@@ -7,10 +7,9 @@ use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
 use super::frozen::{Batched, Merged, Merging, Ordered};
-use super::gathered::Gathering;
-use super::mvcc::{Read, Reader};
+use super::mvcc::Read;
 use super::{RowTable, key, row_id};
-use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
+use crate::engine::tree::{BLinkTree, Direction, Scan, Visit, Visited, scan_of};
 use crate::error::Result;
 use crate::storage::{Batches, Conjunction, Near, Ramp, Row, RowId, Rows, ScanOrder, batches_of};
 use crate::txn::TxId;
@@ -43,6 +42,24 @@ impl Iterator for Ranged {
                 return Some(entry);
             }
             self.current = self.ranges.next().map(|range| RowTable::range(&self.table, range));
+        }
+    }
+}
+
+impl Ranged {
+    /// Shows `f` the newest versions of its rows in order, as
+    /// `Scan::visit` does, range after range.
+    ///
+    /// # Errors
+    ///
+    /// As `Scan::visit`.
+    pub(super) fn visit(&mut self, mut f: impl FnMut(&[u8]) -> Result<Visit>) -> Result<Visited> {
+        loop {
+            let Some(current) = self.current.as_mut() else { return Ok(Visited::Done) };
+            match current.visit(&mut f)? {
+                Visited::Done => self.current = self.ranges.next().map(|range| RowTable::range(&self.table, range)),
+                visited @ (Visited::More | Visited::Later(_)) => return Ok(visited),
+            }
         }
     }
 }
@@ -182,38 +199,16 @@ impl RowTable {
 
     /// The batches of the rows `tx` sees, of `columns`, of only the zones
     /// `condition` may match, if given, as `scan_rows` reads a table that
-    /// holds no group, leaving every row to the filter: each record's
-    /// columns decoded straight into their vectors.
+    /// holds no group, leaving every row to the filter. Each record is read
+    /// in place where it can be, its columns decoded straight into their
+    /// vectors (`rows/in_place.rs`).
     fn gathered(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> Batches {
         let read = || condition.cloned().map_or(Read::All, Read::Condition);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),
         };
-        let entries = Self::ranged(&self, self.zones.ranges(condition));
-        self.gathered_of((reader, entries), columns, Ramp::default())
-    }
-
-    /// The batches of the rows `reader` sees of `entries`, of `columns`,
-    /// each record's columns decoded straight into their vectors, each
-    /// batch's rows as `ramp` says.
-    pub(super) fn gathered_of(self: Arc<Self>, (reader, mut entries): (Reader, Ranged), columns: &[usize], mut ramp: Ramp) -> Batches {
-        let mut gathering = Gathering::new(self.format.types(), columns);
-        Box::new(iter::from_fn(move || {
-            let rows = ramp.next_rows();
-            while gathering.rows() < rows {
-                let Some(entry) = entries.next() else { break };
-                let gathered = entry.and_then(|(key, newest)| match self.visible_from(newest, reader)? {
-                    Some(record) => self.gather_record((row_id(&key)?, &record), &mut gathering),
-                    None => Ok(()),
-                });
-                if let Err(e) = gathered {
-                    // The rows gathered are given up with the scan.
-                    gathering.take();
-                    return Some(Err(e));
-                }
-            }
-            (gathering.rows() > 0).then(|| Ok(gathering.take()))
-        }))
+        let ranges = self.zones.ranges(condition);
+        self.gathered_in((reader, Ramp::default()), columns, ranges)
     }
 }

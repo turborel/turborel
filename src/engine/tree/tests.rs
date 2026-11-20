@@ -434,3 +434,107 @@ fn a_near_read_tries_the_entry_after_the_last() {
     assert!(!tree.get_near(&key(301), &mut near).unwrap(), "no entry after the last");
     assert_eq!(near.at, None, "a key not found leaves no place");
 }
+
+/// The keys a visitor deciding by `decide`, of the number of entries it was
+/// shown so far, reads of `scan`: those it took, from their values, which
+/// are their keys, and those given back copied, in order.
+fn visited(mut scan: Scan<&BLinkTree>, decide: impl Fn(usize) -> Visit) -> Vec<Vec<u8>> {
+    let (mut read, mut shown) = (Vec::new(), 0_usize);
+    loop {
+        let mut taken = Vec::new();
+        let visit = scan.visit(|value| {
+            shown = shown.saturating_add(1);
+            let visit = decide(shown);
+            if visit == Visit::Taken {
+                taken.push(value.to_vec());
+            }
+            Ok(visit)
+        });
+        read.extend(taken);
+        match visit.unwrap() {
+            Visited::More => {}
+            Visited::Later((key, value)) => {
+                assert_eq!(key, value, "an entry given back whole");
+                read.push(key);
+            }
+            Visited::Done => return read,
+        }
+    }
+}
+
+/// Takes most entries, gives back every seventh shown, stops at every
+/// thirteenth.
+fn mixed(shown: usize) -> Visit {
+    if shown.is_multiple_of(13) {
+        Visit::Stop
+    } else if shown.is_multiple_of(7) {
+        Visit::Later
+    } else {
+        Visit::Taken
+    }
+}
+
+/// A tree of keys `1..=n`, each its own value, inserted scattered, so
+/// leaves split anywhere; those of `gone` deleted.
+fn keyed(test: &str, n: u64, gone: std::ops::Range<u64>) -> (BLinkTree, Scratch) {
+    let (tree, scratch) = tree(test);
+    for i in 0..n {
+        let k = i.wrapping_mul(7_919).checked_rem(n).unwrap().wrapping_add(1);
+        assert!(tree.insert(&key(k), &key(k)).unwrap());
+    }
+    for k in gone {
+        assert!(tree.delete(&key(k)).unwrap().is_some());
+    }
+    (tree, scratch)
+}
+
+/// Verifies: [DESIGN] RULES.md D350, entries read in place: a visit
+/// reads, of keys taken or given back, what a forward scan gives, within a
+/// leaf, across leaves and leaves split, past both ends and past keys
+/// deleted, whichever bounds are given, however the visitor takes, gives
+/// back or stops; a stop shows the same entry first at the next visit.
+#[test]
+fn a_visit_reads_what_a_scan_gives() {
+    let (tree, _scratch) = keyed("visited", 6_000, 2_000..3_500);
+    let (from, to) = (key(300), key(4_900));
+    let (from, to) = (from.as_slice(), to.as_slice());
+    let open = Bound::Unbounded::<&[u8]>;
+    let cases = [
+        (open, open),
+        (Bound::Included(from), open),
+        (open, Bound::Excluded(to)),
+        (Bound::Excluded(from), Bound::Included(to)),
+        (Bound::Included(to), Bound::Excluded(from)),
+    ];
+    let decides: [fn(usize) -> Visit; 3] = [mixed, |_| Visit::Taken, |_| Visit::Later];
+    for (lower, upper) in cases {
+        let scanned: Vec<Vec<u8>> = tree.scan(lower, upper, Direction::Forward).map(|e| e.unwrap().0).collect();
+        for decide in decides {
+            assert_eq!(visited(tree.scan(lower, upper, Direction::Forward), decide), scanned);
+        }
+    }
+    let mut scan = tree.scan(open, open, Direction::Forward);
+    assert_eq!(scan.visit(|_| Ok(Visit::Stop)).unwrap(), Visited::More);
+    assert_eq!(scan.visit(|_| Ok(Visit::Later)).unwrap(), Visited::Later((key(1).to_vec(), key(1).to_vec())), "shown again");
+}
+
+/// Verifies: [DESIGN] RULES.md D350: a visit of a scan backward, or of
+/// one that copied a leaf's entries already, gives each entry back copied,
+/// the rest of a forward one then read in place, in the scan's order; a
+/// visitor's error ends the scan.
+#[test]
+fn a_visit_gives_back_what_a_scan_copied() {
+    let (tree, _scratch) = keyed("visited-copies", 1_000, 0..0);
+    let open = Bound::Unbounded::<&[u8]>;
+    let backward: Vec<Vec<u8>> = keys(&tree, Direction::Backward);
+    assert_eq!(visited(tree.scan(open, open, Direction::Backward), |_| Visit::Taken), backward);
+    let mut scan = tree.scan(open, open, Direction::Forward);
+    let first = scan.next().unwrap().unwrap().0;
+    let mut read = vec![first];
+    read.extend(visited(scan, |_| Visit::Taken));
+    assert_eq!(read, keys(&tree, Direction::Forward));
+    let mut failing = tree.scan(open, open, Direction::Forward);
+    let refused = failing.visit(|_| Err(SqlError::new(Code::Api, "[DESIGN] refused")));
+    assert_eq!(refused.unwrap_err().code, Code::Api);
+    assert_eq!(failing.visit(|_| Ok(Visit::Taken)).unwrap(), Visited::Done, "the scan ended");
+}

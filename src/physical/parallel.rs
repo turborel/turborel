@@ -14,12 +14,12 @@
 //! as a point query does, its plan unchanged, so it costs nothing more
 //! than the walk that finds it. So does one a serial scan by batch of a
 //! table kept by column serves better, with no hash join's probe nor
-//! window functions, while EXECUTOR.BATCHES is on. So does a grouping or
-//! DISTINCT of so many groups, as the statistics estimate them, that
-//! grouping each morsel apart barely shrinks it, its exchange of pieces
-//! costing what its threads gain, and with it the stream it reads, whose
-//! rows a channel would carry to it one by one (`parallel/exchange.rs`,
-//! RULES.md D355).
+//! window functions, while EXECUTOR.BATCHES is on, and a bare COUNT(*) its
+//! table's storage counts (RULES.md D351). So does a grouping or DISTINCT
+//! of so many groups, as the statistics estimate them, that grouping each
+//! morsel apart barely shrinks it, its exchange of pieces costing what its
+//! threads gain, and with it the stream it reads, whose rows a channel
+//! would carry to it one by one (`parallel/exchange.rs`, RULES.md D355).
 //! An expression a worker cannot evaluate alone keeps its pipeline whole on
 //! the statement's thread: a subquery's, a routine's, NEXT VALUE FOR's, a
 //! parameter's.
@@ -109,7 +109,9 @@ pub(crate) fn parallel(db: &State, mut plan: Plan) -> Plan {
 
 /// Marks the parts of `plan`, `depth` below the root.
 fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
-    if depth >= MAX_DEPTH {
+    // A bare COUNT(*) its table's storage counts, faster than any split,
+    // stays whole (RULES.md D351).
+    if depth >= MAX_DEPTH || crate::exec::storage_counted(plan, asked.db).is_some() {
         return;
     }
     let rooted = rooted(plan);

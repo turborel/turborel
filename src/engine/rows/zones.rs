@@ -381,21 +381,11 @@ impl Zones {
         let tests = prepared(conditions, &self.kept);
         let mut ranges: Vec<(RowId, Option<RowId>)> = Vec::new();
         for (at, zone) in map.zones.iter().enumerate() {
-            if !passes(&lock_builtin(zone), &tests) {
-                continue;
-            }
-            let first = u64::try_from(at).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
-            let end = first.saturating_add(ZONE_ROWS);
-            // A range that goes on from the one before joins it.
-            if let Some((_, Some(last))) = ranges.last_mut().filter(|r| r.1 == Some(first)) {
-                *last = end;
-            } else {
-                ranges.push((first, Some(end)));
+            if passes(&lock_builtin(zone), &tests) {
+                joined(&mut ranges, at);
             }
         }
-        // Rows past the last zone, written as the scan begins.
-        let past = u64::try_from(map.zones.len()).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
-        ranges.push((past, None));
+        past(&mut ranges, &map);
         ranges
     }
 
@@ -428,6 +418,25 @@ impl Zones {
     pub(super) fn due(&self) -> bool {
         self.stale.load(AtomicOrdering::Acquire) > 0 || self.unsettled.load(AtomicOrdering::Acquire) > 0
     }
+}
+
+/// Adds the row ids of zone `at` to `ranges`, joined to the last if it goes
+/// on from it.
+fn joined(ranges: &mut Vec<(RowId, Option<RowId>)>, at: usize) {
+    let first = u64::try_from(at).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
+    let end = first.saturating_add(ZONE_ROWS);
+    if let Some((_, Some(last))) = ranges.last_mut().filter(|r| r.1 == Some(first)) {
+        *last = end;
+    } else {
+        ranges.push((first, Some(end)));
+    }
+}
+
+/// Adds to `ranges` the row ids past the last zone of `map`, of rows
+/// written as a scan begins.
+fn past(ranges: &mut Vec<(RowId, Option<RowId>)>, map: &Map) {
+    let first = u64::try_from(map.zones.len()).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
+    ranges.push((first, None));
 }
 
 /// How a zone is tested for one conjunct, prepared once for every zone.

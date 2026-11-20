@@ -169,6 +169,47 @@ impl Reply {
         r.finish()?;
         Ok(reply)
     }
+
+    /// \[DESIGN\] RULES.md D393: whether a reply of kind `kind` and body
+    /// `body`, decoded or not, is the last its request is answered with,
+    /// by the order of a statement's replies. A Description, Rows, a
+    /// Notice or a Status has more after it; a Complete has if its tail
+    /// says more (tag 5), read as `completed_head` reads it; any other
+    /// reply ends its request's. A Describe of a cursor, answered by a
+    /// Description alone, is its reader's to know.
+    pub fn ends_request(kind: u8, body: &[u8]) -> bool {
+        match kind {
+            DESCRIPTION | ROWS | NOTICE | STATUS => false,
+            COMPLETE => Reply::completed_head(kind, body).is_none_or(|c| !c.more),
+            _ => true,
+        }
+    }
+
+    /// \[DESIGN\] RULES.md D393: the head of a reply of kind `kind` and
+    /// body `body`, if it is a Complete whose head reads. That is its
+    /// SQLCODE, SQLSTATE and whether a transaction is active, and of its
+    /// tail the commit's position and whether more replies follow, which
+    /// come before any field a client may fail to take, a condition (tag
+    /// 17).
+    /// So a client that cannot take the rest still knows where its
+    /// request's replies end and the session's state.
+    pub fn completed_head(kind: u8, body: &[u8]) -> Option<Completed> {
+        if kind != COMPLETE {
+            return None;
+        }
+        let mut r = Reader::received(body, "reply");
+        let (sqlcode, sqlstate, active) = (r.u32().ok()?.cast_signed(), r.str().ok()?, flag(&mut r).ok()?);
+        let mut c = Completed { sqlcode, sqlstate, active, ..Completed::default() };
+        let mut tail = Tail::new();
+        while let Ok(Some(tag)) = tail.next(&mut r, &[POSITION, MORE, INSERTED, GENERATED, CONDITIONS, TIME]) {
+            match tag {
+                POSITION => c.position = Some(r.u64().ok()?),
+                MORE => c.more = true,
+                _ => break,
+            }
+        }
+        Some(c)
+    }
 }
 
 fn put_columns(b: &mut Vec<u8>, columns: &[Column]) {

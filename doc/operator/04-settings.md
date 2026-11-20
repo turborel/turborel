@@ -223,7 +223,9 @@ EXECUTOR.PARALLEL_MIN_ROWS rows, so a query of a few rows, as one by a
 key, stays on its own thread. A scan, grouping or sort of a column
 store table stays on it too while EXECUTOR.BATCHES is on, since its
 scan by batch is faster alone; a join or window functions over one
-still run in parallel. [EXPLAIN](../sql/statements/explain.md)
+still run in parallel. A bare COUNT(*) of a row store table stays on
+it as well, since its storage counts it faster than any split.
+[EXPLAIN](../sql/statements/explain.md)
 shows the part and its degree. The rows, and their order, are the same
 on any number of threads.
 

@@ -96,6 +96,26 @@ impl Gathering {
         self.rows
     }
 
+    /// Whether it reads any column.
+    pub(in crate::engine::rows) fn reads_any(&self) -> bool {
+        !self.columns.is_empty()
+    }
+
+    /// Whether it reads a plain `record` of `format` from the record alone:
+    /// of no column, or of columns each null or kept in line.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if `record` is not a record of `format`.
+    pub(in crate::engine::rows) fn inline(&self, format: &RecordFormat, record: &[u8]) -> Result<bool> {
+        for &(at, _) in &self.columns {
+            if at < format.columns() && !format.inline(record, at)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Adds the row plain `record` of `format` holds, a value out of line
     /// got by `fetch`.
     ///

@@ -50,7 +50,7 @@ behind it, and each can be replaced or added to.
   emptied nodes reclaimed up to the root. Any other method registers with its
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
-  match.
+  match, and a row-store COUNT(*) is summed from its settled zones.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to

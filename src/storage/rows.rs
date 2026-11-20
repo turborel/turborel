@@ -5,7 +5,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::error::{Code, Result, SqlError};
-use crate::txn::TxId;
+use crate::txn::{NO_TRANSACTION, TxId};
 use crate::value::{Decimal, Value};
 
 /// \[DESIGN\] What keeps and logs a table's large object's object
@@ -78,6 +78,26 @@ pub struct Near {
 /// The iterator owns what it reads, so it can be kept between calls, and
 /// moved to another thread with the cursor reading it.
 pub type Rows = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
+
+/// \[DESIGN\] Counts of a table's rows, which sum to how many there are
+/// (`TableStorage::count`), read as they are pulled.
+pub type Counts = Box<dyn Iterator<Item = Result<u64>> + Send>;
+
+/// Makes row `id` of `table` hold `row`, or be absent, through `get`,
+/// `update`, `restore` and `delete` outside any transaction, as the
+/// default `TableStorage::apply` does.
+///
+/// # Errors
+///
+/// As those.
+pub(super) fn applied<T: super::TableStorage + ?Sized>(table: &T, id: RowId, row: Option<Row>) -> Result<()> {
+    match (row, table.get(NO_TRANSACTION, id)?.is_some()) {
+        (Some(row), true) => table.update(NO_TRANSACTION, id, row),
+        (Some(row), false) => table.restore(NO_TRANSACTION, id, row),
+        (None, true) => table.delete(NO_TRANSACTION, id),
+        (None, false) => Ok(()),
+    }
+}
 
 /// \[DESIGN\] The order an ordered scan gives its rows in: the columns
 /// sorted by, by their places, whether backward, and the most of its

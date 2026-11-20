@@ -38,6 +38,7 @@
 //! (`db/checkpoint.rs`); its locator, the meta page and that position,
 //! finds it again in its file (`StorageEngine::open_table`).
 
+mod count;
 mod counted;
 mod discard;
 mod engine;
@@ -45,6 +46,7 @@ mod files;
 mod frozen;
 mod gathered;
 mod ids;
+mod in_place;
 mod lobs;
 mod meta;
 mod mvcc;
@@ -323,6 +325,12 @@ impl TableStorage for RowTable {
     ) -> Option<crate::storage::Batches> {
         (!order.0.is_empty() && self.ordered_by().starts_with(order.0))
             .then(|| self.scan_ordered_batches_of(tx, (columns, order), conditions.cloned()))
+    }
+
+    /// Of a table that freezes no row, from its zones where settled
+    /// (`rows/count.rs`).
+    fn count(self: Arc<Self>, tx: TxId) -> Option<crate::storage::Counts> {
+        self.count_of(tx)
     }
 
     fn row_count(&self) -> usize {

@@ -17,6 +17,7 @@
 //! rows of a stream are read whole so too by a sort, EXCEPT and INTERSECT
 //! (`keyed.rs`).
 
+mod count;
 mod groups;
 mod joined;
 mod judge;
@@ -28,6 +29,7 @@ mod vector;
 
 use std::sync::Arc;
 
+pub(crate) use count::storage_counted;
 pub(super) use groups::{Held, morsel_groups};
 pub(super) use joined::rows_of;
 pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
@@ -147,6 +149,10 @@ pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIte
     let (Some(read), Plan::Aggregate { aggs, input, .. }) = (read_of(&plan, db), plan) else {
         return failed(super::broken("an aggregation not read by batches"));
     };
+    // A bare COUNT(*), counted by the table's storage if it can (`count.rs`).
+    if let Some(row) = count::counted_table(&read, &input).and_then(|table| count::counted(table, &aggs, db, tx)) {
+        return Box::new(std::iter::once(row));
+    }
     let stream = match stream::open(*input, db, tx) {
         Ok(stream) => stream,
         Err(e) => return failed(e),

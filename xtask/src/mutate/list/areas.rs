@@ -2,6 +2,10 @@
 
 mod batches;
 mod budget;
+// The count's, kept beside the other areas' files.
+mod client_sync;
+#[path = "count.rs"]
+mod count;
 mod distinct_aggregates;
 mod joins;
 mod parallel;
@@ -68,7 +72,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 33] {
+fn second() -> [&'static [Mutation]; 34] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -101,6 +105,7 @@ fn second() -> [&'static [Mutation]; 33] {
         &super::vector_hybrid::VECTOR_HYBRID,
         &super::vector::VECTOR,
         &super::delta_tables::DELTA_TABLES,
+        &count::COUNT,
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
     ]
@@ -145,10 +150,10 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's, parallel queries' and batches' last, as `last`
-    // holds no more.
-    let tail = [&super::transport::TRANSPORT[..], &parallel::PARALLEL[..], &batches::BATCHES[..]];
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(tail)
+    // The transport's, parallel queries', the client's step with its
+    // server and batches' last, as `last` holds no more.
+    let after: [&'static [Mutation]; 4] = [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &batches::BATCHES];
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the

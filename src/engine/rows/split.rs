@@ -147,8 +147,7 @@ impl Split for RowSplit {
         let range = self.range(n)?;
         let asked = self.columns.get(..self.asked)?.to_vec();
         let Some(directory) = &self.directory else {
-            let entries = RowTable::ranged(&self.table, self.zones_within(range));
-            return Some(Arc::clone(&self.table).gathered_of((self.reader, entries), &asked, Ramp::whole()));
+            return Some(Arc::clone(&self.table).gathered_in((self.reader, Ramp::whole()), &asked, self.zones_within(range)));
         };
         let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
         let part = Arc::new(Directory { groups: directory.groups.iter().filter(inside).cloned().collect() });
