@@ -278,6 +278,9 @@ impl Database {
     /// starts until `background_reopened`.
     pub(super) fn background_closing(&self) {
         self.background().jobs.closing(self);
+        if let Ok(st) = self.snapshot() {
+            st.jobs.workers().stop();
+        }
     }
 
     /// Lets the jobs start again, as JOBS.POLICY says: a close failed.

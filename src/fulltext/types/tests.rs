@@ -11,6 +11,7 @@ use crate::fulltext::value::FULLTEXT;
 use crate::value::lob::Lob;
 use crate::value::types::ExtensionValue;
 
+mod pattern_keys;
 mod search;
 mod tokenizing;
 

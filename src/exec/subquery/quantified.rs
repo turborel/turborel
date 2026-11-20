@@ -274,3 +274,7 @@ impl Summary {
 // R-TEST-1).
 #[cfg(test)]
 mod tests;
+
+// Unit tests: a comparison of no quantifier, of one row.
+#[cfg(test)]
+mod one;

@@ -253,3 +253,21 @@ fn a_wait_for_a_lock_past_its_timeout_is_refused() {
     holder.commit().unwrap();
     waiter.run("INSERT INTO L VALUES (2)").unwrap();
 }
+
+/// Verifies: [DESIGN] RULES.md D44: a query reading a recursive query's
+/// result many times, as a product of it with itself does, is cancelled
+/// past its STATEMENT.TIMEOUT_MS as it reads (SQLCODE -920). Regression
+/// test (R-TEST-7): the result was read with no look at the flag, so such
+/// a product of no table ran to its end.
+#[test]
+fn a_product_of_a_recursive_query_past_its_timeout_is_cancelled() {
+    let db = Database::new();
+    let s = db.session("X");
+    s.run("SET STATEMENT.TIMEOUT_MS = 50").unwrap();
+    let product = "WITH RECURSIVE C (N) AS (VALUES (CAST(1 AS INTEGER)) UNION ALL SELECT N + 1 FROM C WHERE N < 99) \
+                   SELECT COUNT(*) FROM C A, C B, C D, C E";
+    let began = std::time::Instant::now();
+    let read = s.open_cursor(product).and_then(|mut cursor| cursor.fetch().map(drop));
+    assert_eq!(read.as_ref().map_err(|e| e.code), Err(Code::Cancelled), "{read:?}");
+    assert!(began.elapsed() < std::time::Duration::from_secs(20), "{:?}", began.elapsed());
+}

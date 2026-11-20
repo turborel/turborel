@@ -169,7 +169,8 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => false,
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => false,
     }
 }
 

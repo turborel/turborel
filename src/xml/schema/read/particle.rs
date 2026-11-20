@@ -99,7 +99,8 @@ impl Builder<'_> {
     ///
     /// # Errors
     ///
-    /// SQLSTATE 22000 if it has not one of them; if a redefinition, refers
+    /// SQLSTATE 22000 if it has not one of them, or that one has a minOccurs
+    /// or maxOccurs [Schema1 Appendix A]; if a redefinition, refers
     /// to itself more than once [Schema1 §4.2.2 src-redefine.6.1.1], or,
     /// never, does not restrict the one it redefines \[6.2.2\].
     pub fn read_group_def(&mut self, place: Place, id: GroupDefId, depth: usize) -> Result<()> {
@@ -110,6 +111,11 @@ impl Builder<'_> {
         let [(inner, which)] = groups.as_slice() else {
             return Err(invalid("[Schema1 §3.7.2]", "a model group definition has one <all>, <choice> or <sequence>"));
         };
+        // [Schema1 Appendix A] the model group of a definition occurs as
+        // its references say, so has no minOccurs or maxOccurs of its own.
+        if let Some(occurs) = ["minOccurs", "maxOccurs"].into_iter().find(|a| inner.attr(a).is_some()) {
+            return Err(invalid("[Schema1 Appendix A]", &format!("the <{which}> of a model group definition has no {occurs}")));
+        }
         let compositor = match *which {
             "all" => Compositor::All,
             "choice" => Compositor::Choice,

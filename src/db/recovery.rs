@@ -520,8 +520,8 @@ impl State {
 
     /// MEMORY.WORK_BYTES in batches of SPILL.BATCH_BYTES, for a load.
     fn load_area(&self) -> Area {
-        use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, batch_bytes, work_bytes};
-        Area::new(work_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)))
+        use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, batch_bytes, held_bytes};
+        Area::new(held_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)))
     }
 
     /// The entries the index `ix` holds, of each version

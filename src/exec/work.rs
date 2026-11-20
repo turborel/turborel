@@ -1,6 +1,7 @@
 //! \[DESIGN\] An operator's work area (RULES.md D38): what it may hold in
-//! memory, the setting MEMORY.WORK_BYTES's bytes, and once it holds more, a
-//! spill area of as many bytes, reserved of the memory budget, made when first
+//! memory, its grant of the memory budget of up to MEMORY.WORK_BYTES
+//! (`spill/grant.rs`, RULES.md D298), and once it holds more, a spill area
+//! of its bytes up to `WORK_FLOOR`, reserved of the budget, made when first
 //! needed (`spill.rs`). And the keys an operator counts, kept in memory until
 //! they outgrow it, then in a table of its area.
 //!
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, batch_bytes, work_bytes};
-use crate::spill::{Area, Batches, Records, SpillArea, SpillRun, SpillTable, SpilledLobs, WorkAreas};
+use crate::spill::{Area, Batches, Grant, Records, SpillArea, SpillRun, SpillTable, SpilledLobs, WORK_FLOOR, WorkAreas};
 use crate::txn::{Stop, TxId, checked};
 
 /// The bytes a key held in memory takes beyond its own: its map entry.
@@ -25,6 +26,8 @@ pub(super) const ENTRY_BYTES: usize = 48;
 /// One operator's work area.
 pub(super) struct Work {
     limit: usize,
+    /// Its grant, shared with its parts, which hold shares of it.
+    grant: Arc<Grant>,
     /// The bytes of rows a run gathers before it writes them.
     batch: usize,
     /// The most partitions an operator writes at once, and the most times
@@ -47,10 +50,18 @@ pub(super) struct Work {
 impl Work {
     /// The work area of an operator of `db`.
     pub(super) fn new(db: &State) -> Work {
-        let (limit, batch) = (work_bytes(db.settings.get(MEMORY_WORK_BYTES)), batch_bytes(db.settings.get(SPILL_BATCH_BYTES)));
+        let (ceiling, batch) = (work_bytes(db.settings.get(MEMORY_WORK_BYTES)), batch_bytes(db.settings.get(SPILL_BATCH_BYTES)));
         let partitions = (db.settings.count(SPILL_PARTITIONS), db.settings.count(SPILL_PARTITION_DEPTH));
         let (areas, types) = (Arc::clone(&db.work), db.types.clone());
-        Work { limit, batch, partitions, areas, area: None, types, lobs: SpilledLobs::new(), stop: None }
+        let grant = areas.grant(ceiling);
+        let limit = grant.bytes();
+        Work { limit, grant, batch, partitions, areas, area: None, types, lobs: SpilledLobs::new(), stop: None }
+    }
+
+    /// The most an operator of `db` is granted, MEMORY.WORK_BYTES, for
+    /// what reserves what it holds itself.
+    pub(super) fn ceiling_of(db: &State) -> usize {
+        work_bytes(db.settings.get(MEMORY_WORK_BYTES))
     }
 
     /// The work area of an operator of `db` run by `tx`'s statement: its
@@ -59,18 +70,24 @@ impl Work {
         Work { stop: db.tx.stop_of(tx), ..Work::new(db) }
     }
 
-    /// A work area of the same settings, of its own: for an operator's
-    /// part that holds rows apart from the rest.
+    /// A work area of the same settings, of a grant of its own of up to
+    /// its bytes: for an operator's part that holds rows apart from the rest.
     pub(super) fn another(&self) -> Work {
-        let (limit, batch, partitions, stop) = (self.limit, self.batch, self.partitions, self.stop.clone());
-        let (areas, types, lobs) = (Arc::clone(&self.areas), self.types.clone(), self.lobs.clone());
-        Work { limit, batch, partitions, areas, area: None, types, lobs, stop }
+        let grant = self.areas.grant(self.limit);
+        Work { limit: grant.bytes(), grant, ..self.shared(self.limit) }
     }
 
-    /// A work area of the same settings, of its own, of `limit` bytes: for
+    /// A work area of the same settings, of `limit` bytes of its grant: for
     /// a part of an operator held beside its others in a part of its area.
     pub(super) fn part(&self, limit: usize) -> Work {
-        Work { limit, ..self.another() }
+        self.shared(limit)
+    }
+
+    /// A work area of the same settings and grant, of `limit` bytes.
+    fn shared(&self, limit: usize) -> Work {
+        let (batch, partitions, stop) = (self.batch, self.partitions, self.stop.clone());
+        let (areas, types, lobs, grant) = (Arc::clone(&self.areas), self.types.clone(), self.lobs.clone(), Arc::clone(&self.grant));
+        Work { limit, grant, batch, partitions, areas, area: None, types, lobs, stop }
     }
 
     /// Half of it, of its own, the other half left to it, an area of each
@@ -80,7 +97,7 @@ impl Work {
     pub(super) fn split(&mut self) -> Work {
         let half = self.limit.div_ceil(2);
         self.limit = self.limit.saturating_sub(half);
-        Work { limit: half, ..self.another() }
+        self.shared(half)
     }
 
     /// The types beyond the standard the rows it spills may hold values of.
@@ -124,7 +141,8 @@ impl Work {
     /// Its spill area, made the first time.
     fn area(&mut self) -> Result<&dyn SpillArea> {
         if self.area.is_none() {
-            self.area = Some(self.areas.area(Area::new(self.limit, self.batch))?);
+            // Its pool caches the area's pages, its rows held of the grant.
+            self.area = Some(self.areas.area(Area::new(self.limit.min(WORK_FLOOR), self.batch))?);
         }
         self.area.as_deref().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a spill area was not made"))
     }
@@ -207,48 +225,53 @@ impl Bag {
 
     /// Adds `more` to the count of `key`.
     pub(super) fn add_count(&mut self, key: &[u8], more: u64) -> Result<()> {
-        let n = self.count(key)?;
-        self.set(key, (n, n.saturating_add(more)))
+        self.change(key, |n| n.saturating_add(more)).map(drop)
     }
 
     /// Adds `key` if it is not in the bag; whether it was not.
     pub(super) fn add_new(&mut self, key: &[u8]) -> Result<bool> {
-        if self.count(key)? > 0 {
-            return Ok(false);
-        }
-        self.set(key, (0, 1))?;
-        Ok(true)
+        Ok(self.change(key, |n| n.max(1))? == 0)
     }
 
     /// Adds one to the count of `key`; whether it was 0.
     pub(super) fn raise(&mut self, key: &[u8]) -> Result<bool> {
-        let n = self.count(key)?;
-        self.set(key, (n, n.saturating_add(1)))?;
-        Ok(n == 0)
+        Ok(self.change(key, |n| n.saturating_add(1))? == 0)
     }
 
     /// Takes one from the count of `key`, if it is above 0; whether it is
     /// 0 now, one taken.
     pub(super) fn lower(&mut self, key: &[u8]) -> Result<bool> {
-        let n = self.count(key)?;
-        if n == 0 {
-            return Ok(false);
-        }
-        self.set(key, (n, n.saturating_sub(1)))?;
-        Ok(n == 1)
+        Ok(self.change(key, |n| n.saturating_sub(1))? == 1)
     }
 
     /// Takes one from the count of `key`, if it is above 0; whether it was.
     pub(super) fn take(&mut self, key: &[u8]) -> Result<bool> {
-        let n = self.count(key)?;
-        if n == 0 {
-            return Ok(false);
-        }
-        self.set(key, (n, n.saturating_sub(1)))?;
-        Ok(true)
+        Ok(self.change(key, |n| n.saturating_sub(1))? > 0)
     }
 
-    /// Changes the count of `key` from `was` to `now`.
+    /// Changes the count of `key` to `now` of it; the count it was. In
+    /// memory a key held is looked up once and one not twice, its bytes
+    /// made only then, and one whose count stays 0 is not added.
+    fn change(&mut self, key: &[u8], now: impl FnOnce(u64) -> u64) -> Result<u64> {
+        if self.table.is_some() {
+            let was = self.count(key)?;
+            self.set(key, (was, now(was)))?;
+            return Ok(was);
+        }
+        if let Some(n) = self.counts.get_mut(key) {
+            let was = *n;
+            *n = now(was);
+            return Ok(was);
+        }
+        let count = now(0);
+        if count > 0 {
+            self.set(key, (0, count))?;
+        }
+        Ok(0)
+    }
+
+    /// Changes the count of `key` from `was` to `now`: in memory, of a
+    /// key not held (`change`).
     fn set(&mut self, key: &[u8], (was, now): (u64, u64)) -> Result<()> {
         if let Some(table) = &mut self.table {
             if was > 0 {
@@ -256,16 +279,8 @@ impl Bag {
             }
             return if now > 0 { table.insert(key, &now.to_le_bytes()) } else { Ok(()) };
         }
-        // A key held already keeps its bytes: none made of it again.
-        match self.counts.get_mut(key) {
-            Some(n) => *n = now,
-            None => {
-                self.counts.insert(key.to_vec(), now);
-            }
-        }
-        if was == 0 {
-            self.bytes = self.bytes.saturating_add(key.len()).saturating_add(ENTRY_BYTES);
-        }
+        self.counts.insert(key.to_vec(), now);
+        self.bytes = self.bytes.saturating_add(key.len()).saturating_add(ENTRY_BYTES);
         if self.bytes > self.work.limit() { self.spill() } else { Ok(()) }
     }
 

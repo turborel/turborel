@@ -315,13 +315,19 @@ impl Builder<'_> {
     ///
     /// # Errors
     ///
-    /// SQLSTATE 22000 if it has a default and a use other than optional
-    /// [Schema1 §3.2.3 src-attribute.2], both or neither of ref and name
+    /// SQLSTATE 22000 if its use is none of optional, prohibited and
+    /// required [Schema1 Appendix A]; if it has a default and a use other
+    /// than optional [Schema1 §3.2.3 src-attribute.2], both or neither of ref and name
     /// \[3.1\], a ref and what a reference cannot have \[3.2\], or a value
     /// constraint other than its declaration's fixed one [Schema1 §3.5.6
     /// au-props-correct.2]; as `read_attribute`.
     pub fn attribute_use(&mut self, at: &At<'_>, local: Local) -> Result<UseRead> {
         let use_ = at.token("use");
+        // [Schema1 Appendix A] use is one of optional, prohibited and
+        // required.
+        if let Some(u) = use_.as_deref().filter(|u| ![OPTIONAL, PROHIBITED, REQUIRED].contains(u)) {
+            return Err(at.bad("use", u));
+        }
         let required = use_.as_deref() == Some(REQUIRED);
         if at.attr("default").is_some() && use_.as_deref().is_some_and(|u| u != OPTIONAL) {
             return Err(invalid("[Schema1 §3.2.3 src-attribute.2]", "an attribute with a default is optional"));
