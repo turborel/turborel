@@ -13,6 +13,7 @@ mod distances;
 mod functions;
 mod recovery;
 mod refusals;
+mod text_lobs;
 mod types;
 
 /// A database whose schema A has table `table` (`columns`), and a

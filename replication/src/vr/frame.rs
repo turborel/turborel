@@ -513,3 +513,6 @@ impl ViewState {
         Ok(ViewState { epoch, began, configuration, view, normal_view, commit, removed })
     }
 }
+
+#[cfg(test)]
+mod tests;

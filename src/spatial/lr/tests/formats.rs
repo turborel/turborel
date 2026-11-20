@@ -44,7 +44,7 @@ fn full_feature() -> LinearElement {
 }
 
 /// One value or more of every type.
-fn samples() -> Vec<LrValue> {
+pub(super) fn samples() -> Vec<LrValue> {
     let all = units();
     let survey = LrMeasure::new_with_units(Some(1.0_f64), Some("US survey foot".to_owned()), &all).unwrap();
     let edge = EdgeParts { topology_type: Some('L'), topology_name: Some("net".to_owned()), edge_id: Some(12_i32) };

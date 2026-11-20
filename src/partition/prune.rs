@@ -138,3 +138,7 @@ fn tighter(a: Option<(Value, bool)>, b: Option<(Value, bool)>, toward: Ordering)
     }
     Some(if order == Some(toward) { a } else { b })
 }
+
+// Unit tests: what conjuncts say of a key part (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

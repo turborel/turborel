@@ -17,6 +17,7 @@ use crate::memory::MemoryBudget;
 use crate::spill::{Area, WorkAreas};
 
 mod codec;
+mod damage;
 mod search;
 
 /// A page size small enough that a few thousand postings span many leaves.
