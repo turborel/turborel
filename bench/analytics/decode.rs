@@ -8,6 +8,7 @@
 
 use super::harness::{Bench, Case};
 use turborel::db::{Database, Session};
+use turborel::threads::JobPolicy;
 
 /// Rows of DC.
 const ROWS: u64 = 400_000;
@@ -17,9 +18,11 @@ const PER_INSERT: u64 = 1_000;
 /// Schema B with DC, in the column store: K its key; P a price of two
 /// digits; F an integer of 21 bits; D one of 1,024 values far apart; R
 /// runs of 5,000 rows; T a text of 300 values; U a text of each row,
-/// alike in its parts.
+/// alike in its parts. Background work runs only when asked (JOBS.POLICY
+/// MANUAL), so no freeze or collection runs while a case is measured.
 fn database() -> Database {
     let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION B
            CREATE TABLE DC (K INTEGER, P DOUBLE PRECISION, F INTEGER, D BIGINT, R INTEGER, T VARCHAR(20), U VARCHAR(60))
