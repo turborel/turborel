@@ -6,9 +6,10 @@
 //!   over the base table its columns come from (`cardinality/lineage.rs`),
 //!   an equality of two relations' columns by classes, a filter over a
 //!   product as the join it is (`cardinality/joins.rs`);
-//! * an operand moved over a guard (`optimizer::is_guarded`), its own rows
-//!   times its own conjuncts': the guard is one row, which its EXISTS
-//!   either keeps or makes none of the statement's, not a third of one;
+//! * an operand moved over a guard (`optimizer::is_guarded`), the join of
+//!   it and the guard's one row, so its own rows times its own conjuncts':
+//!   the guard's EXISTS keeps that row or makes none of the statement's,
+//!   and no conjunct relates the two, so nothing takes a third of them;
 //! * a product, the product; an outer join, the inner join's rows, at
 //!   least each preserved operand's;
 //! * a grouping and DISTINCT, their groups (`cardinality/groups.rs`);
@@ -59,15 +60,10 @@ impl Estimates<'_> {
         self.filter_at((cond, input), 1)
     }
 
-    /// The card of the filter of `cond` over `input`: of a guarded
-    /// operand, its operand's kept by its own conjuncts; over a chain, the
-    /// join's; else its input's kept by each conjunct.
+    /// The card of the filter of `cond` over `input`: over a chain, the
+    /// join's, a guarded operand's among them; else its input's kept by
+    /// each conjunct.
     fn filter_at(&self, (cond, input): (&Cond, &LogicalPlan), depth: usize) -> Card {
-        if let LogicalPlan::Product { left, right } = input
-            && right.width() == 0
-        {
-            return self.card_at(left, depth).kept(self.selectivity(cond, Over::One(input)));
-        }
         if is_chain(input) {
             return self.chain(Some(cond), input, depth);
         }

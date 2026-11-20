@@ -14,14 +14,16 @@ use crate::logical::{Cond, Expr, LogicalPlan, Truth};
 use crate::value::{CompOp, Decimal, Value};
 
 /// Schema E: T of 1,000 rows, K a key, G of 10 values; U of 100 rows, K a
-/// key; V of 10 rows; statistics gathered.
+/// key; V of 10 rows; W of 1,000 rows, A and B of 100 values, equal, and
+/// an index of both; statistics gathered.
 fn database() -> (Database, Session) {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION E
            CREATE TABLE T (K INTEGER NOT NULL, G INTEGER NOT NULL)
            CREATE TABLE U (K INTEGER NOT NULL, W INTEGER)
-           CREATE TABLE V (K INTEGER NOT NULL)",
+           CREATE TABLE V (K INTEGER NOT NULL)
+           CREATE TABLE W (A INTEGER NOT NULL, B INTEGER NOT NULL)",
     )
     .unwrap();
     let s = db.session("E");
@@ -29,6 +31,8 @@ fn database() -> (Database, Session) {
     s.run(&format!("INSERT INTO T VALUES {}", rows(1_000_i32, &|k| format!("({k}, {})", k % 10_i32)))).unwrap();
     s.run(&format!("INSERT INTO U VALUES {}", rows(100_i32, &|k| format!("({k}, {k})")))).unwrap();
     s.run(&format!("INSERT INTO V VALUES {}", rows(10_i32, &|k| format!("({k})")))).unwrap();
+    s.run(&format!("INSERT INTO W VALUES {}", rows(1_000_i32, &|k| format!("({}, {})", k % 100_i32, k % 100_i32)))).unwrap();
+    s.run("CREATE INDEX W_AB ON W (A, B)").unwrap();
     s.commit().unwrap();
     db.maintain().unwrap();
     (db, s)
@@ -71,6 +75,8 @@ fn groupings_are_estimated_by_their_groups() {
     assert!(near(rows(&s, "SELECT DISTINCT G FROM T"), 10.0));
     let keyed = rows(&s, "SELECT K, G FROM T GROUP BY K, G");
     assert!((keyed - 1000.0_f64).abs() < 1.0_f64, "every row of the table is a group of its key: {keyed}");
+    let correlated = rows(&s, "SELECT A, B FROM W GROUP BY A, B");
+    assert!(near(correlated, 100.0_f64), "the index's sketch counts correlated columns once: {correlated}");
     let joined = "SELECT * FROM U, (SELECT G, COUNT(*) AS N FROM T GROUP BY G) AS D WHERE U.K = D.G";
     assert!(near(rows(&s, joined), 10.0), "{}", rows(&s, joined));
 }
@@ -194,12 +200,10 @@ fn state(s: &Session) -> Arc<State> {
     s.optimized("VALUES (1)").unwrap().0
 }
 
-/// Verifies: [DESIGN] RULES.md D370, MC/DC of the guard's decision
-/// (`filter_at`): a filter over a product whose right operand has no
-/// columns is the guarded operand, its own rows kept by its conjuncts,
-/// the guard one row (pair: product and no columns, against product of a
-/// column); a filter over a product of a column is a join; one over no
-/// product its input's (pair: no product).
+/// Verifies: [DESIGN] RULES.md D370: a filter over a product whose right
+/// operand, the guard, has no columns is the guarded operand, its own rows
+/// kept by its conjuncts, the guard one row; over a guard of a column it
+/// is no more; over no product, its input's kept.
 #[test]
 fn a_guarded_operand_is_estimated_as_its_operand() {
     let (_db, s) = database();
@@ -258,4 +262,30 @@ fn defaults_of_what_has_no_count() {
     assert!(est.rows(&LogicalPlan::Filter { cond: Cond::Const(Truth::False), input: Box::new(scan("V", 1)) }) >= 1.0_f64, "at least a row");
     let distinct = super::super::PhysicalPlanner::new(&st).card(&LogicalPlan::Distinct { input: Box::new(scan("T", 2)) });
     assert!(near(distinct.rows, 1000.0) && distinct.upper >= distinct.rows);
+}
+
+/// Each node of `plan` and its subtrees: whether its width counts its names.
+fn widths_agree(plan: &LogicalPlan) -> bool {
+    plan.width() == plan.names().len() && plan.inputs().all(widths_agree)
+}
+
+/// Verifies: [DESIGN] RULES.md D370: a plan's width, which the estimator
+/// asks at every node, is counted as its names are, of every node kind a
+/// query below makes.
+#[test]
+fn widths_count_the_names() {
+    let (_db, s) = database();
+    for sql in [
+        "SELECT G, COUNT(*), MAX(K) + 1 FROM T WHERE K > 3 GROUP BY G ORDER BY 2 FETCH FIRST 2 ROWS ONLY",
+        "SELECT DISTINCT U.W FROM T LEFT JOIN U ON T.K = U.K",
+        "SELECT K, RANK() OVER (ORDER BY K), ROW_NUMBER() OVER (ORDER BY K) FROM V",
+        "SELECT * FROM V, UNNEST(ARRAY[1, 2]) WITH ORDINALITY AS A(X, N)",
+        "SELECT K FROM U EXCEPT SELECT K FROM V",
+        "VALUES (1, 2), (3, 4)",
+        "WITH RECURSIVE R (N) AS (VALUES (1) UNION ALL SELECT N + 1 FROM R WHERE N < 3) SELECT * FROM R",
+        "SELECT * FROM T MATCH_RECOGNIZE (ORDER BY K MEASURES COUNT(*) AS C PATTERN (A B) DEFINE B AS B.G > A.G)",
+    ] {
+        let (_, plan) = s.optimized(sql).unwrap();
+        assert!(widths_agree(&plan), "{sql}");
+    }
 }
