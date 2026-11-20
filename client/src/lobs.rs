@@ -10,7 +10,7 @@
 use std::io::{self, Read, Write};
 
 use turborel::error::{Code, SqlError};
-use turborel::value::lob::{CHUNK_OCTETS, Lob, LobKind};
+use turborel::value::lob::{CHUNK_OCTETS, Lob, LobKind, char_cut};
 use turborel_protocol::{Completed, Failure, LobReply, LobRequest, Reply, Request};
 
 use crate::connection::{Connection, Result};
@@ -183,6 +183,19 @@ pub struct LobWriter<'c, S: Read + Write> {
 }
 
 impl<S: Read + Write> LobWriter<'_, S> {
+    /// Sends the first APPEND_OCTETS of what is pending, a character string
+    /// cut where a character ends, so no Append is longer however much one
+    /// write gave.
+    fn append_piece(&mut self) -> Result<()> {
+        let cut = match self.kind {
+            LobKind::Character => char_cut(&self.pending, APPEND_OCTETS),
+            LobKind::Binary => APPEND_OCTETS,
+        };
+        let rest = self.pending.split_off(cut.max(1).min(self.pending.len()));
+        let bytes = std::mem::replace(&mut self.pending, rest);
+        self.connection.lob_completed(&LobRequest::Append { locator: self.locator, bytes }).map(drop)
+    }
+
     /// Sends what is written and not yet sent.
     fn flush_pending(&mut self) -> Result<()> {
         if self.pending.is_empty() {
@@ -213,8 +226,8 @@ impl<S: Read + Write> Write for LobWriter<'_, S> {
             let leads = bytes.iter().filter(|&&b| b & 0xC0 != 0x80).count();
             self.chars = self.chars.saturating_add(u64::try_from(leads).unwrap_or(u64::MAX));
         }
-        if self.pending.len() >= APPEND_OCTETS {
-            self.flush_pending().map_err(io::Error::other)?;
+        while self.pending.len() >= APPEND_OCTETS {
+            self.append_piece().map_err(io::Error::other)?;
         }
         Ok(bytes.len())
     }

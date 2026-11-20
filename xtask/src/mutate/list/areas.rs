@@ -10,9 +10,10 @@ mod uuid;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 12] {
+pub fn core() -> [&'static [Mutation]; 13] {
     [
         &super::MUTATIONS,
+        &super::assertions::ASSERTIONS,
         &super::hash::HASH,
         &super::rekey::REKEY,
         &super::KEPT,

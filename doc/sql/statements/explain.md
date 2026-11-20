@@ -157,13 +157,21 @@ over STAFF of [Value Expressions](../04-expressions.md). The rule
 `unnest_subqueries` made the subquery a grouping of each department's
 salaries, joined with the outer rows by their departments. Each
 department is taken once, as a value and the count of its trailing
-spaces, and SINGLE stands where the subquery stood:
+spaces. The subquery has one row for each department, a set function of
+no grouping, so its value is read as it is, with no SINGLE:
 
 ```sql
+CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, NAME VARCHAR(30), DEPT CHAR(3), SALARY DECIMAL(9,2));
+INSERT INTO STAFF VALUES (1, 'Ada', 'ENG', 7200), (2, 'Grace', 'ENG', 8100),
+                         (3, 'Edsger', 'OPS', 5400), (4, 'Barbara', NULL, NULL);
+COMMIT;
 EXPLAIN SELECT NAME FROM STAFF S WHERE SALARY > (SELECT AVG(SALARY) FROM STAFF T WHERE T.DEPT = S.DEPT);
 ```
 
 ```
+OK
+OK
+OK
  PLAN
 --------------------------------------------------------------
  -- bound:
@@ -179,7 +187,7 @@ EXPLAIN SELECT NAME FROM STAFF S WHERE SALARY > (SELECT AVG(SALARY) FROM STAFF T
  -- optimized:
  Project S.NAME
    Project S.ID, S.NAME, S.DEPT, S.SALARY
-     Filter S.SALARY > SINGLE(1, AVG(T.SALARY))
+     Filter S.SALARY > AVG(T.SALARY)
        Left outer join on NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))
          Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT, TRAILING_SPACES(S.DEPT)
            Scan ANN.STAFF
@@ -199,7 +207,7 @@ EXPLAIN SELECT NAME FROM STAFF S WHERE SALARY > (SELECT AVG(SALARY) FROM STAFF T
                        Scan ANN.STAFF
  -- physical:
  Project S.NAME
-   Filter S.SALARY > SINGLE(1, AVG(T.SALARY))
+   Filter S.SALARY > AVG(T.SALARY)
      LeftOuterJoin NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))  (hashed on S.DEPT IS NOT DISTINCT FROM S.DEPT AND TRAILING_SPACES(S.DEPT) IS NOT DISTINCT FROM TRAILING_SPACES(S.DEPT))
        Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT, TRAILING_SPACES(S.DEPT)
          SeqScan ANN.STAFF  (rows=4, cost=3.8)

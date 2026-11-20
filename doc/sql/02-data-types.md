@@ -10,11 +10,18 @@ of a [reference type](#reference-types), or *(extension)* of a type a plug-in
 registers, written by its name and, in parentheses, one or two unsigned
 integers it takes; so may a domain.
 
-Some such types are built in. [UUID](#uuids) is described below.
-FULLTEXT and FT_PATTERN are of
-[Full-Text Search](08-fulltext.md). ST_GEOMETRY, also named GEOMETRY,
-and its 26 subtypes, of points, curves, surfaces, solids and
-collections, are of [Spatial Data](10-spatial.md).
+Some such types are built in, in every database, and each is written
+by its name, in any case. [UUID](#uuids) is described below.
+FULLTEXT and FT_PATTERN are of [Full-Text Search](08-fulltext.md).
+VECTOR, dense or sparse, is of [Vectors](14-vectors.md). ST_GEOMETRY,
+also named GEOMETRY, and its 26 subtypes, of points, curves, surfaces,
+solids and collections, the types beside them and the linear
+referencing types are of [Spatial Data](10-spatial.md) and
+[Linear Referencing](17-linear-referencing.md). A
+[topology](16-topology.md) and a [spatial network](18-spatial-networks.md)
+are each a schema of tables and views, and a
+[property graph](20-property-graphs.md) is a schema object over tables,
+so none of them is a type a column is of.
 
 ```
 <data type> ::=
@@ -23,7 +30,8 @@ collections, are of [Spatial Data](10-spatial.md).
     | <exact numeric type> | <approximate numeric type>
     | <decimal floating-point type>
     | <datetime type> | <interval type>
-    | <row type> | <array type> | <reference type> | <XML type>
+    | <row type> | <array type> | <multiset type> | <reference type>
+    | <JSON type> | <XML type>
     | <path-resolved user-defined type name>
 ```
 
@@ -50,7 +58,22 @@ collections, are of [Spatial Data](10-spatial.md).
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
 | ROW(f t, ...) | a value of each field f, of type t | |
 | t ARRAY[n] | up to n values of type t, in order | t ARRAY is t ARRAY[65535] |
+| t MULTISET | up to 65,535 values of type t, in no order | see [Multisets](#multisets) |
+| a distinct type | the values of its source type, compared only with each other | its name; see [Distinct types](#distinct-types) |
+| a structured type | a value of each attribute, of its type or a subtype | its name; see [Structured types](#structured-types) |
+| REF(t) | a reference to a row of a typed table of t | REF(t) SCOPE tab; see [Reference types](#reference-types) |
+| JSON | an SQL/JSON item, stored parsed | see [JSON](#json) and [The JSON Type](12-json-type.md) |
 | XML(SEQUENCE) | an XML document, fragment or sequence | XML; XML(DOCUMENT), XML(CONTENT); see [XML Values](19-xml.md) |
+| UUID | a UUID of 16 octets *(extension)* | see [UUIDs](#uuids) |
+| FULLTEXT | a document of up to 32,767 characters and its language | see [Full-text](#full-text) and [Full-Text Search](08-fulltext.md#the-fulltext-type) |
+| FT_PATTERN | a full-text search pattern of up to 32,767 characters | see [Full-Text Search](08-fulltext.md#the-ft_pattern-type) |
+| VECTOR(n, f, l) | a vector of n elements of format f, dense or sparse *(extension)* | VECTOR leaves all three open; n or f `*` leaves it open; see [Vectors](#vectors) and [Vectors](14-vectors.md#the-vector-type) |
+| ST_GEOMETRY(srid) | a geometry of any type of the family, of the SRID if one is given | GEOMETRY; see [Spatial types](#spatial-types) and [Spatial Data](10-spatial.md#the-geometry-types) |
+| ST_POINT(srid), ST_LINESTRING, ST_POLYGON, ... | a geometry of the subtype or a subtype of it | the 26 subtypes of ST_GEOMETRY; POINT, LINESTRING, POLYGON, MULTIPOINT and the other names of [Simple feature access](10-spatial.md#simple-feature-access) |
+| ST_SPATIALREFSYS, ST_ANGLE, ST_DIRECTION, ST_VECTOR | a spatial reference system, an angle, a direction, a displacement | see [Spatial Data](10-spatial.md#systems-angles-directions-and-vectors) |
+| ST_TINELEMENT, ST_AFFINEPLACEMENT, ST_NURBSPOINT, ST_KNOT | a part of a TIN, a placement, a NURBS curve | see [Spatial Data](10-spatial.md#systems-angles-directions-and-vectors) |
+| ANNOTATION_TEXT, ANNOTATION_TEXT_ELEMENT, ANNOTATION_TEXT_ELEMENT_ARRAY | text placed on a map, its elements, an array of them | see [Annotation text](10-spatial.md#annotation-text) |
+| ST_LRM, ST_LRCURVE, ST_POSITIONEXP, ... | a linear referencing method, a linear element, a position along it | the 13 types of [Linear Referencing](17-linear-referencing.md) |
 
 The longest string is 32,767 characters, the longest binary string 32,767
 octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
@@ -639,6 +662,20 @@ and fragments of them. [XML Values](19-xml.md) describes them, and XMLPARSE,
 XMLDOCUMENT, XMLCAST, the publishing operators and XMLSERIALIZE, which
 make and write them.
 
+## JSON
+
+JSON holds an SQL/JSON item: an object, an array, a string, a number,
+true, false or the JSON null, which is a value and not the SQL null
+value. A value is kept parsed, as a tree its accessors read in place,
+never as JSON text, and an object keeps its members in the order they
+were written. JSON ( ) parses a character string's JSON text into a
+value, JSON_SCALAR makes one of a string, number, truth value or
+datetime, and JSON_SERIALIZE writes one's text. Any two values of JSON
+compare, by the items they are, so JSON columns take ORDER BY, GROUP
+BY, DISTINCT and keys. [The JSON Type](12-json-type.md) describes it,
+and [The Native Protocol](../client/05-protocol.md#json-values) the
+form a client reads.
+
 ## UUIDs
 
 *(extension)* UUID holds a universally unique identifier of RFC 9562,
@@ -679,6 +716,58 @@ OK
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22018): 'not-a-uuid' is not a UUID's text
 ```
+
+## Full-text
+
+*(extension)* FULLTEXT holds a document, of at most 32,767 characters,
+and the name of its language, ENGLISH unless another is given. It is
+made by `FULLTEXT(text [, language])`, `NEW FullText(text [, language])`
+or a CAST of text, and searched by its methods, Contains and Rank, and
+by a fulltext index. FT_PATTERN holds a search pattern of at most 32,767
+characters, which a character string is assigned to and cast to. Both
+are the types of SQL/MM Full-Text, built in; [Full-Text
+Search](08-fulltext.md) describes them.
+
+## Vectors
+
+*(extension)* VECTOR holds a vector of numbers, such as an embedding a
+model made. `VECTOR(n, f, l)` fixes its dimension count n, the format f
+of its elements, FLOAT32, FLOAT16, FLOAT64, INT8 or BINARY, and its
+layout l, DENSE or SPARSE. The format is FLOAT32 and the layout DENSE
+unless written, `*` leaves the dimension count or the format open, and
+VECTOR alone leaves all three open. A sparse vector keeps only its
+elements that are not zero, with their positions, so there is no
+separate sparse type. A vector is written as text, `'[0.12, -0.5,
+3.0E-2]'`. Vectors have no order and no equality, so no vector is in
+ORDER BY, GROUP BY, DISTINCT or a key. [Vectors](14-vectors.md)
+describes them, their distances and their indexes.
+
+## Spatial types
+
+ST_GEOMETRY, also named GEOMETRY, holds a geometry: a point, a curve, a
+surface, a solid or a collection of them, with its coordinates and its
+SRID. Its 26 subtypes, ST_POINT, ST_LINESTRING, ST_POLYGON,
+ST_MULTIPOINT, ST_MULTILINESTRING, ST_MULTIPOLYGON, ST_GEOMCOLLECTION,
+the curves ST_CIRCULARSTRING, ST_COMPOUNDCURVE, ST_NURBSCURVE and the
+others, the surfaces, ST_TIN and the solids, each hold geometries of
+their own type and the types below it. Each takes an SRID as its
+parameter, `ST_POINT(4326)`, and then holds only values of that SRID.
+The names of Simple feature access, POINT, LINESTRING, POLYGON,
+POLYHEDSURFACE, GEOMCOLLECTION and the multi types, name the same types.
+Geometries compare for equality alone, so no geometry is in ORDER BY,
+GROUP BY, DISTINCT or a key. [Spatial Data](10-spatial.md#the-geometry-types)
+gives the whole hierarchy.
+
+Beside them are ST_SPATIALREFSYS, ST_ANGLE, ST_DIRECTION and ST_VECTOR,
+the parts ST_TINELEMENT, ST_AFFINEPLACEMENT, ST_NURBSPOINT and ST_KNOT,
+and the annotation types ANNOTATION_TEXT, ANNOTATION_TEXT_ELEMENT and
+ANNOTATION_TEXT_ELEMENT_ARRAY, each described in [Spatial
+Data](10-spatial.md). The 13 types of [Linear
+Referencing](17-linear-referencing.md) are ST_LRM, ST_LINEARELEMENT,
+ST_LRFEATURE, ST_LRCURVE, ST_LRDIRECTEDEDGE, ST_POSITIONEXP,
+ST_LRMEASURE, ST_STARTVALUE, ST_DISTANCEEXP, ST_REFERENT,
+ST_LATOFFSETEXP, ST_VEROFFSETEXP and ST_VECTOROFFSETEXP. Topologies and
+spatial networks add no types of their own.
 
 ## Assignment and CAST
 
