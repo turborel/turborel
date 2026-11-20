@@ -190,7 +190,9 @@ behind it, and each can be replaced or added to.
   requests, pools connections, fails over across servers, and takes its
   settings from a URI, the environment, a service file or a password file.
 - Bounded memory with one budget over every cache, with sorts, joins and
-  grouping that spill to disk.
+  grouping granted their share of it and spilling to disk past it.
+- [Parallel queries](doc/operator/04-settings.md#parallel-queries) run by
+  morsels on a shared pool of workers, the same rows on any number of threads.
 
 ## Quick start
 

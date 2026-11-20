@@ -22,6 +22,11 @@ bound comes first, then the rewrite rules that changed it, then the plan
 they left, and last the physical plan that runs, with the indexes it
 reads and how it joins.
 
+A part of the physical plan run on several threads at once is headed
+`Parallel` with its degree, the most threads it takes, the statement's
+own among them; the planner runs a part so only if its tables hold
+enough rows ([Parallel queries](../../operator/04-settings.md#parallel-queries)).
+
 EXPLAIN is direct SQL, as a query is. The `turborel` client shows its
 rows as it shows a query's. A program reaches the same text by the
 library's `Session::explain` ([The Embedded Library](../../client/03-embedding.md#reading-rows)),
@@ -85,6 +90,42 @@ OK
  Project PARTS.ID
    IndexScan ANN.PARTS using PARTS_NAME [btree]: PARTS.NAME = 'part 7'  (est. rows=1, cost=20.6)
 (12 rows)
+```
+
+A set function of most of the table's rows, read in morsels of 256 rows
+on up to four threads:
+
+```sql
+SET EXECUTOR.DEGREE = 4;
+SET EXECUTOR.MORSEL_ROWS = 256;
+SET EXECUTOR.PARALLEL_MIN_ROWS = 0;
+EXPLAIN SELECT COUNT(*), MAX(NAME) FROM PARTS WHERE ID > 100;
+```
+
+```
+OK
+OK
+OK
+ PLAN
+-----------------------------------------------------------------
+ -- bound:
+ Project COUNT(*), MAX(PARTS.NAME)
+   Aggregate group by [] computing [COUNT(*), MAX(PARTS.NAME)]
+     Filter PARTS.ID > 100
+       Scan ANN.PARTS
+ -- rules: none
+ -- optimized:
+ Project COUNT(*), MAX(PARTS.NAME)
+   Aggregate group by [] computing [COUNT(*), MAX(PARTS.NAME)]
+     Filter PARTS.ID > 100
+       Scan ANN.PARTS
+ -- physical:
+ Project COUNT(*), MAX(PARTS.NAME)
+   Parallel  (degree=4)
+     Aggregate group by [] computing [COUNT(*), MAX(PARTS.NAME)]
+       Filter PARTS.ID > 100  (est. rows=333)
+         SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
+(17 rows)
 ```
 
 ## STANDARD

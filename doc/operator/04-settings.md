@@ -199,6 +199,56 @@ within LOG.SYNC_AFTER_MS of it, a second by default, if nothing else has;
 fails stops the database taking changes, as any failed sync of the log
 does.
 
+## Parallel queries
+
+A query reading many rows runs on several threads at once: its tables
+are read in morsels, parts of about EXECUTOR.MORSEL_ROWS rows, each
+taken by whichever thread is free, and the operators over them, a
+grouping, DISTINCT, a sort, a hash join, window functions, EXCEPT and
+INTERSECT, are made of each morsel's part. The threads are the
+database's workers, `turborel-exec-1` and on, EXECUTOR.WORKERS of
+them, 0 for as many as the machine runs at once, shared by every
+statement; the statement's own thread works beside them. A statement
+takes at most EXECUTOR.DEGREE threads, its own among them, 0 for as
+many as the workers, 1 for its own thread alone. The planner runs a
+part on several only if its tables hold at least
+EXECUTOR.PARALLEL_MIN_ROWS rows, so a query of a few rows, as one by a
+key, stays on its own thread. [EXPLAIN](../sql/statements/explain.md)
+shows the part and its degree. The rows, and their order, are the same
+on any number of threads.
+
+An operator holds its rows in memory up to a grant of the memory
+budget, half of MEMORY.BUDGET_BYTES left free as it starts, at most
+MEMORY.WORK_BYTES, then spills. Grants shrink as more statements run at
+once, and never together pass the budget. A part run in parallel holds
+one grant for all its threads. One of 4 MiB or less is held unreserved,
+as a session that sets MEMORY.WORK_BYTES below 4 MiB asks.
+
+```sql
+SET EXECUTOR.DEGREE = 4;
+SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTINGS
+    WHERE SETTING_NAME IN ('EXECUTOR.DEGREE', 'EXECUTOR.MORSEL_ROWS', 'EXECUTOR.PARALLEL_MIN_ROWS', 'EXECUTOR.WORKERS', 'MEMORY.WORK_BYTES')
+    ORDER BY SETTING_NAME;
+SET EXECUTOR.DEGREE TO DEFAULT;
+```
+
+```
+OK
+ SETTING_NAME                                                 | SETTING_VALUE                                                | VALUE_SOURCE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------
+ EXECUTOR.DEGREE                                              | 4                                                            | SESSION
+ EXECUTOR.MORSEL_ROWS                                         | 16384                                                        | DEFAULT
+ EXECUTOR.PARALLEL_MIN_ROWS                                   | 65536                                                        | DEFAULT
+ EXECUTOR.WORKERS                                             | 0                                                            | DEFAULT
+ MEMORY.WORK_BYTES                                            | 268435456                                                    | DEFAULT
+(5 rows)
+OK
+```
+
+Data changes write on the statement's own thread. The query choosing
+the rows an INSERT, UPDATE, DELETE or MERGE changes may run in
+parallel, as any query does.
+
 ## Settings of plug-ins
 
 An extension's manifest may declare settings of its own, and a host

@@ -73,7 +73,7 @@ fn both(s: &Session, sql: &str) -> (Result<Vec<String>, Code>, Result<Vec<String
 }
 
 /// Queries of one table `{t}`, each a part the planner marks.
-const QUERIES: [&str; 16] = [
+const QUERIES: [&str; 17] = [
     "SELECT K, G, S, N FROM {t}",
     "SELECT K, N * 2, S FROM {t} WHERE G = 3 AND N > 10",
     "SELECT G, COUNT(*), COUNT(S), SUM(N), AVG(N), MIN(S), MAX(N) FROM {t} GROUP BY G",
@@ -82,6 +82,7 @@ const QUERIES: [&str; 16] = [
     "SELECT S, COUNT(*) FROM {t} WHERE N > 500 GROUP BY S",
     "SELECT DISTINCT G, S FROM {t}",
     "SELECT K, S, N FROM {t} ORDER BY S, N DESC",
+    "SELECT K, G, S FROM {t} ORDER BY G",
     "SELECT K, N FROM {t} ORDER BY N, K FETCH FIRST 7 ROWS ONLY",
     "SELECT {t}.K, D.NAME FROM {t} JOIN D ON {t}.G = D.G WHERE {t}.N < 300",
     "SELECT K, G, ROW_NUMBER() OVER (PARTITION BY G ORDER BY K), SUM(N) OVER (PARTITION BY G ORDER BY K) FROM {t}",
@@ -130,10 +131,12 @@ fn joins_build_and_probe_by_morsels() {
 
 /// Verifies: [DESIGN] RULES.md D291 the planner leaves on the statement's
 /// thread a point query, a part reading fewer rows than
-/// EXECUTOR.PARALLEL_MIN_ROWS, and every part of EXECUTOR.DEGREE 1.
+/// EXECUTOR.PARALLEL_MIN_ROWS, a correlated subquery, its scan below it
+/// run in parallel, and every part of EXECUTOR.DEGREE 1.
 ///
-/// Decision: the part is large enough and the degree above 1. Each pair
-/// changes the outcome alone: rows below the least, degree 1.
+/// Decision: the part is large enough, its expressions a worker's alone,
+/// and the degree above 1. Each pair changes the outcome alone: a
+/// subquery, rows below the least, degree 1.
 #[test]
 fn the_planner_marks_only_large_parts() {
     let (_db, a) = tables();
@@ -141,6 +144,8 @@ fn the_planner_marks_only_large_parts() {
     parallel(&a);
     assert!(plan("SELECT COUNT(*) FROM R").contains("Parallel"));
     assert!(!plan("SELECT N FROM R WHERE K = 5").contains("Parallel"));
+    let correlated = plan("SELECT K, (SELECT COUNT(*) FROM D WHERE D.G = R.G) FROM R");
+    assert!(correlated.starts_with("Project") && correlated.contains("  Parallel"), "a subquery's on the statement's thread: {correlated}");
     exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 100000").unwrap();
     assert!(!plan("SELECT COUNT(*) FROM R").contains("Parallel"));
     exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 0").unwrap();
@@ -201,4 +206,40 @@ fn a_part_past_its_work_area_gives_way() {
         };
         assert_eq!(sorted(alone), sorted(together), "{sql}");
     }
+}
+
+
+/// Verifies: [DESIGN] RULES.md D297 an index range scan is cut at its
+/// B-link tree's inner keys into morsels of 16 rows, its rows those the
+/// scan gives alone, in key order, of a range and of a range filtered
+/// further.
+#[test]
+fn index_ranges_split_into_morsels() {
+    let (_db, a) = tables();
+    for sql in ["SELECT K, N FROM R WHERE K BETWEEN 1000 AND 1150", "SELECT K, S FROM R WHERE K BETWEEN 2000 AND 2150 AND N > 100"] {
+        exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
+        let alone = rows(&a, sql);
+        parallel(&a);
+        exec(&a, "SET EXECUTOR.MORSEL_ROWS = 16").unwrap();
+        let plan = a.physical_plan(sql, &Params::new()).unwrap();
+        assert!(plan.contains("Parallel  (degree=4)") && plan.contains("IndexScan"), "{plan}");
+        assert!(alone.as_ref().is_ok_and(|r| r.len() > 50), "{sql}");
+        assert_eq!(alone, rows(&a, sql), "{sql}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D296, D44 a statement running past its
+/// STATEMENT.TIMEOUT_MS while its part runs in parallel is cancelled
+/// (SQLCODE -920) as a morsel is taken up; the session's next statement
+/// runs.
+#[test]
+fn a_cancelled_parallel_part_fails() {
+    let (_db, a) = tables();
+    parallel(&a);
+    exec(&a, "SET STATEMENT.TIMEOUT_MS = 1").unwrap();
+    let long = "SELECT X.G, COUNT(*) FROM R AS X JOIN R AS Y ON X.G = Y.G GROUP BY X.G";
+    assert!(a.physical_plan(long, &Params::new()).unwrap().contains("Parallel"));
+    assert_eq!(rows(&a, long).err(), Some(Code::Cancelled));
+    exec(&a, "SET STATEMENT.TIMEOUT_MS = 0").unwrap();
+    assert_eq!(rows(&a, "SELECT COUNT(*) FROM R").map(|r| r.len()), Ok(1));
 }
