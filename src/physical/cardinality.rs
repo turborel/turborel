@@ -37,7 +37,6 @@ use crate::logical::LogicalPlan;
 use crate::stats::Statistics;
 use crate::storage::cost_of;
 
-pub(super) use groups::cardenas;
 pub(super) use joins::{Classes, find};
 
 // ---------------------------------------------------------------------------

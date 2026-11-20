@@ -69,7 +69,8 @@ fn groupings_are_estimated_by_their_groups() {
     assert!(near(rows(&s, "SELECT COUNT(*) FROM T"), 1.0));
     assert!(near(rows(&s, "SELECT COUNT(*) FROM T WHERE K < 0"), 1.0), "one row of no rows");
     assert!(near(rows(&s, "SELECT DISTINCT G FROM T"), 10.0));
-    assert!(near(rows(&s, "SELECT K, G FROM T GROUP BY K, G"), 1000.0), "the table's rows bound the combinations");
+    let keyed = rows(&s, "SELECT K, G FROM T GROUP BY K, G");
+    assert!((keyed - 1000.0_f64).abs() < 1.0_f64, "every row of the table is a group of its key: {keyed}");
     let joined = "SELECT * FROM U, (SELECT G, COUNT(*) AS N FROM T GROUP BY G) AS D WHERE U.K = D.G";
     assert!(near(rows(&s, joined), 10.0), "{}", rows(&s, joined));
 }
@@ -111,6 +112,7 @@ fn cardenas_at_its_boundaries() {
     assert!((cardenas(1.0, 1_000.0) - 1.0).abs() < 1e-9_f64);
     assert!((cardenas(10.0, 1_000_000.0) - 10.0).abs() < 1e-6_f64);
     assert!(cardenas(1e9, 1_000.0) <= 1_000.0_f64 && cardenas(1e9, 1_000.0) > 999.0_f64);
+    assert!((cardenas(1_000.0_f64, 1_000.0_f64) - 632.3_f64).abs() < 1.0_f64, "1 - 1/e of the values");
     assert!(cardenas(0.0, 5.0) >= 1.0_f64, "a count of no values is one");
     assert!(cardenas(10.0, f64::NAN).abs() < f64::EPSILON);
 }

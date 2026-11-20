@@ -13,6 +13,8 @@ use super::super::{Mutation, Package};
 const CONFLICTS_FILE: &str = "src/physical/enumerate/conflicts.rs";
 /// The estimates.
 const MODEL_FILE: &str = "src/physical/enumerate/model.rs";
+/// The classes of equalities.
+const CLASSES_FILE: &str = "src/physical/cardinality/joins.rs";
 /// The driver and the adaptive switch.
 const DRIVER_FILE: &str = "src/physical/enumerate.rs";
 /// The merge join's executor.
@@ -40,7 +42,7 @@ pub const JOINS: [Mutation; 13] = [
         name: "joins-class-counted-again",
         package: Package::Core,
         breaks: "an equality other equalities imply is counted again in a join's rows",
-        file: MODEL_FILE,
+        file: CLASSES_FILE,
         original: "distinct.iter().skip(1)",
         replacement: "distinct.iter().skip(0)",
         integration: &[],
@@ -81,7 +83,7 @@ pub const JOINS: [Mutation; 13] = [
         package: Package::Core,
         breaks: "no enumerated plan is ever taken over the FROM clause's",
         file: DRIVER_FILE,
-        original: "if best.cost >= self.db.cost().reorder_gain * written {",
+        original: "if best.cost >= self.weights().reorder_gain * written {",
         replacement: "if best.cost >= 0.0_f64 {",
         integration: &["join_enumeration::explain_tells_the_order_and_the_algorithm"],
         unit: &[],

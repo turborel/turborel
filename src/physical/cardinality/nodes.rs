@@ -147,12 +147,12 @@ impl Estimates<'_> {
                 return card.rows;
             }
             let columns: Vec<usize> = (0..plan.width()).collect();
-            super::cardenas(self.combinations(plan, &columns), card.rows)
+            self.groups(plan, &columns, card.rows)
         };
         match op {
             SetOp::Union => {
                 let sum = l.rows + r.rows;
-                let rows = if all { sum } else { super::cardenas(distinct(left, l) + distinct(right, r), sum) };
+                let rows = if all { sum } else { super::groups::cardenas(distinct(left, l) + distinct(right, r), sum) };
                 Card { rows, upper: l.upper + r.upper }
             }
             SetOp::Intersect => {

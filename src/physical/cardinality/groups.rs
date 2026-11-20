@@ -6,7 +6,11 @@
 //! count, correlation and all. The groups n rows fall into are then
 //! D(1 - (1 - 1/D)^n), Cardenas' formula ("Analysis and Performance of
 //! Inverted Data Base Structures", 1975): the distinct values n draws
-//! from D equally likely ones meet, at most n and, of one row, one.
+//! from D equally likely ones meet, at most n and, of one row, one. Of
+//! every row of the one table that has the columns, n is no sample but the
+//! whole, and the groups are D itself, at most n, so a grouping by a key
+//! of its whole table is all its rows, not the 63% the formula gives of
+//! n = D.
 
 use super::lineage::{Over, one_table};
 use super::{Card, Estimates};
@@ -36,19 +40,34 @@ impl Estimates<'_> {
             return Card::exact(seeded.max(1.0_f64));
         }
         let n = self.card_at(input, depth);
-        let rows = cardenas(self.combinations(input, groups), n.rows) + seeded;
+        let rows = self.groups(input, groups, n.rows) + seeded;
         Card { rows, upper: n.upper + seeded }
     }
 
-    /// The distinct combinations of `input`'s columns `columns`.
-    pub(super) fn combinations(&self, input: &LogicalPlan, columns: &[usize]) -> f64 {
+    /// The groups `n` rows of `input` fall into by its columns `columns`:
+    /// of the whole of the one table that has them, their distinct
+    /// combinations, else Cardenas' formula of them.
+    pub(super) fn groups(&self, input: &LogicalPlan, columns: &[usize], n: f64) -> f64 {
+        let (distinct, table_rows) = self.combinations(input, columns);
+        if let Some(whole) = table_rows
+            && n >= whole
+        {
+            return distinct.min(n).max(n.min(1.0_f64));
+        }
+        cardenas(distinct, n)
+    }
+
+    /// The distinct combinations of `input`'s columns `columns`, and the
+    /// rows of the one table that has them all, if one does.
+    fn combinations(&self, input: &LogicalPlan, columns: &[usize]) -> (f64, Option<f64>) {
         let product = columns.iter().map(|&c| self.distinct(input, c).max(1.0_f64)).product::<f64>();
-        let Some((table, places)) = one_table(Over::One(input), columns) else { return product };
+        let Some((table, places)) = one_table(Over::One(input), columns) else { return (product, None) };
         let mut keys: Vec<usize> = places.iter().map(|&(_, place)| place).collect();
         keys.sort_unstable();
         keys.dedup();
-        let rows = self.table_rows(table).unwrap_or(product);
-        self.sketched(table, &keys).unwrap_or_else(|| product.min(rows.max(1.0_f64)))
+        let rows = self.table_rows(table);
+        let capped = product.min(rows.unwrap_or(product).max(1.0_f64));
+        (self.sketched(table, &keys).unwrap_or(capped), rows)
     }
 
     /// The distinct keys an index of `table` whose key is exactly the

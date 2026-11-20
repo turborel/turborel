@@ -115,11 +115,9 @@ impl PhysicalPlanner<'_> {
                 (scans::index_scans(keyed.read(read), probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
             }
         };
+        let est = plan.est().unwrap_or(0.0_f64);
         let plan = match guard.filter(|_| indexed) {
-            Some(guard) => {
-                let est = plan.est().unwrap_or(0.0_f64);
-                Plan::Product { left: Box::new(plan), right: Box::new(self.build_node(guard, &[]).plan), est }
-            }
+            Some(guard) => Plan::Product { left: Box::new(plan), right: Box::new(self.build_node(guard, &[]).plan), est },
             None => plan,
         };
         let (cost, stats) = (self.weights(), self.statistics(read.table));

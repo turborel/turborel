@@ -93,3 +93,28 @@ fn the_local_fixpoint_reaches_the_same_plan() {
         assert!(!trace.is_empty() || passes == 1, "{sql}");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D371: one pass of the driver reaches the
+/// fixpoint, so a second pass finds no rule to fire, on queries whose
+/// rewrites cascade through the nodes they make.
+#[test]
+fn one_pass_reaches_the_fixpoint() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION O
+           CREATE TABLE T (K INTEGER NOT NULL, G INTEGER)
+           CREATE TABLE U (K INTEGER NOT NULL, W INTEGER)
+           CREATE TABLE V (K INTEGER NOT NULL)",
+    )
+    .unwrap();
+    let s = db.session("O");
+    for sql in QUERIES {
+        let (st, bound) = s.bound_plan(sql).unwrap();
+        let ctx = RuleContext { db: &st };
+        let on: Vec<&dyn Rule> = st.optimizer.rules.iter().map(|r| &*r.rule).collect();
+        let mut trace = Vec::new();
+        let (once, _) = super::pass(&on, bound, (&ctx, super::DEFAULT_MAX_PASSES), &mut trace);
+        let (_, again) = super::pass(&on, once, (&ctx, super::DEFAULT_MAX_PASSES), &mut trace);
+        assert!(!again, "{sql}: {trace:?}");
+    }
+}
