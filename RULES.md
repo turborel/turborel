@@ -2232,7 +2232,7 @@ written back by a later one can overwrite a change committed between them. An en
 SERIALIZABLE.
 
 A transaction that names no level takes TRANSACTION.ISOLATION, READ COMMITTED
-by default as in PostgreSQL. The standard says SERIALIZABLE
+by default. The standard says SERIALIZABLE
 [ISO/IEC 9075:1992 §14.1 SR2], and that setting at SERIALIZABLE conforms.
 
 The coordinator's table locks (D28) remain for engines that leave
@@ -2278,8 +2278,7 @@ reader holds disk and not memory. A table's large objects are a space of
 immutable objects beside it, each owned by one row (D79).
 
 The column store suits scans of a few columns of many rows. New rows stay
-in the tree as a delta, as in SQL Server's deltastore, HyPer's Data Blocks
-and TiFlash's delta tree, which keeps writes and key lookups as fast as in
+in the tree as a delta, which keeps writes and key lookups as fast as in
 the row store. The maintenance thread freezes them into immutable groups of
 compressed column chunks (`engine/columns`) once COLUMNSTORE.FREEZE_ROWS
 rows are committed before every snapshot. The tradeoff is that a row
@@ -6335,7 +6334,7 @@ GRF-0034 is SQLSTATE 22W34, SQLCODE -301.
 
 #### D146. Each graph compatibility syntax compiles to the GPML pattern and binds through the one GRAPH_TABLE binder
 
-SQL Server's MATCH, PGQL's SELECT ... FROM MATCH and openCypher's MATCH
+The MATCH predicate of a WHERE clause, PGQL's SELECT ... FROM MATCH and openCypher's MATCH
 ... RETURN (GS §10) [EXTENSION] are front ends of the parser alone
 (`parser/graph/compat`, its `pgql` and `cypher`). Each compiles its query to
 the GPML AST of a GRAPH_TABLE and its relational query, so the one
