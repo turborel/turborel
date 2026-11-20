@@ -22,6 +22,13 @@
 //! (`rows/options.rs`): each pass then follows changes in proportion to the
 //! rows it reads, so keeping them costs a bounded share of the writes. One thread
 //! gathers at a time; another finding them due meanwhile leaves them.
+//!
+//! A sampled pass tells the builder which run of row ids each row is of,
+//! so a value seen in one run alone counts as seen once (RULES.md D381).
+//! Each pass notes, of each column, whether its greatest value rose past
+//! the last pass's, so a column growing with insertion is known; and the
+//! planner reads the statistics told how many rows were written since
+//! and how many the table holds now (`stats/since.rs`).
 
 use std::ops::Bound;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -36,9 +43,11 @@ use crate::catalog::TableDesc;
 use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::stats::parts::count;
-use crate::stats::{StatsBuilder, TableStats};
+use crate::stats::since::{Changed, GROWING};
+use crate::stats::{Statistics, StatsBuilder, TableStats};
 use crate::sync::{read, write};
 use crate::txn::{NO_TRANSACTION, TxId};
+use crate::value::compare;
 
 /// \[DESIGN\] The rows a pass over a large table reads, about: three times
 /// the values a column's sample keeps (`parts::SAMPLE_VALUES`), so the
@@ -143,6 +152,24 @@ impl Gathered {
     pub(super) fn get(&self) -> Option<Arc<TableStats>> {
         read(&self.stats).ok()?.clone()
     }
+
+    /// The statistics of the last pass, as `asked_for` gives them, read
+    /// after the rows written since, the table holding `live` rows.
+    pub(super) fn answer(&self, live: u64) -> Option<Arc<dyn Statistics>> {
+        let stats = self.asked_for()?;
+        Some(Changed::of(stats, self.changes.load(Ordering::Relaxed), live))
+    }
+}
+
+/// Notes in `stats` of each column whether its greatest value rose past
+/// `previous`'s, the last pass's, at how many passes in a row.
+fn risen(stats: &mut TableStats, previous: Option<&TableStats>) {
+    let Some(previous) = previous else { return };
+    for (column, before) in stats.columns.iter_mut().zip(&previous.columns) {
+        let rose =
+            column.max.as_ref().zip(before.max.as_ref()).is_some_and(|(now, then)| compare(now, then) == Some(std::cmp::Ordering::Greater));
+        column.rises = if rose { before.rises.saturating_add(1).min(GROWING) } else { 0 };
+    }
 }
 
 impl RowTable {
@@ -171,7 +198,9 @@ impl RowTable {
                 // Read again if an older version is released as it is read.
                 let visible = self.unpinned((&key, newest), 0, &mut |bytes, _| self.visible_from(bytes, Reader::Latest))?;
                 let Some(record) = visible.flatten() else { continue };
-                let row = self.decode(row_id(&key)?, &record, None)?;
+                let id = row_id(&key)?;
+                let row = self.decode(id, &record, None)?;
+                builder.at_run(id.checked_div(CHUNK_IDS).unwrap_or(0));
                 builder.add(&row, record.len());
             }
         }
@@ -182,11 +211,14 @@ impl RowTable {
             if read(id) {
                 record.clear();
                 self.format.encode(&row, &mut record)?;
+                builder.at_run(id.checked_div(CHUNK_IDS).unwrap_or(0));
                 builder.add(&row, record.len());
             }
             Ok(())
         })?;
-        let stats = Arc::new(if sampling { builder.finish_sampled(rows) } else { builder.finish() });
+        let mut stats = if sampling { builder.finish_sampled(rows) } else { builder.finish() };
+        risen(&mut stats, self.gathered.get().as_deref());
+        let stats = Arc::new(stats);
         *write(&self.gathered.stats)? = Some(Arc::clone(&stats));
         self.gathered.rows.store(stats.rows, Ordering::Relaxed);
         self.gathered.changes.fetch_sub(before, Ordering::Relaxed);
@@ -248,7 +280,8 @@ mod tests {
     use crate::value::{DataType, Decimal, Spelled, Value};
 
     /// A table of `rows` rows, its first column 0 to `rows - 1`, its
-    /// second that modulo 10.
+    /// second that modulo 10, its third that divided by 64, each value of
+    /// the third held by rows next to each other.
     fn table_of(rows: u64) -> RowTable {
         let fs = MemoryFileSystem::new();
         let crc = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
@@ -256,12 +289,15 @@ mod tests {
         let pool = Arc::new(BufferPool::new(1024, Box::new(Clock::new(1024))).unwrap());
         let file = pool.add_pager(pager);
         let int = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
-        let table =
-            RowTable::create(&TableFiles::new(pool, file, Arc::new(MemoryLog::new())), &[int.clone(), int], TableOptions::default())
-                .unwrap();
+        let table = RowTable::create(
+            &TableFiles::new(pool, file, Arc::new(MemoryLog::new())),
+            &[int.clone(), int.clone(), int],
+            TableOptions::default(),
+        )
+        .unwrap();
         for n in 0..rows {
             let value = |v: u64| Value::Exact(Decimal::new(i128::from(v), 0));
-            table.insert(NO_TRANSACTION, vec![value(n), value(n % 10)]).unwrap();
+            table.insert(NO_TRANSACTION, vec![value(n), value(n % 10), value(n.div_euclid(64))]).unwrap();
         }
         table
     }
@@ -283,9 +319,43 @@ mod tests {
         assert!(near < 0.1_f64, "{} distinct of every value", all.distinct);
         assert!((ten.distinct - 10.0_f64).abs() < 0.5_f64, "{} distinct of ten", ten.distinct);
         assert!(all.unbounded && ten.unbounded);
+        // A value of the third is in one run of row ids alone: counted as
+        // seen once, the distinct values scale to the table's.
+        let clustered = stats.columns[2].distinct / f64::from(u32::try_from(rows.div_euclid(64)).unwrap());
+        assert!((clustered - 1.0_f64).abs() < 0.25_f64, "{} distinct of clustered values", stats.columns[2].distinct);
+        assert!(stats.sample.as_ref().is_some_and(|s| s.rows().len() == crate::stats::sample::SAMPLE_ROWS));
         let small = table_of(1_000).gather().unwrap();
         assert_eq!(small.rows, 1_000);
         assert!(!small.columns[0].unbounded && !small.columns[1].unbounded, "read whole");
+        assert_eq!(small.sample.as_ref().map(|s| s.rows().len()), Some(1_000));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D381: a pass notes of each column at
+    /// how many passes in a row its greatest value rose, so a column
+    /// growing with insertion is known after two, and one that did not
+    /// rise is not; the statistics read after rows are written answer
+    /// by the change, a range past the greatest value keeping the share
+    /// written since.
+    #[test]
+    fn a_column_rising_at_each_pass_is_known_to_grow() {
+        let table = table_of(1_000);
+        let value = |v: u64| Value::Exact(Decimal::new(i128::from(v), 0));
+        let first = table.gather().unwrap();
+        assert_eq!(first.columns[0].rises, 0);
+        for round in 1..=2_u64 {
+            for n in 0..100 {
+                table.insert(NO_TRANSACTION, vec![value(round * 10_000 + n), value(n % 10), value(0)]).unwrap();
+            }
+            let stats = table.gather().unwrap();
+            assert_eq!(stats.columns[0].rises, u8::try_from(round).unwrap());
+            assert_eq!(stats.columns[1].rises, 0, "its greatest value did not rise");
+        }
+        for n in 0..120 {
+            table.insert(NO_TRANSACTION, vec![value(30_000 + n), value(1), value(0)]).unwrap();
+        }
+        let read = table.statistics().unwrap();
+        let past = read.selectivity(0, crate::value::CompOp::Gt, &value(25_000)).unwrap();
+        assert!((past - 0.1_f64).abs() < 0.001_f64, "the share written since: {past}");
     }
 
     /// Verifies: [DESIGN] RULES.md D31, statistics: a sampled pass reads
