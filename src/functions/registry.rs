@@ -30,6 +30,10 @@ pub struct Registry {
     /// by name (`functions/builtin.rs`).
     tables: HashMap<String, Arc<dyn TableFunction>>,
     procedures: HashMap<String, Arc<dyn Procedure>>,
+    /// \[DESIGN\] The kernels the set functions and filters over batches
+    /// run on (`kernels.rs`, RULES.md D354): the portable ones unless the
+    /// database is given others.
+    kernels: Arc<dyn crate::kernels::Kernels>,
 }
 
 /// A set function a `Registry` holds as the standard defines it, no
@@ -112,7 +116,18 @@ impl Registry {
             .chain(crate::spatial::paths::sql::tables())
             .map(|f| (f.name().to_owned(), f))
             .collect();
-        Registry { scalars, aggregates, standard, tables, procedures }
+        let kernels: Arc<dyn crate::kernels::Kernels> = Arc::new(crate::kernels::Portable);
+        Registry { scalars, aggregates, standard, tables, procedures, kernels }
+    }
+
+    /// The kernels batches run on.
+    pub(crate) fn kernels(&self) -> &dyn crate::kernels::Kernels {
+        &*self.kernels
+    }
+
+    /// Runs batches on `kernels` from now on.
+    pub(crate) fn set_kernels(&mut self, kernels: Arc<dyn crate::kernels::Kernels>) {
+        self.kernels = kernels;
     }
 
     /// Adds a scalar function: of a name already a scalar function's, a

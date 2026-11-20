@@ -25,9 +25,13 @@ pub trait Accumulator {
     /// # Errors
     ///
     /// As `update`.
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).try_for_each(|v| self.update(v)),
+            Some(rows) => rows
+                .iter()
+                .filter_map(|&r| values.get(crate::storage::mask::index(r)))
+                .filter(|v| !v.is_null())
+                .try_for_each(|v| self.update(v)),
             None => values.iter().filter(|v| !v.is_null()).try_for_each(|v| self.update(v)),
         }
     }
@@ -38,7 +42,7 @@ pub trait Accumulator {
     /// # Errors
     ///
     /// As `update`.
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
         self.update_many(ints.values(), rows)
     }
     /// \[DESIGN\] Called with a vector of approximate numbers (`Floats`,
@@ -48,7 +52,7 @@ pub trait Accumulator {
     /// # Errors
     ///
     /// As `update`.
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         self.update_many(floats.values(), rows)
     }
     /// \[DESIGN\] Called with a vector of character strings as their text
@@ -58,7 +62,7 @@ pub trait Accumulator {
     /// # Errors
     ///
     /// As `update`.
-    fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
+    fn update_texts(&mut self, texts: &Texts, rows: Option<&[u32]>) -> Result<()> {
         self.update_many(texts.values(), rows)
     }
     /// \[DESIGN\] For COUNT(*): called once for `rows` rows, as `update`

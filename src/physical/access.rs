@@ -199,7 +199,7 @@ impl PhysicalPlanner<'_> {
         let Ok(storage) = self.db.storage_of(read.table) else {
             // [DESIGN] A bound table has storage. If not, it is scanned anyway,
             // and the executor reports the missing storage (SQLCODE -910).
-            return filter::unstored(read, conds, &self.db.cost());
+            return filter::unstored(read, conds, &self.weights());
         };
         self.read_by(read, conds, (want, None), &**storage).0
     }
@@ -210,7 +210,7 @@ impl PhysicalPlanner<'_> {
     /// (`geometric::evaluation`, RULES.md D137), and for checking the XML
     /// queries of the rows an XML lookup does not answer (D106).
     fn best_path(&self, read: TableRead<'_>, (conds, implied): (&[Cond], &[Cond]), want: &[SortKey]) -> Path {
-        let cost = &self.db.cost();
+        let cost = &self.weights();
         let unread = Path {
             total: 0.0_f64,
             cost: 0.0_f64,
@@ -224,7 +224,7 @@ impl PhysicalPlanner<'_> {
         };
         let Some((storage, (desc, indexes, keyed))) = self.planned(read.table) else { return unread };
         let (desc, scanned, conds) = (&*desc, conds, &*keyed.substituted(conds));
-        let (stats, all) = (self.db.statistics(read.table), cost_of(storage.row_count()));
+        let (stats, all) = (self.statistics(read.table), cost_of(storage.row_count()));
         let known = Known { stats: stats.as_deref(), cost };
         let probed = answerable(conds);
         let (compared, ors) = comparisons(probed, known, self.values);
@@ -268,7 +268,7 @@ impl PhysicalPlanner<'_> {
     /// What sorting a path's `est` rows costs, if `want` asks an order the
     /// path does not give.
     fn sort_penalty(&self, want: &[SortKey], est: f64, ordered: bool) -> f64 {
-        if !want.is_empty() && !ordered { self.db.cost().sort(est) } else { 0.0_f64 }
+        if !want.is_empty() && !ordered { self.weights().sort(est) } else { 0.0_f64 }
     }
 
     /// The path of the candidate `c` on the index `on`, if it can read the
@@ -296,7 +296,7 @@ impl PhysicalPlanner<'_> {
         if !supported || omitted || matches!(c.probes.first(), Some(Probe::All)) && order.is_none() {
             return None;
         }
-        let (all, cost) = (cost_of(storage.row_count()), self.db.cost());
+        let (all, cost) = (cost_of(storage.row_count()), self.weights());
         let distinct = || self.db.distinct_keys(read.table, on.found);
         let most = (ix.method == BTREE_METHOD).then_some(BTreeMethod::MOST_COUNTED);
         let (est, probed_cost) = priced((on.found, &distinct, most), &c, (all, on.types.len(), cost.index_descent), storage);

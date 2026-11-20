@@ -14,11 +14,8 @@
 //! engine with its own concurrency control (say, multi-versioning) can show
 //! each transaction what it should see.
 //!
-//! Two engines are built in, one code (`engine/rows.rs`, RULES.md D31):
-//! "rowstore", the default, and "columnstore", which freezes its tables'
-//! rows into groups of each column's values. Both isolate transactions
-//! themselves, with versions, and undo their own changes; a database made
-//! with `Database::new` keeps them in memory.
+//! Two engines of one code are built in (`engine/rows.rs`, RULES.md D31),
+//! "rowstore", the default, and "columnstore", freezing rows by column.
 
 mod batch;
 mod condition;
@@ -30,7 +27,10 @@ mod region;
 mod rows;
 mod split;
 
-pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, FIRST_BATCH_ROWS, Floats, Ints, Nulls, Ramp, Texts, batches_of};
+pub use batch::{
+    BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Late, LateSource, Mask, Nulls, Ramp,
+    Sel, Texts, batches_of, bound, mask, sel,
+};
 pub use condition::{Condition, Conjunct, Conjunction};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
@@ -153,9 +153,9 @@ pub trait TableStorage: Send + Sync {
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
     /// `conditions`, in no particular order, a batch of up to `BATCH_ROWS` of
     /// them at a time: the values of `columns`, a vector for each, in the
-    /// order asked (RULES.md D31). An engine that keeps columns gives them
-    /// without making each row. Default: `scan_where`'s rows, gathered.
-    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>) -> Batches {
+    /// order asked (RULES.md D31), of `_late` late if it can (D361). Default:
+    /// `scan_where`'s rows, gathered, none late.
+    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, _late: &[usize]) -> Batches {
         let rows = match conditions {
             Some(c) => self.scan_where(tx, columns, c),
             None => self.scan(tx, columns),

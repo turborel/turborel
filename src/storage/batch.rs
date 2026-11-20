@@ -8,14 +8,23 @@
 //! ends: work that reads them as integers or as text reads no value made;
 //! any other reads them as values, made the first time it asks.
 
+pub mod bound;
 mod gathered;
 mod held;
+mod kinds;
+mod late;
+pub mod mask;
+pub mod sel;
 
 use std::sync::OnceLock;
 
+pub use self::kinds::{Bools, Datetimes};
+pub use self::late::{Late, LateSource};
+pub use self::mask::Mask;
+pub use self::sel::Sel;
 use super::{Row, Rows};
 use crate::error::Result;
-use crate::value::{Decimal, Value};
+use crate::value::{Datetime, Decimal, Value};
 
 /// \[DESIGN\] The most rows of a batch: a vector, 2048.
 pub const BATCH_ROWS: usize = 2048;
@@ -38,6 +47,11 @@ impl Default for Ramp {
 }
 
 impl Ramp {
+    /// Every batch of `BATCH_ROWS` rows: of a morsel, read whole.
+    pub fn whole() -> Ramp {
+        Ramp(BATCH_ROWS)
+    }
+
     /// The rows of the next batch.
     pub fn next_rows(&mut self) -> usize {
         let rows = self.0;
@@ -67,9 +81,17 @@ pub enum Column {
     Floats(Floats),
     /// Character strings, as their text.
     Texts(Texts),
+    /// [ISO/IEC 9075:1992 §4.5.1] Datetimes of one type, as their
+    /// microseconds in UTC, which compare as the values do.
+    Datetimes(Datetimes),
+    /// [ISO/IEC 9075-2:2023 §4.6] Truth values, a bit each.
+    Bools(Bools),
     /// Nulls, as many as it says, none held: as of a column a projection
     /// names that its input does not read.
     Nulls(Nulls),
+    /// A column store's frozen values not yet decoded (RULES.md D361),
+    /// decoded as an operator reads them (`Batch::resolve`).
+    Late(Late),
 }
 
 /// \[DESIGN\] A vector of nulls, none held: its values made only if they
@@ -104,8 +126,8 @@ pub struct Texts {
     pub text: String,
     /// Where each row's text ends in `text`.
     pub ends: Vec<usize>,
-    /// Whether each row's is null, if any is.
-    pub nulls: Option<Vec<bool>>,
+    /// Which rows are null, if any is.
+    pub nulls: Option<Mask>,
     /// Of a store's dictionaries, each row's entry, and the entries, if the
     /// rows are so: `text` and `ends` are then empty.
     pub coded: Option<Box<Coded>>,
@@ -120,25 +142,25 @@ pub struct Texts {
 pub struct Coded {
     /// Each row's entry, a null's 0.
     pub codes: Vec<u32>,
-    /// The entries.
-    pub entries: Texts,
+    /// The entries, shared by every batch gathered of them.
+    pub entries: std::sync::Arc<Texts>,
 }
 
 impl Texts {
     /// The texts of `text` ending at `ends`, null where `nulls` says.
-    pub fn new(text: String, ends: Vec<usize>, nulls: Option<Vec<bool>>) -> Texts {
+    pub fn new(text: String, ends: Vec<usize>, nulls: Option<Mask>) -> Texts {
         Texts { text, ends, nulls, coded: None, made: OnceLock::new() }
     }
 
     /// The texts of `coded`'s entries, each row's as its code says, null
     /// where `nulls` says.
-    pub fn coded(coded: Coded, nulls: Option<Vec<bool>>) -> Texts {
+    pub fn coded(coded: Coded, nulls: Option<Mask>) -> Texts {
         Texts { text: String::new(), ends: Vec::new(), nulls, coded: Some(Box::new(coded)), made: OnceLock::new() }
     }
 
     /// Whether row `n`'s is null.
     pub fn is_null(&self, n: usize) -> bool {
-        self.nulls.as_ref().is_some_and(|nulls| nulls.get(n).copied().unwrap_or(false))
+        self.nulls.as_ref().is_some_and(|nulls| nulls.get(n))
     }
 
     /// Row `n`'s text, none if it is null or past the end.
@@ -184,8 +206,8 @@ pub struct Ints {
     pub units: Vec<i64>,
     /// The digits of each after the decimal point.
     pub scale: u32,
-    /// Whether each row's is null, if any is.
-    pub nulls: Option<Vec<bool>>,
+    /// Which rows are null, if any is.
+    pub nulls: Option<Mask>,
     /// Where each run of one unit ends, if a store read them as runs
     /// (`with_runs`).
     runs: Option<Vec<usize>>,
@@ -195,7 +217,7 @@ pub struct Ints {
 
 impl Ints {
     /// Exact numbers of `scale`, each of `units`, null where `nulls` says.
-    pub fn new(units: Vec<i64>, scale: u32, nulls: Option<Vec<bool>>) -> Ints {
+    pub fn new(units: Vec<i64>, scale: u32, nulls: Option<Mask>) -> Ints {
         Ints { units, scale, nulls, runs: None, made: OnceLock::new() }
     }
 
@@ -215,14 +237,14 @@ impl Ints {
     /// Of these as runs (`with_runs`), each run's unit and the rows of
     /// `rows` in it, nulls among them, if `rows` are in increasing order:
     /// none if not, or if these are not known as runs.
-    pub fn runs_of<'r>(&'r self, rows: &'r [usize]) -> Option<impl Iterator<Item = (i64, &'r [usize])> + 'r> {
+    pub fn runs_of<'r>(&'r self, rows: &'r [u32]) -> Option<impl Iterator<Item = (i64, &'r [u32])> + 'r> {
         let ends = self.runs.as_deref()?;
         if !rows.is_sorted() {
             return None;
         }
         let (mut rest, mut start) = (rows, 0);
         Some(ends.iter().map(move |&end| {
-            let (these, after) = rest.split_at(rest.partition_point(|&r| r < end));
+            let (these, after) = rest.split_at(rest.partition_point(|&r| mask::index(r) < end));
             let unit = self.units.get(start).copied().unwrap_or(0);
             (rest, start) = (after, end);
             (unit, these)
@@ -235,9 +257,14 @@ impl Ints {
         self.runs.as_deref().filter(|_| self.nulls.is_none())
     }
 
-    /// How many of `rows` are not null.
-    pub fn held(&self, rows: &[usize]) -> usize {
-        if self.nulls.is_none() { rows.len() } else { rows.iter().filter(|&&n| !self.is_null(n)).count() }
+    /// How many of `rows`, or of all, are not null.
+    pub fn held(&self, rows: Option<&[u32]>) -> usize {
+        let all = sel::kept_count(rows, self.units.len());
+        match (&self.nulls, rows) {
+            (None, _) => all,
+            (Some(nulls), None) => all.saturating_sub(nulls.count()),
+            (Some(_), Some(rows)) => rows.iter().filter(|&&n| !self.is_null(mask::index(n))).count(),
+        }
     }
 
     /// Of these as runs (`with_runs`), each run's unit and how many of its
@@ -248,7 +275,7 @@ impl Ints {
         Some(ends.iter().map(move |&end| {
             let unit = self.units.get(start).copied().unwrap_or(0);
             let held = match &self.nulls {
-                Some(nulls) => nulls.get(start..end).map_or(0, |run| run.iter().filter(|&&null| !null).count()),
+                Some(nulls) => (start..end).filter(|&n| !nulls.get(n)).count(),
                 None => end.saturating_sub(start),
             };
             start = end;
@@ -258,7 +285,7 @@ impl Ints {
 
     /// Whether row `n`'s is null.
     pub fn is_null(&self, n: usize) -> bool {
-        self.nulls.as_ref().is_some_and(|nulls| nulls.get(n).copied().unwrap_or(false))
+        self.nulls.as_ref().is_some_and(|nulls| nulls.get(n))
     }
 
     /// The values, made the first time they are asked for.
@@ -283,21 +310,21 @@ impl Ints {
 pub struct Floats {
     /// Each row's number, a null's 0.
     pub numbers: Vec<f64>,
-    /// Whether each row's is null, if any is.
-    pub nulls: Option<Vec<bool>>,
+    /// Which rows are null, if any is.
+    pub nulls: Option<Mask>,
     /// The values, made the first time they are asked for.
     made: OnceLock<Vec<Value>>,
 }
 
 impl Floats {
     /// The approximate numbers `numbers`, null where `nulls` says.
-    pub fn new(numbers: Vec<f64>, nulls: Option<Vec<bool>>) -> Floats {
+    pub fn new(numbers: Vec<f64>, nulls: Option<Mask>) -> Floats {
         Floats { numbers, nulls, made: OnceLock::new() }
     }
 
     /// Whether row `n`'s is null.
     pub fn is_null(&self, n: usize) -> bool {
-        self.nulls.as_ref().is_some_and(|nulls| nulls.get(n).copied().unwrap_or(false))
+        self.nulls.as_ref().is_some_and(|nulls| nulls.get(n))
     }
 
     /// Row `n`'s number, none if it is null or past the end.
@@ -326,7 +353,10 @@ impl Column {
             Column::Ints(ints) => ints.values(),
             Column::Floats(floats) => floats.values(),
             Column::Texts(texts) => texts.values(),
+            Column::Datetimes(datetimes) => datetimes.values(),
+            Column::Bools(bools) => bools.values(),
             Column::Nulls(nulls) => nulls.values(),
+            Column::Late(late) => late.values(),
         }
     }
 
@@ -350,8 +380,22 @@ impl Column {
                 *self = Column::Values(made);
                 self.values_mut()
             }
+            Column::Datetimes(datetimes) => {
+                let made = std::mem::take(datetimes).into_values();
+                *self = Column::Values(made);
+                self.values_mut()
+            }
+            Column::Bools(bools) => {
+                let made = std::mem::take(bools).into_values();
+                *self = Column::Values(made);
+                self.values_mut()
+            }
             Column::Nulls(nulls) => {
                 *self = Column::Values(vec![Value::Null; nulls.rows]);
+                self.values_mut()
+            }
+            Column::Late(late) => {
+                *self = Column::Values(late.values().to_vec());
                 self.values_mut()
             }
         }
@@ -364,7 +408,10 @@ impl Column {
             Column::Ints(ints) => ints.into_values(),
             Column::Floats(floats) => floats.into_values(),
             Column::Texts(texts) => texts.into_values(),
+            Column::Datetimes(datetimes) => datetimes.into_values(),
+            Column::Bools(bools) => bools.into_values(),
             Column::Nulls(nulls) => vec![Value::Null; nulls.rows],
+            Column::Late(late) => late.values().to_vec(),
         }
     }
 }
@@ -433,6 +480,10 @@ pub enum Cell<'b> {
     Approx(f64),
     /// A character string's text.
     Text(&'b str),
+    /// A datetime.
+    Datetime(Datetime),
+    /// A truth value, True or False.
+    Bool(bool),
     /// A null of a vector of integers, numbers or texts, or past the end of
     /// a vector.
     Null,
@@ -443,7 +494,7 @@ impl Cell<'_> {
     pub fn is_null(&self) -> bool {
         match self {
             Cell::Value(v) => v.is_null(),
-            Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) => false,
+            Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Datetime(_) | Cell::Bool(_) => false,
             Cell::Null => true,
         }
     }
@@ -455,6 +506,8 @@ impl Cell<'_> {
             Cell::Exact(units, scale) => Value::Exact(Decimal::new(i128::from(*units), *scale)),
             Cell::Approx(f) => Value::Approx(*f),
             Cell::Text(text) => Value::Char((*text).to_owned()),
+            Cell::Datetime(d) => Value::Datetime(*d),
+            Cell::Bool(b) => Value::Bool(*b),
             Cell::Null => Value::Null,
         }
     }
@@ -465,12 +518,24 @@ impl Batch {
     /// vector of integers, numbers or texts.
     pub fn cell(&self, at: usize, r: usize) -> Cell<'_> {
         match self.columns.get(at) {
-            Some(Column::Values(values)) => values.get(r).map_or(Cell::Null, Cell::Value),
-            Some(Column::Ints(ints)) => ints.units.get(r).filter(|_| !ints.is_null(r)).map_or(Cell::Null, |&u| Cell::Exact(u, ints.scale)),
-            Some(Column::Floats(floats)) => floats.get(r).map_or(Cell::Null, Cell::Approx),
-            Some(Column::Texts(texts)) => texts.get(r).map_or(Cell::Null, Cell::Text),
-            Some(Column::Nulls(_)) | None => Cell::Null,
+            Some(Column::Late(late)) => late.made().map_or(Cell::Null, |made| cell_of(made, r)),
+            Some(column) => cell_of(column, r),
+            None => Cell::Null,
         }
+    }
+}
+
+/// The value of row `r` of `column`, read in place: of a late column not
+/// decoded, a null (`Batch::cell` decodes it first).
+fn cell_of(column: &Column, r: usize) -> Cell<'_> {
+    match column {
+        Column::Values(values) => values.get(r).map_or(Cell::Null, Cell::Value),
+        Column::Ints(ints) => ints.units.get(r).filter(|_| !ints.is_null(r)).map_or(Cell::Null, |&u| Cell::Exact(u, ints.scale)),
+        Column::Floats(floats) => floats.get(r).map_or(Cell::Null, Cell::Approx),
+        Column::Texts(texts) => texts.get(r).map_or(Cell::Null, Cell::Text),
+        Column::Datetimes(datetimes) => datetimes.get(r).map_or(Cell::Null, Cell::Datetime),
+        Column::Bools(bools) => bools.get(r).map_or(Cell::Null, Cell::Bool),
+        Column::Nulls(_) | Column::Late(_) => Cell::Null,
     }
 }
 

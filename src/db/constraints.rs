@@ -26,6 +26,7 @@ use crate::parser::Parser;
 use crate::value::Decimal;
 
 mod names;
+mod not_null;
 pub(in crate::db) mod periods;
 mod referenced;
 

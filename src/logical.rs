@@ -19,6 +19,7 @@ mod pattern;
 mod program;
 mod ptf;
 mod pushed;
+mod raises;
 mod render;
 mod sets;
 mod subqueries;
@@ -46,6 +47,7 @@ pub(crate) use program::{
 };
 pub use ptf::Polymorphic;
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
+pub use raises::{MAX_JUDGED_DEPTH, Types, can_raise_typed, cond_can_raise_typed, plan_column_type};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
 pub use subquery::{Decorrelated, Subquery, bound_expr, map_plan_exprs, plan_has_outer};
@@ -519,7 +521,28 @@ impl LogicalPlan {
 
     /// The number of columns of this node's output.
     pub fn width(&self) -> usize {
-        self.names().len()
+        // Counted, not named: naming renders each projected expression, and
+        // the planner asks a width at every node it estimates.
+        match self {
+            LogicalPlan::Scan { names, .. }
+            | LogicalPlan::System { names, .. }
+            | LogicalPlan::Recursive { names, .. }
+            | LogicalPlan::WorkTable { names, .. }
+            | LogicalPlan::Transition { names, .. } => names.len(),
+            LogicalPlan::Polymorphic(p) => p.names.len(),
+            LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => left.width().saturating_add(right.width()),
+            LogicalPlan::Aggregate { groups, aggs, .. } => groups.len().saturating_add(aggs.len()),
+            LogicalPlan::Project { exprs, .. } => exprs.len(),
+            LogicalPlan::SetOp { left, .. } => left.width(),
+            LogicalPlan::Unnest(u) => u.input.width().saturating_add(u.names.len()),
+            LogicalPlan::Window(w) => w.input.width().saturating_add(w.calls.len()),
+            LogicalPlan::Recognize(_) => self.names().len(),
+            LogicalPlan::Values { types, .. } => types.len(),
+            LogicalPlan::Filter { input, .. }
+            | LogicalPlan::Distinct { input }
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Limit { input, .. } => input.width(),
+        }
     }
 
     /// Rebuild this node with each input replaced by `f(input)`.

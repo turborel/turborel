@@ -37,7 +37,7 @@ impl PhysicalPlanner<'_> {
     ) -> Option<Choice> {
         let storage = self.db.storage_of(read.table).ok()?;
         let desc = self.db.catalog.table(read.table)?;
-        let model = self.db.cost();
+        let model = self.weights();
         let rows = cost_of(storage.row_count());
         let each = rows * share;
         let cost = model.index_descent * (rows + 1.0_f64).log2() + each * storage.fetch_cost();

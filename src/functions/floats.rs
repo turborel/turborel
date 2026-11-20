@@ -11,22 +11,22 @@ use crate::storage::Floats;
 use crate::value::Value;
 
 /// The numbers of `floats` of the rows `rows`, or all, not null.
-fn numbers<'f>(floats: &'f Floats, rows: Option<&'f [usize]>) -> Box<dyn Iterator<Item = f64> + 'f> {
+fn numbers<'f>(floats: &'f Floats, rows: Option<&'f [u32]>) -> Box<dyn Iterator<Item = f64> + 'f> {
     match rows {
-        Some(rows) => Box::new(rows.iter().filter_map(move |&n| floats.get(n))),
+        Some(rows) => Box::new(rows.iter().filter_map(move |&n| floats.get(crate::storage::mask::index(n)))),
         None if floats.nulls.is_none() => Box::new(floats.numbers.iter().copied()),
         None => Box::new((0..floats.numbers.len()).filter_map(move |n| floats.get(n))),
     }
 }
 
 /// How many of the rows `rows` of `floats`, or all, are not null.
-pub(super) fn count(floats: &Floats, rows: Option<&[usize]>) -> usize {
+pub(super) fn count(floats: &Floats, rows: Option<&[u32]>) -> usize {
     numbers(floats, rows).count()
 }
 
 /// Adds to `sum` each of the rows `rows` of `floats`, or all, not null, in
 /// order, as `Wide::with` adds a value; whether there was one.
-pub(super) fn sum_into(sum: &mut Wide, floats: &Floats, rows: Option<&[usize]>) -> bool {
+pub(super) fn sum_into(sum: &mut Wide, floats: &Floats, rows: Option<&[u32]>) -> bool {
     let mut any = false;
     for f in numbers(floats, rows) {
         *sum = sum.with(f);
@@ -82,7 +82,7 @@ impl Wide {
 
 /// The greatest, if `max`, or least of the rows `rows` of `floats`, or
 /// all, not null: the first of those equal [X3.135-1986 §5.8 GR4d].
-pub(super) fn extreme(floats: &Floats, rows: Option<&[usize]>, max: bool) -> Option<Value> {
+pub(super) fn extreme(floats: &Floats, rows: Option<&[u32]>, max: bool) -> Option<Value> {
     let wanted = if max { Ordering::Greater } else { Ordering::Less };
     numbers(floats, rows).reduce(|best, f| if f.partial_cmp(&best) == Some(wanted) { f } else { best }).map(Value::Approx)
 }

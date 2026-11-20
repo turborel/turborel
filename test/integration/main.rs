@@ -30,6 +30,7 @@
 )]
 
 mod adjacency_index;
+mod alter_columns;
 mod collated_indexes;
 mod collation_derivation;
 mod collation_usage;
@@ -47,6 +48,10 @@ mod database;
 /// build of itself.
 #[path = "../../support/src/types.rs"]
 mod ident;
+/// The contract every implementation of the kernels keeps, written once
+/// in `support/` for a kernel crate's tests too (RULES.md R-TEST-10).
+#[path = "../../support/src/kernels.rs"]
+mod kernel_contract;
 #[path = "../../support/src/logs.rs"]
 mod logs;
 
@@ -61,7 +66,9 @@ mod backup_archive;
 mod backup_online;
 mod backup_targets;
 mod backups;
+mod batch_exprs;
 mod batch_joins;
+mod batch_kinds;
 mod batches;
 mod benchmark_shapes;
 mod bigint;
@@ -188,8 +195,10 @@ mod json_type;
 mod kept_plans;
 mod kept_routines;
 mod kept_set_plans;
+mod kernels;
 mod language;
 mod language_collations;
+mod late_columns;
 mod length_units;
 mod listagg;
 mod lob_composites;
@@ -272,10 +281,12 @@ mod regex_functions;
 mod regular_expressions;
 mod rekeying;
 mod renamed_columns;
+mod renamed_tables;
 mod reopen;
 mod replicated_state;
 mod restrict;
 mod revoke;
+mod rewrites;
 mod role_views;
 mod roles;
 mod roles_revoke;

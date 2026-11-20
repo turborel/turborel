@@ -38,9 +38,9 @@
 //! | `PartitionStrategy` | RANGE, LIST, HASH     | partitioned tables (RULES.md D154) |
 //! | `BackupTarget`, `TargetProvider` | a directory, memory | backups and the archive (RULES.md D166) |
 //! | `Eviction`          | CLOCK                 | the data file's buffer pool (`set_eviction`, RULES.md D283) |
+//! | `Kernels`           | `Portable`            | batches' primitives (`set_kernels`, RULES.md D354) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
-//!
 //! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any number of threads (RULES.md D27). Each statement runs
 //! against a snapshot of the definitions taken when it starts, holding no lock on them while it runs; the data is guarded by the
 //! storage engines and indexes, and its isolation by the engine, or by the transaction coordinator's table locks for an engine that

@@ -17,12 +17,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use super::batched::ByBatch;
 use super::pipeline::Pipeline;
 use super::probe::{PARTS, part_of};
 use super::run::Morsels;
 use super::{Held, Limit};
 use crate::db::State;
 use crate::error::{Result, SqlState};
+use crate::exec::batch::{Held as BatchHeld, Read, morsel_groups, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::{RowIter, Runner, broken, eval, warn};
 use crate::functions::Accumulator;
@@ -60,10 +62,13 @@ type Merging = (u64, Row, Vec<Box<dyn Accumulator>>);
 /// One partition's pieces, by morsel in order.
 type Chunks = Vec<Vec<Piece>>;
 
-/// What a grouping groups: by `Spec`, or, of DISTINCT, by every column.
+/// What a grouping groups: by `Spec`, or, of DISTINCT, by every column;
+/// and, of a pipeline read by batch, what it reads of each batch
+/// (`exec/batch/groups/morsel.rs`).
 struct Grouping {
     spec: Spec,
     distinct: bool,
+    read: Option<Read>,
 }
 
 impl Grouping {
@@ -86,15 +91,17 @@ impl Grouping {
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
-        (Grouping { spec, distinct: false }, input)
-    } else if let Plan::Distinct { input } = plan {
+        (Grouping { spec, distinct: false, read: None }, input)
+    } else if let Plan::Distinct { input, .. } = plan {
         let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
-        (Grouping { spec, distinct: true }, input)
+        (Grouping { spec, distinct: true, read: None }, input)
     } else {
         return Err(broken("not a grouping run in parallel"));
     };
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
+    let mut grouping = grouping;
+    grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     let grouping = Arc::new(grouping);
     let Held::Kept(chunks) = pieces(pipeline, Arc::clone(&grouping), (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
     let chunks: Arc<Vec<Mutex<Chunks>>> = Arc::new(chunks.into_iter().map(Mutex::new).collect());
@@ -128,21 +135,18 @@ fn pieces(
     let count = pipeline.count();
     let work = Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
-        let rows = pipeline.morsel(m, &runner)?;
-        morsel_pieces(&grouping, (m, rows), &runner)
+        let parts = if let Some(read) = &grouping.read {
+            let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
+            partitioned(morsel_groups(read, &grouping.spec.aggs, batches, (&runner, first_of(&grouping, m)))?)
+        } else {
+            let rows = pipeline.morsel(m, &runner)?;
+            morsel_pieces(&grouping, (m, rows), &runner)?
+        };
+        Ok(parts.into_iter().map(|made| (pieces_bytes(&made), made)).collect::<Vec<_>>())
     });
     let (mut chunks, from): (Vec<Chunks>, usize) = ((0..PARTS).map(|_| Vec::new()).collect(), limit.held());
     for (done, split) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
-        for (part, made) in chunks.iter_mut().zip(split?) {
-            let bytes = made
-                .iter()
-                .map(|p| {
-                    PIECE_BYTES
-                        .saturating_add(p.key.len())
-                        .saturating_add(crate::spill::row_bytes(&p.values))
-                        .saturating_add(p.states.iter().map(Vec::len).sum::<usize>())
-                })
-                .sum();
+        for (part, (bytes, made)) in chunks.iter_mut().zip(split?) {
             if !limit.take(bytes) {
                 return Ok(Held::GaveWay);
             }
@@ -155,11 +159,60 @@ fn pieces(
     Ok(Held::Kept(chunks))
 }
 
+/// The bytes `made`, a morsel's pieces of one partition, hold: counted by
+/// the worker that made them, so the statement's thread only adds them up.
+fn pieces_bytes(made: &[Piece]) -> usize {
+    made.iter()
+        .map(|p| {
+            PIECE_BYTES
+                .saturating_add(p.key.len())
+                .saturating_add(crate::spill::row_bytes(&p.values))
+                .saturating_add(p.states.iter().map(Vec::len).sum::<usize>())
+        })
+        .sum()
+}
+
+/// \[DESIGN\] (RULES.md D354) What `grouping` reads of each batch of a
+/// pipeline read `by` batch, if it reads them so: of DISTINCT, every
+/// column of batches holding every column of the rows; else its grouping
+/// columns and set functions as a grouping by batch reads them, no seed
+/// nor collation among them.
+fn read_of(grouping: &Grouping, by: &ByBatch) -> Option<Read> {
+    if grouping.distinct {
+        let whole = by.layout.iter().copied().eq(0..by.width);
+        return whole.then(|| read_for(&by.layout, &[], &by.layout)).flatten();
+    }
+    let spec = &grouping.spec;
+    if !spec.seeds.is_empty() || !spec.collations.is_empty() {
+        return None;
+    }
+    read_for(&spec.groups, &spec.aggs, &by.layout)
+}
+
+/// The number of the first row of morsel `m`: after the seeds, numbered
+/// first, its morsel's number in the high bits.
+fn first_of(grouping: &Grouping, m: usize) -> u64 {
+    let seeds = u64::try_from(grouping.spec.seeds.len()).unwrap_or(u64::MAX);
+    seeds.saturating_add(u64::try_from(m).unwrap_or(u64::MAX).checked_shl(PLACE_BITS).unwrap_or(u64::MAX))
+}
+
+/// A morsel's groups `made`, each written as a piece, by partition of its
+/// key.
+fn partitioned(made: Vec<(Vec<u8>, BatchHeld)>) -> Vec<Vec<Piece>> {
+    let mut parts: Vec<Vec<Piece>> = (0..PARTS).map(|_| Vec::new()).collect();
+    for (key, (first, values, states)) in made {
+        let states = states.iter().map(|s| written(s.as_ref())).collect();
+        if let Some(part) = parts.get_mut(part_of(&key)) {
+            part.push(Piece { first, key, values, states });
+        }
+    }
+    parts
+}
+
 /// The pieces of morsel `m`'s `rows`, by partition, its expressions
 /// evaluated by `runner`.
 fn morsel_pieces(grouping: &Grouping, (m, rows): (usize, Vec<Row>), runner: &Runner) -> Result<Vec<Vec<Piece>>> {
-    let seeds = u64::try_from(grouping.spec.seeds.len()).unwrap_or(u64::MAX);
-    let base = seeds.saturating_add(u64::try_from(m).unwrap_or(u64::MAX).checked_shl(PLACE_BITS).unwrap_or(u64::MAX));
+    let base = first_of(grouping, m);
     let mut found: HashMap<Vec<u8>, usize> = HashMap::new();
     let mut made: Vec<Making> = Vec::new();
     for (place, row) in (0_u64..).zip(rows) {

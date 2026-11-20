@@ -16,6 +16,8 @@
 
 mod access;
 mod built;
+mod cardinality;
+mod carried;
 mod collated;
 mod cost;
 mod decided;
@@ -37,6 +39,7 @@ mod nodes;
 pub(crate) use nearest::distance_call;
 pub use nearest::{ApproximateRead, NearestRead};
 mod order;
+mod ordered;
 mod parallel;
 pub use parallel::Parallel;
 pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
@@ -55,6 +58,7 @@ pub(crate) use kept::{filled_plan, keepable, same_shape};
 use std::sync::Arc;
 
 use built::Built;
+use cardinality::Estimates;
 
 use crate::catalog::QualifiedName;
 use crate::db::State;
@@ -62,7 +66,7 @@ use crate::exec::{TransitionRows, WorkRows};
 use crate::index::Probe;
 use crate::logical::{
     AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Polymorphic, Recognize, SetOp, SortKey, Unnest, Window,
-    expr_columns, judged_by_sets, render_cond, render_expr, render_keys,
+    judged_by_sets, render_cond,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -147,8 +151,11 @@ pub enum Plan {
         cond: Cond,
         /// The condition, as text.
         detail: String,
-        /// The rows it is estimated to keep, if its input is a table.
-        est: Option<f64>,
+        /// The rows it is estimated to keep.
+        est: f64,
+        /// Whether it filters a table's read, its estimate the access
+        /// path's, which EXPLAIN shows.
+        of_read: bool,
         /// The rows filtered.
         input: Box<Plan>,
     },
@@ -158,6 +165,8 @@ pub enum Plan {
         left: Box<Plan>,
         /// The inner input, read once.
         right: Box<Plan>,
+        /// Its estimated rows (`physical/cardinality.rs`).
+        est: f64,
     },
     /// The rows of `left` joined with the rows of `right` whose `keys` are
     /// equal: the rows of a product that its equalities keep
@@ -172,6 +181,8 @@ pub enum Plan {
         keys: Vec<JoinKey>,
         /// The equalities, as text.
         detail: String,
+        /// Its estimated rows (`physical/cardinality.rs`).
+        est: f64,
     },
     /// The rows of `left` joined with the rows of a table an index finds
     /// for each, by its bound `probe` (`physical/indexed.rs`): the
@@ -245,6 +256,8 @@ pub enum Plan {
         widths: (usize, usize),
         /// The condition, as text.
         detail: String,
+        /// Its estimated rows (`physical/cardinality.rs`).
+        est: f64,
     },
     /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
     MergeJoin(Box<MergeJoin>),
@@ -263,6 +276,8 @@ pub enum Plan {
         detail: String,
         /// The rows grouped.
         input: Box<Plan>,
+        /// Its estimated groups (`physical/cardinality.rs`).
+        est: f64,
     },
     /// Each `<value expression>` applied to each row [X3.135-1986 §5.25 GR2].
     Project {
@@ -277,6 +292,8 @@ pub enum Plan {
     Distinct {
         /// The rows.
         input: Box<Plan>,
+        /// Its estimated rows (`physical/cardinality.rs`).
+        est: f64,
     },
     /// [ISO/IEC 9075:1992 §7.10 GR1b] The rows of `left` that are, or are
     /// not, in `right`: INTERSECT or EXCEPT \[ALL\] (`exec/set.rs`).
@@ -291,6 +308,8 @@ pub enum Plan {
         left: Box<Plan>,
         /// The second operand, read once.
         right: Box<Plan>,
+        /// Its estimated rows (`physical/cardinality.rs`).
+        est: f64,
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §21.1] A system table's rows.
     System {
@@ -310,6 +329,8 @@ pub enum Plan {
         left: Box<Plan>,
         /// The rows returned after them.
         right: Box<Plan>,
+        /// Its estimated rows (`physical/cardinality.rs`).
+        est: f64,
     },
     /// \[EXTENSION\] The rows of each of `inputs`, each in the order of
     /// `keys`, merged in that order: the partitions of a partitioned table
@@ -340,6 +361,8 @@ pub enum Plan {
         limit: Limit,
         /// The rows limited.
         input: Box<Plan>,
+        /// Its estimated rows (`physical/cardinality.rs`).
+        est: f64,
     },
     /// [ISO/IEC 9075-2:2023 §7.17 GR2c ii] The rows of member `member` of
     /// a recursive stratum: its members' plans run to their fixpoint
@@ -376,6 +399,8 @@ pub enum Plan {
         window: Box<Window<Plan>>,
         /// The partitioning, ordering and functions, as text.
         detail: String,
+        /// Its estimated rows (`physical/cardinality.rs`).
+        est: f64,
     },
     /// [ISO/IEC 9075-2:2023 §7.7] Row pattern recognition over the rows of
     /// its input, which come sorted by its partitioning and ordering
@@ -411,6 +436,8 @@ pub struct PhysicalPlanner<'a> {
     first: Option<usize>,
     /// \[EXTENSION\] The FETCH FIRST whose count `first` is: its search.
     fetch: Option<&'a crate::logical::Fetch>,
+    /// The planning's estimator (`physical/cardinality.rs`), made by `plan`.
+    est: Option<&'a Estimates<'a>>,
 }
 
 /// One table to read: its name, how the operators over it are described
@@ -432,25 +459,30 @@ struct TableRead<'a> {
 impl<'a> PhysicalPlanner<'a> {
     /// A planner over the state `db`, of plans to run.
     pub fn new(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: false, values: None, first: None, fetch: None }
+        PhysicalPlanner { db, shown: false, values: None, first: None, fetch: None, est: None }
     }
 
     /// A planner over the state `db`, of plans to run made with a prepared
     /// statement's slots, their paths chosen by `values`, one execution's,
     /// so that another's may fill them (`physical/kept.rs`).
     pub fn slotted(db: &'a State, values: &'a [Value]) -> Self {
-        PhysicalPlanner { db, shown: false, values: Some(values), first: None, fetch: None }
+        PhysicalPlanner { db, shown: false, values: Some(values), first: None, fetch: None, est: None }
     }
 
     /// A planner over the state `db`, of plans to show: each operator
     /// described, as EXPLAIN shows it.
     pub fn describing(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: true, values: None, first: None, fetch: None }
+        PhysicalPlanner { db, shown: true, values: None, first: None, fetch: None, est: None }
     }
 
-    /// The physical plan for `logical`.
+    /// The physical plan for `logical`, estimated by one estimator for
+    /// the whole planning (RULES.md D370).
     pub fn plan(&self, logical: &LogicalPlan) -> Plan {
-        self.build(logical, &[]).plan
+        if self.est.is_some() {
+            return self.build(logical, &[]).plan;
+        }
+        let estimates = Estimates::over(self.db, logical);
+        PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if
@@ -502,38 +534,6 @@ impl<'a> PhysicalPlanner<'a> {
         }
     }
 
-    /// The window functions `w`, their input sorted by their partitioning,
-    /// each column in the order `want` asks of it if it does, then their
-    /// ordering, unless the input gives that order. Its rows keep it, so
-    /// it gives `want` if `want` is the first of those keys.
-    fn window(&self, w: &Window<LogicalPlan>, want: &[SortKey]) -> Built {
-        let asked = |c: usize| want.iter().find(|k| k.column == c).copied();
-        let mut keys: Vec<SortKey> = w.partition.iter().map(|&c| asked(c).unwrap_or_else(|| SortKey::ascending(c))).collect();
-        keys.extend(w.order.iter().copied());
-        let b = self.build(&w.input, &keys);
-        let detail = self.described(&w.input, |names| w.render(names));
-        let input = if b.ordered {
-            b.plan
-        } else {
-            let sorting = self.described(&w.input, |names| render_keys(&keys, names));
-            Plan::Sort { keys: keys.clone(), detail: sorting, input: Box::new(b.plan), most: None }
-        };
-        let window = Box::new(w.with_input(|_| ()).over(input));
-        Built { plan: Plan::Window { window, detail }, ordered: !want.is_empty() && keys.starts_with(want) }
-    }
-
-    /// [X3.135-1986 §8.3 GR2b] UNION is UNION ALL followed by duplicate
-    /// elimination; EXCEPT and INTERSECT keep the first operand's rows in
-    /// its order [ISO/IEC 9075:1992 §7.10 GR1b].
-    fn set_operation(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
-        let LogicalPlan::SetOp { op, all, compared, left, right } = logical else { return self.build_node(logical, want) };
-        let r = self.build(right, &[]).plan;
-        // UNION's rows are in no order, so it asks none of its left operand.
-        let asked = if *op == SetOp::Union { &[] } else { want };
-        let l = self.build(left, asked);
-        Self::combined(*op, (*all, *compared), l, r)
-    }
-
     /// A filter directly on a table, or over a table's read and a guard
     /// (`physical/access/guarded.rs`), becomes part of the access path,
     /// told the columns the node above reads, `above`, if known; any other
@@ -547,40 +547,10 @@ impl<'a> PhysicalPlanner<'a> {
             return join;
         }
         let b = self.build_node(input, want);
+        let est = self.estimating(|e| e.filter_card(cond, input)).rows;
         let cond = judged_by_sets(cond.clone());
         let detail = self.described(input, |names| render_cond(&cond, names));
-        Built { plan: Plan::Filter { cond, detail, est: None, input: Box::new(b.plan) }, ordered: b.ordered }
-    }
-
-    /// A projected column that is a plain column reference keeps the input's
-    /// order on that column.
-    fn project(&self, exprs: &[Expr], input: &LogicalPlan, want: &[SortKey]) -> Built {
-        let inner: Vec<SortKey> = want
-            .iter()
-            .map(|k| {
-                let column = expression_index::ordered_by(self.db, exprs.get(k.column)?, input)?;
-                Some(SortKey { column, ..*k })
-            })
-            .collect::<Option<_>>()
-            .unwrap_or_default();
-        let mut reads = Vec::new();
-        for e in exprs {
-            expr_columns(e, &mut reads);
-        }
-        let b = self.build_input(input, &inner, &reads);
-        let detail = self.described(input, |names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
-        let (exprs, source) = project::collapsed(exprs.to_vec(), b.plan);
-        Built { plan: Plan::Project { exprs, detail, input: Box::new(source) }, ordered: !inner.is_empty() && b.ordered }
-    }
-
-    /// The keys are asked of the input; if it gives them, no Sort is needed.
-    fn sort(&self, keys: &[SortKey], input: &LogicalPlan) -> Built {
-        let b = self.nearest(keys, input).map_or_else(|| self.build(input, keys), Built::unordered);
-        if b.ordered {
-            return Built::unordered(b.plan);
-        }
-        let detail = self.described(input, |names| render_keys(keys, names));
-        Built::unordered(Plan::Sort { keys: keys.to_vec(), detail, input: Box::new(b.plan), most: None })
+        Built { plan: Plan::Filter { cond, detail, est, of_read: false, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 }
 

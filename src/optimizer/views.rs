@@ -74,7 +74,7 @@ impl Rule for PushFilterThroughDistinct {
 /// (see `PushFilterThroughDistinct`): it has no LIKE and no subquery, and
 /// compares columns, constants and their negations, which no CASE, CAST
 /// or function can tell apart.
-fn alike(c: &Cond) -> bool {
+pub(super) fn alike(c: &Cond) -> bool {
     let plain = |e: &Expr| {
         let mut plain = true;
         expr_columns_only(e, &mut plain);

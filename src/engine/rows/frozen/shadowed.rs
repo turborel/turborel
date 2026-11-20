@@ -64,7 +64,7 @@ fn table(rows: i128) -> (Arc<RowTable>, Vec<RowId>) {
 /// The rows a scan by batch of every column gives, each shown, sorted.
 fn batched(table: &Arc<RowTable>) -> Vec<String> {
     let mut shown = Vec::new();
-    for batch in Arc::clone(table).scan_batches(NO_TRANSACTION, &[0, 1, 2, 3, 4], None) {
+    for batch in Arc::clone(table).scan_batches(NO_TRANSACTION, &[0, 1, 2, 3, 4], None, &[]) {
         let batch = batch.unwrap();
         let columns: Vec<&[Value]> = batch.columns.iter().map(crate::storage::Column::values).collect();
         for r in 0..batch.rows {

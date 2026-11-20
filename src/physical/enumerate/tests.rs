@@ -10,6 +10,7 @@ use super::model::{Conj, Model, Order, Pred, Rel};
 use super::space::{Space, Tree};
 use super::{Algorithm, adaptive};
 use crate::physical::CostModel;
+use crate::physical::cardinality::Classes;
 
 /// A query of `rows.len()` relations of one column each, the FROM clause
 /// left-deep, and an equality of each pair of `edges` of the given
@@ -30,8 +31,8 @@ fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
             class: Some(c),
         })
         .collect();
-    let classes = edges.iter().map(|&(a, b, d)| vec![(a, d), (b, d)]).collect();
-    let rels = rows.iter().map(|&r| Rel { rows: r, reads: vec![(Order::None, r)], probes: Vec::new() }).collect();
+    let classes = Classes::new(edges.iter().map(|&(a, b, d)| vec![(a, d), (b, d)]).collect());
+    let rels = rows.iter().map(|&r| Rel { rows: r, reads: vec![(Order::None, r)], probes: Vec::new(), plans: Vec::new() }).collect();
     let model = Model {
         rels,
         conjuncts,
@@ -109,7 +110,7 @@ fn the_cheapest_tree_may_be_bushy() {
 #[test]
 fn a_class_of_equalities_is_counted_once() {
     let (shapes, mut model) = inner(&[100.0_f64; 3], &[(0_usize, 1_usize, 100.0_f64), (1, 2, 100.0_f64), (0, 2, 100.0_f64)]);
-    model.classes = vec![vec![(0_usize, 100.0_f64), (1, 100.0_f64), (2, 100.0_f64)]];
+    model.classes = Classes::new(vec![vec![(0_usize, 100.0_f64), (1, 100.0_f64), (2, 100.0_f64)]]);
     for c in &mut model.conjuncts {
         c.class = Some(0_usize);
     }

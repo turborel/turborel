@@ -1,5 +1,6 @@
 //! Fixtures and helpers shared by the integration tests.
 
+mod altered;
 mod dynamic;
 mod encodings;
 mod fixtures;
@@ -23,6 +24,7 @@ pub use crate::database::{
     LOCKING, LockingEngine, MemoryTable, after_crash, contents, count, crc32c, number, os, rows, setup, small_pool, sorted,
 };
 pub use crate::logs::Watched;
+pub use altered::{alter_failed, committed_each, query, reopened_after_crash, schema_a};
 pub use dynamic::{code_with, dynamic_host, run_with, set_text};
 pub use encodings::{RunLength, Scramble};
 pub use fixtures::{prices, recognized, staff, state};

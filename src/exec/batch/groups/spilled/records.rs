@@ -11,7 +11,8 @@ use super::super::table::Held;
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError};
 use crate::spill::SpilledLobs;
-use crate::storage::{Batch, Column, Ints, Row};
+use crate::storage::mask::lsb_len;
+use crate::storage::{Batch, Column, Ints, Mask, Row};
 use crate::value::Value;
 use crate::value::types::TypeRegistry;
 
@@ -143,7 +144,8 @@ pub(super) fn put_batch(batch: &Batch, rows: &[(usize, usize, u64)], out: &mut V
             let nulled = rows.iter().any(|&(_, r, _)| ints.is_null(r));
             out.push(u8::from(nulled));
             if nulled {
-                out.extend(rows.iter().map(|&(_, r, _)| u8::from(ints.is_null(r))));
+                let nulls: Vec<bool> = rows.iter().map(|&(_, r, _)| ints.is_null(r)).collect();
+                out.extend(Mask::from_bools(&nulls).lsb_bytes());
             }
             for &(_, r, _) in rows {
                 out.put_u64(ints.units.get(r).copied().unwrap_or(0).cast_unsigned());
@@ -154,7 +156,13 @@ pub(super) fn put_batch(batch: &Batch, rows: &[(usize, usize, u64)], out: &mut V
         for &(_, r, _) in rows {
             match column {
                 Column::Values(values) => lobs.put_value(out, values.get(r).unwrap_or(&Value::Null)),
-                Column::Ints(_) | Column::Floats(_) | Column::Texts(_) | Column::Nulls(_) => {
+                Column::Ints(_)
+                | Column::Floats(_)
+                | Column::Texts(_)
+                | Column::Datetimes(_)
+                | Column::Bools(_)
+                | Column::Nulls(_)
+                | Column::Late(_) => {
                     lobs.put_value(out, &batch.cell(at, r).to_value());
                 }
             }
@@ -202,7 +210,7 @@ fn column_of(reader: &mut Reader<'_>, rows: usize, lobs: &SpilledLobs) -> Result
             let scale = reader.u32()?;
             let nulls = match reader.u8()? {
                 0 => None,
-                _ => Some(reader.take(rows)?.iter().map(|&b| b != 0).collect()),
+                _ => Some(Mask::from_lsb_bytes(reader.take(lsb_len(rows))?, 0, rows)),
             };
             let mut units = Vec::with_capacity(rows);
             for _ in 0..rows {
@@ -243,7 +251,7 @@ mod tests {
     /// A batch of four rows of a column of each kind: integers, a null
     /// among them; values; approximate numbers; texts, a null among them.
     fn batch() -> Batch {
-        let ints = Column::Ints(Ints::new(vec![7_i64, -3_i64, 0_i64, i64::MIN], 2_u32, Some(vec![false, true, false, false])));
+        let ints = Column::Ints(Ints::new(vec![7_i64, -3_i64, 0_i64, i64::MIN], 2_u32, Some(vec![false, true, false, false].into())));
         let values = Column::Values(vec![
             Value::Char("a".to_owned()),
             Value::Null,
@@ -252,7 +260,7 @@ mod tests {
         ]);
         let floats = Column::Floats(Floats::new(vec![1.5_f64, -0.0_f64, 2.0_f64, 3.0_f64], None));
         let ends = vec![1_usize, 3_usize, 3_usize, 5_usize];
-        let texts = Column::Texts(Texts::new("xyzzy".to_owned(), ends, Some(vec![false, false, true, false])));
+        let texts = Column::Texts(Texts::new("xyzzy".to_owned(), ends, Some(vec![false, false, true, false].into())));
         Batch { columns: vec![ints, values, floats, texts], rows: 4 }
     }
 

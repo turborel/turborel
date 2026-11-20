@@ -18,14 +18,16 @@ impl PhysicalPlanner<'_> {
         let want_left = of_left(want, left.width());
         let l = self.build_node(left, want_left);
         let r = self.build_node(right, &[]);
-        Built { plan: Plan::Product { left: Box::new(l.plan), right: Box::new(r.plan) }, ordered: !want_left.is_empty() && l.ordered }
+        let est = self.estimating(|e| e.rows(left) * e.rows(right));
+        Built { plan: Plan::Product { left: Box::new(l.plan), right: Box::new(r.plan), est }, ordered: !want_left.is_empty() && l.ordered }
     }
 
     /// Duplicate elimination of `input`, which keeps the first occurrence,
     /// so order is kept.
     pub(super) fn distinct(&self, input: &LogicalPlan, want: &[SortKey]) -> Built {
         let b = self.build(input, want);
-        Built { plan: Plan::Distinct { input: Box::new(b.plan) }, ordered: b.ordered }
+        let est = self.estimating(|e| e.distinct_card(input)).rows;
+        Built { plan: Plan::Distinct { input: Box::new(b.plan), est }, ordered: b.ordered }
     }
 
     /// A system table's rows.
@@ -48,7 +50,8 @@ impl PhysicalPlanner<'_> {
     /// are read, if it is known.
     pub(super) fn limited(&self, limit: &Limit, input: &LogicalPlan, want: &[SortKey]) -> Built {
         let b = PhysicalPlanner { first: limit.read_rows(), fetch: limit.fetch.as_ref(), ..*self }.build(input, want);
-        Built { plan: Plan::Limit { limit: limit.clone(), input: Box::new(b.plan) }, ordered: b.ordered }
+        let est = self.estimating(|e| e.limit_card(limit, input)).rows;
+        Built { plan: Plan::Limit { limit: limit.clone(), input: Box::new(b.plan), est }, ordered: b.ordered }
     }
 
     /// The rows of member `member` of a recursive stratum, its members'
@@ -72,15 +75,16 @@ impl PhysicalPlanner<'_> {
     }
 
     /// The set operation `op` of the plans `left`, whose order is kept,
-    /// and `right`: UNION ALL an append of them, UNION one without
-    /// duplicates, in no order.
-    pub(super) fn combined(op: SetOp, (all, compared): (bool, Option<usize>), left: Built, right: Plan) -> Built {
+    /// and `right`, estimated to give `est` rows: UNION ALL an append of
+    /// them, UNION one without duplicates, in no order.
+    pub(super) fn combined(op: SetOp, (all, compared, est): (bool, Option<usize>, f64), left: Built, right: Plan) -> Built {
         let (l, r) = (Box::new(left.plan), Box::new(right));
         if op != SetOp::Union {
-            return Built { plan: Plan::SetOp { op, all, compared, left: l, right: r }, ordered: left.ordered };
+            return Built { plan: Plan::SetOp { op, all, compared, left: l, right: r, est }, ordered: left.ordered };
         }
-        let append = Plan::Append { left: l, right: r };
-        Built::unordered(if all { append } else { Plan::Distinct { input: Box::new(append) } })
+        let sum = Plan::summed(&l, &r);
+        let append = Plan::Append { left: l, right: r, est: sum };
+        Built::unordered(if all { append } else { Plan::Distinct { input: Box::new(append), est } })
     }
 }
 

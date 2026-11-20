@@ -53,18 +53,18 @@ impl Accumulator for ExtremeAcc {
     }
     /// The best of the vector found first, by `update`'s rule, then
     /// cloned once.
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         let wanted = if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less };
         let found = match rows {
-            Some(rows) => best_of(rows.iter().filter_map(|&r| values.get(r)), wanted),
+            Some(rows) => best_of(rows.iter().filter_map(|&r| values.get(crate::storage::mask::index(r))), wanted),
             None => best_of(values.iter(), wanted),
         };
         found.map_or(Ok(()), |v| self.update(v))
     }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
         ints::extreme(ints, rows, self.max).map_or(Ok(()), |v| self.update(&v))
     }
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         floats::extreme(floats, rows, self.max).map_or(Ok(()), |v| self.update(&v))
     }
     /// The best value so far, null if none, as `codec::put_value` writes it.
@@ -133,16 +133,16 @@ impl Accumulator for CollatedAcc {
         }
         Ok(())
     }
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).try_for_each(|v| self.update(v)),
+            Some(rows) => rows.iter().filter_map(|&r| values.get(crate::storage::mask::index(r))).try_for_each(|v| self.update(v)),
             None => values.iter().try_for_each(|v| self.update(v)),
         }
     }
-    fn update_ints(&mut self, _: &Ints, _: Option<&[usize]>) -> Result<()> {
+    fn update_ints(&mut self, _: &Ints, _: Option<&[u32]>) -> Result<()> {
         Ok(())
     }
-    fn update_floats(&mut self, _: &Floats, _: Option<&[usize]>) -> Result<()> {
+    fn update_floats(&mut self, _: &Floats, _: Option<&[u32]>) -> Result<()> {
         Ok(())
     }
     /// Its state is written, as `ExtremeAcc`'s.

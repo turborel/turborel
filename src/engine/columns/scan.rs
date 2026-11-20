@@ -4,12 +4,20 @@
 //! (zone maps), and by the parts' Bloom filters; and the rows of a run, only
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
-use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
+use super::group::{Group, PART_ROWS, Pages, Seal};
 use super::prepared::Prepared;
 use super::{Chunk, bloom, padding};
 use crate::error::Result;
-use crate::storage::{Coded, Conjunct, Conjunction, Floats, Ints, Row, Texts};
+use crate::storage::{Column, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Row, Texts};
+use crate::value::datetime::Moment;
 use crate::value::{DataType, Value};
+
+mod positions;
+mod truths;
+
+use positions::coded_at;
+pub use positions::{column_at, datetimes_at, floats_at, ints_at, texts_at, values_at};
+pub use truths::{bools, bools_at};
 
 /// The pages a group's chunks are read of, and the chunks of the group
 /// opened before, kept for the runs after (`prepared.rs`).
@@ -177,15 +185,15 @@ pub fn values<S: Seal>(
 
 /// The 8-byte fields of a column, each as a signed integer, and whether
 /// each is null: none if one of them is not so.
-type Words = Option<(Vec<i64>, Vec<bool>)>;
+type Words = Option<(Vec<i64>, Mask)>;
 
 /// 8-byte fields, whether each is null, and where each run of one value
 /// among them ends, if known.
-type RunWords = ((Vec<i64>, Vec<bool>), Option<Vec<usize>>);
+type RunWords = ((Vec<i64>, Mask), Option<Vec<usize>>);
 
 /// Of nulls, none if none is null.
-fn nulls_of(nulls: Vec<bool>) -> Option<Vec<bool>> {
-    nulls.contains(&true).then_some(nulls)
+fn nulls_of(nulls: Mask) -> Option<Mask> {
+    nulls.any().then_some(nulls)
 }
 
 /// `word`, an approximate number's 8 bytes as a signed integer, as the
@@ -236,21 +244,53 @@ pub fn floats<S: Seal>(
         .map(|((words, nulls), _)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
 }
 
-/// \[DESIGN\] As `ints_at`, as approximate numbers, as `floats` gives
-/// those of a run.
+/// \[DESIGN\] (RULES.md D354) The fields, zone and precision of a datetime
+/// type without a time zone, which a record writes as its instant's
+/// microseconds in 8 bytes; none of any other type.
+fn datetime_shape(t: &DataType) -> Option<(Moment, bool, u8)> {
+    let (moment, precision) = match t {
+        DataType::Date => (Moment::Date, 0),
+        DataType::Time { precision, zoned: false } => (Moment::Time, *precision),
+        DataType::Timestamp { precision, zoned: false } => (Moment::Timestamp, *precision),
+        DataType::Time { zoned: true, .. }
+        | DataType::Timestamp { zoned: true, .. }
+        | DataType::Character { .. }
+        | DataType::Varying { .. }
+        | DataType::Exact { .. }
+        | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
+        | DataType::Boolean
+        | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
+        | DataType::Row(_)
+        | DataType::Distinct(_)
+        | DataType::Json
+        | DataType::Xml(_)
+        | DataType::Extension(_) => return None,
+    };
+    Some((moment, false, u8::try_from(precision).ok()?))
+}
+
+/// \[DESIGN\] As `ints`, as datetimes (`storage::Datetimes`), if `t` is a
+/// datetime type without a time zone (`datetime_shape`).
 ///
 /// # Errors
 ///
 /// As `rows`.
-pub fn floats_at<S: Seal>(
+pub fn datetimes<S: Seal>(
     group: &Group,
-    (pages, prepared): Reading<'_, '_, S>,
+    reading: Reading<'_, '_, S>,
     (column, t): (usize, &DataType),
-    positions: &[u32],
-) -> Result<Option<Floats>> {
-    let DataType::Approximate { .. } = t else { return Ok(None) };
-    Ok(words_at(group, (pages, prepared), (column, t), positions)?
-        .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
+    (from, to): (u32, u32),
+) -> Result<Option<Datetimes>> {
+    let Some(shape) = datetime_shape(t) else { return Ok(None) };
+    Ok(words(group, reading, (column, t), (from, to))?.map(|((utc, nulls), _)| Datetimes::new(utc, None, shape, nulls_of(nulls))))
 }
 
 /// The 8-byte fields of column `column` of the rows at positions `from` to
@@ -264,7 +304,7 @@ fn words<S: Seal>(
 ) -> Result<Option<RunWords>> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-    let (mut units, mut nulls) = (Vec::with_capacity(count), Vec::with_capacity(count));
+    let (mut units, mut nulls) = (Vec::with_capacity(count), Mask::default());
     let mut runs = Some(Vec::new());
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
@@ -290,145 +330,6 @@ fn words<S: Seal>(
 }
 
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
-/// `positions` of `group`, in increasing order, as integers, as `ints`
-/// gives those of a run: each chunk's span from the first position asked
-/// of it to the last decoded at once, and those asked taken of it.
-///
-/// # Errors
-///
-/// As `rows`.
-pub fn ints_at<S: Seal>(
-    group: &Group,
-    (pages, prepared): Reading<'_, '_, S>,
-    (column, t): (usize, &DataType),
-    positions: &[u32],
-) -> Result<Option<Ints>> {
-    let DataType::Exact { scale, .. } = t else { return Ok(None) };
-    Ok(words_at(group, (pages, prepared), (column, t), positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(nulls))))
-}
-
-/// The 8-byte fields of column `column` of the rows at `positions`, in
-/// increasing order, each chunk's span from the first asked of it to the
-/// last read at once.
-fn words_at<S: Seal>(
-    group: &Group,
-    (pages, prepared): Reading<'_, '_, S>,
-    (column, t): (usize, &DataType),
-    positions: &[u32],
-) -> Result<Words> {
-    let Some(zones) = group.columns.get(column) else { return Ok(None) };
-    let (mut units, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
-    let (mut span, mut span_nulls) = (Vec::new(), Vec::new());
-    let mut rest = positions;
-    for zone in zones {
-        let end = zone.run.first.saturating_add(zone.run.rows);
-        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
-        rest = after;
-        let (Some(&low), Some(&high)) = (these.first(), these.last()) else { continue };
-        let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        span.clear();
-        span_nulls.clear();
-        let held = prepared.with(pages, (column, zone, t), |chunk, made| {
-            Ok(chunk.ints_made((at(low), at(high).saturating_add(1)), (&mut span, &mut span_nulls), made))
-        })?;
-        if held.is_none() {
-            return Ok(None);
-        }
-        for &p in these {
-            let n = at(p).saturating_sub(at(low));
-            units.push(span.get(n).copied().unwrap_or(0));
-            nulls.push(span_nulls.get(n).copied().unwrap_or(true));
-        }
-    }
-    if units.len() != positions.len() {
-        return Ok(None);
-    }
-    Ok(Some((units, nulls)))
-}
-
-/// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
-/// `positions` of `group`, in increasing order, as text (`storage::Texts`),
-/// if `t` is a character string type, which a record writes as its text
-/// (a CHARACTER string's then padded as it is read, so as LIKE sees it),
-/// and every chunk's encoding holds text: as their dictionaries' codes if
-/// every chunk asked of is a dictionary (`coded_at`), else each position's
-/// read in place.
-///
-/// # Errors
-///
-/// As `rows`.
-pub fn texts_at<S: Seal>(
-    group: &Group,
-    (pages, prepared): Reading<'_, '_, S>,
-    (column, t): (usize, &DataType),
-    positions: &[u32],
-) -> Result<Option<Texts>> {
-    if padding(t).is_none() {
-        return Ok(None);
-    }
-    let Some(zones) = group.columns.get(column) else { return Ok(None) };
-    if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), positions)? {
-        return Ok(Some(coded));
-    }
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
-    let mut rest = positions;
-    for zone in zones {
-        let end = zone.run.first.saturating_add(zone.run.rows);
-        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
-        rest = after;
-        if these.is_empty() {
-            continue;
-        }
-        let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        let held = prepared.with(pages, (column, zone, t), |chunk, _| {
-            Ok(these.iter().try_for_each(|&p| chunk.texts((at(p), at(p).saturating_add(1)), (&mut text, &mut ends, &mut nulls), t)))
-        })?;
-        if held.is_none() {
-            return Ok(None);
-        }
-    }
-    if ends.len() != positions.len() {
-        return Ok(None);
-    }
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Ok(Some(Texts::new(text, ends, nulls)))
-}
-
-/// \[DESIGN\] The values at `positions` of a column whose chunks are
-/// `zones`, of type `t`, as their dictionaries' entries and each row's
-/// entry among them (`storage::Coded`), every chunk's entries one after
-/// another, if every chunk asked of is a dictionary.
-fn coded_at<S: Seal>(
-    (zones, column, t): (&[Zone], usize, &DataType),
-    (pages, prepared): Reading<'_, '_, S>,
-    positions: &[u32],
-) -> Result<Option<Texts>> {
-    let (mut text, mut ends) = (String::new(), Vec::new());
-    let (mut codes, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
-    let mut rest = positions;
-    for zone in zones {
-        let end = zone.run.first.saturating_add(zone.run.rows);
-        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
-        rest = after;
-        if these.is_empty() {
-            continue;
-        }
-        let at: Vec<usize> = these.iter().map(|&p| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX)).collect();
-        let held = prepared.with(pages, (column, zone, t), |chunk, made| {
-            Ok(chunk.coded_made(&at, (&mut text, &mut ends, &mut codes, &mut nulls), made))
-        })?;
-        if held.is_none() {
-            return Ok(None);
-        }
-    }
-    if codes.len() != positions.len() {
-        return Ok(None);
-    }
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Ok(Some(Texts::coded(Coded { codes, entries: Texts::new(text, ends, None) }, nulls)))
-}
-
-/// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
 /// positions `from` to `to` of `group`, as text, as `texts_at` gives them.
 ///
 /// # Errors
@@ -448,7 +349,7 @@ pub fn texts<S: Seal>(
         return Ok(Some(coded));
     }
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(count), Vec::with_capacity(count));
+    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(count), Mask::default());
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
@@ -461,39 +362,37 @@ pub fn texts<S: Seal>(
     if ends.len() != count {
         return Ok(None);
     }
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Ok(Some(Texts::new(text, ends, nulls)))
+    Ok(Some(Texts::new(text, ends, nulls_of(nulls))))
 }
 
-/// The values of column `column`, of type `t`, of the rows at `positions`
-/// of `group`, in increasing order.
+/// \[DESIGN\] Column `c`, of type `t`, of the rows at positions `from` to
+/// `to` of `group`: as integers, approximate numbers, datetimes, truth
+/// values or text if it is of them, each chunk read a run at a time, else
+/// as values.
 ///
 /// # Errors
 ///
 /// As `rows`.
-pub fn values_at<S: Seal>(
+pub fn column_of_run<S: Seal>(
     group: &Group,
     (pages, prepared): Reading<'_, '_, S>,
-    (column, t): (usize, &DataType),
-    positions: &[u32],
-) -> Result<Vec<Value>> {
-    let mut out = Vec::with_capacity(positions.len());
-    let Some(zones) = group.columns.get(column) else { return Ok(vec![Value::Null; positions.len()]) };
-    let mut rest = positions;
-    for zone in zones {
-        let end = zone.run.first.saturating_add(zone.run.rows);
-        let here = rest.partition_point(|&p| p < end);
-        let (these, after) = rest.split_at(here);
-        rest = after;
-        if these.is_empty() {
-            continue;
-        }
-        prepared.with(pages, (column, zone, t), |chunk, _| {
-            for &position in these {
-                out.push(chunk.value(usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX), t)?);
-            }
-            Ok(())
-        })?;
+    (c, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Column> {
+    if let Some(ints) = ints(group, (pages, &mut *prepared), (c, t), (from, to))? {
+        return Ok(Column::Ints(ints));
     }
-    Ok(out)
+    if let Some(floats) = floats(group, (pages, &mut *prepared), (c, t), (from, to))? {
+        return Ok(Column::Floats(floats));
+    }
+    if let Some(datetimes) = datetimes(group, (pages, &mut *prepared), (c, t), (from, to))? {
+        return Ok(Column::Datetimes(datetimes));
+    }
+    if let Some(bools) = bools(group, (pages, &mut *prepared), (c, t), (from, to))? {
+        return Ok(Column::Bools(bools));
+    }
+    if let Some(texts) = texts(group, (pages, &mut *prepared), (c, t), (from, to))? {
+        return Ok(Column::Texts(texts));
+    }
+    Ok(Column::from(values(group, (pages, prepared), (c, t), (from, to))?))
 }

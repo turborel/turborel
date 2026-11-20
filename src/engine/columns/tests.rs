@@ -135,9 +135,9 @@ fn ints_of(values: &[Value], compress: bool, (from, to): (usize, usize)) -> Opti
     let fields = Fields::of(&INTEGER, values.iter().cloned()).unwrap();
     let bytes = fields.chunk(&INTEGER, 0, (fields.len(), compress)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
-    let (mut units, mut nulls) = (Vec::new(), Vec::new());
+    let (mut units, mut nulls) = (Vec::new(), Mask::default());
     chunk.ints((from, to), (&mut units, &mut nulls))?;
-    let made = units.iter().zip(&nulls).map(|(u, &null)| if null { "NULL".to_owned() } else { u.to_string() }).collect();
+    let made = units.iter().zip(&nulls.to_bools()).map(|(u, &null)| if null { "NULL".to_owned() } else { u.to_string() }).collect();
     let read = (from..to).map(|n| chunk.value(n, &INTEGER).unwrap().to_string()).collect();
     Some((made, read))
 }
@@ -186,9 +186,9 @@ fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Optio
     let fields = Fields::of(t, values.iter().cloned()).unwrap();
     let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Vec::new());
+    let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Mask::default());
     chunk.texts((from, to), (&mut text, &mut ends, &mut nulls), t)?;
-    let texts = crate::storage::Texts::new(text, ends, nulls.contains(&true).then_some(nulls));
+    let texts = crate::storage::Texts::new(text, ends, nulls.any().then_some(nulls));
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
     let read = (from..to).map(|n| chunk.value(n, t).unwrap().to_string()).collect();
     Some((made, read))
@@ -238,10 +238,10 @@ fn coded_of(t: &DataType, values: &[Value], positions: &[usize]) -> Option<(Vec<
     let fields = Fields::of(t, values.iter().cloned()).unwrap();
     let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
-    let (mut text, mut ends, mut codes, mut nulls) = (String::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut text, mut ends, mut codes, mut nulls) = (String::new(), Vec::new(), Vec::new(), Mask::default());
     chunk.coded(positions, (&mut text, &mut ends, &mut codes, &mut nulls), t)?;
-    let dictionary = crate::storage::Coded { codes, entries: crate::storage::Texts::new(text, ends, None) };
-    let texts = crate::storage::Texts::coded(dictionary, nulls.contains(&true).then_some(nulls));
+    let dictionary = crate::storage::Coded { codes, entries: std::sync::Arc::new(crate::storage::Texts::new(text, ends, None)) };
+    let texts = crate::storage::Texts::coded(dictionary, nulls.any().then_some(nulls));
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
     let read = positions.iter().map(|&n| chunk.value(n, t).unwrap().to_string()).collect();
     Some((made, read))
@@ -322,11 +322,11 @@ fn approximate_numbers_are_decimals() {
         assert_eq!(bits(&back), bits(&values));
         // Of every range, a run at a time, as a value at a time.
         for (from, to) in [(0, chunk.len()), (1, chunk.len().saturating_sub(1)), (2, 3)] {
-            let (mut words, mut nulls) = (Vec::new(), Vec::new());
+            let (mut words, mut nulls) = (Vec::new(), Mask::default());
             chunk.ints((from, to), (&mut words, &mut nulls)).unwrap();
             let made: Vec<Value> = words
                 .iter()
-                .zip(&nulls)
+                .zip(&nulls.to_bools())
                 .map(|(&w, &null)| if null { Value::Null } else { Value::Approx(f64::from_bits(u64::from_le_bytes(w.to_le_bytes()))) })
                 .collect();
             assert_eq!(bits(&made), bits(&values[from..to]), "{from} to {to}");
@@ -399,7 +399,7 @@ fn chunks_of_runs_say_where_each_ends() {
     let bytes = chunk_of(&sorted);
     let chunk = Chunk::parse(&bytes).unwrap();
     for (from, to) in [(0, 2000), (0, 1), (249, 252), (1700, 2000), (7, 7)] {
-        let (mut ends, mut units, mut nulls) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut ends, mut units, mut nulls) = (Vec::new(), Vec::new(), Mask::default());
         chunk.run_ends((from, to), 10, &mut ends).unwrap();
         chunk.ints((from, to), (&mut units, &mut nulls)).unwrap();
         assert!(ends.windows(2).all(|w| w[0] < w[1]), "{ends:?}");
@@ -418,4 +418,34 @@ fn chunks_of_runs_say_where_each_ends() {
     let framed = chunk_of(&(0..300_i128).map(int).collect::<Vec<_>>());
     assert_eq!(Chunk::parse(&framed).unwrap().run_ends((0, 300), 0, &mut Vec::new()), None, "a frame of reference");
     assert_eq!(chunk.run_ends((0, 2001), 0, &mut Vec::new()), None, "past the end");
+}
+
+/// Verifies: [DESIGN] RULES.md D354 a chunk of truth values, of every
+/// encoding it is written in (all alike, a constant; nulls among them; of
+/// two values, fixed or a dictionary), gives as bits what its values read
+/// one at a time give, of ranges on and off a byte's edge, its nulls as
+/// its bitmap keeps them; and none of a chunk of integers, which are not
+/// truth values.
+#[test]
+fn chunks_give_their_truth_values() {
+    let truths =
+        |pattern: &dyn Fn(usize) -> Option<bool>| -> Vec<Value> { (0..300).map(|n| pattern(n).map_or(Value::Null, Value::Bool)).collect() };
+    let cases = [truths(&|_| Some(true)), truths(&|n| (n % 3 != 0).then_some(n % 2 == 0)), truths(&|n| Some(n % 7 < 3)), truths(&|_| None)];
+    for (values, compress) in cases.iter().flat_map(|v| [(v, false), (v, true)]) {
+        let fields = Fields::of(&DataType::Boolean, values.iter().cloned()).unwrap();
+        let bytes = fields.chunk(&DataType::Boolean, 0, (fields.len(), compress)).unwrap();
+        let chunk = Chunk::parse(&bytes).unwrap();
+        for (from, to) in [(0, 300), (1, 299), (8, 72), (64, 65), (5, 5)] {
+            let (mut bits, mut nulls) = (Mask::default(), Mask::default());
+            chunk.bools((from, to), (&mut bits, &mut nulls)).unwrap();
+            let made: Vec<String> =
+                (0..to - from).map(|n| if nulls.get(n) { Value::Null } else { Value::Bool(bits.get(n)) }.to_string()).collect();
+            let want: Vec<String> = values[from..to].iter().map(Value::to_string).collect();
+            assert_eq!(made, want, "kind {}, {from} to {to}", bytes[0]);
+            assert_eq!(nulls.len(), to - from, "kind {}", bytes[0]);
+        }
+    }
+    let ints = Fields::of(&INTEGER, (0..10_i128).map(int)).unwrap();
+    let bytes = ints.chunk(&INTEGER, 0, (10, false)).unwrap();
+    assert_eq!(Chunk::parse(&bytes).unwrap().bools((0, 10), (&mut Mask::default(), &mut Mask::default())), None, "integers");
 }

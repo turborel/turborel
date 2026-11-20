@@ -17,6 +17,7 @@
 //!        where each value's codes begin and the last ends | the codes
 //! ```
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use super::{WORD, corrupt, read_word, word};
@@ -267,6 +268,41 @@ impl Symbols {
     }
 }
 
+impl Symbols {
+    /// \[DESIGN\] (RULES.md D360) The order of the text `codes` encode
+    /// against `constant`, each padded with spaces to the other's length,
+    /// as `compare_strings` orders two strings: each symbol's bytes
+    /// compared with the constant's in place, the first that differs
+    /// deciding, so no text is decoded and most are told apart by their
+    /// first code. UTF-8 orders as the characters it encodes, and a space
+    /// is one byte, so bytes order the strings as their characters do.
+    /// None if the codes end in an escape, or a code is of no symbol.
+    pub(super) fn compare_padded(&self, codes: &[u8], constant: &[u8]) -> Option<Ordering> {
+        let (mut codes, mut rest) = (codes.iter(), constant.iter());
+        while let Some(&c) = codes.next() {
+            let bytes = if c == ESCAPE {
+                std::slice::from_ref(codes.next()?)
+            } else {
+                let code = usize::from(c);
+                if code >= self.count {
+                    return None;
+                }
+                self.words.get(code)?.get(..usize::from(*self.lens.get(code)?))?
+            };
+            for &b in bytes {
+                let k = rest.next().copied().unwrap_or(PAD);
+                if b != k {
+                    return Some(b.cmp(&k));
+                }
+            }
+        }
+        Some(rest.find(|&&k| k != PAD).map_or(Ordering::Equal, |k| PAD.cmp(k)))
+    }
+}
+
+/// The byte a string is padded with as it is compared: a space.
+const PAD: u8 = b' ';
+
 /// A table of symbols as a chunk holds it: read of its bytes, or one read
 /// before of the same bytes, held for the runs of a group (`prepared.rs`).
 pub(super) enum Held<'a> {
@@ -330,6 +366,13 @@ impl<'a> Coded<'a> {
         let mut text = Vec::new();
         self.symbols.decode(self.codes.get(a..b)?, &mut text)?;
         Some(text)
+    }
+
+    /// \[DESIGN\] (RULES.md D360) The order of value `n` against
+    /// `constant`, as `Symbols::compare_padded` gives it.
+    pub(super) fn compare_padded(&self, n: usize, constant: &[u8]) -> Option<Ordering> {
+        let (a, b) = self.between(n)?;
+        self.symbols.compare_padded(self.codes.get(a..b)?, constant)
     }
 
     /// The texts at positions `from` to `to`, pushed to `text` and where

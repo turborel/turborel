@@ -20,14 +20,10 @@
 //! orders is taken if it is estimated cheaper than the FROM clause's by the
 //! gain PLANNER.REORDER_GAIN gives (`CostModel::reorder_gain`). The relation of the first key of the order asked for stays first.
 
-use std::sync::Arc;
-
+use super::PhysicalPlanner;
 use super::cost::HASH_ROW;
-use super::{PhysicalPlanner, estimate};
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, and_all, cond_columns, map_cond_columns, split_and};
 use crate::optimizer::is_guarded;
-use crate::stats::Statistics;
-use crate::storage::cost_of;
 use crate::value::CompOp;
 
 /// One operand of the chain: a plan that is not a product.
@@ -36,9 +32,11 @@ struct Relation<'p> {
     /// Its first column in the chain's columns, and how many it has.
     start: usize,
     width: usize,
-    /// Its estimated rows, and its table's statistics, if it reads a table.
+    /// Its estimated rows (`physical/cardinality.rs`).
     rows: f64,
-    stats: Option<Arc<dyn Statistics>>,
+    /// Of its columns, by the chain's places, those an equality of the
+    /// chain's reads, and their distinct values.
+    distinct: Vec<(usize, f64)>,
     /// Of its columns, by the chain's places, those an index of its table
     /// answers an equality of, and the cost of each probe
     /// (`physical/indexed.rs`).
@@ -50,9 +48,10 @@ impl Relation<'_> {
         (self.start..self.start.saturating_add(self.width)).contains(&column)
     }
 
-    /// The distinct values of the chain's column `column`, if known.
+    /// The distinct values of the chain's column `column`, if an
+    /// equality of the chain reads it.
     fn distinct(&self, column: usize) -> Option<f64> {
-        self.stats.as_ref()?.distinct(column.checked_sub(self.start)?)
+        self.distinct.iter().find(|(c, _)| *c == column).map(|(_, d)| *d)
     }
 }
 
@@ -73,11 +72,12 @@ impl PhysicalPlanner<'_> {
             return None;
         }
         let (mut relations, mut conds) = (Vec::new(), Vec::new());
-        self.take_apart(plan, 0, &mut relations, &mut conds)?;
+        self.take_apart(plan, 0, &mut relations, &mut conds);
         if conds.iter().any(Cond::can_raise) {
             return None;
         }
-        let model = self.db.cost();
+        self.keyed(&mut relations, &conds);
+        let model = self.weights();
         let conjuncts: Vec<Conjunct> = conds
             .into_iter()
             .map(|cond| {
@@ -98,11 +98,11 @@ impl PhysicalPlanner<'_> {
     }
 
     /// Adds the relations of the chain `plan`, whose columns begin at
-    /// `start`, to `relations`, and its conditions' conjuncts, over the
-    /// chain's columns, to `conds`; none if a relation's rows are not known.
-    fn take_apart<'p>(&self, plan: &'p LogicalPlan, start: usize, relations: &mut Vec<Relation<'p>>, conds: &mut Vec<Cond>) -> Option<()> {
+    /// `start`, to `relations`, each with its estimated rows, and its
+    /// conditions' conjuncts, over the chain's columns, to `conds`.
+    fn take_apart<'p>(&self, plan: &'p LogicalPlan, start: usize, relations: &mut Vec<Relation<'p>>, conds: &mut Vec<Cond>) {
         if let LogicalPlan::Product { left, right } = plan {
-            self.take_apart(left, start, relations, conds)?;
+            self.take_apart(left, start, relations, conds);
             return self.take_apart(right, start.saturating_add(left.width()), relations, conds);
         }
         if let LogicalPlan::Filter { cond, input } = plan
@@ -112,33 +112,36 @@ impl PhysicalPlanner<'_> {
             split_and(map_cond_columns(cond.clone(), &|c| c.saturating_add(start)), conds);
             return self.take_apart(input, start, relations, conds);
         }
-        let (rows, stats) = self.estimate(plan)?;
-        let any = |_: usize, _: &crate::value::DataType| true;
-        let probes =
-            (0..plan.width()).filter_map(|c| self.probing(plan, &[(0, c)], &any).map(|p| (c.saturating_add(start), p.cost))).collect();
-        relations.push(Relation { plan, start, width: plan.width(), rows, stats, probes });
-        Some(())
+        let rows = self.card(plan).rows;
+        relations.push(Relation { plan, start, width: plan.width(), rows, distinct: Vec::new(), probes: Vec::new() });
     }
 
-    /// The rows of a relation that reads a table, filtered or not, its
-    /// conjuncts that can raise an error over a guard or not
-    /// (`optimizer::is_guarded`), and the table's statistics.
-    fn estimate(&self, plan: &LogicalPlan) -> Option<(f64, Option<Arc<dyn Statistics>>)> {
-        let (read, cond) = if let LogicalPlan::Filter { cond, input } = plan { (&**input, Some(cond)) } else { (plan, None) };
-        let read = if let LogicalPlan::Product { left, .. } = read
-            && is_guarded(plan)
-        {
-            &**left
-        } else {
-            read
-        };
-        let LogicalPlan::Scan { table, .. } = read else { return None };
-        let stats = self.db.statistics(table);
-        let all = cost_of(self.db.row_count(table)?);
-        let model = self.db.cost();
-        let known = estimate::Known { stats: stats.as_deref(), cost: &model };
-        Some((cond.map_or(all, |c| all * estimate::selectivity(c, known)), stats))
+    /// Of each relation, the distinct values of its columns the equalities
+    /// of `conds` read, and the probes of those an index answers: no other
+    /// column is joined by, so no other is probed.
+    fn keyed(&self, relations: &mut [Relation<'_>], conds: &[Cond]) {
+        let any = |_: usize, _: &crate::value::DataType| true;
+        let mut keys: Vec<usize> = conds.iter().filter_map(equated).flat_map(|(a, b)| [a, b]).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        for r in relations.iter_mut() {
+            let (plan, start) = (r.plan, r.start);
+            let own: Vec<usize> = keys.iter().copied().filter(|&c| r.has(c)).collect();
+            for c in own {
+                let at = c.saturating_sub(start);
+                r.distinct.push((c, self.estimating(|e| e.distinct(plan, at))));
+                if let Some(p) = self.probing(plan, &[(0, at)], &any) {
+                    r.probes.push((c, p.cost));
+                }
+            }
+        }
     }
+}
+
+/// The columns of an equality of two columns.
+fn equated(c: &Cond) -> Option<(usize, usize)> {
+    let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c else { return None };
+    Some((*a, *b))
 }
 
 /// Whether `plan` is a product, or a filter over a chain; not a relation

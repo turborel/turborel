@@ -1,5 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
+mod altered_tables;
+mod batches;
 mod budget;
 // The count's, kept beside the other areas' files.
 mod client_sync;
@@ -11,10 +13,16 @@ mod declared_types;
 #[path = "decode.rs"]
 mod decode;
 mod distinct_aggregates;
+mod expr;
+// The estimator's, beside the areas as `list.rs` holds no more modules.
+#[path = "estimates.rs"]
+mod estimates;
 mod insert_values;
 mod joins;
+mod late;
 mod oltp;
 mod parallel;
+mod rewrites;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
 mod unnesting;
@@ -79,7 +87,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 35] {
+fn second() -> [&'static [Mutation]; 39] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -104,6 +112,7 @@ fn second() -> [&'static [Mutation]; 35] {
         &super::temporal_references::TEMPORAL_REFERENCES,
         &super::system_versioned::SYSTEM_VERSIONED,
         &super::rename::RENAME,
+        &altered_tables::ALTERED_TABLES,
         &super::savepoints::SAVEPOINTS,
         &super::graph_catalog::GRAPH_CATALOG,
         &super::graph_native::GRAPH_NATIVE,
@@ -114,12 +123,15 @@ fn second() -> [&'static [Mutation]; 35] {
         &super::delta_tables::DELTA_TABLES,
         &count::COUNT,
         &distinct_aggregates::DISTINCT_AGGREGATES,
+        &rewrites::REWRITES,
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
+        &expr::EXPR,
+        &estimates::ESTIMATES,
     ]
 }
 
-/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's and the decode kernels'.
+/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's, the decode kernels' and late materialization's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 16] = [
         &super::projection::PROJECTION,
@@ -159,10 +171,17 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xml::XML,
     ];
     // The transport's, parallel queries', the client's step with its
-    // server, the decode kernels' and declared types' last, as `last` holds
-    // no more.
-    let after: [&'static [Mutation]; 5] =
-        [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &decode::DECODE, &declared_types::DECLARED_TYPES];
+    // server, the decode kernels', declared types', batches' and late
+    // materialization's last, as `last` holds no more.
+    let after: [&'static [Mutation]; 7] = [
+        &super::transport::TRANSPORT,
+        &parallel::PARALLEL,
+        &client_sync::CLIENT_SYNC,
+        &decode::DECODE,
+        &declared_types::DECLARED_TYPES,
+        &batches::BATCHES,
+        &late::LATE,
+    ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 

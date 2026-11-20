@@ -22,29 +22,30 @@
 //! while one of the transaction's cursors reads its table, the effect on an
 //! open cursor being implementation-defined too [§4.28].
 
+mod copied;
+
 use std::cell::Cell;
 use std::sync::Arc;
 
-use super::alter::{Made, Reshape};
+use copied::emptied_rows;
+pub(super) use copied::{copy_rows, validate_rows};
+
+use super::alter::{Made, renamed_by};
 use super::collations::added_collation;
-use super::defaults::default_value;
-use super::generated::{Column, Generating};
-use super::integrity::Effects;
+use super::generated::Column;
 use super::sequences::Epochs;
 use super::{Database, Session, State, api};
-use crate::ast::{AlterAction, DropBehavior, TableName};
+use crate::ast::{AlterAction, AlterColumnAction, DropBehavior, TableName};
 use crate::binder::{making_typed, qualify};
 use crate::catalog::{QualifiedName, Temporary, TemporaryKind};
 use crate::db::Completion;
 use crate::error::{At, Code, Result, SqlError, fail};
-use crate::exec::NoSubqueries;
 use crate::index::Index;
 use crate::log::record::Change;
 use crate::parser::Parser;
 use crate::settings::{FUNCTION_CALLS, XQUERY_STATIC_TYPING};
 use crate::storage::TableStorage;
 use crate::txn::{LockMode, Timestamp, Txn};
-use crate::value::Value;
 
 /// The definitions a transaction changed, not yet published.
 pub(super) struct Staged {
@@ -190,7 +191,8 @@ impl State {
             // (`TableLock::check_generation`): a table altered, or created,
             // whose rows their snapshots do not see.
             let renewed: Vec<QualifiedName> = match change {
-                Change::AlterTable { table, .. } => vec![table.clone()],
+                // [EXTENSION] of a table renamed, its new name too (RULES.md D402).
+                Change::AlterTable { table, action, .. } => renamed_by(table, action),
                 Change::Defined { schema, sql, placed: Some(_), .. } => super::definitions::created(schema, sql).into_iter().collect(),
                 Change::Schema { sql, engines, .. } => super::staged_schema::schema_tables(sql, engines),
                 Change::Insert { .. }
@@ -314,11 +316,7 @@ impl Session {
         temporary: Option<Temporary>,
     ) -> Result<Completion> {
         let schema = self.default_schema();
-        self.prepare_change(st, tx, qn)?;
-        // [EXTENSION] the table attached or detached changed too (RULES.md D153).
-        if let AlterAction::AttachPartition { table, .. } | AlterAction::DetachPartition(table) = action {
-            self.prepare_change(st, tx, &qualify(table, &schema))?;
-        }
+        self.prepare_altered(st, tx, (qn, action, &schema))?;
         // [DESIGN] Of a temporary table, no other transaction using an
         // instance of it meanwhile, nor one having written one since this
         // transaction's snapshot (RULES.md D49).
@@ -349,6 +347,12 @@ impl Session {
                 // of its new made as they are copied (RULES.md D157).
                 None => st.unindex_partitions(tx, qn).and_then(|()| copy_rows(st, &next, tx, qn, (action, reshape, self.effects(&next)))),
             },
+            // [ISO/IEC 9075-2:2023 §11.15 GR1d] the rows checked of the
+            // NOT NULL constraint added.
+            (None, AlterAction::AlterColumn { action: AlterColumnAction::SetNotNull, .. }) => match temporary {
+                Some(_) => self.validate_instances((st, &next), tx, (qn, action)),
+                None => validate_rows(&next, tx, qn, self.effects(&next)),
+            },
             // [§11.12 GR1] a default changes no row, nor does an option
             // changed in place, nor a partition detached.
             (None, AlterAction::AlterColumn { .. } | AlterAction::Storage(_)) => Ok(()),
@@ -378,9 +382,27 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let change = Change::AlterTable { table: qn.clone(), action: text.to_owned(), schema, zone, epochs: epochs.given(), typed };
+        // [DESIGN] a table renamed logged with its storage's generation (RULES.md D402).
+        let logged = super::alter::logged_rename(&next, qn, action).unwrap_or_else(|| text.to_owned());
+        let change = Change::AlterTable { table: qn.clone(), action: logged, schema, zone, epochs: epochs.given(), typed };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
         Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)))
+    }
+
+    /// Before ALTER TABLE `qn` `action`, its names of schema `schema`, in
+    /// transaction `tx`: the exclusive lock of each table it changes, and
+    /// of the name it gives one.
+    fn prepare_altered(&self, st: &Arc<State>, tx: &Txn, (qn, action, schema): (&QualifiedName, &AlterAction, &str)) -> Result<()> {
+        self.prepare_change(st, tx, qn)?;
+        // [EXTENSION] the table attached or detached changed too (RULES.md D153).
+        if let AlterAction::AttachPartition { table, .. } | AlterAction::DetachPartition(table) = action {
+            self.prepare_change(st, tx, &qualify(table, schema))?;
+        }
+        // [EXTENSION] the name a table is given held (RULES.md D402).
+        if let AlterAction::RenameTable { .. } = action {
+            self.prepare_change(st, tx, &super::alter::renamed_to(qn, action))?;
+        }
+        Ok(())
     }
 
     /// Before a change of definitions to `table`, a table, view or schema
@@ -444,108 +466,4 @@ impl Database {
         taken.into_iter().for_each(Dropped::discard);
         committed
     }
-}
-
-/// Copies the rows of `table` that transaction `tx` sees in `st` into its
-/// new generation in `next`, each reshaped as the action says, by `tx`'s
-/// own writes.
-///
-/// # Errors
-///
-/// SQLCODE -201 if a column added NOT NULL would be null in a row
-/// [ISO/IEC 9075:1992 §11.11 GR2]; the reads' and writes'.
-pub(super) fn copy_rows(
-    st: &Arc<State>,
-    next: &Arc<State>,
-    tx: &Txn,
-    table: &QualifiedName,
-    (action, reshape, mut effects): (&AlterAction, Reshape, Effects<'_>),
-) -> Result<()> {
-    st.read_lock(tx, table)?;
-    let width = st.catalog.table(table).map_or(0, |t| t.columns.len());
-    let columns: Vec<usize> = (0..width).collect();
-    // [§11.11 GR2] every value of a column added is its default.
-    let added = match action {
-        AlterAction::AddColumn(_) => next.catalog.table(table).and_then(|t| t.columns.last()).cloned(),
-        AlterAction::AlterColumn { .. }
-        | AlterAction::DropColumn { .. }
-        | AlterAction::AddConstraint(_)
-        | AlterAction::DropConstraint { .. }
-        | AlterAction::AddPeriod(..)
-        | AlterAction::DropPeriod { .. }
-        | AlterAction::AddVersioning(_)
-        | AlterAction::DropVersioning { .. }
-        | AlterAction::RevertCollation(_)
-        | AlterAction::Truncate { .. }
-        | AlterAction::AttachPartition { .. }
-        | AlterAction::DetachPartition(_)
-        | AlterAction::Storage(_) => None,
-    };
-    let fill = added.as_ref().map(|c| default_value(c, effects.user().of(next.catalog.roles()), effects.now)).transpose()?;
-    effects.rewritten(table);
-    // [ISO/IEC 9075-2:2023 §11.11 GR2a, GR2b] or, of an identity column,
-    // its generator's next value, of a generated column, its expression's.
-    let generating = match next.catalog.table(table).filter(|_| added.is_some()) {
-        Some(desc) => Generating::of_column(next, desc, desc.columns.len().saturating_sub(1))?,
-        None => Generating::default(),
-    };
-    // [ISO/IEC 9075-2:2023 §11.27 GR1c] of a system-time period added,
-    // its start the transaction timestamp, its end the highest value
-    // (IV181).
-    let stamp = if matches!(reshape, Reshape::Two(None)) { next.stamp_of(tx, table)? } else { None };
-    for read in Arc::clone(st.storage_of(table)?).scan(tx.id, &columns) {
-        let (_, row) = read?;
-        let mut new = reshape.row(row);
-        if let Some(stamp) = &stamp {
-            stamp.put(&mut new);
-        }
-        if let (Some(c), Some(value)) = (&added, &fill) {
-            if let Some(slot) = new.last_mut() {
-                *slot = value.clone();
-            }
-            generating.give(next, &mut new, &NoSubqueries)?;
-            if c.not_null && new.last().is_none_or(Value::is_null) {
-                return fail(
-                    Code::Constraint,
-                    format!("[ISO/IEC 9075:1992 §11.11 GR2] {table} has rows, in which NOT NULL column {} would be null", c.name),
-                );
-            }
-        }
-        effects.inserted(table, next.insert_row(tx, table, &new)?, &new)?;
-    }
-    // The table's constraints, those of a column added among them, hold of
-    // the rows copied.
-    next.end_statement(tx, effects)
-}
-
-/// [ISO/IEC 9075:1992 §11.16 GR2] The rows of `table` transaction `tx`
-/// sees, in `next`, its definitions with a constraint added, satisfy its
-/// constraints: NOT NULL too, a PRIMARY KEY's columns not null [§11.7
-/// SR3a].
-pub(super) fn validate_rows(next: &Arc<State>, tx: &Txn, table: &QualifiedName, mut effects: Effects<'_>) -> Result<()> {
-    // [EXTENSION] a partitioned table's rows are its partitions' (RULES.md D153).
-    if next.catalog.partitioning().is_partitioned(table) {
-        return super::partitions::validate_attached(next, tx, table, effects);
-    }
-    next.read_lock(tx, table)?;
-    let desc = next.catalog.table(table).cloned().ok_or_else(|| api(format!("[DESIGN] no table {table}")))?;
-    let columns: Vec<usize> = (0..desc.columns.len()).collect();
-    effects.rewritten(table);
-    for read in Arc::clone(next.storage_of(table)?).scan(tx.id, &columns) {
-        let (id, row) = read?;
-        effects.inserted(table, id, &row)?;
-    }
-    next.end_statement(tx, effects)
-}
-
-/// [ISO/IEC 9075-2:2023 §14.10 GR5] The end of TRUNCATE TABLE of `table`,
-/// its new generation in `next` of no row, in transaction `tx`: each CHECK
-/// with a subquery, and each assertion, that reads it checked, whole.
-///
-/// # Errors
-///
-/// SQLCODE -201 for a constraint it breaks.
-fn emptied_rows(next: &Arc<State>, tx: &Txn, table: &QualifiedName, mut effects: Effects<'_>) -> Result<()> {
-    effects.rewritten(table);
-    next.end_statement(tx, effects)
 }

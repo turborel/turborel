@@ -172,3 +172,25 @@ fn the_budget_and_limits_are_settings() {
     agree(&s, sql);
     assert!(db.set_setting("PLANNER.JOIN_ENUMERATION", &Value::Char("BUSHY".into())).is_err());
 }
+
+/// Verifies: [DESIGN] RULES.md D300, D370: a chain one of whose relations
+/// is a grouping, a derived table of GROUP BY, is planned by DPccp, as
+/// its rows are estimated as its groups, and gives the greedy order's
+/// rows; the hash join over it builds the grouping's few groups, not the
+/// table's 600 rows.
+#[test]
+fn a_grouping_among_the_relations_is_enumerated() {
+    let db = tables();
+    let s = db.session("Q");
+    let sql = "SELECT A.V, G.N, D.Y FROM A, (SELECT X, COUNT(*) AS N FROM C GROUP BY X) AS G, D \
+               WHERE A.V = G.X AND G.X = D.K";
+    let plan = s.explain(sql, &Params::new()).unwrap();
+    assert!(plan.contains("(join order by DPccp: "), "{plan}");
+    assert_ne!(agree(&s, sql), Vec::<String>::new());
+    let built =
+        s.explain("SELECT A.V, G.N FROM A, (SELECT X, COUNT(*) AS N FROM C GROUP BY X) AS G WHERE A.V = G.X", &Params::new()).unwrap();
+    let physical = built.split("-- physical:").last().unwrap_or_default();
+    let (join, grouping) = (physical.find("HashJoin").unwrap_or(usize::MAX), physical.find("Aggregate").unwrap_or(0));
+    let table = physical.find("SeqScan Q.A").unwrap_or(0);
+    assert!(join < table && table < grouping, "the grouping is the hash join's built side: {physical}");
+}

@@ -43,22 +43,28 @@ impl Batch {
 impl Column {
     /// The bytes the vector holds.
     pub fn bytes(&self) -> usize {
-        let nulls = |nulls: &Option<Vec<bool>>| nulls.as_ref().map_or(0, Vec::len);
+        let nulls = |nulls: Option<&super::Mask>| nulls.map_or(0, |m| m.words().len().saturating_mul(size_of::<u64>()));
         match self {
             Column::Values(values) => {
                 values.iter().fold(values.len().saturating_mul(size_of::<Value>()), |sum, v| sum.saturating_add(heap_bytes(v)))
             }
-            Column::Ints(ints) => ints.units.len().saturating_mul(size_of::<i64>()).saturating_add(nulls(&ints.nulls)),
-            Column::Floats(floats) => floats.numbers.len().saturating_mul(size_of::<f64>()).saturating_add(nulls(&floats.nulls)),
+            Column::Ints(ints) => ints.units.len().saturating_mul(size_of::<i64>()).saturating_add(nulls(ints.nulls.as_ref())),
+            Column::Floats(floats) => floats.numbers.len().saturating_mul(size_of::<f64>()).saturating_add(nulls(floats.nulls.as_ref())),
+            Column::Datetimes(d) => {
+                let zones = d.zones.as_ref().map_or(0, |z| z.len().saturating_mul(size_of::<i16>()));
+                d.utc.len().saturating_mul(size_of::<i64>()).saturating_add(zones).saturating_add(nulls(d.nulls.as_ref()))
+            }
+            Column::Bools(b) => nulls(Some(&b.bits)).saturating_add(nulls(b.nulls.as_ref())),
             // None held, but as values once they are asked for.
             Column::Nulls(held) => held.rows.saturating_mul(size_of::<Value>()),
+            Column::Late(late) => late.bytes(),
             Column::Texts(texts) => {
                 let coded = texts.coded.as_ref().map_or(0, |c| {
                     let entries = c.entries.text.len().saturating_add(c.entries.ends.len().saturating_mul(size_of::<usize>()));
                     c.codes.len().saturating_mul(size_of::<u32>()).saturating_add(entries)
                 });
                 let ends = texts.ends.len().saturating_mul(size_of::<usize>());
-                texts.text.len().saturating_add(ends).saturating_add(nulls(&texts.nulls)).saturating_add(coded)
+                texts.text.len().saturating_add(ends).saturating_add(nulls(texts.nulls.as_ref())).saturating_add(coded)
             }
         }
     }
@@ -67,7 +73,13 @@ impl Column {
     fn scale(&self) -> Option<u32> {
         match self {
             Column::Ints(ints) => Some(ints.scale),
-            Column::Values(_) | Column::Floats(_) | Column::Texts(_) | Column::Nulls(_) => None,
+            Column::Values(_)
+            | Column::Floats(_)
+            | Column::Texts(_)
+            | Column::Datetimes(_)
+            | Column::Bools(_)
+            | Column::Nulls(_)
+            | Column::Late(_) => None,
         }
     }
 
@@ -75,7 +87,13 @@ impl Column {
     fn unit_at(&self, r: usize) -> Option<i64> {
         match self {
             Column::Ints(ints) => Some(ints.units.get(r).copied().unwrap_or(0)),
-            Column::Values(_) | Column::Floats(_) | Column::Texts(_) | Column::Nulls(_) => None,
+            Column::Values(_)
+            | Column::Floats(_)
+            | Column::Texts(_)
+            | Column::Datetimes(_)
+            | Column::Bools(_)
+            | Column::Nulls(_)
+            | Column::Late(_) => None,
         }
     }
 
@@ -86,7 +104,10 @@ impl Column {
             Column::Ints(ints) => r >= ints.units.len() || ints.is_null(r),
             Column::Floats(floats) => floats.get(r).is_none(),
             Column::Texts(texts) => texts.get(r).is_none(),
+            Column::Datetimes(d) => d.get(r).is_none(),
+            Column::Bools(b) => b.get(r).is_none(),
             Column::Nulls(_) => true,
+            Column::Late(late) => late.made().is_none_or(|made| made.null_at(r)),
         }
     }
 
@@ -101,7 +122,10 @@ impl Column {
                 .map_or(Value::Null, |&u| Value::Exact(Decimal::new(i128::from(u), ints.scale))),
             Column::Floats(floats) => floats.get(r).map_or(Value::Null, Value::Approx),
             Column::Texts(texts) => texts.get(r).map_or(Value::Null, |s| Value::Char(s.to_owned())),
+            Column::Datetimes(d) => d.get(r).map_or(Value::Null, Value::Datetime),
+            Column::Bools(b) => b.get(r).map_or(Value::Null, Value::Bool),
             Column::Nulls(_) => Value::Null,
+            Column::Late(late) => late.values().get(r).cloned().unwrap_or(Value::Null),
         }
     }
 }
@@ -111,10 +135,7 @@ impl Column {
 /// `Batch::joined` says.
 fn joined_column(parts: &[(Option<&Column>, &[usize])], rows: usize) -> Column {
     let each = || parts.iter().flat_map(|&(column, places)| places.iter().map(move |&r| (column, r)));
-    let nulls = || {
-        let made: Vec<bool> = each().map(|(c, r)| c.is_none_or(|c| c.null_at(r))).collect();
-        made.contains(&true).then_some(made)
-    };
+    let nulls = || super::mask::mask_of(&each().map(|(c, r)| c.is_none_or(|c| c.null_at(r))).collect::<Vec<bool>>());
     let scales: Vec<Option<u32>> = parts.iter().map(|(c, _)| c.and_then(Column::scale)).collect();
     if let Some(&Some(scale)) = scales.first()
         && scales.iter().all(|&s| s == Some(scale))

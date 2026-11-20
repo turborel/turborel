@@ -59,9 +59,12 @@ impl State {
             | AlterColumnAction::DropDefault
             | AlterColumnAction::AddScope(_)
             | AlterColumnAction::DropScope(_)
-            | AlterColumnAction::Rename(_) => {
+            | AlterColumnAction::Rename(_)
+            | AlterColumnAction::SetNotNull
+            | AlterColumnAction::DropNotNull
+            | AlterColumnAction::SetDataType(_) => {
                 return Err(crate::db::api(
-                    "[DESIGN] a default is altered by db/defaults.rs, a scope by db/alter/scope.rs, a name by db/alter/rename.rs",
+                    "[DESIGN] a default is altered by db/defaults.rs, a scope by db/alter/scope.rs, a name by db/alter/rename.rs, a NOT NULL or a type in db/alter",
                 ));
             }
         }

@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use super::cost::HASH_ROW;
-use super::estimate::{self, Known};
+use super::estimate::Known;
 use super::join::Flip;
 use super::shown::Shown;
 use super::{JoinComparison, JoinProbe, PhysicalPlanner, Plan, Preserved};
@@ -37,8 +37,7 @@ mod routed;
 mod spatial;
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
 use crate::index::IndexMethod;
-use crate::logical::{Cond, Expr, LogicalPlan, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
-use crate::storage::cost_of;
+use crate::logical::{Cond, Expr, LogicalPlan, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr};
 use crate::value::datetime::{Datetime, Moment};
 use crate::value::interval::Interval;
 use crate::value::{Binary, CompOp, DataType, Decimal, Value};
@@ -180,8 +179,8 @@ impl PhysicalPlanner<'_> {
     ) -> Option<(Probing, f64)> {
         let of_kind = |l: usize, t: &DataType| self.column_type(left, l).is_some_and(|lt| alike(&lt, t));
         let probing = self.probing(right, keys, &of_kind)?;
-        let rows = self.rows_of(left)?;
-        let hashed = HASH_ROW * (rows + self.rows_of(right).unwrap_or(0.0_f64));
+        let rows = self.rows_of(left);
+        let hashed = HASH_ROW * (rows + self.rows_of(right));
         (rows * probing.cost < access_cost(read)? + hashed).then_some((probing, rows))
     }
 
@@ -204,9 +203,9 @@ impl PhysicalPlanner<'_> {
         } else {
             (Arc::clone(self.db.storage_of(table).ok()?), self.own_candidates(table))
         };
-        let (model, stats) = (self.db.cost(), self.db.statistics(table));
+        let (model, stats) = (self.weights(), self.statistics(table));
         let known = Known { stats: stats.as_deref(), cost: &model };
-        let (rows, columns) = (cost_of(self.db.row_count(table)?), expand::kept(&desc.columns, filter));
+        let (rows, columns) = (self.table_rows(table)?, expand::kept(&desc.columns, filter));
         let mut best: Option<Probing> = None;
         for Candidate { ix, found, routing } in &candidates {
             let Some(kind) = self.db.methods.get(&ix.method) else { continue };
@@ -219,7 +218,8 @@ impl PhysicalPlanner<'_> {
             };
             let probed: Vec<usize> = at.iter().filter_map(|&k| ix.columns.get(k).copied()).collect(); // `indexed/fan_out.rs`
             let fan_out = || self.edge_fan_out(table, &probed).unwrap_or_else(|| rows * by_columns());
-            let each = found.distinct_keys().filter(|_| whole && routing.is_none()).map_or_else(fan_out, |d| rows / d.max(1.0_f64));
+            let keys_counted = (whole && routing.is_none()).then(|| self.index_keys(&ix.name, &**found)).flatten();
+            let each = keys_counted.map_or_else(fan_out, |d| rows / d.max(1.0_f64));
             let pages = Candidate::pages(&**found, (&types, used.len()), reverse, rows);
             let missed = found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();
             // Of each partition's index, each partition a probe is routed to probed.
@@ -255,87 +255,17 @@ impl PhysicalPlanner<'_> {
             .collect()
     }
 
-    /// The rows `plan` is estimated to give, if it reads tables, filters,
-    /// products and projections of them, or a list of rows. A filter of a
-    /// product, as a join is, keeps of an equality of two columns one pair
-    /// in as many as the more distinct of them has values (`distinct_of`),
-    /// as join ordering takes it (`physical/order.rs`).
-    pub(super) fn rows_of(&self, plan: &LogicalPlan) -> Option<f64> {
-        match plan {
-            LogicalPlan::Scan { table, .. } => self.db.row_count(table).map(cost_of),
-            LogicalPlan::Filter { cond, input } => {
-                let stats = if let LogicalPlan::Scan { table, .. } = &**input { self.db.statistics(table) } else { None };
-                let model = self.db.cost();
-                let known = Known { stats: stats.as_deref(), cost: &model };
-                let mut conjuncts = Vec::new();
-                split_and(cond.clone(), &mut conjuncts);
-                let equal = |c: &Cond| if stats.is_some() { None } else { self.equality_share(input, c) };
-                let share = conjuncts.iter().map(|c| equal(c).unwrap_or_else(|| estimate::selectivity(c, known))).product::<f64>();
-                Some(self.rows_of(input)? * share)
-            }
-            LogicalPlan::Product { left, right } => Some(self.rows_of(left)? * self.rows_of(right)?),
-            LogicalPlan::Project { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } => self.rows_of(input),
-            // Its input's, at most its FETCH FIRST count's.
-            LogicalPlan::Limit { limit, input } => {
-                let rows = self.rows_of(input)?;
-                Some(limit.most().map_or(rows, |most| rows.min(cost_of(most))))
-            }
-            LogicalPlan::Values { rows, .. } => Some(cost_of(rows.len())),
-            // A row for each of its input's.
-            LogicalPlan::Window(w) => self.rows_of(&w.input),
-            // At most a row for each of its input's, or one for each match.
-            LogicalPlan::Recognize(r) => self.rows_of(&r.input),
-            LogicalPlan::OuterJoin { .. }
-            | LogicalPlan::Polymorphic(..)
-            | LogicalPlan::Aggregate { .. }
-            | LogicalPlan::SetOp { .. }
-            | LogicalPlan::System { .. }
-            | LogicalPlan::Recursive { .. }
-            | LogicalPlan::Unnest(..)
-            | LogicalPlan::WorkTable { .. }
-            | LogicalPlan::Transition { .. } => None,
-        }
+    /// The rows `plan` is estimated to give (`physical/cardinality.rs`),
+    /// known of every plan.
+    pub(super) fn rows_of(&self, plan: &LogicalPlan) -> f64 {
+        self.card(plan).rows
     }
 
-    /// The share of `plan`'s rows the equality of two of its columns `c`
-    /// keeps, if it is one and their distinct values are known.
-    fn equality_share(&self, plan: &LogicalPlan, c: &Cond) -> Option<f64> {
-        let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c else { return None };
-        let distinct = self.distinct_of(plan, *a)?.max(self.distinct_of(plan, *b)?).max(1.0_f64);
-        Some(1.0_f64 / distinct)
-    }
-
-    /// The distinct values of `plan`'s column `column`, if it is a table's
-    /// column: as its table's statistics count them, else its table's rows,
-    /// as if a key; a filter's as its input's, so no estimate is made
-    /// again of each level of a chain of joins.
-    pub(super) fn distinct_of(&self, plan: &LogicalPlan, column: usize) -> Option<f64> {
-        match plan {
-            LogicalPlan::Scan { table, .. } => self.db.statistics(table).and_then(|s| s.distinct(column)).or_else(|| self.rows_of(plan)),
-            LogicalPlan::Filter { input, .. }
-            | LogicalPlan::Distinct { input }
-            | LogicalPlan::Sort { input, .. }
-            | LogicalPlan::Limit { input, .. } => self.distinct_of(input, column),
-            LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
-                Some(of_right) => self.distinct_of(right, of_right),
-                None => self.distinct_of(left, column),
-            },
-            LogicalPlan::Project { exprs, input } => {
-                let Some(Expr::Column(c)) = exprs.get(column) else { return None };
-                self.distinct_of(input, *c)
-            }
-            LogicalPlan::Aggregate { .. }
-            | LogicalPlan::SetOp { .. }
-            | LogicalPlan::Values { .. }
-            | LogicalPlan::System { .. }
-            | LogicalPlan::Recursive { .. }
-            | LogicalPlan::Unnest(..)
-            | LogicalPlan::Window(..)
-            | LogicalPlan::Recognize(..)
-            | LogicalPlan::Polymorphic(..)
-            | LogicalPlan::WorkTable { .. }
-            | LogicalPlan::Transition { .. } => None,
-        }
+    /// The distinct values of `plan`'s column `column`, through the nodes
+    /// over its table (`cardinality/lineage.rs`): as its table's statistics
+    /// count them, else its table's rows, as if a key.
+    pub(super) fn distinct_of(&self, plan: &LogicalPlan, column: usize) -> f64 {
+        self.estimating(|e| e.distinct(plan, column))
     }
 
     /// The type of `plan`'s column `column`, if it is a table's column.
@@ -410,7 +340,7 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
     match plan {
         Plan::SeqScan { cost, .. } | Plan::IndexScan { cost, .. } => Some(*cost),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => access_cost(input),
-        Plan::Append { left, right } => Some(access_cost(left)? + access_cost(right)?),
+        Plan::Append { left, right, .. } => Some(access_cost(left)? + access_cost(right)?),
         Plan::MergeAppend { inputs, .. } => inputs.iter().map(access_cost).sum(),
         Plan::Product { .. }
         | Plan::Nearest(_)
@@ -445,6 +375,11 @@ struct Read<'a> {
     through: Option<(Vec<usize>, Vec<String>)>,
     needed: &'a [usize],
     located: bool,
+}
+
+/// Whether `plan` reads a table, as `read_table` says.
+pub(super) fn reads_table(plan: &LogicalPlan) -> bool {
+    read_table(plan).is_some()
 }
 
 /// How `plan` reads a table, if it is a table's scan, a filter of one that
@@ -556,6 +491,7 @@ fn sample(t: &DataType) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::physical::estimate;
     use crate::value::Spelled;
 
     /// Verifies: [DESIGN] RULES.md D35: character strings of either length

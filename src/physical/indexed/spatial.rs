@@ -91,7 +91,7 @@ impl PhysicalPlanner<'_> {
         let proved = same && binding.windowed && preserve == Preserve::Inner;
         let supplied = self.supplied(&binding.beside, srid)?;
         let beside = (!supplied.is_empty()).then(|| Box::new(Fields(supplied)));
-        let outer_rows = self.rows_of(outer)?;
+        let outer_rows = self.rows_of(outer);
         let rows = cost_of(self.db.storage_of(read.table).ok()?.row_count());
         let mut best: Option<Choice> = None;
         // [EXTENSION] a global index is probed by equalities alone (RULES.md D157).
@@ -100,7 +100,7 @@ impl PhysicalPlanner<'_> {
             let probe = JoinProbe::Predicate { predicate, outer: binding.outer, beside: beside.clone() };
             // Until geometry statistics exist, use the two-dimensional
             // range estimate. It affects cost only, never the residual.
-            let range = self.db.cost().range_selectivity;
+            let range = self.weights().range_selectivity;
             let mut choice = self.join_cost(&read, ix, probe, (outer_rows, range * range))?;
             (choice.spatial, choice.preserve) = (proved, preserve);
             if best.as_ref().is_none_or(|b| choice.total < b.total) {

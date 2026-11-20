@@ -5,31 +5,35 @@
 //! constant; a column IS NULL or IS NOT NULL; a column IN, or NOT IN, a list
 //! of constants; a column LIKE a constant pattern, split once, or LIKE a
 //! column's pattern, or ESCAPE a column's character, each pattern split once
-//! for the statement (`judge/likes.rs`); two expressions of columns and exact
-//! constants compared, each evaluated as integers (`vector/ints.rs`), as `A >
-//! B` and `-B > C`, and, of a filter that can raise an error, `B * 2 > C`. Of
-//! a filter that cannot raise, such a comparison whose integers are not made,
-//! as of a column of values, is judged a row at a time of the rows kept. A
-//! filter that can raise an error is judged over vectors only if all of it can
-//! be, each conjunct of every row given, so it is judged of every row the
-//! filter row by row would judge it of; one of whose expressions no integers
-//! are made, as of a column of values or a result past 18 digits, has the
-//! batch judged whole a row at a time, so every row it would raise for still
-//! does; and a filter of which some cannot be is judged so of every batch. A
+//! for the statement (`judge/likes.rs`); and any other conjunct of columns
+//! the batch holds, no subquery in it, compiled once and evaluated a vector
+//! at a time into truth values (`expr.rs`, RULES.md D362), as `A > B`, `-B >
+//! C`, `B * 2 > C` and `CASE ... END = 1`. Of a filter that cannot raise,
+//! such a conjunct whose evaluation gives none of a batch is judged a row at a
+//! time of the rows kept. A filter that can raise an error is judged over
+//! vectors only if all of it can be, each conjunct of every row given, so it
+//! is judged of every row the filter row by row would judge it of; one of
+//! whose conjuncts gives none of a batch, as one that would raise does, has
+//! the batch judged whole a row at a time, so every row it would raise for
+//! still does; and a filter of which some cannot be is judged so of every
+//! batch. A
 //! batch whose judgment raises an error is judged again a row at a time, in
 //! order, to give the rows before its failing one first, as a filter read row
 //! by row does, for an EXISTS that stops at one of them (RULES.md D15).
 
+use super::expr::Program;
 use super::project::{Place, place_of};
-use super::vector::ints::evaluable;
 use crate::error::{Result, SqlError};
 use crate::exec::eval::compared;
 use crate::exec::{Runner, Subqueries, eval_cond};
+use crate::kernels::Kernels;
 use likes::Operand;
 use std::sync::Arc;
 
 use crate::logical::{Cond, Expr, InSet, Truth, compared_with_constant, in_list};
-use crate::storage::{Batch, Column};
+use crate::storage::mask::index;
+use crate::storage::sel::rows_of;
+use crate::storage::{Batch, Column, Mask, Sel};
 use crate::value::{CompOp, LikePattern, Value, constant_pattern};
 
 /// A conjunct judged over a batch's vectors, of the column at a place of
@@ -49,43 +53,52 @@ pub(super) enum Judged {
     /// [X3.135-1986 §5.14] the column LIKE a pattern not a constant, a
     /// column's or a constant, ESCAPE one if given (`judge/likes.rs`).
     LikeOf(usize, Operand, Option<Operand>),
-    /// [X3.135-1986 §5.11] two expressions compared, each of a row of the
-    /// values at its places, evaluated as integers; and the conjunct, judged
-    /// a row at a time of a batch whose integers are not made.
-    Compared(Box<Side>, CompOp, Box<Side>, Box<Cond>),
+    /// \[DESIGN\] (RULES.md D362) any other conjunct, compiled for
+    /// vectors, its truth values evaluated a vector at a time; and the
+    /// conjunct, judged a row at a time of a batch of which that gives
+    /// none.
+    Truth(Arc<Program>, Box<Cond>),
+    /// [X3.135-1986 §5.20 GR4] an OR of conjuncts judged over vectors, each
+    /// judged of the same rows, a row kept if one keeps it (RULES.md D354).
+    Any(Vec<Judged>),
 }
 
-/// An expression a comparison judged over vectors compares, of a row of
-/// the values at its places.
-pub(super) type Side = (Expr, Vec<usize>);
-
 impl Judged {
-    /// The rows of `over`, rows of `batch`, it is true of: of integers, as
-    /// integers (`judge/ints.rs`); none if it compares expressions whose
-    /// integers are not made, or is a LIKE of a pattern not a constant that
-    /// raises an error of one; such a LIKE matched by `subqueries`.
-    fn kept(&self, batch: &Batch, over: &[usize], subqueries: &dyn Subqueries) -> Option<Vec<usize>> {
+    /// The rows of `over`, rows of `batch`, or of all, it is true of,
+    /// ascending: of integers, approximate numbers, datetimes, truth values
+    /// and dictionary texts by a kernel of `kernels` (`judge/ints.rs`,
+    /// `judge/kinds.rs`); of another conjunct by its program (`expr.rs`);
+    /// none if that gives none, or it is a LIKE of a pattern not a constant
+    /// that raises an error of one; such a LIKE matched by `subqueries`.
+    fn kept(&self, batch: &Batch, over: Option<&[u32]>, subqueries: &dyn Subqueries, kernels: &dyn Kernels) -> Option<Vec<u32>> {
         let at = match self {
             Judged::Compare(at, ..) | Judged::IsNull(at, _) | Judged::In(at, ..) | Judged::Like(at, _) => *at,
-            Judged::Compared(a, op, b, _) => return ints::compared((a, *op, b), batch, over),
-            Judged::LikeOf(at, pattern, escape) => return likes::kept((*at, pattern, escape.as_ref()), batch, over, subqueries),
+            Judged::Any(disjuncts) => return kinds::any(disjuncts, batch, over, (subqueries, kernels)),
+            Judged::Truth(program, _) => return program.kept(batch, over, (subqueries, kernels)),
+            Judged::LikeOf(at, pattern, escape) => {
+                return likes::kept((*at, pattern, escape.as_ref()), batch, &places(over, batch.rows), subqueries).map(rows_of);
+            }
         };
-        let typed = match batch.columns.get(at) {
-            Some(Column::Ints(column)) => ints::kept(self, column, over),
-            Some(Column::Floats(column)) => floats::kept(self, column, over),
-            Some(Column::Texts(column)) => texts::kept(self, column, over),
-            Some(Column::Values(_) | Column::Nulls(_)) | None => None,
+        let column = batch.columns.get(at);
+        let typed = match column {
+            Some(Column::Ints(column)) => ints::kept(self, column, over, kernels),
+            Some(Column::Floats(column)) => kinds::floats(self, column, over, kernels),
+            Some(Column::Datetimes(column)) => kinds::datetimes(self, column, over, kernels),
+            Some(Column::Bools(column)) => kinds::bools(self, column, over, kernels),
+            Some(Column::Texts(column)) => texts::kept(self, column, over, kernels),
+            Some(Column::Values(_) | Column::Nulls(_) | Column::Late(_)) | None => None,
         };
         if typed.is_some() {
             return typed;
         }
         let vector = batch.values(at);
+        let over = places(over, batch.rows);
         // A large object is read to be compared, which may fail: judged a
         // row at a time (`exec/eval.rs`).
         if over.iter().any(|&r| matches!(vector.get(r), Some(Value::Lob(_)))) {
             return None;
         }
-        Some(over.iter().copied().filter(|&r| vector.get(r).is_some_and(|v| self.keeps(v))).collect())
+        Some(rows_of(over.into_iter().filter(|&r| vector.get(r).is_some_and(|v| self.keeps(v)))))
     }
 
     /// Whether it is true of `v`.
@@ -105,21 +118,28 @@ impl Judged {
                     false
                 }
             }
-            // Of two expressions, not of one value.
-            Judged::Compared(..) | Judged::LikeOf(..) => false,
+            // Of two expressions, or of several, not of one value.
+            Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) => false,
         }
     }
+}
+
+/// The places of the rows `over` keeps of a batch of `all` rows, or of
+/// all.
+fn places(over: Option<&[u32]>, all: usize) -> Vec<usize> {
+    over.map_or_else(|| (0..all).collect(), |rows| rows.iter().map(|&r| index(r)).collect())
 }
 
 /// How a filter judges a scan's batches: its conjuncts judged over the
 /// vectors; the rest of it judged a row at a time, each row made of the
 /// columns the batches hold, as wide as the last of them.
-pub(super) struct Judging {
+#[derive(Clone)]
+pub(in crate::exec) struct Judging {
     columns: Vec<usize>,
     judged: Vec<Judged>,
     rest: Option<Cond>,
-    /// The filter whole, judged a row at a time of a batch whose integers
-    /// a comparison of expressions cannot make.
+    /// The filter whole, judged a row at a time of a batch of which a
+    /// conjunct over vectors gives none.
     whole: Cond,
     /// Whether it can raise an error.
     raising: bool,
@@ -136,38 +156,67 @@ impl Judging {
 
     /// The rows of `batch` the filter keeps, of those at `rows`, which a
     /// filter before kept, or of all: those its conjuncts judged over
-    /// vectors keep, then of those, those the rest keeps.
-    pub(super) fn kept_of(&self, batch: &Batch, rows: Option<&[usize]>, runner: &Runner) -> Result<Vec<usize>> {
-        let all = || rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
-        // The rows given kept apart only by a filter that can raise, which
-        // judges each conjunct of every one; made again where needed.
-        let given: Option<Vec<usize>> = self.raising.then(all);
-        let mut kept = all();
+    /// vectors keep, then of those, those the rest keeps. A filter that
+    /// cannot raise passes each conjunct the rows the one before kept, a
+    /// selection chained (RULES.md D354); one that can judges each of every
+    /// row given, as row by row it would be (RULES.md D15), the rows each
+    /// keeps a mask, the masks joined.
+    pub(super) fn kept_of(&self, batch: &Batch, rows: Option<&[u32]>, runner: &Runner) -> Result<Sel> {
+        if self.raising {
+            return self.kept_raising(batch, rows, runner);
+        }
+        let mut kept: Option<Vec<u32>> = None;
         for judged in &self.judged {
-            let over = given.as_ref().unwrap_or(&kept);
-            let Some(true_of) = judged.kept(batch, over, runner) else {
-                // Integers not made: of a filter that cannot raise, the
-                // conjunct judged a row at a time of the rows kept; of one
-                // that can, the batch judged whole so.
-                if let (false, Judged::Compared(.., conjunct)) = (self.raising, judged) {
-                    kept = self.by_rows(conjunct, batch, &kept, runner)?;
-                    continue;
-                }
-                return self.by_rows(&self.whole, batch, &given.unwrap_or_else(all), runner);
+            let over = kept.as_deref().or(rows);
+            kept = Some(match judged.kept(batch, over, runner, runner.kernels()) {
+                Some(true_of) => true_of,
+                // None given over vectors: the conjunct judged a row at a
+                // time of the rows kept; or the batch judged whole so.
+                None => match judged {
+                    Judged::Truth(_, conjunct) => self.by_rows(conjunct, batch, &places(over, batch.rows), runner)?,
+                    Judged::Compare(..) | Judged::IsNull(..) | Judged::In(..) | Judged::Like(..) | Judged::LikeOf(..) | Judged::Any(_) => {
+                        return self.by_rows(&self.whole, batch, &places(rows, batch.rows), runner).map(Sel::of);
+                    }
+                },
+            });
+        }
+        let kept = kept.map_or_else(|| places(rows, batch.rows), |k| k.iter().map(|&r| index(r)).collect());
+        match &self.rest {
+            Some(rest) => self.by_rows(rest, batch, &kept, runner).map(Sel::of),
+            None => Ok(kept.into_iter().collect()),
+        }
+    }
+
+    /// `kept_of` of a filter that can raise an error: each conjunct judged
+    /// of every row given, the rows it keeps a mask, the masks joined.
+    fn kept_raising(&self, batch: &Batch, rows: Option<&[u32]>, runner: &Runner) -> Result<Sel> {
+        let mut all: Option<Mask> = None;
+        for judged in &self.judged {
+            let Some(true_of) = judged.kept(batch, rows, runner, runner.kernels()) else {
+                return self.by_rows(&self.whole, batch, &places(rows, batch.rows), runner).map(Sel::of);
             };
-            kept = if self.raising { both(&kept, &true_of) } else { true_of };
+            let mut mask = Mask::none(batch.rows);
+            for &r in &true_of {
+                mask.set(index(r));
+            }
+            all = Some(all.map_or(mask.clone(), |held| held.and(&mask)));
+        }
+        let mut out = Vec::new();
+        match &all {
+            Some(mask) => runner.kernels().select_mask(mask.words(), (None, rows), &mut out),
+            None => out.extend(rows.map_or_else(|| rows_of(0..batch.rows), <[u32]>::to_vec)),
         }
         match &self.rest {
-            Some(rest) => self.by_rows(rest, batch, &kept, runner),
-            None => Ok(kept),
+            Some(rest) => self.by_rows(rest, batch, &places(Some(&out), batch.rows), runner).map(Sel::of),
+            None => Ok(Sel::of(out)),
         }
     }
 
     /// The rows of `batch` at `rows` that `cond` is true of, each made a
     /// row and judged as one.
-    fn by_rows(&self, cond: &Cond, batch: &Batch, rows: &[usize], runner: &Runner) -> Result<Vec<usize>> {
+    fn by_rows(&self, cond: &Cond, batch: &Batch, rows: &[usize], runner: &Runner) -> Result<Vec<u32>> {
         let (kept, failed) = self.in_order(cond, batch, rows, runner);
-        failed.map_or(Ok(kept), Err)
+        failed.map_or(Ok(rows_of(kept)), Err)
     }
 
     /// The rows of `batch` at `rows`, or of all, the whole filter keeps,
@@ -177,9 +226,9 @@ impl Judging {
     /// before its failing one before the failure, so that a reader that
     /// stops at one of them, as EXISTS does (RULES.md D15), sees the error
     /// as it would row by row: not at all.
-    pub(super) fn in_order_of(&self, batch: &Batch, rows: Option<&[usize]>, runner: &Runner) -> (Vec<usize>, Option<SqlError>) {
-        let given: Vec<usize> = rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
-        self.in_order(&self.whole, batch, &given, runner)
+    pub(super) fn in_order_of(&self, batch: &Batch, rows: Option<&[u32]>, runner: &Runner) -> (Sel, Option<SqlError>) {
+        let (kept, failed) = self.in_order(&self.whole, batch, &places(rows, batch.rows), runner);
+        (kept.into_iter().collect(), failed)
     }
 
     /// The rows of `batch` at `rows` that `cond` is true of, judged in
@@ -191,9 +240,10 @@ impl Judging {
         let mut row = vec![Value::Null; self.width];
         let mut out = Vec::with_capacity(rows.len());
         for &r in rows {
-            for (vector, &c) in batch.columns.iter().zip(&self.columns) {
-                if let (Some(slot), Some(v)) = (row.get_mut(c), vector.values().get(r)) {
-                    slot.clone_from(v);
+            // Each cell of the row alone made a value (RULES.md D367).
+            for (at, &c) in self.columns.iter().enumerate().take(batch.columns.len()) {
+                if let Some(slot) = row.get_mut(c) {
+                    *slot = batch.cell(at, r).to_value();
                 }
             }
             match eval_cond(cond, &row, runner) {
@@ -204,11 +254,6 @@ impl Judging {
         }
         (out, None)
     }
-}
-
-/// The rows of sorted `kept` also in sorted `true_of`.
-fn both(kept: &[usize], true_of: &[usize]) -> Vec<usize> {
-    kept.iter().copied().filter(|r| true_of.binary_search(r).is_ok()).collect()
 }
 
 /// The conjuncts of `cond` judged over a batch of `columns`, and the rest,
@@ -238,9 +283,13 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
             return;
         }
         Cond::IsNull(Expr::Column(c), not) => place(*c).map(|at| Judged::IsNull(at, *not)),
-        Cond::Or(..) | Cond::In(..) => listed(cond).and_then(|(c, set)| Some(Judged::In(place(c)?, set, false))),
-        Cond::Not(inner) => listed(inner).and_then(|(c, set)| Some(Judged::In(place(c)?, set, true))),
-        Cond::Like(Expr::Column(c), pattern, escape) => liked((*c, pattern, escape.as_ref()), columns),
+        Cond::Or(..) => listed(cond)
+            .and_then(|(c, set)| Some(Judged::In(place(c)?, set, false)))
+            .or_else(|| disjoined(cond, columns))
+            .or_else(|| vectored(cond, columns)),
+        Cond::In(..) => listed(cond).and_then(|(c, set)| Some(Judged::In(place(c)?, set, false))).or_else(|| vectored(cond, columns)),
+        Cond::Not(inner) => listed(inner).and_then(|(c, set)| Some(Judged::In(place(c)?, set, true))).or_else(|| vectored(cond, columns)),
+        Cond::Like(Expr::Column(c), pattern, escape) => liked((*c, pattern, escape.as_ref()), columns).or_else(|| vectored(cond, columns)),
         Cond::Compare(..)
         | Cond::Distinct(..)
         | Cond::Const(_)
@@ -253,12 +302,37 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
         | Cond::Match { .. }
         | Cond::Value(_) => compared_with_constant(cond)
             .and_then(|(c, op, v)| Some(Judged::Compare(place(c)?, op, v.clone())))
-            .or_else(|| compared_of_integers(cond, columns)),
+            .or_else(|| vectored(cond, columns)),
     };
     match found {
         Some(j) => judged.push(j),
         None => rest.push(cond.clone()),
     }
+}
+
+/// \[DESIGN\] (RULES.md D354) The OR `cond` judged over vectors, if each of
+/// its disjuncts is one conjunct judged so: its disjuncts gathered on a
+/// stack of their own, as an OR is as long as its statement's (RULES.md
+/// R-CF-6).
+fn disjoined(cond: &Cond, columns: &[usize]) -> Option<Judged> {
+    let (mut stack, mut disjuncts) = (vec![cond], Vec::new());
+    while let Some(at) = stack.pop() {
+        if let Cond::Or(a, b) = at {
+            stack.push(b);
+            stack.push(a);
+            continue;
+        }
+        let (mut judged, mut rest) = (Vec::new(), Vec::new());
+        gather(at, columns, (&mut judged, &mut rest));
+        let ([one], true) = (judged.as_mut_slice(), rest.is_empty()) else { return None };
+        // One of a program: the OR whole is one program, its disjuncts
+        // its nodes.
+        if matches!(one, Judged::Truth(..)) {
+            return None;
+        }
+        disjuncts.push(std::mem::replace(one, Judged::Any(Vec::new())));
+    }
+    Some(Judged::Any(disjuncts))
 }
 
 /// Of a LIKE of column `c`, `pattern`, `escape`, how it is judged over a
@@ -279,7 +353,7 @@ fn liked((c, pattern, escape): (usize, &Expr, Option<&Expr>), columns: &[usize])
     let operand = |e: &Expr| match place_of(e, columns)? {
         Place::Column(at) => Some(Operand::At(at)),
         Place::Const(v) => Some(Operand::Const(v)),
-        Place::Expr(..) => None,
+        Place::Expr(_) => None,
     };
     let escape = match escape {
         Some(e) => Some(operand(e)?),
@@ -303,26 +377,19 @@ fn wanted(not: bool) -> Truth {
     if not { Truth::False } else { Truth::True }
 }
 
-/// `cond`, if it compares two expressions of columns of `columns` and exact
-/// constants that may be evaluated as integers (`vector/ints.rs`).
-fn compared_of_integers(cond: &Cond, columns: &[usize]) -> Option<Judged> {
-    let Cond::Compare(a, op, b) = cond else { return None };
-    let side = |e: &Expr| {
-        let made = match place_of(e, columns)? {
-            Place::Column(at) => (Expr::Column(0), vec![at]),
-            Place::Const(v) => (Expr::Const(v), Vec::new()),
-            Place::Expr(own, inputs) => (own, inputs),
-        };
-        evaluable(&made.0).then(|| Box::new(made))
-    };
-    Some(Judged::Compared(side(a)?, *op, side(b)?, Box::new(cond.clone())))
+/// \[DESIGN\] (RULES.md D362) `cond` compiled for vectors, if it reads
+/// only columns of `columns`, no subquery nor outer reference in it, and
+/// its program's root is evaluated over vectors.
+fn vectored(cond: &Cond, columns: &[usize]) -> Option<Judged> {
+    let Place::Expr(program) = place_of(&Expr::Truth(Box::new(cond.clone())), columns)? else { return None };
+    program.vectored().then(|| Judged::Truth(program, Box::new(cond.clone())))
 }
 
 // Unit tests: which conjuncts of a filter are judged over vectors, and
 // what each keeps (RULES.md R-TEST-1).
 mod calls;
-mod floats;
 mod ints;
+mod kinds;
 mod likes;
 mod texts;
 

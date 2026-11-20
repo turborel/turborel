@@ -20,8 +20,9 @@
 
 use std::cmp::Ordering;
 
-use super::ScalarFunction;
+use super::{Arg, ScalarFunction, over_vectors};
 use crate::error::{Code, Result, SqlState, fail, fail_with};
+use crate::storage::Column;
 use crate::value::{DOUBLE_PRECISION, DataType, DecFloat, Decimal, MAX_DECFLOAT_PRECISION, Spelled, Value, compare, pow10};
 
 mod decimal;
@@ -190,6 +191,17 @@ impl ScalarFunction for Numeric {
                 | Numeric::Log10,
                 _,
             ) => Ok(if decimal { DECFLOAT } else { DOUBLE }),
+        }
+    }
+
+    /// \[DESIGN\] (RULES.md D363) ABS of a vector of integers or of
+    /// approximate numbers, each as `call` gives it.
+    fn eval_batch(&self, args: &[Arg<'_>], _rows: usize) -> Option<Result<Column>> {
+        let (Numeric::Abs, [Arg::Column(column)]) = (self, args) else { return None };
+        match column {
+            Column::Ints(ints) => over_vectors::absolute_ints(ints).map(|made| Ok(Column::Ints(made))),
+            Column::Floats(floats) => over_vectors::absolute_floats(floats).map(|made| Ok(Column::Floats(made))),
+            Column::Values(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_) | Column::Late(_) => None,
         }
     }
 

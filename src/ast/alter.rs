@@ -99,4 +99,14 @@ pub enum AlterAction {
     },
     /// \[EXTENSION\] DETACH PARTITION `<table name>` (RULES.md D153).
     DetachPartition(TableName),
+    /// \[EXTENSION\] RENAME TO `<table name>` (RULES.md D402,
+    /// `db/alter/renamed.rs`).
+    RenameTable {
+        /// The table's new name.
+        to: TableName,
+        /// \[DESIGN\] The generation of the storage it is given under the
+        /// new name, as the log keeps it, so a replay gives the same; none
+        /// as a statement writes it.
+        generation: Option<u32>,
+    },
 }
