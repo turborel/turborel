@@ -4,6 +4,8 @@
 
 use super::*;
 
+mod damage;
+
 fn leaf(high: Option<&[u8]>, right: Option<PageId>, entries: &[(&[u8], &[u8])]) -> Vec<u8> {
     build(&Shape { level: 0, high, right, first: PageId(0) }, entries).unwrap()
 }

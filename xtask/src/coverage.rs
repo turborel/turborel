@@ -9,7 +9,8 @@
 //! `llvm-cov` as the source directories, so the location of the checkout
 //! does not matter; the test support crate is not the product, and is not
 //! measured. The programs, `turboreld` and `turborel`, run by their tests,
-//! write profiles too, as the test processes do.
+//! write profiles too, as the test processes do, and so does the example
+//! plug-in the extension tests start, which is given the profile's path.
 //! Two limits of the stable toolchain apply. Doc tests are not run under
 //! coverage, because collecting their profiles needs a nightly rustdoc flag.
 //! Unit-test modules inside `src` count as covered code, because excluding them
@@ -51,6 +52,12 @@ const MEASURED_DIRS: [&str; 10] = [
     files::AES_DIR,
     files::REPLICATION_DIR,
 ];
+/// Builds the example plug-in into the instrumented build directory, which
+/// a test build leaves out. The plug-in tests start it as a program of its
+/// own from that directory, and its runs are measured with the SDK's. The
+/// executable cargo names is reported on with the tests'.
+const PLUGIN_EXAMPLE_ARGS: [&str; 7] =
+    ["build", "--package", "turborel-plugin", "--example", "plugin_example", "--quiet", "--message-format=json"];
 /// Everything coverage writes, relative to the workspace root.
 const OUT_DIR: &str = "target/coverage";
 const BUILD_DIR: &str = "build";
@@ -91,11 +98,13 @@ pub fn run(root: &Path) -> Result<()> {
         (RUSTFLAGS_VAR, INSTRUMENT_FLAGS.into()),
         (PROFILE_FILE_VAR, profiles.join(format!("%p-%m.{PROFILE_EXTENSION}")).into_os_string()),
     ];
+    let example = command::cargo_output(root, &PLUGIN_EXAMPLE_ARGS, &envs)?;
     command::cargo(root, &test_args(&["--quiet"]), &envs)?;
     let json = command::cargo_output(root, &test_args(&["--no-run", "--message-format=json"]), &envs)?;
     let merged = out.join(MERGED_PROFILE);
     tools.merge(root, &profile_files(&profiles)?, &merged)?;
-    let report = tools.report(root, &merged, &executables(&json), &out.join(HTML_DIR))?;
+    let objects = [executables(&json), executables(&example)].concat();
+    let report = tools.report(root, &merged, &objects, &out.join(HTML_DIR))?;
     println!("{report}");
     check_floors(&report)
 }

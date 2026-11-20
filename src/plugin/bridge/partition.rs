@@ -223,3 +223,6 @@ impl PartitionStrategy for PluginStrategy {
         })?)
     }
 }
+
+#[cfg(test)]
+mod tests;
