@@ -17,15 +17,20 @@
 
 mod disjunctions;
 mod distinct_aggregates;
+mod elimination;
 mod folding;
+mod hoisting;
 mod inlining;
+mod limits;
 mod outer;
 pub(crate) mod plugged;
 pub(crate) mod prepared;
 mod raising;
+mod setops;
 mod transitivity;
 pub(crate) mod unnesting;
 mod views;
+mod windows;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -52,13 +57,18 @@ pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 
 pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
+pub use elimination::{ELIMINATE_JOINS, EliminateJoins};
 pub use folding::ConstantFolding;
+pub use hoisting::{HOIST_RAISING_EXPRESSIONS, HoistRaisingExpressions};
+pub use limits::{PUSH_LIMIT_THROUGH_UNION, PushLimitThroughUnion};
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
 pub(crate) use raising::is_guarded;
 pub use raising::{PUSH_RAISING_FILTER_INTO_PRODUCT, PushRaisingFilterIntoProduct};
+pub use setops::{PUSH_FILTER_THROUGH_SET_OPERATION, PushFilterThroughSetOperation};
 pub use transitivity::{PREDICATE_TRANSITIVITY, PredicateTransitivity};
 pub(crate) use views::substitute;
 pub use views::{PUSH_FILTER_THROUGH_DISTINCT, PUSH_FILTER_THROUGH_PROJECT, PushFilterThroughDistinct, PushFilterThroughProject};
+pub use windows::{PUSH_FILTER_THROUGH_WINDOW, PushFilterThroughWindow};
 
 /// The passes `Optimizer::optimize` makes at most, unless the setting
 /// `OPTIMIZER.MAX_PASSES` says otherwise.
@@ -142,9 +152,16 @@ impl Optimizer {
         // Before the conjuncts are pushed apart.
         o.add(Box::new(FactorDisjunctions));
         o.add(Box::new(PredicateTransitivity));
+        // Before the raising conjuncts move, so those it leaves of one
+        // operand alone move too (RULES.md D373).
+        o.add(Box::new(HoistRaisingExpressions));
         o.add(Box::new(PushRaisingFilterIntoProduct));
         o.add(Box::new(PushFilterIntoProduct));
         o.add(Box::new(PushFilterIntoOuterJoin));
+        o.add(Box::new(PushFilterThroughSetOperation));
+        o.add(Box::new(PushFilterThroughWindow));
+        o.add(Box::new(PushLimitThroughUnion));
+        o.add(Box::new(EliminateJoins));
         o.add(Box::new(PushHavingIntoWhere));
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));

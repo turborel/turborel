@@ -73,7 +73,9 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | MEMORY.WORK_BYTES | 268435456 | INTEGER FROM 65536 TO 9223372036854775807 | at once | *session* |
 | OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.DISTINCT_AGGREGATES | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.ELIMINATE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.FACTOR_DISJUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.HOIST_RAISING_EXPRESSIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.INLINE_FUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MAX_PASSES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
 | OPTIMIZER.MERGE_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
@@ -82,7 +84,10 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.PUSH_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_FILTER_THROUGH_DISTINCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_FILTER_THROUGH_PROJECT | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_FILTER_THROUGH_SET_OPERATION | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_FILTER_THROUGH_WINDOW | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_HAVING_INTO_WHERE | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PUSH_LIMIT_THROUGH_UNION | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.REMOVE_REDUNDANT_DISTINCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.SIMPLIFY_CONDITIONS | ON | ONE OF ON, OFF | at once | *session* |
@@ -178,7 +183,9 @@ Each in a sentence:
 - **MEMORY.WORK_BYTES**: The most a sort, hash join, grouping, DISTINCT, EXCEPT, INTERSECT or window holds in memory before it spills: half the free MEMORY.BUDGET_BYTES as it starts, reserved, but 4 MiB unreserved where that is less, and itself below 4 MiB. The lesser of it and 4 MiB bounds a cursor's rows read ahead or kept to scroll, the rows a change chooses and keeps for its checks and referential actions, and a session's temporary tables' pages, the rest spilled.
 - **OPTIMIZER.CONSTANT_FOLDING**: Whether the optimizer's rule constant_folding rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.DISTINCT_AGGREGATES**: Whether the optimizer's rule distinct_aggregates rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.ELIMINATE_JOINS**: Whether the optimizer's rule eliminate_joins rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.FACTOR_DISJUNCTIONS**: Whether the optimizer's rule factor_disjunctions rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.HOIST_RAISING_EXPRESSIONS**: Whether the optimizer's rule hoist_raising_expressions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.INLINE_FUNCTIONS**: Whether the optimizer's rule inline_functions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.MAX_PASSES**: The most passes the optimizer makes over a plan.
 - **OPTIMIZER.MERGE_FILTERS**: Whether the optimizer's rule merge_filters rewrites plans: ON; or OFF, as to compare plans made without it.
@@ -187,7 +194,10 @@ Each in a sentence:
 - **OPTIMIZER.PUSH_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_FILTER_THROUGH_DISTINCT**: Whether the optimizer's rule push_filter_through_distinct rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_FILTER_THROUGH_PROJECT**: Whether the optimizer's rule push_filter_through_project rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_FILTER_THROUGH_SET_OPERATION**: Whether the optimizer's rule push_filter_through_set_operation rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_FILTER_THROUGH_WINDOW**: Whether the optimizer's rule push_filter_through_window rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_HAVING_INTO_WHERE**: Whether the optimizer's rule push_having_into_where rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PUSH_LIMIT_THROUGH_UNION**: Whether the optimizer's rule push_limit_through_union rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_raising_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.REMOVE_REDUNDANT_DISTINCT**: Whether the optimizer's rule remove_redundant_distinct rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.SIMPLIFY_CONDITIONS**: Whether the optimizer's rule simplify_conditions rewrites plans: ON; or OFF, as to compare plans made without it.
