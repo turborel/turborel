@@ -247,7 +247,7 @@ OK
 OK
 OK
  PLAN
------------------------------------------------------------------
+--------------------------------------------------------------
  -- bound:
  Project COUNT(*), MAX(PARTS.NAME)
    Aggregate group by [] computing [COUNT(*), MAX(PARTS.NAME)]
@@ -263,7 +263,7 @@ OK
  Project COUNT(*), MAX(PARTS.NAME)
    Parallel  (degree=4)
      Aggregate group by [] computing [COUNT(*), MAX(PARTS.NAME)]
-       Filter PARTS.ID > 100  (est. rows=333)
+       Filter PARTS.ID > 100  (est. rows=899)
          SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
 (17 rows)
 ```
