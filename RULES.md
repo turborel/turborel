@@ -331,6 +331,7 @@ verification approach DO-178C expects (§8).
 | D336 | A prepared CALL's output dynamic parameters are its columns, sent as a row |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
+| D392 | A character large object a client writes is checked as each Append comes |
 
 ### The project
 
@@ -9263,6 +9264,20 @@ statement completes with 01004 and the cut is never silent. A value
 that fits raises nothing. The cast stays a cast and not a store
 assignment, as the standard says, so 22001 is raised only by the
 assignment of a value longer than its column.
+
+#### D392. A character large object a client writes is checked as each Append comes
+
+A character large object a client makes by its locator (D79) is checked
+as UTF-8 as each Append brings octets, with what is left of a character
+the Append before began, so a character split between two Appends is
+taken (`db/lobs/writing.rs`). An octet that is not UTF-8 is refused
+with 22021 by the Append that sends it, which the client's finish sends
+for what it holds. Once one Append is refused, every later one is, and
+so is the value's use, with that error, so no part of a refused value
+is ever stored. The protocol has no request that ends a value, so a
+value that ends within a character is refused, 22021, as it is used. A
+character large object never holds what is not UTF-8, which every read
+of it relies on (§4.2.1).
 
 ## 2. Project layout
 

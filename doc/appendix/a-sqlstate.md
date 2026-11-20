@@ -110,6 +110,7 @@ its own; class TB is turborel's own.
 | 2201V | Invalid XQuery replacement string: a `$` before no digit, or a `\` before neither `$` nor `\` |
 | 2201W | Invalid row count in fetch first clause: a count of FETCH FIRST below 1, or null, or a percentage of the rows whose count is |
 | 2201X | Invalid row count in result offset clause: an offset below 0, or null |
+| 22021 | Character not in repertoire: a character large object a client writes by its locator whose octets are not UTF-8 |
 | 22022 | Indicator overflow |
 | 22025 | Invalid escape sequence |
 | 22027 | Trim error |

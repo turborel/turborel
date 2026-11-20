@@ -211,7 +211,10 @@ impl<S: Read + Write> LobWriter<'_, S> {
     /// # Errors
     ///
     /// A connection failure; the server's: SQLSTATE 22021 if a character
-    /// one's octets are not UTF-8, 22001 if it is longer than the longest.
+    /// one's octets are not UTF-8, checked across the pieces sent, or a
+    /// piece before was refused; 22001 if it is longer than the longest.
+    /// A character one that ends within a character is refused, 22021,
+    /// where it is used, as the server cannot know a piece is the last.
     pub fn finish(mut self) -> Result<Lob> {
         self.flush_pending()?;
         Ok(Lob::of_locator(self.kind, self.locator, (self.octets, self.chars)))
