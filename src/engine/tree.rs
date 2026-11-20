@@ -48,6 +48,7 @@
 //! checkpoint left it, no split half written, and the log redoes what came
 //! after (`disk/shadow.rs`, RULES.md D25).
 
+mod cuts;
 mod load;
 mod near;
 mod node;

@@ -154,7 +154,8 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }) => Err(broken(&format!("not a table access: {other:?}"))),
+        | Plan::Transition { .. }
+        | Plan::Parallel(..)) => Err(broken(&format!("not a table access: {other:?}"))),
     }
 }
 

@@ -346,3 +346,42 @@ fn pipelined_replies_granted_compression_come_in_order() {
     }
     assert!(hand.compressed >= 10, "each row of 500 characters compressed: {}", hand.compressed);
 }
+
+/// The replies up to and including the first `last` says ends them, and
+/// how many of them were Statuses.
+fn statuses_until<S: Read + Write>(hand: &mut Hand<S>, last: fn(&Reply) -> bool) -> usize {
+    let mut statuses = 0_usize;
+    loop {
+        let reply = hand.receive().expect("a reply");
+        statuses = statuses.saturating_add(usize::from(matches!(reply, Reply::Status { .. })));
+        if last(&reply) {
+            return statuses;
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D190: with `status`, a login tells each of
+/// the session's settings once, and a statement after it tells only those
+/// it changed. Regression test (R-TEST-7): the login's Statuses were not
+/// held as told, so the first statement sent five of them again.
+#[test]
+fn a_statement_after_a_login_tells_only_what_it_changed() {
+    let db = Database::new();
+    let server = start(&db, &[]);
+    let mut hand = Hand { stream: BufReader::new(TcpStream::connect(server.address).unwrap()), compressed: 0 };
+    let capabilities = vec!["status".to_owned()];
+    let hello = Request::Hello {
+        version: VERSION,
+        user: "X".into(),
+        mechanism: "trust".into(),
+        initial: vec![],
+        capabilities,
+        attributes: Vec::new(),
+    };
+    hand.send(&[hello]);
+    assert!(statuses_until(&mut hand, |r| matches!(r, Reply::Ready { .. })) >= 7, "every status at login");
+    for _ in 0..2 {
+        hand.send(&[Request::Query { sql: "VALUES 1".into(), ends: true, attributes: Vec::new(), multi: false }]);
+        assert_eq!(statuses_until(&mut hand, |r| matches!(r, Reply::Complete(_))), 0, "nothing changed");
+    }
+}

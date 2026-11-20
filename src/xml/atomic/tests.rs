@@ -366,3 +366,35 @@ fn casts_within_and_across_the_hierarchy() {
     assert!(from_lexical("a:b:c", AtomicType::Notation).unwrap().is_none());
     assert_eq!(normalize(" a \n\r b ", WhiteSpace::Replace), " a    b ");
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j] [Schema2 §3.2.6.1]
+/// [XQueryFO §10.1.1, §17.1.1] text that is no lexical form of a
+/// duration, of no P, of a component of no number or designator, of a
+/// designator unknown or out of order, of a fraction outside the seconds,
+/// or of a T of no time, is err:FORG0001 cast as each duration type; a
+/// component too large to hold is err:FODT0002; xs:duration reads both
+/// halves, its own canonical form.
+#[test]
+fn duration_lexical_forms_are_checked() {
+    let types = [AtomicType::Duration, AtomicType::YearMonthDuration, AtomicType::DayTimeDuration];
+    for text in ["1Y", "-1D", "P1", "PY", "P1Q", "P1DT", "PT1D", "P1D1Y", "P1.5Y", "P1.5D", "PT1.H", "P1Dé", "PT1H2H", "P-1Y", "PT"] {
+        for to in types {
+            assert_eq!(cast_text(text, to), "err:FORG0001", "{text} as {}", to.name());
+        }
+    }
+    let huge = "9".repeat(40);
+    for (text, to) in [
+        (format!("P{huge}Y"), AtomicType::Duration),
+        (format!("P{huge}M"), AtomicType::YearMonthDuration),
+        (format!("P{huge}D"), AtomicType::DayTimeDuration),
+        (format!("PT{huge}S"), AtomicType::Duration),
+        (format!("P1Y{huge}M"), AtomicType::Duration),
+        (format!("P195{}DT1{}H", "0".repeat(25), "0".repeat(28)), AtomicType::DayTimeDuration),
+        (format!("P195{}DT1{}H", "0".repeat(25), "0".repeat(28)), AtomicType::Duration),
+    ] {
+        assert_eq!(cast_text(&text, to), "err:FODT0002", "{text} as {}", to.name());
+    }
+    for (text, expected) in [("P1Y2M3DT4H5M6.5S", "P1Y2M3DT4H5M6.5S"), ("-P13M", "-P1Y1M"), ("PT0S", "PT0S"), ("P0Y", "PT0S")] {
+        assert_eq!(cast_text(text, AtomicType::Duration), expected, "{text}");
+    }
+}

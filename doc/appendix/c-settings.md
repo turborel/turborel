@@ -48,8 +48,12 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | DIAGNOSTICS.SLOW_STATEMENT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | EXECUTOR.BATCHES | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.DECORRELATE_AFTER_RUNS | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
+| EXECUTOR.DEGREE | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.GRAPH_THREADS | 1 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.MAX_ITERATIONS | 1000000 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| EXECUTOR.MORSEL_ROWS | 16384 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
+| EXECUTOR.PARALLEL_MIN_ROWS | 65536 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| EXECUTOR.WORKERS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | FILES.MAX_OPEN | 1024 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | GQL.GRAPH | (empty) | TEXT OF AT MOST 257 CHARACTERS | at once | *session* |
 | GRAPH.DETERMINISTIC_PATHS | OFF | ONE OF ON, OFF | at once | *session* |
@@ -66,8 +70,9 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | LOG.SEGMENT_BYTES | 67108864 | INTEGER FROM 4096 TO 1099511627775 | when the database is made |  |
 | LOG.SYNC_AFTER_MS | 1000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | MEMORY.BUDGET_BYTES | 1073741824 | INTEGER FROM 1048576 TO 9223372036854775807 | at once |  |
-| MEMORY.WORK_BYTES | 4194304 | INTEGER FROM 65536 TO 9223372036854775807 | at once | *session* |
+| MEMORY.WORK_BYTES | 268435456 | INTEGER FROM 65536 TO 9223372036854775807 | at once | *session* |
 | OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.DISTINCT_AGGREGATES | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.FACTOR_DISJUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.INLINE_FUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MAX_PASSES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
@@ -148,8 +153,12 @@ Each in a sentence:
 - **DIAGNOSTICS.SLOW_STATEMENT_MS**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
+- **EXECUTOR.DEGREE**: The most threads a statement's query runs on at once, its own among them; 0, the default, for as many as the workers, and 1 for its own thread alone. Its rows are the same either way.
 - **EXECUTOR.GRAPH_THREADS**: The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.
 - **EXECUTOR.MAX_ITERATIONS**: The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.
+- **EXECUTOR.MORSEL_ROWS**: The rows of a table, about, that a worker of a parallel query reads at a time, a morsel.
+- **EXECUTOR.PARALLEL_MIN_ROWS**: The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.
+- **EXECUTOR.WORKERS**: The executor's workers, threads shared by every statement of the database that runs in parallel; 0, the default, for as many as the system says it runs at once.
 - **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.
 - **GQL.GRAPH**: The property graph a GQL statement reads when it names none, as SESSION SET GRAPH sets it, named in the default schema if unqualified; empty for none.
 - **GRAPH.DETERMINISTIC_PATHS**: Whether a GRAPH_TABLE's selectors that keep some of equal paths, as ANY and ANY SHORTEST, keep the same ones each run, ON, ordered by the elements' identities; or any, OFF.
@@ -166,8 +175,9 @@ Each in a sentence:
 - **LOG.SEGMENT_BYTES**: The bytes after which a segment of the log is ended and the next begun.
 - **LOG.SYNC_AFTER_MS**: The milliseconds after a commit of LOG.COMMIT_SYNC OFF within which the log is synced, by a job of its own if nothing else syncs it first; 0 for none, the commit then synced only by the log's next sync for another reason.
 - **MEMORY.BUDGET_BYTES**: The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.
-- **MEMORY.WORK_BYTES**: The bytes a sort, hash join, adaptive spatial join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY.BUDGET_BYTES; so too a cursor's rows read ahead of its fetches or kept to scroll among; the rows an INSERT, UPDATE or DELETE chooses before changing any, what it did, kept for its constraints' checks (a deferred one's until made), and what its referential actions keep; and a session's temporary tables' pages, the rest in a spill file.
+- **MEMORY.WORK_BYTES**: The most a sort, hash join, grouping, DISTINCT, EXCEPT, INTERSECT or window holds in memory before it spills: half the free MEMORY.BUDGET_BYTES as it starts, reserved, but 4 MiB unreserved where that is less, and itself below 4 MiB. The lesser of it and 4 MiB bounds a cursor's rows read ahead or kept to scroll, the rows a change chooses and keeps for its checks and referential actions, and a session's temporary tables' pages, the rest spilled.
 - **OPTIMIZER.CONSTANT_FOLDING**: Whether the optimizer's rule constant_folding rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.DISTINCT_AGGREGATES**: Whether the optimizer's rule distinct_aggregates rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.FACTOR_DISJUNCTIONS**: Whether the optimizer's rule factor_disjunctions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.INLINE_FUNCTIONS**: Whether the optimizer's rule inline_functions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.MAX_PASSES**: The most passes the optimizer makes over a plan.

@@ -302,3 +302,7 @@ impl Accumulator for Gathered {
         Ok(Value::Array(rows.into_iter().map(|r| r.first().cloned().unwrap_or(Value::Null)).collect()))
     }
 }
+
+// Unit tests: the types the functions report, and the maximum cardinality.
+#[cfg(test)]
+mod tests;

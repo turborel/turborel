@@ -546,26 +546,27 @@ pub trait Index: Send + Sync {
     fn search_for(self: Arc<Self>, probe: &Probe, order: KeyOrder, _reading: bool) -> Entries {
         self.search(probe, order)
     }
+    /// \[DESIGN\] (RULES.md D297) The entries `search` finds in ascending order, cut by keys
+    /// into up to `most` ranges searched apart, in order. Default: none, the entries uncut.
+    fn ranges(self: Arc<Self>, _probe: &Probe, _most: usize) -> Option<Vec<Entries>> {
+        None
+    }
     /// What finds this index again when the database is opened
     /// (`IndexMethod::open`), kept in the catalog. Default: nothing.
     fn locator(&self) -> Vec<u8> {
         Vec::new()
     }
-    /// The index was dropped: once the last reference to it goes, it is
-    /// not read or written again, and may then release its storage. Until
-    /// then, readers of earlier snapshots may still search it. Default:
-    /// nothing, for an index that holds only memory.
+    /// The index was dropped: past its last reference, unread and unwritten, it may release its
+    /// storage, earlier snapshots' readers searching it until then. Default: nothing.
     fn discard(&self) {}
     /// \[EXTENSION\] Options of its table or of it that change in place
     /// changed: `on` holds them now (RULES.md D41), as for
     /// `TableStorage::reconfigure`. Default: nothing.
     fn reconfigure(&self, _on: (&TableDesc, &IndexDesc)) {}
-    /// \[EXTENSION\] (RULES.md D106) The rows whose XML value may hold a
-    /// node `lookup` selects, each once, as they are taken: a superset,
-    /// each row's visible value checked again by the caller
-    /// (`XmlLookup::matches`), as a function lookup's (D34). It holds the
-    /// index, as `search` does. Default: none, for an index of no XML
-    /// lookup.
+    /// \[EXTENSION\] (RULES.md D106) The rows whose XML value may hold a node `lookup` selects,
+    /// each once, as they are taken: a superset, each row's visible value checked again by the
+    /// caller (`XmlLookup::matches`), as a function lookup's (D34). It holds the index, as
+    /// `search` does. Default: none, for an index of no XML lookup.
     fn xml_rows(self: Arc<Self>, _lookup: &xml::XmlLookup) -> Option<RowIds> {
         None
     }
@@ -584,8 +585,7 @@ pub trait Index: Send + Sync {
     }
 }
 
-/// Every entry `probe` selects in `index`, in ascending key order if its
-/// method is ordered: a search read whole, for tests.
+/// Every entry `probe` selects in `index`, in its order: for tests.
 #[cfg(test)]
 pub(crate) fn searched<I: Index + ?Sized>(index: &Arc<I>, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
     Index::search(Arc::clone(index), probe, KeyOrder::Ascending).collect()

@@ -19,16 +19,20 @@
 //! 400,000 rows, by its key, far more groups than the work area holds,
 //! and by 50,000 keys of 8 rows past 64 KiB, made partly as pieces, then
 //! of WC; and set functions of a column of runs of one value, RC's
-//! S, filtered by it and not. Rates are of the tables' rows read, but the key's, of
+//! S, filtered by it and not; and DISTINCT set functions of F and FC
+//! (`analytics/distinct.rs`). Rates are of the tables' rows read, but the key's, of
 //! queries. JSON_VALUE of a member of the JSON type and of JSON text is
 //! measured too (`analytics/json.rs`), path search on a graph of a
 //! million edges (`analytics/graph.rs`), and GRAPH_TABLE queries on an
-//! LDBC SNB-style social network (`analytics/social.rs`). Run with `cargo
+//! LDBC SNB-style social network (`analytics/social.rs`), and queries run
+//! by morsels on several threads (`analytics/parallel.rs`). Run with `cargo
 //! xtask bench`, on the harness (RULES.md R-BENCH-1); with `ONLY_VAR` set
-//! to `social`, the social network's workloads alone, or to `graph`, path
-//! search's on a graph in memory alone, or to `unnesting`, correlated
-//! subqueries unnested and nested alone (`analytics/unnesting.rs`), or to
-//! `decode`, the column store's decoding alone (`analytics/decode.rs`).
+//! to `social`, the social network's workloads alone, to `graph`, path
+//! search's on a graph in memory alone, to `unnesting`, correlated
+//! subqueries unnested and nested alone (`analytics/unnesting.rs`), to
+//! `parallel`, those run by morsels alone, to `distinct`, the DISTINCT
+//! set functions' alone, or to `decode`, the column store's decoding
+//! alone (`analytics/decode.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -43,11 +47,15 @@
 
 #[path = "analytics/decode.rs"]
 mod decode;
+#[path = "analytics/distinct.rs"]
+mod distinct;
 #[path = "analytics/graph.rs"]
 mod graph;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
+#[path = "analytics/parallel.rs"]
+mod parallel;
 #[path = "analytics/social.rs"]
 mod social;
 #[path = "analytics/unnesting.rs"]
@@ -58,8 +66,9 @@ use turborel::db::{Database, Session};
 
 /// The variable naming the workloads run alone: `social` for the social
 /// network's, `graph` for path search's on a graph in memory,
-/// `unnesting` for correlated subqueries', `decode` for the column
-/// store's decoding.
+/// `unnesting` for correlated subqueries', `parallel` for those run by
+/// morsels, `distinct` for the DISTINCT set functions', `decode` for the
+/// column store's decoding.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -90,15 +99,29 @@ fn main() {
         decode::workloads(&bench);
         return;
     }
+    if only == "parallel" {
+        parallel::workloads(&bench);
+        return;
+    }
     let db = database();
     let s = db.session("B");
-    measure(&bench, &s, ("F", "W", ""));
-    measure(&bench, &s, ("FC", "WC", " (columnstore)"));
+    let tables = [("F", "W", ""), ("FC", "WC", " (columnstore)")];
+    if only == "distinct" {
+        for (table, _, label) in tables {
+            distinct::workloads(&bench, &s, (table, label));
+        }
+        return;
+    }
+    for (table, keyed, label) in tables {
+        measure(&bench, &s, (table, keyed, label));
+        distinct::workloads(&bench, &s, (table, label));
+    }
     of_runs(&bench, &s);
     json::workloads(&bench);
     graph::workloads(&bench);
     social::workloads(&bench);
     unnesting::workloads(&bench);
+    parallel::workloads(&bench);
     decode::workloads(&bench);
 }
 

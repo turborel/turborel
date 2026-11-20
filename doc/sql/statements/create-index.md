@@ -98,7 +98,7 @@ candidate's geometry before deciding which rows to return. See
 
 An `rtree` made over rows already in the table is built whole and packed
 from the root down, its nodes nine tenths full, its sorts spilling past
-MEMORY.WORK_BYTES. Rows written while it is built are kept. A node that
+their grants of MEMORY.WORK_BYTES. Rows written while it is built are kept. A node that
 deletes leave empty or under two fifths full is taken out or merged, the
 nodes above it too when that leaves them sparse, and its space reused
 once no query can still read it. The index grows shorter as it empties

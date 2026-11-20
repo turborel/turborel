@@ -35,6 +35,7 @@ behind it, and each can be replaced or added to.
 - [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
   FINAL TABLE of INSERT, UPDATE, DELETE and MERGE.
 - Row and columnar storage, chosen per table.
+- DISTINCT set functions computed by two groupings, read by batches.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins
@@ -202,7 +203,9 @@ behind it, and each can be replaced or added to.
 - [CALL](doc/sql/statements/call.md) prepared with `?` for OUT and INOUT
   parameters, their values returned as a row over the protocol.
 - Bounded memory with one budget over every cache, with sorts, joins and
-  grouping that spill to disk.
+  grouping granted their share of it and spilling to disk past it.
+- [Parallel queries](doc/operator/04-settings.md#parallel-queries) run by
+  morsels on a shared pool of workers, the same rows on any number of threads.
 
 ## Quick start
 

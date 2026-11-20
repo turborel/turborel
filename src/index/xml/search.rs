@@ -27,13 +27,13 @@ use crate::engine::tree::{Direction, Scan, scan_of};
 use crate::error::{Code, Result, SqlError};
 use crate::index::RowIds;
 use crate::spill::map::SpillMap;
-use crate::spill::{DEFAULT_SPILL_BATCH, DEFAULT_WORK_MEMORY, ListSpace};
+use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, WORK_FLOOR};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 
 /// \[DESIGN\] The bytes of the rows a lookup has given, held to give each
 /// once, before they spill: an operator's own, by default.
-const ONCE_BYTES: usize = DEFAULT_WORK_MEMORY;
+const ONCE_BYTES: usize = WORK_FLOOR;
 /// \[DESIGN\] The most entries a cost counts: past them, it is not cheap,
 /// as for a B-link tree's estimate (`index/blink.rs`).
 const MOST_COUNTED: usize = 1_000;

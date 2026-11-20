@@ -73,3 +73,7 @@ impl ScalarFunction for OctetLike {
         Ok(Value::Exact(Decimal::new(i128::from(matches(&pattern, value)?), 0)))
     }
 }
+
+// Unit tests: operands of large objects, and refusals.
+#[cfg(test)]
+mod tests;

@@ -150,3 +150,81 @@ fn the_document_type_declaration() {
     assert!(bad("<!DOCTYPE a [<!ENTITY gt 'x'>]><a/>", Syntax::Document).contains("[XML §4.6]"));
     assert!(bad("<!DOCTYPE a [<!ENTITY amp SYSTEM 'x'>]><a/>", Syntax::Document).contains("[XML §4.6]"));
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.16 GR6a] [XML §2.8 [28],
+/// §4.2.2 [75], §2.3 [13]] a document type declaration of no space or
+/// name before its name, of a name not a QName, of an external ID of no
+/// space or literal where one is required, or of a public identifier of a
+/// character not of one, is not well-formed.
+#[test]
+fn document_type_declarations_are_checked() {
+    for (text, expected) in [
+        ("<!DOCTYPE 1a><a/>", "[XML §2.8 [28]]"),
+        ("<!DOCTYPE a:b:c><a:b:c/>", "a:b:c"),
+        ("<!DOCTYPE a SYSTEM'x'><a/>", "[XML §4.2.2 [75]]"),
+        ("<!DOCTYPE a PUBLIC'x' 'y'><a/>", "[XML §4.2.2 [75]]"),
+        ("<!DOCTYPE a PUBLIC 'x'><a/>", "white space before the system literal"),
+        ("<!DOCTYPE a PUBLIC 'x{' 'y'><a/>", "[XML §2.3 [13]]"),
+        ("<!DOCTYPE a [ %1; ]><a/>", "[XML §4.1"),
+    ] {
+        assert!(bad(text, Syntax::Document).contains(expected), "{text}: {}", bad(text, Syntax::Document));
+    }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.16 GR6a] [XML §4.2 [71] to
+/// [76], §2.3 [9], §4.6] an entity declaration of no space where one is
+/// required, of a name not an NCName, of more after its value, of an
+/// NDATA of no space or notation name, of an entity value of no closing
+/// quote or a bad reference, or a predefined entity declared otherwise
+/// than as its character, is not well-formed.
+#[test]
+fn entity_declarations_are_checked() {
+    for (subset, expected) in [
+        ("<!ENTITYe 'x'>", "[XML §4.2 [71]]"),
+        ("<!ENTITY %p 'x'>", "[XML §4.2 [72]]"),
+        ("<!ENTITY 1e 'x'>", "[XML §4.2 [71]]"),
+        ("<!ENTITY e'x'>", "[XML §4.2 [71]]"),
+        ("<!ENTITY e 'x' y>", "[XML §4.2 [71]]"),
+        ("<!ENTITY e SYSTEM 'x' NDATA>", "[XML §4.2.2 [76]]"),
+        ("<!ENTITY e SYSTEM 'x' NDATA 1n>", "[XML §4.2.2 [76]]"),
+        ("<!ENTITY e SYSTEM 'x' NDATA a:b>", "has a colon"),
+        ("<!ENTITY e '&#xZZ;'>", "[XML §4.1"),
+        ("<!ENTITY e '&1;'>", "[XML §4.1"),
+        ("<!ENTITY gt '&#38;#62'>", "[XML §4.6]"),
+        ("<!ENTITY lt '<'>", "[XML §4.6]"),
+    ] {
+        let text = format!("<!DOCTYPE a [{subset}]><a/>");
+        assert!(bad(&text, Syntax::Document).contains(expected), "{text}: {}", bad(&text, Syntax::Document));
+    }
+    assert!(bad("<!DOCTYPE a [<!ENTITY e 'x", Syntax::Document).contains("no closing quote"));
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.16 GR6a] [XML §3.2 [45] to
+/// [51], §4.7 [82], §3.4 [61] to [63]] an element type declaration, a
+/// notation declaration or a conditional section of no space where one is
+/// required, of a name not a QName or NCName, of a mixed content model of
+/// no `|` between names or of a name not a QName, or of a conditional
+/// section of no keyword or `[`, is not well-formed.
+#[test]
+fn element_notation_and_conditional_declarations_are_checked() {
+    let in_parameter = |section: &str| format!("<!DOCTYPE a [<!ENTITY % p '{section}'> %p; ]><a/>");
+    for (text, expected) in [
+        ("<!DOCTYPE a [<!ELEMENTa EMPTY>]><a/>".to_owned(), "[XML §3.2 [45]]"),
+        ("<!DOCTYPE a [<!ELEMENT 1a EMPTY>]><a/>".to_owned(), "[XML §3.2 [45]]"),
+        ("<!DOCTYPE a [<!ELEMENT a:b:c EMPTY>]><a/>".to_owned(), "a:b:c"),
+        ("<!DOCTYPE a [<!ELEMENT aEMPTY>]><a/>".to_owned(), "[XML §3.2 [45]]"),
+        ("<!DOCTYPE a [<!ELEMENT a (#PCDATA b)*>]><a/>".to_owned(), "[XML §3.2.2 [51]]"),
+        ("<!DOCTYPE a [<!ELEMENT a (#PCDATA | 1b)*>]><a/>".to_owned(), "[XML §3.2.2 [51]]"),
+        ("<!DOCTYPE a [<!ELEMENT a (#PCDATA | b:c:d)*>]><a/>".to_owned(), "b:c:d"),
+        ("<!DOCTYPE a [<!ELEMENT a (b:c:d)>]><a/>".to_owned(), "b:c:d"),
+        ("<!DOCTYPE a [<!NOTATIONn SYSTEM 'x'>]><a/>".to_owned(), "[XML §4.7 [82]]"),
+        ("<!DOCTYPE a [<!NOTATION 1n SYSTEM 'x'>]><a/>".to_owned(), "[XML §4.7 [82]]"),
+        ("<!DOCTYPE a [<!NOTATION a:b SYSTEM 'x'>]><a/>".to_owned(), "has a colon"),
+        ("<!DOCTYPE a [<!NOTATION n>]><a/>".to_owned(), "[XML §4.7 [82]]"),
+        (in_parameter("<![&#37;1;[]]>"), "[XML §4.1"),
+        (in_parameter("<![1x[]]>"), "[XML §3.4 [61]]"),
+        (in_parameter("<![INCLUDE x]]>"), "[XML §3.4 [62], [63]]"),
+    ] {
+        assert!(bad(&text, Syntax::Document).contains(expected), "{text}: {}", bad(&text, Syntax::Document));
+    }
+}
