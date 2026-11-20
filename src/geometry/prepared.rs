@@ -126,8 +126,12 @@ impl Prepared {
         held.resize(base.checked_add(geometry.shape.heap_bytes()?)?).ok()?;
         // The locator's ring parity is the engine's location for a valid
         // polygon only, so another polygon is left to the engine, as are
-        // its cells, labelled by the same parity.
-        let valid = crate::spatial::planar::is_valid(&super::engine::of_shape(&geometry.shape)).unwrap_or(false);
+        // its cells, labelled by the same parity. A recognized rectangle is
+        // valid by its shape (`rectangle::recognizes`), so it skips the
+        // exact self-meeting test, which costs a window as much as the
+        // probe it bounds.
+        let rectangle = rectangle::recognizes(&geometry.shape);
+        let valid = rectangle || crate::spatial::planar::is_valid(&super::engine::of_shape(&geometry.shape)).unwrap_or(false);
         let locator = if valid { Locator::new(&geometry.shape, budget) } else { None };
         let edges = cells::edges(&geometry.shape).unwrap_or(0);
         let cells_after = Some(edges)
@@ -135,7 +139,6 @@ impl Prepared {
             .and_then(|edges| edges.checked_mul(CELL_USES_PER_EDGE)?.checked_add(MIN_CELL_USES))
             .unwrap_or(usize::MAX);
         let visits_after = if cells_after == usize::MAX { usize::MAX } else { edges.saturating_mul(CELL_VISITS_PER_EDGE) };
-        let rectangle = rectangle::recognizes(&geometry.shape);
         let budget = (cells_after < usize::MAX).then(|| Arc::clone(budget));
         let filed_after = if budget.is_some() { FILED_AFTER_USES } else { usize::MAX };
         let (cells, located, filed, probed) = (OnceLock::new(), AtomicUsize::new(0), OnceLock::new(), AtomicUsize::new(0));
