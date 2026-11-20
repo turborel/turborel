@@ -91,13 +91,13 @@ fn store(acc: &mut [u64; ACC_NB], regs: [uint64x2_t; 4]) {
 #[target_feature(enable = "neon")]
 pub(crate) fn xxh3_accumulate(acc: &mut [u64; ACC_NB], stripes: &[Stripe], secret: &[u8]) {
     let mut regs = loaded(acc);
-    let keys = secret.windows(STRIPE_LEN).step_by(SECRET_CONSUME_RATE).filter_map(<[u8]>::first_chunk::<STRIPE_LEN>);
-    for (stripe, key) in stripes.iter().zip(keys) {
-        let (data, keys) = (words(stripe), words(key));
-        for ((reg, data), key) in regs.iter_mut().zip(&data).zip(&keys) {
-            let data = load(data);
-            let data_key = veorq_u64(data, load(key));
-            let sum = vaddq_u64(*reg, vextq_u64::<1>(data, data));
+    let stripe_keys = secret.windows(STRIPE_LEN).step_by(SECRET_CONSUME_RATE).filter_map(<[u8]>::first_chunk::<STRIPE_LEN>);
+    for (stripe, stripe_key) in stripes.iter().zip(stripe_keys) {
+        let (inputs, lane_keys) = (words(stripe), words(stripe_key));
+        for ((reg, input), lane_key) in regs.iter_mut().zip(&inputs).zip(&lane_keys) {
+            let lanes = load(input);
+            let data_key = veorq_u64(lanes, load(lane_key));
+            let sum = vaddq_u64(*reg, vextq_u64::<1>(lanes, lanes));
             *reg = vmlal_u32(sum, vmovn_u64(data_key), vshrn_n_u64::<32>(data_key));
         }
     }
@@ -107,11 +107,11 @@ pub(crate) fn xxh3_accumulate(acc: &mut [u64; ACC_NB], stripes: &[Stripe], secre
 /// Scrambles `acc` by `key`.
 #[target_feature(enable = "neon")]
 pub(crate) fn xxh3_scramble(acc: &mut [u64; ACC_NB], key: &Stripe) {
-    let keys = words(key);
+    let lane_keys = words(key);
     let prime = vdup_n_u32(PRIME32_1);
     let mut regs = loaded(acc);
-    for (reg, key) in regs.iter_mut().zip(&keys) {
-        let data_key = veorq_u64(veorq_u64(*reg, vshrq_n_u64::<47>(*reg)), load(key));
+    for (reg, lane_key) in regs.iter_mut().zip(&lane_keys) {
+        let data_key = veorq_u64(veorq_u64(*reg, vshrq_n_u64::<47>(*reg)), load(lane_key));
         let high = vshlq_n_u64::<32>(vmull_u32(vshrn_n_u64::<32>(data_key), prime));
         *reg = vmlal_u32(high, vmovn_u64(data_key), prime);
     }
