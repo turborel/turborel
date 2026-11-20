@@ -104,3 +104,25 @@ fn constructors_and_calls_pass_on_their_operands_type_errors() {
         "declare variable $v := B; $v",
     ]);
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 SR6] [XQueryFS §4.1.5,
+/// §7.2] a built-in function typed by a rule of its own still has its
+/// arguments checked by its signature [XQueryFO]: a collation, a QName,
+/// a position, a length or a zero of another type is err:XPTY0004.
+#[test]
+fn special_functions_check_their_signatures() {
+    for query in [
+        "distinct-values((1, 2), 1)",
+        "error(1)",
+        "remove((1, 2), 'a')",
+        "insert-before((1, 2), 'a', 3)",
+        "subsequence((1, 2), 'a')",
+        "subsequence((1, 2), 1, 'a')",
+        "min((1, 2), 1)",
+        "sum((1, 2), 'a')",
+        "abs('a')",
+        "round-half-to-even(1.5, 'a')",
+    ] {
+        assert_eq!(alone(query), "err:XPTY0004", "{query}");
+    }
+}
