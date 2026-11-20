@@ -8,6 +8,7 @@ use crate::json::{Keys, Member, Scalar, parse, parse_path, serialize};
 use crate::value::datetime::Clocked;
 use crate::value::{DecFloat, Decimal, Value};
 
+mod damage;
 mod keys;
 
 /// The stored form of the JSON text `text`.
