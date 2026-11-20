@@ -89,10 +89,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::record::{Change, Record};
 use crate::log::{Log, Lsn};
 use crate::settings::{CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES};
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Kept, Row, RowId, TableStorage};
 use crate::sync::{lock, lock_builtin};
 use crate::threads::{Turn, Turned};
-use crate::txn::{NO_TRANSACTION, Persistence, TableLock, Timestamp};
+use crate::txn::{NO_TRANSACTION, Persistence, Sharing, TableLock, Timestamp};
 
 impl Database {
     /// \[DESIGN\] Takes a checkpoint now: see the module's documentation.
@@ -472,9 +472,10 @@ impl State {
         let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
         for (storage, indexes, lock, name) in &stale.tables {
             if !indexes.is_empty() {
+                let sharing: Vec<Sharing> = indexes.iter().map(|ix| Sharing::of(ix, lock)).collect();
                 for read in Arc::clone(storage).garbage(stale.as_of) {
-                    let (row, values) = read?;
-                    log_entries(&*log, (through, indexes), row, &values)?;
+                    let (row, values, kept) = read?;
+                    log_entries(&*log, (through, indexes, &sharing), row, (&values, kept))?;
                 }
             }
             // [DESIGN] RULES.md D79: the large objects it would leave kept.
@@ -545,10 +546,20 @@ impl State {
 }
 
 /// Logs the entry of row `row`, of `values`, in each of `indexes` that
-/// holds its key (`IndexDesc::entry_of`), stale as of the checkpoint
-/// through `through`.
-fn log_entries(log: &dyn Log, (through, indexes): (Lsn, &[IndexDesc]), row: RowId, values: &Row) -> Result<()> {
-    for ix in indexes {
+/// holds its key (`IndexDesc::entry_of`) and does not share with the
+/// version after it, which `kept`, stale as of the checkpoint through
+/// `through`.
+fn log_entries(
+    log: &dyn Log,
+    (through, indexes, shared): (Lsn, &[IndexDesc], &[Sharing]),
+    row: RowId,
+    (values, kept): (&Row, Kept),
+) -> Result<()> {
+    for (ix, sharing) in indexes.iter().zip(shared) {
+        // One its successor shares stays (RULES.md D443).
+        if sharing.shares(kept) {
+            continue;
+        }
         let Some(key) = ix.entry_of(values) else { continue };
         let change = Change::Stale { through, index: ix.name.clone(), row, key: key.0 };
         log.append(&Record { tx: NO_TRANSACTION, change }.encode())?;

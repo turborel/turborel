@@ -93,7 +93,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Near, Newest, Region, Row, RowId, Rows, ScanOrder, Split, TableStorage};
+use crate::storage::{Condition, Conjunction, Garbage, Near, Newest, Region, Removed, Row, RowId, Rows, ScanOrder, Split, TableStorage};
 use crate::txn::{Concurrency, NO_TRANSACTION, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
 /// The name of the row store.
@@ -234,6 +234,10 @@ impl TableStorage for RowTable {
 
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
         self.write_over(tx, id, row, Past::Stamp(seen)).map(drop)
+    }
+
+    fn keep_entries(&self, tx: TxId, id: RowId, unchanged: u64) -> u64 {
+        self.keep_columns(tx, id, unchanged)
     }
 
     /// Puts row `id` back, or replaces it if it is there; ids given from
@@ -385,7 +389,7 @@ impl TableStorage for RowTable {
         Some(stats)
     }
 
-    fn garbage(self: Arc<Self>, as_of: Timestamp) -> Rows {
+    fn garbage(self: Arc<Self>, as_of: Timestamp) -> Garbage {
         self.pending(Box::new(move |at, _| at <= as_of), None)
     }
 
@@ -516,7 +520,7 @@ impl TableStorage for RowTable {
         self.awaits_collection()
     }
 
-    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
+    fn gc(&self, horizon: Timestamp, removed: Removed<'_>) -> Result<()> {
         self.collect(horizon, removed)
     }
 
@@ -542,7 +546,8 @@ impl TableStorage for RowTable {
     }
 
     fn versions(self: Arc<Self>, horizon: Timestamp, as_of: Timestamp, columns: &[usize]) -> Rows {
-        let unreadable = self.pending(Box::new(move |at, own| if own { at <= as_of } else { at <= horizon }), Some(columns));
+        let keep: Box<dyn Fn(Timestamp, bool) -> bool + Send> = Box::new(move |at, own| if own { at <= as_of } else { at <= horizon });
+        let unreadable = self.pending(keep, Some(columns)).map(|read| read.map(|(id, row, _)| (id, row)));
         let frozen = match self.frozen.directory() {
             Ok(directory) => Merged::new(Arc::clone(&self), (Merging::FrozenOnly, directory), columns.to_vec(), None),
             Err(e) => return Box::new(std::iter::once(Err(e))),

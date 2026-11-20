@@ -109,6 +109,14 @@ impl<T: ListItem> SpillList<T> {
         self.held
     }
 
+    /// The last item, if it is held in memory.
+    pub fn last_mut(&mut self) -> Option<&mut T> {
+        match self.segments.last_mut() {
+            Some(Segment::Held(items, _)) => items.last_mut(),
+            Some(Segment::Spilled(..)) | None => None,
+        }
+    }
+
     /// Begins a segment, so the items from here on are apart from those
     /// before; their place.
     pub fn mark(&mut self) -> usize {

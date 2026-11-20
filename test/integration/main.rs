@@ -196,6 +196,7 @@ mod json_functions;
 mod json_index;
 mod json_table;
 mod json_type;
+mod kept_entries;
 mod kept_plans;
 mod kept_routines;
 mod kept_set_plans;

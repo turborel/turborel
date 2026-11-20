@@ -155,6 +155,9 @@ struct Change {
     /// Whether it is not a row's change but a large object's making: `id`
     /// is the object's.
     made: bool,
+    /// The columns the version it replaced holds as its new one does, whose
+    /// index entries the two share (`TableStorage::keep_entries`).
+    unchanged: u64,
 }
 
 impl Change {
@@ -162,7 +165,7 @@ impl Change {
     /// committed one it appended at `appended`, or neither, dropping the
     /// objects `dropped`.
     fn of_row(id: RowId, before: Option<Vec<u8>>, appended: Option<Lsn>, dropped: Vec<u64>) -> Change {
-        Change { id, before, appended, dropped, made: false }
+        Change { id, before, appended, dropped, made: false, unchanged: 0 }
     }
 }
 
@@ -222,10 +225,12 @@ impl Validated {
 /// What a commit made garbage, once it is past the horizon.
 #[derive(Clone)]
 enum Dead {
-    /// A version the transaction made and then replaced itself.
-    Own(RowId, Vec<u8>),
-    /// The committed version it replaced, in the undo store.
-    Older(RowId, Lsn),
+    /// A version the transaction made and then replaced itself, and the
+    /// columns its successor kept (`Change::unchanged`).
+    Own(RowId, Vec<u8>, u64),
+    /// The committed version it replaced, in the undo store, and the
+    /// columns its successor kept.
+    Older(RowId, Lsn, u64),
     /// A row it deleted, whose deletion then leaves the tree.
     Deletion(RowId),
     /// The large objects a change dropped (`rows/lobs/owned.rs`), freed

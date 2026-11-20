@@ -191,6 +191,9 @@ pub(crate) struct TableLock {
     /// The index entries collection could not take back, tried again by
     /// its next (`txn/owed.rs`).
     pub(crate) owed: OwedRemovals,
+    /// Of each index of it filled from its versions, by name, the latest
+    /// commit the fill may have counted (`txn/kept.rs`).
+    filled: Mutex<Vec<(String, Timestamp)>>,
 }
 
 impl TableLock {
@@ -262,6 +265,21 @@ impl TableLock {
     /// Whether collection of its garbage is held back.
     pub(crate) fn collection_held(&self) -> bool {
         self.holds.load(Ordering::SeqCst) > 0
+    }
+
+    /// Notes that the index `name` is filled from the table's versions
+    /// committed through `through` (RULES.md D443): it counts each of
+    /// those, so none superseded by then shares an entry with its successor.
+    pub(crate) fn filled(&self, name: &str, through: Timestamp) {
+        let mut filled = lock_builtin(&self.filled);
+        filled.retain(|(n, _)| n != name);
+        filled.push((name.to_owned(), through));
+    }
+
+    /// The latest commit a fill of the index `name` may have counted, or 0
+    /// for an index not filled from versions while the table had any.
+    pub(crate) fn filled_through(&self, name: &str) -> Timestamp {
+        lock_builtin(&self.filled).iter().find(|(n, _)| n == name).map_or(0, |&(_, at)| at)
     }
 
     /// Holds collection of its garbage back, until `release_collection`.

@@ -15,6 +15,7 @@ mod batch;
 mod condition;
 mod cost;
 mod engine;
+mod kept;
 mod newest;
 mod options;
 mod region;
@@ -28,6 +29,7 @@ pub use batch::{
 pub use condition::{Condition, Conjunct, Conjunction};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
+pub use kept::{COLUMN_BITS, Garbage, Kept, Removed, column_bit, unchanged};
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
@@ -276,6 +278,12 @@ pub trait TableStorage: Send + Sync {
             None => self.delete(tx, id),
         }
     }
+    /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` just replaced shares, with
+    /// the new one, the entries of every index whose key reads only columns of `unchanged`; the columns of those
+    /// noted, which `gc` gives back with the version. Default: none, every entry the new version's own.
+    fn keep_entries(&self, _tx: TxId, _id: RowId, _unchanged: u64) -> u64 {
+        0
+    }
 
     // ----- Cost model. Units: 1.0 = reading one whole row in sequence. -----
 
@@ -448,17 +456,16 @@ pub trait TableStorage: Send + Sync {
     fn durable_through(&self) -> Lsn {
         Lsn(0)
     }
-    /// The rows of the versions superseded by commits at or before `as_of`
-    /// but not yet collected, whose index entries collection (`gc`) would
-    /// take back, with their ids, read as they are pulled: what a checkpoint
-    /// logs, so recovery takes them back if the crash lost the collection
-    /// (`db/checkpoint.rs`). Collection of the table is held back while
-    /// they are read. Default: none, for an engine keeping no versions.
+    /// The rows of the versions superseded by commits at or before `as_of` but not yet collected, whose index
+    /// entries collection (`gc`) would take back, with their ids and what their successors kept (RULES.md D443),
+    /// read as they are pulled: what a checkpoint logs, so recovery takes them back if the crash lost the
+    /// collection (`db/checkpoint.rs`). Collection of the table is held back while they are read. Default: none,
+    /// for an engine keeping no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read a version; the checkpoint fails.
-    fn garbage(self: Arc<Self>, _as_of: Timestamp) -> Rows {
+    fn garbage(self: Arc<Self>, _as_of: Timestamp) -> Garbage {
         Box::new(std::iter::empty())
     }
     /// What finds this table again when the database is opened
@@ -491,32 +498,25 @@ pub trait TableStorage: Send + Sync {
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
         rows::applied(self, id, row)
     }
-    /// Garbage collection of versions: removes the versions of rows that no
-    /// transaction reading at or after `horizon` can read, and gives each
-    /// removed version's row, with its id, to `removed` as it goes, so
-    /// their index entries are removed too (one each: `Index`), none held
-    /// all together. `removed` says whether every entry was: of a row
-    /// whose entries are not, `visible_to_all` is false until each is
-    /// (`taken_back`).
-    /// Called after a transaction that joined the table ends. Default:
-    /// nothing, for an engine that keeps no versions.
+    /// Garbage collection of versions: removes the versions of rows that no transaction reading at or after
+    /// `horizon` can read, and gives each removed version's row, with its id and what its successor kept, to
+    /// `removed` as it goes, so their index entries are removed too (one each: `Index`), none held all together.
+    /// `removed` says whether every entry was: of a row whose entries are not, `visible_to_all` is false until
+    /// each is (`taken_back`). Called after a transaction that joined the table ends. Default: nothing, for an
+    /// engine that keeps no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read or remove them; they stay for a later call.
-    fn gc(&self, _horizon: Timestamp, _removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
+    fn gc(&self, _horizon: Timestamp, _removed: Removed<'_>) -> Result<()> {
         Ok(())
     }
-    /// Whether versions of it await collection (`gc`), so it is collected
-    /// as any transaction ends, though none touches it. Default: none, for
-    /// an engine that keeps no versions.
+    /// Whether versions of it await collection (`gc`), so it is collected as any transaction ends. Default: none.
     fn uncollected(&self) -> bool {
         false
     }
-    /// \[DESIGN\] Whether work is due that the engine leaves to the
-    /// database's maintenance thread (`maintain`), so no transaction's end
-    /// waits for it: asked after each `gc`, so it should be quick. Default:
-    /// none.
+    /// \[DESIGN\] Whether work is due that the engine leaves to the database's maintenance thread (`maintain`), so
+    /// no transaction's end waits for it: asked after each `gc`, so it should be quick. Default: none.
     fn maintenance_due(&self) -> bool {
         false
     }

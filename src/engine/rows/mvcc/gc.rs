@@ -13,7 +13,7 @@ use crate::engine::rows::{RowTable, key};
 use crate::error::{Result, SqlError};
 use crate::log::Lsn;
 use crate::spill::SpillList;
-use crate::storage::{Row, RowId};
+use crate::storage::{Kept, Removed, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 
@@ -169,7 +169,7 @@ impl RowTable {
         for item in segments.flatten().flatten() {
             // Each a `Dead::Undone`, which only releases its position, of no
             // timestamp.
-            let _ = self.remove_dead(&item, 0, &mut |_, _| true);
+            let _ = self.remove_dead(&item, 0, &mut |_, _, _| true);
         }
     }
 
@@ -178,14 +178,15 @@ impl RowTable {
             // Its index entries gone with it (`removed`), its zone's count
             // of versions superseded is one less; else once they are
             // (`TableStorage::taken_back`).
-            Dead::Own(id, bytes) => {
-                if self.remove_version(*id, bytes, removed)? {
+            Dead::Own(id, bytes, unchanged) => {
+                if self.remove_version((*id, bytes), Kept { at, unchanged: *unchanged }, removed)? {
                     self.zones.superseded(*id, false);
                 }
                 Ok(())
             }
-            Dead::Older(id, appended) => {
-                let gone = self.remove_version(*id, &self.undo.read(*appended)?, removed)?;
+            Dead::Older(id, appended, unchanged) => {
+                let kept = Kept { at, unchanged: *unchanged };
+                let gone = self.remove_version((*id, &self.undo.read(*appended)?), kept, removed)?;
                 self.undo.release(*appended);
                 if gone {
                     self.zones.superseded(*id, false);
@@ -216,30 +217,31 @@ impl RowTable {
         }
     }
 
-    /// The row of the version garbage `item` superseded, `columns` decoded,
-    /// or all; none for a deletion, or no version.
-    pub(super) fn garbage_row(&self, item: Dead, columns: Option<&[usize]>) -> Result<Option<(RowId, Row)>> {
-        let (id, bytes) = match item {
-            Dead::Own(id, bytes) => (id, bytes),
-            Dead::Older(id, at) => (id, self.undo.read(at)?),
+    /// The row of the version garbage `item` of `at` superseded, `columns`
+    /// decoded, or all, and what its successor kept; none for a deletion,
+    /// or no version.
+    pub(super) fn garbage_row(&self, (at, item): (Timestamp, Dead), columns: Option<&[usize]>) -> Result<Option<(RowId, Row, Kept)>> {
+        let (id, bytes, unchanged) = match item {
+            Dead::Own(id, bytes, unchanged) => (id, bytes, unchanged),
+            Dead::Older(id, appended, unchanged) => (id, self.undo.read(appended)?, unchanged),
             Dead::Deletion(_) | Dead::Undone(_) | Dead::Objects(_) => return Ok(None),
         };
         let version = Version::parse(&bytes)?;
         if version.deleted {
             return Ok(None);
         }
-        Ok(Some((id, self.decode(id, version.record, columns)?)))
+        Ok(Some((id, self.decode(id, version.record, columns)?, Kept { at, unchanged })))
     }
 
     /// Frees what version `bytes` of row `id` holds out of line, and
-    /// records its row: whether its index entries are gone (`removed`'s
-    /// answer; a deletion has none).
-    fn remove_version(&self, id: RowId, bytes: &[u8], removed: Removed<'_>) -> Result<bool> {
+    /// records its row, with what its successor `kept`: whether its index
+    /// entries are gone (`removed`'s answer; a deletion has none).
+    fn remove_version(&self, (id, bytes): (RowId, &[u8]), kept: Kept, removed: Removed<'_>) -> Result<bool> {
         let version = Version::parse(bytes)?;
         if version.deleted {
             return Ok(true);
         }
-        let gone = removed(id, self.decode(id, version.record, None)?);
+        let gone = removed(id, self.decode(id, version.record, None)?, kept);
         self.free_values(id, version.record);
         Ok(gone)
     }
@@ -253,6 +255,3 @@ impl RowTable {
         }
     }
 }
-
-/// Where a collection gives each version it removes: its row id and row.
-pub(in crate::engine::rows) type Removed<'a> = &'a mut dyn FnMut(RowId, Row) -> bool;

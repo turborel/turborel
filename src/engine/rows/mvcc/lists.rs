@@ -5,10 +5,11 @@
 //! ```text
 //! change:  row id u64, or object id; flags u8, 1 if it has a position
 //!          appended, 2 if it made an object; the position u64 if it has
-//!          one; the objects it dropped, their count u32 and each id u64;
-//!          then the entry it replaced, if its own
-//! garbage: kind u8, then by kind: 0 own version, its row id and bytes;
-//!          1 older version, its row id and position; 2 deletion, its row
+//!          one; the columns kept u64; the objects it dropped, their count
+//!          u32 and each id u64; then the entry it replaced, if its own
+//! garbage: kind u8, then by kind: 0 own version, its row id, the columns
+//!          kept u64 and its bytes; 1 older version, its row id, position
+//!          and the columns kept u64; 2 deletion, its row
 //!          id; 3 undone, its position; 4 objects dropped, their count u32
 //!          and each id u64 (little-endian)
 //! ```
@@ -31,7 +32,7 @@ impl ListItem for Change {
 impl ListItem for Dead {
     fn bytes(&self) -> usize {
         FIXED.saturating_add(match self {
-            Dead::Own(_, bytes) => bytes.len(),
+            Dead::Own(_, bytes, _) => bytes.len(),
             Dead::Objects(ids) => ids.len().saturating_mul(8),
             Dead::Older(..) | Dead::Deletion(_) | Dead::Undone(_) => 0,
         })
@@ -63,6 +64,7 @@ pub(super) fn encode_change(change: &Change) -> Vec<u8> {
     if let Some(at) = change.appended {
         out.put_u64(at.0);
     }
+    out.put_u64(change.unchanged);
     put_ids(&change.dropped, &mut out);
     out.extend_from_slice(change.before.as_deref().unwrap_or_default());
     out
@@ -74,24 +76,28 @@ pub(super) fn decode_change(record: &[u8]) -> Result<Change> {
     let id = r.u64()?;
     let flags = r.u8()?;
     let appended = if flags & 1 == 1 { Some(Lsn(r.u64()?)) } else { None };
+    let unchanged = r.u64()?;
     let dropped = read_ids(&mut r)?;
     let rest = r.rest();
-    Ok(Change { id, before: (!rest.is_empty()).then(|| rest.to_vec()), appended, dropped, made: flags & MADE == MADE })
+    let before = (!rest.is_empty()).then(|| rest.to_vec());
+    Ok(Change { id, before, appended, dropped, made: flags & MADE == MADE, unchanged })
 }
 
 /// `dead` as a record.
 pub(super) fn encode_dead(dead: &Dead) -> Vec<u8> {
     let mut out = Vec::new();
     match dead {
-        Dead::Own(id, bytes) => {
+        Dead::Own(id, bytes, unchanged) => {
             out.put_u8(0);
             out.put_u64(*id);
+            out.put_u64(*unchanged);
             out.extend_from_slice(bytes);
         }
-        Dead::Older(id, at) => {
+        Dead::Older(id, at, unchanged) => {
             out.put_u8(1);
             out.put_u64(*id);
             out.put_u64(at.0);
+            out.put_u64(*unchanged);
         }
         Dead::Deletion(id) => {
             out.put_u8(2);
@@ -113,8 +119,11 @@ pub(super) fn encode_dead(dead: &Dead) -> Vec<u8> {
 pub(super) fn decode_dead(record: &[u8]) -> Result<Dead> {
     let mut r = Reader::new(record, "row garbage");
     let dead = match r.u8()? {
-        0 => Dead::Own(r.u64()?, r.rest().to_vec()),
-        1 => Dead::Older(r.u64()?, Lsn(r.u64()?)),
+        0 => {
+            let (id, unchanged) = (r.u64()?, r.u64()?);
+            Dead::Own(id, r.rest().to_vec(), unchanged)
+        }
+        1 => Dead::Older(r.u64()?, Lsn(r.u64()?), r.u64()?),
         2 => Dead::Deletion(r.u64()?),
         3 => Dead::Undone(Lsn(r.u64()?)),
         4 => Dead::Objects(read_ids(&mut r)?),
@@ -139,16 +148,19 @@ mod tests {
             Change::of_row(1, None, None, Vec::new()),
             Change::of_row(2, Some(vec![1, 2, 3]), None, vec![7, 8]),
             Change::of_row(3, None, Some(Lsn(9)), vec![5]),
-            Change { id: 4, before: None, appended: None, dropped: Vec::new(), made: true },
+            Change { made: true, ..Change::of_row(4, None, None, Vec::new()) },
+            Change { unchanged: 0b101, ..Change::of_row(5, Some(vec![6]), None, Vec::new()) },
         ] {
             let back = decode_change(&encode_change(&change)).unwrap();
             assert_eq!(
-                (back.id, back.before.clone(), back.appended, back.dropped.clone(), back.made),
-                (change.id, change.before.clone(), change.appended, change.dropped.clone(), change.made)
+                (back.id, back.before.clone(), back.appended, back.dropped.clone(), back.made, back.unchanged),
+                (change.id, change.before.clone(), change.appended, change.dropped.clone(), change.made, change.unchanged)
             );
             assert!(back.bytes() >= FIXED);
         }
-        for dead in [Dead::Own(1, vec![4, 5]), Dead::Older(2, Lsn(7)), Dead::Deletion(3), Dead::Undone(Lsn(8)), Dead::Objects(vec![3, 4])] {
+        for dead in
+            [Dead::Own(1, vec![4, 5], 3), Dead::Older(2, Lsn(7), 9), Dead::Deletion(3), Dead::Undone(Lsn(8)), Dead::Objects(vec![3, 4])]
+        {
             let record = encode_dead(&dead);
             assert_eq!(encode_dead(&decode_dead(&record).unwrap()), record);
             assert!(dead.bytes() >= FIXED);

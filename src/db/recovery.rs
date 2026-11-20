@@ -532,6 +532,13 @@ impl State {
         let versions = if crate::catalog::is_global_index(&ix.name) {
             self.global_versions(ix, as_of)?
         } else {
+            // [DESIGN] RULES.md D443: every version it counts shares no
+            // entry; with no snapshot given, the table's writers are kept
+            // out, and every commit given is counted.
+            let through = if as_of == Timestamp::MAX { self.tx.highest() } else { as_of };
+            if let Ok(lock) = self.lock_of(&ix.table) {
+                lock.filled(&ix.name, through);
+            }
             Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.reads())
         };
         Ok(versions.filter_map(move |read| {

@@ -6,13 +6,14 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::UndoEntry;
+use super::kept::key_columns;
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::log::record::Change;
-use crate::storage::{Row, RowId};
+use crate::storage::{Row, RowId, TableStorage, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
 use crate::value::Value;
 
@@ -302,12 +303,23 @@ impl State {
         }
         // An engine keeping versions keeps the old version's entries for
         // the readers that still see it, until the version is removed
-        // (`TableStorage::gc`); the new version gets entries of its own.
+        // (`TableStorage::gc`); the new version gets entries of its own, but
+        // of an index whose key reads only columns it kept, where the two
+        // share one (RULES.md D443).
         let versions = caps.concurrency != Concurrency::Coordinator;
-        for (ix, partition) in self.table_indexes(table) {
+        let own = |(ix, p): (IndexDesc, Option<u64>)| {
+            let columns = if p.is_none() { key_columns(&ix) } else { 0 };
+            (ix, p, columns)
+        };
+        let indexes: Vec<_> = self.table_indexes(table).into_iter().map(own).collect();
+        let kept = if versions { Self::keep_entries((tx, storage), id, (old, row), &indexes) } else { 0 };
+        for (ix, partition, columns) in indexes {
             // RULES.md D92: an entry of one row's one version keeps
             // its key while the columns its expressions read are unchanged.
             if !versions && ix.has_expressions() && ix.unchanged(old, row) {
+                continue;
+            }
+            if columns != 0 && columns & !kept == 0 {
                 continue;
             }
             let entry = Self::entry_id(partition, id)?;
@@ -317,6 +329,22 @@ impl State {
             self.index_add(tx, &ix, row, entry)?;
         }
         Ok(())
+    }
+
+    /// RULES.md D443: of row `id` made `row` from `old` by `tx`, the
+    /// columns both hold alike of those `indexes` read, noted by `storage`
+    /// on the change; those it noted.
+    fn keep_entries(
+        (tx, storage): (&Txn, &Arc<dyn TableStorage>),
+        id: RowId,
+        (old, row): (&Row, &Row),
+        indexes: &[(IndexDesc, Option<u64>, u64)],
+    ) -> u64 {
+        let columns = indexes.iter().fold(0, |all, &(_, _, columns)| all | columns);
+        match unchanged(old, row, columns) {
+            0 => 0,
+            kept => storage.keep_entries(tx.id, id, kept),
+        }
     }
 
     /// Of row `id` of `table`, `old`, deleted, as `updated` says.

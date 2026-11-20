@@ -85,7 +85,7 @@ fn batched(table: &Arc<RowTable>) -> Vec<String> {
 #[test]
 fn shadowed_rows_are_read_past_at_their_positions() {
     let (table, ids) = table(5000);
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     while table.maintain(1, true).unwrap() {}
     assert_eq!(table.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).count(), 5000 - 4096, "two groups frozen");
     let changed: Vec<RowId> = ids.iter().copied().step_by(3).chain(ids[1000..1800].iter().copied()).collect();

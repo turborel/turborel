@@ -174,7 +174,7 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let mut open = lock_builtin(&open);
         open.made.insert(id);
-        open.changes.push(Change { id, before: None, appended: None, dropped: Vec::new(), made: true }, &mut encode_change)
+        open.changes.push(Change { made: true, ..Change::of_row(id, None, None, Vec::new()) }, &mut encode_change)
     }
 
     /// Notes the segments `ids`, made by `tx`, as parts of a directory it

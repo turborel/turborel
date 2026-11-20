@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::owed::{Entry, Owed};
-use super::{Committing, Joined, Timestamp, Transactions, Txn, UndoFailure};
+use super::{Committing, Joined, Sharing, Timestamp, Transactions, Txn, UndoFailure};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::index::{Index, Key};
 use crate::memory::Undoing;
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Kept, Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 
 impl State {
@@ -233,7 +233,7 @@ impl State {
             // The table's indexes, found as the first version is removed:
             // most calls remove none, so most never look them up.
             let found: OnceCell<Vec<Found<'_>>> = OnceCell::new();
-            let indexes: OnceCell<Vec<(&dyn Index, &IndexDesc)>> = OnceCell::new();
+            let indexes: OnceCell<Vec<(&dyn Index, &IndexDesc, Sharing)>> = OnceCell::new();
             let of_table = || {
                 self.catalog
                     .indexes(table)
@@ -253,11 +253,11 @@ impl State {
                 let all = self.globals_over(table).into_iter();
                 all.filter_map(|(ix, partition)| Some((Arc::clone(self.index_of(&ix.name).ok()?), ix, partition))).collect()
             };
-            let _ = storage.gc(horizon, &mut |id, row| {
+            let _ = storage.gc(horizon, &mut |id, row, kept| {
                 remove_global(globals.get_or_init(over), id, &row);
                 let found = found.get_or_init(of_table);
-                let indexes = indexes.get_or_init(|| found.iter().map(|&(_, index, ix)| (&**index, ix)).collect());
-                let failed = remove_entries(indexes, id, &row);
+                let indexes = indexes.get_or_init(|| found.iter().map(|&(_, index, ix)| (&**index, ix, Sharing::of(ix, lock))).collect());
+                let failed = remove_entries(indexes, id, &row, kept);
                 let entries: Vec<Entry> = failed
                     .into_iter()
                     .filter_map(|(at, key)| {
@@ -315,11 +315,15 @@ impl State {
 
 /// Removes the entries of row `id`, a version collected, of `row`, from
 /// `indexes`, each with its columns, of those it holds
-/// (`IndexDesc::entry_of`). Those that cannot be are left: their places among
-/// `indexes`, and their keys.
-pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, row: &Row) -> Vec<(usize, Key)> {
+/// (`IndexDesc::entry_of`), but those it shares with its successor, which
+/// `kept` (RULES.md D443). Those that cannot be are left: their places
+/// among `indexes`, and their keys.
+pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc, Sharing)], id: RowId, row: &Row, kept: Kept) -> Vec<(usize, Key)> {
     let mut failed = Vec::new();
-    for (at, (index, ix)) in indexes.iter().enumerate() {
+    for (at, (index, ix, sharing)) in indexes.iter().enumerate() {
+        if sharing.shares(kept) {
+            continue;
+        }
         if let Some(key) = ix.entry_of(row)
             && index.remove(&key, id).is_err()
         {

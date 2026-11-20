@@ -389,6 +389,7 @@ verification approach DO-178C expects (§8).
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
+| D443 | An update shares the index entries of the version it replaced where it keeps every column the key reads |
 
 ### The project
 
@@ -2507,7 +2508,7 @@ a storage lock held (D27, D42, R-ERR-4).
 
 A comparison scan is index-only when every column it reads is in the key,
 of a type the key codec gives back exactly (`engine::key::restores`). A versioned
-engine keeps an entry per version, so a row is made from its entry only
+engine keeps an entry per run of versions with one key (D443), so a row is made from its entry only
 where every reader sees that row's one version
 (`TableStorage::visible_to_all`). An entry that collection fails to take
 back is owed (`txn/owed.rs`), and a close owing any is not clean.
@@ -10934,6 +10935,45 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+
+#### D443. An update shares the index entries of the version it replaced where it keeps every column the key reads
+
+An engine keeping versions gave every update an entry in every index of
+its table, and collection took the old version's back. An update that
+changed no key column still paid two descents per index, one to add a
+second count of the same entry and one to take it back.
+
+An update now compares the old and new rows in the columns its table's
+own indexes read, a value kept only if written out alike in every part
+(`storage/kept.rs`). It notes those columns on its change
+(`TableStorage::keep_entries`) and adds no entry to an index whose key
+reads only them. The garbage of the version replaced carries the columns
+kept, and collection takes back no entry of that version in such an
+index (`txn/kept.rs`), nor does a checkpoint log one as stale. An index
+then holds one entry per run of consecutive versions of a row with its
+key, taken back with the run's last version. An index reading a column
+past the 64th, a global index over partitions (D157) and a temporary
+table's index keep an entry per version, as before.
+
+A fill of an index from a table's versions, for `CREATE INDEX` beside
+writers (D27) or a rebuild under the table's lock, counts each version it
+finds. So it notes on the table's lock the latest commit it may have
+counted, and a version superseded by that commit or an earlier one
+shares nothing in that index. A write after the fill keeps the index as
+any other.
+
+The semantics hold for these reasons.
+
+- Every version a snapshot may read still has an entry of its key, since
+  a version that kept its key shares its predecessor's entry, and that
+  entry goes only with the last version of the run (D34).
+- A change noted on a spilled change list cannot be found again, so it
+  is not noted, and the update adds its entries as before.
+- A rollback finds nothing to undo for an entry not added, and the
+  version put back still holds the shared entry.
+- Recovery reads no garbage. A checkpoint logs as stale only the entries
+  collection would take back, so recovery from it takes back none a live
+  version shares.
 
 ## 2. Project layout
 
