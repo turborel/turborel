@@ -29,13 +29,15 @@ mod encoded;
 mod fsst;
 pub mod group;
 mod packed;
+pub mod prepared;
 mod runs;
 pub mod scan;
 
 use crate::error::{Code, Result, SqlError};
 use crate::value::{CharUnits, DataType, Value};
 
-use encoded::{Body, Sizer};
+use encoded::{Body, Entries, Sizer};
+use fsst::Symbols;
 
 /// Bytes of a count, a width or an offset.
 const WORD: usize = 4;
@@ -192,11 +194,36 @@ impl<'a> Chunk<'a> {
     ///
     /// SQLCODE -916 if they are not one.
     pub fn parse(bytes: &'a [u8]) -> Result<Chunk<'a>> {
+        Chunk::parse_with(bytes, None)
+    }
+
+    /// The chunk `bytes` hold, of texts coded by `table` if given, with the
+    /// bytes it takes, read of the same bytes before (`prepared.rs`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if they are not one.
+    fn parse_with(bytes: &'a [u8], table: Option<(&'a Symbols, usize)>) -> Result<Chunk<'a>> {
         let kind = bytes.first().copied().ok_or_else(|| corrupt("it is empty"))?;
         let count = read_word(bytes, 1)?;
         let nulls_end = HEADER.checked_add(nulls_len(count)).ok_or_else(|| corrupt("its count is too large"))?;
         let nulls = bytes.get(HEADER..nulls_end).ok_or_else(|| corrupt("it is too short"))?;
-        Ok(Chunk { count, nulls, body: encoded::body(kind, count, (bytes, nulls_end))? })
+        Ok(Chunk { count, nulls, body: encoded::body(kind, count, (bytes, nulls_end), table)? })
+    }
+
+    /// Of texts coded by a table of symbols, the table and the bytes it
+    /// takes, to give when its bytes are parsed again.
+    fn table(&self) -> Option<(Box<Symbols>, usize)> {
+        match &self.body {
+            Body::Fsst(coded) => Some(coded.table()),
+            Body::Fixed { .. }
+            | Body::Varying { .. }
+            | Body::Constant { .. }
+            | Body::Frame { .. }
+            | Body::Dictionary { .. }
+            | Body::Runs(_)
+            | Body::Alp(_) => None,
+        }
     }
 
     /// How many values it holds.
@@ -220,18 +247,34 @@ impl<'a> Chunk<'a> {
     /// to `units`, and whether each is null to `nulls`
     /// (`encoded::Body::ints`): none if its encoding does not hold them.
     pub fn ints(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Vec<bool>)) -> Option<()> {
-        if to > self.count {
+        self.ints_with((from, to), (units, nulls), None)
+    }
+
+    /// As `ints`, of a dictionary whose entries as integers are `entries`
+    /// if given, read once for the runs of a group (`prepared.rs`).
+    fn ints_with(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Vec<bool>), entries: Option<&[i64]>) -> Option<()> {
+        if to > self.count || from > to {
             return None;
         }
-        self.body.ints((from, to), units)?;
-        // The bytes of the bitmap holding the range's bits, read whole.
-        let bytes = self.nulls.get(bit_of(from).0..bit_of(to.saturating_add(BITS.saturating_sub(1))).0).unwrap_or_default();
-        if bytes.iter().all(|&b| b == 0) {
-            nulls.resize(nulls.len().saturating_add(to.saturating_sub(from)), false);
-        } else {
-            nulls.extend((from..to).map(|n| self.is_null(n)));
-        }
+        self.body.ints((from, to), units, entries)?;
+        self.nulls_of((from, to), nulls);
         Some(())
+    }
+
+    /// Whether each of its values at positions `from` to `to` is null,
+    /// pushed to `nulls`: none at once if no bit of the range's bytes is
+    /// set, else each byte's eight bits at once.
+    fn nulls_of(&self, (from, to): (usize, usize), nulls: &mut Vec<bool>) {
+        let (first, last) = (bit_of(from).0, bit_of(to.saturating_add(BITS.saturating_sub(1))).0);
+        let bytes = self.nulls.get(first..last).unwrap_or_default();
+        let count = to.saturating_sub(from);
+        if bytes.iter().all(|&b| b == 0) {
+            nulls.resize(nulls.len().saturating_add(count), false);
+            return;
+        }
+        let skip = usize::from(bit_of(from).1);
+        let bits = bytes.iter().flat_map(|&b| (0..BITS).map(move |bit| b.checked_shr(u32::try_from(bit).unwrap_or(u32::MAX)).unwrap_or(0) & 1 != 0));
+        nulls.extend(bits.skip(skip).take(count));
     }
 
     /// \[DESIGN\] Where each run of one value among its positions `from`
@@ -274,10 +317,21 @@ impl<'a> Chunk<'a> {
         (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Vec<bool>),
         t: &DataType,
     ) -> Option<()> {
+        self.coded_with(positions, (text, ends, codes, nulls), &self.body.entry_texts(padding(t)?)?)
+    }
+
+    /// As `coded`, its entries' text `entries`, read once for the runs of
+    /// a group (`prepared.rs`).
+    fn coded_with(
+        &self,
+        positions: &[usize],
+        (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Vec<bool>),
+        entries: &Entries,
+    ) -> Option<()> {
         if positions.iter().any(|&n| n >= self.count) {
             return None;
         }
-        self.body.coded(positions, (text, ends, codes), (|n| self.is_null(n), padding(t)?))?;
+        self.body.coded(positions, (text, ends, codes), (|n| self.is_null(n), entries))?;
         nulls.extend(positions.iter().map(|&n| self.is_null(n)));
         Some(())
     }

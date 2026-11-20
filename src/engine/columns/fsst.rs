@@ -267,25 +267,54 @@ impl Symbols {
     }
 }
 
-/// A chunk's texts as codes, read in place: its table, where each value's
-/// codes begin, and the codes.
+/// A table of symbols as a chunk holds it: read of its bytes, or one read
+/// before of the same bytes, held for the runs of a group (`prepared.rs`).
+pub(super) enum Held<'a> {
+    Read(Box<Symbols>),
+    Given(&'a Symbols),
+}
+
+impl std::ops::Deref for Held<'_> {
+    type Target = Symbols;
+
+    fn deref(&self) -> &Symbols {
+        match self {
+            Held::Read(symbols) => symbols,
+            Held::Given(symbols) => symbols,
+        }
+    }
+}
+
+/// A chunk's texts as codes, read in place: its table and the bytes it
+/// takes, where each value's codes begin, and the codes.
 pub(super) struct Coded<'a> {
-    symbols: Box<Symbols>,
+    symbols: Held<'a>,
+    table: usize,
     offsets: &'a [u8],
     codes: &'a [u8],
 }
 
 impl<'a> Coded<'a> {
-    /// The texts of a chunk of `count` values `rest` holds.
+    /// The texts of a chunk of `count` values `rest` holds, its table
+    /// `given` if read before, with the bytes it takes, else read.
     ///
     /// # Errors
     ///
     /// SQLCODE -916 if its table is malformed, or it is too short.
-    pub(super) fn parse(rest: &'a [u8], count: usize) -> Result<Coded<'a>> {
-        let (symbols, table) = Symbols::read(rest).ok_or_else(|| corrupt("its table is malformed"))?;
+    pub(super) fn parse(rest: &'a [u8], count: usize, given: Option<(&'a Symbols, usize)>) -> Result<Coded<'a>> {
+        let (symbols, table) = match given {
+            Some((symbols, table)) => (Held::Given(symbols), table),
+            None => Symbols::read(rest).map(|(s, table)| (Held::Read(Box::new(s)), table)).ok_or_else(|| corrupt("its table is malformed"))?,
+        };
         let len = count.checked_add(1).and_then(|n| n.checked_mul(WORD)).ok_or_else(|| corrupt("its count is too large"))?;
         let offsets = rest.get(table..table.saturating_add(len)).ok_or_else(|| corrupt("it is too short"))?;
-        Ok(Coded { symbols: Box::new(symbols), offsets, codes: rest.get(table.saturating_add(len)..).unwrap_or_default() })
+        Ok(Coded { symbols, table, offsets, codes: rest.get(table.saturating_add(len)..).unwrap_or_default() })
+    }
+
+    /// Its table, and the bytes it takes, to be given when its bytes are
+    /// read again.
+    pub(super) fn table(&self) -> (Box<Symbols>, usize) {
+        (Box::new(*self.symbols), self.table)
     }
 
     /// Where the codes of value `n` begin and end.

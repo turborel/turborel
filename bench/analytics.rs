@@ -27,7 +27,8 @@
 //! xtask bench`, on the harness (RULES.md R-BENCH-1); with `ONLY_VAR` set
 //! to `social`, the social network's workloads alone, or to `graph`, path
 //! search's on a graph in memory alone, or to `unnesting`, correlated
-//! subqueries unnested and nested alone (`analytics/unnesting.rs`).
+//! subqueries unnested and nested alone (`analytics/unnesting.rs`), or to
+//! `decode`, the column store's decoding alone (`analytics/decode.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -40,6 +41,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "analytics/decode.rs"]
+mod decode;
 #[path = "analytics/graph.rs"]
 mod graph;
 mod harness;
@@ -55,7 +58,8 @@ use turborel::db::{Database, Session};
 
 /// The variable naming the workloads run alone: `social` for the social
 /// network's, `graph` for path search's on a graph in memory,
-/// `unnesting` for correlated subqueries'.
+/// `unnesting` for correlated subqueries', `decode` for the column
+/// store's decoding.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -82,6 +86,10 @@ fn main() {
         unnesting::workloads(&bench);
         return;
     }
+    if only == "decode" {
+        decode::workloads(&bench);
+        return;
+    }
     let db = database();
     let s = db.session("B");
     measure(&bench, &s, ("F", "W", ""));
@@ -91,6 +99,7 @@ fn main() {
     graph::workloads(&bench);
     social::workloads(&bench);
     unnesting::workloads(&bench);
+    decode::workloads(&bench);
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,

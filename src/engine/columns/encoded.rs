@@ -26,11 +26,13 @@
 //! reading it plain, a value at a time: frame of reference needs only that
 //! a field be 8 bytes, any 8 bytes being a signed integer.
 
+mod words;
+
 use std::collections::HashMap;
 
-use super::alp::{Alp, Trials};
-use super::fsst::{Coded, Table};
-use super::packed::{bits_for, get, pack, packed_len, unpack};
+use super::alp::{Alp, Factors, Trials};
+use super::fsst::{Coded, Symbols, Table};
+use super::packed::{bits_for, get, pack, packed_len, unpack_words};
 use super::runs::{Runs, runs_len};
 use super::{HEADER, WORD, corrupt, nulls_len, padded, read_word, too_large, word};
 use crate::error::Result;
@@ -63,9 +65,9 @@ pub(super) enum Plan {
     Dictionary(u32),
     /// Runs of one value, each less the least in this many bits.
     Runs(i64, u32),
-    /// Approximate numbers as decimals of an exponent, each one's digits
-    /// less the least in this many bits.
-    Alp(u32, i64, u32),
+    /// Approximate numbers as decimals of a pair of factors, each one's
+    /// digits less the least in this many bits.
+    Alp(Factors, i64, u32),
     /// Texts as codes of the sizer's table of symbols.
     Fsst,
 }
@@ -185,8 +187,8 @@ impl<'f> Sizer<'f> {
             let runs = runs_len((self.count, self.runs, bits)).unwrap_or(usize::MAX);
             found.push((Plan::Runs(lo, bits), base.saturating_add(runs)));
         }
-        if let Some(((e, least, bits), bytes)) = self.alp.as_ref().and_then(|a| a.best(self.count)) {
-            found.push((Plan::Alp(e, least, bits), base.saturating_add(bytes)));
+        if let Some(((factors, least, bits), bytes)) = self.alp.as_ref().and_then(|a| a.best(self.count)) {
+            found.push((Plan::Alp(factors, least, bits), base.saturating_add(bytes)));
         }
         if let Some((table, codes)) = &self.fsst {
             let offsets = self.count.saturating_add(1).saturating_mul(WORD);
@@ -233,7 +235,7 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], table: Option<&Tabl
         Plan::Frame(least, bits) => framed(fields, (least, bits), out),
         Plan::Dictionary(bits) => dictionary(fields, bits, out)?,
         Plan::Runs(least, bits) => super::runs::encode(fields, (least, bits), out)?,
-        Plan::Alp(e, least, bits) => super::alp::encode(fields, (e, least, bits), out)?,
+        Plan::Alp(factors, least, bits) => super::alp::encode(fields, (factors, least, bits), out)?,
         Plan::Fsst => super::fsst::encode(fields, table.ok_or_else(|| corrupt("texts have no table"))?, out)?,
     }
     Ok(())
@@ -286,6 +288,14 @@ fn dictionary(fields: &[Option<Vec<u8>>], bits: u32, out: &mut Vec<u8>) -> Resul
     Ok(())
 }
 
+/// Of a dictionary of texts, its entries as text, one after another, and
+/// where each ends.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Entries {
+    text: String,
+    ends: Vec<usize>,
+}
+
 /// A chunk's values, read in place, as their encoding wrote them.
 pub(super) enum Body<'a> {
     Fixed { width: usize, values: &'a [u8] },
@@ -304,8 +314,9 @@ fn slice(bytes: &[u8], at: usize, len: usize) -> Result<&[u8]> {
 }
 
 /// The body of a chunk of `kind`, of `count` values, that `bytes` hold
-/// from `at`.
-pub(super) fn body(kind: u8, count: usize, (bytes, at): (&[u8], usize)) -> Result<Body<'_>> {
+/// from `at`, of texts coded by `table` if given, with the bytes it takes,
+/// read of the same bytes before (`prepared.rs`).
+pub(super) fn body<'a>(kind: u8, count: usize, (bytes, at): (&'a [u8], usize), table: Option<(&'a Symbols, usize)>) -> Result<Body<'a>> {
     let rest = bytes.get(at..).unwrap_or_default();
     match kind {
         FIXED => {
@@ -350,7 +361,7 @@ pub(super) fn body(kind: u8, count: usize, (bytes, at): (&[u8], usize)) -> Resul
         }
         RUNS => Ok(Body::Runs(Runs::parse(rest, count)?)),
         ALP => Ok(Body::Alp(Alp::parse(rest, count)?)),
-        FSST => Ok(Body::Fsst(Coded::parse(rest, count)?)),
+        FSST => Ok(Body::Fsst(Coded::parse(rest, count, table)?)),
         _ => Err(corrupt("it is of another format")),
     }
 }
@@ -387,34 +398,6 @@ impl Body<'_> {
     }
 }
 
-impl Body<'_> {
-    /// \[DESIGN\] The values at positions `from` to `to`, each 8 bytes, an
-    /// exact number's units or an approximate number's bits, as integers
-    /// pushed to `out`, a null's of no meaning (`Ints`, `Floats`): none if
-    /// the fields are not of 8 bytes, or texts coded. Each frame's width
-    /// read with a loop of its own, so its differences are read as fast as
-    /// plain integers.
-    pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
-        let count = to.checked_sub(from)?;
-        match self {
-            Body::Frame { least, bits, deltas } => unframed(*least, (*bits, deltas), (from, to), out),
-            Body::Runs(runs) => runs.ints((from, to), out),
-            Body::Alp(alp) => alp.words((from, to), out),
-            Body::Dictionary { bits, offsets, entries, codes } => dictionary_words((*bits, offsets, entries, codes), (from, to), out),
-            Body::Fixed { width: FRAMED, values } => {
-                let given = values.get(from.checked_mul(FRAMED)?..to.checked_mul(FRAMED)?)?;
-                out.extend(given.as_chunks::<FRAMED>().0.iter().map(|&w| i64::from_le_bytes(w)));
-                Some(())
-            }
-            Body::Constant { field } => {
-                // None if every value is null, its field empty.
-                out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), count));
-                Some(())
-            }
-            Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => None,
-        }
-    }
-}
 
 impl Body<'_> {
     /// \[DESIGN\] Where each run of one value among positions `from` to
@@ -456,34 +439,46 @@ impl Body<'_> {
         Some(())
     }
 
-    /// \[DESIGN\] Of a dictionary, its entries' text pushed to `text` and
-    /// where each ends to `ends`, then of each of `positions` its entry's
-    /// place among all those `ends` holds pushed to `codes`, 0 of those
-    /// `null` says are nulls (`Coded`): none if the encoding is not a
-    /// dictionary, or an entry is not UTF-8. The codes from the first of
-    /// `positions`, in order, to the last are unpacked at once. Each entry
-    /// is padded to `pad` characters if given, as `texts` pads.
+    /// \[DESIGN\] Of a dictionary, its entries' text, `entries`, pushed to
+    /// `text` and where each ends to `ends`, then of each of `positions`
+    /// its entry's place among all those `ends` holds pushed to `codes`, 0
+    /// of those `null` says are nulls (`Coded`): none if the encoding is
+    /// not a dictionary. The codes from the first of `positions`, in
+    /// order, to the last are unpacked at once.
     pub(super) fn coded(
         &self,
         positions: &[usize],
         (text, ends, codes): (&mut String, &mut Vec<usize>, &mut Vec<u32>),
-        (null, pad): (impl Fn(usize) -> bool, Option<usize>),
+        (null, entries): (impl Fn(usize) -> bool, &Entries),
     ) -> Option<()> {
-        let Body::Dictionary { bits, offsets, entries, codes: packed } = self else { return None };
+        let Body::Dictionary { bits, codes: packed, .. } = self else { return None };
         let base = u32::try_from(ends.len()).ok()?;
-        for e in 0..(offsets.len().checked_div(WORD)?.checked_sub(1)?) {
-            let (from, to) = between(offsets, e)?;
-            padded(text, std::str::from_utf8(entries.get(from..to)?).ok()?, pad);
-            ends.push(text.len());
-        }
+        let at = text.len();
+        text.push_str(&entries.text);
+        ends.extend(entries.ends.iter().map(|&end| end.saturating_add(at)));
         let (Some(&first), Some(&last)) = (positions.first(), positions.last()) else { return Some(()) };
         let mut held = Vec::with_capacity(last.checked_sub(first)?.saturating_add(1));
-        unpack(packed, *bits, (first, last.checked_add(1)?), |c| held.push(c))?;
+        unpack_words(packed, (*bits, 0), (first, last.checked_add(1)?), &mut held)?;
         for &n in positions {
             let code = u32::try_from(*held.get(n.checked_sub(first)?)?).ok()?;
             codes.push(if null(n) { 0 } else { base.checked_add(code)? });
         }
         Some(())
+    }
+
+    /// \[DESIGN\] Of a dictionary, its entries' text, each padded to `pad`
+    /// characters if given, as `texts` pads: none if the encoding is not a
+    /// dictionary, or an entry is not UTF-8.
+    pub(super) fn entry_texts(&self, pad: Option<usize>) -> Option<Entries> {
+        let Body::Dictionary { offsets, entries, .. } = self else { return None };
+        let count = offsets.len().checked_div(WORD)?.checked_sub(1)?;
+        let mut held = Entries { text: String::new(), ends: Vec::with_capacity(count) };
+        for e in 0..count {
+            let (from, to) = between(offsets, e)?;
+            padded(&mut held.text, std::str::from_utf8(entries.get(from..to)?).ok()?, pad);
+            held.ends.push(held.text.len());
+        }
+        Some(held)
     }
 
     /// The entry of the `n`th value of a dictionary.
@@ -510,66 +505,9 @@ impl Body<'_> {
     }
 }
 
-/// The values at positions `from` to `to` of a dictionary whose codes of
-/// `bits` are `codes`, each its entry's 8 bytes as an integer, pushed to
-/// `out`: the entries read once, then the codes unpacked a run at a time;
-/// none if an entry is not of 8 bytes.
-fn dictionary_words(
-    (bits, offsets, entries, codes): (u32, &[u8], &[u8], &[u8]),
-    (from, to): (usize, usize),
-    out: &mut Vec<i64>,
-) -> Option<()> {
-    let count = offsets.len().checked_div(WORD)?.checked_sub(1)?;
-    let words: Vec<i64> =
-        (0..count).map(|e| between(offsets, e).and_then(|(a, b)| entries.get(a..b)).and_then(integer)).collect::<Option<_>>()?;
-    out.reserve(to.checked_sub(from)?);
-    let mut ok = true;
-    unpack(codes, bits, (from, to), |c| {
-        let word = usize::try_from(c).ok().and_then(|c| words.get(c)).copied();
-        ok = ok && word.is_some();
-        out.push(word.unwrap_or(0));
-    })?;
-    ok.then_some(())
-}
-
 /// Where the `e`th of the fields `offsets` gives begins and ends.
 fn between(offsets: &[u8], e: usize) -> Option<(usize, usize)> {
     read_word(offsets, e.checked_mul(WORD)?).ok().zip(read_word(offsets, e.checked_add(1)?.checked_mul(WORD)?).ok())
-}
-
-/// The values at positions `from` to `to` of frame of reference `least`
-/// whose differences, of `bits` each, are `deltas`, pushed to `out`. A difference is less than 2^64, and
-/// the value it gives was an integer of 64 bits, so adding it wrapping
-/// gives that value.
-fn unframed(least: i64, (bits, deltas): (u32, &[u8]), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
-    let plus = |d: u64| least.wrapping_add(i64::from_le_bytes(d.to_le_bytes()));
-    // Of whole bytes, read a byte width at a time; of other widths, a
-    // value's window at a time.
-    if bits.checked_rem(8)? != 0 {
-        out.reserve(to.saturating_sub(from));
-        return unpack(deltas, bits, (from, to), |d| out.push(plus(d)));
-    }
-    let bytes = usize::try_from(bits.checked_div(8)?).ok()?;
-    if bytes == 0 {
-        out.extend(std::iter::repeat_n(least, to.checked_sub(from)?));
-        return Some(());
-    }
-    let given = deltas.get(from.checked_mul(bytes)?..to.checked_mul(bytes)?)?;
-    match bytes {
-        1 => out.extend(given.iter().map(|&b| plus(u64::from(b)))),
-        2 => out.extend(given.as_chunks::<2>().0.iter().map(|&d| plus(u64::from(u16::from_le_bytes(d))))),
-        3 => out.extend(given.as_chunks::<3>().0.iter().map(|&[a, b, c]| plus(u64::from(u32::from_le_bytes([a, b, c, 0]))))),
-        4 => out.extend(given.as_chunks::<4>().0.iter().map(|&d| plus(u64::from(u32::from_le_bytes(d))))),
-        FRAMED => out.extend(given.as_chunks::<FRAMED>().0.iter().map(|&d| plus(u64::from_le_bytes(d)))),
-        _ => {
-            for d in given.chunks_exact(bytes) {
-                let mut word = [0_u8; FRAMED];
-                word.get_mut(..d.len())?.copy_from_slice(d);
-                out.push(plus(u64::from_le_bytes(word)));
-            }
-        }
-    }
-    Some(())
 }
 
 /// The kind byte of `plan`.

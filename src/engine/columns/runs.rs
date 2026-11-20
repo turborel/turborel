@@ -10,7 +10,7 @@
 //!        least, of bits | each run's end, of the bits the count needs
 //! ```
 
-use super::packed::{bits_for, get, pack, packed_len, unpack};
+use super::packed::{bits_for, get, pack, packed_len, unpack_words};
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 
@@ -146,19 +146,25 @@ impl<'a> Runs<'a> {
     }
 
     /// The values at positions `from` to `to`, pushed to `out`, each run's
-    /// value repeated for its rows among them.
+    /// value repeated for its rows among them: the ends and values of the
+    /// runs among them alone unpacked, a block at a time.
     pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         if to > self.count || from > to {
             return None;
         }
-        let mut ends = Vec::with_capacity(self.many);
-        unpack(self.ends, bits_for(u64::try_from(self.count).ok()?), (0, self.many), |e| ends.push(e))?;
-        let (mut at, mut r) = (from, self.run_of(from).unwrap_or(self.many));
-        while at < to {
-            let end = usize::try_from(*ends.get(r)?).ok()?.min(to);
-            out.extend(std::iter::repeat_n(self.value(r)?, end.checked_sub(at)?));
-            (at, r) = (end, r.saturating_add(1));
+        if from == to {
+            return Some(());
         }
-        Some(())
+        let (first, last) = (self.run_of(from)?, self.run_of(to.checked_sub(1)?)?.checked_add(1)?);
+        let (mut ends, mut values) = (Vec::with_capacity(last.saturating_sub(first)), Vec::with_capacity(last.saturating_sub(first)));
+        unpack_words(self.ends, (bits_for(u64::try_from(self.count).ok()?), 0), (first, last), &mut ends)?;
+        unpack_words(self.values, (self.bits, self.least), (first, last), &mut values)?;
+        let mut at = from;
+        for (&end, &value) in ends.iter().zip(&values) {
+            let end = usize::try_from(end).ok()?.min(to);
+            out.extend(std::iter::repeat_n(value, end.checked_sub(at)?));
+            at = end;
+        }
+        (at == to).then_some(())
     }
 }
