@@ -44,6 +44,9 @@ impl PhysicalPlanner<'_> {
             };
             reads.push(Plan::Nearest(Box::new(one)));
         }
-        reads.into_iter().rev().reduce(|after, one| Plan::Append { left: Box::new(one), right: Box::new(after) })
+        reads.into_iter().rev().reduce(|after, one| {
+            let est = Plan::summed(&one, &after);
+            Plan::Append { left: Box::new(one), right: Box::new(after), est }
+        })
     }
 }

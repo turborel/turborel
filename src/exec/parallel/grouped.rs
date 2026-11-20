@@ -110,7 +110,7 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize)
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
         (Grouping { spec, distinct: false, read: None, seed: db.functions.seed().clone() }, input)
-    } else if let Plan::Distinct { input } = plan {
+    } else if let Plan::Distinct { input, .. } = plan {
         let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
         (Grouping { spec, distinct: true, read: None, seed: db.functions.seed().clone() }, input)
     } else {

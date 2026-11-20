@@ -70,7 +70,7 @@ pub(super) fn floats(judged: &Judged, floats: &Floats, over: Option<&[u32]>, ker
                 keep(&|f| list.iter().any(|c| ordering(f, c) == Some(Ordering::Equal)))
             }
         }
-        Judged::Like(..) | Judged::Compared(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
+        Judged::Like(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
     }
 }
 
@@ -88,7 +88,7 @@ pub(super) fn datetimes(judged: &Judged, datetimes: &Datetimes, over: Option<&[u
             kernels.select_i64(&datetimes.utc, (*op, c.utc), (datetimes.nulls.as_ref(), over), &mut out);
             Some(out)
         }
-        Judged::Compare(..) | Judged::In(..) | Judged::Like(..) | Judged::Compared(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
+        Judged::Compare(..) | Judged::In(..) | Judged::Like(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
     }
 }
 
@@ -112,7 +112,7 @@ pub(super) fn bools(judged: &Judged, bools: &Bools, over: Option<&[u32]>, kernel
             kernels.select_mask(true_of.words(), (bools.nulls.as_ref(), over), &mut out);
             Some(out)
         }
-        Judged::Compare(..) | Judged::In(..) | Judged::Like(..) | Judged::Compared(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
+        Judged::Compare(..) | Judged::In(..) | Judged::Like(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
     }
 }
 

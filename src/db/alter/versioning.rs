@@ -327,6 +327,7 @@ pub(super) fn unversioned(st: &State, qn: &QualifiedName, action: &AlterAction) 
         | AlterAction::Truncate { .. }
         | AlterAction::AttachPartition { .. }
         | AlterAction::DetachPartition(_)
+        | AlterAction::RenameTable { .. }
         | AlterAction::Storage(_) => return Ok(()),
     };
     if st.versioned(qn) {

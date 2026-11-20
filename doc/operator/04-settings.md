@@ -272,7 +272,13 @@ While EXECUTOR.BATCHES is on, a query reads its tables a batch of up to
 numbers, strings, dates and timestamps, and truth values each kept as
 their own kind, their nulls as bits. A filter comparing such a column
 with a constant, testing it for null, or an OR of such tests, judges a
-whole vector at once. A part run in parallel reads each morsel the same
+whole vector at once. Any other expression of a batch's columns, in a
+filter, a select list or a set function's argument, is compiled once and
+evaluated a vector at a time: arithmetic, comparisons, AND, OR and NOT,
+CASE, COALESCE, NULLIF, CAST, and ABS, CHAR_LENGTH, OCTET_LENGTH, UPPER,
+LOWER and EXTRACT. A batch in which some row would raise an error or a
+warning is evaluated again a row at a time, so the error, the warnings
+and the rows before them are those a row at a time gives. A part run in parallel reads each morsel the same
 way, its filters, projections and grouping done a batch at a time, so a
 thread of a parallel query costs a row what the statement's own thread
 alone does. A part whose morsels pass through a hash join's probe reads

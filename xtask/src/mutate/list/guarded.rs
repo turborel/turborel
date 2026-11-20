@@ -11,7 +11,7 @@ pub const GUARDED: [Mutation; 2] = [
         package: Package::Core,
         breaks: "an index read below a guard is no product with it, so its conjuncts are evaluated of a table whose guard has no row",
         file: "src/physical/access/guarded.rs",
-        original: "            Some(guard) => Plan::Product { left: Box::new(plan), right: Box::new(self.build_node(guard, &[]).plan) },",
+        original: "            Some(guard) => Plan::Product { left: Box::new(plan), right: Box::new(self.build_node(guard, &[]).plan), est },",
         replacement: "            Some(_) => plan,",
         integration: &["guarded_reads::errors_below_a_guard_are_a_full_reads"],
         unit: &[],

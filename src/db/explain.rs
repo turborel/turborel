@@ -43,6 +43,28 @@ impl Session {
         Ok(self.compile(st, &spec, params)?.physical.explain())
     }
 
+    /// The state `sql` is planned in and its optimized logical plan, for
+    /// the planner's unit tests.
+    #[cfg(test)]
+    pub(crate) fn optimized(&self, sql: &str) -> Result<(Arc<State>, crate::logical::LogicalPlan)> {
+        let call = self.enter()?;
+        let st = Arc::clone(call.state());
+        let spec = Self::parse_cursor(&st, sql, &Params::new())?;
+        let optimized = self.compile(&st, &spec, &Params::new())?.optimized;
+        Ok((st, optimized))
+    }
+
+    /// The state `sql` is bound in and its logical plan as bound, before
+    /// any rule, for the optimizer's unit tests.
+    #[cfg(test)]
+    pub(crate) fn bound_plan(&self, sql: &str) -> Result<(Arc<State>, crate::logical::LogicalPlan)> {
+        let call = self.enter()?;
+        let st = Arc::clone(call.state());
+        let spec = Self::parse_cursor(&st, sql, &Params::new())?;
+        let (_, logical) = self.cursor_bound(&st, &spec, &Params::new(), None)?;
+        Ok((st, logical))
+    }
+
     /// \[EXTENSION\] `EXPLAIN <cursor specification>`, `sql` the
     /// specification: a cursor of one column, PLAN, whose rows are the
     /// lines `explain` gives, in order. It opens a transaction, as a query

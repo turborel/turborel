@@ -132,7 +132,8 @@ impl PhysicalPlanner<'_> {
                 let kind = op.map_or(Kind::Inner, |o| cx.model.kind_of(o));
                 let conds = cx.conds(op, sets);
                 let rows = (cx.rows(sets.0), cx.rows(sets.1));
-                self.realize_join(cx, (how, kind), (l, r), (conds, rows))
+                let est = cx.rows(sets.0 | sets.1);
+                self.realize_join(cx, (how, kind), (l, r), (conds, rows, est))
             }
         }
     }
@@ -149,53 +150,58 @@ impl PhysicalPlanner<'_> {
             }
             Order::Want => cx.want.iter().map(|k| Some(SortKey { column: local(k.column)?, ..*k })).collect::<Option<_>>()?,
         };
-        let built = self.build(&leaf.plan, &keys);
         let shape = if self.shown { label(&leaf.plan) } else { String::new() };
+        // The model built the read of each order it costed (`enumerate/modeled.rs`).
+        if let Some(plan) = cx.model.plan_of(rel, order) {
+            return Some(Realized { plan: plan.clone(), layout: vec![rel], order, shape });
+        }
+        let built = self.build(&leaf.plan, &keys);
         Some(Realized { plan: built.plan, layout: vec![rel], order: if built.ordered { order } else { Order::None }, shape })
     }
 
     /// The join of `l` and `r` by `how`, of kind `kind`, judging `conds`,
-    /// its operands giving `rows`.
+    /// its operands giving `rows`, it `est`.
     fn realize_join(
         &self,
         cx: &Context<'_>,
         (how, kind): (Method, Kind),
         (l, r): (Realized, Realized),
-        (conds, rows): (Vec<Cond>, (f64, f64)),
+        (conds, rows, est): (Vec<Cond>, (f64, f64), f64),
     ) -> Option<Realized> {
         match (how, kind) {
             (Method::Index, Kind::Inner | Kind::Left) => {
                 let fallback = (Method::Hash, kind);
                 match self.index_realized(cx, kind, (&l, &r), (&conds, rows.0)) {
                     Some(done) => Some(done),
-                    None => self.realize_join(cx, fallback, (l, r), (conds, rows)),
+                    None => self.realize_join(cx, fallback, (l, r), (conds, rows, est)),
                 }
             }
-            (Method::Merge(class), Kind::Inner | Kind::Left) => self.merge_realized(cx, (class, kind), (l, r), &conds),
-            (Method::Hash, Kind::Inner) => Some(self.hash_realized(cx, (l, r), &conds, rows)),
+            (Method::Merge(class), Kind::Inner | Kind::Left) => self.merge_realized(cx, (class, kind), (l, r), (&conds, est)),
+            (Method::Hash, Kind::Inner) => Some(self.hash_realized(cx, (l, r), &conds, (rows, est))),
             (Method::Hash | Method::Nested | Method::Index | Method::Merge(_), Kind::Left | Kind::Full) => {
-                Some(self.outer_realized(cx, kind, (l, r), (&conds, rows)))
+                Some(self.outer_realized(cx, kind, (l, r), (&conds, rows, est)))
             }
             (Method::Nested, Kind::Inner) => {
                 let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
                 let shape = joined_shape(&l, &r);
-                let product = Plan::Product { left: Box::new(l.plan), right: Box::new(r.plan) };
-                Some(Realized { plan: self.filter_over(cx, product, &conds, &layout), layout, order: l.order, shape })
+                let product = Plan::Product { left: Box::new(l.plan), right: Box::new(r.plan), est };
+                Some(Realized { plan: self.filter_over(cx, product, &conds, (&layout, est)), layout, order: l.order, shape })
             }
         }
     }
 
-    /// `plan`, of the columns of `layout`, under a filter of `conds`.
-    fn filter_over(&self, cx: &Context<'_>, plan: Plan, conds: &[Cond], layout: &[usize]) -> Plan {
+    /// `plan`, of the columns of `layout`, under a filter of `conds`
+    /// giving `est` rows.
+    fn filter_over(&self, cx: &Context<'_>, plan: Plan, conds: &[Cond], (layout, est): (&[usize], f64)) -> Plan {
         let Some(cond) = and_all(conds.iter().map(|c| cx.mapped(c, layout)).collect()).map(judged_by_sets) else { return plan };
         let names = cx.names(layout, self.shown);
         let detail = Shown::of(names.as_deref()).text(|n| render_cond(&cond, n));
-        Plan::Filter { cond, detail, est: None, input: Box::new(plan) }
+        Plan::Filter { cond, detail, est, of_read: false, input: Box::new(plan) }
     }
 
     /// An inner hash join, the operand of fewer rows built unless the
     /// left's order was chosen.
-    fn hash_realized(&self, cx: &Context<'_>, (l, r): (Realized, Realized), conds: &[Cond], rows: (f64, f64)) -> Realized {
+    fn hash_realized(&self, cx: &Context<'_>, (l, r): (Realized, Realized), conds: &[Cond], (rows, est): ((f64, f64), f64)) -> Realized {
         let (l, r) = if l.order == Order::None && rows.0 < rows.1 { (r, l) } else { (l, r) };
         let (keys, rest) = cx.split_keys((&l.layout, &r.layout), conds);
         let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
@@ -203,14 +209,20 @@ impl PhysicalPlanner<'_> {
         let keys = keys.into_iter().map(|(left, right)| JoinKey { left, right, nulls: false }).collect();
         let rest = rest.iter().map(|c| cx.mapped(c, &layout)).collect();
         let names = cx.names(&layout, self.shown);
-        let plan = hashed((l.plan, r.plan), keys, rest, (cx.width(&l.layout), Shown::of(names.as_deref())));
+        let plan = hashed((l.plan, r.plan), keys, rest, (cx.width(&l.layout), Shown::of(names.as_deref()), est));
         Realized { plan, layout, order: l.order, shape }
     }
 
     /// An outer join, hashed on its equalities: the operand of fewer rows
     /// built unless the left's order was chosen, a LEFT join so the RIGHT
     /// join of its operands swapped.
-    fn outer_realized(&self, cx: &Context<'_>, kind: Kind, (l, r): (Realized, Realized), (conds, rows): (&[Cond], (f64, f64))) -> Realized {
+    fn outer_realized(
+        &self,
+        cx: &Context<'_>,
+        kind: Kind,
+        (l, r): (Realized, Realized),
+        (conds, rows, est): (&[Cond], (f64, f64), f64),
+    ) -> Realized {
         let swap = rows.0 < rows.1 && (kind == Kind::Full || l.order == Order::None);
         let of = match (kind, swap) {
             (Kind::Full, true | false) => OuterJoin::Full,
@@ -227,7 +239,7 @@ impl PhysicalPlanner<'_> {
         let detail = shown.text(|n| render_cond(&cond, n));
         let order = if of == OuterJoin::Left { l.order } else { Order::None };
         let widths = (width, cx.width(&r.layout));
-        let plan = hashed_outer(of, (l.plan, r.plan), Parted::of(&cond, width), (widths, detail, shown));
+        let plan = hashed_outer(of, (l.plan, r.plan), Parted::of(&cond, width), (widths, detail, shown, est));
         Realized { plan, layout, order, shape }
     }
 
@@ -268,7 +280,7 @@ impl PhysicalPlanner<'_> {
         cx: &Context<'_>,
         (class, kind): (usize, Kind),
         (left, right): (Realized, Realized),
-        conds: &[Cond],
+        (conds, est): (&[Cond], f64),
     ) -> Option<Realized> {
         let (pairs, _) = cx.split_keys((&left.layout, &right.layout), conds);
         let &(at_left, at_right) = pairs.iter().find(|&&(place, _)| cx.class_at(&left.layout, place) == Some(class))?;
@@ -285,7 +297,7 @@ impl PhysicalPlanner<'_> {
         let all_names = cx.names(&layout, self.shown);
         let detail = merge_detail(Shown::of(all_names.as_deref()), pair_key, cond.as_ref());
         let key = JoinKey { left: at_left, right: at_right, nulls: false };
-        let merged = MergeJoin { outer: kind == Kind::Left, left: left_plan, right: right_plan, key, cond, widths, detail };
+        let merged = MergeJoin { outer: kind == Kind::Left, left: left_plan, right: right_plan, key, cond, widths, detail, est };
         let plan = Plan::MergeJoin(Box::new(merged));
         Some(Realized { plan, layout, order: Order::Class(class), shape })
     }

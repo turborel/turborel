@@ -28,7 +28,8 @@ impl PhysicalPlanner<'_> {
             .unwrap_or_default();
         let b = self.build_input(input, &inner, &reads(groups, aggs));
         let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
-        let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(b.plan) };
+        let est = self.card(logical).rows;
+        let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(b.plan), est };
         Built { plan, ordered: !inner.is_empty() && b.ordered }
     }
 }

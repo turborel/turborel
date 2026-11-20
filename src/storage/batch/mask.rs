@@ -189,6 +189,19 @@ impl Mask {
         out.any().then_some(out)
     }
 
+    /// \[DESIGN\] (RULES.md D362) `len` bits of `words`, least significant
+    /// first, as a kernel writes them a word at a time: a bit past `len`
+    /// cleared, a word missing unset.
+    pub fn from_words(words: Vec<u64>, len: usize) -> Mask {
+        Mask::none(len).with_words(words)
+    }
+
+    /// The bits of `self` not set, of the same length.
+    #[must_use]
+    pub fn not(&self) -> Mask {
+        self.with_words(self.words.iter().map(|w| !w).collect())
+    }
+
     /// The bits of `self` or `other`, of the same length.
     #[must_use]
     pub fn or(&self, other: &Mask) -> Mask {

@@ -30,6 +30,7 @@
 )]
 
 mod adjacency_index;
+mod alter_columns;
 mod collated_indexes;
 mod collation_derivation;
 mod collation_usage;
@@ -65,6 +66,7 @@ mod backup_archive;
 mod backup_online;
 mod backup_targets;
 mod backups;
+mod batch_exprs;
 mod batch_joins;
 mod batch_kinds;
 mod batches;
@@ -276,6 +278,7 @@ mod regex_functions;
 mod regular_expressions;
 mod rekeying;
 mod renamed_columns;
+mod renamed_tables;
 mod reopen;
 mod replicated_state;
 mod restrict;

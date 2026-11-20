@@ -152,7 +152,7 @@ fn outside(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
 
 /// Whether the stream `plan` has a filter.
 fn filtered(plan: &Plan) -> bool {
-    if let Plan::Append { left, right } = plan {
+    if let Plan::Append { left, right, .. } = plan {
         return filtered(left) || filtered(right);
     }
     if let Plan::Project { input, .. } | Plan::HashJoin { left: input, .. } = plan {
@@ -166,7 +166,7 @@ fn rooted(plan: &Plan) -> Option<usize> {
     if let Plan::Aggregate { aggs, input, .. } = plan {
         return mergeable(aggs).then(|| stream(input)).flatten();
     }
-    if let Plan::Distinct { input } = plan {
+    if let Plan::Distinct { input, .. } = plan {
         return stream(input);
     }
     if let Plan::Sort { input, most, .. } = plan {
@@ -201,7 +201,7 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
     if let Plan::HashJoin { left, .. } = plan {
         return stream(left);
     }
-    let Plan::Append { left, right } = plan else { return None };
+    let Plan::Append { left, right, .. } = plan else { return None };
     Some(stream(left)?.saturating_add(stream(right)?))
 }
 
@@ -210,13 +210,13 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
 /// window functions: that scan, making no row, outruns workers that make
 /// each (RULES.md D291).
 fn by_batch(db: &State, plan: &Plan) -> bool {
-    if let Plan::Aggregate { input, .. } | Plan::Distinct { input } | Plan::Sort { input, .. } = plan {
+    if let Plan::Aggregate { input, .. } | Plan::Distinct { input, .. } | Plan::Sort { input, .. } = plan {
         return by_batch(db, input);
     }
     if let Plan::Filter { input, .. } | Plan::Project { input, .. } = plan {
         return by_batch(db, input);
     }
-    if let Plan::SetOp { left, right, .. } | Plan::Append { left, right } = plan {
+    if let Plan::SetOp { left, right, .. } | Plan::Append { left, right, .. } = plan {
         return by_batch(db, left) || by_batch(db, right);
     }
     let Plan::SeqScan { table, .. } = plan else { return false };

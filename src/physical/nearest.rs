@@ -353,7 +353,7 @@ impl PhysicalPlanner<'_> {
 
     fn nearest_cost(&self, (table, columns): (&QualifiedName, &[usize]), condition: Option<&Cond>, first: usize) -> Option<f64> {
         let storage = self.db.storage_of(table).ok()?;
-        let model = self.db.cost();
+        let model = self.weights();
         let all = cost_of(storage.row_count());
         let fraction = self.selectivity(table, condition);
         if fraction <= 0.0_f64 {
@@ -369,8 +369,8 @@ impl PhysicalPlanner<'_> {
 
     /// The share of the rows of `table` `condition` is estimated to keep.
     fn selectivity(&self, table: &QualifiedName, condition: Option<&Cond>) -> f64 {
-        let model = self.db.cost();
-        let stats = self.db.statistics(table);
+        let model = self.weights();
+        let stats = self.statistics(table);
         let known = estimate::Known { stats: stats.as_deref(), cost: &model };
         condition.map_or(1.0_f64, |c| safe::selectivity(c, known))
     }

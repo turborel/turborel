@@ -558,9 +558,8 @@ fn columns_of_runs_answer_as_row_by_row() {
 /// Verifies: [DESIGN] RULES.md D31, D38 [X3.135-1986 §5.22, §5.8]: grouped
 /// by a column of the column store kept as runs, a run's rows each taken
 /// into the group of its first, the groups and their set functions are
-/// those of the same rows of the row store read a row at a time: filtered
-/// or not, held in the work area or past it, their rows written and
-/// grouped again.
+/// those of the row store read a row at a time: filtered or not, held in
+/// the work area or past it, their rows written and grouped again.
 #[test]
 fn groups_of_runs_answer_as_row_by_row() {
     let db = Database::new();

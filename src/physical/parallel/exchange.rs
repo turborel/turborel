@@ -62,7 +62,7 @@ fn groups_of(db: &State, plan: &Plan) -> Option<f64> {
         let product = groups.iter().try_fold(1.0_f64, |n, &c| Some(n * distinct_in(db, input, c)?));
         return (!groups.is_empty()).then_some(product).flatten();
     }
-    let Plan::Distinct { input } = plan else { return None };
+    let Plan::Distinct { input, .. } = plan else { return None };
     let Plan::Project { exprs, .. } = &**input else { return None };
     (0..exprs.len()).try_fold(1.0_f64, |n, c| Some(n * distinct_in(db, input, c)?))
 }

@@ -194,7 +194,7 @@ pub const WINDOWS: [Mutation; 21] = [
         name: "window-input-unsorted",
         package: Package::Core,
         breaks: "a window reads its input in no order, as if sorted by its partitioning and ordering",
-        file: "src/physical.rs",
+        file: "src/physical/ordered.rs",
         original: "        let input = if b.ordered {",
         replacement: "        let input = if !keys.is_empty() {",
         integration: &["windows::ranks_count_rows_and_peer_groups_9_23", "window_rules::windows_read_rows_kept_in_order_unsorted_7_15"],

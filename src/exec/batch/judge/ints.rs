@@ -8,12 +8,11 @@
 
 use std::cmp::Ordering;
 
-use super::{Judged, Side};
-use crate::exec::batch::vector::ints::{both_runs, lane_of};
+use super::Judged;
 use crate::kernels::Kernels;
+use crate::storage::Ints;
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
-use crate::storage::{Batch, Ints};
 use crate::value::{CompOp, Decimal, Value, pow10};
 
 /// The rows of `over`, or of all, that `judged` keeps of `ints`, if it is
@@ -59,7 +58,7 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, over: Option<&[u32]>, kernels: 
             let equal = |u: i64| scaled_list.iter().any(|&(f, c)| i128::from(u).checked_mul(f) == Some(c));
             Some(filtered(&|u| if *not { !has_null && !equal(u) } else { equal(u) }))
         }
-        Judged::Like(..) | Judged::Compared(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
+        Judged::Like(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
     }
 }
 
@@ -156,37 +155,6 @@ fn by_runs(ints: &Ints, kept: &[u32], keeps: &dyn Fn(i64) -> bool) -> Option<Vec
         }
     }
     Some(out)
-}
-
-/// The rows of `over`, rows of `batch`, of which `a` `op` `b` is true, each
-/// side evaluated as integers (`vector/ints.rs`) and both scaled to the
-/// greater scale: none if either's integers are not made. A column is read
-/// in place, a constant once, so a side made of neither makes no vector.
-pub(super) fn compared((left, op, right): (&Side, CompOp, &Side), batch: &Batch, over: Option<&[u32]>) -> Option<Vec<u32>> {
-    let all = over.map_or_else(|| rows_of(0..batch.rows), <[u32]>::to_vec);
-    let given = all.as_slice();
-    let first = lane_of(&left.0, &left.1, batch, Some(given))?;
-    let second = lane_of(&right.0, &right.1, batch, Some(given))?;
-    let common = first.scale().max(second.scale());
-    let factors = (pow10(common.checked_sub(first.scale())?)?, pow10(common.checked_sub(second.scale())?)?);
-    let scaled = |units: i64, factor: i128| i128::from(units).checked_mul(factor);
-    let truth = |n: usize| match (first.unit(n), second.unit(n)) {
-        (Some(one), Some(other)) => holds(op, scaled(one, factors.0).zip(scaled(other, factors.1)).map(|(p, q)| p.cmp(&q))),
-        (None, _) | (_, None) => false,
-    };
-    // Of sides known as runs, judged once a run of both (RULES.md D31).
-    if let Some(ends) = both_runs((&first, &second), given.len()) {
-        let mut kept = Vec::with_capacity(given.len());
-        let mut start = 0_usize;
-        for end in ends {
-            if truth(start) {
-                kept.extend_from_slice(given.get(start..end).unwrap_or_default());
-            }
-            start = end;
-        }
-        return Some(kept);
-    }
-    Some(given.iter().enumerate().filter(|&(n, _)| truth(n)).map(|(_, &r)| r).collect())
 }
 
 /// The factor each integer of `scale` is multiplied by, and `constant` at

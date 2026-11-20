@@ -34,6 +34,10 @@ fn both(s: &Session, (pattern, columns): (&str, &str)) -> (Vec<String>, Vec<Stri
 fn rigid_patterns_join_as_they_search_16() {
     let (_db, s) = bank();
     s.run("INSERT INTO TRANSFER VALUES ('t9', 'a2', 'a2', DATE '2020-10-01', 1)").unwrap();
+    // Transfers of no ends, edges of no pattern, so a probe of one row
+    // costs less than reading TRANSFER (RULES.md D370).
+    let ended = (0..40).map(|k| format!("('n{k}', NULL, NULL, DATE '2020-01-01', 0)")).collect::<Vec<_>>().join(", ");
+    s.run(&format!("INSERT INTO TRANSFER VALUES {ended}")).unwrap();
     let shown = |pattern: &str| {
         let q = format!("SELECT * FROM GRAPH_TABLE (BANK MATCH {pattern} COLUMNS (a.id AS A))");
         s.explain(&q, &Params::new()).unwrap().contains("Graph table")
@@ -85,18 +89,24 @@ fn rigid_patterns_join_as_they_search_16() {
 }
 
 /// A database of the graph ROADS, ENFORCED, its adjacency index given as
-/// it commits, of four cities and five roads of NOT NULL ends; and a
-/// session of A.
+/// it commits, of four cities and five roads of NOT NULL ends, and a
+/// chain of 30 roads apart, so a probe of one row costs less than reading
+/// ROAD (RULES.md D370); and a session of A.
 fn roads() -> (Database, Session) {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
     let s = db.session("A");
+    let chain_cities = format!("INSERT INTO CITY VALUES {}", (0..=30).map(|k| format!("('c{k}')")).collect::<Vec<_>>().join(", "));
+    let chain_roads = (0..30).map(|k| format!("({}, 'c{k}', 'c{}', 1)", 100 + k, k + 1)).collect::<Vec<_>>().join(", ");
+    let chain_roads = format!("INSERT INTO ROAD VALUES {chain_roads}");
     for sql in [
         "CREATE TABLE CITY (NAME VARCHAR(10) PRIMARY KEY)",
         "CREATE TABLE ROAD (ID INTEGER PRIMARY KEY, A VARCHAR(10) NOT NULL REFERENCES CITY, \
          B VARCHAR(10) NOT NULL REFERENCES CITY, KM INTEGER NOT NULL)",
         "INSERT INTO CITY VALUES ('x'), ('y'), ('z'), ('w')",
         "INSERT INTO ROAD VALUES (1, 'x', 'y', 5), (2, 'y', 'z', 7), (3, 'z', 'x', 2), (4, 'x', 'w', 1), (5, 'w', 'y', 3)",
+        chain_cities.as_str(),
+        chain_roads.as_str(),
         "CREATE PROPERTY GRAPH ROADS VERTEX TABLES (CITY) EDGE TABLES (ROAD \
          SOURCE KEY (A) REFERENCES CITY (NAME) DESTINATION KEY (B) REFERENCES CITY (NAME))",
         "COMMIT WORK",

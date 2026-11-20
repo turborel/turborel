@@ -8,7 +8,6 @@
 use crate::bytes::Reader;
 use crate::error::{Code, Result, fail};
 use crate::exec::Runner;
-use crate::exec::batch::vector::Lane;
 use crate::exec::batch::{Fed, Taken, eliminated};
 use crate::functions::{
     Accumulator, ColumnarKind, NO_FLOATS, Summed, Wide, avg_acc, avg_finished, count_acc, count_finished, extreme_acc, plus_float, sum_acc,
@@ -63,7 +62,8 @@ enum Source<'a> {
     Read(&'a Ints),
     Given(&'a Ints),
     Values(&'a [Value]),
-    Lane(&'a Lane<'a>),
+    GivenValues(&'a [Value]),
+    Const(&'a Value),
     Nulls,
 }
 
@@ -255,9 +255,27 @@ fn source_of<'a>(batch: &'a Batch, take: &Taken, lane: Option<&'a Fed<'_>>) -> O
             Some(Column::Nulls(_)) => Some(Source::Nulls),
             Some(Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_)) | None => None,
         },
-        (Taken::Expr(..), Some(Fed::Ints(ints))) => Some(Source::Given(ints)),
-        (Taken::Expr(..), Some(Fed::Values(lane))) => Some(Source::Lane(lane)),
-        (Taken::Expr(..), None) | (Taken::Count, _) => None,
+        (Taken::Expr(_), Some(Fed::Made(column))) => match column {
+            Column::Ints(ints) => Some(Source::Given(ints)),
+            Column::Values(values) => Some(Source::GivenValues(values)),
+            Column::Nulls(_) => Some(Source::Nulls),
+            Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) => None,
+        },
+        (Taken::Expr(_), Some(Fed::Const(v))) => Some(Source::Const(v)),
+        (Taken::Expr(_), None) | (Taken::Count, _) => None,
+    }
+}
+
+/// Whether row `n` of `column` is null, or past its end.
+fn null_in(column: &Column, n: usize) -> bool {
+    match column {
+        Column::Values(values) => values.get(n).is_none_or(Value::is_null),
+        Column::Ints(ints) => n >= ints.units.len() || ints.is_null(n),
+        Column::Floats(floats) => floats.get(n).is_none(),
+        Column::Texts(texts) => texts.get(n).is_none(),
+        Column::Datetimes(datetimes) => datetimes.get(n).is_none(),
+        Column::Bools(bools) => bools.get(n).is_none(),
+        Column::Nulls(_) => true,
     }
 }
 
@@ -277,9 +295,9 @@ fn counted(counts: &mut [i64], pending: &Pending, (batch, take, lane): (&Batch, 
         (Taken::Count, _) => Box::new(|_, _| false),
         // [X3.135-1986 §5.8 GR1] nulls taken out.
         (Taken::Column(c), _) => Box::new(move |r, _| batch.cell(*c, r).is_null()),
-        (Taken::Expr(..), Some(Fed::Ints(ints))) => Box::new(move |_, n| null_at(ints.nulls.as_ref(), n)),
-        (Taken::Expr(..), Some(Fed::Values(values))) => Box::new(move |_, n| values.at(n).is_null()),
-        (Taken::Expr(..), None) => return false,
+        (Taken::Expr(_), Some(Fed::Made(column))) => Box::new(move |_, n| null_in(column, n)),
+        (Taken::Expr(_), Some(Fed::Const(v))) => Box::new(move |_, _| v.is_null()),
+        (Taken::Expr(_), None) => return false,
     };
     let mut any = false;
     for ((r, n), &g) in rows.zip(&pending.groups) {
@@ -303,7 +321,10 @@ impl Exact {
             Source::Values(values) => {
                 return self.feed_values(|at| values.get(at).unwrap_or(&Value::Null), (&pending.read, pending), runner);
             }
-            Source::Lane(lane) => return self.feed_values(|at| lane.at(at), (&pending.given, pending), runner),
+            Source::GivenValues(values) => {
+                return self.feed_values(|at| values.get(at).unwrap_or(&Value::Null), (&pending.given, pending), runner);
+            }
+            Source::Const(v) => return self.feed_values(|_| v, (&pending.given, pending), runner),
             Source::Nulls => {
                 eliminated(!pending.groups.is_empty(), runner);
                 return Ok(true);

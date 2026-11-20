@@ -497,6 +497,7 @@ mod tests {
             own: Some(Box::new((Some(Cond::Const(Truth::True)), None))),
             widths: (0, 0),
             detail: String::new(),
+            est: 0.0_f64,
         };
         let code = outer(plan, &st, NO_TRANSACTION).collect::<Result<Vec<Row>>>().err().map(|e| e.code);
         assert_eq!(code, Some(Code::Api));

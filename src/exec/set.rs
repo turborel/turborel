@@ -59,7 +59,7 @@ fn key(row: &Row, compared: Option<usize>) -> Vec<u8> {
 /// every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
 pub(super) fn operation(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::SetOp { op, all, compared, left, right } = plan else { return failed(broken("a set operation is not one")) };
+    let Plan::SetOp { op, all, compared, left, right, .. } = plan else { return failed(broken("a set operation is not one")) };
     let how = Kept { intersect: op == SetOp::Intersect, all, compared };
     match Operand::of(*right, compared, (db, tx)).and_then(|second| counted_rows(second, (db, tx), how)) {
         Ok((Counted::Held(counts), _, given)) => match Operand::of(*left, compared, (db, tx)) {
