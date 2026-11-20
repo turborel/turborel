@@ -142,12 +142,15 @@ pub(super) fn ranking_named(rankings: &Rankings, name: &str) -> Result<Arc<dyn R
 }
 
 /// The language FULLTEXT.LANGUAGE names: refused as any option's bad
-/// value is, naming the languages known; SQLSTATE 2FF02 stays for a
-/// language named where a statement runs [§5.1.9 GR].
+/// value is, saying which are known, as 43 are too many to list;
+/// SQLSTATE 2FF02 stays for a language named where a statement runs
+/// [§5.1.9 GR].
 fn language_named(name: &str) -> Result<Language> {
     Language::named(name).map_err(|_| {
-        let known: Vec<&str> = Language::all().map(Language::name).collect();
-        SqlError::new(Code::SyntaxRule, format!("[EXTENSION] FULLTEXT.LANGUAGE is one of {}, not {name}", known.join(", ")))
+        let built_in = Language::all().count();
+        let why =
+            format!("[EXTENSION] FULLTEXT.LANGUAGE is one of the {built_in} built-in languages or one an extension serves, not {name}");
+        SqlError::new(Code::SyntaxRule, why)
     })
 }
 

@@ -138,7 +138,7 @@ ALTER INDEX TICKETS_BODY SET (FULLTEXT.LANGUAGE = KLINGON);
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): FULLTEXT.LANGUAGE is one of ENGLISH, NONE, not KLINGON
+turborel: SQLCODE -103 (SQLSTATE 2A000): FULLTEXT.LANGUAGE is one of the 43 built-in languages or one an extension serves, not KLINGON
 ```
 
 An index is of one character string or FULLTEXT column:
