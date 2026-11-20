@@ -23,34 +23,63 @@
 use std::sync::Arc;
 
 use super::calls::{COMPARED_ROWS, FirstValue, SCALAR_ROWS, Single};
-use super::found::Node;
+use super::found::{Node, cond_references};
 use super::{Bound, How, Target, compared};
 use crate::functions::{AggregateRef, Registry, RowOf, ScalarRef, Standard};
 use crate::lexer::kw;
-use crate::logical::{AggCall, Cond, Expr, LogicalPlan, OuterJoin, Truth, and_all};
+use crate::logical::{AggCall, Cond, Expr, LogicalPlan, OuterJoin, Truth, and_all, split_and};
 use crate::value::{CompOp, DataType, Decimal, Value};
 
 /// The node `node`, its subquery `target` unnested as `bound` gives it.
 pub(super) fn rewritten(node: &Node<'_>, target: &Target, bound: Bound, functions: &Registry) -> Option<LogicalPlan> {
     let k = bound.keys.len();
-    let rows = node.input();
-    let w = rows.width();
-    let per = if bound.unique && matches!(target.how, How::Value) { counted_once(bound.plan, k)? } else { per_binding(&target.how, bound.plan, k, functions)? };
-    let mut exprs: Vec<Expr> = (0..w).map(Expr::Column).collect();
-    exprs.extend(bound.keys.iter().cloned());
-    let keyed = LogicalPlan::Project { exprs, input: Box::new(rows.clone()) };
+    let w = node.input().width();
+    let base = w.saturating_add(k.saturating_mul(2));
+    let with = Replacing { target, base, defaults: bound.defaults.as_deref(), unique: bound.unique };
+    let (rows, kept) = split(node, &with);
+    let per = if bound.unique && matches!(target.how, How::Value) {
+        counted_once(bound.plan, k)?
+    } else {
+        per_binding(&target.how, bound.plan, k, functions)?
+    };
+    let mut with_keys: Vec<Expr> = (0..w).map(Expr::Column).collect();
+    with_keys.extend(bound.keys.iter().cloned());
+    let keyed = LogicalPlan::Project { exprs: with_keys, input: Box::new(rows) };
     let on = and_all((0..k).map(|i| matched(w.saturating_add(i), w.saturating_add(k).saturating_add(i), bound.not_distinct)).collect())?;
     let join = LogicalPlan::OuterJoin { kind: OuterJoin::Left, cond: on, left: Box::new(keyed), right: Box::new(per) };
-    let with = Replacing { target, base: w.saturating_add(k.saturating_mul(2)), defaults: bound.defaults.as_deref() };
     Some(match node {
-        Node::Filter(cond, _) => {
-            let filter = LogicalPlan::Filter { cond: with.cond((*cond).clone()), input: Box::new(join) };
+        Node::Filter(..) => {
+            let filter = LogicalPlan::Filter { cond: kept?, input: Box::new(join) };
             LogicalPlan::Project { exprs: (0..w).map(Expr::Column).collect(), input: Box::new(filter) }
         }
         Node::Project(exprs, _) => {
             LogicalPlan::Project { exprs: exprs.iter().map(|e| with.expr(e.clone())).collect(), input: Box::new(join) }
         }
     })
+}
+
+/// The rows the join reads, and the condition left above it, the
+/// subquery replaced: of a filter, its conjuncts that do not use the
+/// subquery are applied below the join, so they join the node's tables,
+/// and the rest above it, on the rows they keep. The rest are then
+/// evaluated on fewer rows, which RULES.md D15 allows only when no
+/// conjunct can raise.
+fn split(node: &Node<'_>, with: &Replacing<'_>) -> (LogicalPlan, Option<Cond>) {
+    let Node::Filter(cond, rows) = node else { return ((*node.input()).clone(), None) };
+    let whole = || ((*rows).clone(), Some(with.cond((*cond).clone())));
+    let mut conjuncts = Vec::new();
+    split_and((*cond).clone(), &mut conjuncts);
+    let (using, plain): (Vec<Cond>, Vec<Cond>) = conjuncts.into_iter().partition(|c| {
+        let mut places = Vec::new();
+        cond_references(c, (with.target.id, true), &mut places);
+        !places.is_empty()
+    });
+    let using: Vec<Cond> = using.into_iter().map(|c| with.cond(c)).collect();
+    if plain.is_empty() || using.is_empty() || plain.iter().chain(&using).any(Cond::can_raise) {
+        return whole();
+    }
+    let Some(applied) = and_all(plain) else { return whole() };
+    (LogicalPlan::Filter { cond: applied, input: Box::new((*rows).clone()) }, and_all(using))
 }
 
 /// Columns `a` and `b` match, as IS NOT DISTINCT FROM if `not_distinct`,
@@ -137,6 +166,8 @@ struct Replacing<'a> {
     target: &'a Target,
     base: usize,
     defaults: Option<&'a [Expr]>,
+    /// Each binding has at most one row, so a value is read as it is.
+    unique: bool,
 }
 
 impl Replacing<'_> {
@@ -212,10 +243,8 @@ impl Replacing<'_> {
     /// value of no row if the subquery was made a grouping.
     fn value(&self, at: usize, rule: &'static str) -> Expr {
         let count = Expr::Column(self.base);
-        let one = Expr::Call(
-            ScalarRef(Arc::new(Single(rule))),
-            vec![count.clone(), Expr::Column(self.base.saturating_add(1).saturating_add(at))],
-        );
+        let column = Expr::Column(self.base.saturating_add(1).saturating_add(at));
+        let one = if self.unique { column } else { Expr::Call(ScalarRef(Arc::new(Single(rule))), vec![count.clone(), column]) };
         match self.defaults.and_then(|d| d.get(at)) {
             Some(empty) => Expr::Case(vec![(Cond::IsNull(count, false), empty.clone())], Box::new(one)),
             None => one,

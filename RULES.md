@@ -8581,6 +8581,10 @@ A plan made of more than MAX_DOMAINS (4) copies of D is not made, as
 each copy reads the outer rows again. A join condition that can raise
 is not pushed into, as it would then be judged on pairs of bindings.
 
+D of a product whose one side holds every binding is made of that side
+alone, with a row that the other side has rows, so D has the same
+bindings without the product being made.
+
 #### D313. An unnested subquery is joined to the outer rows with one counted row for each binding, so a scalar subquery of two rows still fails
 
 The node's rows, each with its binding's keys, are LEFT joined with a
@@ -8595,7 +8599,14 @@ evaluated where the subquery stood [ISO/IEC 9075:1992 §7.11 GR1], so the
 error comes from the same rows as before and not from bindings no row
 reads. A binding with no row reads nulls [§6.11 GR2], or, of a subquery
 made a grouping by its keys (D314), the value its select list has over
-no row.
+no row. A subquery of one row for each binding, a set function of no
+grouping under projections, needs no count, and its value is read as
+it is.
+
+A WHERE's conjuncts that do not use the subquery are applied below the
+join, so that their equalities still join the node's tables and the
+join reads only the rows they keep. That evaluates the others on fewer
+rows, so it is done only when no conjunct can raise (D15).
 
 #### D314. Simple unnesting pulls equalities up, and only from a subquery no part of which can raise
 

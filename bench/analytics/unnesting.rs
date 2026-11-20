@@ -2,7 +2,8 @@
 //! and nested, each run for each binding of its outer references, the
 //! rule OPTIMIZER.UNNEST_SUBQUERIES on and off: over TPC-H-shaped tables
 //! of 2,000 orders and 8,000 line items, the subqueries of queries 2, 4,
-//! 17, 21 and 22, a scalar subquery of a select list, NOT IN, and a SQL
+//! 17, 21 and 22, a join beside a correlated subquery, a scalar subquery
+//! of a select list, NOT IN, and a SQL
 //! function whose body is a correlated subquery (RULES.md R-BENCH-1).
 
 use super::harness::{Bench, Case, scatter};
@@ -43,7 +44,7 @@ fn database() -> Database {
         }
     };
     fill("PARTSUPP", 4 * PARTS, &|n| format!("({}, {}, {})", n % PARTS, scatter(n, PARTS), scatter(n, 1000)));
-    fill("CUSTOMER", CUSTOMERS, &|n| format!("({n}, {})", scatter(n, 2000) as i64 - 500));
+    fill("CUSTOMER", CUSTOMERS, &|n| format!("({n}, {})", i64::try_from(scatter(n, 2000)).unwrap() - 500));
     fill("ORDERS", ORDERS, &|n| format!("({n}, {}, {})", scatter(n, CUSTOMERS * 2 / 3), scatter(n, 365)));
     fill("LINEITEM", LINES, &|n| {
         let commit = scatter(n, 365);
@@ -53,7 +54,7 @@ fn database() -> Database {
             scatter(n, PARTS),
             scatter(n + 7, PARTS),
             1 + scatter(n, 50),
-            commit + scatter(n, 30) - 10
+            i64::try_from(commit + scatter(n, 30)).unwrap() - 10
         )
     });
     s.commit().unwrap();
@@ -84,13 +85,19 @@ const QUERIES: &[(&str, &str, u64)] = &[
         LINES,
     ),
     ("Q22 NOT EXISTS of the customer's orders", "SELECT COUNT(*) FROM CUSTOMER WHERE NOT EXISTS (SELECT * FROM ORDERS WHERE O_CUSTKEY = C_CUSTKEY)", CUSTOMERS),
-    ("scalar COUNT of a select list", "SELECT SUM((SELECT COUNT(*) FROM LINEITEM WHERE L_ORDERKEY = O_ORDERKEY)) FROM ORDERS", ORDERS),
+    ("scalar COUNT of a select list", "SELECT O_ORDERKEY, (SELECT COUNT(*) FROM LINEITEM WHERE L_ORDERKEY = O_ORDERKEY) FROM ORDERS", ORDERS),
     (
         "NOT IN by the order's own lines",
         "SELECT COUNT(*) FROM ORDERS WHERE O_ORDERDATE NOT IN (SELECT L_COMMITDATE FROM LINEITEM WHERE L_ORDERKEY = O_ORDERKEY)",
         ORDERS,
     ),
-    ("SQL function of a correlated COUNT", "SELECT SUM(ORDERED(C_CUSTKEY)) FROM CUSTOMER", CUSTOMERS),
+    (
+        "join beside a correlated AVG, Q17's shape",
+        "SELECT COUNT(*) FROM CUSTOMER, ORDERS WHERE C_CUSTKEY = O_CUSTKEY AND C_ACCTBAL > 0
+         AND O_ORDERDATE < (SELECT AVG(O2.O_ORDERDATE) FROM ORDERS O2 WHERE O2.O_CUSTKEY = C_CUSTKEY)",
+        ORDERS,
+    ),
+    ("SQL function of a correlated COUNT", "SELECT C_CUSTKEY, ORDERED(C_CUSTKEY) FROM CUSTOMER", CUSTOMERS),
 ];
 
 /// Switches unnesting and inlining `on` or off.

@@ -187,7 +187,7 @@ pub(super) fn references(node: &Node<'_>, id: u64) -> Vec<Reference> {
 
 /// The references of `c` to `id`; `top` if `c` is a conjunct of a WHERE
 /// or HAVING condition.
-fn cond_references(c: &Cond, (id, top): (u64, bool), out: &mut Vec<Reference>) {
+pub(super) fn cond_references(c: &Cond, (id, top): (u64, bool), out: &mut Vec<Reference>) {
     match c {
         Cond::And(a, b) | Cond::Or(a, b) => {
             cond_references(a, (id, false), out);

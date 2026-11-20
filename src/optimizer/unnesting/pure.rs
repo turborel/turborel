@@ -6,9 +6,9 @@
 //! could.
 
 use crate::functions::{Registry, Standard};
-use crate::logical::{AggCall, Expr, LogicalPlan, Search, Subquery, map_plan_exprs};
-use crate::value::Value;
+use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Search, Subquery, map_plan_exprs};
 use crate::parser::MAX_NESTING_DEPTH;
+use crate::value::Value;
 
 /// Whether `e`'s own operators, not its subqueries' plans, are all
 /// deterministic and change nothing, so there is no NEXT VALUE FOR,
@@ -118,7 +118,7 @@ pub(super) fn plan_raises(plan: &LogicalPlan, functions: &Registry) -> bool {
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
         LogicalPlan::Unnest(u) => {
             let special = u.json.is_some() || u.graph.is_some();
-            special || u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(|c| c.can_raise())
+            special || u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise)
         }
         LogicalPlan::Window(w) => w.can_raise(),
         LogicalPlan::Limit { limit, .. } => {
@@ -141,7 +141,7 @@ pub(super) fn plan_raises(plan: &LogicalPlan, functions: &Registry) -> bool {
 /// Whether computing `a` can raise an error.
 fn agg_raises(a: &AggCall, functions: &Registry) -> bool {
     let safe = matches!(functions.standard(&a.func), Some(Standard::Count | Standard::Max | Standard::Min));
-    let parts = a.exprs().into_iter().any(Expr::can_raise) || a.filter.as_ref().is_some_and(|c| c.can_raise());
+    let parts = a.exprs().into_iter().any(Expr::can_raise) || a.filter.as_ref().is_some_and(Cond::can_raise);
     !safe || parts || a.distribution.is_some()
 }
 

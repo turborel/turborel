@@ -68,9 +68,7 @@ fn plain_form(e: &Expr) -> bool {
 /// Whether column `column` of `plan` is known to be of a plain type.
 fn plain_column(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog) -> bool {
     match plan {
-        LogicalPlan::Scan { table, .. } => {
-            catalog.table(table).and_then(|t| t.columns.get(column)).is_some_and(|c| plain(&c.data_type))
-        }
+        LogicalPlan::Scan { table, .. } => catalog.table(table).and_then(|t| t.columns.get(column)).is_some_and(|c| plain(&c.data_type)),
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Sort { input, .. }

@@ -3,7 +3,8 @@
 //! bug in both cases, bindings merged by their trailing spaces, ALL
 //! counted as SOME, a conditional subquery that can raise unnested, OFFSET
 //! kept for its own row, and functions inlined that are not deterministic
-//! or that leave a parameter unread.
+//! or that leave a parameter unread, and a join's equality left above the
+//! subquery's join, a product.
 
 use super::super::{Mutation, Package};
 
@@ -11,11 +12,13 @@ use super::super::{Mutation, Package};
 const MATCHED: &str = "decorrelation::unnested_queries_match_nested_ones";
 /// The test of nulls, empty sets and cardinality.
 const NULLS: &str = "decorrelation::nulls_empty_sets_and_cardinality";
+/// The test of a join beside a correlated subquery.
+const JOINED: &str = "decorrelation::tpch::a_join_beside_a_correlated_subquery_stays_a_join";
 /// The test of inlined functions.
 const INLINED: &str = "decorrelation::functions::functions_are_inlined_and_unnested";
 
 /// The mutations of unnesting and inlining.
-pub const UNNESTING: [Mutation; 10] = [
+pub const UNNESTING: [Mutation; 11] = [
     Mutation {
         name: "unnest-two-rows-pass",
         package: Package::Core,
@@ -114,6 +117,16 @@ pub const UNNESTING: [Mutation; 10] = [
         original: "if (0..i.params.len()).any(|p| !read.contains(&p)) {",
         replacement: "if (0..i.params.len()).any(|p| !read.contains(&p) && read.is_empty()) {",
         integration: &[INLINED],
+        unit: &[],
+    },
+    Mutation {
+        name: "unnest-join-kept-above",
+        package: Package::Core,
+        breaks: "a WHERE's conjuncts that do not use the subquery stay above its join, so the node's tables are a product",
+        file: "src/optimizer/unnesting/joined.rs",
+        original: "if plain.is_empty() || using.is_empty() || plain.iter().chain(&using).any(Cond::can_raise) {",
+        replacement: "if !plain.is_empty() || using.is_empty() || plain.iter().chain(&using).any(Cond::can_raise) {",
+        integration: &[JOINED],
         unit: &[],
     },
 ];

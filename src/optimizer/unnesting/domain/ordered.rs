@@ -53,10 +53,7 @@ impl Domain {
                 Some(offset.checked_add(count(&f.count)?)?)
             }
         };
-        let (order, rows) = match input {
-            LogicalPlan::Sort { keys, input } => (keys.clone(), &**input),
-            other => (Vec::new(), other),
-        };
+        let (order, rows) = if let LogicalPlan::Sort { keys, input } = input { (keys.clone(), &**input) } else { (Vec::new(), input) };
         let by = self.width;
         let wide = by.saturating_add(rows.width());
         let order = order.iter().map(|k| SortKey { column: k.column.saturating_add(by), ..*k }).collect();

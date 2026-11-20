@@ -167,17 +167,15 @@ fn returned(program: &Program) -> Option<&crate::logical::Leaf> {
     if !program.variables.is_empty() || !program.cursors.is_empty() {
         return None;
     }
-    let step = match &program.body {
-        Step::Block(b) => {
-            let bare = b.variables.is_empty() && b.cursors.is_empty() && b.handlers.is_empty();
-            let [only] = b.statements.as_slice() else { return None };
-            if !bare {
-                return None;
-            }
-            only
+    let mut step = &program.body;
+    if let Step::Block(b) = step {
+        let bare = b.variables.is_empty() && b.cursors.is_empty() && b.handlers.is_empty();
+        let [only] = b.statements.as_slice() else { return None };
+        if !bare {
+            return None;
         }
-        other => other,
-    };
+        step = only;
+    }
     let Step::Return(Some(leaf)) = step else { return None };
     Some(leaf)
 }

@@ -38,7 +38,9 @@ use super::Bound;
 use super::calls::Trailing;
 use super::pure::plan_pure;
 use crate::functions::ScalarRef;
-use crate::logical::{AggCall, Cond, Expr, LogicalPlan, OuterJoin, Subquery, Unnest, and_all, plan_has_outer};
+use crate::logical::{
+    AggCall, Cond, Expr, LogicalPlan, OuterJoin, Subquery, Unnest, and_all, expr_columns, map_expr_columns, plan_has_outer,
+};
 use crate::value::Value;
 
 /// \[DESIGN\] The most copies of D a subquery's unnesting may read. Each
@@ -69,10 +71,33 @@ pub(super) fn pushed(sub: &Subquery, rows: &LogicalPlan) -> Option<Bound> {
     let trailing = ScalarRef(Arc::new(Trailing));
     let mut keys = sub.outer.clone();
     keys.extend(sub.outer.iter().map(|o| Expr::Call(trailing.clone(), vec![o.clone()])));
-    let projected = LogicalPlan::Project { exprs: keys.clone(), input: Box::new(rows.clone()) };
+    let (from, read) = narrowed(rows, keys.clone());
+    let projected = LogicalPlan::Project { exprs: read, input: Box::new(from) };
     let domain = Domain { plan: LogicalPlan::Distinct { input: Box::new(projected) }, width: keys.len(), copies: Cell::new(0) };
     let plan = domain.over(&sub.plan)?;
     Some(Bound { plan, keys, not_distinct: true, defaults: None, unique: super::one_row(&sub.plan) })
+}
+
+/// The rows D is made of, and `keys` over them: of a product whose one
+/// side the keys read, that side's rows, each once for any row of the
+/// other, so D has the bindings of the product's rows without making it.
+fn narrowed(rows: &LogicalPlan, keys: Vec<Expr>) -> (LogicalPlan, Vec<Expr>) {
+    let LogicalPlan::Product { left, right } = rows else { return (rows.clone(), keys) };
+    let mut read = Vec::new();
+    keys.iter().for_each(|k| expr_columns(k, &mut read));
+    let lw = left.width();
+    let (side, other, keys) = if read.iter().all(|&c| c < lw) {
+        (left, right, keys)
+    } else if read.iter().all(|&c| c >= lw) {
+        (right, left, keys.into_iter().map(|k| map_expr_columns(k, &|c| c.saturating_sub(lw))).collect())
+    } else {
+        return (rows.clone(), keys);
+    };
+    let (side, keys) = narrowed(side, keys);
+    // A row if the other side has any.
+    let any = LogicalPlan::Project { exprs: vec![Expr::Const(Value::Bool(true))], input: other.clone() };
+    let guarded = LogicalPlan::Product { left: Box::new(side), right: Box::new(LogicalPlan::Distinct { input: Box::new(any) }) };
+    (guarded, keys)
 }
 
 /// `e`, of a row whose columns follow `by` others, each outer reference
@@ -191,12 +216,12 @@ impl Domain {
         let on = and_all((0..by).map(|i| same(i, by.saturating_add(i))).collect()).unwrap_or(Cond::Const(crate::logical::Truth::True));
         let join = LogicalPlan::OuterJoin { kind: OuterJoin::Left, cond: on, left: Box::new(self.copy()?), right: Box::new(marked) };
         // The join's rows hold D, D's copy, the input's columns and the marker.
-        let marker = Cond::IsNull(Expr::Column(by.saturating_add(wide)), true);
+        let found = Cond::IsNull(Expr::Column(by.saturating_add(wide)), true);
         let aggs = aggs
             .iter()
             .map(|a| {
                 let a = a.clone().map_exprs(&mut |e| shifted(e, by.saturating_mul(2)));
-                let filter = Some(a.filter.clone().map_or_else(|| marker.clone(), |f| Cond::And(Box::new(f), Box::new(marker.clone()))));
+                let filter = Some(a.filter.clone().map_or_else(|| found.clone(), |f| Cond::And(Box::new(f), Box::new(found.clone()))));
                 AggCall { filter, ..a }
             })
             .collect();

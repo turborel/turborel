@@ -35,7 +35,7 @@ fn tpch(seed: u64) -> Database {
     let suppliers = rows(8, &mut |r, k| format!("{k}, 'S{k}', {}, {}.50", r.below(4), r.below(900)));
     let parts = rows(12, &mut |r, k| format!("{k}, '{}{k}', 'B{}', {}", ["forest", "lemon"][r.below(2)], r.below(3), 10 + r.below(10)));
     let partsupp = rows(30, &mut |r, _| format!("{}, {}, {}, {}.25", r.below(12), r.below(8), r.below(60), r.below(20)));
-    let customers = rows(10, &mut |r, k| format!("{k}, '{}-555', {}.00", 13 + r.below(20), r.below(900) as i64 - 100));
+    let customers = rows(10, &mut |r, k| format!("{k}, '{}-555', {}.00", 13 + r.below(20), i64::try_from(r.below(900)).unwrap() - 100));
     let orders =
         rows(25, &mut |r, k| format!("{k}, {}, '{}', {}, '{}-URG'", r.below(10), ["F", "O"][r.below(2)], r.below(200), r.below(5)));
     let lineitems = rows(80, &mut |r, _| {
@@ -131,4 +131,34 @@ fn tpch_subqueries_are_unnested() {
             assert_eq!(on, off, "{name}");
         }
     }
+}
+
+/// Verifies: [X3.135-1986 §5.21 GR3] (RULES.md D310, D312) a join whose
+/// WHERE has a correlated scalar subquery of a set function, as TPC-H
+/// queries 2 and 17 write it, keeps its equality a join once the
+/// subquery is unnested, not a product of its tables, with the rows it
+/// has nested.
+#[test]
+fn a_join_beside_a_correlated_subquery_stays_a_join() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION J CREATE TABLE P (K INTEGER, B CHAR(2)) CREATE TABLE L (K INTEGER, Q INTEGER, M INTEGER)")
+        .unwrap();
+    let s = db.session("J");
+    let parts: Vec<String> = (0..200).map(|k| format!("({k}, 'B{}')", k % 4)).collect();
+    s.run(&format!("INSERT INTO P VALUES {}", parts.join(", "))).unwrap();
+    let lines: Vec<String> = (0..2000).map(|n| format!("({}, {}, {n})", (n * 7) % 200, (n * 13) % 50)).collect();
+    s.run(&format!("INSERT INTO L VALUES {}", lines.join(", "))).unwrap();
+    s.commit().unwrap();
+    let q = "SELECT COUNT(*) FROM P, L WHERE P.K = L.K AND P.B = 'B1' AND L.Q < (SELECT AVG(L2.Q) FROM L L2 WHERE L2.K = P.K)";
+    let plan = s.explain(q, &turborel::params::Params::new()).unwrap();
+    let physical = plan.split("-- physical:").nth(1).unwrap();
+    assert!(unnested(&s, q), "{plan}");
+    let joined = physical.contains("HashJoin L.K = P.K") || physical.contains("HashJoin P.K = L.K");
+    // A product is left only of D's rows with the one row that says L has any.
+    let lines: Vec<&str> = physical.lines().collect();
+    let products = lines.iter().enumerate().filter(|(_, l)| l.contains("Cartesian product"));
+    let guarded = products.clone().all(|(i, _)| lines.get(i + 2).is_some_and(|l| l.trim() == "Distinct"));
+    assert!(joined && guarded && products.count() == 2, "{plan}");
+    let (on, off) = both(&db, &s, q);
+    assert_eq!(on, off);
 }
