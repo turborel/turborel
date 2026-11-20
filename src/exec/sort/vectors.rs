@@ -19,8 +19,8 @@ use std::sync::Arc;
 use crate::kernels::{Kernels, Portable};
 
 use super::chunk::{Keys, Pick, put_chunk};
-use super::keyed::{Layouts, sorted_places};
-use super::out::{Placed, picked};
+use super::keyed::{Layouts, Made, made_of, sorted_places};
+use super::out::{Dictionaries, Placed, picked};
 use super::{Work, looked, looked_every, merged};
 use crate::db::State;
 use crate::error::Result;
@@ -182,8 +182,9 @@ impl Held {
         let (order, _) = sorted_places(keys, &self.batches, &places, None, self.kernels());
         let sorted: Vec<Placed> = order.iter().filter_map(|&at| places.get(usize::try_from(at).ok()?).copied()).collect();
         let chunks: Vec<Vec<Placed>> = sorted.chunks(BATCH_ROWS).map(<[Placed]>::to_vec).collect();
+        let dictionaries = Dictionaries::of(&self.batches, width);
         let batches = self.batches;
-        Box::new(looked_every(chunks.into_iter().map(move |picks| Ok((picked(&batches, &picks, width), None))), (stop, 1)))
+        Box::new(looked_every(chunks.into_iter().map(move |picks| Ok((picked(&batches, &picks, width, &dictionaries), None))), (stop, 1)))
     }
 
     /// Its rows, sorted by `keys`, written as a run of `work`'s spill area,
@@ -192,6 +193,22 @@ impl Held {
     fn written(self, keys: &[SortKey], work: &mut Work, layouts: &mut Layouts) -> Result<Box<dyn SpillRun>> {
         let places = self.places();
         let (order, made) = sorted_places(keys, &self.batches, &places, Some(layouts), self.kernels());
+        self.written_as((order, made, places), work)
+    }
+
+    /// Its rows, sorted by `keys` already in the order they came, written
+    /// as `written` writes them, their keys made and not sorted again
+    /// (RULES.md D380).
+    fn written_sorted(self, keys: &[SortKey], work: &mut Work, layouts: &mut Layouts) -> Result<Box<dyn SpillRun>> {
+        let places = self.places();
+        let made = made_of(keys, &self.batches, Some(layouts), self.kernels());
+        let order = (0..u32::try_from(places.len()).unwrap_or(u32::MAX)).collect();
+        self.written_as((order, made, places), work)
+    }
+
+    /// Its rows at `places`, in `order`, written to a run of `work`'s spill
+    /// area in chunks beside their keys `made`, if made.
+    fn written_as(self, (order, made, places): (Vec<u32>, Option<Made>, Vec<(u32, u32)>), work: &mut Work) -> Result<Box<dyn SpillRun>> {
         let each = chunk_rows(self.bytes, self.count, work.batch());
         let (mut run, mut out, mut bytes) = (work.run()?, Vec::new(), Vec::new());
         for chunk in order.chunks(each) {
@@ -247,21 +264,21 @@ pub(super) fn written_rows(keys: &[SortKey], rows: Vec<Row>, work: &mut Work, la
 }
 
 /// The first `most` rows of `input`, a morsel's batches each holding every
-/// column of its rows, or all, sorted by `keys` (RULES.md D364), made in
-/// order of those alone, its keys written on `kernels`: a run of a sort
-/// run in parallel.
+/// column of its rows, sorted by `keys` (RULES.md D364), made in order of
+/// those alone, its keys written on `kernels`: a run of a sort of many
+/// first rows run in parallel.
 ///
 /// # Errors
 ///
 /// As reading the input fails.
-pub(in crate::exec) fn sorted_morsel(keys: &[SortKey], input: Batches, most: Option<usize>, kernels: Arc<dyn Kernels>) -> Result<Vec<Row>> {
+pub(in crate::exec) fn sorted_morsel(keys: &[SortKey], input: Batches, most: usize, kernels: Arc<dyn Kernels>) -> Result<Vec<Row>> {
     let mut held = Held::on(kernels);
     for kept in input {
         let (batch, rows) = kept?;
         let rows = crate::storage::sel::places_of(rows, batch.rows);
         held.add(batch, rows);
     }
-    held.into_rows(keys).take(most.unwrap_or(usize::MAX)).collect()
+    held.into_rows(keys).take(most).collect()
 }
 
 /// \[DESIGN\] (RULES.md D380) The rows of `input`, a morsel's batches each
@@ -298,7 +315,7 @@ pub(super) fn written_batches(keys: &[SortKey], batches: Vec<Batch>, work: &mut 
         let rows = (0..batch.rows).collect();
         held.add(batch, rows);
     }
-    held.written(keys, work, layouts)
+    held.written_sorted(keys, work, layouts)
 }
 
 /// Row `r` of `batch`, made of its values.

@@ -89,7 +89,12 @@ pub(super) fn sorted_places(
 /// The keys of the rows of `batches`, each at its places, of a layout of
 /// `layouts`, or narrow if none, written on `kernels`; none if they have
 /// no normal form.
-fn made_of(keys: &[SortKey], batches: &[(Batch, Vec<usize>)], layouts: Option<&mut Layouts>, kernels: &dyn Kernels) -> Option<Made> {
+pub(super) fn made_of(
+    keys: &[SortKey],
+    batches: &[(Batch, Vec<usize>)],
+    layouts: Option<&mut Layouts>,
+    kernels: &dyn Kernels,
+) -> Option<Made> {
     let found: Vec<Option<Found>> = keys
         .iter()
         .map(|k| batches.iter().try_fold(Found::default(), |f, (batch, rows)| with(Some(f), seen_column(batch, k.column, rows))))

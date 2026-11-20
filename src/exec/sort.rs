@@ -97,6 +97,20 @@ pub(super) fn first_batches(
     }
 }
 
+/// The first `most` rows of `input`, a morsel's batches each holding every
+/// column of its rows, sorted by `keys`, in a work area of `db` for the
+/// statement of `tx`, as a sort of its first rows holds them, so no more
+/// are sorted nor made (`sort/top/batched.rs`): a run of such a sort run
+/// in parallel.
+///
+/// # Errors
+///
+/// As reading the input, or a spill, fails.
+pub(super) fn first_of_morsel(keys: &[SortKey], input: super::batch::Batches, most: usize, (db, tx): (&State, TxId)) -> Result<Vec<Row>> {
+    let most = (Most { rows: most, ties: false }, None);
+    top::top_batches(keys, input, most, &mut Work::of(db, tx), db.functions.kernels_shared())?.collect()
+}
+
 /// `sort`'s work.
 fn sorted(keys: &[SortKey], input: RowIter, work: &mut Work) -> Result<RowIter> {
     let mut sorter = Sorter::new(keys.to_vec());

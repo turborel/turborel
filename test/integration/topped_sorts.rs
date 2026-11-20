@@ -59,7 +59,7 @@ fn tables() -> (Database, Session) {
 }
 
 /// The queries each table answers alike, `{t}` its name.
-const QUERIES: [&str; 18] = [
+const QUERIES: [&str; 19] = [
     "SELECT * FROM {t} ORDER BY N FETCH FIRST 10 ROWS ONLY",
     "SELECT * FROM {t} ORDER BY N DESC FETCH FIRST 10 ROWS ONLY",
     "SELECT K, U, T FROM {t} ORDER BY A FETCH FIRST 25 ROWS WITH TIES",
@@ -75,6 +75,7 @@ const QUERIES: [&str; 18] = [
     "SELECT K + 1, U FROM {t} ORDER BY K",
     "SELECT K, U, D, F FROM {t} ORDER BY A DESC, K",
     "SELECT T, U, A FROM {t} ORDER BY F, K",
+    "SELECT K, T, U FROM {t} WHERE A > 0 ORDER BY D DESC, K",
     "SELECT T, COUNT(*), MAX(U) FROM (SELECT * FROM {t} ORDER BY N FETCH FIRST 300 ROWS ONLY) X GROUP BY T",
     "SELECT DISTINCT T FROM (SELECT * FROM {t} ORDER BY K DESC FETCH FIRST 400 ROWS ONLY) X",
     "SELECT K, U FROM {t} WHERE A <> 7 ORDER BY A, K FETCH FIRST 3 ROWS ONLY",

@@ -15,13 +15,15 @@ const ROWS: u64 = 200_000;
 /// Rows each INSERT of the setup writes.
 const PER_INSERT: u64 = 500;
 
-/// Measures each sort of T and of TC, serial and in parallel.
+/// Measures each sort of T and of TC, serial and in parallel, each on a
+/// session of its own, so each runs under the default work area but the
+/// case past 1 MiB.
 pub fn workloads(bench: &Bench) {
     let db = database();
-    let s = db.session("B");
     for (degree, threads) in [("1", ", serial"), ("0", "")] {
-        s.run(&format!("SET EXECUTOR.DEGREE = {degree}")).unwrap();
         for (table, label) in [("T", ""), ("TC", " (columnstore)")] {
+            let s = db.session("B");
+            s.run(&format!("SET EXECUTOR.DEGREE = {degree}")).unwrap();
             measured(bench, &s, table, &format!("{threads}{label}"));
         }
     }
@@ -53,7 +55,6 @@ fn measured(bench: &Bench, s: &Session, table: &str, label: &str) {
         super::fetched(s, &sql);
         ROWS
     });
-    s.run("SET MEMORY.WORK_BYTES = 4194304").unwrap();
 }
 
 /// Schema B with T, in the row store, and TC, in the column store, each

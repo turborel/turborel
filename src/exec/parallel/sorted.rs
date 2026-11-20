@@ -14,8 +14,10 @@
 //! A morsel read by batch whose batches hold every column of its rows is
 //! sorted as its batches, by keys made of their vectors (RULES.md D380).
 //! Of a whole sort its run is held as sorted batches, made rows by the
-//! threads once every run is in; of one of its first rows alone, only the
-//! rows its run keeps are made. Any other is sorted as its rows, read by
+//! threads once every run is in; of one of its first few rows alone, its
+//! run is held as such a sort's of a stream holds it (D365), so only the
+//! rows it keeps are sorted and made; of more, the morsel is sorted whole
+//! and only those made. Any other is sorted as its rows, read by
 //! batch if it is.
 //!
 //! The runs are charged to one work area (RULES.md D38), a run of batches
@@ -33,7 +35,7 @@ use super::run::Morsels;
 use super::{Held, Limit, Streamed};
 use crate::db::State;
 use crate::error::Result;
-use crate::exec::sort::{Sorter, rows_of_batches, sorted_morsel, sorted_morsel_batches, sorted_rows};
+use crate::exec::sort::{Sorter, first_of_morsel, rows_of_batches, sorted_morsel, sorted_morsel_batches, sorted_rows};
 use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner, broken, compare_rows};
 use crate::logical::SortKey;
@@ -45,6 +47,12 @@ use crate::txn::TxId;
 /// \[DESIGN\] The ranges a sort's runs are merged in, by thread: more than
 /// one each, so a range of more rows than the others delays little.
 const RANGES_PER_THREAD: usize = 4;
+
+/// \[DESIGN\] The most first rows a morsel's run holds as a sort of its
+/// first rows does (RULES.md D365), each row past the greatest held not
+/// taken; of more, nearly every row is taken, and the morsel is sorted
+/// whole by its keys for less.
+const FEW_FIRST: usize = crate::storage::BATCH_ROWS;
 
 /// \[DESIGN\] The keys sampled of each run to cut the ranges at.
 const SAMPLES_PER_RUN: usize = 64;
@@ -109,8 +117,9 @@ fn morsel_run(pipeline: &Pipeline, m: usize, (keys, most): (&[SortKey], Option<u
     let whole = pipeline.batched.as_ref().is_some_and(|b| b.layout.iter().copied().eq(0..b.width));
     if whole {
         let kept = pipeline.morsel_kept(m, (db, tx))?;
-        return match most {
-            Some(_) => sorted_morsel(keys, kept, most, db.functions.kernels_shared()).map(Run::Rows),
+        return match most.map(|n| (n, n <= FEW_FIRST)) {
+            Some((n, true)) => first_of_morsel(keys, kept, n, (db, tx)).map(Run::Rows),
+            Some((n, false)) => sorted_morsel(keys, kept, n, db.functions.kernels_shared()).map(Run::Rows),
             None => sorted_morsel_batches(keys, kept, db.functions.kernels_shared()).map(Run::Batches),
         };
     }

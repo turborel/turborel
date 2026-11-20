@@ -10230,9 +10230,12 @@ row of theirs must be read for its errors or its matches.
 A whole sort whose input's batches hold every column of its rows gives
 its rows as batches (`stream::layout`, `exec/sort/out.rs`). Each batch of
 up to `BATCH_ROWS` rows in order is gathered of the batches it held, a
-column a vector of the kind every one held keeps it as, else values. So a
-projection, a grouping or a DISTINCT above a sort reads it as it reads a
-scan. A top-N's first rows are few, and are made batches of their rows.
+column a vector of the kind every one held keeps it as, else values. A
+column every batch keeps as texts, one at least as texts of a store's
+dictionaries, is gathered as codes of one dictionary set up once for the
+sort, each store's dictionary in it once and each other batch's texts,
+so no text of a store's dictionary is copied and no other twice. So a projection, a grouping or a DISTINCT
+above a sort reads it as it reads a scan. A top-N's first rows are few, and are made batches of their rows.
 
 A vector of integers of one scale and no null is written into the sort's
 keys by `Kernels::normalize_i64`, so a kernel plug-in's wider
@@ -10253,7 +10256,12 @@ those of rows. Once every run is in, the runs are made rows by the
 threads and merged by ranges if those rows fit too. Past the work area
 it no longer gives way to the serial sort. It writes the runs held, and
 each run after, to the spill area, a run of batches as a sort of batches
-writes its own, and merges them by the loser tree (D364).
+writes its own but not sorted again, and merges them by the loser tree
+(D364). A sort of its first rows alone, up to a batch's rows of them,
+holds each morsel's run as the serial one holds a stream's (D365), the
+rows past the greatest held not taken, so only those the run keeps are
+sorted and made. Of more, nearly every row of a morsel is taken, so the
+morsel is sorted whole by its keys and only its first rows made.
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

@@ -11,7 +11,7 @@ const AS_COMPARATOR: &str = "exec::sort::normal::tests::normal_keys_sort_as_the_
 
 /// Mechanisms whose removal must fail the requirements of sorts by normal
 /// keys.
-pub const SORTS: [Mutation; 14] = [
+pub const SORTS: [Mutation; 18] = [
     Mutation {
         name: "sort-padding-zero",
         package: Package::Core,
@@ -149,6 +149,46 @@ pub const SORTS: [Mutation; 14] = [
         file: "src/exec/sort/out.rs",
         original: "Column::Ints(Ints::new(units, i.scale, nulls))",
         replacement: "Column::Ints(Ints::new(units, 0, nulls))",
+        integration: &["topped_sorts::topped_sorts_give_what_rows_give"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sort-out-codes-unmoved",
+        package: Package::Core,
+        breaks: "a sort's batches give each batch's dictionary codes unmoved, so a row reads another batch's entry",
+        file: "src/exec/sort/out.rs",
+        original: "codes.push(code.saturating_add(start));",
+        replacement: "codes.push(code.saturating_add(start).min(code));",
+        integration: &["topped_sorts::topped_sorts_give_what_rows_give"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sort-sorted-run-reversed",
+        package: Package::Core,
+        breaks: "a run a parallel sort spills, sorted already, is written in reverse",
+        file: "src/exec/sort/vectors.rs",
+        original: "let order = (0..u32::try_from(places.len()).unwrap_or(u32::MAX)).collect();",
+        replacement: "let order = (0..u32::try_from(places.len()).unwrap_or(u32::MAX)).rev().collect();",
+        integration: &["topped_sorts::topped_sorts_give_what_rows_give", "normal_sorts::normal_sorts_give_what_rows_give"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sort-parallel-first-halved",
+        package: Package::Core,
+        breaks: "each morsel's run of a parallel sort of its first rows keeps half of those asked for",
+        file: "src/exec/sort.rs",
+        original: "let most = (Most { rows: most, ties: false }, None);",
+        replacement: "let most = (Most { rows: most.div_ceil(2), ties: false }, None);",
+        integration: &["topped_sorts::topped_sorts_give_what_rows_give"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sort-parallel-many-first-cut",
+        package: Package::Core,
+        breaks: "each morsel's run of a parallel sort of many first rows keeps 64 of them alone",
+        file: "src/exec/sort/vectors.rs",
+        original: "held.into_rows(keys).take(most).collect()",
+        replacement: "held.into_rows(keys).take(most.min(64)).collect()",
         integration: &["topped_sorts::topped_sorts_give_what_rows_give"],
         unit: &[],
     },
