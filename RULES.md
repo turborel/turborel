@@ -10030,7 +10030,14 @@ over a VALUES of one row. The part is so evaluated on the rows of the
 operand exactly when the product has a row, and raises of the same rows
 it would of the product [X3.135-1986 §5.20 GR2b]. An operand of an
 outer reference, or of no column, takes no guard, and its conjunct is
-left. A sort key cannot raise and needs no guard, as evaluating it of
+left. The guard evaluates each other operand once more, so each must be
+a plain read, of tables and values through filters, projections, joins,
+groupings, windows, sorts and set operations, of expressions that invoke
+no routine, draw no sequence value and call no function that is not
+deterministic (`hoisting/plain.rs`). A table function, which may record
+its run or cost as much as the query, a system table, an unnested
+collection, a recursive query, a row pattern or a transition table is
+not, and a part needing a guard over one is left. A sort key cannot raise and needs no guard, as evaluating it of
 more rows or fewer changes nothing.
 
 The search goes only into what is evaluated whenever the condition is,
