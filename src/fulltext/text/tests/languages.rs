@@ -96,7 +96,8 @@ fn elisions_are_taken_off() {
 /// run of ideographs, kana, Hangul or Thai letters in a language read as
 /// bigrams is its overlapping pairs, each at its first letter, a letter's
 /// marks with it; one letter alone is a word of one; other words are cut
-/// as elsewhere; another language reads each ideograph alone.
+/// as elsewhere; another language reads each ideograph alone, and a Thai
+/// run as one word, its marks taken off in ENGLISH.
 #[test]
 fn runs_are_read_as_bigrams() {
     assert_eq!(spans_in("東京都庁", Language::Chinese), [("東京".into(), 0, 2), ("京都".into(), 1, 2), ("都庁".into(), 2, 2)]);
@@ -107,7 +108,7 @@ fn runs_are_read_as_bigrams() {
     assert_eq!(spans_in("สวัสดี", Language::Thai), [("สวั".into(), 0, 3), ("วัส".into(), 1, 3), ("สดี".into(), 3, 3)]);
     assert_eq!(words_in("ສະບາຍດີ", Language::Lao).len(), 5);
     assert_eq!(words_in("東京都庁", Language::English), ["東", "京", "都", "庁"]);
-    assert_eq!(words_in("สวัสดี", Language::English), ["สวัสดี"]);
+    assert_eq!(words_in("สวัสดี", Language::English), ["สวสด"], "ENGLISH takes the marks off");
     let ordinals: Vec<u32> = tokens_in("東京。大阪", Language::Japanese).iter().map(|t| t.ordinal * 10 + t.sentence).collect();
     assert_eq!(ordinals, [11, 22]);
 }
