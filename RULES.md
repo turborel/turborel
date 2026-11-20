@@ -398,6 +398,7 @@ verification approach DO-178C expects (§8).
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D443 | An update shares the index entries of the version it replaced where it keeps every column the key reads |
+| D444 | A validated transaction's images are decoded only when a reader's conditions are checked against them |
 
 ### The project
 
@@ -11214,6 +11215,29 @@ The semantics hold for these reasons.
 - Recovery reads no garbage. A checkpoint logs as stale only the entries
   collection would take back, so recovery from it takes back none a live
   version shares.
+
+#### D444. A validated transaction's images are decoded only when a reader's conditions are checked against them
+
+Every commit of a table that kept validation decoded the versions before
+and after each row it wrote, before any reader asked, at every isolation
+level. Only a reader that recorded a condition or a region (D29) ever
+compares them, and most commits meet none.
+
+A transaction validated now keeps the ids it wrote, and its images are
+decoded the first time a reader's conditions or regions are checked
+against it, then kept with it (`mvcc/commit.rs`). They are found by
+going back from the row's newest version to the one its transaction
+made, open or committed at its timestamp, and the one before it.
+
+The semantics hold for these reasons.
+
+- A reader checked against a transaction is open with a snapshot before
+  that transaction's commit, so the horizon is before it, and collection
+  removes neither version the images come from.
+- A version not found refuses the transaction being validated, so a
+  phantom is never missed for want of an image.
+- Reads by id and reads of the whole table are answered from the ids, as
+  before, with no image.
 
 ## 2. Project layout
 

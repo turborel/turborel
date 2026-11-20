@@ -201,24 +201,25 @@ struct Validated {
     /// Whether it wrote more rows than are tracked, which then count as
     /// every row: its writes and their rows are not kept.
     wrote_many: bool,
-    /// What it changed (`reads.rs`). Decoded before the validation lock is
-    /// taken, so the lock is held only to compare.
-    changed: Changed,
+    /// What it changed (`reads.rs`), decoded only once a reader's
+    /// conditions or regions are checked against it (RULES.md D444): none
+    /// until then.
+    changed: Option<Changed>,
 }
 
 impl Validated {
-    /// Whether `reads` cover a row this one wrote: one read by id, or with
-    /// the whole table, or one whose version before or after this one's
-    /// change a condition read matches, though the reader never saw it (a
-    /// phantom).
-    fn wrote_any(&self, reads: &Reads) -> bool {
+    /// Whether `reads` cover a row this one wrote, without its images: one
+    /// read by id, or with the whole table; or none whatever it changed, as
+    /// `reads` hold no condition or region; else unknown until they are
+    /// matched against what it changed (`RowTable::wrote_any`).
+    fn wrote_by_id(&self, reads: &Reads) -> Option<bool> {
         if self.wrote_many {
-            return reads.any();
+            return Some(reads.any());
         }
-        !self.writes.is_empty()
-            && (reads.all
-                || reads.rows.iter().any(|id| self.writes.contains(id))
-                || self.changed.matched_by(&reads.conditions, &reads.regions))
+        if self.writes.is_empty() || reads.all || reads.rows.iter().any(|id| self.writes.contains(id)) {
+            return Some(!self.writes.is_empty());
+        }
+        (reads.conditions.is_empty() && reads.regions.is_empty()).then_some(false)
     }
 }
 
