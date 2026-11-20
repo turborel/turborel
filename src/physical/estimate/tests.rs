@@ -170,3 +170,24 @@ fn the_sample_remembers_by_the_conjuncts_structure() {
         assert_ne!(both, other);
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D382, an IN list written as a chain of
+/// ORs: of one column, a synopsis answers it, so alone it is estimated as
+/// its disjuncts are, near the share of its 64 values, and never
+/// sampled; an OR of two columns'
+/// equalities anywhere along the chain is not answered.
+#[test]
+fn a_chain_of_ors_of_one_column_is_answered_by_its_synopsis() {
+    let cost = CostModel::default();
+    let large = correlated(20_000);
+    let one = crate::logical::or_all((0..64).map(|n| eq(0, n * 7)).collect()).unwrap();
+    assert!(sampled::answered(&one));
+    assert!(eligible(&[&one], known(&large, &cost)).is_none());
+    let got = conjunction(std::slice::from_ref(&one), known(&large, &cost));
+    assert_eq!(got, selectivity(&one, known(&large, &cost)));
+    assert!(got > 0.03_f64 && got < 0.07_f64, "64 of 1,000 values: {got}");
+    let mut equalities: Vec<Cond> = (0..64).map(|n| eq(0, n * 7)).collect();
+    equalities.insert(40, eq(1, 3));
+    let two = crate::logical::or_all(equalities).unwrap();
+    assert!(!sampled::answered(&two));
+}

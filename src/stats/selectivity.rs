@@ -49,14 +49,15 @@ impl ColumnStats {
         let average = rest / others;
         let absent = self.min.is_none() || (bounded && place != Place::Within);
         let equal = share_of(&self.common, value).unwrap_or(if absent { 0.0_f64 } else { average });
-        let below = share_below(&self.common, value) + rest * self.histogram.below(value).unwrap_or(0.5_f64);
+        // The share below the value, which an equality does not ask.
+        let below = || share_below(&self.common, value) + rest * self.histogram.below(value).unwrap_or(0.5_f64);
         let fraction = match op {
             CompOp::Eq => equal,
             CompOp::Ne => present - equal,
-            CompOp::Lt => below,
-            CompOp::Le => below + equal,
-            CompOp::Gt => present - below - equal,
-            CompOp::Ge => present - below,
+            CompOp::Lt => below(),
+            CompOp::Le => below() + equal,
+            CompOp::Gt => present - below() - equal,
+            CompOp::Ge => present - below(),
         };
         let floor = if bounded { 0.0_f64 } else { self.beyond(op, place, (average, since)) };
         fraction.max(floor).clamp(0.0, 1.0)
