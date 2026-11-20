@@ -51,7 +51,8 @@ pub(super) fn windowed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize
     let Plan::Sort { keys, input, .. } = &window.input else { return Err(broken("a window run in parallel reads no sort")) };
     let columns = window.partition.clone();
     let key = move |row: &Row| columns.iter().map(|&c| row.get(c).cloned()).collect();
-    let Held::Kept((parts, _, limit)) = split(input, (db, tx, degree), (key, false))? else { return Ok(Held::GaveWay) };
+    let limit = Limit::of(db);
+    let Held::Kept((parts, _)) = split(input, (db, tx, degree), (key, false), (&limit, limit.most()))? else { return Ok(Held::GaveWay) };
     let (shape, detail, keys) = (Arc::new(window.with_input(|_| ())), detail.clone(), keys.clone());
     let sort_keys = keys.clone();
     let each = move |rows: TransitionRows| {
@@ -73,8 +74,11 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: 
     let Plan::SetOp { op, all, compared, left, right } = plan else { return Err(broken("not a set operation run in parallel")) };
     let n = *compared;
     let key = move |row: &Row| Some(row.get(..n.unwrap_or(row.len()).min(row.len()))?.to_vec());
-    let Held::Kept((rights, _, kept)) = split(right, (db, tx, degree), (key, false))? else { return Ok(Held::GaveWay) };
-    let Held::Kept((parts, width, limit)) = split(left, (db, tx, degree), (key, true))? else { return Ok(Held::GaveWay) };
+    // One grant, half of it each operand's.
+    let limit = Limit::of(db);
+    let half = limit.most() >> 1_u32;
+    let Held::Kept((rights, _)) = split(right, (db, tx, degree), (key, false), (&limit, half))? else { return Ok(Held::GaveWay) };
+    let Held::Kept((parts, width)) = split(left, (db, tx, degree), (key, true), (&limit, half))? else { return Ok(Held::GaveWay) };
     // No row of the first operand: none is kept.
     let Some(width) = width else { return Ok(Held::Kept(Box::new(std::iter::empty()))) };
     let (op, all, compared_of) = (*op, *all, Some(n.unwrap_or(width)));
@@ -84,13 +88,12 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: 
         let built = Box::new(Plan::Transition { rows: TransitionRows::with(taken.unwrap_or_else(|| HeldRows::new(ListSpace::default()))) });
         Plan::SetOp { op, all, compared: compared_of, left: Box::new(Plan::Transition { rows }), right: built }
     };
-    let outs = per_part_numbered(parts, (db, tx, degree), (each, limit.most().saturating_add(kept.most())))?;
+    let outs = per_part_numbered(parts, (db, tx, degree), (each, limit.most()))?;
     let place = SortKey::new(width, crate::value::SortOrder::of(false, None));
     let rows = merge_by(&outs, &[place]).into_iter().map(move |mut row| {
         row.truncate(width);
         Ok(row)
     });
-    drop(kept);
     Ok(Held::Kept(limit.keeping(Box::new(rows))))
 }
 
@@ -107,15 +110,16 @@ fn space(db: &State, share: usize) -> ListSpace {
 /// The rows of the stream `input`, read by morsels on up to `degree`
 /// threads, split into partitions by `key` of each, a row of none in the
 /// first, each followed by its place among the stream's rows if
-/// `numbered`; and the width of its rows before it, if it has one. Given
-/// way if a table cannot be split.
+/// `numbered`; and the width of its rows before it, if it has one. Held
+/// in `bytes` of `limit`'s grant, operands it builds within it. Given way
+/// if a table cannot be split.
 fn split(
     input: &Plan,
     (db, tx, degree): (&Arc<State>, TxId, usize),
     (key, numbered): (impl Fn(&Row) -> Option<Row> + Send + Sync + 'static, bool),
-) -> Result<Held<(Parts, Option<usize>, Limit)>> {
-    let limit = Limit::of(db);
-    let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
+    (limit, bytes): (&Limit, usize),
+) -> Result<Held<(Parts, Option<usize>)>> {
+    let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
     let count = pipeline.count();
     let work = Box::new(move |m: usize| {
@@ -132,7 +136,7 @@ fn split(
         }
         Ok((parts, width))
     });
-    let share = limit.most().checked_div(PARTS).unwrap_or_default().max(1);
+    let share = bytes.checked_div(PARTS).unwrap_or_default().max(1);
     let mut held: Parts = (0..PARTS).map(|_| HeldRows::new(space(db, share))).collect();
     let mut width = None;
     for made in Morsels::start(db, tx, (count, degree), work) {
@@ -144,7 +148,7 @@ fn split(
             }
         }
     }
-    Ok(Held::Kept((held, width, limit)))
+    Ok(Held::Kept((held, width)))
 }
 
 /// Runs the plan `each` makes of each partition's rows on a thread of up
@@ -175,11 +179,12 @@ fn per_part_numbered(
     Morsels::start(db, tx, (PARTS, degree), work).collect()
 }
 
-/// A copy of `db` whose operators are each granted at most `work` bytes,
-/// for a part of a statement run beside others in its grant (RULES.md
-/// D298).
+/// A copy of `db` whose operators are each granted `work` bytes of the
+/// statement's grant, not of the budget again, for a part of a statement
+/// run beside others in its grant (RULES.md D298).
 fn shared(db: &Arc<State>, work: usize) -> Arc<State> {
     let mut copy = State::clone(db);
+    copy.work = Arc::new(db.work.covered());
     copy.settings.set_key(MEMORY_WORK_BYTES, Value::Exact(Decimal::new(i128::try_from(work).unwrap_or(i128::MAX), 0)));
     Arc::new(copy)
 }

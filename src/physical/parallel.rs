@@ -12,7 +12,9 @@
 //! EXECUTOR.DEGREE, or the workers, EXECUTOR.WORKERS. A part reading fewer
 //! rows than EXECUTOR.PARALLEL_MIN_ROWS stays on the statement's thread,
 //! as a point query does, its plan unchanged, so it costs nothing more
-//! than the walk that finds it. An expression a worker cannot evaluate
+//! than the walk that finds it. So does one a serial scan by batch of a
+//! table kept by column serves better, with no hash join's probe nor
+//! window functions, while EXECUTOR.BATCHES is on. An expression a worker cannot evaluate
 //! alone keeps its pipeline whole on the statement's thread: a subquery's,
 //! a routine's, NEXT VALUE FOR's, a parameter's.
 
@@ -36,9 +38,12 @@ pub struct Parallel {
     pub input: Plan,
 }
 
-/// What the settings ask of a statement's parallel parts.
+/// What the settings ask of a statement's parallel parts, and the
+/// database whose tables they read.
 #[derive(Clone, Copy)]
-struct Asked {
+struct Asked<'a> {
+    /// The database.
+    db: &'a State,
     /// The most threads a part runs on.
     most: usize,
     /// The rows of a morsel.
@@ -55,20 +60,21 @@ pub(crate) fn workers_of(db: &State) -> usize {
     }
 }
 
-impl Asked {
+impl<'a> Asked<'a> {
     /// What `db`'s settings ask.
-    fn of(db: &State) -> Asked {
+    fn of(db: &'a State) -> Asked<'a> {
         let workers = workers_of(db);
         let most = match db.settings.count(EXECUTOR_DEGREE) {
             0 => workers,
             n => n.min(workers.max(1)),
         };
-        Asked { most, morsel: db.settings.count(EXECUTOR_MORSEL_ROWS).max(1), least: db.settings.count(EXECUTOR_PARALLEL_MIN_ROWS) }
+        Asked { db, most, morsel: db.settings.count(EXECUTOR_MORSEL_ROWS).max(1), least: db.settings.count(EXECUTOR_PARALLEL_MIN_ROWS) }
     }
 
-    /// The degree of a part reading `rows` rows: 1 to run it alone.
-    fn degree(self, rows: usize) -> usize {
-        if rows < self.least {
+    /// The degree of the part `plan` reading `rows` rows: 1 to run it
+    /// alone, as one a serial scan by batch serves better.
+    fn degree(self, plan: &Plan, rows: usize) -> usize {
+        if rows < self.least || (crate::exec::batched(self.db) && by_batch(self.db, plan)) {
             return 1;
         }
         self.most.min(rows.div_ceil(self.morsel))
@@ -85,11 +91,11 @@ pub(crate) fn parallel(db: &State, mut plan: Plan) -> Plan {
 }
 
 /// Marks the parts of `plan`, `depth` below the root.
-fn walk(asked: Asked, plan: &mut Plan, depth: usize) {
+fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
     if depth >= MAX_DEPTH {
         return;
     }
-    let degree = rooted(plan).map_or(1, |rows| asked.degree(rows));
+    let degree = rooted(plan).map_or(1, |rows| asked.degree(plan, rows));
     let deeper = depth.saturating_add(1);
     if degree < 2 {
         // A limit of few rows over a stream reads too few for workers to
@@ -109,7 +115,7 @@ fn walk(asked: Asked, plan: &mut Plan, depth: usize) {
 
 /// Marks the parts of the inputs of `plan`, a part, but its pipelines:
 /// those of a hash join's operand built, of a pipeline's.
-fn outside(asked: Asked, plan: &mut Plan, depth: usize) {
+fn outside(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
     if depth >= MAX_DEPTH {
         return;
     }
@@ -174,6 +180,24 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
     }
     let Plan::Append { left, right } = plan else { return None };
     Some(stream(left)?.saturating_add(stream(right)?))
+}
+
+/// \[DESIGN\] Whether the part `plan` reads a table kept by column with
+/// nothing a serial scan by batch leaves to rows, a hash join's probe or
+/// window functions: that scan, making no row, outruns workers that make
+/// each (RULES.md D291).
+fn by_batch(db: &State, plan: &Plan) -> bool {
+    if let Plan::Aggregate { input, .. } | Plan::Distinct { input } | Plan::Sort { input, .. } = plan {
+        return by_batch(db, input);
+    }
+    if let Plan::Filter { input, .. } | Plan::Project { input, .. } = plan {
+        return by_batch(db, input);
+    }
+    if let Plan::SetOp { left, right, .. } | Plan::Append { left, right } = plan {
+        return by_batch(db, left) || by_batch(db, right);
+    }
+    let Plan::SeqScan { table, .. } = plan else { return false };
+    db.storage_of(table).is_ok_and(|s| s.keeps_columns())
 }
 
 /// The rows of an estimate `est`, as a count.

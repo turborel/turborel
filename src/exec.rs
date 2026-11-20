@@ -302,7 +302,7 @@ fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// Whether a query reads its tables a batch at a time where it can, as the
 /// setting EXECUTOR.BATCHES says.
-pub(super) fn batched(db: &State) -> bool {
+pub(crate) fn batched(db: &State) -> bool {
     if let Value::Char(s) = db.settings.get(crate::settings::EXECUTOR_BATCHES) { s != "OFF" } else { true }
 }
 

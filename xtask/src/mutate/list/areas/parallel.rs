@@ -4,8 +4,9 @@
 //! order, a sort's ties taken from the later run, a probe's matches out of
 //! build order, a set operation's place left on its rows, a window's
 //! partitions not merged by their keys, a row lost at each morsel's
-//! start, an index range's last part lost, and a grant of the whole free
-//! budget.
+//! start, an index range's last part lost, a grant of the whole free
+//! budget, a part's operators reserving the budget again, and a column
+//! store's scan by batch run in parallel.
 
 use super::super::{Mutation, Package};
 
@@ -19,16 +20,18 @@ const PLANNER: &str = "parallel::the_planner_marks_only_large_parts";
 const INDEX_RANGES: &str = "parallel::index_ranges_split_into_morsels";
 /// The unit test of work grants.
 const GRANTS: &str = "spill::grant::tests::grants_halve_the_free_budget";
+/// The unit test of grants inside a statement's grant.
+const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 11] = [
+pub const PARALLEL: [Mutation; 13] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
         breaks: "a part reading fewer rows than EXECUTOR.PARALLEL_MIN_ROWS is run in parallel",
         file: "src/physical/parallel.rs",
-        original: "if rows < self.least {",
-        replacement: "if rows < self.least.min(0) {",
+        original: "if rows < self.least ||",
+        replacement: "if rows < self.least.min(0) ||",
         integration: &[PLANNER],
         unit: &[],
     },
@@ -131,5 +134,25 @@ pub const PARALLEL: [Mutation; 11] = [
         replacement: "let wanted = ceiling.min(free);",
         integration: &[],
         unit: &[GRANTS],
+    },
+    Mutation {
+        name: "parallel-column-store-by-morsels",
+        package: Package::Core,
+        breaks: "a column store's scan, which a serial scan by batch serves better, is run in parallel",
+        file: "src/physical/parallel.rs",
+        original: "db.storage_of(table).is_ok_and(|s| s.keeps_columns())",
+        replacement: "db.storage_of(table).is_ok_and(|s| s.keeps_columns() && false)",
+        integration: &[PLANNER],
+        unit: &[],
+    },
+    Mutation {
+        name: "grant-covered-reserved-again",
+        package: Package::Core,
+        breaks: "a parallel part's operators reserve the budget again beside the statement's grant",
+        file: "src/spill/grant.rs",
+        original: "if self.covered {",
+        replacement: "if false {",
+        integration: &[],
+        unit: &[COVERED],
     },
 ];

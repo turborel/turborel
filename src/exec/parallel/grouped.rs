@@ -10,8 +10,9 @@
 //! seeds, numbered first, and the groups are given in that order, as the
 //! serial grouping gives them (`exec/group.rs`), DISTINCT each row the
 //! first time it comes. The pieces a grouping holds are charged to one
-//! work area (RULES.md D38); past it, it gives way to the serial grouping,
-//! which spills, its rows read again in the statement's snapshot.
+//! work grant (RULES.md D38, D298); past it, or bound past it as its first
+//! morsels show, it gives way to the serial grouping, which spills, its
+//! rows read again in the statement's snapshot.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -130,8 +131,8 @@ fn pieces(
         let rows = pipeline.morsel(m, &runner)?;
         morsel_pieces(&grouping, (m, rows), &runner)
     });
-    let mut chunks: Vec<Chunks> = (0..PARTS).map(|_| Vec::new()).collect();
-    for split in Morsels::start(db, tx, (count, degree), work) {
+    let (mut chunks, from): (Vec<Chunks>, usize) = ((0..PARTS).map(|_| Vec::new()).collect(), limit.held());
+    for (done, split) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
         for (part, made) in chunks.iter_mut().zip(split?) {
             let bytes = made
                 .iter()
@@ -146,6 +147,9 @@ fn pieces(
                 return Ok(Held::GaveWay);
             }
             part.push(made);
+        }
+        if !limit.on_course(from, (done, count)) {
+            return Ok(Held::GaveWay);
         }
     }
     Ok(Held::Kept(chunks))

@@ -64,12 +64,12 @@ type Both = (Result<Vec<String>, Code>, Result<Vec<String>, Code>, bool);
 
 /// The rows of `sql`, in the order given, run alone (EXECUTOR.DEGREE 1) a
 /// row at a time, as a batch gives its rows in no order (RULES.md D31);
-/// then in parallel; and whether its plan has a parallel part.
+/// then in parallel, of the column store too, which a scan by batch keeps
+/// serial; and whether its plan has a parallel part.
 fn both(s: &Session, sql: &str) -> Both {
     exec(s, "SET EXECUTOR.DEGREE = 1").unwrap();
     exec(s, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
     let alone = rows(s, sql);
-    exec(s, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
     parallel(s);
     let marked = s.physical_plan(sql, &Params::new()).unwrap().contains("Parallel  (degree=4)");
     (alone, rows(s, sql), marked)
@@ -135,7 +135,9 @@ fn joins_build_and_probe_by_morsels() {
 /// Verifies: [DESIGN] RULES.md D291 the planner leaves on the statement's
 /// thread a point query, a part reading fewer rows than
 /// EXECUTOR.PARALLEL_MIN_ROWS, a correlated subquery, its scan below it
-/// run in parallel, and every part of EXECUTOR.DEGREE 1.
+/// run in parallel, a column store's part a scan by batch serves while
+/// EXECUTOR.BATCHES is on, not its join, and every part of
+/// EXECUTOR.DEGREE 1.
 ///
 /// Decision: the part is large enough, its expressions a worker's alone,
 /// and the degree above 1. Each pair changes the outcome alone: a
@@ -149,6 +151,10 @@ fn the_planner_marks_only_large_parts() {
     assert!(!plan("SELECT N FROM R WHERE K = 5").contains("Parallel"));
     let correlated = plan("SELECT K, (SELECT COUNT(*) FROM D WHERE D.G = R.G) FROM R");
     assert!(correlated.starts_with("Project") && correlated.contains("  Parallel"), "a subquery's on the statement's thread: {correlated}");
+    assert!(!plan("SELECT G, COUNT(*) FROM C GROUP BY G").contains("Parallel"), "the column store's scan by batch");
+    assert!(plan("SELECT COUNT(*) FROM C JOIN D ON C.G = D.G").contains("Parallel"), "a probe is not by batch");
+    exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+    assert!(plan("SELECT G, COUNT(*) FROM C GROUP BY G").contains("Parallel"));
     exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 100000").unwrap();
     assert!(!plan("SELECT COUNT(*) FROM R").contains("Parallel"));
     exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 0").unwrap();

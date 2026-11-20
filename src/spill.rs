@@ -261,6 +261,9 @@ pub trait SpillRun: Send {
 pub struct WorkAreas {
     memory: Arc<MemoryBudget>,
     place: RwLock<(Arc<dyn Spill>, Arc<TempFiles>)>,
+    /// Whether its operators' grants are held of another's grant, not of
+    /// the budget (RULES.md D298).
+    covered: bool,
 }
 
 impl WorkAreas {
@@ -269,7 +272,7 @@ impl WorkAreas {
     pub fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
         let files = MemoryFileSystem::within(Arc::clone(&memory), "a spill file");
         let temp = TempFiles::new(Arc::new(files), Path::new("/tmp"));
-        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))) }
+        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))), covered: false }
     }
 
     /// The budget its areas are reserved of, for what is held beside them.

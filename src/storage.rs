@@ -210,6 +210,11 @@ pub trait TableStorage: Send + Sync {
     fn reads_by_batch(&self) -> bool {
         false
     }
+    /// \[DESIGN\] Whether it keeps its rows by column, so a serial scan by
+    /// batch outruns workers making rows (RULES.md D291). Default: false.
+    fn keeps_columns(&self) -> bool {
+        false
+    }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
     /// `tx` is about to read, by `get`, the rows an index chose by

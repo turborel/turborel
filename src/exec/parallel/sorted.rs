@@ -59,10 +59,10 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) 
         }
         Ok(run)
     });
-    let mut runs = Vec::new();
-    for run in Morsels::start(db, tx, (count, degree), work) {
+    let (mut runs, from) = (Vec::new(), limit.held());
+    for (done, run) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
         let run = run?;
-        if !limit.take(run.iter().map(row_bytes).sum()) {
+        if !limit.take(run.iter().map(row_bytes).sum()) || !limit.on_course(from, (done, count)) {
             return Ok(Held::GaveWay);
         }
         runs.push(run);

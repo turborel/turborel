@@ -213,7 +213,10 @@ takes at most EXECUTOR.DEGREE threads, its own among them, 0 for as
 many as the workers, 1 for its own thread alone. The planner runs a
 part on several only if its tables hold at least
 EXECUTOR.PARALLEL_MIN_ROWS rows, so a query of a few rows, as one by a
-key, stays on its own thread. [EXPLAIN](../sql/statements/explain.md)
+key, stays on its own thread. A scan, grouping or sort of a column
+store table stays on it too while EXECUTOR.BATCHES is on, since its
+scan by batch is faster alone; a join or window functions over one
+still run in parallel. [EXPLAIN](../sql/statements/explain.md)
 shows the part and its degree. The rows, and their order, are the same
 on any number of threads.
 

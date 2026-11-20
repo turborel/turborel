@@ -116,13 +116,16 @@ fn parallel_built(
         }
         Ok(split)
     });
-    let mut chunks: Vec<Chunks> = (0..PARTS).map(|_| Vec::new()).collect();
-    for split in Morsels::start(db, tx, (count, degree), work) {
+    let (mut chunks, from): (Vec<Chunks>, usize) = ((0..PARTS).map(|_| Vec::new()).collect(), limit.held());
+    for (done, split) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
         for (part, rows) in chunks.iter_mut().zip(split?) {
             if !limit.take(rows.iter().map(|(_, r)| row_bytes(r)).sum()) {
                 return Ok(Held::GaveWay);
             }
             part.push(rows);
+        }
+        if !limit.on_course(from, (done, count)) {
+            return Ok(Held::GaveWay);
         }
     }
     let chunks: Arc<Vec<Mutex<Chunks>>> = Arc::new(chunks.into_iter().map(Mutex::new).collect());

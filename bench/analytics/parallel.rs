@@ -24,7 +24,7 @@ const PER_INSERT: u64 = 1_000;
 
 /// Queries of `{t}`, each with the name it is reported by.
 const QUERIES: [(&str, &str); 10] = [
-    ("COUNT by a filter of 2,000,000 rows", "SELECT COUNT(*), SUM(A) FROM {t} WHERE MOD(B, 10) < 3"),
+    ("COUNT by a filter of 2,000,000 rows", "SELECT COUNT(*), SUM(A) FROM {t} WHERE G < 300"),
     ("GROUP BY 1,000 groups", "SELECT G, COUNT(*), SUM(A), AVG(B) FROM {t} GROUP BY G"),
     ("GROUP BY 200,000 groups", "SELECT H, COUNT(*), SUM(A) FROM {t} GROUP BY H"),
     ("DISTINCT of 200,000 rows", "SELECT DISTINCT H FROM {t}"),

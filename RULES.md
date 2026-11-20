@@ -8551,7 +8551,11 @@ does, keeps its plan unchanged, so OLTP statements pay only for the
 walk. An expression a worker cannot evaluate alone keeps its pipeline
 on the statement's thread, a subquery's, a routine's, NEXT VALUE FOR's
 and an outer reference's among them, as do located scans, scans in a
-key order and a limit of few rows over an unfiltered stream.
+key order and a limit of few rows over an unfiltered stream. While
+EXECUTOR.BATCHES is on, a part reading a column store table with no
+hash join's probe and no window functions stays serial too, since
+the serial scan by batch makes no rows and outruns workers that make
+each. A join or window over one still runs in parallel.
 
 #### D292. A pipeline's morsels are its table's parts, and a hash join builds and probes by them
 
@@ -8616,7 +8620,10 @@ the first failed one starts, and the error raised is the first in row
 order, after the rows before it, as the serial plan raises it. A part
 holds one work grant (D298), shared by its threads and split across
 its partitions' operators. A part that would hold more, or whose table
-cannot be split, gives way to its serial plan, which spills, reading
+cannot be split, gives way to its serial plan. It gives way as soon
+as what its first morsels hold, as much again for every morsel left,
+would pass the grant, so a grouping of many groups wastes a few
+morsels' work, not all of it. The serial plan spills, reading
 its rows again in the same snapshot. Results never depend on the
 degree, the morsel size or the timing of workers.
 
@@ -8645,7 +8652,10 @@ shrink as sessions grow. Where half the free budget is under 4 MiB an
 operator holds 4 MiB unreserved, as every operator did before grants,
 and a ceiling set below 4 MiB is held as set, so a session can still
 ask for small areas. A spill area's pool is at most 4 MiB, as rows are
-held of the grant, not the pool. What holds rows outside operators,
+held of the grant, not the pool. The operators of a parallel part
+run inside the statement's grant, each given its share, and reserve
+nothing again, so one statement never takes the budget twice and its
+spill areas still find room. What holds rows outside operators,
 a cursor's read ahead, a change's chosen rows, temporary tables'
 pages, takes no grant and holds at most the lesser of
 MEMORY.WORK_BYTES and 4 MiB. Spilling never changes an answer, so a

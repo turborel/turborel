@@ -80,6 +80,20 @@ impl Limit {
         held <= self.most
     }
 
+    /// What it holds.
+    fn held(&self) -> usize {
+        self.held.load(Ordering::Acquire)
+    }
+
+    /// Whether what it holds, the bytes taken since it held `from` after
+    /// `done` of `count` morsels counted as much again for each morsel
+    /// left, would fit: a part that will pass its grant gives way after
+    /// its first morsels, not after its last.
+    fn on_course(&self, from: usize, (done, count): (usize, usize)) -> bool {
+        let grown = self.held().saturating_sub(from);
+        from.saturating_add(grown.saturating_mul(count).checked_div(done).unwrap_or(grown)) <= self.most
+    }
+
     /// `rows`, its grant held until they are dropped.
     fn keeping(&self, rows: RowIter) -> RowIter {
         let grant = Arc::clone(&self.grant);

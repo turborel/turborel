@@ -11,7 +11,7 @@
 //! for small work areas gets them. A grant changes when an operator
 //! spills, never what it gives.
 
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use super::{WORK_FLOOR, WorkAreas};
 use crate::memory::Reservation;
@@ -41,7 +41,18 @@ impl WorkAreas {
     /// of: half of what is free, at most `ceiling`, at least the floor, or
     /// `ceiling` itself below the floor.
     pub fn grant(&self, ceiling: usize) -> Arc<Grant> {
-        Arc::new(grant_of(self.budget(), ceiling))
+        if self.covered {
+            return Arc::new(Grant { bytes: ceiling, held: None });
+        }
+        Arc::new(grant_of(&self.memory, ceiling))
+    }
+
+    /// Its areas, for the operators of a part of a statement whose grant
+    /// already holds their bytes: each granted its ceiling, none reserved
+    /// again, so the parts of one grant never take the budget twice.
+    pub(crate) fn covered(&self) -> WorkAreas {
+        let place = self.place.read().unwrap_or_else(PoisonError::into_inner).clone();
+        WorkAreas { memory: Arc::clone(&self.memory), place: RwLock::new(place), covered: true }
     }
 }
 
@@ -66,7 +77,7 @@ fn grant_of(budget: &Arc<crate::memory::MemoryBudget>, ceiling: usize) -> Grant 
 mod tests {
     use super::grant_of;
     use crate::memory::MemoryBudget;
-    use crate::spill::WORK_FLOOR;
+    use crate::spill::{WORK_FLOOR, WorkAreas};
 
     /// Verifies: [DESIGN] RULES.md D298 each grant takes half the free
     /// budget up to its ceiling, reserved while it is held; past the floor
@@ -87,5 +98,16 @@ mod tests {
         assert_eq!(rest.last().map(|g| (g.bytes, g.reserved())), Some((WORK_FLOOR, false)), "the floor, unreserved");
         drop((first, second, third, rest));
         assert_eq!(budget.reserved(), 0, "given back");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D298 the operators of a part of a
+    /// statement are granted their ceiling of its grant, none of the budget
+    /// reserved again.
+    #[test]
+    fn covered_grants_reserve_nothing() {
+        let budget = MemoryBudget::new(64 * WORK_FLOOR);
+        let areas = WorkAreas::new(std::sync::Arc::clone(&budget)).covered();
+        let grant = areas.grant(16 * WORK_FLOOR);
+        assert_eq!((grant.bytes, grant.reserved(), budget.reserved()), (16 * WORK_FLOOR, false, 0));
     }
 }

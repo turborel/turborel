@@ -294,6 +294,11 @@ impl TableStorage for RowTable {
         true
     }
 
+    /// A table of the column store does.
+    fn keeps_columns(&self) -> bool {
+        self.frozen.columns().is_some()
+    }
+
     /// Of the column store, the columns COLUMNSTORE.ORDER names.
     fn ordered_by(&self) -> Vec<usize> {
         self.frozen.columns().map(|c| c.order.places().to_vec()).unwrap_or_default()
