@@ -2,7 +2,9 @@
 //! the common values ignored, a run's repeats counted each, the bounds
 //! kept after rows are written, the sample's count replaced by the
 //! synopses', a rare combination's joint distinct values ignored, an
-//! unseen one's share ignored, conjuncts multiplied, a LIKE's prefix ignored, an index's
+//! unseen one's share ignored, a partial sample's bound taken as of a
+//! large table's, a LIKE's rest not counted on the sample, strings not
+//! placed within a bucket, conjuncts multiplied, a LIKE's prefix ignored, an index's
 //! range share lost and an index's joint distinct keys ignored.
 
 use super::super::{Mutation, Package};
@@ -17,8 +19,11 @@ const JOINT_FILE: &str = "src/physical/estimate/joint.rs";
 /// The test of rare equalities.
 const RARE: &str = "physical::estimate::tests::rare_equalities_are_estimated_by_joint_distinct_values";
 
+/// The test of narrow prefixes and single-character wildcards.
+const NARROW: &str = "statistics_estimates::narrow_prefixes_and_single_character_wildcards_are_estimated";
+
 /// Mechanisms of the statistics whose removal must fail their tests.
-pub const STATISTICS: [Mutation; 10] = [
+pub const STATISTICS: [Mutation; 13] = [
     Mutation {
         name: "statistics-common-ignored",
         package: Package::Core,
@@ -121,5 +126,35 @@ pub const STATISTICS: [Mutation; 10] = [
         replacement: "    None",
         integration: &[],
         unit: &[RARE],
+    },
+    Mutation {
+        name: "statistics-partial-sample-unnarrowed",
+        package: Package::Core,
+        breaks: "a conjunction a sample of part of a table keeps no row of is bounded by 3(1 - f)/n",
+        file: "src/physical/estimate/sampled.rs",
+        original: "    let bound = (hits + cost_of(EMPTY_BOUND) * (1.0_f64 - whole)) / n;",
+        replacement: "    let bound = (hits + cost_of(EMPTY_BOUND)) / n;",
+        integration: &[],
+        unit: &["physical::estimate::tests::a_sample_of_the_whole_table_is_exact"],
+    },
+    Mutation {
+        name: "statistics-like-rest-unsampled",
+        package: Package::Core,
+        breaks: "a LIKE with more than % after its prefix keeps the share of the sampled prefixed strings it keeps",
+        file: "src/physical/estimate/like.rs",
+        original: "sampled_rest(c, column, &prefix, known).unwrap_or(LIKE_REST)",
+        replacement: "LIKE_REST",
+        integration: &[NARROW],
+        unit: &[],
+    },
+    Mutation {
+        name: "statistics-strings-unplaced",
+        package: Package::Core,
+        breaks: "a string is placed within a histogram's bucket by its characters",
+        file: "src/stats/parts.rs",
+        original: ".or_else(|| self.bounds.get(lower).zip(self.bounds.get(upper)).and_then(|(l, h)| string_within(l, h, value)))",
+        replacement: ".or_else(|| self.bounds.get(lower).zip(self.bounds.get(upper)).and_then(|(l, h)| string_within(l, h, value)).and(None))",
+        integration: &[NARROW],
+        unit: &[],
     },
 ];

@@ -171,9 +171,12 @@ fn narrow_prefixes_and_single_character_wildcards_are_estimated() {
     // name123 and name1230 to name1239: 11 values of 10 rows each.
     let (narrow, plan) = estimated(&s, "SELECT * FROM N WHERE S LIKE 'name123%'");
     assert!(within(narrow, 110.0, 3.0), "{narrow}\n{plan}");
-    // name409 to name499 by tens: 10 values.
+    // name409 to name499 by tens: 10 values. name120 to name129: 10 of
+    // the 111 values beginning name12, far below a quarter of them.
     let (wild, plan) = estimated(&s, "SELECT * FROM N WHERE S LIKE 'name4_9'");
-    assert!(within(wild, 100.0, 2.5), "{wild}\n{plan}");
+    assert!(within(wild, 100.0, 1.5), "{wild}\n{plan}");
+    let (last, plan) = estimated(&s, "SELECT * FROM N WHERE S LIKE 'name12_'");
+    assert!(within(last, 100.0, 1.3), "{last}\n{plan}");
 }
 
 /// Verifies: [DESIGN] RULES.md D382, a small table: of a table its sample
