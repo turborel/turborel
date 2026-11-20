@@ -45,10 +45,10 @@ fn a_starter_is_made_packed_installed_and_called() {
     std::fs::create_dir_all(&release).unwrap();
     std::fs::copy(plugin_example(), release.join(format!("hello{}", std::env::consts::EXE_SUFFIX))).unwrap();
     let packed = ext_in(root, &["pack", "hello"]).unwrap();
-    let into = std::path::Path::new("hello").join("hello-0.1.0.tbpkg");
+    let into = std::path::Path::new("hello").join("hello-0.1.0.tbx");
     let told = format!("packed HELLO 0.1.0 into {}, unsigned, license LicenseRef-Proprietary (text in LICENSE)", into.display());
     assert!(packed.contains(&told), "{packed}");
-    let file = project.join("hello-0.1.0.tbpkg").display().to_string();
+    let file = project.join("hello-0.1.0.tbx").display().to_string();
     let said = f.on(&["install", &file]).unwrap();
     assert!(said.contains("installed HELLO 0.1.0 from") && said.ends_with("license LicenseRef-Proprietary (text in LICENSE)\n"), "{said}");
     let installed = f.plugins.join("HELLO").join("0.1.0");
@@ -125,7 +125,7 @@ fn new_refuses_what_it_cannot_make() {
 fn pack_refuses_a_license_it_cannot_carry() {
     let f = Fixture::new("pack-license");
     let root = &f.scratch.dir;
-    let pack = |dir: &std::path::Path| ext_in(root, &["pack", &dir.display().to_string(), "--out", "x.tbpkg"]);
+    let pack = |dir: &std::path::Path| ext_in(root, &["pack", &dir.display().to_string(), "--out", "x.tbx"]);
     let missing = source(root, "NOFILE", "1.0.0", "LICENSE 'MIT'; LICENSE FILE 'COPYING';");
     assert!(pack(&missing).unwrap_err().contains("COPYING"));
     let bad = source(root, "BAD", "1.0.0", "LICENSE 'MIT AND';");
@@ -136,7 +136,7 @@ fn pack_refuses_a_license_it_cannot_carry() {
     std::fs::write(good.join("notes.txt"), "not named").unwrap();
     let said = pack(&good).unwrap();
     assert!(!said.contains("warning") && said.contains("license (MIT OR Apache-2.0) AND LicenseRef-Extra WITH LLVM-exception"), "{said}");
-    let shown = f.on(&["install", "x.tbpkg"]).unwrap();
+    let shown = f.on(&["install", "x.tbx"]).unwrap();
     assert!(shown.contains("installed GOOD 1.0.0"), "{shown}");
     let dir = f.plugins.join("GOOD").join("1.0.0");
     assert!(dir.join("doc/README").exists() && !dir.join("notes.txt").exists());

@@ -8163,7 +8163,7 @@ runtimes of their own, over in-memory databases.
 
 turborel runs no registry, reads no index of one and fetches nothing,
 neither in the server nor in the command-line client. A package is a
-file, `.tbpkg`, and its author hands it to operators by whatever means
+file, `.tbx`, and its author hands it to operators by whatever means
 they share files, which turborel does not choose for them. So no
 setting names a registry or pins a package to one, no cache of fetched
 packages is kept, and the client needs no HTTPS for packages. What a
@@ -8176,7 +8176,7 @@ directory of files, which `install` takes whole (D261).
 #### D261. Install resolves among the package files given and the packages installed
 
 `turborel extension install FILE...` takes package files, and
-directories whose `.tbpkg` files it takes in the order of their names
+directories whose `.tbx` files it takes in the order of their names
 (`cli/src/extension/files.rs`). Each is read and its entries' digests
 checked before anything is chosen. Two files of one name and version
 with other contents are refused. The packages asked for by name are the
@@ -8233,7 +8233,7 @@ executable is taken at its path in DIR, or else by its file's name under
 build --release` puts it. A file the manifest names that is in neither
 place is refused with 38T06, saying to build the program first. With
 `--key` the package is signed. It is written to `--out`, or into DIR as
-its name in lower case, its version and `.tbpkg`.
+its name in lower case, its version and `.tbx`.
 
 #### D265. A license is an SPDX expression, checked against the grammar alone
 

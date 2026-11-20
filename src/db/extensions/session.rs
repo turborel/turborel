@@ -30,7 +30,7 @@ use crate::plugin::package::{hex, install_file, resolve_installed, upgrade_scrip
 use crate::plugin::{MANIFEST_FILE, Manifest};
 
 /// What a package file's name ends with.
-const PACKAGE_SUFFIX: &str = ".tbpkg";
+const PACKAGE_SUFFIX: &str = ".tbx";
 
 /// One extension to create or update, as found.
 struct Found {

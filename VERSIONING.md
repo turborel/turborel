@@ -119,7 +119,7 @@ version, and comes with a major release (see
 | Plug-in manifest (`turborel-plugin.manifest`) | 1 | its PROTOCOL item | `plugin/manifest.rs` |
 | Plan form of an optimizer rule (kind 37) | 1 | its first field | `plugin/plan.rs`, `FORMAT` |
 | Plug-in statistics (engine and index operations 8 and 9, STATISTICS and STATISTICSDONE) | 1, as the protocol | the protocol's version | `plugin/payload/statistics.rs` |
-| Extension package file | 1 | the byte after its magic `TBPKG\0` | `plugin/package/archive.rs`, `plugin/package.rs` `FORMAT` |
+| Extension package file | 1 | the byte after its magic `TBX\0` | `plugin/package/archive.rs`, `plugin/package.rs` `FORMAT` |
 | Installed package digests file (`turborel-package.digests`) | 1 | its first line | `plugin/package/install.rs` |
 | Extension lock file (`turborel-extensions.lock`), each package's license among it | 1 | its first line | `plugin/package/lock.rs` |
 | Backup manifest | 1 | the manifest's first byte | `backup/manifest.rs`, `MANIFEST_FORMAT` |
