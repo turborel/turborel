@@ -182,7 +182,9 @@ impl State {
                 let _gate = self.tx.gate.enter();
                 self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
             };
-            drop(turn.take());
+            // The turn is kept until the write is made or given up: a
+            // write refused once as the waiter's snapshot is past is tried
+            // again over the version committed, before the next waiter's.
             let e = match attempt {
                 Ok((old, history)) => {
                     if let (Some(history), Some(stamp)) = (history, &stamp) {
@@ -199,6 +201,7 @@ impl State {
             }
             let newest = self.storage_of(table)?.newest(tx.id, id)?;
             if let Some(writer) = newest.writer {
+                drop(turn.take());
                 turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
                 seen = None;
                 continue;
