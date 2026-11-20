@@ -46,11 +46,9 @@
 //! storage engines and indexes, and its isolation by the engine, or by the transaction coordinator's table locks for an engine that
 //! leaves it to them (RULES.md D29). A `Session` is used by one thread at a time, and may move between threads between calls.
 
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    sync::{Arc, Mutex, Weak},
-};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, Weak};
 
 use self::area::commands;
 use crate::binder::OutColumn;
@@ -251,9 +249,8 @@ enum CursorRows {
 struct SessionState {
     tx: Option<Arc<Txn>>,
     cursors: HashMap<dynamic::Name, DeclaredCursor>,
-    /// The rows of cursors opened with `open_cursor`, shared with the
-    /// cursors: settled before the transaction changes a table they read,
-    /// taken away when it ends.
+    /// The rows of cursors opened with `open_cursor`, shared with the cursors: settled before the transaction changes a table
+    /// they read, taken away when it ends.
     anonymous: Vec<Weak<Mutex<Option<Stream>>>>,
     /// The definitions its transaction changed, until it ends (`db/ddl.rs`).
     staged: Option<ddl::Staged>,
@@ -261,9 +258,8 @@ struct SessionState {
     area: area::Area,
     /// Its prepared statements and SQL descriptor areas (`db/dynamic.rs`).
     dynamic: dynamic::DynamicState,
-    /// [ISO/IEC 9075-2:2023 §7.6] Where the data change statement running
-    /// records the rows of its delta table, if a query reads it
-    /// (`db/delta.rs`).
+    /// [ISO/IEC 9075-2:2023 §7.6] Where the data change statement running records the rows of its delta table, if a query
+    /// reads it (`db/delta.rs`).
     delta: Option<delta::Collector>,
     /// \[EXTENSION\] The rows it gave in place of estimates (`db/explain/injected.rs`).
     injected: Option<Arc<crate::physical::Injected>>,
