@@ -1,7 +1,7 @@
 //! The rows a cursor is moved among by FETCH (`db/position.rs`): a scrollable
 //! read-only cursor's, kept as they are read, and an updatable cursor's, each
 //! derived as the cursor reaches it. Each cursor holds its rows, or their ids,
-//! up to MEMORY.WORK_BYTES, the rest spilled (`exec/held.rs`, RULES.md D38).
+//! up to `settings::held_bytes`, the rest spilled (`exec/held.rs`, RULES.md D38).
 
 use std::sync::Arc;
 
@@ -269,7 +269,8 @@ fn sort_of(plan: Plan) -> std::result::Result<(Vec<SortKey>, Plan), Box<Plan>> {
             | Plan::Polymorphic(..)
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
-            | Plan::Transition { .. }) => return Err(Box::new(other)),
+            | Plan::Transition { .. }
+            | Plan::Parallel(..)) => return Err(Box::new(other)),
         }
     }
 }
@@ -309,7 +310,8 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             | Plan::Polymorphic(..)
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
-            | Plan::Transition { .. }) => {
+            | Plan::Transition { .. }
+            | Plan::Parallel(..)) => {
                 layers.reverse();
                 return (layers, other);
             }

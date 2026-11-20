@@ -90,11 +90,11 @@ pub const ESTIMATES: [Mutation; 8] = [
     Mutation {
         name: "estimates-local-fixpoint-lost",
         package: Package::Core,
-        breaks: "a node a rule rewrote is left to the next pass, so one pass no longer reaches the fixpoint",
+        breaks: "a node a rule rewrote is left to the next pass, so the rules take as many passes as when restarted",
         file: "src/optimizer.rs",
-        original: "    for _ in 0..local {",
-        replacement: "    for _ in 0..local.min(1) {",
+        original: "    while *budget > 0 {",
+        replacement: "    if *budget > 0 {",
         integration: &[],
-        unit: &["optimizer::drivers::one_pass_reaches_the_fixpoint"],
+        unit: &["optimizer::drivers::rewriting_a_node_again_takes_fewer_passes"],
     },
 ];

@@ -509,3 +509,7 @@ impl RowTable {
 // R-TEST-1).
 #[cfg(test)]
 mod tests;
+
+// Unit tests: frozen rows read past the tree's entries shadowing them.
+#[cfg(test)]
+mod shadowed;

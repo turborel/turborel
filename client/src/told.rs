@@ -121,13 +121,15 @@ impl Told {
 mod tests {
     use super::*;
 
-    /// Verifies: [DESIGN] RULES.md D185, D187: a connection asks for every
-    /// capability but compression unless told; a notice with no handler is
+    /// Verifies: [DESIGN] RULES.md D185, D187, D396: a connection asks for
+    /// every capability but compression unless told, `declared-types`
+    /// among them; a notice with no handler is
     /// kept, the oldest dropped past `KEPT_NOTICES`; with one, handed to it.
     #[test]
     fn an_offer_asks_and_notices_are_kept_or_handed() {
         let offer = Offer::default();
         assert_eq!(offer.capabilities.len(), ALL.len() - 1);
+        assert!(offer.capabilities.iter().any(|c| c == turborel_protocol::capability::DECLARED_TYPES), "declared types asked");
         assert!(offer.clone().compressed().capabilities.iter().any(|c| c == COMPRESSION));
         assert_eq!(Offer::none().capabilities.len(), 0);
         let mut told = Told::default();

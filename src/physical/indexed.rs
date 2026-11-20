@@ -358,7 +358,8 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => None,
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => None,
     }
 }
 
@@ -371,6 +372,11 @@ struct Read<'a> {
     through: Option<(Vec<usize>, Vec<String>)>,
     needed: &'a [usize],
     located: bool,
+}
+
+/// Whether `plan` reads a table, as `read_table` says.
+pub(super) fn reads_table(plan: &LogicalPlan) -> bool {
+    read_table(plan).is_some()
 }
 
 /// How `plan` reads a table, if it is a table's scan, a filter of one that

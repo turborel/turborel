@@ -29,7 +29,7 @@ use crate::db::State;
 use crate::error::{Result, SqlState};
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Cond, Truth};
-use crate::spill::{Records, SpillRun, norm_row, row_bytes};
+use crate::spill::{Records, SpillRun, norm_row, put_norm, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::Value;
@@ -54,7 +54,7 @@ pub(super) struct Spec {
 /// The key of a group of `values`: by their sort keys where `spec` says, so
 /// values equal by a collation are of one group, which keeps the first's
 /// [ISO/IEC 9075:1992 §8.2 GR3d].
-fn group_key(spec: &Spec, values: &Row) -> Result<Vec<u8>> {
+pub(in crate::exec) fn group_key(spec: &Spec, values: &Row) -> Result<Vec<u8>> {
     if spec.collations.is_empty() {
         return Ok(norm_row(values));
     }
@@ -118,6 +118,9 @@ struct Fed<'a> {
     runner: &'a Runner,
     seen: Bag,
     sorting: Option<Sorting>,
+    /// The key of a value a DISTINCT set function took, made again for
+    /// each in the same bytes, so none is allocated for a value seen.
+    key: Vec<u8>,
 }
 
 /// Where a pass writes the rows of the groups it has no room for: to
@@ -223,7 +226,8 @@ impl Grouper {
     fn pass(&mut self, rows: Numbered<'_>, overflow: &mut Overflow) -> Result<Finished> {
         let (mut found, mut bytes) = (HashMap::<Vec<u8>, Group>::new(), 0_usize);
         let seen = Bag::new(self.bag.as_ref().unwrap_or(&self.work).another());
-        let mut fed = Fed { runner: &self.runner, seen, sorting: self.sorts.as_ref().map(|w| Sorting::new(w.another())) };
+        let sorting = self.sorts.as_ref().map(|w| Sorting::new(w.another()));
+        let mut fed = Fed { runner: &self.runner, seen, sorting, key: Vec::new() };
         for r in rows {
             let (n, row) = match r? {
                 Seeded::Seed(n, values) => {
@@ -279,7 +283,7 @@ fn fresh(spec: &Spec) -> Vec<Box<dyn Accumulator>> {
 /// argument of `row`, the values each DISTINCT one took kept in the bag of
 /// `fed`, those of each inverse distribution function sorted in its sort.
 fn feed(aggs: &[AggCall], group: &mut Group, row: &Row, fed: &mut Fed<'_>) -> Result<()> {
-    let (runner, seen, sorting) = (fed.runner, &mut fed.seen, &mut fed.sorting);
+    let (runner, seen, sorting, scratch) = (fed.runner, &mut fed.seen, &mut fed.sorting, &mut fed.key);
     let Group { first, key, states, picks, .. } = group;
     for (n, (a, acc)) in aggs.iter().zip(states.iter_mut()).enumerate() {
         // [ISO/IEC 9075-2:2023 §10.9 GR4] a row its filter is not true of
@@ -306,10 +310,11 @@ fn feed(aggs: &[AggCall], group: &mut Group, row: &Row, fed: &mut Fed<'_>) -> Re
                 // The group's key, the function's place, and the value: one
                 // key for each value each function of each group took.
                 let taken = || {
-                    seen.add_new(
-                        &[key.as_slice(), &u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes(), &norm_row(std::slice::from_ref(&v))]
-                            .concat(),
-                    )
+                    scratch.clear();
+                    scratch.extend_from_slice(key);
+                    scratch.extend_from_slice(&u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes());
+                    put_norm(&v, scratch);
+                    seen.add_new(scratch)
                 };
                 if joins_argument(a.distinct, &v, taken)? {
                     acc.update(&v)?;

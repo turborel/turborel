@@ -82,7 +82,7 @@ version, and comes with a major release (see
 | Partitioning descriptors, keys, bounds and index templates | 1 | the catalog image's, as part of it | `catalog/codec/partitions.rs` |
 | Log record | 1 | each record's first byte | `log/record.rs`, `RECORD_VERSION` |
 | Row store table | 1 | its meta page | `engine/rows/meta.rs`, `TABLE_FORMAT` |
-| Column store row group | 1 | its header's first byte | `engine/columns/group.rs`, `GROUP_FORMAT` |
+| Column store row group, its chunks among it (an ALP chunk's factors marked by its first byte's bit 0x80, RULES.md D353) | 1 | its header's first byte | `engine/columns/group.rs`, `GROUP_FORMAT`; `engine/columns/alp.rs`, `FACTORED` |
 | B-link tree | 1 | its meta page | `engine/tree.rs`, `TREE_FORMAT` |
 | Hash index | 1 | its meta page | `engine/hash.rs`, `FORMAT` |
 | R-link tree, its meta page and nodes | 1 | each page | `engine/rtree.rs`, `META_VERSION`; `engine/rtree/node.rs`, `FORMAT` |

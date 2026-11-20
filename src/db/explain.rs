@@ -12,6 +12,7 @@ use super::{Cursor, Session, State};
 use crate::binder::OutColumn;
 use crate::error::Result;
 use crate::params::Params;
+use crate::physical::Plan;
 use crate::value::{DataType, Value};
 
 /// The name of EXPLAIN's one column.
@@ -91,7 +92,8 @@ impl Session {
     /// The text `explain` gives of `sql` in state `st`.
     fn planned(&self, st: &Arc<State>, sql: &str, params: &Params) -> Result<String> {
         let spec = Self::parse_cursor(st, sql, params)?;
-        let text = shown(&self.compile(st, &spec, params)?);
+        let compiled = self.compile(st, &spec, params)?;
+        let text = with_count(st, &compiled.physical, shown(&compiled));
         Ok(with_plugin_calls(st, text))
     }
 }
@@ -114,6 +116,16 @@ fn shown(c: &Compiled) -> String {
         c.optimized.explain(),
         c.physical.explain()
     )
+}
+
+/// \[DESIGN\] `text`, a plan, with a line naming the table whose rows the
+/// bare COUNT(*) of `physical` counts by its storage, if it does
+/// (RULES.md D351, `exec/batch/count.rs`).
+fn with_count(st: &State, physical: &Plan, text: String) -> String {
+    match crate::exec::storage_counted(physical, st) {
+        Some(table) => format!("{text}-- counted by storage: {table}\n"),
+        None => text,
+    }
 }
 
 /// \[EXTENSION\] `text`, a plan, with a last line naming the objects of

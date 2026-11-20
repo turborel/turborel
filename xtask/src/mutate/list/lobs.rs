@@ -2,7 +2,8 @@
 //! within a character; equality of values of many chunks not read; a
 //! large object ordered; the objects collection, an undo and a commit
 //! free, and those the recovery sweep keeps; a value too long stored; a
-//! piece not UTF-8 taken; a locator kept past its transaction, a held one
+//! piece not UTF-8 taken, an Append's octets not checked as they come, a
+//! refused Append forgotten; a locator kept past its transaction, a held one
 //! not copied, the snapshot of a READ COMMITTED one not pinned; the
 //! server's transaction ended though it sent a locator, and its inline
 //! threshold reversed; LISTAGG and a collated LIKE of a character large
@@ -11,7 +12,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of large objects, in the order they run.
-pub const LOBS: [Mutation; 18] = [
+pub const LOBS: [Mutation; 20] = [
     Mutation {
         name: "lob-cut-split",
         package: Package::Core,
@@ -97,10 +98,30 @@ pub const LOBS: [Mutation; 18] = [
         package: Package::Core,
         breaks: "a character large object made a piece at a time takes octets not UTF-8",
         file: "src/db/lobs/writing.rs",
-        original: "    std::str::from_utf8(bytes).map(|s| s.chars().count()).map_err(|_| {",
-        replacement: "    Ok::<_, std::str::Utf8Error>(String::from_utf8_lossy(bytes).chars().count()).map_err(|_| {",
+        original: "    std::str::from_utf8(bytes).map(|s| s.chars().count()).map_err(|_| not_utf8())",
+        replacement: "    Ok::<_, std::str::Utf8Error>(String::from_utf8_lossy(bytes).chars().count()).map_err(|_| not_utf8())",
         integration: &[],
         unit: &["db::lobs::tests::a_value_is_made_a_piece_at_a_time"],
+    },
+    Mutation {
+        name: "lob-appends-unchecked",
+        package: Package::Server,
+        breaks: "a character large object's Appends are not checked as UTF-8 as they come, so a finish sends octets not UTF-8 unrefused (D392)",
+        file: "src/db/lobs/writing.rs",
+        original: "            self.valid = checked_to(&self.pending, self.valid)?;",
+        replacement: "            self.valid = self.pending.len();",
+        integration: &["lobs::a_character_value_written_in_pieces_must_be_utf8"],
+        unit: &[],
+    },
+    Mutation {
+        name: "lob-refusal-forgotten",
+        package: Package::Server,
+        breaks: "an Append refused is forgotten, so the value is made of what came before and after it (D392)",
+        file: "src/db/lobs/writing.rs",
+        original: "            self.refused = Some(e.clone());",
+        replacement: "            drop(e);",
+        integration: &["lobs::a_character_value_written_in_pieces_must_be_utf8"],
+        unit: &[],
     },
     Mutation {
         name: "lob-locator-outlives",

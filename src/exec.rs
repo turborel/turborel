@@ -12,7 +12,7 @@
 //! reads them a batch at a time where it can (`exec/batch.rs`,
 //! EXECUTOR.BATCHES). Operators that must
 //! hold rows (sorts, grouping, DISTINCT, joins and products, EXCEPT and
-//! INTERSECT, subqueries' rows) hold up to MEMORY.WORK_BYTES of them in memory
+//! INTERSECT, subqueries' rows) hold up to their work grants of them in memory
 //! and spill the rest (`exec/work.rs`, RULES.md D38); so do the rows a
 //! statement holds past them, a cursor's or a write's (`exec/held.rs`).
 
@@ -30,6 +30,7 @@ mod json_table;
 mod limit;
 mod merged;
 mod nearest;
+mod parallel;
 mod partition;
 mod pattern;
 mod program;
@@ -47,6 +48,8 @@ mod window;
 mod work;
 
 use std::sync::Arc;
+
+pub(crate) use batch::storage_counted;
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
@@ -147,6 +150,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Recognize { .. } => pattern::recognized,
         // [ISO/IEC 9075-2:2023 §9.25] its component procedures run as it opens.
         Plan::Polymorphic(..) => ptf::polymorphic,
+        // [DESIGN] by morsels on the workers (RULES.md D290).
+        Plan::Parallel(..) => parallel::parallel,
     };
     run(plan, db, tx)
 }
@@ -180,7 +185,8 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Recognize { .. }
         | Plan::Polymorphic(..)
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => failed(broken("a join is not one")),
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => failed(broken("a join is not one")),
     }
 }
 
@@ -300,7 +306,7 @@ fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// Whether a query reads its tables a batch at a time where it can, as the
 /// setting EXECUTOR.BATCHES says.
-pub(super) fn batched(db: &State) -> bool {
+pub(crate) fn batched(db: &State) -> bool {
     if let Value::Char(s) = db.settings.get(crate::settings::EXECUTOR_BATCHES) { s != "OFF" } else { true }
 }
 

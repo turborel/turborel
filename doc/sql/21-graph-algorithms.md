@@ -322,7 +322,8 @@ OK
 A run reads its edges in the statement's snapshot, through the
 privileges the statement has on them. It runs on as many threads as
 EXECUTOR.GRAPH_THREADS says, 1 unless set, and gives the same rows on
-any number. Its arrays are held within MEMORY.WORK_BYTES, and one that
+any number. Its arrays are held within the lesser of MEMORY.WORK_BYTES and
+4 MiB, and one that
 needs more is refused with SQLCODE -918. Cancelled, or past the
 statement's timeout, it stops with SQLCODE -920.
 
@@ -359,7 +360,7 @@ SELECT RUN_ID, ALGORITHM, ARGUMENTS, VERTICES, EDGES, ROWS_RETURNED, STATUS
 | 2A000 | -103 | GRAPH_ALGO has no algorithm of the name, an argument names no parameter, two are of one, one without a name follows a named one, START is missing, the edges are a value that names no property graph, VERTICES is written with a graph, or a key is not of a type that compares with the source's |
 | 22000 | -301 | An argument is out of its range, as a DAMPING past 1 |
 | 22W34 | -301 | GRF-0034, of a COST that names no column, is null or not a number, is negative where the algorithm takes no negative cost, or makes a negative cycle SSSP's START reaches |
-| TB918 | -918 | The run needs more memory than MEMORY.WORK_BYTES |
+| TB918 | -918 | The run needs more memory than the lesser of MEMORY.WORK_BYTES and 4 MiB |
 | TB920 | -920 | The statement was cancelled or ran past its timeout |
 
 ## Standard

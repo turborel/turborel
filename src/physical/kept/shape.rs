@@ -42,16 +42,13 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             let Plan::Sort { keys: keys2, input: input2, .. } = other else { return false };
             keys == keys2 && same_shape(input, input2)
         }
-        Plan::Limit { limit, input, .. } => {
-            let Plan::Limit { limit: limit2, input: input2, .. } = other else { return false };
-            let fetch = |l: &Limit| l.fetch.as_ref().map(|f| (f.percent, f.ties.clone()));
-            limit.offset.is_some() == limit2.offset.is_some() && fetch(limit) == fetch(limit2) && same_shape(input, input2)
-        }
+        Plan::Limit { .. } => same_limit(one, other),
         Plan::Append { left, right, .. } => {
             let Plan::Append { left: left2, right: right2, .. } = other else { return false };
             same_shape(left, left2) && same_shape(right, right2)
         }
         Plan::MergeAppend { .. } => same_merge(one, other),
+        Plan::Parallel(p) => same_parallel(p, other),
         Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
@@ -68,6 +65,13 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => false,
     }
+}
+
+/// Whether `one` and `other` are limits alike, of inputs of one shape.
+fn same_limit(one: &Plan, other: &Plan) -> bool {
+    let (Plan::Limit { limit, input, .. }, Plan::Limit { limit: limit2, input: input2, .. }) = (one, other) else { return false };
+    let fetch = |l: &Limit| l.fetch.as_ref().map(|f| (f.percent, f.ties.clone()));
+    limit.offset.is_some() == limit2.offset.is_some() && fetch(limit) == fetch(limit2) && same_shape(input, input2)
 }
 
 /// Whether `one` and `other` are merges of one order, of inputs of one
@@ -164,6 +168,12 @@ fn same_function(a: &ScalarRef, b: &ScalarRef) -> bool {
     }
     let Some(spatial) = a.0.spatial_operation() else { return false };
     a.0.deterministic() && b.0.deterministic() && b.0.spatial_operation() == Some(spatial)
+}
+
+/// Whether `other` is a part run in parallel of `p`'s degree and shape.
+fn same_parallel(p: &crate::physical::Parallel, other: &Plan) -> bool {
+    let Plan::Parallel(p2) = other else { return false };
+    p.degree == p2.degree && same_shape(&p.input, &p2.input)
 }
 
 // Unit tests: plans of one shape and of two (RULES.md R-TEST-1, R-TEST-8).

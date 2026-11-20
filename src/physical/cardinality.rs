@@ -15,18 +15,25 @@
 //!
 //! One `Estimates` lives for one planning. It reads the cost model's
 //! weights once, and asks each table's statistics and row count once, as
-//! asking them takes the settings' and the engines' locks. It keeps no
-//! estimate of a node, as the planner builds and drops temporary plans
-//! (flipped, reordered, extracted) whose addresses are reused, and a
-//! structural key would cost more to hash than the estimate it saves.
+//! asking them takes the settings' and the engines' locks. It keeps each
+//! node's estimate by the node's address. The nodes of the plan being
+//! planned, its subqueries' among them, live the whole planning, so theirs
+//! are kept throughout, and the planner asking at each node it builds asks
+//! no subtree twice. Any other node is a temporary plan the planner builds
+//! and drops (flipped, reordered, extracted), whose address is reused, so
+//! its estimate is kept for one asking only, while the plan asked of is
+//! borrowed and no node moves. Within an asking it must be kept, as a
+//! node's rule asks its inputs' estimates more than once, a column's
+//! distinct values among them, and a plan of nested groupings and outer
+//! joins would be estimated a number of times exponential in its depth.
 
 mod groups;
 mod joins;
 mod lineage;
 mod nodes;
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::{CostModel, PhysicalPlanner};
@@ -105,13 +112,31 @@ pub(super) struct Estimates<'a> {
     rows: RefCell<HashMap<QualifiedName, Option<f64>>>,
     /// Each index's distinct keys, by its name, as its sketch counts them.
     keys: RefCell<HashMap<String, Option<f64>>>,
+    /// Each node's estimate, by its address, for the asking under way.
+    memo: RefCell<HashMap<usize, Card>>,
+    /// The addresses of the nodes of the plan being planned, and the
+    /// estimates of those asked, kept the whole planning.
+    planned: HashSet<usize>,
+    kept: RefCell<HashMap<usize, Card>>,
+    /// How many askings are under way, nested.
+    asking: Cell<usize>,
 }
 
 impl<'a> Estimates<'a> {
     /// An estimator over `db`, its weights read now.
     pub(super) fn new(db: &'a State) -> Estimates<'a> {
         let (stats, rows, keys) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
-        Estimates { db, cost: db.cost(), stats, rows, keys }
+        let (memo, asking) = (RefCell::new(HashMap::new()), Cell::new(0));
+        let (planned, kept) = (HashSet::new(), RefCell::new(HashMap::new()));
+        Estimates { db, cost: db.cost(), stats, rows, keys, memo, asking, planned, kept }
+    }
+
+    /// An estimator over `db` for the planning of `plan`, whose nodes live
+    /// as long as it.
+    pub(super) fn over(db: &'a State, plan: &LogicalPlan) -> Estimates<'a> {
+        let mut planned = HashSet::new();
+        addresses(plan, &mut planned);
+        Estimates { planned, ..Estimates::new(db) }
     }
 
     /// The state estimated of.
@@ -161,7 +186,34 @@ impl<'a> Estimates<'a> {
 
     /// The card of `plan`.
     pub(super) fn card(&self, plan: &LogicalPlan) -> Card {
-        self.card_at(plan, 0)
+        self.asked(|| self.card_at(plan, 0))
+    }
+
+    /// `f`, an asking of the estimator: the outermost forgets the
+    /// estimates the last one kept, whose nodes may be gone.
+    pub(super) fn asked<R>(&self, f: impl FnOnce() -> R) -> R {
+        let outer = self.asking.get();
+        if outer == 0 {
+            // Dropped, not cleared: clearing a table that once held a large
+            // plan's nodes writes its whole capacity at every asking.
+            drop(self.memo.take());
+        }
+        self.asking.set(outer.saturating_add(1));
+        let answer = f();
+        self.asking.set(outer);
+        answer
+    }
+
+    /// The estimate of the node at `at` kept, if any.
+    fn kept_card(&self, at: usize) -> Option<Card> {
+        let kept = if self.planned.contains(&at) { &self.kept } else { &self.memo };
+        kept.borrow().get(&at).copied()
+    }
+
+    /// Keeps `card`, the estimate of the node at `at`.
+    fn keep_card(&self, at: usize, card: Card) {
+        let kept = if self.planned.contains(&at) { &self.kept } else { &self.memo };
+        kept.borrow_mut().insert(at, card);
     }
 
     /// The estimated rows of `plan`.
@@ -204,6 +256,18 @@ impl PhysicalPlanner<'_> {
     /// `table`'s rows, as counted once this planning.
     pub(super) fn table_rows(&self, table: &QualifiedName) -> Option<f64> {
         self.est.map_or_else(|| self.db.row_count(table).map(cost_of), |est| est.table_rows(table))
+    }
+}
+
+/// Adds the addresses of `plan`'s nodes, and its subqueries' plans', to
+/// `found`. It recurs only into the plan's depth, as planning does.
+fn addresses(plan: &LogicalPlan, found: &mut HashSet<usize>) {
+    found.insert(std::ptr::from_ref(plan).addr());
+    for q in plan.subqueries() {
+        addresses(&q.plan, found);
+    }
+    for input in plan.inputs() {
+        addresses(input, found);
     }
 }
 

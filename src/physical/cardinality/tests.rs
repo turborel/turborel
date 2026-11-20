@@ -32,6 +32,7 @@ fn database() -> (Database, Session) {
     s.run(&format!("INSERT INTO U VALUES {}", rows(100_i32, &|k| format!("({k}, {k})")))).unwrap();
     s.run(&format!("INSERT INTO V VALUES {}", rows(10_i32, &|k| format!("({k})")))).unwrap();
     s.run(&format!("INSERT INTO W VALUES {}", rows(1_000_i32, &|k| format!("({}, {})", k % 100_i32, k % 100_i32)))).unwrap();
+    s.commit().unwrap();
     s.run("CREATE INDEX W_AB ON W (A, B)").unwrap();
     s.commit().unwrap();
     db.maintain().unwrap();
@@ -288,4 +289,20 @@ fn widths_count_the_names() {
         let (_, plan) = s.optimized(sql).unwrap();
         assert!(widths_agree(&plan), "{sql}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D370, regression test (R-TEST-7): a plan of
+/// 18 nested groupings, each by its input's count, which has no table, is
+/// estimated once a node in an asking: each grouping asks its input's rows
+/// twice, as its rows and as its column's distinct values, so the estimator
+/// keeping no estimate within an asking ran 2^18 times, and 2^n of n.
+#[test]
+fn nested_groupings_are_estimated_once_a_node() {
+    let (_db, s) = database();
+    let mut sql = "SELECT K AS A, G AS B FROM T".to_owned();
+    for level in 0..18_usize {
+        sql = format!("SELECT B AS A, COUNT(*) AS B FROM ({sql}) AS D{level} GROUP BY B");
+    }
+    let estimated = rows(&s, &sql);
+    assert!((1.0_f64..=1_000.0_f64).contains(&estimated), "{estimated}");
 }

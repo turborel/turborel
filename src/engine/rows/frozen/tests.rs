@@ -389,7 +389,13 @@ fn a_read_by_batch_misses_no_entry_taken_out() {
 fn sorted_by_text(table: &RowTable) -> bool {
     let directory = table.frozen.directory().unwrap();
     let group = &*table.group_of(&directory.groups[0]).unwrap();
-    let texts = crate::engine::columns::scan::values(group, &table.group_pages().unwrap(), (1, &TYPES[1]), (0, group.rows)).unwrap();
+    let texts = crate::engine::columns::scan::values(
+        group,
+        (&table.group_pages().unwrap(), &mut crate::engine::columns::prepared::Prepared::default()),
+        (1, &TYPES[1]),
+        (0, group.rows),
+    )
+    .unwrap();
     group.sorted() && texts.windows(2).all(|w| crate::value::sort_cmp(&w[0], &w[1]).is_le())
 }
 

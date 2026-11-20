@@ -116,7 +116,7 @@ fn corrupt(why: &str) -> SqlError {
 }
 
 /// The fetch of a format with nothing out of line: refuses.
-fn not_fetched(reference: Reference) -> Result<Vec<u8>> {
+pub(in crate::engine) fn not_fetched(reference: Reference) -> Result<Vec<u8>> {
     Err(SqlError::new(Code::Api, format!("[DESIGN] column {} is kept out of line: read it through its layout", reference.column)))
 }
 
@@ -373,6 +373,19 @@ impl RecordFormat {
                 Ok(Some(Cow::Owned(fetched)))
             }
         }
+    }
+
+    /// Whether column `i` of a record is read from the record alone: null,
+    /// or not kept out of line.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if `bytes` are not a record of this format.
+    pub fn inline(&self, bytes: &[u8], i: usize) -> Result<bool> {
+        Ok(match self.field(bytes, i)? {
+            Field::Null | Field::Inline(_) => true,
+            Field::Outside(_) => false,
+        })
     }
 
     /// The values a record keeps out of line.

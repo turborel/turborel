@@ -35,6 +35,7 @@ behind it, and each can be replaced or added to.
 - [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
   FINAL TABLE of INSERT, UPDATE, DELETE and MERGE.
 - Row and columnar storage, chosen per table.
+- DISTINCT set functions computed by two groupings, read by batches.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins
@@ -47,7 +48,7 @@ behind it, and each can be replaced or added to.
   emptied nodes reclaimed up to the root. Any other method registers with its
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
-  match.
+  match, and a row-store COUNT(*) is summed from its settled zones.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
@@ -195,14 +196,17 @@ behind it, and each can be replaced or added to.
 - A [native protocol](doc/client/05-protocol.md) that grows by
   negotiated capabilities: structured errors and notices, row counts,
   generated keys and server time in each completion, bulk copy,
-  compression, session status, and reads after a commit on replicas.
+  compression, session status, columns' declared types, and reads
+  after a commit on replicas, with sample frames for every message.
 - A [client library](doc/client/02-library-connections.md) that pipelines
   requests, pools connections, fails over across servers, and takes its
   settings from a URI, the environment, a service file or a password file.
 - [CALL](doc/sql/statements/call.md) prepared with `?` for OUT and INOUT
   parameters, their values returned as a row over the protocol.
 - Bounded memory with one budget over every cache, with sorts, joins and
-  grouping that spill to disk.
+  grouping granted their share of it and spilling to disk past it.
+- [Parallel queries](doc/operator/04-settings.md#parallel-queries) run by
+  morsels on a shared pool of workers, the same rows on any number of threads.
 
 ## Quick start
 

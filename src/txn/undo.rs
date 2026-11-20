@@ -70,7 +70,7 @@ pub(super) fn apply_undo(tx: TxId, entries: Vec<UndoEntry>) -> Vec<UndoFailure> 
 }
 
 /// \[DESIGN\] Where a transaction's undo entries spill (RULES.md D38): the
-/// bytes of them it holds in memory, MEMORY.WORK_BYTES's when it began, and the
+/// bytes of them it holds in memory, `settings::held_bytes` when it began, and the
 /// work areas its runs are made in, with SPILL.BATCH_BYTES's batches.
 pub(crate) type UndoSpace = ListSpace;
 

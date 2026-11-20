@@ -19,7 +19,7 @@ use super::Params;
 use crate::ast::TableName;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::parser::Parser;
-use crate::value::cast;
+use crate::value::cast_warned;
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
 
 /// [ISO/IEC 9075:1992 §17.6 GR5] The type a `?` takes from its context.
@@ -69,10 +69,11 @@ fn untyped() -> SqlError {
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR5f, g] `value`, a dynamic parameter's, cast
-/// to `to`'s data type, and that type.
-fn conformed(value: Value, to: ParameterType) -> Result<(Value, DataType)> {
-    let t = to.data_type();
-    Ok((cast(value, &t)?, t))
+/// to `to`'s data type, that type, and the warning the cast raises
+/// [ISO/IEC 9075-2:2023 §20.11 GR6c ii 2 B], 01004 of a string cut to
+/// the type's length [§6.13 GR11d ii, GR12d ii, GR13] (RULES.md D391).
+pub(crate) fn conformed(value: Value, to: &DataType) -> Result<(Value, Option<SqlState>)> {
+    cast_warned(value, to)
 }
 
 impl Params {
@@ -198,12 +199,23 @@ impl Params {
     ///
     /// As `dynamic_value`.
     pub(crate) fn dynamic_typed(&self, index: usize, taken: Option<ParameterType>) -> Result<(Value, DataType)> {
+        self.dynamic_warned(index, taken).map(|(value, t, _)| (value, t))
+    }
+
+    /// `dynamic_typed`, and the warning its value's cast raises.
+    ///
+    /// # Errors
+    ///
+    /// As `dynamic_value`.
+    pub(crate) fn dynamic_warned(&self, index: usize, taken: Option<ParameterType>) -> Result<(Value, DataType, Option<SqlState>)> {
         let (Some(dynamic), Some(to)) = (&self.dynamic, taken) else { return Err(untyped()) };
         if let Some(slot) = dynamic.types.borrow_mut().get_mut(index) {
             *slot = Some(to.clone());
         }
-        let Some(values) = &dynamic.values else { return Ok((Value::Null, to.data_type())) };
+        let t = to.data_type();
+        let Some(values) = &dynamic.values else { return Ok((Value::Null, t, None)) };
         let value = values.get(index).cloned().ok_or_else(untyped)?;
-        conformed(value, to)
+        let (value, warning) = conformed(value, &t)?;
+        Ok((value, t, warning))
     }
 }

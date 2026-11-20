@@ -35,7 +35,7 @@ use crate::error::Result;
 use crate::physical::{JoinKey, Plan};
 use crate::spill::{Records, SpillTable, SpilledLobs, bucket_key, row_bytes};
 use crate::storage::Row;
-use crate::txn::TxId;
+use crate::txn::{TxId, checked};
 use crate::value::types::TypeRegistry;
 use crate::value::{Bucket, key_bucket, key_equal};
 
@@ -49,7 +49,9 @@ pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<JoinKey>>, db: &A
     let mut work = Work::of(db, tx);
     let Some(keys) = keys else {
         return match Rescanned::of(execute(right, db, tx), &mut work) {
-            Ok((right, _)) => product(execute(left, db, tx), right),
+            // A product held in memory reads no table as it gives its rows,
+            // so each is looked at for a cancel here.
+            Ok((right, _)) => Box::new(checked(product(execute(left, db, tx), right), db.tx.stop_of(tx))),
             Err(e) => failed(e),
         };
     };

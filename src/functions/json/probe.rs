@@ -252,4 +252,83 @@ mod tests {
         assert!(!JsonProbe { on_error: OnError::Value, ..p }.lookup_safe(), "TRUE ON ERROR");
         assert!(!JsonProbe { passing: &[], ..p }.lookup_safe(), "a variable not passed");
     }
+
+    /// A call of `operation` of the path `text`, passing `$v`.
+    fn call(text: &str, operation: JsonOperation) -> JsonCall {
+        JsonCall::new(text, parse_path_now(text).unwrap(), vec![("v".to_owned(), false)], operation)
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D34, the probe of each operator:
+    /// JSON_EXISTS ERROR, FALSE, UNKNOWN and TRUE ON ERROR raise, give
+    /// null and give a value; JSON_VALUE's slots and JSON_QUERY's
+    /// behaviours do as written; only a call raising no error keys an
+    /// index, and JSON_QUERY's ON EMPTY is null only of NULL ON EMPTY.
+    #[test]
+    fn each_operator_is_probed_as_its_behaviours_say() {
+        use crate::json::{Quotes, Wrapper};
+        let exists = |b| call("lax $.a", JsonOperation::Exists(b)).probe().on_error;
+        assert_eq!(exists(ExistsBehavior::Error), OnError::Raised);
+        assert_eq!((exists(ExistsBehavior::False), exists(ExistsBehavior::Unknown)), (OnError::Null, OnError::Null));
+        assert_eq!(exists(ExistsBehavior::True), OnError::Value);
+        let int = DataType::Exact { precision: 9, scale: 0, spelled: crate::value::Spelled::Integer };
+        let value = |on_error| call("lax $.a", JsonOperation::Value { returning: int.clone(), on_empty: ValueSlot::Null, on_error });
+        assert_eq!(value(ValueSlot::Error).probe().on_error, OnError::Raised);
+        assert_eq!(value(ValueSlot::Default).probe().on_error, OnError::Value);
+        assert!(value(ValueSlot::Null).index_safe() && !value(ValueSlot::Error).index_safe());
+        let query = |on_empty, on_error| {
+            let returning = DataType::varying(100);
+            call("lax $.a", JsonOperation::Query { returning, wrapper: Wrapper::Without, quotes: Quotes::Keep, on_empty, on_error })
+        };
+        let cases = [
+            (QueryBehavior::Error, OnError::Raised),
+            (QueryBehavior::Null, OnError::Null),
+            (QueryBehavior::EmptyArray, OnError::Value),
+            (QueryBehavior::EmptyObject, OnError::Value),
+        ];
+        for (behavior, on_error) in cases {
+            let q = query(QueryBehavior::Null, behavior);
+            let p = q.probe();
+            assert_eq!((p.operator, p.on_error, p.empty_null), (JsonOperator::Query, on_error, true), "{behavior:?}");
+            assert!(p.returning.is_some_and(DataType::is_character));
+        }
+        assert!(!query(QueryBehavior::EmptyArray, QueryBehavior::Null).probe().empty_null);
+        assert!(query(QueryBehavior::Error, QueryBehavior::Null).index_safe());
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D15, a zoned datetime read anywhere
+    /// in a path makes a call unsafe to key an index: in a sign's or an
+    /// arithmetic's operand, a subscript and its range end, a filter's
+    /// EXISTS, LIKE_REGEX, comparison, STARTS WITH, IS UNKNOWN, NOT, AND
+    /// and OR; a path reading only plain items in each is safe.
+    #[test]
+    fn a_zoned_datetime_anywhere_in_a_path_is_unsafe() {
+        let zoned = [
+            "lax -$.a.datetime()",
+            "lax $.a + $.b.datetime()",
+            "lax $.a[$.b.datetime() to 3]",
+            "lax $.a[1 to $.b.time_tz()]",
+            "lax $.a ? (exists(@.datetime()))",
+            "lax $.a ? (@.datetime() like_regex \"x\")",
+            "lax $.a ? (@.datetime() starts with \"x\")",
+            "lax $.a ? ((@.datetime() == 1) is unknown)",
+            "lax $.a ? (!(@.datetime() == 1))",
+            "lax $.a ? (@ == 1 && @.datetime() == 1)",
+            "lax $.a ? (@ == 1 || @.datetime() == 1)",
+        ];
+        for text in zoned {
+            let path = parse_path_now(text).unwrap();
+            assert!(!probe(&path, OnError::Null, None), "{text}");
+        }
+        let plain = [
+            "lax -$.a.size()",
+            "lax $.a * $.b",
+            "lax $.a[1 to last]",
+            "lax $.a ? (exists(@.b) && @ like_regex \"x\" || !(@ starts with \"y\") || (@ > 1) is unknown)",
+            "lax $.*.type()",
+        ];
+        for text in plain {
+            let path = parse_path_now(text).unwrap();
+            assert!(probe(&path, OnError::Null, None), "{text}");
+        }
+    }
 }

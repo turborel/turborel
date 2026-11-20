@@ -40,6 +40,7 @@ mod completions;
 mod composite;
 mod connections;
 mod copying;
+mod declared;
 mod diagnostics;
 mod ending;
 mod host_plugins;

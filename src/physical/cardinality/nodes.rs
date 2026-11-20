@@ -29,11 +29,23 @@ use crate::storage::cost_of;
 use crate::value::Value;
 
 impl Estimates<'_> {
-    /// The card of `plan`, `depth` levels below the node first asked.
+    /// The card of `plan`, `depth` levels below the node first asked, as
+    /// kept this asking or found now and kept.
     pub(super) fn card_at(&self, plan: &LogicalPlan, depth: usize) -> Card {
         if depth > MAX_ESTIMATE_DEPTH {
             return Card::guess(UNKNOWN_ROWS);
         }
+        let at = std::ptr::from_ref(plan).addr();
+        if let Some(card) = self.kept_card(at) {
+            return card;
+        }
+        let card = self.found(plan, depth);
+        self.keep_card(at, card);
+        card
+    }
+
+    /// The card of `plan` by its node's rule.
+    fn found(&self, plan: &LogicalPlan, depth: usize) -> Card {
         let next = depth.saturating_add(1);
         match plan {
             LogicalPlan::Scan { table, .. } => self.table_rows(table).map_or(Card::guess(UNKNOWN_ROWS), Card::exact),
@@ -57,7 +69,7 @@ impl Estimates<'_> {
 
     /// The card of a filter of `cond` over `input`.
     pub(in crate::physical) fn filter_card(&self, cond: &Cond, input: &LogicalPlan) -> Card {
-        self.filter_at((cond, input), 1)
+        self.asked(|| self.filter_at((cond, input), 1))
     }
 
     /// The card of the filter of `cond` over `input`: over a chain, the
@@ -72,7 +84,7 @@ impl Estimates<'_> {
 
     /// The card of DISTINCT of `input`: the groups of all its columns.
     pub(in crate::physical) fn distinct_card(&self, input: &LogicalPlan) -> Card {
-        self.distinct_at(input, 1)
+        self.asked(|| self.distinct_at(input, 1))
     }
 
     /// See `distinct_card`.
@@ -109,14 +121,14 @@ impl Estimates<'_> {
     /// statistics count them, else its table's rows, as if a key; of a
     /// column of no table, `plan`'s rows.
     pub(in crate::physical) fn distinct(&self, plan: &LogicalPlan, column: usize) -> f64 {
-        let Some(found) = origin(plan, column) else { return self.rows(plan) };
+        let Some(found) = origin(plan, column) else { return self.rows(plan).max(1.0_f64) };
         let counted = self.statistics(found.table).and_then(|s| s.distinct(found.column));
         counted.or_else(|| self.table_rows(found.table)).unwrap_or(UNKNOWN_ROWS)
     }
 
     /// The card of an outer join of `kind` on `cond` of `left` and `right`.
     pub(in crate::physical) fn outer_card(&self, (kind, cond): (OuterJoin, &Cond), (left, right): (&LogicalPlan, &LogicalPlan)) -> Card {
-        self.outer_at((kind, cond), (left, right), 1)
+        self.asked(|| self.outer_at((kind, cond), (left, right), 1))
     }
 
     /// See `outer_card`: the inner join's rows, at least each preserved

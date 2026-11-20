@@ -78,8 +78,10 @@ pub(super) fn recursive(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Fixpoint::Whole(plans) => whole(member, &plans, db, tx),
         Fixpoint::Delta { anchor, step, distinct } => delta((*anchor, &step), distinct, db, tx),
     };
+    // Each row read while the statement is not cancelled, as a work table's
+    // is, so a query reading the result many times, as a product does, stops.
     match found {
-        Ok(rows) => Box::new(rows.into_iter()),
+        Ok(rows) => Box::new(checked(rows.into_iter(), db.tx.stop_of(tx))),
         Err(e) => failed(e),
     }
 }
@@ -208,6 +210,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::Sort { input, .. }
         | Plan::Limit { input, .. } => give(input, work),
         Plan::Unnest(u) => give(&mut u.input, work),
+        Plan::Parallel(p) => give(&mut p.input, work),
         Plan::Window { window, .. } => give(&mut window.input, work),
         Plan::Recognize { recognize, .. } => give(&mut recognize.input, work),
         Plan::Polymorphic(p) => p.inputs.iter_mut().for_each(|input| give(input, work)),

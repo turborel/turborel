@@ -11,7 +11,7 @@ use turborel::value::types::uuid::{UuidType, octets_of, uuid_value};
 #[test]
 fn uuids_travel_under_their_own_tag() {
     let octets: [u8; 16] = std::array::from_fn(|i| u8::try_from(i * 17).unwrap());
-    let column = Column { name: Some("ID".into()), data_type: UuidType::data_type(), not_null: true };
+    let column = Column { name: Some("ID".into()), data_type: UuidType::data_type(), not_null: true, declared: None };
     for reply in [Reply::Rows(vec![vec![uuid_value(octets)]]), Reply::Description(vec![column])] {
         let mut encoded = Vec::new();
         reply.encode(&mut encoded);

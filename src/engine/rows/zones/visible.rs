@@ -8,7 +8,7 @@ use std::ops::Bound;
 
 use super::super::version::{Maker, Version};
 use super::super::{RowTable, key};
-use super::{Map, SAMPLED, ZONE_ROWS, Zone, Zones, zone_at};
+use super::{Map, SAMPLED, ZONE_ROWS, Zone, Zones, joined, past, zone_at};
 use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::RowId;
@@ -44,6 +44,29 @@ impl Zones {
     /// (see the module's documentation).
     pub(in crate::engine::rows) fn visible(&self, id: RowId) -> bool {
         read(&self.map).is_ok_and(|map| map.visible.get(zone_at(id)).is_some_and(|flag| flag.load(AtomicOrdering::Acquire)))
+    }
+
+    /// The rows of the zones whose rows every reader sees alone, summed,
+    /// and the ranges of row ids of the others and past the last zone, in
+    /// order, as `ranges` gives them (`RowTable::count_of`). Each zone's
+    /// flag and rows are read together under its lock, which a write takes
+    /// to clear the flag and a sum up to set both, so a zone counted holds
+    /// exactly the rows its flag was set for; its rows are then every
+    /// reader's, as a write the reader sees would have cleared it.
+    pub(in crate::engine::rows) fn settled(&self) -> (u64, Vec<(RowId, Option<RowId>)>) {
+        let mut ranges = Vec::new();
+        let Ok(map) = read(&self.map) else { return (0, vec![(0, None)]) };
+        let mut rows = 0_u64;
+        for (at, slot) in map.zones.iter().enumerate() {
+            let zone = lock_builtin(slot);
+            if map.visible.get(at).is_some_and(|flag| flag.load(AtomicOrdering::Acquire)) {
+                rows = rows.saturating_add(u64::from(zone.rows));
+            } else {
+                joined(&mut ranges, at);
+            }
+        }
+        past(&mut ranges, &map);
+        (rows, ranges)
     }
 
     /// The share of the zones visible to every reader, of `SAMPLED` at

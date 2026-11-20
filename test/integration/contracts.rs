@@ -97,13 +97,20 @@ fn storage_contract(engine: &dyn StorageEngine) {
     assert!(c != a && c != b, "an insert never reuses a deleted row's id");
     table.restore(tx, b, row(2, "TWO")).unwrap();
     assert_eq!((table.row_count(), live(&table)), (3, vec![(a, "3,THR".into()), (b, "2,TWO".into()), (c, "4,FOU".into())]));
+    // A count, if the engine gives one, is the scan's, before and after
+    // its maintenance (`TableStorage::count`).
+    for _ in 0..2 {
+        let counted = Arc::clone(&table).count(tx).map(|counts| counts.sum::<error::Result<u64>>().unwrap());
+        assert!(counted.is_none_or(|n| n == 3), "a count of {counted:?}");
+        while table.maintain(u64::MAX).unwrap() {}
+    }
     for cost in [table.scan_cost(&[0]), table.fetch_cost()] {
         assert!(cost.is_finite() && cost >= 0.0, "cost {cost}");
     }
 }
 
-/// Verifies: [DESIGN] `StorageEngine` and `TableStorage` contracts, for the
-/// built-in row store, in memory and on files, the column store over its
+/// Verifies: [DESIGN] `StorageEngine` and `TableStorage` contracts, a
+/// count the scan's (RULES.md D351) among them, for the built-in row store, in memory and on files, the column store over its
 /// files (RULES.md D31), and the test engine of coordinator-isolated
 /// tables the other tests use.
 #[test]

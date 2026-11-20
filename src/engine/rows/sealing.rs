@@ -29,6 +29,12 @@ const SEALED: u8 = 1;
 /// Bytes of an encoding's id in sealed data.
 const ID_BYTES: usize = 4;
 
+/// Whether `stored`, a record as it is stored, is sealed, to be opened by
+/// its encodings.
+pub(super) fn sealed(stored: &[u8]) -> bool {
+    stored.first() == Some(&SEALED)
+}
+
 /// \[EXTENSION\] How a table's rows are sealed.
 pub(super) struct Sealing {
     encodings: Arc<Encodings>,

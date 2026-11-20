@@ -14,6 +14,7 @@ use turborel::value::Value;
 use turborel_protocol::{Attributes, Column, Completed, Described, Reply, Request};
 
 use crate::connection::{Connection, Outcome, Result};
+use crate::frames::Answer;
 
 /// A statement the server prepared, of a connection.
 #[derive(Debug, Clone)]
@@ -242,7 +243,8 @@ impl<S: Read + Write> Connection<S> {
     pub fn describe_cursor(&mut self, (statement, cursor): (&Statement, u32)) -> Result<Vec<Column>> {
         self.needs(false, turborel_protocol::capability::DESCRIBE)?;
         self.send(&Request::Describe(Described::Cursor { statement: statement.number, cursor }))?;
-        match self.receive()? {
+        // Its Description is its last reply, as no rows follow it.
+        match self.receive_of(Answer::One)? {
             Reply::Description(columns) => Ok(columns),
             Reply::Error(failure) => Err(self.failed(failure)),
             Reply::Lob(_)

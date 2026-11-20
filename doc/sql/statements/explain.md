@@ -32,6 +32,20 @@ the FROM clause's order, as one estimated no cheaper by
 PLANNER.REORDER_GAIN does, has no note. A merge join shows as
 `MergeJoin`, or `LeftMergeJoin` of a LEFT join, with its key.
 
+A part of the physical plan run on several threads at once is headed
+`Parallel` with its degree, the most threads it takes, the statement's
+own among them; the planner runs a part so only if its tables hold
+enough rows ([Parallel queries](../../operator/04-settings.md#parallel-queries)).
+
+A query that only counts a table's rows, `SELECT COUNT(*) FROM T` with
+no WHERE clause or grouping, may be answered by the table's storage
+without reading each row. The row store sums the rows of the blocks of
+rows every transaction sees alike, and reads only the others, so the
+count is the one a scan makes at any isolation level. The plan then ends
+with a line `-- counted by storage:` naming the table. A table of the
+column store, and any query with EXECUTOR.BATCHES OFF, is counted by its
+scan and has no such line.
+
 EXPLAIN is direct SQL, as a query is. The `turborel` client shows its
 rows as it shows a query's. A program reaches the same text by the
 library's `Session::explain` ([The Embedded Library](../../client/03-embedding.md#reading-rows)),
@@ -95,6 +109,33 @@ OK
  Project PARTS.ID
    IndexScan ANN.PARTS using PARTS_NAME [btree]: PARTS.NAME = 'part 7'  (est. rows=1, cost=20.6)
 (12 rows)
+```
+
+A count of the rows of PARTS, a table of the row store, which its
+storage counts:
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM PARTS;
+```
+
+```
+ PLAN
+------------------------------------------------
+ -- bound:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     Scan ANN.PARTS
+ -- rules: none
+ -- optimized:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     Scan ANN.PARTS
+ -- physical:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     SeqScan ANN.PARTS  (rows=1000, cost=800.0)
+ -- counted by storage: ANN.PARTS
+(14 rows)
 ```
 
 Three tables joined, their joins ordered by enumeration. The note on
@@ -225,6 +266,78 @@ OK
                        SeqScan ANN.STAFF  (rows=4, cost=3.8)
                    SeqScan ANN.STAFF  (rows=4, cost=3.6)
 (50 rows)
+```
+
+Set functions of all the table's rows, read in morsels of 256 rows
+on up to two threads:
+
+```sql
+SET EXECUTOR.DEGREE = 2;
+SET EXECUTOR.MORSEL_ROWS = 256;
+SET EXECUTOR.PARALLEL_MIN_ROWS = 0;
+EXPLAIN SELECT SUM(ID), MAX(NAME) FROM PARTS;
+```
+
+```
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project SUM(PARTS.ID), MAX(PARTS.NAME)
+   Aggregate group by [] computing [SUM(PARTS.ID), MAX(PARTS.NAME)]
+     Scan ANN.PARTS
+ -- rules: none
+ -- optimized:
+ Project SUM(PARTS.ID), MAX(PARTS.NAME)
+   Aggregate group by [] computing [SUM(PARTS.ID), MAX(PARTS.NAME)]
+     Scan ANN.PARTS
+ -- physical:
+ Project SUM(PARTS.ID), MAX(PARTS.NAME)
+   Parallel  (degree=2)
+     Aggregate group by [] computing [SUM(PARTS.ID), MAX(PARTS.NAME)]
+       SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
+(14 rows)
+```
+
+A query of a DISTINCT set function, which the rule distinct_aggregates
+computes by two groupings. The first groups the rows by REGION and
+CUSTOMER and makes SUM in parts, and the second groups those groups by
+REGION, counting each CUSTOMER once and merging the parts of SUM
+([Set functions](../04-expressions.md#set-functions)):
+
+```sql
+CREATE TABLE SALES (REGION VARCHAR(10), CUSTOMER INTEGER, AMOUNT DECIMAL(9, 2));
+INSERT INTO SALES VALUES ('north', 1, 10.00), ('north', 1, 5.00), ('north', 2, 7.50), ('south', 3, 2.25);
+COMMIT;
+EXPLAIN SELECT REGION, COUNT(DISTINCT CUSTOMER), SUM(AMOUNT) FROM SALES GROUP BY REGION;
+```
+
+```
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project SALES.REGION, COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)
+   Aggregate group by [SALES.REGION] computing [COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)]
+     Scan ANN.SALES
+ -- rules: distinct_aggregates
+ -- optimized:
+ Project SALES.REGION, COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)
+   Aggregate group by [SALES.REGION] computing [COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)]
+     Aggregate group by [SALES.REGION, SALES.CUSTOMER] computing [PARTIAL SUM(SALES.AMOUNT)]
+       Project SALES.REGION, SALES.AMOUNT, SALES.CUSTOMER
+         Scan ANN.SALES
+ -- physical:
+ Project SALES.REGION, COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)
+   Aggregate group by [SALES.REGION] computing [COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)]
+     Aggregate group by [SALES.REGION, SALES.CUSTOMER] computing [PARTIAL SUM(SALES.AMOUNT)]
+       Project SALES.REGION, SALES.AMOUNT, SALES.CUSTOMER
+         SeqScan ANN.SALES  (rows=4, cost=4.0)
+(17 rows)
 ```
 
 ## STANDARD

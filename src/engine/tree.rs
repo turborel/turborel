@@ -48,6 +48,7 @@
 //! checkpoint left it, no split half written, and the log redoes what came
 //! after (`disk/shadow.rs`, RULES.md D25).
 
+mod cuts;
 mod load;
 mod near;
 mod node;
@@ -62,7 +63,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::locks::{Locks, NodeLock};
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, Node, Shape};
 pub(crate) use reclaim::{Entered, Epochs};
-pub use scan::{Direction, Scan, scan_of};
+pub use scan::{Direction, Scan, Visit, Visited, scan_of};
 pub use write::Update;
 #[cfg(test)]
 use write::{Mode, Written};

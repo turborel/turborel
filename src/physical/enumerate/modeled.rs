@@ -20,7 +20,7 @@ use crate::logical::{Cond, Expr, SortKey, split_and};
 use crate::physical::PhysicalPlanner;
 use crate::physical::cardinality::{Classes, find};
 use crate::physical::estimate::{self, Known};
-use crate::physical::indexed::access_cost;
+use crate::physical::indexed::{access_cost, reads_table};
 use crate::value::{CompOp, DataType};
 
 /// The columns of an equality of columns of two different relations.
@@ -172,6 +172,14 @@ impl PhysicalPlanner<'_> {
         let leaf = q.leaves.get(r)?;
         let rows = self.card(&leaf.plan).rows;
         let mut rel = Rel { rows, reads: Vec::new(), plans: Vec::new(), probes: Vec::new() };
+        // A relation that is no table's read, a grouping or a join, costs
+        // the same in every order, so it is costed as its rows and planned
+        // once, as it is realized. Planning it here too, its own relations
+        // so at each level below it, took time exponential in the nesting.
+        if !reads_table(&leaf.plan) {
+            rel.reads.push((Order::None, rows));
+            return Some(rel);
+        }
         let mut read = |order: Order, keys: &[SortKey]| {
             let built = self.build(&leaf.plan, keys);
             let taken = built.ordered || order == Order::None;

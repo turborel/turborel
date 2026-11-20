@@ -16,6 +16,9 @@ mod query;
 mod schema_type;
 mod validate;
 
+#[cfg(test)]
+mod tests;
+
 pub use aggregate::{XMLAGG, XmlAggregate};
 pub use cast::{IMPLICIT_BINARY_ENCODING, XmlCastIn, XmlCastOut, xml_schema_type};
 pub use element::{XmlElement, XmlForest};

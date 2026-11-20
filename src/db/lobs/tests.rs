@@ -31,10 +31,12 @@ fn locators_end_with_their_transaction_unless_held() {
     assert_eq!(locators.value(b).err().map(|e| e.sqlstate().as_str().to_owned()), Some("0F001".to_owned()), "a rollback ends a held one");
 }
 
-/// Verifies: [DESIGN] RULES.md D79: a character large object made in
+/// Verifies: [DESIGN] RULES.md D79, D392: a character large object made in
 /// pieces, characters split between them, longer than two chunks, reads
-/// back as given; a piece not UTF-8 is refused (SQLSTATE 22021); a binary
-/// one takes any octets.
+/// back as given; a piece not UTF-8 is refused by its Append (SQLSTATE
+/// 22021), and so is every later Append and the value; one ending within
+/// a character is refused as it is made whole; a binary one takes any
+/// octets.
 #[test]
 fn a_value_is_made_a_piece_at_a_time() {
     let temp = store();
@@ -47,10 +49,16 @@ fn a_value_is_made_a_piece_at_a_time() {
     assert_eq!(lob.octets(), u64::try_from(text.len()).unwrap());
     assert_eq!(lob.chars(), u64::try_from(text.chars().count()).unwrap());
     assert_eq!(lob.reader().read(0, lob.octets()).unwrap(), text.as_bytes());
+    let state = |e: crate::error::SqlError| (e.code, e.sqlstate().as_str().to_owned());
+    let refused = (Code::Data, "22021".to_owned());
     let mut bad = Appender::new(LobKind::Character);
-    bad.append(&[0xFF, 0xFE], &temp).unwrap();
-    let refused = bad.finish().err().unwrap();
-    assert_eq!((refused.code, refused.sqlstate().as_str().to_owned()), (Code::Data, "22021".to_owned()));
+    bad.append(b"ok", &temp).unwrap();
+    assert_eq!(state(bad.append(&[0xFF, 0xFE], &temp).unwrap_err()), refused);
+    assert_eq!(state(bad.append(b"more", &temp).unwrap_err()), refused, "every Append after");
+    assert_eq!(state(bad.finish().unwrap_err()), refused, "and the value");
+    let mut cut = Appender::new(LobKind::Character);
+    cut.append(&[b'a', 0xE2, 0x82], &temp).unwrap();
+    assert_eq!(state(cut.finish().unwrap_err()), refused, "ends within a character");
     let mut octets = Appender::new(LobKind::Binary);
     octets.append(&[0xFF, 0, 0xFE], &temp).unwrap();
     assert_eq!(octets.finish().unwrap().inline(), Some(&[0xFF, 0, 0xFE][..]));
