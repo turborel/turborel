@@ -365,6 +365,7 @@ verification approach DO-178C expects (§8).
 | D376 | EXPLAIN ANALYZE runs a query and shows each operator's rows beside its estimate |
 | D377 | Cardinalities may be given the planner through the library in place of its estimates, to test it |
 | D378 | An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock |
+| D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -10193,6 +10194,29 @@ shown only when the clock moved while the query ran. So a test, which
 gives a clock that stands still (R-TEST-5), and the manual's examples
 show no time. An operator of a pipeline run in parallel has no time of
 its own, since its rows pass every step of the pipeline at once.
+
+#### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
+
+The inner joins' equalities of two columns make classes of columns
+(D302), and the rows of a join are estimated by the class, whichever
+two of its columns the join holds. So `a.k = c.k AND b.k = c.k` joins
+`a` and `b` by `a.k = b.k` as the estimate sees it, though no conjunct
+reads both. The join enumeration takes that key too. Each pair of
+relations of a class that no stated key joins is an edge of the join
+graph (`physical/enumerate/graph.rs`), a join of two sets holding
+columns of a class judges the equality of one column of each when no
+stated key of the class joins them (`Model::implied_keys`), and that
+equality is a key of its hash, merge or index join. The plan is then
+never a product of the two whose rows the estimate counts as joined.
+An equality implied is true of every row the stated ones keep, so the
+rows are those of the query as written [X3.135-1986 §5.20 GR2b]. A
+chain with an outer join takes no implied key, since its keys hold only
+above it. The FROM clause's tree, planned as written, makes a product
+of two such sets, so a tree with one is never kept in place of the
+enumerated plan (`physical/enumerate.rs`). A plan-space test runs the
+join workload under rows given that are up to a thousand times too few
+or too many, and each plan gives its rows well within a minute
+(`test/integration/plan_space.rs`).
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

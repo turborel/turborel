@@ -29,7 +29,9 @@ plan so made notes the order taken, as nested pairs of its tables, and
 the algorithm that found it, DPccp or DPhyp of a query small enough to
 search whole, linearized DP or GOO-DP of a larger one. A plan that keeps
 the FROM clause's order, as one estimated no cheaper by
-PLANNER.REORDER_GAIN does, has no note. A merge join shows as
+PLANNER.REORDER_GAIN does, has no note. Two tables equalities join only
+through a third, as `A.K = C.K AND B.K = C.K` do, may be joined first,
+by the key those imply, `A.K = B.K`, never by a product. A merge join shows as
 `MergeJoin`, or `LeftMergeJoin` of a LEFT join, with its key.
 
 A part of the physical plan run on several threads at once is headed

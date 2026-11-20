@@ -1,14 +1,16 @@
 //! The mutations of EXPLAIN ANALYZE and of cardinalities given the planner
-//! (RULES.md R-TEST-9, D376 to D378): an operator's rows lost as its
+//! (RULES.md R-TEST-9, D376 to D378, D387): an operator's rows lost as its
 //! iterator is dropped, a step of a pipeline run in parallel or of one by
 //! batches that counts nothing, times shown while the clock stood still,
 //! ANALYZE read after EXPLAIN before any token, and the rows given left
-//! out by the estimator or by the join enumeration.
+//! out by the estimator or by the join enumeration; and the keys a class
+//! of equalities implies left out, so two of its relations are joined by a
+//! product.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of the forms.
-pub const ANALYZE: [Mutation; 7] = [
+pub const ANALYZE: [Mutation; 8] = [
     Mutation {
         name: "analyze-rows-lost",
         package: Package::Core,
@@ -77,6 +79,16 @@ pub const ANALYZE: [Mutation; 7] = [
         original: "        if let Some(&(_, given)) = self.injected.iter().find(|(s, _)| *s == s1 | s2) {",
         replacement: "        if let Some(&(_, given)) = self.injected.iter().find(|(s, _)| *s == s1 | s2 && false) {",
         integration: &["explain_analyze::injected_cardinalities_change_the_plan_not_the_rows"],
+        unit: &[],
+    },
+    Mutation {
+        name: "implied-keys-dropped",
+        package: Package::Core,
+        breaks: "two relations a class of equalities joins, no conjunct reading both, are joined by a product",
+        file: "src/physical/enumerate/model.rs",
+        original: "        if self.kinds.iter().any(|&k| k != Kind::Inner) {\n            return Vec::new();\n        }\n        let mut classes",
+        replacement: "        if self.kinds.iter().any(|&k| k == Kind::Inner) {\n            return Vec::new();\n        }\n        let mut classes",
+        integration: &["plan_space::relations_of_one_class_join_by_its_implied_key"],
         unit: &[],
     },
 ];

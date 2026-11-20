@@ -25,23 +25,19 @@ const RANDOM_NAMES: [&str; 3] = ["X", "Y", "Z"];
 /// The pairs of them their joins' conditions join.
 const RANDOM_PAIRS: [(usize, usize); 2] = [(0, 1), (1, 2)];
 
-/// The milliseconds a query of the workload runs under cardinalities
-/// given before it gives up. A plan they make bad enough may run for
-/// minutes, and gives its rows whatever its speed. About one run in ten
-/// gives up, most of them where the join enumeration joins two relations
-/// whose columns the query's equalities make equal by a product.
-const TIMEOUT_MS: u64 = 1_500;
-/// At most one run in this many gives up, a slower machine giving up
-/// more.
-const GAVE_UP_SHARE: usize = 4;
+/// The milliseconds a query of the workload may run under cardinalities
+/// given, a guard against a hang alone: every plan they make runs well
+/// within it.
+const TIMEOUT_MS: u64 = 60_000;
 
 /// Titles of the small database.
 const TITLES: u64 = 100;
 /// The seeds of the cardinalities given, one run of each query each.
 const SEEDS: [u64; 2] = [0x5EED_0001, 0x5EED_0002];
-/// The powers of ten a set's rows are drawn from, 0 to 3, the titles'
-/// rows multiplied by one of them.
-const POWERS: u64 = 4;
+/// The powers of ten a set's rows are drawn from, -3 to 3, the titles'
+/// rows multiplied by one of them: each set's rows under- and
+/// overestimated by up to a thousand times.
+const POWERS: [i32; 7] = [-3, -2, -1, 0, 1, 2, 3];
 /// The rows a set given is drawn from, the database's titles.
 const BASE_ROWS: f64 = 100.0_f64;
 
@@ -57,18 +53,16 @@ impl Draws {
         z ^ (z >> 31_u32)
     }
 
-    /// Rows `BASE_ROWS` multiplied by 10^k, k in 0..=3.
+    /// Rows `BASE_ROWS` multiplied by 10^k, k in -3..=3, at least one.
     fn rows(&mut self) -> f64 {
-        BASE_ROWS * 10.0_f64.powi(i32::try_from(self.next() % POWERS).unwrap_or_default())
+        let at = usize::try_from(self.next() % 7).unwrap_or_default();
+        (BASE_ROWS * 10.0_f64.powi(POWERS.get(at).copied().unwrap_or_default())).max(1.0_f64)
     }
 }
 
 /// Cardinalities drawn from `seed` for every relation of `names` and
 /// each of `pairs` of them, each named as EXPLAIN names it. A pair no
-/// condition joins is left out, and no set is given fewer rows than the
-/// titles. A set given too few makes a product with it look cheap
-/// whatever it holds, and such a plan runs for minutes or past the
-/// memory a query may take.
+/// condition joins is left out.
 fn drawn(names: &[String], pairs: &[(usize, usize)], seed: u64) -> Injected {
     let mut draws = Draws(seed);
     let mut given = Injected::new();
@@ -102,9 +96,7 @@ fn under(s: &Session, sql: &str, given: Injected) -> (String, Vec<String>) {
     (s.physical_plan(sql, &Params::new()).unwrap(), sorted(s, sql))
 }
 
-/// The plan and the outcome of `sql` under `given`, a plan that takes
-/// longer than STATEMENT.TIMEOUT_MS or more memory than a query may
-/// giving up.
+/// The plan and the outcome of `sql` under `given`.
 fn tried(s: &Session, sql: &str, given: Injected) -> (String, Result<Vec<String>, Code>) {
     s.with_cardinalities(given);
     let plan = s.physical_plan(sql, &Params::new()).unwrap();
@@ -116,15 +108,15 @@ fn tried(s: &Session, sql: &str, given: Injected) -> (String, Result<Vec<String>
     (plan, found)
 }
 
-/// Verifies: [EXTENSION] RULES.md D377, D302, D308: every query of the
-/// workload gives its rows under cardinalities drawn from each seed, or
-/// gives up as its plan takes too long or too much memory, which a few do;
+/// Verifies: [EXTENSION] RULES.md D377, D387, D302: every query of the
+/// workload gives its rows under cardinalities drawn from each seed,
+/// under- and overestimates, each plan they make in well under a minute;
 /// and they plan a third of the queries otherwise at least once.
 #[test]
 fn every_plan_the_workload_may_take_gives_its_rows() {
     let db = imdb::load(TITLES);
     let s = db.session("IMDB");
-    let (mut changed, mut gave_up) = (0, 0);
+    let mut changed = 0;
     for (name, sql) in imdb::queries() {
         let names: Vec<String> = imdb::relations(sql).iter().map(|(_, alias)| alias.to_uppercase()).collect();
         assert!(names.len() >= 2, "{name}");
@@ -134,11 +126,7 @@ fn every_plan_the_workload_may_take_gives_its_rows() {
         let mut other = false;
         for seed in SEEDS {
             let (injected, found) = tried(&s, sql, drawn(&names, &pairs, seed));
-            match found {
-                Ok(found) => assert_eq!(found, rows, "{name} under seed {seed:#x}:\n{injected}"),
-                Err(Code::Cancelled | Code::Resources) => gave_up += 1,
-                Err(code) => panic!("{name} under seed {seed:#x}: {code:?}\n{injected}"),
-            }
+            assert_eq!(found, Ok(rows.clone()), "{name} under seed {seed:#x}:\n{injected}");
             other |= injected != plan;
         }
         exec(&s, "SET STATEMENT.TIMEOUT_MS = 0").unwrap();
@@ -146,7 +134,6 @@ fn every_plan_the_workload_may_take_gives_its_rows() {
     }
     s.with_cardinalities(Injected::new());
     assert!(changed >= 33, "{changed} of 100 queries planned otherwise");
-    assert!(gave_up * GAVE_UP_SHARE <= 2 * 100, "{gave_up} of 200 runs gave up");
 }
 
 /// Verifies: [EXTENSION] RULES.md D377: a join of three tables and a self
@@ -203,4 +190,31 @@ fn random_queries_answer_alike_under_any_cardinalities() {
             assert!(agree(&sql, &alone, &found), "seed {own:#x}, drawn from {seed:#x}: {sql}\n{alone:?}\n{found:?}");
         }
     }
+}
+
+/// The query of the regression test of RULES.md D387: two relations
+/// joined only through a third, adjacent in FROM.
+const IMPLIED: &str = "SELECT akt.id, mi.id FROM aka_title AS akt, movie_info AS mi, title AS t\n\
+     WHERE akt.movie_id = t.id\n  AND mi.movie_id = t.id";
+
+/// Verifies: [DESIGN] RULES.md D387, D302: two relations of one class of
+/// equalities, though no conjunct reads both, joined first as their rows
+/// given make cheapest, are joined by the key their class implies, never
+/// by a product, and give the rows they give with none given, in a time a
+/// product of them would pass.
+#[test]
+fn relations_of_one_class_join_by_its_implied_key() {
+    let db = imdb::load(TITLES);
+    let s = db.session("IMDB");
+    let (_, rows) = under(&s, IMPLIED, Injected::new());
+    assert_ne!(rows, Vec::<String>::new());
+    let given = Injected::new().with(&["T"], 1.0e7_f64).with(&["AKT", "MI"], 1.0_f64);
+    exec(&s, "SET STATEMENT.TIMEOUT_MS = 20000").unwrap();
+    let (plan, found) = tried(&s, IMPLIED, given);
+    exec(&s, "SET STATEMENT.TIMEOUT_MS = 0").unwrap();
+    s.with_cardinalities(Injected::new());
+    assert!(!plan.contains("Cartesian product"), "{plan}");
+    let keyed = |l: &str| l.contains("MI.MOVIE_ID = AKT.MOVIE_ID") || l.contains("AKT.MOVIE_ID = MI.MOVIE_ID");
+    assert!(plan.lines().any(|l| l.contains("Join") && keyed(l) && !l.contains("T.ID")), "{plan}");
+    assert_eq!(found, Ok(rows), "{plan}");
 }
