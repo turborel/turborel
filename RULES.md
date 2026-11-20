@@ -346,8 +346,16 @@ verification approach DO-178C expects (§8).
 | D344 | A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once |
 | D350 | A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there |
 | D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
+| D352 | A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs |
+| D353 | ALP decimals are read by two multiplications with a stored pair of factors |
+| D390 | A `?` in the rows of an INSERT takes its object column's type |
+| D391 | A `?` whose value its cast cuts warns 01004 |
+| D392 | A character large object a client writes is checked as each Append comes |
 | D393 | A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection |
 | D394 | Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error |
+| D396 | A column's declared type is told in a Description's and a Prepared's tail, with `declared-types`, and values are written as ever |
+| D397 | Status CATALOG is never empty, as CATALOG.NAME takes no null |
+| D398 | The protocol's sample frames are a file its tests make from its encoders, and fail on any difference |
 | D399 | SET NOT NULL adds a named NOT NULL constraint, checked of the rows every snapshot sees under the table's lock |
 | D400 | DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's |
 | D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
@@ -9596,6 +9604,101 @@ snapshot's either; zone flags kept on disk, which would need logging to
 stay right across a crash and which the maintenance thread rebuilds soon
 after a table opens.
 
+#### D352. A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs
+
+Bit-packed values (frames of reference, dictionary codes, run ends, ALP
+digits) are read 64 at a time by a routine of their width, after Lemire
+and Boytsov 2015. A block of 64 values of w bits is exactly 8 × w bytes,
+read as w little-endian words. The routine is one function generic over
+the width, and a macro makes a table of it for each width from 0 to 64,
+so every shift and mask is a constant the compiler unrolls. A frame's
+least is added as each value is read, wrapping, since a difference is
+below 2^64 and the value it gives was an integer of 64 bits. The values
+before the first whole block and after the last are read one at a time.
+The packed format, horizontal and from the least significant bit, is
+unchanged. A vertical layout interleaved for SIMD lanes would be a format
+change whose gain needs SIMD, and a later kernel can shuffle the
+horizontal one.
+
+A batch scan of the column store reads a group in runs of at most a
+vector of rows, and a compressed chunk holds many more. Each run used to
+reopen, unseal and parse every chunk it touched. The scan now keeps each
+chunk it opens, by its column and first row, as its bytes opened, its
+FSST table read, and a dictionary's entries made integers or text once.
+The runs after parse its few header bytes alone. Runs come in order, so
+a chunk ended before the one asked for is let go then, a column keeps at
+most 64 chunks, and every chunk goes when the next group is taken up.
+What is held is about one run's chunks a column, so no work grant is
+charged for it. A run of runs unpacks only the ends and values of the
+runs it covers, and a chunk's null bitmap is read a byte at a time.
+
+#### D353. ALP decimals are read by two multiplications with a stored pair of factors
+
+A chunk of approximate numbers as decimals keeps a pair of factors e and
+f, f at most e, and each value is n × 10^f × 10^-e, two multiplications
+by tabled powers, as the ALP paper decodes. A division by 10^e, as
+before, is correctly rounded but several times slower. The multiplication
+is not always correctly rounded (3 × 0.1 is 0.30000000000000004), so the
+encoder keeps a value as a decimal only when those same two
+multiplications give it back bit for bit, and any other value is an
+exception kept as it is. A value read is therefore always the one
+written. The pair is the one of the first 64 values that leaves fewest
+exceptions, then takes fewest bits, then has the least e, then the least
+f. An n of magnitude below 2^51 becomes an f64 by adding it to the bits
+of 2^52 + 2^51 and subtracting that number, which is exact and
+branch-free.
+
+This changes the chunk's format and keeps its version, 1, as alpha
+allows. The new encoder sets bit 0x80 of the chunk's first byte, which is
+above every exponent, and writes f after it. A chunk without the bit was
+written before and is read by division, so an older file never reads
+wrongly and needs no migration.
+
+#### D390. A `?` in the rows of an INSERT takes its object column's type
+
+A `?` in a row of an INSERT's VALUES, or of VALUES in a query expression
+an INSERT simply contains, as an operand of UNION ALL too, takes the type
+of the object column it lands in, whatever the other rows hold
+(ISO/IEC 9075-2:2023 §20.7 GR5a xix 1 A). The type §9.5
+gives the column's values is taken only by a `?` of VALUES outside an
+INSERT (§20.7 GR5a xix 1 B, §7.3 SR3). A value bound beside a shorter
+literal in another row is so never cut to that literal's length
+(`binder/set_operations.rs`). Each row's value is then assigned to its
+column (§14.11 SR16, §9.2), which raises 22001 for any character other
+than a space past the column's length, in whichever row or operand it
+stands. The rows' common type has the greatest of their lengths (§9.5
+SR3a, SR3b), so no literal is cut to another's length before that.
+
+#### D391. A `?` whose value its cast cuts warns 01004
+
+A `?`'s value is cast to the type its context gives it (§20.11 GR6c ii
+2 B). That is its object column's as an INSERT's or an UPDATE's value
+(§20.7 GR5a xix 1 A, xxvi), the type §9.5 gives the other operand as a
+comparison's (xxi), and its parameter's as a CALL's argument (xxx). A
+string longer than that type is cut, with the warning string data,
+right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13), and a
+comparison compares the value cut. The
+binder keeps the warning with the constant (`Expr::Warned`), and so does
+a kept plan's slot as it is filled (`logical/dynamic.rs`), so the
+statement completes with 01004 and the cut is never silent. A value
+that fits raises nothing. The cast stays a cast and not a store
+assignment, as the standard says, so 22001 is raised only by the
+assignment of a value longer than its column, as a literal's is.
+
+#### D392. A character large object a client writes is checked as each Append comes
+
+A character large object a client makes by its locator (D79) is checked
+as UTF-8 as each Append brings octets, with what is left of a character
+the Append before began, so a character split between two Appends is
+taken (`db/lobs/writing.rs`). An octet that is not UTF-8 is refused
+with 22021 by the Append that sends it, which the client's finish sends
+for what it holds. Once one Append is refused, every later one is, and
+so is the value's use, with that error, so no part of a refused value
+is ever stored. The protocol has no request that ends a value, so a
+value that ends within a character is refused, 22021, as it is used. A
+character large object never holds what is not UTF-8, which every read
+of it relies on (§4.2.1).
+
 #### D393. A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection
 
 A reply's frame is read whole by its length before it is decoded, so a
@@ -9660,6 +9763,70 @@ connection as an answer Terminate does not have. The client had read
 the bytes whole and decoded them as one reply, so a Notice before the
 Error left bytes after it and failed with SQLSTATE 08006 in place of
 the Error.
+
+#### D396. A column's declared type is told in a Description's and a Prepared's tail, with `declared-types`, and values are written as ever
+
+A data type's tag says how a column's values are written, and one tag
+stands for several declared types. SMALLINT, INTEGER, BIGINT, DECIMAL
+and NUMERIC are all exact numeric, tag 2, as their descriptors keep
+the name apart [ISO/IEC 9075:1992 §6.1, §21.3.5] (`Spelled`). REAL, DOUBLE
+PRECISION and FLOAT are all approximate numeric, tag 3, and a distinct
+type goes as its source type (D69). Every other tag is one type. A
+client was told INTEGER as DECIMAL(10, 0), and a program showing its
+columns showed it so.
+
+A tag of its own for each name would change what a client of today
+reads of every number, and values of one type would be written under
+several tags. So the tags stay, and the declared type is told beside
+them. With the capability `declared-types` (D185) a Description and a
+Prepared end with tail tag 19, a count, then of each column its type's
+name, as the Information Schema's DATA_TYPE gives it, and its type as
+SQL writes it (`declared.rs`). The name serves a program that shows a
+type's name, and the text one that shows it whole, a distinct type's
+schema and name or an array's element too. A client not granted it is
+sent the columns alone, the bytes of before, and a Rows reply is the
+same bytes either way. The protocol stays version 1.
+
+The server tells it only to a client granted it, so it is decided once
+where the columns are described (`described` in `native/requests.rs`).
+The client library asks for it by default, as for every capability but
+compression, and a column's `type_written` gives the declared type where
+told, else the type its tag says. The command-line client's `\gdesc`
+prepares a statement, shows each column's name and that text, and runs
+nothing.
+
+#### D397. Status CATALOG is never empty, as CATALOG.NAME takes no null
+
+The protocol's reference said Status CATALOG is empty if CATALOG.NAME
+is null. CATALOG.NAME is an identifier setting (`Kind::Identifier`).
+Its value, or its default, set to a null is refused (SQLCODE -910),
+and so is one of spaces alone or longer than an identifier, so it is
+always 1 to 128 characters. A reset gives it its default, TURBOREL,
+again. So a null never reaches the Status, and the reference says the
+value is never empty. The general rule of a Status, empty for a null,
+stays for the settings a session may set, which can be null.
+
+#### D398. The protocol's sample frames are a file its tests make from its encoders, and fail on any difference
+
+A driver written to the protocol's reference needs frames to test its
+decoder with, and frames written by hand drift from what the code
+sends. So the frames beside the reference
+(`doc/client/05-protocol-frames.tsv`) are made by a test of the
+protocol crate from the encoders the server and the client use
+(`tests/frames.rs`). Each frame is decoded again and must encode to the
+same bytes, and the test fails if the file differs, leaving the frames
+it should hold in the temporary directory to copy over. The repository
+has no mode that writes a checked-in file from a test, so none is added.
+
+The file is plain text with fixed fields, so a decoder in any language
+reads it without a parser. Each line is a frame, its direction, a
+unique name, the capabilities it needs, its bytes in hexadecimal and
+what it means, apart by tabs, and a line beginning with `#` is a
+comment. It covers every request and reply, every value and data type
+tag, each tail field, each Status the reference names, a Notice and an
+Error with and without diagnostics, compressed frames, and the edges a
+decoder meets. A plug-in's type is read without its kind by a reader
+with no registry, so its sample is checked to decode alone.
 
 #### D399. SET NOT NULL adds a named NOT NULL constraint, checked of the rows every snapshot sees under the table's lock
 

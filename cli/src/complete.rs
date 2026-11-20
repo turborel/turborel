@@ -33,7 +33,7 @@ const COLUMN_WORDS: [&str; 10] = ["SELECT", "WHERE", "BY", "SET", "AND", "OR", "
 /// The words after which a user or role is named.
 const USER_WORDS: [&str; 4] = ["USER", "ROLE", "AUTHORIZATION", "TO"];
 /// The backslash commands completed after `\`.
-pub const COMMAND_NAMES: [&str; 48] = [
+pub const COMMAND_NAMES: [&str; 49] = [
     "?",
     "a",
     "c",
@@ -60,6 +60,7 @@ pub const COMMAND_NAMES: [&str; 48] = [
     "export",
     "format",
     "g",
+    "gdesc",
     "gexec",
     "gset",
     "gx",

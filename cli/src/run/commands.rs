@@ -67,6 +67,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             Command::Go { target, expanded } => self.go(splitter, target, expanded),
             Command::Gset(prefix) => self.gset(splitter, &prefix),
             Command::Gexec => self.gexec(splitter),
+            Command::Gdesc => self.gdesc(splitter),
             Command::Watch { every, count } => self.watch(splitter, every, count),
             Command::Edit(path) => self.edit(splitter, path.as_deref()),
             Command::Print => self.say(splitter.pending_text().trim_end()),

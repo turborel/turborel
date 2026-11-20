@@ -64,6 +64,7 @@ fn simple(name: &str, args: &[String]) -> Result<Option<Command>, String> {
         "endif" => Command::Endif,
         "G" => Command::Go { target: Target::Default, expanded: true },
         "gexec" => Command::Gexec,
+        "gdesc" => Command::Gdesc,
         "p" | "print" => Command::Print,
         "r" | "reset" => Command::Reset,
         "a" => Command::Aligned,

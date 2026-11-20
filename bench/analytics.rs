@@ -31,8 +31,9 @@
 //! search's on a graph in memory alone, to `unnesting`, correlated
 //! subqueries unnested and nested alone (`analytics/unnesting.rs`), to
 //! `parallel`, those run by morsels alone, to `distinct`, the DISTINCT
-//! set functions' alone, or to `counts`, a row-store table counted and
-//! summed, its zones settled and not, alone (`analytics/counts.rs`).
+//! set functions' alone, to `counts`, a row-store table counted and
+//! summed, its zones settled and not, alone (`analytics/counts.rs`), or
+//! to `decode`, the column store's decoding alone (`analytics/decode.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -47,6 +48,8 @@
 
 #[path = "analytics/counts.rs"]
 mod counts;
+#[path = "analytics/decode.rs"]
+mod decode;
 #[path = "analytics/distinct.rs"]
 mod distinct;
 #[path = "analytics/graph.rs"]
@@ -68,7 +71,7 @@ use turborel::db::{Database, Session};
 /// network's, `graph` for path search's on a graph in memory,
 /// `unnesting` for correlated subqueries', `parallel` for those run by
 /// morsels, `distinct` for the DISTINCT set functions', `counts` for a
-/// row-store table's counts.
+/// row-store table's counts, `decode` for the column store's decoding.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -99,6 +102,10 @@ fn main() {
         counts::workloads(&bench);
         return;
     }
+    if only == "decode" {
+        decode::workloads(&bench);
+        return;
+    }
     if only == "parallel" {
         parallel::workloads(&bench);
         return;
@@ -123,6 +130,7 @@ fn main() {
     unnesting::workloads(&bench);
     parallel::workloads(&bench);
     counts::workloads(&bench);
+    decode::workloads(&bench);
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,
