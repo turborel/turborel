@@ -10473,6 +10473,21 @@ dropped index or a table made again is seen; a leaf first planned over
 a table too small for an unpriced probe keeps no plan until then
 (`routines/kept/leaves.rs`).
 
+#### D409. A shadowed file is read outside its lock, each run of the file's granules at once
+
+A read of a shadowed file (D30) held the file's lock while it read each
+granule, one call of 4 KiB at a time, so every write, which takes the
+lock alone to append to the side file, waited for the reads under way,
+and every read for that write. Under a write load the threads spent
+more time waiting for that lock than reading. A read now copies under
+the lock what was written since the last commit, held or in the side
+files, and finds the rest to be the file's; it then lets the lock go and
+reads each run of the file's granules with one call. A commit writes
+into the file only granules the sealed batch holds, which a read copies
+from the side file instead, and cuts the file no lower than the limit a
+read takes, so what is read of the file is what the lock saw
+(`disk/shadow/file.rs`).
+
 ## 2. Project layout
 
 ```
