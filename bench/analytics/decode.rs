@@ -68,6 +68,9 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 pub fn workloads(bench: &Bench) {
     let db = database();
     let s = db.session("B");
+    // On one thread, so a case measures decoding, not the threads a query
+    // runs on.
+    s.run("SET EXECUTOR.DEGREE = 1").unwrap();
     for (name, sql) in [
         ("SUM of prices as decimals", "SELECT SUM(P) FROM DC"),
         ("SUM of a frame of 21 bits", "SELECT SUM(F) FROM DC"),
