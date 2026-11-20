@@ -324,3 +324,7 @@ impl ScalarFunction for XmlSerialize {
         target.kind().assign(serialized, target, "ISO/IEC 9075-14:2006 draft §10.15 GR11a ii")
     }
 }
+
+// Unit tests: the types the functions report, their limits and refusals.
+#[cfg(test)]
+mod tests;

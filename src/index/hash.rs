@@ -454,3 +454,7 @@ impl Index for HashIndex {
 // R-TEST-2).
 #[cfg(test)]
 mod tests;
+
+// Unit tests: the queries a hash index answers none of, by the defaults.
+#[cfg(test)]
+mod defaults;

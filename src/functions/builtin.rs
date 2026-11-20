@@ -248,3 +248,7 @@ fn rows_of(v: &Value) -> Result<Vec<Vec<Value>>> {
     let Value::Multiset(items) = v else { return Err(SqlError::new(Code::Corrupt, format!("a table function read {v:?}, no multiset"))) };
     Ok(items.iter().map(|item| if let Value::Row(fields) = item { fields.to_vec() } else { vec![item.clone()] }).collect())
 }
+
+// Unit tests: a table function invoked, its rows and its value.
+#[cfg(test)]
+mod tests;
