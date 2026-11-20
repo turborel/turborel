@@ -13,9 +13,9 @@
 mod backup;
 mod builtin;
 mod configurable;
+mod executor;
 mod extension;
 mod graph;
-mod executor;
 mod hosted;
 mod kind;
 mod plugins;
@@ -47,13 +47,13 @@ pub use builtin::{
 };
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
+pub use executor::{
+    DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS,
+};
 pub use extension::Owner;
 pub use graph::{
     DEFAULT_MAX_SEARCH_STATES, GRAPH_DETERMINISTIC_PATHS, GRAPH_MAX_PATH_LENGTH, GRAPH_MAX_PATHS_PER_PARTITION, GRAPH_MAX_SEARCH_STATES,
     GRAPH_ON_LIMIT, GRAPH_PARALLEL_MIN_STATES, TRUNCATE,
-};
-pub use executor::{
-    DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS,
 };
 pub use hosted::PLUGINS_HOST;
 pub use kind::{Kind, column_list, column_names};

@@ -9,7 +9,7 @@
 //! sockets or memory nodes, as the core reads no system's topology
 //! (RULES.md D3).
 //!
-//! No statement waits for a worker: the thread that offered a task takes
+//! No statement waits for a worker, as the thread that offered a task takes
 //! its morsels too (`exec/parallel/run.rs`), so a task ends whether or not
 //! a worker is free, and a task offered from within a morsel cannot wait
 //! for itself. Workers are started as a task first wants more of them than
@@ -63,8 +63,8 @@ struct Board {
     closing: bool,
 }
 
-/// The board, a worker's panic having poisoned none of what it holds: a
-/// job's morsel runs outside its lock.
+/// The board, a worker's panic having poisoned none of what it holds, as
+/// a job's morsel runs outside its lock.
 fn board(shared: &Shared) -> MutexGuard<'_, Board> {
     shared.board.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -110,7 +110,7 @@ impl Pool {
         Ok(())
     }
 
-    /// Wakes the idle workers: a task offered may want more of them.
+    /// Wakes the idle workers, as a task offered may want more of them.
     pub(crate) fn nudge(&self) {
         self.shared.wake.notify_all();
     }
@@ -210,7 +210,7 @@ mod tests {
         fn step(&self) {
             let mut left = self.left.load(Ordering::Acquire);
             while left > 0 {
-                match self.left.compare_exchange(left, left - 1, Ordering::AcqRel, Ordering::Acquire) {
+                match self.left.compare_exchange(left, left.saturating_sub(1), Ordering::AcqRel, Ordering::Acquire) {
                     Ok(_) => {
                         self.done.fetch_add(1, Ordering::AcqRel);
                         return;
@@ -227,7 +227,8 @@ mod tests {
     fn workers_take_every_morsel() {
         let pool = Pool::default();
         let job = Arc::new(Counting { left: AtomicUsize::new(1000), done: AtomicUsize::new(0) });
-        pool.offer(Arc::clone(&job) as Arc<dyn Task>, 3).unwrap();
+        let task: Arc<dyn Task> = job.clone();
+        pool.offer(task, 3).unwrap();
         while job.wanted() {
             job.step();
         }
@@ -242,8 +243,9 @@ mod tests {
     fn fewer_workers_wanted_end() {
         let pool = Pool::default();
         let none = Arc::new(Counting { left: AtomicUsize::new(0), done: AtomicUsize::new(0) });
-        pool.offer(Arc::clone(&none) as Arc<dyn Task>, 4).unwrap();
-        pool.offer(none as Arc<dyn Task>, 1).unwrap();
+        let task: Arc<dyn Task> = none;
+        pool.offer(Arc::clone(&task), 4).unwrap();
+        pool.offer(task, 1).unwrap();
         assert_eq!(board(&pool.shared).size, 1);
     }
 }

@@ -48,6 +48,14 @@ struct Piece {
     states: Vec<Vec<u8>>,
 }
 
+/// A group being made: its first row's number, its key, its grouping
+/// values and each set function's state.
+type Making = (u64, Vec<u8>, Row, Vec<Box<dyn Accumulator>>);
+
+/// A group being merged: its first row's number, its grouping values and
+/// each set function's state.
+type Merging = (u64, Row, Vec<Box<dyn Accumulator>>);
+
 /// One partition's pieces, by morsel in order.
 type Chunks = Vec<Vec<Piece>>;
 
@@ -109,7 +117,12 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize)
 /// The pieces of `pipeline`'s rows under `grouping`, each morsel's made
 /// by a thread of up to `degree`, by partition, each partition's by
 /// morsel in order; given way past `limit`.
-fn pieces(pipeline: Pipeline, grouping: Arc<Grouping>, (db, tx, degree): (&Arc<State>, TxId, usize), limit: &Limit) -> Result<Held<Vec<Chunks>>> {
+fn pieces(
+    pipeline: Pipeline,
+    grouping: Arc<Grouping>,
+    (db, tx, degree): (&Arc<State>, TxId, usize),
+    limit: &Limit,
+) -> Result<Held<Vec<Chunks>>> {
     let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
     let count = pipeline.count();
     let work = Box::new(move |m: usize| {
@@ -120,7 +133,15 @@ fn pieces(pipeline: Pipeline, grouping: Arc<Grouping>, (db, tx, degree): (&Arc<S
     let mut chunks: Vec<Chunks> = (0..PARTS).map(|_| Vec::new()).collect();
     for split in Morsels::start(db, tx, (count, degree), work) {
         for (part, made) in chunks.iter_mut().zip(split?) {
-            let bytes = made.iter().map(|p| PIECE_BYTES + p.key.len() + crate::spill::row_bytes(&p.values) + p.states.iter().map(Vec::len).sum::<usize>()).sum();
+            let bytes = made
+                .iter()
+                .map(|p| {
+                    PIECE_BYTES
+                        .saturating_add(p.key.len())
+                        .saturating_add(crate::spill::row_bytes(&p.values))
+                        .saturating_add(p.states.iter().map(Vec::len).sum::<usize>())
+                })
+                .sum();
             if !limit.take(bytes) {
                 return Ok(Held::GaveWay);
             }
@@ -136,17 +157,16 @@ fn morsel_pieces(grouping: &Grouping, (m, rows): (usize, Vec<Row>), runner: &Run
     let seeds = u64::try_from(grouping.spec.seeds.len()).unwrap_or(u64::MAX);
     let base = seeds.saturating_add(u64::try_from(m).unwrap_or(u64::MAX).checked_shl(PLACE_BITS).unwrap_or(u64::MAX));
     let mut found: HashMap<Vec<u8>, usize> = HashMap::new();
-    let mut made: Vec<(u64, Vec<u8>, Row, Vec<Box<dyn Accumulator>>)> = Vec::new();
+    let mut made: Vec<Making> = Vec::new();
     for (place, row) in (0_u64..).zip(rows) {
         let values = grouping.values(&row)?;
         let key = group_key(&grouping.spec, &values)?;
-        let at = match found.get(&key) {
-            Some(&at) => at,
-            None => {
-                found.insert(key.clone(), made.len());
-                made.push((base.saturating_add(place), key, values, fresh(&grouping.spec.aggs)));
-                made.len().saturating_sub(1)
-            }
+        let at = if let Some(&at) = found.get(&key) {
+            at
+        } else {
+            found.insert(key.clone(), made.len());
+            made.push((base.saturating_add(place), key, values, fresh(&grouping.spec.aggs)));
+            made.len().saturating_sub(1)
         };
         let states = made.get_mut(at).map(|g| &mut g.3).ok_or_else(|| broken("a group of a morsel is missing"))?;
         feed(&grouping.spec.aggs, states, &row, runner)?;
@@ -154,7 +174,12 @@ fn morsel_pieces(grouping: &Grouping, (m, rows): (usize, Vec<Row>), runner: &Run
     let mut parts: Vec<Vec<Piece>> = (0..PARTS).map(|_| Vec::new()).collect();
     for (first, key, values, states) in made {
         let states = states.iter().map(|s| written(s.as_ref())).collect();
-        parts.get_mut(part_of(&key)).ok_or_else(|| broken("a partition of a grouping is missing"))?.push(Piece { first, key, values, states });
+        parts.get_mut(part_of(&key)).ok_or_else(|| broken("a partition of a grouping is missing"))?.push(Piece {
+            first,
+            key,
+            values,
+            states,
+        });
     }
     Ok(parts)
 }
@@ -202,7 +227,7 @@ fn feed(aggs: &[AggCall], states: &mut [Box<dyn Accumulator>], row: &Row, runner
 /// order, each finished, with its number.
 fn merged(grouping: &Grouping, p: usize, chunks: Chunks) -> Result<Vec<(u64, Row)>> {
     let aggs = &grouping.spec.aggs;
-    let mut groups: HashMap<Vec<u8>, (u64, Row, Vec<Box<dyn Accumulator>>)> = HashMap::new();
+    let mut groups: HashMap<Vec<u8>, Merging> = HashMap::new();
     for (n, seed) in (0_u64..).zip(&grouping.spec.seeds) {
         let key = group_key(&grouping.spec, seed)?;
         if part_of(&key) == p {

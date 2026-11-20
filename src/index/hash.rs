@@ -39,7 +39,7 @@ use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
 use crate::spill::map::SpillMap;
-use crate::spill::{DEFAULT_SPILL_BATCH, WORK_FLOOR, ListSpace, WorkAreas};
+use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, WORK_FLOOR, WorkAreas};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 use crate::value::{CompOp, DataType, Value};

@@ -4,7 +4,7 @@
 //! at those of the highest level that holds enough of them within it,
 //! read level by level down from the root and no further than the level
 //! above the leaves. A node split or emptied while they are read leaves
-//! its keys out or in, which makes the parts less even, never wrong: any
+//! its keys out or in, which makes the parts less even, never wrong, since any
 //! keys in order cut a range into parts that together hold each of its
 //! keys once, as a scan of each reads its own (`scan.rs`).
 
@@ -56,7 +56,12 @@ impl BLinkTree {
 
 /// Adds to `keys` those of inner node `node` within `bounds`, and to
 /// `children` the children whose ranges meet them.
-fn within(node: &Node<'_>, (lower, upper): (Bound<&[u8]>, Bound<&[u8]>), keys: &mut Vec<Vec<u8>>, children: &mut Vec<PageId>) -> Result<()> {
+fn within(
+    node: &Node<'_>,
+    (lower, upper): (Bound<&[u8]>, Bound<&[u8]>),
+    keys: &mut Vec<Vec<u8>>,
+    children: &mut Vec<PageId>,
+) -> Result<()> {
     for at in 0..=node.len() {
         let (child, below) = node.child_at(at)?;
         let above = if at < node.len() { Some(node.key(at)?) } else { node.high };

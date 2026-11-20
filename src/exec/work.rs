@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, batch_bytes, work_bytes};
-use crate::spill::{Area, Batches, Grant, WORK_FLOOR, Records, SpillArea, SpillRun, SpillTable, SpilledLobs, WorkAreas};
+use crate::spill::{Area, Batches, Grant, Records, SpillArea, SpillRun, SpillTable, SpilledLobs, WORK_FLOOR, WorkAreas};
 use crate::txn::{Stop, TxId, checked};
 
 /// The bytes a key held in memory takes beyond its own: its map entry.

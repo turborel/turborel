@@ -279,7 +279,7 @@ impl Database {
     pub(super) fn background_closing(&self) {
         self.background().jobs.closing(self);
         if let Ok(st) = self.snapshot() {
-            st.workers.stop();
+            st.jobs.workers().stop();
         }
     }
 

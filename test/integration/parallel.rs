@@ -59,10 +59,13 @@ fn parallel(s: &Session) {
     }
 }
 
+/// Rows alone, rows in parallel, and whether the plan has a parallel part.
+type Both = (Result<Vec<String>, Code>, Result<Vec<String>, Code>, bool);
+
 /// The rows of `sql`, in the order given, run alone (EXECUTOR.DEGREE 1) a
 /// row at a time, as a batch gives its rows in no order (RULES.md D31);
 /// then in parallel; and whether its plan has a parallel part.
-fn both(s: &Session, sql: &str) -> (Result<Vec<String>, Code>, Result<Vec<String>, Code>, bool) {
+fn both(s: &Session, sql: &str) -> Both {
     exec(s, "SET EXECUTOR.DEGREE = 1").unwrap();
     exec(s, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
     let alone = rows(s, sql);
@@ -160,7 +163,9 @@ fn the_planner_marks_only_large_parts() {
 #[test]
 fn errors_are_those_alone_raises() {
     let (_db, a) = tables();
-    for sql in ["SELECT K, 10 / (K - 4000) FROM R", "SELECT G, SUM(10 / (K - 4000)) FROM R GROUP BY G", "SELECT K FROM R ORDER BY 10 / (K - 4000)"] {
+    for sql in
+        ["SELECT K, 10 / (K - 4000) FROM R", "SELECT G, SUM(10 / (K - 4000)) FROM R GROUP BY G", "SELECT K FROM R ORDER BY 10 / (K - 4000)"]
+    {
         let (alone, together, _) = both(&a, sql);
         assert!(alone.is_err(), "{sql}");
         assert_eq!(alone, together, "{sql}");
@@ -207,7 +212,6 @@ fn a_part_past_its_work_area_gives_way() {
         assert_eq!(sorted(alone), sorted(together), "{sql}");
     }
 }
-
 
 /// Verifies: [DESIGN] RULES.md D297 an index range scan is cut at its
 /// B-link tree's inner keys into morsels of 16 rows, its rows those the

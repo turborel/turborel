@@ -1,6 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
+mod parallel;
 // UUID's mutations, here as `list.rs` holds no more modules.
 mod uuid;
 
@@ -159,8 +160,9 @@ fn plugins() -> [&'static [Mutation]; 9] {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
+/// the memory budget's and parallel queries',
 /// the command-line client's, replication's, the server's, the native protocol's and the client library's.
-fn last() -> [&'static [Mutation]; 46] {
+fn last() -> [&'static [Mutation]; 47] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -178,6 +180,7 @@ fn last() -> [&'static [Mutation]; 46] {
         &super::geometry::reach::REACH,
         &super::geometry::within::WITHIN,
         &budget::BUDGET,
+        &parallel::PARALLEL,
         &super::spatial_types::SPATIAL_TYPES,
         &super::spatial_curves::SPATIAL_CURVES,
         &super::spatial_routines::SPATIAL_ROUTINES,

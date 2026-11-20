@@ -59,7 +59,7 @@ pub(super) fn windowed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize
         Plan::Window { window: Box::new(shape.with_input(|()| sorted)), detail: detail.clone() }
     };
     let outs = per_part(parts, (db, tx, degree), (each, limit.most()))?;
-    Ok(Held::Kept(limit.keeping(Box::new(merge_by(outs, &keys).into_iter().map(Ok)))))
+    Ok(Held::Kept(limit.keeping(Box::new(merge_by(&outs, &keys).into_iter().map(Ok)))))
 }
 
 /// [ISO/IEC 9075:1992 §7.10 GR1b] The rows of EXCEPT or INTERSECT, `plan`,
@@ -77,16 +77,16 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: 
     let Held::Kept((parts, width, limit)) = split(left, (db, tx, degree), (key, true))? else { return Ok(Held::GaveWay) };
     // No row of the first operand: none is kept.
     let Some(width) = width else { return Ok(Held::Kept(Box::new(std::iter::empty()))) };
-    let (op, all, compared) = (*op, *all, Some(n.unwrap_or(width)));
+    let (op, all, compared_of) = (*op, *all, Some(n.unwrap_or(width)));
     let rights: Arc<Vec<Mutex<Option<HeldRows<Row>>>>> = Arc::new(rights.into_iter().map(|r| Mutex::new(Some(r))).collect());
     let each = move |rows: TransitionRows, p: usize| {
         let taken = rights.get(p).and_then(|r| r.lock().unwrap_or_else(PoisonError::into_inner).take());
-        let right = Box::new(Plan::Transition { rows: TransitionRows::with(taken.unwrap_or_else(|| HeldRows::new(ListSpace::default()))) });
-        Plan::SetOp { op, all, compared, left: Box::new(Plan::Transition { rows }), right }
+        let built = Box::new(Plan::Transition { rows: TransitionRows::with(taken.unwrap_or_else(|| HeldRows::new(ListSpace::default()))) });
+        Plan::SetOp { op, all, compared: compared_of, left: Box::new(Plan::Transition { rows }), right: built }
     };
     let outs = per_part_numbered(parts, (db, tx, degree), (each, limit.most().saturating_add(kept.most())))?;
     let place = SortKey::new(width, crate::value::SortOrder::of(false, None));
-    let rows = merge_by(outs, &[place]).into_iter().map(move |mut row| {
+    let rows = merge_by(&outs, &[place]).into_iter().map(move |mut row| {
         row.truncate(width);
         Ok(row)
     });
@@ -96,7 +96,12 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: 
 
 /// A list of `share` bytes of `db`'s work areas.
 fn space(db: &State, share: usize) -> ListSpace {
-    ListSpace { limit: share, batch: batch_bytes(db.settings.get(SPILL_BATCH_BYTES)), areas: Some(Arc::clone(&db.work)), types: db.types.clone() }
+    ListSpace {
+        limit: share,
+        batch: batch_bytes(db.settings.get(SPILL_BATCH_BYTES)),
+        areas: Some(Arc::clone(&db.work)),
+        types: db.types.clone(),
+    }
 }
 
 /// The rows of the stream `input`, read by morsels on up to `degree`
@@ -161,7 +166,10 @@ fn per_part_numbered(
     let shared = shared(db, bytes.checked_div(degree.max(1)).unwrap_or_default().max(1));
     let parts: Arc<Vec<Mutex<Option<HeldRows<Row>>>>> = Arc::new(parts.into_iter().map(|p| Mutex::new(Some(p))).collect());
     let work = Box::new(move |p: usize| {
-        let rows = parts.get(p).and_then(|r| r.lock().unwrap_or_else(PoisonError::into_inner).take()).ok_or_else(|| broken("a partition run twice"))?;
+        let rows = parts
+            .get(p)
+            .and_then(|r| r.lock().unwrap_or_else(PoisonError::into_inner).take())
+            .ok_or_else(|| broken("a partition run twice"))?;
         execute(each(TransitionRows::with(rows), p), &shared, tx).collect::<Result<Vec<Row>>>()
     });
     Morsels::start(db, tx, (PARTS, degree), work).collect()

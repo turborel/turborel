@@ -81,8 +81,8 @@ had its rows open uses it once that transaction ends
 
 A session's rows of a temporary table, with its indexes' entries and
 the earlier versions of the committed rows a transaction updates or
-deletes, kept until it ends, are read and written through a buffer pool of the session's
-MEMORY.WORK_BYTES, reserved of the database's MEMORY.BUDGET_BYTES as a
+deletes, kept until it ends, are read and written through a buffer pool of the lesser of the session's
+MEMORY.WORK_BYTES and 4 MiB, reserved of the database's MEMORY.BUDGET_BYTES as a
 transaction of the session first reads or writes the table. What the
 pool does not hold is written to a spill file in the database's `tmp/`
 directory, so a session's rows may be many times the budget. The file

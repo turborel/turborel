@@ -51,7 +51,8 @@ takes what it needs to undo, even past the budget, until it gives back
 what the undone changes held.
 
 The data file's pages are read through a buffer pool of
-STORAGE.POOL_BYTES, and what a query spills through one of MEMORY.WORK_BYTES,
+STORAGE.POOL_BYTES, and what a query spills through one of
+its grant of MEMORY.WORK_BYTES, at most 4 MiB,
 as is a session's instance of a temporary table, over a spill file of
 its own ([Temporary Tables](../user/09-temporary-tables.md)).
 A page wanted while every page of its pool is held at once, as by a

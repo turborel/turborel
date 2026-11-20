@@ -81,8 +81,10 @@ fn merged(runs: Vec<Vec<Row>>, keys: Arc<Vec<SortKey>>, (db, tx, degree): (&Arc<
     let ranges = degree.saturating_mul(RANGES_PER_THREAD).max(1);
     let splitters = splitters(&runs, &keys, ranges);
     // The place in each run of each range's first row, and past its last.
-    let cuts: Vec<Vec<usize>> =
-        runs.iter().map(|run| splitters.iter().map(|s| run.partition_point(|r| compare_rows(&keys, r, s) == Ordering::Less)).collect()).collect();
+    let cuts: Vec<Vec<usize>> = runs
+        .iter()
+        .map(|run| splitters.iter().map(|s| run.partition_point(|r| compare_rows(&keys, r, s) == Ordering::Less)).collect())
+        .collect();
     let (runs, count) = (Arc::new(runs), splitters.len().saturating_add(1));
     let work = Box::new(move |range: usize| {
         let slices: Vec<&[Row]> = runs
@@ -147,7 +149,7 @@ impl Eq for Head<'_> {}
 
 /// The rows of `outs`, each sorted by `keys`, merged, a tie taken from
 /// the earlier.
-pub(super) fn merge_by(outs: Vec<Vec<Row>>, keys: &[SortKey]) -> Vec<Row> {
+pub(super) fn merge_by(outs: &[Vec<Row>], keys: &[SortKey]) -> Vec<Row> {
     let slices: Vec<&[Row]> = outs.iter().map(Vec::as_slice).collect();
     merge(&slices, keys)
 }
@@ -156,9 +158,10 @@ pub(super) fn merge_by(outs: Vec<Vec<Row>>, keys: &[SortKey]) -> Vec<Row> {
 /// the earlier slice.
 fn merge(slices: &[&[Row]], keys: &[SortKey]) -> Vec<Row> {
     let mut out = Vec::with_capacity(slices.iter().map(|s| s.len()).sum());
-    let mut heap: BinaryHeap<Head<'_>> = slices.iter().enumerate().filter_map(|(run, s)| Some(Head { row: s.first()?, run, at: 0, keys })).collect();
-    while let Some(Head { row, run, at, keys }) = heap.pop() {
-        out.push(row.clone());
+    let mut heap: BinaryHeap<Head<'_>> =
+        slices.iter().enumerate().filter_map(|(run, s)| Some(Head { row: s.first()?, run, at: 0, keys })).collect();
+    while let Some(Head { row: least, run, at, .. }) = heap.pop() {
+        out.push(least.clone());
         let next = at.saturating_add(1);
         if let Some(row) = slices.get(run).and_then(|s| s.get(next)) {
             heap.push(Head { row, run, at: next, keys });

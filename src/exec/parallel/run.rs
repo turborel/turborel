@@ -3,7 +3,7 @@
 //! at once, each the next number not taken, by one atomic step, as the
 //! dispatcher of Leis et al., "Morsel-Driven Parallelism" (2014), hands
 //! them out. Their results are given back in the order of their numbers,
-//! so what reads them sees what one thread taking them in turn would: the
+//! so what reads them sees what one thread taking them in turn would, the
 //! rows before an error, then the error, as a statement run alone raises
 //! it (RULES.md D15).
 //!
@@ -47,9 +47,9 @@ struct Run<T> {
     running: AtomicUsize,
     /// The number of the next morsel the reader is given.
     given: AtomicUsize,
-    /// The least number of a morsel that failed: none past it is taken.
+    /// The least number of a morsel that failed, none past it taken.
     failed: AtomicUsize,
-    /// Set once its reader is gone: no morsel is taken after.
+    /// Set once its reader is gone, after which no morsel is taken.
     ended: AtomicBool,
     done: Mutex<BTreeMap<usize, Result<T>>>,
     landed: Condvar,
@@ -62,8 +62,8 @@ pub(super) struct Morsels<T: Send + 'static> {
     run: Arc<Run<T>>,
 }
 
-/// The results done, a panic in a morsel having poisoned none: a morsel's
-/// work runs outside the lock.
+/// The results done, a panic in a morsel having poisoned none, as a
+/// morsel's work runs outside the lock.
 fn done_of<T>(run: &Run<T>) -> MutexGuard<'_, BTreeMap<usize, Result<T>>> {
     run.done.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -145,7 +145,9 @@ impl<T: Send + 'static> Task for Run<T> {
     fn wanted(&self) -> bool {
         let ahead = self.given.load(Ordering::Acquire).saturating_add(self.window);
         let limit = self.count.min(ahead).min(self.failed.load(Ordering::Acquire).saturating_add(1));
-        !self.ended.load(Ordering::Acquire) && self.running.load(Ordering::Acquire) < self.degree && self.taken.load(Ordering::Acquire) < limit
+        !self.ended.load(Ordering::Acquire)
+            && self.running.load(Ordering::Acquire) < self.degree
+            && self.taken.load(Ordering::Acquire) < limit
     }
 
     fn finished(&self) -> bool {
@@ -179,13 +181,14 @@ impl<T: Send + 'static> Morsels<T> {
             ended: AtomicBool::new(false),
             done: Mutex::new(BTreeMap::new()),
             landed: Condvar::new(),
-            pool: Arc::clone(&db.workers),
+            pool: Arc::clone(db.jobs.workers()),
         });
         if degree > 1 && count > 1 {
             let workers = crate::physical::workers_of(db);
             // A worker not started leaves its morsels to the others and to
             // the statement's own thread, which takes them as it waits.
-            let _ = db.workers.offer(Arc::clone(&run) as Arc<dyn Task>, workers);
+            let task: Arc<dyn Task> = run.clone();
+            let _ = db.jobs.workers().offer(task, workers);
         }
         Morsels { run }
     }
@@ -202,5 +205,7 @@ impl<T: Send + 'static> Iterator for Morsels<T> {
 impl<T: Send + 'static> Drop for Morsels<T> {
     fn drop(&mut self) {
         self.run.ended.store(true, Ordering::Release);
+        // Woken, the workers let go of the run, and of what its work holds.
+        self.run.pool.nudge();
     }
 }

@@ -234,19 +234,25 @@ struct Record {
     last_error: Option<SqlError>,
 }
 
-/// \[DESIGN\] A database's jobs: those of its own, and whether it is
-/// closing.
+/// \[DESIGN\] A database's jobs: those of its own, whether it is closing,
+/// and the executor's workers (`threads/pool.rs`, RULES.md D290).
 #[derive(Default)]
 pub(crate) struct Jobs {
-    jobs: Mutex<Vec<Arc<Job>>>,
+    listed: Mutex<Vec<Arc<Job>>>,
     closing: AtomicBool,
+    workers: Arc<Pool>,
 }
 
 impl Jobs {
+    /// The executor's workers, shared by every statement run in parallel.
+    pub(crate) fn workers(&self) -> &Arc<Pool> {
+        &self.workers
+    }
+
     /// The job labelled `label`, doing `work`, tried again `retry` after a
     /// failure if given: added, or the one of that label already added.
     pub(crate) fn add(&self, label: &'static str, work: Work, retry: Option<Duration>) -> JobId {
-        let mut jobs = lock_builtin(&self.jobs);
+        let mut jobs = lock_builtin(&self.listed);
         if let Some(at) = jobs.iter().position(|j| j.label == label) {
             return JobId(at);
         }
@@ -257,15 +263,15 @@ impl Jobs {
 
     /// Whether a job labelled `label` was added.
     pub(crate) fn has(&self, label: &str) -> bool {
-        lock_builtin(&self.jobs).iter().any(|j| j.label == label)
+        lock_builtin(&self.listed).iter().any(|j| j.label == label)
     }
 
     fn job(&self, id: JobId) -> Option<Arc<Job>> {
-        lock_builtin(&self.jobs).get(id.0).map(Arc::clone)
+        lock_builtin(&self.listed).get(id.0).map(Arc::clone)
     }
 
     fn all(&self) -> Vec<Arc<Job>> {
-        lock_builtin(&self.jobs).clone()
+        lock_builtin(&self.listed).clone()
     }
 
     /// Asks for job `id` of `db`, which runs it as `policy` says.

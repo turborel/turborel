@@ -1,4 +1,4 @@
-//! \[DESIGN\] Morsel-driven parallel execution (RULES.md D290 to D296), as
+//! \[DESIGN\] Morsel-driven parallel execution (RULES.md D290 to D299), as
 //! Leis, Boncz, Kemper and Neumann describe it in "Morsel-Driven
 //! Parallelism: A NUMA-Aware Query Evaluation Framework for the Many-Core
 //! Age" (2014). A part of a plan the planner marked (`physical/parallel.rs`)
@@ -11,7 +11,7 @@
 //! (`parallel/sorted.rs`), window functions, EXCEPT and INTERSECT
 //! (`parallel/partitioned.rs`), and a hash join's built operand
 //! (`parallel/probe.rs`). No operator passes rows to another between
-//! threads: a morsel's rows go through its pipeline on one.
+//! threads, as a morsel's rows go through its pipeline on one.
 //!
 //! Every part gives the rows the plan alone gives, in its order: a
 //! pipeline's morsels in the order of their numbers, an operator's groups
@@ -20,8 +20,8 @@
 //! statement's transaction does, in its snapshot and with its own writes
 //! (RULES.md D29); each morsel looks at its cancellation (RULES.md D44);
 //! the first error in the order of the rows is the one raised, and none
-//! after it is read. A part holds no more than one work area, split among
-//! its partitions (RULES.md D38). One that would hold more gives way to
+//! after it is read. A part holds no more than one work grant, split among
+//! its partitions (RULES.md D38, D298). One that would hold more gives way to
 //! the plan run alone, which spills, reading its rows again in the
 //! statement's snapshot, as does a part of a table its engine cannot
 //! split.

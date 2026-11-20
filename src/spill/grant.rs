@@ -1,7 +1,7 @@
 //! \[DESIGN\] Work grants (RULES.md D298): the bytes an operator holds in
 //! memory before it spills, given it of the memory budget as it starts.
 //! MEMORY.WORK_BYTES is the most an operator is granted, not what each
-//! holds: one is granted half the budget left free, up to that ceiling,
+//! holds. One is granted half the budget left free, up to that ceiling,
 //! reserved until it ends, so each grant after it takes half of what is
 //! left and the grants of every statement running at once together never
 //! pass the budget (RULES.md D38), however many sessions run them. Where
@@ -21,13 +21,18 @@ use crate::memory::Reservation;
 #[derive(Debug)]
 pub struct Grant {
     bytes: usize,
-    _held: Option<Reservation>,
+    held: Option<Reservation>,
 }
 
 impl Grant {
     /// Its bytes.
     pub fn bytes(&self) -> usize {
         self.bytes
+    }
+
+    /// Whether its bytes are reserved of the budget.
+    pub fn reserved(&self) -> bool {
+        self.held.is_some()
     }
 }
 
@@ -43,17 +48,17 @@ impl WorkAreas {
 /// A grant of `budget` of up to `ceiling` bytes.
 fn grant_of(budget: &Arc<crate::memory::MemoryBudget>, ceiling: usize) -> Grant {
     if ceiling <= WORK_FLOOR {
-        return Grant { bytes: ceiling, _held: None };
+        return Grant { bytes: ceiling, held: None };
     }
     let free = budget.limit().saturating_sub(budget.reserved());
-    let wanted = ceiling.min(free / 2);
+    let wanted = ceiling.min(free >> 1_u32);
     if wanted <= WORK_FLOOR {
-        return Grant { bytes: WORK_FLOOR, _held: None };
+        return Grant { bytes: WORK_FLOOR, held: None };
     }
     match budget.reserve(wanted, "a work grant") {
-        Ok(held) => Grant { bytes: wanted, _held: Some(held) },
+        Ok(held) => Grant { bytes: wanted, held: Some(held) },
         // Taken by another between the look and the reservation.
-        Err(_) => Grant { bytes: WORK_FLOOR, _held: None },
+        Err(_) => Grant { bytes: WORK_FLOOR, held: None },
     }
 }
 
@@ -75,11 +80,11 @@ mod tests {
         assert_eq!(second.bytes, 8 * WORK_FLOOR, "its ceiling");
         let third = grant_of(&budget, usize::MAX);
         assert_eq!(third.bytes, 12 * WORK_FLOOR);
-        let small = grant_of(&budget, 1024);
-        assert_eq!((small.bytes, small._held.is_none()), (1024, true));
-        let rest: Vec<_> = (0..8).map(|_| grant_of(&budget, usize::MAX)).collect();
+        let small = grant_of(&budget, 1024_usize);
+        assert_eq!((small.bytes, small.reserved()), (1024_usize, false));
+        let rest: Vec<_> = (0_u8..8).map(|_| grant_of(&budget, usize::MAX)).collect();
         assert!(budget.reserved() <= budget.limit());
-        assert_eq!(rest.last().map(|g| (g.bytes, g._held.is_none())), Some((WORK_FLOOR, true)), "the floor, unreserved");
+        assert_eq!(rest.last().map(|g| (g.bytes, g.reserved())), Some((WORK_FLOOR, false)), "the floor, unreserved");
         drop((first, second, third, rest));
         assert_eq!(budget.reserved(), 0, "given back");
     }

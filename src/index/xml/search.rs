@@ -27,7 +27,7 @@ use crate::engine::tree::{Direction, Scan, scan_of};
 use crate::error::{Code, Result, SqlError};
 use crate::index::RowIds;
 use crate::spill::map::SpillMap;
-use crate::spill::{DEFAULT_SPILL_BATCH, WORK_FLOOR, ListSpace};
+use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, WORK_FLOOR};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 

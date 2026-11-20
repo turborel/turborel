@@ -99,11 +99,16 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Arc<State>, TxId
 
 /// `pipeline`, a hash join's operand, built by its morsels on up to
 /// `degree` threads, then each partition's table by a thread of its own.
-fn parallel_built(pipeline: Pipeline, keys: &[JoinKey], (db, tx): (&Arc<State>, TxId), (degree, limit): (usize, &Limit)) -> Result<Held<Arc<Table>>> {
+fn parallel_built(
+    pipeline: Pipeline,
+    keys: &[JoinKey],
+    (db, tx): (&Arc<State>, TxId),
+    (degree, limit): (usize, &Limit),
+) -> Result<Held<Arc<Table>>> {
     let (pipeline, shared_keys) = (Arc::new(pipeline), Arc::new(keys.to_vec()));
     let (count, db_for, keys_for) = (pipeline.count(), Arc::clone(db), Arc::clone(&shared_keys));
-    let work = Box::new(move |m: usize| -> Result<Vec<Vec<(Vec<Bucket>, Row)>>> {
-        let mut split: Vec<Vec<(Vec<Bucket>, Row)>> = (0..PARTS).map(|_| Vec::new()).collect();
+    let work = Box::new(move |m: usize| -> Result<Chunks> {
+        let mut split: Chunks = (0..PARTS).map(|_| Vec::new()).collect();
         for row in pipeline.morsel(m, &Runner::new(&db_for, tx))? {
             if let Some(b) = key(&row, &keys_for, Operand::Right)? {
                 split.get_mut(part_of(&b)).ok_or_else(|| broken("a partition of a built operand is missing"))?.push((b, row));

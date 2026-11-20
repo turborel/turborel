@@ -52,10 +52,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             same_shape(left, left2) && same_shape(right, right2)
         }
         Plan::MergeAppend { .. } => same_merge(one, other),
-        Plan::Parallel(p) => {
-            let Plan::Parallel(p2) = other else { return false };
-            p.degree == p2.degree && same_shape(&p.input, &p2.input)
-        }
+        Plan::Parallel(p) => same_parallel(p, other),
         Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
@@ -167,6 +164,12 @@ fn same_function(a: &ScalarRef, b: &ScalarRef) -> bool {
     }
     let Some(spatial) = a.0.spatial_operation() else { return false };
     a.0.deterministic() && b.0.deterministic() && b.0.spatial_operation() == Some(spatial)
+}
+
+/// Whether `other` is a part run in parallel of `p`'s degree and shape.
+fn same_parallel(p: &crate::physical::Parallel, other: &Plan) -> bool {
+    let Plan::Parallel(p2) = other else { return false };
+    p.degree == p2.degree && same_shape(&p.input, &p2.input)
 }
 
 // Unit tests: plans of one shape and of two (RULES.md R-TEST-1, R-TEST-8).
