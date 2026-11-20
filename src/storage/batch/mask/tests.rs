@@ -64,6 +64,28 @@ fn masks_read_from_bytes_at_any_offset() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D354 masks appended one after another at
+/// every length, each of the last on or off a word's edge, and unset bits
+/// added between them, keep each bit and its count, none past the length.
+#[test]
+fn masks_append_at_any_length() {
+    let bits = pattern(300);
+    for first in [0, 1, 63, 64, 65, 130] {
+        for second in [0, 1, 63, 64, 65, 130] {
+            let mut mask = Mask::from_bools(&bits[..first]);
+            mask.append(&Mask::from_bools(&bits[first..first + second]));
+            mask.extend_unset(3);
+            mask.append(&Mask::from_bools(&bits[..5]));
+            let mut want = bits[..first + second].to_vec();
+            want.extend([false; 3]);
+            want.extend(&bits[..5]);
+            assert_eq!(mask.to_bools(), want, "{first} then {second}");
+            assert_eq!(mask.count(), want.iter().filter(|&&b| b).count(), "{first} then {second}");
+            assert_eq!(mask.words().len(), want.len().div_ceil(64), "{first} then {second}");
+        }
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D354 a mask's bits gathered at rows, and
 /// whether any of them is set; none of a mask of no bit set.
 #[test]

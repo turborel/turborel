@@ -73,6 +73,15 @@ pub trait Kernels: Send + Sync {
     fn gather_i64(&self, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
         portable::gather::gather_i64(values, sel, out);
     }
+
+    /// Appends to `out` the values from the `from`th to the `to`th of
+    /// `bits` bits packed in `bytes`, as a chunk's frame of reference
+    /// keeps them (RULES.md D352), each plus `least`, wrapping: none if
+    /// `bytes` hold fewer values, or `bits` is above 64. The whole blocks
+    /// of 64 values are what wider instructions unpack at once.
+    fn unpack(&self, bytes: &[u8], (bits, least): (u32, i64), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
+        portable::unpack::unpack(bytes, (bits, least), (from, to), out)
+    }
 }
 
 /// \[DESIGN\] The built-in kernels: every portable body, as written.

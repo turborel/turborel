@@ -6,7 +6,7 @@
 
 mod blocks;
 
-pub(super) use blocks::unpack_words;
+pub(crate) use blocks::unpack_words;
 
 /// The bytes a window of one value is read from: a value of 64 bits at
 /// any bit's offset lies in 9 of them.

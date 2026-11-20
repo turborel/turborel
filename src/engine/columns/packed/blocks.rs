@@ -68,7 +68,7 @@ fn block<const W: usize>(bytes: &[u8], least: i64, out: &mut [i64; BLOCK]) -> Op
 /// `bytes`, each plus `least`, wrapping, pushed to `out`: whole blocks by
 /// their width's routine, the others one at a time. None if `bytes` hold
 /// fewer values, or `bits` is above 64.
-pub(in crate::engine::columns) fn unpack_words(
+pub(crate) fn unpack_words(
     bytes: &[u8],
     (bits, least): (u32, i64),
     (from, to): (usize, usize),

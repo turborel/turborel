@@ -83,6 +83,7 @@ pub fn contract(kernels: &dyn Kernels) {
         selections(kernels, len);
         aggregates(kernels, len);
     }
+    unpacking(kernels);
 }
 
 /// Checks the selections of `kernels` of vectors of `len`.
@@ -134,4 +135,43 @@ fn aggregates(kernels: &dyn Kernels, len: usize) {
         kernels.gather_i64(&i, &rows, &mut out);
         assert_eq!(out[1..], held[..], "gather_i64 of {len}");
     }
+}
+
+/// `count` values of `bits` bits, each the low bits of a pattern that sets
+/// both ends of the width, bit-packed one after another from the least
+/// significant bit, as a chunk's frame of reference writes them.
+fn packed(count: usize, bits: u32) -> (Vec<u64>, Vec<u8>) {
+    let low = if bits == 64 { u64::MAX } else { (1_u64 << bits) - 1 };
+    let values: Vec<u64> = (0..count as u64).map(|n| n.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(7) & low).collect();
+    let mut bytes = vec![0_u8; (count * bits as usize).div_ceil(8)];
+    for (n, v) in values.iter().enumerate() {
+        for b in 0..bits as usize {
+            if (v >> b) & 1 == 1 {
+                let at = n * bits as usize + b;
+                bytes[at / 8] |= 1 << (at % 8);
+            }
+        }
+    }
+    (values, bytes)
+}
+
+/// Checks the unpacking of `kernels` of every width, of ranges on and off
+/// a block's edges, against the bits read one at a time; none of too few
+/// bytes or a width past 64.
+fn unpacking(kernels: &dyn Kernels) {
+    for bits in 0..=64_u32 {
+        let (values, bytes) = packed(200, bits);
+        for (from, to) in [(0, 200), (0, 64), (1, 129), (63, 65), (64, 192), (130, 130), (199, 200)] {
+            for least in [0, -5, i64::MIN] {
+                let mut out = vec![3];
+                assert_eq!(kernels.unpack(&bytes, (bits, least), (from, to), &mut out), Some(()), "{bits} bits");
+                let want: Vec<i64> = values[from..to].iter().map(|&v| least.wrapping_add(v as i64)).collect();
+                assert_eq!(out[1..], want[..], "unpack of {bits} bits, {from} to {to}, plus {least}");
+            }
+        }
+        if bits > 0 {
+            assert_eq!(kernels.unpack(&bytes, (bits, 0), (0, 201 + 64), &mut Vec::new()), None, "{bits} bits, too few bytes");
+        }
+    }
+    assert_eq!(kernels.unpack(&[0; 1024], (65, 0), (0, 64), &mut Vec::new()), None, "wider than 64 bits");
 }

@@ -30,7 +30,7 @@ use crate::engine::columns::ahead::GroupAhead;
 use crate::engine::columns::group::{Group, Summary};
 use crate::engine::columns::prepared::Prepared;
 use crate::engine::columns::scan::{
-    Reading, datetimes, datetimes_at, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at,
+    Reading, bools, bools_at, datetimes, datetimes_at, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at,
 };
 use crate::engine::rows::gathered::Gathering;
 use crate::engine::rows::mvcc::Reader;
@@ -302,6 +302,9 @@ fn run_column(
     if let Some(datetimes) = datetimes(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Datetimes(datetimes));
     }
+    if let Some(bools) = bools(group, (pages, &mut *prepared), (c, t), (from, to))? {
+        return Ok(Column::Bools(bools));
+    }
     if let Some(texts) = texts(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Texts(texts));
     }
@@ -323,6 +326,9 @@ fn positions_column(
     }
     if let Some(datetimes) = datetimes_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Datetimes(datetimes));
+    }
+    if let Some(bools) = bools_at(group, (pages, &mut *prepared), (c, t), positions)? {
+        return Ok(Column::Bools(bools));
     }
     if let Some(texts) = texts_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Texts(texts));

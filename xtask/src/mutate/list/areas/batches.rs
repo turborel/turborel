@@ -1,8 +1,9 @@
 //! The mutations of the batch's shape and its kernels (RULES.md R-TEST-9,
 //! D354, D355): an exact constant folded to a column's scale, a filter's
 //! selections chained, a null word read once a word, a mask's bits past
-//! its length cleared, a morsel's groups numbered by their first rows, and
-//! a grouping of many groups kept serial.
+//! its length cleared, a chunk's bitmap joined to a mask at its offset, a
+//! morsel's groups numbered by their first rows, and a grouping of many
+//! groups kept serial.
 
 use super::super::{Mutation, Package};
 
@@ -10,7 +11,7 @@ use super::super::{Mutation, Package};
 const FILTERS: &str = "batch_kinds::datetimes_truth_values_and_ors_filter_as_rows_do";
 
 /// Mechanisms whose removal must fail the batch's requirements.
-pub const BATCHES: [Mutation; 6] = [
+pub const BATCHES: [Mutation; 8] = [
     Mutation {
         name: "batches-fold-less-by-floor",
         package: Package::Core,
@@ -70,5 +71,25 @@ pub const BATCHES: [Mutation; 6] = [
         replacement: "    parallel > f64::MAX\n",
         integration: &["batch_kinds::groupings_of_many_groups_stay_serial"],
         unit: &[],
+    },
+    Mutation {
+        name: "batches-mask-append-unshifted",
+        package: Package::Core,
+        breaks: "a mask appended past a part of a word shifts its bits past the bits before",
+        file: "src/storage/batch/mask.rs",
+        original: "                    *last |= word << shift;",
+        replacement: "                    *last |= word;",
+        integration: &[],
+        unit: &["storage::batch::mask::tests::masks_append_at_any_length"],
+    },
+    Mutation {
+        name: "batches-chunk-nulls-from-start",
+        package: Package::Core,
+        breaks: "a chunk's nulls of a range are read from the range's first position",
+        file: "src/engine/columns.rs",
+        original: "        nulls.append(&Mask::from_lsb_bytes(self.nulls, from, count));",
+        replacement: "        nulls.append(&Mask::from_lsb_bytes(self.nulls, 0, count));",
+        integration: &[],
+        unit: &["engine::columns::tests::chunks_give_their_truth_values"],
     },
 ];

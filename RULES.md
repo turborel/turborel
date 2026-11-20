@@ -9723,11 +9723,16 @@ keeps of a batch are a selection of `u32` places, ascending
 the rows copied. One width serves every batch, since a join's held build
 side is one batch of all its rows. Datetimes are a vector of instants in
 UTC, in microseconds, with their zones if they keep them, and truth
-values are a bitmap, so a filter of a date leaves the row path.
+values are a bitmap, so a filter of a date leaves the row path. A frozen
+group's chunks are decoded straight into these shapes. A chunk's null
+bitmap is joined to the vector's a word at a time (`Mask::append`), a
+datetime column without a zone is read as its 8-byte instants, and a
+truth value column as its bits (`engine/columns/scan/truths.rs`).
 
 The loops over vectors are kernels (`src/kernels.rs`): a selection of the
 rows a comparison with a constant is true of, of bits set, of a
-dictionary's codes kept, an exact sum, the extremes, a gather. Each has a
+dictionary's codes kept, an exact sum, the extremes, a gather, the
+unpacking of a frame of reference's bit-packed values (D352). Each has a
 portable body, branch-free where a branch would be mispredicted, which is
 what a database runs unless it is given others (`Database::set_kernels`).
 A crate of kernels for one processor's instructions implements the same

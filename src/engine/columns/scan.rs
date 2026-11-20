@@ -12,6 +12,10 @@ use crate::storage::{Coded, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask
 use crate::value::datetime::Moment;
 use crate::value::{DataType, Value};
 
+mod truths;
+
+pub use truths::{bools, bools_at};
+
 /// The pages a group's chunks are read of, and the chunks of the group
 /// opened before, kept for the runs after (`prepared.rs`).
 pub type Reading<'p, 'a, S> = (&'p Pages<'a, S>, &'p mut Prepared);
@@ -178,15 +182,15 @@ pub fn values<S: Seal>(
 
 /// The 8-byte fields of a column, each as a signed integer, and whether
 /// each is null: none if one of them is not so.
-type Words = Option<(Vec<i64>, Vec<bool>)>;
+type Words = Option<(Vec<i64>, Mask)>;
 
 /// 8-byte fields, whether each is null, and where each run of one value
 /// among them ends, if known.
-type RunWords = ((Vec<i64>, Vec<bool>), Option<Vec<usize>>);
+type RunWords = ((Vec<i64>, Mask), Option<Vec<usize>>);
 
 /// Of nulls, none if none is null.
-fn nulls_of(nulls: &[bool]) -> Option<Mask> {
-    crate::storage::mask::mask_of(nulls)
+fn nulls_of(nulls: Mask) -> Option<Mask> {
+    nulls.any().then_some(nulls)
 }
 
 /// `word`, an approximate number's 8 bytes as a signed integer, as the
@@ -211,7 +215,7 @@ pub fn ints<S: Seal>(
 ) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
     Ok(words(group, (pages, prepared), (column, t), (from, to))?.map(|((units, nulls), runs)| {
-        let ints = Ints::new(units, *scale, nulls_of(&nulls));
+        let ints = Ints::new(units, *scale, nulls_of(nulls));
         match runs {
             Some(ends) => ints.with_runs(ends),
             None => ints,
@@ -234,7 +238,7 @@ pub fn floats<S: Seal>(
 ) -> Result<Option<Floats>> {
     let DataType::Approximate { .. } = t else { return Ok(None) };
     Ok(words(group, (pages, prepared), (column, t), (from, to))?
-        .map(|((words, nulls), _)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(&nulls))))
+        .map(|((words, nulls), _)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
 }
 
 /// \[DESIGN\] As `ints_at`, as approximate numbers, as `floats` gives
@@ -251,7 +255,7 @@ pub fn floats_at<S: Seal>(
 ) -> Result<Option<Floats>> {
     let DataType::Approximate { .. } = t else { return Ok(None) };
     Ok(words_at(group, (pages, prepared), (column, t), positions)?
-        .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(&nulls))))
+        .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
 }
 
 /// \[DESIGN\] (RULES.md D354) The fields, zone and precision of a datetime
@@ -300,7 +304,7 @@ pub fn datetimes<S: Seal>(
     (from, to): (u32, u32),
 ) -> Result<Option<Datetimes>> {
     let Some(shape) = datetime_shape(t) else { return Ok(None) };
-    Ok(words(group, reading, (column, t), (from, to))?.map(|((utc, nulls), _)| Datetimes::new(utc, None, shape, nulls_of(&nulls))))
+    Ok(words(group, reading, (column, t), (from, to))?.map(|((utc, nulls), _)| Datetimes::new(utc, None, shape, nulls_of(nulls))))
 }
 
 /// \[DESIGN\] As `ints_at`, as datetimes, as `datetimes` gives those of a
@@ -316,7 +320,7 @@ pub fn datetimes_at<S: Seal>(
     positions: &[u32],
 ) -> Result<Option<Datetimes>> {
     let Some(shape) = datetime_shape(t) else { return Ok(None) };
-    Ok(words_at(group, reading, (column, t), positions)?.map(|(utc, nulls)| Datetimes::new(utc, None, shape, nulls_of(&nulls))))
+    Ok(words_at(group, reading, (column, t), positions)?.map(|(utc, nulls)| Datetimes::new(utc, None, shape, nulls_of(nulls))))
 }
 
 /// The 8-byte fields of column `column` of the rows at positions `from` to
@@ -330,7 +334,7 @@ fn words<S: Seal>(
 ) -> Result<Option<RunWords>> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-    let (mut units, mut nulls) = (Vec::with_capacity(count), Vec::with_capacity(count));
+    let (mut units, mut nulls) = (Vec::with_capacity(count), Mask::default());
     let mut runs = Some(Vec::new());
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
@@ -370,7 +374,7 @@ pub fn ints_at<S: Seal>(
     positions: &[u32],
 ) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
-    Ok(words_at(group, (pages, prepared), (column, t), positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(&nulls))))
+    Ok(words_at(group, (pages, prepared), (column, t), positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(nulls))))
 }
 
 /// The 8-byte fields of column `column` of the rows at `positions`, in
@@ -383,8 +387,8 @@ fn words_at<S: Seal>(
     positions: &[u32],
 ) -> Result<Words> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
-    let (mut units, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
-    let (mut span, mut span_nulls) = (Vec::new(), Vec::new());
+    let (mut units, mut nulls) = (Vec::with_capacity(positions.len()), Mask::default());
+    let mut span = Vec::new();
     let mut rest = positions;
     for zone in zones {
         let end = zone.run.first.saturating_add(zone.run.rows);
@@ -393,7 +397,7 @@ fn words_at<S: Seal>(
         let (Some(&low), Some(&high)) = (these.first(), these.last()) else { continue };
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         span.clear();
-        span_nulls.clear();
+        let mut span_nulls = Mask::default();
         let held = prepared.with(pages, (column, zone, t), |chunk, made| {
             Ok(chunk.ints_made((at(low), at(high).saturating_add(1)), (&mut span, &mut span_nulls), made))
         })?;
@@ -403,7 +407,7 @@ fn words_at<S: Seal>(
         for &p in these {
             let n = at(p).saturating_sub(at(low));
             units.push(span.get(n).copied().unwrap_or(0));
-            nulls.push(span_nulls.get(n).copied().unwrap_or(true));
+            nulls.push(n >= span_nulls.len() || span_nulls.get(n));
         }
     }
     if units.len() != positions.len() {
@@ -436,7 +440,7 @@ pub fn texts_at<S: Seal>(
     if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), positions)? {
         return Ok(Some(coded));
     }
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
+    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(positions.len()), Mask::default());
     let mut rest = positions;
     for zone in zones {
         let end = zone.run.first.saturating_add(zone.run.rows);
@@ -456,7 +460,7 @@ pub fn texts_at<S: Seal>(
     if ends.len() != positions.len() {
         return Ok(None);
     }
-    Ok(Some(Texts::new(text, ends, nulls_of(&nulls))))
+    Ok(Some(Texts::new(text, ends, nulls_of(nulls))))
 }
 
 /// \[DESIGN\] The values at `positions` of a column whose chunks are
@@ -469,7 +473,7 @@ fn coded_at<S: Seal>(
     positions: &[u32],
 ) -> Result<Option<Texts>> {
     let (mut text, mut ends) = (String::new(), Vec::new());
-    let (mut codes, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
+    let (mut codes, mut nulls) = (Vec::with_capacity(positions.len()), Mask::default());
     let mut rest = positions;
     for zone in zones {
         let end = zone.run.first.saturating_add(zone.run.rows);
@@ -489,7 +493,7 @@ fn coded_at<S: Seal>(
     if codes.len() != positions.len() {
         return Ok(None);
     }
-    Ok(Some(Texts::coded(Coded { codes, entries: std::sync::Arc::new(Texts::new(text, ends, None)) }, nulls_of(&nulls))))
+    Ok(Some(Texts::coded(Coded { codes, entries: std::sync::Arc::new(Texts::new(text, ends, None)) }, nulls_of(nulls))))
 }
 
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
@@ -512,7 +516,7 @@ pub fn texts<S: Seal>(
         return Ok(Some(coded));
     }
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(count), Vec::with_capacity(count));
+    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(count), Mask::default());
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
@@ -525,7 +529,7 @@ pub fn texts<S: Seal>(
     if ends.len() != count {
         return Ok(None);
     }
-    Ok(Some(Texts::new(text, ends, nulls_of(&nulls))))
+    Ok(Some(Texts::new(text, ends, nulls_of(nulls))))
 }
 
 /// The values of column `column`, of type `t`, of the rows at `positions`

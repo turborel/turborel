@@ -115,6 +115,33 @@ impl Mask {
         }
     }
 
+    /// \[DESIGN\] Adds `other`'s bits past its last, a word at a time:
+    /// each of `other`'s words split at its own last word's free bits, the
+    /// low part into that word and the high part a word of its own, as a
+    /// chunk's bitmap is joined to the bits of the chunks before it.
+    pub fn append(&mut self, other: &Mask) {
+        let shift = self.len & IN_WORD;
+        if shift == 0 {
+            self.words.extend_from_slice(&other.words);
+        } else {
+            for &word in &other.words {
+                if let Some(last) = self.words.last_mut() {
+                    *last |= word << shift;
+                }
+                self.words.push(word >> WORD_BITS.wrapping_sub(shift));
+            }
+        }
+        self.len = self.len.saturating_add(other.len);
+        self.words.truncate(self.len.div_ceil(WORD_BITS));
+        self.set = self.set.saturating_add(other.set);
+    }
+
+    /// Adds `count` bits, none set, past its last.
+    pub fn extend_unset(&mut self, count: usize) {
+        self.len = self.len.saturating_add(count);
+        self.words.resize(self.len.div_ceil(WORD_BITS), 0);
+    }
+
     /// How many bits are set.
     pub fn count(&self) -> usize {
         self.set
