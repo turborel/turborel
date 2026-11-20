@@ -243,3 +243,20 @@ fn errors_are_echoed_and_a_single_transaction_commits() {
     assert_eq!(one.outcome, Outcome::Succeeded, "{}", one.err);
     assert_eq!(script(&server, &["-t", "-A"], "SELECT COUNT(*) FROM T WHERE K = 3;").out, "1\n", "committed");
 }
+
+/// Verifies: [DESIGN] RULES.md D214, D217, D219: `\c` to a server not
+/// reached is told, the connection before kept; `\d` of a relation
+/// there is not, and `\h` of a statement there is not, are told; the run
+/// goes on after each.
+#[test]
+fn reconnecting_describing_and_help_say_what_failed() {
+    let (_db, server) = served();
+    let ran = script(&server, &["-t", "-A"], "\\c 127.0.0.1:1\n\\d NOWHERE\n\\h NO SUCH STATEMENT\nSELECT COUNT(*) FROM T;\n");
+    assert_eq!(ran.outcome, Outcome::Failed);
+    assert_eq!(ran.out, "2\n", "{}", ran.err);
+    let told: Vec<&str> = ran.err.lines().collect();
+    assert_eq!(told.len(), 3, "{}", ran.err);
+    assert!(told[0].starts_with("turborel: \\c: SQLCODE "), "{}", ran.err);
+    assert!(told[1].starts_with("turborel: ") && told[1].contains("NOWHERE"), "{}", ran.err);
+    assert!(told[2].starts_with("turborel: "), "{}", ran.err);
+}

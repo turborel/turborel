@@ -94,6 +94,7 @@ fn words_are_completed_from_the_information_schema() {
         Step::Complete("SET SCHEMA "),
         Step::Complete("GRANT SELECT ON T TO "),
         Step::Complete("sel"),
+        Step::Complete("SELECT K FROM T GROUP B"),
         Step::Line("VALUES 1;".into()),
     ];
     let (seat, seen) = typist(steps);
@@ -108,6 +109,7 @@ fn words_are_completed_from_the_information_schema() {
     assert_eq!(words[3], (11, vec!["X".to_owned()]), "the schemas X may see");
     assert!(words[4].1.contains(&"X".to_owned()), "{:?}", words[4]);
     assert_eq!(words[5], (0, vec!["select".to_owned()]));
+    assert!(words[6].1.contains(&"BY".to_owned()), "a key word after one no context names: {:?}", words[6]);
 }
 
 /// Verifies: [DESIGN] RULES.md D211: each statement or command typed is
