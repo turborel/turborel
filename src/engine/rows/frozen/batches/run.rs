@@ -14,6 +14,7 @@
 use std::sync::Arc;
 
 use super::Batched;
+use super::pending::Pending;
 use crate::engine::columns::group::Group;
 use crate::engine::columns::scan::{column_at, column_of_run};
 use crate::error::Result;
@@ -41,7 +42,7 @@ impl Batched {
         if self.judgment.is_empty() {
             return match positions {
                 None => self.dense(&group, (from, to), (Vec::new(), true)).map(Some),
-                Some(p) => (!p.is_empty()).then(|| self.at_positions(&group, &p)).transpose(),
+                Some(p) => (!p.is_empty()).then(|| self.at_positions(&group, &p, Vec::new())).transpose(),
             };
         }
         let shadowed = positions.is_some();
@@ -53,19 +54,25 @@ impl Batched {
         let kept: Vec<u32> = judged.kept.iter().map(|&r| from.saturating_add(r)).collect();
         // Of many rows kept, the run as it is, which the filter selects of.
         if self.pending.is_empty() && kept.len().saturating_mul(KEPT_SHARE) >= rows {
-            return if shadowed { self.at_positions(&group, &kept) } else { self.dense(&group, (from, to), (judged.decoded, false)) }
-                .map(Some);
+            if !shadowed {
+                return self.dense(&group, (from, to), (judged.decoded, false)).map(Some);
+            }
+            let mut once = Pending::default();
+            once.add(&kept, (&judged.kept, &judged.decoded));
+            return self.held_batch(&group, once.take()).map(Some);
         }
+        let these = (judged.kept.as_slice(), judged.decoded.as_slice());
         if !self.pending.is_empty() && self.pending.len().saturating_add(kept.len()) > BATCH_ROWS {
-            let ready = std::mem::replace(&mut self.pending, kept);
-            return self.at_positions(&group, &ready).map(Some);
+            let ready = self.pending.take();
+            self.pending.add(&kept, these);
+            return self.held_batch(&group, ready).map(Some);
         }
-        self.pending.extend(kept);
+        self.pending.add(&kept, these);
         if self.pending.len() < KEPT_ROWS {
             return Ok(None);
         }
-        let ready = std::mem::take(&mut self.pending);
-        self.at_positions(&group, &ready).map(Some)
+        let ready = self.pending.take();
+        self.held_batch(&group, ready).map(Some)
     }
 
     /// The batch of the rows kept of the group's runs and not yet given,
@@ -74,8 +81,8 @@ impl Batched {
         let Some(group) = self.group.as_ref().map(|(group, _, _)| Arc::clone(group)).filter(|_| !self.pending.is_empty()) else {
             return Ok(None);
         };
-        let ready = std::mem::take(&mut self.pending);
-        self.at_positions(&group, &ready).map(Some)
+        let ready = self.pending.take();
+        self.held_batch(&group, ready).map(Some)
     }
 
     /// The batch of every row of the run `from` to `to` of `group`, each
@@ -106,9 +113,17 @@ impl Batched {
         Ok(batch)
     }
 
-    /// The batch of the rows at `positions` of `group`, ascending, each
-    /// column decoded at them alone, late ones not decoded.
-    fn at_positions(&mut self, group: &Group, positions: &[u32]) -> Result<Batch> {
+    /// The batch of the rows held at `positions` of `group`, the columns
+    /// of `held` as they are, each other decoded at them alone (RULES.md
+    /// D366).
+    fn held_batch(&mut self, group: &Group, (positions, held): (Vec<u32>, Vec<(usize, Column)>)) -> Result<Batch> {
+        self.at_positions(group, &positions, held)
+    }
+
+    /// The batch of the rows at `positions` of `group`, ascending, those
+    /// of `held` as they are, each other column decoded at them alone,
+    /// late ones not decoded.
+    fn at_positions(&mut self, group: &Group, positions: &[u32], mut held: Vec<(usize, Column)>) -> Result<Batch> {
         let pages = self.table.group_pages()?;
         let types = self.table.format.types();
         let mut places: Option<Arc<[u32]>> = None;
@@ -116,6 +131,10 @@ impl Batched {
         for &c in &self.columns {
             if let Some(late) = self.late_column(c, &mut places, || positions.to_vec()) {
                 batch.columns.push(late);
+                continue;
+            }
+            if let Some(at) = held.iter().position(|(h, _)| *h == c) {
+                batch.columns.push(held.swap_remove(at).1);
                 continue;
             }
             batch.columns.push(match types.get(c) {

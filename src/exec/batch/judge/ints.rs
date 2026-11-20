@@ -19,12 +19,14 @@ use crate::value::{Decimal, Value, pow10};
 /// constant folded to the column's scale once (`rescaled_bound`); of
 /// integers known as runs, judged once a run (`by_runs`).
 pub(super) fn kept(judged: &Judged, ints: &Ints, over: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {
-    let rows = over.map_or_else(|| rows_of(0..ints.units.len()), <[u32]>::to_vec);
+    // The rows made only when judged one by one or by runs, not by the kernel.
+    let rows = || over.map_or_else(|| rows_of(0..ints.units.len()), <[u32]>::to_vec);
     let unit = |n: u32| {
         let n = index(n);
         (!ints.is_null(n)).then(|| ints.units.get(n).copied()).flatten()
     };
     let filtered = |keeps: &dyn Fn(i64) -> bool| {
+        let rows = rows();
         by_runs(ints, &rows, keeps).unwrap_or_else(|| rows.iter().copied().filter(|&n| unit(n).is_some_and(keeps)).collect())
     };
     match judged {

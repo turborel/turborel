@@ -35,6 +35,7 @@ use expr::Program;
 pub(super) use groups::{Held, morsel_groups};
 pub(super) use joined::rows_of;
 pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
+pub(super) use late::{Deferred, resolved};
 use project::Place;
 pub(super) use project::{projectable, projected};
 pub(super) use shaped::{Shaped, filter_step, project_step, through};

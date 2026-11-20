@@ -218,14 +218,16 @@ impl Pred {
         let bound = self.compared().and_then(|(op, c)| rescaled_bound(ints.scale, op, c));
         let value = |u: i64| Value::Exact(Decimal::new(i128::from(u), ints.scale));
         let keeps = |u: i64| bound.map_or_else(|| self.conjunct.matches_key(&[&value(u)]), |b| b.holds(u));
-        let all = rows(ints.units.len(), given);
-        if let Some(runs) = ints.runs_of(&all).filter(|_| ints.nulls.is_none()) {
-            return runs.filter(|&(unit, _)| keeps(unit)).flat_map(|(_, these)| these.iter().copied()).collect();
+        if ints.nulls.is_none() && ints.runs().is_some() {
+            let all = rows(ints.units.len(), given);
+            if let Some(runs) = ints.runs_of(&all) {
+                return runs.filter(|&(unit, _)| keeps(unit)).flat_map(|(_, these)| these.iter().copied()).collect();
+            }
         }
         let mut out = Vec::new();
         match bound {
             Some(Bound::Of(op, c)) => Portable.select_i64(&ints.units, (op, c), (ints.nulls.as_ref(), given), &mut out),
-            Some(Bound::All) => out.extend(all.into_iter().filter(|&r| !ints.is_null(index(r)))),
+            Some(Bound::All) => out.extend(rows(ints.units.len(), given).into_iter().filter(|&r| !ints.is_null(index(r)))),
             Some(Bound::None) => {}
             None => {
                 return self

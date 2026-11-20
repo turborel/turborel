@@ -354,6 +354,8 @@ verification approach DO-178C expects (§8).
 | D361 | A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept |
 | D362 | An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows |
 | D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
+| D366 | A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does |
+| D367 | A row made of a batch makes each of its cells a value alone, not its columns' every value |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -9881,6 +9883,50 @@ numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
 (`functions/over_vectors.rs`). Strings of a dictionary are folded or
 counted once an entry. A function that may warn has its body skipped
 and is called as a row's evaluation calls it.
+
+#### D366. A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does
+
+A column store's scan decodes a column whole to judge a conjunct of it
+(D360). When the run keeps few rows, the scan holds their places until
+they make half a batch. It now also holds that column's values of
+those rows, gathered from the vector it decoded, an integer vector of
+one scale or a vector of approximate numbers
+(`frozen/batches/pending.rs`). The batch made of the rows held takes
+the column as held and decodes only the others at the places. A column
+the filter reads is so decoded once a run, to judge it, and not again
+at the rows kept. A column of another kind, or one a run judged without
+decoding it (texts compared in place), is decoded at the places as
+before. A run whose rows the tree shadows gathers its kept rows the
+same way.
+
+Judging a run costs no more than the comparison. A conjunct the kernel
+judges makes no list of the run's rows first; the list is made only of
+integers known as runs, judged once a run, or of rows judged one at a
+time. The kernel judges a vector with no nulls without reading a bitmap
+(`kernels/portable/select.rs`). A group's row ids are read only if the
+tree holds an entry for one of its rows, as only those are told apart
+by id.
+
+A morsel of a parallel scan read by batch (D354) is told its late
+columns too (`Split::morsel_batches`). They are the columns of the
+branch's scan no step reads before a filter drops rows, found as the
+serial stream finds them (D361), walking the branch's steps from its
+end (`parallel/batched.rs`). The batches a morsel's steps keep are
+resolved before its rows are made or its groups fed, each late column
+decoded of the rows still kept. So a worker decodes what the
+statement's thread alone would. The planner still runs a column store's
+scan by batch on one thread where it serves better (D291); a pipeline
+it runs by morsels reads its late columns so.
+
+#### D367. A row made of a batch makes each of its cells a value alone, not its columns' every value
+
+A projection read by batches (`exec/batch/project.rs`) and a filter
+judged a row at a time (`exec/batch/judge.rs`) make each row's values
+of the batch's cells (`Batch::cell`). A vector of integers, numbers,
+texts or datetimes makes a value of the row read alone. Reading a
+column's values instead made every row's value of the vector the first
+time any was read, which a projection of few kept rows paid for every
+row of the batch. The values are the same either way.
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

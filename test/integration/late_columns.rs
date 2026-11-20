@@ -68,7 +68,7 @@ fn tables() -> (Database, Session) {
 }
 
 /// The queries each table answers alike, `{t}` its name.
-const QUERIES: [&str; 26] = [
+const QUERIES: [&str; 29] = [
     "SELECT SUM(A), SUM(D), SUM(E) FROM {t} WHERE C < 60",
     "SELECT K, A, D, T, U, S FROM {t} WHERE C < 60",
     "SELECT K, U FROM {t} WHERE C BETWEEN 100 AND 3100",
@@ -95,6 +95,9 @@ const QUERIES: [&str; 26] = [
     "SELECT X.U, X.S, Y.D FROM {t} X JOIN R Y ON X.N = Y.K WHERE X.C < 600",
     "SELECT K, U FROM {t} WHERE C < 30 UNION SELECT K, U FROM {t} WHERE C BETWEEN 5990 AND 6000",
     "SELECT K FROM {t} WHERE C < 300 AND U LIKE '%mail3%'",
+    "SELECT COUNT(A), SUM(A), COUNT(*) FROM {t} WHERE (A = 1 OR A IS NULL) AND C < 3000",
+    "SELECT SUM(E), MIN(E), COUNT(*) FROM {t} WHERE E < 3.5",
+    "SELECT SUM(D), MAX(D), COUNT(D) FROM {t} WHERE D < 0.30",
 ];
 
 /// What `s` reads of table `table` by each query, sorted.

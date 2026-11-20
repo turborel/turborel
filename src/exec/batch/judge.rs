@@ -240,9 +240,10 @@ impl Judging {
         let mut row = vec![Value::Null; self.width];
         let mut out = Vec::with_capacity(rows.len());
         for &r in rows {
-            for (vector, &c) in batch.columns.iter().zip(&self.columns) {
-                if let (Some(slot), Some(v)) = (row.get_mut(c), vector.values().get(r)) {
-                    slot.clone_from(v);
+            // Each cell of the row alone made a value (RULES.md D367).
+            for (at, &c) in self.columns.iter().enumerate().take(batch.columns.len()) {
+                if let Some(slot) = row.get_mut(c) {
+                    *slot = batch.cell(at, r).to_value();
                 }
             }
             match eval_cond(cond, &row, runner) {

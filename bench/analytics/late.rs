@@ -122,4 +122,22 @@ pub fn workloads(bench: &Bench) {
             ROWS * REPEATS
         });
     }
+    // By morsels on 4 threads, each morsel's late columns decoded of the
+    // rows it keeps (RULES.md D366).
+    s.run("SET EXECUTOR.DEGREE = 4").unwrap();
+    for (name, sql) in PARALLEL {
+        bench.measure(Case::new(format!("{name} (late, 4 threads)"), "rows"), || {
+            (0..REPEATS).for_each(|_| {
+                fetched(&s, sql);
+            });
+            ROWS * REPEATS
+        });
+    }
 }
+
+/// The queries run by morsels.
+const PARALLEL: [(&str, &str); 3] = [
+    ("SUMs of 2 columns of 1%", "SELECT SUM(A), SUM(D) FROM LC WHERE C < 4000"),
+    ("fetch 5 columns of 0.1%", "SELECT K, A, D, T, U FROM LC WHERE C < 400"),
+    ("fetch 3 columns by a dictionary text", "SELECT K, A, U FROM LC WHERE T = 'name 7'"),
+];

@@ -25,7 +25,7 @@ use crate::physical::JoinKey;
 /// stream leave of its rows' columns unread before the stream is read
 /// whole, and whether one of them drops rows.
 #[derive(Debug, Clone, Default)]
-pub(super) struct Deferred {
+pub(in crate::exec) struct Deferred {
     /// Whether an operator above drops rows.
     reduced: bool,
     /// The columns of the subtree's rows none above reads, ascending.
@@ -35,19 +35,19 @@ pub(super) struct Deferred {
 impl Deferred {
     /// Of a stream read whole, its rows `width` columns wide: no column read
     /// yet, no row dropped.
-    pub(super) fn all(width: usize) -> Deferred {
+    pub(in crate::exec) fn all(width: usize) -> Deferred {
         Deferred { reduced: false, unread: (0..width).collect() }
     }
 
     /// Whether it leaves any column unread.
-    pub(super) fn any(&self) -> bool {
+    pub(in crate::exec) fn any(&self) -> bool {
         !self.unread.is_empty()
     }
 
     /// Of a filter's input, `cond` the filter's condition: the columns it
     /// reads read, rows dropped. A condition with a subquery is judged of
     /// rows made of every column, so it reads them all.
-    pub(super) fn filtered(&self, cond: &Cond) -> Deferred {
+    pub(in crate::exec) fn filtered(&self, cond: &Cond) -> Deferred {
         if cond.has_subquery() {
             return Deferred::default();
         }
@@ -61,7 +61,7 @@ impl Deferred {
     /// (`stream::pick`); every column any other reads read. A projection
     /// not of columns alone reads every column of a batch a filter kept
     /// rows of (`project::computed`), so reads them all.
-    pub(super) fn projected(&self, exprs: &[Expr]) -> Deferred {
+    pub(in crate::exec) fn projected(&self, exprs: &[Expr]) -> Deferred {
         let moved: Option<Vec<usize>> = exprs.iter().map(|e| if let Expr::Column(c) = e { Some(*c) } else { None }).collect();
         let Some(moved) = moved else { return Deferred::default() };
         let (mut unread, mut read) = (Vec::new(), Vec::new());
@@ -88,7 +88,7 @@ impl Deferred {
 
     /// The columns of a scan of `columns` it gives late: those left unread,
     /// if an operator above drops rows.
-    pub(super) fn late_of(&self, columns: &[usize]) -> Vec<usize> {
+    pub(in crate::exec) fn late_of(&self, columns: &[usize]) -> Vec<usize> {
         if !self.reduced {
             return Vec::new();
         }
@@ -105,7 +105,7 @@ fn without(columns: &[usize], read: &[usize]) -> Vec<usize> {
 /// of the rows kept of it alone (`Batch::resolve`), as the stream is read
 /// whole: by a grouping, a sort, a projection, a set operation or the rows
 /// made of it.
-pub(super) fn resolved(batches: Batches) -> Batches {
+pub(in crate::exec) fn resolved(batches: Batches) -> Batches {
     Box::new(batches.map(|kept| {
         let (mut batch, rows) = kept?;
         if batch.has_late() {

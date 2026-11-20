@@ -48,6 +48,7 @@ use crate::engine::tree::{Direction, Scan};
 use crate::error::Result;
 use crate::storage::{BATCH_ROWS, Batch, Conjunction, LateSource, Ramp, RowId};
 
+mod pending;
 mod run;
 
 /// \[DESIGN\] A column store table's batches.
@@ -64,13 +65,14 @@ pub(in crate::engine::rows) struct Batched {
     /// read decodes them of, if any is.
     late: Vec<usize>,
     source: Option<Arc<dyn LateSource>>,
-    /// The places in the group being read of its rows kept, not yet given.
-    pending: Vec<u32>,
+    /// The rows kept of the group being read, not yet given, and the
+    /// columns judging decoded of them (RULES.md D366).
+    pending: pending::Pending,
     /// Its groups, taken before its tree is read, held to the end.
     directory: Arc<Directory>,
     next_group: usize,
-    /// The group being read, its row ids, those the tree has entries for,
-    /// in order, and its runs left to read.
+    /// The group being read, its row ids if the tree has entries for any,
+    /// those it has entries for, in order, and its runs left to read.
     group: Option<(Arc<Group>, Vec<RowId>, Vec<RowId>)>,
     runs: VecDeque<(u32, u32)>,
     /// The records, unsealed, of the tree's entries in the group's range,
@@ -107,7 +109,7 @@ impl Batched {
             judgment,
             late: Vec::new(),
             source: None,
-            pending: Vec::new(),
+            pending: pending::Pending::default(),
             directory,
             next_group: 0,
             group: None,
@@ -157,7 +159,8 @@ impl Batched {
         let shadowed = self.entries_in(&entry.summary)?;
         let pages = self.table.group_pages()?;
         let group = self.table.group_of(&entry)?;
-        let ids = group.row_ids(&pages)?;
+        // Its row ids read only to tell the rows the tree shadows.
+        let ids = if shadowed.is_empty() { Vec::new() } else { group.row_ids(&pages)? };
         let vector = u32::try_from(VECTOR_ROWS).unwrap_or(u32::MAX);
         let candidates = read_candidates(&group, &pages, self.condition.as_ref())?;
         // A late column's pages are read only as it is decoded.
