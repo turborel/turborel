@@ -157,25 +157,38 @@ fn topped_sorts_raise_and_read_changes_as_rows() {
 
 /// Verifies: [DESIGN] RULES.md D380, D44: a sort held in memory looks for a
 /// cancel as it gives its rows, its input read already. A cursor of a whole
-/// sort of 200,000 rows, fetched from as another thread cancels, fails
-/// before its last row (SQLCODE -920), and every fetch after it fails so
-/// too.
+/// sort of 200,000 rows, its first row fetched, then fetched from as another
+/// thread cancels, fails before its last row (SQLCODE -920), and every
+/// fetch after it fails so too. A cancel counts only within the fetch it
+/// lands in, so a cursor whose fetches all miss it is opened again, a few
+/// times at most.
 #[test]
 fn a_sort_held_looks_for_a_cancel() {
     let (_db, s) = tables();
-    let mut cursor = s.open_cursor("SELECT R.K FROM R, (SELECT K FROM R WHERE K < 10) X ORDER BY R.K DESC").unwrap();
-    assert!(cursor.fetch().unwrap().is_some());
-    let done = Arc::new(AtomicBool::new(false));
-    let (canceller, stop) = (s.canceller(), Arc::clone(&done));
+    let (done, on) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let (canceller, stop, cancels) = (s.canceller(), Arc::clone(&done), Arc::clone(&on));
     let cancelling = std::thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
-            canceller.cancel();
+            if cancels.load(Ordering::Relaxed) {
+                canceller.cancel();
+            }
             std::thread::yield_now();
         }
     });
-    let failed = (1..200_000).find_map(|_| cursor.fetch().err());
+    let cut = (0..CANCEL_TRIES).find_map(|_| {
+        on.store(false, Ordering::Relaxed);
+        let mut cursor = s.open_cursor("SELECT R.K FROM R, (SELECT K FROM R WHERE K < 10) X ORDER BY R.K DESC").ok()?;
+        cursor.fetch().ok()?;
+        on.store(true, Ordering::Relaxed);
+        let failed = (1..200_000).find_map(|_| cursor.fetch().err())?;
+        Some((failed.code, cursor.fetch().err().map(|e| e.code)))
+    });
     done.store(true, Ordering::Relaxed);
     cancelling.join().unwrap();
-    assert_eq!(failed.map(|e| e.code), Some(Code::Cancelled), "before the last row");
-    assert_eq!(cursor.fetch().err().map(|e| e.code), Some(Code::Cancelled), "cut short");
+    let (failed, after) = cut.expect("a cursor cut short before its last row");
+    assert_eq!(failed, Code::Cancelled, "before the last row");
+    assert_eq!(after, Some(Code::Cancelled), "cut short");
 }
+
+/// Cursors of `a_sort_held_looks_for_a_cancel` opened at most.
+const CANCEL_TRIES: usize = 20;

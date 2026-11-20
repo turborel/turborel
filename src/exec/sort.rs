@@ -186,8 +186,9 @@ impl Sorter {
 }
 
 /// \[DESIGN\] The rows a sort held in memory gives between looks for a
-/// cancel (RULES.md D380).
-const SORT_RUN_ROWS: usize = 65_536;
+/// cancel (RULES.md D380): few, as a cancel counts within the fetch of a
+/// cursor it lands in alone (D44), and a look costs a few atomic reads.
+const SORT_RUN_ROWS: usize = 1_024;
 
 /// `rows`, a sort's held in memory, given while the statement `stop`
 /// cancels, if known, goes on: looked at once every `SORT_RUN_ROWS` rows.
