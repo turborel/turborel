@@ -7,9 +7,9 @@
 //! grouping values (`SpilledLobs::put_row`), then each set function's
 //! state (`Accumulator::write_state`).
 
-use super::super::table::Held;
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError};
+use crate::exec::table::GroupTable;
 use crate::spill::SpilledLobs;
 use crate::storage::mask::lsb_len;
 use crate::storage::{Batch, Column, Ints, Mask, Row};
@@ -53,17 +53,17 @@ pub(super) fn record_of(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs)
     }
 }
 
-/// Appends to `out` `group`, partly made, as a piece: its first row's
-/// number, its grouping values, then each set function's state, each after
-/// its length; whether each has one.
-pub(super) fn put_group((first, values, states): &Held, out: &mut Vec<u8>, lobs: &SpilledLobs) -> bool {
-    out.put_u64(*first);
-    lobs.put_row(out, values);
-    out.put_u32(u32::try_from(states.len()).unwrap_or(u32::MAX));
-    for state in states {
+/// Appends to `out` group `g` of `table`, partly made, as a piece: its
+/// first row's number, its grouping values, then each set function's
+/// state, each after its length; whether each has one.
+pub(super) fn put_group((table, g): (&GroupTable, usize), out: &mut Vec<u8>, lobs: &SpilledLobs) -> bool {
+    out.put_u64(table.first(g));
+    lobs.put_row(out, &table.values(g));
+    out.put_u32(u32::try_from(table.functions()).unwrap_or(u32::MAX));
+    for a in 0..table.functions() {
         let at = out.len();
         out.put_u32(0);
-        if !state.write_state(out) {
+        if !table.write_state((g, a), out) {
             return false;
         }
         let len = u32::try_from(out.len().saturating_sub(at).saturating_sub(LENGTH_BYTES)).unwrap_or(u32::MAX);
@@ -229,8 +229,10 @@ mod tests {
     use super::*;
     use crate::catalog::MemoryCatalog;
     use crate::db::State;
+    use crate::exec::table::{Key, Seed};
     use crate::exec::work::Work;
     use crate::functions::{Accumulator, Registry};
+    use crate::logical::AggCall;
     use crate::storage::{Floats, Texts};
     use crate::value::{Binary, DataType, Decimal};
 
@@ -350,22 +352,48 @@ mod tests {
         }
     }
 
-    /// Verifies: [DESIGN] RULES.md D38, D53: groups partly made, written
-    /// as pieces of one record (`put_group`, `put_pieces`), read back in
-    /// order, each as its first row's number, grouping values and set
-    /// functions' states, each merged as it was; a group of a set function
-    /// of no state is not written; a piece read back and written again
-    /// (`put_piece`) is as it was.
+    /// A plug-in's set function whose accumulator writes no state.
+    struct StatelessFunction;
+
+    impl crate::functions::AggregateFunction for StatelessFunction {
+        fn name(&self) -> &'static str {
+            "STATELESS"
+        }
+        fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
+            Ok(DataType::Boolean)
+        }
+        fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
+            Box::new(Stateless)
+        }
+    }
+
+    /// A call of `func`, of rows, of result type `result`.
+    fn call(func: crate::functions::AggregateRef, result: DataType) -> AggCall {
+        AggCall { func, arg: None, distinct: false, result, filter: None, distribution: None, label: String::new() }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D38, D53, D356: groups partly made,
+    /// written as pieces of one record (`put_group`, `put_pieces`), read
+    /// back in order, each as its first row's number, grouping values and
+    /// set functions' states, each merged as it was; a group of a set
+    /// function of no state is not written; a piece read back and written
+    /// again (`put_piece`) is as it was.
     #[test]
     fn pieces_are_read_back_as_written() {
-        let count = Registry::with_set_functions().aggregate("COUNT").unwrap().0;
-        let counted = || count.accumulator(DataType::Exact { precision: 18_u32, scale: 0_u32, spelled: crate::value::Spelled::Integer });
-        let (mut acc, other) = (counted(), counted());
-        acc.update_rows(3_usize).unwrap();
+        let count = Registry::with_set_functions().aggregate("COUNT").unwrap();
+        let integer = DataType::Exact { precision: 18_u32, scale: 0_u32, spelled: crate::value::Spelled::Integer };
+        let counted = || count.0.accumulator(integer.clone());
+        let mut table = GroupTable::new(2, &[call(count.clone(), integer.clone())], &Seed::default(), usize::MAX);
         let values = vec![Value::Char("k".to_owned()), Value::Null];
+        let (mut three, mut acc) = (Vec::new(), counted());
+        acc.update_rows(3_usize).unwrap();
+        assert!(acc.write_state(&mut three));
+        let g = table.make(0, Key::Values(&values), 41);
+        table.merge_written(g, (41, &[three])).unwrap();
+        table.make(1, Key::Values(&[Value::Null, Value::Null]), 7);
         let mut body = Vec::new();
-        assert!(put_group(&(41_u64, values.clone(), vec![acc]), &mut body, &SpilledLobs::new()));
-        assert!(put_group(&(7_u64, vec![Value::Null, Value::Null], vec![other]), &mut body, &SpilledLobs::new()));
+        assert!(put_group((&table, 0), &mut body, &SpilledLobs::new()));
+        assert!(put_group((&table, 1), &mut body, &SpilledLobs::new()));
         let mut out = Vec::new();
         put_pieces(2_u32, &body, &mut out);
         let Record::Pieces(pieces) = record_of(&out, &TypeRegistry::default(), &SpilledLobs::new()).unwrap() else { panic!("pieces") };
@@ -376,8 +404,10 @@ mod tests {
         merged.merge(&read.states[0]).unwrap();
         assert_eq!(merged.finish().unwrap().to_string(), "3");
         assert_eq!(merged.merge(&[1_u8]).err().map(|e| e.code), Some(Code::Corrupt), "not a count's state");
-        let stateless: Box<dyn Accumulator> = Box::new(Stateless);
-        assert!(!put_group(&(0_u64, Vec::new(), vec![stateless]), &mut out, &SpilledLobs::new()));
+        let stateless = call(crate::functions::AggregateRef(std::sync::Arc::new(StatelessFunction)), DataType::Boolean);
+        let mut none = GroupTable::new(0, &[stateless], &Seed::default(), usize::MAX);
+        none.make(0, Key::Values(&[]), 0);
+        assert!(!put_group((&none, 0), &mut out, &SpilledLobs::new()));
         let mut again = Vec::new();
         put_piece(read, &mut again, &SpilledLobs::new());
         put_pieces(1_u32, &again, &mut out);

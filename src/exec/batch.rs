@@ -25,12 +25,12 @@ mod keyed;
 mod project;
 mod shaped;
 mod stream;
-mod vector;
+pub(in crate::exec) mod vector;
 
 use std::sync::Arc;
 
 pub(crate) use count::storage_counted;
-pub(super) use groups::{Held, morsel_groups};
+pub(super) use groups::morsel_groups;
 pub(super) use joined::rows_of;
 pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
 use project::Place;
@@ -55,7 +55,7 @@ use crate::value::Value;
 /// the values at these places, its columns those of the row
 /// (`project::place_of`).
 #[derive(Debug, Clone)]
-enum Taken {
+pub(in crate::exec) enum Taken {
     Count,
     Column(usize),
     Expr(Expr, Vec<usize>),
@@ -64,8 +64,8 @@ enum Taken {
 /// What an aggregation read by batches reads: what each set function
 /// takes, and where each grouping column is in a batch.
 pub(in crate::exec) struct Read {
-    taken: Vec<Taken>,
-    groups: Vec<usize>,
+    pub(in crate::exec) taken: Vec<Taken>,
+    pub(in crate::exec) groups: Vec<usize>,
 }
 
 /// What each of `aggs` takes of a batch of `columns`, if each counts rows
@@ -170,7 +170,7 @@ pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIte
 /// `given`th of those given, the rows `read_rows` of the batch; each set
 /// function a vector of them at a time, of values or of integers, but of
 /// an expression not evaluated by vectors, a row at a time.
-fn fed_group(
+pub(in crate::exec) fn fed_group(
     states: &mut [Box<dyn Accumulator>],
     (taken, scratch, runner): (&[Taken], &mut Row, &Runner),
     (batch, lanes): (&Batch, &[Option<Fed<'_>>]),
@@ -227,7 +227,7 @@ fn evaluated((e, inputs): (&Expr, &[usize]), (scratch, runner): (&mut Row, &Runn
 /// [ISO/IEC 9075:1992 §6.5 GR1b] Raises the warning null value eliminated
 /// in set function, heard by `runner`, if a set function's argument took
 /// out a null: `any`.
-fn eliminated(any: bool, runner: &Runner) {
+pub(in crate::exec) fn eliminated(any: bool, runner: &Runner) {
     if any {
         warn(runner, SqlState::NULL_VALUE_ELIMINATED);
     }
@@ -376,7 +376,7 @@ fn fed_by_rows(
 /// The values of each of `taken` that is an expression of the rows `rows`
 /// of `batch`, or all, evaluated a vector at a time, where it is
 /// (`vector.rs`).
-fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [u32]>) -> Vec<Option<Fed<'b>>> {
+pub(in crate::exec) fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [u32]>) -> Vec<Option<Fed<'b>>> {
     let fed = |e: &'b Expr, inputs: &'b [usize]| {
         vector::ints::lane(e, inputs, batch, rows).map(Fed::Ints).or_else(|| vector::lane(e, inputs, batch, rows).map(Fed::Values))
     };
@@ -385,7 +385,7 @@ fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [u32]>) -> V
 
 /// An expression's values of a batch, evaluated a vector at a time: as
 /// values, or as integers.
-enum Fed<'b> {
+pub(in crate::exec) enum Fed<'b> {
     Values(Lane<'b>),
     Ints(Ints),
 }

@@ -25,7 +25,7 @@ static NULL: Value = Value::Null;
 /// An expression's values over the rows of a batch given: a column's, read
 /// in place, of those rows or all; ones made, one a row given; or a
 /// constant, every row's.
-pub(super) enum Lane<'b> {
+pub(in crate::exec) enum Lane<'b> {
     Column(&'b [Value], Option<&'b [u32]>),
     Made(Vec<Value>),
     Const(&'b Value),
@@ -33,7 +33,7 @@ pub(super) enum Lane<'b> {
 
 impl Lane<'_> {
     /// The value of the `n`th row given.
-    pub(super) fn at(&self, n: usize) -> &Value {
+    pub(in crate::exec) fn at(&self, n: usize) -> &Value {
         match self {
             Lane::Column(values, rows) => values.get(crate::storage::sel::nth(*rows, n)).unwrap_or(&NULL),
             Lane::Made(values) => values.get(n).unwrap_or(&NULL),

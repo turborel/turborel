@@ -6,16 +6,28 @@
 //! thread of its own (`Accumulator::merge`), in the order of the morsels,
 //! so each set function takes its values in the order it would alone.
 //!
+//! A pipeline read by batch groups each morsel in the executor's table
+//! (`exec/table.rs`), its groups split among the partitions by the high
+//! bits of their hashes and handed over whole (`table/made.rs`), each
+//! partition merged into a table of its own in waves, each group found by
+//! the hash it came with and its states merged slot by slot (`waves.rs`,
+//! RULES.md D356).
+//!
 //! Each group is numbered by its first row, morsel and place, after the
 //! seeds, numbered first, and the groups are given in that order, as the
 //! serial grouping gives them (`exec/group.rs`), DISTINCT each row the
-//! first time it comes. The pieces a grouping holds are charged to one
+//! first time it comes: each partition orders its own groups on its
+//! thread, and the statement's thread merges the partitions' orders. The
+//! pieces a grouping holds are charged to one
 //! work grant (RULES.md D38, D298); past it, or bound past it as its first
 //! morsels show, it gives way to the serial grouping, which spills, its
 //! rows read again in the statement's snapshot.
 
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
+
+mod waves;
 
 use super::batched::ByBatch;
 use super::pipeline::Pipeline;
@@ -24,8 +36,9 @@ use super::run::Morsels;
 use super::{Held, Limit};
 use crate::db::State;
 use crate::error::{Result, SqlState};
-use crate::exec::batch::{Held as BatchHeld, Read, morsel_groups, read_for};
+use crate::exec::batch::{Read, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
+use crate::exec::table::Seed;
 use crate::exec::{RowIter, Runner, broken, eval, warn};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
@@ -62,13 +75,18 @@ type Merging = (u64, Row, Vec<Box<dyn Accumulator>>);
 /// One partition's pieces, by morsel in order.
 type Chunks = Vec<Vec<Piece>>;
 
+/// Each partition's groups, finished with their numbers, in the order of
+/// their first rows; or that the grouping gave way.
+type Runs = Held<Vec<Vec<(u64, Row)>>>;
+
 /// What a grouping groups: by `Spec`, or, of DISTINCT, by every column;
 /// and, of a pipeline read by batch, what it reads of each batch
-/// (`exec/batch/groups/morsel.rs`).
+/// (`exec/batch/groups/morsel.rs`) and the seed its keys are hashed by.
 struct Grouping {
     spec: Spec,
     distinct: bool,
     read: Option<Read>,
+    seed: Seed,
 }
 
 impl Grouping {
@@ -91,10 +109,10 @@ impl Grouping {
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
-        (Grouping { spec, distinct: false, read: None }, input)
+        (Grouping { spec, distinct: false, read: None, seed: db.functions.seed().clone() }, input)
     } else if let Plan::Distinct { input } = plan {
         let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
-        (Grouping { spec, distinct: true, read: None }, input)
+        (Grouping { spec, distinct: true, read: None, seed: db.functions.seed().clone() }, input)
     } else {
         return Err(broken("not a grouping run in parallel"));
     };
@@ -103,23 +121,83 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize)
     let mut grouping = grouping;
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     let grouping = Arc::new(grouping);
-    let Held::Kept(chunks) = pieces(pipeline, Arc::clone(&grouping), (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
+    let mut runs = if grouping.read.is_some() {
+        let Held::Kept(runs) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
+        runs
+    } else {
+        let Held::Kept(runs) = merged_all(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
+        runs
+    };
+    if runs.iter().all(Vec::is_empty) && grouping.spec.groups.is_empty() && !grouping.distinct {
+        // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
+        runs = vec![vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)]];
+    }
+    Ok(Held::Kept(limit.keeping(Box::new(Ordered::of(runs)))))
+}
+
+/// The groups of each partition of `grouping`'s pipeline read a row at a
+/// time, each finished with its number, in the order of their first rows:
+/// its morsels' pieces made on up to `degree` threads, then each
+/// partition's merged by a thread; given way past `limit`.
+///
+/// # Errors
+///
+/// As reading the pipeline, or a set function, fails.
+fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Arc<State>, TxId, usize), limit: &Limit) -> Result<Runs> {
+    let Held::Kept(chunks) = pieces(pipeline, Arc::clone(grouping), (db, tx, degree), limit)? else { return Ok(Held::GaveWay) };
     let chunks: Arc<Vec<Mutex<Chunks>>> = Arc::new(chunks.into_iter().map(Mutex::new).collect());
-    let merging = Arc::clone(&grouping);
+    let merging = Arc::clone(grouping);
     let merge = Box::new(move |p: usize| {
         let taken = chunks.get(p).map(|c| std::mem::take(&mut *c.lock().unwrap_or_else(PoisonError::into_inner))).unwrap_or_default();
         merged(&merging, p, taken)
     });
-    let mut groups: Vec<(u64, Row)> = Vec::new();
-    for part in Morsels::start(db, tx, (PARTS, degree), merge) {
-        groups.extend(part?);
+    Morsels::start(db, tx, (PARTS, degree), merge).collect::<Result<Vec<_>>>().map(Held::Kept)
+}
+
+/// The groups of each partition, each partition's in the order of their
+/// first rows, given in that order: of the partitions' first groups not
+/// yet given, the earliest, as a merge of sorted runs takes them.
+struct Ordered {
+    runs: Vec<std::vec::IntoIter<(u64, Row)>>,
+    /// Each run's group next given, if any.
+    heads: Vec<Option<Row>>,
+    /// The first rows' numbers of the heads, each with its run, earliest
+    /// first.
+    order: BinaryHeap<Reverse<(u64, usize)>>,
+}
+
+impl Ordered {
+    /// The groups of the runs `runs`, each in order.
+    fn of(runs: Vec<Vec<(u64, Row)>>) -> Ordered {
+        let mut ordered = Ordered { runs: Vec::new(), heads: Vec::new(), order: BinaryHeap::with_capacity(runs.len()) };
+        for (at, run) in runs.into_iter().enumerate() {
+            let mut run = run.into_iter();
+            let head = run.next().map(|(first, row)| {
+                ordered.order.push(Reverse((first, at)));
+                row
+            });
+            ordered.runs.push(run);
+            ordered.heads.push(head);
+        }
+        ordered
     }
-    if groups.is_empty() && grouping.spec.groups.is_empty() && !grouping.distinct {
-        // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
-        groups.push((0, finished(fresh(&grouping.spec.aggs), Vec::new())?));
+}
+
+impl Iterator for Ordered {
+    type Item = Result<Row>;
+
+    fn next(&mut self) -> Option<Result<Row>> {
+        let Reverse((_, at)) = self.order.pop()?;
+        let (Some(head), Some(run)) = (self.heads.get_mut(at), self.runs.get_mut(at)) else {
+            return Some(Err(broken("a partition's groups are missing")));
+        };
+        let row = head.take();
+        *head = run.next().map(|(first, next)| {
+            self.order.push(Reverse((first, at)));
+            next
+        });
+        row.map(Ok)
     }
-    groups.sort_unstable_by_key(|g| g.0);
-    Ok(Held::Kept(limit.keeping(Box::new(groups.into_iter().map(|(_, row)| Ok(row))))))
 }
 
 /// The pieces of `pipeline`'s rows under `grouping`, each morsel's made
@@ -135,28 +213,32 @@ fn pieces(
     let count = pipeline.count();
     let work = Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
-        let parts = if let Some(read) = &grouping.read {
-            let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
-            partitioned(morsel_groups(read, &grouping.spec.aggs, batches, (&runner, first_of(&grouping, m)))?)
-        } else {
-            let rows = pipeline.morsel(m, &runner)?;
-            morsel_pieces(&grouping, (m, rows), &runner)?
-        };
+        let rows = pipeline.morsel(m, &runner)?;
+        let parts = morsel_pieces(&grouping, (m, rows), &runner)?;
         Ok(parts.into_iter().map(|made| (pieces_bytes(&made), made)).collect::<Vec<_>>())
     });
     let (mut chunks, from): (Vec<Chunks>, usize) = ((0..PARTS).map(|_| Vec::new()).collect(), limit.held());
-    for (done, split) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
-        for (part, (bytes, made)) in chunks.iter_mut().zip(split?) {
-            if !limit.take(bytes) {
-                return Ok(Held::GaveWay);
-            }
-            part.push(made);
+    for (done, morsel) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
+        if !handed(morsel?, &mut chunks, limit) {
+            return Ok(Held::GaveWay);
         }
         if !limit.on_course(from, (done, count)) {
             return Ok(Held::GaveWay);
         }
     }
     Ok(Held::Kept(chunks))
+}
+
+/// Hands a morsel's pieces, by partition, each with the bytes they hold,
+/// to the partitions' `chunks`, charged to `limit`: whether they fit it.
+fn handed(parts: Vec<(usize, Vec<Piece>)>, chunks: &mut [Chunks], limit: &Limit) -> bool {
+    for (part, (bytes, made)) in chunks.iter_mut().zip(parts) {
+        if !limit.take(bytes) {
+            return false;
+        }
+        part.push(made);
+    }
+    true
 }
 
 /// The bytes `made`, a morsel's pieces of one partition, hold: counted by
@@ -194,19 +276,6 @@ fn read_of(grouping: &Grouping, by: &ByBatch) -> Option<Read> {
 fn first_of(grouping: &Grouping, m: usize) -> u64 {
     let seeds = u64::try_from(grouping.spec.seeds.len()).unwrap_or(u64::MAX);
     seeds.saturating_add(u64::try_from(m).unwrap_or(u64::MAX).checked_shl(PLACE_BITS).unwrap_or(u64::MAX))
-}
-
-/// A morsel's groups `made`, each written as a piece, by partition of its
-/// key.
-fn partitioned(made: Vec<(Vec<u8>, BatchHeld)>) -> Vec<Vec<Piece>> {
-    let mut parts: Vec<Vec<Piece>> = (0..PARTS).map(|_| Vec::new()).collect();
-    for (key, (first, values, states)) in made {
-        let states = states.iter().map(|s| written(s.as_ref())).collect();
-        if let Some(part) = parts.get_mut(part_of(&key)) {
-            part.push(Piece { first, key, values, states });
-        }
-    }
-    parts
 }
 
 /// The pieces of morsel `m`'s `rows`, by partition, its expressions
@@ -280,9 +349,17 @@ fn feed(aggs: &[AggCall], states: &mut [Box<dyn Accumulator>], row: &Row, runner
     Ok(())
 }
 
-/// The groups of partition `p`: its seeds', then its pieces merged in
-/// order, each finished, with its number.
+/// The groups of partition `p`, each finished, with its number, in the
+/// order of their first rows: its seeds', then its pieces merged in order.
 fn merged(grouping: &Grouping, p: usize, chunks: Chunks) -> Result<Vec<(u64, Row)>> {
+    let mut groups = merged_pieces(grouping, p, chunks)?;
+    groups.sort_unstable_by_key(|g| g.0);
+    Ok(groups)
+}
+
+/// The groups of partition `p` of pieces: its seeds', then its pieces
+/// merged in order, each finished, with its number.
+fn merged_pieces(grouping: &Grouping, p: usize, chunks: Chunks) -> Result<Vec<(u64, Row)>> {
     let aggs = &grouping.spec.aggs;
     let mut groups: HashMap<Vec<u8>, Merging> = HashMap::new();
     for (n, seed) in (0_u64..).zip(&grouping.spec.seeds) {

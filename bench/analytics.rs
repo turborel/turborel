@@ -32,8 +32,9 @@
 //! subqueries unnested and nested alone (`analytics/unnesting.rs`), to
 //! `parallel`, those run by morsels alone, to `distinct`, the DISTINCT
 //! set functions' alone, to `counts`, a row-store table counted and
-//! summed, its zones settled and not, alone (`analytics/counts.rs`), or
-//! to `decode`, the column store's decoding alone (`analytics/decode.rs`).
+//! summed, its zones settled and not, alone (`analytics/counts.rs`),
+//! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
+//! or to `grouping`, groupings on one thread alone (`analytics/grouping.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -54,6 +55,8 @@ mod decode;
 mod distinct;
 #[path = "analytics/graph.rs"]
 mod graph;
+#[path = "analytics/grouping.rs"]
+mod grouping;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
@@ -71,7 +74,8 @@ use turborel::db::{Database, Session};
 /// network's, `graph` for path search's on a graph in memory,
 /// `unnesting` for correlated subqueries', `parallel` for those run by
 /// morsels, `distinct` for the DISTINCT set functions', `counts` for a
-/// row-store table's counts, `decode` for the column store's decoding.
+/// row-store table's counts, `decode` for the column store's decoding,
+/// `grouping` for groupings on one thread.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -110,6 +114,10 @@ fn main() {
         parallel::workloads(&bench);
         return;
     }
+    if only == "grouping" {
+        grouping::workloads(&bench);
+        return;
+    }
     let db = database();
     let s = db.session("B");
     let tables = [("F", "W", ""), ("FC", "WC", " (columnstore)")];
@@ -129,6 +137,7 @@ fn main() {
     social::workloads(&bench);
     unnesting::workloads(&bench);
     parallel::workloads(&bench);
+    grouping::workloads(&bench);
     counts::workloads(&bench);
     decode::workloads(&bench);
 }

@@ -38,6 +38,8 @@ behind it, and each can be replaced or added to.
 - DISTINCT set functions computed by two groupings, read by batches.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
+- One table of groups with typed keys and columns of set functions'
+  states, merged in parallel in waves, its hash keyed past long probes.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins

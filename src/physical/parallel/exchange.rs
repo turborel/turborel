@@ -1,37 +1,39 @@
-//! \[DESIGN\] What a grouping's exchange costs (RULES.md D355): a grouping
-//! or DISTINCT run in parallel groups each morsel apart, writes each
-//! morsel's groups as pieces, and merges each partition's pieces anew
+//! \[DESIGN\] What a grouping's exchange costs (RULES.md D355, D356): a
+//! grouping or DISTINCT run in parallel groups each morsel apart, hands its
+//! groups to the partitions, and merges each partition's anew
 //! (`exec/parallel/grouped.rs`). A morsel of `m` rows of `G` groups, each
 //! as likely, holds `G (1 - (1 - 1/G)^m)` of them, as Cardenas, "Analysis
 //! and Performance of Inverted Data Base Structures" (1975), counts the
-//! blocks a query touches, so the part's `M` morsels write that many
+//! blocks a query touches, so the part's `M` morsels hand over that many
 //! pieces each. Its threads share the rows and the work of the pieces, each
-//! costing `PIECE_WORKED` rows grouped; but a piece's bytes move through
-//! the memory every thread shares as they are written, gathered and read
-//! back, which costs `PIECE_MOVED` rows grouped whatever the threads; and
-//! the statement's thread orders every group by its first row alone, each
-//! costing `GROUP_ORDERED`. The part stays serial if that costs the rows'
-//! grouping alone as much: of many groups, each morsel grouped barely
-//! shrinks.
+//! costing `PIECE_WORKED` rows grouped; but a piece's vectors move through
+//! the memory every thread shares as they are handed over and merged,
+//! which costs `PIECE_MOVED` rows grouped whatever the threads; and the
+//! statement's thread merges the partitions' groups in the order of their
+//! first rows, each costing `GROUP_ORDERED`. The part stays serial if that
+//! costs the rows' grouping alone as much: of many groups on few threads,
+//! each morsel grouped barely shrinks.
 
 use super::super::Plan;
 use crate::db::State;
 use crate::logical::Expr;
 
 /// \[DESIGN\] What a piece costs its thread, in rows grouped: its group
-/// made in its morsel, its states written, its key hashed to its
-/// partition, then read and merged into a group made anew, each of its
-/// vectors and states allocated twice where a row grouped is looked up.
-const PIECE_WORKED: f64 = 4.0_f64;
+/// made in its morsel's table, found again by the hash it came with in its
+/// partition's, its states added slot to slot, and taken up again by each
+/// wave after (`exec/parallel/grouped/waves.rs`). Measured as most of a
+/// row and a half of a grouping with set functions, less of DISTINCT.
+const PIECE_WORKED: f64 = 1.5_f64;
 
-/// \[DESIGN\] What a piece's bytes cost moving through the memory the
-/// threads share, in rows grouped: written by one thread, read by another,
-/// none of it in a cache the two share.
-const PIECE_MOVED: f64 = 0.75_f64;
+/// \[DESIGN\] What a piece's vectors cost moving through the memory the
+/// threads share, in rows grouped: written by one thread, read by another
+/// in order, as columns, none of it allocated a piece at a time.
+const PIECE_MOVED: f64 = 0.1_f64;
 
 /// \[DESIGN\] What a group costs the statement's thread, in rows grouped:
-/// gathered from its partition, ordered by its first row, given.
-const GROUP_ORDERED: f64 = 1.0_f64;
+/// taken from the heap of the partitions' groups by their first rows,
+/// given, each partition having ordered its own.
+const GROUP_ORDERED: f64 = 0.4_f64;
 
 /// A count as a float, exact to 2^32.
 fn real(n: usize) -> f64 {
