@@ -9659,8 +9659,11 @@ A conjunct over two operands of a product that can raise is evaluated
 on the rows of the product (D15), so it held the chain as written and
 the join order was not enumerated. The rule `hoist_raising_expressions`
 (`optimizer/hoisting.rs`) takes each maximal part of such a conjunct
-that reads one operand and can raise, or is a sort key of a collation,
-and computes it as a column after that operand's own. The conjunct
+that reads one operand and can raise by its declared types, or is a sort
+key of a collation, and computes it as a column after that operand's
+own. A part that cannot raise by its types is left in place, as the
+enumeration judges its conjunct movable already, and an expression
+written to keep a join a nested loop keeps it so. The conjunct
 reads the column and, when nothing else in it can raise, may then be
 evaluated wherever the enumeration puts it.
 
@@ -9670,8 +9673,8 @@ over a VALUES of one row. The part is so evaluated on the rows of the
 operand exactly when the product has a row, and raises of the same rows
 it would of the product [X3.135-1986 §5.20 GR2b]. An operand of an
 outer reference, or of no column, takes no guard, and its conjunct is
-left. A part that cannot raise needs no guard, as evaluating it of more
-rows or fewer changes nothing.
+left. A sort key cannot raise and needs no guard, as evaluating it of
+more rows or fewer changes nothing.
 
 The search goes only into what is evaluated whenever the condition is,
 never into a CASE's results or later conditions [ISO/IEC 9075:1992 §6.9
@@ -9680,8 +9683,9 @@ invokes a routine, calls a function that is not deterministic or warns,
 which computed once a row of the operand would happen fewer times. Of a
 LEFT, RIGHT or FULL join's ON, a raising part of the operand that
 supplies nulls is taken over a guard of the other, as of a product. A
-part of a preserved operand is taken only when it cannot raise, as its
-rows are kept whatever the ON gives [§7.5 GR1c, GR5]. A LEFT join of a
+sort key of a preserved operand is taken with no guard, and a raising
+part of it never, as its rows are kept whatever the ON gives [§7.5 GR1c,
+GR5]. A LEFT join of a
 chain of products whose ON reads one operand of the chain alone, and
 cannot raise, is moved onto that operand within the chain first, which
 gives the same rows, so the unnested `SINGLE` of a scalar subquery is
@@ -9735,8 +9739,8 @@ rows not distinct would be taken as one after the operands' limits.
 A LEFT join gives each row of its left operand once when at most one row
 of the right satisfies the ON for it [ISO/IEC 9075:1992 §7.5 GR1c]. When
 the right is a table, filtered or not, whose ON equates each column of
-a unique key of it to a column of the left, no two of its rows match a
-left row. If nothing above reads the right's columns, the join is the
+a unique key of it to a value of the left alone, a column or an
+expression of its columns, no two of its rows match a left row. If nothing above reads the right's columns, the join is the
 left operand (`optimizer/elimination.rs`), and a RIGHT join mirrors it.
 The key must hold whenever a statement reads it, so its constraint is
 not deferrable, and neither is the NOT NULL or PRIMARY KEY of each of

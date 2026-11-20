@@ -13,18 +13,20 @@
 //! column after the operand's, over the guard that
 //! `push_raising_filter_into_product` uses, a row of no columns if every
 //! other operand has a row: it raises exactly when the product would. A
-//! part that cannot raise by the declared types (`logical/raises.rs`), as
-//! a sort key, needs no guard. The conjunct reads the column in its place,
-//! no longer raises, and moves as any. A projection over the chain keeps
-//! its own columns.
+//! sort key, which cannot raise, needs no guard. A part that cannot raise
+//! by the declared types (`logical/raises.rs`) is not taken, as the
+//! enumeration already judges its conjunct movable. The conjunct reads the
+//! column in its place, no longer raises, and moves as any. A projection
+//! over the chain keeps its own columns.
 //!
 //! An ON condition is applied to every row of the product of its operands
 //! [ISO/IEC 9075:1992 §7.5 GR1c]. A part of the operand that supplies
 //! nulls is computed over a guard of the other, as of a product: the
 //! join's rows are then all made of a row of each or of the preserved
 //! operand alone, which has rows only when the join does. A part of a
-//! preserved operand is taken only when it cannot raise, as a guard would
-//! drop that operand's rows when the other has none. A part reading both
+//! preserved operand is taken only when it is a sort key that cannot
+//! raise, as a guard would drop that operand's rows when the other has
+//! none. A part reading both
 //! operands is left, and so is the condition.
 
 mod found;
@@ -83,8 +85,8 @@ fn product_hoisted(cond: &Cond, chain: &LogicalPlan, catalog: &dyn Catalog) -> O
     let mut plans = Vec::new();
     operands_of(chain, &mut plans);
     let operands = Operands::new(plans);
-    let everywhere = |_: usize, _: &Expr| true;
-    let mut finder = Finder::new(&operands, &everywhere);
+    let needed = |at: usize, e: &Expr| operands.needed(at, e, catalog);
+    let mut finder = Finder::new(&operands, &needed);
     let mut conjuncts = Vec::new();
     split_and(cond.clone(), &mut conjuncts);
     let conjuncts: Vec<Cond> = conjuncts.into_iter().map(|c| if operands.searched(&c) { finder.cond(c) } else { c }).collect();

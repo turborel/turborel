@@ -161,20 +161,26 @@ fn table_of(plan: &LogicalPlan) -> Option<(&crate::catalog::QualifiedName, Optio
 }
 
 /// The columns of the operand of `width` columns beginning at `start` that
-/// a conjunct of `cond` equates with a column of the other operand, as
-/// that operand's own.
+/// a conjunct of `cond` equates with a value of the other operand alone,
+/// a column or an expression of its columns, of no subquery, as that
+/// operand's own: each row of the other gives one value, which at most one
+/// row of a unique key equals.
 fn equated_columns(cond: &Cond, start: usize, width: usize) -> Vec<usize> {
     let own = |c: usize| c.checked_sub(start).filter(|at| *at < width);
+    let other = |e: &Expr| {
+        let mut columns = Vec::new();
+        expr_columns(e, &mut columns);
+        columns.iter().all(|&c| own(c).is_none())
+    };
     let mut conjuncts = Vec::new();
     split_and(cond.clone(), &mut conjuncts);
     conjuncts
         .iter()
+        .filter(|c| c.subqueries().is_empty())
         .filter_map(|c| {
-            let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c else { return None };
-            match (own(*a), own(*b)) {
-                (Some(at), None) | (None, Some(at)) => Some(at),
-                (Some(_), Some(_)) | (None, None) => None,
-            }
+            let Cond::Compare(a, CompOp::Eq, b) = c else { return None };
+            let column = |e: &Expr| if let Expr::Column(k) = e { own(*k) } else { None };
+            column(a).filter(|_| other(b)).or_else(|| column(b).filter(|_| other(a)))
         })
         .collect()
 }

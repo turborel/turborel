@@ -15,7 +15,10 @@
 //! for each row of its operand, it would give its value fewer times than
 //! for each row of the product.
 
-use crate::logical::{Cond, Expr, LogicalPlan, MAX_JUDGED_DEPTH, cond_columns, expr_columns};
+use crate::catalog::Catalog;
+use crate::logical::{
+    Cond, Expr, LogicalPlan, MAX_JUDGED_DEPTH, can_raise_typed, cond_columns, expr_columns, map_expr_columns, plan_column_type,
+};
 
 /// The operands of a join and where their columns begin among its own.
 pub(super) struct Operands<'p> {
@@ -62,6 +65,16 @@ impl<'p> Operands<'p> {
         let mut keyed = false;
         c.for_each_expr(&mut |e| keyed = keyed || has_sort_key(e, 0));
         (keyed || c.can_raise()) && self.read_by(c) > 1
+    }
+
+    /// Whether the part `e` of operand `at` is worth a column: a sort key,
+    /// or one that can raise by its columns' declared types. A part that
+    /// cannot raise by them is left where it is, as the enumeration judges
+    /// it so too (`physical/enumerate/extract.rs`).
+    pub(super) fn needed(&self, at: usize, e: &Expr, catalog: &dyn Catalog) -> bool {
+        let (Some(plan), Some(start)) = (self.plans.get(at), self.starts.get(at)) else { return false };
+        let own = map_expr_columns(e.clone(), &|c| c.saturating_sub(*start));
+        matches!(e, Expr::SortKey(..)) || can_raise_typed(&own, &|c| plan_column_type(plan, c, catalog))
     }
 
     /// How many operands the columns of `c` are of.

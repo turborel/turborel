@@ -94,8 +94,8 @@ impl Join<'_> {
     /// The join with the parts of its condition over both operands made
     /// columns of one, if one has a part to take and the condition is then
     /// left raising nothing. A part of the operand that supplies nulls is
-    /// taken over a guard of the other; of a preserved one, only a part
-    /// that cannot raise, which needs none.
+    /// taken over a guard of the other; of a preserved one, only a sort
+    /// key that cannot raise, which needs none.
     pub(super) fn hoisted(&self, catalog: &dyn Catalog) -> Option<LogicalPlan> {
         let kind = self.kind;
         let operands = Operands::new(vec![self.left, self.right]);
@@ -107,7 +107,7 @@ impl Join<'_> {
         // A guard of a preserved operand would drop its rows.
         let supplies =
             |at: usize| if at == 0 { kind.keeps_right() && !kind.keeps_left() } else { kind.keeps_left() && !kind.keeps_right() };
-        let allowed = |at: usize, e: &Expr| supplies(at) || safe(at, e).unwrap_or(false);
+        let allowed = |at: usize, e: &Expr| operands.needed(at, e, catalog) && (supplies(at) || safe(at, e).unwrap_or(false));
         let mut finder = Finder::new(&operands, &allowed);
         let mut conjuncts = Vec::new();
         split_and(self.cond.clone(), &mut conjuncts);

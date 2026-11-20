@@ -89,20 +89,19 @@ fn hoisted_parts_raise_as_the_product_would() {
 }
 
 /// Verifies: [ISO/IEC 9075:1992 §7.5 GR1c, GR5]; [DESIGN] RULES.md D373:
-/// an ON's part of the preserved operand is hoisted only when it cannot
-/// raise, a sort key or exact arithmetic within 18 digits, and the rows
-/// of LEFT, RIGHT and FULL joins and of joins written with ON are alike
-/// with the rule and without it.
+/// an ON's raising part of the operand that supplies nulls is hoisted, a
+/// sort key of either, and a raising part of an inner join's; a raising
+/// part of the preserved operand, of a FULL join, and a sum that cannot
+/// raise of its INTEGER columns are left. The rows of each are alike with
+/// the rule and without it.
 #[test]
 fn outer_joins_keep_their_rows_hoisted() {
     let (_db, s) = tables();
     let hoisted = [
-        "SELECT C.K, D.Y FROM {C} C LEFT JOIN {D} D ON C.X = D.K AND C.X + 1 > D.Y",
-        "SELECT C.K, D.Y FROM {C} C RIGHT JOIN {D} D ON C.X = D.K AND C.X + 1 > D.Y",
-        "SELECT C.K, D.Y FROM {C} C FULL JOIN {D} D ON C.X = D.K AND C.X + 1 > D.Y",
         "SELECT C.K, Z.K FROM {C} C LEFT JOIN {Z} Z ON C.X = Z.K AND Z.X / Z.Y < C.K",
+        "SELECT Z.K, C.K FROM {Z} Z RIGHT JOIN {C} C ON C.X = Z.K AND Z.X / Z.Y < C.K",
         "SELECT A.K, C.K FROM {A} A LEFT JOIN {C} C ON A.S COLLATE CASE_INSENSITIVE = C.S",
-        "SELECT A.V, C.X FROM {A} A JOIN {B} B ON A.K = B.K JOIN {C} C ON B.W = C.K AND A.V + 1 > C.X",
+        "SELECT A.V, C.X FROM {A} A JOIN {D} D ON A.K = D.K JOIN {C} C ON D.Y = C.K AND A.V / (A.K + 1000) < C.X",
     ];
     for sql in hoisted {
         alike(&s, HOIST_RAISING_EXPRESSIONS, sql);
@@ -110,6 +109,9 @@ fn outer_joins_keep_their_rows_hoisted() {
     let kept = [
         "SELECT Z.K, D.Y FROM {Z} Z LEFT JOIN {D} D ON Z.K = D.K AND Z.X / Z.Y > D.Y",
         "SELECT Z.K, D.Y FROM {Z} Z FULL JOIN {D} D ON Z.K = D.K AND Z.X / Z.Y > D.Y",
+        "SELECT C.K, D.Y FROM {C} C LEFT JOIN {D} D ON C.X = D.K AND C.X + 1 > D.Y",
+        "SELECT C.K, D.Y FROM {C} C RIGHT JOIN {D} D ON C.X = D.K AND C.X + 1 > D.Y",
+        "SELECT C.K, D.Y FROM {C} C FULL JOIN {D} D ON C.X = D.K AND C.X + 1 > D.Y",
     ];
     for sql in kept {
         left(&s, HOIST_RAISING_EXPRESSIONS, sql);

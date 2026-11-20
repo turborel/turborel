@@ -5,6 +5,7 @@ use super::*;
 use crate::catalog::MemoryCatalog;
 use crate::db::State;
 use crate::logical::{OuterJoin, Truth};
+use crate::value::collation::{CASE_INSENSITIVE, CollationRef, Pad, builtin};
 use crate::value::{ArithOp, CompOp, DataType, Decimal, Spelled, Value};
 
 /// An operand of one row of `width` INTEGER columns.
@@ -23,6 +24,17 @@ fn arith(a: Expr, op: ArithOp, b: Expr) -> Expr {
 
 fn one() -> Expr {
     Expr::Const(Value::Exact(Decimal::new(1, 0)))
+}
+
+/// The sort key of `e` under the collation CASE_INSENSITIVE.
+fn key(e: Expr) -> Expr {
+    let collation = builtin().into_iter().find(|c| c.name() == CASE_INSENSITIVE).unwrap();
+    Expr::SortKey(Box::new(e), CollationRef { collation, pad: Pad::Space })
+}
+
+/// The equality of the sort keys of columns `a` and `b`.
+fn keyed(a: usize, b: usize) -> Cond {
+    Cond::Compare(key(Expr::Column(a)), CompOp::Eq, key(Expr::Column(b)))
 }
 
 fn greater(a: Expr, b: Expr) -> Cond {
@@ -61,9 +73,10 @@ fn guarded(plan: &LogicalPlan) -> bool {
 /// Verifies: [X3.135-1986 §5.20 GR2b]; [DESIGN] RULES.md D373, D15: of
 /// `A.X / A.Y > B.Z`, the quotient, which can raise and reads A alone, is
 /// a column after A's over a guard of B, and the conjunct reads it and no
-/// longer raises; of `A.X + 1 > B.Z`, the sum, which cannot raise of
-/// INTEGER columns, is A's column with no guard; the projection over the
-/// chain keeps its columns.
+/// longer raises; of a collated equality, each sort key is its operand's
+/// column with no guard; of `A.X + 1 > B.Z`, the sum, which cannot raise of
+/// INTEGER columns, is left; the projection over the chain keeps its
+/// columns.
 #[test]
 fn parts_are_columns_of_their_operands() {
     let quotient = greater(arith(Expr::Column(0), ArithOp::Div, Expr::Column(1)), Expr::Column(2));
@@ -73,10 +86,10 @@ fn parts_are_columns_of_their_operands() {
     let (operands, cond) = operands_made(plan);
     assert!(guarded(&operands[0]) && operands[0].width() == 3, "{:?}", operands[0]);
     assert!(!cond.can_raise(), "{cond:?}");
+    let (unguarded, _) = operands_made(filtered(keyed(0, 2), product(operand(2), operand(1))).unwrap());
+    assert!(unguarded.iter().all(|o| !guarded(o) && matches!(o, LogicalPlan::Project { .. })), "{unguarded:?}");
     let sum = greater(arith(Expr::Column(0), ArithOp::Add, one()), Expr::Column(2));
-    let (unguarded, safe) = operands_made(filtered(sum, product(operand(2), operand(1))).unwrap());
-    assert!(!guarded(&unguarded[0]) && matches!(unguarded[0], LogicalPlan::Project { .. }), "{:?}", unguarded[0]);
-    assert!(!safe.can_raise());
+    assert!(filtered(sum, product(operand(2), operand(1))).is_none());
 }
 
 /// Verifies: [ISO/IEC 9075:1992 §6.9 GR1, GR2]; [DESIGN] RULES.md D373:
@@ -102,15 +115,14 @@ fn what_cannot_be_taken_is_left() {
     let quotient = || greater(arith(Expr::Column(0), ArithOp::Div, Expr::Column(1)), Expr::Column(2));
     assert!(filtered(quotient(), product(operand(2), outer.clone())).is_none(), "T T");
     assert!(filtered(quotient(), product(operand(2), operand(1))).is_some(), "T F");
-    let sum = greater(arith(Expr::Column(0), ArithOp::Add, one()), Expr::Column(2));
-    assert!(filtered(sum, product(operand(2), outer)).is_some(), "F T");
+    assert!(filtered(keyed(0, 2), product(operand(2), outer)).is_some(), "F T");
 }
 
 /// Verifies: [ISO/IEC 9075:1992 §7.5 GR1c, GR5]; [DESIGN] RULES.md D373:
 /// of a LEFT join's ON, a raising part of the operand that supplies nulls
 /// is taken over a guard; a raising part of the preserved one is not,
-/// and of a FULL join neither is; a part that cannot raise is taken of
-/// either.
+/// and of a FULL join neither is; a sort key, which cannot raise, is
+/// taken of either; a sum that cannot raise is left.
 ///
 /// Decision `supplies(at) || safe(at, e)` in `Join::hoisted`. MC/DC:
 /// (F F) left; (T F) taken; (F T) taken.
@@ -119,7 +131,7 @@ fn outer_joins_take_parts_of_the_operand_that_supplies_nulls() {
     let join = |kind: OuterJoin, cond: Cond| LogicalPlan::OuterJoin { kind, cond, left: Box::new(operand(1)), right: Box::new(operand(2)) };
     let of_right = greater(arith(Expr::Column(1), ArithOp::Div, Expr::Column(2)), Expr::Column(0));
     let of_left = greater(arith(one(), ArithOp::Div, Expr::Column(0)), Expr::Column(1));
-    let safe_left = greater(arith(Expr::Column(0), ArithOp::Add, one()), Expr::Column(1));
+    let safe_left = keyed(0, 1);
     assert!(applied(&join(OuterJoin::Left, of_left.clone())).is_none(), "F F");
     let Some(LogicalPlan::Project { input, .. }) = applied(&join(OuterJoin::Left, of_right.clone())) else { panic!("T F") };
     let LogicalPlan::OuterJoin { right, cond, .. } = *input else { panic!("joined") };
@@ -128,6 +140,8 @@ fn outer_joins_take_parts_of_the_operand_that_supplies_nulls() {
     assert!(applied(&join(OuterJoin::Right, of_left)).is_some(), "the left supplies nulls");
     assert!(applied(&join(OuterJoin::Full, of_right)).is_none());
     assert!(applied(&join(OuterJoin::Full, safe_left)).is_some());
+    let sum = greater(arith(Expr::Column(0), ArithOp::Add, one()), Expr::Column(1));
+    assert!(applied(&join(OuterJoin::Left, sum)).is_none());
 }
 
 /// Verifies: [ISO/IEC 9075:1992 §7.5 GR1c]; [DESIGN] RULES.md D373: a
