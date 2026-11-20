@@ -39,6 +39,8 @@ behind it, and each can be replaced or added to.
 - DISTINCT set functions computed by two groupings, read by batches.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
+- One table of groups with typed keys and columns of set functions'
+  states, merged in parallel in waves, its hash keyed past long probes.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH

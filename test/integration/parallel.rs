@@ -266,3 +266,69 @@ fn a_cancelled_parallel_part_fails() {
     exec(&a, "SET STATEMENT.TIMEOUT_MS = 0").unwrap();
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM R").map(|r| r.len()), Ok(1));
 }
+
+/// Verifies: [DESIGN] RULES.md D356, D357: groupings and DISTINCT of
+/// dates, timestamps with time zones of one instant in two zones, truth
+/// values, fixed-length texts with and without trailing spaces, decimals of
+/// one value at two scales and doubles of -0 and 0, with nulls among them,
+/// their groups spread over every morsel, give by the executor's table,
+/// serial by batch and in parallel, its partitions merged at the end or in
+/// waves, the rows and order a row at a time gives, each group's values
+/// its first row's.
+#[test]
+fn groups_of_every_type_come_as_a_row_at_a_time_gives() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION T
+           CREATE TABLE V (K INTEGER, D DATE, Z TIMESTAMP WITH TIME ZONE, B BOOLEAN, C CHARACTER(6),
+             E DECIMAL(9, 2), X DOUBLE PRECISION)",
+    )
+    .unwrap();
+    let t = db.session("T");
+    for first in (0..4000_i64).step_by(500) {
+        let values: Vec<String> = (first..first + 500)
+            .map(|k| {
+                let null = |v: String| if k % 17 == 0 { "NULL".to_owned() } else { v };
+                let zone = if k % 2 == 0 { "TIMESTAMP '2024-01-01 10:00:00+00:00'" } else { "TIMESTAMP '2024-01-01 12:00:00+02:00'" };
+                let text = if k % 3 == 0 { format!("'c{}  '", k % 40) } else { format!("'c{}'", k % 40) };
+                let decimal = if k % 2 == 0 { format!("{}.5", k % 300) } else { format!("{}.50", k % 300) };
+                let double = if k % 2 == 0 { "0.0E0" } else { "-0.0E0" };
+                format!(
+                    "({k}, {}, {}, {}, {}, {}, {})",
+                    null(format!("DATE '2024-01-01' + INTERVAL '{}' DAY(3)", k % 365)),
+                    null(zone.to_owned()),
+                    null(if k % 5 == 0 { "TRUE".to_owned() } else { "FALSE".to_owned() }),
+                    null(text),
+                    null(decimal),
+                    null(double.to_owned()),
+                )
+            })
+            .collect();
+        t.run(&format!("INSERT INTO V VALUES {}", values.join(", "))).unwrap();
+    }
+    t.commit().unwrap();
+    for sql in [
+        "SELECT D, COUNT(*), SUM(E), MIN(K) FROM V GROUP BY D",
+        "SELECT Z, B, COUNT(*), MAX(E), AVG(X) FROM V GROUP BY Z, B",
+        "SELECT C, E, COUNT(K), SUM(X), MIN(C) FROM V GROUP BY C, E",
+        "SELECT X, COUNT(*) FROM V GROUP BY X",
+        "SELECT DISTINCT C, B FROM V",
+        "SELECT DISTINCT E, D FROM V",
+        "SELECT COUNT(DISTINCT C), COUNT(DISTINCT E), SUM(DISTINCT E) FROM V",
+    ] {
+        let (alone, together, _) = both(&t, sql);
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}, in parallel");
+        exec(&t, "SET EXECUTOR.DEGREE = 1").unwrap();
+        exec(&t, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+        assert_eq!(alone, rows(&t, sql), "{sql}, serial by batch");
+        parallel(&t);
+        assert_eq!(alone, rows(&t, sql), "{sql}, in parallel by batch");
+        // Merged in waves, a few morsels' groups at a time, or given way.
+        exec(&t, "SET MEMORY.WORK_BYTES = 262144").unwrap();
+        assert_eq!(alone, rows(&t, sql), "{sql}, in parallel by batch, in waves");
+        exec(&t, "SET MEMORY.WORK_BYTES TO DEFAULT").unwrap();
+    }
+}
