@@ -17,7 +17,7 @@ use std::sync::Arc;
 use super::super::super::area::commands;
 use super::super::super::savepoints::{Level, none_named};
 use super::super::super::{Completion, Session, State, StatementContext};
-use super::super::kept::KeptProgram;
+use super::super::kept::{KeptProgram, KeptRuns};
 use super::{Hosted, diagnostics, step_command};
 use crate::ast::{FetchOrientation, SavepointStatement, SqlStatement};
 use crate::error::{Result, SqlError};
@@ -139,7 +139,12 @@ impl Host for SessionHost<'_, '_> {
             }
             // A runner of its own, so no rows kept are read after a
             // statement changed them.
-            rows(&Hosted::new(Some(self.session), cx), leaf, frame, limit)
+            let hosted = Hosted::new(Some(self.session), cx);
+            // [DESIGN] A leaf of a program kept, by its plans kept (RULES.md D408).
+            if let Some(plans) = self.kept.map(|kept| kept.leaves.of(cx.st, leaf)).transpose()?.flatten() {
+                return rows(&KeptRuns { runner: &hosted, plans: &plans, at: (cx.st, cx.tx.id) }, leaf, frame, limit);
+            }
+            rows(&hosted, leaf, frame, limit)
         })
     }
 

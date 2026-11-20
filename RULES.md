@@ -9907,6 +9907,24 @@ The table stays due while it waits, and the maintenance job looks at
 it again a second later. `Database::maintain` and `Database::analyze`
 gather at once, as asked (`TableStorage::maintain`, `now`).
 
+#### D408. A kept procedure body keeps the plans of its point reads
+
+A procedure body kept between CALLs (D406) still ran each of its
+leaves, the values, conditions and queries over its variables (D76),
+as a new subquery, optimized and planned with the variables' values as
+constants. An order entry body reads a row by its whole primary key a
+dozen times, and planning those reads cost about as much as running
+them. A leaf of a kept body whose outer references are each a variable
+or parameter, or each subquery of a leaf's row of values whose outer
+references name those, is now planned once with each reference a slot
+of the variable's type. A plan that is one probe of a whole unique key
+is kept with the body and filled with the values at each run, as a
+prepared statement's is (D45, `physical/kept.rs`). Any other leaf runs
+as before. The plans are made again when the body is bound again, so a
+dropped index or a table made again is seen; a leaf first planned over
+a table too small for an unpriced probe keeps no plan until then
+(`routines/kept/leaves.rs`).
+
 ## 2. Project layout
 
 ```

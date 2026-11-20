@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 10] = [
+pub const OLTP: [Mutation; 12] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -106,5 +106,25 @@ pub const OLTP: [Mutation; 10] = [
         replacement: "        let due = self.gathered.due() && self.gathered.spaced();",
         integration: &["statistics::statistics_follow_the_table"],
         unit: &[],
+    },
+    Mutation {
+        name: "oltp-kept-leaf-slots-merged",
+        package: Package::Core,
+        breaks: "a kept leaf's outer references all take the first slot's value",
+        file: "src/db/routines/kept/leaves.rs",
+        original: "Expr::Dynamic(Slot { index, data_type",
+        replacement: "Expr::Dynamic(Slot { index: 0, data_type",
+        integration: &["kept_routines::a_kept_leaf_reads_the_row_each_calls_values_name"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-filled-subquery-renamed",
+        package: Package::Core,
+        breaks: "a subquery whose plan has no slot takes a new identity as it is filled, so a kept leaf's plan is never found",
+        file: "src/logical/dynamic.rs",
+        original: "        if self.filled == before {",
+        replacement: "        if self.filled == before && false {",
+        integration: &[],
+        unit: &["logical::dynamic::tests::a_subquery_keeps_its_identity_unless_its_plan_had_a_slot"],
     },
 ];

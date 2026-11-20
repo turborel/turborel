@@ -31,7 +31,7 @@ pub fn warned(value: Value, warning: Option<SqlState>) -> Expr {
 /// CAST's, of a value its slot's type takes none of [§17.9 GR5f]: the
 /// first met; SQLCODE -910 for a slot `values` has none for.
 pub fn filled(plan: LogicalPlan, values: &[Value]) -> Result<LogicalPlan> {
-    let mut filling = Filling { values, failed: None };
+    let mut filling = Filling { values, failed: None, filled: 0 };
     let plan = filling.plan(plan);
     filling.failed.map_or(Ok(plan), Err)
 }
@@ -42,7 +42,7 @@ pub fn filled(plan: LogicalPlan, values: &[Value]) -> Result<LogicalPlan> {
 ///
 /// As `filled`.
 pub fn filled_expr(e: Expr, values: &[Value]) -> Result<Expr> {
-    let mut filling = Filling { values, failed: None };
+    let mut filling = Filling { values, failed: None, filled: 0 };
     let e = filling.expr(e);
     filling.failed.map_or(Ok(e), Err)
 }
@@ -53,7 +53,7 @@ pub fn filled_expr(e: Expr, values: &[Value]) -> Result<Expr> {
 ///
 /// As `filled`.
 pub fn filled_cond(c: Cond, values: &[Value]) -> Result<Cond> {
-    let mut filling = Filling { values, failed: None };
+    let mut filling = Filling { values, failed: None, filled: 0 };
     let c = filling.cond(c);
     filling.failed.map_or(Ok(c), Err)
 }
@@ -62,6 +62,8 @@ pub fn filled_cond(c: Cond, values: &[Value]) -> Result<Cond> {
 struct Filling<'a> {
     values: &'a [Value],
     failed: Option<SqlError>,
+    /// The slots filled so far.
+    filled: usize,
 }
 
 impl Filling<'_> {
@@ -72,6 +74,7 @@ impl Filling<'_> {
 
     /// The constant `slot` is filled with; the slot itself if that fails.
     fn value(&mut self, slot: Slot) -> Expr {
+        self.filled = self.filled.saturating_add(1);
         let Some(value) = self.values.get(slot.index).cloned() else {
             let missing = format!("[DESIGN] no value is given for <dynamic parameter specification> {}", slot.index.saturating_add(1));
             self.fail(SqlError::new(Code::Api, missing));
@@ -112,9 +115,17 @@ impl Filling<'_> {
         }
     }
 
+    /// `s` filled: of an identity of its own if its plan had a slot, else
+    /// of its own, its plan the same, so a runner keeps its rows and a
+    /// kept program its plan (RULES.md D408).
     fn subquery(&mut self, s: &Subquery) -> Arc<Subquery> {
+        let before = self.filled;
+        let plan = self.plan(s.plan.clone());
+        if self.filled == before {
+            return s.map_outer(&mut |e| self.expr(e));
+        }
         let outer = s.outer.iter().cloned().map(|e| self.expr(e)).collect();
-        Arc::new(Subquery::new(self.plan(s.plan.clone()), outer))
+        Arc::new(Subquery::new(plan, outer))
     }
 
     fn exprs(&mut self, exprs: Vec<Expr>) -> Vec<Expr> {
@@ -290,5 +301,25 @@ mod tests {
         let first = filled_expr(Expr::Neg(Box::new(slot(0))), &[Value::Char("X".into())]).unwrap_err();
         assert_eq!(first.code, Code::Data);
         assert_eq!(filled_expr(slot(2), &[]).unwrap_err().code, Code::Api);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D408, a subquery filled keeps its
+    /// identity if its plan had no slot, its outer expression's slot
+    /// filled; of a plan with a slot it takes one of its own.
+    #[test]
+    fn a_subquery_keeps_its_identity_unless_its_plan_had_a_slot() {
+        let unslotted = Arc::new(Subquery::new(scan(), vec![slot(1)]));
+        let int = |n: i128| Value::Exact(Decimal::new(n, 0));
+        let filled = |s: &Arc<Subquery>| {
+            let Expr::Subquery(f, _) = filled_expr(Expr::Subquery(Arc::clone(s), 0), &[int(1), int(2)]).unwrap() else {
+                panic!("no subquery")
+            };
+            f
+        };
+        let kept = filled(&unslotted);
+        assert_eq!(kept.id(), unslotted.id());
+        assert_eq!(format!("{:?}", kept.outer), format!("{:?}", [Expr::Const(int(2))]), "its outer expression filled");
+        let slotted = subquery();
+        assert_ne!(filled(&slotted).id(), slotted.id());
     }
 }

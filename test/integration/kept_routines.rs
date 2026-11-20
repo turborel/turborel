@@ -109,3 +109,33 @@ fn a_kept_body_is_bound_again_as_definitions_change() {
     assert_eq!(rows(&a, "SELECT W, LOW FROM L"), ["1,2"]);
     assert_eq!(rows(&a, "SELECT Q FROM S WHERE I = 3"), ["29"]);
 }
+
+/// Verifies: [DESIGN] RULES.md D408, a query of a kept body that probes a
+/// whole primary key with the procedure's parameters keeps its plan, and
+/// each CALL reads the row its own values name: the warehouse and the
+/// item each by its own parameter, a null item naming none.
+#[test]
+fn a_kept_leaf_reads_the_row_each_calls_values_name() {
+    let (_db, a) = defined();
+    // Rows enough that a probe of the key is chosen unpriced.
+    let more: Vec<String> = (51..=600_i64).flat_map(|i| (1..=2_i64).map(move |w| format!("({w}, {i}, 0)"))).collect();
+    a.run(&format!("INSERT INTO S VALUES {}", more.join(", "))).unwrap();
+    a.run("UPDATE S SET Q = W * 1000 + I").unwrap();
+    a.run(
+        "CREATE PROCEDURE READ_ONE (IN WH INTEGER, IN ITEM INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE GOT INTEGER;
+           SET GOT = (SELECT Q FROM S WHERE W = WH AND I = ITEM);
+           INSERT INTO L VALUES (WH, GOT);
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    for (w, i) in [("1", "3"), ("2", "7"), ("1", "40"), ("2", "CAST(NULL AS INTEGER)")] {
+        a.run(&format!("CALL READ_ONE({w}, {i})")).unwrap();
+    }
+    a.commit().unwrap();
+    let mut read = rows(&a, "SELECT W, LOW FROM L");
+    read.sort();
+    assert_eq!(read, ["1,1003", "1,1040", "2,2007", "2,NULL"]);
+}

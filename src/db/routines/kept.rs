@@ -8,7 +8,11 @@
 //! changed binds the body again. A binding that reads the statement's
 //! instant holds it, and is not kept. Each INSERT, searched UPDATE and
 //! searched DELETE of a program kept keeps its own plan the same way,
-//! its SQL parameters and variables slots each execution fills.
+//! its SQL parameters and variables slots each execution fills; each leaf
+//! that is one probe of a unique key keeps its physical plan
+//! (`kept/leaves.rs`, RULES.md D408).
+
+mod leaves;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -21,6 +25,8 @@ use crate::catalog::{QualifiedName, SqlRoutineDesc};
 use crate::error::Result;
 use crate::logical::{Contained, Program};
 use crate::sync::lock;
+use leaves::KeptLeaves;
+pub(in crate::db) use leaves::KeptRuns;
 
 /// The procedures a session keeps the bodies of, by specific name.
 #[derive(Debug, Default)]
@@ -41,13 +47,15 @@ pub(in crate::db) struct KeptRoutine {
 pub(in crate::db) struct KeptProgram {
     pub(in crate::db) program: Arc<Program>,
     plans: Arc<[Plans]>,
+    /// The plans its leaves keep (`kept/leaves.rs`).
+    pub(in crate::db) leaves: Arc<KeptLeaves>,
 }
 
 impl KeptProgram {
     /// `program`, its statements keeping no plan yet.
     pub(in crate::db) fn of(program: Program) -> KeptProgram {
         let plans = program.contained().iter().map(|_| Plans::default()).collect();
-        KeptProgram { program: Arc::new(program), plans }
+        KeptProgram { program: Arc::new(program), plans, leaves: Arc::default() }
     }
 
     /// The plans the statement `c` of its program keeps, if it is one of
