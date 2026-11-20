@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 8] = [
+pub const OLTP: [Mutation; 10] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -85,6 +85,26 @@ pub const OLTP: [Mutation; 8] = [
         original: "        self.tables.insert(desc.name.clone(), desc);\n        self.table_order = OnceLock::new();\n    }",
         replacement: "        self.tables.insert(desc.name.clone(), desc);\n    }",
         integration: &["information_schema::tables_made_and_dropped_are_listed_at_once"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-pass-never-spaced",
+        package: Package::Core,
+        breaks: "a table's statistics pass waits for no spacing after the last",
+        file: "src/engine/rows/stats.rs",
+        original: "past || self.since_made() >= self.earliest.load(Ordering::Relaxed)",
+        replacement: "past || true",
+        integration: &[],
+        unit: &["engine::rows::stats::tests::a_pass_waits_its_spacing_unless_the_table_changed_past_its_rows"],
+    },
+    Mutation {
+        name: "oltp-maintain-now-spaced",
+        package: Package::Core,
+        breaks: "Database::maintain leaves a pass due to its spacing instead of making it at once",
+        file: "src/engine/rows/stats.rs",
+        original: "        let due = self.gathered.due() && (now || self.gathered.spaced());",
+        replacement: "        let due = self.gathered.due() && self.gathered.spaced();",
+        integration: &["statistics::statistics_follow_the_table"],
         unit: &[],
     },
 ];

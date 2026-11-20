@@ -522,14 +522,14 @@ pub trait TableStorage: Send + Sync {
     }
     /// \[DESIGN\] Does some of the work due (`maintenance_due`), of rows
     /// committed at or before `horizon`, before every snapshot; on the
-    /// database's maintenance thread, or when it is asked to
-    /// (`Database::maintain`), never two calls at once: whether it did any,
-    /// for it to be called again. Default: none.
+    /// database's maintenance thread, or, `now`, when it is asked to
+    /// (`Database::maintain`), work it spaces in time done at once; never two
+    /// calls at once: whether it did any, for it to be called again.
     ///
     /// # Errors
     ///
     /// The engine cannot do it; it is tried again later.
-    fn maintain(&self, _horizon: Timestamp) -> Result<bool> {
+    fn maintain(&self, _horizon: Timestamp, _now: bool) -> Result<bool> {
         Ok(false)
     }
     /// Every version a new index needs an entry for, with its row id,

@@ -9890,6 +9890,23 @@ Each INSERT, searched UPDATE and searched DELETE of a program kept
 keeps its plan as a prepared statement's does, its SQL parameters and
 variables slots each execution fills (`db/routines/kept.rs`).
 
+#### D407. A table's statistics are gathered no more often than their cost allows
+
+The row store gathers a table's statistics again once its changes pass
+a tenth of its rows and 50 more (D31), so each change costs about ten
+rows read by a later pass. A table written fast, as the stock, customer
+and order tables of an order entry load are, had its statistics
+gathered again every second or two, and the maintenance thread spent
+about a third of the server's time reading rows for them. A pass now
+also waits fifty times as long as the last one took, so a table's
+passes take at most a fiftieth of one thread's time
+(`engine/rows/stats.rs`, `PASS_SPACING`). A table whose changes
+outnumber the rows of its last pass, as one loaded after it was made,
+is not made to wait, nor one whose statistics a plan asked for first.
+The table stays due while it waits, and the maintenance job looks at
+it again a second later. `Database::maintain` and `Database::analyze`
+gather at once, as asked (`TableStorage::maintain`, `now`).
+
 ## 2. Project layout
 
 ```
