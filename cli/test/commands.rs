@@ -222,3 +222,24 @@ fn includes_are_bounded_and_exports_refused() {
     assert_eq!(told.len(), 2, "{}", exported.err);
     assert!(told[1].starts_with("turborel: \\export: "), "{}", exported.err);
 }
+
+/// Verifies: [DESIGN] RULES.md D212, D215: with ECHO set to errors, a
+/// statement that fails is written before its failure, one that succeeds
+/// is not; a query of `\gset` that fails is told so, its variables left
+/// as they were; with `--single-transaction`, a run whose statements all
+/// succeed is committed at its end.
+#[test]
+fn errors_are_echoed_and_a_single_transaction_commits() {
+    let (_db, server) = served();
+    let text = "\\set ECHO errors\n\\set N kept\nVALUES 1;\nSELECT NOTHING FROM T;\nSELECT NOTHING AS N FROM T \\gset\n\\echo :N\n";
+    let ran = script(&server, &["-t", "-A"], text);
+    assert_eq!(ran.outcome, Outcome::Failed);
+    assert_eq!(ran.out, "1\nkept\n");
+    let told: Vec<&str> = ran.err.lines().collect();
+    assert_eq!(told.len(), 4, "{}", ran.err);
+    assert_eq!((told[0], told[2]), ("SELECT NOTHING FROM T", "SELECT NOTHING AS N FROM T"));
+    assert!(told[1].starts_with("turborel: SQLCODE -103") && told[3].starts_with("turborel: SQLCODE -103"), "{}", ran.err);
+    let one = script(&server, &["-1", "-q"], "INSERT INTO T VALUES (3, 'c');\n");
+    assert_eq!(one.outcome, Outcome::Succeeded, "{}", one.err);
+    assert_eq!(script(&server, &["-t", "-A"], "SELECT COUNT(*) FROM T WHERE K = 3;").out, "1\n", "committed");
+}

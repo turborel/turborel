@@ -79,12 +79,14 @@ pub struct Script {
 pub type Typed = dyn FnMut(&str) -> std::io::Result<String>;
 
 /// What a session's terminal has, owned by the test: its screen, a line
-/// editor and what reads a password.
+/// editor, what reads a password, and the environment.
 #[derive(Default)]
 pub struct Seat {
     pub screen: Option<turborel_cli::Screen>,
     pub editor: Option<Box<dyn turborel_cli::Lines>>,
     pub secret: Option<Box<Typed>>,
+    /// The environment's variables the command line is read with.
+    pub environment: Vec<(&'static str, String)>,
 }
 
 /// Runs `text` as standard input, `typed` if so, at `seat`, with the
@@ -94,7 +96,9 @@ pub fn session(server: &Running, args: &[&str], text: &str, typed: bool, mut sea
     let port = server.address.port().to_string();
     let mut line: Vec<String> = ["-U", "X", "-p", port.as_str()].iter().map(|a| (*a).to_owned()).collect();
     line.extend(args.iter().map(|a| (*a).to_owned()));
-    let Ok(turborel_cli::Command::Run(options)) = turborel_cli::parse(&line, &|_| None) else { panic!("{line:?}") };
+    let environment = std::mem::take(&mut seat.environment);
+    let env = |name: &str| environment.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
+    let Ok(turborel_cli::Command::Run(options)) = turborel_cli::parse(&line, &env) else { panic!("{line:?}") };
     let connection = turborel_cli::connect(&options, || Ok(String::new())).unwrap();
     let mut agent = Agent::connected(Dialer::new((*options).clone(), Box::new(|| Ok(String::new()))), connection);
     let (mut out, mut err) = (Vec::new(), Vec::new());

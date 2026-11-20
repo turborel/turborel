@@ -66,11 +66,25 @@ fn a_plain_connection_fetches_exports_and_tells_where() {
 }
 
 /// A connection whose server tells no session status, server time,
-/// notices or Ping: the trait's defaults.
-struct Untold(Connection<TcpStream>);
+/// notices or Ping: the trait's defaults. Its server ends it, as an
+/// operator would, as the statement or `\import` it names begins.
+struct Untold<'a>(Connection<TcpStream>, Option<(&'a Running, &'static str)>);
 
-impl Statements for Untold {
+impl Untold<'_> {
+    /// Ends the connection if `what` is what ends it.
+    fn ending(&self, what: &str) {
+        if let Some((server, at)) = self.1
+            && at == what
+        {
+            let (id, _) = server.operator.connections().into_iter().find(|(_, u)| u.as_deref() == Some("X")).unwrap();
+            assert!(server.operator.end(id));
+        }
+    }
+}
+
+impl Statements for Untold<'_> {
     fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
+        self.ending(sql);
         self.0.query_into(sql, sink)
     }
     fn fetch_into(&mut self, sql: &str, rows: u32, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
@@ -101,6 +115,7 @@ impl Statements for Untold {
         Statements::connection_name(&self.0)
     }
     fn import(&mut self, source: &mut FileSource, how: &Import, rejected: &mut dyn FnMut(Rejected)) -> Result<Imported, ImportError> {
+        self.ending("import");
         Statements::import(&mut self.0, source, how, rejected)
     }
 }
@@ -113,7 +128,7 @@ impl Statements for Untold {
 #[test]
 fn an_untold_status_is_probed() {
     let (_db, server) = served();
-    let mut untold = Untold(server.connect("X"));
+    let mut untold = Untold(server.connect("X"), None);
     let text = "\\set PROMPT '%c%#>'\nVALUES 1;\n\\set PROMPT '%s>'\nSET SCHEMA 'X';\nCOMMIT;\n";
     let (outcome, out, err) = over(&server, &mut untold, text, true);
     assert_eq!(outcome, Outcome::Succeeded, "{err}");
@@ -123,4 +138,23 @@ fn an_untold_status_is_probed() {
     assert_eq!(untold.ping(), None);
     assert_eq!(untold.status("CATALOG"), None);
     assert_eq!(untold.take_notices().len(), 0);
+}
+
+/// Verifies: [DESIGN] RULES.md D215: a connection lost as a statement
+/// runs ends the run there, its outcome Lost, exit status 2, the
+/// statements after it not run; so does one lost as `\import` runs.
+#[test]
+fn a_lost_connection_ends_the_run() {
+    let (_db, server) = served();
+    let mut ended = Untold(server.connect("X"), Some((&server, "VALUES 'end'")));
+    let (outcome, out, err) = over(&server, &mut ended, "VALUES 1;\nVALUES 'end';\nVALUES 2;\n", false);
+    assert_eq!((outcome, outcome.code()), (Outcome::Lost, 2));
+    assert_eq!(out, "   1\n");
+    assert!(err.starts_with("turborel: SQLCODE -919"), "{err}");
+    let scratch = Scratch::new("cli-plain-lost");
+    let file = scratch.path("rows.csv");
+    std::fs::write(&file, "9\n").unwrap();
+    let mut importing = Untold(server.connect("X"), Some((&server, "import")));
+    let (outcome, _, err) = over(&server, &mut importing, &format!("\\import T {} csv\nVALUES 2;\n", file.display()), false);
+    assert_eq!(outcome, Outcome::Lost, "{err}");
 }
