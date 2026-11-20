@@ -148,7 +148,7 @@ pub(in crate::db) enum KeptPlan {
     /// execution, which fills its own SET values and object rows' plan.
     Write(Arc<BoundWrite>),
     /// An INSERT's table, and its query's plan, if it has one.
-    Insert(Box<Target>, Option<LogicalPlan>),
+    Insert(Arc<Target>, Option<LogicalPlan>),
     /// A MERGE, bound, and where each of its WHEN NOT MATCHED clauses
     /// inserts, in order.
     Merge(Arc<BoundMerge>, Arc<[Inserting]>),
