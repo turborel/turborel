@@ -285,6 +285,7 @@ mod reopen;
 mod replicated_state;
 mod restrict;
 mod revoke;
+mod rewrites;
 mod role_views;
 mod roles;
 mod roles_revoke;

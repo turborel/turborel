@@ -21,6 +21,7 @@ mod insert_values;
 mod joins;
 mod late;
 mod parallel;
+mod rewrites;
 mod sorts;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
@@ -121,6 +122,7 @@ fn second() -> [&'static [Mutation]; 39] {
         &super::delta_tables::DELTA_TABLES,
         &count::COUNT,
         &distinct_aggregates::DISTINCT_AGGREGATES,
+        &rewrites::REWRITES,
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
         &expr::EXPR,

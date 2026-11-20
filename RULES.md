@@ -361,6 +361,9 @@ verification approach DO-178C expects (§8).
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
 | D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
 | D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
+| D373 | A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot |
+| D374 | A filter goes into a set operation's operands and below a window's partitions, and FETCH FIRST into UNION ALL's operands, when the rows are the same |
+| D375 | A join is removed when it gives each row of the other operand once and nothing above reads it, by a unique key or a referential constraint not deferrable |
 | D379 | A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read |
 | D380 | A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
@@ -10080,6 +10083,120 @@ adds one. DISTINCT is the grouping of all its columns. UNION estimates
 its distinct values with the formula over the sum of both sides'
 distinct values. INTERSECT is at most the smaller side's distinct values
 and EXCEPT at most the left's.
+#### D373. A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot
+
+A conjunct over two operands of a product that can raise is evaluated
+on the rows of the product (D15), so it held the chain as written and
+the join order was not enumerated. The rule `hoist_raising_expressions`
+(`optimizer/hoisting.rs`) takes each maximal part of such a conjunct
+that reads one operand and can raise by its declared types, or is a sort
+key of a collation, and computes it as a column after that operand's
+own. A part that cannot raise by its types is left in place, as the
+enumeration judges its conjunct movable already, and an expression
+written to keep a join a nested loop keeps it so. The conjunct
+reads the column and, when nothing else in it can raise, may then be
+evaluated wherever the enumeration puts it.
+
+A part that can raise is computed over a guard of the other operands,
+the product of the operand and a filter of EXISTS of each other operand
+over a VALUES of one row. The part is so evaluated on the rows of the
+operand exactly when the product has a row, and raises of the same rows
+it would of the product [X3.135-1986 §5.20 GR2b]. An operand of an
+outer reference, or of no column, takes no guard, and its conjunct is
+left. The guard evaluates each other operand once more, so each must be
+a plain read, of tables and values through filters, projections, joins,
+groupings, windows, sorts and set operations, of expressions that invoke
+no routine, draw no sequence value and call no function that is not
+deterministic (`hoisting/plain.rs`). A table function, which may record
+its run or cost as much as the query, a system table, an unnested
+collection, a recursive query, a row pattern or a transition table is
+not, and a part needing a guard over one is left. A sort key cannot raise and needs no guard, as evaluating it of
+more rows or fewer changes nothing.
+
+The search goes only into what is evaluated whenever the condition is,
+never into a CASE's results or later conditions [ISO/IEC 9075:1992 §6.9
+GR1, GR2] nor a subquery, and takes nothing that draws a sequence value,
+invokes a routine, calls a function that is not deterministic or warns,
+which computed once a row of the operand would happen fewer times. Of a
+LEFT, RIGHT or FULL join's ON, a raising part of the operand that
+supplies nulls is taken over a guard of the other, as of a product. A
+sort key of a preserved operand is taken with no guard, and a raising
+part of it never, as its rows are kept whatever the ON gives [§7.5 GR1c,
+GR5]. A LEFT join of a
+chain of products whose ON reads one operand of the chain alone, and
+cannot raise, is moved onto that operand within the chain first, which
+gives the same rows, so the unnested `SINGLE` of a scalar subquery is
+hoisted onto the operand it reads.
+
+Whether an expression can raise is judged by the declared types of its
+columns (`logical/raises.rs`). A sum or difference of exact numbers whose
+digits before the point, one more than the larger's, and after it, the
+larger scale, are 18 or fewer cannot raise, nor a product of 18 or fewer
+digits in all [X3.135-1986 §5.9 SR4b, GR6a], nor a quotient by a
+constant of magnitude at least 1 whose digits and the dividend's scale
+are 18 or fewer, nor a CAST that widens. Anything else, an approximate
+number among it, a column of no known type, or more than 18 digits, can.
+The enumeration's leaves (`physical/enumerate/extract.rs`) use the same
+judgement, so a conjunct of such arithmetic no longer holds a chain.
+
+#### D374. A filter goes into a set operation's operands and below a window's partitions, and FETCH FIRST into UNION ALL's operands, when the rows are the same
+
+A row of UNION ALL is a row of one operand, so a filter over it keeps the
+same rows filtered in each operand, and raises of the same rows. Of UNION,
+INTERSECT and EXCEPT, with ALL or not, rows not distinct are taken as
+one [ISO/IEC 9075-2:2023 §7.17 GR3b iii]. A filter that treats rows not
+distinct alike (`views.rs` `alike`) keeps all of such a set or none, so
+filtering the operands first keeps the same rows. One that can tell them
+apart, as LIKE tells trailing spaces, is left above all but UNION ALL.
+Of INTERSECT and EXCEPT a filter that can raise is left too, as a row
+the operation drops would raise in the operand. A set operation by a
+collation's sort keys is left, its values not the keys. The rule is
+`push_filter_through_set_operation` (`optimizer/setops.rs`).
+
+A window function's value of a row is of the rows of its window
+partition alone, those not distinct from it in the partitioning columns
+[§7.15 GR3, §4.17.15]. A conjunct over the partitioning columns alone that
+treats rows not distinct alike keeps a whole partition or none, so the
+values of the partitions kept are the same of the rows filtered first.
+Rule `push_filter_through_window` (`optimizer/windows.rs`) moves such
+conjuncts below the window, unless a conjunct left above can raise, as
+it would then be evaluated of fewer rows.
+
+FETCH FIRST n ROWS ONLY after OFFSET m of UNION ALL, sorted or not, takes
+m + n rows at most, each the first m + n of its operand by the same order
+or any of them unsorted [§7.17 GR6, GR7]. Rule `push_limit_through_union`
+(`optimizer/limits.rs`) puts each operand under such a limit, and its
+sort, and keeps the outer limit. A count that is not a constant of at
+least 1, WITH TIES, which takes the peers of the last row [§10.10 GR1h,
+GR1i], PERCENT and an approximate FETCH are left, as is UNION, whose
+rows not distinct would be taken as one after the operands' limits.
+
+#### D375. A join is removed when it gives each row of the other operand once and nothing above reads it, by a unique key or a referential constraint not deferrable
+
+A LEFT join gives each row of its left operand once when at most one row
+of the right satisfies the ON for it [ISO/IEC 9075:1992 §7.5 GR1c]. When
+the right is a table, filtered or not, whose ON equates each column of
+a unique key of it to a value of the left alone, a column or an
+expression of its columns, no two of its rows match a left row. If nothing above reads the right's columns, the join is the
+left operand (`optimizer/elimination.rs`), and a RIGHT join mirrors it.
+The key must hold whenever a statement reads it, so its constraint is
+not deferrable, and neither is the NOT NULL or PRIMARY KEY of each of
+its columns, as a deferred constraint may be violated until checked
+[ISO/IEC 9075-2:2023 §4.25.2, §4.25.3.2]. Its columns are of no
+collation of their own, which could equate values the key keeps apart,
+and the table has no period. The ON and the filter must neither raise,
+by their declared types, nor draw a sequence value, as they are no
+longer evaluated.
+
+An inner join of a chain of products whose conjuncts equate the columns
+of a referential constraint to the referenced columns, the referencing
+ones NOT NULL, gives each row of the referencing table exactly one row
+of the referenced [§4.25.3.3, §11.8 SR4, SR5]. When the referenced
+table is unfiltered, read nowhere else and nothing above reads it, it
+and those conjuncts are removed (`optimizer/elimination/referential.rs`).
+The constraint, the NOT NULL and the referenced key are not deferrable
+and of no period, and the columns of no collation. The rule is
+`eliminate_joins`.
 
 #### D379. A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read
 
