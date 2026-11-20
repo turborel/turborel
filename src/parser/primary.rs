@@ -209,6 +209,11 @@ impl Parser {
         if self.at_current_role() {
             return Ok(ValueExpression::Value(self.value_specification()?));
         }
+        // [ISO/IEC 9075-2:2023 §6.43] LOCALTIME or LOCALTIMESTAMP.
+        if self.at_local_datetime().is_some() {
+            let f = self.datetime_value_function()?.ok_or_else(|| self.syntax("expected a <datetime value function>"))?;
+            return Ok(ValueExpression::Datetime(f));
+        }
         if let Some(special) = self.composite_pattern_or_aggregate()? {
             return Ok(special);
         }

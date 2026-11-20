@@ -1,9 +1,10 @@
 //! The syntax of Feature T621 [ISO/IEC 9075-2:2023 §6.31, §10.9]: the
 //! numeric value functions LN, EXP, POWER, SQRT, FLOOR and CEIL or
 //! CEILING, and the set functions STDDEV_POP, STDDEV_SAMP, VAR_POP,
-//! VAR_SAMP and the `<binary set function>`s. Their names, which SQL:2023
-//! reserves and SQL-92 does not, are read as these only before "(", so a
-//! column may still be named one.
+//! VAR_SAMP and the `<binary set function>`s; of Features T441, T622,
+//! T623 and T624, ABS, MOD, the `<trigonometric function>`s, LOG and
+//! LOG10. Their names, which SQL:2023 reserves and SQL-92 does not, are
+//! read as these only before "(", so a column may still be named one.
 
 use super::Parser;
 use crate::ast::{SetArg, SetFunctionSpecification, ValueExpression};
@@ -20,27 +21,29 @@ impl Parser {
             return None;
         }
         if let Some(numeric) = Numeric::named(name) {
-            return Some(self.numeric_function(numeric));
+            return Some(self.numeric_function(numeric.name(), numeric.operands()));
         }
         let statistic = Statistic::named(name)?;
         Some(self.statistical_set_function(statistic).map(ValueExpression::SetFunction))
     }
 
     /// [§6.31] `<natural logarithm>` ::= LN ( `<numeric value
-    /// expression>` ), and alike EXP, SQRT, FLOOR and { CEIL | CEILING };
-    /// `<power function>` ::= POWER ( `<numeric value expression base>` ,
-    /// `<numeric value expression exponent>` ).
-    fn numeric_function(&mut self, numeric: Numeric) -> Result<ValueExpression> {
+    /// expression>` ), and alike EXP, SQRT, FLOOR, { CEIL | CEILING }, ABS,
+    /// LOG10 and each `<trigonometric function name>`; `<power function>`
+    /// ::= POWER ( `<numeric value expression base>` , `<numeric value
+    /// expression exponent>` ), and alike MOD and LOG: the function `name`
+    /// of `operands` operands.
+    fn numeric_function(&mut self, name: &'static str, operands: usize) -> Result<ValueExpression> {
         let at = self.here();
         self.advance();
         self.expect_delim(delim::LEFT_PAREN)?;
         let mut args = vec![self.value_expression()?];
-        while args.len() < numeric.operands() {
+        while args.len() < operands {
             self.expect_delim(delim::COMMA)?;
             args.push(self.value_expression()?);
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(ValueExpression::Function { name: numeric.name(), args, at })
+        Ok(ValueExpression::Function { name, args, at })
     }
 
     /// [§10.9] `<general set function>` ::= `<set function type>` (

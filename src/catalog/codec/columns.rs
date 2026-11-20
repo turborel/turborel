@@ -122,8 +122,8 @@ pub(super) fn collation_name(r: &mut Reader<'_>) -> Result<Option<QualifiedName>
 }
 
 /// A default: 0 for none, 1 and a value, 2 for a user's, or 3 for a
-/// datetime value function's: 0 CURRENT_DATE, 1 CURRENT_TIME or 2
-/// CURRENT_TIMESTAMP, and its precision.
+/// datetime value function's: 0 CURRENT_DATE, 1 CURRENT_TIME, 2
+/// CURRENT_TIMESTAMP, 3 LOCALTIME or 4 LOCALTIMESTAMP, and its precision.
 pub(crate) fn put_default(out: &mut Vec<u8>, default: Option<&ColumnDefault>) {
     match default {
         None => out.put_u8(0),
@@ -140,12 +140,14 @@ pub(crate) fn put_default(out: &mut Vec<u8>, default: Option<&ColumnDefault>) {
                 UserFunction::Role => 3,
             });
         }
-        Some(ColumnDefault::Datetime(moment, precision)) => {
+        Some(ColumnDefault::Datetime(moment, precision, local)) => {
             out.put_u8(3);
-            out.put_u8(match moment {
-                Moment::Date => 0,
-                Moment::Time => 1,
-                Moment::Timestamp => 2,
+            out.put_u8(match (moment, local) {
+                (Moment::Date, _) => 0,
+                (Moment::Time, false) => 1,
+                (Moment::Timestamp, false) => 2,
+                (Moment::Time, true) => 3,
+                (Moment::Timestamp, true) => 4,
             });
             out.put_u32(*precision);
         }
@@ -165,13 +167,15 @@ pub(crate) fn default(r: &mut Reader<'_>) -> Result<Option<ColumnDefault>> {
             _ => return Err(r.corrupt("not a user value function")),
         })),
         3 => {
-            let moment = match r.u8()? {
-                0 => Moment::Date,
-                1 => Moment::Time,
-                2 => Moment::Timestamp,
+            let (moment, local) = match r.u8()? {
+                0 => (Moment::Date, false),
+                1 => (Moment::Time, false),
+                2 => (Moment::Timestamp, false),
+                3 => (Moment::Time, true),
+                4 => (Moment::Timestamp, true),
                 _ => return Err(r.corrupt("not a datetime value function")),
             };
-            Some(ColumnDefault::Datetime(moment, r.u32()?))
+            Some(ColumnDefault::Datetime(moment, r.u32()?, local))
         }
         _ => return Err(r.corrupt("not a column default")),
     })

@@ -363,10 +363,12 @@ fn default_text(default: Option<&ColumnDefault>) -> Value {
             UserFunction::System => "SYSTEM_USER",
             UserFunction::Role => "CURRENT_ROLE",
         }),
-        Some(ColumnDefault::Datetime(moment, precision)) => text(&match moment {
-            Moment::Date => "CURRENT_DATE".to_owned(),
-            Moment::Time => format!("CURRENT_TIME({precision})"),
-            Moment::Timestamp => format!("CURRENT_TIMESTAMP({precision})"),
+        Some(ColumnDefault::Datetime(moment, precision, local)) => text(&match (moment, local) {
+            (Moment::Date, _) => "CURRENT_DATE".to_owned(),
+            (Moment::Time, false) => format!("CURRENT_TIME({precision})"),
+            (Moment::Timestamp, false) => format!("CURRENT_TIMESTAMP({precision})"),
+            (Moment::Time, true) => format!("LOCALTIME({precision})"),
+            (Moment::Timestamp, true) => format!("LOCALTIMESTAMP({precision})"),
         }),
     }
 }
