@@ -142,8 +142,9 @@ fn joins_build_and_probe_by_morsels() {
 /// thread a point query, a part reading fewer rows than
 /// EXECUTOR.PARALLEL_MIN_ROWS, a correlated subquery, its scan below it
 /// run in parallel, a column store's part a scan by batch serves while
-/// EXECUTOR.BATCHES is on, not its join, a bare COUNT(*) the row store
-/// counts (D351), and every part of EXECUTOR.DEGREE 1.
+/// EXECUTOR.BATCHES is on, not its join nor its grouping (D358), a bare
+/// COUNT(*) the row store counts (D351), and every part of
+/// EXECUTOR.DEGREE 1.
 ///
 /// Decision: the part is large enough, its expressions a worker's alone,
 /// and the degree above 1. Each pair changes the outcome alone: a
@@ -158,10 +159,12 @@ fn the_planner_marks_only_large_parts() {
     assert!(!plan("SELECT N FROM R WHERE K = 5").contains("Parallel"));
     let correlated = plan("SELECT K, (SELECT COUNT(*) FROM D WHERE D.G = R.G) FROM R");
     assert!(correlated.starts_with("Project") && correlated.contains("  Parallel"), "a subquery's on the statement's thread: {correlated}");
-    assert!(!plan("SELECT G, COUNT(*) FROM C GROUP BY G").contains("Parallel"), "the column store's scan by batch");
+    assert!(!plan("SELECT K, N FROM C WHERE G = 3").contains("Parallel"), "the column store's scan by batch");
     assert!(plan("SELECT COUNT(*) FROM C JOIN D ON C.G = D.G").contains("Parallel"), "a probe is not by batch");
+    assert!(plan("SELECT G, COUNT(*) FROM C GROUP BY G").contains("Parallel"), "a grouping by morsels of frozen groups (D358)");
+    assert!(plan("SELECT DISTINCT S FROM C").contains("Parallel"), "DISTINCT by morsels of frozen groups (D358)");
     exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
-    assert!(plan("SELECT G, COUNT(*) FROM C GROUP BY G").contains("Parallel"));
+    assert!(plan("SELECT K, N FROM C WHERE G = 3").contains("Parallel"));
     exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 100000").unwrap();
     assert!(!plan("SELECT SUM(N) FROM R").contains("Parallel"));
     exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 0").unwrap();
@@ -330,5 +333,57 @@ fn groups_of_every_type_come_as_a_row_at_a_time_gives() {
         exec(&t, "SET MEMORY.WORK_BYTES = 262144").unwrap();
         assert_eq!(alone, rows(&t, sql), "{sql}, in parallel by batch, in waves");
         exec(&t, "SET MEMORY.WORK_BYTES TO DEFAULT").unwrap();
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D356, D358: a grouping in parallel whose
+/// first morsels hold few groups, merged on the statement's thread, and
+/// whose later ones hold many, handed to the partitions, or the other way
+/// about, gives the groups, their set functions and their order a row at a
+/// time gives; and of the column store, grouped by batch in parallel, each
+/// morsel of its frozen groups, by a column kept as runs too, the same
+/// groups, in the order its scan by batch gives its rows.
+#[test]
+fn groupings_of_few_then_many_groups_come_as_alone() {
+    let (db, a) = tables();
+    a.run("CREATE TABLE F (K INTEGER, G INTEGER, H INTEGER, X DOUBLE PRECISION)").unwrap();
+    a.run("CREATE TABLE O (K INTEGER, G INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048, COLUMNSTORE.ORDER = 'G')").unwrap();
+    for first in (0..8000_i64).step_by(500) {
+        let few = |k: i64, before: bool| if (k < 4000) == before { k % 3 } else { k };
+        let values: Vec<String> =
+            (first..first + 500).map(|k| format!("({k}, {}, {}, {}.5E0)", few(k, true), few(k, false), k % 7)).collect();
+        a.run(&format!("INSERT INTO F VALUES {}", values.join(", "))).unwrap();
+        let values: Vec<String> = (first..first + 500).map(|k| format!("({k}, {})", k % 300)).collect();
+        a.run(&format!("INSERT INTO O VALUES {}", values.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    for sql in [
+        "SELECT G, COUNT(*), MIN(K), MAX(X) FROM F GROUP BY G",
+        "SELECT H, COUNT(*), MIN(K), MAX(X) FROM F GROUP BY H",
+        "SELECT G, COUNT(*), MAX(K) FROM F WHERE K >= 2000 OR MOD(K, 2) = 0 GROUP BY G",
+        "SELECT DISTINCT H FROM F WHERE K < 1000 OR K >= 7000",
+        "SELECT G, COUNT(*), SUM(K) FROM O GROUP BY G",
+        "SELECT DISTINCT G FROM O WHERE K > 100",
+        "SELECT G, COUNT(*), SUM(K), AVG(N) FROM C GROUP BY G",
+        "SELECT COUNT(DISTINCT S), SUM(N) FROM C",
+    ] {
+        let (alone, _, _) = both(&a, sql);
+        exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+        let marked = a.physical_plan(sql, &Params::new()).unwrap().contains("Parallel  (degree=4)");
+        assert!(marked, "{sql} is not run in parallel");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        // The column store's scan by batch reads its frozen groups, O's
+        // sorted by G, then its rows changed; a row at a time reads them in
+        // the order of their ids.
+        let ordered = |r: Result<Vec<String>, Code>| {
+            r.map(|mut r| {
+                if !sql.contains("FROM F ") {
+                    r.sort();
+                }
+                r
+            })
+        };
+        assert_eq!(ordered(alone), ordered(rows(&a, sql)), "{sql}, in parallel by batch");
     }
 }

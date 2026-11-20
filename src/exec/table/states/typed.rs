@@ -276,7 +276,7 @@ fn null_in(column: &Column, n: usize) -> bool {
         Column::Datetimes(datetimes) => datetimes.get(n).is_none(),
         Column::Bools(bools) => bools.get(n).is_none(),
         Column::Nulls(_) => true,
-        Column::Late(late) => late.values().get(n).is_none_or(Value::is_null),
+        Column::Late(late) => late.made().is_none_or(|made| null_in(made, n)),
     }
 }
 
