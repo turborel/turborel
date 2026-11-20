@@ -82,6 +82,13 @@ A reader holds what it reads as it goes. A count larger than what
 follows fails as the body runs out, so it cannot make the reader reserve
 memory.
 
+A field of a value is not a frame's. A value whose body its reader
+cannot take, as a truth value of 2 or a JSON document damaged, leaves
+the frame read whole by its length and the stream in step. The client
+library fails the request with the value's error, not of class 08, and
+reads past the rest of its replies up to the last
+([The Client Library](02-library.md)).
+
 ### Data types
 
 A data type is a tag, then what its kind writes after it. Columns,

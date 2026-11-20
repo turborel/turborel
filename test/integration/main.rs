@@ -285,6 +285,7 @@ mod routines_fixed;
 mod routines_overloading;
 mod routines_privileges;
 mod routines_schema;
+mod row_count;
 mod row_pattern_rules;
 mod row_pattern_windows;
 mod row_patterns;

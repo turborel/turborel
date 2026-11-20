@@ -123,7 +123,9 @@ pub(super) enum Reader {
 }
 
 impl Reader {
-    fn sees(self, maker: Maker) -> bool {
+    /// Whether it sees a version `maker` made, a commit stamped late
+    /// taken as open unless the maker is looked up first (`RowTable::maker`).
+    pub(super) fn sees(self, maker: Maker) -> bool {
         match (self, maker) {
             (Reader::At { snapshot, .. }, Maker::Committed(at)) => at <= snapshot,
             (Reader::At { tx, .. }, Maker::Open(by)) => by == tx,

@@ -9,16 +9,17 @@
 //! 08), after which the connection takes no more. How long it waits on
 //! its server, its `Timeouts` say (`timeouts.rs`).
 
-use std::io::{BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use turborel::error::{Code, SqlError, SqlState};
 use turborel::storage::Row;
 
-use turborel_protocol::{CancelKey, Capabilities, Column, Completed, Failure, HEADER, MAX_BODY, Reply, Request, VERSION, broken};
+use turborel_protocol::{CancelKey, Capabilities, Column, Completed, Failure, MAX_BODY, Reply, Request, VERSION, broken};
 
 use crate::cancel::Canceller;
+use crate::frames::Answer;
 pub use crate::mechanism::{Certificate, Mechanism, Password, TlsChannel, Trust};
 use crate::target::Target;
 use crate::timeouts::{Bound, Limit, TERMINATE_WITHIN, Timeouts, io_failed, limit, tcp_to};
@@ -141,7 +142,7 @@ pub fn connect(address: impl ToSocketAddrs, user: &str, mechanism: &mut dyn Mech
     let stream = tcp_to(address, timeouts.connect)?;
     stream.set_nodelay(true).map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
     let server = stream.peer_addr().map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
-    Ok(Connection::open_timed(stream, (user, mechanism), timeouts)?.reached_by(Target::Tcp(server)))
+    Ok(Connection::open_within(stream, (user, mechanism), timeouts)?.reached_by(Target::Tcp(server)))
 }
 
 /// Connects to the server at the Unix socket `path` as `user`,
@@ -157,7 +158,7 @@ pub fn connect_local(
     mechanism: &mut dyn Mechanism,
 ) -> Result<Connection<std::os::unix::net::UnixStream>> {
     let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| io_failed("connect", &e))?;
-    let opened = Connection::open_timed(stream, (user, mechanism), Timeouts::default())?;
+    let opened = Connection::open_within(stream, (user, mechanism), Timeouts::default())?;
     Ok(opened.reached_by(Target::Local(path.to_path_buf())))
 }
 
@@ -174,7 +175,7 @@ pub fn connect_local(
 pub fn connect_local(path: &std::path::Path, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connection<std::fs::File>> {
     let timeouts = Timeouts::default();
     let pipe = crate::pipe::open(path, timeouts.connect)?;
-    let opened = Connection::open_timed(pipe, (user, mechanism), timeouts)?;
+    let opened = Connection::open_within(pipe, (user, mechanism), timeouts)?;
     Ok(opened.reached_by(Target::Local(path.to_path_buf())))
 }
 
@@ -183,7 +184,9 @@ impl<S: Read + Write> Connection<S> {
     /// `mechanism`. Of a stream given, the caller answers for whether it
     /// keeps a secret mechanism's bytes, as a password, private: `connect`,
     /// `connect_local`, `target::connect_to` and `tls::connect` know their
-    /// transport, and refuse one over plain TCP.
+    /// transport, and refuse one over plain TCP. Its waits, Terminate's
+    /// too, are as its maker set the stream to, and `open_within` bounds
+    /// a stream that bounds itself.
     ///
     /// # Errors
     ///
@@ -288,25 +291,28 @@ impl<S: Read + Write> Connection<S> {
 
     /// Opens a connection over `stream`, as `open`, its waits bounded on
     /// the stream itself as `timeouts` say: each step of the login by
-    /// `connect`, each after by `read`.
+    /// `connect`, each after by `read`, and Terminate's answer by `read`,
+    /// else `TERMINATE_WITHIN`. A stream of a program's own bounds itself
+    /// by implementing `Bound` (RULES.md D394); `set_read_timeout` then
+    /// changes its read timeout too.
     ///
     /// # Errors
     ///
     /// As `open`'s; a connection failure if a wait runs out.
-    pub(crate) fn open_timed(stream: S, login: (&str, &mut dyn Mechanism), timeouts: Timeouts) -> Result<Connection<S>>
+    pub fn open_within(stream: S, login: (&str, &mut dyn Mechanism), timeouts: Timeouts) -> Result<Connection<S>>
     where
         S: Bound,
     {
-        Connection::open_timed_offering(stream, login, (timeouts, Offer::default()))
+        Connection::open_within_offering(stream, login, (timeouts, Offer::default()))
     }
 
-    /// Opens a connection over `stream` as `open_timed` does, asking for
+    /// Opens a connection over `stream` as `open_within` does, asking for
     /// what `offer` asks, as `open_offering`.
     ///
     /// # Errors
     ///
-    /// As `open_timed`'s.
-    pub(crate) fn open_timed_offering(
+    /// As `open_within`'s.
+    pub(crate) fn open_within_offering(
         stream: S,
         login: (&str, &mut dyn Mechanism),
         (timeouts, offer): (Timeouts, Offer),
@@ -525,40 +531,40 @@ impl<S: Read + Write> Connection<S> {
     }
 
     /// Ends the connection, once the server has ended its session as
-    /// SESSION.COMMIT_AT_END says and closed it: waiting for it at most as its read
-    /// timeout says, else `TERMINATE_WITHIN`, and taking at most a reply's
-    /// bytes.
+    /// SESSION.COMMIT_AT_END says and closed it. It waits at most as its
+    /// read timeout says, else `TERMINATE_WITHIN`, on a stream that bounds
+    /// itself (`open_within`), and as its maker set it on a stream given
+    /// to `open` (RULES.md D394). Each reply before the close is of at
+    /// most a reply's bytes, a Notice or a Status read past.
     ///
     /// # Errors
     ///
     /// A connection failure, if Terminate cannot be sent, or the server
-    /// does not close in time; the server's error, if it sends one rather
-    /// than close: a commit that fails as SESSION.COMMIT_AT_END ends the session,
-    /// its transaction rolled back (SQLSTATE 40002 for a deferred
-    /// constraint not satisfied).
+    /// does not close in time, or answers it; the server's error, if it
+    /// sends one rather than close, as a commit that fails as
+    /// SESSION.COMMIT_AT_END ends the session, its transaction rolled back
+    /// (SQLSTATE 40002 for a deferred constraint not satisfied).
     pub fn terminate(mut self) -> Result<()> {
         self.send(&Request::Terminate)?;
         if let Some(bounded) = self.bounded {
             bounded(self.stream.get_ref(), Some(self.timeouts.read.unwrap_or(TERMINATE_WITHIN)))?;
         }
-        let most = u64::from(self.max_body).saturating_add(u64::try_from(HEADER).unwrap_or(u64::MAX));
-        let mut rest = Vec::new();
-        self.stream.by_ref().take(most).read_to_end(&mut rest).map_err(|e| io_failed("receive", &e))?;
-        let Some((head, body)) = rest.split_first_chunk::<HEADER>() else { return Ok(()) };
-        let (kind, _) = turborel_protocol::header(*head, self.max_body).map_err(|e| Failure::from(&e))?;
-        match Reply::decode(kind, body).map_err(|e| Failure::from(&e))? {
-            Reply::Error(failure) => Err(failure),
-            // A notice or a status comes before the session's end is told.
-            Reply::Notice(_) | Reply::Status { .. } | Reply::Pong => Ok(()),
-            Reply::Lob(_)
-            | Reply::Challenge(_)
-            | Reply::Ready { .. }
-            | Reply::Prepared { .. }
-            | Reply::Description(_)
-            | Reply::Rows(_)
-            | Reply::Suspended
-            | Reply::Complete(_) => Err(failed("[DESIGN] the server answered Terminate")),
+        while !self.stream.fill_buf().map_err(|e| io_failed("receive", &e))?.is_empty() {
+            match self.next_reply(Answer::One)? {
+                Reply::Error(failure) => return Err(failure),
+                // A notice or a status comes before the session's end is told.
+                Reply::Notice(_) | Reply::Status { .. } | Reply::Pong => {}
+                Reply::Lob(_)
+                | Reply::Challenge(_)
+                | Reply::Ready { .. }
+                | Reply::Prepared { .. }
+                | Reply::Description(_)
+                | Reply::Rows(_)
+                | Reply::Suspended
+                | Reply::Complete(_) => return Err(failed("[DESIGN] the server answered Terminate")),
+            }
         }
+        Ok(())
     }
 
     /// Whether the connection is lost: it takes no more.
