@@ -176,8 +176,8 @@ fn filtered(plan: LogicalPlan, mut conds: Vec<Cond>) -> LogicalPlan {
         && !is_guarded(&plan)
     {
         conds.insert(0, cond.clone());
-        let Some(cond) = and_all(conds) else { return plan };
-        return LogicalPlan::Filter { cond, input: input.clone() };
+        let Some(joined) = and_all(conds) else { return plan };
+        return LogicalPlan::Filter { cond: joined, input: input.clone() };
     }
     match and_all(conds) {
         Some(cond) => LogicalPlan::Filter { cond, input: Box::new(plan) },

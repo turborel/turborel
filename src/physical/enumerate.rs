@@ -81,8 +81,8 @@ const MIN_RELATIONS: usize = 3;
 
 /// What became of a chain: planned, planned as written, or left to the
 /// greedy order.
-pub(super) enum Outcome {
-    Planned(Built),
+enum Outcome {
+    Planned(Box<Built>),
     Kept,
     Greedy,
 }
@@ -128,9 +128,22 @@ fn adaptive(space: &mut Space<'_>, (budget, linear): (usize, usize)) -> Algorith
 }
 
 impl PhysicalPlanner<'_> {
+    /// `plan` built, its joins enumerated if they may be, else ordered
+    /// greedily (`physical/order.rs`).
+    pub(super) fn ordered_joins(&self, plan: &LogicalPlan, want: &[SortKey]) -> Built {
+        match self.enumerated(plan, want) {
+            Outcome::Planned(built) => *built,
+            Outcome::Kept => self.build_node(plan, want),
+            Outcome::Greedy => match self.join_order(plan, want) {
+                Some(reordered) => self.build_node(&reordered, want),
+                None => self.build_node(plan, want),
+            },
+        }
+    }
+
     /// `plan`, a chain, planned by join enumeration, if
     /// PLANNER.JOIN_ENUMERATION is ADAPTIVE and the chain may be.
-    pub(super) fn enumerated(&self, plan: &LogicalPlan, want: &[SortKey]) -> Outcome {
+    fn enumerated(&self, plan: &LogicalPlan, want: &[SortKey]) -> Outcome {
         if !extract::is_chain(plan) || self.db.settings.word(JOIN_ENUMERATION) == GREEDY {
             return Outcome::Greedy;
         }
@@ -153,7 +166,7 @@ impl PhysicalPlanner<'_> {
         }
         let cx = Context { query: &query, model: &model, space: &space, want };
         match self.realize(&cx, best.tree, 0) {
-            Some(done) => Outcome::Planned(self.restored(&cx, done, algorithm)),
+            Some(done) => Outcome::Planned(Box::new(self.restored(&cx, done, algorithm))),
             None => Outcome::Kept,
         }
     }
@@ -209,9 +222,10 @@ fn written(space: &mut Space<'_>, query: &Query, node: Node, depth: usize) -> Op
 /// over it.
 fn annotate(plan: &mut Plan, note: &str) {
     match plan {
-        Plan::HashJoin { detail, .. } | Plan::OuterJoin { detail, .. } | Plan::MergeJoin { detail, .. } | Plan::Filter { detail, .. } => {
+        Plan::HashJoin { detail, .. } | Plan::OuterJoin { detail, .. } | Plan::Filter { detail, .. } => {
             detail.push_str(note);
         }
+        Plan::MergeJoin(m) => m.detail.push_str(note),
         Plan::IndexJoin { detail, .. } => *detail = format!("{detail}{note}").into(),
         Plan::Project { input, .. } => annotate(input, note),
         Plan::SeqScan { .. }

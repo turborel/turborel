@@ -106,7 +106,7 @@ impl Plan {
             Plan::Filter { detail, est: Some(est), .. } => writeln!(out, "{pad}Filter {detail}  (est. rows={est:.0})"),
             Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
-            Plan::MergeJoin { outer, detail, .. } => writeln!(out, "{pad}{}MergeJoin {detail}", if *outer { "Left" } else { "" }),
+            Plan::MergeJoin(m) => writeln!(out, "{pad}{}MergeJoin {}", if m.outer { "Left" } else { "" }, m.detail),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
             Plan::IndexJoin { .. } => self.write_index_join(out, &pad),
             Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
@@ -148,7 +148,6 @@ impl Plan {
             }
             Plan::Product { left, right }
             | Plan::HashJoin { left, right, .. }
-            | Plan::MergeJoin { left, right, .. }
             | Plan::OuterJoin { left, right, .. }
             | Plan::Append { left, right }
             | Plan::SetOp { left, right, .. } => {
@@ -167,6 +166,10 @@ impl Plan {
             Plan::Recognize { recognize, .. } => recognize.input.write(out, depth),
             Plan::Polymorphic(p) => p.inputs.iter().for_each(|input| input.write(out, depth)),
             Plan::MergeAppend { inputs, .. } => inputs.iter().for_each(|input| input.write(out, depth)),
+            Plan::MergeJoin(m) => {
+                m.left.write(out, depth);
+                m.right.write(out, depth);
+            }
         }
     }
 }

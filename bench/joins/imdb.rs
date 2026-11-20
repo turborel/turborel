@@ -359,20 +359,25 @@ fn vocabulary() -> HashMap<String, Vec<String>> {
             let Some((alias, column)) = token.split_once('.') else { continue };
             let Some(table) = aliases.get(alias) else { continue };
             let values = found.entry(format!("{table}.{column}")).or_default();
-            for value in
-                tokens.iter().skip(at + 1).take(64).take_while(|t| (t.starts_with('\'') || !t.contains('.')) && *t != "AND" && *t != "OR")
-            {
-                if let Some(text) = value.strip_prefix('\'') {
-                    let plain = text.trim_end_matches('\'').replace("''", "'").replace('%', " ").replace('_', "x");
-                    let plain = plain.trim().to_owned();
-                    if !plain.is_empty() && !values.contains(&plain) {
-                        values.push(plain);
-                    }
+            let compared =
+                tokens.iter().skip(at + 1).take(64).take_while(|t| (t.starts_with('\'') || !t.contains('.')) && *t != "AND" && *t != "OR");
+            for plain in compared.filter_map(|value| literal(value)) {
+                if !values.contains(&plain) {
+                    values.push(plain);
                 }
             }
         }
     }
     found
+}
+
+/// The text of the quoted literal `token`, its wildcards made plain; none
+/// if it is not one or holds nothing.
+fn literal(token: &str) -> Option<String> {
+    let text = token.strip_prefix('\'')?;
+    let plain = text.trim_end_matches('\'').replace("''", "'").replace('%', " ").replace('_', "x");
+    let plain = plain.trim().to_owned();
+    (!plain.is_empty()).then_some(plain)
 }
 
 /// The tables of `sql`'s FROM clause by their aliases.

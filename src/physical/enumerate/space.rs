@@ -11,6 +11,7 @@
 //! dearer than another may still win once its order spares a sort.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use super::bits::{Set, count, lowest, within};
 use super::conflicts::{Kind, obeyed};
@@ -65,6 +66,12 @@ impl Entry {
         self.cands.iter().copied().filter(|c| c.order == order).min_by(|a, b| a.cost.total_cmp(&b.cost))
     }
 
+    /// Whether `cand` is cheaper than its order's plan, or of an order it
+    /// has none of.
+    fn takes(&self, cand: &Cand) -> bool {
+        self.cands.iter().find(|c| c.order == cand.order).is_none_or(|kept| cand.cost < kept.cost)
+    }
+
     /// Adds `cand` if it is the cheapest of its order; whether it was.
     fn offer(&mut self, cand: Cand) -> bool {
         if let Some(kept) = self.cands.iter_mut().find(|c| c.order == cand.order) {
@@ -90,11 +97,39 @@ pub(super) struct Applied {
     pub(super) conjuncts: Vec<usize>,
 }
 
+/// \[DESIGN\] A hasher of sets for the table: a set is its own hash,
+/// folded and mixed by one multiplication, as a table probed for every
+/// pair the enumeration tries cannot afford a keyed hash, and no key of
+/// it comes from outside.
+#[derive(Default)]
+pub(super) struct SetHasher(u64);
+
+impl Hasher for SetHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(b)).wrapping_mul(MIX);
+        }
+    }
+
+    fn write_u128(&mut self, n: u128) {
+        let (low, high) = (u64::try_from(n & u128::from(u64::MAX)).unwrap_or(0), u64::try_from(n >> 64_u32).unwrap_or(0));
+        self.0 = (self.0 ^ low ^ high.rotate_left(32)).wrapping_mul(MIX);
+        self.0 ^= self.0 >> 29_u32;
+    }
+}
+
+/// An odd constant of mixed bits, Fibonacci hashing's.
+const MIX: u64 = 0x9E37_79B9_7F4A_7C15;
+
 /// The table and the plans in it.
 pub(super) struct Space<'m> {
     pub(super) graph: &'m Graph,
     pub(super) model: &'m Model,
-    pub(super) table: HashMap<Set, Entry>,
+    pub(super) table: HashMap<Set, Entry, BuildHasherDefault<SetHasher>>,
     pub(super) trees: Vec<Tree>,
     /// The joins tried that the operators allowed: the work done.
     pub(super) pairs: usize,
@@ -103,7 +138,7 @@ pub(super) struct Space<'m> {
 impl<'m> Space<'m> {
     /// The table of `graph`'s relations alone, each with its reads.
     pub(super) fn new(graph: &'m Graph, model: &'m Model) -> Space<'m> {
-        let mut space = Space { graph, model, table: HashMap::new(), trees: Vec::new(), pairs: 0 };
+        let mut space = Space { graph, model, table: HashMap::default(), trees: Vec::new(), pairs: 0 };
         for rel in 0..graph.n {
             let mut entry = Entry { rows: model.rows(rel), cands: Vec::new() };
             for (order, cost) in model.reads(rel) {
@@ -179,13 +214,12 @@ impl<'m> Space<'m> {
         let s = s1 | s2;
         self.table.entry(s).or_insert_with(|| Entry { rows, cands: Vec::new() });
         let kind = applied.op.and_then(|o| self.graph.ops.get(o)).map_or(Kind::Inner, |o| o.shape.kind);
-        let sides = if kind.commutes() {
-            vec![(applied.left, applied.right), (applied.right, applied.left)]
-        } else {
-            vec![(applied.left, applied.right)]
-        };
-        for (l, r) in sides {
+        let sides = [(applied.left, applied.right), (applied.right, applied.left)];
+        for &(l, r) in sides.iter().take(if kind.commutes() { 2 } else { 1 }) {
             for (cand, tree) in self.offers(&applied, (l, r), rows) {
+                if !self.table.get(&s).is_some_and(|entry| entry.takes(&cand)) {
+                    continue;
+                }
                 let at = self.tree(tree);
                 if let Some(entry) = self.table.get_mut(&s) {
                     entry.offer(Cand { tree: at, ..cand });

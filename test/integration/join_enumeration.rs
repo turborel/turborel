@@ -64,7 +64,7 @@ fn explain_tells_the_order_and_the_algorithm() {
     let sql = "SELECT A.V, B.W, C.X, D.Y FROM A, B, C, D WHERE A.K = B.K AND B.W = C.K AND C.X = D.K";
     let plan = s.explain(sql, &Params::new()).unwrap();
     assert!(plan.contains("(join order by DPccp: "), "{plan}");
-    assert!(!agree(&s, sql).is_empty());
+    assert_ne!(agree(&s, sql), Vec::<String>::new());
     enumeration(&s, "GREEDY");
     assert!(!s.explain(sql, &Params::new()).unwrap().contains("join order by"));
 }

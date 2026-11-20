@@ -148,19 +148,13 @@ impl Model {
     /// rows, applying `applied`.
     pub(super) fn joined_rows(&self, (s1, r1): (Set, f64), (s2, r2): (Set, f64), applied: &Applied) -> f64 {
         let product = r1 * r2;
-        let fraction = match applied.op.and_then(|o| self.preds.get(o)).and_then(Option::as_ref) {
-            Some(pred) => pred.fraction,
-            None => {
-                let classes = self.class_fraction(s1 | s2) / (self.class_fraction(s1) * self.class_fraction(s2)).max(f64::MIN_POSITIVE);
-                let rest: f64 = applied
-                    .conjuncts
-                    .iter()
-                    .filter_map(|&c| self.conjuncts.get(c))
-                    .filter(|c| c.class.is_none())
-                    .map(|c| c.fraction)
-                    .product();
-                classes * rest
-            }
+        let fraction = if let Some(pred) = applied.op.and_then(|o| self.preds.get(o)).and_then(Option::as_ref) {
+            pred.fraction
+        } else {
+            let classes = self.class_fraction(s1 | s2) / (self.class_fraction(s1) * self.class_fraction(s2)).max(f64::MIN_POSITIVE);
+            let rest: f64 =
+                applied.conjuncts.iter().filter_map(|&c| self.conjuncts.get(c)).filter(|c| c.class.is_none()).map(|c| c.fraction).product();
+            classes * rest
         };
         let joined = product * fraction;
         let kind = applied.op.map_or(Kind::Inner, |o| self.kind_of(o));

@@ -55,7 +55,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
-        | Plan::MergeJoin { .. }
+        | Plan::MergeJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }

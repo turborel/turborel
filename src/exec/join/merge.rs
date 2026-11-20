@@ -23,7 +23,7 @@ use super::rescan::{Pass, Rescanned};
 use crate::db::State;
 use crate::error::Result;
 use crate::logical::{Cond, SortKey, Truth};
-use crate::physical::{JoinKey, Plan};
+use crate::physical::{self, JoinKey, Plan};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::{SortOrder, Value, key_equal};
@@ -32,10 +32,11 @@ use crate::value::{SortOrder, Value, key_equal};
 /// frame every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn merged(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::MergeJoin { outer, left, right, key, cond, widths, .. } = plan else { return failed(broken("a merge join is not one")) };
+    let Plan::MergeJoin(plan) = plan else { return failed(broken("a merge join is not one")) };
+    let physical::MergeJoin { outer, left, right, key, cond, widths, .. } = *plan;
     Box::new(MergeJoin {
-        left: execute(*left, db, tx),
-        right: execute(*right, db, tx).peekable(),
+        left: execute(left, db, tx),
+        right: execute(right, db, tx).peekable(),
         key,
         cond,
         nulls: outer.then(|| vec![Value::Null; widths.1]),

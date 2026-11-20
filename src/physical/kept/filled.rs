@@ -93,7 +93,7 @@ impl Filling<'_> {
             Plan::Product { .. }
             | Plan::HashJoin { .. }
             | Plan::IndexJoin { .. }
-            | Plan::MergeJoin { .. }
+            | Plan::MergeJoin(_)
             | Plan::OuterJoin { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }

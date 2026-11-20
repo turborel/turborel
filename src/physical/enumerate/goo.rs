@@ -62,14 +62,14 @@ impl Space<'_> {
         let mut nodes: Vec<Node> = members(u).map(|r| Node { set: bit(r), operands: None }).collect();
         let mut forest: Vec<usize> = (0..nodes.len()).collect();
         while forest.len() > 1 {
-            let (i, j) = self.smallest_join(&nodes, &forest)?;
-            let (a, b) = (*forest.get(i)?, *forest.get(j)?);
-            let (sa, sb) = (nodes.get(a)?.set, nodes.get(b)?.set);
-            if !self.join(sa, sb) {
+            let (first, second) = self.smallest_join(&nodes, &forest)?;
+            let (left, right) = (*forest.get(first)?, *forest.get(second)?);
+            let (left_set, right_set) = (nodes.get(left)?.set, nodes.get(right)?.set);
+            if !self.join(left_set, right_set) {
                 return None;
             }
-            nodes.push(Node { set: sa | sb, operands: Some((a, b)) });
-            forest.retain(|&f| f != a && f != b);
+            nodes.push(Node { set: left_set | right_set, operands: Some((left, right)) });
+            forest.retain(|&tree| tree != left && tree != right);
             forest.push(nodes.len().saturating_sub(1));
         }
         Some(nodes)

@@ -31,6 +31,8 @@ pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spati
 mod join;
 pub use join::JoinKey;
 mod kept;
+mod merged;
+pub use merged::MergeJoin;
 mod nearest;
 mod nodes;
 pub(crate) use nearest::distance_call;
@@ -242,28 +244,8 @@ pub enum Plan {
         /// The condition, as text.
         detail: String,
     },
-    /// \[DESIGN\] (RULES.md D303) The rows of `left` and `right`, each in
-    /// ascending order of its `key` column, paired where the keys are equal
-    /// and `cond` is true of the pair: the rows of a product that its
-    /// equalities keep [X3.135-1986 §5.20 GR2b, §5.21 GR2], or, `outer`, of
-    /// a LEFT outer join [ISO/IEC 9075:1992 §7.5], each left row no pair
-    /// keeps with nulls; in the key's order (`exec/join/merge.rs`).
-    MergeJoin {
-        /// Whether the left rows that match none are kept, of a LEFT join.
-        outer: bool,
-        /// The first operand, in its key's order.
-        left: Box<Plan>,
-        /// The second operand, in its key's order.
-        right: Box<Plan>,
-        /// The column of each its rows are ordered and matched by.
-        key: JoinKey,
-        /// The rest of the condition, over the pair's columns.
-        cond: Option<Cond>,
-        /// The degrees of `left` and `right`, the widths of the nulls.
-        widths: (usize, usize),
-        /// The condition, as text.
-        detail: String,
-    },
+    /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
+    MergeJoin(Box<MergeJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
     Aggregate {
         /// The grouping columns of `input`.
@@ -471,15 +453,7 @@ impl<'a> PhysicalPlanner<'a> {
     /// any, where that pays, its joins enumerated (`physical/enumerate.rs`)
     /// or ordered greedily (`physical/order.rs`).
     fn build(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
-        match self.enumerated(logical, want) {
-            enumerate::Outcome::Planned(built) => return built,
-            enumerate::Outcome::Kept => return self.build_node(logical, want),
-            enumerate::Outcome::Greedy => {}
-        }
-        match self.join_order(logical, want) {
-            Some(reordered) => self.build_node(&reordered, want),
-            None => self.build_node(logical, want),
-        }
+        self.ordered_joins(logical, want)
     }
 
     /// Build `logical` as it is: a chain of products below it is not

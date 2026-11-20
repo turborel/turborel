@@ -40,7 +40,7 @@ impl Edge {
 
     /// Whether it is simple: one relation on each side.
     fn simple(&self) -> bool {
-        self.left.count_ones() == 1 && self.right.count_ones() == 1
+        self.left.is_power_of_two() && self.right.is_power_of_two()
     }
 }
 
@@ -86,11 +86,8 @@ impl Graph {
         let mut hyper = Vec::new();
         for (e, edge) in edges.iter().enumerate() {
             if edge.simple() {
-                for (from, to) in [(edge.left, edge.right), (edge.right, edge.left)] {
-                    if let Some(at) = super::bits::lowest(from).and_then(|r| simple.get_mut(r)) {
-                        *at |= to;
-                    }
-                }
+                link(&mut simple, (edge.left, edge.right));
+                link(&mut simple, (edge.right, edge.left));
             } else {
                 hyper.push(e);
             }
@@ -133,5 +130,12 @@ impl Graph {
     /// The relations a simple edge joins to `r`.
     pub(super) fn adjacent(&self, r: usize) -> Set {
         self.simple.get(r).copied().unwrap_or(0) & !bit(r)
+    }
+}
+
+/// Adds `to` to the simple neighbours of the relation of `from`.
+fn link(simple: &mut [Set], (from, to): (Set, Set)) {
+    if let Some(at) = super::bits::lowest(from).and_then(|r| simple.get_mut(r)) {
+        *at |= to;
     }
 }

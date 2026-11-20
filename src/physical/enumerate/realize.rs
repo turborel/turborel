@@ -19,7 +19,7 @@ use crate::logical::{Cond, Expr, OuterJoin, SortKey, and_all, judged_by_sets, ma
 use crate::physical::indexed::{Equijoin, alike, index_join};
 use crate::physical::join::{JoinKey, Parted, hashed, hashed_outer};
 use crate::physical::shown::Shown;
-use crate::physical::{PhysicalPlanner, Plan};
+use crate::physical::{MergeJoin, PhysicalPlanner, Plan};
 use crate::value::DataType;
 
 /// A realized plan: the plan, the relations whose columns it gives, in
@@ -55,6 +55,13 @@ impl Context<'_> {
         layout.contains(&rel).then(|| before.saturating_add(col.saturating_sub(leaf.start)))
     }
 
+    /// The class of orders of the column at `place` of the columns of
+    /// `layout`.
+    fn class_at(&self, layout: &[usize], place: usize) -> Option<usize> {
+        let col = (0..self.query.width).find(|&c| self.place_of(layout, c) == Some(place))?;
+        self.model.order_of(col).map(|(class, _)| class)
+    }
+
     /// The width of the columns of `layout`.
     fn width(&self, layout: &[usize]) -> usize {
         layout.iter().filter_map(|&r| self.query.leaves.get(r)).map(|l| l.width).sum()
@@ -73,6 +80,28 @@ impl Context<'_> {
     /// The rows of set `s`.
     fn rows(&self, s: Set) -> f64 {
         self.space.table.get(&s).map_or(0.0_f64, |e| e.rows)
+    }
+
+    /// The equalities of `conds` of a column of `left` and one of `right`,
+    /// as places in the columns of the pair, the right's among its own;
+    /// and the rest.
+    fn split_keys(&self, (left, right): (&[usize], &[usize]), conds: &[Cond]) -> (Vec<(usize, usize)>, Vec<Cond>) {
+        let (mut keys, mut rest) = (Vec::new(), Vec::new());
+        for c in conds {
+            let pair = if let Cond::Compare(Expr::Column(a), crate::value::CompOp::Eq, Expr::Column(b)) = c {
+                match (self.place_of(left, *a), self.place_of(right, *b), self.place_of(left, *b), self.place_of(right, *a)) {
+                    (Some(x), Some(y), _, _) | (_, _, Some(x), Some(y)) => Some((x, y)),
+                    (None | Some(_), None | Some(_), None | Some(_), None | Some(_)) => None,
+                }
+            } else {
+                None
+            };
+            match pair {
+                Some(p) => keys.push(p),
+                None => rest.push(c.clone()),
+            }
+        }
+        (keys, rest)
     }
 
     /// The conjuncts a join of `sets` judges: its operator's condition's,
@@ -137,7 +166,7 @@ impl PhysicalPlanner<'_> {
         match (how, kind) {
             (Method::Index, Kind::Inner | Kind::Left) => {
                 let fallback = (Method::Hash, kind);
-                match self.index_realized(cx, kind, (&l, &r), &conds, rows.0) {
+                match self.index_realized(cx, kind, (&l, &r), (&conds, rows.0)) {
                     Some(done) => Some(done),
                     None => self.realize_join(cx, fallback, (l, r), (conds, rows)),
                 }
@@ -164,33 +193,11 @@ impl PhysicalPlanner<'_> {
         Plan::Filter { cond, detail, est: None, input: Box::new(plan) }
     }
 
-    /// The equalities of `conds` of a column of `left` and one of `right`,
-    /// as places in the columns of the pair, the right's among its own;
-    /// and the rest.
-    fn split_keys(&self, cx: &Context<'_>, (left, right): (&[usize], &[usize]), conds: &[Cond]) -> (Vec<(usize, usize)>, Vec<Cond>) {
-        let (mut keys, mut rest) = (Vec::new(), Vec::new());
-        for c in conds {
-            let pair = if let Cond::Compare(Expr::Column(a), crate::value::CompOp::Eq, Expr::Column(b)) = c {
-                match (cx.place_of(left, *a), cx.place_of(right, *b), cx.place_of(left, *b), cx.place_of(right, *a)) {
-                    (Some(x), Some(y), _, _) | (_, _, Some(x), Some(y)) => Some((x, y)),
-                    (None | Some(_), None | Some(_), None | Some(_), None | Some(_)) => None,
-                }
-            } else {
-                None
-            };
-            match pair {
-                Some(p) => keys.push(p),
-                None => rest.push(c.clone()),
-            }
-        }
-        (keys, rest)
-    }
-
     /// An inner hash join, the operand of fewer rows built unless the
     /// left's order was chosen.
     fn hash_realized(&self, cx: &Context<'_>, (l, r): (Realized, Realized), conds: &[Cond], rows: (f64, f64)) -> Realized {
         let (l, r) = if l.order == Order::None && rows.0 < rows.1 { (r, l) } else { (l, r) };
-        let (keys, rest) = self.split_keys(cx, (&l.layout, &r.layout), conds);
+        let (keys, rest) = cx.split_keys((&l.layout, &r.layout), conds);
         let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
         let shape = joined_shape(&l, &r);
         let keys = keys.into_iter().map(|(left, right)| JoinKey { left, right, nulls: false }).collect();
@@ -226,10 +233,16 @@ impl PhysicalPlanner<'_> {
 
     /// An index nested-loop join of `l` and the relation `r` reads, if an
     /// index of its table answers the equalities for the left's values.
-    fn index_realized(&self, cx: &Context<'_>, kind: Kind, (l, r): (&Realized, &Realized), conds: &[Cond], rows: f64) -> Option<Realized> {
+    fn index_realized(
+        &self,
+        cx: &Context<'_>,
+        kind: Kind,
+        (l, r): (&Realized, &Realized),
+        (conds, rows): (&[Cond], f64),
+    ) -> Option<Realized> {
         let &[rel] = r.layout.as_slice() else { return None };
         let leaf = cx.query.leaves.get(rel)?;
-        let (pairs, rest) = self.split_keys(cx, (&l.layout, &r.layout), conds);
+        let (pairs, rest) = cx.split_keys((&l.layout, &r.layout), conds);
         if pairs.is_empty() {
             return None;
         }
@@ -254,43 +267,47 @@ impl PhysicalPlanner<'_> {
         &self,
         cx: &Context<'_>,
         (class, kind): (usize, Kind),
-        (l, r): (Realized, Realized),
+        (left, right): (Realized, Realized),
         conds: &[Cond],
     ) -> Option<Realized> {
-        let (pairs, _) = self.split_keys(cx, (&l.layout, &r.layout), conds);
-        let class_at = |layout: &[usize], place: usize| {
-            let col = (0..cx.query.width).find(|&c| cx.place_of(layout, c) == Some(place))?;
-            cx.model.order_of(col).map(|(k, _)| k)
-        };
-        let &(a, b) = pairs.iter().find(|&&(a, _)| class_at(&l.layout, a) == Some(class))?;
-        let right_class = class_at(&r.layout, b)?;
-        let shape = joined_shape(&l, &r);
-        let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
-        let width = cx.width(&l.layout);
-        let names = cx.names(&layout, self.shown);
-        let shown = Shown::of(names.as_deref());
-        let sorted = |side: Realized, key: usize, k: usize, names: Option<Vec<String>>| {
-            if side.order == Order::Class(k) {
-                return side.plan;
-            }
-            let keys = vec![SortKey::ascending(key)];
-            let detail = Shown::of(names.as_deref()).text(|n| crate::logical::render_keys(&keys, n));
-            Plan::Sort { keys, detail, input: Box::new(side.plan), most: None }
-        };
-        let (left_names, right_names) = (cx.names(&l.layout, self.shown), cx.names(&r.layout, self.shown));
-        let widths = (width, cx.width(&r.layout));
-        let left = sorted(l, a, class, left_names);
-        let right = sorted(r, b, right_class, right_names);
-        let rest: Vec<Cond> = conds.iter().map(|c| cx.mapped(c, &layout)).filter(|c| !is_key(c, (a, b.saturating_add(width)))).collect();
+        let (pairs, _) = cx.split_keys((&left.layout, &right.layout), conds);
+        let &(at_left, at_right) = pairs.iter().find(|&&(place, _)| cx.class_at(&left.layout, place) == Some(class))?;
+        let right_class = cx.class_at(&right.layout, at_right)?;
+        let shape = joined_shape(&left, &right);
+        let layout: Vec<usize> = left.layout.iter().chain(&right.layout).copied().collect();
+        let widths = (cx.width(&left.layout), cx.width(&right.layout));
+        let (left_names, right_names) = (cx.names(&left.layout, self.shown), cx.names(&right.layout, self.shown));
+        let left_plan = sorted(left, (at_left, class), left_names.as_deref());
+        let right_plan = sorted(right, (at_right, right_class), right_names.as_deref());
+        let pair_key = (at_left, at_right.saturating_add(widths.0));
+        let rest: Vec<Cond> = conds.iter().map(|c| cx.mapped(c, &layout)).filter(|c| !is_key(c, pair_key)).collect();
         let cond = and_all(rest).map(judged_by_sets);
-        let key_text =
-            shown.text(|n| format!("{} = {}", render_expr(&Expr::Column(a), n), render_expr(&Expr::Column(b.saturating_add(width)), n)));
-        let rest_text = cond.as_ref().map(|c| shown.text(|n| format!(" AND {}", render_cond(c, n)))).unwrap_or_default();
-        let detail = format!("{key_text}{rest_text}");
-        let key = JoinKey { left: a, right: b, nulls: false };
-        let plan = Plan::MergeJoin { outer: kind == Kind::Left, left: Box::new(left), right: Box::new(right), key, cond, widths, detail };
+        let all_names = cx.names(&layout, self.shown);
+        let detail = merge_detail(Shown::of(all_names.as_deref()), pair_key, cond.as_ref());
+        let key = JoinKey { left: at_left, right: at_right, nulls: false };
+        let merged = MergeJoin { outer: kind == Kind::Left, left: left_plan, right: right_plan, key, cond, widths, detail };
+        let plan = Plan::MergeJoin(Box::new(merged));
         Some(Realized { plan, layout, order: Order::Class(class), shape })
     }
+}
+
+/// The plan of `side`, sorted by its column `key` unless it is in the
+/// order of `class` already.
+fn sorted(side: Realized, (key, class): (usize, usize), names: Option<&[String]>) -> Plan {
+    if side.order == Order::Class(class) {
+        return side.plan;
+    }
+    let keys = vec![SortKey::ascending(key)];
+    let detail = Shown::of(names).text(|shown| crate::logical::render_keys(&keys, shown));
+    Plan::Sort { keys, detail, input: Box::new(side.plan), most: None }
+}
+
+/// How EXPLAIN shows a merge join: its key's equality, then the rest of
+/// its condition.
+fn merge_detail(shown: Shown<'_>, (left, right): (usize, usize), rest: Option<&Cond>) -> String {
+    let key = shown.text(|names| format!("{} = {}", render_expr(&Expr::Column(left), names), render_expr(&Expr::Column(right), names)));
+    let more = rest.map(|c| shown.text(|names| format!(" AND {}", render_cond(c, names)))).unwrap_or_default();
+    format!("{key}{more}")
 }
 
 /// The name a relation is shown by: the qualifier of its first column's
@@ -300,8 +317,8 @@ fn label(plan: &crate::logical::LogicalPlan) -> String {
     first.rsplit_once('.').map_or(first.clone(), |(q, _)| q.to_owned())
 }
 
-/// Whether `c` is the equality of the pair's columns `a` and `b`.
-fn is_key(c: &Cond, (a, b): (usize, usize)) -> bool {
-    let Cond::Compare(Expr::Column(x), crate::value::CompOp::Eq, Expr::Column(y)) = c else { return false };
-    (*x, *y) == (a, b) || (*x, *y) == (b, a)
+/// Whether `c` is the equality of the pair's columns `left` and `right`.
+fn is_key(c: &Cond, (left, right): (usize, usize)) -> bool {
+    let Cond::Compare(Expr::Column(first), crate::value::CompOp::Eq, Expr::Column(second)) = c else { return false };
+    (*first, *second) == (left, right) || (*first, *second) == (right, left)
 }

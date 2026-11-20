@@ -28,6 +28,36 @@ fn equated(c: &Cond, q: &Query) -> Option<(usize, usize)> {
     (q.rel_of(*a)? != q.rel_of(*b)?).then_some((*a, *b))
 }
 
+/// The equalities of a column of each operand `pred` holds, the left
+/// operand's column first, of an operator other than an inner join.
+fn pred_keys(pred: Option<&Cond>, q: &Query) -> Vec<(usize, usize)> {
+    let mut conjuncts = Vec::new();
+    if let Some(c) = pred {
+        split_and(c.clone(), &mut conjuncts);
+    }
+    conjuncts.iter().filter_map(|c| equated(c, q)).collect()
+}
+
+/// The class whose ascending order is `want`'s, if it asks for one
+/// column's ascending order, nulls as implied, of a column of `orders` a
+/// merge join may join by.
+fn wanted_class(want: &[SortKey], orders: &[(usize, usize, bool)]) -> Option<usize> {
+    let [key] = want else { return None };
+    if *key != SortKey::ascending(key.column) {
+        return None;
+    }
+    orders.iter().find(|&&(c, _, merge)| c == key.column && merge).map(|&(_, class, _)| class)
+}
+
+/// The classes of a chain's equalities: of each column a key uses, its
+/// class and whether a merge join may join by it; of each class, its
+/// members and their distinct values; and of each conjunct, its class.
+struct Classed {
+    orders: Vec<(usize, usize, bool)>,
+    classes: Vec<Vec<(usize, f64)>>,
+    of_conjunct: Vec<Option<usize>>,
+}
+
 /// The root of `c` among `parents`.
 fn find(parents: &[usize], mut c: usize) -> usize {
     for _ in 0..parents.len() {
@@ -51,7 +81,37 @@ impl PhysicalPlanner<'_> {
     pub(super) fn model(&self, q: &Query, want: &[SortKey]) -> Option<Model> {
         let cost = self.db.cost();
         let inner: Vec<Option<(usize, usize)>> = q.conjuncts.iter().map(|(_, c)| equated(c, q)).collect();
-        let pred_keys: Vec<Vec<(usize, usize)>> = q.preds.iter().map(|p| self.pred_keys(p.as_ref(), q)).collect();
+        let pred_keys: Vec<Vec<(usize, usize)>> = q.preds.iter().map(|p| pred_keys(p.as_ref(), q)).collect();
+        let classed = self.classed(q, &inner, &pred_keys)?;
+        let known = Known { stats: None, cost: &cost };
+        let conjuncts = q
+            .conjuncts
+            .iter()
+            .zip(inner.iter().zip(&classed.of_conjunct))
+            .map(|((op, c), (key, class))| Conj {
+                reads: q.reads(c),
+                op: *op,
+                fraction: estimate::selectivity(c, known),
+                key: *key,
+                class: *class,
+            })
+            .collect();
+        let preds =
+            q.preds.iter().zip(pred_keys).map(|(p, keys)| p.as_ref().map(|c| Pred { fraction: self.pred_fraction(c, q), keys })).collect();
+        let want_class = wanted_class(want, &classed.orders);
+        let spans = q.leaves.iter().map(|l| (l.start, l.width)).collect();
+        let kinds = q.shapes.iter().map(|s| s.kind).collect();
+        let Classed { orders, classes, .. } = classed;
+        let mut model = Model { rels: Vec::new(), conjuncts, preds, kinds, classes, orders, spans, cost, want_class };
+        model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
+        Some(model)
+    }
+
+    /// The classes of the equalities `inner` of the inner joins, by union of
+    /// their columns, with the columns of the equalities `pred_keys` of the
+    /// other operators each in its own unless an inner one joins it; none
+    /// if a column's distinct values are not known.
+    fn classed(&self, q: &Query, inner: &[Option<(usize, usize)>], pred_keys: &[Vec<(usize, usize)>]) -> Option<Classed> {
         let mut parents: Vec<usize> = (0..q.width).collect();
         for &(a, b) in inner.iter().flatten() {
             let (ra, rb) = (find(&parents, a), find(&parents, b));
@@ -77,41 +137,8 @@ impl PhysicalPlanner<'_> {
                 members.push((rel, self.chain_distinct(q, col)?));
             }
         }
-        let known = Known { stats: None, cost: &cost };
-        let conjuncts = q
-            .conjuncts
-            .iter()
-            .zip(&inner)
-            .map(|((op, c), key)| Conj {
-                reads: q.reads(c),
-                op: *op,
-                fraction: estimate::selectivity(c, known),
-                key: *key,
-                class: key.and_then(|(a, _)| class_of(a)),
-            })
-            .collect();
-        let preds =
-            q.preds.iter().zip(pred_keys).map(|(p, keys)| p.as_ref().map(|c| Pred { fraction: self.pred_fraction(c, q), keys })).collect();
-        let want_class = match want {
-            [key] if *key == SortKey::ascending(key.column) => {
-                orders.iter().find(|&&(c, _, merge)| c == key.column && merge).map(|&(_, class, _)| class)
-            }
-            _ => None,
-        };
-        let spans = q.leaves.iter().map(|l| (l.start, l.width)).collect();
-        let mut model = Model {
-            rels: Vec::new(),
-            conjuncts,
-            preds,
-            kinds: q.shapes.iter().map(|s| s.kind).collect(),
-            classes,
-            orders,
-            spans,
-            cost,
-            want_class,
-        };
-        model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
-        Some(model)
+        let of_conjunct = inner.iter().map(|key| key.and_then(|(a, _)| class_of(a))).collect();
+        Some(Classed { orders, classes, of_conjunct })
     }
 
     /// The type of the chain's column `col`, if it is a table's.
@@ -125,16 +152,6 @@ impl PhysicalPlanner<'_> {
     fn chain_distinct(&self, q: &Query, col: usize) -> Option<f64> {
         let leaf = q.leaves.get(q.rel_of(col)?)?;
         self.distinct_of(&leaf.plan, col.checked_sub(leaf.start)?).or_else(|| self.rows_of(&leaf.plan))
-    }
-
-    /// The equalities of a column of each operand `pred` holds, the left
-    /// operand's column first, of an operator other than an inner join.
-    fn pred_keys(&self, pred: Option<&Cond>, q: &Query) -> Vec<(usize, usize)> {
-        let mut conjuncts = Vec::new();
-        if let Some(c) = pred {
-            split_and(c.clone(), &mut conjuncts);
-        }
-        conjuncts.iter().filter_map(|c| equated(c, q)).collect()
     }
 
     /// The fraction of pairs `pred` keeps: of each equality of columns of

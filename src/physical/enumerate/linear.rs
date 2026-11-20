@@ -46,18 +46,25 @@ impl Space<'_> {
     pub(super) fn linearized(&mut self, u: Set) -> bool {
         let Some(order) = self.ikkbz(u) else { return false };
         let n = order.len();
-        let run = |from: usize, to: usize| order.get(from..to).unwrap_or_default().iter().fold(0, |s, &r| s | bit(r));
         for len in 2..=n {
-            for i in 0..=n.saturating_sub(len) {
-                for j in 1..len {
-                    let (l, r) = (run(i, i.saturating_add(j)), run(i.saturating_add(j), i.saturating_add(len)));
-                    if self.has(l) && self.has(r) {
-                        self.join(l, r);
-                    }
-                }
+            for start in 0..=n.saturating_sub(len) {
+                self.join_run(&order, (start, len));
             }
         }
         true
+    }
+
+    /// Joins the run of `order` of `len` relations from `start`, by each
+    /// split of it into two runs that have plans.
+    fn join_run(&mut self, order: &[usize], (start, len): (usize, usize)) {
+        let run = |from: usize, to: usize| order.get(from..to).unwrap_or_default().iter().fold(0, |s, &r| s | bit(r));
+        for split in 1..len {
+            let middle = start.saturating_add(split);
+            let (left, right) = (run(start, middle), run(middle, start.saturating_add(len)));
+            if self.has(left) && self.has(right) {
+                self.join(left, right);
+            }
+        }
     }
 
     /// The fraction of pairs of relations `a` and `b` their join keeps.
