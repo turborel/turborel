@@ -209,3 +209,22 @@ fn inflates_far_matches_zlib_wrote() {
         assert_eq!(decompress(&hex(stream), data.len()).unwrap(), data);
     }
 }
+
+/// Verifies: [EXTENSION] RFC 1950 §2.2, RFC 1951 §3.2 (RULES.md D193):
+/// a stream cut short anywhere, in its header, inside a stored, fixed or
+/// dynamic block, inside a dynamic block's code lengths, or in its
+/// Adler-32, is refused as malformed (SQLCODE -916), never inflated to
+/// less.
+#[test]
+fn every_prefix_of_a_stream_is_refused() {
+    let fixed = hex("789c4b040000620062");
+    let stored = compress(&noise(40));
+    let dynamic = compress(&skewed());
+    for stream in [fixed, stored, dynamic] {
+        assert!(decompress(&stream, 1 << 20).is_ok());
+        for end in 0..stream.len() {
+            let e = decompress(&stream[..end], 1 << 20).unwrap_err();
+            assert_eq!(e.sqlcode(), -916_i32, "cut at {end} of {}: {e}", stream.len());
+        }
+    }
+}

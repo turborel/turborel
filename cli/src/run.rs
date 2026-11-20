@@ -421,9 +421,13 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// Writes `line` and a newline to the output.
+    /// Writes `line` and a newline to the output, copied to the file `\tee`
+    /// names, as all that is written is.
     fn print_line(&mut self, line: &str) -> io::Result<()> {
-        let written = writeln!(self.out, "{line}").and_then(|()| self.out.flush());
+        let written = writeln!(self.out, "{line}").and_then(|()| self.out.flush()).and_then(|()| match &mut self.tee {
+            Some(tee) => writeln!(tee, "{line}"),
+            None => Ok(()),
+        });
         written.inspect_err(|e| {
             self.tell(&format!("cannot write: {e}"), Next::Stop);
         })

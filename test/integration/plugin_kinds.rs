@@ -7,6 +7,8 @@
 
 mod engines;
 mod indexes;
+mod keys;
+mod overlays;
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;

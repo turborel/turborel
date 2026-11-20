@@ -7,7 +7,9 @@
 
 use turborel::db::{Database, Direct, Session};
 
+mod changes;
 mod dml;
+mod expressions;
 mod modes;
 mod queries;
 mod seams;
