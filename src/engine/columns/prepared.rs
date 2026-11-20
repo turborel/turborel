@@ -13,9 +13,11 @@
 //! `KEPT` chunks, so what is held is about a run's chunks a column, never
 //! a whole group. The scan lets every chunk go as it takes up the next
 //! group (`clear`). What is held is one run's metadata and bytes, so it is
-//! charged to no work grant.
+//! charged to no work grant. The bytes of a chunk let go are kept to hold
+//! the next one's, so a scan allocates them about once a column, not once
+//! a chunk.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 use super::encoded::Entries;
 use super::fsst::Symbols;
@@ -50,7 +52,10 @@ pub struct Made {
 /// \[DESIGN\] The chunks opened of the group being read.
 #[derive(Default)]
 pub struct Prepared {
-    columns: HashMap<usize, VecDeque<Held>>,
+    /// Each column's chunks held, by its number.
+    columns: Vec<VecDeque<Held>>,
+    /// The bytes of chunks let go, to hold the next ones'.
+    spare: Vec<Vec<u8>>,
     /// How many chunks were opened, as a test counts them.
     #[cfg(test)]
     pub(super) opened: usize,
@@ -59,7 +64,11 @@ pub struct Prepared {
 impl Prepared {
     /// Lets every chunk go, as the next group is taken up.
     pub fn clear(&mut self) {
-        self.columns.clear();
+        let Prepared { columns, spare, .. } = self;
+        for kept in columns {
+            spare.extend(kept.drain(..).map(|h| h.bytes));
+        }
+        spare.truncate(KEPT);
     }
 
     /// What `read` makes of the chunk `zone` of column `column` of type
@@ -77,17 +86,26 @@ impl Prepared {
         read: impl FnOnce(&Chunk<'_>, &Made) -> Result<T>,
     ) -> Result<T> {
         let first = zone.run.first;
-        let kept = self.columns.entry(column).or_default();
+        if self.columns.len() <= column {
+            self.columns.resize_with(column.saturating_add(1), VecDeque::new);
+        }
+        let Prepared {
+            columns,
+            spare,
+            #[cfg(test)]
+            opened,
+        } = &mut *self;
+        let kept = columns.get_mut(column).ok_or_else(|| super::corrupt("a column held is gone"))?;
         let at = if let Some(at) = kept.iter().position(|h| h.first == first) {
             at
         } else {
             while kept.front().is_some_and(|h| h.end <= first) || kept.len() >= KEPT {
-                kept.pop_front();
+                spare.extend(kept.pop_front().map(|h| h.bytes));
             }
-            kept.push_back(open(pages, zone, t)?);
+            kept.push_back(open(pages, (zone, t), spare.pop().unwrap_or_default())?);
             #[cfg(test)]
             {
-                self.opened = self.opened.saturating_add(1);
+                *opened = opened.saturating_add(1);
             }
             kept.len().saturating_sub(1)
         };
@@ -97,10 +115,14 @@ impl Prepared {
     }
 }
 
-/// The chunk `zone`, of a column of type `t`, read of `pages`, and what
-/// its runs share made of it.
-fn open<S: Seal>(pages: &Pages<'_, S>, zone: &Zone, t: &DataType) -> Result<Held> {
-    let bytes = pages.with_run(&zone.run, |b| Ok(b.to_vec()))?;
+/// The chunk `zone`, of a column of type `t`, read of `pages` into
+/// `bytes`, and what its runs share made of it.
+fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t): (&Zone, &DataType), mut bytes: Vec<u8>) -> Result<Held> {
+    bytes.clear();
+    pages.with_run(&zone.run, |b| {
+        bytes.extend_from_slice(b);
+        Ok(())
+    })?;
     let chunk = Chunk::parse(&bytes)?;
     let table = chunk.table();
     // Entries as text of a character string type, else as integers.
