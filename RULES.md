@@ -9862,6 +9862,17 @@ number is of a numeric type, so the equality added compares without
 error and keeps the rows the two keep. The join then probes the index
 by both columns, as it would by any other equality of theirs.
 
+#### D405. A statement planned asks the system nothing
+
+Planning a statement asked the system how many threads it runs, to
+size parallel parts (D291), and the asking opens and reads files of the
+system's each time, about a dozen calls. It is asked once, as the
+system's threads do not change while the database runs
+(`physical/parallel.rs`). The catalog's lists sorted by name, read at
+each statement's end to find the constraints a change may break, sort
+by a name made once for each entry, not at each comparison
+(`catalog/memory.rs`).
+
 ## 2. Project layout
 
 ```

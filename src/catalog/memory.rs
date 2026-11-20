@@ -124,7 +124,7 @@ impl Catalog for MemoryCatalog {
     }
     fn tables(&self) -> Vec<&TableDesc> {
         let mut tables: Vec<&TableDesc> = self.tables.values().collect();
-        tables.sort_by_key(|t| t.name.to_string());
+        tables.sort_by_cached_key(|t| t.name.to_string());
         tables
     }
     fn temporary_tables(&self) -> Vec<&TableDesc> {
@@ -146,7 +146,7 @@ impl Catalog for MemoryCatalog {
     }
     fn views(&self) -> Vec<&ViewDesc> {
         let mut views: Vec<&ViewDesc> = self.views.values().collect();
-        views.sort_by_key(|v| v.name.to_string());
+        views.sort_by_cached_key(|v| v.name.to_string());
         views
     }
     fn replace_table(&mut self, desc: TableDesc) {
@@ -177,7 +177,7 @@ impl Catalog for MemoryCatalog {
     }
     fn domains(&self) -> Vec<&DomainDesc> {
         let mut domains: Vec<&DomainDesc> = self.domains.values().collect();
-        domains.sort_by_key(|d| d.name.to_string());
+        domains.sort_by_cached_key(|d| d.name.to_string());
         domains
     }
     fn put_collation(&mut self, collation: CollationDesc) {
@@ -188,7 +188,7 @@ impl Catalog for MemoryCatalog {
     }
     fn collations(&self) -> Vec<&CollationDesc> {
         let mut collations: Vec<&CollationDesc> = self.collations.values().collect();
-        collations.sort_by_key(|c| c.name.to_string());
+        collations.sort_by_cached_key(|c| c.name.to_string());
         collations
     }
     fn remove_collation(&mut self, name: &QualifiedName) {
@@ -202,7 +202,7 @@ impl Catalog for MemoryCatalog {
     }
     fn xml_schemas(&self) -> Vec<&XmlSchemaDesc> {
         let mut all: Vec<&XmlSchemaDesc> = self.xml_schemas.values().collect();
-        all.sort_by_key(|x| x.name.to_string());
+        all.sort_by_cached_key(|x| x.name.to_string());
         all
     }
     fn remove_xml_schema(&mut self, name: &QualifiedName) {
@@ -216,7 +216,7 @@ impl Catalog for MemoryCatalog {
     }
     fn xquery_modules(&self) -> Vec<&XQueryModuleDesc> {
         let mut all: Vec<&XQueryModuleDesc> = self.xquery_modules.values().collect();
-        all.sort_by_key(|m| m.name.to_string());
+        all.sort_by_cached_key(|m| m.name.to_string());
         all
     }
     fn remove_xquery_module(&mut self, name: &QualifiedName) {
@@ -230,7 +230,7 @@ impl Catalog for MemoryCatalog {
     }
     fn sequences(&self) -> Vec<&SequenceDesc> {
         let mut sequences: Vec<&SequenceDesc> = self.sequences.values().collect();
-        sequences.sort_by_key(|s| s.name.to_string());
+        sequences.sort_by_cached_key(|s| s.name.to_string());
         sequences
     }
     fn remove_sequence(&mut self, name: &QualifiedName) {
@@ -244,7 +244,7 @@ impl Catalog for MemoryCatalog {
     }
     fn user_types(&self) -> Vec<&UserTypeDesc> {
         let mut user_types: Vec<&UserTypeDesc> = self.user_types.values().collect();
-        user_types.sort_by_key(|t| t.name.to_string());
+        user_types.sort_by_cached_key(|t| t.name.to_string());
         user_types
     }
     fn remove_user_type(&mut self, name: &QualifiedName) {
@@ -258,7 +258,7 @@ impl Catalog for MemoryCatalog {
     }
     fn structured_types(&self) -> Vec<&StructuredDesc> {
         let mut all: Vec<&StructuredDesc> = self.structured_types.values().collect();
-        all.sort_by_key(|t| t.name.to_string());
+        all.sort_by_cached_key(|t| t.name.to_string());
         all
     }
     fn remove_structured_type(&mut self, name: &QualifiedName) {
@@ -314,7 +314,7 @@ impl Catalog for MemoryCatalog {
     }
     fn assertions(&self) -> Vec<&ConstraintDesc> {
         let mut assertions: Vec<&ConstraintDesc> = self.assertions.values().collect();
-        assertions.sort_by_key(|a| a.name.to_string());
+        assertions.sort_by_cached_key(|a| a.name.to_string());
         assertions
     }
     fn remove_assertion(&mut self, name: &QualifiedName) {
