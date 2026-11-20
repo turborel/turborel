@@ -11,6 +11,7 @@ use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::optimizer::{PUSH_FILTER_INTO_OUTER_JOIN, PUSH_RAISING_FILTER_INTO_PRODUCT};
 use turborel::params::Params;
+use turborel::value::Value;
 
 use crate::common::{both_ways, rows, sorted};
 
@@ -378,7 +379,7 @@ fn right_joins_and_derived_tables_probe_an_index() {
 /// estimated by the distinct values of the columns
 /// its equality compares, not by a default share of its product: G of two
 /// values in each of L and M, their join's rows are half their product,
-/// too many to probe T's index each, so T is hash joined; joined on K, a
+/// too many to probe T's index each, so the greedy order hash joins T; joined on K, a
 /// key of each, they are as few as either's rows, and probe it.
 #[test]
 fn a_joined_left_operand_is_estimated_by_distinct_values() {
@@ -403,6 +404,12 @@ fn a_joined_left_operand_is_estimated_by_distinct_values() {
     // Statistics asked for, then gathered (D31).
     s.explain(grouped, &Params::new()).unwrap();
     db.maintain().unwrap();
+    // The joins enumerated (D300) reassociate the LEFT join below the
+    // inner one, its 100 rows of M probing T's index.
+    let plan = s.explain(grouped, &Params::new()).unwrap();
+    assert!(plan.contains("LeftOuterIndexNestedLoop P.T using T_K") && plan.contains("(L (M T))"), "{plan}");
+    assert_eq!(rows(&s, grouped), Ok(vec!["5000".to_owned()]));
+    db.set_setting("PLANNER.JOIN_ENUMERATION", &Value::Char("GREEDY".into())).unwrap();
     let plan = s.explain(grouped, &Params::new()).unwrap();
     assert!(!plan.contains("IndexNestedLoop"), "{plan}");
     assert_eq!(rows(&s, grouped), Ok(vec!["5000".to_owned()]));

@@ -339,6 +339,7 @@ ZONE or not (RULES.md D54).
 | Storing, comparing, indexing, uniqueness | Kept in UTC, by their instants | §8.2 GR5 |
 | Assignment | To a datetime of their fields | §9.2 SR2, GR3l |
 | CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP | One instant in a statement | §6.8 |
+| LOCALTIME, LOCALTIMESTAMP | That instant without time zone, in the session's displacement (Feature F051, [Local datetimes](#local-datetimes)) | ISO/IEC 9075-2:2023 §6.43 SR2, SR3 |
 | CAST | To and from character strings, and between datetimes | §6.10 SR4, GR5e, GR6e, GR9–GR11 |
 | EXTRACT | A datetime's fields and displacement | §6.6 |
 | CASE, set operations | Of one datetime type | §9.3 SR3e |
@@ -1230,6 +1231,34 @@ and of ON OVERFLOW ERROR the error is raised then. Their total does not
 depend on their order, so it is the error the result would raise
 (RULES.md D15). ANY_VALUE, LISTAGG, WITHIN and OVERFLOW, which SQL-92 does
 not reserve, are key words only where they are read.
+
+### Local datetimes
+
+Feature F051 (Basic date and time), its subfeatures LOCALTIME (F051-07)
+and LOCALTIMESTAMP (F051-08) with the DATE, TIME and TIMESTAMP types,
+their literals, comparison, CAST and CURRENT_DATE of [Data
+types](#data-types).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| LOCALTIME, LOCALTIMESTAMP | §6.43 SR2, SR3, GR1 to GR3 | CAST(CURRENT_TIME(p) AS TIME(p) WITHOUT TIME ZONE) and CAST(CURRENT_TIMESTAMP(p) AS TIMESTAMP(p) WITHOUT TIME ZONE), so of the statement's one instant, their fields in the session's displacement. Of an omitted precision 0 and 6 [§6.1 SR38]; a precision past 6 is SQLCODE -900. |
+| WITHOUT TIME ZONE | §6.1 SR39 | Written after TIME or TIMESTAMP in a data type, as its default is. WITHOUT is a word there alone. |
+| Defaults | §11.5 SR4d, GR2c | A column's default of either is taken as the statement that takes it runs, shown in COLUMNS.COLUMN_DEFAULT with its precision. |
+| The names | §5.2 | SQL-92 does not reserve them, so each is the function standing alone or before its precision, a column's name qualified or delimited (RULES.md D330). |
+
+### Absolute value, modulus, trigonometry and logarithms
+
+Features T441 (ABS and MOD functions), T622 (Trigonometric functions),
+T623 (General logarithm functions) and T624 (Common logarithm
+functions), of §6.31.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| ABS | §6.31 SR11, GR8 | Of a number, of its declared type; null of null. −N is always of the type, so 22003 is never raised (RULES.md D333). |
+| MOD | §6.31 SR12, GR9 | Of exact numbers of scale 0, of the divisor's type, or DECFLOAT(34) if either is DECFLOAT (IV140), else SQLCODE -103. The remainder of the dividend's sign, found exactly. A divisor of 0 is SQLSTATE 22012; a null operand gives null first (RULES.md D332). |
+| SIN, COS, TAN, SINH, COSH, TANH, ASIN, ACOS, ATAN | §6.31 SR13, GR10 | Of a number in radians, DOUBLE PRECISION (IV144), or DECFLOAT(34) of a DECFLOAT (IV143). ASIN and ACOS of a value outside −1 to 1 are 22003, as is a result past the range (RULES.md D331). |
+| LOG, LOG10 | §6.31 SR14, SR15, GR11 | LOG(base, argument), and LOG10(x) as LOG(10, x). DOUBLE PRECISION (IV142), or DECFLOAT(34) if either is DECFLOAT (IV141). An argument of 0 or below, or a base of 0 or below or of 1, is 22003. |
+| The names | §5.2 | ABS, MOD and the others, which SQL-92 does not reserve, are the functions only before "(", so a column may still be named one. |
 
 ### Enhanced numeric functions
 
@@ -2395,7 +2424,7 @@ column answers that comparison.
 | FT_MaxPatternLength [§5.3.1 DR1] | 32,767 characters |
 | FT_MaxLanguageLength [§5.1.1 DR4] | 32 |
 | FT_DefaultLanguage [§5.1.1 DR5] | ENGLISH |
-| Languages [§5.1.9] | ENGLISH and NONE, in any case, trailing blanks ignored; another, an empty or a null one is SQLSTATE 2FF02 |
+| Languages [§5.1.9] | The 43 the tokenizer knows (below), named in English, in any case, trailing blanks ignored; another, an empty or a null one is SQLSTATE 2FF02 |
 | FT_MinRankValue, FT_MaxRankValue [§5.1.3] | 0 and the greatest DOUBLE PRECISION |
 | FT_RankDeterminism [§5.1.1 DR6] | NOT DETERMINISTIC. A rank moves with its index's statistics, which a statement reads once, so it is fixed within a statement |
 | Thesauri [§8.3 D1] | Those whose names FT_THESAURUS's tables hold, made by the user with clause 8's definitions; at most 65,535 relations a statement, the greatest array |
@@ -2415,12 +2444,13 @@ column answers that comparison.
 | Escapes | An escape before anything but itself, `%` or `_` is 2FF01, as is an escape not one character |
 | Optional words | A phrase part of unescaped `%` alone; a phrase of optional words alone is 2FF01 |
 | Stop words [§4.4.2, §6.6.2] | Never 2FF01. A pattern of stop words alone is 2FF03. A lone stop word matches nothing, and inside a phrase matches any stop word of the document |
-| A literal of another language [§6.4.2, §6.5.2] | LIKE over normalized text, its stop words and stems of its own language |
+| A literal of another language [§6.4.2, §6.5.2] | LIKE over normalized text, its stop words, normalization and stems of its own language |
+| A single letter of a bigram language | Matches each word of the document holding it (RULES.md D329) |
 | Phrases | May cross a sentence's end; in a context condition a match lies wholly in one unit |
 | IS ABOUT [§6.17.2] | Any word of the phrase that is not a stop word |
 | SOUNDS LIKE [§6.9.5] | American Soundex of the word's ASCII letters; a word of none matches itself only |
 | FUZZY FORM OF [§6.10.5] | Optimal string alignment distance at most 1, or 2 of a word of 8 or more characters |
-| Thesaurus terms | Deduplicated, read in the start term's language and matched literally; names compared trimmed of blanks; synonyms transitive [§6.13.5] |
+| Thesaurus terms | Deduplicated, read in the start term's language and matched literally; names compared trimmed of blanks; synonyms transitive [§6.13.5]. A start term of a bigram language is its pairs joined back (RULES.md D329) |
 | Nesting | At most 100 levels, else 2FF01; a thesaurus expansion adds at most 64 |
 
 ### Tokenizing [§5.1.4–§5.1.8]
@@ -3571,13 +3601,15 @@ TEXT_MATCHES(document, words) is true of a document holding every word
 of `words` that is not a stop word, true of a search of stop words
 alone, and null of a null argument (`fulltext/matches.rs`). Both are
 character strings or large objects, read a piece at a time. It reads
-both in English and compares words normalized, not stemmed. ISO/IEC
+both in the FULLTEXT.LANGUAGE of the full-text index of the document's
+column, else in English, and compares words normalized, not stemmed
+(RULES.md D327). ISO/IEC
 13249-2:2002 (CD, SC32 N0640) searches by its FULLTEXT type's CONTAINS
 method instead, [below](#sqlmm-full-text).
 
 The index method `fulltext` answers TEXT_MATCHES of one character string
 column (`index/fulltext.rs`, RULES.md D86). Its options are
-FULLTEXT.LANGUAGE, ENGLISH or NONE, and FULLTEXT.STOP_WORDS, DEFAULT,
+FULLTEXT.LANGUAGE, one of the 43 languages below, and FULLTEXT.STOP_WORDS, DEFAULT,
 NONE or a list of words, each a rebuild; and FULLTEXT.K1 (0 to 1000,
 1.2) and FULLTEXT.B (0 to 1, 0.75), BM25's weights, changed in place. A
 column with a collation is refused (SQLCODE -900), as its key is its
@@ -3591,15 +3623,19 @@ These are turborel's choices (`fulltext/text.rs`).
 
 | Choice | turborel |
 |---|---|
-| Word | A run of Unicode 13.0 letters, numbers and marks, two joined by one connector (Pc) or, between letters, one apostrophe (U+0027 or U+2019). Each Han, Hiragana or Katakana character is a word |
+| Word | A run of Unicode 13.0 letters, numbers and marks, two joined by one connector (Pc) or, between letters, one apostrophe (U+0027 or U+2019). Each Han, Hiragana or Katakana character is a word, but in a language read as bigrams |
+| Elisions | In FRENCH, ITALIAN, CATALAN and IRISH an elided article or pronoun before a word's first apostrophe is taken off it; in CATALAN a middle dot between letters joins them (RULES.md D322) |
+| Bigrams | In CHINESE, JAPANESE, KOREAN, THAI, LAO, KHMER and BURMESE a run of ideographs, kana, Hangul, or Thai, Lao, Myanmar or Khmer letters is read as its overlapping pairs, a letter with its marks; one letter alone is a word (RULES.md D323) |
 | Sentence end | `.`, `!` or `?`, with closing brackets and quotes after it, then a blank, a line terminator or the end; U+3002, U+FF01, U+FF0E and U+FF1F alone |
 | Paragraph end | Two line terminators with only blanks between, or U+2029 |
 | Ordinals | Every word, stop words too, from 1; sentences and paragraphs from 1, counting those holding a word |
 | Offset and length | In characters, as written |
-| Normalization [§4.5] | Simple case folding, canonical decomposition, folding again, nonspacing marks (Mn) removed, U+2019 made U+0027 |
-| Stop words [§4.4.2] | English, Snowball's list of 174; NONE, none |
-| Stems [§4.2.3.4] | English, Porter2 (Snowball English, 2006); NONE, the word |
-| Languages [§5.1.9] | ENGLISH, NONE; another is SQLSTATE 2FF02 |
+| Normalization [§4.5] | ENGLISH and NONE, simple case folding, canonical decomposition, folding again, nonspacing marks (Mn) removed. A stemmed language, simple case folding and NFC, accents kept; TURKISH folds `I` to `ı` and `İ` to `i` first. A bigram language, simple case folding and NFKC. U+2019 made U+0027 in all (RULES.md D325) |
+| Stop words [§4.4.2] | Snowball's list where Snowball has one, in DANISH, DUTCH, ENGLISH (174), FINNISH, FRENCH, GERMAN, HUNGARIAN, INDONESIAN, IRISH, ITALIAN, NORWEGIAN, PORTUGUESE, RUSSIAN, SESOTHO, SPANISH, SWEDISH and UKRAINIAN; none in the others |
+| Stems [§4.2.3.4] | Snowball 3.2.0's own program of the language, run by an interpreter of the Snowball language, in ARABIC, ARMENIAN, BASQUE, CATALAN, CZECH, DANISH, DUTCH, ENGLISH, ESPERANTO, ESTONIAN, FINNISH, FRENCH, GERMAN, GREEK, HINDI, HUNGARIAN, INDONESIAN, IRISH, ITALIAN, LITHUANIAN, NEPALI, NORWEGIAN, PERSIAN, POLISH, PORTUGUESE, ROMANIAN, RUSSIAN, SERBIAN, SESOTHO, SPANISH, SWEDISH, TAMIL, TURKISH, UKRAINIAN and YIDDISH; the word in NONE and the bigram languages (RULES.md D320) |
+| Languages [§5.1.9] | NONE, the 35 stemmed languages and the 7 bigram languages, and a language an extension serves by a LANGUAGE object under a name none of these has; another is SQLSTATE 2FF02. None is detected; a document's is its FullText value's or its index's (RULES.md D327, D328) |
+| Served languages | An extension's LANGUAGE cuts text into words, stems and gives stop words as it SERVES, the rest its LIKE language's; a document is one call to cut and one to stem the words not stemmed before (RULES.md D328) |
+| Documents of several languages | An index keeps the languages of its FullText values and reads a pattern in each (RULES.md D324) |
 | Word and term length | A word's first 256 characters; a term's first 255 bytes of UTF-8, cut at a character |
 
 ### JSON documents
@@ -4195,7 +4231,7 @@ PARTITIONS and PARTITION_INDEXES are extensions
 
 | View | Shows |
 |---|---|
-| CONNECTIONS, SERVER, REPLICAS | A server's connections, its counts and its replicas |
+| CONNECTIONS, SERVER, REPLICAS | A server's connections, its counts with the database's transactions committed and rolled back (RULES.md D334), and its replicas |
 | FILES, FILE_FORMATS | A database's files and their formats |
 | JOBS | Its background jobs |
 | MEMORY_RESERVATIONS | What holds its memory |
@@ -4378,6 +4414,11 @@ parts: `cargo xtask features` writes their rows from it, and
 | T625 | LISTAGG | [LISTAGG and ANY_VALUE](#listagg-and-any_value) |
 | T626 | ANY_VALUE | [LISTAGG and ANY_VALUE](#listagg-and-any_value) |
 | T621 | Enhanced numeric functions | [Enhanced numeric functions](#enhanced-numeric-functions) |
+| F051 | Basic date and time | [Local datetimes](#local-datetimes) |
+| T441 | ABS and MOD functions | [Absolute value, modulus, trigonometry and logarithms](#absolute-value-modulus-trigonometry-and-logarithms) |
+| T622 | Trigonometric functions | [Absolute value, modulus, trigonometry and logarithms](#absolute-value-modulus-trigonometry-and-logarithms) |
+| T623 | General logarithm functions | [Absolute value, modulus, trigonometry and logarithms](#absolute-value-modulus-trigonometry-and-logarithms) |
+| T624 | Common logarithm functions | [Absolute value, modulus, trigonometry and logarithms](#absolute-value-modulus-trigonometry-and-logarithms) |
 | T301 | Functional dependencies | [Functional dependencies](#functional-dependencies) |
 | E121-02 | ORDER BY columns need not be in select list | [Sort keys](#sort-keys) |
 | E121-03 | Value expressions in ORDER BY clause | [Sort keys](#sort-keys) |
@@ -5159,6 +5200,7 @@ Where the standards are unclear, turborel reads them as follows.
 | JVNi of JSON_OBJECT [2023 §6.34 GR2d ii 1 G] | The rule makes JVNi a member's key. VJNi, the value of its name, is meant. |
 | VBVi, CJOA and NJVE of the aggregates [2023 §10.11 GR4b ii 2 D II, GR4c, GR5g] | GR4b ii 2 D II lets VBVi be the value, where the other cases let JBVi be; GR4c lets JACF be CJOA, where GR4b made CJO; GR5g counts NJVE, which only §6.34 defines. JBVi, CJO and NTXA are meant. |
 | FORMAT after a query of JSON_ARRAY [2023 §6.34 F, §7.6] | In JSON_ARRAY of a query whose FROM clause ends in a table of no correlation name, FORMAT is read as that table's correlation name, as the grammar lets it be, FORMAT being no reserved word. AS before a name, or the query in parentheses, keeps it the `<JSON input clause>`. |
+| MOD of a DECFLOAT that is no whole number [2023 §6.31 SR12, GR9c] | SR12 lets an operand of MOD be any DECFLOAT, and GR9c defines the remainder only of a whole quotient of scale 0. The remainder is then found as of whole numbers, of the operands' digits at the lesser exponent, so MOD(7.5, 2) is 1.5, of the dividend's sign (RULES.md D332). |
 
 ### The property graph standard
 

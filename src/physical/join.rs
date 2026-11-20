@@ -122,7 +122,7 @@ impl PhysicalPlanner<'_> {
 /// The hash join of `left` and `right` on `keys`, the left `width` columns
 /// wide, its rows filtered by the rest of the condition, `rest`, over its
 /// pairs' columns, described as `shown` says.
-fn hashed((left, right): (Plan, Plan), keys: Vec<JoinKey>, rest: Vec<Cond>, (width, shown): (usize, Shown<'_>)) -> Plan {
+pub(super) fn hashed((left, right): (Plan, Plan), keys: Vec<JoinKey>, rest: Vec<Cond>, (width, shown): (usize, Shown<'_>)) -> Plan {
     let detail = shown.text(|names| keys_detail(&keys, names, width));
     let join = Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail };
     match and_all(rest).map(judged_by_sets) {
@@ -236,14 +236,14 @@ fn equated(c: &Cond, width: usize) -> Option<JoinKey> {
 /// of the right's alone, renumbered as its own. If one that can raise
 /// reads both operands' columns, every conjunct is the rest's: every pair
 /// is then judged (RULES.md D15).
-struct Parted {
+pub(super) struct Parted {
     keys: Vec<JoinKey>,
     rest: Vec<Cond>,
     own: (Vec<Cond>, Vec<Cond>),
 }
 
 impl Parted {
-    fn of(cond: &Cond, width: usize) -> Parted {
+    pub(super) fn of(cond: &Cond, width: usize) -> Parted {
         let mut conjuncts = Vec::new();
         split_and(cond.clone(), &mut conjuncts);
         // Whether a conjunct reads the left's columns alone, or none.
@@ -359,7 +359,7 @@ impl PhysicalPlanner<'_> {
 /// The outer join `kind` of `left` and `right`, of degrees `widths`, on
 /// its condition `parted`, as text `detail`, over its pairs' columns,
 /// described as `shown` says.
-fn hashed_outer(
+pub(super) fn hashed_outer(
     kind: OuterJoin,
     (left, right): (Plan, Plan),
     parted: Parted,

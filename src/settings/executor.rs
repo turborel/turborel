@@ -7,13 +7,13 @@ use super::builtin::{at_least, count, defined};
 use super::{Definition, Effect, Key};
 
 /// EXECUTOR.WORKERS.
-pub const EXECUTOR_WORKERS: Key = Key(79);
+pub const EXECUTOR_WORKERS: Key = Key(82);
 /// EXECUTOR.DEGREE.
-pub const EXECUTOR_DEGREE: Key = Key(80);
+pub const EXECUTOR_DEGREE: Key = Key(83);
 /// EXECUTOR.MORSEL_ROWS.
-pub const EXECUTOR_MORSEL_ROWS: Key = Key(81);
+pub const EXECUTOR_MORSEL_ROWS: Key = Key(84);
 /// EXECUTOR.PARALLEL_MIN_ROWS.
-pub const EXECUTOR_PARALLEL_MIN_ROWS: Key = Key(82);
+pub const EXECUTOR_PARALLEL_MIN_ROWS: Key = Key(85);
 
 /// \[DESIGN\] The default of EXECUTOR.MORSEL_ROWS: enough rows that taking a
 /// morsel costs little beside reading it, few enough that the last

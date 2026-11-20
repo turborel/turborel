@@ -23,6 +23,7 @@ mod block;
 mod cursor;
 mod document;
 mod keys;
+mod languages;
 mod load;
 mod matcher;
 mod near;
@@ -287,7 +288,9 @@ impl IndexMethod for FullTextMethod {
         let (meta, reading) = located(locator)?;
         let (pool, file) = self.files()?;
         let tree = BLinkTree::open(pool, file, meta)?;
-        Ok(Some(Box::new(FullTextIndex::with(tree, (reading, Weights::default()), self.spill()))))
+        let index = FullTextIndex::with(tree, (reading, Weights::default()), self.spill());
+        index.read_languages()?;
+        Ok(Some(Box::new(index)))
     }
     /// As `open`, its weights its descriptor's; its language the one it
     /// was made in, which a change of the option makes anew.
@@ -297,7 +300,9 @@ impl IndexMethod for FullTextMethod {
         let options = Options { reading, ..options_of(on.1)? };
         let (pool, file) = self.files()?;
         let tree = BLinkTree::open(pool, file, meta)?;
-        Ok(Some(Box::new(self.index_of(tree, options)?)))
+        let index = self.index_of(tree, options)?;
+        index.read_languages()?;
+        Ok(Some(Box::new(index)))
     }
     /// Writes back every page and syncs the file.
     fn checkpoint(&self) -> Result<()> {
@@ -314,6 +319,9 @@ pub struct FullTextIndex {
     reading: Reading,
     /// k1's bits, then b's: changed in place (`reconfigure`).
     weights: [AtomicU64; 2],
+    /// The bits of the languages of its documents besides its own
+    /// (`languages.rs`), never taken back.
+    languages: AtomicU64,
     /// The most bytes of a term, so its keys fit the tree's pages.
     most_term: usize,
     projection: Arc<document::Projection>,
@@ -350,6 +358,7 @@ impl FullTextIndex {
             projection: document::Projection::shared(reading.clone()),
             reading,
             weights: [AtomicU64::new(weights.k1.to_bits()), AtomicU64::new(weights.b.to_bits())],
+            languages: AtomicU64::new(0),
             most_term,
             spill,
             rows: (0..ROW_LOCKS).map(|_| Mutex::new(())).collect(),

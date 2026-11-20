@@ -17,6 +17,7 @@ mod executor;
 mod extension;
 mod graph;
 mod hosted;
+mod joins;
 mod kind;
 mod plugins;
 mod started;
@@ -56,6 +57,7 @@ pub use graph::{
     GRAPH_ON_LIMIT, GRAPH_PARALLEL_MIN_STATES, TRUNCATE,
 };
 pub use hosted::PLUGINS_HOST;
+pub use joins::{DP_BUDGET, JOIN_ENUMERATION, LINEARIZED_RELATIONS};
 pub use kind::{Kind, column_list, column_names};
 pub use plugins::{
     HOST_ONLY, PLUGINS_CALL_TIMEOUT_MS, PLUGINS_CANCEL_GRACE_MS, PLUGINS_DIRECTORIES, PLUGINS_MAX_CALL_BYTES, PLUGINS_MAX_MESSAGE_BYTES,

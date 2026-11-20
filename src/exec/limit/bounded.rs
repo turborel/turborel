@@ -35,6 +35,7 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         | Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
+        | Plan::MergeJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }

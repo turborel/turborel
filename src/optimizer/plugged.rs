@@ -86,15 +86,20 @@ fn run(st: &State, phase: Phase, mut plan: LogicalPlan, trace: &mut Vec<&'static
 /// `logical` optimized: the extensions' BOUND rules, the built-in rules
 /// `st`'s settings leave on, and the extensions' REWRITTEN rules; with
 /// the names of the rules that fired, in order. A rule skipped raises
-/// RULE_SKIPPED to `heard`, if given.
-pub(crate) fn optimize(st: &State, logical: LogicalPlan, heard: Option<&Warnings>) -> (LogicalPlan, Vec<&'static str>) {
+/// RULE_SKIPPED to `heard`, if given. The built-in rules named in `except`
+/// are left off.
+pub(crate) fn optimize(
+    st: &State,
+    logical: LogicalPlan,
+    (heard, except): (Option<&Warnings>, &[&str]),
+) -> (LogicalPlan, Vec<&'static str>) {
     let none = st.extensions.values().all(|e| e.objects.iter().all(|(_, b)| !matches!(b, Bridged::Rule(_))));
     if none {
-        return st.optimizer.optimize(logical, &RuleContext { db: st });
+        return st.optimizer.optimize_except(logical, &RuleContext { db: st }, except);
     }
     let mut trace = Vec::new();
     let (bound, early) = run(st, Phase::Bound, logical, &mut trace);
-    let (optimized, built_in) = st.optimizer.optimize(bound, &RuleContext { db: st });
+    let (optimized, built_in) = st.optimizer.optimize_except(bound, &RuleContext { db: st }, except);
     trace.extend(built_in);
     let (rewritten, late) = run(st, Phase::Rewritten, optimized, &mut trace);
     if let Some(w) = heard.filter(|_| early || late) {

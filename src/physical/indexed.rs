@@ -309,7 +309,7 @@ impl PhysicalPlanner<'_> {
     /// column: as its table's statistics count them, else its table's rows,
     /// as if a key; a filter's as its input's, so no estimate is made
     /// again of each level of a chain of joins.
-    fn distinct_of(&self, plan: &LogicalPlan, column: usize) -> Option<f64> {
+    pub(super) fn distinct_of(&self, plan: &LogicalPlan, column: usize) -> Option<f64> {
         match plan {
             LogicalPlan::Scan { table, .. } => self.db.statistics(table).and_then(|s| s.distinct(column)).or_else(|| self.rows_of(plan)),
             LogicalPlan::Filter { input, .. }
@@ -339,7 +339,7 @@ impl PhysicalPlanner<'_> {
     }
 
     /// The type of `plan`'s column `column`, if it is a table's column.
-    fn column_type(&self, plan: &LogicalPlan, column: usize) -> Option<DataType> {
+    pub(super) fn column_type(&self, plan: &LogicalPlan, column: usize) -> Option<DataType> {
         match plan {
             LogicalPlan::Scan { table, .. } => self.db.catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),
             LogicalPlan::Filter { input, .. }
@@ -415,6 +415,7 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::HashJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
+        | Plan::MergeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
@@ -488,7 +489,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
 /// type `b` (`engine/key.rs` `anchor`): of one kind, character strings of
 /// either length, and binary strings, alike; an exact number among
 /// DECFLOAT keys too, which hold it exactly.
-fn alike(a: &DataType, b: &DataType) -> bool {
+pub(super) fn alike(a: &DataType, b: &DataType) -> bool {
     family(a) == family(b) || (matches!(a, DataType::Exact { .. }) && matches!(b, DataType::DecFloat { .. }))
 }
 

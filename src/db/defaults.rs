@@ -67,7 +67,7 @@ pub(super) fn default_of(subject: &DataType, option: &DefaultOption, zone: i16) 
                 return Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3c] the default {t} is not a value of {subject}")));
             }
             let precision = if let DataType::Time { precision, .. } | DataType::Timestamp { precision, .. } = t { precision } else { 0 };
-            return Ok(ColumnDefault::Datetime(f.moment, precision));
+            return Ok(ColumnDefault::Datetime(f.moment, precision, f.local));
         }
         DefaultOption::Literal(l) => l,
     };

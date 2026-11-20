@@ -12,11 +12,11 @@ on:
     branches: [main]
   pull_request:
 
-# A newer push to a pull request replaces its checks still running. On main
-# every merge is checked to the end, since the nightly build waits on it.
+# A newer push to a branch or a pull request replaces its checks still
+# running, so only the latest commit is checked.
 concurrency:
-  group: verify-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:

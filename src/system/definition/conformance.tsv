@@ -82,7 +82,7 @@ FEATURE	F036	 	REVOKE statement performed by non-owner	 	NO
 FEATURE	F037	 	REVOKE statement: GRANT OPTION FOR clause	 	NO		
 FEATURE	F038	 	REVOKE of a WITH GRANT OPTION privilege	 	NO		
 FEATURE	F041	 	Basic joined table	 	NO		
-FEATURE	F051	 	Basic date and time	 	NO		
+FEATURE	F051	 	Basic date and time	 	YES		CONFORMANCE.md, Local datetimes
 FEATURE	F052	 	Intervals and datetime arithmetic	 	NO		
 FEATURE	F053	 	OVERLAPS predicate	 	NO		
 FEATURE	F054	 	TIMESTAMP in DATE type precedence list	 	NO		
@@ -367,7 +367,7 @@ FEATURE	T431	 	Extended grouping capabilities	 	YES		CONFORMANCE.md, Grouping se
 FEATURE	T432	 	Nested and concatenated GROUPING SETS	 	YES		CONFORMANCE.md, Grouping sets
 FEATURE	T433	 	Multi-argument GROUPING function	 	YES		CONFORMANCE.md, Grouping sets
 FEATURE	T434	 	GROUP BY DISTINCT	 	YES		CONFORMANCE.md, Grouping sets
-FEATURE	T441	 	ABS and MOD functions	 	NO		
+FEATURE	T441	 	ABS and MOD functions	 	YES		CONFORMANCE.md, Absolute value, modulus, trigonometry and logarithms
 FEATURE	T461	 	Symmetric BETWEEN predicate	 	NO		
 FEATURE	T471	 	Result sets return value	 	NO		
 FEATURE	T472	 	DESCRIBE CURSOR	 	NO		
@@ -399,9 +399,9 @@ FEATURE	T618	 	NTH_VALUE function	 	YES		CONFORMANCE.md, Window functions
 FEATURE	T619	 	Nested window functions	 	YES		CONFORMANCE.md, Window functions
 FEATURE	T620	 	WINDOW clause: GROUPS option	 	YES		CONFORMANCE.md, Window functions
 FEATURE	T621	 	Enhanced numeric functions	 	YES		CONFORMANCE.md, Enhanced numeric functions
-FEATURE	T622	 	Trigonometric functions	 	NO		
-FEATURE	T623	 	General logarithm functions	 	NO		
-FEATURE	T624	 	Common logarithm functions	 	NO		
+FEATURE	T622	 	Trigonometric functions	 	YES		CONFORMANCE.md, Absolute value, modulus, trigonometry and logarithms
+FEATURE	T623	 	General logarithm functions	 	YES		CONFORMANCE.md, Absolute value, modulus, trigonometry and logarithms
+FEATURE	T624	 	Common logarithm functions	 	YES		CONFORMANCE.md, Absolute value, modulus, trigonometry and logarithms
 FEATURE	T625	 	LISTAGG	 	YES		CONFORMANCE.md, LISTAGG and ANY_VALUE
 FEATURE	T626	 	ANY_VALUE	 	YES		CONFORMANCE.md, LISTAGG and ANY_VALUE
 FEATURE	T627	 	Window framed COUNT DISTINCT	 	YES		CONFORMANCE.md, Window functions
@@ -708,14 +708,14 @@ SUBFEATURE	F041	04	Basic joined table	RIGHT OUTER JOIN	NO
 SUBFEATURE	F041	05	Basic joined table	Outer joins can be nested	NO		
 SUBFEATURE	F041	07	Basic joined table	The inner table in a left or right outer join can also be used in an inner join	NO		
 SUBFEATURE	F041	08	Basic joined table	All comparison operators are supported (rather than just =)	NO		
-SUBFEATURE	F051	01	Basic date and time	DATE data type (including support of DATE literal)	NO		
-SUBFEATURE	F051	02	Basic date and time	TIME data type (including support of TIME literal) with fractional seconds precision of at least 0.	NO		
-SUBFEATURE	F051	03	Basic date and time	TIMESTAMP data type (including support of TIMESTAMP literal) with fractional seconds precision of at least 0 and 6.	NO		
-SUBFEATURE	F051	04	Basic date and time	Comparison predicate on DATE, TIME, and TIMESTAMP data types	NO		
-SUBFEATURE	F051	05	Basic date and time	Explicit CAST between datetime types and character string types	NO		
-SUBFEATURE	F051	06	Basic date and time	CURRENT_DATE	NO		
-SUBFEATURE	F051	07	Basic date and time	LOCALTIME	NO		
-SUBFEATURE	F051	08	Basic date and time	LOCALTIMESTAMP	NO		
+SUBFEATURE	F051	01	Basic date and time	DATE data type (including support of DATE literal)	YES		CONFORMANCE.md, Local datetimes
+SUBFEATURE	F051	02	Basic date and time	TIME data type (including support of TIME literal) with fractional seconds precision of at least 0.	YES		CONFORMANCE.md, Local datetimes
+SUBFEATURE	F051	03	Basic date and time	TIMESTAMP data type (including support of TIMESTAMP literal) with fractional seconds precision of at least 0 and 6.	YES		CONFORMANCE.md, Local datetimes
+SUBFEATURE	F051	04	Basic date and time	Comparison predicate on DATE, TIME, and TIMESTAMP data types	YES		CONFORMANCE.md, Local datetimes
+SUBFEATURE	F051	05	Basic date and time	Explicit CAST between datetime types and character string types	YES		CONFORMANCE.md, Local datetimes
+SUBFEATURE	F051	06	Basic date and time	CURRENT_DATE	YES		CONFORMANCE.md, Local datetimes
+SUBFEATURE	F051	07	Basic date and time	LOCALTIME	YES		CONFORMANCE.md, Local datetimes
+SUBFEATURE	F051	08	Basic date and time	LOCALTIMESTAMP	YES		CONFORMANCE.md, Local datetimes
 SUBFEATURE	F131	01	Grouped operations	WHERE, GROUP BY, and HAVING clauses supported in queries with grouped views	NO		
 SUBFEATURE	F131	02	Grouped operations	Multiple tables supported in queries with grouped views	NO		
 SUBFEATURE	F131	03	Grouped operations	Set functions supported in queries with grouped views	NO		

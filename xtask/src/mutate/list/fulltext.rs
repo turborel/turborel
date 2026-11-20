@@ -74,7 +74,7 @@ pub const FULLTEXT: [Mutation; 15] = [
         breaks: "stop words take no ordinal, so the distances between words are wrong",
         file: "src/fulltext/text/segment.rs",
         original: "self.ordinal = self.ordinal.saturating_add(1);",
-        replacement: "self.ordinal = self.ordinal.saturating_add(u32::from(!self.stop.contains(self.language, &tables.normalize(&word.text))));",
+        replacement: "self.ordinal = self.ordinal.saturating_add(u32::from(!self.stop.contains(self.language, &tables.normalize(text))));",
         integration: &[],
         unit: &[
             "fulltext::text::tests::paragraph_separator_ends_a_paragraph",

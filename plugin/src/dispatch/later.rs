@@ -2,7 +2,7 @@
 //! batch, answered by a call of the object's trait for each of it.
 
 use turborel::bytes::{Put, Reader};
-use turborel::plugin::payload::{self as p, collation, process, quantizer, ranking, system, types};
+use turborel::plugin::payload::{self as p, collation, language as lang, process, quantizer, ranking, system, types};
 use turborel::plugin::values::put_values;
 use turborel::plugin::wire::rows;
 use turborel::value::Value;
@@ -60,6 +60,24 @@ pub(super) fn answer(plugin: &mut Plugin, cx: &mut Cx<'_>, (kind, op, object): (
         }
         _ => Err(PluginError::external(&format!("the plug-in serves no kind {kind}"))),
     }
+}
+
+/// A language's words of documents, stems of words or stop words
+/// (RULES.md D328).
+pub(super) fn language(plugin: &mut Plugin, object: &str, op: u8, r: &mut Reader<'_>) -> Answer<Vec<u8>> {
+    let l = find(&mut plugin.languages, object)?;
+    let mut out = Vec::new();
+    if op == p::LANGUAGE_STOP {
+        p::put_strings(&mut out, &l.stop_words()?);
+        return Ok(out);
+    }
+    let texts = read(r, p::strings)?;
+    if op == p::LANGUAGE_STEM {
+        p::put_strings(&mut out, &texts.iter().map(|w| l.stem(w)).collect::<Answer<Vec<_>>>()?);
+    } else {
+        lang::put_spans(&mut out, &texts.iter().map(|t| l.segment(t)).collect::<Answer<Vec<_>>>()?);
+    }
+    Ok(out)
 }
 
 /// A ranking's weights or bounds.

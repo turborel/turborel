@@ -36,7 +36,7 @@ pub use resolve::resolve_installed;
 pub use trust::Trust;
 
 /// \[DESIGN\] The extension of a package file's name.
-pub const PACKAGE_EXTENSION: &str = "tbpkg";
+pub const PACKAGE_EXTENSION: &str = "tbx";
 /// \[DESIGN\] The file an installed package keeps its entries' digests and
 /// its signature in.
 pub const DIGESTS_FILE: &str = "turborel-package.digests";

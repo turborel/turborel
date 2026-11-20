@@ -61,7 +61,8 @@ pub fn encode(language: Language, text: &str) -> Vec<u8> {
 ///
 /// # Errors
 ///
-/// SQLCODE -916 if it is malformed.
+/// SQLCODE -916 if it is malformed; SQLSTATE 2FF02 if it names a
+/// language no extension serves now (RULES.md D328).
 pub fn decode(bytes: &[u8]) -> Result<(Language, &str)> {
     let mut r = Reader::new(bytes, "FullText value");
     if r.u8()? != VERSION {
@@ -69,7 +70,7 @@ pub fn decode(bytes: &[u8]) -> Result<(Language, &str)> {
     }
     let length = usize::from(r.u8()?);
     let name = std::str::from_utf8(r.take(length)?).map_err(|_| r.corrupt("a language name not in UTF-8"))?;
-    let language = Language::named(name).map_err(|_| r.corrupt("a language the tokenizer does not know"))?;
+    let language = Language::named(name)?;
     let text = std::str::from_utf8(r.rest()).map_err(|_| r.corrupt("text not in UTF-8"))?;
     Ok((language, text))
 }

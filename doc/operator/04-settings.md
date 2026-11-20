@@ -157,8 +157,10 @@ whether its commits wait for the log, LOG.COMMIT_SYNC; whether it takes
 calls of registered functions, SQL.FUNCTION_CALLS; whether the XQuery
 expressions of the statements it prepares are statically typed,
 XQUERY.STATIC_TYPING ([Static typing](../sql/19-xml.md#static-typing));
-and each of the optimizer's rules, OPTIMIZER and the rule's name, as to
-see a plan made without it. A rule a program adds to the optimizer has
+each of the optimizer's rules, OPTIMIZER and the rule's name, as to
+see a plan made without it; and how the planner orders joins,
+PLANNER.JOIN_ENUMERATION, as to compare the enumerated plan with the
+greedy one ([EXPLAIN](../sql/statements/explain.md)). A rule a program adds to the optimizer has
 its setting too. A definition, such as a view, is typed as it is made by
 the XQUERY.STATIC_TYPING of the session making it, and read as it was
 made by every session.
@@ -166,22 +168,27 @@ made by every session.
 ```sql
 SET LOG.COMMIT_SYNC = 'OFF';
 SET OPTIMIZER.PREDICATE_TRANSITIVITY = 'OFF';
+SET PLANNER.JOIN_ENUMERATION = 'GREEDY';
 SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTINGS
-    WHERE SETTING_NAME IN ('LOG.COMMIT_SYNC', 'OPTIMIZER.PREDICATE_TRANSITIVITY', 'SQL.FUNCTION_CALLS')
+    WHERE SETTING_NAME IN ('LOG.COMMIT_SYNC', 'OPTIMIZER.PREDICATE_TRANSITIVITY', 'PLANNER.JOIN_ENUMERATION', 'SQL.FUNCTION_CALLS')
     ORDER BY SETTING_NAME;
 SET LOG.COMMIT_SYNC TO DEFAULT;
 SET OPTIMIZER.PREDICATE_TRANSITIVITY TO DEFAULT;
+SET PLANNER.JOIN_ENUMERATION TO DEFAULT;
 ```
 
 ```
+OK
 OK
 OK
  SETTING_NAME                                                 | SETTING_VALUE                                                | VALUE_SOURCE
 --------------------------------------------------------------+--------------------------------------------------------------+--------------
  LOG.COMMIT_SYNC                                              | OFF                                                          | SESSION
  OPTIMIZER.PREDICATE_TRANSITIVITY                             | OFF                                                          | SESSION
+ PLANNER.JOIN_ENUMERATION                                     | GREEDY                                                       | SESSION
  SQL.FUNCTION_CALLS                                           | ON                                                           | DEFAULT
-(3 rows)
+(4 rows)
+OK
 OK
 OK
 ```

@@ -2,7 +2,7 @@
 //! them in place: the planner's marking of parts run in parallel
 //! (`physical/parallel.rs`).
 
-use super::Plan;
+use super::super::Plan;
 
 impl Plan {
     /// Calls `each` with each input of this node, in order: not the
@@ -30,6 +30,10 @@ impl Plan {
             Plan::Polymorphic(p) => p.inputs.iter_mut().for_each(each),
             Plan::MergeAppend { inputs, .. } => inputs.iter_mut().for_each(each),
             Plan::Parallel(p) => each(&mut p.input),
+            Plan::MergeJoin(m) => {
+                each(&mut m.left);
+                each(&mut m.right);
+            }
             Plan::Product { left, right }
             | Plan::HashJoin { left, right, .. }
             | Plan::OuterJoin { left, right, .. }

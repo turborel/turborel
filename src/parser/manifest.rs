@@ -31,6 +31,7 @@
 //!   | INDEX METHOD <identifier> SUPPORTS ( <identifier> [ , ... ] ) [ BATCH <unsigned integer> ]
 //!   | CREDENTIALS <identifier> | DIAGNOSTICS <identifier> [ BATCH <unsigned integer> ]
 //!   | OPTIMIZER RULE <identifier> [ PHASE <identifier> ] [ PASSES <unsigned integer> ]
+//!   | LANGUAGE <identifier> SERVES ( <identifier> [ , ... ] ) [ LIKE <identifier> ] [ BATCH <unsigned integer> ]
 //!   | HOST <host kind> <identifier> [ ( <identifier> = <unsigned integer> | <character string literal> [ , ... ] ) ]
 //!   | <setting declaration> | <reads settings>
 //! <parameters>     ::= ( [ <data type> [ , <data type> ]... ] )
@@ -64,7 +65,7 @@ const LICENSE_WORDS: [&str; 2] = ["LICENSE", "FILE"];
 const TABLE: &str = "TABLE";
 /// The words a declaration of each kind begins with, the second if it
 /// has two.
-const DECLARATIONS: [(&str, Option<&str>, ObjectKind); 20] = [
+const DECLARATIONS: [(&str, Option<&str>, ObjectKind); 21] = [
     ("FUNCTION", None, ObjectKind::Scalar),
     ("AGGREGATE", None, ObjectKind::Aggregate),
     ("TABLE", Some("FUNCTION"), ObjectKind::Table),
@@ -85,6 +86,7 @@ const DECLARATIONS: [(&str, Option<&str>, ObjectKind); 20] = [
     ("CREDENTIALS", None, ObjectKind::Credentials),
     ("DIAGNOSTICS", None, ObjectKind::Diagnostics),
     ("OPTIMIZER", Some("RULE"), ObjectKind::Rule),
+    ("LANGUAGE", None, ObjectKind::Language),
 ];
 /// The words of the clauses of a declaration.
 const CLAUSES: [&str; 8] = ["READS", "MODIFIES", "SQL", "DATA", "FORMATS", "PROPERTIES", "DIMENSIONS", "ELEMENT"];
@@ -92,6 +94,8 @@ const CLAUSES: [&str; 8] = ["READS", "MODIFIES", "SQL", "DATA", "FORMATS", "PROP
 const NEW_CLAUSES: [&str; 2] = ["ORDERED", "SUPPORTS"];
 /// The words of an optimizer rule's clauses (RULES.md D276).
 const RULE_CLAUSES: [&str; 2] = ["PHASE", "PASSES"];
+/// The words of a language's clauses (RULES.md D328).
+const LANGUAGE_CLAUSES: [&str; 2] = ["SERVES", "LIKE"];
 
 impl Parser {
     /// `word`, a key word or not, if it is next: whether it was.
@@ -261,7 +265,8 @@ impl Parser {
             | ObjectKind::IndexMethod
             | ObjectKind::Credentials
             | ObjectKind::Diagnostics
-            | ObjectKind::Rule => {}
+            | ObjectKind::Rule
+            | ObjectKind::Language => {}
         }
         self.kind_clauses(d)?;
         d.deterministic = self.determinism()?;
@@ -308,6 +313,7 @@ impl Parser {
                 d.supports = self.manifest_words()?;
             }
             ObjectKind::Rule => self.rule_clauses(d)?,
+            ObjectKind::Language => self.language_clauses(d)?,
             ObjectKind::Authenticator
             | ObjectKind::Target
             | ObjectKind::Partition
@@ -316,6 +322,17 @@ impl Parser {
             | ObjectKind::Engine
             | ObjectKind::Credentials
             | ObjectKind::Diagnostics => {}
+        }
+        Ok(())
+    }
+
+    /// A language's SERVES, and its LIKE if written.
+    fn language_clauses(&mut self, d: &mut Declared) -> Result<()> {
+        let [serves, like] = LANGUAGE_CLAUSES;
+        self.expect_manifest_word(serves)?;
+        d.supports = self.manifest_words()?;
+        if self.accept_manifest_word(like) {
+            d.like = Some(self.identifier()?);
         }
         Ok(())
     }

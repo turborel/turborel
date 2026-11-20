@@ -9,28 +9,29 @@
 //!     can use to find rows, and whether it gives key order (`IndexMethod`),
 //!   * the remaining weights live in a `CostModel` the user can change.
 //!
-//! "Interesting orders" (System R: Selinger et al., "Access Path Selection in a
-//! Relational Database Management System", SIGMOD 1979): when a Sort is
-//! required, the order is passed down through operators that preserve it.
-//! A table access may then choose an ordered index path, and the Sort is
-//! dropped if that is cheaper than scanning in any order and sorting.
+//! "Interesting orders" (System R: Selinger et al., "Access Path Selection in a Relational Database
+//! Management System", SIGMOD 1979): when a Sort is required, the order is passed down through
+//! operators that preserve it. A table access may then choose an ordered index path, and the Sort
+//! is dropped if that is cheaper than scanning in any order and sorting.
 
 mod access;
 mod built;
 mod collated;
 mod cost;
 mod decided;
+mod enumerate;
 pub use decided::Decided;
 pub(crate) mod estimate;
 mod expression_index;
 mod grouping;
 mod indexed;
-mod inputs;
 mod join_probe;
 pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spatial, Supplied, Unmatched};
 mod join;
 pub use join::JoinKey;
 mod kept;
+mod merged;
+pub use merged::MergeJoin;
 mod nearest;
 mod nodes;
 pub(crate) use nearest::distance_call;
@@ -47,6 +48,7 @@ mod shown;
 pub(crate) mod spatial;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
+pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
 pub use kept::{Place, ProbeSlot};
 pub(crate) use kept::{filled_plan, keepable, same_shape};
 
@@ -244,6 +246,8 @@ pub enum Plan {
         /// The condition, as text.
         detail: String,
     },
+    /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
+    MergeJoin(Box<MergeJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
     Aggregate {
         /// The grouping columns of `input`.
@@ -386,8 +390,7 @@ pub enum Plan {
     /// component procedures run on its table arguments' rows, each read
     /// whole first (`exec/ptf.rs`).
     Polymorphic(Box<Polymorphic<Plan>>),
-    /// \[DESIGN\] Its input run by morsels on several threads at once
-    /// (`exec/parallel.rs`, RULES.md D290), giving its rows in its order.
+    /// \[DESIGN\] Its input run by morsels on threads at once, its rows in order (RULES.md D290).
     Parallel(Box<Parallel>),
 }
 
@@ -451,13 +454,10 @@ impl<'a> PhysicalPlanner<'a> {
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if
-    /// any, where that pays, its products joined in the cheapest order
-    /// (`physical/order.rs`).
+    /// any, where that pays, its joins enumerated (`physical/enumerate.rs`)
+    /// or ordered greedily (`physical/order.rs`).
     fn build(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
-        match self.join_order(logical, want) {
-            Some(reordered) => self.build_node(&reordered, want),
-            None => self.build_node(logical, want),
-        }
+        self.ordered_joins(logical, want)
     }
 
     /// Build `logical` as it is: a chain of products below it is not

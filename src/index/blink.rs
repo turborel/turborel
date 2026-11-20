@@ -19,7 +19,7 @@
 //! taken (`engine/tree/scan.rs`), forward, or backward for descending keys.
 //! An estimate counts the entries a probe selects up to `MOST_COUNTED`:
 //! past that, it is not cheap, and the planner estimates from the table's
-//! statistics instead, as it does at once for every entry, which no count
+//! statistics instead, no fewer than it counted (RULES.md D302), as it does at once for every entry, which no count
 //! tells it more of. Counted, a range's entries are found by their places
 //! in each leaf, none copied, unless each key is to be checked.
 
@@ -61,6 +61,10 @@ pub struct BTreeMethod {
 }
 
 impl BTreeMethod {
+    /// \[DESIGN\] The most entries an estimate counts: past them it tells
+    /// none, and the planner estimates no fewer (RULES.md D302).
+    pub const MOST_COUNTED: usize = MOST_COUNTED;
+
     /// A method keeping its indexes in pager file `file` of `pool`.
     pub fn new(pool: Arc<BufferPool>, file: FileId) -> BTreeMethod {
         BTreeMethod { files: Mutex::new(Some((pool, file))), memory: MemoryPages::new(0) }

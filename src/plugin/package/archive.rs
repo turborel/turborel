@@ -3,10 +3,10 @@
 //! writes:
 //!
 //! ```text
-//! file      := "TBPKG\0" | format u8 (1) | count u32 | entry...
+//! file      := "TBX\0" | format u8 (1) | count u32 | entry...
 //!              | 0 u8, unsigned, or 1 u8 | public key bytes (32) | signature bytes (64)
 //! entry     := path str | kind u8 | SHA-256 digest bytes (32) | content bytes
-//! signed    := "TBPKG-SIGNED\0" | the manifest's content | each entry's path str and digest bytes
+//! signed    := "TBX-SIGNED\0" | the manifest's content | each entry's path str and digest bytes
 //! ```
 //!
 //! The signature is over `signed`, so it covers the manifest and, through
@@ -25,9 +25,9 @@ use super::crypto::{Digest, PackageCrypto, PublicKey, Signature, Signer};
 use super::errors::{changed, malformed};
 
 /// What a package file begins with.
-pub const MAGIC: &[u8; 6] = b"TBPKG\0";
+pub const MAGIC: &[u8; 4] = b"TBX\0";
 /// What the message signed begins with.
-pub const SIGNED_MAGIC: &[u8; 13] = b"TBPKG-SIGNED\0";
+pub const SIGNED_MAGIC: &[u8; 11] = b"TBX-SIGNED\0";
 /// The most entries a package holds.
 pub const MAX_ENTRIES: u32 = 100_000;
 

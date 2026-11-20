@@ -274,7 +274,9 @@ impl ProgramBinder<'_> {
                 return Ok(Initial::Value(Leaf { query: Arc::new(Subquery::new(plan, Vec::new())), at }));
             }
             ColumnDefault::User(f) => ValueExpression::Value(ValueSpecification::User(*f)),
-            ColumnDefault::Datetime(moment, p) => ValueExpression::Datetime(ast::DatetimeFunction { moment: *moment, precision: Some(*p) }),
+            ColumnDefault::Datetime(moment, p, local) => {
+                ValueExpression::Datetime(ast::DatetimeFunction { moment: *moment, precision: Some(*p), local: *local })
+            }
         };
         Ok(Initial::Value(self.value(&value, at)?.0))
     }

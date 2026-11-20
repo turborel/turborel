@@ -27,8 +27,9 @@
 //! by morsels on several threads (`analytics/parallel.rs`). Run with `cargo
 //! xtask bench`, on the harness (RULES.md R-BENCH-1); with `ONLY_VAR` set
 //! to `social`, the social network's workloads alone, to `graph`, path
-//! search's on a graph in memory alone, or to `parallel`, those run by
-//! morsels alone.
+//! search's on a graph in memory alone, to `unnesting`, correlated
+//! subqueries unnested and nested alone (`analytics/unnesting.rs`), or to
+//! `parallel`, those run by morsels alone.
 
 #![allow(
     clippy::unwrap_used,
@@ -50,13 +51,16 @@ mod json;
 mod parallel;
 #[path = "analytics/social.rs"]
 mod social;
+#[path = "analytics/unnesting.rs"]
+mod unnesting;
 
 use harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
 
 /// The variable naming the workloads run alone: `social` for the social
-/// network's, `graph` for path search's on a graph in memory, `parallel`
-/// for those run by morsels.
+/// network's, `graph` for path search's on a graph in memory,
+/// `unnesting` for correlated subqueries', `parallel` for those run by
+/// morsels.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -79,6 +83,10 @@ fn main() {
         graph::workloads(&bench);
         return;
     }
+    if only == "unnesting" {
+        unnesting::workloads(&bench);
+        return;
+    }
     if only == "parallel" {
         parallel::workloads(&bench);
         return;
@@ -91,6 +99,7 @@ fn main() {
     json::workloads(&bench);
     graph::workloads(&bench);
     social::workloads(&bench);
+    unnesting::workloads(&bench);
     parallel::workloads(&bench);
 }
 

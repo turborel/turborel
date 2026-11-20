@@ -18,6 +18,8 @@
 //! alone keeps its pipeline whole on the statement's thread: a subquery's,
 //! a routine's, NEXT VALUE FOR's, a parameter's.
 
+mod inputs;
+
 use super::Plan;
 use crate::db::State;
 use crate::index::Probe;

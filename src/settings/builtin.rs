@@ -248,6 +248,7 @@ fn last() -> impl Iterator<Item = Definition> {
         .chain(plugins)
         .chain(backup)
         .chain(super::hosted::definitions())
+        .chain(super::joins::definitions())
         .chain(super::executor::definitions())
 }
 
