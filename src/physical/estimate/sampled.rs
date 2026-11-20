@@ -69,14 +69,14 @@ pub(super) fn kept(conds: &[&Cond], sample: &RowSample, synopses: f64) -> f64 {
 }
 
 /// Whether a column's synopsis answers `c`: a comparison, an IN or a
-/// null test of a column with constants, a LIKE of a constant prefix, an
-/// OR of such of one column, a negation of one.
+/// null test of a column with constants, a LIKE of a constant prefix and
+/// `%` after it, an OR of such of one column, a negation of one.
 pub(super) fn answered(c: &Cond) -> bool {
     match c {
         Cond::Const(_) => true,
         Cond::Compare(..) => compared_with_constant(c).is_some(),
         Cond::In(e, _) | Cond::IsNull(e, _) => matches!(e, Expr::Column(_)),
-        Cond::Like(..) => super::like::prefixed(c).is_some(),
+        Cond::Like(..) => super::like::whole(c),
         Cond::Not(a) => answered(a),
         Cond::Or(a, b) => {
             let mut columns = Vec::new();

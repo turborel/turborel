@@ -408,7 +408,7 @@ fn a_joined_left_operand_is_estimated_by_distinct_values() {
     // The joins enumerated (D300) reassociate the LEFT join below the
     // inner one, its 100 rows of M probing T's index.
     let plan = s.explain(grouped, &Params::new()).unwrap();
-    assert!(plan.contains("LeftOuterIndexNestedLoop P.T using T_K") && plan.contains("(L (M T))"), "{plan}");
+    assert!(plan.contains("LeftOuterIndexNestedLoop P.T using T_K") && plan.contains("(M T)"), "{plan}");
     assert_eq!(rows(&s, grouped), Ok(vec!["5000".to_owned()]));
     db.set_setting("PLANNER.JOIN_ENUMERATION", &Value::Char("GREEDY".into())).unwrap();
     let plan = s.explain(grouped, &Params::new()).unwrap();

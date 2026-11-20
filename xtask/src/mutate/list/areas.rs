@@ -22,6 +22,7 @@ mod joins;
 mod late;
 mod parallel;
 mod rewrites;
+mod statistics;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
 mod unnesting;
@@ -85,7 +86,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 39] {
+fn second() -> [&'static [Mutation]; 40] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -126,6 +127,7 @@ fn second() -> [&'static [Mutation]; 39] {
         &insert_values::INSERT_VALUES,
         &expr::EXPR,
         &estimates::ESTIMATES,
+        &statistics::STATISTICS,
     ]
 }
 

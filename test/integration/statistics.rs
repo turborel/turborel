@@ -73,8 +73,8 @@ pub(crate) fn added(db: &Database, ids: impl Iterator<Item = u32>, grade: impl F
 /// Verifies: [DESIGN] RULES.md D31, estimates: with the row store's
 /// statistics, EXPLAIN shows the rows a filter keeps: equality shares the
 /// rows among the distinct values; an order follows the histogram; IS NULL
-/// and IS NOT NULL the fraction NULL; OR, AND and NOT combine their parts
-/// as independent; a comparison with the column on the right is turned
+/// and IS NOT NULL the fraction NULL; OR and NOT combine their parts as
+/// independent, AND by exponential backoff (D382); a comparison with the column on the right is turned
 /// around; one the statistics cannot price takes a default.
 #[test]
 fn filters_are_estimated_from_statistics() {
@@ -89,7 +89,8 @@ fn filters_are_estimated_from_statistics() {
     assert!(near(est("NOTE IS NULL"), 250.0, 1.0));
     assert!(near(est("NOTE IS NOT NULL"), 750.0, 1.0));
     assert!(near(est("GRADE = 3 OR GRADE = 4"), 190.0, 10.0));
-    assert!(near(est("GRADE = 3 AND ID < 500"), 50.0, 5.0));
+    // Backoff: the more selective whole, the other by its square root.
+    assert!(near(est("GRADE = 3 AND ID < 500"), 100.0 * 0.5_f64.sqrt(), 5.0), "{:?}", est("GRADE = 3 AND ID < 500"));
     assert!(near(est("NOT GRADE = 3"), 900.0, 5.0));
     assert!(near(est("GRADE = 42"), 0.0, 0.0), "outside the values");
     assert!(near(est("GRADE = ID"), 10.0, 0.0), "a comparison of columns: one row in a hundred");

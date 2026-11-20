@@ -415,3 +415,35 @@ fn a_range_is_estimated_by_its_share_of_the_tree() {
         }
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D383: statistics read with a table's
+/// indexes give, of columns exactly an index's key, its distinct keys,
+/// correlated columns counted once, in any order the columns are asked;
+/// of a column alone in a key, its index's count; of columns holding a
+/// unique key's, the rows; of other columns, none.
+#[test]
+fn an_indexs_columns_are_as_distinct_as_its_keys() {
+    use crate::stats::StatsBuilder;
+    use crate::stats::keyed::{KeyIndex, Keyed};
+    let pair = index(&[MONEY, MONEY]);
+    let one = index(&[MONEY]);
+    let mut builder = StatsBuilder::new(3);
+    for row in 0..8_000_u64 {
+        let (x, y) = (i128::from(row % 200), i128::from(row % 200 % 20));
+        pair.insert(Key(vec![exact(x, 0), exact(y, 0)]), row).unwrap();
+        one.insert(Key(vec![exact(i128::from(row), 0)]), row).unwrap();
+        builder.add(&vec![exact(x, 0), exact(y, 0), exact(i128::from(row), 0)], 9);
+    }
+    let pair: Arc<dyn Index> = pair;
+    let one: Arc<dyn Index> = one;
+    let keys = vec![KeyIndex::new(&[0, 1], false, pair), KeyIndex::new(&[2], true, one)];
+    let stats = Keyed::of(Arc::new(builder.finish()), keys);
+    let near = |got: Option<f64>, want: f64| got.is_some_and(|g| (g / want - 1.0_f64).abs() < 0.05_f64);
+    assert!(near(stats.group_distinct(&[1, 0]), 200.0_f64), "{:?}", stats.group_distinct(&[1, 0]));
+    assert!(near(stats.distinct(2), 8_000.0_f64), "a column alone in a key");
+    assert_eq!(stats.group_distinct(&[0, 2]), Some(8_000.0_f64), "holding a unique key");
+    assert_eq!(stats.group_distinct(&[0, 1, 2]), Some(8_000.0_f64));
+    assert!(near(stats.group_distinct(&[1]), 20.0_f64), "one column");
+    let product = stats.distinct(0).unwrap() * stats.distinct(1).unwrap();
+    assert!(product > 3_000.0_f64, "the product counts every pair: {product}");
+}

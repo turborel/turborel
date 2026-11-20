@@ -4,8 +4,10 @@
 //! prefix up to the prefix with its last character the next: that
 //! range's share, by the column's common values and histogram, times
 //! `LIKE_REST` for what the rest of the pattern asks, unless the rest is
-//! `%` alone, which asks nothing. Any other pattern no synopsis answers;
-//! the sample does if it can (`estimate/sampled.rs`), else the default.
+//! `%` alone, which asks nothing. A range narrower than a histogram's
+//! bucket keeps at least an equality's share. Of a pattern whose rest
+//! asks more, or with no prefix, the sample answers if it can
+//! (`estimate/sampled.rs`), else this estimate or the default.
 
 use std::cmp::Ordering;
 
@@ -28,7 +30,16 @@ pub(super) fn selectivity(c: &Cond, known: Known<'_>) -> Option<f64> {
     let from = compare((column, CompOp::Ge, &Value::Char(prefix.clone())), known);
     let past = next_prefix(&prefix).map_or(0.0_f64, |next| compare((column, CompOp::Ge, &Value::Char(next)), known));
     let rest = if constant_rest_is_any(pattern, escape) { 1.0_f64 } else { LIKE_REST };
-    Some(((from - past).max(0.0_f64) * rest).clamp(0.0, 1.0))
+    // A range narrower than a histogram's bucket shows no share of it; it
+    // keeps at least what an equality with the prefix would.
+    let equal = compare((column, CompOp::Eq, &Value::Char(prefix)), known);
+    Some(((from - past).max(equal).max(0.0_f64) * rest).clamp(0.0, 1.0))
+}
+
+/// Whether `c` is a LIKE whose prefix answers it whole, the rest of its
+/// pattern `%` alone.
+pub(super) fn whole(c: &Cond) -> bool {
+    prefixed(c).is_some_and(|p| constant_rest_is_any(p.pattern, p.escape))
 }
 
 /// A LIKE of a column and a constant pattern that begins with
