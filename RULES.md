@@ -3201,7 +3201,10 @@ unchecked, being the one version's, as an index-only scan trusts its
 entry; any other row an index finds is read with the key's columns and
 checked against its entry, as an index may give extra candidates. A
 join probing a spatial predicate, which judges it of each row paired,
-leaves the entry of a row every reader sees unchecked the same way. Such a
+leaves the entry of a row every reader sees unchecked the same way. A
+spatial join's pass over the table (D138) decides a row whose geometry
+is one point of each region its envelope meets from the point, instead
+of calling the function on the row for each. Such a
 scan is priced as a covering scan. A prepared polygon decides
 "distance op constant" of a point by bounds its cells put on the
 distance (`prepared/cells/within.rs`): each cell's Chebyshev distance,
@@ -3399,7 +3402,9 @@ owner. A single rectangular ring can locate points through its closed
 envelope. Recognition requires four distinct axis-aligned corners and
 closure, in either ring direction; holes, diagonal edges and collapsed
 rectangles retain general point location. It uses no area arithmetic or
-tolerance, including for subnormal and extreme coordinates.
+tolerance, including for subnormal and extreme coordinates. A recognized
+rectangle is valid by its shape, so its preparation skips the exact
+self-meeting test every other polygon takes before it may locate points.
 Polygon and MultiPolygon operands with at least one ring of 64
 edges can also keep a Y-interval tree for each ring. The threshold follows
 the crossover the geometry benchmark measures (`bench/geometry.rs`); shorter boundaries retain

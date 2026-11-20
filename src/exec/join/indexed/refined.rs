@@ -70,4 +70,15 @@ impl Binding {
         let intersects = function.0.call_borrowed(&args, temp)?;
         Ok(compared(&intersects, CompOp::Eq, &Value::Exact(Decimal::new(1, 0))) == Truth::True)
     }
+
+    /// `intersects` of an inner value that is one point, at `point` of
+    /// `srid`, decided from the point as an index entry of it is (RULES.md
+    /// D85, `ScalarFunction::point_compared`), its value not decoded again
+    /// for each outer row; none if the function cannot decide it, and the
+    /// call is made.
+    pub(super) fn point_intersects(&self, outer: &Row, function: &ScalarRef, point: ([f64; 2], i32)) -> Option<Result<bool>> {
+        let outer_value = outer.get(self.outer)?;
+        let decided = function.0.point_compared(point, outer_value, CompOp::Eq, &Value::Exact(Decimal::new(1, 0)))?;
+        Some(decided.map(|truth| truth == Some(true)))
+    }
 }

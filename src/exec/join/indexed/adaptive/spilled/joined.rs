@@ -137,7 +137,7 @@ impl Cell {
                 if !m.grid.owns(self.at, *envelope, *bounds) {
                     continue;
                 }
-                if let Some(pair) = joined((&m.binding, &m.runner, m.output.as_ref()), (outer, row), function)? {
+                if let Some(pair) = joined((&m.binding, &m.runner, m.output.as_ref()), (outer, row), function, None)? {
                     return Ok(Some(pair));
                 }
             } else if let Some(rows) = &mut self.rows {
