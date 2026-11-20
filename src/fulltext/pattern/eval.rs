@@ -48,7 +48,7 @@ pub fn contains<I: Iterator<Item = Result<char>>>(pattern: &Pattern, chars: I, l
     let read = Cell::new(false);
     for token in tokenize(chars.inspect(|_| read.set(true)), language) {
         let token = token?;
-        let seen = Seen::new(&token, language, stems);
+        let seen = Seen::new(&token, language, stems)?;
         for leaf in &mut leaves {
             leaf.step(&seen);
         }
@@ -109,7 +109,7 @@ fn compile(pattern: &Pattern, leaves: &mut Vec<Leaf>, depth: usize) -> Result<No
         Pattern::Or(l, r) => Node::Or(Box::new(compile(l, leaves, deeper)?), Box::new(compile(r, leaves, deeper)?)),
         Pattern::And(l, r) => Node::And(Box::new(compile(l, leaves, deeper)?), Box::new(compile(r, leaves, deeper)?)),
         Pattern::Not(inner) => Node::Not(Box::new(compile(inner, leaves, deeper)?)),
-        Pattern::Literal(literal) => Node::Leaf(add(leaves, Matcher::literal(literal), false)),
+        Pattern::Literal(literal) => Node::Leaf(add(leaves, Matcher::literal(literal)?, false)),
         Pattern::About(literal) => Node::Leaf(add(leaves, Matcher::about(literal), false)),
         Pattern::Expansion(expansion) => Node::Leaf(add(leaves, expansion_matcher(expansion)?, false)),
         Pattern::Near(near) => Node::Near {
@@ -149,8 +149,8 @@ fn expansion_matcher(expansion: &Expansion) -> Result<Matcher> {
 /// keep their places, added to `leaves`.
 fn argument(argument: &Argument, leaves: &mut Vec<Leaf>) -> Result<Vec<usize>> {
     Ok(match argument {
-        Argument::Literal(literal) => vec![add(leaves, Matcher::literal(literal), true)],
-        Argument::List(literals) => literals.iter().map(|l| add(leaves, Matcher::literal(l), true)).collect(),
+        Argument::Literal(literal) => vec![add(leaves, Matcher::literal(literal)?, true)],
+        Argument::List(literals) => literals.iter().map(|l| Ok(add(leaves, Matcher::literal(l)?, true))).collect::<Result<_>>()?,
         Argument::Expansion(expansion) => vec![add(leaves, expansion_matcher(expansion)?, true)],
     })
 }

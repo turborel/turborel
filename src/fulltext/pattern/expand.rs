@@ -117,7 +117,9 @@ fn expansion(thesaurus: &Thesaurus, terms: &dyn Terms) -> Result<Vec<Literal>> {
 }
 
 /// The words of `literal` as a thesaurus holds a term: its words, as
-/// written, separated by blanks.
+/// written, separated by blanks. In a language read as bigrams the pairs
+/// of a run are joined back into it, `東京 京都` into `東京都` (RULES.md
+/// D323).
 fn term_text(literal: &Literal) -> String {
     let words: Vec<String> = literal
         .parts
@@ -127,7 +129,31 @@ fn term_text(literal: &Literal) -> String {
             Part::Optional => None,
         })
         .collect();
-    words.join(" ")
+    if !literal.language.reads_bigrams() {
+        return words.join(" ");
+    }
+    let mut out = String::new();
+    let mut last: Option<String> = None;
+    for word in words {
+        if let Some(rest) = last.as_deref().and_then(|before| overlap(before, &word)) {
+            out.push_str(rest);
+        } else {
+            if last.is_some() {
+                out.push(' ');
+            }
+            out.push_str(&word);
+        }
+        last = Some(word);
+    }
+    out
+}
+
+/// What `word` adds after `before` if it is the next pair of its run: its
+/// part past the longest start of it, short of the whole, that ends
+/// `before`.
+fn overlap<'w>(before: &str, word: &'w str) -> Option<&'w str> {
+    let starts: Vec<usize> = word.char_indices().map(|(at, _)| at).skip(1).collect();
+    starts.into_iter().rev().find(|at| word.get(..*at).is_some_and(|start| before.ends_with(start))).and_then(|at| word.get(at..))
 }
 
 /// The OR of `literals`, as a balanced tree, so it nests no deeper than

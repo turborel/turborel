@@ -271,6 +271,40 @@ pub trait Collation {
     fn sort_key(&mut self, text: &str, pad: bool) -> Answer<Vec<u8>>;
 }
 
+/// Kind 39, a language of full-text search (RULES.md D328): what its
+/// manifest SERVES of cutting text into words, stemming words and its stop
+/// words, each called once a document or a word of the batch a CALL
+/// carries. A part it does not serve is the built-in language's it is
+/// LIKE, so it implements only what it serves; deterministic.
+pub trait Language {
+    /// The words of `text`, each the offset of its first character and its
+    /// characters, in the order of their offsets. By default no word.
+    ///
+    /// # Errors
+    ///
+    /// The language's.
+    fn segment(&mut self, _text: &str) -> Answer<Vec<(u32, u32)>> {
+        Ok(Vec::new())
+    }
+    /// The stem of `word`, normalized as the database normalizes its
+    /// words. By default the word.
+    ///
+    /// # Errors
+    ///
+    /// The language's.
+    fn stem(&mut self, word: &str) -> Answer<String> {
+        Ok(word.to_owned())
+    }
+    /// Its stop words. By default none.
+    ///
+    /// # Errors
+    ///
+    /// The language's.
+    fn stop_words(&mut self) -> Answer<Vec<String>> {
+        Ok(Vec::new())
+    }
+}
+
 /// Kind 13, a system table of INFORMATION_SCHEMA.
 pub trait SystemTable {
     /// Its rows as `user` sees them, the database's owner if `owner`.

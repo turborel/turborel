@@ -87,6 +87,7 @@ mod damage;
 mod datetimes;
 mod ddl;
 mod decfloat;
+mod decorrelation;
 mod defaults;
 mod defaults_kept;
 mod deferred;

@@ -52,6 +52,9 @@ behind it, and each can be replaced or added to.
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables.
+- Correlated subqueries of every form unnested into joins, and SQL
+  functions that return one value inlined, so each is computed once
+  rather than once for each row.
 - [SQL/XML](doc/sql/19-xml.md): an XML type kept in tables, in arrays,
   multisets, rows and distinct and structured types too, its values parsed
   from XML 1.0 and 1.1 text and serialized back, XMLDOCUMENT, XMLCAST, IS
@@ -88,6 +91,9 @@ behind it, and each can be replaced or added to.
   block-compressed postings.
 - [SQL/MM Full-Text](doc/sql/08-fulltext.md), its FULLTEXT type, CONTAINS
   patterns and thesauri, ranked by BM25 or a ranking of your own.
+- [Full text in 43 languages](doc/sql/08-fulltext.md#languages), stemmed by
+  Snowball's own stemmers, with CJK and Thai read as character bigrams,
+  and more served by plug-ins, as dictionary segmenters.
 - Collations, from binary order through case-insensitive to the Unicode
   Collation Algorithm and CLDR's tailorings for 48 languages, so text sorts
   and compares as its readers expect.

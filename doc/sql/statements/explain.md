@@ -152,6 +152,73 @@ OK
 (26 rows)
 ```
 
+A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
+over STAFF of [Value Expressions](../04-expressions.md). The rule
+`unnest_subqueries` made the subquery a grouping of each department's
+salaries, joined with the outer rows by their departments. Each
+department is taken once, as a value and the count of its trailing
+spaces, and SINGLE stands where the subquery stood:
+
+```sql
+EXPLAIN SELECT NAME FROM STAFF S WHERE SALARY > (SELECT AVG(SALARY) FROM STAFF T WHERE T.DEPT = S.DEPT);
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project S.NAME
+   Filter S.SALARY > (<subquery>).1
+     Scan ANN.STAFF
+     Subquery
+       Project AVG(T.SALARY)
+         Aggregate group by [] computing [AVG(T.SALARY)]
+           Filter T.DEPT = S.DEPT
+             Scan ANN.STAFF
+ -- rules: unnest_subqueries
+ -- optimized:
+ Project S.NAME
+   Project S.ID, S.NAME, S.DEPT, S.SALARY
+     Filter S.SALARY > SINGLE(1, AVG(T.SALARY))
+       Left outer join on NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))
+         Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT, TRAILING_SPACES(S.DEPT)
+           Scan ANN.STAFF
+         Project S.DEPT, TRAILING_SPACES(S.DEPT), 1, AVG(T.SALARY)
+           Project S.DEPT, TRAILING_SPACES(S.DEPT), AVG(T.SALARY)
+             Aggregate group by [S.DEPT, TRAILING_SPACES(S.DEPT)] computing [AVG(T.SALARY)]
+               Left outer join on NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))
+                 Distinct
+                   Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                     Scan ANN.STAFF
+                 Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY, TRUE
+                   Filter T.DEPT = S.DEPT
+                     Product
+                       Distinct
+                         Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                           Scan ANN.STAFF
+                       Scan ANN.STAFF
+ -- physical:
+ Project S.NAME
+   Filter S.SALARY > SINGLE(1, AVG(T.SALARY))
+     LeftOuterJoin NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))  (hashed on S.DEPT IS NOT DISTINCT FROM S.DEPT AND TRAILING_SPACES(S.DEPT) IS NOT DISTINCT FROM TRAILING_SPACES(S.DEPT))
+       Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT, TRAILING_SPACES(S.DEPT)
+         SeqScan ANN.STAFF  (rows=4, cost=3.8)
+       Project S.DEPT, TRAILING_SPACES(S.DEPT), 1, AVG(T.SALARY)
+         Project S.DEPT, TRAILING_SPACES(S.DEPT), AVG(T.SALARY)
+           Aggregate group by [S.DEPT, TRAILING_SPACES(S.DEPT)] computing [AVG(T.SALARY)]
+             LeftOuterJoin NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))  (hashed on S.DEPT IS NOT DISTINCT FROM S.DEPT AND TRAILING_SPACES(S.DEPT) IS NOT DISTINCT FROM TRAILING_SPACES(S.DEPT))
+               Distinct
+                 Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                   SeqScan ANN.STAFF  (rows=4, cost=3.8)
+               Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY, TRUE
+                 HashJoin S.DEPT = T.DEPT
+                   Distinct
+                     Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                       SeqScan ANN.STAFF  (rows=4, cost=3.8)
+                   SeqScan ANN.STAFF  (rows=4, cost=3.6)
+(50 rows)
+```
+
 ## STANDARD
 
 EXPLAIN is an extension of turborel. No part of ISO/IEC 9075 shows how

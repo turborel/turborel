@@ -47,7 +47,7 @@ pub fn found(s: &Session, words: &str) -> Vec<String> {
 /// Whether the plan of a search for `words` reads DOCS_BODY.
 pub fn probed(s: &Session, words: &str) -> bool {
     let sql = format!("SELECT ID FROM DOCS WHERE TEXT_MATCHES(BODY, '{words}')");
-    s.physical_plan(&sql, &Params::new()).unwrap().contains("DOCS_BODY")
+    s.physical_plan(&sql, &Params::new()).unwrap().contains("using DOCS_BODY")
 }
 
 /// Texts of a few words each, for the tests.
@@ -207,7 +207,7 @@ fn a_temporary_table_has_a_full_text_index_of_its_own_rows() {
     exec(&s, "COMMIT WORK").unwrap();
     exec(&other, "COMMIT WORK").unwrap();
     let search = "SELECT ID FROM NOTES WHERE TEXT_MATCHES(BODY, 'buy') ORDER BY ID";
-    assert!(s.physical_plan(search, &Params::new()).unwrap().contains("NOTES_BODY"));
+    assert!(s.physical_plan(search, &Params::new()).unwrap().contains("using NOTES_BODY"));
     assert_eq!(rows(&s, search).unwrap(), ["1"]);
     assert_eq!(rows(&other, search).unwrap(), ["9"]);
 }

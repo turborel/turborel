@@ -2,7 +2,9 @@
 
 mod budget;
 mod joins;
-// UUID's mutations, here as `list.rs` holds no more modules.
+// Unnesting's and UUID's mutations, here as `list.rs` holds no more
+// modules.
+mod unnesting;
 mod uuid;
 
 use super::Mutation;
@@ -61,8 +63,8 @@ fn first() -> [&'static [Mutation]; 25] {
     ]
 }
 
-/// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 31] {
+/// The second half of the areas, in order, unnesting's last.
+fn second() -> [&'static [Mutation]; 32] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -95,12 +97,13 @@ fn second() -> [&'static [Mutation]; 31] {
         &super::vector_hybrid::VECTOR_HYBRID,
         &super::vector::VECTOR,
         &super::delta_tables::DELTA_TABLES,
+        &unnesting::UNNESTING,
     ]
 }
 
 /// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
-    let json: [&'static [Mutation]; 15] = [
+    let json: [&'static [Mutation]; 16] = [
         &super::projection::PROJECTION,
         &super::json::JSON,
         &super::json_path::JSON_PATH,
@@ -109,6 +112,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::expression_index::EXPRESSION_INDEX,
         &super::json_table::JSON_TABLE,
         &super::fulltext::FULLTEXT,
+        &super::fulltext_languages::FULLTEXT_LANGUAGES,
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
         &super::graph_syntax::GRAPH_SYNTAX,

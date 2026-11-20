@@ -52,8 +52,9 @@ than once, as `--kind aggregate --kind metric`. It takes `scalar`,
 `aggregate`, `table`, `procedure`, `metric`, `embedding`,
 `authenticator`, `target`, `partition`, `ranking`, `quantizer`,
 `collation`, `system-table`, `xquery`, `type`, `engine`,
-`index-method`, `credentials` and `diagnostics`, and the project then
-serves a small object of each ([Kinds of Plug-in](04-plugins-kinds.md)).
+`index-method`, `credentials`, `diagnostics` and `language`, and the
+project then serves a small object of each ([Kinds of
+Plug-in](04-plugins-kinds.md)). The language cuts text at white space.
 `--sdk DIR` makes the project depend on a turborel source tree at DIR
 by path instead of on the release's crates.
 

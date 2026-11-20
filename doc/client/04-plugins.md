@@ -86,6 +86,8 @@ folded to upper case as an identifier is.
     | INDEX METHOD <identifier> SUPPORTS ( EQUALITY | RANGE | NEAREST, ... ) [ BATCH <unsigned integer> ]
     | CREDENTIALS <identifier>
     | DIAGNOSTICS <identifier> [ BATCH <unsigned integer> ]
+    | LANGUAGE <identifier> SERVES ( SEGMENT | STEM | STOP, ... ) [ LIKE <identifier> ]
+          [ BATCH <unsigned integer> ]
     | SETTING <identifier> TYPE <setting type>
           [ MIN <literal> ] [ MAX <literal> ] [ CHOICES ( <identifier>, ... ) ]
           [ DEFAULT <literal> ] [ SCOPE SESSION | DATABASE | NODE ]
@@ -253,12 +255,13 @@ are counted, a count u32 before them.
 | 18 credentials | 1 verifier |
 | 19 sink of events | 1 events |
 | 37 optimizer rule | 1 rewrite: plan form → u8 0, or u8 1 and the plan form rewritten |
+| 39 language | 1 segment; 2 stem; 3 stop words |
 
 An aggregate's state is the program's own bytes, which the database
 keeps, so a program holds nothing between calls; it starts empty. An
 exchange, a target and an upload are the program's, so the database
 keeps one process for each until it ends. The payloads of kinds 10 to
-19 are in [Kinds of Plug-in](04-plugins-kinds.md), a section each, and
+19 and 39 are in [Kinds of Plug-in](04-plugins-kinds.md), a section each, and
 statistics and kind 37 in [Optimizer Rules and
 Statistics](04-plugins-planner.md).
 
@@ -433,6 +436,14 @@ change (`Plugin::rule`). `Engine::statistics` and
 `Cx::table_statistics`, `Cx::column_statistics` and
 `Cx::index_statistics` ask the database ([Optimizer Rules and
 Statistics](04-plugins-planner.md)).
+
+### Languages
+
+`Language::segment(text)` gives the words of a text, each its offset
+and length in characters, `Language::stem(word)` a word's stem and
+`Language::stop_words()` the stop words (`Plugin::language`). Each has
+a default, no word, the word itself and none, so a program implements
+only what its manifest SERVES.
 
 ### Credentials and sinks of events
 

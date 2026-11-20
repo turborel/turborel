@@ -312,3 +312,42 @@ fn an_advisor_reads_its_settings_and_answers_a_policy() {
     assert_eq!(policy.ranges, [Range { file: 0, first: 0, last: 2, weight: 0 }]);
     assert!(h.call(38, 9, "K", Vec::new()).is_err());
 }
+
+/// A language of the tests: words of letters, stems their first three.
+struct Threes;
+
+impl Language for Threes {
+    fn segment(&mut self, text: &str) -> Answer<Vec<(u32, u32)>> {
+        Ok(text
+            .split(' ')
+            .scan(0_u32, |at, w| {
+                let n = u32::try_from(w.chars().count()).unwrap_or(0);
+                let span = (*at, n);
+                *at = at.saturating_add(n).saturating_add(1);
+                Some(span)
+            })
+            .collect())
+    }
+    fn stem(&mut self, word: &str) -> Answer<String> {
+        Ok(word.chars().take(3).collect())
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D328: a language answers SEGMENT and
+/// STEM a batch a call, each document and word in order, and STOP its
+/// default, none; WELCOME names kind 39.
+#[test]
+fn a_language_is_answered_a_batch_a_call() {
+    use turborel::plugin::payload::language::{put_texts, spans};
+    let plugin = Plugin::new("1.0.0").language("T", Threes);
+    assert_eq!(plugin.kinds(), [39]);
+    let mut h = Harness::new(plugin);
+    let mut payload = Vec::new();
+    put_texts(&mut payload, &["ab cde", "x"]);
+    let cut = h.call(39, p::LANGUAGE_SEGMENT, "T", payload.clone()).unwrap();
+    assert_eq!(spans(&mut p::reader(&cut)).unwrap(), [vec![(0, 2), (3, 3)], vec![(0, 1)]]);
+    let stemmed = h.call(39, p::LANGUAGE_STEM, "T", payload).unwrap();
+    assert_eq!(p::strings(&mut p::reader(&stemmed)).unwrap(), ["ab ", "x"]);
+    let stops = h.call(39, p::LANGUAGE_STOP, "T", Vec::new()).unwrap();
+    assert_eq!(p::strings(&mut p::reader(&stops)).unwrap(), Vec::<String>::new());
+}

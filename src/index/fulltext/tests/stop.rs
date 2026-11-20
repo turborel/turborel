@@ -41,7 +41,7 @@ const TEXT: &str = "the cat and the hat";
 fn each_set_posts_what_it_does_not_list() {
     let sets = [
         (StopWords::Language, vec!["cat", "hat"]),
-        (StopWords::parse("cat, HAT"), vec!["and", "the"]),
+        (StopWords::parse("cat, HAT", Language::English), vec!["and", "the"]),
         (StopWords::None, vec!["and", "cat", "hat", "the"]),
     ];
     for (stop, want) in sets {
@@ -65,7 +65,7 @@ fn each_set_posts_what_it_does_not_list() {
 /// function reads its words in English; what is left is intersected.
 #[test]
 fn searches_drop_the_indexs_stop_words() {
-    let index = stopping(StopWords::parse("cat"));
+    let index = stopping(StopWords::parse("cat", Language::English));
     index.insert(doc(TEXT), 1).unwrap();
     index.insert(doc("a dog and a hat"), 2).unwrap();
     let matching = |words: &str| {
@@ -109,10 +109,10 @@ fn projections_follow_the_stop_words() {
 /// rebuild; an index opened by its locator keeps its set.
 #[test]
 fn the_option_takes_default_none_or_words() {
-    assert_eq!(stop_words_of(" default "), StopWords::Language);
-    assert_eq!(stop_words_of("None"), StopWords::None);
-    assert_eq!(stop_words_of("Cat, hat ,"), StopWords::parse("cat,hat"));
-    assert_eq!(stop_words_of(",,"), StopWords::None);
+    assert_eq!(stop_words_of(" default ", Language::English), StopWords::Language);
+    assert_eq!(stop_words_of("None", Language::English), StopWords::None);
+    assert_eq!(stop_words_of("Cat, hat ,", Language::English), StopWords::parse("cat,hat", Language::English));
+    assert_eq!(stop_words_of(",,", Language::English), StopWords::None);
     let declared = FullTextMethod::in_memory().index_options();
     let option = declared.iter().find(|o| o.name == STOP_WORDS_OPTION).unwrap();
     assert!(matches!(option.kind, crate::settings::Kind::Text { .. }));
