@@ -48,6 +48,8 @@ mod work;
 
 use std::sync::Arc;
 
+pub(crate) use batch::storage_counted;
+
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Cond, Expr, SortKey, Truth};

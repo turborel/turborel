@@ -37,7 +37,7 @@ pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
+pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
 
 use std::sync::Arc;
 
@@ -46,10 +46,6 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::stats::Statistics;
 use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
-
-/// \[DESIGN\] What keeps and logs a table's large object's object
-/// (`TableStorage::keep_lobs`): given its id, its body and what keeps it.
-pub type LobLog<'a> = &'a mut dyn FnMut(u64, &[u8], &mut dyn FnMut() -> Result<()>) -> Result<()>;
 
 /// \[DESIGN\] The rows of one table. Row ids identify rows within the table.
 ///
@@ -203,6 +199,14 @@ pub trait TableStorage: Send + Sync {
     /// its batches being its rows gathered, read ahead for nothing.
     fn reads_by_batch(&self) -> bool {
         false
+    }
+    /// \[DESIGN\] (RULES.md D350) The rows `scan_batches` gives `tx` with
+    /// no conditions, counted faster than read: counts that sum to how
+    /// many, read once first asked for, each a cancel looked at before, as
+    /// a batch is, and the read noted as the scan's. None if it cannot
+    /// count them faster, the caller then scanning. Default: none.
+    fn count(self: Arc<Self>, _tx: TxId) -> Option<Counts> {
+        None
     }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
@@ -472,12 +476,7 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine's, if it cannot store or remove the row.
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
-        match (row, self.get(NO_TRANSACTION, id)?.is_some()) {
-            (Some(row), true) => self.update(NO_TRANSACTION, id, row),
-            (Some(row), false) => self.restore(NO_TRANSACTION, id, row),
-            (None, true) => self.delete(NO_TRANSACTION, id),
-            (None, false) => Ok(()),
-        }
+        rows::applied(self, id, row)
     }
     /// Garbage collection of versions: removes the versions of rows that no
     /// transaction reading at or after `horizon` can read, and gives each
