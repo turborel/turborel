@@ -101,9 +101,9 @@ impl Plan {
                 if *covering { "IndexOnlyScan" } else { "IndexScan" },
                 if *reverse { " backward" } else { "" }
             ),
-            Plan::Filter { detail, est: None, .. } => writeln!(out, "{pad}Filter {detail}"),
+            Plan::Filter { detail, of_read: false, .. } => writeln!(out, "{pad}Filter {detail}"),
             Plan::Nearest(read) => writeln!(out, "{pad}{}", nearest_line(read)),
-            Plan::Filter { detail, est: Some(est), .. } => writeln!(out, "{pad}Filter {detail}  (est. rows={est:.0})"),
+            Plan::Filter { detail, est, of_read: true, .. } => writeln!(out, "{pad}Filter {detail}  (est. rows={est:.0})"),
             Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
             Plan::MergeJoin(m) => writeln!(out, "{pad}{}MergeJoin {}", if m.outer { "Left" } else { "" }, m.detail),
@@ -146,10 +146,10 @@ impl Plan {
                     p.write(out, depth);
                 }
             }
-            Plan::Product { left, right }
+            Plan::Product { left, right, .. }
             | Plan::HashJoin { left, right, .. }
             | Plan::OuterJoin { left, right, .. }
-            | Plan::Append { left, right }
+            | Plan::Append { left, right, .. }
             | Plan::SetOp { left, right, .. } => {
                 left.write(out, depth);
                 right.write(out, depth);
@@ -157,7 +157,7 @@ impl Plan {
             Plan::Filter { input, .. }
             | Plan::Aggregate { input, .. }
             | Plan::Project { input, .. }
-            | Plan::Distinct { input }
+            | Plan::Distinct { input, .. }
             | Plan::Sort { input, .. }
             | Plan::Limit { input, .. }
             | Plan::IndexJoin { left: input, .. } => input.write(out, depth),

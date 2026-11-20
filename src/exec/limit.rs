@@ -35,7 +35,7 @@ use crate::value::Value;
 /// The rows the limit `plan` keeps.
 #[inline(never)]
 pub(super) fn limited(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::Limit { limit, input } = plan else { return failed(broken("a limit is not one")) };
+    let Plan::Limit { limit, input, .. } = plan else { return failed(broken("a limit is not one")) };
     let drain = input.can_raise();
     let rows = |most: Option<Most>| {
         let input = match most {

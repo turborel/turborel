@@ -89,6 +89,7 @@ impl PhysicalPlanner<'_> {
         }
         let names = self.names_of(input);
         let shown = Shown::of(names.as_deref());
+        let est = self.estimating(|e| e.filter_card(cond, input)).rows;
         // As in a product, the rows come in the order of the left operand.
         let want_left = of_left(want, width);
         let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
@@ -106,27 +107,26 @@ impl PhysicalPlanner<'_> {
             let flipped = flip.names(shown);
             let of_flipped = Shown::of(flipped.as_deref());
             let rest = rest.into_iter().map(|c| flip.cond(c)).collect();
-            let join = hashed((r.plan, l.plan), swapped_keys(&keys), rest, (flip.right_width, of_flipped));
+            let join = hashed((r.plan, l.plan), swapped_keys(&keys), rest, (flip.right_width, of_flipped, est));
             return Some(Built::unordered(flip.restored(join, of_flipped)));
         }
-        Some(Built { plan: hashed((l.plan, r.plan), keys, rest, (width, shown)), ordered })
+        Some(Built { plan: hashed((l.plan, r.plan), keys, rest, (width, shown, est)), ordered })
     }
 
-    /// Whether `a` is estimated to give more rows than `b`; not if either's
-    /// rows are not known.
+    /// Whether `a` is estimated to give more rows than `b`.
     fn larger(&self, a: &LogicalPlan, b: &LogicalPlan) -> bool {
-        self.rows_of(a).zip(self.rows_of(b)).is_some_and(|(of_a, of_b)| of_a > of_b)
+        self.estimating(|e| e.rows(a) > e.rows(b))
     }
 }
 
 /// The hash join of `left` and `right` on `keys`, the left `width` columns
 /// wide, its rows filtered by the rest of the condition, `rest`, over its
 /// pairs' columns, described as `shown` says.
-pub(super) fn hashed((left, right): (Plan, Plan), keys: Vec<JoinKey>, rest: Vec<Cond>, (width, shown): (usize, Shown<'_>)) -> Plan {
+pub(super) fn hashed((left, right): (Plan, Plan), keys: Vec<JoinKey>, rest: Vec<Cond>, (width, shown, est): (usize, Shown<'_>, f64)) -> Plan {
     let detail = shown.text(|names| keys_detail(&keys, names, width));
-    let join = Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail };
+    let join = Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail, est };
     match and_all(rest).map(judged_by_sets) {
-        Some(c) => Plan::Filter { detail: shown.text(|names| render_cond(&c, names)), cond: c, est: None, input: Box::new(join) },
+        Some(c) => Plan::Filter { detail: shown.text(|names| render_cond(&c, names)), cond: c, est, of_read: false, input: Box::new(join) },
         None => join,
     }
 }
@@ -314,6 +314,7 @@ impl PhysicalPlanner<'_> {
         }
         let width = left.width();
         let parted = Parted::of(cond, width);
+        let est = self.estimating(|e| e.outer_card((kind, cond), (left, right))).rows;
         let both = self.shown.then(|| left.names().into_iter().chain(right.names()).collect::<Vec<String>>());
         let shown = Shown::of(both.as_deref());
         let want_left = if kind.keeps_right() { &[] } else { of_left(want, width) };
@@ -346,24 +347,28 @@ impl PhysicalPlanner<'_> {
             let flipped = flip.names(shown);
             let of_flipped = Shown::of(flipped.as_deref());
             let detail = of_flipped.text(|names| render_cond(&flip.cond(cond.clone()), names));
-            let join =
-                hashed_outer(OuterJoin::Left, (r.plan, l.plan), parted.flipped(flip), ((flip.right_width, width), detail, of_flipped));
+            let join = hashed_outer(
+                OuterJoin::Left,
+                (r.plan, l.plan),
+                parted.flipped(flip),
+                ((flip.right_width, width), detail, of_flipped, est),
+            );
             return Built::unordered(flip.restored(join, of_flipped));
         }
-        let plan =
-            hashed_outer(kind, (l.plan, r.plan), parted, ((width, right.width()), shown.text(|names| render_cond(cond, names)), shown));
+        let shown_cond = shown.text(|names| render_cond(cond, names));
+        let plan = hashed_outer(kind, (l.plan, r.plan), parted, ((width, right.width()), shown_cond, shown, est));
         Built { plan, ordered }
     }
 }
 
 /// The outer join `kind` of `left` and `right`, of degrees `widths`, on
 /// its condition `parted`, as text `detail`, over its pairs' columns,
-/// described as `shown` says.
+/// described as `shown` says, estimated to give `est` rows.
 pub(super) fn hashed_outer(
     kind: OuterJoin,
     (left, right): (Plan, Plan),
     parted: Parted,
-    (widths, detail, shown): ((usize, usize), String, Shown<'_>),
+    (widths, detail, shown, est): ((usize, usize), String, Shown<'_>, f64),
 ) -> Plan {
     let Parted { keys, mut rest, own } = parted;
     let width = widths.0;
@@ -386,5 +391,6 @@ pub(super) fn hashed_outer(
         own,
         widths,
         detail,
+        est,
     }
 }

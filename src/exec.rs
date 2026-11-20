@@ -155,7 +155,7 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 #[inline(never)]
 fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     match plan {
-        Plan::Product { left, right } => join::joined(*left, *right, None, db, tx),
+        Plan::Product { left, right, .. } => join::joined(*left, *right, None, db, tx),
         Plan::HashJoin { left, right, keys, .. } => join::joined(*left, *right, Some(keys), db, tx),
         Plan::SeqScan { .. }
         | Plan::Nearest(_)
@@ -187,7 +187,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// [X3.135-1986 §8.3 GR2b ii] the rows of both operands of `plan`.
 #[inline(never)]
 fn appended(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::Append { left, right } = plan else { return failed(broken("an append is not one")) };
+    let Plan::Append { left, right, .. } = plan else { return failed(broken("an append is not one")) };
     Box::new(execute(*left, db, tx).chain(execute(*right, db, tx)))
 }
 
@@ -256,7 +256,7 @@ fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     if let Some(width) = batched(db).then(|| batch::distinct_groupable(&plan, db)).flatten() {
         return grouped(batch::distinct_grouping(plan, width), db, tx);
     }
-    let Plan::Distinct { input } = plan else { return failed(broken("a duplicate elimination is not one")) };
+    let Plan::Distinct { input, .. } = plan else { return failed(broken("a duplicate elimination is not one")) };
     distinct::distinct_of(execute(*input, db, tx), db, tx)
 }
 
@@ -379,7 +379,7 @@ mod tests {
         assert_eq!(code(execute(index(), &st, NO_TRANSACTION)), Some(Code::Api));
         assert_eq!(row_entries(seq(), &st, NO_TRANSACTION).err().map(|e| e.code), Some(Code::Api));
         assert_eq!(row_entries(index(), &st, NO_TRANSACTION).err().map(|e| e.code), Some(Code::Api));
-        let product = Plan::Product { left: Box::new(seq()), right: Box::new(seq()) };
+        let product = Plan::Product { left: Box::new(seq()), right: Box::new(seq()), est: 0.0_f64 };
         assert_eq!(code(execute(product, &st, NO_TRANSACTION)), Some(Code::Api));
     }
 
@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn row_entries_needs_a_table_access() {
         let st = Arc::new(state());
-        let plan = Plan::Distinct { input: Box::new(one_row(vec![])) };
+        let plan = Plan::Distinct { input: Box::new(one_row(vec![])), est: 0.0_f64 };
         assert_eq!(row_entries(plan, &st, NO_TRANSACTION).err().map(|e| e.code), Some(Code::Api));
     }
 
@@ -467,6 +467,7 @@ mod tests {
             seeds: vec![],
             detail: String::new(),
             input: Box::new(one_row(row.clone())),
+            est: 0.0_f64,
         };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey::ascending(1)];
@@ -497,7 +498,7 @@ mod tests {
         for run in executors {
             assert_eq!(code(run(other(), &st, NO_TRANSACTION)), Some(Code::Api));
         }
-        let distinct = Plan::Distinct { input: Box::new(other()) };
+        let distinct = Plan::Distinct { input: Box::new(other()), est: 0.0_f64 };
         assert_eq!(code(set::values(distinct, &st, NO_TRANSACTION)), Some(Code::Api));
         assert!(!batch::aggregable(&other(), &st) && batch::distinct_groupable(&other(), &st).is_none());
         assert!(matches!(batch::distinct_grouping(other(), 1_usize), Plan::Values { .. }), "not a DISTINCT: left as it is");

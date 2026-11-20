@@ -133,7 +133,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         }
         // The index scans of an OR's ranges, none overlapping
         // (`physical/access.rs`): each row once.
-        Plan::Append { left, right } => Ok(Box::new(table_entries(*left, db, tx)?.chain(table_entries(*right, db, tx)?))),
+        Plan::Append { left, right, .. } => Ok(Box::new(table_entries(*left, db, tx)?.chain(table_entries(*right, db, tx)?))),
         other @ (Plan::Product { .. }
         | Plan::Nearest(_)
         | Plan::HashJoin { .. }

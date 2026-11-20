@@ -27,4 +27,6 @@ pub struct MergeJoin {
     pub widths: (usize, usize),
     /// The condition, as text.
     pub detail: String,
+    /// Its estimated rows (`physical/cardinality.rs`).
+    pub est: f64,
 }

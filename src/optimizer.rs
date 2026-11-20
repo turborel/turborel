@@ -3,7 +3,10 @@
 //! A `Rule` looks at one node of the logical plan, whose inputs have already
 //! been rewritten, and either returns an equivalent plan or `None`. The
 //! driver applies the enabled rules bottom-up, in registration order, until
-//! no rule fires (or the setting `OPTIMIZER.MAX_PASSES` is reached).
+//! no rule fires (or the setting `OPTIMIZER.MAX_PASSES` is reached). After
+//! a rule fires at a node, the inputs the rewrite made and then the node
+//! are rewritten again before the walk goes up (RULES.md D371), so one
+//! pass reaches the fixpoint of most plans, and a second finds nothing.
 //!
 //! Every rule here must preserve the result *and* the run-time errors of the
 //! query ([X3.135-1986 §3.3] the implementation "shall achieve the same effect"). That is
@@ -196,7 +199,7 @@ impl Optimizer {
         // A safety net against rules that keep undoing each other.
         let passes = usize::try_from(settings.integer(OPTIMIZER_MAX_PASSES)).unwrap_or(DEFAULT_MAX_PASSES);
         for _ in 0..passes {
-            let (p, changed) = pass(&on, plan, ctx, &mut trace);
+            let (p, changed) = pass(&on, plan, (ctx, passes), &mut trace);
             plan = p;
             if !changed {
                 break;
@@ -207,19 +210,23 @@ impl Optimizer {
 }
 
 /// One pass of the rules `on` over `plan`, its inputs first: the plan, and
-/// whether a rule fired.
-fn pass(on: &[&dyn Rule], plan: LogicalPlan, ctx: &RuleContext<'_>, trace: &mut Vec<&'static str>) -> (LogicalPlan, bool) {
+/// whether a rule fired. A node a rule rewrote has the inputs the rewrite
+/// made rewritten, then the rules tried again, up to `local` times, where
+/// a restarted pass over the whole plan would find them only later
+/// (RULES.md D371). The walk recurs only into the plan's depth; each node's
+/// rounds are a loop, so its stack is the plan's depth, as before.
+fn pass(on: &[&dyn Rule], plan: LogicalPlan, (ctx, local): (&RuleContext<'_>, usize), trace: &mut Vec<&'static str>) -> (LogicalPlan, bool) {
     let mut changed = false;
-    let plan = plan.map_inputs(|input| {
-        let (p, c) = pass(on, input, ctx, trace);
+    let mut plan = plan.map_inputs(|input| {
+        let (p, c) = pass(on, input, (ctx, local), trace);
         changed |= c;
         p
     });
-    for rule in on {
-        if let Some(p) = rule.apply(&plan, ctx) {
-            trace.push(rule.name());
-            return (p, true);
-        }
+    for _ in 0..local {
+        let Some((name, p)) = on.iter().find_map(|rule| rule.apply(&plan, ctx).map(|p| (rule.name(), p))) else { break };
+        trace.push(name);
+        changed = true;
+        plan = p.map_inputs(|input| pass(on, input, (ctx, local), trace).0);
     }
     (plan, changed)
 }
@@ -486,3 +493,8 @@ impl Rule for RemoveRedundantDistinct {
         desc.unique().any(|u| u.iter().all(keyed)).then(|| (**input).clone())
     }
 }
+
+// Unit tests: the driver's local fixpoint against a pass restarted after
+// every rewrite (RULES.md R-TEST-1).
+#[cfg(test)]
+mod drivers;

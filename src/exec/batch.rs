@@ -101,7 +101,7 @@ fn read_of(plan: &Plan, db: &State) -> Option<Read> {
 /// R-CF-6).
 #[inline(never)]
 pub(super) fn distinct_groupable(plan: &Plan, db: &State) -> Option<usize> {
-    let Plan::Distinct { input } = plan else { return None };
+    let Plan::Distinct { input, .. } = plan else { return None };
     whole_width(input, db)
 }
 
@@ -112,7 +112,7 @@ pub(super) fn distinct_groupable(plan: &Plan, db: &State) -> Option<usize> {
 /// them, none of no rows.
 #[inline(never)]
 pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
-    let Plan::Distinct { input } = plan else { return plan };
+    let Plan::Distinct { input, est } = plan else { return plan };
     Plan::Aggregate {
         groups: (0..width).collect(),
         collations: Vec::new(),
@@ -120,6 +120,7 @@ pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
         seeds: Vec::new(),
         detail: String::new(),
         input,
+        est,
     }
 }
 
@@ -416,6 +417,7 @@ mod tests {
             seeds,
             detail: String::new(),
             input: Box::new(scan()),
+            est: 0.0_f64,
         };
         assert!(aggregable(&aggregate(Vec::new(), Vec::new()), &st));
         assert!(!aggregable(&aggregate(vec![Vec::new()], Vec::new()), &st));

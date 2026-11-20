@@ -21,9 +21,9 @@ impl Plan {
             Plan::Filter { cond, input, .. } => cond.can_raise() || input.can_raise(),
             Plan::Project { exprs, input, .. } => exprs.iter().any(Expr::can_raise) || input.can_raise(),
             Plan::Aggregate { aggs, input, .. } => !aggs.is_empty() || input.can_raise(),
-            Plan::Product { left, right }
+            Plan::Product { left, right, .. }
             | Plan::HashJoin { left, right, .. }
-            | Plan::Append { left, right }
+            | Plan::Append { left, right, .. }
             | Plan::SetOp { left, right, .. } => left.can_raise() || right.can_raise(),
             Plan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
             Plan::MergeJoin(m) => m.left.can_raise() || m.right.can_raise() || m.cond.as_ref().is_some_and(Cond::can_raise),
@@ -39,7 +39,7 @@ impl Plan {
                 let proved = spatial.is_some() && matches!(outer, super::Preserved::Inner);
                 left.can_raise() || (!proved && cond.as_ref().is_some_and(Cond::can_raise))
             }
-            Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),
+            Plan::Distinct { input, .. } | Plan::Sort { input, .. } => input.can_raise(),
             Plan::MergeAppend { inputs, .. } => inputs.iter().any(Plan::can_raise),
             // A GRAPH_TABLE's search can always pass its limits.
             Plan::Unnest(u) => {

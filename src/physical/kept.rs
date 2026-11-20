@@ -415,8 +415,9 @@ mod tests {
         let filtered = Plan::Filter {
             cond: Cond::Const(Truth::True),
             detail: String::new(),
-            est: None,
+            est: 0.0_f64,
             input: Box::new(scan("I", whole(), Vec::new())),
+            of_read: false,
         };
         let projected = Plan::Project { exprs: vec![Expr::Column(0)], detail: String::new(), input: Box::new(filtered) };
         assert!(keepable(&projected, &st));
@@ -481,7 +482,7 @@ mod tests {
         let slots = vec![ProbeSlot { place: Place::Key(1), slot: slot(0) }];
         let standing = Probe::Prefix { equal: vec![int(7), Value::Null], then: None };
         let judged = Cond::Compare(Expr::Column(1), CompOp::Lt, Expr::Dynamic(slot(1)));
-        let filtered = Plan::Filter { cond: judged, detail: String::new(), est: None, input: Box::new(scan("I", standing, slots)) };
+        let filtered = Plan::Filter { cond: judged, detail: String::new(), est: 0.0_f64, input: Box::new(scan("I", standing, slots)), of_read: false };
         let plan = Plan::Project { exprs: vec![Expr::Dynamic(slot(1))], detail: String::new(), input: Box::new(filtered) };
         let filled = filled_plan(plan, &[Value::Char(" 12 ".into()), int(3)]).unwrap();
         let Plan::Project { exprs, input, .. } = filled else { panic!("{filled:?}") };
@@ -518,8 +519,8 @@ mod tests {
             scan("I", Probe::Prefix { equal: vec![int(1)], then: None }, vec![ProbeSlot { place: Place::Low, slot: slot(0) }]);
         assert_eq!(filled_plan(low_of_prefix, &[int(1)]).unwrap_err().code, Code::Api, "a bound of no range");
         let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", Probe::All, Vec::new())), most: None };
-        assert!(filled_plan(Plan::Distinct { input: Box::new(sorted) }, &[]).is_ok());
-        let other = Plan::Product { left: Box::new(scan("I", Probe::All, Vec::new())), right: Box::new(scan("I", Probe::All, Vec::new())) };
+        assert!(filled_plan(Plan::Distinct { input: Box::new(sorted), est: 0.0_f64 }, &[]).is_ok());
+        let other = Plan::Product { left: Box::new(scan("I", Probe::All, Vec::new())), right: Box::new(scan("I", Probe::All, Vec::new())), est: 0.0_f64 };
         assert_eq!(filled_plan(other, &[]).unwrap_err().code, Code::Api);
     }
 

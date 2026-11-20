@@ -46,7 +46,7 @@ impl PhysicalPlanner<'_> {
     fn coordinate_probe(&self, (outer, inner): (&LogicalPlan, &LogicalPlan), cond: &Cond) -> Option<Choice> {
         let read = read_table(inner)?;
         let comparisons = crossed(cond, outer.width());
-        let outer_rows = self.rows_of(outer)?;
+        let outer_rows = self.rows_of(outer);
         let mut best: Option<Choice> = None;
         for ix in self.db.catalog.indexes(read.table) {
             // [EXTENSION] a global index is probed by equalities alone (RULES.md D157).
@@ -100,7 +100,7 @@ impl PhysicalPlanner<'_> {
     }
 
     fn coordinate_cost(&self, read: &Read<'_>, ix: &IndexDesc, comparisons: Vec<JoinComparison>, outer: f64) -> Option<Choice> {
-        let model = self.db.cost();
+        let model = self.weights();
         let share = comparisons.iter().map(|c| if c.op == CompOp::Eq { model.equal_selectivity } else { model.range_selectivity });
         let share = share.product::<f64>();
         self.join_cost(read, ix, JoinProbe::Columns(comparisons.into_boxed_slice()), (outer, share))

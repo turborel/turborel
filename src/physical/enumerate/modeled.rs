@@ -1,5 +1,5 @@
 //! \[DESIGN\] The model of a chain's initial tree, from the planner's
-//! estimates (RULES.md D302): each relation's rows (`rows_of`), the cost of
+//! estimates (RULES.md D302): each relation's rows (`physical/cardinality.rs`), the cost of
 //! its best read in no order and in each interesting order it gives, from
 //! the access paths the planner would choose (`physical/access.rs`), the
 //! probes its table's indexes answer (`physical/indexed.rs`), the classes
@@ -18,6 +18,7 @@ use super::extract::Query;
 use super::model::{Conj, Model, Order, Pred, Rel};
 use crate::logical::{Cond, Expr, SortKey, split_and};
 use crate::physical::PhysicalPlanner;
+use crate::physical::cardinality::{Classes, find};
 use crate::physical::estimate::{self, Known};
 use crate::physical::indexed::access_cost;
 use crate::value::{CompOp, DataType};
@@ -58,18 +59,6 @@ struct Classed {
     of_conjunct: Vec<Option<usize>>,
 }
 
-/// The root of `c` among `parents`.
-fn find(parents: &[usize], mut c: usize) -> usize {
-    for _ in 0..parents.len() {
-        let Some(&p) = parents.get(c) else { break };
-        if p == c {
-            break;
-        }
-        c = p;
-    }
-    c
-}
-
 /// Whether a merge join may join by a column of type `t`.
 fn merges(t: Option<&DataType>) -> bool {
     matches!(t, Some(DataType::Exact { .. } | DataType::Date))
@@ -79,7 +68,7 @@ impl PhysicalPlanner<'_> {
     /// The model of `q`, the chain asked for the order `want`; none if a
     /// relation's rows are not known.
     pub(super) fn model(&self, q: &Query, want: &[SortKey]) -> Option<Model> {
-        let cost = self.db.cost();
+        let cost = self.weights();
         let inner: Vec<Option<(usize, usize)>> = q.conjuncts.iter().map(|(_, c)| equated(c, q)).collect();
         let pred_keys: Vec<Vec<(usize, usize)>> = q.preds.iter().map(|p| pred_keys(p.as_ref(), q)).collect();
         let classed = self.classed(q, &inner, &pred_keys)?;
@@ -102,7 +91,8 @@ impl PhysicalPlanner<'_> {
         let spans = q.leaves.iter().map(|l| (l.start, l.width)).collect();
         let kinds = q.shapes.iter().map(|s| s.kind).collect();
         let Classed { orders, classes, .. } = classed;
-        let mut model = Model { rels: Vec::new(), conjuncts, preds, kinds, classes, orders, spans, cost, want_class };
+        let joins = Classes::new(classes);
+        let mut model = Model { rels: Vec::new(), conjuncts, preds, kinds, classes: joins, orders, spans, cost, want_class };
         model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
         Some(model)
     }
@@ -151,14 +141,14 @@ impl PhysicalPlanner<'_> {
     /// relation's rows, as if a key.
     fn chain_distinct(&self, q: &Query, col: usize) -> Option<f64> {
         let leaf = q.leaves.get(q.rel_of(col)?)?;
-        self.distinct_of(&leaf.plan, col.checked_sub(leaf.start)?).or_else(|| self.rows_of(&leaf.plan))
+        Some(self.distinct_of(&leaf.plan, col.checked_sub(leaf.start)?))
     }
 
     /// The fraction of pairs `pred` keeps: of each equality of columns of
     /// two relations, one in as many as the more distinct has values; of
     /// each other conjunct, its default.
     fn pred_fraction(&self, pred: &Cond, q: &Query) -> f64 {
-        let cost = self.db.cost();
+        let cost = self.weights();
         let known = Known { stats: None, cost: &cost };
         let mut conjuncts = Vec::new();
         split_and(pred.clone(), &mut conjuncts);
@@ -174,36 +164,39 @@ impl PhysicalPlanner<'_> {
             .product()
     }
 
-    /// Relation `r` of `q`: its rows, its reads in no order and in each
-    /// interesting order of `model` or `want` it gives, and its probes.
+    /// Relation `r` of `q`: its rows (`physical/cardinality.rs`), its
+    /// reads in no order and in each interesting order of `model` or
+    /// `want` it gives, each read's plan kept, and the probes of its
+    /// columns a key of the chain uses, the only ones a join can probe by.
     fn rel(&self, q: &Query, r: usize, (model, want): (&Model, &[SortKey])) -> Option<Rel> {
         let leaf = q.leaves.get(r)?;
-        let rows = self.rows_of(&leaf.plan)?;
-        let read = |keys: &[SortKey]| {
+        let rows = self.card(&leaf.plan).rows;
+        let mut rel = Rel { rows, reads: Vec::new(), plans: Vec::new(), probes: Vec::new() };
+        let mut read = |order: Order, keys: &[SortKey]| {
             let built = self.build(&leaf.plan, keys);
-            (built.ordered, access_cost(&built.plan).unwrap_or(rows))
-        };
-        let mut reads = vec![(Order::None, read(&[]).1)];
-        let local = |c: usize| c.checked_sub(leaf.start).filter(|&l| l < leaf.width);
-        for &(col, class, merge) in &model.orders {
-            let Some(at) = local(col).filter(|_| merge) else { continue };
-            if reads.iter().any(|(o, _)| *o == Order::Class(class)) {
-                continue;
+            let taken = built.ordered || order == Order::None;
+            if taken {
+                rel.reads.push((order, access_cost(&built.plan).unwrap_or(rows)));
+                rel.plans.push((order, built.plan));
             }
-            if let (true, cost) = read(&[SortKey::ascending(at)]) {
-                reads.push((Order::Class(class), cost));
+            taken
+        };
+        let _ = read(Order::None, &[]);
+        let local = |c: usize| c.checked_sub(leaf.start).filter(|&l| l < leaf.width);
+        let mut classes: Vec<usize> = Vec::new();
+        for &(col, class, merge) in &model.orders {
+            let Some(at) = local(col).filter(|_| merge && !classes.contains(&class)) else { continue };
+            if read(Order::Class(class), &[SortKey::ascending(at)]) {
+                classes.push(class);
             }
         }
         let wanted: Option<Vec<SortKey>> = want.iter().map(|k| Some(SortKey { column: local(k.column)?, ..*k })).collect();
-        if let Some(keys) = wanted.filter(|k| !k.is_empty())
-            && let (true, cost) = read(&keys)
-        {
-            reads.push((Order::Want, cost));
+        if let Some(keys) = wanted.filter(|k| !k.is_empty()) {
+            let _ = read(Order::Want, &keys);
         }
         let any = |_: usize, _: &DataType| true;
-        let probes = (0..leaf.width)
-            .filter_map(|c| self.probing(&leaf.plan, &[(0, c)], &any).map(|p| (c.saturating_add(leaf.start), p.cost)))
-            .collect();
-        Some(Rel { rows, reads, probes })
+        let keyed = model.orders.iter().filter_map(|&(col, _, _)| local(col).map(|at| (col, at)));
+        rel.probes = keyed.filter_map(|(col, at)| self.probing(&leaf.plan, &[(0, at)], &any).map(|p| (col, p.cost))).collect();
+        Some(rel)
     }
 }

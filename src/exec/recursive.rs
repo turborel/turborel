@@ -204,7 +204,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::IndexJoin { left: input, .. }
         | Plan::Aggregate { input, .. }
         | Plan::Project { input, .. }
-        | Plan::Distinct { input }
+        | Plan::Distinct { input, .. }
         | Plan::Sort { input, .. }
         | Plan::Limit { input, .. } => give(input, work),
         Plan::Unnest(u) => give(&mut u.input, work),
@@ -216,11 +216,11 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
             give(&mut m.left, work);
             give(&mut m.right, work);
         }
-        Plan::Product { left, right }
+        Plan::Product { left, right, .. }
         | Plan::HashJoin { left, right, .. }
         | Plan::OuterJoin { left, right, .. }
         | Plan::SetOp { left, right, .. }
-        | Plan::Append { left, right } => {
+        | Plan::Append { left, right, .. } => {
             give(left, work);
             give(right, work);
         }

@@ -62,14 +62,14 @@ impl Filling<'_> {
                 let exprs = exprs.into_iter().map(|e| self.expr(e)).collect::<Result<_>>()?;
                 Ok(Plan::Project { exprs, detail, input: Box::new(self.plan(*input)?) })
             }
-            Plan::Filter { cond, detail, est, input } => {
+            Plan::Filter { cond, detail, est, of_read, input } => {
                 let cond = self.cond(cond)?;
-                Ok(Plan::Filter { cond, detail, est, input: Box::new(self.plan(*input)?) })
+                Ok(Plan::Filter { cond, detail, est, of_read, input: Box::new(self.plan(*input)?) })
             }
             Plan::IndexScan { .. } => self.scan(plan),
             Plan::SeqScan { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
-            Plan::Aggregate { groups, collations, aggs, seeds, detail, input } => {
+            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est } => {
                 let filled_agg = |a: AggCall| {
                     let arg = a.arg.map(|e| self.expr(e)).transpose()?;
                     let distribution = match a.distribution {
@@ -79,16 +79,16 @@ impl Filling<'_> {
                     Ok(AggCall { arg, filter: a.filter.map(|c| self.cond(c)).transpose()?, distribution, ..a })
                 };
                 let aggs = aggs.into_iter().map(filled_agg).collect::<Result<_>>()?;
-                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?) })
+                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est })
             }
-            Plan::Distinct { input } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?) }),
+            Plan::Distinct { input, est } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est }),
             Plan::Sort { keys, detail, input, most } => Ok(Plan::Sort { keys, detail, input: Box::new(self.plan(*input)?), most }),
-            Plan::Limit { limit, input } => {
+            Plan::Limit { limit, input, est } => {
                 let offset = limit.offset.map(|e| self.expr(e)).transpose()?;
                 let fetch = limit.fetch.map(|f| Ok::<_, SqlError>(Fetch { count: self.expr(f.count)?, ..f })).transpose()?;
-                Ok(Plan::Limit { limit: Limit { offset, fetch }, input: Box::new(self.plan(*input)?) })
+                Ok(Plan::Limit { limit: Limit { offset, fetch }, input: Box::new(self.plan(*input)?), est })
             }
-            Plan::Append { left, right } => Ok(Plan::Append { left: Box::new(self.plan(*left)?), right: Box::new(self.plan(*right)?) }),
+            Plan::Append { left, right, est } => Ok(Plan::Append { left: Box::new(self.plan(*left)?), right: Box::new(self.plan(*right)?), est }),
             Plan::MergeAppend { inputs, keys, detail } => Ok(Plan::MergeAppend { inputs: self.plans(inputs)?, keys, detail }),
             Plan::Product { .. }
             | Plan::HashJoin { .. }

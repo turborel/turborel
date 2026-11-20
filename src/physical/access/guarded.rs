@@ -116,10 +116,13 @@ impl PhysicalPlanner<'_> {
             }
         };
         let plan = match guard.filter(|_| indexed) {
-            Some(guard) => Plan::Product { left: Box::new(plan), right: Box::new(self.build_node(guard, &[]).plan) },
+            Some(guard) => {
+                let est = plan.est().unwrap_or(0.0_f64);
+                Plan::Product { left: Box::new(plan), right: Box::new(self.build_node(guard, &[]).plan), est }
+            }
             None => plan,
         };
-        let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
+        let (cost, stats) = (self.weights(), self.statistics(read.table));
         let known = Known { stats: stats.as_deref(), cost: &cost };
         (
             filtered(
