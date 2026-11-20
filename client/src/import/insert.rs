@@ -338,6 +338,9 @@ impl<S: Read + Write> Run<'_, S> {
                 let bytes = match &v {
                     Value::Char(s) if s.len() > LOB_INLINE_OCTETS => s.as_bytes(),
                     Value::Binary(b) if b.bytes().len() > LOB_INLINE_OCTETS => b.bytes(),
+                    // A string assigned to a large object column is a large
+                    // object held inline (`assigned`), as long as it was.
+                    Value::Lob(l) if l.inline().is_some_and(|b| b.len() > LOB_INLINE_OCTETS) => l.inline().unwrap_or_default(),
                     Value::Null
                     | Value::Char(_)
                     | Value::Binary(_)

@@ -14,6 +14,8 @@ use turborel_client::import::{
     Cause, Delimited, Dialect, Heading, Import, ImportError, Imported, Position, Record, Rejected, Source, SourceError, import,
 };
 
+use turborel_server::settings::MAX_MESSAGE_BYTES;
+
 use crate::common::{Running, rows, start, state};
 
 /// A database whose schema X holds STAFF, of an ID that is its primary
@@ -319,5 +321,24 @@ fn a_string_too_long_for_its_column_is_refused() {
         assert!(failure.rule.as_deref().is_some_and(|r| r.starts_with("ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3")), "{failure:?}");
     }
     assert_eq!(rows(&c.query("SELECT K, F || '|', V || '|' FROM T").unwrap()), ["1,ab |,abc|"]);
+    c.terminate().unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D59: a field longer than a request may
+/// hold inline, for a large object column, is sent ahead a piece at a
+/// time and given by its locator, after it is assigned to the column's
+/// type. Regression test (R-TEST-7): assigned, it was a large object held
+/// inline and sent whole in the Execute, which a server taking smaller
+/// messages refused.
+#[test]
+fn a_long_field_for_a_large_object_goes_by_locator() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER, C CLOB(1M))").unwrap();
+    let server = start(&db, &[(MAX_MESSAGE_BYTES, 300_000)]);
+    let mut c = server.connect("X");
+    let text = format!("1,{}\n", "a".repeat(600_000));
+    let mut source = Delimited::new(text.as_bytes(), Dialect::csv().with_max_record(700_000));
+    assert_eq!(import(&mut c, &mut source, &Import::into("T"), &mut |_| {}).unwrap(), Imported { rows: 1, rejected: 0 });
+    assert_eq!(rows(&c.query("SELECT K, CHAR_LENGTH(C) FROM T").unwrap()), ["1,600000"]);
     c.terminate().unwrap();
 }
