@@ -37,6 +37,9 @@ fn measured(bench: &Bench, s: &Session, table: &str, label: &str) {
         ("ORDER BY three keys, nulls first", "SELECT G, N, C FROM {t} ORDER BY G DESC, N NULLS FIRST, C"),
         ("first 10 by an integer column", "SELECT C, K FROM {t} ORDER BY C FETCH FIRST 10 ROWS ONLY"),
         ("first 10,000 by an integer column", "SELECT C, K FROM {t} ORDER BY C FETCH FIRST 10000 ROWS ONLY"),
+        ("first 10 of every column by the key", "SELECT * FROM {t} ORDER BY K DESC FETCH FIRST 10 ROWS ONLY"),
+        ("first 10 of every column by an integer column", "SELECT * FROM {t} ORDER BY C FETCH FIRST 10 ROWS ONLY"),
+        ("ORDER BY an integer column, others projected", "SELECT K, S FROM {t} ORDER BY C"),
     ] {
         let sql = sql.replace("{t}", table);
         bench.measure(Case::new(format!("{name}{label}"), "rows"), || {

@@ -11,7 +11,7 @@ const AS_COMPARATOR: &str = "exec::sort::normal::tests::normal_keys_sort_as_the_
 
 /// Mechanisms whose removal must fail the requirements of sorts by normal
 /// keys.
-pub const SORTS: [Mutation; 8] = [
+pub const SORTS: [Mutation; 14] = [
     Mutation {
         name: "sort-padding-zero",
         package: Package::Core,
@@ -91,5 +91,65 @@ pub const SORTS: [Mutation; 8] = [
         replacement: "if by_key.is_gt() || (by_key.is_eq() && !truncates) {",
         integration: &[],
         unit: &["exec::sort::top::tests::the_first_rows_of_batches_are_a_whole_sorts"],
+    },
+    Mutation {
+        name: "sort-top-bound-raised-away",
+        package: Package::Core,
+        breaks: "a top-N's bound widens instead of narrowing, so a scan may pass over a group holding one of the first rows",
+        file: "src/storage/condition/threshold.rs",
+        original: "let past = if self.descending { Ordering::Greater } else { Ordering::Less };",
+        replacement: "let past = if self.descending { Ordering::Less } else { Ordering::Greater };",
+        integration: &[],
+        unit: &["storage::condition", "exec::sort::top::tests::a_top_raises_its_bound_to_its_greatest_held"],
+    },
+    Mutation {
+        name: "sort-top-bound-untold",
+        package: Package::Core,
+        breaks: "a top-N tells its scan no bound, so every group is read",
+        file: "src/exec/batch/late.rs",
+        original: "self.bound.as_ref().map(|(column, threshold)|",
+        replacement: "self.bound.as_ref().filter(|_| false).map(|(column, threshold)|",
+        integration: &[],
+        unit: &["exec::batch::late::tests::a_top_bound_is_told_its_scan_where_its_rows_are_the_scans"],
+    },
+    Mutation {
+        name: "sort-kernel-uninverted",
+        package: Package::Core,
+        breaks: "the kernel writes a descending integer key as an ascending one",
+        file: "src/kernels/portable/normal.rs",
+        original: "let flip = if invert { u8::MAX } else { 0 };",
+        replacement: "let flip = if invert { 0 } else { 0 };",
+        integration: &["kernels::", "normal_sorts::"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sort-cancel-unlooked",
+        package: Package::Core,
+        breaks: "a sort held in memory never looks for a cancel as it gives its rows",
+        file: "src/exec/sort.rs",
+        original: "at.is_multiple_of(every.max(1))",
+        replacement: "at == usize::MAX",
+        integration: &["topped_sorts::a_sort_held_looks_for_a_cancel"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sort-parallel-run-dropped",
+        package: Package::Core,
+        breaks: "a sort run in parallel past its work area drops each run after it spills",
+        file: "src/exec/parallel/sorted.rs",
+        original: "            run.push_to(sorter, work)?;",
+        replacement: "            drop((run, work, &sorter));",
+        integration: &["topped_sorts::topped_sorts_give_what_rows_give"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sort-out-scale-lost",
+        package: Package::Core,
+        breaks: "a sort's batches give a decimal column's units at scale 0",
+        file: "src/exec/sort/out.rs",
+        original: "Column::Ints(Ints::new(units, i.scale, nulls))",
+        replacement: "Column::Ints(Ints::new(units, 0, nulls))",
+        integration: &["topped_sorts::topped_sorts_give_what_rows_give"],
+        unit: &[],
     },
 ];

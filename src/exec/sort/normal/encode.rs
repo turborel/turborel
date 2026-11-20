@@ -11,6 +11,7 @@
 //! The fields are written last to first for that.
 
 use super::{Code, Field, Ints, Layout};
+use crate::kernels::Kernels;
 use crate::storage::{Batch, Cell, Column, Row};
 use crate::value::{Value, pow10};
 
@@ -46,11 +47,22 @@ enum Val<'a> {
 
 /// Writes into `keys`, a key of `layout.width` bytes after another, the
 /// keys of `batch`'s rows at `rows`, in order; none if a value cannot be.
-pub(in crate::exec::sort) fn encode_batch(layout: &Layout, batch: &Batch, rows: &[usize], keys: &mut [u8]) -> Option<()> {
+/// A vector of integers of none null, of the field's scale, is written by
+/// `kernels` at once (`Kernels::normalize_i64`, RULES.md D380).
+pub(in crate::exec::sort) fn encode_batch(
+    (layout, kernels): (&Layout, &dyn Kernels),
+    batch: &Batch,
+    rows: &[usize],
+    keys: &mut [u8],
+) -> Option<()> {
     if layout.width == 0 {
         return Some(());
     }
     for field in layout.fields.iter().rev() {
+        if let Some(ints) = batch.columns.get(field.column).and_then(|c| at_once(c, field)) {
+            put_ints(kernels, (layout.width, field), ints, rows, keys)?;
+            continue;
+        }
         let slots = keys.chunks_exact_mut(layout.width).zip(rows);
         match batch.columns.get(field.column)? {
             Column::Ints(ints) => {
@@ -83,6 +95,40 @@ pub(in crate::exec::sort) fn encode_batch(layout: &Layout, batch: &Batch, rows: 
         }
     }
     Some(())
+}
+
+/// A vector's integers and the base, bytes and inversion
+/// `Kernels::normalize_i64` writes them by.
+type AtOnce<'a> = (&'a [i64], (i64, usize, bool));
+
+/// Writes `field` of `keys`, each `width` bytes, of the rows at `rows` of
+/// `units`, none null, by `kernels`, and its null byte if it has one.
+fn put_ints(
+    kernels: &dyn Kernels,
+    (width, field): (usize, &Field),
+    (units, shape): AtOnce<'_>,
+    rows: &[usize],
+    keys: &mut [u8],
+) -> Option<()> {
+    let places: Vec<u32> = rows.iter().map(|&r| u32::try_from(r).unwrap_or(u32::MAX)).collect();
+    let value_at = field.at.checked_add(usize::from(field.nullable))?;
+    kernels.normalize_i64((units, &places), shape, (width, value_at), keys)?;
+    if field.nullable {
+        // Of no null, each null byte is a value's [ISO/IEC 9075-2:2023 §10.10 GR1e ii].
+        let byte = u8::from(field.order.nulls_first);
+        keys.chunks_exact_mut(width).take(rows.len()).try_for_each(|key| key.get_mut(field.at).map(|b| *b = byte))?;
+    }
+    Some(())
+}
+
+/// Of `column`, a vector of integers of none null, of the scale of `field`
+/// of exact numbers, its units and the base, bytes and inversion
+/// `Kernels::normalize_i64` writes them by; none of another.
+fn at_once<'a>(column: &'a Column, field: &Field) -> Option<AtOnce<'a>> {
+    let (Column::Ints(ints), Code::Int { scale, base, bytes }) = (column, field.code) else { return None };
+    let fits = ints.nulls.is_none() && ints.scale == scale && field.ints == Ints::Exact && bytes <= size_of::<u64>();
+    fits.then_some(())?;
+    Some((&ints.units, (i64::try_from(base).ok()?, bytes, field.order.descending)))
 }
 
 /// Writes into `key`, of `layout.width` bytes, the key of `row`; none if

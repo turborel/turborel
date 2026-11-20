@@ -1,7 +1,9 @@
 use super::*;
 use crate::catalog::MemoryCatalog;
 use crate::db::State;
+use crate::storage::Threshold;
 use crate::value::{Decimal, SortOrder, Value};
+use std::sync::Arc;
 
 /// The work area of a new database's operator.
 fn work() -> Work {
@@ -97,7 +99,7 @@ fn topped_batches(keys: &[SortKey], rows: &[Row], (most, each): (Most, usize), w
         })
         .collect();
     let input: crate::exec::batch::Batches = Box::new(batches.into_iter().map(Ok));
-    top_batches(keys, input, most, work).unwrap().map(Result::unwrap).collect()
+    top_batches(keys, input, (most, None), work, Arc::new(crate::kernels::Portable)).unwrap().map(Result::unwrap).collect()
 }
 
 /// `n` rows of a string key, some longer than a key holds, some null, of an
@@ -156,4 +158,47 @@ fn the_first_rows_of_batches_are_a_whole_sorts() {
         let got = topped_batches(&keys, &rows, (most, 100), &mut work().part(4096));
         assert_eq!(format!("{:?}", got.get(..want.len())), format!("{:?}", Some(want.as_slice())), "past the work area, ties {ties}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D379: once a top-N holds its first rows, the
+/// bound told the scan is the first key of the greatest held, ascending
+/// the least that may yet be among them and descending the greatest, so
+/// no row of a key past it is ever needed; before, there is none.
+#[test]
+fn a_top_raises_its_bound_to_its_greatest_held() {
+    let rows: Vec<Row> =
+        (0..1000_i128).map(|p| vec![Value::Exact(Decimal::new(p * 7919 % 1000, 0)), Value::Exact(Decimal::new(p, 0))]).collect();
+    for (descending, want) in [(false, "9"), (true, "990")] {
+        let keys = [SortKey::new(0, SortOrder::of(descending, None))];
+        let bound = Arc::new(Threshold::new(descending));
+        let input: crate::exec::batch::Batches = Box::new(
+            rows.chunks(100)
+                .map(|chunk| {
+                    let columns = (0..2).map(|c| crate::storage::Column::Values(chunk.iter().map(|r| r[c].clone()).collect())).collect();
+                    Ok((crate::storage::Batch { columns, rows: chunk.len() }, None))
+                })
+                .collect::<Vec<_>>()
+                .into_iter(),
+        );
+        let most = Most { rows: 10, ties: false };
+        let got: Vec<Row> = top_batches(&keys, input, (most, Some(Arc::clone(&bound))), &mut work(), Arc::new(crate::kernels::Portable))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(got.len(), 10);
+        assert_eq!(bound.bound().map(|b| b.to_string()), Some(want.to_owned()), "descending {descending}");
+    }
+    let bound = Arc::new(Threshold::new(false));
+    let input: crate::exec::batch::Batches = Box::new(std::iter::empty());
+    drop(
+        top_batches(
+            &[SortKey::ascending(0)],
+            input,
+            (Most { rows: 10, ties: false }, Some(Arc::clone(&bound))),
+            &mut work(),
+            Arc::new(crate::kernels::Portable),
+        )
+        .unwrap(),
+    );
+    assert!(bound.bound().is_none(), "none of no rows");
 }

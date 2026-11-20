@@ -131,7 +131,7 @@ fn batch_of(rows: &[Row]) -> Batch {
 fn by_places(keys: &[SortKey], batches: &[(Batch, Vec<usize>)], layouts: Option<&mut Layouts>) -> (Vec<Row>, bool) {
     let places: Vec<(u32, u32)> =
         batches.iter().zip(0_u32..).flat_map(|((_, rows), b)| rows.iter().map(move |&r| (b, u32::try_from(r).unwrap()))).collect();
-    let (order, made) = sorted_places(keys, batches, &places, layouts);
+    let (order, made) = sorted_places(keys, batches, &places, layouts, &crate::kernels::Portable);
     let rows = order
         .iter()
         .map(|&at| {

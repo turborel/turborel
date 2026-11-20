@@ -125,6 +125,11 @@ impl Registry {
         &*self.kernels
     }
 
+    /// The kernels batches run on, shared, for what holds them past a call.
+    pub(crate) fn kernels_shared(&self) -> Arc<dyn crate::kernels::Kernels> {
+        Arc::clone(&self.kernels)
+    }
+
     /// Runs batches on `kernels` from now on.
     pub(crate) fn set_kernels(&mut self, kernels: Arc<dyn crate::kernels::Kernels>) {
         self.kernels = kernels;

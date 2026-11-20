@@ -18,12 +18,13 @@ mod chunk;
 mod keyed;
 mod merge;
 mod normal;
+mod out;
 mod prefix;
 mod top;
 mod vectors;
 
 pub(super) use keyed::sorted_rows;
-pub(super) use vectors::sort_batches;
+pub(super) use vectors::{rows_of_batches, sort_batches, sorted_morsel, sorted_morsel_batches, sorted_out};
 
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -34,11 +35,11 @@ use crate::db::State;
 use crate::error::Result;
 use crate::logical::{Most, SortKey};
 use crate::spill::{SpillRun, row_bytes};
-use crate::storage::Row;
+use crate::storage::{Row, Threshold};
 use crate::txn::TxId;
 use keyed::Layouts;
 use merge::{Order, merge};
-use vectors::written_rows;
+use vectors::{written_batches, written_rows};
 
 /// [X3.135-1986 §8.3 GR3b] `input` sorted by `keys`, in a work area of
 /// `db`, for the statement of `tx`. Never inlined into the caller, whose
@@ -62,13 +63,35 @@ pub(super) fn first(keys: &[SortKey], input: RowIter, most: Most, db: &State, tx
     }
 }
 
+/// \[DESIGN\] (RULES.md D380) A sort of its input's first rows reads the
+/// columns its keys do not late once it keeps fewer than one in this many
+/// of the rows estimated.
+const LATE_SHARE: usize = 4;
+
+/// Of a sort by `keys` of the first `most` rows of an input of `est` rows
+/// estimated, if known: whether the columns its keys do not read are read
+/// late (RULES.md D380), and the bound of its first key told its scans, of
+/// a key whose nulls sort last (D379).
+pub(super) fn topped_of(keys: &[SortKey], most: Most, est: Option<f64>) -> (bool, Option<Arc<Threshold>>) {
+    let rows = est.map(|e| crate::spatial::curves::linearize::count(e, usize::MAX >> 1_u32));
+    let late = rows.is_none_or(|rows| most.rows.saturating_mul(LATE_SHARE) < rows);
+    let first = keys.first().map(SortKey::order).filter(|o| !o.nulls_first);
+    (late, first.map(|o| Arc::new(Threshold::new(o.descending))))
+}
+
 /// The first `most` rows of `input`, a stream's batches each holding every
 /// column of its rows, sorted by `keys`, and of WITH TIES the peers of the
-/// last, in a work area of `db`, for the statement of `tx`
-/// (`sort/top/batched.rs`).
+/// last, in a work area of `db`, for the statement of `tx`, raising the
+/// bound `bound` of its first key if given (`sort/top/batched.rs`).
 #[inline(never)]
-pub(super) fn first_batches(keys: &[SortKey], input: super::batch::Batches, most: Most, db: &State, tx: TxId) -> RowIter {
-    match top::top_batches(keys, input, most, &mut Work::of(db, tx)) {
+pub(super) fn first_batches(
+    keys: &[SortKey],
+    input: super::batch::Batches,
+    most: (Most, Option<Arc<Threshold>>),
+    db: &State,
+    tx: TxId,
+) -> RowIter {
+    match top::top_batches(keys, input, most, &mut Work::of(db, tx), db.functions.kernels_shared()) {
         Ok(rows) => rows,
         Err(e) => failed(e),
     }
@@ -115,18 +138,71 @@ impl Sorter {
         Ok(())
     }
 
+    /// Adds `rows`, a run of a sort run in parallel past its work area,
+    /// written to a run of `work` (RULES.md D380).
+    pub(super) fn push_run(&mut self, rows: Vec<Row>, work: &mut Work) -> Result<()> {
+        if !rows.is_empty() {
+            self.runs.push(written_rows(&self.keys, rows, work, &mut self.layouts)?);
+        }
+        Ok(())
+    }
+
+    /// Adds `batches`, a run of a sort run in parallel past its work area,
+    /// sorted, written to a run of `work` (RULES.md D380).
+    pub(super) fn push_batches(&mut self, batches: Vec<crate::storage::Batch>, work: &mut Work) -> Result<()> {
+        if batches.iter().any(|b| b.rows > 0) {
+            self.runs.push(written_batches(&self.keys, batches, work, &mut self.layouts)?);
+        }
+        Ok(())
+    }
+
     /// The rows added, sorted: in memory if they fit `work`, else merged
     /// from its runs.
     pub(super) fn sorted(self, work: &mut Work) -> Result<RowIter> {
         let Sorter { keys, rows, mut runs, mut layouts, .. } = self;
         if runs.is_empty() {
-            return Ok(Box::new(sorted_rows(&keys, rows).into_iter().map(Ok)));
+            work.look()?;
+            return Ok(looked(Box::new(sorted_rows(&keys, rows).into_iter().map(Ok)), work.stop()));
         }
         if !rows.is_empty() {
             runs.push(written_rows(&keys, rows, work, &mut layouts)?);
         }
         merged(&keys, runs, work)
     }
+}
+
+/// \[DESIGN\] The rows a sort held in memory gives between looks for a
+/// cancel (RULES.md D380).
+const SORT_RUN_ROWS: usize = 65_536;
+
+/// `rows`, a sort's held in memory, given while the statement `stop`
+/// cancels, if known, goes on: looked at once every `SORT_RUN_ROWS` rows.
+fn looked(rows: RowIter, stop: Option<Arc<crate::txn::Stop>>) -> RowIter {
+    Box::new(looked_every(rows, (stop, SORT_RUN_ROWS)))
+}
+
+/// `items` given while the statement `stop` cancels, if known, goes on,
+/// looked at once every `every` items: at a cancel, its error, then that
+/// error again at every ask, as a scan's rows cut short give it
+/// (`txn::checked`).
+fn looked_every<T: Send + 'static>(
+    items: impl Iterator<Item = Result<T>> + Send + 'static,
+    (stop, every): (Option<Arc<crate::txn::Stop>>, usize),
+) -> impl Iterator<Item = Result<T>> + Send + 'static {
+    let (mut items, mut cut, mut n) = (items, None::<crate::error::SqlError>, 0_usize);
+    std::iter::from_fn(move || {
+        if let Some(e) = &cut {
+            return Some(Err(e.clone()));
+        }
+        let at = n;
+        n = n.wrapping_add(1);
+        let looked = stop.as_deref().filter(|_| at.is_multiple_of(every.max(1))).map_or(Ok(()), crate::txn::Stop::check);
+        if let Err(e) = looked {
+            cut = Some(e.clone());
+            return Some(Err(e));
+        }
+        items.next()
+    })
 }
 
 /// The rows of sorted `runs`, merged by `keys`, in passes of as many as

@@ -361,6 +361,8 @@ verification approach DO-178C expects (§8).
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
 | D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
 | D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
+| D379 | A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read |
+| D380 | A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -10078,6 +10080,63 @@ adds one. DISTINCT is the grouping of all its columns. UNION estimates
 its distinct values with the formula over the sum of both sides'
 distinct values. INTERSECT is at most the smaller side's distinct values
 and EXCEPT at most the left's.
+
+#### D379. A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read
+
+A sort under FETCH FIRST (ISO/IEC 9075-2:2023 §7.17 GR5, GR7) of a
+stream whose batches hold every column of its rows tells the stream that
+only its keys' columns are read before it keeps its rows
+(`Deferred::topped`). The scan gives the other columns late (D361), and
+the top-N decodes them of the rows it gives alone, batch by batch, or of
+the rows it holds once it sorts them whole (`exec/sort/top/batched.rs`).
+It does so when it asks for less than a quarter of the input's estimated
+rows, or when there is no estimate, as decoding a column at most of its
+rows costs more than decoding it whole.
+
+When the first key's nulls sort last, the top-N also tells the scan a
+bound of that key (`storage::Threshold`), a conjunct of its own kind
+(`Conjunct::Dynamic`). Once it holds its first rows, it raises the bound
+to the first key of the greatest held, which only narrows. The scan
+passes over a group, or a chunk, whose least value is past it, ascending,
+or whose greatest is short of it, descending, as its zone maps tell
+(`summary.may_match`, `columns/scan.rs`). No row of such a group can be
+among the first, so the rows given are the same. The bound holds only
+exact numbers and datetimes, which compare as their stored bounds do,
+and judges no row. A row whose group is read is kept, and the top-N
+judges it. Under NULLS FIRST a null of a group past the bound would be
+among the first, so no bound is told. A filter whose condition can raise,
+a projection of an expression, or a join's operand tells none, as each
+row of theirs must be read for its errors or its matches.
+
+#### D380. A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel
+
+A whole sort whose input's batches hold every column of its rows gives
+its rows as batches (`stream::layout`, `exec/sort/out.rs`). Each batch of
+up to `BATCH_ROWS` rows in order is gathered of the batches it held, a
+column a vector of the kind every one held keeps it as, else values. So a
+projection, a grouping or a DISTINCT above a sort reads it as it reads a
+scan. A top-N's first rows are few, and are made batches of their rows.
+
+A vector of integers of one scale and no null is written into the sort's
+keys by `Kernels::normalize_i64`, so a kernel plug-in's wider
+instructions write them too (D354). The contract tests
+hold it to the portable loop. Any other column is written a value at a
+time as before (D364).
+
+A sort held in memory looks for a cancel (D44) before it sorts, and
+every 65,536 rows (`SORT_RUN_ROWS`) or each batch as it gives them. A
+run written to the spill area looks after each chunk. At a cancel it
+gives its error, and the same error at every ask after.
+
+A sort run in parallel reads each morsel by batch where its pipeline
+does (`morsel_kept`), and sorts it as batches, so a worker decodes no
+row it does not give. A whole sort keeps each morsel's run as sorted
+batches, gathered as above, and charges the work area their bytes, not
+those of rows. Once every run is in, the runs are made rows by the
+threads and merged by ranges if those rows fit too. Past the work area
+it no longer gives way to the serial sort. It writes the runs held, and
+each run after, to the spill area, a run of batches as a sort of batches
+writes its own, and merges them by the loser tree (D364).
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

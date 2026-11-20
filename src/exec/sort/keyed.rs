@@ -10,6 +10,7 @@
 //! as before, by their first key's prefix, then their values
 //! (`prefix.rs`).
 
+use crate::kernels::Kernels;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -74,9 +75,10 @@ pub(super) fn sorted_places(
     batches: &[(Batch, Vec<usize>)],
     places: &[(u32, u32)],
     layouts: Option<&mut Layouts>,
+    kernels: &dyn Kernels,
 ) -> (Vec<u32>, Option<Made>) {
     let compare = |a: u32, b: u32| cells_of(batches, places, a, b, keys);
-    if let Some(made) = made_of(keys, batches, layouts)
+    if let Some(made) = made_of(keys, batches, layouts, kernels)
         && let Some(order) = order((&made.bytes, places.len()), made.layout.width, made.layout.truncates, compare)
     {
         return (order, Some(made));
@@ -85,8 +87,9 @@ pub(super) fn sorted_places(
 }
 
 /// The keys of the rows of `batches`, each at its places, of a layout of
-/// `layouts`, or narrow if none; none if they have no normal form.
-fn made_of(keys: &[SortKey], batches: &[(Batch, Vec<usize>)], layouts: Option<&mut Layouts>) -> Option<Made> {
+/// `layouts`, or narrow if none, written on `kernels`; none if they have
+/// no normal form.
+fn made_of(keys: &[SortKey], batches: &[(Batch, Vec<usize>)], layouts: Option<&mut Layouts>, kernels: &dyn Kernels) -> Option<Made> {
     let found: Vec<Option<Found>> = keys
         .iter()
         .map(|k| batches.iter().try_fold(Found::default(), |f, (batch, rows)| with(Some(f), seen_column(batch, k.column, rows))))
@@ -100,7 +103,7 @@ fn made_of(keys: &[SortKey], batches: &[(Batch, Vec<usize>)], layouts: Option<&m
     let mut from = 0_usize;
     for (batch, rows) in batches {
         let to = from.checked_add(rows.len().checked_mul(layout.width)?)?;
-        encode_batch(&layout, batch, rows, bytes.get_mut(from..to)?)?;
+        encode_batch((&layout, kernels), batch, rows, bytes.get_mut(from..to)?)?;
         from = to;
     }
     Some(Made { layout, number, bytes })

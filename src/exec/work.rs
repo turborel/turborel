@@ -64,6 +64,21 @@ impl Work {
         work_bytes(db.settings.get(MEMORY_WORK_BYTES))
     }
 
+    /// Whether the statement it works for goes on: an error once it was
+    /// cancelled or ran past its time (RULES.md D380).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -920 if it was cancelled or timed out.
+    pub(super) fn look(&self) -> Result<()> {
+        self.stop.as_deref().map_or(Ok(()), Stop::check)
+    }
+
+    /// What cancels the statement it works for, if known.
+    pub(super) fn stop(&self) -> Option<Arc<Stop>> {
+        self.stop.clone()
+    }
+
     /// The work area of an operator of `db` run by `tx`'s statement: its
     /// runs read back only while the statement is not cancelled.
     pub(super) fn of(db: &State, tx: TxId) -> Work {

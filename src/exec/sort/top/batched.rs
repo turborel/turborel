@@ -14,16 +14,18 @@
 //! admit, or rows held past the work area, end it. Then the rows held, in
 //! the order they came, and the rest are sorted as a whole sort sorts them.
 
+use crate::kernels::Kernels;
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use super::super::Work;
 use super::super::normal::{Layout, Shape, encode_batch, seen_column};
 use super::super::vectors::{Held, compare_cells, row_of, sorted};
 use crate::error::Result;
-use crate::exec::batch::Batches;
+use crate::exec::batch::{Batches, resolved};
 use crate::exec::{RowIter, broken};
 use crate::logical::{Most, SortKey};
-use crate::storage::{BATCH_ROWS, Batch};
+use crate::storage::{BATCH_ROWS, Batch, Threshold};
 
 /// \[DESIGN\] The fewest rows of a batch that is gathered to those held:
 /// fewer cost little to keep.
@@ -59,18 +61,33 @@ struct Top<'k> {
     /// Of WITH TIES, the peers of the greatest of the heap.
     peers: Vec<Entry>,
     seq: u64,
+    /// The bound of the first key told the scan, raised as rows are held
+    /// (RULES.md D379).
+    bound: Option<Arc<Threshold>>,
+    /// The kernels its keys are written on (RULES.md D354).
+    kernels: Arc<dyn Kernels>,
 }
 
 /// The first `most` rows of `input`, a stream's batches each holding every
-/// column of its rows, sorted by `keys`, in a work area of `work`, and of
-/// WITH TIES the peers of the last after it; of more, the rest after them,
-/// sorted, once those held outgrow `work`.
+/// column of its rows, its columns not read by `keys` late if the scan gave
+/// them so (RULES.md D380), sorted by `keys`, in a work area of `work`, and
+/// of WITH TIES the peers of the last after it; of more, the rest after
+/// them, sorted, once those held outgrow `work`. The bound of the first
+/// key, `bound`, is raised as rows are held, if given (D379).
 ///
 /// # Errors
 ///
-/// The input's, a row of no key column's, or a spill's.
-pub(in crate::exec::sort) fn top_batches(keys: &[SortKey], mut input: Batches, most: Most, work: &mut Work) -> Result<RowIter> {
-    let mut top = Top { keys, most, layout: None, batches: Vec::new(), live: Vec::new(), heap: Vec::new(), peers: Vec::new(), seq: 0 };
+/// The input's, a row of no key column's, a late column's decoding, or a
+/// spill's.
+pub(in crate::exec::sort) fn top_batches(
+    keys: &[SortKey],
+    mut input: Batches,
+    (most, bound): (Most, Option<Arc<Threshold>>),
+    work: &mut Work,
+    kernels: Arc<dyn Kernels>,
+) -> Result<RowIter> {
+    let (batches, live, heap, peers) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut top = Top { keys, most, layout: None, batches, live, heap, peers, seq: 0, bound, kernels };
     while let Some(kept) = input.next() {
         let (batch, rows) = kept?;
         let rows = crate::storage::sel::places_of(rows, batch.rows);
@@ -84,6 +101,7 @@ pub(in crate::exec::sort) fn top_batches(keys: &[SortKey], mut input: Batches, m
             return top.whole((last, rows), input, work);
         }
         top.settle();
+        top.raise();
         if top.bytes() > work.limit() {
             // Past the work area, every batch is gathered to its rows held
             // before the whole sort is.
@@ -96,8 +114,31 @@ pub(in crate::exec::sort) fn top_batches(keys: &[SortKey], mut input: Batches, m
     let mut all = std::mem::take(&mut top.heap);
     all.append(&mut top.peers);
     all.sort_by(|a, b| top.order(a, b));
-    let batches = top.batches;
-    Ok(Box::new(all.into_iter().filter_map(move |e| batches.get(e.batch)?.as_ref().map(|b| Ok(row_of(b, e.row))))))
+    let mut kept = top.batches;
+    resolve_held(&mut kept, &all)?;
+    Ok(Box::new(all.into_iter().filter_map(move |e| kept.get(e.batch)?.as_ref().map(|b| Ok(row_of(b, e.row))))))
+}
+
+/// Decodes the late columns of each of `batches` of the rows of `entries`
+/// held of it alone (RULES.md D380).
+///
+/// # Errors
+///
+/// As decoding a late column fails.
+fn resolve_held(batches: &mut [Option<Batch>], entries: &[Entry]) -> Result<()> {
+    let mut rows: Vec<Vec<u32>> = vec![Vec::new(); batches.len()];
+    for e in entries {
+        if let Some(of) = rows.get_mut(e.batch) {
+            of.push(u32::try_from(e.row).unwrap_or(u32::MAX));
+        }
+    }
+    for (batch, mut of) in batches.iter_mut().zip(rows) {
+        if let Some(batch) = batch.as_mut().filter(|b| b.has_late()) {
+            of.sort_unstable();
+            batch.resolve(Some(&of))?;
+        }
+    }
+    Ok(())
 }
 
 impl Top<'_> {
@@ -113,7 +154,7 @@ impl Top<'_> {
         let Some(layout) = self.layout.as_ref().filter(|l| l.admits(&found)) else { return false };
         let (width, truncates) = (layout.width, layout.truncates);
         let mut keys = vec![0_u8; rows.len().saturating_mul(width)];
-        if encode_batch(layout, batch, rows, &mut keys).is_none() {
+        if encode_batch((layout, &*self.kernels), batch, rows, &mut keys).is_none() {
             return false;
         }
         for (n, &row) in rows.iter().enumerate() {
@@ -182,6 +223,17 @@ impl Top<'_> {
             (None | Some(Ordering::Equal | Ordering::Greater), _) => {}
         }
         self.heap = heap;
+    }
+
+    /// Raises the bound told the scan to the first key of the greatest
+    /// held, once as many rows as are asked are held. A row whose first key
+    /// is past it is past the greatest whatever its other keys.
+    fn raise(&self) {
+        let Some(bound) = self.bound.as_ref().filter(|_| self.heap.len() >= self.most.rows) else { return };
+        let (Some(greatest), Some(key)) = (self.heap.first(), self.keys.first()) else { return };
+        if let Some(Some(batch)) = self.batches.get(greatest.batch) {
+            bound.raise(&batch.cell(key.column, greatest.row).to_value());
+        }
     }
 
     /// Counts a row more held of `batch`.
@@ -257,33 +309,55 @@ impl Top<'_> {
     /// the last batch, `last`, whose keys could not be written, then the
     /// rest of `input`, sorted as a whole sort sorts them.
     fn whole(mut self, (last, rows): (usize, Vec<usize>), input: Batches, work: &mut Work) -> Result<RowIter> {
-        let mut held = self.held_in_order(last);
-        if let Some(Some(batch)) = self.batches.get_mut(last).map(Option::take) {
+        let mut held = self.held_in_order(last)?;
+        if let Some(Some(mut batch)) = self.batches.get_mut(last).map(Option::take) {
+            resolve_at(&mut batch, &rows)?;
             held.add(batch, rows);
         }
-        sorted(self.keys, input, held, work)
+        sorted(self.keys, resolved(input), held, work)
     }
 
     /// The rows held, in the order they came, then the rest of `input`,
     /// sorted as a whole sort sorts them.
     fn whole_held(mut self, input: Batches, work: &mut Work) -> Result<RowIter> {
-        let held = self.held_in_order(self.batches.len());
-        sorted(self.keys, input, held, work)
+        let held = self.held_in_order(self.batches.len())?;
+        sorted(self.keys, resolved(input), held, work)
     }
 
-    /// The rows held of the batches before `end`, in the order they came.
-    fn held_in_order(&mut self, end: usize) -> Held {
+    /// The rows held of the batches before `end`, in the order they came,
+    /// their late columns decoded of them.
+    ///
+    /// # Errors
+    ///
+    /// As decoding a late column fails.
+    fn held_in_order(&mut self, end: usize) -> Result<Held> {
         let mut entries: Vec<Entry> = self.heap.drain(..).chain(self.peers.drain(..)).filter(|e| e.batch < end).collect();
         entries.sort_by_key(|e| e.seq);
-        let mut held = Held::default();
+        let mut held = Held::on(Arc::clone(&self.kernels));
         for (at, batch) in self.batches.iter_mut().enumerate().take(end) {
             let rows: Vec<usize> = entries.iter().filter(|e| e.batch == at).map(|e| e.row).collect();
-            if let Some(batch) = batch.take().filter(|_| !rows.is_empty()) {
+            if let Some(mut batch) = batch.take().filter(|_| !rows.is_empty()) {
+                resolve_at(&mut batch, &rows)?;
                 held.add(batch, rows);
             }
         }
-        held
+        Ok(held)
     }
+}
+
+/// Decodes `batch`'s late columns of the rows at `rows` alone, if it has
+/// any (RULES.md D380).
+///
+/// # Errors
+///
+/// As decoding a late column fails.
+fn resolve_at(batch: &mut Batch, rows: &[usize]) -> Result<()> {
+    if !batch.has_late() {
+        return Ok(());
+    }
+    let mut at: Vec<u32> = rows.iter().map(|&r| u32::try_from(r).unwrap_or(u32::MAX)).collect();
+    at.sort_unstable();
+    batch.resolve(Some(&at))
 }
 
 /// Moves `heap`'s entry at `at` up to its place in the heap whose

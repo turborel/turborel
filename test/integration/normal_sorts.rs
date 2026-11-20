@@ -87,7 +87,7 @@ fn sorted(s: &Session, (table, set): (&str, &[&str]), orders: &[String]) -> Vec<
 /// nulls first and last, of several keys and under a collation, gives the
 /// rows the row store gives row by row, in order, stably: of either store
 /// by batches, past a work area of 64 KiB, and in parallel at a degree of
-/// 16.
+/// 16, its runs spilled past 64 KiB too (D380).
 #[test]
 fn normal_sorts_give_what_rows_give() {
     let (db, s) = tables();
@@ -103,6 +103,7 @@ fn normal_sorts_give_what_rows_give() {
     db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     for table in ["R", "C"] {
         assert_eq!(sorted(&s, (table, &serial), &orders), expected, "{table} past 64 KiB");
+        assert_eq!(sorted(&s, (table, &parallel), &orders), expected, "{table} in parallel past 64 KiB");
     }
 }
 

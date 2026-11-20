@@ -42,7 +42,8 @@ behind it, and each can be replaced or added to.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
-  losers, and FETCH FIRST that makes only the rows it gives.
+  losers, and FETCH FIRST that makes only the rows it gives, reading its
+  other columns late and skipping groups past its bound.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins
