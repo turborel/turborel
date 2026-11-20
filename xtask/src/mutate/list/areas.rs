@@ -1,5 +1,6 @@
 //! Each area's mutations, in the order they run, after the core's.
 
+mod altered_tables;
 mod batches;
 mod budget;
 // The count's, kept beside the other areas' files.
@@ -104,6 +105,7 @@ fn second() -> [&'static [Mutation]; 36] {
         &super::temporal_references::TEMPORAL_REFERENCES,
         &super::system_versioned::SYSTEM_VERSIONED,
         &super::rename::RENAME,
+        &altered_tables::ALTERED_TABLES,
         &super::savepoints::SAVEPOINTS,
         &super::graph_catalog::GRAPH_CATALOG,
         &super::graph_native::GRAPH_NATIVE,

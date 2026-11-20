@@ -360,6 +360,10 @@ verification approach DO-178C expects (§8).
 | D396 | A column's declared type is told in a Description's and a Prepared's tail, with `declared-types`, and values are written as ever |
 | D397 | Status CATALOG is never empty, as CATALOG.NAME takes no null |
 | D398 | The protocol's sample frames are a file its tests make from its encoders, and fail on any difference |
+| D399 | SET NOT NULL adds a named NOT NULL constraint, checked of the rows every snapshot sees under the table's lock |
+| D400 | DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's |
+| D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
+| D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
 
 ### The project
 
@@ -9958,6 +9962,89 @@ tag, each tail field, each Status the reference names, a Notice and an
 Error with and without diagnostics, compressed frames, and the edges a
 decoder meets. A plug-in's type is read without its kind by a reader
 with no registry, so its sample is checked to decode alone.
+
+#### D399. SET NOT NULL adds a named NOT NULL constraint, checked of the rows every snapshot sees under the table's lock
+
+ALTER COLUMN … SET NOT NULL [ISO/IEC 9075-2:2023 §11.15, Feature F383]
+gives the column a NOT NULL constraint, a table constraint of a name the
+database makes, as a column definition's NOT NULL is, so the
+Information Schema shows it and DROP CONSTRAINT drops it. Of a column
+already known not null it does nothing [GR1]. The rows are checked as
+ADD CONSTRAINT checks them [ISO/IEC 9075:1992 §11.16 GR2]. The ALTER
+holds the table's exclusive lock, so no transaction writes the table
+while it runs, and one that has written it and not ended keeps the lock
+from it. A row any snapshot may see once the ALTER commits is a row
+committed before the lock is held, so the scan under it finds every
+null. A null fails the ALTER with SQLSTATE 23000, which changes nothing.
+The action is logged as written (D33), so recovery and a standby make
+the constraint again. The rows are not checked again there, as they
+were when it ran.
+
+#### D400. DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's
+
+ALTER COLUMN … DROP NOT NULL [§11.16] drops every NOT NULL constraint
+of the table on the column alone, as DROP CONSTRAINT … CASCADE does
+[GR1c], so what depends on the key it made of a UNIQUE goes with it. A
+NOT NULL of the column's domain is the domain's, and stays. The
+column's nullability is then that of what is left. It is refused of a
+column of the primary key [SR4], one that bounds an application-time
+period [SR3] or a system-time period [SR2], and of an identity column
+[§11.12 SR6]. A system-versioned table's columns are altered by no
+ALTER COLUMN (D83), so §11.12 SR2 refuses those first.
+
+#### D401. SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again
+
+ALTER COLUMN … SET DATA TYPE [§11.19, Feature F382] takes a predefined
+type of the same kind of no lesser length, precision, scale or
+qualifier [SR13 to SR15], so every value stored is assigned to it
+without loss. A column of a domain has the domain's type and is given
+no other, by design. The other refusals are the Syntax Rules': a
+self-referencing column [SR3], one that bounds a period [SR4, SR5], an
+identity column [§11.12 SR6], and one that a CHECK of more columns or
+an assertion [SR6], a trigger's column list or action [SR7], a
+routine's body [SR8], a view's query [SR9] or a generation expression
+[SR10] references. A routine's body is also read by its tokens, as a
+column's RENAME reads it, so a column its counting misses still
+refuses it.
+
+The new type changes the stored form of a value, so the table gets a
+new storage generation, as ADD COLUMN gives it (D33). Its rows are
+read a row at a time from a scan of the old one and inserted in the new
+one by the transaction's own logged writes, each value assigned to the
+new type [GR1], so no table's rows are held in memory. The copy fires
+no trigger, being no SQL-data change statement [§4.46.1]. Its indexes
+are made again over the new generation, and its CHECKs of the column
+alone bound again. ROLLBACK drops the new generation, recovery replays
+the copy's writes at the generation the ALTER's record names, and a
+standby applies the same records.
+
+#### D402. A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow
+
+SQL:2023 renames no table [§11.10], so ALTER TABLE … RENAME TO … is an
+extension. The new name is of the table's schema and of no table, view
+or property graph of it [ISO/IEC 9075:1992 §11.3 SR2], else SQLCODE
+-103. Only the schema's owner alters the table [§11.10 AR1]. A log
+record of a row change names its table by its name, so the table is
+renamed into a new storage generation of the new name, its rows copied
+as SET DATA TYPE copies them (D401) and its indexes made again. The
+generation is written in the action logged, as GENERATION n, which only
+the log's parser reads, so recovery gives the table the generation it
+had though the names retired are not kept.
+
+Stored SQL text is not rewritten, as a column's RENAME rewrites none
+(D83). While a view, a CHECK or domain constraint that reads the table,
+an assertion, a trigger's action or condition, a routine, a property
+graph, a generation expression or an index expression names the table,
+the rename is refused, a test of the texts' tokens and so conservative.
+What refers to the table by its descriptor follows it: constraints and
+indexes keep their names, a foreign key of another table references the
+new name, privileges are held on it, and a trigger's subject table is
+it, the ON clause of its text written again so. An identity column's
+generator keeps the name it was made with (D63), so its values go on.
+A typed, temporary, system-versioned or partitioned table, a node or
+edge table, one a vector pipeline keeps and one of a column registered
+with a spatial or linear referencing system are known by name
+elsewhere, so none is renamed.
 
 ## 2. Project layout
 

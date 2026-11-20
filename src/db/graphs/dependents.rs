@@ -77,6 +77,7 @@ impl State {
             | AlterAction::Truncate { .. }
             | AlterAction::AttachPartition { .. }
             | AlterAction::DetachPartition(_)
+            | AlterAction::RenameTable { .. }
             | AlterAction::Storage(_) => None,
         };
         if let Some(refusal) = refused {

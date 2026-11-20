@@ -105,7 +105,7 @@ pub const GENERATED: [Mutation; 28] = [
         name: "added-column-not-generated",
         package: Package::Core,
         breaks: "an identity column or a generated column added to a table of rows leaves each null",
-        file: "src/db/ddl.rs",
+        file: "src/db/ddl/copied.rs",
         original: "generating.give(next, &mut new, &NoSubqueries)?;",
         replacement: "",
         integration: &["identity::added_and_dropped_11_11", "generated::added_and_expression_dropped_11_22"],
