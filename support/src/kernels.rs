@@ -16,6 +16,7 @@
     clippy::integer_division,
     clippy::default_numeric_fallback,
     clippy::missing_panics_doc,
+    clippy::shadow_unrelated,
     reason = "test code: a panic is a test failure, its fixtures literal (RULES.md R-TEST-4)"
 )]
 

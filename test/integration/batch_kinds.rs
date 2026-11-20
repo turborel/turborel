@@ -6,6 +6,7 @@
 //! gives the rows it gives alone, in its order.
 
 use turborel::db::{Database, Session};
+use turborel::error::Code;
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
 
@@ -127,38 +128,38 @@ const PARALLEL: [&str; 7] = [
 #[test]
 fn morsels_read_by_batch_give_the_rows_alone_gives() {
     let (_db, a) = tables();
-    for table in ["R", "C"] {
-        for query in PARALLEL {
-            let sql = query.replace("{t}", table);
-            for set in ["SET EXECUTOR.DEGREE = 1", "SET EXECUTOR.BATCHES = 'OFF'"] {
-                exec(&a, set).unwrap();
-            }
-            let alone = rows(&a, &sql);
-            for set in [
-                "SET EXECUTOR.BATCHES = 'ON'",
-                "SET EXECUTOR.DEGREE = 4",
-                "SET EXECUTOR.MORSEL_ROWS = 256",
-                "SET EXECUTOR.PARALLEL_MIN_ROWS = 0",
-            ] {
-                exec(&a, set).unwrap();
-            }
-            let plan = a.physical_plan(&sql, &Params::new()).unwrap();
-            assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
-            if table == "R" {
-                assert!(plan.contains("Parallel  (degree=4)"), "{sql}: {plan}");
-                assert_eq!(alone, rows(&a, &sql), "{sql}");
-            } else {
-                // Kept serial, by batch, its rows in no order (RULES.md D31).
-                let sorted = |r: Result<Vec<String>, _>| {
-                    r.map(|mut r| {
-                        r.sort();
-                        r
-                    })
-                };
-                assert_eq!(sorted(alone), sorted(rows(&a, &sql)), "{sql}");
-            }
+    for (table, query) in ["R", "C"].into_iter().flat_map(|t| PARALLEL.map(|q| (t, q))) {
+        let sql = query.replace("{t}", table);
+        for set in ["SET EXECUTOR.DEGREE = 1", "SET EXECUTOR.BATCHES = 'OFF'"] {
+            exec(&a, set).unwrap();
+        }
+        let alone = rows(&a, &sql);
+        for set in [
+            "SET EXECUTOR.BATCHES = 'ON'",
+            "SET EXECUTOR.DEGREE = 4",
+            "SET EXECUTOR.MORSEL_ROWS = 256",
+            "SET EXECUTOR.PARALLEL_MIN_ROWS = 0",
+        ] {
+            exec(&a, set).unwrap();
+        }
+        let plan = a.physical_plan(&sql, &Params::new()).unwrap();
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        if table == "R" {
+            assert!(plan.contains("Parallel  (degree=4)"), "{sql}: {plan}");
+            assert_eq!(alone, rows(&a, &sql), "{sql}");
+        } else {
+            // Kept serial, by batch, its rows in no order (RULES.md D31).
+            assert_eq!(sorted_rows(alone), sorted_rows(rows(&a, &sql)), "{sql}");
         }
     }
+}
+
+/// `r`, its rows sorted.
+fn sorted_rows(r: Result<Vec<String>, Code>) -> Result<Vec<String>, Code> {
+    r.map(|mut r| {
+        r.sort();
+        r
+    })
 }
 
 /// Verifies: [DESIGN] RULES.md D355 the planner keeps serial a grouping or

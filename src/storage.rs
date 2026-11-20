@@ -14,9 +14,8 @@
 //! engine with its own concurrency control (say, multi-versioning) can show
 //! each transaction what it should see.
 //!
-//! Two engines are built in, one code (`engine/rows.rs`, RULES.md D31),
-//! "rowstore", the default, and "columnstore", which freezes rows into
-//! groups of each column's values, both isolating and undoing their own.
+//! Two engines of one code are built in (`engine/rows.rs`, RULES.md D31),
+//! "rowstore", the default, and "columnstore", freezing rows by column.
 
 mod batch;
 mod condition;

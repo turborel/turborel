@@ -65,7 +65,7 @@ fn conjuncts_judged_over_vectors() {
     assert!(shown[1].contains("Compare(0, Gt"), "turned around: {shown:?}");
     assert!(shown[2].starts_with("IsNull(1, true)"), "{shown:?}");
     assert!(shown[3].starts_with("In(0,") && shown[4].ends_with("true)"), "{shown:?}");
-    assert!(matches!(rest, Some(Cond::And(..))), "the column the batch lacks, and the OR of two columns");
+    assert!(matches!(rest, Some(Cond::Compare(..))), "the column the batch lacks alone");
     let raising = and(
         compare(Expr::Column(2), CompOp::Lt, int(5)),
         compare(Expr::Arith(Box::new(int(1)), ArithOp::Div, Box::new(Expr::Column(2))), CompOp::Gt, int(0)),
