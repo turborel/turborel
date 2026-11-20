@@ -1,23 +1,28 @@
 //! [X3.135-1986 §8.3 GR3b] ORDER BY: rows sorted by each key in turn, most
 //! significant first. \[DESIGN\] Rows that fit the work area are sorted in
 //! memory; more are sorted externally (RULES.md D38): each work area's worth
-//! sorted and written as a run of chunks of vectors, each row beside its first
-//! key's prefix (`sort/chunk.rs`, `sort/vectors.rs`), the runs merged by their
-//! prefixes, as many at once as the work area reads, in passes until one is
-//! left (`sort/merge.rs`). Sorting is stable, a tie going to the earlier run,
-//! so rows of equal keys keep their order. Rows are sorted by a prefix of
-//! their first key, where it has one (`sort/prefix.rs`). The runs read back
+//! sorted and written as a run of chunks of vectors, each row beside its
+//! normal key (`sort/chunk.rs`, `sort/vectors.rs`), the runs merged by their
+//! keys by a tree of losers, as many at once as the work area reads, in
+//! passes until one is left (`sort/merge.rs`). Sorting is stable, a tie
+//! going to the earlier run, so rows of equal keys keep their order. Rows
+//! are sorted by their keys made one string of bytes each, by radix sort if
+//! short (`sort/normal.rs`, `sort/keyed.rs`, RULES.md D364); keys of no such
+//! form by a prefix of their first key, where it has one (`sort/prefix.rs`). The runs read back
 //! look for a cancel of the statement (RULES.md D44). A stream's batches are
 //! sorted as they are, no row made but to be given or written
 //! (`sort/vectors.rs`, RULES.md D31). A sort of which only the first rows
 //! are asked for holds about those alone (`sort/top.rs`).
 
 mod chunk;
+mod keyed;
 mod merge;
+mod normal;
 mod prefix;
 mod top;
 mod vectors;
 
+pub(super) use keyed::sorted_rows;
 pub(super) use vectors::sort_batches;
 
 use std::cmp::Ordering;
@@ -31,6 +36,7 @@ use crate::logical::{Most, SortKey};
 use crate::spill::{SpillRun, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
+use keyed::Layouts;
 use merge::{Order, merge};
 use vectors::written_rows;
 
@@ -56,6 +62,18 @@ pub(super) fn first(keys: &[SortKey], input: RowIter, most: Most, db: &State, tx
     }
 }
 
+/// The first `most` rows of `input`, a stream's batches each holding every
+/// column of its rows, sorted by `keys`, and of WITH TIES the peers of the
+/// last, in a work area of `db`, for the statement of `tx`
+/// (`sort/top/batched.rs`).
+#[inline(never)]
+pub(super) fn first_batches(keys: &[SortKey], input: super::batch::Batches, most: Most, db: &State, tx: TxId) -> RowIter {
+    match top::top_batches(keys, input, most, &mut Work::of(db, tx)) {
+        Ok(rows) => rows,
+        Err(e) => failed(e),
+    }
+}
+
 /// `sort`'s work.
 fn sorted(keys: &[SortKey], input: RowIter, work: &mut Work) -> Result<RowIter> {
     let mut sorter = Sorter::new(keys.to_vec());
@@ -76,12 +94,13 @@ pub(super) struct Sorter {
     rows: Vec<Row>,
     bytes: usize,
     runs: Vec<Box<dyn SpillRun>>,
+    layouts: Layouts,
 }
 
 impl Sorter {
     /// Rows to be sorted by `keys`, each of which every row has.
     pub(super) fn new(keys: Vec<SortKey>) -> Sorter {
-        Sorter { keys, rows: Vec::new(), bytes: 0, runs: Vec::new() }
+        Sorter { keys, rows: Vec::new(), bytes: 0, runs: Vec::new(), layouts: Layouts::default() }
     }
 
     /// Adds `row`, the rows held written to a run of `work` once they
@@ -90,7 +109,7 @@ impl Sorter {
         self.bytes = self.bytes.saturating_add(row_bytes(&row));
         self.rows.push(row);
         if self.bytes > work.limit() {
-            self.runs.push(written_rows(&self.keys, std::mem::take(&mut self.rows), work)?);
+            self.runs.push(written_rows(&self.keys, std::mem::take(&mut self.rows), work, &mut self.layouts)?);
             self.bytes = 0;
         }
         Ok(())
@@ -99,12 +118,12 @@ impl Sorter {
     /// The rows added, sorted: in memory if they fit `work`, else merged
     /// from its runs.
     pub(super) fn sorted(self, work: &mut Work) -> Result<RowIter> {
-        let Sorter { keys, rows, mut runs, .. } = self;
+        let Sorter { keys, rows, mut runs, mut layouts, .. } = self;
         if runs.is_empty() {
-            return Ok(Box::new(prefix::sorted(&keys, rows).into_iter().map(Ok)));
+            return Ok(Box::new(sorted_rows(&keys, rows).into_iter().map(Ok)));
         }
         if !rows.is_empty() {
-            runs.push(written_rows(&keys, rows, work)?);
+            runs.push(written_rows(&keys, rows, work, &mut layouts)?);
         }
         merged(&keys, runs, work)
     }

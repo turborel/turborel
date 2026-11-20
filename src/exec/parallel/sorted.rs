@@ -1,12 +1,15 @@
 //! \[DESIGN\] A sort run in parallel (RULES.md D294), as Leis et al.,
 //! "Morsel-Driven Parallelism" (2014), §4.5, sort: each morsel's rows
-//! sorted by a thread, a run; then the runs cut at keys sampled of them
-//! into ranges, each range of every run merged by a thread of its own,
-//! and the ranges given in order. Each sort is stable, the merge taking a
-//! tie from the earlier morsel's run, and a key's peers all fall in one
-//! range, so rows of equal keys keep the order they come in, as the
-//! serial sort keeps it (`exec/sort.rs`). Of a sort of which only the
-//! first rows are asked for, each run keeps those of its own alone.
+//! sorted by a thread, a run, by their normal keys (RULES.md D364); then
+//! the runs cut at keys sampled of them into ranges, each range's rows of
+//! every run moved to it, in the runs' order, and sorted again by their
+//! keys by a thread of its own, and the ranges given in order. A range's
+//! rows are sorted, not merged, since a radix sort of their keys costs
+//! less than a merge's comparisons of rows, and no row is copied. Each
+//! sort is stable, and a key's peers all fall in one range, so rows of
+//! equal keys keep the order they come in, as the serial sort keeps it
+//! (`exec/sort.rs`). Of a sort of which only the first rows are asked
+//! for, each run keeps those of its own alone.
 //!
 //! The runs are charged to one work area (RULES.md D38); past it, the sort
 //! gives way to the serial one, which spills, its rows read again in the
@@ -14,13 +17,14 @@
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit, Streamed};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::sort::sorted_rows;
 use crate::exec::{RowIter, Runner, broken, compare_rows};
 use crate::logical::SortKey;
 use crate::physical::Plan;
@@ -52,8 +56,7 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) 
     let (pipeline, keys, db_for) = (Arc::new(pipeline), Arc::new(keys.clone()), Arc::clone(db));
     let (count, keys_for) = (pipeline.count(), Arc::clone(&keys));
     let work = Box::new(move |m: usize| {
-        let mut run = pipeline.morsel(m, &Runner::new(&db_for, tx))?;
-        run.sort_by(|a, b| compare_rows(&keys_for, a, b));
+        let mut run = sorted_rows(&keys_for, pipeline.morsel(m, &Runner::new(&db_for, tx))?);
         if let Some(rows) = most {
             run.truncate(rows);
         }
@@ -80,23 +83,25 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) 
 fn merged(runs: Vec<Vec<Row>>, keys: Arc<Vec<SortKey>>, (db, tx, degree): (&Arc<State>, TxId, usize)) -> Morsels<Vec<Row>> {
     let ranges = degree.saturating_mul(RANGES_PER_THREAD).max(1);
     let splitters = splitters(&runs, &keys, ranges);
-    // The place in each run of each range's first row, and past its last.
-    let cuts: Vec<Vec<usize>> = runs
-        .iter()
-        .map(|run| splitters.iter().map(|s| run.partition_point(|r| compare_rows(&keys, r, s) == Ordering::Less)).collect())
-        .collect();
-    let (runs, count) = (Arc::new(runs), splitters.len().saturating_add(1));
+    let mut parts: Vec<Vec<Row>> = (0..=splitters.len()).map(|_| Vec::new()).collect();
+    for run in runs {
+        // The place in the run past each range's last row.
+        let cuts: Vec<usize> = splitters.iter().map(|s| run.partition_point(|r| compare_rows(&keys, r, s) == Ordering::Less)).collect();
+        let (mut rows, mut at) = (run.into_iter(), 0_usize);
+        for (part, cut) in parts.iter_mut().zip(cuts.into_iter().chain(std::iter::once(usize::MAX))) {
+            let taken = cut.saturating_sub(at);
+            part.extend(rows.by_ref().take(taken));
+            at = at.saturating_add(taken);
+        }
+    }
+    let count = parts.len();
+    let parts: Arc<Vec<Mutex<Vec<Row>>>> = Arc::new(parts.into_iter().map(Mutex::new).collect());
     let work = Box::new(move |range: usize| {
-        let slices: Vec<&[Row]> = runs
-            .iter()
-            .zip(&cuts)
-            .map(|(run, cut)| {
-                let from = if range == 0 { 0 } else { cut.get(range.saturating_sub(1)).copied().unwrap_or(run.len()) };
-                let to = cut.get(range).copied().unwrap_or(run.len());
-                run.get(from..to.max(from)).unwrap_or_default()
-            })
-            .collect();
-        Ok(merge(&slices, &keys))
+        let rows = match parts.get(range) {
+            Some(part) => std::mem::take(&mut *crate::sync::lock(part)?),
+            None => Vec::new(),
+        };
+        Ok(sorted_rows(&keys, rows))
     });
     Morsels::start(db, tx, (count, degree), work)
 }

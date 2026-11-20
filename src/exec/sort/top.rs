@@ -150,6 +150,10 @@ fn whole(top: Top, input: RowIter, work: &mut Work) -> Result<RowIter> {
     sorter.sorted(work)
 }
 
+mod batched;
+
+pub(super) use batched::top_batches;
+
 // Unit tests: the first rows held against a whole sort's, of ONLY and WITH
 // TIES, and once they outgrow the work area (RULES.md R-TEST-1).
 #[cfg(test)]

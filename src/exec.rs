@@ -208,10 +208,12 @@ fn system_plan(plan: Plan, db: &Arc<State>, _tx: TxId) -> RowIter {
 #[inline(never)]
 fn sorted_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::Sort { keys, input, most, .. } = plan else { return failed(broken("a sort is not one")) };
-    match most {
-        Some(most) => sort::first(&keys, execute(*input, db, tx), most, db, tx),
-        None => sorted(&keys, *input, db, tx),
+    let Some(most) = most else { return sorted(&keys, *input, db, tx) };
+    // A stream's batches taken as they are, if it can be (`sort/top/batched.rs`).
+    if batched(db) && batch::whole_width(&input, db).is_some() {
+        return batch::kept(*input, db, tx).map_or_else(failed, |batches| sort::first_batches(&keys, batches, most, db, tx));
     }
+    sort::first(&keys, execute(*input, db, tx), most, db, tx)
 }
 
 /// The rows of the system table `read` reads, made now.

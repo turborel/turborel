@@ -1,26 +1,29 @@
-//! \[DESIGN\] RULES.md D31, D38: a spilled sort's runs, written as vectors.
-//! Each record of a run is a chunk of its rows, in their order: their
-//! count and width; each row's head, the tag and the prefix of its first
-//! key (`merge.rs`), as two vectors; then each column, a byte of its kind,
+//! \[DESIGN\] RULES.md D31, D38, D364: a spilled sort's runs, written as
+//! vectors. Each record of a run is a chunk of its rows, in their order:
+//! their count and width; the layout their normal keys are of (0 if they
+//! have none), whether rows of equal keys may differ, and the keys' width,
+//! then each row's key (`normal.rs`); then each column, a byte of its kind,
 //! a byte saying whether it has nulls and then, if it has, a bit a row,
-//! least significant first (`Mask::lsb_bytes`),
-//! and its vector: of exact numbers of one scale fitting 64 bits, the
-//! scale and each row's units; of approximate numbers, each row's bits; of
-//! character strings, each row's length, then their bytes. A column of
-//! anything else, or of values of more than one kind, is written as each
-//! row's value, as the value codec writes it, what it names after it
-//! (`SpilledLobs::put_value`), with no byte of nulls. Read back, a chunk
-//! is a batch of those vectors (`Column::Ints`, `Floats`, `Texts` and
-//! `Values`), its rows compared and made where they lie, as `vectors.rs`
-//! compares and makes them.
+//! least significant first (`Mask::lsb_bytes`), and its vector: of exact
+//! numbers of one scale fitting 64 bits, the scale and each row's units; of
+//! approximate numbers, each row's bits; of character strings, each row's
+//! length, then their bytes; of datetimes of one type, the type, each
+//! row's instant and its displacement; of truth values, a bit a row. A
+//! column of anything else, or of values of more than one kind, is
+//! written as each row's value, as the value codec writes it, what it
+//! names after it (`SpilledLobs::put_value`), with no byte of nulls. Read
+//! back, a chunk is a batch of those vectors (`Column::Ints`, `Floats`,
+//! `Texts`, `Datetimes`, `Bools` and `Values`), its rows compared and made
+//! where they lie, as `vectors.rs` compares and makes them.
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::spill::SpilledLobs;
 use crate::storage::mask::lsb_len;
-use crate::storage::{Batch, Cell, Column, Floats, Ints, Mask, Texts};
-use crate::value::Value;
+use crate::storage::{Batch, Bools, Cell, Column, Datetimes, Floats, Ints, Mask, Texts};
+use crate::value::datetime::Moment;
 use crate::value::types::TypeRegistry;
+use crate::value::{Datetime, Value};
 
 /// A column's kind: each row's value.
 const VALUES: u8 = 0;
@@ -30,31 +33,63 @@ const INTS: u8 = 1;
 const FLOATS: u8 = 2;
 /// A column's kind: character strings.
 const TEXTS: u8 = 3;
+/// A column's kind: datetimes of one type.
+const DATETIMES: u8 = 4;
+/// A column's kind: truth values.
+const BOOLS: u8 = 5;
+
+/// A datetime type's code: its fields' in the low byte, its precision in
+/// the next, and this bit if it is WITH TIME ZONE.
+const ZONED: u32 = 1 << 16;
+
+/// The bits of a byte, a datetime type's code shifted by them.
+const BYTE: u32 = u8::BITS;
+
+/// The fields of datetimes, in the order of their codes.
+const MOMENTS: [Moment; 3] = [Moment::Date, Moment::Time, Moment::Timestamp];
 
 /// A row to write: a batch, and the row's place in it.
 pub(super) type Pick<'a> = (&'a Batch, usize);
 
-/// A chunk read back: each row's tag and prefix, and its vectors.
+/// The normal keys of a chunk's rows: the layout they are of, numbered
+/// by the sort (0 for none), whether rows of equal keys may differ, each
+/// key's width, and the keys, one after another.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Keys<'k> {
+    pub(super) layout: u32,
+    pub(super) truncates: bool,
+    pub(super) width: usize,
+    pub(super) bytes: &'k [u8],
+}
+
+/// A chunk read back: its rows' keys, as `Keys` says, and its vectors.
 pub(super) struct Chunk {
-    pub(super) tags: Vec<u8>,
-    pub(super) prefixes: Vec<u64>,
+    pub(super) layout: u32,
+    pub(super) truncates: bool,
+    pub(super) width: usize,
+    pub(super) keys: Vec<u8>,
     pub(super) batch: Batch,
 }
 
+impl Chunk {
+    /// The key of its row `at`.
+    pub(super) fn key(&self, at: usize) -> &[u8] {
+        let from = at.saturating_mul(self.width);
+        self.keys.get(from..from.saturating_add(self.width)).unwrap_or_default()
+    }
+}
+
 /// Writes to `out`, emptied first, the chunk of `rows`, each row of the
-/// width of the first's batch, beside its head of `heads`, its tag and
-/// prefix, naming what `lobs` holds.
-pub(super) fn put_chunk(heads: &[(u8, u64)], rows: &[Pick<'_>], out: &mut Vec<u8>, lobs: &SpilledLobs) {
+/// width of the first's batch, their keys `keys`, naming what `lobs` holds.
+pub(super) fn put_chunk(keys: Keys<'_>, rows: &[Pick<'_>], out: &mut Vec<u8>, lobs: &SpilledLobs) {
     out.clear();
     let width = rows.first().map_or(0, |(batch, _)| batch.columns.len());
     out.put_u32(count(rows.len()));
     out.put_u32(count(width));
-    for &(tag, _) in heads {
-        out.put_u8(tag);
-    }
-    for &(_, bits) in heads {
-        out.put_u64(bits);
-    }
+    out.put_u32(keys.layout);
+    out.put_u8(u8::from(keys.truncates));
+    out.put_u32(count(keys.width));
+    out.extend_from_slice(keys.bytes);
     for at in 0..width {
         put_column(rows, at, out, lobs);
     }
@@ -74,14 +109,12 @@ fn cell_kind(cell: Cell<'_>) -> Option<(u8, u32)> {
         Cell::Value(Value::Exact(d)) => Some(i64::try_from(d.units).map_or((VALUES, 0_u32), |_| (INTS, d.scale))),
         Cell::Approx(_) | Cell::Value(Value::Approx(_)) => Some((FLOATS, 0_u32)),
         Cell::Text(_) | Cell::Value(Value::Char(_)) => Some((TEXTS, 0_u32)),
-        Cell::Datetime(_)
-        | Cell::Bool(_)
-        | Cell::Value(
+        Cell::Datetime(d) | Cell::Value(&Value::Datetime(d)) => Some((DATETIMES, type_code(&d))),
+        Cell::Bool(_) | Cell::Value(Value::Bool(_)) => Some((BOOLS, 0_u32)),
+        Cell::Value(
             Value::DecFloat(_)
             | Value::Binary(_)
             | Value::Lob(_)
-            | Value::Bool(_)
-            | Value::Datetime(_)
             | Value::Interval(_)
             | Value::Array(_)
             | Value::Multiset(_)
@@ -138,6 +171,20 @@ fn put_column(rows: &[Pick<'_>], at: usize, out: &mut Vec<u8>, lobs: &SpilledLob
         cells().for_each(|c| out.put_u64(units(c).cast_unsigned()));
     } else if kind == FLOATS {
         cells().for_each(|c| out.put_u64(number(c).to_bits()));
+    } else if kind == DATETIMES {
+        out.put_u32(scale);
+        let instants: Vec<(i64, i16)> = cells().map(|c| instant(c).map_or((0, 0), |d| (d.utc, d.zone))).collect();
+        for &(utc, _) in &instants {
+            out.put_u64(utc.cast_unsigned());
+        }
+        for &(_, zone) in &instants {
+            out.put_u32(u32::from(zone.cast_unsigned()));
+        }
+    } else if kind == BOOLS {
+        out.extend(
+            Mask::from_bools(&cells().map(|c| matches!(c, Cell::Bool(true) | Cell::Value(Value::Bool(true)))).collect::<Vec<bool>>())
+                .lsb_bytes(),
+        );
     } else {
         cells().for_each(|c| out.put_u32(count(text(c).len())));
         cells().for_each(|c| out.extend_from_slice(text(c).as_bytes()));
@@ -151,6 +198,28 @@ fn units(cell: Cell<'_>) -> i64 {
         Cell::Value(Value::Exact(d)) => i64::try_from(d.units).unwrap_or(0),
         Cell::Value(_) | Cell::Approx(_) | Cell::Text(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null => 0,
     }
+}
+
+/// A cell's datetime; else none.
+fn instant(cell: Cell<'_>) -> Option<Datetime> {
+    match cell {
+        Cell::Datetime(d) | Cell::Value(&Value::Datetime(d)) => Some(d),
+        Cell::Value(_) | Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Bool(_) | Cell::Null => None,
+    }
+}
+
+/// The code of `d`'s type, as `ZONED` says.
+fn type_code(d: &Datetime) -> u32 {
+    let moment = MOMENTS.iter().position(|&m| m == d.moment).and_then(|m| u32::try_from(m).ok()).unwrap_or(0);
+    let zoned = if d.zoned { ZONED } else { 0 };
+    moment | u32::from(d.precision).checked_shl(BYTE).unwrap_or(0) | zoned
+}
+
+/// The type of datetimes of `code`, as `Datetimes::new` takes it.
+fn type_of(code: u32) -> Option<(Moment, bool, u8)> {
+    let moment = MOMENTS.get(usize::try_from(code & u32::from(u8::MAX)).ok()?).copied()?;
+    let precision = u8::try_from(code.checked_shr(BYTE)? & u32::from(u8::MAX)).ok()?;
+    Some((moment, code & ZONED != 0, precision))
 }
 
 /// A cell's approximate number; else 0.
@@ -181,11 +250,13 @@ pub(super) fn chunk(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> 
     let mut reader = Reader::new(record, "sorted run").with_types(types);
     let rows = place(reader.u32()?);
     let width = place(reader.u32()?);
-    let tags = reader.take(rows)?.to_vec();
-    let prefixes = (0..rows).map(|_| reader.u64()).collect::<Result<Vec<u64>>>()?;
+    let layout = reader.u32()?;
+    let truncates = reader.u8()? != 0;
+    let key_width = place(reader.u32()?);
+    let keys = reader.take(rows.saturating_mul(key_width))?.to_vec();
     let columns = (0..width).map(|_| column(&mut reader, rows, lobs)).collect::<Result<Vec<Column>>>()?;
     reader.finish()?;
-    Ok(Chunk { tags, prefixes, batch: Batch { columns, rows } })
+    Ok(Chunk { layout, truncates, width: key_width, keys, batch: Batch { columns, rows } })
 }
 
 /// A count read, as a place.
@@ -208,6 +279,16 @@ fn column(reader: &mut Reader<'_>, rows: usize, lobs: &SpilledLobs) -> Result<Co
     if kind == FLOATS {
         let numbers = (0..rows).map(|_| reader.u64().map(f64::from_bits)).collect::<Result<Vec<f64>>>()?;
         return Ok(Column::Floats(Floats::new(numbers, nulls)));
+    }
+    if kind == DATETIMES {
+        let code = reader.u32()?;
+        let shape = type_of(code).ok_or_else(|| reader.corrupt(&format!("no datetime type of a sorted run has code {code}")))?;
+        let utc = (0..rows).map(|_| reader.u64().map(u64::cast_signed)).collect::<Result<Vec<i64>>>()?;
+        let zones = (0..rows).map(|_| reader.u32().map(|z| u16::try_from(z).unwrap_or(0).cast_signed())).collect::<Result<Vec<i16>>>()?;
+        return Ok(Column::Datetimes(Datetimes::new(utc, Some(zones), shape, nulls)));
+    }
+    if kind == BOOLS {
+        return Ok(Column::Bools(Bools::new(Mask::from_lsb_bytes(reader.take(lsb_len(rows))?, 0, rows), nulls)));
     }
     if kind != TEXTS {
         return Err(reader.corrupt(&format!("no vector of a sorted run has kind {kind}")));
@@ -233,11 +314,11 @@ mod tests {
 
     /// The rows of `batch` and their heads, written as a chunk and read
     /// back: the vectors' kinds, the heads, and the rows as strings.
-    fn round_trip(batch: &Batch) -> (Vec<&'static str>, Vec<(u8, u64)>, Vec<String>) {
+    fn round_trip(batch: &Batch) -> (Vec<&'static str>, Vec<Vec<u8>>, Vec<String>) {
         let rows: Vec<Pick<'_>> = (0..batch.rows).map(|r| (batch, r)).collect();
-        let heads: Vec<(u8, u64)> = (0..batch.rows).map(|r| (u8::try_from(r).unwrap(), u64::try_from(r).unwrap() << 40_u32)).collect();
+        let bytes: Vec<u8> = (0..batch.rows).flat_map(|r| [u8::try_from(r).unwrap(), 7_u8]).collect();
         let mut out = Vec::new();
-        put_chunk(&heads, &rows, &mut out, &SpilledLobs::new());
+        put_chunk(Keys { layout: 3, truncates: true, width: 2, bytes: &bytes }, &rows, &mut out, &SpilledLobs::new());
         let read = chunk(&out, &TypeRegistry::default(), &SpilledLobs::new()).unwrap();
         let kinds = read
             .batch
@@ -253,7 +334,8 @@ mod tests {
                 Column::Nulls(_) => "nulls",
             })
             .collect();
-        let back: Vec<(u8, u64)> = read.tags.iter().copied().zip(read.prefixes.iter().copied()).collect();
+        assert!(read.batch.rows == 0 || (read.layout, read.truncates, read.width) == (3, true, 2));
+        let back: Vec<Vec<u8>> = (0..read.batch.rows).map(|r| read.key(r).to_vec()).collect();
         let shown = (0..read.batch.rows)
             .map(|r| (0..read.batch.columns.len()).map(|at| read.batch.cell(at, r).to_value().to_string()).collect::<Vec<_>>().join(","))
             .collect();
@@ -265,7 +347,8 @@ mod tests {
     /// kept: exact numbers of one scale as integers, of a vector of values
     /// too; approximate numbers; strings, of a store's dictionary too;
     /// values of two kinds, of exact numbers past 64 bits or of two scales,
-    /// of other types, and all null, as values; each row's head kept.
+    /// of other types, and all null, as values; datetimes of a type and
+    /// their zones; truth values; each row's key kept.
     #[test]
     fn chunks_keep_their_vectors_kinds() {
         let exact = |n: i128, scale: u32| Value::Exact(Decimal::new(n, scale));
@@ -289,21 +372,28 @@ mod tests {
                 Column::Values(vec![exact(1_i128, 0_u32), exact(1_i128, 1_u32), Value::Null]),
                 Column::Values(vec![Value::Binary(Binary::new(vec![0xA0])), Value::Null, Value::Null]),
                 Column::nulls(3_usize),
+                Column::Datetimes(Datetimes::new(
+                    vec![86_400_000_000_i64, 0_i64, -60_000_000_i64],
+                    Some(vec![60_i16, 0_i16, -90_i16]),
+                    (Moment::Timestamp, true, 3_u8),
+                    Some(vec![false, true, false].into()),
+                )),
+                Column::Values(vec![Value::Bool(true), Value::Null, Value::Bool(false)]),
             ],
             rows: 3,
         };
         let (kinds, heads, rows) = round_trip(&batch);
-        assert_eq!(kinds, ["ints", "ints", "floats", "texts", "texts", "values", "values", "values", "values", "values"]);
-        assert_eq!(heads, [(0_u8, 0_u64), (1_u8, 1_u64 << 40_u32), (2_u8, 2_u64 << 40_u32)]);
-        let max = i128::MAX;
         assert_eq!(
-            rows,
-            [
-                format!("1.50,0.7,1.5E0,a,y,1,{max},1,A0,NULL"),
-                "NULL,NULL,-0E0,NULL,x,a,1,0.1,NULL,NULL".to_owned(),
-                "-0.03,-0.2,2E0,bcde,y,NULL,2,NULL,NULL,NULL".to_owned()
-            ]
+            kinds,
+            ["ints", "ints", "floats", "texts", "texts", "values", "values", "values", "values", "values", "datetimes", "bools"]
         );
+        assert_eq!(heads, [vec![0_u8, 7_u8], vec![1_u8, 7_u8], vec![2_u8, 7_u8]]);
+        let made: Vec<String> = (0..3)
+            .map(|r| (0..batch.columns.len()).map(|at| batch.cell(at, r).to_value().to_string()).collect::<Vec<_>>().join(","))
+            .collect();
+        assert_eq!(rows, made, "every value as written");
+        let max = i128::MAX;
+        assert!(rows[0].starts_with(&format!("1.50,0.7,1.5E0,a,y,1,{max},1,A0,NULL,")), "{rows:?}");
         let (none, _, empty) = round_trip(&Batch { columns: Vec::new(), rows: 0 });
         assert!(none.is_empty() && empty.is_empty());
     }
@@ -315,15 +405,16 @@ mod tests {
     fn records_not_chunks_are_refused() {
         let batch = Batch { columns: vec![Column::Texts(Texts::new("ab".to_owned(), vec![2_usize], None))], rows: 1 };
         let mut out = Vec::new();
-        put_chunk(&[(0_u8, 0_u64)], &[(&batch, 0_usize)], &mut out, &SpilledLobs::new());
+        put_chunk(Keys { layout: 1, truncates: false, width: 1, bytes: &[9_u8] }, &[(&batch, 0_usize)], &mut out, &SpilledLobs::new());
         let refused = |record: &[u8]| chunk(record, &TypeRegistry::default(), &SpilledLobs::new()).err().map(|e| e.code);
         assert!(refused(&out).is_none());
         assert_eq!(refused(&out[..out.len() - 1]), Some(Code::Corrupt), "short");
         let mut longer = out.clone();
         longer.push(0_u8);
         assert_eq!(refused(&longer), Some(Code::Corrupt), "bytes past its vectors");
-        // Its column's kind follows the count, width, tag and prefix.
-        let kind = 4 + 4 + 1 + 8;
+        // Its column's kind follows the count, width, layout, truncation,
+        // key width and key.
+        let kind = 4 + 4 + 4 + 1 + 4 + 1;
         let mut unknown = out.clone();
         unknown[kind] = 9_u8;
         assert_eq!(refused(&unknown), Some(Code::Corrupt), "no kind");

@@ -352,6 +352,8 @@ verification approach DO-178C expects (§8).
 | D355 | A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange |
 | D362 | An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows |
 | D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
+| D364 | A sort orders rows by one string of bytes made of their keys, by radix sort if it is short, and merges its runs by a tree of losers |
+| D365 | A sort of which only the first rows are asked for takes a batch's rows by their keys' bytes, making only the rows it gives |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -9788,6 +9790,78 @@ numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
 (`functions/over_vectors.rs`). Strings of a dictionary are folded or
 counted once an entry. A function that may warn has its body skipped
 and is called as a row's evaluation calls it.
+
+#### D364. A sort orders rows by one string of bytes made of their keys, by radix sort if it is short, and merges its runs by a tree of losers
+
+Each row's sort keys are made one string of bytes of a width fixed for
+the sort, whose order as bytes is the comparator's order of the rows
+(`exec/sort/normal.rs`), as Graefe's survey of sorting in database systems
+(2006) describes normalized keys. For each key in turn there is a byte
+placing a null first or last, as its null ordering says, whatever the
+direction (ISO/IEC 9075-2:2023 §10.10 GR1e ii), left out if no row's
+value is null, and then the value's bytes, every one inverted of a DESC
+key. An exact number is its units at the key's greatest scale less the
+least of them, big-endian, in as few bytes as the greatest less the least
+needs; an approximate number its bits in order, negative zero as zero; a
+datetime its instant in UTC and an interval its units, as exact numbers
+are; a truth value one byte. So a key of an integer from 0 to 200,000 is
+3 bytes, and three keys of a group, a nullable number and an integer fit 8.
+
+A character string is its first bytes padded with spaces, as a comparison
+pads the shorter string (X3.135-1986 §5.11 GR3), then a byte saying
+whether what is past them is less than spaces, equal or greater. A binary
+string, and so a key under a collation, whose sort key is bits (D60), is
+its first octets padded with zeros, then its length or one more than
+they hold. A string's bytes are as many as its longest value's, at most
+32, so keys of a long shared start, an order's or a customer's code, are
+told apart by their bytes and not compared whole. A string longer than
+its bytes whose rest is not spaces may tie with another and differ, so
+every byte after it is zero, the two rows' keys are equal, and the sort
+compares them whole. Keys of a type with no such form (DECFLOAT, a large
+object, a composite), of kinds not alike, or of exact numbers past 128
+bits, sort as before, by a prefix of the first key and the values
+(D38).
+
+Keys of at most 8 bytes are sorted as integers beside their rows' places
+by a least significant digit radix sort of 8-bit digits, which skips a
+digit every key shares, as the high digits of short keys are (Kim et al.,
+"Sort vs. Hash Revisited", PVLDB 2009); of at most 16 likewise, and
+longer ones as byte strings. Every pass of the radix sort is stable and a
+comparison breaks ties by the place, so the sort is stable, as the
+standard's cursors and WITH TIES rely on. A sort's keys are made of its
+batches' vectors, a vector of one kind at a time, and the rows are made
+only as they are given or written.
+
+A sort past its work area makes the layout of its first run open to the
+later ones, every key nullable and every number at its whole width, and
+writes each row's key beside its vectors in the run's chunks. The runs
+are merged by a tree of losers (Knuth, vol. 3, §5.4.1), about log k
+comparisons a row and no heap's sift, comparing two rows' keys when both
+are of the shared layout, and their values otherwise or when their keys
+tie and may hide a difference. A tie goes to the earlier run. The chunks
+keep datetimes and truth values as vectors too. A sort run in parallel
+sorts each morsel's rows by their keys, moves each range's rows of every
+run to it in the runs' order and sorts the range again by its keys, which
+costs less than merging rows by the comparator and copies no row.
+
+#### D365. A sort of which only the first rows are asked for takes a batch's rows by their keys' bytes, making only the rows it gives
+
+A sort under FETCH FIRST (ISO/IEC 9075-2:2023 §7.17 GR5, GR7) of a
+stream's batches writes each batch's normal keys (D364) of an open layout
+made of the first batch, and once it holds as many rows as are asked,
+compares each row's key with the greatest held's. A row above it is
+passed over with nothing made, so of a long input most rows cost a key's
+bytes and a comparison. A row below it takes the greatest's place in a
+heap kept by the keys, then by the order rows came, so ties go to the
+earlier row, as the whole sort's do (`exec/sort/top/batched.rs`). Of
+WITH TIES the peers of the greatest are held too. A batch is held while a
+row of it is, and once the rows of the batches held are more than twice
+those asked, each batch of which fewer than a quarter of the rows are held
+is gathered to those rows, and every batch is once they take more than
+the work area. A batch whose keys the layout does not admit, or rows past
+the work area still, end it, and the rows held, in the order they
+came, and the rest are sorted as a whole sort sorts them, so the first
+rows given are the same.
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

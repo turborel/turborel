@@ -34,8 +34,9 @@
 //! set functions' alone, to `expressions`, expressions evaluated a
 //! vector at a time alone (`analytics/expressions.rs`), to `counts`, a
 //! row-store table counted and
-//! summed, its zones settled and not, alone (`analytics/counts.rs`), or
-//! to `decode`, the column store's decoding alone (`analytics/decode.rs`).
+//! summed, its zones settled and not, alone (`analytics/counts.rs`), to
+//! `decode`, the column store's decoding alone (`analytics/decode.rs`),
+//! or to `sorts`, ORDER BY and top-N alone (`analytics/sorts.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -65,6 +66,8 @@ mod json;
 mod parallel;
 #[path = "analytics/social.rs"]
 mod social;
+#[path = "analytics/sorts.rs"]
+mod sorts;
 #[path = "analytics/unnesting.rs"]
 mod unnesting;
 
@@ -76,7 +79,8 @@ use turborel::db::{Database, Session};
 /// `unnesting` for correlated subqueries', `parallel` for those run by
 /// morsels, `distinct` for the DISTINCT set functions', `expressions`
 /// for expressions over vectors, `counts` for a
-/// row-store table's counts, `decode` for the column store's decoding.
+/// row-store table's counts, `decode` for the column store's decoding,
+/// `sorts` for ORDER BY and top-N.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -120,6 +124,7 @@ fn main() {
     parallel::workloads(&bench);
     counts::workloads(&bench);
     decode::workloads(&bench);
+    sorts::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -132,6 +137,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "counts" => counts::workloads,
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
+        "sorts" => sorts::workloads,
         _ => return false,
     };
     run(bench);
