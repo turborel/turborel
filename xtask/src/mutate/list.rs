@@ -299,11 +299,11 @@ pub const MUTATIONS: [Mutation; 13] = [
     Mutation {
         name: "sort-merge-whole",
         package: Package::Core,
-        breaks: "a spilled sort's merge: rows of equal prefixes are compared by the later keys alone, their prefixes held whole or not",
+        breaks: "a spilled sort's merge: rows of equal keys are equal, though a string longer than its key may differ past it",
         file: "src/exec/sort/merge.rs",
-        original: "let whole = by_prefix && self.tag & other.tag & WHOLE != 0;",
-        replacement: "let whole = by_prefix;",
-        integration: &["spilled_sorts::spilled_sorts_give_the_rows_held_sorts_give"],
-        unit: &["exec::sort::merge::tests::merged_by_prefixes_as_compared_whole"],
+        original: "if by_keys.is_ne() || !x.truncates {",
+        replacement: "if by_keys.is_ne() || x.layout != 0 {",
+        integration: &["normal_sorts::normal_sorts_give_what_rows_give"],
+        unit: &["exec::sort::merge::tests::merged_by_keys_as_compared_whole"],
     },
 ];
