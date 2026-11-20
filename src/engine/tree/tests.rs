@@ -443,7 +443,7 @@ fn visited(mut scan: Scan<&BLinkTree>, decide: impl Fn(usize) -> Visit) -> Vec<V
     loop {
         let mut taken = Vec::new();
         let visit = scan.visit(|value| {
-            shown += 1;
+            shown = shown.saturating_add(1);
             let visit = decide(shown);
             if visit == Visit::Taken {
                 taken.push(value.to_vec());
@@ -506,9 +506,10 @@ fn a_visit_reads_what_a_scan_gives() {
         (Bound::Excluded(from), Bound::Included(to)),
         (Bound::Included(to), Bound::Excluded(from)),
     ];
+    let decides: [fn(usize) -> Visit; 3] = [mixed, |_| Visit::Taken, |_| Visit::Later];
     for (lower, upper) in cases {
         let scanned: Vec<Vec<u8>> = tree.scan(lower, upper, Direction::Forward).map(|e| e.unwrap().0).collect();
-        for decide in [mixed as fn(usize) -> Visit, |_| Visit::Taken, |_| Visit::Later] {
+        for decide in decides {
             assert_eq!(visited(tree.scan(lower, upper, Direction::Forward), decide), scanned);
         }
     }
