@@ -375,6 +375,7 @@ verification approach DO-178C expects (§8).
 | D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
 | D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
 | D413 | MIN or MAX of a column known not null is read from the first row in order |
+| D414 | Every query of a kept procedure body over its variables learns its plan with slots |
 
 ### The project
 
@@ -10501,6 +10502,22 @@ that the rows sorted would not, and so are a condition that may raise,
 whose rows a stopped read would evaluate fewer of. Only exact numbers
 are taken, whose values alike are one value, as the sort and MIN each
 keep the first of rows alike.
+
+#### D414. Every query of a kept procedure body over its variables learns its plan with slots
+
+A kept body's leaf over its variables kept its plan only if the plan was
+one probe of a whole unique key (D408). Every other leaf, as a count of
+customers by name, the sum of an order's lines, or a least new order, was
+optimized and planned again at each run, and planning was a sixth of what
+an order status or a delivery cost. Such a leaf now learns its plan as
+a prepared query does (D45): each of its first runs plans it with its
+values, which it runs, and with its slots, and once `LEARNED_RUNS` in a
+row make the two plans one shape the one with slots is kept and filled
+at each run. One whose plans keep changing stops learning after
+`MOST_LEARNING_RUNS`, and is planned at each run. A table it reads that
+gains or loses rows as its statistics would be gathered again for has
+it learn again (`routines/kept/leaves.rs`). Its plans are the body's,
+made again when the body is bound again (D406).
 
 ## 2. Project layout
 

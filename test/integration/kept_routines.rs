@@ -139,3 +139,40 @@ fn a_kept_leaf_reads_the_row_each_calls_values_name() {
     read.sort();
     assert_eq!(read, ["1,1003", "1,1040", "2,2007", "2,NULL"]);
 }
+
+/// Verifies: [DESIGN] RULES.md D414, a query of a kept body that reads a
+/// range of rows learns its plan with slots over its first CALLs and
+/// keeps it, and every CALL, before and after, reads the rows its own
+/// values name: a count below a bound, and the least item at or above it.
+#[test]
+fn a_kept_leaf_learns_its_plan_and_reads_each_calls_rows() {
+    let (_db, a) = defined();
+    let more: Vec<String> = (51..=600_i64).flat_map(|i| (1..=2_i64).map(move |w| format!("({w}, {i}, 0)"))).collect();
+    a.run(&format!("INSERT INTO S VALUES {}", more.join(", "))).unwrap();
+    a.run("UPDATE S SET Q = MOD(I * 7, 100) + W").unwrap();
+    a.run(
+        "CREATE PROCEDURE RANGE_OF (IN WH INTEGER, IN BELOW INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE N INTEGER;
+           DECLARE LEAST INTEGER;
+           SET N = (SELECT COUNT(*) FROM S WHERE W = WH AND Q < BELOW);
+           SELECT MIN(I) INTO LEAST FROM S WHERE W = WH AND Q >= BELOW;
+           INSERT INTO L VALUES (N, LEAST);
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    let calls: Vec<(i64, i64)> = (0..14_i64).map(|k| (1 + k % 2, (k * 37) % 103)).collect();
+    let mut expected = Vec::new();
+    for (w, below) in &calls {
+        let n = rows(&a, &format!("SELECT COUNT(*) FROM S WHERE W = {w} AND Q < {below}"));
+        let least = rows(&a, &format!("SELECT MIN(I) FROM S WHERE W = {w} AND Q >= {below}"));
+        expected.push(format!("{},{}", n.join(""), least.join("")));
+        a.run(&format!("CALL RANGE_OF({w}, {below})")).unwrap();
+    }
+    a.commit().unwrap();
+    let mut read = rows(&a, "SELECT W, LOW FROM L");
+    read.sort();
+    expected.sort();
+    assert_eq!(read, expected);
+}
