@@ -360,7 +360,8 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Parallel(..)
+        | Plan::Counted(_) => None,
     }
 }
 

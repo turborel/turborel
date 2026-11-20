@@ -366,6 +366,10 @@ verification approach DO-178C expects (§8).
 | D373 | A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot |
 | D374 | A filter goes into a set operation's operands and below a window's partitions, and FETCH FIRST into UNION ALL's operands, when the rows are the same |
 | D375 | A join is removed when it gives each row of the other operand once and nothing above reads it, by a unique key or a referential constraint not deferrable |
+| D376 | EXPLAIN ANALYZE runs a query and shows each operator's rows beside its estimate |
+| D377 | Cardinalities may be given the planner through the library in place of its estimates, to test it |
+| D378 | An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock |
+| D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -10281,6 +10285,100 @@ and those conjuncts are removed (`optimizer/elimination/referential.rs`).
 The constraint, the NOT NULL and the referenced key are not deferrable
 and of no period, and the columns of no collation. The rule is
 `eliminate_joins`.
+
+#### D376. EXPLAIN ANALYZE runs a query and shows each operator's rows beside its estimate
+
+`EXPLAIN ANALYZE <cursor specification>` plans the query as EXPLAIN
+does, runs it in the session's transaction under the locks a cursor of
+it takes, reads every row and drops it. Its rows are the lines of the
+physical plan, each operator's line followed by the estimate when its
+line shows none, then what it did, and a last line of the query's rows.
+An operator shows the rows it gave, the times it was opened when not
+once, an index nested loop its probes, and its time. One never opened
+shows `(never run)`, as a scan whose storage counted its table does.
+ANALYZE is no key word. It is read as this option only right after
+EXPLAIN and before a query's first token, and before a parenthesis only
+when the next token begins a query too, so a table named ANALYZE, or a
+table EXPLAIN whose correlation name ANALYZE lists its columns, is read
+as before. A data change statement is refused as EXPLAIN refuses one,
+so EXPLAIN ANALYZE changes nothing a query does not. A query that raises
+makes it raise the same exception (D15). It shows the physical plan
+alone, since the stages before it are EXPLAIN's and run nothing.
+`Session::explain_analyze` gives the same text and `Session::analyzed`
+each operator's line, depth, estimate, rows, openings, time and the
+tables below it, for a tool such as the joins benchmark's q-error report
+(`bench/joins/qerror.rs`). A subquery planned and run for each row it is
+evaluated of is no operator of the statement's plan and is not shown.
+
+#### D377. Cardinalities may be given the planner through the library in place of its estimates, to test it
+
+`Session::with_cardinalities` gives the planner rows in place of its
+estimates for every statement the session plans after, until it gives
+others or none (`physical/cardinality/injected.rs`). Each names a set of
+a query's relations by the names EXPLAIN shows them by, their
+correlation names, and gives the rows of their join with their filters.
+The estimator takes it for a table's read, a filter or a product that
+joins and filters exactly that set, and the join enumeration for any
+join of it, so every way of joining the set gives it those rows (D302).
+A set naming a relation the query has not, or two of one name, is left
+out. This is the experiment of Leis et al., "How Good Are Query
+Optimizers, Really?" (2015), section 4. With every intermediate result's
+true rows given, what is left of a bad plan is the cost model's and the
+search's. There is no SQL for it, since it is a tool for the planner's
+tests and benchmarks. The session's snapshot carries the rows, as it
+carries the session's own settings. A plan a prepared statement kept
+before they were given is kept still. A plan-space test runs the join workload under
+rows drawn from a fixed seed, which force other orders and methods, and
+each gives the rows it gives with none (`test/integration/plan_space.rs`).
+
+#### D378. An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock
+
+EXPLAIN ANALYZE wraps each operator of the chosen plan in a `Counted`
+node (`physical/analyzed.rs`), which the executor runs as its input,
+adding the rows it gives and the time each pull takes
+(`exec/counted.rs`). A plan made to run holds none, so a statement not
+analyzed pays one more arm of the executor's dispatch and nothing else.
+A batch is counted as one pull, its kept rows at once
+(`exec/batch/counted.rs`). The batch streams, a filter's conditions told
+its scan, a FETCH FIRST's bound and the storage's count of a table all
+look through the wrapper, so an analyzed plan runs as the plan run alone
+does. A part run in parallel counts its pipeline's operators by a step
+of their own, each morsel's rows added once (`exec/parallel/pipeline.rs`),
+and by batch once a batch. The part's mark is not wrapped and its top
+operator is. The sort below a window run in parallel is left bare, as
+the part sorts the window's rows itself. An iterator tallies its rows
+and time and adds them to its operator's count once, as it is dropped,
+so threads add once each and never contend a row at a time. Time is the
+database's clock's (D54), the operator's inputs' among it, and it is
+shown only when the clock moved while the query ran. So a test, which
+gives a clock that stands still (R-TEST-5), and the manual's examples
+show no time. An operator of a pipeline run in parallel has no time of
+its own, since its rows pass every step of the pipeline at once.
+
+#### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
+
+The inner joins' equalities of two columns make classes of columns
+(D302), and the rows of a join are estimated by the class, whichever
+two of its columns the join holds. So `a.k = c.k AND b.k = c.k` joins
+`a` and `b` by `a.k = b.k` as the estimate sees it, though no conjunct
+reads both. The join enumeration takes that key too. A join of two
+sets no conjunct reads both of, as the FROM clause's order lets the
+enumeration make, judges the equality of one column of each of every
+class with a column on each side (`Model::implied_keys`), and that
+equality is a key of its hash, merge or index join. The plan is then
+never a product of the two whose rows the estimate counts as joined.
+The classes are made once with the model, and the join graph takes no
+edge of its own for such a pair, since an edge of each pair of a large
+class makes a clique the enumeration's search grows past.
+An equality implied is true of every row the stated ones keep, so the
+rows are those of the query as written [X3.135-1986 §5.20 GR2b]. A
+chain with an outer join takes no implied key, since its keys hold only
+above it. The FROM clause's tree, planned as written, makes a product
+of two such sets, so a tree with one is never kept in place of the
+enumerated plan (`physical/enumerate.rs`). A plan-space test runs the
+join workload under rows given that are up to a thousand times too few
+or too many, and each plan gives its rows well within a minute
+(`test/integration/plan_space.rs`).
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

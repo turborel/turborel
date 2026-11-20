@@ -133,12 +133,16 @@ pub(super) struct Space<'m> {
     pub(super) trees: Vec<Tree>,
     /// The joins tried that the operators allowed: the work done.
     pub(super) pairs: usize,
+    /// Whether it costs the FROM clause's tree, which is planned as
+    /// written, a product where no conjunct reads both operands, so no
+    /// join of it judges the keys its classes imply (RULES.md D387).
+    pub(super) written: bool,
 }
 
 impl<'m> Space<'m> {
     /// The table of `graph`'s relations alone, each with its reads.
     pub(super) fn new(graph: &'m Graph, model: &'m Model) -> Space<'m> {
-        let mut space = Space { graph, model, table: HashMap::default(), trees: Vec::new(), pairs: 0 };
+        let mut space = Space { graph, model, table: HashMap::default(), trees: Vec::new(), pairs: 0, written: false };
         for rel in 0..graph.n {
             let mut entry = Entry { rows: model.rows(rel), cands: Vec::new() };
             for (order, cost) in model.reads(rel) {

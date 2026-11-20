@@ -18,6 +18,7 @@
 
 mod answered;
 mod batch;
+mod counted;
 mod distinct;
 mod entries;
 mod eval;
@@ -154,6 +155,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Polymorphic(..) => ptf::polymorphic,
         // [DESIGN] by morsels on the workers (RULES.md D290).
         Plan::Parallel(..) => parallel::parallel,
+        // [EXTENSION] as its input, counted (RULES.md D376).
+        Plan::Counted(_) => counted::counted,
     };
     run(plan, db, tx)
 }
@@ -188,7 +191,8 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Polymorphic(..)
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => failed(broken("a join is not one")),
+        | Plan::Parallel(..)
+        | Plan::Counted(_) => failed(broken("a join is not one")),
     }
 }
 

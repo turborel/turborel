@@ -52,6 +52,8 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     match plan {
         Plan::SeqScan { table, columns, located: false, .. } => Some((columns.clone(), db.catalog.table(table)?.columns.len())),
         Plan::Filter { input, .. } => layout(input, db),
+        // [EXTENSION] a counted operator's, its input's (RULES.md D378).
+        Plan::Counted(c) => layout(&c.input, db),
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::layout(plan, db),
         Plan::Project { exprs, input, .. } => {
             let (columns, _) = layout(input, db)?;
@@ -138,6 +140,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         // (`TableStorage::scan_ordered_batches`).
         Plan::SeqScan { table, located, .. } => !located && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => reads_by_batch(input, db),
+        Plan::Counted(c) => reads_by_batch(&c.input, db),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
         Plan::Product { left, right, .. } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
@@ -239,6 +242,7 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::batches_with,
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
+        Plan::Counted(_) => super::counted::batches,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
@@ -290,17 +294,30 @@ fn scan_batches(scan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) 
 /// As `batches`.
 fn filter_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Filter { cond, input, .. } = plan else { return Err(crate::exec::broken("a filter is not one")) };
-    let inner = *input;
     let below = deferred.filtered(&cond);
-    let (inner, columns) = if let Plan::SeqScan { table, columns, order, .. } = &inner
+    let (inner, columns) = told(*input, &cond, (db, tx), &below)?;
+    Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
+}
+
+/// The batches of `inner`, the input of a filter of `cond`, its scans'
+/// columns `below` leaves unread given late, and the columns they hold:
+/// of a scan's, its simple conjuncts told the scan, unless it is in an
+/// order; \[EXTENSION\] of a counted scan's too, counted (RULES.md D378).
+///
+/// # Errors
+///
+/// As `batches`.
+fn told(inner: Plan, cond: &Cond, (db, tx): (&Arc<State>, TxId), below: &Deferred) -> Result<(Batches, Vec<usize>)> {
+    if let Plan::Counted(c) = inner {
+        return super::counted::through(*c, db, |input| told(input, cond, (db, tx), below));
+    }
+    if let Plan::SeqScan { table, columns, order, .. } = &inner
         && order.is_empty()
     {
-        (scan_of((table, columns, Some(&cond)), &below.late_of(columns), db, tx)?, columns.clone())
-    } else {
-        let columns = layout(&inner, db).map(|l| l.0).unwrap_or_default();
-        (batches_with(inner, (db, tx), &below)?, columns)
-    };
-    Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
+        return Ok((scan_of((table, columns, Some(cond)), &below.late_of(columns), db, tx)?, columns.clone()));
+    }
+    let columns = layout(&inner, db).map(|l| l.0).unwrap_or_default();
+    Ok((batches_with(inner, (db, tx), below)?, columns))
 }
 
 /// The batches of the projection of `input` by `exprs`.
