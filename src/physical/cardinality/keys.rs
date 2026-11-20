@@ -90,9 +90,14 @@ impl Estimates<'_> {
     }
 
     /// The distinct values `plan`'s columns `columns` hold together, if
-    /// they hold a key of it: of a table's key, the table's rows; of a
-    /// grouping's or DISTINCT's, its estimated rows.
+    /// they hold a key of it: `plan`'s estimated rows, each a value of its
+    /// own, at most those of the key's table, grouping or DISTINCT.
     pub(in crate::physical) fn key_of(&self, plan: &LogicalPlan, columns: &[usize]) -> Option<f64> {
+        self.keyed(plan, columns).map(|all| all.min(self.card_at(plan, 1).rows))
+    }
+
+    /// See `key_of`: the rows of the key's table, grouping or DISTINCT.
+    fn keyed(&self, plan: &LogicalPlan, columns: &[usize]) -> Option<f64> {
         let (mut at, mut columns) = (plan, columns.to_vec());
         for _ in 0..MAX_ESTIMATE_DEPTH {
             match at {

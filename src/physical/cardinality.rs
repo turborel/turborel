@@ -289,4 +289,6 @@ fn addresses(plan: &LogicalPlan, found: &mut HashSet<usize>) {
 // Unit tests: each node's rule, lineage, Cardenas' formula and classes on
 // synthetic catalogs (RULES.md R-TEST-1, R-TEST-8).
 #[cfg(test)]
+mod keyed_tests;
+#[cfg(test)]
 mod tests;

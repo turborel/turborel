@@ -161,7 +161,7 @@ impl Estimates<'_> {
         let mut keys: Vec<usize> = places.iter().map(|&(_, place)| place).collect();
         keys.sort_unstable();
         keys.dedup();
-        let rows = self.table_rows(table).unwrap_or(f64::INFINITY);
+        let rows = self.table_rows(table).unwrap_or(f64::INFINITY).min(self.card_at(side.plan, 1).rows);
         let counted = self.statistics(table).and_then(|s| s.group_distinct(&keys)).or_else(|| self.sketched(table, &keys));
         counted.map_or(Joint::Guessed(guess.min(rows)), |d| Joint::Counted(d.min(rows)))
     }

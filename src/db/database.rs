@@ -458,6 +458,7 @@ impl Database {
                 ("PLANNER.RANGE_SELECTIVITY", cost.range_selectivity),
                 ("PLANNER.NULL_FRACTION", cost.null_fraction),
                 ("PLANNER.REORDER_GAIN", cost.reorder_gain),
+                ("PLANNER.ESTIMATE_MARGIN", cost.estimate_margin),
             ];
             for (name, weight) in weights {
                 st.define_setting(name, Some(&Value::Approx(weight)))?;

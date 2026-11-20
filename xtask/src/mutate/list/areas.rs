@@ -19,6 +19,7 @@ mod expr;
 mod estimates;
 mod group_table;
 mod insert_values;
+mod join_estimates;
 mod joins;
 mod late;
 mod parallel;
@@ -87,7 +88,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 40] {
+fn second() -> [&'static [Mutation]; 41] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -129,6 +130,7 @@ fn second() -> [&'static [Mutation]; 40] {
         &expr::EXPR,
         &estimates::ESTIMATES,
         &statistics::STATISTICS,
+        &join_estimates::JOIN_ESTIMATES,
     ]
 }
 

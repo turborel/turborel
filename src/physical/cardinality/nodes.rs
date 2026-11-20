@@ -22,7 +22,7 @@
 //! * what has no count, the defaults of `cardinality.rs`.
 
 use super::joins::{columns_of, is_chain};
-use super::lineage::{Over, one_table, origin};
+use super::lineage::{Over, one_table, origin, step};
 use super::{Card, Estimates, FUNCTION_ROWS, MAX_ESTIMATE_DEPTH, RECURSIVE_ROWS, UNKNOWN_ROWS, UNNEST_FANOUT, at_least_one};
 use crate::logical::{Cond, Expr, Limit, LogicalPlan, OuterJoin, SetOp, map_cond_columns, split_and};
 use crate::physical::estimate::{Known, selectivity};
@@ -119,12 +119,39 @@ impl Estimates<'_> {
     }
 
     /// The distinct values of `plan`'s column `column`: as its table's
-    /// statistics count them, else its table's rows, as if a key; of a
+    /// statistics count them, else its table's rows, as if a key, times
+    /// the share of them the conjuncts of the filters on the way that
+    /// read that column alone keep, at least one (RULES.md D384); of a
     /// column of no table, `plan`'s rows.
     pub(in crate::physical) fn distinct(&self, plan: &LogicalPlan, column: usize) -> f64 {
         let Some(found) = origin(plan, column) else { return self.rows(plan).max(1.0_f64) };
         let counted = self.statistics(found.table).and_then(|s| s.distinct(found.column));
-        counted.or_else(|| self.table_rows(found.table)).unwrap_or(UNKNOWN_ROWS)
+        let all = counted.or_else(|| self.table_rows(found.table)).unwrap_or(UNKNOWN_ROWS);
+        (all * self.column_share(plan, column)).max(all.min(1.0_f64))
+    }
+
+    /// The share of the rows the conjuncts of `plan`'s filters, down to
+    /// its column `column`'s table, that read that column alone keep: a
+    /// filter of a column on its values keeps that share of its values,
+    /// as a filter a join's key implies on the other side does.
+    fn column_share(&self, plan: &LogicalPlan, column: usize) -> f64 {
+        let (mut at, mut column, mut share) = (plan, column, 1.0_f64);
+        for _ in 0..MAX_ESTIMATE_DEPTH {
+            if let LogicalPlan::Filter { cond, .. } = at {
+                let mut conjuncts = Vec::new();
+                split_and(cond.clone(), &mut conjuncts);
+                conjuncts.retain(|c| columns_of(c) == [column]);
+                if !conjuncts.is_empty() {
+                    share *= self.conjunction(&conjuncts, Over::One(at));
+                }
+            }
+            let Some((next, place)) = step(at, column) else { break };
+            if std::ptr::eq(next, at) {
+                break;
+            }
+            (at, column) = (next, place);
+        }
+        share
     }
 
     /// The card of an outer join of `kind` on `cond` of `left` and `right`.
