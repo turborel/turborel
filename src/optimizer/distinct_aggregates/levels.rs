@@ -241,4 +241,3 @@ fn first(grouping: &Grouping<'_>, shape: &Shape, layout: &Layout, projected: Log
         .collect();
     LogicalPlan::Aggregate { groups, collations, aggs, seeds: Vec::new(), input: Box::new(projected) }
 }
-

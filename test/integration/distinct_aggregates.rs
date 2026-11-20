@@ -185,8 +185,12 @@ fn arguments_are_computed_only_of_rows_admitted_10_9() {
 #[test]
 fn collations_decide_what_is_distinct_10_9() {
     let (_db, a) = tables();
-    assert_eq!(alike(&a, "SELECT COUNT(DISTINCT S COLLATE CASE_INSENSITIVE), COUNT(DISTINCT S) FROM T"), format!("[\"4,7\"] {:?}", Some(SqlState::NULL_VALUE_ELIMINATED)));
-    let grouped = alike(&a, "SELECT S COLLATE CASE_INSENSITIVE, COUNT(DISTINCT X) FROM T WHERE S IS NOT NULL GROUP BY S COLLATE CASE_INSENSITIVE");
+    assert_eq!(
+        alike(&a, "SELECT COUNT(DISTINCT S COLLATE CASE_INSENSITIVE), COUNT(DISTINCT S) FROM T"),
+        format!("[\"4,7\"] {:?}", Some(SqlState::NULL_VALUE_ELIMINATED))
+    );
+    let grouped =
+        alike(&a, "SELECT S COLLATE CASE_INSENSITIVE, COUNT(DISTINCT X) FROM T WHERE S IS NOT NULL GROUP BY S COLLATE CASE_INSENSITIVE");
     assert_eq!(grouped, "[\"a,3\", \"b,2\", \"c,2\", \"d,1\"] None");
 }
 
@@ -260,4 +264,3 @@ fn window_distinct_functions_keep_their_results() {
     let sql = "SELECT K, COUNT(DISTINCT X) OVER (PARTITION BY G), COUNT(DISTINCT X) OVER (ORDER BY K ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM T WHERE K < 8 ORDER BY K";
     assert_eq!(rows(&a, sql).unwrap(), ["1,2,1", "2,2,1", "3,2,2", "4,2,2", "5,2,2", "6,2,1", "7,2,2"]);
 }
-
