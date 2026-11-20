@@ -320,7 +320,7 @@ turborel: SQLCODE -920 (SQLSTATE TB920): the statement was cancelled
 
 `turborel extension COMMAND` manages the packages of extensions in a
 server's plug-in directory, on the server's machine, and needs no
-connection. turborel has no registry. A package is a `.tbpkg` file the
+connection. turborel has no registry. A package is a `.tbx` file the
 operator copies to the machine. It also starts and packs a plug-in's
 project for its author. [Packages](04-plugins-packages.md) describes
 packages and every command, and [Writing a Plug-in](04-plugins-sdk.md)

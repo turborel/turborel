@@ -13,7 +13,7 @@ use super::Context;
 /// The usage text of `turborel extension`.
 pub const EXTENSION_USAGE: &str = "usage: turborel extension COMMAND [options]
 
-Packages are .tbpkg files. turborel has no registry, so the operator copies them
+Packages are .tbx files. turborel has no registry, so the operator copies them
 to the server's machine as they like.
 
   install FILE|DIR...    install package files, or directories of them, choosing

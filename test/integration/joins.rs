@@ -298,7 +298,8 @@ fn operands_that_can_raise_raise_one_of_their_errors() {
 
 /// Verifies: [DESIGN] RULES.md D15, D35: operands of a chain of products
 /// that can each raise an error raise one of their errors in any join
-/// order, the FROM clause's or the cheapest (PLANNER.REORDER_GAIN), each
+/// order, the FROM clause's or the cheapest (PLANNER.REORDER_GAIN), found
+/// greedily or by enumeration (PLANNER.JOIN_ENUMERATION, D300), each
 /// operand read whole: T's division by zero or U's subquery of more than
 /// one row.
 #[test]
@@ -307,14 +308,17 @@ fn any_join_order_raises_one_of_the_errors() {
     let s = db.session("J");
     let sql = "SELECT T.V, U.W, S.K FROM T, U, S WHERE T.K = S.K AND U.K = S.K AND T.V / (T.K - 5) >= 0 AND U.W = (SELECT K FROM S)";
     let mut plans = Vec::new();
-    for gain in [0.0_f64, 0.999_f64] {
-        db.set_setting("PLANNER.REORDER_GAIN", &Value::Approx(gain)).unwrap();
-        plans.push(s.physical_plan(sql, &Params::new()).unwrap());
-        for c in codes(&s, sql) {
-            assert!(matches!(c, Code::Data | Code::Cardinality), "{c:?}");
+    for enumeration in ["ADAPTIVE", "GREEDY"] {
+        db.set_setting("PLANNER.JOIN_ENUMERATION", &Value::Char(enumeration.into())).unwrap();
+        for gain in [0.0_f64, 0.999_f64] {
+            db.set_setting("PLANNER.REORDER_GAIN", &Value::Approx(gain)).unwrap();
+            plans.push(s.physical_plan(sql, &Params::new()).unwrap());
+            for c in codes(&s, sql) {
+                assert!(matches!(c, Code::Data | Code::Cardinality), "{enumeration}: {c:?}");
+            }
         }
     }
-    assert_ne!(plans.first(), plans.last(), "the orders differ");
+    assert_ne!(plans.get(2), plans.get(3), "the greedy orders differ");
 }
 
 /// Verifies: [DESIGN] RULES.md D35: a RIGHT outer join is planned as the

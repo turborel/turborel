@@ -112,8 +112,8 @@ project.
 author.key` wrote. Give operators the public key it printed.
 
 ```
-$ turborel extension pack hello --key author.key --out hello-0.1.0.tbpkg
-packed HELLO 0.1.0 into hello-0.1.0.tbpkg, signed by ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c, license LicenseRef-Proprietary (text in LICENSE)
+$ turborel extension pack hello --key author.key --out hello-0.1.0.tbx
+packed HELLO 0.1.0 into hello-0.1.0.tbx, signed by ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c, license LicenseRef-Proprietary (text in LICENSE)
 ```
 
 ## Installing
@@ -123,8 +123,8 @@ trusting the author's key. Install tells the package's license, and
 never refuses one for its license.
 
 ```
-$ turborel extension install hello-0.1.0.tbpkg --set PLUGINS.DIRECTORIES=plugins --set PLUGINS.TRUSTED_KEYS=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c --set PLUGINS.REQUIRE_SIGNED=ON
-installed HELLO 0.1.0 from hello-0.1.0.tbpkg, license LicenseRef-Proprietary (text in LICENSE)
+$ turborel extension install hello-0.1.0.tbx --set PLUGINS.DIRECTORIES=plugins --set PLUGINS.TRUSTED_KEYS=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c --set PLUGINS.REQUIRE_SIGNED=ON
+installed HELLO 0.1.0 from hello-0.1.0.tbx, license LicenseRef-Proprietary (text in LICENSE)
 ```
 
 A user then makes the extension in a database and calls its function.

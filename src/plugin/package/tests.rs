@@ -124,7 +124,7 @@ fn a_package_packs_writes_and_reads_back() {
     tampered[at] = b'P';
     assert_eq!(Package::read(&tampered, &Toy).unwrap_err().sqlstate(), errors::CHANGED);
     let mut other_format = bytes.clone();
-    other_format[6] = 2;
+    other_format[archive::MAGIC.len()] = 2;
     assert_eq!(Package::read(&other_format, &Toy).unwrap_err().sqlstate(), errors::CHANGED);
     for bad in ["../x", "/x", "a\\b", "a//b", "c:x", "./a"] {
         assert!(archive::check_path(bad).is_err(), "{bad}");

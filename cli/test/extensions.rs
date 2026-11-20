@@ -67,7 +67,7 @@ impl Fixture {
     /// Packs a package into the files' directory: its file.
     fn pack(&self, name: &str, version: &str, extra: &str) -> String {
         let src = source(&self.scratch.dir, name, version, extra);
-        let out = self.files.join(format!("{}-{version}.tbpkg", name.to_ascii_lowercase()));
+        let out = self.files.join(format!("{}-{version}.tbx", name.to_ascii_lowercase()));
         ext_in(&self.scratch.dir, &["pack", &src.display().to_string(), "--out", &out.display().to_string()]).unwrap();
         out.display().to_string()
     }
@@ -96,10 +96,10 @@ fn a_signed_package_is_packed_installed_and_verified() {
     assert!(said.contains(&public), "{said}");
     assert!(ext_in(root, &["keygen", "--out", "author.key"]).is_err(), "never written over");
     let src = source(root, "DEMO", "1.0.0", "").display().to_string();
-    let packed = ext_in(root, &["pack", &src, "--key", "author.key", "--out", "demo.tbpkg"]).unwrap();
+    let packed = ext_in(root, &["pack", &src, "--key", "author.key", "--out", "demo.tbx"]).unwrap();
     assert!(packed.contains(&format!("signed by {public}")) && packed.contains("no license declared"), "{packed}");
     assert!(packed.starts_with("warning: the manifest declares no LICENSE"), "{packed}");
-    ext_in(root, &["pack", &src, "--out", "unsigned.tbpkg"]).unwrap();
+    ext_in(root, &["pack", &src, "--out", "unsigned.tbx"]).unwrap();
     let mut strict = f.options.clone();
     strict.extend([
         "--set".to_owned(),
@@ -108,7 +108,7 @@ fn a_signed_package_is_packed_installed_and_verified() {
         "PLUGINS.REQUIRE_SIGNED=ON".to_owned(),
     ]);
     let on = |verb: &[&str], options: &[String]| ext_in(root, &[verb, &options.iter().map(String::as_str).collect::<Vec<_>>()].concat());
-    assert!(on(&["install", "unsigned.tbpkg"], &strict).unwrap_err().contains("not signed"));
+    assert!(on(&["install", "unsigned.tbx"], &strict).unwrap_err().contains("not signed"));
     let (_, other) = key(root, "other");
     let mut untrusting = f.options.clone();
     untrusting.extend([
@@ -117,14 +117,14 @@ fn a_signed_package_is_packed_installed_and_verified() {
         "--set".to_owned(),
         "PLUGINS.REQUIRE_SIGNED=ON".to_owned(),
     ]);
-    assert!(on(&["install", "demo.tbpkg"], &untrusting).unwrap_err().contains("not in PLUGINS.TRUSTED_KEYS"));
-    let mut tampered = std::fs::read(root.join("demo.tbpkg")).unwrap();
+    assert!(on(&["install", "demo.tbx"], &untrusting).unwrap_err().contains("not in PLUGINS.TRUSTED_KEYS"));
+    let mut tampered = std::fs::read(root.join("demo.tbx")).unwrap();
     let at = tampered.windows(10).position(|w| w == b"program of").unwrap();
     tampered[at] = b'P';
-    std::fs::write(root.join("tampered.tbpkg"), tampered).unwrap();
-    assert!(on(&["install", "tampered.tbpkg"], &strict).unwrap_err().contains("not what its digest says"));
-    let said = on(&["install", "demo.tbpkg"], &strict).unwrap();
-    assert_eq!(said, "installed DEMO 1.0.0 from demo.tbpkg, no license declared\n");
+    std::fs::write(root.join("tampered.tbx"), tampered).unwrap();
+    assert!(on(&["install", "tampered.tbx"], &strict).unwrap_err().contains("not what its digest says"));
+    let said = on(&["install", "demo.tbx"], &strict).unwrap();
+    assert_eq!(said, "installed DEMO 1.0.0 from demo.tbx, no license declared\n");
     let dir = f.plugins.join("DEMO").join("1.0.0");
     assert_eq!(std::fs::read_to_string(dir.join("run")).unwrap(), "program of DEMO 1.0.0");
     assert!(on(&["verify"], &strict).unwrap().contains(&format!("ok DEMO 1.0.0 signed by {public}")));
@@ -187,12 +187,12 @@ fn what_is_missing_is_refused_naming_the_file_to_add() {
     let cycle = Fixture::new("cycle");
     let (a, b) = (cycle.pack("A", "1.0.0", "REQUIRES B '*';"), cycle.pack("B", "1.0.0", "REQUIRES A '*';"));
     assert!(cycle.on(&["install", &a, &b]).unwrap_err().contains("cycle"));
-    let twin = cycle.scratch.path("twin.tbpkg");
+    let twin = cycle.scratch.path("twin.tbx");
     let other = source(&cycle.scratch.path("other"), "A", "1.0.0", "FUNCTION EXTRA(INTEGER) RETURNS INTEGER;");
     ext_in(&cycle.scratch.dir, &["pack", &other.display().to_string(), "--out", &twin.display().to_string()]).unwrap();
     assert!(cycle.on(&["install", &a, &twin.display().to_string()]).unwrap_err().contains("with other contents"));
     std::fs::create_dir_all(cycle.scratch.path("empty")).unwrap();
-    assert!(cycle.on(&["install", "empty"]).unwrap_err().contains("holds no .tbpkg file"));
+    assert!(cycle.on(&["install", "empty"]).unwrap_err().contains("holds no .tbx file"));
     assert!(cycle.on(&["install"]).unwrap_err().contains("name the package files"));
 }
 
@@ -240,7 +240,7 @@ fn the_lock_reproduces_a_set_from_files() {
 fn the_extension_command_line() {
     let env = |name: &str| (name == "TURBOREL_PLUGINS_DIRECTORIES").then(|| "/env".to_owned());
     let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-    let inv = parse(&args(&["install", "x.tbpkg", "--set", "plugins.require_signed=on"]), &env).unwrap().unwrap();
+    let inv = parse(&args(&["install", "x.tbx", "--set", "plugins.require_signed=on"]), &env).unwrap().unwrap();
     assert_eq!(inv.context.directories.paths(), [PathBuf::from("/env")]);
     assert!(inv.context.trust.require_signed);
     let set =
