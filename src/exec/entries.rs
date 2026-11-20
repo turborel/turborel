@@ -21,11 +21,21 @@ use crate::value::Value;
 /// chosen once, and what the table keeps from read to read.
 pub(in crate::exec) struct Reading {
     columns: Option<Vec<usize>>,
+    /// The statement's columns alone, read of a row every reader sees one
+    /// version of, whose entry needs no check against the row.
+    needed: Option<Vec<usize>>,
     near: Near,
     projection: Option<Arc<dyn KeyProjection>>,
 }
 
 impl Reading {
+    /// Whether every reader sees row `id`'s one version
+    /// (`TableStorage::visible_to_all_near`), asked with what the scan
+    /// keeps of the last row.
+    pub(in crate::exec) fn visible_to_all(&mut self, storage: &dyn TableStorage, id: RowId) -> bool {
+        storage.visible_to_all_near(id, &mut self.near)
+    }
+
     /// Independent projected probes can change from sparse to clustered
     /// row ids. Renew the leaf trial without dropping the transaction's
     /// cached bookkeeping or the row-byte allocation.
@@ -45,14 +55,15 @@ impl Reading {
             read.dedup();
             read
         });
-        Reading { columns, near: Near::default(), projection }
+        Reading { columns, needed: needed.map(<[usize]>::to_vec), near: Near::default(), projection }
     }
 }
 
 /// Row `id` of `storage`, as `tx` sees it, if that version has `key` in the
 /// index `ix`: an index holds the entries of versions `tx` may not
 /// see (`Index`). Of a statement that reads only some columns, only those
-/// are read (`TableStorage::get_columns`).
+/// are read (`TableStorage::get_columns`). The key is checked of every row,
+/// as an index may give extra candidates (RULES.md D34).
 pub(in crate::exec) fn fetch(
     storage: &dyn TableStorage,
     ix: &KeyShape,
@@ -60,13 +71,52 @@ pub(in crate::exec) fn fetch(
     (tx, id): (TxId, RowId),
     key: &Key,
 ) -> Result<Option<(RowId, Row)>> {
-    let Reading { columns, near, projection } = reading;
+    let Reading { columns, near, projection, .. } = reading;
     let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
     let Some(mut seen) = ix.key_of(&row) else { return Ok(None) };
     if let Some(project) = projection {
         seen = project.project(&seen)?;
     }
     Ok((seen == *key).then_some((id, row)))
+}
+
+/// As `fetch`, of a point entry whose conjunct is decided (`Decided`): of a
+/// row every reader sees one version of, whose entries are then all that
+/// version's, the entry is trusted as an index-only scan trusts one
+/// (RULES.md D34, D85), so only the statement's columns are read, the
+/// key's left undecoded; of a point found by its envelope, that is the
+/// geometry. Of any other row, as `fetch`.
+pub(in crate::exec) fn fetch_decided(
+    storage: &dyn TableStorage,
+    ix: &KeyShape,
+    reading: &mut Reading,
+    (tx, id): (TxId, RowId),
+    key: &Key,
+) -> Result<Option<(RowId, Row)>> {
+    if reading.visible_to_all(storage, id) {
+        let Reading { needed, near, .. } = reading;
+        return Ok(storage.get_near(tx, id, needed.as_deref(), near)?.map(|row| (id, row)));
+    }
+    fetch(storage, ix, reading, (tx, id), key)
+}
+
+/// As `fetch`, for a reader that judges the condition the entries answer
+/// of each row it keeps, so an extra candidate is refused by the row
+/// itself (RULES.md D34): of a row every reader sees one version of,
+/// whose entries are then all that version's, the key is not checked
+/// against the entry. Of any other row, as `fetch`.
+pub(in crate::exec) fn fetch_judged(
+    storage: &dyn TableStorage,
+    ix: &KeyShape,
+    reading: &mut Reading,
+    (tx, id): (TxId, RowId),
+    key: &Key,
+) -> Result<Option<(RowId, Row)>> {
+    if reading.visible_to_all(storage, id) {
+        let Reading { columns, near, .. } = reading;
+        return Ok(storage.get_near(tx, id, columns.as_deref(), near)?.map(|row| (id, row)));
+    }
+    fetch(storage, ix, reading, (tx, id), key)
 }
 
 /// \[DESIGN\] (RULES.md D34) The row of an entry of row `id` under `key`
@@ -83,7 +133,7 @@ pub(super) fn entry_row(
     key: Key,
 ) -> Result<Option<Row>> {
     if let Some(width) = width.filter(|_| reading.projection.is_none())
-        && storage.visible_to_all(id)
+        && reading.visible_to_all(storage, id)
     {
         let mut row = vec![Value::Null; width];
         for (&column, value) in ix.columns.iter().zip(key.0) {

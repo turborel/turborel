@@ -3194,7 +3194,14 @@ decides the comparison from the point and the column's SRID
 call would; any other entry's row is read and the conjunct judged of
 it. Where nothing else reads the column, a point entry decided true
 needs no row if every reader sees it (`TableStorage::visible_to_all`),
-as an index-only scan's entry needs none; else its row is read. Such a
+as an index-only scan's entry needs none; else its row is read. Of a
+point entry decided true whose row every reader sees, the row is read
+of the statement's columns alone, the key's left undecoded and the entry
+unchecked, being the one version's, as an index-only scan trusts its
+entry; any other row an index finds is read with the key's columns and
+checked against its entry, as an index may give extra candidates. A
+join probing a spatial predicate, which judges it of each row paired,
+leaves the entry of a row every reader sees unchecked the same way. Such a
 scan is priced as a covering scan. A prepared polygon decides
 "distance op constant" of a point by bounds its cells put on the
 distance (`prepared/cells/within.rs`): each cell's Chebyshev distance,
