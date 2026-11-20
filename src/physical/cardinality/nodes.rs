@@ -39,7 +39,8 @@ impl Estimates<'_> {
         if let Some(card) = self.kept_card(at) {
             return card;
         }
-        let card = self.found(plan, depth);
+        // [EXTENSION] the rows given in its place, if any are (RULES.md D377).
+        let card = self.injected(plan).unwrap_or_else(|| self.found(plan, depth));
         self.keep_card(at, card);
         card
     }

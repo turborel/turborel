@@ -1,11 +1,12 @@
 //! \[DESIGN\] `MemoryCatalog`, the built-in catalog, held in memory.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use super::{
-    CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc, OrderingDesc,
-    Partitioning, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc, TableDesc,
-    TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
+    CastDesc, Catalog, CollationDesc, Constrained, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc,
+    OrderingDesc, Partitioning, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc,
+    TableDesc, TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
 };
 use crate::hash::murmur::MurmurMap;
 use crate::value::DataType;
@@ -16,6 +17,14 @@ pub struct MemoryCatalog {
     /// Each schema's name, and its owner, in the order created.
     schemas: Vec<(String, String)>,
     tables: MurmurMap<QualifiedName, TableDesc>,
+    /// Its tables' names in the order `tables` lists them: sorted once, as
+    /// first asked, and again after a table is added or removed
+    /// (RULES.md D405).
+    table_order: OnceLock<Vec<QualifiedName>>,
+    /// Whether its tables have a foreign key, or a CHECK constraint that
+    /// reads tables: found once, as first asked, and again after a table
+    /// is added, changed or removed (RULES.md D415).
+    constrained: OnceLock<Constrained>,
     indexes: Vec<IndexDesc>,
     views: HashMap<QualifiedName, ViewDesc>,
     privileges: Vec<PrivilegeDesc>,
@@ -56,6 +65,15 @@ pub struct MemoryCatalog {
     partitioning: Partitioning,
     /// The extensions created.
     extensions: Vec<super::ExtensionDesc>,
+}
+
+impl MemoryCatalog {
+    /// What is kept of its tables made again, after a table is added or
+    /// removed.
+    fn tables_changed(&mut self) {
+        self.table_order = OnceLock::new();
+        self.constrained = OnceLock::new();
+    }
 }
 
 impl Catalog for MemoryCatalog {
@@ -100,12 +118,14 @@ impl Catalog for MemoryCatalog {
         for t in tables {
             self.tables.insert(t.name.clone(), t);
         }
+        self.tables_changed();
     }
     fn remove_schema(&mut self, schema: &str) {
         self.schemas.retain(|(s, _)| s != schema);
     }
     fn add_table(&mut self, desc: TableDesc) {
         self.tables.insert(desc.name.clone(), desc);
+        self.tables_changed();
     }
     fn table(&self, name: &QualifiedName) -> Option<&TableDesc> {
         self.tables.get(name)
@@ -123,9 +143,15 @@ impl Catalog for MemoryCatalog {
         self.indexes.iter().filter(|i| &i.table == table).collect()
     }
     fn tables(&self) -> Vec<&TableDesc> {
-        let mut tables: Vec<&TableDesc> = self.tables.values().collect();
-        tables.sort_by_key(|t| t.name.to_string());
-        tables
+        let order = self.table_order.get_or_init(|| {
+            let mut names: Vec<&QualifiedName> = self.tables.keys().collect();
+            names.sort_by_cached_key(ToString::to_string);
+            names.into_iter().cloned().collect()
+        });
+        order.iter().filter_map(|name| self.tables.get(name)).collect()
+    }
+    fn constrained(&self) -> Constrained {
+        *self.constrained.get_or_init(|| Constrained::of(self.tables.values()))
     }
     fn temporary_tables(&self) -> Vec<&TableDesc> {
         self.tables.values().filter(|t| t.temporary.is_some()).collect()
@@ -146,18 +172,22 @@ impl Catalog for MemoryCatalog {
     }
     fn views(&self) -> Vec<&ViewDesc> {
         let mut views: Vec<&ViewDesc> = self.views.values().collect();
-        views.sort_by_key(|v| v.name.to_string());
+        views.sort_by_cached_key(|v| v.name.to_string());
         views
     }
     fn replace_table(&mut self, desc: TableDesc) {
         // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2 COLUMN_EXISTS]
         let kept: Vec<&str> = desc.columns.iter().map(|c| c.name.as_str()).collect();
         self.spatial.forget_columns(&desc.name, &kept);
-        self.tables.insert(desc.name.clone(), desc);
+        if self.tables.insert(desc.name.clone(), desc).is_none() {
+            self.table_order = OnceLock::new();
+        }
+        self.constrained = OnceLock::new();
     }
     fn remove_table(&mut self, name: &QualifiedName) {
         self.spatial.forget_columns(name, &[]);
         self.tables.remove(name);
+        self.tables_changed();
     }
     fn remove_view(&mut self, name: &QualifiedName) {
         self.views.remove(name);
@@ -177,7 +207,7 @@ impl Catalog for MemoryCatalog {
     }
     fn domains(&self) -> Vec<&DomainDesc> {
         let mut domains: Vec<&DomainDesc> = self.domains.values().collect();
-        domains.sort_by_key(|d| d.name.to_string());
+        domains.sort_by_cached_key(|d| d.name.to_string());
         domains
     }
     fn put_collation(&mut self, collation: CollationDesc) {
@@ -188,7 +218,7 @@ impl Catalog for MemoryCatalog {
     }
     fn collations(&self) -> Vec<&CollationDesc> {
         let mut collations: Vec<&CollationDesc> = self.collations.values().collect();
-        collations.sort_by_key(|c| c.name.to_string());
+        collations.sort_by_cached_key(|c| c.name.to_string());
         collations
     }
     fn remove_collation(&mut self, name: &QualifiedName) {
@@ -202,7 +232,7 @@ impl Catalog for MemoryCatalog {
     }
     fn xml_schemas(&self) -> Vec<&XmlSchemaDesc> {
         let mut all: Vec<&XmlSchemaDesc> = self.xml_schemas.values().collect();
-        all.sort_by_key(|x| x.name.to_string());
+        all.sort_by_cached_key(|x| x.name.to_string());
         all
     }
     fn remove_xml_schema(&mut self, name: &QualifiedName) {
@@ -216,7 +246,7 @@ impl Catalog for MemoryCatalog {
     }
     fn xquery_modules(&self) -> Vec<&XQueryModuleDesc> {
         let mut all: Vec<&XQueryModuleDesc> = self.xquery_modules.values().collect();
-        all.sort_by_key(|m| m.name.to_string());
+        all.sort_by_cached_key(|m| m.name.to_string());
         all
     }
     fn remove_xquery_module(&mut self, name: &QualifiedName) {
@@ -230,7 +260,7 @@ impl Catalog for MemoryCatalog {
     }
     fn sequences(&self) -> Vec<&SequenceDesc> {
         let mut sequences: Vec<&SequenceDesc> = self.sequences.values().collect();
-        sequences.sort_by_key(|s| s.name.to_string());
+        sequences.sort_by_cached_key(|s| s.name.to_string());
         sequences
     }
     fn remove_sequence(&mut self, name: &QualifiedName) {
@@ -244,7 +274,7 @@ impl Catalog for MemoryCatalog {
     }
     fn user_types(&self) -> Vec<&UserTypeDesc> {
         let mut user_types: Vec<&UserTypeDesc> = self.user_types.values().collect();
-        user_types.sort_by_key(|t| t.name.to_string());
+        user_types.sort_by_cached_key(|t| t.name.to_string());
         user_types
     }
     fn remove_user_type(&mut self, name: &QualifiedName) {
@@ -258,7 +288,7 @@ impl Catalog for MemoryCatalog {
     }
     fn structured_types(&self) -> Vec<&StructuredDesc> {
         let mut all: Vec<&StructuredDesc> = self.structured_types.values().collect();
-        all.sort_by_key(|t| t.name.to_string());
+        all.sort_by_cached_key(|t| t.name.to_string());
         all
     }
     fn remove_structured_type(&mut self, name: &QualifiedName) {
@@ -314,7 +344,7 @@ impl Catalog for MemoryCatalog {
     }
     fn assertions(&self) -> Vec<&ConstraintDesc> {
         let mut assertions: Vec<&ConstraintDesc> = self.assertions.values().collect();
-        assertions.sort_by_key(|a| a.name.to_string());
+        assertions.sort_by_cached_key(|a| a.name.to_string());
         assertions
     }
     fn remove_assertion(&mut self, name: &QualifiedName) {

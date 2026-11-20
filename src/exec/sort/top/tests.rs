@@ -1,7 +1,9 @@
 use super::*;
 use crate::catalog::MemoryCatalog;
 use crate::db::State;
+use crate::storage::Threshold;
 use crate::value::{Decimal, SortOrder, Value};
+use std::sync::Arc;
 
 /// The work area of a new database's operator.
 fn work() -> Work {
@@ -83,4 +85,120 @@ fn rows_held_past_the_work_area_are_sorted_whole() {
         assert!(got.len() >= want.len(), "{} rows given", got.len());
         assert_eq!(format!("{:?}", got.get(..want.len())), format!("{:?}", Some(want.as_slice())), "ties {ties}");
     }
+}
+
+/// The rows `top_batches` gives of `rows`, as batches of vectors of values
+/// of `each` rows, every other row of each given, in `work`.
+fn topped_batches(keys: &[SortKey], rows: &[Row], (most, each): (Most, usize), work: &mut Work) -> Vec<Row> {
+    let batches: Vec<_> = rows
+        .chunks(each)
+        .map(|chunk| {
+            let width = chunk.first().map_or(0, Vec::len);
+            let columns = (0..width).map(|c| crate::storage::Column::Values(chunk.iter().map(|r| r[c].clone()).collect())).collect();
+            (crate::storage::Batch { columns, rows: chunk.len() }, None)
+        })
+        .collect();
+    let input: crate::exec::batch::Batches = Box::new(batches.into_iter().map(Ok));
+    top_batches(keys, input, (most, None), work, Arc::new(crate::kernels::Portable)).unwrap().map(Result::unwrap).collect()
+}
+
+/// `n` rows of a string key, some longer than a key holds, some null, of an
+/// exact key of `scale`, and their place.
+fn strings(state: &mut u64, n: i128, scale: u32) -> Vec<Row> {
+    (0..n)
+        .map(|place| {
+            let key = match below(state, 6) {
+                0 => Value::Null,
+                k => Value::Char(format!(
+                    "{}{}",
+                    "a long shared start of a key ".repeat(usize::try_from(k % 2).unwrap().saturating_add(1)),
+                    k
+                )),
+            };
+            vec![key, Value::Exact(Decimal::new(below(state, 5), scale)), Value::Exact(Decimal::new(place, 0))]
+        })
+        .collect()
+}
+
+/// Verifies: [DESIGN] RULES.md D365 [ISO/IEC 9075-2:2023 §7.17 GR5, GR7d]:
+/// the first rows a sort of batches holds are those a whole sort gives
+/// first, equal rows in the order they came: of integer keys and of
+/// strings longer than their keys hold, compared whole; ASC and DESC,
+/// nulls first or last; of WITH TIES the peers of the last; of more asked
+/// for than there are, all; of batches gathered to their rows held; of a
+/// batch of a scale its layout does not admit, and past the work area,
+/// sorted whole.
+#[test]
+fn the_first_rows_of_batches_are_a_whole_sorts() {
+    let mut state = 13_u64;
+    for order in [SortOrder::of(false, None), SortOrder::of(true, None), SortOrder::of(false, Some(true)), SortOrder::of(true, Some(false))]
+    {
+        let keys = [SortKey::new(0, order), SortKey::new(1, order)];
+        let mut scaled = strings(&mut state, 200, 0);
+        scaled.extend(strings(&mut state, 200, 2));
+        for rows in [made(&mut state, 300), strings(&mut state, 3000, 1), scaled] {
+            let one = [SortKey::new(0, order)];
+            for chosen in [&one[..], &keys[..1.max(rows[0].len() - 1)]] {
+                let counts = [1, 7, 64, 5000].into_iter().flat_map(|count| [false, true].map(|ties| Most { rows: count, ties }));
+                for most in counts {
+                    let want = expected(chosen, rows.clone(), most);
+                    let got = topped_batches(chosen, &rows, (most, 200), &mut work());
+                    // Sorted whole, all the rows are given, the first those.
+                    let first = got.get(..want.len().min(got.len())).unwrap_or_default();
+                    assert_eq!(format!("{first:?}"), format!("{want:?}"), "{order:?} {chosen:?}, {most:?}");
+                }
+            }
+        }
+    }
+    let rows = made(&mut state, 2000);
+    let keys = [SortKey::ascending(0)];
+    for ties in [false, true] {
+        let most = Most { rows: 1900, ties };
+        let want = expected(&keys, rows.clone(), most);
+        let got = topped_batches(&keys, &rows, (most, 100), &mut work().part(4096));
+        assert_eq!(format!("{:?}", got.get(..want.len())), format!("{:?}", Some(want.as_slice())), "past the work area, ties {ties}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D379: once a top-N holds its first rows, the
+/// bound told the scan is the first key of the greatest held, ascending
+/// the least that may yet be among them and descending the greatest, so
+/// no row of a key past it is ever needed; before, there is none.
+#[test]
+fn a_top_raises_its_bound_to_its_greatest_held() {
+    let rows: Vec<Row> =
+        (0..1000_i128).map(|p| vec![Value::Exact(Decimal::new(p * 7919 % 1000, 0)), Value::Exact(Decimal::new(p, 0))]).collect();
+    for (descending, want) in [(false, "9"), (true, "990")] {
+        let keys = [SortKey::new(0, SortOrder::of(descending, None))];
+        let bound = Arc::new(Threshold::new(descending));
+        let input: crate::exec::batch::Batches = Box::new(
+            rows.chunks(100)
+                .map(|chunk| {
+                    let columns = (0..2).map(|c| crate::storage::Column::Values(chunk.iter().map(|r| r[c].clone()).collect())).collect();
+                    Ok((crate::storage::Batch { columns, rows: chunk.len() }, None))
+                })
+                .collect::<Vec<_>>()
+                .into_iter(),
+        );
+        let most = Most { rows: 10, ties: false };
+        let got: Vec<Row> = top_batches(&keys, input, (most, Some(Arc::clone(&bound))), &mut work(), Arc::new(crate::kernels::Portable))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(got.len(), 10);
+        assert_eq!(bound.bound().map(|b| b.to_string()), Some(want.to_owned()), "descending {descending}");
+    }
+    let bound = Arc::new(Threshold::new(false));
+    let input: crate::exec::batch::Batches = Box::new(std::iter::empty());
+    drop(
+        top_batches(
+            &[SortKey::ascending(0)],
+            input,
+            (Most { rows: 10, ties: false }, Some(Arc::clone(&bound))),
+            &mut work(),
+            Arc::new(crate::kernels::Portable),
+        )
+        .unwrap(),
+    );
+    assert!(bound.bound().is_none(), "none of no rows");
 }

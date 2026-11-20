@@ -20,8 +20,12 @@
 //! changes since the last pass than a share of its rows then, and a number
 //! more, the table's options STATISTICS.REFRESH_FRACTION and REFRESH_ROWS
 //! (`rows/options.rs`): each pass then follows changes in proportion to the
-//! rows it reads, so keeping them costs a bounded share of the writes. One thread
-//! gathers at a time; another finding them due meanwhile leaves them.
+//! rows it reads, so keeping them costs a bounded share of the writes. A
+//! pass also waits `PASS_SPACING` times as long as the last one took, so
+//! a table written fast costs at most a bounded share of one thread's time
+//! (RULES.md D407); one whose changes outnumber the rows of the last pass,
+//! and REFRESH_ROWS more, is not made to wait. One thread gathers at a
+//! time; another finding them due meanwhile leaves them.
 //!
 //! A sampled pass tells the builder which run of row ids each row is of,
 //! so a value seen in one run alone counts as seen once (RULES.md D381).
@@ -33,6 +37,7 @@
 use std::ops::Bound;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use super::RowTable;
 use super::key;
@@ -58,6 +63,10 @@ const SAMPLED_ROWS: u64 = 30_000;
 const CHUNK_IDS: u64 = 128;
 /// The seed of the hash choosing the runs a sampled pass reads.
 const SAMPLE_SEED: u64 = 0x2545_F491_4F6C_DD1D;
+/// \[DESIGN\] How many times as long as a pass took the next waits after
+/// it, at least: a table's passes then take at most a fiftieth of one
+/// thread's time (RULES.md D407).
+const PASS_SPACING: u32 = 50;
 
 /// Whether a sampled pass of a table of `rows` rows reads the run of row
 /// ids `chunk`: with a chance of `SAMPLED_ROWS` in `rows`, by a hash of
@@ -91,6 +100,11 @@ pub(super) struct Gathered {
     when_asked: AtomicBool,
     /// Set as a table opened is first asked for them, until gathered.
     asked: AtomicBool,
+    /// When it was made, which `earliest` counts from.
+    made: Instant,
+    /// The nanoseconds after `made` before which the next pass waits, of
+    /// changes no more than the last pass's rows (`PASS_SPACING`).
+    earliest: AtomicU64,
 }
 
 impl Gathered {
@@ -105,6 +119,8 @@ impl Gathered {
             gathering: AtomicBool::default(),
             when_asked: AtomicBool::default(),
             asked: AtomicBool::default(),
+            made: Instant::now(),
+            earliest: AtomicU64::default(),
         }
     }
 
@@ -126,11 +142,32 @@ impl Gathered {
     }
 
     /// Whether a table opened was asked for them, or the table has changed
-    /// enough to gather them again.
+    /// enough to gather them again: past the share of its rows.
     fn due(&self) -> bool {
         let Refresh { fraction, rows: more, .. } = self.refresh();
         let rows = count(self.rows.load(Ordering::Relaxed));
         self.asked.load(Ordering::Acquire) || count(self.changes.load(Ordering::Relaxed)) > rows * fraction + count(more)
+    }
+
+    /// Whether a pass due may be made now: asked for, the last pass long
+    /// enough past, or the table changed past its rows, and REFRESH_ROWS
+    /// more.
+    fn spaced(&self) -> bool {
+        let rows = count(self.rows.load(Ordering::Relaxed));
+        let past = count(self.changes.load(Ordering::Relaxed)) > rows + count(self.refresh().rows);
+        self.asked.load(Ordering::Acquire) || past || self.since_made() >= self.earliest.load(Ordering::Relaxed)
+    }
+
+    /// The nanoseconds since it was made.
+    fn since_made(&self) -> u64 {
+        u64::try_from(self.made.elapsed().as_nanos()).unwrap_or(u64::MAX)
+    }
+
+    /// Makes the next pass wait, after one that took `took`, `PASS_SPACING`
+    /// times as long as it took.
+    fn spaced_after(&self, took: Duration) {
+        let wait = u64::try_from(took.saturating_mul(PASS_SPACING).as_nanos()).unwrap_or(u64::MAX);
+        self.earliest.store(self.since_made().saturating_add(wait), Ordering::Relaxed);
     }
 
     /// Makes them due when first asked for.
@@ -188,6 +225,7 @@ impl RowTable {
     pub(super) fn gather(&self) -> Result<Arc<TableStats>> {
         // Changes made during the pass may or may not be seen: they count
         // towards the next.
+        let begun = Instant::now();
         let before = self.gathered.changes.load(Ordering::Relaxed);
         let rows = u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
         let sampling = rows > SAMPLED_ROWS.saturating_mul(2);
@@ -228,6 +266,7 @@ impl RowTable {
         self.gathered.rows.store(stats.rows, Ordering::Relaxed);
         self.gathered.changes.fetch_sub(before, Ordering::Relaxed);
         self.gathered.asked.store(false, Ordering::Release);
+        self.gathered.spaced_after(begun.elapsed());
         Ok(stats)
     }
 
@@ -256,13 +295,17 @@ impl RowTable {
         self.gathered.due()
     }
 
-    /// Gathers them if due and no other thread is. A failure leaves them
-    /// for the next call.
-    pub(super) fn gather_if_due(&self) {
-        if self.gathered.due() && !self.gathered.gathering.swap(true, Ordering::Acquire) {
+    /// Gathers them if due, spaced from the last pass or asked to `now`,
+    /// and no other thread is: whether it did. A failure leaves them for
+    /// the next call.
+    pub(super) fn gather_if_due(&self, now: bool) -> bool {
+        let due = self.gathered.due() && (now || self.gathered.spaced());
+        if due && !self.gathered.gathering.swap(true, Ordering::Acquire) {
             let _ = self.gather();
             self.gathered.gathering.store(false, Ordering::Release);
+            return true;
         }
+        false
     }
 }
 
@@ -380,5 +423,28 @@ mod tests {
             assert_eq!(taken, (0..runs).filter(|&chunk| sampled(chunk, rows)).count(), "the same runs");
         }
         assert!((0..100).all(|chunk| sampled(chunk, SAMPLED_ROWS)), "a table no larger than the sample: every run");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D407, a table changed past the share
+    /// of its rows is due, but its pass waits for the spacing after the
+    /// last; changed past its rows, and REFRESH_ROWS more, it does not;
+    /// once the spacing is past it may be made. MC/DC of the spacing:
+    /// waited (made) against not waited (waits), changes past the rows
+    /// (made) against not past.
+    #[test]
+    fn a_pass_waits_its_spacing_unless_the_table_changed_past_its_rows() {
+        let gathered = super::Gathered::new(super::Refresh::default());
+        gathered.rows.store(1_000, std::sync::atomic::Ordering::Relaxed);
+        gathered.earliest.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+        gathered.changed(200);
+        assert!(gathered.due() && !gathered.spaced(), "past the share, not spaced");
+        gathered.changed(900);
+        assert!(gathered.spaced(), "past the rows and REFRESH_ROWS");
+        let fresh = super::Gathered::new(super::Refresh::default());
+        fresh.rows.store(1_000, std::sync::atomic::Ordering::Relaxed);
+        fresh.changed(200);
+        assert!(fresh.due() && fresh.spaced(), "spaced");
+        fresh.spaced_after(std::time::Duration::from_secs(3_600));
+        assert!(fresh.due() && !fresh.spaced(), "after a pass of an hour");
     }
 }

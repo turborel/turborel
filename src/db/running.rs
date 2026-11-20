@@ -48,7 +48,7 @@ impl Session {
             Some(crate::txn::Held::Following | crate::txn::Held::Deposed) | None => Ok(st),
         };
         let published = self.db.refuse_earlier(self.service).and_then(|()| self.db.snapshot()).and_then(retired)?;
-        Ok(self.with_own(self.with_temporaries(self.definitions(published)?)))
+        Ok(self.with_injected(self.with_own(self.with_temporaries(self.definitions(published)?))))
     }
 
     /// Its current transaction, if one is active.

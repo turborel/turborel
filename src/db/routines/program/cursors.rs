@@ -4,6 +4,7 @@
 //! statement or FOR statement begins and destroyed as it ends.
 
 use super::super::super::dynamic::Name;
+use super::super::super::prepared::Keeping;
 use super::super::super::{DeclaredCursor, Session, StatementContext, rule};
 use crate::ast::FetchOrientation;
 use crate::error::Result;
@@ -37,14 +38,21 @@ impl Session {
     }
 
     /// [§12.2] Opens the local cursor `key`, its specification's values
-    /// those of `frame`.
+    /// those of `frame`: of a program kept, from the specification and plan
+    /// `keeping` keeps, its variables slots (RULES.md D416).
     ///
     /// # Errors
     ///
     /// As OPEN's.
-    pub(in crate::db) fn open_local(&self, cx: StatementContext<'_>, key: &str, cursor: &Cursor, frame: &Params) -> Result<()> {
+    pub(in crate::db) fn open_local(
+        &self,
+        cx: StatementContext<'_>,
+        (key, cursor): (&str, &Cursor),
+        frame: &Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<()> {
         let flags = (cursor.insensitive, cursor.scroll);
-        self.open_text(cx, &Name::plain(key), (&cursor.text, flags, None), frame).map(|_| ())
+        self.open_text(cx, &Name::plain(key), (&cursor.text, flags, keeping), frame).map(|_| ())
     }
 
     /// [§12.3] The row the local cursor `key` fetches in `orientation`;
