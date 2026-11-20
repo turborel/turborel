@@ -31,11 +31,13 @@
 
 mod found;
 mod outer;
+mod plain;
 #[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
 
+use self::plain::plain;
 use super::views::substitute;
 use super::{Rule, RuleContext, wrap};
 use crate::catalog::Catalog;
@@ -117,7 +119,8 @@ impl Hoisted {
     /// The operands of `operands` with the parts `found` taken, each over
     /// a guard of the others if one of its parts can raise; none if none
     /// was found, or if a guard is needed and an operand has no columns or
-    /// an outer reference, which the guard's subquery would leave unfilled.
+    /// an outer reference, which the guard's subquery would leave unfilled,
+    /// or is not a plain read the guard may evaluate again (`plain.rs`).
     fn of(operands: &Operands<'_>, found: Vec<Found>, catalog: &dyn Catalog) -> Option<Hoisted> {
         if found.is_empty() {
             return None;
@@ -133,7 +136,7 @@ impl Hoisted {
             parts.push((at, plan.width().saturating_add(list.len())));
             list.push(own);
         }
-        if guarded.contains(&true) && operands.plans.iter().any(|o| o.width() == 0 || plan_has_outer(o)) {
+        if guarded.contains(&true) && operands.plans.iter().any(|o| o.width() == 0 || plan_has_outer(o) || !plain(o)) {
             return None;
         }
         let made = lists.into_iter().zip(guarded).enumerate().map(|(at, (list, guard))| hoisted_operand(operands, at, list, guard));

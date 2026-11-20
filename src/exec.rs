@@ -42,6 +42,8 @@ mod scan;
 mod set;
 mod sort;
 mod subquery;
+mod table;
+pub(crate) use table::Seed;
 mod transition;
 mod unnest;
 mod window;

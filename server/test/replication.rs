@@ -313,9 +313,11 @@ fn nodes_are_added_and_removed_by_reconfiguration() {
     let second = nodes.iter().find(|n| n.replica.transport().me() == ReplicaId(2)).unwrap();
     assert!(eventually(|| second.kept.all().iter().any(|e| e.contains("Removed"))), "{:?}", second.kept.all());
     assert_eq!(second.rows("SELECT K FROM T").err(), Some(Code::TransactionState), "retired: not even a read");
-    let three: Vec<String> = [1, 3, 4].iter().map(|m| format!("{m},2")).collect();
+    // Elections while the members settle may raise the epoch past 2, so
+    // each node is asked for members 1, 3 and 4 at one epoch of 2 or more.
     for node in nodes.iter().filter(|n| n.replica.transport().me() != ReplicaId(2)) {
-        assert!(eventually(|| rows(&node.db.session("OWNER"), shown) == Ok(three.clone())), "{:?}", rows(&node.db.session("OWNER"), shown));
+        let seen = || rows(&node.db.session("OWNER"), shown);
+        assert!(eventually(|| seen().is_ok_and(|r| three_at_one_epoch(&r))), "{:?}", seen());
     }
     on_primary(&nodes, |db| {
         let s = db.session("Y");
@@ -331,4 +333,13 @@ fn nodes_are_added_and_removed_by_reconfiguration() {
     for node in nodes {
         node.stop();
     }
+}
+
+/// Whether the rows of REPLICAS name members 1, 3 and 4 alone, all at one
+/// epoch of 2 or more.
+fn three_at_one_epoch(rows: &[String]) -> bool {
+    let parts: Vec<(&str, u64)> = rows.iter().filter_map(|r| r.split_once(',')).map(|(m, e)| (m, e.parse().unwrap_or(0))).collect();
+    let members: Vec<&str> = parts.iter().map(|p| p.0).collect();
+    let epoch = parts.first().map_or(0, |p| p.1);
+    members == ["1", "3", "4"] && epoch >= 2 && parts.iter().all(|p| p.1 == epoch)
 }

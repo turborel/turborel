@@ -350,6 +350,10 @@ verification approach DO-178C expects (§8).
 | D353 | ALP decimals are read by two multiplications with a stored pair of factors |
 | D354 | A batch keeps nulls as bitmaps, rows as selections, datetimes and truth values as vectors, its primitives in kernels |
 | D355 | A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange |
+| D356 | A grouping by batch keeps its groups in one table of typed key lanes and columns of states, its keys hashed by value |
+| D357 | A table of groups whose probe passes 128 slots hashes its keys by SipHash keyed by the database's seed |
+| D358 | A grouping or DISTINCT of the column store runs in parallel by morsels of its frozen groups |
+| D359 | EXCEPT and INTERSECT count their second operand's rows in the table of groups |
 | D360 | A column store's scan judges the conjuncts it is told of their own columns, then decodes the others at the rows kept alone |
 | D361 | A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept |
 | D362 | An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows |
@@ -8645,7 +8649,9 @@ key order and a limit of few rows over an unfiltered stream. While
 EXECUTOR.BATCHES is on, a part reading a column store table with no
 hash join's probe and no window functions stays serial too, since
 the serial scan by batch makes no rows and outruns workers that make
-each. A join or window over one still runs in parallel.
+each. A join or window over one still runs in parallel, and so does a
+grouping or DISTINCT over one, whose morsels are read by batch too
+(D358).
 
 #### D292. A pipeline's morsels are its table's parts, and a hash join builds and probes by them
 
@@ -9712,37 +9718,191 @@ batch (`exec/parallel/batched.rs`). A morsel's rows are read as the
 serial scan by batch reads its range (`Split::morsel_batches`) and taken
 through the same functions, so a worker costs a row what the statement's
 thread alone costs it. A grouping or DISTINCT over such a pipeline groups
-each morsel's batches as a grouping by batch groups them, and writes its
-groups as the pieces it merges (D293). A hash join's probe keeps its
+each morsel's batches as a grouping by batch groups them, and hands its
+groups to the partitions that merge them (D293, D356). A hash join's probe keeps its
 pipeline on rows.
 
 #### D355. A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange
 
-A grouping or DISTINCT run in parallel groups each morsel apart, writes
-each morsel's groups as pieces, and merges each partition's pieces into
-groups made anew (D293). A morsel of `m` rows of `G` groups, each as
-likely, holds `G (1 - (1 - 1/G)^m)` of them, as Cardenas (1975) counts
-the blocks a query touches. Of a thousand groups a morsel's few hundred
-pieces cost nothing beside its rows. Of two hundred thousand, nearly
-every row is a piece, written, moved between threads and merged.
+A grouping or DISTINCT run in parallel groups each morsel apart, hands
+each morsel's groups to the partitions, and merges each partition's
+into groups of its own (D293, D356). A morsel of `m` rows of `G` groups,
+each as likely, holds `G (1 - (1 - 1/G)^m)` of them, as Cardenas (1975)
+counts the blocks a query touches. Of a thousand groups a morsel's few
+hundred pieces cost nothing beside its rows. Of two hundred thousand,
+nearly every row is a piece, handed over and merged.
 
 The planner prices the part in rows grouped (`physical/parallel/exchange.rs`).
-The threads share the rows and each piece's own work, its group made,
-its states written and merged, four rows' worth. A piece's bytes cross
-the memory the threads share, three quarters of a row whatever the
-threads, and the statement's thread orders each group by its first row
-alone, one row each. If that costs the serial grouping's rows as much,
-the part stays serial whole, the scan under it too, since a channel
-carrying its rows one by one to a serial grouping costs more than the
-serial scan by batch. The groups come from the statistics of the grouped
-columns, their distinct values multiplied, capped at the rows. A
-grouping of a column not a table's, or of a table of no statistics, has
-no estimate and runs in parallel, as before.
+The threads share the rows and each piece's own work, its group made in
+its morsel's table, found again in its partition's and its states added,
+a row and a half's worth. A piece's vectors cross the memory the threads
+share, a tenth of a row whatever the threads, and the statement's thread
+takes each group from the heap of the partitions' groups by their first
+rows, four tenths of a row each. If that costs the serial grouping's
+rows as much, the part stays serial whole, the scan under it too, since
+a channel carrying its rows one by one to a serial grouping costs more
+than the serial scan by batch. The groups are those the optimizer
+estimates the grouping makes (D372), the same Cardenas formula over the
+distinct combinations of its columns, so the planner and the exchange
+agree on one number; of a morsel, the formula of those groups over its
+rows. The optimizer takes a column of no statistics as a key, so only a
+grouping each of whose columns the statistics count is weighed. One of a
+column not a table's, or of a table of no statistics, runs in parallel,
+as before.
 
-The constants are measured, not derived. A grouping of keys unique to
-each row never gains, whatever the threads, as the ordering of its
-groups alone costs the serial grouping's rows. One of few groups gains
-by nearly the degree.
+The constants are measured, not derived, as a piece of the table of
+D356 costs where one written as bytes cost several times more. A
+grouping of keys unique to each row gains on many threads only, its
+groups as many as its rows, ordered on one thread. One of few groups
+gains by nearly the degree. The planner does not price the grant. A
+grouping whose groups alone pass it gives way to the serial grouping as
+its waves show it (D356), its work thrown away.
+
+#### D356. A grouping by batch keeps its groups in one table of typed key lanes and columns of states, its keys hashed by value
+
+A grouping or DISTINCT read by batch, serial or a morsel of a parallel
+one, and each partition of the parallel one as it merges, keeps its
+groups in one table (`exec/table.rs`). Its slots are a vector of words,
+each the high half of a group's hash beside the group's number, probed
+linearly and at most half full (`exec/table/slots.rs`). A group's hash
+is kept, so a table grows by placing the hashes it has, none hashed
+anew. The groups are numbered in the order they are made, which is the
+order of their first rows, so the groups come out as a row at a time
+gives them.
+
+A batch's keys are hashed a vector at a time, a vector of integers by a
+kernel (`Kernels::hash_i64`). Each value is hashed by what it is, not
+how it is held (`exec/table/hash.rs`): an exact number by its value
+whatever its scale, an approximate number with -0 as 0, a text without
+its trailing spaces, a datetime by its instant. A key in a vector of
+integers, of values, or written in a piece hashes alike, so every
+morsel, partition and spill agrees which partition a group is of.
+
+The key columns are lanes (`exec/table/keys.rs`): integers of one scale,
+numbers, datetimes, truth values or texts, each with a bit a group for
+its nulls. A lane given a value it does not hold, an integer of another
+scale or a value of another type, turns into a lane of values and the
+bytes `put_key` makes of them, once. Two keys are equal as those bytes
+are, so a lane decides by its own values only where they tell the same.
+
+The states of COUNT, of SUM, AVG, MAX and MIN of integers of one scale,
+and of SUM and AVG of approximate numbers are columns, a slot a group,
+fed a batch's rows in one loop, as Boncz, Zukowski and Nes (2005)
+update aggregates by primitive loops (`exec/table/states.rs`). An
+approximate sum adds each group's numbers in the order its rows come,
+so it is the sum an accumulator makes. A column finishes, writes and
+turns into accumulators by the accumulators' own code
+(`functions/columnar.rs`), so a result, an error and a written state
+are an accumulator's. Every other set function, or a column given what
+it does not hold, keeps an accumulator a group, each group's rows of a
+batch fed to it together and in order.
+
+A grouping past its work area writes groups as pieces and rows by
+partition as before (D38, D298), each piece from the table's lanes and
+states. What a table holds is what its vectors hold, their room counted,
+so a grouping of integers holds about three words a group where a key
+of bytes, a row and a map's entry held several times that.
+
+Run in parallel (D293), each morsel's table goes to the partitions
+whole, each partition given the list of its groups by the high bits of
+their hashes (`exec/table/made.rs`), a set function's states in columns
+as they are, an accumulator's written. Each partition merges its
+morsels' groups in morsel order into a table of its own, found by the
+hash each came with, its states added slot to slot. It orders its own
+groups by their first rows on its thread, and the statement's thread
+merges the 64 partitions' orders by a heap of their first groups, where
+it sorted every group before.
+
+The partitions merge in waves (`exec/parallel/grouped/waves.rs`). Once
+the morsels handed over hold half the room the grant has left, the 64
+partitions merge them, each on a thread, and freeze their tables as a
+morsel's groups go, so another thread takes each up for the next wave.
+The grant then holds the partitions' tables in place of the morsels
+merged. Of many groups every morsel's groups are nearly as many as its
+rows, so holding them all until the last morsel holds about as many
+pieces as rows, and a grouping of a few hundred thousand groups of a
+few million rows gave way to the serial grouping under the grant a
+default budget leaves. In waves it holds its groups and one wave. A grouping whose
+groups alone pass the grant still gives way, as before.
+
+A morsel whose groups are few beside its rows, at least two rows a group
+on each thread, is not split among the partitions. Its table goes to the
+statement's thread whole, which merges it into one table of its own,
+since merging a group costs about what grouping a row or two does, and
+the statement's thread keeps up while the others group their next
+morsels. A grouping of few groups then wakes no partition's thread and
+makes no partition's table, which cost more than its rows on a table of
+a few hundred thousand rows. A morsel of many groups after them takes
+that table to the partitions first, so each partition still merges its
+morsels in their order; if no morsel went to the partitions, that table
+is the grouping's groups, ordered by their first rows.
+
+#### D357. A table of groups whose probe passes 128 slots hashes its keys by SipHash keyed by the database's seed
+
+The hash a table of groups keys by is the cheap one of D356, a seed's
+words mixed by a fixed function. Its seed is drawn at random as each
+database opens (`functions/registry.rs`), but a text's words are mixed
+one after another by a structure the seed does not change, so texts can
+be chosen whose hashes collide whatever the seed. A table of such keys
+would probe every group for each row. So a table counts the slots each
+probe passes (`exec/table/slots.rs`), and one that passes `MAX_PROBE`,
+128 slots, hashes every key anew by SipHash-1-3 keyed by the seed and
+probes by those hashes from then on (`GroupTable::rekeyed`), as the hash
+maps of the rest of the engine hash by a keyed SipHash already. The
+bound guards every key, a number's as a text's.
+
+The table's groups, their numbers and their states stay as they were.
+Only the slots are rebuilt, so the groups come out in the order of their
+first rows whichever hash found them, and the result never depends on
+the seed. A grouping run in parallel splits its groups among partitions
+by the cheap hash still, so each morsel's table and each partition agree
+whatever any one of them rekeyed. A key made to collide costs one
+partition the keyed hash and the rest nothing. Of keys spread as data
+spreads them, no probe nears the bound, as a table is at most half full.
+
+#### D358. A grouping or DISTINCT of the column store runs in parallel by morsels of its frozen groups
+
+D291 kept every part reading the column store serial while
+EXECUTOR.BATCHES is on, as its serial scan by batch outran workers that
+made each row. A grouping by batch in parallel makes no row (D354,
+D356): each morsel of a column store table is a run of its frozen
+groups, cut at their starts, then its tree's rows (`engine/rows/split.rs`),
+read by batch as the serial scan reads them (`Split::morsel_batches`)
+and grouped in a table of its own. So a grouping or DISTINCT over the
+column store is a part as over the row store, weighed by its exchange
+(D355), and gains by the threads what the serial scan by batch gains by
+its vectors. A morsel's batch of a column kept as runs is grouped a run
+at a time, its rows taken into the group of the run's first, no key
+compared, as the serial grouping takes them (D31). A plain scan, a sort
+and a set operation of the column store stay serial, as D291 says,
+their rows made one by one where they run in parallel.
+
+#### D359. EXCEPT and INTERSECT count their second operand's rows in the table of groups
+
+EXCEPT and INTERSECT counted the second operand's rows in a map of keys
+made into bytes, a key, a map entry and a hash of the bytes a row
+(D38). In memory they count them in the table of groups of D356
+instead (`exec/set/tabled.rs`), with no set function: each key found or
+made by its hash of values, a vector at a time of an operand read by
+batch, and compared in the table's lanes, its count in a column beside
+the table. Each row of the first operand is found there by the same
+hash and lanes. Of ALL, a duplicate of the second operand matches one
+of the first by lowering its count; else a row is given once, a flag a
+group telling it, and a key of the first operand the second did not
+have is made a group of no count, so it is known again. Equal values
+are duplicates as before, whatever their spelling, as the table's keys
+are equal as the bytes of `put_key` are, which are the bytes the map
+keyed by.
+
+What the table holds is its vectors' room. Past the work area while
+counting, the groups' keys made into bytes, with their counts, and the
+keys after them go to the bag or the partitions as before (D38). Once
+the table holds the work area of both its counts and the rows given,
+a key of the first operand the second did not have goes to a bag of its
+own, which spills, by its bytes. A table of keys alone holds no
+accumulator, so it goes to the threads that read the operator's rows
+(`GroupTable<()>`). In parallel (D295) each partition counts in a table
+of its own.
 
 #### D360. A column store's scan judges the conjuncts it is told of their own columns, then decodes the others at the rows kept alone
 
@@ -10028,7 +10188,14 @@ over a VALUES of one row. The part is so evaluated on the rows of the
 operand exactly when the product has a row, and raises of the same rows
 it would of the product [X3.135-1986 §5.20 GR2b]. An operand of an
 outer reference, or of no column, takes no guard, and its conjunct is
-left. A sort key cannot raise and needs no guard, as evaluating it of
+left. The guard evaluates each other operand once more, so each must be
+a plain read, of tables and values through filters, projections, joins,
+groupings, windows, sorts and set operations, of expressions that invoke
+no routine, draw no sequence value and call no function that is not
+deterministic (`hoisting/plain.rs`). A table function, which may record
+its run or cost as much as the query, a system table, an unnested
+collection, a recursive query, a row pattern or a transition table is
+not, and a part needing a guard over one is left. A sort key cannot raise and needs no guard, as evaluating it of
 more rows or fewer changes nothing.
 
 The search goes only into what is evaluated whenever the condition is,

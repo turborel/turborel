@@ -1,8 +1,9 @@
 //! The mutations of the optimizer's rewrites (RULES.md R-TEST-9, D373 to
 //! D375): the rules' places among the rules, the guard of a hoisted part
-//! that can raise, the typed bound of exact arithmetic, the filters that
-//! may go into a set operation or below a window, the FETCH FIRST that may
-//! go into UNION ALL, and the keys a join is removed on.
+//! that can raise and the operands it may read again, the typed bound of
+//! exact arithmetic, the filters that may go into a set operation or below
+//! a window, the FETCH FIRST that may go into UNION ALL, and the keys a
+//! join is removed on.
 
 use super::super::{Mutation, Package};
 
@@ -13,7 +14,7 @@ const RAISING: &str = "rewrites::hoisting::hoisted_parts_raise_as_the_product_wo
 const KEPT: &str = "rewrites::elimination::joins_that_could_change_rows_are_kept";
 
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 12] = [
+pub const REWRITES: [Mutation; 13] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -39,10 +40,20 @@ pub const REWRITES: [Mutation; 12] = [
         package: Package::Core,
         breaks: "no guard is made over an operand of an outer reference",
         file: "src/optimizer/hoisting.rs",
-        original: "        if guarded.contains(&true) && operands.plans.iter().any(|o| o.width() == 0 || plan_has_outer(o)) {",
-        replacement: "        if guarded.contains(&true) && operands.plans.iter().any(|o| o.width() == 0) {",
+        original: "        if guarded.contains(&true) && operands.plans.iter().any(|o| o.width() == 0 || plan_has_outer(o) || !plain(o)) {",
+        replacement: "        if guarded.contains(&true) && operands.plans.iter().any(|o| o.width() == 0 || !plain(o)) {",
         integration: &[],
         unit: &["optimizer::hoisting::tests::what_cannot_be_taken_is_left"],
+    },
+    Mutation {
+        name: "rewrites-hoisting-guard-reads-again",
+        package: Package::Core,
+        breaks: "no guard evaluates again an operand that is not a plain read, as a table function",
+        file: "src/optimizer/hoisting.rs",
+        original: "        if guarded.contains(&true) && operands.plans.iter().any(|o| o.width() == 0 || plan_has_outer(o) || !plain(o)) {",
+        replacement: "        if guarded.contains(&true) && operands.plans.iter().any(|o| o.width() == 0 || plan_has_outer(o)) {",
+        integration: &["rewrites::hoisting::a_guard_never_evaluates_a_table_function_again"],
+        unit: &[],
     },
     Mutation {
         name: "rewrites-typed-bound-widened",

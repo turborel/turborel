@@ -16,12 +16,12 @@
 
 mod records;
 
-use super::table::Held;
 use super::{Grouping, Groups, Numbers};
 use crate::error::{Code, Result, SqlError};
 use crate::exec::RowIter;
 use crate::exec::group::Finished;
 use crate::exec::partition::{Partitioner, merge_all, numbered};
+use crate::exec::table::GroupTable;
 use crate::exec::work::Work;
 use crate::spill::{Records, SpillRun};
 use crate::storage::Batch;
@@ -128,16 +128,18 @@ impl Overflow {
         Ok(true)
     }
 
-    /// Writes `group`, of key `key`, partly made, as a piece to the
-    /// partition of its key, in `work`, made in `out`.
+    /// Writes group `g` of `table`, partly made, as a piece to the
+    /// partition of its key, in `work`.
     ///
     /// # Errors
     ///
     /// The spill area's; SQLCODE -910 if a set function of it writes no
     /// state, as a grouping makes groups partly only if each does.
-    pub(super) fn write_group(&mut self, (key, group): (&[u8], &Held), queued: &mut Queued, work: &mut Work) -> Result<()> {
+    pub(super) fn write_group(&mut self, (table, g): (&GroupTable, usize), queued: &mut Queued, work: &mut Work) -> Result<()> {
         let lobs = work.lobs().clone();
-        if !self.queue(key, |out| put_group(group, out, &lobs), (queued, work))? {
+        let mut key = Vec::new();
+        table.key_bytes(g, &mut key);
+        if !self.queue(&key, |out| put_group((table, g), out, &lobs), (queued, work))? {
             return Err(SqlError::new(Code::Api, "[DESIGN] a group partly made of a set function of no state"));
         }
         Ok(())
@@ -202,7 +204,7 @@ fn regrouped(partition: Records, (depth, sources): (usize, &mut Vec<Records>), h
     let (mut next, mut going) = (Some(partition), how);
     while let Some(records) = next.take() {
         let to = if depth < work.depth() { Overflow::Partitions(None) } else { Overflow::Run(None) };
-        let mut groups = Groups::new(work.limit(), to, going.partial);
+        let mut groups = Groups::new(going, work.limit(), to, going.partial);
         let (types, lobs) = (work.types().clone(), work.lobs().clone());
         for record in records {
             match record_of(&record?, &types, &lobs)? {
