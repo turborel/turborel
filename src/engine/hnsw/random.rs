@@ -63,9 +63,15 @@ pub fn mixed(mut z: u64) -> u64 {
     z ^ (z >> SHIFT_3)
 }
 
-/// A hash of a vector's components, bit for bit, stable on every platform.
+/// A hash of a vector's components, bit for bit, stable on every
+/// platform: XXH3-64 of their bits, each little-endian (RULES.md D460).
 pub fn vector_hash(vector: &[f32]) -> u64 {
-    vector.iter().fold(GOLDEN, |h, x| mixed(h ^ u64::from(x.to_bits())))
+    use std::hash::Hasher as _;
+    let mut hasher = crate::hash::xxhash::Xxh3Hasher::default();
+    for x in vector {
+        hasher.write_u32(x.to_bits());
+    }
+    hasher.finish()
 }
 
 /// \[DESIGN\] The HNSW layer of an entry (Malkov and Yashunin, §4,
@@ -74,7 +80,7 @@ pub fn vector_hash(vector: &[f32]) -> u64 {
 /// often it is inserted, as after reopening, and no generator state need
 /// be kept. A node reaches layer l when U is at most M^-l.
 pub fn level_of(seed: u64, row: u64, hash: u64, m: usize) -> u8 {
-    let mut rng = Rng::new(mixed(seed ^ mixed(row ^ mixed(hash))));
+    let mut rng = Rng::new(crate::hash::xxhash::xxh3_64_words(&[seed, row, hash], 0));
     let u = rng.unit();
     let shrink = 1.0_f64 / f64::from(u32::try_from(m.max(MIN_M)).unwrap_or(u32::MAX));
     let mut level = 0_u8;

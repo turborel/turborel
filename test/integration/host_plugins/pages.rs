@@ -11,7 +11,7 @@ use super::{crash, hosted, started};
 use crate::common::rows;
 
 /// The host plug-in's encoding and checksum.
-const PAGES: &str = "HOST ENCODING XOR (ID = 9001, OVERHEAD = 1); HOST HASH FUNCTION FNV (ID = 9001, LENGTH = 8);";
+const PAGES: &str = "HOST ENCODING XOR (ID = 9001, OVERHEAD = 1); HOST HASH FUNCTION XXH64 (ID = 9001, LENGTH = 8);";
 
 /// `db` opened from `dir` on the system's files.
 fn opened(db: &Database, dir: &std::path::Path) -> turborel::error::Result<()> {
@@ -41,7 +41,7 @@ fn pages_pass_through_a_host_plugins_encoding() {
     let dir = scratch.path("db");
     let db = started(&spec);
     db.set_setting("STORAGE.ENCODINGS", &Value::Char("XOR".into())).unwrap();
-    db.set_setting("STORAGE.CHECKSUM", &Value::Char("FNV".into())).unwrap();
+    db.set_setting("STORAGE.CHECKSUM", &Value::Char("XXH64".into())).unwrap();
     opened(&db, &dir).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION U CREATE TABLE T (K INTEGER, S VARCHAR(100))").unwrap();
     let s = db.session("U");

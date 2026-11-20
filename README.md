@@ -221,6 +221,8 @@ behind it, and each can be replaced or added to.
   grouping granted their share of it and spilling to disk past it.
 - [Parallel queries](doc/operator/04-settings.md#parallel-queries) run by
   morsels on a shared pool of workers, the same rows on any number of threads.
+- [xxHash](doc/operator/07-encryption.md#hash-functions) for every checksum,
+  hash table and filter, XXH3 vectorized on SSE2, AVX2, AVX-512 and NEON.
 
 ## Quick start
 

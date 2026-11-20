@@ -11,7 +11,7 @@ use super::reads::Changed;
 use super::{Change, Dead, Maker, Validated, Version};
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::MurmurSet;
+use crate::hash::xxhash::Xxh3Set;
 use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{Timestamp, TxId};
@@ -29,7 +29,7 @@ impl RowTable {
                 return Ok(());
             }
             let wrote_many = open.changes.len() > self.versions.tracked();
-            let mut writes = MurmurSet::default();
+            let mut writes = Xxh3Set::default();
             if !wrote_many {
                 open.changes.visit(&decode_change, &mut |c| {
                     writes.extend((!c.made).then_some(c.id));
@@ -92,7 +92,7 @@ impl RowTable {
     /// leaves; whether its row could not be stamped. An object made for
     /// no version it wrote, as for an attempt that failed, is no one's,
     /// and freed now.
-    fn committed(&self, (tx, at): (TxId, Timestamp), change: Change, adopted: &MurmurSet<u64>, dead: &mut Vec<Dead>) -> bool {
+    fn committed(&self, (tx, at): (TxId, Timestamp), change: Change, adopted: &Xxh3Set<u64>, dead: &mut Vec<Dead>) -> bool {
         if change.made {
             if !adopted.contains(&change.id) {
                 self.free_objects(&[change.id]);

@@ -10,7 +10,7 @@
 //! needs, its values single precision as its postings' are.
 
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_128_with_seed;
 use crate::vector::{Element, Layout, VectorRef};
 
 /// The image's format version (§4.1 offset 0).
@@ -41,7 +41,7 @@ pub const MOST_DIMENSIONS: u32 = 0x7fff_ffff;
 /// The bytes of a vector's hash, by which the index counts it.
 pub const HASH_BYTES: usize = 16;
 /// \[DESIGN\] The seed of a vector's hash, fixed for the index's life.
-const HASH_SEED: u32 = 0x5350_5653;
+const HASH_SEED: u64 = 0x5350_5653;
 /// The bytes of a position.
 const POSITION_BYTES: usize = 4;
 /// The bytes of a position and a FLOAT32 value.
@@ -195,12 +195,7 @@ impl SparseVector {
             bytes.extend_from_slice(&index.to_le_bytes());
             bytes.extend_from_slice(&value.to_bits().to_le_bytes());
         }
-        let (high, low) = murmur3_x64_128(&bytes, HASH_SEED);
-        let mut out = [0_u8; HASH_BYTES];
-        for (slot, byte) in out.iter_mut().zip(high.to_be_bytes().into_iter().chain(low.to_be_bytes())) {
-            *slot = byte;
-        }
-        out
+        xxh3_128_with_seed(&bytes, HASH_SEED).to_be_bytes()
     }
 }
 

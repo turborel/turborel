@@ -32,6 +32,7 @@ use turborel::settings::Effect;
 use turborel::value::{Decimal, Value};
 use turborel_aes::{AesGcm, ChaCha20Poly1305, HmacSha256, Sha256, Sha512};
 use turborel_lz4::Lz4;
+use turborel_simd::Simd;
 
 use tokio::runtime::Runtime;
 use turborel_server::auth::{Authenticator, Trust};
@@ -424,11 +425,13 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
     outcome.and(stopped).and(closed)
 }
 
-/// Registers with `db` the plug-ins the program ships (RULES.md D26, D48):
+/// Registers with `db` the plug-ins the program ships (RULES.md D26, D48,
+/// D460): the kernels of the widest vector instructions the processor has;
 /// LZ4; AES-256-GCM and ChaCha20-Poly1305 with the keys of `--keys`;
 /// SHA-256 and SHA-512; and HMAC-SHA-256 if `--checksum-key` names its key.
 /// The geometry types and their functions are built in.
 pub(crate) fn register(db: &Database, config: &Config) -> Result<hosted::HostKeys, String> {
+    db.register_kernels(Box::new(Simd::detect())).map_err(refused("the SIMD kernels"))?;
     db.register_encoding(Box::new(Lz4)).map_err(refused("LZ4"))?;
     let (keyring, host_keys) = hosted::keyring(db, config)?;
     db.register_encoding(Box::new(AesGcm::new(Arc::clone(&keyring)))).map_err(refused("AES-256-GCM"))?;
