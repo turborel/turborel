@@ -9,6 +9,11 @@ use crate::value::xml::{IMPLICIT, Typing, XmlType};
 use crate::xml::AtomicType;
 use crate::xml::schema::SimpleType;
 
+/// An XMLPARSE of `syntax`, stripping whitespace.
+fn parser(syntax: Syntax) -> XmlParse {
+    XmlParse { syntax, whitespace: Whitespace::Strip, binary: false }
+}
+
 /// The name `f` is called by and the type it declares of `args`.
 fn declared(f: &dyn ScalarFunction, args: &[DataType]) -> (String, DataType) {
     (f.name().to_owned(), f.return_type(args).unwrap())
@@ -22,9 +27,8 @@ fn declared(f: &dyn ScalarFunction, args: &[DataType]) -> (String, DataType) {
 /// argument's, the publishing functions XML(SEQUENCE).
 #[test]
 fn xml_functions_name_themselves_and_their_types() {
-    let parse_of = |syntax| XmlParse { syntax, whitespace: Whitespace::Strip, binary: false };
-    assert_eq!(declared(&parse_of(Syntax::Document), &[]), ("XMLPARSE".to_owned(), DataType::Xml(XmlType::Document(Typing::Untyped))));
-    assert_eq!(declared(&parse_of(Syntax::Content), &[]), ("XMLPARSE".to_owned(), DataType::Xml(XmlType::Content(Typing::Untyped))));
+    assert_eq!(declared(&parser(Syntax::Document), &[]), ("XMLPARSE".to_owned(), DataType::Xml(XmlType::Document(Typing::Untyped))));
+    assert_eq!(declared(&parser(Syntax::Content), &[]), ("XMLPARSE".to_owned(), DataType::Xml(XmlType::Content(Typing::Untyped))));
     assert_eq!(declared(&XmlIs(Syntax::Document), &[]), ("IS DOCUMENT".to_owned(), DataType::Boolean));
     assert_eq!(declared(&XmlIs(Syntax::Content), &[]), ("IS CONTENT".to_owned(), DataType::Boolean));
     let content = DataType::Xml(XmlType::Content(Typing::Any));
@@ -65,9 +69,9 @@ fn xml_functions_refuse_arguments_of_other_types() {
 }
 
 /// Verifies: [DESIGN] RULES.md D15, XMLPARSE takes text of at most
-/// turborel's limit of 64 MiB: longer text is refused with SQLCODE -900
-/// before it is parsed; the text of an octet string is none, as it is
-/// parsed by its encoding.
+/// turborel's limit of 64 MiB, and longer text is refused with SQLCODE
+/// -900 before it is parsed. The text of an octet string is none, as it
+/// is parsed by its encoding.
 #[test]
 fn text_past_the_limit_is_refused() {
     let long = Value::Char("a".repeat(MAX_INPUT.saturating_add(1)));
