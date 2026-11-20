@@ -312,6 +312,13 @@ verification approach DO-178C expects (§8).
 | D327 | A document's language is its FullText value's or its index's, TEXT_MATCHES's its index's; no language is detected |
 | D328 | A plug-in serves a language by the LANGUAGE kind, named where a built-in one is, a batch a call |
 | D329 | A single letter of a bigram language matches the bigrams holding it, and thesaurus terms are joined back |
+| D330 | LOCALTIME and LOCALTIMESTAMP are words, read as the functions only standing alone |
+| D331 | The trigonometric and logarithm functions are found in double precision |
+| D332 | MOD of DECFLOAT operands is exact, and of a non-whole one too |
+| D333 | ABS never raises 22003 |
+| D334 | A database counts its transactions committed and rolled back, shown in INFORMATION_SCHEMA.SERVER |
+| D335 | A connection whose request runs is watched for its client gone |
+| D336 | A prepared CALL's output dynamic parameters are its columns, sent as a row |
 
 ### The project
 
@@ -8926,6 +8933,96 @@ holds terms as written, while a pattern's word of a bigram language is
 its pairs, so the pairs of a run are joined back into it (`東京 京都`
 into `東京都`) before the thesaurus is asked, and the terms it gives are
 cut into pairs again in the pattern's language.
+
+#### D330. LOCALTIME and LOCALTIMESTAMP are words, read as the functions only standing alone
+
+SQL:2023 reserves LOCALTIME and LOCALTIMESTAMP (§5.2), and SQL-92 does
+not, so a column of either name may exist. Each is read as a regular
+identifier that is the datetime value function where it stands alone or
+before its precision in parentheses, as CURRENT_ROLE is (D75). Followed
+by a period it is a qualifier, and delimited it is a column's name. Each
+is CURRENT_TIME or CURRENT_TIMESTAMP cast to the type without time zone
+(§6.43 SR2, SR3), so it is the statement's instant in the session's
+displacement. A column's default of either is kept in the catalog as
+the datetime value function it is, codes 3 and 4 beside the three
+CURRENT forms, in format version 1.
+
+#### D331. The trigonometric and logarithm functions are found in double precision
+
+SIN, COS, TAN, SINH, COSH, TANH, ASIN, ACOS, ATAN, LOG and LOG10
+(§6.31, Features T622 to T624) are found by the platform's double
+precision functions, as LN, EXP and POWER are. Of a DECFLOAT operand the
+result is DECFLOAT(34) (IV141, IV143) of the double's 16 digits, and a
+logarithm of a DECFLOAT is found through its decimal exponent, so an
+argument past a double's range has one. LOG is the quotient of the
+base-10 logarithms of its argument and its base, so a power of 10 or of
+2 comes out a whole number. A result past a double's range raises 22003, as a cosh of
+1000 does.
+
+#### D332. MOD of DECFLOAT operands is exact, and of a non-whole one too
+
+MOD of exact operands of scale 0 is the truncated remainder, of the
+dividend's sign, of the divisor's type (§6.31 SR12, GR9). Of a DECFLOAT
+operand the remainder is found exactly from the coefficients at the
+lesser exponent, a dividend's exponent past the divisor's taken by
+modular arithmetic, so 1E100 is divided as itself and never through a
+double. GR9c gives no remainder of a DECFLOAT that is not a whole
+number, as SR12 allows one. Such operands get the same exact remainder,
+of the lesser exponent, so MOD(7.5, 2) is 1.5 (CONFORMANCE.md, Readings
+of ambiguous text).
+
+#### D333. ABS never raises 22003
+
+ABS of N is of N's declared type (§6.31 SR11), and GR8c raises 22003
+when −N is not a value of it. An exact type here is of a decimal
+precision, as many digits either side of 0, and an approximate or a
+decimal floating-point type is as wide either side, so −N always is.
+ABS of the least SMALLINT, −32768, is 32768, a SMALLINT of 5 digits.
+
+#### D334. A database counts its transactions committed and rolled back, shown in INFORMATION_SCHEMA.SERVER
+
+Each session counts the transactions it ended in its diagnostics area
+(§23.1 GR2h, GR2i). The same count goes into two atomic counters of the
+database, held beside its definitions and not in them, so a system
+table reads them with no lock through a handle, `Database::ended_counts`,
+that keeps nothing else of the database alive. A transaction in doubt (D25) is counted
+neither way. The counts run from the database's opening, go on when it
+is opened again in place (D57), and are not kept in its files.
+INFORMATION_SCHEMA.SERVER shows them to the database's owner alone as
+COMMITTED and ROLLED_BACK, with the server's own counts, and
+`Database::transactions_ended` gives them to a program that embeds the
+library, served or not.
+
+#### D335. A connection whose request runs is watched for its client gone
+
+A request runs on a worker lent the connection's stream, so nothing
+read the socket while a statement ran and a client gone left it running
+with its locks. Each TCP or Unix socket taken is copied once (a second
+descriptor, never registered with the runtime and never read). While a
+request is lent out, the connection's task peeks at the copy's next
+byte every LOOK_AGAIN, on a thread of the blocking pool, as the copy
+shares the socket's mode and may wait a moment. No byte to read, or an
+error, is the client gone, and what runs is cancelled as an operator's
+ending cancels it (D44). The connection then ends and its session rolls
+back. A byte waiting is a request sent ahead and tells nothing. So a
+client that sent one and closed, or closed TLS with its closing alert,
+is found only once the statement ends. A request answered within
+LOOK_AGAIN is never looked at, so the fast path costs nothing.
+
+#### D336. A prepared CALL's output dynamic parameters are its columns, sent as a row
+
+A `?` that is the argument of an OUT or INOUT parameter of a prepared
+CALL is an output dynamic parameter of the parameter's type (§20.7 GR7a,
+SR5a). The statement is described with a column for each, in the order
+of the procedure's parameters, which DESCRIBE OUTPUT and the protocol's
+Prepared show. Its input parameters are the other `?`s, an INOUT
+parameter's among them, so an OUT parameter's `?` takes no value. An
+execution gives the outputs back. The protocol sends them as one Rows
+reply of one row before the Complete, so no message or capability is
+added and protocol version 1 holds, and a client reading rows for a
+statement of columns reads them unchanged. EXECUTE puts them where its
+result using clause says and raises 07007 without one (§20.13 GR6,
+GR10). EXECUTE IMMEDIATE takes no such statement (§20.14 GR3).
 
 ## 2. Project layout
 

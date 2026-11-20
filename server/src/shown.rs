@@ -10,8 +10,10 @@
 //!   connection's client gave in Hello (`shown/attributes.rs`, RULES.md
 //!   D191).
 //! * INFORMATION_SCHEMA.SERVER: one row of counts: workers running a
-//!   statement, statements waiting for one, connections, and those refused
-//!   past SERVER.MAX_CONNECTIONS, told or closed at once.
+//!   statement, statements waiting for one, connections, those refused
+//!   past SERVER.MAX_CONNECTIONS, told or closed at once, and the
+//!   database's transactions committed and rolled back since it was
+//!   opened, of every session, served or not (RULES.md D334).
 //!
 //! A server not serving shows no connections, and counts of none.
 //!
@@ -29,7 +31,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use tokio::sync::watch;
 
 use turborel::catalog::ColumnDesc;
-use turborel::db::ServedConnections;
+use turborel::db::{EndedCounts, ServedConnections};
 use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
@@ -336,7 +338,7 @@ impl SystemTable for Connections {
 }
 
 /// \[EXTENSION\] INFORMATION_SCHEMA.SERVER.
-pub(crate) struct Server(pub(crate) Arc<Shown>);
+pub(crate) struct Server(pub(crate) Arc<Shown>, pub(crate) EndedCounts);
 
 impl SystemTable for Server {
     fn name(&self) -> &'static str {
@@ -344,7 +346,10 @@ impl SystemTable for Server {
     }
 
     fn columns(&self) -> Vec<ColumnDesc> {
-        ["WORKERS_BUSY", "STATEMENTS_WAITING", "CONNECTIONS", "REFUSED", "CLOSED_UNTOLD"].into_iter().map(counted).collect()
+        ["WORKERS_BUSY", "STATEMENTS_WAITING", "CONNECTIONS", "REFUSED", "CLOSED_UNTOLD", "COMMITTED", "ROLLED_BACK"]
+            .into_iter()
+            .map(counted)
+            .collect()
     }
 
     fn rows(&self, seen: &Seen<'_>) -> Result<Vec<Row>> {
@@ -354,7 +359,16 @@ impl SystemTable for Server {
         let shown = &self.0;
         let connections = u64::try_from(shown.locked().len()).unwrap_or(u64::MAX);
         let read = |n: &AtomicU64| count(n.load(Ordering::Relaxed));
-        Ok(vec![vec![read(&shown.busy), read(&shown.waiting), count(connections), read(&shown.refused), read(&shown.closed)]])
+        let ended = self.1.now();
+        Ok(vec![vec![
+            read(&shown.busy),
+            read(&shown.waiting),
+            count(connections),
+            read(&shown.refused),
+            read(&shown.closed),
+            count(ended.committed),
+            count(ended.rolled_back),
+        ]])
     }
 }
 

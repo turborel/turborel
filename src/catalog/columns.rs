@@ -8,7 +8,7 @@ use crate::ast::UserFunction;
 use crate::value::DataType;
 use crate::value::Value;
 use crate::value::datetime::{Clocked, Moment};
-use crate::value::types::datetime::current;
+use crate::value::types::datetime::{current, current_local};
 
 /// [X3.135-1986 §4.3] a column's description is its name, data type, and nullability.
 #[derive(Debug, Clone)]
@@ -122,8 +122,9 @@ pub enum ColumnDefault {
     User(UserFunction),
     /// [ISO/IEC 9075:1992 §6.8] CURRENT_DATE, CURRENT_TIME or
     /// CURRENT_TIMESTAMP, of `precision`: the instant of the statement that
-    /// takes the default \[GR1d\].
-    Datetime(Moment, u32),
+    /// takes the default \[GR1d\]; or, local, [ISO/IEC 9075-2:2023 §6.43,
+    /// §11.5 GR2c] LOCALTIME or LOCALTIMESTAMP.
+    Datetime(Moment, u32, bool),
 }
 
 impl ColumnDesc {
@@ -142,7 +143,8 @@ impl ColumnDesc {
         match self.default.as_ref().or(of_domain) {
             Some(ColumnDefault::Value(v)) => v.clone(),
             Some(ColumnDefault::User(f)) => user.value(*f).map_or(Value::Null, |s| Value::Char(s.to_owned())),
-            Some(ColumnDefault::Datetime(moment, precision)) => current(*moment, *precision, now.instant()),
+            Some(ColumnDefault::Datetime(moment, precision, false)) => current(*moment, *precision, now.instant()),
+            Some(ColumnDefault::Datetime(moment, precision, true)) => current_local(*moment, *precision, now.instant()),
             None => Value::Null,
         }
     }

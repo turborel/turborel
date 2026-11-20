@@ -48,6 +48,10 @@ VARYING value. No row is no data, SQLSTATE 02000; more than one, an
 exception. Any other query is read by a cursor
 ([ALLOCATE CURSOR](allocate-cursor.md)), not executed.
 
+A CALL whose `?`s are arguments of OUT or INOUT parameters
+([CALL](call.md)) puts their values, once it has run, where the INTO
+clause says, as a single SELECT puts its row.
+
 Any other statement runs as it would run written there. EXECUTE is a
 statement of its own: the diagnostics area names EXECUTE, and the
 statement prepared as its DYNAMIC_FUNCTION, `DYNAMIC UPDATE CURSOR` and
@@ -60,7 +64,8 @@ EXECUTE runs only in a program that embeds turborel, as
 ## RULES
 
 1. A statement of the name is prepared.
-2. A query executed is a single SELECT, and has an INTO clause.
+2. A query executed is a single SELECT, and has an INTO clause, as has
+   a CALL whose `?`s take outputs.
 3. A statement of dynamic parameters has a USING clause; of none, no
    USING clause.
 4. The USING clause gives one value for each parameter, of a type cast
@@ -82,7 +87,7 @@ Those the statement prepared needs.
 |---|---|---|
 | 26000 | -921 | No statement of the name is prepared (rule 1) |
 | 07003 | -921 | A query that is not a single SELECT (rule 2) |
-| 07007 | -921 | A single SELECT and no INTO clause (rule 2) |
+| 07007 | -921 | A single SELECT, or a CALL whose `?`s take outputs, and no INTO clause (rule 2) |
 | 07004 | -921 | Dynamic parameters and no USING clause (rule 3) |
 | 07001 | -921 | The USING clause does not give one valid value for each parameter (rules 3, 4) |
 | 07002 | -921 | The INTO clause does not match the columns (rule 5) |

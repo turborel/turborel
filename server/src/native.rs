@@ -18,7 +18,10 @@
 //! fails sent as the client's error before the connection closes; rolled
 //! back if the connection ends otherwise, lost or failed, cut by the
 //! server stopping or ended by its operator, as a direct invocation of SQL
-//! that terminated unexpectedly [ISO/IEC 9075:1992 §20.1 GR2a].
+//! that terminated unexpectedly [ISO/IEC 9075:1992 §20.1 GR2a]. A client
+//! gone while its request runs, its socket closed or failed, is found by
+//! a watch on its socket (`transport/watch.rs`, RULES.md D335), and what
+//! runs cancelled as an operator's ending cancels it, so its locks go.
 //!
 //! A connection has SERVER.LOGIN_TIMEOUT_MS to authenticate, in messages of
 //! at most `LOGIN_MESSAGE_BYTES`, its checks run apart from the workers
@@ -58,12 +61,16 @@ use crate::server::{Connection, Protocol, Registered, Services, Serving};
 use crate::settings;
 use crate::shown::Present;
 use crate::told;
-use crate::transport::Transport;
+use crate::transport::{Transport, Watch};
 
 /// \[DESIGN\] How often a statement of a connection its operator ended is
 /// cancelled again until it stops: a cancel made before it began does
 /// nothing (RULES.md D44). As often as a wait for a lock looks.
 const CANCEL_AGAIN: std::time::Duration = std::time::Duration::from_millis(20);
+/// \[DESIGN\] How often a connection whose request runs is looked at for
+/// its client gone (RULES.md D335). A request answered sooner is never
+/// looked at.
+const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_millis(100);
 /// \[DESIGN\] How long a refused connection is held after its refusal,
 /// for the client to close it (`Wire::close_refusing`): one that has read
 /// its refusal closes at once; one that neither sends nor closes holds a
@@ -114,13 +121,21 @@ async fn next(wire: &mut Wire, services: &Services, present: &Present) -> Result
 }
 
 /// What `worked` gives back, once it is done: if the operator ends the
-/// connection first, what its session runs cancelled, again every
-/// `CANCEL_AGAIN` until it stops.
-async fn stopped<T>(worked: impl Future<Output = T>, present: &Present) -> T {
+/// connection first, or `watch` finds its client gone (RULES.md D335),
+/// what its session runs cancelled, again every `CANCEL_AGAIN` until it
+/// stops.
+async fn stopped<T>(worked: impl Future<Output = T>, present: &Present, watch: Option<Watch>) -> T {
     tokio::pin!(worked);
+    let gone = async {
+        match watch {
+            Some(watch) => watch.gone_within(LOOK_AGAIN).await,
+            None => std::future::pending().await,
+        }
+    };
     tokio::select! {
         back = &mut worked => return back,
         () = present.ended() => {}
+        () = gone => {}
     }
     loop {
         present.cancel();
@@ -377,12 +392,14 @@ async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer)
             }
             Err(e) => break Err(e),
         };
+        let watch = lent.wire.watch();
         let (loan, running, limits) = (Loan::new(&slot, lent), running.clone(), limits(services));
         // Not waited for: the loan comes back once the request is answered,
         // and the fast client's requests after it (`Loan::run`). Until
-        // then, an operator ending the connection cancels what runs.
+        // then, an operator ending the connection, or its client gone,
+        // cancels what runs.
         drop(services.spawn_with(move |permit| loan.run(work, &running, permit, limits)).await);
-        lent = stopped(slot.take(), present).await;
+        lent = stopped(slot.take(), present, watch).await;
         // A read or a write that failed lost the connection.
         if let Some(failed) = lent.failed.take() {
             break Err(failed);

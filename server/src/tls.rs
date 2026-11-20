@@ -420,6 +420,10 @@ impl Transport for Prefixed {
         }
         self.inner.direct()
     }
+
+    fn watch(&self) -> Option<crate::transport::Watch> {
+        self.inner.watch()
+    }
 }
 
 /// The TLS state is the runtime's: a thread cannot read or write through

@@ -195,12 +195,7 @@ impl Session {
         let prepared = self.prepared_as(&key, "§17.10 GR1")?;
         let types: Vec<DataType> = prepared.parameters().iter().map(|t| t.clone().data_type()).collect();
         if !prepared.is_query() {
-            // [§17.9 GR6] a statement of no row: of degree 0.
-            if let Some(result) = result {
-                self.using_targets(result, &[], params, ("X3.135-1986 §8.10 GR8", "X3.135-1986 §8.10 GR9"))?;
-            }
-            let values = self.using_values(parameters, &types, params, "§17.10 GR4")?;
-            return self.run_prepared(&prepared, values, commands::EXECUTE);
+            return self.execute_outputs(&prepared, (result, parameters), &types, params);
         }
         if !prepared.is_single_row() {
             let msg =
@@ -214,6 +209,34 @@ impl Session {
         let targets = self.using_targets(result, prepared.columns(), params, ("X3.135-1986 §8.10 GR8", "X3.135-1986 §8.10 GR9"))?;
         let values = self.using_values(parameters, &types, params, "§17.10 GR4")?;
         self.single_row(&prepared, values, &targets, params)
+    }
+
+    /// [ISO/IEC 9075:1992 §17.10] EXECUTE of `prepared`, no query, with
+    /// the values of `parameters`, of `types`. [§17.9 GR6] A statement of
+    /// no row is of degree 0; [ISO/IEC 9075-2:2023 §20.13 GR6, GR10] a CALL
+    /// of output dynamic parameters puts their values where `result` says,
+    /// SQLSTATE 07007 if it says nowhere.
+    fn execute_outputs(
+        &self,
+        prepared: &Prepared,
+        (result, parameters): (Option<&UsingClause>, Option<&UsingClause>),
+        types: &[DataType],
+        params: &mut Params,
+    ) -> Result<Completion> {
+        let columns = prepared.columns();
+        let targets = if let Some(result) = result {
+            Some(self.using_targets(result, columns, params, ("X3.135-1986 §8.10 GR8", "X3.135-1986 §8.10 GR9"))?)
+        } else if prepared.has_outputs() {
+            let msg = "[ISO/IEC 9075-2:2023 §20.13 GR6] a statement of output dynamic parameters needs a <result using clause>";
+            return Err(dynamic_error(SqlState::USING_CLAUSE_REQUIRED_RESULTS, msg.to_owned()));
+        } else {
+            None
+        };
+        let values = self.using_values(parameters, types, params, "§17.10 GR4")?;
+        let (done, outputs) = self.run_prepared_out(prepared, values, commands::EXECUTE)?;
+        let Some(targets) = targets.filter(|_| prepared.has_outputs()) else { return Ok(done) };
+        // The CALL's warning, else the assignments'.
+        self.put_row(&targets, columns, &outputs, params).map(|put| if done == Completion::Success { put } else { done })
     }
 
     /// [ISO/IEC 9075:1992 §17.10 GR8a, §13.5] The one row of the `<dynamic
@@ -243,7 +266,7 @@ impl Session {
     fn execute_immediate(&self, source: &ValueSpecification, params: &Params) -> Result<Completion> {
         let text = self.statement_text(source, params, "§17.11 SR1")?;
         let prepared = self.prepared_quietly(&text).map_err(unplaced)?;
-        if prepared.is_query() || !prepared.parameters().is_empty() {
+        if prepared.is_query() || !prepared.parameters().is_empty() || prepared.has_outputs() {
             let msg = "[ISO/IEC 9075:1992 §17.11 GR3a, GR3c] a statement executed immediately is no query, and has no <dynamic parameter specification>";
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::DYNAMIC_SYNTAX_ERROR));
         }

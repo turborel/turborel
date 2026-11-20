@@ -1,10 +1,14 @@
 //! The numeric value functions of Feature T621 [ISO/IEC 9075-2:2023
 //! §6.31]: `<natural logarithm>` LN, `<exponential function>` EXP, `<power
 //! function>` POWER, `<square root>` SQRT, `<floor function>` FLOOR and
-//! `<ceiling function>` CEIL or CEILING. Their names are no key words of
-//! SQL-92, so the parser reads each before "(" as the function
-//! (`parser/numeric.rs`); each is registered, so the binder finds it by
-//! name.
+//! `<ceiling function>` CEIL or CEILING; the `<absolute value
+//! expression>` ABS and the `<modulus expression>` MOD of Feature T441
+//! (`numeric/modulus.rs`); and the `<trigonometric
+//! function>`s of Feature T622, the `<general logarithm function>` LOG of
+//! T623 and the `<common logarithm>` LOG10 of T624 (`numeric/trig.rs`).
+//! Their names are no key words of SQL-92, so the parser reads each before
+//! "(" as the function (`parser/numeric.rs`); each is registered, so the
+//! binder finds it by name.
 //!
 //! \[DESIGN\] Of exact and approximate operands LN, EXP, POWER and SQRT
 //! are found in double precision, and their result is DOUBLE PRECISION
@@ -21,9 +25,15 @@ use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::value::{DOUBLE_PRECISION, DataType, DecFloat, Decimal, MAX_DECFLOAT_PRECISION, Spelled, Value, compare, pow10};
 
 mod decimal;
+mod modulus;
+mod trig;
 pub(super) use decimal::square_root;
+pub use modulus::MOD;
+pub use trig::{ACOS, ASIN, ATAN, COS, COSH, LOG, LOG10, SIN, SINH, TAN, TANH, Trig};
 
-/// [ISO/IEC 9075-2:2023 §6.31] LN, no key word of SQL-92.
+/// [ISO/IEC 9075-2:2023 §6.31] ABS, no key word of SQL-92.
+pub const ABS: &str = "ABS";
+/// [§6.31] LN, no key word of SQL-92.
 pub const LN: &str = "LN";
 /// [§6.31] EXP, no key word of SQL-92.
 pub const EXP: &str = "EXP";
@@ -62,11 +72,41 @@ pub enum Numeric {
     Floor,
     /// CEILING, or CEIL.
     Ceiling,
+    /// [§6.31] ABS (Feature T441).
+    Abs,
+    /// [§6.31] MOD (Feature T441).
+    Mod,
+    /// [§6.31] A `<trigonometric function>` (Feature T622).
+    Trigonometric(Trig),
+    /// [§6.31] LOG (Feature T623).
+    Log,
+    /// [§6.31] LOG10 (Feature T624).
+    Log10,
 }
 
 impl Numeric {
     /// Each, in the order of §6.31's Format.
-    pub const EVERY: [Numeric; 6] = [Numeric::Ln, Numeric::Exp, Numeric::Power, Numeric::Sqrt, Numeric::Floor, Numeric::Ceiling];
+    pub const EVERY: [Numeric; 19] = [
+        Numeric::Abs,
+        Numeric::Mod,
+        Numeric::Trigonometric(Trig::Sin),
+        Numeric::Trigonometric(Trig::Cos),
+        Numeric::Trigonometric(Trig::Tan),
+        Numeric::Trigonometric(Trig::Sinh),
+        Numeric::Trigonometric(Trig::Cosh),
+        Numeric::Trigonometric(Trig::Tanh),
+        Numeric::Trigonometric(Trig::Asin),
+        Numeric::Trigonometric(Trig::Acos),
+        Numeric::Trigonometric(Trig::Atan),
+        Numeric::Log,
+        Numeric::Log10,
+        Numeric::Ln,
+        Numeric::Exp,
+        Numeric::Power,
+        Numeric::Sqrt,
+        Numeric::Floor,
+        Numeric::Ceiling,
+    ];
 
     /// The function of name `name`, CEIL CEILING's; none if it is none.
     pub fn named(name: &str) -> Option<Numeric> {
@@ -85,12 +125,17 @@ impl Numeric {
             Numeric::Sqrt => SQRT,
             Numeric::Floor => FLOOR,
             Numeric::Ceiling => CEILING,
+            Numeric::Abs => ABS,
+            Numeric::Mod => MOD,
+            Numeric::Trigonometric(t) => t.name(),
+            Numeric::Log => LOG,
+            Numeric::Log10 => LOG10,
         }
     }
 
-    /// How many operands it takes: POWER two, the others one.
+    /// How many operands it takes: POWER, MOD and LOG two, the others one.
     pub fn operands(self) -> usize {
-        if self == Numeric::Power { 2 } else { 1 }
+        if matches!(self, Numeric::Power | Numeric::Mod | Numeric::Log) { 2 } else { 1 }
     }
 }
 
@@ -104,11 +149,15 @@ impl ScalarFunction for Numeric {
         Numeric::name(*self)
     }
 
-    /// [§6.31 SR16 to SR20] Each operand a number. Of FLOOR and CEILING
+    /// [§6.31 SR11 to SR20] Each operand a number. Of ABS the result is
+    /// of its operand's type \[SR11\]. Of FLOOR and CEILING
     /// the result is exact of scale 0 of an exact operand \[SR20a\], of
     /// precision enough for its whole part, one digit more than it has
-    /// (IV151); else the operand's type \[SR20b, SR20c\]. Of the others
-    /// DECFLOAT if an operand is, else DOUBLE PRECISION.
+    /// (IV151); else the operand's type \[SR20b, SR20c\]. Of MOD each
+    /// operand exact of scale 0 or DECFLOAT, the result DECFLOAT(34) if
+    /// one is (IV140), else the divisor's type \[SR12\]. Of the others
+    /// DECFLOAT(34) if an operand is (IV141, IV143, IV145, IV147, IV149),
+    /// else DOUBLE PRECISION (IV142, IV144, IV146, IV148, IV150).
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         if args.len() != self.operands() {
             return fail(Code::Api, format!("[DESIGN] {} takes {} operands", self.name(), self.operands()));
@@ -126,14 +175,25 @@ impl ScalarFunction for Numeric {
             } else {
                 DataType::Exact { precision: precision.saturating_sub(*scale).saturating_add(1), scale: 0, spelled: Spelled::Numeric }
             }),
-            (Numeric::Floor | Numeric::Ceiling, Some(t)) => Ok(t.clone()),
-            (Numeric::Ln | Numeric::Exp | Numeric::Power | Numeric::Sqrt | Numeric::Floor | Numeric::Ceiling, _) => {
-                Ok(if decimal { DECFLOAT } else { DOUBLE })
-            }
+            (Numeric::Floor | Numeric::Ceiling | Numeric::Abs, Some(t)) => Ok(t.clone()),
+            (Numeric::Mod, _) => modulus_type(args, decimal),
+            (
+                Numeric::Ln
+                | Numeric::Exp
+                | Numeric::Power
+                | Numeric::Sqrt
+                | Numeric::Floor
+                | Numeric::Ceiling
+                | Numeric::Abs
+                | Numeric::Trigonometric(_)
+                | Numeric::Log
+                | Numeric::Log10,
+                _,
+            ) => Ok(if decimal { DECFLOAT } else { DOUBLE }),
         }
     }
 
-    /// [§6.31 GR12 to GR16] Null if an operand is; else the function's
+    /// [§6.31 GR9 to GR16] Null if an operand is; else the function's
     /// value.
     fn call(&self, args: &[Value]) -> Result<Value> {
         if args.iter().any(Value::is_null) {
@@ -147,11 +207,42 @@ impl ScalarFunction for Numeric {
             (Numeric::Sqrt, [v]) => square_root_of(v),
             (Numeric::Floor, [v]) => rounded(v, false),
             (Numeric::Ceiling, [v]) => rounded(v, true),
-            (Numeric::Ln | Numeric::Exp | Numeric::Power | Numeric::Sqrt | Numeric::Floor | Numeric::Ceiling, _) => {
-                fail(Code::Api, format!("[DESIGN] {} takes {} operands", self.name(), self.operands()))
-            }
+            (Numeric::Abs, [v]) => absolute(v),
+            (Numeric::Mod, [n, m]) => modulus::remainder(n, m),
+            (Numeric::Trigonometric(t), [v]) => trig::trigonometric(*t, v),
+            (Numeric::Log, [base, argument]) => trig::logarithm(base, argument),
+            (Numeric::Log10, [v]) => trig::common_logarithm(v),
+            (
+                Numeric::Ln
+                | Numeric::Exp
+                | Numeric::Power
+                | Numeric::Sqrt
+                | Numeric::Floor
+                | Numeric::Ceiling
+                | Numeric::Abs
+                | Numeric::Mod
+                | Numeric::Trigonometric(_)
+                | Numeric::Log
+                | Numeric::Log10,
+                _,
+            ) => fail(Code::Api, format!("[DESIGN] {} takes {} operands", self.name(), self.operands())),
         }
     }
+}
+
+/// [§6.31 SR12] The type of MOD of operands of `types`, each exact of
+/// scale 0 or DECFLOAT: DECFLOAT(34) if one is, `decimal` (IV140), else
+/// the divisor's.
+fn modulus_type(types: &[DataType], decimal: bool) -> Result<DataType> {
+    let allowed = |t: &&DataType| matches!(t, DataType::Exact { scale: 0, .. } | DataType::DecFloat { .. });
+    if let Some(t) = types.iter().find(|t| !allowed(t)) {
+        return fail(
+            Code::SyntaxRule,
+            format!("[ISO/IEC 9075-2:2023 §6.31 SR12] an operand of MOD is exact of scale 0 or decimal floating point, not {t}"),
+        );
+    }
+    let divisor = types.get(1).cloned().ok_or_else(|| crate::error::SqlError::new(Code::Api, "[DESIGN] MOD takes two operands"))?;
+    Ok(if decimal { DECFLOAT } else { divisor })
 }
 
 /// SQLSTATE 22003, `why` failing.
@@ -177,6 +268,24 @@ fn double(v: &Value) -> Result<f64> {
 /// Which side of 0 the number `v` is on.
 fn sign(v: &Value) -> Result<Ordering> {
     compare(v, &Value::Exact(Decimal::new(0, 0))).map_or_else(|| fail(Code::Api, format!("[DESIGN] {v} is not a number")), Ok)
+}
+
+/// [§6.31 GR8] ABS: `v` if it is not below 0 \[GR8b\], else −`v`
+/// \[GR8c\]. −N is a value of N's type, so GR8c's 22003 is never raised:
+/// an exact type here is of a decimal precision, as many digits either
+/// side of 0, which an `i128` holds negated; an approximate and a
+/// decimal floating-point type are as wide either side (RULES.md D333).
+fn absolute(v: &Value) -> Result<Value> {
+    if sign(v)? != Ordering::Less {
+        return Ok(v.clone());
+    }
+    if let Value::Exact(Decimal { units, scale }) = v {
+        return Ok(Value::Exact(Decimal::new(units.saturating_neg(), *scale)));
+    }
+    if let Value::DecFloat(d) = v {
+        return Ok(Value::DecFloat(d.negated()));
+    }
+    Ok(Value::Approx(-double(v)?))
 }
 
 /// [§6.31 GR12] LN: 2201E of 0 or below, else the natural logarithm.

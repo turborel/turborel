@@ -339,6 +339,7 @@ ZONE or not (RULES.md D54).
 | Storing, comparing, indexing, uniqueness | Kept in UTC, by their instants | §8.2 GR5 |
 | Assignment | To a datetime of their fields | §9.2 SR2, GR3l |
 | CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP | One instant in a statement | §6.8 |
+| LOCALTIME, LOCALTIMESTAMP | That instant without time zone, in the session's displacement (Feature F051, [Local datetimes](#local-datetimes)) | ISO/IEC 9075-2:2023 §6.43 SR2, SR3 |
 | CAST | To and from character strings, and between datetimes | §6.10 SR4, GR5e, GR6e, GR9–GR11 |
 | EXTRACT | A datetime's fields and displacement | §6.6 |
 | CASE, set operations | Of one datetime type | §9.3 SR3e |
@@ -1230,6 +1231,34 @@ and of ON OVERFLOW ERROR the error is raised then. Their total does not
 depend on their order, so it is the error the result would raise
 (RULES.md D15). ANY_VALUE, LISTAGG, WITHIN and OVERFLOW, which SQL-92 does
 not reserve, are key words only where they are read.
+
+### Local datetimes
+
+Feature F051 (Basic date and time), its subfeatures LOCALTIME (F051-07)
+and LOCALTIMESTAMP (F051-08) with the DATE, TIME and TIMESTAMP types,
+their literals, comparison, CAST and CURRENT_DATE of [Data
+types](#data-types).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| LOCALTIME, LOCALTIMESTAMP | §6.43 SR2, SR3, GR1 to GR3 | CAST(CURRENT_TIME(p) AS TIME(p) WITHOUT TIME ZONE) and CAST(CURRENT_TIMESTAMP(p) AS TIMESTAMP(p) WITHOUT TIME ZONE), so of the statement's one instant, their fields in the session's displacement. Of an omitted precision 0 and 6 [§6.1 SR38]; a precision past 6 is SQLCODE -900. |
+| WITHOUT TIME ZONE | §6.1 SR39 | Written after TIME or TIMESTAMP in a data type, as its default is. WITHOUT is a word there alone. |
+| Defaults | §11.5 SR4d, GR2c | A column's default of either is taken as the statement that takes it runs, shown in COLUMNS.COLUMN_DEFAULT with its precision. |
+| The names | §5.2 | SQL-92 does not reserve them, so each is the function standing alone or before its precision, a column's name qualified or delimited (RULES.md D330). |
+
+### Absolute value, modulus, trigonometry and logarithms
+
+Features T441 (ABS and MOD functions), T622 (Trigonometric functions),
+T623 (General logarithm functions) and T624 (Common logarithm
+functions), of §6.31.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| ABS | §6.31 SR11, GR8 | Of a number, of its declared type; null of null. −N is always of the type, so 22003 is never raised (RULES.md D333). |
+| MOD | §6.31 SR12, GR9 | Of exact numbers of scale 0, of the divisor's type, or DECFLOAT(34) if either is DECFLOAT (IV140), else SQLCODE -103. The remainder of the dividend's sign, found exactly. A divisor of 0 is SQLSTATE 22012; a null operand gives null first (RULES.md D332). |
+| SIN, COS, TAN, SINH, COSH, TANH, ASIN, ACOS, ATAN | §6.31 SR13, GR10 | Of a number in radians, DOUBLE PRECISION (IV144), or DECFLOAT(34) of a DECFLOAT (IV143). ASIN and ACOS of a value outside −1 to 1 are 22003, as is a result past the range (RULES.md D331). |
+| LOG, LOG10 | §6.31 SR14, SR15, GR11 | LOG(base, argument), and LOG10(x) as LOG(10, x). DOUBLE PRECISION (IV142), or DECFLOAT(34) if either is DECFLOAT (IV141). An argument of 0 or below, or a base of 0 or below or of 1, is 22003. |
+| The names | §5.2 | ABS, MOD and the others, which SQL-92 does not reserve, are the functions only before "(", so a column may still be named one. |
 
 ### Enhanced numeric functions
 
@@ -4202,7 +4231,7 @@ PARTITIONS and PARTITION_INDEXES are extensions
 
 | View | Shows |
 |---|---|
-| CONNECTIONS, SERVER, REPLICAS | A server's connections, its counts and its replicas |
+| CONNECTIONS, SERVER, REPLICAS | A server's connections, its counts with the database's transactions committed and rolled back (RULES.md D334), and its replicas |
 | FILES, FILE_FORMATS | A database's files and their formats |
 | JOBS | Its background jobs |
 | MEMORY_RESERVATIONS | What holds its memory |
@@ -4385,6 +4414,11 @@ parts: `cargo xtask features` writes their rows from it, and
 | T625 | LISTAGG | [LISTAGG and ANY_VALUE](#listagg-and-any_value) |
 | T626 | ANY_VALUE | [LISTAGG and ANY_VALUE](#listagg-and-any_value) |
 | T621 | Enhanced numeric functions | [Enhanced numeric functions](#enhanced-numeric-functions) |
+| F051 | Basic date and time | [Local datetimes](#local-datetimes) |
+| T441 | ABS and MOD functions | [Absolute value, modulus, trigonometry and logarithms](#absolute-value-modulus-trigonometry-and-logarithms) |
+| T622 | Trigonometric functions | [Absolute value, modulus, trigonometry and logarithms](#absolute-value-modulus-trigonometry-and-logarithms) |
+| T623 | General logarithm functions | [Absolute value, modulus, trigonometry and logarithms](#absolute-value-modulus-trigonometry-and-logarithms) |
+| T624 | Common logarithm functions | [Absolute value, modulus, trigonometry and logarithms](#absolute-value-modulus-trigonometry-and-logarithms) |
 | T301 | Functional dependencies | [Functional dependencies](#functional-dependencies) |
 | E121-02 | ORDER BY columns need not be in select list | [Sort keys](#sort-keys) |
 | E121-03 | Value expressions in ORDER BY clause | [Sort keys](#sort-keys) |
@@ -5165,6 +5199,7 @@ Where the standards are unclear, turborel reads them as follows.
 | JVNi of JSON_OBJECT [2023 §6.34 GR2d ii 1 G] | The rule makes JVNi a member's key. VJNi, the value of its name, is meant. |
 | VBVi, CJOA and NJVE of the aggregates [2023 §10.11 GR4b ii 2 D II, GR4c, GR5g] | GR4b ii 2 D II lets VBVi be the value, where the other cases let JBVi be; GR4c lets JACF be CJOA, where GR4b made CJO; GR5g counts NJVE, which only §6.34 defines. JBVi, CJO and NTXA are meant. |
 | FORMAT after a query of JSON_ARRAY [2023 §6.34 F, §7.6] | In JSON_ARRAY of a query whose FROM clause ends in a table of no correlation name, FORMAT is read as that table's correlation name, as the grammar lets it be, FORMAT being no reserved word. AS before a name, or the query in parentheses, keeps it the `<JSON input clause>`. |
+| MOD of a DECFLOAT that is no whole number [2023 §6.31 SR12, GR9c] | SR12 lets an operand of MOD be any DECFLOAT, and GR9c defines the remainder only of a whole quotient of scale 0. The remainder is then found as of whole numbers, of the operands' digits at the lesser exponent, so MOD(7.5, 2) is 1.5, of the dividend's sign (RULES.md D332). |
 
 ### The property graph standard
 

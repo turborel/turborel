@@ -371,7 +371,7 @@ impl Server {
         db.set_credentials(Box::new(Pbkdf2::of(&db)))?;
         let shown = Arc::new(Shown::default());
         db.register_system_table(Box::new(shown::Connections(Arc::clone(&shown))))?;
-        db.register_system_table(Box::new(shown::Server(Arc::clone(&shown))))?;
+        db.register_system_table(Box::new(shown::Server(Arc::clone(&shown), db.ended_counts())))?;
         db.register_system_table(Box::new(shown::ConnectionAttributes(Arc::clone(&shown))))?;
         db.replace_scalar_function(Box::new(shown::QueryAttribute(Arc::clone(&shown.requests))))?;
         db.set_served_connections(Box::new(Operator::of(&shown)))?;

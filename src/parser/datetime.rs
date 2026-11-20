@@ -1,6 +1,7 @@
 //! [ISO/IEC 9075:1992 §5.3, §6.1, §6.6, §6.8] The datetime grammar: the
 //! `<datetime type>`s, the `<datetime literal>`s, the `<datetime value
-//! function>`s and the `<extract expression>`.
+//! function>`s, LOCALTIME and LOCALTIMESTAMP of ISO/IEC 9075-2:2023 §6.43
+//! too, and the `<extract expression>`.
 
 use super::Parser;
 use crate::ast::{DatetimeFunction, ExtractField, Literal, ValueExpression};
@@ -8,6 +9,18 @@ use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::DataType;
 use crate::value::datetime::{Field, MAX_TIME_PRECISION, Moment, parse};
+
+/// [ISO/IEC 9075-2:2023 §6.43] LOCALTIME, a `<reserved word>` there:
+/// \[DESIGN\] here a `<regular identifier>` no period follows, so the
+/// columns and names that spell it keep their meaning as CURRENT_ROLE's do
+/// (RULES.md D75, D330).
+pub(crate) const LOCALTIME: &str = "LOCALTIME";
+/// [ISO/IEC 9075-2:2023 §6.43] LOCALTIMESTAMP, read as LOCALTIME is.
+pub(crate) const LOCALTIMESTAMP: &str = "LOCALTIMESTAMP";
+
+/// [ISO/IEC 9075-2:2023 §6.1] WITHOUT, of `<with or without time zone>`,
+/// no key word of SQL-92: a word only after a time or timestamp type.
+const WITHOUT: &str = "WITHOUT";
 
 /// The datetime type, literal or value function key word `word` names,
 /// and which.
@@ -55,13 +68,36 @@ impl Parser {
         Ok(Literal::Datetime(written))
     }
 
+    /// Whether LOCALTIME or LOCALTIMESTAMP is next, as
+    /// `datetime_value_function` reads it, its token as wide as the word,
+    /// so not delimited by double quotes, and no period after it; and
+    /// which.
+    pub(super) fn at_local_datetime(&self) -> Option<Moment> {
+        let t = self.token_at(0);
+        let Tok::Identifier(word) = &t.tok else { return None };
+        let moment = if word == LOCALTIME {
+            Moment::Time
+        } else if word == LOCALTIMESTAMP {
+            Moment::Timestamp
+        } else {
+            return None;
+        };
+        let regular = t.end.checked_sub(t.start) == Some(word.len());
+        (regular && !matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD))).then_some(moment)
+    }
+
     /// [ISO/IEC 9075:1992 §6.8] `<datetime value function>` ::=
     /// CURRENT_DATE | CURRENT_TIME \[(`<time precision>`)\] |
-    /// CURRENT_TIMESTAMP \[(`<timestamp precision>`)\], taken if one is
-    /// next.
+    /// CURRENT_TIMESTAMP \[(`<timestamp precision>`)\]; [ISO/IEC
+    /// 9075-2:2023 §6.43] | LOCALTIME \[(`<time precision>`)\] |
+    /// LOCALTIMESTAMP \[(`<timestamp precision>`)\]; taken if one is next.
     pub(super) fn datetime_value_function(&mut self) -> Result<Option<DatetimeFunction>> {
-        let Tok::KeyWord(word @ (kw::CURRENT_DATE | kw::CURRENT_TIME | kw::CURRENT_TIMESTAMP)) = *self.peek() else { return Ok(None) };
-        let moment = moment_of(word).ok_or_else(|| self.syntax("expected a <datetime value function>"))?;
+        let (moment, local) = if let Some(moment) = self.at_local_datetime() {
+            (moment, true)
+        } else {
+            let Tok::KeyWord(word @ (kw::CURRENT_DATE | kw::CURRENT_TIME | kw::CURRENT_TIMESTAMP)) = *self.peek() else { return Ok(None) };
+            (moment_of(word).ok_or_else(|| self.syntax("expected a <datetime value function>"))?, false)
+        };
         self.advance();
         let precision = if moment != Moment::Date && self.accept_delim(delim::LEFT_PAREN) {
             let p = self.time_precision()?;
@@ -70,7 +106,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(Some(DatetimeFunction { moment, precision }))
+        Ok(Some(DatetimeFunction { moment, precision, local }))
     }
 
     /// [ISO/IEC 9075:1992 §6.6] `<extract expression>` ::= EXTRACT
@@ -108,9 +144,11 @@ impl Parser {
     }
 
     /// [ISO/IEC 9075:1992 §6.1] `<datetime type>` ::= DATE | TIME
-    /// \[(`<time precision>`)\] \[WITH TIME ZONE\] | TIMESTAMP
-    /// \[(`<timestamp precision>`)\] \[WITH TIME ZONE\]; of an omitted
-    /// precision 0 for TIME and 6 for TIMESTAMP [SR25].
+    /// \[(`<time precision>`)\] \[`<with or without time zone>`\] |
+    /// TIMESTAMP \[(`<timestamp precision>`)\] \[`<with or without time
+    /// zone>`\]; of an omitted precision 0 for TIME and 6 for TIMESTAMP
+    /// [SR25]. [ISO/IEC 9075-2:2023 §6.1] `<with or without time zone>`
+    /// ::= WITH TIME ZONE | WITHOUT TIME ZONE, WITHOUT implied [SR39].
     pub(super) fn datetime_type(&mut self) -> Result<DataType> {
         let Tok::KeyWord(word) = *self.peek() else { return Err(self.syntax("expected a <datetime type>")) };
         let moment = moment_of(word).ok_or_else(|| self.syntax("expected a <datetime type>"))?;
@@ -124,7 +162,7 @@ impl Parser {
             self.expect_delim(delim::RIGHT_PAREN)?;
         }
         let zoned = self.accept_kw(kw::WITH);
-        if zoned {
+        if zoned || self.accept_word(WITHOUT) {
             self.expect_kw(kw::TIME)?;
             self.expect_kw(kw::ZONE)?;
         }

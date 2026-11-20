@@ -27,10 +27,22 @@ whose body the CALL is, an SQL variable of a compound statement the
 CALL is in, or, in a BEFORE row trigger, a column of its new transition
 variable. Of the last two it may be one element of the
 array, `P[i]` or `N.C[i]`, as [CREATE PROCEDURE](create-procedure.md)
-says. An OUT parameter starts null. An INOUT
+says. Of a CALL prepared, the target may be a `?`, a dynamic parameter
+of the parameter's type, an output, and of an INOUT parameter an input
+too. An OUT parameter starts null. An INOUT
 parameter starts with its target's value. Once the body has run, the
 value of each OUT and INOUT parameter is assigned to its target, as
 SELECT INTO assigns a value.
+
+A CALL prepared with a `?` for an OUT or INOUT parameter is described
+with a column for each such `?`, named and typed as its parameter, in
+the parameters' order, as DESCRIBE OUTPUT shows; its input parameters
+are the other `?`s, an INOUT parameter's among them. Executed, it gives
+back the values of those columns. EXECUTE puts them where its INTO or
+USING SQL DESCRIPTOR says. Over [the native protocol](../../client/05-protocol.md)
+they come as a row before the statement's completion, which the client
+library's `execute` gives as rows. The command-line client prepares a
+CALL that has a `?`, and shows its outputs as a row.
 
 The body runs as the owner of the procedure's schema, of that schema,
 with a diagnostics area of its own, within the CALL statement: all it
@@ -74,6 +86,7 @@ EXECUTE on the procedure.
 | 22001 | -301 | A value is too long for a parameter or a target |
 | 22003 | -301 | A value is out of the range of a parameter or a target |
 | 0A000 | -900 | A feature not supported is used, or the nesting limit is passed |
+| 07007 | -921 | EXECUTE of a CALL whose `?`s take outputs has no INTO |
 
 A statement of the body that fails fails the CALL with its SQLSTATE.
 
@@ -127,9 +140,25 @@ turborel: SQLCODE -900 (SQLSTATE 0A000): NULL or DEFAULT as an argument of an in
 turborel: SQLCODE -301 (SQLSTATE 22003): 99999999999 does not fit INTEGER without losing leading digits [ISO/IEC 9075-2:2023 §9.18 GR4c i; ISO/IEC 9075:1992 §9.2 GR3k]
 ```
 
+A CALL prepared, a `?` for its OUT parameter, shown as a row:
+
+```sql
+CALL LEFT_OF(2, ?);
+```
+
+```
+            N
+--------------
+            4
+(1 row)
+```
+
 ## STANDARD
 
-ISO/IEC 9075-2:2023 §16.1, §9.18, §10.4, Feature T321-04. An argument
+ISO/IEC 9075-2:2023 §16.1, §9.18, §10.4, Feature T321-04. A `?` of an
+OUT or INOUT parameter is an output dynamic parameter [§20.7 GR7a,
+SR5a], described [§20.10] and put where EXECUTE's `<result using
+clause>` says [§20.13 GR6, GR10]. An argument
 `P[i]` is a `<target array element specification>` [§6.4], Feature
 S097. SQL-86 and SQL-92 have no CALL.
 
