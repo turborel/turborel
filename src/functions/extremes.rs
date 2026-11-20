@@ -160,3 +160,7 @@ impl Accumulator for CollatedAcc {
         Ok(self.best.as_ref().map_or(Value::Null, |(_, v)| v.clone()))
     }
 }
+
+// Unit tests: MAX and MIN by a collation, merged and by vector.
+#[cfg(test)]
+mod tests;
