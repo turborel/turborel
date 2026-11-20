@@ -15,6 +15,9 @@
 //! is dropped if that is cheaper than scanning in any order and sorting.
 
 mod access;
+mod analyzed;
+pub use analyzed::{Analyzed, Counted, NodeCount, Operator};
+pub(crate) use analyzed::{counted, millis, operators};
 mod built;
 mod cardinality;
 mod carried;
@@ -50,6 +53,7 @@ mod recognized;
 mod shown;
 pub(crate) mod spatial;
 
+pub use cardinality::Injected;
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
 pub use kept::{Place, ProbeSlot};
@@ -417,6 +421,8 @@ pub enum Plan {
     Polymorphic(Box<Polymorphic<Plan>>),
     /// \[DESIGN\] Its input run by morsels on threads at once, its rows in order (RULES.md D290).
     Parallel(Box<Parallel>),
+    /// \[EXTENSION\] An operator EXPLAIN ANALYZE counts, run as its input (RULES.md D376).
+    Counted(Box<Counted>),
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's

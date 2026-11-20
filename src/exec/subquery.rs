@@ -80,6 +80,12 @@ impl SubqueryRows {
         SubqueryRows { rows: Arc::new(Mutex::new(rows)), db: Arc::clone(db), spilled, summary, agreeing }
     }
 
+    /// The rows `rows`, held in memory, of `db`: a few, as one probe of a
+    /// unique key finds.
+    pub fn held(rows: Vec<Row>, db: &Arc<State>) -> SubqueryRows {
+        SubqueryRows::of(Rescanned::Held(Arc::new(rows)), db)
+    }
+
     /// Its rows, from the first, in order.
     ///
     /// # Errors

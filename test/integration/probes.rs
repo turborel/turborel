@@ -295,9 +295,9 @@ fn few_rows_probe_an_index_of_the_other_table() {
 /// Verifies: [X3.135-1986 §5.20 GR2b, §5.11 GR4]; [DESIGN] RULES.md D35,
 /// D34: a few rows probe an index on a DATE or a BINARY column, by values of
 /// its kind; an index on two columns by both, or by its first if the
-/// second is NOT NULL; not a hash index by its first column alone, nor a
-/// B-link index whose second column may be null, nor an index by values
-/// of another kind of number. A view's expression probes nothing; an outer
+/// second is NOT NULL or the index holds keys with a null (D403); not a
+/// hash index by its first column alone, nor an index by values of
+/// another kind of number. A view's expression probes nothing; an outer
 /// join's rows, estimated as every relation's are (D370), probe as a
 /// table's do.
 #[test]
@@ -324,7 +324,7 @@ fn few_rows_probe_indexes_of_every_kind_they_can() {
     for (query, least, index) in [
         ("SELECT E.K, W.N FROM E, W WHERE E.C = W.C AND E.K = W.K", 3, Some("W_")),
         ("SELECT E.K, W.N FROM E, W WHERE E.C = W.C", 30, Some("W_C_K")),
-        ("SELECT E.K, W.N FROM E, W WHERE E.K = W.K", 3, None),
+        ("SELECT E.K, W.N FROM E, W WHERE E.K = W.K", 3, Some("W_K_N")),
     ] {
         assert_eq!(sorted(&s, query), sorted(&s, &query.replace("W.", "S.").replace(" W ", " S ")), "{query}");
         assert!(sorted(&s, query).len() >= least, "{query}");

@@ -211,6 +211,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::Limit { input, .. } => give(input, work),
         Plan::Unnest(u) => give(&mut u.input, work),
         Plan::Parallel(p) => give(&mut p.input, work),
+        Plan::Counted(c) => give(&mut c.input, work),
         Plan::Window { window, .. } => give(&mut window.input, work),
         Plan::Recognize { recognize, .. } => give(&mut recognize.input, work),
         Plan::Polymorphic(p) => p.inputs.iter_mut().for_each(|input| give(input, work)),

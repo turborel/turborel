@@ -17,6 +17,7 @@ use std::sync::Arc;
 use super::super::super::area::commands;
 use super::super::super::savepoints::{Level, none_named};
 use super::super::super::{Completion, Session, State, StatementContext};
+use super::super::kept::{KeptProgram, KeptRuns};
 use super::{Hosted, diagnostics, step_command};
 use crate::ast::{FetchOrientation, SavepointStatement, SqlStatement};
 use crate::error::{Result, SqlError};
@@ -41,19 +42,23 @@ enum Context<'c> {
 pub(super) struct SessionHost<'s, 'c> {
     session: &'s Session,
     context: Context<'c>,
+    /// Of a procedure's body kept, the plans its statements keep
+    /// (`routines/kept.rs`).
+    kept: Option<&'s KeptProgram>,
 }
 
 impl<'s, 'c> SessionHost<'s, 'c> {
-    /// The host of a program `session` runs within the statement in `cx`.
-    pub(super) fn within(session: &'s Session, cx: StatementContext<'c>) -> SessionHost<'s, 'c> {
-        SessionHost { session, context: Context::Within(cx) }
+    /// The host of a program `session` runs within the statement in `cx`:
+    /// of a procedure's body, the program `kept` keeps, if given.
+    pub(super) fn within(session: &'s Session, cx: StatementContext<'c>, kept: Option<&'s KeptProgram>) -> SessionHost<'s, 'c> {
+        SessionHost { session, context: Context::Within(cx), kept }
     }
 
     /// The host of an SQL control statement `session` runs directly,
     /// beginning in `cx`.
     pub(super) fn direct(session: &'s Session, cx: StatementContext<'_>) -> SessionHost<'s, 'c> {
         let tx = RefCell::new(session.current_transaction());
-        SessionHost { session, context: Context::Own { st: Arc::clone(cx.st), tx } }
+        SessionHost { session, context: Context::Own { st: Arc::clone(cx.st), tx }, kept: None }
     }
 
     /// `f` run in the context the program's statements run in now: in a
@@ -134,7 +139,12 @@ impl Host for SessionHost<'_, '_> {
             }
             // A runner of its own, so no rows kept are read after a
             // statement changed them.
-            rows(&Hosted::new(Some(self.session), cx), leaf, frame, limit)
+            let hosted = Hosted::new(Some(self.session), cx);
+            // [DESIGN] A leaf of a program kept, by its plans kept (RULES.md D408).
+            if let Some(plans) = self.kept.map(|kept| kept.leaves.of(cx.st, leaf)).transpose()?.flatten() {
+                return rows(&KeptRuns { runner: &hosted, plans: &plans, at: (cx.st, cx.tx.id) }, leaf, frame, limit);
+            }
+            rows(&hosted, leaf, frame, limit)
         })
     }
 
@@ -159,9 +169,13 @@ impl Host for SessionHost<'_, '_> {
         }
         frame.set_routine(Arc::clone(&c.scope));
         let session = self.session;
+        // [DESIGN] An INSERT, searched UPDATE or searched DELETE of a
+        // program kept keeps its plan (RULES.md D406).
+        let kept = self.kept.and_then(|k| k.plans_of(c)).filter(|_| keeps_plan(c.statement()));
         let ran = self.with(|cx| {
             session.may_run(cx.st, c.statement())?;
-            session.run_statement(cx, c.statement(), frame, None)
+            let keeping = kept.map(|plans| session.keeping(cx.st, plans));
+            session.run_statement(cx, c.statement(), frame, keeping.as_ref())
         });
         if defines(c.statement()) {
             self.refreshed()?;
@@ -179,7 +193,14 @@ impl Host for SessionHost<'_, '_> {
 
     fn open(&mut self, key: &str, cursor: &Cursor, frame: &mut Params) -> Result<()> {
         frame.set_routine(Arc::clone(&cursor.scope));
-        self.with(|cx| self.session.open_local(cx, key, cursor, frame))
+        // [DESIGN] A local cursor of a program kept, opened from the
+        // specification and plan it keeps (RULES.md D416).
+        let kept = self.kept.and_then(|k| k.cursor_plans(cursor));
+        let session = self.session;
+        self.with(|cx| {
+            let keeping = kept.map(|plans| session.keeping(cx.st, plans));
+            session.open_local(cx, (key, cursor), frame, keeping.as_ref())
+        })
     }
 
     fn fetch(&mut self, key: &str, orientation: &FetchOrientation, frame: &Params) -> Result<Option<Row>> {
@@ -242,4 +263,10 @@ impl Host for SessionHost<'_, '_> {
     fn pop_area(&mut self) {
         self.session.pop_area();
     }
+}
+
+/// Whether `stmt`, a statement of a program kept, keeps its plan as a
+/// prepared statement does: an INSERT, a searched UPDATE or DELETE.
+fn keeps_plan(stmt: &SqlStatement) -> bool {
+    matches!(stmt, SqlStatement::Insert(_) | SqlStatement::UpdateSearched { .. } | SqlStatement::DeleteSearched { .. })
 }

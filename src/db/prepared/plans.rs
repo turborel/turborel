@@ -58,7 +58,7 @@ use crate::physical::{Plan, filled_plan, keepable};
 use crate::settings::Own;
 use crate::sync::lock;
 use crate::value::Value;
-use learning::{Learning, moved, rows_of};
+pub(in crate::db) use learning::{Learned, Learning, moved, rows_of};
 
 mod learning;
 
@@ -157,7 +157,7 @@ pub(in crate::db) enum KeptPlan {
 /// What a plan is made with, besides the statement's text: as the module
 /// says.
 #[derive(Debug)]
-struct Key {
+pub(in crate::db) struct Key {
     generation: u64,
     catalog: Weak<dyn Catalog>,
     auth: String,
@@ -177,29 +177,39 @@ pub(in crate::db) struct Keeping<'a> {
     session: &'a Session,
 }
 
+impl Key {
+    /// What holds now for `s` in `st`, for what is kept to be kept with.
+    pub(in crate::db) fn now(st: &State, s: &Session) -> Key {
+        Key {
+            generation: st.generation,
+            catalog: Arc::downgrade(&st.catalog),
+            auth: s.auth().clone(),
+            role: s.role.borrow().clone(),
+            session_user: s.user_identifier.borrow().clone(),
+            schema: s.default_schema(),
+            zone: s.now.get().zone,
+            own: s.own.borrow().clone(),
+        }
+    }
+
+    /// Whether it holds now for `s` in `st`.
+    pub(in crate::db) fn holds(&self, st: &State, s: &Session) -> bool {
+        let definitions = self.generation == st.generation && std::ptr::addr_eq(Weak::as_ptr(&self.catalog), Arc::as_ptr(&st.catalog));
+        let cell = self.auth == *s.auth() && self.role == *s.role.borrow() && self.session_user == *s.user_identifier.borrow();
+        let session = cell && self.schema == *s.schema.borrow() && self.zone == s.now.get().zone;
+        definitions && session && self.own.same_as(&s.own.borrow())
+    }
+}
+
 impl Keeping<'_> {
     /// Whether what is kept with `key` holds now.
     fn holds(&self, key: &Key) -> bool {
-        let definitions =
-            key.generation == self.st.generation && std::ptr::addr_eq(Weak::as_ptr(&key.catalog), Arc::as_ptr(&self.st.catalog));
-        let s = self.session;
-        let cell = key.auth == *s.auth() && key.role == *s.role.borrow() && key.session_user == *s.user_identifier.borrow();
-        let session = cell && key.schema == *s.schema.borrow() && key.zone == s.now.get().zone;
-        definitions && session && key.own.same_as(&self.session.own.borrow())
+        key.holds(self.st, self.session)
     }
 
     /// What holds now, for a plan to be kept with.
     fn key(&self) -> Key {
-        Key {
-            generation: self.st.generation,
-            catalog: Arc::downgrade(&self.st.catalog),
-            auth: self.session.auth().clone(),
-            role: self.session.role.borrow().clone(),
-            session_user: self.session.user_identifier.borrow().clone(),
-            schema: self.session.default_schema(),
-            zone: self.session.now.get().zone,
-            own: self.session.own.borrow().clone(),
-        }
+        Key::now(self.st, self.session)
     }
 
     /// What `get` takes of what is kept, if it is kept with what holds now.

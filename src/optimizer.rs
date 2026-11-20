@@ -20,6 +20,7 @@
 mod disjunctions;
 mod distinct_aggregates;
 mod elimination;
+mod extremes;
 mod folding;
 mod hoisting;
 mod inlining;
@@ -60,6 +61,7 @@ pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
 pub use elimination::{ELIMINATE_JOINS, EliminateJoins};
+pub use extremes::{EXTREMES_BY_ORDER, ExtremesByOrder};
 pub use folding::ConstantFolding;
 pub use hoisting::{HOIST_RAISING_EXPRESSIONS, HoistRaisingExpressions};
 pub use limits::{PUSH_LIMIT_THROUGH_UNION, PushLimitThroughUnion};
@@ -128,16 +130,30 @@ struct Switched {
 /// The rules, in the order they are tried, each turned on or off by a
 /// setting of its own (`switch_name`), so a session may turn one off for
 /// itself and the database's choice is kept with its definitions
-/// (RULES.md D36).
+/// (RULES.md D36). With them, the rows a session gave the planner in
+/// place of its estimates, in the session's own snapshot (RULES.md D377).
 #[derive(Clone)]
 pub struct Optimizer {
     rules: Vec<Switched>,
+    injected: Option<Arc<crate::physical::Injected>>,
 }
 
 impl Optimizer {
     /// An optimizer with no rules: plans are left as bound.
     pub fn empty() -> Optimizer {
-        Optimizer { rules: Vec::new() }
+        Optimizer { rules: Vec::new(), injected: None }
+    }
+
+    /// \[EXTENSION\] The rows given the planner in place of its
+    /// estimates, if any are (RULES.md D377).
+    pub(crate) fn injected(&self) -> Option<&crate::physical::Injected> {
+        self.injected.as_deref()
+    }
+
+    /// \[EXTENSION\] Gives the planner `injected` in place of its
+    /// estimates (RULES.md D377).
+    pub(crate) fn inject(&mut self, injected: Arc<crate::physical::Injected>) {
+        self.injected = Some(injected);
     }
 
     /// An optimizer with the built-in rules.
@@ -167,6 +183,7 @@ impl Optimizer {
         o.add(Box::new(PushHavingIntoWhere));
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
+        o.add(Box::new(ExtremesByOrder));
         o
     }
 

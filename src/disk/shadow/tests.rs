@@ -393,3 +393,25 @@ fn a_granule_written_in_part_keeps_the_rest_of_the_file() {
     shadows.commit().unwrap();
     assert_eq!(content(&*disk), expected, "after it");
 }
+
+/// Verifies: [DESIGN] RULES.md D409, a read across granules, some written
+/// since the last commit and the rest the file's, reads each run of the
+/// file's at its own place, unaligned too, the newest written between.
+#[test]
+fn a_read_takes_the_files_runs_around_what_was_written() {
+    let disk = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+    let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+    let granule = |b: u8| vec![b; GRANULE];
+    let committed: Vec<u8> = (1..=5_u8).flat_map(granule).collect();
+    file.write_all_at(&committed, 0).unwrap();
+    shadows.commit().unwrap();
+    file.write_all_at(&granule(0xEE), side::offset(2)).unwrap();
+    let mut back = vec![0_u8; 5 * GRANULE];
+    file.read_exact_at(&mut back, 0).unwrap();
+    let expected: Vec<u8> = [1, 2, 0xEE, 4, 5].into_iter().flat_map(granule).collect();
+    assert_eq!(back, expected, "the file's runs around the granule written");
+    let mut part = vec![0_u8; 3 * GRANULE];
+    file.read_exact_at(&mut part, 1_000).unwrap();
+    assert_eq!(part, expected[1_000..1_000 + 3 * GRANULE], "unaligned");
+}

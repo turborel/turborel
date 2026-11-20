@@ -122,6 +122,19 @@ pub trait Log: Send + Sync {
     /// tried again after one failed may succeed without what the failed
     /// one lost, so the file log fails every later sync too.
     fn sync(&self, through: Lsn) -> Result<()>;
+    /// \[DESIGN\] As `sync`, and the position before which every record
+    /// is now durable, past `through`: a group commit's sync may make
+    /// records appended after `through` durable too, which those waiting
+    /// on them can then count as such without a sync of their own.
+    /// Default: just past `through`.
+    ///
+    /// # Errors
+    ///
+    /// As `sync`.
+    fn sync_reached(&self, through: Lsn) -> Result<Lsn> {
+        self.sync(through)?;
+        Ok(Lsn(through.0.saturating_add(1)))
+    }
     /// The records at or after `from`, in order.
     fn read_from(&self, from: Lsn) -> Records<'_>;
     /// The record at `at`, if the log holds one there. Default: the first

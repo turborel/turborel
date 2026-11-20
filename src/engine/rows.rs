@@ -94,7 +94,7 @@ use crate::log::Lsn;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
 use crate::storage::{Condition, Conjunction, Near, Newest, Region, Row, RowId, Rows, ScanOrder, Split, TableStorage};
-use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
+use crate::txn::{Concurrency, NO_TRANSACTION, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
 /// The name of the row store.
 pub const ROW_STORE: &str = "rowstore";
@@ -217,15 +217,23 @@ impl TableStorage for RowTable {
     }
 
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.write_over(tx, id, Some(row), Past::Snapshot)
+        self.write_over(tx, id, Some(row), Past::Snapshot).map(drop)
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.write_over(tx, id, None, Past::Snapshot)
+        self.write_over(tx, id, None, Past::Snapshot).map(drop)
+    }
+
+    fn replace(&self, tx: TxId, id: RowId, row: Option<Row>) -> Result<Row> {
+        if tx == NO_TRANSACTION {
+            let old = self.get(tx, id)?.map_or_else(|| no_row(id), Ok)?;
+            return self.write_over(tx, id, row, Past::Snapshot).map(|_| old);
+        }
+        self.write_over(tx, id, row, Past::Snapshot)?.map_or_else(|| no_row(id), Ok)
     }
 
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
-        self.write_over(tx, id, row, Past::Stamp(seen))
+        self.write_over(tx, id, row, Past::Stamp(seen)).map(drop)
     }
 
     /// Puts row `id` back, or replaces it if it is there; ids given from
@@ -514,13 +522,13 @@ impl TableStorage for RowTable {
         self.gather_wanted() || self.zones.wanted() || self.freeze_wanted()
     }
 
-    /// Statistics gathered as one call's work, zones summed up as the
-    /// next's, freezing as the next's: freezing as this one's too if no
-    /// zone could be summed up, as one of a commit too recent waits for
-    /// the horizon (`rows/zones.rs`).
-    fn maintain(&self, horizon: Timestamp) -> Result<bool> {
-        if self.gather_wanted() {
-            self.gather_if_due();
+    /// Statistics gathered as one call's work, once spaced from the last
+    /// pass or `now` (`rows/stats.rs`), zones summed up as the next's,
+    /// freezing as the next's: freezing as this one's too if no zone could
+    /// be summed up, as one of a commit too recent waits for the horizon
+    /// (`rows/zones.rs`).
+    fn maintain(&self, horizon: Timestamp, now: bool) -> Result<bool> {
+        if self.gather_wanted() && self.gather_if_due(now) {
             return Ok(true);
         }
         if self.zones.due() && self.sum_zones(horizon)? {
