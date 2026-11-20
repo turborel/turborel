@@ -164,7 +164,8 @@ pub(super) fn omits_rows(ix: &IndexDesc, columns: &[&ColumnDesc], probe: Option<
     if matches!(probe, Some(Probe::Predicate { .. })) {
         return !ix.nulls && untested_nulls(columns, probe);
     }
-    columns.get(probe.map_or(0, tested)..).unwrap_or_default().iter().any(|col| !col.not_null)
+    // An index holding keys with a null misses no row (RULES.md D403).
+    !ix.nulls && columns.get(probe.map_or(0, tested)..).unwrap_or_default().iter().any(|col| !col.not_null)
 }
 
 /// Whether a function lookup may keep nulls in another key column. Such
@@ -173,6 +174,17 @@ pub(super) fn omits_rows(ix: &IndexDesc, columns: &[&ColumnDesc], probe: Option<
 pub(super) fn untested_nulls(columns: &[&ColumnDesc], probe: Option<&Probe>) -> bool {
     let Some(Probe::Predicate { predicate, .. }) = probe else { return false };
     columns.iter().enumerate().any(|(at, col)| at != predicate.column && !col.not_null)
+}
+
+/// Whether the entries `probe` finds of `ix` on `columns` may hold a null
+/// in a key column: of a function lookup, in another column than its
+/// argument's (`untested_nulls`); of an index holding keys with a null, in
+/// a column its comparisons do not test (RULES.md D403). A null sorts
+/// before every value in the index, where SQL's order may want it after,
+/// so the entries' order is not taken for it (D66).
+pub(super) fn surviving_nulls(ix: &IndexDesc, columns: &[&ColumnDesc], probe: Option<&Probe>) -> bool {
+    let untested = || columns.get(probe.map_or(0, tested)..).unwrap_or_default().iter().any(|col| !col.not_null);
+    untested_nulls(columns, probe) || (ix.nulls && untested())
 }
 
 /// How many initial key columns a comparison probe excludes nulls from.

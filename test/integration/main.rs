@@ -125,6 +125,7 @@ mod embedding_queue;
 mod embedding_sources;
 mod encodings;
 mod engine_settings;
+mod equated_joins;
 mod expression_indexes;
 mod expressions;
 mod extension_types;

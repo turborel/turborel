@@ -291,7 +291,7 @@ impl PhysicalPlanner<'_> {
         // appended, are in key order too, read backward in reverse.
         // Collation sort keys and surviving nulls may require a
         // different SQL order, so neither can replace a sort.
-        let ordered_index = kind.ordered() && !ix.is_collated() && !predicate::untested_nulls(on.columns, c.probes.first());
+        let ordered_index = kind.ordered() && !ix.is_collated() && !predicate::surviving_nulls(ix, on.columns, c.probes.first());
         let order = if ordered_index && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
         if !supported || omitted || matches!(c.probes.first(), Some(Probe::All)) && order.is_none() {
             return None;

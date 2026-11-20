@@ -397,7 +397,9 @@ fn probed_columns(
         kind.supports_prefix(ix.columns.len(), probed, None)
     };
     let untested = ix.columns.get(probed..).unwrap_or_default();
-    let nullable = untested.iter().any(|&c| columns.get(c).is_none_or(|d| !d.not_null));
+    // An index of no key with a null misses the rows of a null in a column
+    // not probed; one holding them misses none (RULES.md D403).
+    let nullable = !ix.nulls && untested.iter().any(|&c| columns.get(c).is_none_or(|d| !d.not_null));
     (probed > 0 && supported && !nullable).then_some((used, types))
 }
 

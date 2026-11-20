@@ -388,9 +388,10 @@ fn two_column_indexes() -> Database {
 /// Verifies: [EXTENSION] RULES.md D34, indexes on several columns answer
 /// equalities of their first columns, then a comparison of the next: a
 /// B-link index a prefix, a hash index only its whole key; the rows are
-/// those of a scan (`+ 0` keeps a comparison from any index). An index
-/// holds no key with a null, so one is not probed on fewer columns than it
-/// has unless the others are NOT NULL: N's rows whose C is null are found.
+/// those of a scan (`+ 0` keeps a comparison from any index). A B-tree
+/// index not a constraint's holds keys with a null (D403), so it is probed
+/// on fewer columns than it has though the others may be null, and N's
+/// rows whose C is null are found by it.
 #[test]
 fn indexes_on_several_columns_answer_prefixes() {
     let db = two_column_indexes();
@@ -407,8 +408,9 @@ fn indexes_on_several_columns_answer_prefixes() {
         assert_eq!(crate::common::sorted(&s, sql), crate::common::sorted(&s, scan), "{sql}");
     }
     let sql = "SELECT C FROM N WHERE A = 5";
-    assert!(!s.physical_plan(sql, &Params::new()).unwrap().contains("N_AC"), "C may be null");
+    assert!(s.physical_plan(sql, &Params::new()).unwrap().contains("N_AC"), "C may be null");
     assert_eq!(crate::common::count(&s, sql), 20);
+    assert_eq!(crate::common::count(&s, "SELECT C FROM N WHERE A = 5 AND C IS NULL"), 20, "its nulls held");
 }
 
 /// Verifies: [DESIGN] RULES.md D35, [X3.135-1986 §8.3 GR3] sort elimination
