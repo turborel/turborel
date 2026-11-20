@@ -1,6 +1,6 @@
 //! Tests of durations.
 
-use super::super::testing::{atom, call, code, empty, s, text, typed};
+use super::super::testing::{atom, call, code, empty, s, text, texts, typed};
 use super::*;
 
 fn ym(text: &str) -> Atomic {
@@ -116,4 +116,75 @@ fn component_examples() {
     assert!(call("days-from-duration", &[empty()]).unwrap().items().is_empty());
     assert_eq!(code(call("days-from-duration", &[s("P1D")])), "XPTY0004");
     assert_eq!(code(call("years-from-duration", &[atom(AtomicType::DayTimeDuration, "P1D")])), "XPTY0004");
+}
+
+/// An operator of two atomic values of [XQueryFO §10.4, §10.6].
+type Operator = fn(&Atomic, &Atomic) -> Result<Atomic>;
+
+/// A comparison of two atomic values of [XQueryFO §10.4].
+type Comparison = fn(&Atomic, &Atomic) -> Result<bool>;
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §10.4,
+/// §10.6] [XQuery §2.2.3.2] each comparison and arithmetic operator of
+/// durations refuses an operand of another type, first or second, with
+/// err:XPTY0004.
+#[test]
+fn each_operator_refuses_operands_of_another_type() {
+    let boolean = Atomic::new(AtomicType::Boolean, "true");
+    let comparisons: [(Comparison, Atomic); 6] = [
+        (year_month_duration_equal, ym("P1M")),
+        (year_month_duration_less_than, ym("P1M")),
+        (year_month_duration_greater_than, ym("P1M")),
+        (day_time_duration_equal, dt("P1D")),
+        (day_time_duration_less_than, dt("P1D")),
+        (day_time_duration_greater_than, dt("P1D")),
+    ];
+    for (compare, good) in comparisons {
+        assert_eq!(error(compare(&boolean, &good).map(|_| ym("P0M"))), "XPTY0004");
+        assert_eq!(error(compare(&good, &boolean).map(|_| ym("P0M"))), "XPTY0004");
+    }
+    assert_eq!(error(duration_equal(&boolean, &dt("P1D")).map(|_| ym("P0M"))), "XPTY0004");
+    assert_eq!(error(duration_equal(&dt("P1D"), &boolean).map(|_| ym("P0M"))), "XPTY0004");
+    assert_eq!(error(duration_order(&ym("P1M"), &boolean).map(|_| ym("P0M"))), "XPTY0004");
+    assert_eq!(error(duration_order(&dt("P1D"), &boolean).map(|_| ym("P0M"))), "XPTY0004");
+    let of_two: [(Operator, Atomic); 6] = [
+        (add_year_month_durations, ym("P1M")),
+        (subtract_year_month_durations, ym("P1M")),
+        (divide_year_month_duration_by_year_month_duration, ym("P1M")),
+        (add_day_time_durations, dt("P1D")),
+        (subtract_day_time_durations, dt("P1D")),
+        (divide_day_time_duration_by_day_time_duration, dt("P1D")),
+    ];
+    for (operate, good) in of_two {
+        assert_eq!(error(operate(&boolean, &good)), "XPTY0004");
+        assert_eq!(error(operate(&good, &boolean)), "XPTY0004");
+    }
+    let scaling: [(Operator, Atomic); 4] = [
+        (multiply_year_month_duration, ym("P1M")),
+        (divide_year_month_duration, ym("P1M")),
+        (multiply_day_time_duration, dt("P1D")),
+        (divide_day_time_duration, dt("P1D")),
+    ];
+    for (operate, good) in scaling {
+        assert_eq!(error(operate(&boolean, &dbl("2"))), "XPTY0004");
+        assert_eq!(error(operate(&good, &boolean)), "XPTY0004");
+    }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §10.5.1 to
+/// §10.5.6] each component function of durations refuses an argument of
+/// another duration type with err:XPTY0004, and of none is the empty
+/// sequence.
+#[test]
+fn component_functions_refuse_other_durations() {
+    let day = atom(AtomicType::DayTimeDuration, "P1D");
+    let month = atom(AtomicType::YearMonthDuration, "P1M");
+    for local in ["years-from-duration", "months-from-duration"] {
+        assert_eq!(code(call(local, std::slice::from_ref(&day))), "XPTY0004", "{local}");
+        assert!(texts(&call(local, &[empty()]).unwrap()).is_empty(), "{local}");
+    }
+    for local in ["days-from-duration", "hours-from-duration", "minutes-from-duration", "seconds-from-duration"] {
+        assert_eq!(code(call(local, std::slice::from_ref(&month))), "XPTY0004", "{local}");
+        assert!(texts(&call(local, &[empty()]).unwrap()).is_empty(), "{local}");
+    }
 }

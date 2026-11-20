@@ -214,3 +214,41 @@ fn user_defined_atomic_types_are_stored() {
     let marked = [&plain[..plain.len() - 1], &[7]].concat();
     assert!(corrupt(&marked).contains("marked 7"));
 }
+
+/// A document validated by a schema of a typed attribute and element, so
+/// its nodes carry annotations, as an item.
+fn validated() -> Item {
+    let schema_text = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="r"><xs:complexType>
+        <xs:sequence><xs:element name="n" type="xs:int"/></xs:sequence><xs:attribute name="id" type="xs:ID"/>
+        </xs:complexType></xs:element></xs:schema>"#;
+    let source =
+        crate::xml::schema::Source { location: None, tree: Arc::new(parse(schema_text, Syntax::Document, Whitespace::Preserve).unwrap()) };
+    let schema = crate::xml::schema::read(&source, &crate::xml::schema::Library::default()).unwrap();
+    let document = Node::root(parse("<r id='i'><n>5</n></r>", Syntax::Document, Whitespace::Preserve).unwrap());
+    Item::Node(crate::xml::schema::validate(&schema, &document, crate::xml::schema::Mode::Strict).unwrap().unwrap())
+}
+
+/// Verifies: [DESIGN] RULES.md D30, D106: a stored form cut short at any
+/// octet, of documents and elements, namespace bindings, attributes,
+/// text, comments, processing instructions, annotations and atomic
+/// values of built-in and user-defined types, is corruption, SQLCODE
+/// -916, read whole or as events, never a panic; whole, it reads back.
+#[test]
+fn a_stored_form_cut_short_anywhere_is_refused() {
+    let text = "<!--c--><?p d?><a xmlns='d' xmlns:p='u' p:x='1'><p:b y='2'>t</p:b><!--k--><?q r?></a>";
+    let name = Arc::new(QName { prefix: None, uri: Some("urn:t".into()), local: "small".into() });
+    let value = Sequence::new(vec![
+        Item::Node(Node::root(parse(text, Syntax::Content, Whitespace::Preserve).unwrap())),
+        validated(),
+        Item::Atomic(Atomic::new(AtomicType::Int, "5").annotated(Some(name))),
+        Item::Atomic(Atomic::qname(Some("http://e.org/n"), "p:local")),
+    ]);
+    let bytes = encode(&value);
+    assert_eq!(text_of(&again(&value)), text_of(&value));
+    assert!(events_of(&bytes).is_ok());
+    for cut in 0..bytes.len() {
+        let part = &bytes[..cut];
+        assert_eq!(decode(part).unwrap_err().sqlcode(), -916_i32, "decoded cut at {cut}");
+        assert_eq!(events_of(part).map(drop).unwrap_err().sqlcode(), -916_i32, "events cut at {cut}");
+    }
+}

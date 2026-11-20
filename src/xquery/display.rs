@@ -12,6 +12,9 @@ mod direct;
 mod expr;
 mod types;
 
+#[cfg(test)]
+mod tests;
+
 use std::fmt::{self, Display, Formatter};
 
 use super::ast::{
