@@ -64,6 +64,8 @@ pub use multisets::{
 };
 pub use numeric::{CEIL, CEILING, EXP, FLOOR, LN, Numeric, POWER, SQRT};
 mod octet_like;
+mod partial;
+pub(crate) use partial::{MERGED, Merged, PART_TYPE, PARTIAL, Partial, Split, split_of};
 mod periods;
 pub use octet_like::OctetLike;
 pub use periods::PeriodTest;

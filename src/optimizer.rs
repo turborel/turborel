@@ -15,6 +15,7 @@
 //! Rules are storage-agnostic. Anything that depends on engines, indexes or
 //! costs belongs in physical.rs.
 
+mod distinct_aggregates;
 mod folding;
 mod outer;
 pub(crate) mod plugged;
@@ -44,6 +45,7 @@ pub const PUSH_HAVING_INTO_WHERE: &str = "push_having_into_where";
 /// See [`CONSTANT_FOLDING`].
 pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 
+pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
 pub use folding::ConstantFolding;
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
 pub(crate) use raising::is_guarded;
@@ -135,6 +137,7 @@ impl Optimizer {
         o.add(Box::new(PushFilterIntoOuterJoin));
         o.add(Box::new(PushHavingIntoWhere));
         o.add(Box::new(RemoveRedundantDistinct));
+        o.add(Box::new(DistinctAggregates));
         o
     }
 

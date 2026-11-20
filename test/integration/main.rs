@@ -100,6 +100,7 @@ mod descriptors;
 mod diagnostics;
 mod direct;
 mod disk;
+mod distinct_aggregates;
 mod distinct_methods;
 mod distinct_predicate;
 mod distinct_type_dynamic;
