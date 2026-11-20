@@ -346,6 +346,8 @@ verification approach DO-178C expects (§8).
 | D344 | A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once |
 | D350 | A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there |
 | D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
+| D393 | A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection |
+| D394 | Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error |
 
 ### The project
 
@@ -9589,6 +9591,71 @@ tree's nodes, which every insert must write and which are not any
 snapshot's either; zone flags kept on disk, which would need logging to
 stay right across a crash and which the maintenance thread rebuilds soon
 after a table opens.
+
+#### D393. A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection
+
+A reply's frame is read whole by its length before it is decoded, so a
+value in it the client cannot take leaves the stream in step. Damaged
+JSON, JSON nested too deep, a truth byte other than 0 or 1, a units byte
+of neither kind and a malformed condition of a Complete are such values.
+They fail with the value's own SQLCODE, -916 or another not of class 08.
+The client kept the connection then but left the rest of the request's
+replies unread, so the next request took a stale Complete as its own.
+
+Losing the connection would be safe but costs a session for a value
+that one statement held. So the client fails the request with the
+value's error and first reads past the rest of its replies, up to the
+one that ends them, each taken as ever (a Notice to its handler, a
+Status to the settings, the last reply's state noted). Which reply is
+last is told by its kind, by the order a statement's replies keep. A
+Description, Rows, a Notice or a Status has more after it, a Complete
+has if its tail says more (tag 5), and any other reply is the last
+(`Reply::ends_request`). A Describe of a cursor is answered by a
+Description alone, which its reader knows (`Answer::One`). A Complete
+that does not decode whole still gives its head, its SQLCODE, SQLSTATE,
+whether a transaction is active and whether more follow. They come
+before a condition, the one field of it the client may fail to take
+(`Reply::completed_head`). So the session's state is noted as the whole
+Complete would note it. The rule is one place, the reading of a frame
+(`frames.rs`), so a statement's rows, a cursor's batches, a Complete's
+conditions, LOB reads, pipelines and imports all follow it.
+
+A frame that is itself malformed loses the connection (SQLSTATE 08006),
+as the protocol says. A header too long, a body cut short, a compressed
+frame that does not inflate, a kind no reply has, a flag neither 0 nor
+1, a string not UTF-8, a tail out of order or bytes after the last
+field are such frames. Its own decoding reports each of them as class
+08, so the connection is lost by the error's class alone. The protocol
+stays version 1, as nothing it sends changes.
+
+#### D394. Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error
+
+Terminate waits for the server to close, so a commit at the session's
+end that fails is reported. A stream's waits are bounded on the stream
+itself (`Bound`, D42), never through a second handle on its socket. A
+connection the client makes knows its stream's type and bounds the wait
+at the read timeout, else TERMINATE_WITHIN. A stream given to
+`Connection::open` is any type that reads and writes, and was not
+bounded, so Terminate waited on it without limit.
+
+The standard library cannot bound a blocking read of a stream it does
+not know. A thread reading for it would need the stream to be `Send`,
+could not be stopped once the limit ran out, and would be a thread the
+client starts outside the thread manager (R-SAFE-5). So the bound stays
+the stream's own, and `Connection::open_within` takes any stream that
+implements `Bound`, a program's own type too, its waits bounded as
+`Timeouts` say and Terminate's as above. A stream given to `open` waits
+as its maker set it, Terminate's answer too, and the manual says so. A
+named pipe on Windows, which the standard library cannot bound, is
+bounded only as it opens.
+
+What the server sends before it closes is read a frame at a time, each
+of at most the longest reply taken. A Notice, a Status or a Pong is
+read past, an Error is reported, and any other reply loses the
+connection as an answer Terminate does not have. The client had read
+the bytes whole and decoded them as one reply, so a Notice before the
+Error left bytes after it and failed with SQLSTATE 08006 in place of
+the Error.
 
 ## 2. Project layout
 

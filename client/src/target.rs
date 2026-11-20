@@ -243,5 +243,5 @@ pub(crate) fn log_in(
     if let Some(secured) = channel {
         mechanism.bind(&secured);
     }
-    Ok(Connection::open_timed_offering(stream, (user, mechanism), (timeouts, offer))?.reached_by(target.clone()))
+    Ok(Connection::open_within_offering(stream, (user, mechanism), (timeouts, offer))?.reached_by(target.clone()))
 }
