@@ -31,7 +31,9 @@
 //! search's on a graph in memory alone, to `unnesting`, correlated
 //! subqueries unnested and nested alone (`analytics/unnesting.rs`), to
 //! `parallel`, those run by morsels alone, to `distinct`, the DISTINCT
-//! set functions' alone, to `counts`, a row-store table counted and
+//! set functions' alone, to `expressions`, expressions evaluated a
+//! vector at a time alone (`analytics/expressions.rs`), to `counts`, a
+//! row-store table counted and
 //! summed, its zones settled and not, alone (`analytics/counts.rs`), or
 //! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
 //! or to `late`, a column store's selective queries, the columns they keep
@@ -54,6 +56,8 @@ mod counts;
 mod decode;
 #[path = "analytics/distinct.rs"]
 mod distinct;
+#[path = "analytics/expressions.rs"]
+mod expressions;
 #[path = "analytics/graph.rs"]
 mod graph;
 mod harness;
@@ -74,7 +78,8 @@ use turborel::db::{Database, Session};
 /// The variable naming the workloads run alone: `social` for the social
 /// network's, `graph` for path search's on a graph in memory,
 /// `unnesting` for correlated subqueries', `parallel` for those run by
-/// morsels, `distinct` for the DISTINCT set functions', `counts` for a
+/// morsels, `distinct` for the DISTINCT set functions', `expressions`
+/// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
 /// `late` for a column store's selective queries.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
@@ -91,32 +96,26 @@ const KEYS: u64 = 400_000;
 fn main() {
     let bench = Bench::new("analytics");
     let only = std::env::var(ONLY_VAR).unwrap_or_default();
-    let alone: Option<fn(&Bench)> = match only.as_str() {
-        "social" => Some(social::workloads),
-        "graph" => Some(graph::workloads),
-        "unnesting" => Some(unnesting::workloads),
-        "counts" => Some(counts::workloads),
-        "decode" => Some(decode::workloads),
-        "parallel" => Some(parallel::workloads),
-        "late" => Some(late::workloads),
-        _ => None,
-    };
-    if let Some(workloads) = alone {
-        workloads(&bench);
+    if alone(&bench, &only) {
         return;
     }
     let db = database();
     let s = db.session("B");
     let tables = [("F", "W", ""), ("FC", "WC", " (columnstore)")];
-    if only == "distinct" {
+    if only == "distinct" || only == "expressions" {
         for (table, _, label) in tables {
-            distinct::workloads(&bench, &s, (table, label));
+            if only == "distinct" {
+                distinct::workloads(&bench, &s, (table, label));
+            } else {
+                expressions::workloads(&bench, &s, (table, label));
+            }
         }
         return;
     }
     for (table, keyed, label) in tables {
         measure(&bench, &s, (table, keyed, label));
         distinct::workloads(&bench, &s, (table, label));
+        expressions::workloads(&bench, &s, (table, label));
     }
     of_runs(&bench, &s);
     json::workloads(&bench);
@@ -127,6 +126,23 @@ fn main() {
     counts::workloads(&bench);
     decode::workloads(&bench);
     late::workloads(&bench);
+}
+
+/// Runs the workloads `only` names that need no table F, if it names
+/// one: whether it did.
+fn alone(bench: &Bench, only: &str) -> bool {
+    let run: fn(&Bench) = match only {
+        "social" => social::workloads,
+        "graph" => graph::workloads,
+        "unnesting" => unnesting::workloads,
+        "counts" => counts::workloads,
+        "decode" => decode::workloads,
+        "parallel" => parallel::workloads,
+        "late" => late::workloads,
+        _ => return false,
+    };
+    run(bench);
+    true
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,

@@ -43,7 +43,9 @@ fn or(a: Cond, b: Cond) -> Cond {
 /// comparing a column the batch holds with a constant, a constant first
 /// turned around, testing it for null, or testing it IN or NOT IN a list
 /// of constants, or an OR of conjuncts each judged so, are judged over
-/// vectors; those of a column the batch lacks are the rest.
+/// vectors; those of a column the batch lacks are the rest. A filter that
+/// can raise is judged so too, its raising conjunct by a program
+/// (RULES.md D362), which gives none of a batch that would raise.
 #[test]
 fn conjuncts_judged_over_vectors() {
     let list = or(
@@ -70,20 +72,20 @@ fn conjuncts_judged_over_vectors() {
         compare(Expr::Column(2), CompOp::Lt, int(5)),
         compare(Expr::Arith(Box::new(int(1)), ArithOp::Div, Box::new(Expr::Column(2))), CompOp::Gt, int(0)),
     );
-    let (none_judged, all_rest) = split(&raising, &[2]);
-    assert!(none_judged.is_empty() && all_rest.is_some(), "it can raise");
+    let (all_judged, no_rest) = split(&raising, &[2]);
+    assert!(matches!(all_judged.as_slice(), [Judged::Compare(..), Judged::Truth(..)]) && no_rest.is_none(), "it can raise: by a program");
     let (one, left) = split(&compare(Expr::Column(2), CompOp::Eq, int(1)), &[2]);
     assert_eq!((one.len(), left.is_none()), (1, true), "nothing left");
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4]: of a
 /// filter that cannot raise, a comparison of two columns, or of a negated
-/// one, is judged over vectors of integers, scaled alike, keeping what a
-/// row's comparison keeps, a null never; over a vector of values its
-/// integers are not made, so it is judged a row at a time; one of a column
-/// the batch lacks is rest.
+/// one, is compiled for vectors (RULES.md D362), over integers scaled
+/// alike, keeping what a row's comparison keeps, a null never; over a
+/// vector of values each value's; one of a column the batch lacks is
+/// rest.
 #[test]
-fn comparisons_that_cannot_raise_are_judged_over_integers() {
+fn comparisons_of_expressions_are_judged_by_programs() {
     let neg = |e: Expr| Expr::Neg(Box::new(e));
     let cond = and(
         compare(Expr::Column(4), CompOp::Gt, Expr::Column(2)),
@@ -91,7 +93,7 @@ fn comparisons_that_cannot_raise_are_judged_over_integers() {
     );
     assert!(!cond.can_raise());
     let (judged, rest) = split(&cond, &[4, 2]);
-    assert!(matches!(judged.as_slice(), [Judged::Compared(..), Judged::Compared(..)]), "{judged:?}");
+    assert!(matches!(judged.as_slice(), [Judged::Truth(..), Judged::Truth(..)]), "{judged:?}");
     assert!(matches!(rest, Some(Cond::Compare(..))), "the column the batch lacks");
     let first = crate::storage::Ints::new(vec![150, -20, 0, 7, 300], 2, Some(vec![false, false, false, true, false].into()));
     let second = crate::storage::Ints::new(vec![1, -1, 0, 5, 4], 0, None);
@@ -99,7 +101,7 @@ fn comparisons_that_cannot_raise_are_judged_over_integers() {
     let of_ints = Batch { columns: vec![Column::Ints(first), Column::Ints(second)], rows: 5 };
     let all: Vec<u32> = (0..5).collect();
     let by_values = |j: &Judged| -> Vec<u32> {
-        let Judged::Compared(.., conjunct) = j else { panic!("{j:?}") };
+        let Judged::Truth(_, conjunct) = j else { panic!("{j:?}") };
         let Cond::Compare(a, op, b) = &**conjunct else { panic!("{conjunct:?}") };
         let at = |e: &Expr, n: usize| {
             if let Expr::Neg(inner) = e { at_column(inner, n, &of_values).negate() } else { at_column(e, n, &of_values) }
@@ -109,7 +111,7 @@ fn comparisons_that_cannot_raise_are_judged_over_integers() {
     assert_eq!(judged[0].kept(&of_ints, Some(&all), &NoSubqueries, &Portable), Some(vec![0, 1]), "1.50 > 1, -0.20 > -1");
     for j in &judged {
         assert_eq!(j.kept(&of_ints, Some(&all), &NoSubqueries, &Portable), Some(by_values(j)), "{j:?}");
-        assert_eq!(j.kept(&of_values, Some(&all), &NoSubqueries, &Portable), None, "{j:?}: no integers of values");
+        assert_eq!(j.kept(&of_values, Some(&all), &NoSubqueries, &Portable), Some(by_values(j)), "{j:?}: of values, each value's");
     }
     assert_eq!(judged[0].kept(&of_ints, Some(&[1, 4]), &NoSubqueries, &Portable), Some(vec![1]), "of the rows given");
 }
@@ -166,8 +168,8 @@ fn a_like_is_judged_over_vectors() {
     assert!(matches!(nulled.as_slice(), [Judged::Like(0, None)]) && !nulled[0].keeps(&text("a")));
     let (escaped, _) = split(&like(text("a!%%"), Some(text("!"))), &[3]);
     assert!(escaped[0].keeps(&text("a%z")) && !escaped[0].keeps(&text("az")));
-    let (none, all) = split(&like(text("a!x"), Some(text("!"))), &[3]);
-    assert!(none.is_empty() && all.is_some(), "no partitioning: it may raise");
+    let (raising, none) = split(&like(text("a!x"), Some(text("!"))), &[3]);
+    assert!(matches!(raising.as_slice(), [Judged::Truth(..)]) && none.is_none(), "it may raise: by a program");
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4, §5.13,
@@ -339,12 +341,12 @@ fn likes_of_patterns_not_constant_are_judged_over_vectors() {
     assert!(
         matches!(
             judged.as_slice(),
-            [Judged::Compared(..), Judged::LikeOf(0, Operand::At(1), None), Judged::LikeOf(0, Operand::Const(_), Some(Operand::At(2)))]
+            [Judged::Truth(..), Judged::LikeOf(0, Operand::At(1), None), Judged::LikeOf(0, Operand::Const(_), Some(Operand::At(2)))]
         ),
         "{judged:?}"
     );
     let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Const(text("a%")))], Box::new(Expr::Const(Value::Null)));
-    assert!(split(&like(case, None), &[1]).0.is_empty(), "of another expression: rest");
+    assert!(matches!(split(&like(case, None), &[1]).0.as_slice(), [Judged::Truth(..)]), "of another expression: a program");
 }
 
 /// Rows of strings, patterns and escape characters, nulls among them: as

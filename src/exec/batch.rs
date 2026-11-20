@@ -6,7 +6,7 @@
 //! grouping by every column (`distinct_grouping`). Projections are read
 //! so too (`project.rs`). Each function is given its column's values
 //! straight from the batch, an expression's evaluated a vector at a time
-//! where it can be (`vector.rs`); under a filter, only of the rows it
+//! where it can be (`expr.rs`, RULES.md D362); under a filter, only of the rows it
 //! keeps (`judge.rs`). Groups are held in the work area, each the grouping
 //! values and their set functions, given in the order their first rows
 //! came; groups past it are made partly before they spill, if their set
@@ -18,6 +18,7 @@
 //! (`keyed.rs`).
 
 mod count;
+mod expr;
 mod groups;
 mod joined;
 mod judge;
@@ -26,11 +27,11 @@ mod late;
 mod project;
 mod shaped;
 mod stream;
-mod vector;
 
 use std::sync::Arc;
 
 pub(crate) use count::storage_counted;
+use expr::Program;
 pub(super) use groups::{Held, morsel_groups};
 pub(super) use joined::rows_of;
 pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
@@ -38,7 +39,6 @@ use project::Place;
 pub(super) use project::{projectable, projected};
 pub(super) use shaped::{Shaped, filter_step, project_step, through};
 pub(super) use stream::Batches;
-use vector::Lane;
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
@@ -53,13 +53,13 @@ use crate::value::Value;
 
 /// What a set function takes of each row: a count of it, the value of the
 /// column at this place of the batch, or that of an expression of a row of
-/// the values at these places, its columns those of the row
-/// (`project::place_of`).
+/// the values at some places, its columns those of the row, compiled for
+/// vectors (`project::place_of`, `expr.rs`).
 #[derive(Debug, Clone)]
 enum Taken {
     Count,
     Column(usize),
-    Expr(Expr, Vec<usize>),
+    Expr(Arc<Program>),
 }
 
 /// What an aggregation read by batches reads: what each set function
@@ -79,8 +79,8 @@ fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
             (None, false) => Some(Taken::Count),
             (Some(e), false) => Some(match project::place_of(e, columns)? {
                 Place::Column(at) => Taken::Column(at),
-                Place::Const(v) => Taken::Expr(Expr::Const(v), Vec::new()),
-                Place::Expr(e, inputs) => Taken::Expr(e, inputs),
+                Place::Const(v) => Taken::Expr(Arc::new(Program::of(Expr::Const(v), Vec::new()))),
+                Place::Expr(program) => Taken::Expr(program),
             }),
             (Some(_), true) | (None, true) => None,
         })
@@ -183,28 +183,22 @@ fn fed_group(
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             (Taken::Count, _) => state.update_rows(given.len())?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
-            (Taken::Column(c), _) => match batch.columns.get(*c) {
-                Some(Column::Ints(ints)) => state.update_ints(ints, Some(read_rows))?,
-                Some(Column::Floats(floats)) => state.update_floats(floats, Some(read_rows))?,
-                Some(Column::Values(values)) => state.update_many(values, Some(read_rows))?,
-                Some(Column::Texts(texts)) => state.update_texts(texts, Some(read_rows))?,
-                Some(column @ (Column::Datetimes(_) | Column::Bools(_) | Column::Late(_))) => {
-                    state.update_many(column.values(), Some(read_rows))?;
+            (Taken::Column(c), _) => {
+                if let Some(column) = batch.columns.get(*c) {
+                    fed_column(state, column, Some(read_rows))?;
                 }
-                // Every value null, none taken.
-                Some(Column::Nulls(_)) | None => {}
-            },
-            (Taken::Expr(..), Some(Fed::Ints(ints))) => state.update_ints(ints, Some(given))?,
-            (Taken::Expr(..), Some(Fed::Values(Lane::Made(values)))) => state.update_many(values, Some(given))?,
-            (Taken::Expr(..), Some(Fed::Values(Lane::Column(values, _)))) => state.update_many(values, Some(read_rows))?,
-            (Taken::Expr(..), Some(Fed::Values(Lane::Const(v)))) => {
+            }
+            (Taken::Expr(_), Some(Fed::Made(column))) => fed_column(state, column, Some(given))?,
+            (Taken::Expr(_), Some(Fed::Const(v))) => {
                 if !v.is_null() {
                     (0..given.len()).try_for_each(|_| state.update(v))?;
                 }
             }
-            (Taken::Expr(e, inputs), None) => {
+            (Taken::Expr(program), None) => {
                 for &r in read_rows {
-                    let v = evaluated((e, inputs), (scratch, runner), |at, slot| put_cell(batch.cell(at, index(r)), slot))?;
+                    let v = evaluated((&program.expr, &program.inputs), (scratch, runner), |at, slot| {
+                        put_cell(batch.cell(at, index(r)), slot);
+                    })?;
                     eliminated(v.is_null(), runner);
                     if !v.is_null() {
                         state.update(&v)?;
@@ -254,19 +248,14 @@ fn marked(nulls: Option<&Mask>, rows: Option<&[u32]>) -> bool {
 fn column_nulled(column: &Column, rows: Option<&[u32]>) -> bool {
     match column {
         Column::Values(values) => values_nulled(values, rows),
+        Column::Late(late) => values_nulled(late.values(), rows),
         Column::Ints(Ints { nulls, .. })
         | Column::Floats(Floats { nulls, .. })
         | Column::Texts(Texts { nulls, .. })
         | Column::Datetimes(Datetimes { nulls, .. })
         | Column::Bools(Bools { nulls, .. }) => marked(nulls.as_ref(), rows),
         Column::Nulls(nulls) => rows.map_or(nulls.rows > 0, |r| !r.is_empty()),
-        Column::Late(late) => values_nulled(late.values(), rows),
     }
-}
-
-/// Whether the value of `lane` of any of the rows given `given` is null.
-fn lane_nulled(lane: &Lane<'_>, mut given: impl Iterator<Item = usize>) -> bool {
-    given.any(|n| lane.at(n).is_null())
 }
 
 /// Whether a set function that takes `take`, of `lane` if evaluated by
@@ -275,10 +264,10 @@ fn lane_nulled(lane: &Lane<'_>, mut given: impl Iterator<Item = usize>) -> bool 
 /// at a time is told as it is.
 fn group_nulled((take, lane): (&Taken, &Option<Fed<'_>>), batch: &Batch, (given, read_rows): (&[u32], &[u32])) -> bool {
     match (take, lane) {
-        (Taken::Count, _) | (Taken::Expr(..), None) => false,
+        (Taken::Count, _) | (Taken::Expr(_), None) => false,
         (Taken::Column(c), _) => batch.columns.get(*c).is_some_and(|column| column_nulled(column, Some(read_rows))),
-        (Taken::Expr(..), Some(Fed::Ints(ints))) => marked(ints.nulls.as_ref(), Some(given)),
-        (Taken::Expr(..), Some(Fed::Values(lane))) => lane_nulled(lane, given.iter().map(|&n| index(n))),
+        (Taken::Expr(_), Some(Fed::Made(column))) => column_nulled(column, Some(given)),
+        (Taken::Expr(_), Some(Fed::Const(v))) => v.is_null() && !given.is_empty(),
     }
 }
 
@@ -311,52 +300,43 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[u32]>
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
             Taken::Count => state.update_rows(rows.map_or(batch.rows, <[u32]>::len))?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
-            Taken::Column(at) => {
-                eliminated(batch.columns.get(*at).is_some_and(|column| column_nulled(column, rows)), runner);
-                match batch.columns.get(*at) {
-                    Some(Column::Ints(ints)) => state.update_ints(ints, rows)?,
-                    Some(Column::Floats(floats)) => state.update_floats(floats, rows)?,
-                    Some(Column::Values(values)) => state.update_many(values, rows)?,
-                    Some(Column::Texts(texts)) => state.update_texts(texts, rows)?,
-                    Some(column @ (Column::Datetimes(_) | Column::Bools(_) | Column::Late(_))) => {
-                        state.update_many(column.values(), rows)?;
-                    }
-                    // Every value null, none taken.
-                    Some(Column::Nulls(_)) => {}
-                    None => state.update_many(&[], rows)?,
+            Taken::Column(at) => match batch.columns.get(*at) {
+                Some(column) => {
+                    eliminated(column_nulled(column, rows), runner);
+                    fed_column(state, column, rows)?;
                 }
-            }
-            // Its values evaluated a vector at a time (`vector.rs`), or else
-            // a row at a time.
-            Taken::Expr(e, inputs) => match vector::ints::lane(e, inputs, batch, rows) {
-                // Of integers, as integers (`vector/ints.rs`).
-                Some(ints) => {
-                    eliminated(marked(ints.nulls.as_ref(), None), runner);
-                    state.update_ints(&ints, None)?;
+                None => state.update_many(&[], rows)?,
+            },
+            // Its values evaluated a vector at a time (`expr.rs`), or, of a
+            // batch of which that gives none, a row at a time.
+            Taken::Expr(program) => match lane(program, batch, rows, runner) {
+                Some(Fed::Made(column)) => {
+                    eliminated(column_nulled(&column, None), runner);
+                    fed_column(state, &column, None)?;
                 }
-                None => fed_by_vector(batch, (e, inputs, runner), rows, state)?,
+                Some(Fed::Const(v)) => {
+                    let count = rows.map_or(batch.rows, <[u32]>::len);
+                    eliminated(v.is_null() && count > 0, runner);
+                    state.update_many(&vec![v.clone(); count], None)?;
+                }
+                None => fed_by_rows(batch, (&program.expr, &program.inputs, runner), rows, state)?,
             },
         }
     }
     Ok(())
 }
 
-/// Feeds `state` the values of `e` of the rows `rows` of `batch`, or all,
-/// evaluated a vector at a time (`vector.rs`), or else a row at a time;
-/// the warnings raised heard by `runner`.
-fn fed_by_vector(
-    batch: &Batch,
-    (e, inputs, runner): (&Expr, &[usize], &Runner),
-    rows: Option<&[u32]>,
-    state: &mut Box<dyn Accumulator>,
-) -> Result<()> {
-    let count = rows.map_or(batch.rows, <[u32]>::len);
-    let Some(lane) = vector::lane(e, inputs, batch, rows) else { return fed_by_rows(batch, (e, inputs, runner), rows, state) };
-    eliminated(lane_nulled(&lane, 0..count), runner);
-    match lane {
-        Lane::Column(values, given) => state.update_many(values, given),
-        Lane::Made(values) => state.update_many(&values, None),
-        Lane::Const(v) => state.update_many(&vec![v.clone(); count], None),
+/// Feeds `state` the values of `column` at `rows`, or all, a vector at a
+/// time, by its kind; a vector of nulls none.
+fn fed_column(state: &mut Box<dyn Accumulator>, column: &Column, rows: Option<&[u32]>) -> Result<()> {
+    match column {
+        Column::Ints(ints) => state.update_ints(ints, rows),
+        Column::Floats(floats) => state.update_floats(floats, rows),
+        Column::Values(values) => state.update_many(values, rows),
+        Column::Texts(texts) => state.update_texts(texts, rows),
+        Column::Datetimes(_) | Column::Bools(_) | Column::Late(_) => state.update_many(column.values(), rows),
+        // Every value null, none taken.
+        Column::Nulls(_) => Ok(()),
     }
 }
 
@@ -379,21 +359,31 @@ fn fed_by_rows(
     state.update_many(&values, None)
 }
 
-/// The values of each of `taken` that is an expression of the rows `rows`
-/// of `batch`, or all, evaluated a vector at a time, where it is
-/// (`vector.rs`).
-fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [u32]>) -> Vec<Option<Fed<'b>>> {
-    let fed = |e: &'b Expr, inputs: &'b [usize]| {
-        vector::ints::lane(e, inputs, batch, rows).map(Fed::Ints).or_else(|| vector::lane(e, inputs, batch, rows).map(Fed::Values))
-    };
-    taken.iter().map(|t| if let Taken::Expr(e, inputs) = t { fed(e, inputs) } else { None }).collect()
+/// The values of `program` of the rows `rows` of `batch`, or all: a
+/// constant once, else a vector at a time; none of a batch of which that
+/// gives none.
+fn lane<'b>(program: &'b Program, batch: &Batch, rows: Option<&[u32]>, runner: &dyn super::Subqueries) -> Option<Fed<'b>> {
+    if let Some(v) = program.constant() {
+        return Some(Fed::Const(v));
+    }
+    program.vectored().then(|| program.column(batch, rows, runner)).flatten().map(Fed::Made)
 }
 
-/// An expression's values of a batch, evaluated a vector at a time: as
-/// values, or as integers.
+/// The values of each of `taken` that is an expression of the rows `rows`
+/// of `batch`, or all, evaluated a vector at a time, where they are
+/// (`expr.rs`). No statement is at hand: a call that needs one, to keep a
+/// large object it makes, gives none, and so does one that would raise a
+/// warning, and its rows are evaluated one by one in the statement.
+fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [u32]>) -> Vec<Option<Fed<'b>>> {
+    let alone = super::NoSubqueries;
+    taken.iter().map(|t| if let Taken::Expr(program) = t { lane(program, batch, rows, &alone) } else { None }).collect()
+}
+
+/// An expression's values of a batch, evaluated a vector at a time: a
+/// vector made, or a constant.
 enum Fed<'b> {
-    Values(Lane<'b>),
-    Ints(Ints),
+    Made(Column),
+    Const(&'b Value),
 }
 
 // Unit tests: which aggregations are read by batches (RULES.md R-TEST-1,
