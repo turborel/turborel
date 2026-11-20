@@ -59,7 +59,7 @@ pub const STATISTICS: [Mutation; 13] = [
         package: Package::Core,
         breaks: "a conjunction the sample keeps enough rows of is estimated by them",
         file: "src/physical/estimate/sampled.rs",
-        original: "        return cost_of(hits) / n;",
+        original: "        return hits / n;",
         replacement: "        return synopses;",
         integration: &["statistics_estimates::a_correlated_conjunction_is_estimated_on_the_sample"],
         unit: &["physical::estimate::tests::a_correlated_conjunction_is_estimated_on_the_sample"],
