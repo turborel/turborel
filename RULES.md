@@ -382,6 +382,14 @@ verification approach DO-178C expects (§8).
 | D400 | DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's |
 | D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
 | D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
+| D413 | MIN or MAX of a column known not null is read from the first row in order |
+| D414 | Every query of a kept procedure body over its variables learns its plan with slots |
+| D415 | A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks |
+| D416 | A local cursor of a kept procedure body keeps its specification and plan |
+| D417 | An update or delete takes the row it replaced from the write, not a read before it |
+| D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
+| D419 | A row of values that reads nothing is evaluated, not planned |
+| D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
 
 ### The project
 
@@ -836,7 +844,7 @@ AS is refused in a CREATE SCHEMA.
 
 #### D66. A key of NULLS NOT DISTINCT holds its nulls in its index
 
-An index holds no key with a null, as no comparison with a null is true
+A constraint's index holds no key with a null, as no comparison with a null is true
 [X3.135-1986 §5.11 GR2], so a key of NULLS DISTINCT, the default, needs
 none to find its duplicates. A key of NULLS NOT DISTINCT [ISO/IEC
 9075-2:2023 §11.7] counts a null as a value, so its index holds every key,
@@ -848,9 +856,10 @@ time.
 
 Whether an index holds nulls is decided in one place, from the table's
 constraints, and every path that adds or removes an entry asks it
-(`catalog/keys.rs`). Only the constraint's own index holds them, or one
-built again to take its place, as each is made and dropped with the
-constraint. A key with a null sorts before every value, so a probe whose
+(`catalog/keys.rs`). Of the constraints' indexes, only the constraint's
+own holds them, or one built again to take its place, as each is made
+and dropped with the constraint. A B-tree index CREATE INDEX makes
+holds them too (D403). A key with a null sorts before every value, so a probe whose
 range is open below starts after them, and the `Index` contract says no
 comparison probe selects one. A function lookup may return a null key as
 an extra candidate; the executor checks the row against the whole WHERE
@@ -10636,6 +10645,260 @@ A typed, temporary, system-versioned or partitioned table, a node or
 edge table, one a vector pipeline keeps and one of a column registered
 with a spatial or linear referencing system are known by name
 elsewhere, so none is renamed.
+
+### OLTP paths
+
+#### D403. A B-tree index not a constraint's holds keys with a null
+
+An index that holds no key with a null (D66) misses the rows of a null
+in any of its columns, so a probe of its first columns was refused
+whenever a later column could be null. An index on a customer's
+warehouse, district, last and first names could then never answer a
+search by the last name, as the first name may be null, and every such
+search read the whole table. So a B-tree index made by CREATE INDEX
+holds every key, a null in it or not, and a probe of its first columns
+is taken whatever the others may hold (`db/collations.rs`,
+`physical/access/predicate.rs`, `physical/indexed.rs`). A probe still
+selects no null in the columns it compares, as a null sorts before
+every value and the `Index` contract asks. A constraint's index is
+unchanged, as its duplicates are found by probes of its whole key. Its
+entries keep a null before every value, where SQL may want it after,
+so the planner keeps the sort an ORDER BY asks for whenever a column
+the probe does not compare may be null (`surviving_nulls`). An index
+made before this decision lacks those entries, so a database made
+before it is loaded again.
+
+#### D404. Columns of two tables equal to one value are equated for a join
+
+A join of two tables each filtered by one value, such as a stock
+level's order lines and stock rows of one warehouse, holds the two
+columns equal, though no conjunct says so. Without that equality the
+join could not probe the stock table's key, whose first column is the
+warehouse, and hashed every stock row of the warehouse instead. So
+predicate transitivity (D35) adds `a = b` where a filter over a product
+holds `a = v` and `b = v`, `a` and `b` of different tables and `v` one
+exact number or one `?` of exact numeric type
+(`optimizer/transitivity/joined.rs`). A column compared with an exact
+number is of a numeric type, so the equality added compares without
+error and keeps the rows the two keep. The join then probes the index
+by both columns, as it would by any other equality of theirs.
+
+#### D405. A statement planned asks the system nothing
+
+Planning a statement asked the system how many threads it runs, to
+size parallel parts (D291), and the asking opens and reads files of the
+system's each time, about a dozen calls. It is asked once, as the
+system's threads do not change while the database runs
+(`physical/parallel.rs`). The catalog's lists sorted by name, read at
+each statement's end to find the constraints a change may break, are
+sorted once: the catalog keeps its tables' names in that order, sorted
+as first asked and again once a table is added or removed
+(`catalog/memory.rs`).
+
+#### D406. A procedure's body is kept between CALLs
+
+A CALL read the procedure's text again and bound its body again, and
+each INSERT, UPDATE and DELETE in it was bound and planned again as it
+ran, though the body and the definitions it reads seldom change. A
+session keeps each procedure's text read while it stays the same, and
+its body's program (D76) with what it was bound with, as a prepared
+statement keeps its plan (D45): the snapshot's generation, the
+catalog, the authorization, the schema, the time zone and the session's
+own settings. A CALL that finds any of them changed binds the body
+again, so its rules are checked against the definitions of then. A
+binding that reads the statement's instant holds it, and is not kept.
+Each INSERT, searched UPDATE and searched DELETE of a program kept
+keeps its plan as a prepared statement's does, its SQL parameters and
+variables slots each execution fills (`db/routines/kept.rs`).
+
+#### D407. A table's statistics are gathered no more often than their cost allows
+
+The row store gathers a table's statistics again once its changes pass
+a tenth of its rows and 50 more (D31), so each change costs about ten
+rows read by a later pass. A table written fast, as the stock, customer
+and order tables of an order entry load are, had its statistics
+gathered again every second or two, and the maintenance thread spent
+about a third of the server's time reading rows for them. A pass now
+also waits fifty times as long as the last one took, so a table's
+passes take at most a fiftieth of one thread's time
+(`engine/rows/stats.rs`, `PASS_SPACING`). A table whose changes
+outnumber the rows of its last pass, as one loaded after it was made,
+is not made to wait, nor one whose statistics a plan asked for first.
+The table stays due while it waits, and the maintenance job looks at
+it again a second later. `Database::maintain` and `Database::analyze`
+gather at once, as asked (`TableStorage::maintain`, `now`).
+
+#### D408. A kept procedure body keeps the plans of its point reads
+
+A procedure body kept between CALLs (D406) still ran each of its
+leaves, the values, conditions and queries over its variables (D76),
+as a new subquery, optimized and planned with the variables' values as
+constants. An order entry body reads a row by its whole primary key a
+dozen times, and planning those reads cost about as much as running
+them. A leaf of a kept body whose outer references are each a variable
+or parameter, or each subquery of a leaf's row of values whose outer
+references name those, is now planned once with each reference a slot
+of the variable's type. A plan that is one probe of a whole unique key
+is kept with the body and filled with the values at each run, as a
+prepared statement's is (D45, `physical/kept.rs`). Any other leaf runs
+as before. The plans are made again when the body is bound again, so a
+dropped index or a table made again is seen; a leaf first planned over
+a table too small for an unpriced probe keeps no plan until then
+(`routines/kept/leaves.rs`).
+
+#### D409. A shadowed file is read outside its lock, each run of the file's granules at once
+
+A read of a shadowed file (D30) held the file's lock while it read each
+granule, one call of 4 KiB at a time, so every write, which takes the
+lock alone to append to the side file, waited for the reads under way,
+and every read for that write. Under a write load the threads spent
+more time waiting for that lock than reading. A read now copies under
+the lock what was written since the last commit, held or in the side
+files, and finds the rest to be the file's; it then lets the lock go and
+reads each run of the file's granules with one call. A commit writes
+into the file only granules the sealed batch holds, which a read copies
+from the side file instead, and cuts the file no lower than the limit a
+read takes, so what is read of the file is what the lock saw
+(`disk/shadow/file.rs`).
+
+#### D410. A log's sync tells how far the log is durable
+
+A transaction that commits waits for its commit record to be durable,
+and the file log groups those waits into one sync (D25), which makes
+durable every record appended before it began, often other
+transactions' commit records too. `Log::sync_reached` syncs as `sync`
+does and gives the position before which every record is now durable,
+so those transactions can know their records durable without a sync of
+their own, and the database can keep how far the log is durable. The
+file log gives the end of its segment's blocks the group's sync made
+durable (`log/file/segments.rs`). A log syncing nothing, and the
+default, claim just past the record asked for.
+
+### Order entry execution
+
+#### D413. MIN or MAX of a column known not null is read from the first row in order
+
+An order entry's delivery takes the least new order of each district by
+MIN over the district's rows, and the aggregation read every one of
+them, several hundred, though the table's key gives them in order of
+the number asked for. So an aggregation without grouping columns whose
+one set function is MIN or MAX of an exact numeric column known not
+null, over a table's rows filtered by a condition that cannot raise, is
+rewritten to aggregate its rows sorted by the column under FETCH FIRST
+1 ROW ONLY (rule `extremes_by_order`, `optimizer/extremes.rs`). The
+planner reads such rows from an index whose first columns the filter
+fixes and whose next is the column, and stops at the first; else a sort
+of the first row holds one. A column that may hold a null is left, as
+its nulls eliminated raise a warning [ISO/IEC 9075-2:2023 §10.9 GR7a]
+that the rows sorted would not, and so are a condition that may raise,
+whose rows a stopped read would evaluate fewer of. Only exact numbers
+are taken, whose values alike are one value, as the sort and MIN each
+keep the first of rows alike.
+
+#### D414. Every query of a kept procedure body over its variables learns its plan with slots
+
+A kept body's leaf over its variables kept its plan only if the plan was
+one probe of a whole unique key (D408). Every other leaf, as a count of
+customers by name, the sum of an order's lines, or a least new order, was
+optimized and planned again at each run, and planning was a sixth of what
+an order status or a delivery cost. Such a leaf now learns its plan as
+a prepared query does (D45): each of its first runs plans it with its
+values, which it runs, and with its slots, and once `LEARNED_RUNS` in a
+row make the two plans one shape the one with slots is kept and filled
+at each run. One whose plans keep changing stops learning after
+`MOST_LEARNING_RUNS`, and is planned at each run. A table it reads that
+gains or loses rows as its statistics would be gathered again for has
+it learn again (`routines/kept/leaves.rs`). Its plans are the body's,
+made again when the body is bound again (D406).
+
+#### D415. A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks
+
+Each statement's end looked over every table of the catalog for the
+CHECK constraints that read tables, and, for each row it updated or
+deleted, over every table again for the foreign keys that reference it,
+each table's own and its supertables' gathered anew. A cursor settled
+before a change looked over them once more for referential actions. An
+order entry's new order ends two dozen statements, and those looks took
+about a twentieth of it, though its tables have neither. The catalog
+now keeps whether any table has a foreign key and whether any has a
+CHECK that reads tables (`Catalog::constrained`), found as first asked
+and again once a table is added, changed or removed
+(`catalog/memory.rs`), and a statement's end looks for either only where
+one exists (`db/integrity/gather.rs`, `State::written_by`). It keeps
+whether any table is a node table too, and a statement's end looks for
+referential actions and a node's edges only where a table has a foreign
+key or is a node table (`db/integrity/actions.rs`). A unique key's
+check names a global index only of a partition's key. The checks
+of a row's NOT NULL, CHECK and foreign key constraints, which come one
+after another, each read the row again. The row read is kept for the
+next check of the same row (`Checking`), so a row is read once for them
+all.
+
+#### D416. A local cursor of a kept procedure body keeps its specification and plan
+
+A local cursor, declared or a FOR statement's, was opened from its text
+at each OPEN: parsed, bound, optimized and planned again, though its
+procedure's body was kept (D406). An order status opens one at each
+call, and that took nearly half of it. Each local cursor of a program
+kept now keeps its parsed specification and its plan, its variables
+slots, as a prepared cursor does (D45, `KeptProgram::cursor_plans`), and
+OPEN fills the plan with the frame's values. Its physical plan is kept
+or learned as a prepared query's is, and all of it is made again once a
+definition, the session's authorization, schema or time zone changes.
+
+#### D417. An update or delete takes the row it replaced from the write, not a read before it
+
+Each UPDATE or DELETE of a row read the row once more before writing it
+(`State::write_once`), for its undo, its log record, its index entries
+and its triggers, and the row store's write then found the row's newest
+version again to write over it. Each read is a descent of the table's
+tree, and decoding the row. `TableStorage::replace` now writes a row and
+gives the row it replaced, and the row store decodes it from the version
+its write found and replaced (`engine/rows/mvcc/write.rs`), so the row is
+found once. The row is the one the transaction saw, its own version or
+the committed one its snapshot shows, as the write refuses any other
+(SQLCODE -911); its values out of line are freed only as the transaction
+ends. Another engine reads the row and writes it, as before. A row of a
+system-time period is read first still, so that its period refuses a
+write before it is made.
+
+#### D418. A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot
+
+A kept or learned plan held no join (D45), so a query joining two
+tables was optimized and planned at each run, prepared or a kept body's
+leaf (D414). And each outer reference of a leaf became a slot of its
+own, so a variable named for a column of each table, as an order
+entry's customer and warehouse are, was two slots the optimizer could
+not equate, while the plan made with the values equated the columns
+(D404). The plan with slots was a product, the one with values a hash
+join, and the query never learned. A leaf's outer references of one
+slot of the frame are now one slot of its plan (`kept/leaves.rs`), and a
+product, a hash join and an inner index join probing by the outer row's
+columns now have a shape (`physical/kept/shape.rs`) and are filled
+(`physical/kept/filled.rs`). An outer join, a set operation and the
+rest still keep no plan.
+
+#### D419. A row of values that reads nothing is evaluated, not planned
+
+An INSERT's VALUES and a CALL's arguments were a query, optimized,
+planned and run at each execution, though kept (D45, D406), to compute
+a row of a few expressions. Where no value of the rows holds a
+subquery, invokes a routine or draws a sequence generator's next value
+(`Expr::reads_nothing`), each row is now evaluated in turn
+(`routines/program/hosted.rs`, `hosted_rows`), as a row invoking a
+function that modifies SQL-data already was. The values and errors are
+those the query gave. A value that reads a table, or that draws the
+next value of a generator once a row, is still planned.
+
+#### D420. A fixed-length character string already of its type's length is cast and assigned without a copy
+
+A CHARACTER value cast or assigned to a CHARACTER type was cut to the
+type's length and padded again into a new string, though every value
+read of a column of the type, or of a variable of it, already has that
+length. An order entry's line assigns a district's 24 characters into a
+variable at each line, and the copies were a fiftieth of it. A value of
+the type's length is now kept as it is (`types/character.rs`), the value
+the cut and the padding would give.
 
 ## 2. Project layout
 

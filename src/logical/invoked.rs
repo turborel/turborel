@@ -89,4 +89,19 @@ impl Expr {
         }
         false
     }
+
+    /// \[DESIGN\] Whether it is a value of its own operands alone: no
+    /// subquery, no routine invoked and no sequence generator's next value,
+    /// at any depth, so evaluating it reads no table, runs no statement and
+    /// draws no value a row shares (RULES.md D419).
+    pub fn reads_nothing(&self) -> bool {
+        let mut work = vec![self];
+        while let Some(e) = work.pop() {
+            if matches!(e, Expr::Subquery(..) | Expr::Invoked(_) | Expr::NextValue(_)) {
+                return false;
+            }
+            e.for_each_child(&mut |child| work.push(child));
+        }
+        true
+    }
 }

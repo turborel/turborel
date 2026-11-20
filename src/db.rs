@@ -220,8 +220,7 @@ struct DeclaredCursor {
     /// opening procedure's parameters, and always at OPEN.
     updatable: Option<bool>,
     open: Option<OpenCursor>,
-    /// Of a dynamic cursor, the statement prepared that is its
-    /// specification [ISO/IEC 9075:1992 §17.12, §17.13].
+    /// Of a dynamic cursor, the statement prepared that is its specification [ISO/IEC 9075:1992 §17.12, §17.13].
     statement: Option<dynamic::Name>,
 }
 
@@ -258,11 +257,12 @@ struct SessionState {
     area: area::Area,
     /// Its prepared statements and SQL descriptor areas (`db/dynamic.rs`).
     dynamic: dynamic::DynamicState,
-    /// [ISO/IEC 9075-2:2023 §7.6] Where the data change statement running records the rows of its delta table, if a query
-    /// reads it (`db/delta.rs`).
+    /// [ISO/IEC 9075-2:2023 §7.6] Where the change running records its delta table's rows (`db/delta.rs`).
     delta: Option<delta::Collector>,
     /// \[EXTENSION\] The rows it gave in place of estimates (`db/explain/injected.rs`).
     injected: Option<Arc<crate::physical::Injected>>,
+    /// The procedures' bodies it keeps (`db/routines/kept.rs`).
+    routines: routines::KeptRoutines,
 }
 
 /// \[DESIGN\] An application program bound to a `<module>`: an authorization

@@ -159,16 +159,18 @@ impl FileLog {
     /// Makes block `id` of `segment` durable as `durability`, not `None`,
     /// says, grouping with other syncs: if one is running, wait for it,
     /// then check again; otherwise sync for everyone, through the blocks
-    /// published when the sync began.
-    pub(super) fn sync_through(&self, segment: &Segment, id: BlockId, durability: Durability) -> Result<()> {
-        if id.0 < segment.durable_end.load(Ordering::Acquire) {
-            return Ok(());
+    /// published when the sync began: the end of the segment's blocks
+    /// durable then, past `id`, as the group's sync may reach further.
+    pub(super) fn sync_through(&self, segment: &Segment, id: BlockId, durability: Durability) -> Result<BlockId> {
+        let reached = || BlockId(segment.durable_end.load(Ordering::Acquire));
+        if id < reached() {
+            return Ok(reached());
         }
         add(&self.counters.sync_requests, 1);
         let mut syncing = lock_builtin(&self.syncing);
         loop {
-            if id.0 < segment.durable_end.load(Ordering::Acquire) {
-                return Ok(());
+            if id < reached() {
+                return Ok(reached());
             }
             // The group's sync failed: none is tried again.
             self.healthy()?;
@@ -187,6 +189,6 @@ impl FileLog {
         }
         *lock_builtin(&self.syncing) = false;
         self.synced.notify_all();
-        synced
+        synced.map(|()| reached())
     }
 }

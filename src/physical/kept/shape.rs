@@ -7,13 +7,15 @@
 //!
 //! Only the operators a kept plan may hold compare (`filled_plan`): a
 //! table's scan, an index's, a filter, a projection, a grouping, DISTINCT,
-//! a sort, a limit and an append. A join, a set operation, a system table or a
-//! VALUES list has no shape a kept plan may take.
+//! a sort, a limit, an append, a product, a hash join, and an inner index
+//! join by the outer row's columns (RULES.md D418). An outer join, a set
+//! operation, a system table or a VALUES list has no shape a kept plan may
+//! take.
 
 use crate::functions::ScalarRef;
 use crate::index::Probe;
 use crate::logical::Limit;
-use crate::physical::Plan;
+use crate::physical::{JoinProbe, Plan, Preserved};
 use std::sync::Arc;
 
 /// Whether `one` and `other` have one shape, as the module says.
@@ -49,10 +51,10 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         }
         Plan::MergeAppend { .. } => same_merge(one, other),
         Plan::Parallel(p) => same_parallel(p, other),
-        Plan::Product { .. }
-        | Plan::HashJoin { .. }
-        | Plan::IndexJoin { .. }
-        | Plan::MergeJoin(_)
+        Plan::Product { .. } => same_product(one, other),
+        Plan::HashJoin { .. } => same_hash_join(one, other),
+        Plan::IndexJoin { .. } => same_index_join(one, other),
+        Plan::MergeJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
@@ -66,6 +68,47 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::Transition { .. }
         | Plan::Counted(_) => false,
     }
+}
+
+/// Whether `one` and `other` are products of inputs of one shape each
+/// (RULES.md D418).
+fn same_product(one: &Plan, other: &Plan) -> bool {
+    let (Plan::Product { left, right, .. }, Plan::Product { left: left2, right: right2, .. }) = (one, other) else { return false };
+    same_shape(left, left2) && same_shape(right, right2)
+}
+
+/// Whether `one` and `other` are hash joins by the same keys of inputs of
+/// one shape each (RULES.md D418).
+fn same_hash_join(one: &Plan, other: &Plan) -> bool {
+    let (Plan::HashJoin { left, right, keys, .. }, Plan::HashJoin { left: left2, right: right2, keys: keys2, .. }) = (one, other) else {
+        return false;
+    };
+    keys == keys2 && same_shape(left, left2) && same_shape(right, right2)
+}
+
+/// Whether `one` and `other` are inner index joins of one table, by one
+/// index, probed by the same columns of outer inputs of one shape, both
+/// with a condition or neither (RULES.md D418).
+fn same_index_join(one: &Plan, other: &Plan) -> bool {
+    let Plan::IndexJoin { outer: Preserved::Inner, spatial: None, left, table, index, probe: JoinProbe::Prefix(columns), cond, .. } = one
+    else {
+        return false;
+    };
+    let Plan::IndexJoin {
+        outer: Preserved::Inner,
+        spatial: None,
+        left: left2,
+        table: table2,
+        index: index2,
+        probe: JoinProbe::Prefix(columns2),
+        cond: cond2,
+        ..
+    } = other
+    else {
+        return false;
+    };
+    let read = table == table2 && index == index2 && columns == columns2;
+    read && cond.is_some() == cond2.is_some() && same_shape(left, left2)
 }
 
 /// Whether `one` and `other` are limits alike, of inputs of one shape.
@@ -301,7 +344,10 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D45: operators over plans of one shape
     /// have one if they are alike: a sort by the same keys, a grouping by
-    /// the same columns; a sort by others has two; a join has none.
+    /// the same columns; a sort by others has two. RULES.md D418: a product
+    /// of inputs of one shape has one, a hash join by the same keys too; by
+    /// other keys, or a product beside a hash join, they have two; an outer
+    /// join has none.
     #[test]
     fn operators_over_one_shape_have_it_if_alike() {
         let sorted = |descending: bool| Plan::Sort {
@@ -315,8 +361,20 @@ mod tests {
         let distinct = Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64 };
         assert!(same_shape(&distinct, &Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64 }));
         assert!(!same_shape(&distinct, &sorted(false)), "another operator");
-        let joined = Plan::Product { left: Box::new(sorted(false)), right: Box::new(sorted(false)), est: 0.0_f64 };
-        assert!(!same_shape(&joined, &joined), "a join is kept by no plan");
+        let product = |descending: bool| Plan::Product { left: Box::new(sorted(false)), right: Box::new(sorted(descending)), est: 0.0_f64 };
+        assert!(same_shape(&product(false), &product(false)));
+        assert!(!same_shape(&product(false), &product(true)), "an input of another shape");
+        let hashed = |right: usize| Plan::HashJoin {
+            left: Box::new(sorted(false)),
+            right: Box::new(sorted(false)),
+            keys: vec![crate::physical::JoinKey { left: 0, right, nulls: false }],
+            detail: String::new(),
+            est: 0.0_f64,
+        };
+        assert!(same_shape(&hashed(0), &hashed(0)));
+        assert!(!same_shape(&hashed(0), &hashed(1)), "other keys");
+        assert!(!same_shape(&hashed(0), &product(false)), "another join");
+        assert!(!same_shape(&product(false), &hashed(0)), "another join");
     }
 
     /// Verifies: [DESIGN] Independent probes share a prepared shape only

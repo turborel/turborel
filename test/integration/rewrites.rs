@@ -6,6 +6,7 @@
 //! EXPLAIN telling whether the rule rewrote it.
 
 mod elimination;
+mod extremes;
 mod hoisting;
 mod pushdown;
 

@@ -20,6 +20,7 @@
 mod disjunctions;
 mod distinct_aggregates;
 mod elimination;
+mod extremes;
 mod folding;
 mod hoisting;
 mod inlining;
@@ -60,6 +61,7 @@ pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
 pub use elimination::{ELIMINATE_JOINS, EliminateJoins};
+pub use extremes::{EXTREMES_BY_ORDER, ExtremesByOrder};
 pub use folding::ConstantFolding;
 pub use hoisting::{HOIST_RAISING_EXPRESSIONS, HoistRaisingExpressions};
 pub use limits::{PUSH_LIMIT_THROUGH_UNION, PushLimitThroughUnion};
@@ -181,6 +183,7 @@ impl Optimizer {
         o.add(Box::new(PushHavingIntoWhere));
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
+        o.add(Box::new(ExtremesByOrder));
         o
     }
 
