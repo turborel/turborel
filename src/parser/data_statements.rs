@@ -19,6 +19,37 @@ pub(crate) const TRUNCATE: &str = "TRUNCATE";
 /// a direct statement showing a query's plan (`db/explain.rs`). No
 /// standard reserves it, so it stays a `<regular identifier>` elsewhere.
 pub(crate) const EXPLAIN: &str = "EXPLAIN";
+/// \[EXTENSION\] The word that, right after EXPLAIN and before a query,
+/// makes it `EXPLAIN ANALYZE <cursor specification>`, which runs the
+/// query (`db/explain/analyzed.rs`). No standard reserves it either, so a
+/// table may be named ANALYZE.
+pub(crate) const ANALYZE: &str = "ANALYZE";
+
+/// Whether `tok` may begin the `<cursor specification>` of EXPLAIN: SELECT,
+/// VALUES, TABLE, WITH, MATCH or a parenthesis.
+fn begins_query(tok: Option<&Tok>) -> bool {
+    matches!(tok, Some(Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE | kw::WITH | kw::MATCH) | Tok::Delimiter(delim::LEFT_PAREN)))
+}
+
+/// \[EXTENSION\] Of `tokens`, those of a direct statement, where the
+/// query of `EXPLAIN [ ANALYZE ] <cursor specification>` begins among
+/// them, and whether ANALYZE is written, if they begin one: EXPLAIN, then
+/// a query's first token; or EXPLAIN, ANALYZE, then a query's first
+/// token, of a parenthesis one that begins a query too, as a table named
+/// EXPLAIN whose correlation name ANALYZE has a list of columns is
+/// followed by a column's name.
+pub(crate) fn explained<'t>(mut tokens: impl Iterator<Item = &'t Tok>) -> Option<(usize, bool)> {
+    let (first, second, third, fourth) = (tokens.next(), tokens.next(), tokens.next(), tokens.next());
+    if !matches!(first, Some(Tok::Identifier(w)) if w == EXPLAIN) {
+        return None;
+    }
+    if begins_query(second) {
+        return Some((1, false));
+    }
+    let analyze = matches!(second, Some(Tok::Identifier(w)) if w == ANALYZE);
+    let parenthesis = matches!(third, Some(Tok::Delimiter(delim::LEFT_PAREN)));
+    (analyze && begins_query(third) && (!parenthesis || begins_query(fourth))).then_some((2, true))
+}
 
 /// Whether the tokens `first` and `second` begin a `<truncate table
 /// statement>`, not a query: TRUNCATE, then TABLE, which, reserved, no
@@ -259,5 +290,44 @@ impl Parser {
             UpdateSource::Value(self.value_expression()?)
         };
         Ok(SetClause { column, attributes, element, value, at })
+    }
+}
+
+// Unit tests: where EXPLAIN's query begins, and whether ANALYZE is read
+// (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::lex;
+
+    /// Where the query of `sql`, a direct statement, begins, and whether
+    /// ANALYZE is read, if it is EXPLAIN's.
+    fn of(sql: &str) -> Option<(usize, bool)> {
+        explained(lex(sql).unwrap().iter().map(|t| &t.tok))
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D376, R-TEST-8: EXPLAIN is read before
+    /// a query's first token, and EXPLAIN ANALYZE before one, of a
+    /// parenthesis one that begins a query too. MC/DC of `analyze &&
+    /// begins_query(third) && (!parenthesis || begins_query(fourth))`:
+    /// the first two rows against the third show `analyze`; the first
+    /// against the fourth, `begins_query(third)`; the fifth against the
+    /// sixth, `parenthesis`, `begins_query(fourth)` false in both; the
+    /// sixth against the seventh, `begins_query(fourth)`.
+    #[test]
+    fn analyze_is_read_right_after_explain_before_a_query() {
+        assert_eq!(of("EXPLAIN ANALYZE SELECT 1 FROM T"), Some((2, true)));
+        assert_eq!(of("EXPLAIN ANALYZE VALUES (1)"), Some((2, true)));
+        assert_eq!(of("EXPLAIN ANALYSE SELECT 1 FROM T"), None);
+        assert_eq!(of("EXPLAIN ANALYZE T"), None);
+        assert_eq!(of("EXPLAIN ANALYZE SELECT A FROM T"), Some((2, true)));
+        assert_eq!(of("EXPLAIN ANALYZE (A) CROSS JOIN T"), None);
+        assert_eq!(of("EXPLAIN ANALYZE (SELECT A FROM T)"), Some((2, true)));
+        assert_eq!(of("EXPLAIN SELECT A FROM ANALYZE"), Some((1, false)));
+        assert_eq!(of("EXPLAIN (VALUES 1)"), Some((1, false)));
+        assert_eq!(of("EXPLAIN ANALYZE INSERT INTO T VALUES (1)"), None);
+        assert_eq!(of("ANALYZE SELECT 1 FROM T"), None);
+        assert_eq!(of("SELECT 1 FROM T"), None);
+        assert_eq!(of("EXPLAIN"), None);
     }
 }

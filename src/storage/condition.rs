@@ -3,10 +3,14 @@
 //! told (`TableStorage::scan_where`).
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use super::Row;
 use crate::index::Probe;
 use crate::value::{CompOp, Value, compare};
+
+mod threshold;
+pub use threshold::Threshold;
 
 /// \[DESIGN\] A condition rows were chosen by through an index: their values
 /// in `columns`, the index's, answer `probe` (`TableStorage::read_by_condition`).
@@ -98,6 +102,16 @@ pub enum Conjunct {
     },
     /// [X3.135-1986 §5.18] An OR of conjuncts of one column: any of them.
     Any(Vec<Conjunct>),
+    /// \[DESIGN\] (RULES.md D379) The bound of a sort's first key, `column`,
+    /// as it holds rows. A row past it is not among the first. True of
+    /// every row, as the sort judges them, it passes over groups and parts
+    /// alone.
+    Dynamic {
+        /// The column.
+        column: usize,
+        /// The bound, raised as the sort holds rows.
+        threshold: Arc<Threshold>,
+    },
 }
 
 impl Conjunct {
@@ -105,7 +119,10 @@ impl Conjunct {
     pub fn columns(&self) -> Vec<usize> {
         match self {
             Conjunct::Condition(c) => c.columns.clone(),
-            Conjunct::Null { column, .. } | Conjunct::In { column, .. } | Conjunct::NotIn { column, .. } => vec![*column],
+            Conjunct::Null { column, .. }
+            | Conjunct::In { column, .. }
+            | Conjunct::NotIn { column, .. }
+            | Conjunct::Dynamic { column, .. } => vec![*column],
             Conjunct::Any(each) => {
                 let mut columns: Vec<usize> = each.iter().flat_map(Conjunct::columns).collect();
                 columns.sort_unstable();
@@ -133,6 +150,7 @@ impl Conjunct {
             }
             // Each of one column, the same.
             Conjunct::Any(each) => each.iter().any(|c| c.matches_key(key)),
+            Conjunct::Dynamic { .. } => true,
         }
     }
 
@@ -150,6 +168,7 @@ impl Conjunct {
             }
             Conjunct::NotIn { column, values } => bounds.get(*column).and_then(Option::as_ref).is_some_and(|r| !one_of(r, values)),
             Conjunct::Any(each) => each.iter().any(|c| c.may_match(bounds)),
+            Conjunct::Dynamic { column, threshold } => threshold.may_match(bounds.get(*column).and_then(Option::as_ref)),
         }
     }
 }
@@ -164,6 +183,7 @@ impl Conjunct {
             Conjunct::Null { not, .. } => !*not || range.is_some(),
             Conjunct::NotIn { values, .. } => range.is_some_and(|r| !one_of(r, values)),
             Conjunct::Any(each) => each.iter().any(|c| c.may_match_range(range)),
+            Conjunct::Dynamic { threshold, .. } => threshold.may_match(range),
             Conjunct::Condition(c) => {
                 let Some(&column) = c.columns.first() else { return true };
                 let mut bounds = vec![None; column.saturating_add(1)];

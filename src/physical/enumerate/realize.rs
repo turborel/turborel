@@ -20,7 +20,7 @@ use crate::physical::indexed::{Equijoin, alike, index_join};
 use crate::physical::join::{JoinKey, Parted, hashed, hashed_outer};
 use crate::physical::shown::Shown;
 use crate::physical::{MergeJoin, PhysicalPlanner, Plan};
-use crate::value::DataType;
+use crate::value::{CompOp, DataType};
 
 /// A realized plan: the plan, the relations whose columns it gives, in
 /// order, and the order of its rows.
@@ -88,7 +88,7 @@ impl Context<'_> {
     fn split_keys(&self, (left, right): (&[usize], &[usize]), conds: &[Cond]) -> (Vec<(usize, usize)>, Vec<Cond>) {
         let (mut keys, mut rest) = (Vec::new(), Vec::new());
         for c in conds {
-            let pair = if let Cond::Compare(Expr::Column(a), crate::value::CompOp::Eq, Expr::Column(b)) = c {
+            let pair = if let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c {
                 match (self.place_of(left, *a), self.place_of(right, *b), self.place_of(left, *b), self.place_of(right, *a)) {
                     (Some(x), Some(y), _, _) | (_, _, Some(x), Some(y)) => Some((x, y)),
                     (None | Some(_), None | Some(_), None | Some(_), None | Some(_)) => None,
@@ -105,7 +105,9 @@ impl Context<'_> {
     }
 
     /// The conjuncts a join of `sets` judges: its operator's condition's,
-    /// or the inner joins' conjuncts that read both.
+    /// or the inner joins' conjuncts that read both, or, if none does, the
+    /// equalities their keys imply of a column of each
+    /// (`Model::implied_keys`, RULES.md D387).
     fn conds(&self, op: Option<usize>, (l, r): (Set, Set)) -> Vec<Cond> {
         if let Some(cond) = op.and_then(|o| self.query.preds.get(o)).and_then(Option::as_ref) {
             let mut out = Vec::new();
@@ -114,7 +116,12 @@ impl Context<'_> {
         }
         let s = l | r;
         let straddles = |reads: Set| reads & !s == 0 && reads & !l != 0 && reads & !r != 0;
-        self.query.conjuncts.iter().filter(|(_, c)| straddles(self.query.reads(c))).map(|(_, c)| c.clone()).collect()
+        let stated: Vec<Cond> =
+            self.query.conjuncts.iter().filter(|(_, c)| straddles(self.query.reads(c))).map(|(_, c)| c.clone()).collect();
+        if !stated.is_empty() {
+            return stated;
+        }
+        self.model.implied_keys((l, r)).into_iter().map(|(a, b)| Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b))).collect()
     }
 }
 
@@ -331,6 +338,6 @@ fn label(plan: &crate::logical::LogicalPlan) -> String {
 
 /// Whether `c` is the equality of the pair's columns `left` and `right`.
 fn is_key(c: &Cond, (left, right): (usize, usize)) -> bool {
-    let Cond::Compare(Expr::Column(first), crate::value::CompOp::Eq, Expr::Column(second)) = c else { return false };
+    let Cond::Compare(Expr::Column(first), CompOp::Eq, Expr::Column(second)) = c else { return false };
     (*first, *second) == (left, right) || (*first, *second) == (right, left)
 }

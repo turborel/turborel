@@ -320,6 +320,27 @@ pub fn queries() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// The relations a query of the workload joins, each its table and its
+/// correlation name, as its FROM clause names them, a line each.
+pub fn relations(sql: &str) -> Vec<(&str, &str)> {
+    let from = sql.split_once("FROM ").map_or("", |(_, rest)| rest);
+    let list = from.split_once("WHERE").map_or(from, |(list, _)| list);
+    list.split(',').filter_map(|item| item.trim().split_once(" AS ")).map(|(table, alias)| (table.trim(), alias.trim())).collect()
+}
+
+/// The conjuncts of `sql`'s WHERE, one a line.
+pub fn conjuncts(sql: &str) -> Vec<String> {
+    let condition = sql.split_once("WHERE").map_or("", |(_, rest)| rest);
+    condition.lines().map(|l| l.trim().trim_start_matches("AND ").trim().to_owned()).filter(|l| !l.is_empty()).collect()
+}
+
+/// Whether `conjunct` reads a column of the relation `alias`.
+pub fn reads(conjunct: &str, alias: &str) -> bool {
+    let qualifier = format!("{alias}.");
+    let name_char = |c: char| c.is_alphanumeric() || c == '_';
+    conjunct.match_indices(&qualifier).any(|(at, _)| conjunct.get(..at).is_some_and(|before| !before.ends_with(name_char)))
+}
+
 /// xorshift64*, from a fixed seed.
 struct Rng(u64);
 

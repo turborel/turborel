@@ -108,6 +108,8 @@ pub(super) fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId
             }
             ordered_scan((&table, &columns, located), (&order, backward, None), Some(&condition), db, tx)
         }
+        // [EXTENSION] a counted scan told them too (RULES.md D378).
+        (Plan::Counted(c), Some(_)) => super::counted::through(*c, db, |counted| filtered_input(counted, cond, db, tx)),
         (input, _) => execute(input, db, tx),
     }
 }

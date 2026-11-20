@@ -25,7 +25,7 @@ pub use batch::{
     BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Late, LateSource, Mask, Nulls, Ramp,
     Sel, Texts, batches_of, bound, mask, sel,
 };
-pub use condition::{Condition, Conjunct, Conjunction};
+pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
 pub use newest::Newest;

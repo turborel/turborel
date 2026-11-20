@@ -166,6 +166,13 @@ impl Shown {
 }
 
 impl Present {
+    /// Its row taken out now, before its client is told why it closes:
+    /// a client that reads that it closed never finds it listed after
+    /// (RULES.md D42). The `Listed` then has nothing left to take out.
+    pub fn unlisted(&self) {
+        self.shown.locked().remove(&self.id);
+    }
+
     /// Its user, `user`, authenticated: idle from now.
     pub fn authenticated(&self, user: &str) {
         if let Some(entry) = self.shown.locked().get_mut(&self.id) {

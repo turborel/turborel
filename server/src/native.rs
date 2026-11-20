@@ -188,6 +188,10 @@ async fn serve(connection: Connection) {
         Ok(None) => (wire, Ok(())),
         Err(e) => (wire, Err(e)),
     };
+    // Its row goes before the client can read why it closes, which it
+    // takes for the close itself; the shutdown would take it out only
+    // after that reply.
+    present.unlisted();
     // Told within SERVER.IDLE_TIMEOUT_MS, as any reply: a client that takes
     // nothing would hold the connection open.
     let closing = async {
