@@ -6,12 +6,13 @@
 //! kept body's cursors opening from one cursor's plan; a write giving
 //! the row it wrote as the row it replaced; a kept hash join's inner
 //! input left unfilled; a node's edges not acted on; a row drawing a
-//! generator's next value evaluated as one that reads nothing.
+//! generator's next value evaluated as one that reads nothing; a short
+//! fixed-length string cast without its padding.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 10] = [
+pub const TPCC: [Mutation; 11] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -110,6 +111,16 @@ pub const TPCC: [Mutation; 10] = [
         original: "if matches!(e, Expr::Subquery(..) | Expr::Invoked(_) | Expr::NextValue(_)) {",
         replacement: "if matches!(e, Expr::Subquery(..) | Expr::Invoked(_)) {",
         integration: &["sequences::one_value_a_row_6_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-char-cast-unpadded",
+        package: Package::Core,
+        breaks: "a CHARACTER value shorter than its type is cast as it is, not padded to the length",
+        file: "src/value/types/character.rs",
+        original: "if units.count(&s) == usize::try_from(length).unwrap_or(usize::MAX) {",
+        replacement: "if units.count(&s) <= usize::try_from(length).unwrap_or(usize::MAX) {",
+        integration: &["rows::cast_and_assigned_6_13"],
         unit: &[],
     },
 ];

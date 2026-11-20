@@ -129,6 +129,10 @@ impl SqlType for Character {
         let Value::Char(s) = v else { return unassignable(&v, t, rule) };
         let (length, units) = length_of(t);
         let (count, fits) = (units.count(&s), usize::try_from(length).unwrap_or(usize::MAX));
+        // Of its length already: itself, not copied.
+        if count == fits {
+            return Ok(Value::Char(s));
+        }
         if count <= fits {
             return Ok(Value::Char(spaced(&s, fits.saturating_sub(count))));
         }
@@ -165,6 +169,10 @@ impl SqlType for Character {
             // A value of a kind beyond the standard, as its kind shows it.
             Value::Extension(ref e) => padded(&e.kind.text(&v), length).map(unwarned),
             Value::Char(s) => {
+                // Of its length already: itself, as cut and padded it would be.
+                if units.count(&s) == usize::try_from(length).unwrap_or(usize::MAX) {
+                    return Ok((Value::Char(s), None));
+                }
                 let (kept, warning) = cut(&s, length, units);
                 Ok((self.assign(Value::Char(kept), t, "ISO/IEC 9075:1992 §6.10 GR5c")?, warning))
             }

@@ -381,6 +381,7 @@ verification approach DO-178C expects (§8).
 | D417 | An update or delete takes the row it replaced from the write, not a read before it |
 | D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
 | D419 | A row of values that reads nothing is evaluated, not planned |
+| D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
 
 ### The project
 
@@ -10602,6 +10603,16 @@ subquery, invokes a routine or draws a sequence generator's next value
 function that modifies SQL-data already was. The values and errors are
 those the query gave. A value that reads a table, or that draws the
 next value of a generator once a row, is still planned.
+
+#### D420. A fixed-length character string already of its type's length is cast and assigned without a copy
+
+A CHARACTER value cast or assigned to a CHARACTER type was cut to the
+type's length and padded again into a new string, though every value
+read of a column of the type, or of a variable of it, already has that
+length. An order entry's line assigns a district's 24 characters into a
+variable at each line, and the copies were a fiftieth of it. A value of
+the type's length is now kept as it is (`types/character.rs`), the value
+the cut and the padding would give.
 
 ## 2. Project layout
 
