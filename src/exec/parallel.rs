@@ -81,6 +81,14 @@ impl Limit {
         held <= self.most
     }
 
+    /// Gives back `bytes` it was charged, no longer held.
+    fn give(&self, bytes: usize) {
+        let mut seen = self.held.load(Ordering::Acquire);
+        while let Err(now) = self.held.compare_exchange_weak(seen, seen.saturating_sub(bytes), Ordering::AcqRel, Ordering::Acquire) {
+            seen = now;
+        }
+    }
+
     /// What it holds.
     fn held(&self) -> usize {
         self.held.load(Ordering::Acquire)

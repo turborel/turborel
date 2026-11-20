@@ -208,9 +208,14 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
 /// \[DESIGN\] Whether the part `plan` reads a table kept by column with
 /// nothing a serial scan by batch leaves to rows, a hash join's probe or
 /// window functions: that scan, making no row, outruns workers that make
-/// each (RULES.md D291).
+/// each (RULES.md D291). A grouping or DISTINCT is not one: each morsel of
+/// frozen groups is read by batch and grouped in a table of its own as the
+/// serial grouping reads and groups them (RULES.md D358).
 fn by_batch(db: &State, plan: &Plan) -> bool {
-    if let Plan::Aggregate { input, .. } | Plan::Distinct { input, .. } | Plan::Sort { input, .. } = plan {
+    if let Plan::Aggregate { .. } | Plan::Distinct { .. } = plan {
+        return false;
+    }
+    if let Plan::Sort { input, .. } = plan {
         return by_batch(db, input);
     }
     if let Plan::Filter { input, .. } | Plan::Project { input, .. } = plan {
