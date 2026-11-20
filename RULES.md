@@ -10556,6 +10556,8 @@ a bound.
 The bound is a proof only as far as the statistics are true, and at
 depth it overstates many times, so it clamps the estimate and tells how
 far an estimate may be wrong (D386); it is never taken as the estimate.
+A set holding a relation of rows given in place of the estimates (D377)
+has no bound, since those rows overrule the statistics it is drawn from.
 
 #### D386. A hash join and an index nested-loop join are chosen by their regret over the estimate and its pessimistic rows
 

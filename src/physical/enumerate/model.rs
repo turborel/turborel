@@ -222,8 +222,13 @@ impl Model {
     /// column of the left and one of the right: their bounds' product, or
     /// where one side is one relation, the other's bound times the most
     /// rows of one value of its column; a LEFT join's at most adds the
-    /// left's rows, a FULL join's both operands'.
+    /// left's rows, a FULL join's both operands'. A set holding a relation
+    /// of rows given in place of the estimates has none, as those rows
+    /// overrule the statistics the bound is drawn from (RULES.md D377).
     pub(super) fn joined_upper(&self, (s1, u1): (Set, f64), (s2, u2): (Set, f64), (kind, keys): (Kind, &[(usize, usize)])) -> f64 {
+        if self.injected.iter().any(|&(given, _)| given & (s1 | s2) != 0) {
+            return f64::INFINITY;
+        }
         let most = |s: Set, column: usize| {
             let rel = super::space::Space::single(s)?;
             self.rels.get(rel)?.most.iter().find(|(c, _)| *c == column).map(|(_, m)| *m)
