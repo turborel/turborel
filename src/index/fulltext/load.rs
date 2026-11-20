@@ -108,7 +108,11 @@ impl FullTextIndex {
     /// document's, then its runs'; none for a null document. Its places
     /// are sorted in an area of `work`.
     fn records<'a>(&'a self, entry: Result<(Key, RowId)>, work: (&WorkAreas, Area)) -> impl Iterator<Item = Result<Vec<u8>>> + 'a {
-        let made = entry.and_then(|(key, row)| Ok(read(single(&key)?, &self.reading, self.most_term, work)?.map(|r| (row, r))));
+        let made = entry.and_then(|(key, row)| {
+            let value = single(&key)?;
+            self.note_language_in_memory(value)?;
+            Ok(read(value, &self.reading, self.most_term, work)?.map(|r| (row, r)))
+        });
         let (head, runs) = match made {
             Ok(Some((row, read))) => {
                 let doc = Doc { row, hash: read.hash };
@@ -145,6 +149,7 @@ impl FullTextIndex {
         let counts = numbered.counts;
         let mut merged = Merged { index: self, records: by_key, back: None };
         self.tree.load(&mut merged)?;
+        self.write_languages()?;
         if counts.totals.documents == 0 {
             return Ok(());
         }
@@ -205,7 +210,7 @@ impl Numbered<'_> {
         let mut statistic = statistic_key(term);
         statistic.extend_from_slice(&docno.to_be_bytes());
         statistic.extend_from_slice(rest.get(..FOUR).ok_or_else(corrupt)?);
-        let mut stem = stem_key(&self.index.stem_of(term), term);
+        let mut stem = stem_key(&self.index.stem_of(term)?, term);
         stem.extend_from_slice(&docno.to_be_bytes());
         Ok(vec![Ok(posting), Ok(statistic), Ok(stem)])
     }

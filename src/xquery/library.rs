@@ -62,6 +62,7 @@ pub use booleans::effective_boolean_value;
 pub use comparison::{value_comparison, value_equal, value_order};
 pub use decimal::{DIVISION_SCALE, Decimal, MAX_DIGITS, Rounding};
 pub use deep_equal::sequences_deep_equal;
+pub(crate) use normalize::{Form, normalized};
 
 use super::functions::Context;
 use crate::error::Result;

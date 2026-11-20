@@ -13,6 +13,7 @@ use crate::vector::Element;
 
 use super::errors::invalid_manifest;
 
+mod checks;
 pub mod host;
 pub mod settings;
 
@@ -36,7 +37,7 @@ pub const RANGE: &str = "RANGE";
 pub const NEAREST: &str = "NEAREST";
 /// The set functions a plug-in's aggregate may not be named, as one of
 /// their name would replace the standard's [ISO/IEC 9075:1992 §6.5].
-const STANDARD_AGGREGATES: [&str; 5] = ["COUNT", "SUM", "AVG", "MAX", "MIN"];
+pub(super) const STANDARD_AGGREGATES: [&str; 5] = ["COUNT", "SUM", "AVG", "MAX", "MIN"];
 /// The code of an optimizer rule's kind (RULES.md D275), the first after
 /// the host kinds'.
 pub const RULE_CODE: u8 = 37;
@@ -46,6 +47,11 @@ pub const BOUND: &str = "BOUND";
 /// See `BOUND`: after the built-in rules, before joins are ordered; the
 /// default.
 pub const REWRITTEN: &str = "REWRITTEN";
+/// The code of a full-text language's kind (RULES.md D328), after a host
+/// buffer eviction policy's 38.
+pub const LANGUAGE_CODE: u8 = 39;
+/// What a language SERVES: its text cut into words, stems, stop words.
+pub const SERVED_PARTS: [&str; 3] = ["SEGMENT", "STEM", "STOP"];
 
 /// The kinds of object a plug-in provides, each with its code in protocol
 /// 1 (`payload.rs`).
@@ -91,11 +97,13 @@ pub enum ObjectKind {
     Diagnostics,
     /// A rewrite rule of the optimizer (RULES.md D275).
     Rule,
+    /// A language of full-text search (RULES.md D328).
+    Language,
 }
 
 impl ObjectKind {
     /// Every kind, in the order of their codes.
-    pub const ALL: [ObjectKind; 20] = [
+    pub const ALL: [ObjectKind; 21] = [
         ObjectKind::Scalar,
         ObjectKind::Aggregate,
         ObjectKind::Table,
@@ -116,6 +124,7 @@ impl ObjectKind {
         ObjectKind::Credentials,
         ObjectKind::Diagnostics,
         ObjectKind::Rule,
+        ObjectKind::Language,
     ];
 
     /// Its code in protocol 1.
@@ -142,6 +151,7 @@ impl ObjectKind {
             ObjectKind::Diagnostics => 19,
             // After the host kinds' 20 to 36.
             ObjectKind::Rule => RULE_CODE,
+            ObjectKind::Language => LANGUAGE_CODE,
         }
     }
 
@@ -173,6 +183,7 @@ impl ObjectKind {
             ObjectKind::Credentials => "CREDENTIALS",
             ObjectKind::Diagnostics => "DIAGNOSTICS",
             ObjectKind::Rule => "OPTIMIZER RULE",
+            ObjectKind::Language => "LANGUAGE",
         }
     }
 }
@@ -212,8 +223,10 @@ pub struct Declared {
     pub element: Option<String>,
     /// A collation's VERSION.
     pub version: Option<String>,
-    /// An index method's SUPPORTS.
+    /// An index method's SUPPORTS, or what a language SERVES.
     pub supports: Vec<String>,
+    /// The built-in language a language is LIKE, if written.
+    pub like: Option<String>,
     /// An optimizer rule's PHASE, if written.
     pub phase: Option<String>,
     /// An optimizer rule's PASSES, if written.
@@ -241,6 +254,7 @@ impl Declared {
             element: None,
             version: None,
             supports: Vec::new(),
+            like: None,
             phase: None,
             passes: None,
         }
@@ -414,7 +428,7 @@ impl Manifest {
             if !seen.insert((d.kind, d.name.clone())) {
                 return Err(invalid_manifest(&format!("{} {} is declared twice", d.kind.word(), d.name)));
             }
-            check_object(d)?;
+            checks::check_object(d)?;
         }
         let mut hosted = HashSet::new();
         for d in &self.hosted {
@@ -493,82 +507,6 @@ pub fn inside(path: &str, item: &str) -> Result<()> {
     let within = Path::new(path).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
     if path.is_empty() || !within {
         return Err(invalid_manifest(&format!("{item} {path} is not a path inside the plug-in's directory")));
-    }
-    Ok(())
-}
-
-/// The rules of one declaration.
-fn check_object(d: &Declared) -> Result<()> {
-    let named = |what: &str| invalid_manifest(&format!("{} {} {what}", d.kind.word(), d.name));
-    if d.batch == Some(0) {
-        return Err(named("has a BATCH of 0"));
-    }
-    match d.kind {
-        ObjectKind::Aggregate => {
-            if d.parameters.len() != 1 {
-                return Err(named("takes one argument"));
-            }
-            if STANDARD_AGGREGATES.contains(&d.name.as_str()) {
-                return Err(named("would replace a standard set function"));
-            }
-            Ok(())
-        }
-        ObjectKind::Metric => {
-            d.metric_formats()?;
-            let known = [SYMMETRIC, NON_NEGATIVE, TRIANGLE];
-            match d.properties.iter().find(|p| !known.contains(&p.as_str())) {
-                Some(p) => Err(named(&format!("has no property {p}"))),
-                None => Ok(()),
-            }
-        }
-        ObjectKind::Embedding => {
-            if d.dimensions == Some(0) {
-                return Err(named("has no dimensions"));
-            }
-            match d.element.as_deref().filter(|e| Element::named(e).is_none()) {
-                Some(e) => Err(named(&format!("has no element format {e}"))),
-                None => Ok(()),
-            }
-        }
-        ObjectKind::IndexMethod => check_supports(d),
-        ObjectKind::Rule => check_rule(d),
-        ObjectKind::Scalar
-        | ObjectKind::Table
-        | ObjectKind::Procedure
-        | ObjectKind::Authenticator
-        | ObjectKind::Target
-        | ObjectKind::Partition
-        | ObjectKind::Ranking
-        | ObjectKind::Quantizer
-        | ObjectKind::Collation
-        | ObjectKind::SystemTable
-        | ObjectKind::XQuery
-        | ObjectKind::Type
-        | ObjectKind::Engine
-        | ObjectKind::Credentials
-        | ObjectKind::Diagnostics => Ok(()),
-    }
-}
-
-/// That an optimizer rule's PHASE is one there is, and its PASSES not 0.
-fn check_rule(d: &Declared) -> Result<()> {
-    if let Some(p) = d.phase.as_deref().filter(|p| ![BOUND, REWRITTEN].contains(p)) {
-        return Err(invalid_manifest(&format!("OPTIMIZER RULE {} has no phase {p}", d.name)));
-    }
-    if d.passes == Some(0) {
-        return Err(invalid_manifest(&format!("OPTIMIZER RULE {} makes no pass", d.name)));
-    }
-    Ok(())
-}
-
-/// That an index method SUPPORTS at least one search, each one known.
-fn check_supports(d: &Declared) -> Result<()> {
-    let known = [EQUALITY, RANGE, NEAREST];
-    if let Some(s) = d.supports.iter().find(|s| !known.contains(&s.as_str())) {
-        return Err(invalid_manifest(&format!("INDEX METHOD {} supports no search {s}", d.name)));
-    }
-    if d.supports.is_empty() {
-        return Err(invalid_manifest(&format!("INDEX METHOD {} supports no search", d.name)));
     }
     Ok(())
 }

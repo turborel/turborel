@@ -68,6 +68,7 @@ pub(super) fn answer(plugin: &mut Plugin, cx: &mut Cx<'_>, (kind, op, object): (
         8 => target(find(&mut plugin.targets, object)?.as_mut(), &mut plugin.held, op, &mut r),
         9 => partition(plugin, object, op, &mut r),
         RULE_KIND => super::rule::rewrite(plugin, cx, (op, object), &mut r),
+        super::registry::LANGUAGE_CODE => later::language(plugin, object, op, &mut r),
         20.. => super::host::answer(plugin, cx, (kind, op, object), payload),
         _ => later::answer(plugin, cx, (kind, op, object), &mut r),
     }

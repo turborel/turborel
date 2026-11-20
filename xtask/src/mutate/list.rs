@@ -23,6 +23,7 @@ mod expression_index;
 mod fill;
 mod filter;
 mod fulltext;
+mod fulltext_languages;
 mod generated;
 mod geometry;
 mod graph_adjacency;

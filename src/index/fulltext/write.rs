@@ -60,9 +60,13 @@ struct Progress {
 
 impl FullTextIndex {
     /// The bytes of the stem of `term`, cut as terms are.
-    pub(super) fn stem_of(&self, term: &[u8]) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Of a served language, its call's.
+    pub(super) fn stem_of(&self, term: &[u8]) -> Result<Vec<u8>> {
         let word = String::from_utf8_lossy(term);
-        super::document::term_of(&stem(self.reading.language, &word), self.most_term).to_vec()
+        Ok(super::document::term_of(&stem(self.reading.language, &word)?, self.most_term).to_vec())
     }
 
     /// The document `value`, read, its places sorted in a work area.
@@ -92,6 +96,7 @@ impl FullTextIndex {
         let value = single(key)?;
         let Some(hash) = hash_of(value, &self.reading)? else { return Ok(()) };
         let doc = Doc { row, hash };
+        self.note_language(value)?;
         let _row = self.row_lock(row)?;
         let entry = document_key(doc);
         if let Some(old) = self.tree.get(&entry)? {
@@ -240,7 +245,7 @@ impl FullTextIndex {
             }
             Ok(Update::Put(TermStatistics { documents, most: found.most.max(frequency) }.encode()))
         })?;
-        self.tree.update(&stem_key(&self.stem_of(term), term), |old| {
+        self.tree.update(&stem_key(&self.stem_of(term)?, term), |old| {
             let count = stepped(old.map(count_of).transpose()?.unwrap_or_default(), step);
             Ok(if count == 0 { Update::Remove } else { Update::Put(count_value(count)) })
         })

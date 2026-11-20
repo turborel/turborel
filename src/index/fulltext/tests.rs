@@ -7,6 +7,7 @@
 
 mod blocks;
 mod contains;
+mod languages;
 pub(super) mod method;
 mod ranking;
 mod search;
@@ -159,7 +160,7 @@ fn term_and_stem_counts_rise_and_fall() {
     index.insert(two.clone(), 2).unwrap();
     assert_eq!(index.statistics("apples").unwrap(), TermStatistics { documents: 2, most: 3 });
     assert_eq!(index.statistics("pie").unwrap(), TermStatistics { documents: 1, most: 1 });
-    let stem = stem_key(&index.stem_of(b"apples"), b"apples");
+    let stem = stem_key(&index.stem_of(b"apples").unwrap(), b"apples");
     let count = |of: &FullTextIndex| of.tree.get(&stem).unwrap().map(|v| keys::count_of(&v).unwrap());
     assert_eq!(count(&index), Some(2));
     index.remove(&one, 1).unwrap();

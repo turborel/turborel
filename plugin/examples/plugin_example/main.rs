@@ -17,7 +17,8 @@
 //! a host plug-in's manifest, which declares them alone. SETTING_OF and RUN
 //! (`settings.rs`) read and write settings. The optimizer rules and the
 //! procedure that asks for statistics are in `rules.rs`; FILES and SORTED
-//! answer the planner's statistics.
+//! answer the planner's statistics. The languages TOYZH and TOYSTEM are
+//! in `languages.rs`.
 
 mod files;
 mod functions;
@@ -25,6 +26,7 @@ mod host_net;
 mod host_small;
 mod host_store;
 mod indexes;
+mod languages;
 mod later;
 mod replication;
 mod rules;
@@ -39,7 +41,7 @@ use turborel_plugin::{Plugin, serve};
 fn plugin() -> Plugin {
     let plugin = functions::with(Plugin::new("1.0.0"));
     let plugin = services::with(plugin);
-    let plugin = settings::with(later::with(plugin));
+    let plugin = languages::with(settings::with(later::with(plugin)));
     let plugin = shipped::with(replication::with(host_net::with(host_store::with(host_small::with(plugin)))));
     let plugin = plugin.rule("CONTRADICTION", rules::Contradiction).rule("BROKEN", rules::Broken { fails: false });
     let plugin = plugin.rule("ERRING", rules::Broken { fails: true }).procedure("SKEW", rules::Skew);
