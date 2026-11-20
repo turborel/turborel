@@ -72,9 +72,13 @@ println!("{}, as {}", conn.server(), conn.authorization());
 A connection is a session of the server's. `terminate` ends it, its
 transaction as the setting SESSION.COMMIT_AT_END says. A commit that fails then,
 as one of a deferred constraint not satisfied (SQLSTATE 40002), rolls
-the transaction back, and `terminate` gives its `Failure`. It waits for
-the server to close at most as the connection's read timeout says, else
-`TERMINATE_WITHIN`, 60 seconds.
+the transaction back, and `terminate` gives its `Failure`. A Notice or
+a Status the server sends before that Error is read past. On a stream
+that bounds itself it waits for the server to close at most as the
+connection's read timeout says, else `TERMINATE_WITHIN`, 60 seconds.
+Every connection the library makes is over such a stream, but a named
+pipe on Windows, and so is one `Connection::open_within` makes. A
+stream given to `Connection::open` waits as its maker set it.
 
 ## Timeouts
 
@@ -87,7 +91,11 @@ as long as it must. `connect`, `connect_local`, `tls::connect` and
 `Timeouts` of its own, and `set_read_timeout` changes a connection's
 read timeout. A wait that runs out loses the connection (SQLSTATE
 08006), saying the server did not answer in time. A connection over a
-stream given to `Connection::open` waits as its maker set the stream to.
+stream given to `Connection::open` waits as its maker set the stream to,
+`terminate` too. `Connection::open_within` takes a stream of any type
+that implements `timeouts::Bound`, a program's own too, and bounds it as
+its `Timeouts` say, `terminate` as above, and `set_read_timeout` then
+works on it as on a connection the library makes.
 A named pipe, on Windows, is bounded only as it is opened, while it is
 busy: its reads and writes, of the login too, wait as long as they must,
 as the standard library sets no limit on them.
@@ -104,6 +112,14 @@ let mut conn = connect_to_within(&Target::Tcp("127.0.0.1:7422".parse()?), "ANN",
 A reply is taken up to `MAX_BODY`, 16 MiB, the protocol's longest;
 `set_max_body` takes replies of at most as many bytes as it says, a
 longer one losing the connection.
+
+A reply whose frame is whole but holds a value the client cannot take,
+as damaged JSON or a truth byte other than 0 or 1, fails its statement
+with that value's error, SQLCODE -916 or another not of class 08. The
+connection goes on. The rest of the statement's replies are read past
+first, so the next statement gets its own. A frame that is itself
+malformed, cut short or with bytes after its last field, loses the
+connection (SQLSTATE 08006).
 
 ## Running statements
 

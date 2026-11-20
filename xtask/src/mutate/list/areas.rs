@@ -1,6 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
+mod client_sync;
 mod distinct_aggregates;
 mod joins;
 mod parallel;
@@ -144,8 +145,10 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's and parallel queries' last, as `last` holds no more.
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain([&super::transport::TRANSPORT[..], &parallel::PARALLEL[..]])
+    // The transport's, parallel queries' and the client's step with its
+    // server last, as `last` holds no more.
+    let after: [&'static [Mutation]; 3] = [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC];
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the
