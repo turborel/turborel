@@ -14,6 +14,9 @@ use turborel::threads::JobPolicy;
 const ROWS: u64 = 400_000;
 /// Rows each INSERT of the setup writes.
 const PER_INSERT: u64 = 1_000;
+/// Times a measured run reads its query, so a run lasts long enough to
+/// be measured apart from the host's other work.
+const REPEATS: u64 = 20;
 
 /// Schema B with DC, in the column store: K its key; P a price of two
 /// digits; F an integer of 21 bits; D one of 1,024 values far apart; R
@@ -81,8 +84,10 @@ pub fn workloads(bench: &Bench) {
         ("COUNT by texts coded by symbols", "SELECT COUNT(*) FROM DC WHERE U LIKE 'customer1%'"),
     ] {
         bench.measure(Case::new(format!("{name} (decode)"), "rows"), || {
-            fetched(&s, sql);
-            ROWS
+            (0..REPEATS).for_each(|_| {
+                fetched(&s, sql);
+            });
+            ROWS * REPEATS
         });
     }
 }
