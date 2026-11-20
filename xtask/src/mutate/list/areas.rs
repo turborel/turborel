@@ -6,6 +6,10 @@ mod budget;
 mod client_sync;
 #[path = "count.rs"]
 mod count;
+// The decode kernels' mutations, beside the areas as `list.rs` holds no
+// more modules.
+#[path = "decode.rs"]
+mod decode;
 mod distinct_aggregates;
 mod joins;
 mod parallel;
@@ -111,7 +115,7 @@ fn second() -> [&'static [Mutation]; 34] {
     ]
 }
 
-/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's and the server's.
+/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's and the decode kernels'.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 16] = [
         &super::projection::PROJECTION,
@@ -151,8 +155,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xml::XML,
     ];
     // The transport's, parallel queries', the client's step with its
-    // server and batches' last, as `last` holds no more.
-    let after: [&'static [Mutation]; 4] = [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &batches::BATCHES];
+    // server, the decode kernels' and batches' last, as `last` holds no more.
+    let after: [&'static [Mutation]; 5] =
+        [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &decode::DECODE, &batches::BATCHES];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 

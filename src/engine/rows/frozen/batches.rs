@@ -8,7 +8,10 @@
 //! so the filter and the set functions work once a run.
 //!
 //! As a group is taken up, the pages of the chunks its runs are read from
-//! are asked to be read ahead, a window at a time (`columns/ahead.rs`).
+//! are asked to be read ahead, a window at a time (`columns/ahead.rs`);
+//! each chunk a run reads is opened once for the group's runs, and let go
+//! as the runs pass it or the next group is taken up
+//! (`columns/prepared.rs`).
 //!
 //! A group's rows the tree has entries for are read from them as the group
 //! is taken up, the tree read once over its range of row ids, in whatever
@@ -24,9 +27,10 @@ use std::sync::Arc;
 use super::Directory;
 use super::merge::VECTOR_ROWS;
 use crate::engine::columns::ahead::GroupAhead;
-use crate::engine::columns::group::{Group, Pages, Summary};
+use crate::engine::columns::group::{Group, Summary};
+use crate::engine::columns::prepared::Prepared;
 use crate::engine::columns::scan::{
-    datetimes, datetimes_at, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at,
+    Reading, datetimes, datetimes_at, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at,
 };
 use crate::engine::rows::gathered::Gathering;
 use crate::engine::rows::mvcc::Reader;
@@ -63,6 +67,8 @@ pub(in crate::engine::rows) struct Batched {
     read: Vec<(RowId, RowId)>,
     /// The pages of the group being read it asks to be read ahead.
     ahead: GroupAhead,
+    /// The chunks of the group being read its runs have opened.
+    prepared: Prepared,
     /// How many of the tree's rows each batch of them holds.
     ramp: Ramp,
 }
@@ -89,6 +95,7 @@ impl Batched {
             delta: None,
             read: Vec::new(),
             ahead: GroupAhead::default(),
+            prepared: Prepared::default(),
             ramp: Ramp::default(),
         }
     }
@@ -107,11 +114,6 @@ impl Batched {
         Batched { delta, ramp: Ramp::whole(), ..Batched::new(table, (reader, directory), columns, condition) }
     }
 
-    /// The group being read.
-    fn current(&self) -> Option<&Group> {
-        self.group.as_ref().map(|(group, _, _)| &**group)
-    }
-
     /// Takes up the next group, its runs a vector at most each, and the
     /// tree's entries in its range; whether there was one. A group the
     /// condition cannot match by its summary is passed over unread, the
@@ -119,6 +121,7 @@ impl Batched {
     fn next_group(&mut self) -> Result<bool> {
         let Some(entry) = self.directory.groups.get(self.next_group).cloned() else { return Ok(false) };
         self.group = None;
+        self.prepared.clear();
         if !entry.summary.may_match(self.condition.as_ref()) {
             self.next_group = self.next_group.saturating_add(1);
             return Ok(true);
@@ -198,8 +201,8 @@ impl Batched {
 
     /// The batch of the run `from` to `to` of the group being read, if any
     /// of its rows the tree has no entry for is given.
-    fn run_batch(&self, (from, to): (u32, u32)) -> Result<Option<Batch>> {
-        let Some(group) = self.current() else { return Ok(None) };
+    fn run_batch(&mut self, (from, to): (u32, u32)) -> Result<Option<Batch>> {
+        let Some(group) = self.group.as_ref().map(|(group, _, _)| Arc::clone(group)) else { return Ok(None) };
         let pages = self.table.group_pages()?;
         let types = self.table.format.types();
         // A frozen row is not judged here, the filter judging every row
@@ -219,10 +222,11 @@ impl Batched {
                 // A run whole is read a chunk at a time, each value once, as
                 // integers, approximate numbers or text if it is of them.
                 Some(t) => {
+                    let reading = (&pages, &mut self.prepared);
                     if whole {
-                        run_column(group, &pages, (c, t), (from, to))?
+                        run_column(&group, reading, (c, t), (from, to))?
                     } else {
-                        positions_column(group, &pages, (c, t), &positions)?
+                        positions_column(&group, reading, (c, t), &positions)?
                     }
                 }
                 None => Column::from(vec![Value::Null; rows]),
@@ -283,37 +287,47 @@ impl Batched {
 /// Column `c`, of type `t`, of the rows at positions `from` to `to` of
 /// `group`: as integers, approximate numbers or text if it is of them,
 /// else as values.
-fn run_column(group: &Group, pages: &Pages<'_, Sealing>, (c, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Column> {
-    if let Some(ints) = ints(group, pages, (c, t), (from, to))? {
+fn run_column(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, Sealing>,
+    (c, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Column> {
+    if let Some(ints) = ints(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Ints(ints));
     }
-    if let Some(floats) = floats(group, pages, (c, t), (from, to))? {
+    if let Some(floats) = floats(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Floats(floats));
     }
-    if let Some(datetimes) = datetimes(group, pages, (c, t), (from, to))? {
+    if let Some(datetimes) = datetimes(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Datetimes(datetimes));
     }
-    if let Some(texts) = texts(group, pages, (c, t), (from, to))? {
+    if let Some(texts) = texts(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Texts(texts));
     }
-    Ok(Column::from(values(group, pages, (c, t), (from, to))?))
+    Ok(Column::from(values(group, (pages, prepared), (c, t), (from, to))?))
 }
 
 /// As `run_column`, of the rows at `positions`.
-fn positions_column(group: &Group, pages: &Pages<'_, Sealing>, (c, t): (usize, &DataType), positions: &[u32]) -> Result<Column> {
-    if let Some(ints) = ints_at(group, pages, (c, t), positions)? {
+fn positions_column(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, Sealing>,
+    (c, t): (usize, &DataType),
+    positions: &[u32],
+) -> Result<Column> {
+    if let Some(ints) = ints_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Ints(ints));
     }
-    if let Some(floats) = floats_at(group, pages, (c, t), positions)? {
+    if let Some(floats) = floats_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Floats(floats));
     }
-    if let Some(datetimes) = datetimes_at(group, pages, (c, t), positions)? {
+    if let Some(datetimes) = datetimes_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Datetimes(datetimes));
     }
-    if let Some(texts) = texts_at(group, pages, (c, t), positions)? {
+    if let Some(texts) = texts_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Texts(texts));
     }
-    Ok(Column::from(values_at(group, pages, (c, t), positions)?))
+    Ok(Column::from(values_at(group, (pages, prepared), (c, t), positions)?))
 }
 
 impl Iterator for Batched {

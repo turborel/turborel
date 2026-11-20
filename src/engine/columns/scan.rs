@@ -5,11 +5,16 @@
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
 use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
+use super::prepared::Prepared;
 use super::{Chunk, bloom, padding};
 use crate::error::Result;
 use crate::storage::{Coded, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Row, Texts};
 use crate::value::datetime::Moment;
 use crate::value::{DataType, Value};
+
+/// The pages a group's chunks are read of, and the chunks of the group
+/// opened before, kept for the runs after (`prepared.rs`).
+pub type Reading<'p, 'a, S> = (&'p Pages<'a, S>, &'p mut Prepared);
 
 /// The runs of positions of `group`'s rows that each of `conditions` may
 /// match, in order: those every one of them keeps (`kept_by`), every row if
@@ -150,14 +155,18 @@ fn fill(chunk: &Chunk<'_>, (column, t): (usize, &DataType), (first, from, to): (
 /// # Errors
 ///
 /// As `rows`.
-pub fn values<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Vec<Value>> {
+pub fn values<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    (column, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Vec<Value>> {
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
     let mut out = Vec::with_capacity(count);
     let Some(zones) = group.columns.get(column) else { return Ok(vec![Value::Null; count]) };
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
-        pages.with_run(&zone.run, |bytes| {
-            let chunk = Chunk::parse(bytes)?;
+        prepared.with(pages, (column, zone, t), |chunk, _| {
             for position in first..end {
                 out.push(chunk.value(usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX), t)?);
             }
@@ -194,9 +203,14 @@ fn float_of(word: i64) -> f64 {
 /// # Errors
 ///
 /// As `rows`.
-pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Option<Ints>> {
+pub fn ints<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    (column, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
-    Ok(words(group, pages, column, (from, to))?.map(|((units, nulls), runs)| {
+    Ok(words(group, (pages, prepared), (column, t), (from, to))?.map(|((units, nulls), runs)| {
         let ints = Ints::new(units, *scale, nulls_of(&nulls));
         match runs {
             Some(ends) => ints.with_runs(ends),
@@ -214,12 +228,12 @@ pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &
 /// As `rows`.
 pub fn floats<S: Seal>(
     group: &Group,
-    pages: &Pages<'_, S>,
+    (pages, prepared): Reading<'_, '_, S>,
     (column, t): (usize, &DataType),
     (from, to): (u32, u32),
 ) -> Result<Option<Floats>> {
     let DataType::Approximate { .. } = t else { return Ok(None) };
-    Ok(words(group, pages, column, (from, to))?
+    Ok(words(group, (pages, prepared), (column, t), (from, to))?
         .map(|((words, nulls), _)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(&nulls))))
 }
 
@@ -231,12 +245,12 @@ pub fn floats<S: Seal>(
 /// As `rows`.
 pub fn floats_at<S: Seal>(
     group: &Group,
-    pages: &Pages<'_, S>,
+    (pages, prepared): Reading<'_, '_, S>,
     (column, t): (usize, &DataType),
     positions: &[u32],
 ) -> Result<Option<Floats>> {
     let DataType::Approximate { .. } = t else { return Ok(None) };
-    Ok(words_at(group, pages, column, positions)?
+    Ok(words_at(group, (pages, prepared), (column, t), positions)?
         .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(&nulls))))
 }
 
@@ -281,12 +295,12 @@ fn datetime_shape(t: &DataType) -> Option<(Moment, bool, u8)> {
 /// As `rows`.
 pub fn datetimes<S: Seal>(
     group: &Group,
-    pages: &Pages<'_, S>,
+    reading: Reading<'_, '_, S>,
     (column, t): (usize, &DataType),
     (from, to): (u32, u32),
 ) -> Result<Option<Datetimes>> {
     let Some(shape) = datetime_shape(t) else { return Ok(None) };
-    Ok(words(group, pages, column, (from, to))?.map(|((utc, nulls), _)| Datetimes::new(utc, None, shape, nulls_of(&nulls))))
+    Ok(words(group, reading, (column, t), (from, to))?.map(|((utc, nulls), _)| Datetimes::new(utc, None, shape, nulls_of(&nulls))))
 }
 
 /// \[DESIGN\] As `ints_at`, as datetimes, as `datetimes` gives those of a
@@ -297,18 +311,23 @@ pub fn datetimes<S: Seal>(
 /// As `rows`.
 pub fn datetimes_at<S: Seal>(
     group: &Group,
-    pages: &Pages<'_, S>,
+    reading: Reading<'_, '_, S>,
     (column, t): (usize, &DataType),
     positions: &[u32],
 ) -> Result<Option<Datetimes>> {
     let Some(shape) = datetime_shape(t) else { return Ok(None) };
-    Ok(words_at(group, pages, column, positions)?.map(|(utc, nulls)| Datetimes::new(utc, None, shape, nulls_of(&nulls))))
+    Ok(words_at(group, reading, (column, t), positions)?.map(|(utc, nulls)| Datetimes::new(utc, None, shape, nulls_of(&nulls))))
 }
 
 /// The 8-byte fields of column `column` of the rows at positions `from` to
 /// `to`, each chunk's read at once, and where each run of one value among
 /// them ends, if every chunk keeps its values as runs (`Chunk::run_ends`).
-fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to): (u32, u32)) -> Result<Option<RunWords>> {
+fn words<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    (column, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Option<RunWords>> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
     let (mut units, mut nulls) = (Vec::with_capacity(count), Vec::with_capacity(count));
@@ -317,9 +336,8 @@ fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to)
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         let base = units.len();
-        let held = pages.with_run(&zone.run, |bytes| {
-            let chunk = Chunk::parse(bytes)?;
-            let held = chunk.ints((at(first), at(end)), (&mut units, &mut nulls));
+        let held = prepared.with(pages, (column, zone, t), |chunk, made| {
+            let held = chunk.ints_made((at(first), at(end)), (&mut units, &mut nulls), made);
             if let Some(ends) = &mut runs
                 && chunk.run_ends((at(first), at(end)), base, ends).is_none()
             {
@@ -345,15 +363,25 @@ fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to)
 /// # Errors
 ///
 /// As `rows`.
-pub fn ints_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Option<Ints>> {
+pub fn ints_at<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    (column, t): (usize, &DataType),
+    positions: &[u32],
+) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
-    Ok(words_at(group, pages, column, positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(&nulls))))
+    Ok(words_at(group, (pages, prepared), (column, t), positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(&nulls))))
 }
 
 /// The 8-byte fields of column `column` of the rows at `positions`, in
 /// increasing order, each chunk's span from the first asked of it to the
 /// last read at once.
-fn words_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, positions: &[u32]) -> Result<Words> {
+fn words_at<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    (column, t): (usize, &DataType),
+    positions: &[u32],
+) -> Result<Words> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
     let (mut units, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
     let (mut span, mut span_nulls) = (Vec::new(), Vec::new());
@@ -366,8 +394,8 @@ fn words_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, positio
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         span.clear();
         span_nulls.clear();
-        let held = pages.with_run(&zone.run, |bytes| {
-            Ok(Chunk::parse(bytes)?.ints((at(low), at(high).saturating_add(1)), (&mut span, &mut span_nulls)))
+        let held = prepared.with(pages, (column, zone, t), |chunk, made| {
+            Ok(chunk.ints_made((at(low), at(high).saturating_add(1)), (&mut span, &mut span_nulls), made))
         })?;
         if held.is_none() {
             return Ok(None);
@@ -395,12 +423,17 @@ fn words_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, positio
 /// # Errors
 ///
 /// As `rows`.
-pub fn texts_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Option<Texts>> {
+pub fn texts_at<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    (column, t): (usize, &DataType),
+    positions: &[u32],
+) -> Result<Option<Texts>> {
     if padding(t).is_none() {
         return Ok(None);
     }
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
-    if let Some(coded) = coded_at((zones, t), pages, positions)? {
+    if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), positions)? {
         return Ok(Some(coded));
     }
     let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
@@ -413,8 +446,7 @@ pub fn texts_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usiz
             continue;
         }
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        let held = pages.with_run(&zone.run, |bytes| {
-            let chunk = Chunk::parse(bytes)?;
+        let held = prepared.with(pages, (column, zone, t), |chunk, _| {
             Ok(these.iter().try_for_each(|&p| chunk.texts((at(p), at(p).saturating_add(1)), (&mut text, &mut ends, &mut nulls), t)))
         })?;
         if held.is_none() {
@@ -431,7 +463,11 @@ pub fn texts_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usiz
 /// `zones`, of type `t`, as their dictionaries' entries and each row's
 /// entry among them (`storage::Coded`), every chunk's entries one after
 /// another, if every chunk asked of is a dictionary.
-fn coded_at<S: Seal>((zones, t): (&[Zone], &DataType), pages: &Pages<'_, S>, positions: &[u32]) -> Result<Option<Texts>> {
+fn coded_at<S: Seal>(
+    (zones, column, t): (&[Zone], usize, &DataType),
+    (pages, prepared): Reading<'_, '_, S>,
+    positions: &[u32],
+) -> Result<Option<Texts>> {
     let (mut text, mut ends) = (String::new(), Vec::new());
     let (mut codes, mut nulls) = (Vec::with_capacity(positions.len()), Vec::with_capacity(positions.len()));
     let mut rest = positions;
@@ -443,8 +479,9 @@ fn coded_at<S: Seal>((zones, t): (&[Zone], &DataType), pages: &Pages<'_, S>, pos
             continue;
         }
         let at: Vec<usize> = these.iter().map(|&p| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX)).collect();
-        let held =
-            pages.with_run(&zone.run, |bytes| Ok(Chunk::parse(bytes)?.coded(&at, (&mut text, &mut ends, &mut codes, &mut nulls), t)))?;
+        let held = prepared.with(pages, (column, zone, t), |chunk, made| {
+            Ok(chunk.coded_made(&at, (&mut text, &mut ends, &mut codes, &mut nulls), made))
+        })?;
         if held.is_none() {
             return Ok(None);
         }
@@ -463,7 +500,7 @@ fn coded_at<S: Seal>((zones, t): (&[Zone], &DataType), pages: &Pages<'_, S>, pos
 /// As `rows`.
 pub fn texts<S: Seal>(
     group: &Group,
-    pages: &Pages<'_, S>,
+    (pages, prepared): Reading<'_, '_, S>,
     (column, t): (usize, &DataType),
     (from, to): (u32, u32),
 ) -> Result<Option<Texts>> {
@@ -471,7 +508,7 @@ pub fn texts<S: Seal>(
         return Ok(None);
     }
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
-    if let Some(coded) = coded_at((zones, t), pages, &(from..to).collect::<Vec<u32>>())? {
+    if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), &(from..to).collect::<Vec<u32>>())? {
         return Ok(Some(coded));
     }
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
@@ -479,8 +516,8 @@ pub fn texts<S: Seal>(
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        let held = pages
-            .with_run(&zone.run, |bytes| Ok(Chunk::parse(bytes)?.texts((at(first), at(end)), (&mut text, &mut ends, &mut nulls), t)))?;
+        let held = prepared
+            .with(pages, (column, zone, t), |chunk, _| Ok(chunk.texts((at(first), at(end)), (&mut text, &mut ends, &mut nulls), t)))?;
         if held.is_none() {
             return Ok(None);
         }
@@ -497,7 +534,12 @@ pub fn texts<S: Seal>(
 /// # Errors
 ///
 /// As `rows`.
-pub fn values_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Vec<Value>> {
+pub fn values_at<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    (column, t): (usize, &DataType),
+    positions: &[u32],
+) -> Result<Vec<Value>> {
     let mut out = Vec::with_capacity(positions.len());
     let Some(zones) = group.columns.get(column) else { return Ok(vec![Value::Null; positions.len()]) };
     let mut rest = positions;
@@ -509,8 +551,7 @@ pub fn values_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usi
         if these.is_empty() {
             continue;
         }
-        pages.with_run(&zone.run, |bytes| {
-            let chunk = Chunk::parse(bytes)?;
+        prepared.with(pages, (column, zone, t), |chunk, _| {
             for &position in these {
                 out.push(chunk.value(usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX), t)?);
             }

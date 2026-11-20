@@ -10,7 +10,7 @@
 //!        least, of bits | each run's end, of the bits the count needs
 //! ```
 
-use super::packed::{bits_for, get, pack, packed_len, unpack};
+use super::packed::{bits_for, get, pack, packed_len};
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 
@@ -146,16 +146,19 @@ impl<'a> Runs<'a> {
     }
 
     /// The values at positions `from` to `to`, pushed to `out`, each run's
-    /// value repeated for its rows among them.
+    /// value repeated for its rows among them: the runs from the one of
+    /// `from` read one at a time until one ends at or past `to`, so a range
+    /// reads the few runs it covers, not every run of the chunk.
     pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         if to > self.count || from > to {
             return None;
         }
-        let mut ends = Vec::with_capacity(self.many);
-        unpack(self.ends, bits_for(u64::try_from(self.count).ok()?), (0, self.many), |e| ends.push(e))?;
-        let (mut at, mut r) = (from, self.run_of(from).unwrap_or(self.many));
+        if from == to {
+            return Some(());
+        }
+        let (mut at, mut r) = (from, self.run_of(from)?);
         while at < to {
-            let end = usize::try_from(*ends.get(r)?).ok()?.min(to);
+            let end = self.end(r)?.min(to);
             out.extend(std::iter::repeat_n(self.value(r)?, end.checked_sub(at)?));
             (at, r) = (end, r.saturating_add(1));
         }
