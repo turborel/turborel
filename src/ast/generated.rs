@@ -3,7 +3,7 @@
 //! values, how ALTER COLUMN changes what it gives, and an INSERT's
 //! `<override clause>`.
 
-use super::{DefaultOption, DropBehavior, SequenceOptions, TableName, ValueExpression};
+use super::{DefaultOption, DropBehavior, SequenceOptions, TableName, TypeName, ValueExpression};
 
 /// [ISO/IEC 9075-2:2023 §11.4] An `<identity column specification>` or a
 /// `<generation clause>`, in place of a `<default clause>`.
@@ -84,6 +84,15 @@ pub enum AlterColumnAction {
     /// \[EXTENSION\] RENAME \[COLUMN\] `<column name>` TO `<column
     /// name>`: the new name (`db/alter/rename.rs`).
     Rename(String),
+    /// [§11.15] `<set column not null clause>` ::= SET NOT NULL
+    /// (`db/alter/nullability.rs`).
+    SetNotNull,
+    /// [§11.16] `<drop column not null clause>` ::= DROP NOT NULL
+    /// (`db/alter/nullability.rs`).
+    DropNotNull,
+    /// [§11.19] `<alter column data type clause>` ::= SET DATA TYPE
+    /// `<data type>` (`db/alter/retype.rs`).
+    SetDataType(TypeName),
 }
 
 /// [ISO/IEC 9075-2:2023 §14.11] `<override clause>` ::= OVERRIDING USER

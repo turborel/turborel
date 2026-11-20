@@ -127,8 +127,8 @@ FEATURE	F321	 	User authorization	 	NO
 FEATURE	F341	 	Usage tables	 	YES		CONFORMANCE.md, Transactions, sessions and the Information Schema
 FEATURE	F361	 	Subprogram support	 	NO		
 FEATURE	F381	 	Extended schema manipulation	 	NO		
-FEATURE	F382	 	Alter column data type	 	NO		
-FEATURE	F383	 	Set column not null clause	 	NO		
+FEATURE	F382	 	Alter column data type	 	YES		CONFORMANCE.md, Altered columns
+FEATURE	F383	 	Set column not null clause	 	YES		CONFORMANCE.md, Altered columns
 FEATURE	F384	 	Drop identity property clause	 	YES		CONFORMANCE.md, Identity columns and generated columns
 FEATURE	F385	 	Drop column generation expression clause	 	YES		CONFORMANCE.md, Identity columns and generated columns
 FEATURE	F386	 	Set identity column generation clause	 	YES		CONFORMANCE.md, Identity columns and generated columns

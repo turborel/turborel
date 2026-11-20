@@ -95,7 +95,7 @@ pub const SYSTEM_VERSIONED: [Mutation; 34] = [
         name: "added-period-unfilled",
         package: Package::Core,
         breaks: "the rows of a table given a system-time period are not stamped [§11.27 GR1c]",
-        file: "src/db/ddl.rs",
+        file: "src/db/ddl/copied.rs",
         original: "stamp.put(&mut new);",
         replacement: "let _ = stamp;",
         integration: &["system_versioned::a_system_time_period_is_added_with_its_columns_11_27"],

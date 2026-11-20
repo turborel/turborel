@@ -28,14 +28,14 @@ use crate::settings::Kind;
 use crate::value::Value;
 
 /// A name written delimited, its quotes doubled.
-fn quoted(name: &str) -> String {
+pub(super) fn quoted(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 /// Whether `text` names `names` as identifiers, or, if `star`, selects all
 /// columns by `*`, after SELECT or a qualifier. A text that does not lex
 /// is taken to name them.
-fn names_any(text: &str, names: [&str; 2], star: bool) -> bool {
+pub(super) fn names_any(text: &str, names: [&str; 2], star: bool) -> bool {
     let Ok(tokens) = lex(text) else { return true };
     tokens.iter().enumerate().any(|(k, t)| {
         if let Tok::Identifier(n) = &t.tok {

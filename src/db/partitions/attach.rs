@@ -293,6 +293,7 @@ impl State {
             | AlterAction::DropConstraint { .. }
             | AlterAction::AttachPartition { .. }
             | AlterAction::DetachPartition(_) => None,
+            AlterAction::RenameTable { .. } => Some("its tree knows it by its name"),
         };
         match refused_for {
             Some(why) => refused(format!("[EXTENSION] {qn} is partitioned or a partition, and {why} (RULES.md D153)")),
