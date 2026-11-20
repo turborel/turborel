@@ -171,7 +171,7 @@ impl State {
         }
         // The version it rechecked, and its turn behind the row's earlier
         // waiters (RULES.md D442).
-        let (mut seen, mut tries, mut turn): (Option<(Timestamp, Row)>, usize, _) = (None, 0, None);
+        let (mut seen, mut tries, mut turn): (Option<(Timestamp, Row)>, usize, Option<super::row_waits::Turn>) = (None, 0, None);
         loop {
             if let Write::Update(row) = &mut write {
                 self.keep_lobs(tx, table, Some(id), row)?;
