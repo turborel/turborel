@@ -11,6 +11,7 @@
 
 mod handed;
 pub mod hosted;
+mod watch;
 
 use std::future::Future;
 use std::io::{self, Read, Write};
@@ -22,6 +23,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use turborel::db::Database;
 
 pub use handed::{Handed, Socket};
+pub use watch::Watch;
 
 use crate::auth::Peer;
 use crate::keepalive::Keepalive;
@@ -33,10 +35,16 @@ use crate::keepalive::Keepalive;
 /// One a thread can read and write itself, apart from the runtime, gives
 /// itself so from `direct` (`Handed`, and a stream TLS secures over one);
 /// one that cannot, as a named pipe, leaves it `None`, the default, so an
-/// `impl Transport for It {}` is enough.
+/// `impl Transport for It {}` is enough. One whose peer can be watched
+/// gives a watch from `watch` (RULES.md D335), else `None`, the default.
 pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send + 'static {
     /// The stream as a thread reads and writes it itself, if it can.
     fn direct(&mut self) -> Option<&mut dyn Direct> {
+        None
+    }
+
+    /// A watch on its peer, if it can be watched (`Watch`).
+    fn watch(&self) -> Option<Watch> {
         None
     }
 }

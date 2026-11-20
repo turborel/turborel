@@ -1,5 +1,6 @@
 //! How a connection ends at the server's word: ended by its operator, its
-//! user dropped, or idle in a transaction too long.
+//! user dropped, or idle in a transaction too long; and how a statement
+//! ends once its client is gone.
 
 use std::time::Duration;
 
@@ -181,4 +182,64 @@ fn a_connection_idle_in_a_transaction_is_closed() {
     holder.run("DELETE FROM T").unwrap();
     holder.rollback().unwrap();
     assert_eq!(count(&db, "X", "T"), "0", "rolled back, its locks let go");
+}
+
+/// Rows of X.T, so a join of four of it runs longer than any test.
+const MANY: usize = 1000;
+
+/// The most a session waits for the lock of a statement whose client is
+/// gone: far longer than finding it gone takes, so the wait is bounded
+/// only for a server that never finds it.
+const LOCK_WAIT_MS: u32 = 60_000;
+
+/// Verifies: [ISO/IEC 9075:1992 §20.1 GR2a]; [DESIGN] RULES.md D335, D44: a
+/// statement whose client closes its connection while it runs is
+/// cancelled, the connection's session rolled back and its locks let go:
+/// a statement that would run far longer than any test stops, and another
+/// session's UPDATE of the row the gone session updated waits no more,
+/// that update undone.
+#[test]
+fn a_statement_stops_once_its_client_is_gone() {
+    let db = Database::new();
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER) CREATE TABLE R (K INTEGER)").unwrap();
+    let filling = db.session("X");
+    let values: Vec<String> = (0..MANY).map(|k| format!("({k})")).collect();
+    filling.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    filling.run("INSERT INTO R VALUES (1)").unwrap();
+    filling.commit().unwrap();
+    let server = start(&db, &[]);
+    let mut gone = server.raw();
+    gone.hello("X");
+    gone.send(&Request::Query { sql: "UPDATE R SET K = 2".into(), ends: false, attributes: Vec::new(), multi: false });
+    assert!(matches!(gone.receive(), Some(Reply::Complete(Completed { sqlcode: 0, active: true, .. }))));
+    let long = "SELECT COUNT(*) FROM T A, T B, T C, T D";
+    gone.send(&Request::Query { sql: long.into(), ends: false, attributes: Vec::new(), multi: false });
+    let owner = db.session("OWNER");
+    let state = "SELECT STATE FROM INFORMATION_SCHEMA.CONNECTIONS WHERE USER_NAME = 'X'";
+    while rows_of(&owner, state) != ["RUNNING"] {
+        std::thread::yield_now();
+    }
+    drop(gone);
+    let waiting = db.session("X");
+    waiting.run(&format!("SET LOCKS.TIMEOUT_MS = {LOCK_WAIT_MS}")).unwrap();
+    waiting.run("UPDATE R SET K = K + 10").unwrap();
+    waiting.commit().unwrap();
+    assert_eq!(rows_of(&waiting, "SELECT K FROM R"), ["11"], "the gone session's update undone");
+    while !rows_of(&owner, state).is_empty() {
+        std::thread::yield_now();
+    }
+}
+
+/// The rows of `query` in `session`, its transaction then rolled back.
+fn rows_of(session: &turborel::db::Session, query: &str) -> Vec<String> {
+    let mut cursor = session.open_cursor(query).unwrap();
+    let mut all = Vec::new();
+    while let Some(row) = cursor.fetch().unwrap() {
+        all.push(row.iter().map(|v| v.to_string().trim_end().to_owned()).collect::<Vec<_>>().join(","));
+    }
+    drop(cursor);
+    session.rollback().unwrap();
+    all
 }

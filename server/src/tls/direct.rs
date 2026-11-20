@@ -153,6 +153,10 @@ impl Transport for Encrypted {
         self.0.get_mut().0.direct()?;
         Some(self)
     }
+
+    fn watch(&self) -> Option<crate::transport::Watch> {
+        self.0.get_ref().0.watch()
+    }
 }
 
 impl AsyncRead for Encrypted {

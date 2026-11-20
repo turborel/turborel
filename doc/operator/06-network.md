@@ -249,6 +249,14 @@ turborel: SQLCODE -919 (SQLSTATE 08006): the server's operator ended the connect
 A connection whose user is dropped ends at its next request
 ([Users](05-users.md#a-users-sessions)).
 
+A client that closes its connection, or whose connection fails, while
+its statement runs does not leave the statement running. The server
+looks at the socket of a connection whose request is still running,
+finds the client gone, and cancels the statement as ending the
+connection does; its session is rolled back and its locks let go. A
+client that sent its next request ahead, or closed a TLS connection
+with its closing alert, is found as the statement ends instead.
+
 The database's owner sees the connections served, and the server's
 counts, in INFORMATION_SCHEMA.CONNECTIONS and INFORMATION_SCHEMA.SERVER
 ([Information Schema](../sql/07-information-schema.md)). Of a server whose
