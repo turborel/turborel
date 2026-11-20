@@ -267,10 +267,8 @@ impl Entry {
 mod tests {
     use super::*;
 
-    /// Verifies: [EXTENSION] RULES.md D166, the history's entries, format
-    /// version 1: each kind round trips, and an unknown kind is refused.
-    #[test]
-    fn entries_round_trip() {
+    /// An entry of each kind.
+    fn entries() -> [Entry; 5] {
         let segment = SegmentEntry { location: "/a".into(), timeline: 1, first: Lsn(1), last: Lsn(4), bytes: 9, wall: 3 };
         let backup = BackupEntry {
             id: "B".into(),
@@ -286,18 +284,65 @@ mod tests {
             started: 1,
             ended: 2,
         };
-        let entries = [
+        [
             Entry::Backup(backup),
             Entry::Archived(segment.clone()),
             Entry::Removed(segment),
             Entry::Point { name: "P".into(), position: Lsn(3), wall: -4 },
             Entry::Restored { location: "/b".into(), id: "B".into(), timeline: 2, branch: Lsn(7), wall: 5 },
-        ];
+        ]
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D166, the history's entries, format
+    /// version 1: each kind round trips, and an unknown kind is refused.
+    #[test]
+    fn entries_round_trip() {
+        let entries = entries();
         for entry in entries {
             assert_eq!(Entry::decode(&entry.encode()).unwrap(), entry);
         }
         assert_eq!(Entry::decode(&[HISTORY_FORMAT, 9]).err().map(|e| e.code), Some(Code::Corrupt));
         assert_eq!(BackupState::of(0), None);
         assert_eq!(BackupState::of(BackupState::Gone.code()), Some(BackupState::Gone));
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D166, the history's entries: each
+    /// kind cut at any byte, or followed by one, of another format, of a
+    /// backup state or kind no code names, or of an instant out of range
+    /// is refused with SQLCODE -916; each state has its name.
+    #[test]
+    fn malformed_entries_are_refused() {
+        let corrupt = |bytes: &[u8]| Entry::decode(bytes).err().map(|e| e.code);
+        for entry in entries() {
+            let bytes = entry.encode();
+            for cut in 0..bytes.len() {
+                assert_eq!(corrupt(&bytes[..cut]), Some(Code::Corrupt), "{entry:?} cut at {cut}");
+            }
+            assert_eq!(corrupt(&[bytes.as_slice(), &[0]].concat()), Some(Code::Corrupt));
+            let mut format = bytes.clone();
+            format[0] = HISTORY_FORMAT.wrapping_add(1);
+            assert_eq!(corrupt(&format), Some(Code::Corrupt));
+        }
+        let [backup, _, _, point, _] = entries();
+        let bytes = backup.encode();
+        // The format, the kind, then the id "B", the location "/b" and the
+        // backup's kind: strings are a u32 length and their bytes.
+        let kind_at = 2 + 4 + 1 + 4 + 2;
+        assert_eq!(bytes[kind_at], BackupKind::Full.code());
+        let mut kind = bytes.clone();
+        kind[kind_at] = 0xEE;
+        assert_eq!(corrupt(&kind), Some(Code::Corrupt), "a backup's kind");
+        // Then the parent "", the timeline, the two positions and the bytes.
+        let state_at = kind_at + 1 + 4 + 4 + 8 + 8 + 8;
+        assert_eq!(bytes[state_at], BackupState::Completed.code());
+        let mut state = bytes;
+        state[state_at] = 0xEE;
+        assert_eq!(corrupt(&state), Some(Code::Corrupt), "a backup's state");
+        let mut far = point.encode();
+        let wall_at = far.len() - 16;
+        far[wall_at..].copy_from_slice(&i128::MAX.to_le_bytes());
+        assert_eq!(corrupt(&far), Some(Code::Corrupt), "an instant out of range");
+        let names: Vec<&str> = STATES.iter().map(|s| s.name()).collect();
+        assert_eq!(names, ["RUNNING", "COMPLETED", "FAILED", "CANCELLED", "GONE"]);
     }
 }

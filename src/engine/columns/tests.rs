@@ -4,6 +4,8 @@ use super::encoded::{ALP, CONSTANT, DICTIONARY, FIXED, FRAME, FSST, RUNS, VARYIN
 use super::*;
 use crate::value::{Decimal, Spelled};
 
+mod truncated;
+
 fn int(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))
 }
