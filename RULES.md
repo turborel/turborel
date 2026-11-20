@@ -344,8 +344,12 @@ verification approach DO-178C expects (§8).
 | D342 | DISTINCT functions of several arguments make each row once for each argument, marked, not one grouping each joined back |
 | D343 | A DISTINCT function's filter is a truth of each row, grouped by, and its argument is computed of the rows it admits |
 | D344 | A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once |
+| D350 | A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there |
+| D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
 | D352 | A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs |
 | D353 | ALP decimals are read by two multiplications with a stored pair of factors |
+| D393 | A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection |
+| D394 | Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error |
 
 ### The project
 
@@ -8705,11 +8709,15 @@ deciding entries itself (D85) and a located one stay serial.
 
 A fixed small work area made large operators spill while the budget
 sat unused. An operator now takes a grant as it starts
-(`spill/grant.rs`), half of the budget left free, at most
-MEMORY.WORK_BYTES, default 256 MiB, reserved until it ends. Each grant
-after takes half of what is left, so the grants of all statements
-together never pass the budget however many sessions run, and they
-shrink as sessions grow. Where half the free budget is under 4 MiB an
+(`spill/grant.rs`), at most MEMORY.WORK_BYTES, default 256 MiB,
+reserved until it ends. Grants share half the budget, and the other
+half is kept for what reserves beside them, spill areas' pools first,
+so a statement holding hundreds of operators at once, as an XMLMAP of
+the catalog does, still finds room to spill. A grant is half of the
+grants' share left free. Each grant after takes half of what is left, so
+the grants of all statements together never pass their share however
+many sessions run, and they shrink as sessions grow. Where half of that
+share left free is under 4 MiB an
 operator holds 4 MiB unreserved, as every operator did before grants,
 and a ceiling set below 4 MiB is held as set, so a session can still
 ask for small areas. A spill area's pool is at most 4 MiB, as rows are
@@ -9527,6 +9535,64 @@ again in one buffer for each value, so a value seen allocates nothing.
 The bag (`exec/work.rs`) looks a key up once if it holds it and twice if
 not, where it hashed every new key three times, which the set operations,
 recursive queries and window functions using it gain too.
+#### D350. A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there
+
+A batch scan of a row-store table copied each entry's key and value out
+of its leaf, then copied the record of the version it saw, three
+allocations a row, which cost more than the visibility checks and the
+latching together. Now the tree shows a visitor each entry of a leaf
+under the leaf's latch, borrowed (`Scan::visit`). The visitor parses the
+newest version where it lies and, if the reader sees it, gathers the
+columns asked for straight into the batch's vectors, or with no column
+only counts the row. What cannot be read under a latch is handed back
+copied and read after the latch is released, as every row was read
+before. That covers a version the reader does not see as stamped, whose
+older versions are in the undo store or whose maker is a commit stamped
+late, looked up under a lock not taken under a latch. It covers a sealed
+record, opened by a plug-in's encodings (R-ERR-4), and a record whose
+columns asked for are out of line on other pages. The scan goes on past
+an entry handed back, or a batch filled, from the same leaf, and a leaf
+read again after a split still leads right to every key past it (Lehman
+and Yao, §4). Rows keep their row id order, so results and their order
+do not change. A table that freezes rows reads its tree through its own
+path and is not changed.
+
+#### D351. A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place
+
+`TableStorage::count` gives counts of the rows a scan of the table with
+no condition would give the transaction, or none when the engine cannot
+count faster. Its default is none. The row store answers for a table
+that freezes no row and holds no group. Under each zone's lock it reads
+the zone's flag of rows every reader sees (D34) and its rows together. A
+write clears the flag under that lock before its index entries, and a
+sum up sets both, so a zone whose flag is set holds exactly those rows,
+committed at or before the horizon, none a deletion. The horizon is at or
+below every open snapshot, so every reader, at any isolation level,
+sees those rows and only those, and its own writes would have cleared
+the flag. Each such zone adds its rows. The ranges of every other zone
+and the ids past the last are read in place with no column (D350).
+Under SERIALIZABLE the read is noted as the whole table's, as a scan's
+with no condition is. Nothing is read or noted until the first count is
+asked for, so EXPLAIN can ask the storage whether it counts. A table
+that freezes rows is scanned, because a freeze takes out entries without
+a change of their zones, so their rows are no longer the tree's. Zone
+flags stay in memory, so a table opened reads its rows until the
+maintenance thread settles its zones.
+
+The executor feeds an aggregation of one group, whose set functions each
+count rows, over a bare scan in no order, not located and unfiltered,
+the storage's counts in place of the scan's batches, each looked at for
+a cancel as a batch is. COUNT of a column declared NOT NULL is left to
+the scan, as a deferred constraint may let a transaction hold a null
+until it commits. EXPLAIN adds the line `-- counted by storage: <table>`
+when a bare COUNT(*) at the top of the plan is counted so. The planner
+never runs such a count in parallel (D291), as the zone count is faster
+than any split of the table into morsels. Rejected: a
+stored row count per table, which is not any snapshot's; counts in the
+tree's nodes, which every insert must write and which are not any
+snapshot's either; zone flags kept on disk, which would need logging to
+stay right across a crash and which the maintenance thread rebuilds soon
+after a table opens.
 
 #### D352. A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs
 
@@ -9577,6 +9643,71 @@ allows. The new encoder sets bit 0x80 of the chunk's first byte, which is
 above every exponent, and writes f after it. A chunk without the bit was
 written before and is read by division, so an older file never reads
 wrongly and needs no migration.
+
+#### D393. A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection
+
+A reply's frame is read whole by its length before it is decoded, so a
+value in it the client cannot take leaves the stream in step. Damaged
+JSON, JSON nested too deep, a truth byte other than 0 or 1, a units byte
+of neither kind and a malformed condition of a Complete are such values.
+They fail with the value's own SQLCODE, -916 or another not of class 08.
+The client kept the connection then but left the rest of the request's
+replies unread, so the next request took a stale Complete as its own.
+
+Losing the connection would be safe but costs a session for a value
+that one statement held. So the client fails the request with the
+value's error and first reads past the rest of its replies, up to the
+one that ends them, each taken as ever (a Notice to its handler, a
+Status to the settings, the last reply's state noted). Which reply is
+last is told by its kind, by the order a statement's replies keep. A
+Description, Rows, a Notice or a Status has more after it, a Complete
+has if its tail says more (tag 5), and any other reply is the last
+(`Reply::ends_request`). A Describe of a cursor is answered by a
+Description alone, which its reader knows (`Answer::One`). A Complete
+that does not decode whole still gives its head, its SQLCODE, SQLSTATE,
+whether a transaction is active and whether more follow. They come
+before a condition, the one field of it the client may fail to take
+(`Reply::completed_head`). So the session's state is noted as the whole
+Complete would note it. The rule is one place, the reading of a frame
+(`frames.rs`), so a statement's rows, a cursor's batches, a Complete's
+conditions, LOB reads, pipelines and imports all follow it.
+
+A frame that is itself malformed loses the connection (SQLSTATE 08006),
+as the protocol says. A header too long, a body cut short, a compressed
+frame that does not inflate, a kind no reply has, a flag neither 0 nor
+1, a string not UTF-8, a tail out of order or bytes after the last
+field are such frames. Its own decoding reports each of them as class
+08, so the connection is lost by the error's class alone. The protocol
+stays version 1, as nothing it sends changes.
+
+#### D394. Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error
+
+Terminate waits for the server to close, so a commit at the session's
+end that fails is reported. A stream's waits are bounded on the stream
+itself (`Bound`, D42), never through a second handle on its socket. A
+connection the client makes knows its stream's type and bounds the wait
+at the read timeout, else TERMINATE_WITHIN. A stream given to
+`Connection::open` is any type that reads and writes, and was not
+bounded, so Terminate waited on it without limit.
+
+The standard library cannot bound a blocking read of a stream it does
+not know. A thread reading for it would need the stream to be `Send`,
+could not be stopped once the limit ran out, and would be a thread the
+client starts outside the thread manager (R-SAFE-5). So the bound stays
+the stream's own, and `Connection::open_within` takes any stream that
+implements `Bound`, a program's own type too, its waits bounded as
+`Timeouts` say and Terminate's as above. A stream given to `open` waits
+as its maker set it, Terminate's answer too, and the manual says so. A
+named pipe on Windows, which the standard library cannot bound, is
+bounded only as it opens.
+
+What the server sends before it closes is read a frame at a time, each
+of at most the longest reply taken. A Notice, a Status or a Pong is
+read past, an Error is reported, and any other reply loses the
+connection as an answer Terminate does not have. The client had read
+the bytes whole and decoded them as one reply, so a Notice before the
+Error left bytes after it and failed with SQLSTATE 08006 in place of
+the Error.
 
 ## 2. Project layout
 

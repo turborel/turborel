@@ -8,6 +8,7 @@ use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
+use turborel::value::{Decimal, Value};
 
 use crate::common::{exec, rows};
 
@@ -20,6 +21,9 @@ const ROWS: i64 = 6000;
 fn tables() -> (Database, Session) {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
+    // Four workers whatever the machine's cores, so a degree of 4 is not
+    // cut to fewer.
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER)
@@ -136,8 +140,8 @@ fn joins_build_and_probe_by_morsels() {
 /// thread a point query, a part reading fewer rows than
 /// EXECUTOR.PARALLEL_MIN_ROWS, a correlated subquery, its scan below it
 /// run in parallel, a column store's part a scan by batch serves while
-/// EXECUTOR.BATCHES is on, not its join, and every part of
-/// EXECUTOR.DEGREE 1.
+/// EXECUTOR.BATCHES is on, not its join, a bare COUNT(*) the row store
+/// counts (D351), and every part of EXECUTOR.DEGREE 1.
 ///
 /// Decision: the part is large enough, its expressions a worker's alone,
 /// and the degree above 1. Each pair changes the outcome alone: a
@@ -147,7 +151,8 @@ fn the_planner_marks_only_large_parts() {
     let (_db, a) = tables();
     let plan = |sql: &str| a.physical_plan(sql, &Params::new()).unwrap();
     parallel(&a);
-    assert!(plan("SELECT COUNT(*) FROM R").contains("Parallel"));
+    assert!(plan("SELECT SUM(N) FROM R").contains("Parallel"));
+    assert!(!plan("SELECT COUNT(*) FROM R").contains("Parallel"), "a count the row store makes (D351)");
     assert!(!plan("SELECT N FROM R WHERE K = 5").contains("Parallel"));
     let correlated = plan("SELECT K, (SELECT COUNT(*) FROM D WHERE D.G = R.G) FROM R");
     assert!(correlated.starts_with("Project") && correlated.contains("  Parallel"), "a subquery's on the statement's thread: {correlated}");
@@ -156,10 +161,10 @@ fn the_planner_marks_only_large_parts() {
     exec(&a, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
     assert!(plan("SELECT G, COUNT(*) FROM C GROUP BY G").contains("Parallel"));
     exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 100000").unwrap();
-    assert!(!plan("SELECT COUNT(*) FROM R").contains("Parallel"));
+    assert!(!plan("SELECT SUM(N) FROM R").contains("Parallel"));
     exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 0").unwrap();
     exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
-    assert!(!plan("SELECT COUNT(*) FROM R").contains("Parallel"));
+    assert!(!plan("SELECT SUM(N) FROM R").contains("Parallel"));
 }
 
 /// Verifies: [DESIGN] RULES.md D290, D15 an error raised by a row of a

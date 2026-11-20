@@ -1,6 +1,10 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
+// The count's, kept beside the other areas' files.
+mod client_sync;
+#[path = "count.rs"]
+mod count;
 // The decode kernels' mutations, beside the areas as `list.rs` holds no
 // more modules.
 #[path = "decode.rs"]
@@ -71,7 +75,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 33] {
+fn second() -> [&'static [Mutation]; 34] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -104,6 +108,7 @@ fn second() -> [&'static [Mutation]; 33] {
         &super::vector_hybrid::VECTOR_HYBRID,
         &super::vector::VECTOR,
         &super::delta_tables::DELTA_TABLES,
+        &count::COUNT,
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
     ]
@@ -148,13 +153,11 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's, parallel queries' and the decode kernels' last, as
-    // `last` holds no more.
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain([
-        &super::transport::TRANSPORT[..],
-        &parallel::PARALLEL[..],
-        &decode::DECODE[..],
-    ])
+    // The transport's, parallel queries', the client's step with its server
+    // and the decode kernels' last, as `last` holds no more.
+    let after: [&'static [Mutation]; 4] =
+        [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &decode::DECODE];
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the

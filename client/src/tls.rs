@@ -184,7 +184,7 @@ pub fn connect(
     let stream = secured(tcp, (name, config))?;
     mechanism.bind(&channel(&stream));
     let reach = Target::Tls(server, name.to_owned(), Arc::clone(config));
-    Ok(Connection::open_timed(stream, (user, mechanism), timeouts)?.reached_by(reach))
+    Ok(Connection::open_within(stream, (user, mechanism), timeouts)?.reached_by(reach))
 }
 
 /// What the handshake of `stream` gives a mechanism to bind its channel

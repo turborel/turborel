@@ -37,6 +37,15 @@ A part of the physical plan run on several threads at once is headed
 own among them; the planner runs a part so only if its tables hold
 enough rows ([Parallel queries](../../operator/04-settings.md#parallel-queries)).
 
+A query that only counts a table's rows, `SELECT COUNT(*) FROM T` with
+no WHERE clause or grouping, may be answered by the table's storage
+without reading each row. The row store sums the rows of the blocks of
+rows every transaction sees alike, and reads only the others, so the
+count is the one a scan makes at any isolation level. The plan then ends
+with a line `-- counted by storage:` naming the table. A table of the
+column store, and any query with EXECUTOR.BATCHES OFF, is counted by its
+scan and has no such line.
+
 EXPLAIN is direct SQL, as a query is. The `turborel` client shows its
 rows as it shows a query's. A program reaches the same text by the
 library's `Session::explain` ([The Embedded Library](../../client/03-embedding.md#reading-rows)),
@@ -100,6 +109,33 @@ OK
  Project PARTS.ID
    IndexScan ANN.PARTS using PARTS_NAME [btree]: PARTS.NAME = 'part 7'  (est. rows=1, cost=20.6)
 (12 rows)
+```
+
+A count of the rows of PARTS, a table of the row store, which its
+storage counts:
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM PARTS;
+```
+
+```
+ PLAN
+------------------------------------------------
+ -- bound:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     Scan ANN.PARTS
+ -- rules: none
+ -- optimized:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     Scan ANN.PARTS
+ -- physical:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     SeqScan ANN.PARTS  (rows=1000, cost=800.0)
+ -- counted by storage: ANN.PARTS
+(14 rows)
 ```
 
 Three tables joined, their joins ordered by enumeration. The note on
@@ -232,14 +268,14 @@ OK
 (50 rows)
 ```
 
-A set function of most of the table's rows, read in morsels of 256 rows
+Set functions of all the table's rows, read in morsels of 256 rows
 on up to four threads:
 
 ```sql
 SET EXECUTOR.DEGREE = 4;
 SET EXECUTOR.MORSEL_ROWS = 256;
 SET EXECUTOR.PARALLEL_MIN_ROWS = 0;
-EXPLAIN SELECT COUNT(*), MAX(NAME) FROM PARTS WHERE ID > 100;
+EXPLAIN SELECT SUM(ID), MAX(NAME) FROM PARTS;
 ```
 
 ```
@@ -249,23 +285,20 @@ OK
  PLAN
 --------------------------------------------------------------
  -- bound:
- Project COUNT(*), MAX(PARTS.NAME)
-   Aggregate group by [] computing [COUNT(*), MAX(PARTS.NAME)]
-     Filter PARTS.ID > 100
-       Scan ANN.PARTS
+ Project SUM(PARTS.ID), MAX(PARTS.NAME)
+   Aggregate group by [] computing [SUM(PARTS.ID), MAX(PARTS.NAME)]
+     Scan ANN.PARTS
  -- rules: none
  -- optimized:
- Project COUNT(*), MAX(PARTS.NAME)
-   Aggregate group by [] computing [COUNT(*), MAX(PARTS.NAME)]
-     Filter PARTS.ID > 100
-       Scan ANN.PARTS
+ Project SUM(PARTS.ID), MAX(PARTS.NAME)
+   Aggregate group by [] computing [SUM(PARTS.ID), MAX(PARTS.NAME)]
+     Scan ANN.PARTS
  -- physical:
- Project COUNT(*), MAX(PARTS.NAME)
+ Project SUM(PARTS.ID), MAX(PARTS.NAME)
    Parallel  (degree=4)
-     Aggregate group by [] computing [COUNT(*), MAX(PARTS.NAME)]
-       Filter PARTS.ID > 100  (est. rows=899)
-         SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
-(17 rows)
+     Aggregate group by [] computing [SUM(PARTS.ID), MAX(PARTS.NAME)]
+       SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
+(14 rows)
 ```
 
 A query of a DISTINCT set function, which the rule distinct_aggregates

@@ -9,7 +9,9 @@
 //! The limits are the stream's own (`Bound`), set on the stream itself, a
 //! stream TLS wraps through it, never through a second handle on its
 //! socket. A connection made over a stream given to `Connection::open` is
-//! bounded as its maker bounds it. A named pipe, on Windows, is bounded
+//! bounded as its maker bounds it, and one given to
+//! `Connection::open_within` by its own `Bound`, a program's own stream
+//! too (RULES.md D394). A named pipe, on Windows, is bounded
 //! only as it is opened (`pipe.rs`): the standard library sets no limit on
 //! a pipe's reads and writes.
 

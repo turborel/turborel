@@ -1,11 +1,14 @@
 //! \[DESIGN\] Work grants (RULES.md D298): the bytes an operator holds in
 //! memory before it spills, given it of the memory budget as it starts.
 //! MEMORY.WORK_BYTES is the most an operator is granted, not what each
-//! holds. One is granted half the budget left free, up to that ceiling,
-//! reserved until it ends, so each grant after it takes half of what is
-//! left and the grants of every statement running at once together never
-//! pass the budget (RULES.md D38), however many sessions run them. Where
-//! half the free budget is no more than `WORK_FLOOR`, an operator holds
+//! holds. Grants share half the budget, the other half kept for what
+//! reserves beside them, spill areas' pools first, so an operator that
+//! spills finds room however many grants are held. One is granted half of
+//! the grants' share left free, up to that ceiling, reserved until it ends,
+//! so each grant after it takes half of what is left and the grants of
+//! every statement running at once together never pass their share (RULES.md
+//! D38), however many sessions run them. Where half of the share left free
+//! is no more than `WORK_FLOOR`, an operator holds
 //! that floor unreserved, as every operator did before grants; a ceiling
 //! set below the floor is held as set, unreserved, so a session that asks
 //! for small work areas gets them. A grant changes when an operator
@@ -61,7 +64,9 @@ fn grant_of(budget: &Arc<crate::memory::MemoryBudget>, ceiling: usize) -> Grant 
     if ceiling <= WORK_FLOOR {
         return Grant { bytes: ceiling, held: None };
     }
-    let free = budget.limit().saturating_sub(budget.reserved());
+    // Half the budget is kept for what reserves beside grants.
+    let kept = budget.limit() >> 1_u32;
+    let free = budget.limit().saturating_sub(budget.reserved()).saturating_sub(kept);
     let wanted = ceiling.min(free >> 1_u32);
     if wanted <= WORK_FLOOR {
         return Grant { bytes: WORK_FLOOR, held: None };
@@ -79,22 +84,28 @@ mod tests {
     use crate::memory::MemoryBudget;
     use crate::spill::{WORK_FLOOR, WorkAreas};
 
-    /// Verifies: [DESIGN] RULES.md D298 each grant takes half the free
-    /// budget up to its ceiling, reserved while it is held; past the floor
-    /// none is reserved; a ceiling below the floor is held as set.
+    /// Verifies: [DESIGN] RULES.md D298 each grant takes half of the
+    /// grants' share left free, half the budget, up to its ceiling,
+    /// reserved while it is held; past the floor none is reserved; a
+    /// ceiling below the floor is held as set; and however many are held,
+    /// half the budget stays free for spill areas. Regression test
+    /// (R-TEST-7): grants took half of all the budget left free, so a
+    /// query of hundreds of operators held at once (an XMLMAP of the
+    /// catalog) left no room for a spill area's pool.
     #[test]
     fn grants_halve_the_free_budget() {
         let budget = MemoryBudget::new(64 * WORK_FLOOR);
         let first = grant_of(&budget, usize::MAX);
-        assert_eq!((first.bytes, budget.reserved()), (32 * WORK_FLOOR, 32 * WORK_FLOOR));
-        let second = grant_of(&budget, 8 * WORK_FLOOR);
-        assert_eq!(second.bytes, 8 * WORK_FLOOR, "its ceiling");
+        assert_eq!((first.bytes, budget.reserved()), (16 * WORK_FLOOR, 16 * WORK_FLOOR));
+        let second = grant_of(&budget, 4 * WORK_FLOOR);
+        assert_eq!(second.bytes, 4 * WORK_FLOOR, "its ceiling");
         let third = grant_of(&budget, usize::MAX);
-        assert_eq!(third.bytes, 12 * WORK_FLOOR);
+        assert_eq!(third.bytes, 6 * WORK_FLOOR);
         let small = grant_of(&budget, 1024_usize);
         assert_eq!((small.bytes, small.reserved()), (1024_usize, false));
-        let rest: Vec<_> = (0_u8..8).map(|_| grant_of(&budget, usize::MAX)).collect();
-        assert!(budget.reserved() <= budget.limit());
+        let rest: Vec<_> = (0_u16..300).map(|_| grant_of(&budget, usize::MAX)).collect();
+        assert!(budget.reserved() <= budget.limit() >> 1_u32, "half kept");
+        assert!(budget.reserve(WORK_FLOOR, "a spill area").is_ok(), "a spill area finds room");
         assert_eq!(rest.last().map(|g| (g.bytes, g.reserved())), Some((WORK_FLOOR, false)), "the floor, unreserved");
         drop((first, second, third, rest));
         assert_eq!(budget.reserved(), 0, "given back");
