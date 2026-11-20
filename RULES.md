@@ -383,6 +383,7 @@ verification approach DO-178C expects (§8).
 | D415 | A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks |
 | D416 | A local cursor of a kept procedure body keeps its specification and plan |
 | D417 | An update or delete takes the row it replaced from the write, not a read before it |
+| D418 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 
 ### The project
 
@@ -2265,7 +2266,8 @@ rolled back. If it committed, a transaction reading at one snapshot is
 refused (SQLCODE -911), and commit checks that nothing read has changed.
 
 Commit is atomic across engines. Each validates at the commit timestamp and
-then commits at it. A commit returns only once every commit before it has
+then commits at it. The built-in engines commit with one store in a status
+table and stamp their versions after the locks are released (D418). A commit returns only once every commit before it has
 ended, so its session's next snapshot counts it. A transaction that wrote
 nothing commits at its snapshot, unchecked. Its end collects only the tables
 whose versions await collection, since it leaves no garbage of its own.
@@ -10755,6 +10757,48 @@ their own, and the database can keep how far the log is durable. The
 file log gives the end of its segment's blocks the group's sync made
 durable (`log/file/segments.rs`). A log syncing nothing, and the
 default, claim just past the record asked for.
+
+#### D418. A commit is one store in a status table, and its versions are stamped after its locks are released
+
+The row store stamped each changed row with its commit timestamp, a tree
+read and a tree write per row, after the sync of the commit record and
+before the transaction's locks were released. A hot row, such as an order
+entry's warehouse, stayed owned through all of it.
+
+Each store now keeps the statuses of its writing transactions
+(`engine/rows/mvcc/status.rs`), a fixed array of slots read without a
+lock. A transaction claims its slot before its first version is written.
+Commit stores the commit timestamp there. That one store makes every
+version it wrote committed for every reader and writer of the store, and
+the garbage is filed without touching the tree. The versions are stamped
+once the locks are released, still inside the checkpoint gate
+(`TableStorage::settle`). A writer that replaces a version not yet stamped
+appends it to the undo store stamped, so only a row's newest version is
+ever unstamped. A stamp replaces an entry only as it read it.
+
+The semantics hold for these reasons.
+
+- Before the store every version of the transaction reads as open, which
+  only the transaction sees. After it, all read as committed at its
+  timestamp. The stable timestamp passes the commit only after the store,
+  as before, so no snapshot sees part of a commit.
+- A reader at a snapshot gets the same answer from a slot as from a stamp.
+- A rollback forgets the slot. Its versions read as open either way, and
+  are taken out as before. Savepoints are unchanged.
+- A slot is claimed again only once no transaction can hold a version it
+  read before the stamping. Its mark is the latest snapshot any
+  transaction joined a table of the store at once the stamping ended, and
+  never before the commit timestamp. A horizon past the mark finds every
+  such transaction ended, and the commit's phase 2 done in every table.
+  Only a read outside any transaction can meet a forgotten transaction. It
+  reads the version as open, as it did when a stamp was written after its
+  read.
+- The stamping ends before the gate opens, so a checkpoint's image holds
+  stamps, or the versions of open transactions, which recovery resolves
+  by the log as before. A version that cannot be stamped is stamped by a
+  later collection, and its slot is kept until then.
+- Constraints, triggers, history tables, replication, DDL and recovery
+  read versions only through who made them, so they are unchanged.
 
 ## 2. Project layout
 

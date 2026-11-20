@@ -89,8 +89,10 @@ impl State {
                 Err(in_doubt)
             }
             Ok((participants, committing, Ok(()))) => {
-                // Phase 2 uses storages already found, so it cannot fail part way.
-                for storage in participants {
+                // Phase 2 uses storages already found, so it cannot fail part
+                // way. Each engine makes the changes committed at once, as
+                // the row store does with one store (RULES.md D418).
+                for storage in &participants {
                     storage.commit(tx.id, committing.at);
                 }
                 let at = committing.at;
@@ -98,8 +100,14 @@ impl State {
                 // The commit has reached every engine: snapshots may now
                 // count it.
                 drop(committing);
-                drop(gate);
                 tx.release();
+                // [DESIGN] RULES.md D418: written in place once its locks
+                // are released, and before the gate lets a checkpoint
+                // capture the pages.
+                for storage in participants {
+                    storage.settle(tx.id);
+                }
+                drop(gate);
                 // [DESIGN] RULES.md D29: not before every commit before it
                 // has ended, so its session's next snapshot counts it.
                 self.tx.wait_stable(at);

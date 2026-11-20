@@ -35,6 +35,7 @@ mod collated_indexes;
 mod collation_derivation;
 mod collation_usage;
 mod collations;
+mod commit_visibility;
 mod common;
 mod composite_columns;
 mod concepts;
