@@ -4265,7 +4265,8 @@ PARTITIONS and PARTITION_INDEXES are extensions
 
 | View | Shows |
 |---|---|
-| CONNECTIONS, SERVER, REPLICAS | A server's connections, its counts with the database's transactions committed and rolled back (RULES.md D334), and its replicas |
+| CONNECTIONS, SERVER, REPLICAS | A server's connections, each with the statement it runs, its transaction's start and what it waits on (RULES.md D520), its counts with the database's transactions committed and rolled back (RULES.md D334), and its replicas |
+| STATEMENT_STATISTICS | The statements run since the database opened, by normalized text and user, with their calls, times, rows, rows read and bytes spilled (RULES.md D521) |
 | FILES, FILE_FORMATS | A database's files and their formats |
 | JOBS | Its background jobs |
 | MEMORY_RESERVATIONS | What holds its memory |

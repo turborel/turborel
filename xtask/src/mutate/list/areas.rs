@@ -24,6 +24,7 @@ mod late;
 mod oltp;
 mod parallel;
 mod rewrites;
+mod studio;
 mod tpcc;
 mod txn_layer;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
@@ -34,7 +35,7 @@ mod uuid;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 16] {
+pub fn core() -> [&'static [Mutation]; 17] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -52,6 +53,7 @@ pub fn core() -> [&'static [Mutation]; 16] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &studio::STUDIO,
     ]
 }
 

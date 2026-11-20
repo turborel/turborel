@@ -14,7 +14,7 @@ use crate::index::{Key, KeyProjection, Probe};
 use crate::logical::{Truth, pushed_conjuncts};
 use crate::physical::{Decided, Plan};
 use crate::storage::{Near, Row, RowId, TableStorage};
-use crate::txn::{TxId, checked};
+use crate::txn::{TxId, checked, counted};
 use crate::value::Value;
 
 /// What the fetches of one scan of an index share: the columns they read,
@@ -114,13 +114,13 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
     match plan {
         Plan::Project { input, .. } => table_entries(*input, db, tx),
         Plan::SeqScan { table, columns, .. } => {
-            Ok(Box::new(checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx))))
+            Ok(Box::new(counted(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx), |_| 1)))
         }
         Plan::IndexScan { table, index, probe, reverse, decided, .. } => index_entries((&table, &index, probe, reverse), decided, db, tx),
         Plan::Filter { cond, input, .. } => {
             let rows: Entries = match (*input, pushed_conjuncts(&cond)) {
                 (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
-                    Box::new(checked(Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition), db.tx.stop_of(tx)))
+                    Box::new(counted(Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition), db.tx.stop_of(tx), |_| 1))
                 }
                 (input, _) => table_entries(input, db, tx)?,
             };
@@ -187,7 +187,7 @@ fn index_entries(
         let Some(decided) = &decided else { return Ok(Some((id, row))) };
         Ok((eval_cond(&decided.cond, &row, &runner)? == Truth::True).then_some((id, row)))
     };
-    let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+    let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
         let fetched = entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key));
         fetched.and_then(|found| found.map_or(Ok(None), &judge)).transpose()
     });

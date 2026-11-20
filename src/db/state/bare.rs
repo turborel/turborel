@@ -63,7 +63,7 @@ impl State {
             work: Arc::clone(&work),
             temp_lobs: Arc::new(crate::spill::TempLobStore::new(work)),
             jobs: Arc::default(),
-            graph_runs: Arc::default(),
+            ran: Arc::default(),
             ahead: crate::disk::buffer::AheadReader::new(),
             rekey: Arc::default(),
             files: Arc::default(),

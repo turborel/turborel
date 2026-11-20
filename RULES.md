@@ -390,6 +390,8 @@ verification approach DO-178C expects (§8).
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
+| D520 | CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session |
+| D521 | Statements are tallied by normalized text and user, each session in its own tallies |
 
 ### The project
 
@@ -10947,6 +10949,68 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+
+#### D520. CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session
+
+An IDE watching a server needs to see what each connection runs, since
+when, and what holds it up. INFORMATION_SCHEMA.CONNECTIONS shows it in six
+columns more: STATEMENT_TEXT and STATEMENT_BEGAN while a statement runs,
+TRANSACTION_BEGAN while a transaction is open, and WAITING_ON, LOCK_NAME
+and LOCK_HOLDER.
+
+What a session does is kept in its activity, held in its `Stop`
+(`txn/stop/activity.rs`), as the server reaches a session and the lock
+manager reaches a transaction's session through it. A statement notes its
+text and its start, the instant its call began, as it is timed
+(`db/slow.rs`). The text is shared, made once for a prepared statement and
+once for each text a session runs directly while it keeps it, so a
+statement copies nothing. A transaction notes its start as it begins, the
+start of the statement that began it, and clears it as it ends. A wait
+for a table's lock or a row sets what it waits for and the first holder
+as it begins, and clears it as it ends. A commit's sync of the log, and a
+reply waiting for a commit it read to be durable, show IO. A request
+waiting for a worker shows WORKER, which the server sets without a lock
+and clears as the request runs. LOCK_HOLDER is the connection whose
+session's open transaction holds the lock.
+
+Statement texts carry values, so who sees them is narrowed. The
+database's owner sees every connection. So does a user for whom the role
+MONITOR is applicable, if the owner created that role. So the right is
+given and taken back by the standard's own statements, CREATE ROLE
+MONITOR, GRANT MONITOR TO a user and REVOKE, and a role of that name
+another user created gives nothing. Any other user sees their own
+connections alone, where before they saw none.
+
+#### D521. Statements are tallied by normalized text and user, each session in its own tallies
+
+INFORMATION_SCHEMA.STATEMENT_STATISTICS shows each statement run since the
+database was opened, by normalized text and user. Each row has its calls,
+their time, its mean and longest, the rows given or changed, the rows its
+scans read, the bytes its work areas spilled, and its last run. A
+normalized text is the statement's tokens one space apart, each literal a
+`?`, its key the MurmurHash3 of it (`system/statements/text.rs`).
+
+The tally sits on every statement's path, so it costs a statement a few
+counts and no shared lock. A text is normalized once, for a prepared
+statement in what it keeps between executions and for a direct one in
+its session's activity. Each session tallies its own runs in a map only
+it writes, under a lock only a reader of the table takes besides. A
+session's tallies are listed with the database's the first time it
+tallies, and kept once it ends, merged, until the table is next read.
+Rows read are counted by each scan as it reads, and given to its
+session's count once it is read through or dropped, so a row costs no
+atomic count. Bytes spilled are counted as a work area's run or table
+takes them. A statement's tally takes what those two counts grew by while
+it ran. They are one count each, which EXPLAIN ANALYZE can read the same
+way.
+
+STATEMENTS.KEPT, declared by the tallies themselves, bounds each
+session's tallies and the merged ones. A new statement past it takes the
+place of the one called least. At 0 nothing is tallied, and setting it to
+0 forgets every tally, which is how they are reset, with no statement of
+its own. The database's owner and a user granted MONITOR (D520) see every
+text. Another user sees every row, the texts of other users' statements
+as the null value, as VIEWS hides the definitions of others' views.
 
 ## 2. Project layout
 

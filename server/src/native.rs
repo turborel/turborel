@@ -404,6 +404,7 @@ async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer)
         // and the fast client's requests after it (`Loan::run`). Until
         // then, an operator ending the connection, or its client gone,
         // cancels what runs.
+        present.queued();
         drop(services.spawn_with(move |permit| loan.run(work, &running, permit, limits)).await);
         lent = stopped(slot.take(), present, watch).await;
         // A read or a write that failed lost the connection.

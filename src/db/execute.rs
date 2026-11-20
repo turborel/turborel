@@ -10,7 +10,7 @@ use super::integrity::Effects;
 use super::prepared::{Keeping, Plans};
 use super::triggers::{Event, instead_for};
 use super::write::{Written, delete_rows, update_rows};
-use super::{Call, Completion, Session, StatementContext, slow};
+use super::{Call, Completion, Session, StatementContext};
 use crate::ast::{
     AlterAction, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, SchemaStatement, SearchCondition,
     SetClause, SqlStatement, TableName, TableStorage,
@@ -63,7 +63,8 @@ impl Session {
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(Command, &Plans)>) -> Result<Completion> {
         self.wait_if_hinted(sql)?;
         let mut call = self.enter()?;
-        call.timed = slow::Timed::of(call.state(), || sql, (&self.auth(), &self.stop));
+        let statement = prepared.map_or_else(|| self.stop.activity().text_of(sql), |(_, plans)| plans.text(sql));
+        call.timed = self.timed(call.state(), || sql, statement);
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
         let parsed = Self::parsed(&call, sql, params, keeping.as_ref()).and_then(|s| super::embedding::blob_given(s, params));
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the

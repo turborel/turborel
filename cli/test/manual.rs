@@ -12,6 +12,7 @@ mod embedding;
 mod extensions;
 mod hybrid;
 mod information;
+mod monitoring;
 mod partitioning;
 mod uuids;
 mod vector;

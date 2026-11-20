@@ -19,7 +19,7 @@ use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe};
 use crate::logical::{Cond, Most, SortKey, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{self, Condition, Conjunction, Row, RowId, ScanOrder, TableStorage};
-use crate::txn::{TxId, checked};
+use crate::txn::{TxId, checked, counted};
 use crate::value::SortOrder;
 
 /// A table to read: its name, the columns read, and whether each row is
@@ -65,7 +65,7 @@ fn ordered_scan(
     };
     let stop = db.tx.stop_of(tx);
     if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, (order, backward, most), condition) {
-        return Box::new(checked(rows.map(move |read| read.map(|r| read_row(located, r))), stop));
+        return Box::new(counted(rows.map(move |read| read.map(|r| read_row(located, r))), stop, |_| 1));
     }
     let read = match condition {
         Some(c) => storage.scan_where(tx, columns, c),
@@ -74,7 +74,7 @@ fn ordered_scan(
     // Sorted as ORDER BY sorts, in a work area that spills (RULES.md D38).
     // A row's id, last, is no sort key.
     let keys: Vec<SortKey> = order.iter().map(|&column| SortKey::new(column, SortOrder::of(backward, None))).collect();
-    let rows: RowIter = Box::new(checked(read.map(move |r| r.map(|r| read_row(located, r))), stop));
+    let rows: RowIter = Box::new(counted(read.map(move |r| r.map(|r| read_row(located, r))), stop, |_| 1));
     match most {
         Some(rows_asked) => sort::first(&keys, rows, Most { rows: rows_asked, ties: false }, db, tx),
         None => sort::sort(&keys, rows, db, tx),
@@ -92,7 +92,7 @@ fn scanned((table, columns, located): ReadOf<'_>, condition: Option<&Conjunction
                 Some(c) => storage.scan_where(tx, columns, c),
                 None => storage.scan(tx, columns),
             };
-            Box::new(checked(read.map(move |r| r.map(|r| read_row(located, r))), db.tx.stop_of(tx)))
+            Box::new(counted(read.map(move |r| r.map(|r| read_row(located, r))), db.tx.stop_of(tx), |_| 1))
         }
         Err(e) => failed(e),
     }
@@ -135,7 +135,7 @@ pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Ok(Found { storage, ix, entries, projection, read }) => match read.record(&*storage, tx) {
             Ok(()) => {
                 let mut reading = Reading::of(&ix, Some(&needed), projection);
-                let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+                let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
                     let row = |(key, id)| {
                         let row = match &deciding {
                             Some(deciding) => deciding.row((&*storage, &ix), &mut reading, (tx, id), &key)?,

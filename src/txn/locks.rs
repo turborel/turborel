@@ -444,6 +444,10 @@ fn wait_on<'l>(
         if let Some(most) = tx.stop.lock_timeout().filter(|&most| began.elapsed() >= most) {
             break Err(refused(&format!("{what} stayed locked by another transaction past LOCKS.TIMEOUT_MS, {} ms", most.as_millis())));
         }
+        if !waited {
+            // [DESIGN] RULES.md D520: shown waiting, and for whom.
+            tx.stop.activity().waits_for_lock(what.to_string(), ids.first().copied().unwrap_or(0));
+        }
         waits_for.insert(tx.id, ids);
         drop(waits_for);
         waited = true;
@@ -452,6 +456,7 @@ fn wait_on<'l>(
         holders = lk.released.wait_timeout(holders, STOP_POLL).map_err(|_| poisoned_wait())?.0;
     };
     if waited {
+        tx.stop.activity().woke();
         lock(&tx.shared.waits_for)?.remove(&tx.id);
         // [DESIGN] RULES.md D240: the time waited, for the client.
         tx.stop.served().waited(began.elapsed());

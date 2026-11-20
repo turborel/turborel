@@ -161,9 +161,9 @@ pub struct State {
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
     /// RULES.md D55).
     pub(crate) jobs: Arc<crate::threads::Jobs>,
-    /// The latest runs of the graph algorithms, shared by every snapshot
-    /// (`system/graph_runs.rs`).
-    pub(crate) graph_runs: Arc<crate::system::GraphRuns>,
+    /// What ran since it was opened, its graph algorithms' latest runs and
+    /// its statements' tallies, shared by every snapshot (`system.rs`).
+    pub(crate) ran: Arc<crate::system::Ran>,
     /// What reads ahead for its pools on its read-ahead job, shared by
     /// every snapshot (`disk/buffer/ahead.rs`, RULES.md D30).
     pub(crate) ahead: Arc<crate::disk::buffer::AheadReader>,
@@ -210,6 +210,8 @@ impl State {
             let _ = self.declare_plugin(engine.name(), engine.configurable());
         }
         let _ = self.switch_rules();
+        let ran = Arc::clone(&self.ran);
+        let _ = self.declare_plugin(crate::system::STATEMENTS_GROUP, Some(&ran.statements));
     }
 
     /// The built-in engines and index methods, given the budget `memory`

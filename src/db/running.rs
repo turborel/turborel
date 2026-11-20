@@ -107,8 +107,9 @@ impl Drop for Call<'_> {
     fn drop(&mut self) {
         self.session.ran();
         self.session.busy.set(false);
-        if let Some(timed) = self.timed.take() {
-            timed.done(&self.session.db);
+        if let Some(mut timed) = self.timed.take() {
+            timed.rows(u64::try_from(self.session.rows_affected()).unwrap_or(u64::MAX));
+            timed.done(&self.session.db, &self.session.stop);
         }
     }
 }

@@ -69,12 +69,20 @@ pub(crate) struct Plans {
     kept: Mutex<Option<Kept>>,
     /// The plans its executions made.
     made: AtomicU64,
+    /// Its text, normalized once (RULES.md D521).
+    text: std::sync::OnceLock<Arc<crate::system::Text>>,
 }
 
 impl Plans {
     /// How many plans its executions made.
     pub(super) fn made(&self) -> u64 {
         self.made.load(Ordering::Relaxed)
+    }
+
+    /// Its text, `sql`, normalized the first time, never at each run
+    /// (RULES.md D521).
+    pub(in crate::db) fn text(&self, sql: &str) -> Arc<crate::system::Text> {
+        Arc::clone(self.text.get_or_init(|| Arc::new(crate::system::Text::of(sql))))
     }
 }
 
@@ -448,7 +456,7 @@ impl Session {
     pub(in crate::db) fn open_kept(&self, call: &Call<'_>, p: &Prepared, params: &Params) -> Result<Cursor> {
         let st = call.state();
         let k = self.keeping(st, &p.plans);
-        let timed = super::super::slow::Timed::of(st, || p.sql.clone(), (&self.auth(), &self.stop));
+        let timed = self.timed(st, || p.sql.clone(), p.plans.text(&p.sql));
         let spec = Self::cursor_specification(st, &p.sql, params, Some(&k))?;
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |snapshot, tx| self.open_rows(snapshot, tx, &spec, (params, Some(&k))))
