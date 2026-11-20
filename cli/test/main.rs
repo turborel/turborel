@@ -30,12 +30,18 @@
               handle one variant, and flat lists of assertions (RULES.md R-TEST-4)"
 )]
 
+mod administered;
 mod args;
+mod commands;
 mod common;
 mod connections;
+mod edits;
 mod extensions;
 mod imports;
 mod manual;
+mod plain;
 mod program;
 mod scripts;
 mod sessions;
+mod subcommands;
+mod typed;

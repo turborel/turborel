@@ -156,3 +156,44 @@ fn the_environment_and_words_are_read() {
     assert_eq!(settings.hosts, [Host::Tcp("a".to_owned(), 1), Host::Tcp("b".to_owned(), 2)]);
     assert!(settings.tls.system_roots);
 }
+
+/// Verifies: [DESIGN] RULES.md D202: a list of hosts with an empty one,
+/// an IPv6 address whose bracket is not closed or whose port is no
+/// number, a list of ports with one that is no number, and a word no
+/// channel binding, target, load balance or truth takes are each refused
+/// (SQLSTATE 08001); several hosts of one port each take it; a service
+/// file that cannot be read is refused.
+#[test]
+fn malformed_hosts_and_words_are_refused() {
+    let refused = |pairs: &[(&str, &str)]| {
+        let mut options = Options::new();
+        options.set(USER, "u").unwrap();
+        for (key, value) in pairs {
+            options.set(key, value).unwrap();
+        }
+        Settings::resolve_in(&options, environment(&[])).map(|s| s.hosts).map_err(|e| e.sqlstate)
+    };
+    for host in ["a,,b", "[::1", "[::1]:x"] {
+        assert_eq!(refused(&[(HOST, host)]), Err("08001".to_owned()), "{host}");
+    }
+    assert_eq!(refused(&[(HOST, "a"), (PORT, "1,x")]), Err("08001".to_owned()));
+    for key in [CHANNEL_BINDING, TARGET, LOAD_BALANCE, TLS_SYSTEM_ROOTS] {
+        assert_eq!(refused(&[(key, "sometimes")]), Err("08001".to_owned()), "{key}");
+    }
+    let one_port = vec![Host::Tcp("a".to_owned(), 9), Host::Tcp("b".to_owned(), 9), Host::Tcp("::1".to_owned(), 9)];
+    assert_eq!(refused(&[(HOST, "a,b,[::1]"), (PORT, "9")]), Ok(one_port));
+    let missing = std::env::temp_dir().join(format!("turborel-client-no-service-{}", std::process::id()));
+    assert_eq!(service(&missing, "s").unwrap_err().sqlstate, "08001");
+}
+
+/// Verifies: [DESIGN] RULES.md D203: the password file is matched for a
+/// local socket by its path and the default port.
+#[test]
+fn a_password_file_matches_a_local_socket_by_its_path() {
+    let file = scratch("passfile-local", &format!("/run/s.sock:{DEFAULT_PORT}:ann:local\n"));
+    let mut explicit = Options::new();
+    explicit.set(USER, "ann").unwrap().set(PASSFILE, file.to_str().unwrap()).unwrap();
+    let settings = Settings::resolve_in(&explicit, environment(&[])).unwrap();
+    assert_eq!(settings.password_for(&Host::Local(PathBuf::from("/run/s.sock"))).as_deref(), Some("local"));
+    std::fs::remove_file(&file).unwrap();
+}

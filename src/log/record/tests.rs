@@ -4,7 +4,7 @@
 use super::*;
 use crate::value::datetime::Now;
 use crate::value::types::TypeRegistry;
-use crate::value::{Decimal, Value};
+use crate::value::{DataType, Decimal, Value};
 
 fn table() -> QualifiedName {
     QualifiedName { auth: "AUTH".into(), ident: "TÄBLE".into() }
@@ -77,6 +77,17 @@ fn drops() -> Vec<Change> {
         Change::Drop { object: DropTarget::Sequence(table()), cascade: true },
         Change::Drop { object: DropTarget::XmlSchema(table()), cascade: false },
         Change::Drop { object: DropTarget::XQueryModule(table()), cascade: true },
+        Change::Drop { object: DropTarget::Type(table()), cascade: false },
+        Change::Drop { object: DropTarget::Trigger(table()), cascade: true },
+        Change::Drop { object: DropTarget::Routine(table()), cascade: false },
+        Change::Drop { object: DropTarget::Module(table()), cascade: true },
+        Change::Drop { object: DropTarget::Ordering(table()), cascade: false },
+        Change::Drop { object: DropTarget::Model(table()), cascade: true },
+        Change::Drop { object: DropTarget::Pipeline(table()), cascade: false },
+        Change::Drop { object: DropTarget::Extension(table()), cascade: true },
+        Change::Drop { object: DropTarget::Cast(Box::new((DataType::Boolean, DataType::Date))), cascade: false },
+        Change::Drop { object: DropTarget::Transform(table(), Some("G".into())), cascade: true },
+        Change::Drop { object: DropTarget::Transform(table(), None), cascade: false },
     ]
 }
 

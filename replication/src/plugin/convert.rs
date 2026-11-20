@@ -137,3 +137,6 @@ fn event_from(event: Event) -> ReplicaEvent {
         Event::Removed => ReplicaEvent::Removed,
     }
 }
+
+#[cfg(test)]
+mod tests;
