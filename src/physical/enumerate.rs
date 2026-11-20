@@ -154,8 +154,7 @@ impl PhysicalPlanner<'_> {
         }
         let Some(model) = self.model(&query, want) else { return Outcome::Greedy };
         let conjuncts: Vec<(usize, Set)> = model.conjuncts.iter().map(|c| (c.op, c.reads)).collect();
-        let mut graph = Graph::new(n, &query.shapes, &conjuncts);
-        graph.implied(&model.implied_pairs());
+        let graph = Graph::new(n, &query.shapes, &conjuncts);
         let wanted = if want.is_empty() { Order::None } else { Order::Want };
         let Some(written) = written_cost(&graph, &model, &query, wanted) else { return Outcome::Greedy };
         let mut space = Space::new(&graph, &model);

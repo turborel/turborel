@@ -98,8 +98,21 @@ impl PhysicalPlanner<'_> {
             .into_iter()
             .map(|(rels, rows)| (rels.into_iter().fold(0, |s, r| s | bit(r)), rows))
             .collect();
-        let mut model = Model { rels: Vec::new(), conjuncts, preds, kinds, classes: joins, orders, spans, cost, want_class, injected };
+        let mut model = Model {
+            rels: Vec::new(),
+            conjuncts,
+            preds,
+            kinds,
+            classes: joins,
+            orders,
+            spans,
+            cost,
+            want_class,
+            injected,
+            implied: Vec::new(),
+        };
         model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
+        model.implied = model.key_classes();
         Some(model)
     }
 

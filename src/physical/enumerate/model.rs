@@ -90,6 +90,9 @@ pub(super) struct Model {
     /// \[EXTENSION\] The rows given of sets of its relations in place of
     /// their estimates (`physical/cardinality/injected.rs`, RULES.md D377).
     pub(super) injected: Vec<(Set, f64)>,
+    /// The classes of columns the inner joins' keys make equal
+    /// (`key_classes`, RULES.md D387).
+    pub(super) implied: Vec<Vec<usize>>,
 }
 
 impl Model {
@@ -109,61 +112,38 @@ impl Model {
     }
 
     /// \[DESIGN\] (RULES.md D387) The classes of columns the inner joins'
-    /// keys make equal, each with the operator of one of its keys; none of
-    /// a chain with an outer join, whose keys hold only above it.
-    fn key_classes(&self) -> Vec<(Vec<usize>, usize)> {
+    /// keys make equal; none of a chain with an outer join, whose keys hold
+    /// only above it. Made once, as the model is.
+    pub(super) fn key_classes(&self) -> Vec<Vec<usize>> {
         if self.kinds.iter().any(|&k| k != Kind::Inner) {
             return Vec::new();
         }
-        let mut classes: Vec<(Vec<usize>, usize)> = Vec::new();
-        for c in &self.conjuncts {
-            let Some((a, b)) = c.key else { continue };
+        let mut classes: Vec<Vec<usize>> = Vec::new();
+        for (a, b) in self.conjuncts.iter().filter_map(|c| c.key) {
             let mut merged = vec![a, b];
-            classes.retain(|(class, _)| {
+            classes.retain(|class| {
                 let joins = class.contains(&a) || class.contains(&b);
                 if joins {
                     merged.extend(class);
                 }
                 !joins
             });
-            classes.push((merged, c.op));
+            merged.sort_unstable();
+            merged.dedup();
+            classes.push(merged);
         }
         classes
     }
 
     /// The equalities of a column of `l` and one of `r` the inner joins'
-    /// keys imply through others: one of each class with a column on each
-    /// side and no key stated of the two, the left's first. `joined_rows`
-    /// counts a class's fraction of any join that holds two of its
-    /// columns, so a join of the two judges these though no conjunct
-    /// reads both, and is never a product (RULES.md D387).
+    /// keys imply through others, of a join no conjunct of which reads
+    /// both: one of each class with a column on each side, the left's
+    /// first. `joined_rows` counts a class's fraction of any join that
+    /// holds two of its columns, so such a join judges these, and is never
+    /// a product (RULES.md D387).
     pub(super) fn implied_keys(&self, (l, r): (Set, Set)) -> Vec<(usize, usize)> {
-        let straddles = |(a, b): (usize, usize)| (self.holds(l, a) && self.holds(r, b)) || (self.holds(l, b) && self.holds(r, a));
-        let stated = |class: &[usize]| self.conjuncts.iter().filter_map(|c| c.key).any(|(a, b)| class.contains(&a) && straddles((a, b)));
         let side = |class: &[usize], s: Set| class.iter().copied().find(|&c| self.holds(s, c));
-        self.key_classes()
-            .iter()
-            .filter(|(class, _)| !stated(class))
-            .filter_map(|(class, _)| Some((side(class, l)?, side(class, r)?)))
-            .collect()
-    }
-
-    /// The pairs of relations of a class of the inner joins' keys no key
-    /// joins, each with the operator of one of its keys: the edges the
-    /// enumeration joins them by (`Graph::implied`, RULES.md D387).
-    pub(super) fn implied_pairs(&self) -> Vec<(usize, Set)> {
-        let mut out: Vec<(usize, Set)> = Vec::new();
-        for (class, op) in self.key_classes() {
-            let rels: Vec<usize> = class.iter().filter_map(|&c| self.rel_of(c)).collect();
-            let pairs = rels.iter().enumerate().flat_map(|(i, &a)| rels.iter().skip(i.saturating_add(1)).map(move |&b| (a, b)));
-            for pair in pairs.filter(|&(a, b)| a != b).map(|(a, b)| bit(a) | bit(b)) {
-                let keyed = self.conjuncts.iter().any(|c| c.key.is_some() && c.reads == pair);
-                if !keyed && !out.iter().any(|&(_, p)| p == pair) {
-                    out.push((op, pair));
-                }
-            }
-        }
-        out
+        self.implied.iter().filter_map(|class| Some((side(class, l)?, side(class, r)?))).collect()
     }
 
     /// The relation whose column the chain's column `column` is.

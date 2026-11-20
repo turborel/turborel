@@ -98,12 +98,7 @@ impl Pipeline {
         for branch in &self.branches {
             let morsels = branch.split.morsels();
             if at < morsels {
-                let (mut out, mut tally) = (Vec::new(), vec![0_u64; branch.steps.len()]);
-                for read in branch.split.morsel(at) {
-                    feed(&branch.steps, (&mut tally, read?.1), runner, &mut out)?;
-                }
-                counted(&branch.steps, &tally);
-                return Ok(out);
+                return branch.morsel(at, runner);
             }
             at = at.saturating_sub(morsels);
         }
@@ -215,10 +210,58 @@ fn split(
     Arc::clone(storage).split(tx, columns, conditions, rows)
 }
 
+impl Branch {
+    /// The rows of its morsel `at`, its steps' expressions evaluated by
+    /// `runner`. A pipeline of no counted step, as every one is but an
+    /// analyzed plan's, tallies nothing a row (RULES.md D378).
+    ///
+    /// # Errors
+    ///
+    /// As reading a row or a step fails.
+    fn morsel(&self, at: usize, runner: &Runner) -> Result<Vec<Row>> {
+        let mut out = Vec::new();
+        if !self.steps.iter().any(|s| matches!(s, Step::Count(_))) {
+            for read in self.split.morsel(at) {
+                feed(&self.steps, read?.1, runner, &mut out)?;
+            }
+            return Ok(out);
+        }
+        let mut tally = vec![0_u64; self.steps.len()];
+        for read in self.split.morsel(at) {
+            tallied(&self.steps, (&mut tally, read?.1), runner, &mut out)?;
+        }
+        counted(&self.steps, &tally);
+        Ok(out)
+    }
+}
+
 /// Takes `row` through `steps`, the first first, adding each row it gives
-/// to `out`, and to `tally`, a count for each step, the rows that reach a
-/// counted one.
-fn feed(steps: &[Step], (tally, row): (&mut [u64], Row), runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
+/// to `out`; a counted step passes it on, as no step of a plan not
+/// analyzed is one.
+fn feed(steps: &[Step], row: Row, runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
+    let Some((step, rest)) = steps.split_first() else {
+        out.push(row);
+        return Ok(());
+    };
+    match step {
+        Step::Filter(cond) => {
+            if eval_cond(cond, &row, runner)? == Truth::True {
+                feed(rest, row, runner, out)?;
+            }
+            Ok(())
+        }
+        Step::Project(exprs) => {
+            let projected = exprs.iter().map(|e| eval(e, &row, runner)).collect::<Result<Row>>()?;
+            feed(rest, projected, runner, out)
+        }
+        Step::Probe(table) => table.each_match(&row, |r| feed(rest, row.iter().chain(r.iter()).cloned().collect(), runner, out)),
+        Step::Count(_) => feed(rest, row, runner, out),
+    }
+}
+
+/// As `feed`, adding to `tally`, a count for each step, the rows that
+/// reach a counted one.
+fn tallied(steps: &[Step], (tally, row): (&mut [u64], Row), runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
     let Some((step, rest)) = steps.split_first() else {
         out.push(row);
         return Ok(());
@@ -230,22 +273,22 @@ fn feed(steps: &[Step], (tally, row): (&mut [u64], Row), runner: &Runner, out: &
     match step {
         Step::Filter(cond) => {
             if eval_cond(cond, &row, runner)? == Truth::True {
-                feed(rest, (later, row), runner, out)?;
+                tallied(rest, (later, row), runner, out)?;
             }
             Ok(())
         }
         Step::Project(exprs) => {
             let projected = exprs.iter().map(|e| eval(e, &row, runner)).collect::<Result<Row>>()?;
-            feed(rest, (later, projected), runner, out)
+            tallied(rest, (later, projected), runner, out)
         }
         Step::Probe(table) => {
-            table.each_match(&row, |r| feed(rest, (&mut *later, row.iter().chain(r.iter()).cloned().collect()), runner, out))
+            table.each_match(&row, |r| tallied(rest, (&mut *later, row.iter().chain(r.iter()).cloned().collect()), runner, out))
         }
         Step::Count(_) => {
             if let Some(seen) = seen {
                 *seen = seen.saturating_add(1);
             }
-            feed(rest, (later, row), runner, out)
+            tallied(rest, (later, row), runner, out)
         }
     }
 }

@@ -95,22 +95,6 @@ impl Graph {
         Graph { n, ops, edges, simple, hyper }
     }
 
-    /// \[DESIGN\] (RULES.md D387) Adds a simple edge of each of `pairs`,
-    /// two relations and the operator of a key of their class, which the
-    /// keys of the inner joins make equal though no conjunct reads both:
-    /// their join judges the key the class implies.
-    pub(super) fn implied(&mut self, pairs: &[(usize, Set)]) {
-        for &(op, pair) in pairs {
-            let (left, right) = (lowest_bit(pair), pair & !lowest_bit(pair));
-            if self.edges.iter().any(|e| e.joins(left, right)) {
-                continue;
-            }
-            self.edges.push(Edge { left, right, op, conjunct: None });
-            link(&mut self.simple, (left, right));
-            link(&mut self.simple, (right, left));
-        }
-    }
-
     /// All its relations.
     pub(super) fn all(&self) -> Set {
         self.n.checked_sub(1).map_or(0, super::bits::through)

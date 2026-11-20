@@ -10361,13 +10361,15 @@ The inner joins' equalities of two columns make classes of columns
 (D302), and the rows of a join are estimated by the class, whichever
 two of its columns the join holds. So `a.k = c.k AND b.k = c.k` joins
 `a` and `b` by `a.k = b.k` as the estimate sees it, though no conjunct
-reads both. The join enumeration takes that key too. Each pair of
-relations of a class that no stated key joins is an edge of the join
-graph (`physical/enumerate/graph.rs`), a join of two sets holding
-columns of a class judges the equality of one column of each when no
-stated key of the class joins them (`Model::implied_keys`), and that
+reads both. The join enumeration takes that key too. A join of two
+sets no conjunct reads both of, as the FROM clause's order lets the
+enumeration make, judges the equality of one column of each of every
+class with a column on each side (`Model::implied_keys`), and that
 equality is a key of its hash, merge or index join. The plan is then
 never a product of the two whose rows the estimate counts as joined.
+The classes are made once with the model, and the join graph takes no
+edge of its own for such a pair, since an edge of each pair of a large
+class makes a clique the enumeration's search grows past.
 An equality implied is true of every row the stated ones keep, so the
 rows are those of the query as written [X3.135-1986 §5.20 GR2b]. A
 chain with an outer join takes no implied key, since its keys hold only

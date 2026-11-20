@@ -105,9 +105,9 @@ impl Context<'_> {
     }
 
     /// The conjuncts a join of `sets` judges: its operator's condition's,
-    /// or the inner joins' conjuncts that read both, and the equalities
-    /// their keys imply of a column of each (`Model::implied_keys`, RULES.md
-    /// D387).
+    /// or the inner joins' conjuncts that read both, or, if none does, the
+    /// equalities their keys imply of a column of each
+    /// (`Model::implied_keys`, RULES.md D387).
     fn conds(&self, op: Option<usize>, (l, r): (Set, Set)) -> Vec<Cond> {
         if let Some(cond) = op.and_then(|o| self.query.preds.get(o)).and_then(Option::as_ref) {
             let mut out = Vec::new();
@@ -116,9 +116,12 @@ impl Context<'_> {
         }
         let s = l | r;
         let straddles = |reads: Set| reads & !s == 0 && reads & !l != 0 && reads & !r != 0;
-        let stated = self.query.conjuncts.iter().filter(|(_, c)| straddles(self.query.reads(c))).map(|(_, c)| c.clone());
-        let implied = self.model.implied_keys((l, r)).into_iter();
-        stated.chain(implied.map(|(a, b)| Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)))).collect()
+        let stated: Vec<Cond> =
+            self.query.conjuncts.iter().filter(|(_, c)| straddles(self.query.reads(c))).map(|(_, c)| c.clone()).collect();
+        if !stated.is_empty() {
+            return stated;
+        }
+        self.model.implied_keys((l, r)).into_iter().map(|(a, b)| Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b))).collect()
     }
 }
 

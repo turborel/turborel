@@ -72,9 +72,10 @@ impl Space<'_> {
         let pairs: Vec<(usize, usize)> = if let Some(pred) = applied.op.and_then(|o| self.model.preds.get(o)).and_then(Option::as_ref) {
             pred.keys.clone()
         } else {
-            let stated = applied.conjuncts.iter().filter_map(|&c| self.model.conjuncts.get(c)?.key);
-            let implied = if self.written { Vec::new() } else { self.model.implied_keys((l, r)) };
-            stated.chain(implied).collect()
+            let stated: Vec<(usize, usize)> = applied.conjuncts.iter().filter_map(|&c| self.model.conjuncts.get(c)?.key).collect();
+            // A join of the FROM clause's tree is planned as written, and
+            // one a conjunct reads is no product (RULES.md D387).
+            if self.written || !applied.conjuncts.is_empty() { stated } else { self.model.implied_keys((l, r)) }
         };
         pairs
             .into_iter()
