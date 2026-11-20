@@ -1,5 +1,5 @@
 //! \[DESIGN\] General unnesting (Neumann and Kemper, "Unnesting Arbitrary
-//! Queries", 2015, §3.2; RULES.md D312): the dependent join of the outer
+//! Queries", 2015, §3.2; RULES.md D312). The dependent join of the outer
 //! rows with a subquery is the join of those rows with the dependent join
 //! of D, the set of their distinct bindings, with the subquery, D's own
 //! made of a projection of them with duplicates removed (the magic set).
@@ -7,8 +7,8 @@
 //! operator, until what it reaches reads no outer reference and it is a
 //! product with D.
 //!
-//! The plan made gives D's columns first, then the subquery's: for each
-//! binding, the rows the subquery gives for it. Each outer reference is
+//! The plan made gives, for each binding, the rows the subquery gives for
+//! it, D's columns first, then the subquery's. Each outer reference is
 //! the column of D of its slot. As D is a set, a grouping groups by its
 //! columns too, a window partitions by them, DISTINCT and the set
 //! operators compare them, and a join of two sides that both read outer
@@ -41,17 +41,17 @@ use crate::functions::ScalarRef;
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, OuterJoin, Subquery, Unnest, and_all, plan_has_outer};
 use crate::value::Value;
 
-/// \[DESIGN\] The most copies of D a subquery's unnesting may read: each
+/// \[DESIGN\] The most copies of D a subquery's unnesting may read. Each
 /// reads the outer rows again, so a subquery whose correlation reaches
 /// more of its leaves is left nested.
 pub(super) const MAX_DOMAINS: usize = 4;
 
-/// D: the distinct bindings of the outer rows, and how many copies of it
+/// D, the distinct bindings of the outer rows, and how many copies of it
 /// the plan made reads.
 pub(super) struct Domain {
     /// Its plan.
     plan: LogicalPlan,
-    /// Its columns: each outer expression's, then each one's trailing
+    /// Its columns, each outer expression's, then each one's trailing
     /// spaces.
     width: usize,
     /// The copies read so far.
@@ -59,10 +59,10 @@ pub(super) struct Domain {
 }
 
 /// `sub`, applied to the rows of `rows`, unnested by its domain, if it
-/// can be: the rows of its outer join, D's columns first; the keys,
-/// matched as not distinct, the outer rows' bindings.
+/// can be, as the rows of its outer join, D's columns first; the keys,
+/// matched as not distinct, are the outer rows' bindings.
 pub(super) fn pushed(sub: &Subquery, rows: &LogicalPlan) -> Option<Bound> {
-    // D reads the outer rows again: they must be the same rows.
+    // D reads the outer rows again, so they must be the same rows.
     if !plan_pure(rows) {
         return None;
     }
@@ -110,7 +110,7 @@ impl Domain {
         (copies <= MAX_DOMAINS).then(|| self.plan.clone())
     }
 
-    /// D's dependent join with `plan`: pushed down it if it reads an
+    /// D's dependent join with `plan`, pushed down it if it reads an
     /// outer reference, else D's product with it.
     pub(super) fn over(&self, plan: &LogicalPlan) -> Option<LogicalPlan> {
         if plan_has_outer(plan) {
@@ -156,8 +156,9 @@ impl Domain {
         }
     }
 
-    /// A grouping by `groups`, under `collations`: by D's columns too
-    /// (Neumann and Kemper 2015, §3.2: Γ over D's attributes too).
+    /// A grouping by `groups`, under `collations`, and by D's columns too
+    /// (Neumann and Kemper 2015, §3.2, whose Γ is over D's attributes
+    /// too).
     fn grouped(
         &self,
         (groups, collations): (&[usize], &[Option<crate::value::collation::CollationRef>]),
@@ -176,7 +177,7 @@ impl Domain {
         Some(LogicalPlan::Aggregate { groups: columns, collations: collated, aggs, seeds: Vec::new(), input: Box::new(self.over(input)?) })
     }
 
-    /// A grouping of no grouping columns: of each binding's rows, over
+    /// A grouping of no grouping columns, of each binding's rows, over
     /// D's outer join with them, so a binding with none has its group;
     /// each set function takes only the rows the join found, by a marker
     /// that is null on the row of nulls [ISO/IEC 9075-2:2023 §10.9 GR4].
@@ -189,7 +190,7 @@ impl Domain {
         let marked = LogicalPlan::Project { exprs, input: Box::new(rows) };
         let on = and_all((0..by).map(|i| same(i, by.saturating_add(i))).collect()).unwrap_or(Cond::Const(crate::logical::Truth::True));
         let join = LogicalPlan::OuterJoin { kind: OuterJoin::Left, cond: on, left: Box::new(self.copy()?), right: Box::new(marked) };
-        // The join's rows: D, D's copy, the input's columns, the marker.
+        // The join's rows hold D, D's copy, the input's columns and the marker.
         let marker = Cond::IsNull(Expr::Column(by.saturating_add(wide)), true);
         let aggs = aggs
             .iter()

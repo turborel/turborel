@@ -2,25 +2,25 @@
 //! how the node uses each (RULES.md D311).
 //!
 //! A subquery is evaluated for every row the node reads unless it stands
-//! where a CASE may not reach: a WHEN's result, a WHEN's condition after
-//! the first, or the ELSE [ISO/IEC 9075:1992 §6.9 GR2]. AND and OR
-//! evaluate both operands (RULES.md D15), as a call does its arguments.
-//! A subquery that may go unevaluated is conditional: unnesting computes
-//! it for every row's binding, so it may only be one that cannot raise an
-//! error.
+//! where a CASE may not reach, which is a WHEN's result, a WHEN's
+//! condition after the first, or the ELSE [ISO/IEC 9075:1992 §6.9 GR2].
+//! AND and OR evaluate both operands (RULES.md D15), as a call does its
+//! arguments. A subquery that may go unevaluated is conditional.
+//! Unnesting computes it for every row's binding, so it may only be one
+//! that cannot raise an error.
 
 use std::sync::Arc;
 
 use crate::logical::{Cond, Expr, LogicalPlan, Quantifier, Subquery, split_and};
 use crate::value::CompOp;
 
-/// The node a rewrite starts at: a filter of its input's rows, or a
+/// The node a rewrite starts at, a filter of its input's rows or a
 /// projection of them.
 #[derive(Clone, Copy)]
 pub(super) enum Node<'a> {
-    /// WHERE or HAVING: the condition and the rows.
+    /// WHERE or HAVING, with the condition and the rows.
     Filter(&'a Cond, &'a LogicalPlan),
-    /// A select list: the expressions and the rows.
+    /// A select list, with the expressions and the rows.
     Project(&'a [Expr], &'a LogicalPlan),
 }
 
@@ -71,10 +71,10 @@ pub(super) enum Reference {
     /// EXISTS.
     Exists,
     /// A scalar or row subquery's column, or a comparison with its one row
-    /// [X3.135-1986 §5.11]: of degree one the column; of a comparison the
-    /// values compared and the operator.
+    /// [X3.135-1986 §5.11]. Of degree one it holds the column; of a
+    /// comparison, the values compared and the operator.
     Value(Option<(Vec<Expr>, CompOp)>),
-    /// A quantified comparison [X3.135-1986 §5.16]: the values compared,
+    /// A quantified comparison [X3.135-1986 §5.16], with the values compared,
     /// the operator, ALL rather than SOME, and whether it is a conjunct of
     /// a WHERE or HAVING condition, where unknown and false are alike.
     Quantified(Vec<Expr>, CompOp, bool, bool),
@@ -96,7 +96,7 @@ pub(super) fn candidates(node: &Node<'_>) -> Vec<Found> {
 }
 
 /// Adds to `out` each uncorrelated subquery of an IN or SOME comparison
-/// that is a conjunct of `cond`: made EXISTS of a subquery that compares
+/// that is a conjunct of `cond`. Made EXISTS of a subquery that compares
 /// the values with its rows, it is a semi join.
 fn semi_joins(cond: &Cond, out: &mut Vec<Found>) {
     let mut conjuncts = Vec::new();

@@ -1,16 +1,18 @@
-//! \[DESIGN\] The node made of an unnested subquery (RULES.md D313): its
-//! rows reduced to one for each binding, joined with the outer rows, and
-//! each place the node used the subquery reading that row instead.
+//! \[DESIGN\] The node made of an unnested subquery (RULES.md D313). Its
+//! rows are reduced to one for each binding and joined with the outer
+//! rows, and each place the node used the subquery reads that row
+//! instead.
 //!
 //! The join is a LEFT outer join of the outer rows, each with its
 //! binding's keys, with a row for each binding the subquery has rows for,
 //! so a row whose binding has none is kept, the row's columns null; a
 //! WHERE of a marker that rejects those nulls makes it the join it is
-//! (`optimizer::PushFilterIntoOuterJoin`). For each binding:
+//! (`optimizer::PushFilterIntoOuterJoin`). The row for each binding holds
+//! the following.
 //!
 //! * of EXISTS, a marker [X3.135-1986 §5.17 GR2, GR3];
 //! * of a scalar subquery, or a comparison with one row, the count of its
-//!   rows and the first row's values: a row whose count is more than one
+//!   rows and the first row's values. A row whose count is more than one
 //!   raises SQLCODE -811 where the subquery stood, as that row would have
 //!   [ISO/IEC 9075:1992 §7.11 GR1; X3.135-1986 §5.11 GR1], and a row whose
 //!   binding has none reads nulls [§6.11 GR2];
@@ -21,8 +23,8 @@
 use std::sync::Arc;
 
 use super::calls::{COMPARED_ROWS, FirstValue, SCALAR_ROWS, Single};
-use super::{Bound, How, Target, compared};
 use super::found::Node;
+use super::{Bound, How, Target, compared};
 use crate::functions::{AggregateRef, Registry, RowOf, ScalarRef, Standard};
 use crate::lexer::kw;
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, OuterJoin, Truth, and_all};
@@ -45,11 +47,13 @@ pub(super) fn rewritten(node: &Node<'_>, target: &Target, bound: Bound, function
             let filter = LogicalPlan::Filter { cond: with.cond((*cond).clone()), input: Box::new(join) };
             LogicalPlan::Project { exprs: (0..w).map(Expr::Column).collect(), input: Box::new(filter) }
         }
-        Node::Project(exprs, _) => LogicalPlan::Project { exprs: exprs.iter().map(|e| with.expr(e.clone())).collect(), input: Box::new(join) },
+        Node::Project(exprs, _) => {
+            LogicalPlan::Project { exprs: exprs.iter().map(|e| with.expr(e.clone())).collect(), input: Box::new(join) }
+        }
     })
 }
 
-/// Columns `a` and `b` match: as IS NOT DISTINCT FROM, if `not_distinct`,
+/// Columns `a` and `b` match, as IS NOT DISTINCT FROM if `not_distinct`,
 /// else as =.
 fn matched(a: usize, b: usize, not_distinct: bool) -> Cond {
     if not_distinct {
@@ -60,7 +64,7 @@ fn matched(a: usize, b: usize, not_distinct: bool) -> Cond {
 }
 
 /// The rows of `plan`, its `k` key columns first, reduced to one for each
-/// binding: the keys, then what `how` reads.
+/// binding, with the keys, then what `how` reads.
 fn per_binding(how: &How, plan: LogicalPlan, k: usize, functions: &Registry) -> Option<LogicalPlan> {
     let n = plan.width().checked_sub(k)?;
     let aggs = match how {
@@ -104,12 +108,20 @@ fn first(column: usize) -> AggCall {
     let row = DataType::row(Vec::new());
     let arg = Expr::Call(ScalarRef(Arc::new(RowOf(row.clone()))), vec![Expr::Column(column)]);
     let label = format!("{}(#{column})", super::calls::FIRST_VALUE);
-    AggCall { func: AggregateRef(Arc::new(FirstValue)), arg: Some(arg), distinct: false, filter: None, distribution: None, result: row, label }
+    AggCall {
+        func: AggregateRef(Arc::new(FirstValue)),
+        arg: Some(arg),
+        distinct: false,
+        filter: None,
+        distribution: None,
+        result: row,
+        label,
+    }
 }
 
-/// What a place the node used the subquery reads instead: the columns of
-/// its binding's row, from `base` on, and of a subquery made a grouping
-/// by its keys, the values it has of no row.
+/// What a place the node used the subquery reads instead, which is the
+/// columns of its binding's row, from `base` on, and of a subquery made
+/// a grouping by its keys, the values it has of no row.
 struct Replacing<'a> {
     target: &'a Target,
     base: usize,
@@ -189,7 +201,10 @@ impl Replacing<'_> {
     /// value of no row if the subquery was made a grouping.
     fn value(&self, at: usize, rule: &'static str) -> Expr {
         let count = Expr::Column(self.base);
-        let one = Expr::Call(ScalarRef(Arc::new(Single(rule))), vec![count.clone(), Expr::Column(self.base.saturating_add(1).saturating_add(at))]);
+        let one = Expr::Call(
+            ScalarRef(Arc::new(Single(rule))),
+            vec![count.clone(), Expr::Column(self.base.saturating_add(1).saturating_add(at))],
+        );
         match self.defaults.and_then(|d| d.get(at)) {
             Some(empty) => Expr::Case(vec![(Cond::IsNull(count, false), empty.clone())], Box::new(one)),
             None => one,

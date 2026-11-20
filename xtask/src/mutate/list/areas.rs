@@ -1,7 +1,9 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
-// UUID's mutations, here as `list.rs` holds no more modules.
+// Unnesting's and UUID's mutations, here as `list.rs` holds no more
+// modules.
+mod unnesting;
 mod uuid;
 
 use super::Mutation;
@@ -60,8 +62,8 @@ fn first() -> [&'static [Mutation]; 25] {
     ]
 }
 
-/// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 31] {
+/// The second half of the areas, in order, unnesting's last.
+fn second() -> [&'static [Mutation]; 32] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -94,6 +96,7 @@ fn second() -> [&'static [Mutation]; 31] {
         &super::vector_hybrid::VECTOR_HYBRID,
         &super::vector::VECTOR,
         &super::delta_tables::DELTA_TABLES,
+        &unnesting::UNNESTING,
     ]
 }
 

@@ -26,7 +26,8 @@
 //! LDBC SNB-style social network (`analytics/social.rs`). Run with `cargo
 //! xtask bench`, on the harness (RULES.md R-BENCH-1); with `ONLY_VAR` set
 //! to `social`, the social network's workloads alone, or to `graph`, path
-//! search's on a graph in memory alone.
+//! search's on a graph in memory alone, or to `unnesting`, correlated
+//! subqueries unnested and nested alone (`analytics/unnesting.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -46,12 +47,15 @@ mod harness;
 mod json;
 #[path = "analytics/social.rs"]
 mod social;
+#[path = "analytics/unnesting.rs"]
+mod unnesting;
 
 use harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
 
 /// The variable naming the workloads run alone: `social` for the social
-/// network's, `graph` for path search's on a graph in memory.
+/// network's, `graph` for path search's on a graph in memory,
+/// `unnesting` for correlated subqueries'.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -74,6 +78,10 @@ fn main() {
         graph::workloads(&bench);
         return;
     }
+    if only == "unnesting" {
+        unnesting::workloads(&bench);
+        return;
+    }
     let db = database();
     let s = db.session("B");
     measure(&bench, &s, ("F", "W", ""));
@@ -82,6 +90,7 @@ fn main() {
     json::workloads(&bench);
     graph::workloads(&bench);
     social::workloads(&bench);
+    unnesting::workloads(&bench);
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,

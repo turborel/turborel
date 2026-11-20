@@ -10,7 +10,7 @@
 //! the row has. A join condition that can raise an error is left as it
 //! is, as it would then be judged on pairs of two bindings. A set
 //! operator's operands both take D, and compare its columns with the
-//! rest: D ⋈ (T1 ∪ T2) is (D ⋈ T1) ∪ (D ⋈ T2), and so of EXCEPT and
+//! rest, as D ⋈ (T1 ∪ T2) is (D ⋈ T1) ∪ (D ⋈ T2), and so of EXCEPT and
 //! INTERSECT.
 
 use super::{Domain, same, shifted};
@@ -68,30 +68,37 @@ impl Domain {
             let cond = cond.clone().map_exprs(&mut |e| shifted(e, by));
             return Some(LogicalPlan::OuterJoin { kind, cond, left: Box::new(self.push(left)?), right: Box::new(right.clone()) });
         }
-        // Both sides take D: the left's columns follow D, the right's D's copy.
+        // Both sides take D. The left's columns follow D, the right's D's copy.
         let (l, r) = (self.over(left)?, self.over(right)?);
         let copy = by.saturating_add(lw);
         let slot = |i: usize| if kind == OuterJoin::Right { copy.saturating_add(i) } else { i };
         let moved = map_cond_columns(cond.clone(), &|c| if c < lw { c.saturating_add(by) } else { c.saturating_add(by.saturating_mul(2)) });
         let moved = moved.map_exprs(&mut |e| bound_slots(e, &slot));
-        let joined = LogicalPlan::OuterJoin { kind, cond: Cond::And(Box::new(moved), Box::new(self.on(lw))), left: Box::new(l), right: Box::new(r) };
+        let joined =
+            LogicalPlan::OuterJoin { kind, cond: Cond::And(Box::new(moved), Box::new(self.on(lw))), left: Box::new(l), right: Box::new(r) };
         let right_at = by.saturating_mul(2).saturating_add(lw);
         let rest = (by..copy).chain(right_at..right_at.saturating_add(rw)).map(Expr::Column);
         let bindings: Vec<Expr> = (0..by)
             .map(|i| match kind {
                 OuterJoin::Left => Expr::Column(i),
                 OuterJoin::Right => Expr::Column(copy.saturating_add(i)),
-                // Of the side the row has: COALESCE.
-                OuterJoin::Full => {
-                    Expr::Case(vec![(Cond::IsNull(Expr::Column(i), false), Expr::Column(copy.saturating_add(i)))], Box::new(Expr::Column(i)))
-                }
+                // Of the side the row has, by COALESCE.
+                OuterJoin::Full => Expr::Case(
+                    vec![(Cond::IsNull(Expr::Column(i), false), Expr::Column(copy.saturating_add(i)))],
+                    Box::new(Expr::Column(i)),
+                ),
             })
             .collect();
         Some(LogicalPlan::Project { exprs: bindings.into_iter().chain(rest).collect(), input: Box::new(joined) })
     }
 
     /// A set operator's operands, each D's dependent join.
-    pub(super) fn set_op(&self, (op, all, compared): (SetOp, bool, Option<usize>), left: &LogicalPlan, right: &LogicalPlan) -> Option<LogicalPlan> {
+    pub(super) fn set_op(
+        &self,
+        (op, all, compared): (SetOp, bool, Option<usize>),
+        left: &LogicalPlan,
+        right: &LogicalPlan,
+    ) -> Option<LogicalPlan> {
         let compared = compared.map(|c| c.saturating_add(self.width));
         Some(LogicalPlan::SetOp { op, all, compared, left: Box::new(self.over(left)?), right: Box::new(self.over(right)?) })
     }

@@ -10,7 +10,7 @@ use turborel::error::Code;
 use turborel::optimizer::{INLINE_FUNCTIONS, UNNEST_SUBQUERIES};
 use turborel::params::Params;
 
-use crate::common::{Rng, set_rule};
+use crate::common::{Rng, count, set_rule};
 
 /// The rows of `sql`, sorted, each value as it is written, trailing
 /// spaces and all; or the condition it raises.
@@ -52,7 +52,8 @@ fn random_tables(seed: u64) -> Database {
         .unwrap();
     let s = db.session("A");
     let mut rng = Rng::new(seed);
-    let value = |rng: &mut Rng, n: usize| if rng.chance(12) { "NULL".to_owned() } else { (i64::try_from(rng.below(n)).unwrap() - 2).to_string() };
+    let value =
+        |rng: &mut Rng, n: usize| if rng.chance(12) { "NULL".to_owned() } else { (i64::try_from(rng.below(n)).unwrap() - 2).to_string() };
     for (table, count) in [("R", 30), ("S", 50)] {
         for _ in 0..count {
             let (k, v) = (value(&mut rng, 7), value(&mut rng, 8));
@@ -103,7 +104,10 @@ const QUERIES: &[(&str, bool)] = &[
     ("SELECT K, (SELECT R.V + MIN(W) FROM S WHERE S.K = R.K) FROM R", true),
     ("SELECT K FROM R GROUP BY K HAVING COUNT(*) > (SELECT COUNT(*) FROM S WHERE S.K = R.K)", true),
     ("SELECT K FROM R GROUP BY K HAVING EXISTS (SELECT * FROM S WHERE S.K = R.K AND S.W > 3)", true),
-    ("SELECT K, V FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K AND EXISTS (SELECT * FROM R AS X WHERE X.V = S.W AND X.K <> R.K))", true),
+    (
+        "SELECT K, V FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K AND EXISTS (SELECT * FROM R AS X WHERE X.V = S.W AND X.K <> R.K))",
+        true,
+    ),
     ("SELECT K, V FROM R WHERE V > (SELECT MIN(W) FROM S WHERE S.K = R.K AND S.W > (SELECT MIN(V) FROM R AS X WHERE X.C = S.C))", true),
     ("SELECT K, (SELECT COUNT(*) FROM S WHERE S.W IN (SELECT V FROM R AS X WHERE X.K = R.K)) FROM R", true),
     ("SELECT K, V FROM R WHERE EXISTS (SELECT S.K FROM S WHERE S.K = R.K UNION SELECT X.K FROM R AS X WHERE X.V = R.V)", true),
@@ -164,7 +168,7 @@ fn nulls_empty_sets_and_cardinality() {
         ("SELECT K, (SELECT W FROM S WHERE S.K = R.K AND S.W IS NOT NULL) FROM R", Ok(&["-,-", "[1],[2]", "[2],[1]", "[3],-"])),
         ("SELECT K, (SELECT W FROM S WHERE S.K = R.K) FROM R", Err(Code::Cardinality)),
         ("SELECT K FROM R WHERE V = (SELECT W FROM S WHERE S.K = R.K)", Err(Code::Cardinality)),
-        ("SELECT K FROM R WHERE K > 1 AND V = (SELECT W FROM S WHERE S.K = R.K + 2)", Err(Code::Cardinality)),
+        ("SELECT K FROM R WHERE K > 1 AND V = (SELECT W FROM S WHERE S.K > R.K)", Err(Code::Cardinality)),
     ];
     for (q, want) in cases {
         let want = want.map(|rows| rows.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>());
@@ -194,4 +198,19 @@ fn explain_shows_the_unnested_plan() {
     s.run("CREATE FUNCTION MAYBE (X INTEGER) RETURNS INTEGER NOT DETERMINISTIC CONTAINS SQL RETURN X").unwrap();
     assert!(!unnested(&s, "SELECT K FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = MAYBE(R.K))"));
     assert!(!unnested(&s, "SELECT K FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K AND MAYBE(S.W) > 0)"));
+}
+
+/// Verifies: [X3.135-1986 §8.5 GR1, §8.12 GR1] (RULES.md D318) a searched
+/// DELETE or UPDATE whose condition has a correlated subquery finds its
+/// object rows by an access to its table, the subquery run for each row,
+/// as through an updatable cursor.
+#[test]
+fn changes_find_their_rows_with_subqueries_nested() {
+    let db = random_tables(2);
+    let s = db.session("A");
+    let doomed = count(&s, "SELECT K FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K)");
+    s.run("UPDATE R SET V = (SELECT MIN(W) FROM S WHERE S.K = R.K) WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K AND S.W > R.V)").unwrap();
+    let before = count(&s, "SELECT K FROM R");
+    s.run("DELETE FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K)").unwrap();
+    assert_eq!(count(&s, "SELECT K FROM R"), before - doomed);
 }

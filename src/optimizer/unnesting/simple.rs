@@ -1,30 +1,30 @@
 //! \[DESIGN\] Simple unnesting (Neumann and Kemper, "Unnesting Arbitrary
-//! Queries", 2015, §3.1 and §4; RULES.md D314): a subquery correlated only
+//! Queries", 2015, §3.1 and §4; RULES.md D314). A subquery correlated only
 //! by equalities of its own columns with outer references has those
 //! equalities pulled up out of it, so it is computed once for every value
 //! of the columns, and joined with the outer rows on them; no domain of
 //! bindings is made.
 //!
 //! The equalities rise through filters, projections, DISTINCT and
-//! groupings, each keeping the columns as its own: a grouping groups by
-//! them too. A grouping of no grouping columns then has a group for each
+//! groupings, each keeping the columns as its own, so a grouping groups
+//! by them too. A grouping of no grouping columns then has a group for each
 //! value that has rows, not one of no rows for the values that have none
-//! (the COUNT bug): its value for those is the value its select list has
+//! (the COUNT bug). Its value for those is the value its select list has
 //! over the empty group, given where the join finds no row
 //! (`Pulled::defaults`).
 //!
 //! The subquery is then computed for values of the columns no outer row
-//! has, so no part of it may raise an error (RULES.md D15): its set
+//! has, so no part of it may raise an error (RULES.md D15). Its set
 //! functions are COUNT, MAX and MIN alone (`pure::plan_raises`).
 
-use super::pure::plan_raises;
 use super::Bound;
+use super::pure::plan_raises;
 use crate::functions::Registry;
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Subquery, and_all, plan_has_outer, split_and};
 use crate::value::CompOp;
 
-/// A subquery's plan, its correlation pulled up: its columns, then one
-/// for each equality pulled up, the value of the column the equality
+/// A subquery's plan, its correlation pulled up, which gives its columns,
+/// then one for each equality pulled up, the value of the column the equality
 /// compares with an outer reference.
 struct Pulled {
     /// The plan.
@@ -38,7 +38,7 @@ struct Pulled {
     defaults: Option<Vec<Expr>>,
 }
 
-/// `sub` unnested simply, if it can be, as a bound subquery: its key
+/// `sub` unnested simply, if it can be, as a bound subquery with its key
 /// columns first; the keys are its outer expressions' values compared
 /// with them, as an equality compares them, a null matching none.
 pub(super) fn pulled(sub: &Subquery, functions: &Registry) -> Option<Bound> {
@@ -56,7 +56,7 @@ pub(super) fn pulled(sub: &Subquery, functions: &Registry) -> Option<Bound> {
 }
 
 /// `e`, over outer reference slots, over the rows the subquery is
-/// applied to: each slot replaced by its outer expression.
+/// applied to, each slot replaced by its outer expression.
 fn outer_bound(e: Expr, outer: &[Expr]) -> Expr {
     if let Expr::Outer(i, name) = e {
         return outer.get(i).cloned().unwrap_or(Expr::Outer(i, name));
@@ -117,8 +117,8 @@ fn reads_columns(e: &Expr) -> bool {
 }
 
 /// Of a conjunct "a = b", one side reading columns and no outer reference
-/// and the other outer references and no column, those sides: the
-/// column's expression, then the outer one's.
+/// and the other outer references and no column, those sides, the
+/// column's expression first, then the outer one's.
 fn equated(c: &Cond) -> Option<(Expr, Expr)> {
     let Cond::Compare(a, CompOp::Eq, b) = c else { return None };
     let inner = |e: &Expr| reads_columns(e) && !expr_has_outer(e) && e.all_subqueries().is_empty();
@@ -215,13 +215,8 @@ fn grouped(
     if !collated.is_empty() {
         collated.extend(std::iter::repeat_n(None, k));
     }
-    let grouping = LogicalPlan::Aggregate {
-        groups: by,
-        collations: collated,
-        aggs: aggs.to_vec(),
-        seeds: Vec::new(),
-        input: Box::new(inner.plan),
-    };
+    let grouping =
+        LogicalPlan::Aggregate { groups: by, collations: collated, aggs: aggs.to_vec(), seeds: Vec::new(), input: Box::new(inner.plan) };
     // Its grouping columns, its set functions, then the keys.
     let (g, n) = (groups.len(), aggs.len());
     let order = (0..g).chain(g.saturating_add(k)..g.saturating_add(k).saturating_add(n)).chain(g..g.saturating_add(k));
@@ -230,8 +225,8 @@ fn grouped(
     Some(Pulled { plan, keys: inner.keys, defaults })
 }
 
-/// [ISO/IEC 9075-2:2023 §10.9 GR7] The value of `a` over no row: what its
-/// accumulator, given none, finishes with.
+/// [ISO/IEC 9075-2:2023 §10.9 GR7] The value of `a` over no row, which is
+/// what its accumulator, given none, finishes with.
 fn empty_value(a: &AggCall) -> Option<Expr> {
     a.func.0.accumulator(a.result.clone()).finish().ok().map(Expr::Const)
 }

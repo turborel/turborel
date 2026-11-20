@@ -60,7 +60,13 @@ impl Domain {
         let by = self.width;
         let wide = by.saturating_add(rows.width());
         let order = order.iter().map(|k| SortKey { column: k.column.saturating_add(by), ..*k }).collect();
-        let frame = Frame { units: Units::Rows, start: Bound::UnboundedPreceding, end: Bound::CurrentRow, exclusion: Exclusion::NoOthers, matching: None };
+        let frame = Frame {
+            units: Units::Rows,
+            start: Bound::UnboundedPreceding,
+            end: Bound::CurrentRow,
+            exclusion: Exclusion::NoOthers,
+            matching: None,
+        };
         let call = WindowCall { kind: WindowKind::RowNumber, frame, label: ROW_NUMBER.to_owned(), nested: Vec::new() };
         let numbered = Window { partition: (0..by).collect(), order, calls: vec![call], input: self.over(rows)? };
         let number = Expr::Column(wide);

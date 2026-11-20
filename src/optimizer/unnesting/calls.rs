@@ -1,5 +1,5 @@
-//! \[DESIGN\] The functions unnesting writes into the plans it makes: none
-//! a statement can name, as none is registered.
+//! \[DESIGN\] The functions unnesting writes into the plans it makes. A
+//! statement can name none of them, as none is registered.
 //!
 //! * `Single` checks, where a scalar subquery was evaluated, that its
 //!   binding had one row at most [ISO/IEC 9075:1992 §7.11 GR1; X3.135-1986
@@ -20,7 +20,7 @@ use crate::error::{Code, Result, Subject, fail};
 use crate::functions::{Accumulator, AggregateFunction, ScalarFunction};
 use crate::value::{DataType, Decimal, Spelled, Value, assign, compare};
 
-/// The type `Trailing` gives: an INTEGER's, of nine digits.
+/// The type `Trailing` gives, an INTEGER's, of nine digits.
 const COUNTED: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
 
 /// The name EXPLAIN shows of `Single`.
@@ -39,7 +39,7 @@ pub(super) const SCALAR_ROWS: &str = "[ISO/IEC 9075:1992 §7.11 GR1] a <scalar s
 /// than one row, as `exec/eval.rs` raises it.
 pub(super) const COMPARED_ROWS: &str = "[X3.135-1986 §5.11 GR1] the <subquery> of a comparison gives more than one value";
 
-/// `SINGLE(count, value)`: the value, unless the count of the binding's
+/// `SINGLE(count, value)` gives the value, unless the count of the binding's
 /// rows is more than one, which fails with SQLCODE -811.
 pub(super) struct Single(pub(super) &'static str);
 
@@ -60,8 +60,8 @@ impl ScalarFunction for Single {
     }
 }
 
-/// `SINGLE_VALUE(ROW(column))`: the column's value in the first row of its
-/// group, null too; null of no row.
+/// `SINGLE_VALUE(ROW(column))` gives the column's value in the first row
+/// of its group, null too; null of no row.
 pub(super) struct FirstValue;
 
 impl AggregateFunction for FirstValue {
@@ -71,7 +71,9 @@ impl AggregateFunction for FirstValue {
     /// The type of the one field of its argument's row type.
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
         match arg {
-            Some(DataType::Row(row)) => row.fields.first().map(|f| f.data_type.clone()).map_or_else(|| fail(Code::Api, "[DESIGN] no field"), Ok),
+            Some(DataType::Row(row)) => {
+                row.fields.first().map(|f| f.data_type.clone()).map_or_else(|| fail(Code::Api, "[DESIGN] no field"), Ok)
+            }
             Some(_) | None => fail(Code::Api, "[DESIGN] SINGLE_VALUE takes a row of one field"),
         }
     }
@@ -96,8 +98,8 @@ impl Accumulator for Kept {
     }
 }
 
-/// `TRAILING_SPACES(value)`: of a character string, how many spaces end
-/// it; of any other value, null.
+/// `TRAILING_SPACES(value)` gives, of a character string, how many
+/// spaces end it; of any other value, null.
 pub(super) struct Trailing;
 
 impl ScalarFunction for Trailing {
@@ -117,14 +119,14 @@ impl ScalarFunction for Trailing {
     }
 }
 
-/// `ASSIGN(value)`: the value stored in `to` by the rule `rule`, an error
-/// about `about` if it cannot be.
+/// `ASSIGN(value)` gives the value stored in `to` by the rule `rule`, an
+/// error about `about` if it cannot be.
 pub(crate) struct Assigned {
     /// The type stored in.
     pub(crate) to: DataType,
     /// The rule cited of a value it cannot be stored in.
     pub(crate) rule: &'static str,
-    /// What an error of it is about: the parameter or the routine.
+    /// What an error of it is about, the parameter or the routine.
     pub(crate) about: Subject,
 }
 

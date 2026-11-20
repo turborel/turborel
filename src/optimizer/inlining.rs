@@ -1,4 +1,4 @@
-//! \[DESIGN\] SQL-invoked functions inlined (RULES.md D316): an invocation
+//! \[DESIGN\] SQL-invoked functions inlined (RULES.md D316). An invocation
 //! of a function whose body returns one value is that value's expression,
 //! each parameter its argument stored in the parameter's type, the result
 //! stored in the result type [ISO/IEC 9075-2:2023 §9.18 GR4a ii, GR8b ix
@@ -117,7 +117,7 @@ fn parameter(i: &Invocation, (n, name, t): (usize, &String, &crate::value::DataT
 }
 
 /// The one value `i`'s body returns, each parameter the column of its
-/// number: of a `<return statement>`, its outer references the
+/// number. Of a `<return statement>`, its outer references become the
 /// parameters' columns; of a program's, the frame's slots of them
 /// (`exec/program/leaves.rs`), read only where they can be replaced.
 fn body_value(i: &Invocation) -> Option<Expr> {
@@ -183,7 +183,7 @@ fn returned(program: &Program) -> Option<&crate::logical::Leaf> {
 }
 
 /// Adds to `out` each column, a parameter's, `e` reads where it is
-/// evaluated whenever `e` is: not if `conditional`, nor in a CASE's
+/// evaluated whenever `e` is, so not if `conditional`, nor in a CASE's
 /// result, ELSE or WHEN after the first [ISO/IEC 9075:1992 §6.9 GR2].
 fn columns_read(e: &Expr, conditional: bool, out: &mut Vec<usize>) {
     match e {
@@ -247,7 +247,7 @@ fn columns_replaced(e: Expr, values: &[Expr]) -> Expr {
 }
 
 /// `e`, each outer reference slot replaced by `values`' expression for
-/// it: those of the subqueries nested in it among them.
+/// it, those of the subqueries nested in it among them.
 fn slots_replaced(e: Expr, values: &[Expr]) -> Expr {
     if let Expr::Outer(slot, name) = e {
         return values.get(slot).cloned().unwrap_or(Expr::Outer(slot, name));

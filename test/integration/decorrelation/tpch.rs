@@ -36,10 +36,19 @@ fn tpch(seed: u64) -> Database {
     let parts = rows(12, &mut |r, k| format!("{k}, '{}{k}', 'B{}', {}", ["forest", "lemon"][r.below(2)], r.below(3), 10 + r.below(10)));
     let partsupp = rows(30, &mut |r, _| format!("{}, {}, {}, {}.25", r.below(12), r.below(8), r.below(60), r.below(20)));
     let customers = rows(10, &mut |r, k| format!("{k}, '{}-555', {}.00", 13 + r.below(20), r.below(900) as i64 - 100));
-    let orders = rows(25, &mut |r, k| format!("{k}, {}, '{}', {}, '{}-URG'", r.below(10), ["F", "O"][r.below(2)], r.below(200), r.below(5)));
+    let orders =
+        rows(25, &mut |r, k| format!("{k}, {}, '{}', {}, '{}-URG'", r.below(10), ["F", "O"][r.below(2)], r.below(200), r.below(5)));
     let lineitems = rows(80, &mut |r, _| {
         let (ship, commit) = (r.below(200), r.below(200));
-        format!("{}, {}, {}, {}.00, {}.00, {ship}, {commit}, {}", r.below(25), r.below(12), r.below(8), 1 + r.below(30), r.below(500), ship + r.below(20))
+        format!(
+            "{}, {}, {}, {}.00, {}.00, {ship}, {commit}, {}",
+            r.below(25),
+            r.below(12),
+            r.below(8),
+            1 + r.below(30),
+            r.below(500),
+            ship + r.below(20)
+        )
     });
     insert("SUPPLIER", suppliers);
     insert("PART", parts);
