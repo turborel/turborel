@@ -329,6 +329,8 @@ verification approach DO-178C expects (§8).
 | D334 | A database counts its transactions committed and rolled back, shown in INFORMATION_SCHEMA.SERVER |
 | D335 | A connection whose request runs is watched for its client gone |
 | D336 | A prepared CALL's output dynamic parameters are its columns, sent as a row |
+| D390 | A `?` in the rows of an INSERT takes its object column's type |
+| D391 | A `?` whose value its cast cuts warns 01004 |
 
 ### The project
 
@@ -9234,6 +9236,33 @@ added and protocol version 1 holds, and a client reading rows for a
 statement of columns reads them unchanged. EXECUTE puts them where its
 result using clause says and raises 07007 without one (§20.13 GR6,
 GR10). EXECUTE IMMEDIATE takes no such statement (§20.14 GR3).
+
+#### D390. A `?` in the rows of an INSERT takes its object column's type
+
+A `?` in a row of an INSERT's VALUES, or of VALUES in a query expression
+an INSERT simply contains, as an operand of UNION ALL too, takes the type
+of the object column it lands in, whatever the other rows hold
+(ISO/IEC 9075-2:2023 §20.7 GR5a xix 1 A). The type §9.5
+gives the column's values is taken only by a `?` of VALUES outside an
+INSERT (§20.7 GR5a xix 1 B, §7.3 SR3). A value bound beside a shorter
+literal in another row is so never cut to that literal's length
+(`binder/set_operations.rs`). Each row's value is then assigned to its
+column (§14.11 SR16, §9.2), which raises 22001 for any character other
+than a space past the column's length, in whichever row or operand it
+stands. The rows' common type has the greatest of their lengths (§9.5
+SR3a, SR3b), so no literal is cut to another's length before that.
+
+#### D391. A `?` whose value its cast cuts warns 01004
+
+A `?`'s value is cast to the type its context gives it (§20.11 GR6c ii
+2 B). A string longer than that type is cut, with the warning string
+data, right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13). The
+binder keeps the warning with the constant (`Expr::Warned`), and so does
+a kept plan's slot as it is filled (`logical/dynamic.rs`), so the
+statement completes with 01004 and the cut is never silent. A value
+that fits raises nothing. The cast stays a cast and not a store
+assignment, as the standard says, so 22001 is raised only by the
+assignment of a value longer than its column.
 
 ## 2. Project layout
 

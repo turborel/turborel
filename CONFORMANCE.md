@@ -202,7 +202,11 @@ statement's outcome, as the client library exposes it, follows.
 
 Prepared statements come in two forms, both with `<dynamic parameter
 specification>`s [§6.2]. Their types are deduced as §17.6 GR5 says, and
-refused where it gives none [GR4].
+refused where it gives none [GR4]. A `?` in a row of an INSERT's VALUES
+takes its object column's type, whatever the other rows hold [ISO/IEC
+9075-2:2023 §20.7 GR5a xix 1 A] (RULES.md D390). A value is cast to its
+`?`'s type, a string too long cut with 01004 [§20.11 GR6c ii 2 B]
+(RULES.md D391).
 
 | Form | Rules | What turborel does |
 |---|---|---|
@@ -618,7 +622,7 @@ in memory, in the log or on the wire. RULES.md D79 says how.
 | Feature | Rules | What turborel does |
 |---|---|---|
 | CHARACTER LARGE OBJECT, NATIONAL CHARACTER LARGE OBJECT, BINARY LARGE OBJECT | §5.2 SR10, §6.1 SR1, SR10 to SR13, SR17 | CLOB, CHAR LARGE OBJECT, NCLOB, NCHAR LARGE OBJECT and BLOB too. A `<large object length>` of digits, with K, M or G as one token or two, of CHARACTERS or OCTETS of a CLOB. 4G if none is written (ID068), the longest (IL042, IL002, IL004), so T, P or more than 4G is SQLCODE -900, and 0 is -103. NATIONAL CHARACTER LARGE OBJECT is CHARACTER LARGE OBJECT, SQL_TEXT the one character set. |
-| Assignment and CAST | §6.13 SR7, GR10 to GR13, §9.1, §9.2 GR3b, GR3e | To and from the strings of its family alone, else SQLCODE -103. Stored, a value longer than its site is 22001 unless what is past it is spaces, which are cut. Retrieved or cast, it is cut with 01004 unless what is cut is spaces. A dynamic parameter's value is cast to its type [§17.9 GR5g]. |
+| Assignment and CAST | §6.13 SR7, GR10 to GR13, §9.1, §9.2 GR3b, GR3e | To and from the strings of its family alone, else SQLCODE -103. Stored, a value longer than its site is 22001 unless what is past it is spaces, which are cut. Retrieved or cast, it is cut with 01004 unless what is cut is spaces. A dynamic parameter's value is cast to its type [§17.9 GR5g], with 01004 if it is cut (RULES.md D391). |
 | Comparing | §4.1, §8.2, §9.11, §9.12 SR3, §9.14 SR3 | Equality alone. `=`, `<>`, IN, a quantified `=`, MATCH, EXISTS of an equality and a join's equality read both operands a chunk at a time. ORDER BY, GROUP BY, DISTINCT, a set operation not ALL, MAX, MIN, `<`, UNIQUE, and a key of a constraint or an index refuse one, SQLCODE -103. |
 | `\|\|` | §6.32 SR3b i, SR6a i, GR2, GR3 | Of a large object and a string of its family, a large object of the sum of their lengths up to 4G, joined without a copy. |
 | CHAR_LENGTH, OCTET_LENGTH | §6.30 GR4, GR5 | From the value's counts, nothing read. |

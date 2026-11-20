@@ -36,6 +36,13 @@ column's, its domain's, or the null value.
 In VALUES, DEFAULT gives a column its default and NULL the null value.
 DEFAULT VALUES inserts one row of every column's default.
 
+A `?` of a prepared INSERT, in any row of its VALUES, takes the type of
+the column it goes to, whatever the other rows hold, so a long value
+bound beside a short literal in another row is stored whole. A value
+longer than its column raises 22001, in whichever row it stands. A `?`'s
+value longer than the column is cut to it as it is cast, and the
+statement completes with the warning 01004.
+
 An identity column given no value, or DEFAULT, takes its generator's next
 value, one for each row. One GENERATED ALWAYS is given a value of the
 query's only with OVERRIDING SYSTEM VALUE. OVERRIDING USER VALUE ignores

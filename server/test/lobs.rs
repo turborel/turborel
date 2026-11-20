@@ -166,3 +166,30 @@ fn values_sent_whole_and_binary_values_written_in_pieces() {
     assert_eq!(all, octets);
     c.terminate().unwrap();
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §20.7 GR5a xix 1 A, §14.11 SR16]
+/// RULES.md D390: over a connection, a 4 MiB BLOB and an 80 KB CLOB bound
+/// to the `?`s of the first row of an INSERT's VALUES, beside a second row
+/// of X'0102' and 'short', are stored whole and read back octet for octet.
+/// Regression test: they were cut to two octets and five characters.
+#[test]
+fn bound_values_beside_shorter_literals_store_whole() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE SCANS (ID INTEGER, B BLOB(10M), C CLOB(1M))").unwrap();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let blob: Vec<u8> = (0..4_u32 << 20).map(|i| u8::try_from(i % 251).unwrap()).collect();
+    let clob = text(80_000);
+    let p = c.prepare("INSERT INTO SCANS VALUES (1, ?, ?), (2, X'0102', 'short')").unwrap();
+    assert_eq!(done(&c.execute(&p, &[Value::Lob(Lob::of_octets(&blob)), Value::Lob(Lob::of_text(&clob))]).unwrap()), 0);
+    let Outcome::Rows { rows, .. } = c.query("SELECT B, C FROM SCANS ORDER BY ID").unwrap() else { panic!("no rows") };
+    let mut read = Vec::new();
+    for v in rows.iter().flatten() {
+        let Value::Lob(l) = v else { panic!("{v:?}") };
+        let mut all = Vec::new();
+        c.lob_reader(l).read_to_end(&mut all).unwrap();
+        read.push(all);
+    }
+    assert_eq!(read, [blob, clob.into_bytes(), vec![1, 2], b"short".to_vec()]);
+    c.terminate().unwrap();
+}
