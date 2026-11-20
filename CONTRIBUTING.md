@@ -118,6 +118,10 @@ intersection queries over 100,000 points, narrow and broad windows, and
 80% reads with 20% committed updates on one, four and eight threads.
 Read-only cases retain a prepared query per worker and report latency
 percentiles; each mixed run starts with a fresh database outside the timer.
+The default is 16 queries per worker per run, which times thread start and
+session setup with them; set `TURBOREL_GEOMETRY_QUERIES` for longer runs,
+as a comparison with a server timed over open connections needs. The case
+label records a count other than the default.
 Both kinds fetch every result and maintain the geometry R-tree. The report
 states whether the planner could use that tree in each compared build.
 
