@@ -25,6 +25,7 @@ mod late;
 mod oltp;
 mod parallel;
 mod rewrites;
+mod sorts;
 mod tpcc;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
@@ -131,6 +132,7 @@ fn second() -> [&'static [Mutation]; 40] {
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
         &expr::EXPR,
+        &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
     ]
