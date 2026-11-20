@@ -127,7 +127,13 @@ impl PhysicalPlanner<'_> {
 
     /// The join of `l` and `r` by `how`, of kind `kind`, judging `conds`,
     /// its operands giving `rows`.
-    fn realize_join(&self, cx: &Context<'_>, (how, kind): (Method, Kind), (l, r): (Realized, Realized), (conds, rows): (Vec<Cond>, (f64, f64))) -> Option<Realized> {
+    fn realize_join(
+        &self,
+        cx: &Context<'_>,
+        (how, kind): (Method, Kind),
+        (l, r): (Realized, Realized),
+        (conds, rows): (Vec<Cond>, (f64, f64)),
+    ) -> Option<Realized> {
         match (how, kind) {
             (Method::Index, Kind::Inner | Kind::Left) => {
                 let fallback = (Method::Hash, kind);
@@ -138,7 +144,9 @@ impl PhysicalPlanner<'_> {
             }
             (Method::Merge(class), Kind::Inner | Kind::Left) => self.merge_realized(cx, (class, kind), (l, r), &conds),
             (Method::Hash, Kind::Inner) => Some(self.hash_realized(cx, (l, r), &conds, rows)),
-            (Method::Hash | Method::Nested | Method::Index | Method::Merge(_), Kind::Left | Kind::Full) => Some(self.outer_realized(cx, kind, (l, r), (&conds, rows))),
+            (Method::Hash | Method::Nested | Method::Index | Method::Merge(_), Kind::Left | Kind::Full) => {
+                Some(self.outer_realized(cx, kind, (l, r), (&conds, rows)))
+            }
             (Method::Nested, Kind::Inner) => {
                 let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
                 let shape = joined_shape(&l, &r);
@@ -242,7 +250,13 @@ impl PhysicalPlanner<'_> {
 
     /// A merge join on the equality of `class`, each operand sorted by its
     /// key unless its order is the key's.
-    fn merge_realized(&self, cx: &Context<'_>, (class, kind): (usize, Kind), (l, r): (Realized, Realized), conds: &[Cond]) -> Option<Realized> {
+    fn merge_realized(
+        &self,
+        cx: &Context<'_>,
+        (class, kind): (usize, Kind),
+        (l, r): (Realized, Realized),
+        conds: &[Cond],
+    ) -> Option<Realized> {
         let (pairs, _) = self.split_keys(cx, (&l.layout, &r.layout), conds);
         let class_at = |layout: &[usize], place: usize| {
             let col = (0..cx.query.width).find(|&c| cx.place_of(layout, c) == Some(place))?;
@@ -269,7 +283,8 @@ impl PhysicalPlanner<'_> {
         let right = sorted(r, b, right_class, right_names);
         let rest: Vec<Cond> = conds.iter().map(|c| cx.mapped(c, &layout)).filter(|c| !is_key(c, (a, b.saturating_add(width)))).collect();
         let cond = and_all(rest).map(judged_by_sets);
-        let key_text = shown.text(|n| format!("{} = {}", render_expr(&Expr::Column(a), n), render_expr(&Expr::Column(b.saturating_add(width)), n)));
+        let key_text =
+            shown.text(|n| format!("{} = {}", render_expr(&Expr::Column(a), n), render_expr(&Expr::Column(b.saturating_add(width)), n)));
         let rest_text = cond.as_ref().map(|c| shown.text(|n| format!(" AND {}", render_cond(c, n)))).unwrap_or_default();
         let detail = format!("{key_text}{rest_text}");
         let key = JoinKey { left: a, right: b, nulls: false };

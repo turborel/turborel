@@ -233,6 +233,32 @@ SELECT S.NAME, D.DEPT, S.SALARY FROM DEPT D LEFT JOIN STAFF S PARTITION BY (NAME
 (8 rows)
 ```
 
+### How joins are planned *(extension)*
+
+The rows of a join are the standard's whatever order its tables are read
+in, so the planner chooses the order, and the method of each join, that
+it estimates cheapest. Of three or more tables it searches every order
+that keeps the query's result, bushy ones among them, where one join's
+result is joined with another's. Inner joins are reordered freely, and
+an outer join where its rows are kept, such as a LEFT join moved below
+an inner join of its preserved side. The search is exact for a query of
+up to 13 tables, or more while their connected subsets number no more
+than PLANNER.DP_BUDGET, and past that it is narrowed to orders near a
+greedy one, so a query of a hundred tables is still planned at once.
+Each join is a hash join, building the smaller side, an index
+nested-loop join probing the other table's index, or a merge join where
+a side is read in its key's order already and that order pays, as when
+the query asks for it. The rows of each set of tables are estimated
+from the distinct values of the joined columns, an equality that others
+imply counted once. A query with a condition that can raise an error, as
+a division can, is planned in the greedy order described next, which
+keeps the errors raised the same whatever the order.
+
+SET PLANNER.JOIN_ENUMERATION = 'GREEDY' plans a session's joins in a
+left-deep order instead, each next join the cheapest, as to compare the
+two. EXPLAIN shows the order and the algorithm chosen
+([EXPLAIN](statements/explain.md)).
+
 ## UNNEST
 
 UNNEST in the FROM clause gives the elements of arrays as rows, a row of

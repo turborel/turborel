@@ -292,6 +292,16 @@ verification approach DO-178C expects (§8).
 | D282 | A plug-in reads the settings a call runs with in a SETTINGS frame before it, and writes none but its own |
 | D283 | BUFFER EVICTION programs the pool's evictor, never called by the pool, and its death stops the node |
 | D284 | An eviction policy is weights of one score, read with no lock, with ranges weighed and pages kept |
+| D300 | Joins are ordered by dynamic programming over connected subgraphs, bushy trees among them |
+| D301 | Outer joins are reordered where the conflict rules of CD-C allow, and nowhere else |
+| D302 | Join rows are estimated from distinct values, by classes of equalities, at least one row |
+| D303 | Each join's method is chosen with its order, and a merge join is one of them |
+| D304 | Exact DP while the graph is small, then linearized DP, then GOO-DP |
+| D305 | Three session settings govern join enumeration |
+| D306 | EXPLAIN shows the join order chosen and the algorithm that chose it |
+| D307 | An enumerated plan replaces the FROM clause's only when estimated cheaper by the gain |
+| D308 | The Join Order Benchmark runs on a generated database of its schema |
+| D309 | Interesting orders are kept through the enumeration |
 
 ### The project
 
@@ -2461,6 +2471,11 @@ the bounds, and the complete join condition checks each visible candidate.
 Both table orders are costed, including derived-table column projections.
 An untested nullable key column or a raising inner filter forbids the path.
 These joins use the existing indexed-row fetch and serializable read tracking.
+
+Chains of three or more relations are ordered by join enumeration, which
+chooses each join's method with its order (D300 to D309). The greedy
+left-deep order described here plans the rest, and every chain while
+PLANNER.JOIN_ENUMERATION is GREEDY.
 
 #### D36. Settings
 
@@ -8497,6 +8512,182 @@ frame in the sample is evictable, so a hint never wedges the pool. A
 policy pushed reweighs each frame once, and a page placed later takes
 its range's weight as it is placed. The score is computed per victim
 from atomics, so the hot path takes no lock and never calls the program.
+
+#### D300. Joins are ordered by dynamic programming over connected subgraphs, bushy trees among them
+
+A chain of products, filters and outer joins of three to 128 relations
+is planned by join enumeration (`physical/enumerate.rs`). The plans of
+every connected set of relations are built from the plans of each pair
+of connected sets whose union it is, so bushy trees are found as well as
+left-deep ones and no product is planned where a join condition connects
+the sets. Of a query graph of simple edges and inner joins alone this is
+DPccp, after Moerkotte and Neumann, "Analysis of Two Existing and One New
+Dynamic Programming Algorithm for the Generation of Optimal Bushy Join
+Trees without Cross Products", 2006. It enumerates each csg-cmp pair once
+and no pair that cannot join. Of a hypergraph, where a conjunct reads
+more than two relations or an outer join's predicate does, it is DPhyp,
+after Moerkotte and Neumann, "Dynamic Programming Strikes Back", 2008,
+whose neighbourhood takes a hyperedge's least relation as its
+representative (`enumerate/dphyp.rs`). Both are one algorithm here, run
+on the graph the chain gives, and EXPLAIN names the one that ran (D306).
+Sets are bit sets of 128 relations, so a larger chain, or one of fewer
+than three relations, is left to the greedy left-deep order of
+`physical/order.rs`, as is any chain while PLANNER.JOIN_ENUMERATION is
+GREEDY (D305). A conjunct that can raise an error (D15), or compares
+collated sort keys, leaves the whole chain to the greedy order too,
+which already keeps D15.
+
+#### D301. Outer joins are reordered where the conflict rules of CD-C allow, and nowhere else
+
+An outer join's operands, and a filter's conjuncts, are placed in the
+initial operator tree as written (`enumerate/extract.rs`). A RIGHT join
+is the LEFT join of its operands swapped. A filter conjunct goes into a
+LEFT join's preserved operand only, since the optimizer has already
+moved the rest where they may go (`optimizer/outer.rs`). A conjunct that
+would have to stay over an outer join leaves the chain to the greedy
+order. Which joins of two sets keep the result is decided by the
+conflict detector CD-C of Moerkotte, Fender and Eich, "On the Correct
+and Complete Enumeration of the Core Search Space", 2013
+(`enumerate/conflicts.rs`). Of each pair of operators where
+associativity, left asscom or right asscom does not hold, by the paper's
+Tables 2 and 3, the upper one gets a conflict rule `T1 → T2`, and a
+join is made only if each operator it applies obeys its rules. The
+rules are correct and complete for inner, LEFT and FULL joins, so every
+valid order is searched and no invalid one. An entry the tables give
+only if a predicate rejects nulls is taken only if both predicates
+reject nulls on every table they read. That condition implies each
+footnote's, so a conflict wrongly assumed narrows the search and never
+admits a wrong plan. Semi and antijoins are not operators of the
+logical plan yet, as subqueries stay conditions until unnesting makes
+them joins, and the tables gain their rows when it does.
+
+#### D302. Join rows are estimated from distinct values, by classes of equalities, at least one row
+
+A relation's rows are the planner's estimate of its filtered read
+(`rows_of`), from the statistics of the table, a plug-in engine's among
+them (D278). An equality of a column of two relations keeps one pair in
+as many as the more distinct column has values, as Selinger et al.,
+"Access Path Selection in a Relational Database Management System",
+1979, §4 has it. Equalities chained through one value form a class, by
+union of their columns (`enumerate/modeled.rs`). A set of relations
+keeps one row in as many as each member column in it but the least
+distinct has values, so an equality that others imply is not counted
+again, and every way of joining a set gives it the same rows. Other
+conjuncts keep their default fractions, independent as a table's
+filters are. A LEFT join gives at least its left's rows and a FULL join
+at least each operand's. Every join gives at least one row if its
+operands' product has one, so no estimate of zero makes the joins above
+it free, which Leis et al., "How Good Are Query Optimizers, Really?",
+2015, §3 show to mislead most. Distinct counts are the table's, not
+lowered by the filters over it, since a key column keeps its
+distinctness under any filter and independence is the only assumption
+that holds for both.
+
+#### D303. Each join's method is chosen with its order, and a merge join is one of them
+
+Each pair the enumeration joins is costed by every method it may use
+(`enumerate/methods.rs`), so the cheapest plan of each set is cheapest
+of order and method together. A hash join reads both operands and
+hashes each row once (`HASH_ROW`), building the operand of fewer
+estimated rows (`enumerate/realize.rs`). An index nested-loop join of an
+inner or LEFT join probes, for each left row, an index of the right
+operand's table where the right operand is one relation (D35). A merge
+join is offered of an inner or LEFT join on an equality whose columns
+are exact numbers or dates, whose order is the order their equality
+compares by, and only where one operand already has a plan in the key's
+order, from an index or a table kept in order, as an interesting order
+pays (D309). Where both operands would be sorted the hash join is taken.
+A nested loop pairs every row where no equality joins the sets. Each
+join adds the rows it gives to the cost, as Cout does. The merge join
+(`exec/join/merge.rs`) pairs each left row with the run of right rows of
+its key. The run is read once and held while left rows of that key come,
+in memory until it outgrows the work area and then in a run of the spill
+area (D38). A null key matches nothing, and of a LEFT join a left row
+none matches is kept with nulls. Its rows are in its left operand's order.
+
+#### D304. Exact DP while the graph is small, then linearized DP, then GOO-DP
+
+The search adapts to the graph as Neumann and Radke, "Adaptive
+Optimization of Very Large Join Queries", 2018, §4 describe. Below 14
+relations, or while the graph's connected subgraphs, counted until they
+pass the budget, are no more than PLANNER.DP_BUDGET (10,000), the search
+is exact. Past it, a graph of simple edges and inner joins alone of no
+more than PLANNER.LINEARIZED_RELATIONS relations (100) is planned by
+linearized DP (`enumerate/linear.rs`). That orders the relations by
+IKKBZ over a spanning tree of the most selective edges, after Ibaraki
+and Kameda, "On the Optimal Nesting Order for Computing N-Relational
+Joins", 1984, and Krishnamurthy, Boral and Zaniolo, "Optimization of
+Nonrecursive Queries", 1986, and plans by DP each run of that order.
+Larger graphs, and hypergraphs past the budget, are planned by GOO-DP
+(`enumerate/goo.rs`). Greedy operator ordering, after Fegaras, "A New
+Heuristic for Optimizing Large Queries", 1998, joins the pair of least
+rows first, and the costliest subtrees of at most 100 relations, or 10 of
+a hypergraph, are planned again by linearized DP or DPhyp until the
+budget is spent. Every stage plans the whole chain, so the search never
+fails for size.
+
+#### D305. Three session settings govern join enumeration
+
+PLANNER.JOIN_ENUMERATION (key 79) is ADAPTIVE, the enumeration of D300
+to D304, or GREEDY, the left-deep order of `physical/order.rs`, kept to
+compare plans and as a fallback. PLANNER.DP_BUDGET (key 80, 1 to a
+million, 10,000) bounds exact search and GOO-DP's entries, and
+PLANNER.LINEARIZED_RELATIONS (key 81, 2 to 128, 100) bounds linearized
+DP and GOO-DP's subtrees (`settings/joins.rs`). All three are SESSION
+scope and take effect at the next plan, so a session may compare plans
+without touching others.
+
+#### D306. EXPLAIN shows the join order chosen and the algorithm that chose it
+
+A chain planned by enumeration shows, on its top join, the order taken
+as nested pairs of its relations and the algorithm's name (DPccp, DPhyp,
+linearized DP or GOO-DP), for example `(join order by DPccp: ((T U) S))`
+(`physical/enumerate.rs`). A merge join shows as `MergeJoin` or
+`LeftMergeJoin` with its key. A chain planned as written or greedily
+shows no note, so a plan says whether enumeration chose it.
+
+#### D307. An enumerated plan replaces the FROM clause's only when estimated cheaper by the gain
+
+The FROM clause's own tree is costed by the same methods, each of its
+joins taking its cheapest. The enumerated plan is taken only if it costs
+less than PLANNER.REORDER_GAIN times that, as the greedy order is
+(D35). Otherwise the chain is planned as written. A query whose author
+ordered it well keeps its order, and a mistaken estimate must be wrong
+by more than the gain to reorder it. The plan's columns are restored to
+the FROM clause's order by a projection over it, so nothing above the
+chain sees the order.
+
+#### D308. The Join Order Benchmark runs on a generated database of its schema
+
+The joins benchmark runs the Join Order Benchmark of Leis et al., "How
+Good Are Query Optimizers, Really?", 2015, its 113 queries
+(`bench/joins/job.sql`) over a database of its schema made from a fixed
+seed (`bench/joins/imdb.rs`), planned alone and planned and run, under
+each enumeration. The IMDB data the paper used is not distributed with
+turborel. The generated data keeps what makes the benchmark hard, which
+is skewed references from the fact tables to their movies and people,
+values correlated through each movie's theme across tables, and string
+values drawn from those the queries compare with, so the queries find
+rows. The queries are the paper's, with `!=` as `<>`, an IN list of one
+value as an equality, and the names `at` and `character`, reserved
+words, as `att` and `character_name`. An integration test runs all 113
+over a small database and requires the same rows under both settings
+(`test/integration/join_order_benchmark.rs`).
+
+#### D309. Interesting orders are kept through the enumeration
+
+Each set's entry keeps its cheapest plan in no order and its cheapest in
+each interesting order, as Selinger et al., 1979, §5 keep them
+(`enumerate/space.rs`). An order is interesting if it is the order asked
+of the chain or that of a class of equalities a merge join may join by.
+A class's columns are equal in every row an inner join of them gives,
+so a plan ordered by one is ordered by all, and a merge join's rows
+answer an ORDER BY of any column of its class, ascending with nulls as
+implied. A relation's ordered reads are priced by the access path the
+planner would choose for that order (`physical/access.rs`). A hash or
+index join keeps its left operand's order and a merge join gives its
+key's. A FULL join gives none. The order asked is answered by the
+cheapest plan in it unless the cheapest plan and a sort cost less.
 
 ## 2. Project layout
 

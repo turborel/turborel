@@ -179,7 +179,11 @@ impl<'m> Space<'m> {
         let s = s1 | s2;
         self.table.entry(s).or_insert_with(|| Entry { rows, cands: Vec::new() });
         let kind = applied.op.and_then(|o| self.graph.ops.get(o)).map_or(Kind::Inner, |o| o.shape.kind);
-        let sides = if kind.commutes() { vec![(applied.left, applied.right), (applied.right, applied.left)] } else { vec![(applied.left, applied.right)] };
+        let sides = if kind.commutes() {
+            vec![(applied.left, applied.right), (applied.right, applied.left)]
+        } else {
+            vec![(applied.left, applied.right)]
+        };
         for (l, r) in sides {
             for (cand, tree) in self.offers(&applied, (l, r), rows) {
                 let at = self.tree(tree);
@@ -197,7 +201,8 @@ impl<'m> Space<'m> {
         let entry = self.table.get(&s)?;
         let best = entry.best()?;
         let sorted = best.cost + self.model.sort(entry.rows);
-        let answering = entry.cands.iter().filter(|c| want != Order::None && self.model.answers(c.order)).min_by(|a, b| a.cost.total_cmp(&b.cost));
+        let answering =
+            entry.cands.iter().filter(|c| want != Order::None && self.model.answers(c.order)).min_by(|a, b| a.cost.total_cmp(&b.cost));
         Some(answering.filter(|o| o.cost <= sorted).copied().unwrap_or(best))
     }
 

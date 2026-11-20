@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use super::extract::Query;
 use super::model::{Conj, Model, Order, Pred, Rel};
 use crate::logical::{Cond, Expr, SortKey, split_and};
-use crate::physical::estimate::{self, Known};
 use crate::physical::PhysicalPlanner;
+use crate::physical::estimate::{self, Known};
 use crate::physical::indexed::access_cost;
 use crate::value::{CompOp, DataType};
 
@@ -82,15 +82,34 @@ impl PhysicalPlanner<'_> {
             .conjuncts
             .iter()
             .zip(&inner)
-            .map(|((op, c), key)| Conj { reads: q.reads(c), op: *op, fraction: estimate::selectivity(c, known), key: *key, class: key.and_then(|(a, _)| class_of(a)) })
+            .map(|((op, c), key)| Conj {
+                reads: q.reads(c),
+                op: *op,
+                fraction: estimate::selectivity(c, known),
+                key: *key,
+                class: key.and_then(|(a, _)| class_of(a)),
+            })
             .collect();
-        let preds = q.preds.iter().zip(pred_keys).map(|(p, keys)| p.as_ref().map(|c| Pred { fraction: self.pred_fraction(c, q), keys })).collect();
+        let preds =
+            q.preds.iter().zip(pred_keys).map(|(p, keys)| p.as_ref().map(|c| Pred { fraction: self.pred_fraction(c, q), keys })).collect();
         let want_class = match want {
-            [key] if *key == SortKey::ascending(key.column) => orders.iter().find(|&&(c, _, merge)| c == key.column && merge).map(|&(_, class, _)| class),
+            [key] if *key == SortKey::ascending(key.column) => {
+                orders.iter().find(|&&(c, _, merge)| c == key.column && merge).map(|&(_, class, _)| class)
+            }
             _ => None,
         };
         let spans = q.leaves.iter().map(|l| (l.start, l.width)).collect();
-        let mut model = Model { rels: Vec::new(), conjuncts, preds, kinds: q.shapes.iter().map(|s| s.kind).collect(), classes, orders, spans, cost, want_class };
+        let mut model = Model {
+            rels: Vec::new(),
+            conjuncts,
+            preds,
+            kinds: q.shapes.iter().map(|s| s.kind).collect(),
+            classes,
+            orders,
+            spans,
+            cost,
+            want_class,
+        };
         model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
         Some(model)
     }
@@ -165,7 +184,9 @@ impl PhysicalPlanner<'_> {
             reads.push((Order::Want, cost));
         }
         let any = |_: usize, _: &DataType| true;
-        let probes = (0..leaf.width).filter_map(|c| self.probing(&leaf.plan, &[(0, c)], &any).map(|p| (c.saturating_add(leaf.start), p.cost))).collect();
+        let probes = (0..leaf.width)
+            .filter_map(|c| self.probing(&leaf.plan, &[(0, c)], &any).map(|p| (c.saturating_add(leaf.start), p.cost)))
+            .collect();
         Some(Rel { rows, reads, probes })
     }
 }

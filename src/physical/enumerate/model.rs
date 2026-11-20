@@ -152,7 +152,13 @@ impl Model {
             Some(pred) => pred.fraction,
             None => {
                 let classes = self.class_fraction(s1 | s2) / (self.class_fraction(s1) * self.class_fraction(s2)).max(f64::MIN_POSITIVE);
-                let rest: f64 = applied.conjuncts.iter().filter_map(|&c| self.conjuncts.get(c)).filter(|c| c.class.is_none()).map(|c| c.fraction).product();
+                let rest: f64 = applied
+                    .conjuncts
+                    .iter()
+                    .filter_map(|&c| self.conjuncts.get(c))
+                    .filter(|c| c.class.is_none())
+                    .map(|c| c.fraction)
+                    .product();
                 classes * rest
             }
         };

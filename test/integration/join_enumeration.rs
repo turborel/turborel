@@ -87,6 +87,7 @@ fn outer_joins_keep_their_rows_reordered() {
         "SELECT C.X, D.Y, B.W FROM (C FULL JOIN D ON C.X = D.K) JOIN B ON B.W = C.K",
         "SELECT C.X, D.Y, A.V FROM (C FULL JOIN D ON C.X = D.K) LEFT JOIN A ON A.K = D.Y",
         "SELECT A.V, B.W, D.Y FROM A LEFT JOIN B ON A.K = B.K AND B.W < 5 JOIN D ON A.V = D.K WHERE A.V > 1",
+        "SELECT A.V, B.W, C.X FROM (A LEFT JOIN B ON A.K = B.K) JOIN C ON A.V = C.K WHERE B.W IS NULL OR B.W < 3",
     ] {
         agree(&s, sql);
     }

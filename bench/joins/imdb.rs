@@ -129,7 +129,12 @@ const TABLES: [Table; 21] = [
             ("md5sum", Col::Str(32), 0),
         ],
     },
-    Table { name: "keyword", per_hundred: 40, fixed: false, columns: &[("id", Col::Id, 0), ("keyword", Col::Str(200), 0), ("phonetic_code", Col::Str(5), 5)] },
+    Table {
+        name: "keyword",
+        per_hundred: 40,
+        fixed: false,
+        columns: &[("id", Col::Id, 0), ("keyword", Col::Str(200), 0), ("phonetic_code", Col::Str(5), 5)],
+    },
     Table {
         name: "company_name",
         per_hundred: 10,
@@ -279,7 +284,12 @@ const TABLES: [Table; 21] = [
         name: "movie_link",
         per_hundred: 5,
         fixed: false,
-        columns: &[("id", Col::Id, 0), ("movie_id", Col::Ref("title"), 0), ("linked_movie_id", Col::Ref("title"), 0), ("link_type_id", Col::Ref("link_type"), 0)],
+        columns: &[
+            ("id", Col::Id, 0),
+            ("movie_id", Col::Ref("title"), 0),
+            ("linked_movie_id", Col::Ref("title"), 0),
+            ("link_type_id", Col::Ref("link_type"), 0),
+        ],
     },
     Table {
         name: "person_info",
@@ -349,7 +359,9 @@ fn vocabulary() -> HashMap<String, Vec<String>> {
             let Some((alias, column)) = token.split_once('.') else { continue };
             let Some(table) = aliases.get(alias) else { continue };
             let values = found.entry(format!("{table}.{column}")).or_default();
-            for value in tokens.iter().skip(at + 1).take(64).take_while(|t| (t.starts_with('\'') || !t.contains('.')) && *t != "AND" && *t != "OR") {
+            for value in
+                tokens.iter().skip(at + 1).take(64).take_while(|t| (t.starts_with('\'') || !t.contains('.')) && *t != "AND" && *t != "OR")
+            {
                 if let Some(text) = value.strip_prefix('\'') {
                     let plain = text.trim_end_matches('\'').replace("''", "'").replace('%', " ").replace('_', "x");
                     let plain = plain.trim().to_owned();

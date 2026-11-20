@@ -26,12 +26,12 @@ pub(super) fn definitions() -> [Definition; 3] {
         defined(
             ("PLANNER.JOIN_ENUMERATION", Kind::Choice(ENUMERATIONS), text(ADAPTIVE)),
             SESSION,
-            "How the joins of a query are ordered: ADAPTIVE, by dynamic programming over bushy plans, outer joins among them, linearized or guided greedily as the query grows; or GREEDY, left-deep, each next join the cheapest, as to compare the two.",
+            "How the joins of a query are ordered. ADAPTIVE orders them by dynamic programming over bushy plans, outer joins among them, linearized or guided greedily as the query grows, and GREEDY orders them left-deep, each next join the cheapest, as to compare the two.",
         ),
         defined(
             ("PLANNER.DP_BUDGET", Kind::Integer { min: 1, max: MOST_BUDGET }, count(DEFAULT_DP_BUDGET)),
             SESSION,
-            "The connected subsets of a query's joined tables up to which ADAPTIVE join ordering finds the cheapest plan exactly; past it, it linearizes the search, and it plans again by dynamic programming parts of a greedy plan until it has made this many table entries.",
+            "The connected subsets of a query's joined tables up to which ADAPTIVE join ordering finds the cheapest plan exactly. Past it the search is linearized, and parts of a greedy plan are planned again by dynamic programming until this many table entries are made.",
         ),
         defined(
             ("PLANNER.LINEARIZED_RELATIONS", Kind::Integer { min: 2, max: MOST_LINEARIZED }, count(DEFAULT_LINEARIZED)),

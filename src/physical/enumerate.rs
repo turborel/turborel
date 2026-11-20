@@ -172,8 +172,11 @@ impl PhysicalPlanner<'_> {
             annotate(&mut plan, &format!("  (join order by {}: {shape})", algorithm.name()));
         }
         let exprs: Vec<Expr> = (0..cx.query.width).map(|c| Expr::Column(cx.place_of(&layout, c).unwrap_or(c))).collect();
-        let inner_names: Option<Vec<String>> = self.shown.then(|| layout.iter().filter_map(|&r| cx.query.leaves.get(r)).flat_map(|l| l.plan.names()).collect());
-        let detail = inner_names.map(|n| exprs.iter().map(|e| crate::logical::render_expr(e, &n)).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+        let inner_names: Option<Vec<String>> =
+            self.shown.then(|| layout.iter().filter_map(|&r| cx.query.leaves.get(r)).flat_map(|l| l.plan.names()).collect());
+        let detail = inner_names
+            .map(|n| exprs.iter().map(|e| crate::logical::render_expr(e, &n)).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
         Built { plan: Plan::Project { exprs, detail, input: Box::new(plan) }, ordered: !cx.want.is_empty() && cx.model.answers(order) }
     }
 }

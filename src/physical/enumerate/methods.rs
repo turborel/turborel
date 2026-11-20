@@ -59,7 +59,9 @@ impl Space<'_> {
                 out.push((Cand { cost: base + left.rows * probe, order, tree: 0 }, tree(Method::Index, (cand.tree, build.tree))));
             }
         }
-        out.extend(self.merges(&sides, kind, &keys, rows).into_iter().map(|(cand, class, trees)| (cand, tree(Method::Merge(class), trees))));
+        out.extend(
+            self.merges(&sides, kind, &keys, rows).into_iter().map(|(cand, class, trees)| (cand, tree(Method::Merge(class), trees))),
+        );
         out
     }
 

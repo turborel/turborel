@@ -48,6 +48,10 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
+- [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
+  by dynamic programming, DPccp and DPhyp, outer joins reordered where
+  sound, hash, merge and index joins chosen with the order, adaptive to
+  queries of a hundred tables.
 - [SQL/XML](doc/sql/19-xml.md): an XML type kept in tables, in arrays,
   multisets, rows and distinct and structured types too, its values parsed
   from XML 1.0 and 1.1 text and serialized back, XMLDOCUMENT, XMLCAST, IS

@@ -89,7 +89,9 @@ fn right_asscom(a: &Shape, b: &Shape) -> bool {
     match (a.kind, b.kind) {
         (Kind::Inner, Kind::Inner) => true,
         (Kind::Full, Kind::Full) => both_strong(a, b),
-        (Kind::Inner, Kind::Left | Kind::Full) | (Kind::Left, Kind::Inner | Kind::Left | Kind::Full) | (Kind::Full, Kind::Inner | Kind::Left) => false,
+        (Kind::Inner, Kind::Left | Kind::Full)
+        | (Kind::Left, Kind::Inner | Kind::Left | Kind::Full)
+        | (Kind::Full, Kind::Inner | Kind::Left) => false,
     }
 }
 

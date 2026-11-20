@@ -16,7 +16,8 @@ use crate::physical::CostModel;
 /// distinct values, each its own class.
 fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
     let n = rows.len();
-    let shapes: Vec<Shape> = (1..n).map(|k| Shape { kind: Kind::Inner, left: through(k - 1), right: bit(k), reads: 0, strong: true }).collect();
+    let shapes: Vec<Shape> =
+        (1..n).map(|k| Shape { kind: Kind::Inner, left: through(k - 1), right: bit(k), reads: 0, strong: true }).collect();
     let conjuncts = edges
         .iter()
         .enumerate()
