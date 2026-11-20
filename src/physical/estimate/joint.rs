@@ -15,8 +15,10 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
-use super::sampled::{as_given, key_of, remembered_as};
+use super::fingerprint::key_of;
+use super::sampled::{as_given, remembered_as};
 use crate::stats::{RowSample, scaled_distinct};
 use crate::storage::cost_of;
 use crate::value::{NormKey, Value, compare};
@@ -25,7 +27,13 @@ use crate::value::{NormKey, Value, compare};
 /// values `values`, by the joint distinct values of those columns in
 /// `sample`; none if the sample holds no row of them all present.
 pub(super) fn share(columns: &[usize], values: &[&Value], sample: &RowSample, rows: f64) -> Option<f64> {
-    let key = key_of("joint", &(columns, values, rows.to_bits()));
+    let key = key_of("joint", &[], &|h| {
+        columns.hash(h);
+        for v in values {
+            v.norm().hash(h);
+        }
+        h.write_u64(rows.to_bits());
+    });
     as_given(sample.remembered(key, || remembered_as(found(columns, values, sample, rows))))
 }
 

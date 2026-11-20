@@ -10369,8 +10369,9 @@ three, the bound an empty sample allows (Hertzschuch et al., SIGMOD
 most 1,024 evaluations however large the table, so small tables are
 sampled too, where the sample is most of the table and a conjunction
 that keeps no row is estimated to keep none. The sample remembers what
-was asked of it, up to 1,024 answers by a hash of the conjuncts' form,
-as the planner asks the same of each plan it weighs and of each
+was asked of it, up to 1,024 answers, each kept under a fingerprint of
+the conjuncts' columns, operators and constants in any order, hashed by
+MurmurHash3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
 statement it plans again: it never changes, so an answer holds until the
 next pass replaces it. An index remembers its distinct keys' estimate
 until a register of its sketch is raised. Of fewer, equalities of two or more

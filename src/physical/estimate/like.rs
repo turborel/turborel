@@ -13,7 +13,8 @@
 
 use std::cmp::Ordering;
 
-use super::sampled::{SAMPLE_HITS, as_given, key_of, remembered_as};
+use super::fingerprint::key_of;
+use super::sampled::{SAMPLE_HITS, as_given, remembered_as};
 use super::{Known, compare};
 use crate::exec::{NoSubqueries, eval_cond};
 use crate::logical::Truth;
@@ -48,7 +49,7 @@ pub(super) fn selectivity(c: &Cond, known: Known<'_>) -> Option<f64> {
 /// characters after a `%` among it, which no synopsis tells.
 fn sampled_rest(c: &Cond, column: usize, prefix: &str, known: Known<'_>) -> Option<f64> {
     let sample = known.stats?.sample()?;
-    as_given(sample.remembered(key_of("like", c), || remembered_as(rest_of(c, column, prefix, sample.rows()))))
+    as_given(sample.remembered(key_of("like", &[c], &|_| {}), || remembered_as(rest_of(c, column, prefix, sample.rows()))))
 }
 
 /// `sampled_rest`, found from the sampled rows `rows`.

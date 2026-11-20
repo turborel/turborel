@@ -11,6 +11,7 @@
 
 mod backoff;
 mod conjunction;
+mod fingerprint;
 mod joint;
 mod like;
 mod sampled;

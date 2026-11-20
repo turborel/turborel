@@ -149,3 +149,24 @@ fn a_sample_of_the_whole_table_is_exact() {
     let none = share(&half, &[op(0, CompOp::Lt, 10), eq(2, 3), op(3, CompOp::Gt, 50)]);
     assert!(none <= 1.5_f64 / 1_024.0_f64 + 1e-12_f64, "{none}");
 }
+
+/// Verifies: [DESIGN] RULES.md D382, the sample's memory: a conjunction
+/// is remembered under one key whatever the order of its conjuncts, and
+/// under another of another constant, column, operator or question, and
+/// 5 and 5.0, identical by the standard, are one constant.
+#[test]
+fn the_sample_remembers_by_the_conjuncts_structure() {
+    let key = |question: &str, conds: &[Cond]| fingerprint::key_of(question, &conds.iter().collect::<Vec<&Cond>>(), &|_| {});
+    let both = key("kept", &[eq(0, 5), eq(2, 6)]);
+    assert_eq!(both, key("kept", &[eq(2, 6), eq(0, 5)]));
+    let tenths = Cond::Compare(Expr::Column(0), CompOp::Eq, Expr::Const(Value::Exact(Decimal::new(50, 1))));
+    assert_eq!(both, key("kept", &[tenths, eq(2, 6)]));
+    for other in [
+        key("kept", &[eq(0, 5), eq(2, 7)]),
+        key("kept", &[eq(1, 5), eq(2, 6)]),
+        key("kept", &[op(0, CompOp::Lt, 5), eq(2, 6)]),
+        key("like", &[eq(0, 5), eq(2, 6)]),
+    ] {
+        assert_ne!(both, other);
+    }
+}
