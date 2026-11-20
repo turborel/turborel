@@ -11,7 +11,7 @@ const AS_COMPARATOR: &str = "exec::sort::normal::tests::normal_keys_sort_as_the_
 
 /// Mechanisms whose removal must fail the requirements of sorts by normal
 /// keys.
-pub const SORTS: [Mutation; 18] = [
+pub const SORTS: [Mutation; 19] = [
     Mutation {
         name: "sort-padding-zero",
         package: Package::Core,
@@ -191,5 +191,15 @@ pub const SORTS: [Mutation; 18] = [
         replacement: "held.into_rows(keys).take(most.min(64)).collect()",
         integration: &["topped_sorts::topped_sorts_give_what_rows_give"],
         unit: &[],
+    },
+    Mutation {
+        name: "sort-shared-bytes-overskipped",
+        package: Package::Core,
+        breaks: "a sort's keys are read past a byte beyond those every key shares, so rows differing there alone keep their places",
+        file: "src/exec/sort/normal/order.rs",
+        original: "let skip = shared(keys, width);",
+        replacement: "let skip = shared(keys, width).saturating_add(1).min(width);",
+        integration: &["normal_sorts::normal_sorts_give_what_rows_give"],
+        unit: &["exec::sort::normal::tests::radix_sorts_as_a_stable_sort"],
     },
 ];

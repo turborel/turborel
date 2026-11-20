@@ -10088,7 +10088,9 @@ Keys of at most 8 bytes are sorted as integers beside their rows' places
 by a least significant digit radix sort of 8-bit digits, which skips a
 digit every key shares, as the high digits of short keys are (Kim et al.,
 "Sort vs. Hash Revisited", PVLDB 2009); of at most 16 likewise, and
-longer ones as byte strings. Every pass of the radix sort is stable and a
+longer ones as byte strings. The bytes every key shares first order
+nothing and are not read, so keys of strings of a long shared start are
+sorted by the bytes past it, as short keys if those are few. Every pass of the radix sort is stable and a
 comparison breaks ties by the place, so the sort is stable, as the
 standard's cursors and WITH TIES rely on. A sort's keys are made of its
 batches' vectors, a vector of one kind at a time, and the rows are made

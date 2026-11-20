@@ -264,7 +264,8 @@ fn padding_null_bytes_and_widths() {
 /// bytes, from a fixed seed, of few values and of many, gives the order a
 /// stable sort by key gives, ties in their places' order; and so do keys
 /// sorted by `order`, by radix sort and by comparison, enough of them and
-/// too few for radix sort.
+/// too few for radix sort, of no bytes shared first and of many, all of
+/// them alike too.
 #[test]
 fn radix_sorts_as_a_stable_sort() {
     let mut g = Seeded(0xABCD_EF01_2345_6789_u64);
@@ -279,11 +280,16 @@ fn radix_sorts_as_a_stable_sort() {
         long_sorted.sort_by_key(|&(k, _)| k);
         assert_eq!(radix::sort(long), long_sorted, "16 bytes, spread {spread}");
     }
-    for (rows, width) in [(5000_usize, 3_usize), (5000, 12), (100, 3), (5000, 20)] {
-        let keys: Vec<u8> = (0..rows.checked_mul(width).unwrap()).map(|_| u8::try_from(g.below(3)).unwrap()).collect();
+    for (rows, width, lead) in
+        [(5000_usize, 3_usize, 0_usize), (5000, 12, 0), (100, 3, 0), (5000, 20, 0), (5000, 20, 13), (5000, 30, 10), (5000, 9, 9)]
+    {
+        let byte = |at: usize, seeded: &mut Seeded| {
+            if at.checked_rem(width).unwrap() < lead { 0x41 } else { u8::try_from(seeded.below(3)).unwrap() }
+        };
+        let keys: Vec<u8> = (0..rows.checked_mul(width).unwrap()).map(|at| byte(at, &mut g)).collect();
         let places = order((&keys, rows), width, false, |_, _| std::cmp::Ordering::Equal).unwrap();
         let mut expected: Vec<u32> = (0_u32..).take(rows).collect();
         expected.sort_by_key(|&p| keys.chunks_exact(width).nth(usize::try_from(p).unwrap()).unwrap());
-        assert_eq!(places, expected, "{rows} keys of {width} bytes");
+        assert_eq!(places, expected, "{rows} keys of {width} bytes, {lead} shared");
     }
 }
