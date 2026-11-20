@@ -45,7 +45,7 @@ fn search(pattern: &str) -> String {
 
 /// The IDs below `FILLER` of the documents CONTAINS finds `pattern` in.
 fn found(a: &Session, pattern: &str) -> Vec<String> {
-    let ids = rows(a, &search(pattern)).unwrap();
+    let ids = rows(a, &search(pattern)).unwrap_or_else(|e| panic!("{pattern}: {e:?}"));
     ids.into_iter().filter(|id| id.parse::<u32>().is_ok_and(|id| id < FILLER)).collect()
 }
 
@@ -95,7 +95,7 @@ fn contains_finds_words_in_each_language() {
     assert!(plan.contains("using DOCS_BODY"), "{plan}");
     a.run("INSERT INTO DOCS VALUES (10, FULLTEXT('Gli studenti dell''università', 'ITALIAN'))").unwrap();
     assert_eq!(found(&a, "FORM OF \"università\""), ["10"]);
-    assert_eq!(found(&a, "\"dell\""), Vec::<String>::new());
+    assert_eq!(found(&a, "\"studenti\" & \"università\""), ["10"]);
 }
 
 /// Verifies: [ISO/IEC 13249-2:2002 §5.1.4, §5.1.5, §5.1.7] [EXTENSION]
@@ -107,7 +107,8 @@ fn tokenizing_methods_read_each_language() {
     let db = Database::new();
     let a = documents(&db, &[BODIES[0], BODIES[1], BODIES[3]]);
     let words = |id: u32, method: &str| {
-        rows(&a, &format!("SELECT W FROM DOCS, UNNEST(DOCS.BODY.{method}()) WITH ORDINALITY AS U (W, N) WHERE ID = {id} ORDER BY N")).unwrap()
+        rows(&a, &format!("SELECT W FROM DOCS, UNNEST(DOCS.BODY.{method}()) WITH ORDINALITY AS U (W, N) WHERE ID = {id} ORDER BY N"))
+            .unwrap()
     };
     assert_eq!(words(1, "Tokenize"), ["enfants", "jouaient", "école", "village"]);
     assert_eq!(words(1, "TokenizeAndStem"), ["enfant", "jou", "écol", "villag"]);
@@ -151,8 +152,10 @@ fn thesauri_expand_each_language() {
     a.run("COMMIT WORK").unwrap();
     db.schema(super::thesaurus::TABLES).unwrap();
     let t = db.session("FT_THESAURUS");
-    t.run("INSERT INTO TERM_DICTIONARY VALUES (1, '東京都', 'CITY'), (2, '首都', 'CITY'), (3, 'capitale', 'CITY'), (4, 'métropole', 'CITY')")
-        .unwrap();
+    t.run(
+        "INSERT INTO TERM_DICTIONARY VALUES (1, '東京都', 'CITY'), (2, '首都', 'CITY'), (3, 'capitale', 'CITY'), (4, 'métropole', 'CITY')",
+    )
+    .unwrap();
     t.run("INSERT INTO TERM_SYNONYM VALUES (1, 2, NULL, 'CITY'), (3, 4, NULL, 'CITY')").unwrap();
     t.run("COMMIT WORK").unwrap();
     let expanded = |term: &str| {

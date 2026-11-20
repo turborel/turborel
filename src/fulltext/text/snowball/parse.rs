@@ -293,7 +293,11 @@ impl Parser {
             Some(Token::Text(text)) => Ok(text),
             Some(Token::Name(name)) => {
                 let place = self.resolve(&name, Kind::Grouping)?;
-                self.groupings.get(place).cloned().flatten().ok_or_else(|| damaged(self.line(), &format!("{name} is used before it is defined")))
+                self.groupings
+                    .get(place)
+                    .cloned()
+                    .flatten()
+                    .ok_or_else(|| damaged(self.line(), &format!("{name} is used before it is defined")))
             }
             Some(Token::Key(_) | Token::Number(_) | Token::Sym(_)) | None => Err(damaged(self.line(), "expected a string or grouping")),
         }
@@ -312,5 +316,4 @@ impl Parser {
         };
         Ok(Program { routines, groupings, amongs, integers: self.integers, booleans: self.booleans, strings: self.strings, stem })
     }
-
 }

@@ -236,7 +236,7 @@ impl Segmenter {
             return None;
         }
         let unit = self.unit(tables, c);
-        let Some(word) = self.word.as_mut() else { return None };
+        let word = self.word.as_mut()?;
         let joined = if word.ideograph { kind == Kind::Mark } else { continues(kind) && !unit };
         if joined {
             word.push(c);

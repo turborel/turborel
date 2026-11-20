@@ -157,7 +157,7 @@ pub(super) enum Sym {
     MinusAssign,
     SliceTo,
     DivideAssign,
-    InsertSym,
+    Insertion,
     SliceFrom,
     Le,
     Eq,
@@ -176,7 +176,7 @@ const SYMBOLS: [(&str, Sym); 25] = [
     ("/=", Sym::DivideAssign),
     ("<-", Sym::SliceFrom),
     ("<=", Sym::Le),
-    ("<+", Sym::InsertSym),
+    ("<+", Sym::Insertion),
     ("==", Sym::Eq),
     ("=>", Sym::AssignTo),
     (">=", Sym::Ge),
@@ -295,7 +295,7 @@ impl Lexer {
             return Ok(());
         }
         if self.looking_at(LINE_COMMENT) {
-            while self.peek().is_some_and(|c| c != '\n') {
+            while self.peek().is_some_and(|next| next != '\n') {
                 self.take();
             }
             return Ok(());
@@ -344,7 +344,10 @@ impl Lexer {
     fn number(&mut self) -> Result<()> {
         let mut value: i64 = 0;
         while let Some(digit) = self.peek().and_then(|c| c.to_digit(10)) {
-            value = value.checked_mul(10).and_then(|v| v.checked_add(i64::from(digit))).ok_or_else(|| damaged(self.line, "a number is too large"))?;
+            value = value
+                .checked_mul(10)
+                .and_then(|v| v.checked_add(i64::from(digit)))
+                .ok_or_else(|| damaged(self.line, "a number is too large"))?;
             self.take();
         }
         self.push(Token::Number(value));

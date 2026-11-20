@@ -47,11 +47,7 @@ impl<'p> Machine<'p> {
         let program = self.program;
         let Some(chars) = program.groupings.get(grouping) else { return false };
         let env = &mut self.env;
-        let at = if self.backward {
-            env.c.checked_sub(1).filter(|at| *at >= env.lb)
-        } else {
-            Some(env.c).filter(|at| *at < env.l)
-        };
+        let at = if self.backward { env.c.checked_sub(1).filter(|at| *at >= env.lb) } else { Some(env.c).filter(|at| *at < env.l) };
         let Some(c) = at.and_then(|at| env.s.get(at)) else { return false };
         if chars.binary_search(c).is_ok() == non {
             return false;

@@ -135,14 +135,13 @@ fn term_text(literal: &Literal) -> String {
     let mut out = String::new();
     let mut last: Option<String> = None;
     for word in words {
-        match last.as_deref().and_then(|before| overlap(before, &word)) {
-            Some(rest) => out.push_str(rest),
-            None => {
-                if last.is_some() {
-                    out.push(' ');
-                }
-                out.push_str(&word);
+        if let Some(rest) = last.as_deref().and_then(|before| overlap(before, &word)) {
+            out.push_str(rest);
+        } else {
+            if last.is_some() {
+                out.push(' ');
             }
+            out.push_str(&word);
         }
         last = Some(word);
     }

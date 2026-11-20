@@ -104,7 +104,10 @@ pub(super) enum Command {
     /// A literal string or string variable as a test.
     Match(Text),
     /// A grouping by its place, or `non` of it.
-    Grouping { grouping: usize, non: bool },
+    Grouping {
+        grouping: usize,
+        non: bool,
+    },
     /// A routine by its place.
     Call(usize),
     Set(usize),
@@ -121,7 +124,10 @@ pub(super) enum Command {
     Substring(usize),
     /// `among`, by its place, which matched already at its `substring` if
     /// it has one.
-    Among { among: usize, substring: bool },
+    Among {
+        among: usize,
+        substring: bool,
+    },
     True,
     False,
 }

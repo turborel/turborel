@@ -52,6 +52,15 @@ struct Env {
     ket: usize,
 }
 
+/// What the string of an among found chooses.
+#[derive(Debug, Clone, Copy)]
+enum Chosen {
+    /// The among's command of this place.
+    Command(usize),
+    /// No command; the among succeeds.
+    Nothing,
+}
+
 /// A program running on a word.
 struct Machine<'p> {
     program: &'p Program,
@@ -61,9 +70,8 @@ struct Machine<'p> {
     integers: Vec<i64>,
     booleans: Vec<bool>,
     strings: Vec<Vec<char>>,
-    /// What each among's `substring` matched: its string's command, if
-    /// it has one.
-    matched: Vec<Option<Option<usize>>>,
+    /// What each among's `substring` matched, if it matched.
+    matched: Vec<Option<Chosen>>,
     depth: usize,
     steps: u64,
 }

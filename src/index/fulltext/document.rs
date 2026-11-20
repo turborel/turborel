@@ -28,7 +28,6 @@ use crate::index::{Key, KeyProjection};
 use crate::value::lob::{LobChars, LobKind};
 use crate::value::{Binary, Value};
 
-
 /// \[DESIGN\] The seed of the document hash: fixed, so the hash is the
 /// same in every run. Its bytes spell "FTX1".
 const HASH_SEED: u32 = 0x4654_5831;

@@ -81,8 +81,9 @@ impl FullTextIndex {
         for entry in self.tree.scan(Bound::Included(&lower[..]), Bound::Excluded(&upper[..]), Direction::Forward) {
             let (key, _) = entry?;
             let name = String::from_utf8_lossy(key.get(1..).unwrap_or_default()).into_owned();
-            let language = Language::named(&name)
-                .map_err(|_| SqlError::new(Code::Corrupt, format!("[DESIGN] a full-text index holds documents in {name}, no language known")))?;
+            let language = Language::named(&name).map_err(|_| {
+                SqlError::new(Code::Corrupt, format!("[DESIGN] a full-text index holds documents in {name}, no language known"))
+            })?;
             bits = bits.with(language);
         }
         self.languages.fetch_or(bits.bits(), Ordering::AcqRel);

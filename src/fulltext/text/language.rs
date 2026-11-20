@@ -244,7 +244,16 @@ const LANGUAGES: usize = 43;
 
 /// Every language and what the tokenizer does in it.
 const PROFILES: [Profile; LANGUAGES] = [
-    Profile { language: Language::None, name: "NONE", program: None, stop: None, fold: Fold::Strip, cut: Cut::Words, elisions: &[], middle_dot: false },
+    Profile {
+        language: Language::None,
+        name: "NONE",
+        program: None,
+        stop: None,
+        fold: Fold::Strip,
+        cut: Cut::Words,
+        elisions: &[],
+        middle_dot: false,
+    },
     Profile { fold: Fold::Strip, ..snowball(Language::English, "ENGLISH", programs::ENGLISH, Some(stops::ENGLISH)) },
     snowball(Language::Arabic, "ARABIC", programs::ARABIC, None),
     snowball(Language::Armenian, "ARMENIAN", programs::ARMENIAN, None),

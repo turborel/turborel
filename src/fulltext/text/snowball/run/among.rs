@@ -8,13 +8,13 @@
 //! suffix, so trying them longest first is trying the runtime's chain of
 //! shorter strings. Each length is looked up once in the among's index.
 
-use super::{Halt, Machine, Signal};
+use super::{Chosen, Halt, Machine, Signal};
 
-impl<'p> Machine<'p> {
+impl Machine<'_> {
     /// The command chosen by the longest string of the among `among` at
     /// the cursor whose routine succeeds, if any matches; the cursor
     /// moved past the string.
-    fn find(&mut self, among: usize) -> Result<Option<Option<usize>>, Halt> {
+    fn find(&mut self, among: usize) -> Result<Option<Chosen>, Halt> {
         let program = self.program;
         let among = program.amongs.get(among).ok_or(Halt)?;
         let c = self.env.c;
@@ -34,7 +34,7 @@ impl<'p> Machine<'p> {
                 }
                 self.env.c = to;
             }
-            return Ok(Some(entry.action));
+            return Ok(Some(entry.action.map_or(Chosen::Nothing, Chosen::Command)));
         }
         Ok(None)
     }
@@ -52,8 +52,8 @@ impl<'p> Machine<'p> {
     pub(super) fn among(&mut self, among: usize, substring: bool) -> Signal {
         let found = if substring { Some(self.matched.get(among).copied().flatten().ok_or(Halt)?) } else { self.find(among)? };
         let program = self.program;
-        let Some(action) = found else { return Ok(false) };
-        let Some(action) = action else { return Ok(true) };
+        let Some(chosen) = found else { return Ok(false) };
+        let Chosen::Command(action) = chosen else { return Ok(true) };
         let command = program.amongs.get(among).and_then(|a| a.actions.get(action)).ok_or(Halt)?;
         self.run(command)
     }

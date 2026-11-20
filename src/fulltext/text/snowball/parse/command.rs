@@ -58,8 +58,14 @@ const ASSIGNMENTS: [(Sym, Assignment); 5] = [
 ];
 
 /// The comparisons, by their symbols.
-const RELATIONS: [(Sym, Relation); 6] =
-    [(Sym::Eq, Relation::Eq), (Sym::Ne, Relation::Ne), (Sym::Lt, Relation::Lt), (Sym::Le, Relation::Le), (Sym::Gt, Relation::Gt), (Sym::Ge, Relation::Ge)];
+const RELATIONS: [(Sym, Relation); 6] = [
+    (Sym::Eq, Relation::Eq),
+    (Sym::Ne, Relation::Ne),
+    (Sym::Lt, Relation::Lt),
+    (Sym::Le, Relation::Le),
+    (Sym::Gt, Relation::Gt),
+    (Sym::Ge, Relation::Ge),
+];
 
 impl Parser {
     /// A command.
@@ -104,7 +110,7 @@ impl Parser {
             Sym::SliceTo => Ok(Command::SliceTo(self.variable(Kind::String)?)),
             Sym::AssignTo => Ok(Command::AssignTo(self.variable(Kind::String)?)),
             Sym::Assign => Ok(Command::Assign(self.text()?)),
-            Sym::InsertSym => Ok(Command::Insert(self.text()?)),
+            Sym::Insertion => Ok(Command::Insert(self.text()?)),
             Sym::SliceFrom => Ok(Command::SliceFrom(self.text()?)),
             Sym::Ket
             | Sym::Multiply
@@ -254,7 +260,11 @@ impl Parser {
             self.split_slice_from();
             return Ok(Relation::Lt);
         }
-        RELATIONS.iter().find(|(written, _)| *written == sym).map(|(_, relation)| *relation).ok_or_else(|| damaged(line, "expected a comparison"))
+        RELATIONS
+            .iter()
+            .find(|(written, _)| *written == sym)
+            .map(|(_, relation)| *relation)
+            .ok_or_else(|| damaged(line, "expected a comparison"))
     }
 
     /// The `<-` just taken, read as `<` then `-`: its minus put back.
