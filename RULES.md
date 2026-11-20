@@ -10568,6 +10568,33 @@ the committed one its snapshot shows, as the write refuses any other
 ends. Another engine reads the row and writes it, as before. A row of a
 system-time period is read first still, so that its period refuses a
 write before it is made.
+#### D409. A shadowed file is read outside its lock, each run of the file's granules at once
+
+A read of a shadowed file (D30) held the file's lock while it read each
+granule, one call of 4 KiB at a time, so every write, which takes the
+lock alone to append to the side file, waited for the reads under way,
+and every read for that write. Under a write load the threads spent
+more time waiting for that lock than reading. A read now copies under
+the lock what was written since the last commit, held or in the side
+files, and finds the rest to be the file's; it then lets the lock go and
+reads each run of the file's granules with one call. A commit writes
+into the file only granules the sealed batch holds, which a read copies
+from the side file instead, and cuts the file no lower than the limit a
+read takes, so what is read of the file is what the lock saw
+(`disk/shadow/file.rs`).
+
+#### D410. A log's sync tells how far the log is durable
+
+A transaction that commits waits for its commit record to be durable,
+and the file log groups those waits into one sync (D25), which makes
+durable every record appended before it began, often other
+transactions' commit records too. `Log::sync_reached` syncs as `sync`
+does and gives the position before which every record is now durable,
+so those transactions can know their records durable without a sync of
+their own, and the database can keep how far the log is durable. The
+file log gives the end of its segment's blocks the group's sync made
+durable (`log/file/segments.rs`). A log syncing nothing, and the
+default, claim just past the record asked for.
 
 ## 2. Project layout
 
