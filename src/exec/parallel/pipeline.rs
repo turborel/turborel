@@ -129,7 +129,7 @@ fn scan_branch(
 /// Adds the branches of `plan` to `out`, each split into morsels of about
 /// `rows` rows: whether each could be, and each built operand held.
 fn branched(plan: &Plan, (db, tx, rows): (&Arc<State>, TxId, usize), limit: &Limit, out: &mut Vec<Branch>) -> Result<bool> {
-    if let Plan::Append { left, right } = plan {
+    if let Plan::Append { left, right, .. } = plan {
         return Ok(branched(left, (db, tx, rows), limit, out)? && branched(right, (db, tx, rows), limit, out)?);
     }
     if let Plan::SeqScan { table, columns, .. } = plan {

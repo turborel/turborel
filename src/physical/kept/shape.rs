@@ -34,8 +34,8 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             let Plan::Aggregate { groups: groups2, aggs: aggs2, seeds: seeds2, input: input2, .. } = other else { return false };
             groups == groups2 && aggs.len() == aggs2.len() && seeds.len() == seeds2.len() && same_shape(input, input2)
         }
-        Plan::Distinct { input } => {
-            let Plan::Distinct { input: input2 } = other else { return false };
+        Plan::Distinct { input, .. } => {
+            let Plan::Distinct { input: input2, .. } = other else { return false };
             same_shape(input, input2)
         }
         Plan::Sort { keys, input, .. } => {
@@ -43,8 +43,8 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             keys == keys2 && same_shape(input, input2)
         }
         Plan::Limit { .. } => same_limit(one, other),
-        Plan::Append { left, right } => {
-            let Plan::Append { left: left2, right: right2 } = other else { return false };
+        Plan::Append { left, right, .. } => {
+            let Plan::Append { left: left2, right: right2, .. } = other else { return false };
             same_shape(left, left2) && same_shape(right, right2)
         }
         Plan::MergeAppend { .. } => same_merge(one, other),
@@ -69,7 +69,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
 
 /// Whether `one` and `other` are limits alike, of inputs of one shape.
 fn same_limit(one: &Plan, other: &Plan) -> bool {
-    let (Plan::Limit { limit, input }, Plan::Limit { limit: limit2, input: input2 }) = (one, other) else { return false };
+    let (Plan::Limit { limit, input, .. }, Plan::Limit { limit: limit2, input: input2, .. }) = (one, other) else { return false };
     let fetch = |l: &Limit| l.fetch.as_ref().map(|f| (f.percent, f.ties.clone()));
     limit.offset.is_some() == limit2.offset.is_some() && fetch(limit) == fetch(limit2) && same_shape(input, input2)
 }
@@ -311,10 +311,10 @@ mod tests {
         };
         assert!(same_shape(&sorted(false), &sorted(false)));
         assert!(!same_shape(&sorted(false), &sorted(true)), "another order");
-        let distinct = Plan::Distinct { input: Box::new(sorted(false)) };
-        assert!(same_shape(&distinct, &Plan::Distinct { input: Box::new(sorted(false)) }));
+        let distinct = Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64 };
+        assert!(same_shape(&distinct, &Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64 }));
         assert!(!same_shape(&distinct, &sorted(false)), "another operator");
-        let joined = Plan::Product { left: Box::new(sorted(false)), right: Box::new(sorted(false)) };
+        let joined = Plan::Product { left: Box::new(sorted(false)), right: Box::new(sorted(false)), est: 0.0_f64 };
         assert!(!same_shape(&joined, &joined), "a join is kept by no plan");
     }
 

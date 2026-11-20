@@ -354,6 +354,9 @@ verification approach DO-178C expects (§8).
 | D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
 | D364 | A sort orders rows by one string of bytes made of their keys, by radix sort if it is short, and merges its runs by a tree of losers |
 | D365 | A sort of which only the first rows are asked for takes a batch's rows by their keys' bytes, making only the rows it gives |
+| D370 | One estimator gives every plan node its rows, from the base tables under its columns |
+| D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
+| D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -8806,13 +8809,12 @@ them joins, and the tables gain their rows when it does.
 
 #### D302. Join rows are estimated from distinct values, by classes of equalities, at least one row
 
-A relation's rows are the planner's estimate of its filtered read
-(`rows_of`), from the statistics of the table, a plug-in engine's among
-them (D278). An equality of a column of two relations keeps one pair in
+A relation's rows are the planner's estimate of it (D370), from the
+statistics of the table, a plug-in engine's among them (D278). An equality of a column of two relations keeps one pair in
 as many as the more distinct column has values, as Selinger et al.,
 "Access Path Selection in a Relational Database Management System",
 1979, §4 has it. Equalities chained through one value form a class, by
-union of their columns (`enumerate/modeled.rs`). A set of relations
+union of their columns (`cardinality/joins.rs`). A set of relations
 keeps one row in as many as each member column in it but the least
 distinct has values, so an equality that others imply is not counted
 again, and every way of joining a set gives it the same rows. Other
@@ -9862,6 +9864,81 @@ the work area. A batch whose keys the layout does not admit, or rows past
 the work area still, end it, and the rows held, in the order they
 came, and the rest are sorted as a whole sort sorts them, so the first
 rows given are the same.
+
+#### D370. One estimator gives every plan node its rows, from the base tables under its columns
+
+The join enumeration, the greedy order, a hash join's build side, the
+index nested-loop choice and the rows a physical plan carries all ask one
+estimator (`physical/cardinality.rs`). Before it, four of them each
+estimated rows their own way, and an aggregate, an outer join or a set
+operation under a join had no estimate at all. Such a relation was then
+left out of the enumeration and joined where it was written, and two
+parts of the planner could cost one plan at two cardinalities.
+
+Every node has a rule. A filter keeps its input's rows by each conjunct's
+selectivity, computed from the statistics of the base table the
+conjunct's columns come from. Lineage follows a column down through
+filters, sorts, limits, DISTINCT, projections of a column, products and
+outer joins by their offsets, a window's input columns and a grouping's
+grouping columns (`cardinality/lineage.rs`). So a filter above a join or
+over a derived table is estimated by the table under it. A filter over a
+product is the join it is, by D302's classes, the same rows in every
+order. An operand moved over a guard of no columns is its own rows kept
+by its own conjuncts, as the guard's one row is kept whole or not at all.
+A union of all rows is the sum and the others are distinct counts (D372).
+A limit is its count past its offset. Every node gives at least one row
+when its input has one.
+
+One estimator lives for one planning. It reads the cost model once and
+asks each table's statistics, row count and index sketch once, since
+asking takes the settings' and the engines' locks and a sketch's count is
+recomputed at each asking. Within one question it keeps each node's
+estimate by the node's address, since a node's rule asks its inputs more
+than once and a plan of nested groupings would otherwise be estimated a
+number of times exponential in its depth. The access-path model of each enumerated
+relation keeps the plans it built, so the plan realized is the one costed
+and is not built again. Statistics are asked for the columns of the
+equalities a chain joins by, not for every column. No node's estimate is
+kept from one question to the next. The planner builds and drops
+temporary plans whose addresses are reused, and a structural key costs
+more to hash than the estimate.
+EXPLAIN shows the estimates it showed before, on reads and the operators
+that already carried one.
+
+#### D371. The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites
+
+A pass of the rules walks the plan bottom-up. Once a rule rewrites a
+node, the rules are tried at the node again before the walk goes up. The
+driver it replaced ended the node's turn at the first rewrite and left
+the next rule to a pass restarted over the whole plan, so a node whose
+rewrites cascade, such as a filter merged and then pushed, took one full
+pass per step. The inputs a rewrite made still wait for the next pass.
+Walking them again at once costs a walk of the subtree for each rewrite,
+and nested so, it grows with the plan's depth past any bound, as plans of
+many subqueries showed. Every rewrite spends one of a budget, the passes'
+limit times the plan's nodes, its subqueries' among them, the most the
+replaced driver made. So rules that undo each other stop once it is
+spent, as the passes' limit stopped them before. Both drivers reach the
+same plan, since each rule is an equivalence applied until none fires.
+A test runs both over queries that fire every built-in rule
+(`optimizer/drivers.rs`).
+
+#### D372. A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values
+
+A grouping of n rows by columns of D distinct combinations is estimated
+to give D(1 - (1 - 1/D)^n) groups, Cardenas' formula ("Analysis and
+Performance of Inverted Data Base Structures", 1975). It is the number of
+distinct values that n draws from D equally likely values meet. It gives
+one group for one row and at most n, and it nears D as n grows past it.
+D is the product of each column's distinct values, from its base table's
+statistics through lineage. When one table has all the columns, D is at
+most that table's rows. When an index's key is exactly those columns, D
+is the distinct keys its sketch counts, which counts correlated columns
+once. A grouping of no columns gives one row, and each empty grouping set
+adds one. DISTINCT is the grouping of all its columns. UNION estimates
+its distinct values with the formula over the sum of both sides'
+distinct values. INTERSECT is at most the smaller side's distinct values
+and EXCEPT at most the left's.
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

@@ -157,7 +157,7 @@ impl PhysicalPlanner<'_> {
     /// condition keeps `first` of.
     pub(super) fn approximate_cost(&self, table: &QualifiedName, read: &ApproximateRead, first: usize) -> Option<f64> {
         let storage = self.db.storage_of(table).ok()?;
-        let model = self.db.cost();
+        let model = self.weights();
         let all = cost_of(storage.row_count());
         let list = read.target.search_list.map_or(cost_of(first), f64::from).max(cost_of(first));
         let candidates = (list / read.selectivity).min(all);

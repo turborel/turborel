@@ -3,7 +3,9 @@
 //! A `Rule` looks at one node of the logical plan, whose inputs have already
 //! been rewritten, and either returns an equivalent plan or `None`. The
 //! driver applies the enabled rules bottom-up, in registration order, until
-//! no rule fires (or the setting `OPTIMIZER.MAX_PASSES` is reached).
+//! no rule fires (or the setting `OPTIMIZER.MAX_PASSES` is reached). After
+//! a rule fires at a node, the rules are tried at the node again before the
+//! walk goes up, within a budget of rewrites (RULES.md D371).
 //!
 //! Every rule here must preserve the result *and* the run-time errors of the
 //! query ([X3.135-1986 §3.3] the implementation "shall achieve the same effect"). That is
@@ -198,8 +200,11 @@ impl Optimizer {
             .collect();
         // A safety net against rules that keep undoing each other.
         let passes = usize::try_from(settings.integer(OPTIMIZER_MAX_PASSES)).unwrap_or(DEFAULT_MAX_PASSES);
+        // As many rewrites as the passes of the driver before D371 made at
+        // most, one at each node in each pass.
+        let mut budget = nodes(&plan).saturating_mul(passes);
         for _ in 0..passes {
-            let (p, changed) = pass(&on, plan, ctx, &mut trace);
+            let (p, changed) = pass(&on, plan, (ctx, &mut budget), &mut trace);
             plan = p;
             if !changed {
                 break;
@@ -209,20 +214,39 @@ impl Optimizer {
     }
 }
 
+/// The nodes of `plan` and of its subqueries' plans, which unnesting
+/// makes nodes of it.
+fn nodes(plan: &LogicalPlan) -> usize {
+    let own = plan.subqueries().iter().fold(1_usize, |n, q| n.saturating_add(nodes(&q.plan)));
+    plan.inputs().fold(own, |n, input| n.saturating_add(nodes(input)))
+}
+
 /// One pass of the rules `on` over `plan`, its inputs first: the plan, and
-/// whether a rule fired.
-fn pass(on: &[&dyn Rule], plan: LogicalPlan, ctx: &RuleContext<'_>, trace: &mut Vec<&'static str>) -> (LogicalPlan, bool) {
+/// whether a rule fired. A node a rule rewrote has the rules tried at it
+/// again, where a restarted pass over the whole plan would find them only
+/// later (RULES.md D371); the inputs a rewrite made wait for the next
+/// pass, as walking them again at once costs a walk of the subtree for
+/// each rewrite. Every rewrite spends one of `budget`, the optimization's,
+/// so rules that undo each other stop once it is spent. The walk recurs
+/// only into the plan's depth; each node's rounds are a loop.
+fn pass(
+    on: &[&dyn Rule],
+    plan: LogicalPlan,
+    (ctx, budget): (&RuleContext<'_>, &mut usize),
+    trace: &mut Vec<&'static str>,
+) -> (LogicalPlan, bool) {
     let mut changed = false;
-    let plan = plan.map_inputs(|input| {
-        let (p, c) = pass(on, input, ctx, trace);
+    let mut plan = plan.map_inputs(|input| {
+        let (p, c) = pass(on, input, (ctx, &mut *budget), trace);
         changed |= c;
         p
     });
-    for rule in on {
-        if let Some(p) = rule.apply(&plan, ctx) {
-            trace.push(rule.name());
-            return (p, true);
-        }
+    while *budget > 0 {
+        let Some((name, p)) = on.iter().find_map(|rule| rule.apply(&plan, ctx).map(|p| (rule.name(), p))) else { break };
+        trace.push(name);
+        changed = true;
+        *budget = budget.saturating_sub(1);
+        plan = p;
     }
     (plan, changed)
 }
@@ -489,3 +513,8 @@ impl Rule for RemoveRedundantDistinct {
         desc.unique().any(|u| u.iter().all(keyed)).then(|| (**input).clone())
     }
 }
+
+// Unit tests: the driver's local fixpoint against a pass restarted after
+// every rewrite (RULES.md R-TEST-1).
+#[cfg(test)]
+mod drivers;

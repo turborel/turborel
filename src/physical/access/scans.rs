@@ -62,7 +62,10 @@ pub(super) fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Con
         let mut next = Vec::new();
         while let Some(left) = pairs.next() {
             next.push(match pairs.next() {
-                Some(right) => Plan::Append { left: Box::new(left), right: Box::new(right) },
+                Some(right) => {
+                    let appended = Plan::summed(&left, &right);
+                    Plan::Append { left: Box::new(left), right: Box::new(right), est: appended }
+                }
                 None => left,
             });
         }

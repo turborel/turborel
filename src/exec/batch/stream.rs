@@ -99,7 +99,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
 fn appended(plan: &Plan) -> Vec<&Plan> {
     let (mut stack, mut out) = (vec![plan], Vec::new());
     while let Some(at) = stack.pop() {
-        if let Plan::Append { left, right } = at {
+        if let Plan::Append { left, right, .. } = at {
             stack.push(right);
             stack.push(left);
         } else {
@@ -113,7 +113,7 @@ fn appended(plan: &Plan) -> Vec<&Plan> {
 fn appended_owned(plan: Plan) -> Vec<Plan> {
     let (mut stack, mut out) = (vec![plan], Vec::new());
     while let Some(at) = stack.pop() {
-        if let Plan::Append { left, right } = at {
+        if let Plan::Append { left, right, .. } = at {
             stack.push(*right);
             stack.push(*left);
         } else {
@@ -138,7 +138,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         Plan::SeqScan { table, located, .. } => !located && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => reads_by_batch(input, db),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
-        Plan::Product { left, right } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
+        Plan::Product { left, right, .. } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
         }
         Plan::Nearest(_)

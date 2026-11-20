@@ -53,7 +53,10 @@ impl PhysicalPlanner<'_> {
         for one in each.into_iter().rev() {
             built = Some(match built {
                 None => one,
-                Some(after) => Built::unordered(Plan::Append { left: Box::new(one.plan), right: Box::new(after.plan) }),
+                Some(after) => {
+                    let est = Plan::summed(&one.plan, &after.plan);
+                    Built::unordered(Plan::Append { left: Box::new(one.plan), right: Box::new(after.plan), est })
+                }
             });
         }
         built
@@ -65,7 +68,7 @@ impl PhysicalPlanner<'_> {
     /// index of it whose every column `conds` fix, and its cost; none if
     /// no such index is there.
     fn global_read(&self, read: TableRead<'_>, conds: &[Cond]) -> Option<(Built, f64)> {
-        let (db, cost) = (self.db, self.db.cost());
+        let (db, cost) = (self.db, self.weights());
         let desc = db.catalog.table(read.table)?;
         let known = Known { stats: None, cost: &cost };
         let leaves: Vec<_> = db.catalog.partitioning().leaves(read.table).iter().filter_map(|l| db.storage_of(l).ok()).cloned().collect();
