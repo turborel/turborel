@@ -1,11 +1,13 @@
-//! The stemmers against Snowball's own vocabularies (RULES.md D320,
-//! D326): a sample of each language's words, every k-th of its whole
-//! vocabulary, each stemmed as Snowball's stemmer stems it.
+//! The stemmers against their word lists (RULES.md D320, D326): of a
+//! language whose vocabulary is Snowball's own, every k-th word of it,
+//! each stemmed as Snowball's stemmer stems it; of the others, the
+//! project's own list, each word with the stem the interpreter gave it,
+//! which the whole vocabularies tie to Snowball's.
 
 use crate::fulltext::text::{Language, stem};
 
-/// Each stemmed language and the sample of its vocabulary, a word and its
-/// stem a line, separated by a tab, after `#` comment lines.
+/// Each stemmed language and its word list, a word and its stem a line,
+/// separated by a tab, after `#` comment lines.
 const SAMPLES: [(Language, &str); 35] = [
     (Language::Arabic, include_str!("../snowball/vocabulary/arabic.voc")),
     (Language::Armenian, include_str!("../snowball/vocabulary/armenian.voc")),
@@ -48,8 +50,8 @@ const SAMPLES: [(Language, &str); 35] = [
 const COMMENT: char = '#';
 
 /// Verifies: [ISO/IEC 13249-2:2002 §4.2.3.4] [EXTENSION] (RULES.md
-/// D320) each language stems every word of its sample as Snowball does,
-/// and every stemmed language has a sample.
+/// D320, D326) each language stems every word of its list as it should,
+/// and every stemmed language has a list.
 #[test]
 fn stems_match_snowballs_vocabularies() {
     let mut checked = 0_usize;
@@ -57,7 +59,7 @@ fn stems_match_snowballs_vocabularies() {
         let mut pairs = 0_usize;
         for line in sample.lines().filter(|line| !line.starts_with(COMMENT)) {
             let (word, expected) = line.split_once('\t').unwrap_or_else(|| panic!("{}: {line}", language.name()));
-            assert_eq!(stem(language, word), expected, "{}: {word}", language.name());
+            assert_eq!(stem(language, word).unwrap(), expected, "{}: {word}", language.name());
             pairs += 1;
         }
         assert!(pairs >= 90, "{}: {pairs}", language.name());

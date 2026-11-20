@@ -249,7 +249,7 @@ fn threads_inserting_at_once_lose_no_count() {
     let all = THREADS * EACH;
     assert_eq!(index.statistics("common").unwrap(), TermStatistics { documents: all, most: 1 });
     assert_eq!(index.totals().unwrap(), Totals { documents: all, length: 2 * all });
-    let stem = stem_key(&index.stem_of(b"common"), b"common");
+    let stem = stem_key(&index.stem_of(b"common").unwrap(), b"common");
     assert_eq!(keys::count_of(&index.tree.get(&stem).unwrap().unwrap()).unwrap(), all);
     work(true);
     assert_eq!(left(&index), Vec::new());

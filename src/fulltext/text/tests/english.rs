@@ -6,7 +6,7 @@ use crate::fulltext::text::{Language, stem};
 /// Checks each word of `pairs` stems to its stem.
 fn check(pairs: &[(&str, &str)]) {
     for (word, expected) in pairs {
-        assert_eq!(stem(Language::English, word), *expected, "{word}");
+        assert_eq!(stem(Language::English, word).unwrap(), *expected, "{word}");
     }
 }
 

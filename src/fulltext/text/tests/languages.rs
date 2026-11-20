@@ -89,7 +89,7 @@ fn elisions_are_taken_off() {
     assert_eq!(words_in("col·lecció", Language::Spanish), ["col", "lecció"]);
     assert_eq!(words_in("d'fhág", Language::Irish), ["fhág"]);
     assert_eq!(words_in("l'homme", Language::English), ["l'homme"]);
-    assert_eq!(stem(Language::French, &words_in("l'école", Language::French)[0]), "écol");
+    assert_eq!(stem(Language::French, &words_in("l'école", Language::French)[0]).unwrap(), "écol");
 }
 
 /// Verifies: [ISO/IEC 13249-2:2002 §4.1] [EXTENSION] (RULES.md D323) a

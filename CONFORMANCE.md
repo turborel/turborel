@@ -3572,7 +3572,9 @@ TEXT_MATCHES(document, words) is true of a document holding every word
 of `words` that is not a stop word, true of a search of stop words
 alone, and null of a null argument (`fulltext/matches.rs`). Both are
 character strings or large objects, read a piece at a time. It reads
-both in English and compares words normalized, not stemmed. ISO/IEC
+both in the FULLTEXT.LANGUAGE of the full-text index of the document's
+column, else in English, and compares words normalized, not stemmed
+(RULES.md D327). ISO/IEC
 13249-2:2002 (CD, SC32 N0640) searches by its FULLTEXT type's CONTAINS
 method instead, [below](#sqlmm-full-text).
 
@@ -3602,7 +3604,8 @@ These are turborel's choices (`fulltext/text.rs`).
 | Normalization [§4.5] | ENGLISH and NONE, simple case folding, canonical decomposition, folding again, nonspacing marks (Mn) removed. A stemmed language, simple case folding and NFC, accents kept; TURKISH folds `I` to `ı` and `İ` to `i` first. A bigram language, simple case folding and NFKC. U+2019 made U+0027 in all (RULES.md D325) |
 | Stop words [§4.4.2] | Snowball's list where Snowball has one, in DANISH, DUTCH, ENGLISH (174), FINNISH, FRENCH, GERMAN, HUNGARIAN, INDONESIAN, IRISH, ITALIAN, NORWEGIAN, PORTUGUESE, RUSSIAN, SESOTHO, SPANISH, SWEDISH and UKRAINIAN; none in the others |
 | Stems [§4.2.3.4] | Snowball 3.2.0's own program of the language, run by an interpreter of the Snowball language, in ARABIC, ARMENIAN, BASQUE, CATALAN, CZECH, DANISH, DUTCH, ENGLISH, ESPERANTO, ESTONIAN, FINNISH, FRENCH, GERMAN, GREEK, HINDI, HUNGARIAN, INDONESIAN, IRISH, ITALIAN, LITHUANIAN, NEPALI, NORWEGIAN, PERSIAN, POLISH, PORTUGUESE, ROMANIAN, RUSSIAN, SERBIAN, SESOTHO, SPANISH, SWEDISH, TAMIL, TURKISH, UKRAINIAN and YIDDISH; the word in NONE and the bigram languages (RULES.md D320) |
-| Languages [§5.1.9] | NONE, the 35 stemmed languages and the 7 bigram languages; another is SQLSTATE 2FF02. None is detected; a document's is its FullText value's or its index's (RULES.md D327) |
+| Languages [§5.1.9] | NONE, the 35 stemmed languages and the 7 bigram languages, and a language an extension serves by a LANGUAGE object under a name none of these has; another is SQLSTATE 2FF02. None is detected; a document's is its FullText value's or its index's (RULES.md D327, D328) |
+| Served languages | An extension's LANGUAGE cuts text into words, stems and gives stop words as it SERVES, the rest its LIKE language's; a document is one call to cut and one to stem the words not stemmed before (RULES.md D328) |
 | Documents of several languages | An index keeps the languages of its FullText values and reads a pattern in each (RULES.md D324) |
 | Word and term length | A word's first 256 characters; a term's first 255 bytes of UTF-8, cut at a character |
 

@@ -210,7 +210,7 @@ impl Numbered<'_> {
         let mut statistic = statistic_key(term);
         statistic.extend_from_slice(&docno.to_be_bytes());
         statistic.extend_from_slice(rest.get(..FOUR).ok_or_else(corrupt)?);
-        let mut stem = stem_key(&self.index.stem_of(term), term);
+        let mut stem = stem_key(&self.index.stem_of(term)?, term);
         stem.extend_from_slice(&docno.to_be_bytes());
         Ok(vec![Ok(posting), Ok(statistic), Ok(stem)])
     }

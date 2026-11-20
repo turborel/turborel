@@ -332,7 +332,7 @@ impl FullTextIndex {
             if contains(&read, std::iter::empty(), language).is_err() {
                 return Ok(None);
             }
-            for matcher in positive_matchers(&read) {
+            for matcher in positive_matchers(&read)? {
                 if !matchers.contains(&matcher) {
                     matchers.push(matcher);
                 }

@@ -137,15 +137,15 @@ pub(super) fn key_rows(index: &Arc<FullTextIndex>, key: &Key) -> RowIds {
 
 impl FullTextIndex {
     /// The terms TEXT_MATCHES's words `words` are looked for under, each
-    /// once: its words that are not stop words, of its language, English,
-    /// or of the index's set, as the index posts none of the latter;
-    /// none if they are null.
+    /// once: its words, read in the index's language, that are not stop
+    /// words of it or of the index's set, as the index posts none of the
+    /// latter; none if they are null.
     ///
     /// # Errors
     ///
     /// As reading them.
     pub(super) fn terms_of(&self, words: &Value) -> Result<Option<Vec<Vec<u8>>>> {
-        let Some(words) = search_words(words)? else { return Ok(None) };
+        let Some(words) = search_words(words, self.reading.language)? else { return Ok(None) };
         let mut terms: Vec<Vec<u8>> =
             words.iter().filter(|word| !self.reading.is_stop(word)).map(|word| term_of(word, self.most_term).to_vec()).collect();
         terms.sort_unstable();

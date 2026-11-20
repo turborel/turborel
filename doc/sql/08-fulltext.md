@@ -588,7 +588,38 @@ LARGE OBJECT values too, read a piece at a time. The result is BOOLEAN.
 
 Words are matched as written, after normalization. TEXT_MATCHES does
 not stem, so `invoice` does not find `invoices`. It reads both arguments
-in English, whatever an index's FULLTEXT.LANGUAGE.
+in the FULLTEXT.LANGUAGE of the full-text index of the document's
+column, by the index and by a scan alike, and in ENGLISH when the
+column has no index. A FULLTEXT document names its own language and is
+searched by CONTAINS. In FRENCH an elided article is taken off, so
+`école` finds `l'école`, which in ENGLISH is one word:
+
+```sql
+CREATE TABLE FR (ID INTEGER NOT NULL UNIQUE, BODY VARCHAR(100));
+INSERT INTO FR VALUES (1, 'Les enfants de l''école'), (2, 'Le village');
+COMMIT;
+SELECT ID FROM FR WHERE TEXT_MATCHES(BODY, 'ÉCOLE enfants');
+COMMIT;
+CREATE INDEX FR_BODY ON FR (BODY) USING fulltext WITH (FULLTEXT.LANGUAGE = FRENCH);
+COMMIT;
+SELECT ID FROM FR WHERE TEXT_MATCHES(BODY, 'ÉCOLE enfants');
+```
+
+```
+OK
+OK
+OK
+           ID
+--------------
+(0 rows)
+OK
+OK
+OK
+           ID
+--------------
+            1
+(1 row)
+```
 
 ## How text is read
 
@@ -734,6 +765,25 @@ SELECT ID FROM NOTES WHERE BODY.Contains('"ISTANBUL"') = 1;
 A full-text index reads each FullText document in its language too, and
 notes the languages its documents are in, so a search reads its pattern
 in each of them.
+
+### Languages plug-ins serve *(extension)*
+
+An extension may serve a language of its own under a name no built-in
+language has, by a LANGUAGE object ([Kinds of
+Plug-in](../client/04-plugins-kinds.md)). It is named where a built-in
+language is, in FULLTEXT.LANGUAGE, `FULLTEXT(text, language)` and a
+pattern's language specification. The program may cut text into words,
+stem words and give stop words, and leave any of them to a built-in
+language. Cutting Chinese or Japanese into dictionary words is served
+this way, and the database ships no dictionary. A plug-in's author may
+use one under a permissive license, as jieba's dictionary (MIT) for
+Chinese or IPADIC for Japanese.
+
+A document in such a language costs one call to cut and, if the
+program stems, one call more for the words not stemmed before, and a
+pattern's words are cut by the same program. A failed call fails the
+statement with an error of class 38, and the next call starts the
+program again.
 
 ### Snowball's license
 

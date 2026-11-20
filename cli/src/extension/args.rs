@@ -46,7 +46,8 @@ options:
   --kind KIND            a kind of object new serves: scalar, aggregate, table,
                          procedure, metric, embedding, authenticator, target,
                          partition, ranking, quantizer, collation, system-table,
-                         xquery, type, engine, index-method, credentials, diagnostics;
+                         xquery, type, engine, index-method, credentials, diagnostics,
+                         language;
                          or host kinds alone: encoding, hash-function, clock,
                          log-storage, catalog-storage, spill, file-system,
                          served-connections, listener, package-crypto, keyring,

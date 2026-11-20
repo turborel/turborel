@@ -17,5 +17,5 @@ pub mod types;
 pub mod value;
 
 pub use text::{
-    Language, Languages, StopWords, Token, Tokens, is_single_letter, is_stop, normalize, normalize_in, stem, tokenize, tokenize_with,
+    Language, Languages, StopWords, Token, Tokens, is_single_letter, is_stop, normalize, normalize_in, stem, stems, tokenize, tokenize_with,
 };

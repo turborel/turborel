@@ -1,12 +1,13 @@
 //! Mutations of the full-text languages: the Snowball interpreter, the
 //! normalization of each language, elisions, the Catalan middle dot,
 //! character bigrams, single letters and joined thesaurus terms, and the
-//! languages an index notes (RULES.md R-TEST-9, D320 to D329).
+//! languages an index notes, the languages plug-ins serve and the
+//! language TEXT_MATCHES reads in (RULES.md R-TEST-9, D320 to D329).
 
 use super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the full-text language requirements.
-pub const FULLTEXT_LANGUAGES: [Mutation; 12] = [
+pub const FULLTEXT_LANGUAGES: [Mutation; 15] = [
     Mutation {
         name: "snowball-among-shortest",
         package: Package::Core,
@@ -132,5 +133,35 @@ pub const FULLTEXT_LANGUAGES: [Mutation; 12] = [
         replacement: "bits = bits.with(self.reading.language);",
         integration: &[],
         unit: &["index::fulltext::tests::languages::an_index_notes_and_reopens_its_languages"],
+    },
+    Mutation {
+        name: "fulltext-served-uncut",
+        package: Package::Core,
+        breaks: "a served language's text is cut as its base cuts it, so a plug-in's dictionary words are never read",
+        file: "src/fulltext/text/language.rs",
+        original: "self.serving().is_some_and(|s| s.segments())",
+        replacement: "false && self.serving().is_some_and(|s| s.segments())",
+        integration: &["plugin_kinds::languages::a_served_language_cuts_documents_and_patterns"],
+        unit: &[],
+    },
+    Mutation {
+        name: "fulltext-served-stops-nothing",
+        package: Package::Core,
+        breaks: "a served language's stop words are not taken, so its stop word alone is searched as a word",
+        file: "src/fulltext/text.rs",
+        original: "return list.binary_search_by(|listed| listed.as_str().cmp(word)).is_ok();",
+        replacement: "return list.is_empty();",
+        integration: &["plugin_kinds::languages::a_served_language_cuts_documents_and_patterns"],
+        unit: &[],
+    },
+    Mutation {
+        name: "text-matches-english-always",
+        package: Package::Core,
+        breaks: "TEXT_MATCHES reads its words in English whatever its index's language, so an index's own search misses",
+        file: "src/fulltext/matches.rs",
+        original: "TextMatches::matched(args, statistics.and_then(|s| s.language()).unwrap_or(FT_DEFAULT_LANGUAGE))",
+        replacement: "TextMatches::matched(args, statistics.and(None).unwrap_or(FT_DEFAULT_LANGUAGE))",
+        integration: &["fulltext::languages::text_matches_reads_the_index_language"],
+        unit: &[],
     },
 ];

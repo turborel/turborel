@@ -1,12 +1,9 @@
-The files in this directory are samples of Snowball's test vocabularies
-(https://github.com/snowballstem/snowball-data), each word with the stem
-Snowball's own stemmer gives it, kept to test that the interpreter gives
-the same. Each file's header says which words of the vocabulary it keeps:
-every k-th from the first, so the sample is the same each time it is
-made.
-
-Where Snowball's vocabulary is its own, under its BSD license, the sample
-keeps about 1000 words, and Snowball's notice is:
+The files in this directory are word lists the stemmers are tested on,
+each word with its stem. Fourteen of them are samples of Snowball's test
+vocabularies (https://github.com/snowballstem/snowball-data), where the
+vocabulary is Snowball's own, under its BSD license: each keeps about
+1000 words, every k-th from the first as its header says, with the stem
+Snowball's own stemmer gives it. Snowball's notice is:
 
 Copyright (c) 2001, Dr Martin Porter
 Copyright (c) 2004,2005, Richard Boulton
@@ -36,11 +33,14 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Where Snowball takes its vocabulary from another source, as a dump of
-Wikipedia (CC BY-SA), the Wortschatz Leipzig corpus, the srWaC corpus, a
-spelling dictionary or a GPL word list, the sample keeps about 100 words,
-a short list of words and their stems, kept as test data alone. These are
-arabic, armenian, basque, catalan, czech, esperanto, estonian, finnish,
-french, greek, hindi, indonesian, italian, lithuanian, persian, polish,
-serbian, sesotho, tamil, ukrainian and yiddish. Each source is named in
-snowball-data's COPYING of that language.
+The other 21 files, of arabic, armenian, basque, catalan, czech,
+esperanto, estonian, finnish, french, greek, hindi, indonesian, italian,
+lithuanian, persian, polish, serbian, sesotho, tamil, ukrainian and
+yiddish, are the project's own lists, under the repository's license
+(BSD-2-Clause-Patent, LICENSE at its root). Snowball takes the
+vocabularies of these languages from other sources, so none of their
+words is kept here. Each list was written for its language, of its
+words' rarer inflected forms and of words built to reach its stemmer's
+suffix rules, and none of its words is in Snowball's vocabulary of that
+language. Each word carries the stem the interpreter gives it, which
+matched Snowball's output on every word of the whole vocabularies.

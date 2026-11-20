@@ -43,6 +43,9 @@
 //! 18 credentials    1 verifier    `process.rs`
 //! 19 diagnostics    1 events      `process.rs`
 //! 37 optimizer rule 1 rewrite     plan form (`plan.rs`)             u8 0 (no change), or u8 1 | plan form
+//! 39 language       1 segment     `language.rs`
+//!                   2 stem
+//!                   3 stop words
 //! ```
 //!
 //! The kinds from 10 (RULES.md D220) each have a module of their own,
@@ -58,6 +61,7 @@ pub mod engine;
 pub mod eviction;
 pub mod hosted;
 pub mod index;
+pub mod language;
 pub mod process;
 pub mod quantizer;
 pub mod ranking;
@@ -184,6 +188,12 @@ pub const ENGINE_STATISTICS: u8 = 8;
 pub const INDEX_STATISTICS: u8 = 9;
 /// An optimizer rule's rewrite of a plan form (RULES.md D275).
 pub const RULE_REWRITE: u8 = 1;
+/// A language's words of documents (`language.rs`, RULES.md D328).
+pub const LANGUAGE_SEGMENT: u8 = 1;
+/// A language's stems of words.
+pub const LANGUAGE_STEM: u8 = 2;
+/// A language's stop words.
+pub const LANGUAGE_STOP: u8 = 3;
 
 /// Strings, counted.
 pub fn put_strings(out: &mut Vec<u8>, all: &[String]) {

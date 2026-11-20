@@ -12,6 +12,7 @@
 //! pattern's word that the tokenizer reads as several words matches as
 //! each of them.
 
+use crate::error::Result;
 use crate::fulltext::pattern::fuzzy::{allowed, within};
 use crate::fulltext::pattern::soundex::soundex;
 use crate::fulltext::pattern::{Argument, Expansion, Literal, Mask, MaskChar, Part, Pattern};
@@ -61,17 +62,28 @@ pub(crate) enum Matcher {
 impl Matcher {
     /// Whether it matches the normalized word `word` of a document in one
     /// of `languages`.
-    pub(crate) fn matches(&self, word: &str, languages: Languages) -> bool {
-        match self {
+    ///
+    /// # Errors
+    ///
+    /// Of a stem, a served language's call's.
+    pub(crate) fn matches(&self, word: &str, languages: Languages) -> Result<bool> {
+        Ok(match self {
             Matcher::Exact(exact) => exact == word,
             Matcher::Mask(mask) => glob(mask, &word.chars().collect::<Vec<_>>(), false),
-            Matcher::Stem(stemmed) => languages.iter().any(|language| stem(language, word) == *stemmed),
+            Matcher::Stem(stemmed) => {
+                for language in languages.iter() {
+                    if stem(language, word)? == *stemmed {
+                        return Ok(true);
+                    }
+                }
+                false
+            }
             Matcher::Sounds { word: sounded, code } => {
                 sounded == word || code.as_ref().is_some_and(|code| soundex(word).as_ref() == Some(code))
             }
             Matcher::Spelled { word: spelled, edits } => within(&word.chars().collect::<Vec<_>>(), spelled, *edits),
             Matcher::Unknown => false,
-        }
+        })
     }
 
     /// Whether it may match a word beginning with the normalized `word`,
@@ -145,35 +157,43 @@ fn normalized(mask: &Mask, language: Language) -> Option<Vec<Glob>> {
 /// must hold: one for a word the tokenizer reads as one, one for each of
 /// several; `Unknown` for a mask it cannot read. A single letter of a
 /// language read as bigrams matches each word holding it (RULES.md D323).
-pub(crate) fn word_matchers(literal: &Literal, mask: &Mask) -> Vec<Matcher> {
+///
+/// # Errors
+///
+/// A served language's calls (`fulltext/text/served.rs`).
+pub(crate) fn word_matchers(literal: &Literal, mask: &Mask) -> Result<Vec<Matcher>> {
     let Some(text) = mask.text() else {
-        return vec![normalized(mask, literal.language).map_or(Matcher::Unknown, Matcher::Mask)];
+        return Ok(vec![normalized(mask, literal.language).map_or(Matcher::Unknown, Matcher::Mask)]);
     };
-    let words: Vec<String> = tokenize(text.chars().map(Ok), literal.language).filter_map(|token| token.ok().map(|t| t.word)).collect();
+    let words = tokenize(text.chars().map(Ok), literal.language).map(|token| token.map(|t| t.word)).collect::<Result<Vec<String>>>()?;
     if words.is_empty() {
-        return vec![Matcher::Unknown];
+        return Ok(vec![Matcher::Unknown]);
     }
     let each = |word: String| {
-        if is_single_letter(literal.language, &word) {
+        Ok(if is_single_letter(literal.language, &word) {
             Matcher::Mask([Glob::Any].into_iter().chain(word.chars().map(Glob::Char)).chain([Glob::Any]).collect())
         } else if literal.stemmed {
-            Matcher::Stem(stem(literal.language, &word))
+            Matcher::Stem(stem(literal.language, &word)?)
         } else {
             Matcher::Exact(word)
-        }
+        })
     };
     words.into_iter().map(each).collect()
 }
 
 /// The matchers of every word of `literal`, in order.
-pub(crate) fn literal_matchers(literal: &Literal) -> Vec<Matcher> {
+///
+/// # Errors
+///
+/// As `word_matchers`.
+pub(crate) fn literal_matchers(literal: &Literal) -> Result<Vec<Matcher>> {
     let mut out = Vec::new();
     for part in &literal.parts {
         if let Part::Word(mask) = part {
-            out.extend(word_matchers(literal, mask));
+            out.extend(word_matchers(literal, mask)?);
         }
     }
-    out
+    Ok(out)
 }
 
 /// The matchers of an expansion: a sound or spelling alike of its word;
@@ -220,17 +240,21 @@ fn literal_chars(mask: &Mask) -> String {
 }
 
 /// The matchers of a context or proximity argument.
-fn argument_matchers(argument: &Argument) -> Vec<Matcher> {
+fn argument_matchers(argument: &Argument) -> Result<Vec<Matcher>> {
     match argument {
         Argument::Literal(literal) => literal_matchers(literal),
-        Argument::List(literals) => literals.iter().flat_map(literal_matchers).collect(),
-        Argument::Expansion(expansion) => expansion_matchers(expansion),
+        Argument::List(literals) => Ok(literals.iter().map(literal_matchers).collect::<Result<Vec<_>>>()?.concat()),
+        Argument::Expansion(expansion) => Ok(expansion_matchers(expansion)),
     }
 }
 
 /// The matchers Rank counts of `pattern`: of every word it asks for that
 /// is not under NOT, each once [§5.1.3].
-pub(crate) fn positive_matchers(pattern: &Pattern) -> Vec<Matcher> {
+///
+/// # Errors
+///
+/// As `word_matchers`.
+pub(crate) fn positive_matchers(pattern: &Pattern) -> Result<Vec<Matcher>> {
     let mut out: Vec<Matcher> = Vec::new();
     let mut stack = vec![pattern];
     while let Some(part) = stack.pop() {
@@ -241,10 +265,10 @@ pub(crate) fn positive_matchers(pattern: &Pattern) -> Vec<Matcher> {
                 continue;
             }
             Pattern::Not(_) => continue,
-            Pattern::Literal(literal) | Pattern::About(literal) => literal_matchers(literal),
-            Pattern::Near(near) => argument_matchers(&near.left).into_iter().chain(argument_matchers(&near.right)).collect(),
+            Pattern::Literal(literal) | Pattern::About(literal) => literal_matchers(literal)?,
+            Pattern::Near(near) => [argument_matchers(&near.left)?, argument_matchers(&near.right)?].concat(),
             Pattern::Expansion(expansion) => expansion_matchers(expansion),
-            Pattern::Context(context) => context.arguments.iter().flat_map(argument_matchers).collect(),
+            Pattern::Context(context) => context.arguments.iter().map(argument_matchers).collect::<Result<Vec<_>>>()?.concat(),
         };
         for matcher in found {
             if matcher != Matcher::Unknown && !out.contains(&matcher) {
@@ -252,5 +276,5 @@ pub(crate) fn positive_matchers(pattern: &Pattern) -> Vec<Matcher> {
             }
         }
     }
-    out
+    Ok(out)
 }

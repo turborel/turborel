@@ -298,9 +298,9 @@ verification approach DO-178C expects (§8).
 | D323 | Scripts written without spaces are read as character bigrams; no dictionary segmentation is built in |
 | D324 | A full-text index keeps the languages of its documents, and a search reads a pattern in each |
 | D325 | A stemmed language keeps accents and composes its words, and Turkish folds the dotted and dotless I |
-| D326 | Each stemmer is tested on a deterministic sample of Snowball's vocabulary, the whole checked outside the tree |
-| D327 | A document's language is its FullText value's or its index's; no language is detected |
-| D328 | A plug-in language would be a Snowball program given as data, and none is a plug-in kind yet |
+| D326 | Each stemmer is tested on a sample of Snowball's own vocabulary or on the project's own list, the whole checked outside the tree |
+| D327 | A document's language is its FullText value's or its index's, TEXT_MATCHES's its index's; no language is detected |
+| D328 | A plug-in serves a language by the LANGUAGE kind, named where a built-in one is, a batch a call |
 | D329 | A single letter of a bigram language matches the bigrams holding it, and thesaurus terms are joined back |
 
 ### The project
@@ -6775,7 +6775,8 @@ the list to the directory.
 An extension may serve, besides the kinds of D169, a ranking (kind 10),
 a quantizer (11), a collation (12), a system table (13), an XQuery
 function (14), a type (15), a storage engine (16), an index method
-(17), credentials (18) and a sink of events (19), each declared by its
+(17), credentials (18), a sink of events (19), an optimizer rule (37,
+D275) and a language of full-text search (39, D328), each declared by its
 manifest and bridged onto the trait the in-process point already has
 (`plugin/bridge/`), with payloads of their own (`plugin/payload/`). The
 rule of them all is that a call crosses a pipe and costs a round trip,
@@ -8532,7 +8533,11 @@ the Porter2 code written before. That code differed from Snowball's
 English stemmer on 57 of the 42,649 words of its vocabulary, and
 Snowball's program matches all of them. Snowball's Porter, Dutch
 Porter, Lovins and Early Modern English stemmers are left out, as
-older or special forms of languages already stemmed.
+older or special forms of languages already stemmed. The whole of
+Snowball's vocabularies, all 35 languages and Arabic's 9.2 million
+words included, was run through the interpreter locally against
+Snowball's own output, and every word matched, 100%. The vocabularies
+stay outside the tree (D326).
 
 #### D321. A language is a built-in profile of normalization, stems, stop words and cutting, named in English
 
@@ -8630,20 +8635,25 @@ words (final `ς` folds to `σ`) and 51 capitalized Irish ones, and
 stemming each gives the stem of the word as Snowball's vocabulary
 writes it, the Irish ones in lower case.
 
-#### D326. Each stemmer is tested on a deterministic sample of Snowball's vocabulary, the whole checked outside the tree
+#### D326. Each stemmer is tested on a sample of Snowball's own vocabulary or on the project's own list, the whole checked outside the tree
 
 Snowball's vocabularies hold from 4,000 to 9.2 million words a language,
 too many to keep in the tree. `src/fulltext/text/snowball/vocabulary`
-keeps every k-th word of each from the first, with its stem from
-Snowball's output, k chosen for about 1000 words where the vocabulary
-is Snowball's own (BSD) and about 100 where Snowball took it from
-another source (Wikipedia, corpora, a spelling dictionary, a GPL list),
-so the sample is a short list of words kept as test data alone. Each
-file's header says its k and its whole size, so the sample can be made
-again. The unit test stems every word of every sample and matches all
-of them. The whole vocabularies, all 35 languages and Arabic's 9.2
-million words included, were run against the interpreter before it was
-committed and matched every word. They are not in the tree.
+keeps, for the 14 languages whose vocabulary is Snowball's own (BSD),
+every k-th word of it from the first with its stem from Snowball's
+output, k chosen for about 1000 words. Each file's header says its k
+and its whole size, so the sample can be made again. For the 21
+languages whose vocabulary Snowball took from another source
+(Wikipedia, corpora, a spelling dictionary, a GPL list), no word of
+that vocabulary is kept. Each has a list of the project's own instead,
+under the repository's license: 138 to 167 words written for it, rarer
+inflected forms of the language's words and words built to reach its
+stemmer's suffix rules, none of them a word of Snowball's vocabulary of
+the language. Each word carries the stem the interpreter gives it. The
+unit test stems every word of every file and matches all of them. For
+the own lists that guards the interpreter against change, and their
+agreement with Snowball itself rests on the full run of D320, made
+locally before commit.
 
 #### D327. A document's language is its FullText value's or its index's; no language is detected
 
@@ -8655,18 +8665,53 @@ short texts, needs per-language data of its own, and a wrong guess
 would silently change a document's stems and stop words, which an
 index then keeps.
 
-#### D328. A plug-in language would be a Snowball program given as data, and none is a plug-in kind yet
+TEXT_MATCHES, an extension the standard does not have, reads both its
+character strings in the FULLTEXT.LANGUAGE of the full-text index of
+the document's column, whose name the binder gives it as it gives
+CONTAINS and RANK theirs (D87), and else in FT_DefaultLanguage,
+ENGLISH. SQL/MM ties a language to FullText values and to a pattern's
+words [§4.4] and says nothing of TEXT_MATCHES, so it follows the rule a
+character string has under CONTAINS. An index reads its strings in its
+language, and its search must too, or an index in FRENCH would post
+words its own TEXT_MATCHES never asks for. A FULLTEXT value names its
+own language and is searched by CONTAINS.
 
-The plug-in kinds (D275 and those beside it) have no tokenizer kind,
-and this change adds none. A language is a row of a built-in table, so
-the set of languages is fixed for a build and every index and
-document names one the build knows. The interpreter takes a Snowball
-program as data, so a later plug-in language needs no code in the
-plug-in. Its package would carry a Snowball program and a stop list,
-registered with the database (never global state) under a name that
-is not a built-in one, as rankings already are (FULLTEXT.RANKING).
-That waits for a need, since an index's entries depend on its
-language and a plug-in removed would leave them unreadable.
+#### D328. A plug-in serves a language by the LANGUAGE kind, named where a built-in one is, a batch a call
+
+A LANGUAGE object of an extension (kind 39) serves a language of
+full-text search. SERVES names what it does of SEGMENT (text cut into
+words, each its offset and length in characters), STEM and STOP (its
+stop words), and LIKE names the built-in language whose other parts it
+keeps, NONE unless written. So a plug-in may cut Chinese or Japanese
+into dictionary words and keep no stemmer. Dictionary segmentation is
+served this way and is not built in. A plug-in's author may use a
+dictionary of a permissive license, as jieba's dictionary (MIT) for
+Chinese or IPADIC for Japanese; these are examples of what is
+possible, and none is shipped. A Snowball program given as data stays
+possible inside a plug-in.
+
+Its calls are batches. A document read is one SEGMENT call, and its
+words not yet stemmed one STEM call more if the plug-in stems; the stop
+words are one STOP call as the extension is registered. A stem is kept
+once answered, as a language is deterministic. BATCH bounds the
+documents or words of a call, 256 unless written. A pattern's word is
+cut by the same plug-in. A document a plug-in cuts is held whole while
+it is read, unlike the built-in tokenizer's stream, and its words'
+sentences and paragraphs are those the built-in rules give at their
+offsets.
+
+It is named wherever a built-in language is: an index's
+FULLTEXT.LANGUAGE, FULLTEXT(text, language) and a pattern's language
+specification. Its name is checked against the built-in ones, which
+win, by the manifest (38T06) and again as it is registered. A language
+is named in the whole process, as the tokenizer reads text with no
+database at hand, so a name is the first registering extension's while
+one of its registrations lives, and a process knows at most 21 served
+names, the bits of a set of languages past the 43 built-in ones. An
+index naming it holds its extension (DROP EXTENSION RESTRICT is
+refused), and a name no extension serves now is 2FF02. A failed call
+follows the extension kinds' rules (D170): the statement fails with its
+class 38 error, and the next call starts another process.
 
 #### D329. A single letter of a bigram language matches the bigrams holding it, and thesaurus terms are joined back
 

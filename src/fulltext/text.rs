@@ -50,10 +50,15 @@
 //! - Stems [§4.2.3.4]. A language stems by its Snowball program
 //!   (`snowball.rs`, D320); NONE's stem of a word, and that of a language
 //!   read as bigrams, is the word.
+//! - Served languages. A language a plug-in serves (`served.rs`, RULES.md
+//!   D328) has a document read whole and cut by one call, its words'
+//!   sentences and paragraphs those the rules above give, and its words
+//!   stemmed a batch a call.
 
 mod kind;
 mod language;
 mod segment;
+pub mod served;
 mod snowball;
 mod stop;
 #[cfg(test)]
@@ -91,6 +96,9 @@ pub struct Tokens<I> {
     chars: I,
     segmenter: Segmenter,
     done: bool,
+    /// Of a language a plug-in cuts into words: the language, its stop
+    /// words, and the tokens of the document once it is read whole.
+    served: Option<(Language, StopWords, Option<std::vec::IntoIter<Token>>)>,
 }
 
 /// The tokens of the characters `chars` of a document in `language`, read
@@ -102,7 +110,27 @@ pub fn tokenize<I: Iterator<Item = Result<char>>>(chars: I, language: Language) 
 /// The tokens of the characters `chars` of a document in `language`, as
 /// `tokenize` reads them, each marked `stop` by the stop words `stop`.
 pub fn tokenize_with<I: Iterator<Item = Result<char>>>(chars: I, language: Language, stop: &StopWords) -> Tokens<I> {
-    Tokens { chars, segmenter: Segmenter::new(language, stop.clone()), done: false }
+    let served = language.served_segments().then(|| (language, stop.clone(), None));
+    Tokens { chars, segmenter: Segmenter::new(language, stop.clone()), done: false, served }
+}
+
+impl<I: Iterator<Item = Result<char>>> Tokens<I> {
+    /// The next token of a document a plug-in cuts into words: the
+    /// document read whole and cut at the first.
+    fn next_served(&mut self) -> Option<Result<Token>> {
+        let (language, stop, read) = self.served.as_mut()?;
+        if read.is_none() {
+            let text: Result<String> = self.chars.by_ref().collect();
+            match text.and_then(|text| served::tokens(&text, *language, stop)) {
+                Ok(tokens) => *read = Some(tokens.into_iter()),
+                Err(e) => {
+                    self.done = true;
+                    return Some(Err(e));
+                }
+            }
+        }
+        read.as_mut()?.next().map(Ok)
+    }
 }
 
 impl<I: Iterator<Item = Result<char>>> Iterator for Tokens<I> {
@@ -111,6 +139,9 @@ impl<I: Iterator<Item = Result<char>>> Iterator for Tokens<I> {
     fn next(&mut self) -> Option<Result<Token>> {
         if self.done {
             return None;
+        }
+        if self.served.is_some() {
+            return self.next_served();
         }
         let tables = match tables() {
             Ok(tables) => tables,
@@ -156,18 +187,43 @@ pub fn normalize_in(language: Language, word: &str) -> String {
 
 /// The stem of the word `word`, normalized in `language`, in that
 /// language [§4.2.3.4]: by its Snowball stemmer, the word itself in NONE
-/// and in a language read as bigrams.
-pub fn stem(language: Language, word: &str) -> String {
-    match language.stemmer() {
-        Some(stemmer) => stemmer.stem(word),
-        None => word.to_owned(),
+/// and in a language read as bigrams; by its plug-in, if one stems it.
+///
+/// # Errors
+///
+/// A served language's call's (`served.rs`).
+pub fn stem(language: Language, word: &str) -> Result<String> {
+    let mut got = stems(language, &[word])?;
+    Ok(got.pop().unwrap_or_else(|| word.to_owned()))
+}
+
+/// The stems of the words `words`, as `stem` gives each: of a language a
+/// plug-in stems, one call for all of them that it has not stemmed yet.
+///
+/// # Errors
+///
+/// As `stem`.
+pub fn stems(language: Language, words: &[&str]) -> Result<Vec<String>> {
+    if let Language::Served(slot) = language
+        && language.served_stems()
+    {
+        return served::stems(slot, words);
     }
+    Ok(match language.stemmer() {
+        Some(stemmer) => words.iter().map(|word| stemmer.stem(word)).collect(),
+        None => words.iter().map(|word| (*word).to_owned()).collect(),
+    })
 }
 
 /// Whether the word `word`, normalized in `language`, is a stop word of
 /// that language [§4.4.2]: Snowball's list of it, none if Snowball has
 /// none.
 pub fn is_stop(language: Language, word: &str) -> bool {
+    if let Some(served) = language.serving()
+        && let Some(list) = served.stop_words()
+    {
+        return list.binary_search_by(|listed| listed.as_str().cmp(word)).is_ok();
+    }
     stop_list(language).binary_search_by(|listed| listed.as_str().cmp(word)).is_ok()
 }
 

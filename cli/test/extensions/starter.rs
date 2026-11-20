@@ -80,7 +80,7 @@ fn first(s: &Session, sql: &str) -> String {
 /// know, naming those it does; `--kind` writes a project of each kind
 /// asked, once, in the order of their codes, at `--dir`; host kinds are
 /// asked alone, their README naming PLUGINS.HOST, an eviction policy
-/// with the setting it reads.
+/// with the setting it reads; a language is no host kind.
 #[test]
 fn new_refuses_what_it_cannot_make() {
     let f = Fixture::new("new");
@@ -109,6 +109,11 @@ fn new_refuses_what_it_cannot_make() {
     let parsed = turborel::plugin::manifest::Manifest::parse(&manifest).unwrap();
     assert_eq!((parsed.hosted.len(), parsed.settings[0].qualified(&parsed.name)), (1, "SCANS.ONCE".to_owned()), "{manifest}");
     assert!(std::fs::read_to_string(root.join("scans/src/main.rs")).unwrap().contains(".host_eviction(\"SCANS\", Scans)"));
+    let worded = ext_in(root, &["new", "words", "--kind", "language", "--kind", "scalar"]).unwrap();
+    assert!(worded.contains("serving scalar, language"), "{worded}");
+    let manifest = std::fs::read_to_string(root.join("words").join("turborel-plugin.manifest")).unwrap();
+    assert_eq!(turborel::plugin::manifest::Manifest::parse(&manifest).unwrap().kinds(), [1, 39], "{manifest}");
+    assert!(std::fs::read_to_string(root.join("words/src/main.rs")).unwrap().contains(".language(\"SPACED\", Spaced)"));
 }
 
 /// Verifies: [EXTENSION] RULES.md D264, D265, D266: pack refuses a

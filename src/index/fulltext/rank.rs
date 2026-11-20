@@ -47,7 +47,7 @@ type Counted = (Vec<BTreeMap<String, u32>>, u32);
 
 /// The counts of `document`, read in its language or else `language`.
 fn counted(pattern: &Pattern, document: Document<'_>, language: Language, statistics: &dyn Statistics) -> Result<Counted> {
-    let matchers = positive_matchers(pattern);
+    let matchers = positive_matchers(pattern)?;
     let language = document.language.unwrap_or(language);
     let stop = statistics.stop_words();
     let most = statistics.most_term();
@@ -60,7 +60,7 @@ fn counted(pattern: &Pattern, document: Document<'_>, language: Language, statis
         }
         length = length.saturating_add(1);
         for (matcher, count) in matchers.iter().zip(counts.iter_mut()) {
-            if matcher.matches(&token.word, Languages::of(language)) {
+            if matcher.matches(&token.word, Languages::of(language))? {
                 let term = String::from_utf8_lossy(term_of(&token.word, most)).into_owned();
                 let tf = count.entry(term).or_default();
                 *tf = tf.saturating_add(1);

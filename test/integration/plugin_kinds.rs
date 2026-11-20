@@ -3,10 +3,12 @@
 //! (`plugin/examples/plugin_example`): rankings, quantizers,
 //! collations, system tables, XQuery functions, types, credentials and
 //! sinks of events here; storage engines and index methods in
-//! `plugin_kinds/engines.rs` and `plugin_kinds/indexes.rs`.
+//! `plugin_kinds/engines.rs` and `plugin_kinds/indexes.rs`, languages of
+//! full-text search in `plugin_kinds/languages.rs`.
 
 mod engines;
 mod indexes;
+mod languages;
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;

@@ -449,5 +449,5 @@ impl Files for Store {
 
 /// Whether `starter` is of a host kind.
 pub(in crate::extension) fn is_host(starter: &Starter) -> bool {
-    starter.code >= 20
+    HOST_STARTERS.iter().any(|h| h.code == starter.code)
 }

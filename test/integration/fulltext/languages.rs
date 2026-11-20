@@ -165,3 +165,25 @@ fn thesauri_expand_each_language() {
     assert_eq!(expanded("東京都"), ["1", "2"]);
     assert_eq!(expanded("capitale"), ["3", "4"]);
 }
+
+/// Verifies: [EXTENSION] RULES.md D327: TEXT_MATCHES reads both its
+/// strings in the FULLTEXT.LANGUAGE of the index of the document's
+/// column, alike by the index and by a scan, so a French elision is
+/// taken off; with no index, in ENGLISH, where it is not.
+#[test]
+fn text_matches_reads_the_index_language() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION F CREATE TABLE FR (ID INTEGER NOT NULL UNIQUE, BODY VARCHAR(100))").unwrap();
+    let f = db.session("F");
+    f.run("INSERT INTO FR VALUES (1, 'Les enfants de l''école'), (2, 'Le village')").unwrap();
+    f.run("COMMIT WORK").unwrap();
+    let matched = "SELECT ID FROM FR WHERE TEXT_MATCHES(BODY, 'ÉCOLE enfants') ORDER BY ID";
+    assert!(rows(&f, matched).unwrap().is_empty(), "l'école is one English word");
+    f.run("COMMIT WORK").unwrap();
+    f.run("CREATE INDEX FR_BODY ON FR (BODY) USING fulltext WITH (FULLTEXT.LANGUAGE = FRENCH)").unwrap();
+    f.run("COMMIT WORK").unwrap();
+    assert_eq!(rows(&f, matched).unwrap(), ["1"]);
+    let scanned = "SELECT ID FROM FR WHERE TEXT_MATCHES(BODY, 'école') OR ID = 0 ORDER BY ID";
+    assert_eq!(rows(&f, scanned).unwrap(), ["1"], "a scan reads it in the index's language too");
+    assert!(rows(&f, "SELECT ID FROM FR WHERE TEXT_MATCHES(BODY, 'ecole')").unwrap().is_empty(), "French keeps accents");
+}

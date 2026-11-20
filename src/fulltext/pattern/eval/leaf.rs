@@ -21,6 +21,7 @@
 //! - A phrase matches consecutive tokens, an optional word one token or
 //!   none [§6.6.2 Description 5e], across sentence ends.
 
+use crate::error::Result;
 use crate::fulltext::pattern::fuzzy::{allowed, within};
 use crate::fulltext::pattern::literal::is_stop_word;
 use crate::fulltext::pattern::soundex::soundex;
@@ -102,25 +103,29 @@ pub(super) enum Matcher {
 
 impl Matcher {
     /// The matcher of the word or phrase `literal`.
-    pub(super) fn literal(literal: &Literal) -> Matcher {
+    ///
+    /// # Errors
+    ///
+    /// Of a stem, a served language's call's.
+    pub(super) fn literal(literal: &Literal) -> Result<Matcher> {
         if literal.parts.is_empty() || stop_word(literal) {
-            return Matcher::Never;
+            return Ok(Matcher::Never);
         }
         let steps = literal
             .parts
             .iter()
             .map(|part| match part {
-                Part::Optional => Step::Optional,
+                Part::Optional => Ok(Step::Optional),
                 Part::Word(mask) => {
                     if is_stop_word(mask, literal.language) {
-                        Step::Stop
+                        Ok(Step::Stop)
                     } else {
-                        Step::Word { mask: stemmed(&mask.0, literal), stemmed: literal.stemmed }
+                        Ok(Step::Word { mask: stemmed(&mask.0, literal)?, stemmed: literal.stemmed })
                     }
                 }
             })
-            .collect();
-        Matcher::Sequence(steps)
+            .collect::<Result<_>>()?;
+        Ok(Matcher::Sequence(steps))
     }
 
     /// The matcher of IS ABOUT `literal` \[implementation-defined, §6.17.2
@@ -195,15 +200,15 @@ fn literal_char(c: MaskChar) -> Option<char> {
 /// it if it is a single letter of a language read as bigrams (RULES.md
 /// D323); its stem in the literal's language if the literal is stemmed
 /// and the word has no wild card; else as written.
-fn stemmed(mask: &[MaskChar], literal: &Literal) -> Vec<MaskChar> {
+fn stemmed(mask: &[MaskChar], literal: &Literal) -> Result<Vec<MaskChar>> {
     let text: Option<String> = mask.iter().map(|c| literal_char(*c)).collect();
     if let Some(letter) = text.as_deref().filter(|text| is_single_letter(literal.language, text)) {
-        return [MaskChar::Any].into_iter().chain(letter.chars().map(MaskChar::Literal)).chain([MaskChar::Any]).collect();
+        return Ok([MaskChar::Any].into_iter().chain(letter.chars().map(MaskChar::Literal)).chain([MaskChar::Any]).collect());
     }
-    match text.filter(|_| literal.stemmed) {
-        Some(text) => stem(literal.language, &text).chars().map(MaskChar::Literal).collect(),
+    Ok(match text.filter(|_| literal.stemmed) {
+        Some(text) => stem(literal.language, &text)?.chars().map(MaskChar::Literal).collect(),
         None => mask.to_vec(),
-    }
+    })
 }
 
 /// A token as the leaves read it.
@@ -219,9 +224,13 @@ pub(super) struct Seen<'t> {
 
 impl<'t> Seen<'t> {
     /// `token` of a document in `language`, its stem taken if `stems`.
-    pub(super) fn new(token: &'t Token, language: Language, stems: bool) -> Seen<'t> {
-        let stem = if stems { stem(language, &token.word).chars().collect() } else { Vec::new() };
-        Seen { token, chars: token.word.chars().collect(), stem }
+    ///
+    /// # Errors
+    ///
+    /// Of a stem, a served language's call's.
+    pub(super) fn new(token: &'t Token, language: Language, stems: bool) -> Result<Seen<'t>> {
+        let stem = if stems { stem(language, &token.word)?.chars().collect() } else { Vec::new() };
+        Ok(Seen { token, chars: token.word.chars().collect(), stem })
     }
 }
 

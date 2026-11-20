@@ -198,7 +198,7 @@ impl FullTextIndex {
         if stop {
             return Ok(None);
         }
-        let matchers = word_matchers(literal, mask);
+        let matchers = word_matchers(literal, mask)?;
         if let [matcher] = matchers.as_slice()
             && let Some(terms) = self.terms(matcher)?
         {
@@ -219,7 +219,7 @@ impl FullTextIndex {
             if mask.text().is_some_and(|text| is_stop(literal.language, &text)) {
                 continue;
             }
-            for matcher in word_matchers(literal, mask) {
+            for matcher in word_matchers(literal, mask)? {
                 plans.push(of_terms(self.terms(&matcher)?));
             }
         }
@@ -239,7 +239,7 @@ impl FullTextIndex {
         for literal in literals {
             plans.push(self.literal_plan(literal)?);
             let one = match literal.parts.as_slice() {
-                [Part::Word(mask)] => match word_matchers(literal, mask).as_slice() {
+                [Part::Word(mask)] => match word_matchers(literal, mask)?.as_slice() {
                     [matcher] => self.terms(matcher)?,
                     _ => None,
                 },
@@ -284,7 +284,7 @@ impl FullTextIndex {
     ///
     /// The tree's.
     pub(super) fn terms(&self, matcher: &Matcher) -> Result<Option<Vec<Vec<u8>>>> {
-        if self.unposted(matcher) || *matcher == Matcher::Unknown {
+        if self.unposted(matcher)? || *matcher == Matcher::Unknown {
             return Ok(None);
         }
         self.listed(matcher).map(Some)
@@ -321,16 +321,19 @@ impl FullTextIndex {
     /// Whether a word `matcher` matches may be one the index does not
     /// post while Contains finds it: a word of the index's own stop words
     /// [§4.4.2], or for a word itself, a stop word of any language.
-    fn unposted(&self, matcher: &Matcher) -> bool {
+    fn unposted(&self, matcher: &Matcher) -> Result<bool> {
         if let Matcher::Exact(word) = matcher
             && self.reading.may_stop(word, self.languages())
         {
-            return true;
+            return Ok(true);
         }
-        match &self.reading.stop {
-            StopWords::Words(words) => words.iter().any(|word| matcher.matches(word, self.languages())),
-            StopWords::Language | StopWords::None => false,
+        let StopWords::Words(words) = &self.reading.stop else { return Ok(false) };
+        for word in words.iter() {
+            if matcher.matches(word, self.languages())? {
+                return Ok(true);
+            }
         }
+        Ok(false)
     }
 
     /// The terms of the dictionary beginning with `prefix` that `matcher`
@@ -346,7 +349,7 @@ impl FullTextIndex {
             let term = key.get(1..key.len().saturating_sub(1)).unwrap_or_default();
             let word = String::from_utf8_lossy(term);
             let cut = term.len().saturating_add(CUT_SLACK) > self.most_term;
-            if matcher.matches(&word, languages) || (cut && matcher.matches_prefix(&word)) {
+            if matcher.matches(&word, languages)? || (cut && matcher.matches_prefix(&word)) {
                 out.push(term.to_vec());
             }
         }

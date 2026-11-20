@@ -16,9 +16,12 @@
 //!   Catalan joins the letters around a middle dot, `col·lecció`.
 //! - Chinese, Japanese, Korean, Thai, Lao, Khmer and Burmese, written
 //!   with no spaces between words, are read as character bigrams (D323).
+//! - A language a plug-in serves is named as these are, its parts it does
+//!   not serve those of the built-in language it is LIKE (`served.rs`).
 
 use std::sync::OnceLock;
 
+use super::served;
 use super::snowball::Stemmer;
 use crate::error::{Code, Result, SqlError, SqlState};
 
@@ -112,6 +115,8 @@ pub enum Language {
     Khmer,
     /// Burmese, in the Myanmar script, read as character bigrams.
     Burmese,
+    /// \[EXTENSION\] A language a plug-in serves, by its slot (`served.rs`).
+    Served(u8),
 }
 
 /// How a language's words are normalized [§4.5].
@@ -317,7 +322,9 @@ impl Language {
     /// SQLSTATE 2FF02 if the tokenizer knows none of that name
     /// [§5.1.9 GR].
     pub fn named(name: &str) -> Result<Language> {
-        PROFILES.iter().find(|profile| profile.name.eq_ignore_ascii_case(name)).map(|profile| profile.language).ok_or_else(|| {
+        let built_in = PROFILES.iter().find(|profile| profile.name.eq_ignore_ascii_case(name)).map(|profile| profile.language);
+        let served = || served::named(name).and_then(|slot| u8::try_from(slot).ok()).map(Language::Served);
+        built_in.or_else(served).ok_or_else(|| {
             SqlError::new(Code::Data, format!("[ISO/IEC 13249-2:2002 §5.1.9] no language is named {}", name.to_ascii_uppercase()))
                 .with_state(SqlState::INVALID_LANGUAGE_SPECIFICATION)
         })
@@ -325,37 +332,62 @@ impl Language {
 
     /// Its name.
     pub fn name(self) -> &'static str {
+        if let Language::Served(slot) = self {
+            return served::name_of(slot);
+        }
         self.profile().name
     }
 
-    /// Every language the tokenizer knows, NONE and ENGLISH first, then
-    /// the stemmed languages and those read as bigrams, each in the order
-    /// of its name.
+    /// What serves it, if a plug-in does now.
+    pub(super) fn serving(self) -> Option<std::sync::Arc<dyn served::ServedLanguage>> {
+        if let Language::Served(slot) = self { served::serving(slot) } else { None }
+    }
+
+    /// Whether a plug-in cuts its text into words.
+    pub(super) fn served_segments(self) -> bool {
+        self.serving().is_some_and(|s| s.segments())
+    }
+
+    /// Whether a plug-in stems its words.
+    pub(super) fn served_stems(self) -> bool {
+        self.serving().is_some_and(|s| s.stems())
+    }
+
+    /// The built-in language whose parts it has: itself, or the one a
+    /// served language is LIKE, NONE if no extension serves it now.
+    pub(super) fn base(self) -> Language {
+        if let Language::Served(_) = self { self.serving().map_or(Language::None, |s| s.base()) } else { self }
+    }
+
+    /// Every language the tokenizer has built in, NONE and ENGLISH first,
+    /// then the stemmed languages and those read as bigrams, each in the
+    /// order of its name.
     pub fn all() -> impl Iterator<Item = Language> {
         PROFILES.iter().map(|profile| profile.language)
     }
 
     /// Whether it has a stemmer.
     pub fn stems(self) -> bool {
-        self.profile().program.is_some()
+        self.served_stems() || self.profile().program.is_some()
     }
 
     /// Whether it has stop words of its own.
     pub fn has_stop_words(self) -> bool {
-        self.profile().stop.is_some()
+        self.serving().is_some_and(|s| s.stop_words().is_some()) || self.profile().stop.is_some()
     }
 
     /// Whether its text is read as character bigrams (D323).
     pub fn reads_bigrams(self) -> bool {
-        self.profile().cut == Cut::Bigrams
+        !self.served_segments() && self.profile().cut == Cut::Bigrams
     }
 
-    /// Its place in `PROFILES`.
+    /// Its place in `PROFILES`, that of its base if it is served.
     fn place(self) -> usize {
-        PROFILES.iter().position(|profile| profile.language == self).unwrap_or(0)
+        let base = self.base();
+        PROFILES.iter().position(|profile| profile.language == base).unwrap_or(0)
     }
 
-    /// What the tokenizer does in it.
+    /// What the tokenizer does in it, as its base does if it is served.
     pub(super) fn profile(self) -> &'static Profile {
         PROFILES.get(self.place()).unwrap_or(&PROFILES[0])
     }
@@ -363,6 +395,9 @@ impl Language {
     /// Its stemmer, read the first time it is asked for; none if it does
     /// not stem.
     pub(super) fn stemmer(self) -> Option<&'static Stemmer> {
+        if self.served_stems() {
+            return None;
+        }
         let program = self.profile().program?;
         STEMMERS.get(self.place())?.get_or_init(|| Stemmer::compile(program).ok()).as_ref()
     }
@@ -370,6 +405,9 @@ impl Language {
     /// Its stop words, normalized as `normalize` normalizes its words,
     /// sorted, each once; none if it has no list.
     pub(super) fn stop_list(self, normalize: impl Fn(&str) -> String) -> &'static [String] {
+        if self.serving().is_some_and(|s| s.stop_words().is_some()) {
+            return &[];
+        }
         let Some(list) = self.profile().stop else { return &[] };
         let Some(cell) = STOP_WORDS.get(self.place()) else { return &[] };
         cell.get_or_init(|| {
@@ -413,13 +451,20 @@ impl Languages {
         self.0 & Languages::bit(language) != 0
     }
 
-    /// Its languages, in the order of `Language::all`.
+    /// Its languages, in the order of `Language::all`, then those served
+    /// in the order they were named.
     pub fn iter(self) -> impl Iterator<Item = Language> {
-        Language::all().filter(move |language| self.contains(*language))
+        let served = (0..served::slots()).filter_map(|slot| u8::try_from(slot).ok()).map(Language::Served);
+        Language::all().chain(served).filter(move |language| self.contains(*language))
     }
 
-    /// The bit of `language`.
+    /// The bit of `language`, a served one's past the built-in ones.
     fn bit(language: Language) -> u64 {
-        u32::try_from(language.place()).ok().and_then(|place| 1_u64.checked_shl(place)).unwrap_or(0)
+        let place = if let Language::Served(slot) = language {
+            LANGUAGES.saturating_add(usize::from(slot))
+        } else {
+            PROFILES.iter().position(|profile| profile.language == language).unwrap_or(0)
+        };
+        u32::try_from(place).ok().and_then(|place| 1_u64.checked_shl(place)).unwrap_or(0)
     }
 }

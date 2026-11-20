@@ -3,6 +3,7 @@
 
 mod english;
 mod languages;
+mod served;
 mod vocabulary;
 
 use std::cell::Cell;
@@ -229,8 +230,8 @@ fn english_stop_words() {
 /// Verifies: [ISO/IEC 13249-2:2002 §4.2.3.4] NONE stems a word to itself.
 #[test]
 fn none_stems_to_the_word() {
-    assert_eq!(stem(Language::None, "running"), "running");
-    assert_eq!(stem(Language::English, "running"), "run");
+    assert_eq!(stem(Language::None, "running").unwrap(), "running");
+    assert_eq!(stem(Language::English, "running").unwrap(), "run");
 }
 
 /// Characters of a document of `length` characters, made as they are read,

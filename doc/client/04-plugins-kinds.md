@@ -7,7 +7,8 @@ embedding models, authenticators, backup targets and partitioning
 strategies ([Plug-ins](04-plugins.md)), an extension may bring a
 full-text ranking, a vector quantizer, a collation, a system table, an
 XQuery function, a data type, a storage engine, an index method, the
-database's credentials and a sink of its events. Each is the in-process
+database's credentials, a sink of its events and a language of
+full-text search. Each is the in-process
 extension point of its kind, served by the program over protocol 1.
 
 Every call crosses a pipe and costs a round trip, so the database asks
@@ -379,6 +380,67 @@ written) by a thread of their own, so emitting never waits for a pipe.
 ```text
 CREDENTIALS 1 verifier  user str | password str               -> bytes
 DIAGNOSTICS 1 events    count u32 | (level str | kind str | text str)... | dropped u64  -> (nothing)
+```
+
+## Languages of full-text search
+
+```
+LANGUAGE <identifier> SERVES ( SEGMENT | STEM | STOP, ... ) [ LIKE <identifier> ] [ BATCH <unsigned integer> ]
+```
+
+A language serves full-text search under its own name, wherever a
+built-in language is named: an index's FULLTEXT.LANGUAGE,
+`FULLTEXT(text, language)` and a pattern's language specification.
+SERVES says what the program does. SEGMENT cuts text into words, STEM
+stems a word and STOP gives the stop words. A part it does not serve is
+that of the built-in language written after LIKE, NONE if none is. So a
+program may cut Chinese or Japanese into dictionary words and keep no
+stemmer. Its name may not be a built-in language's, as the built-in
+languages win. Kind 39 has three operations.
+
+```text
+span     := offset u32 | length u32, in characters
+SEGMENT  count u32 | str...   -> count u32 | (count u32 | span...)...
+STEM     count u32 | str...   -> count u32 | str...
+STOP     (nothing)            -> count u32 | str...
+```
+
+A document read is one SEGMENT call, and its words not stemmed before
+one STEM call more, a call carrying BATCH documents or words at most
+(256 if not written). The words of the last 32 short documents are
+kept, so an index that reads a document for its key and for its
+postings asks once, and a stem is kept once answered. The stop words
+are one STOP call, made as the extension is created. A pattern's words
+are cut by the same program. A document is held whole while the
+program cuts it. A language is named in the whole server, as the first
+extension that serves it names it, and at most 21 are served at once.
+An index naming one keeps its extension from being dropped. The example
+plug-in's TOYZH cuts by a dictionary of a dozen words, so `数据库` is
+one word and `数据` inside it is not found, where CHINESE's bigrams
+would find it.
+
+```sql
+CREATE TABLE ZH (ID INTEGER NOT NULL UNIQUE, BODY VARCHAR(200));
+COMMIT;
+CREATE INDEX ZH_BODY ON ZH (BODY) USING FULLTEXT WITH (FULLTEXT.LANGUAGE = TOYZH);
+INSERT INTO ZH VALUES (1, '我们喜欢数据库'), (2, '全文搜索引擎'), (4, '数据');
+SELECT ID FROM ZH WHERE CONTAINS(BODY, '"数据"') = 1;
+SELECT ID FROM ZH WHERE CONTAINS(BODY, '"全文搜索"') = 1;
+```
+
+```
+OK
+OK
+OK
+OK
+           ID
+--------------
+            4
+(1 row)
+           ID
+--------------
+            2
+(1 row)
 ```
 
 ## The points a plug-in may not serve
