@@ -9869,8 +9869,9 @@ size parallel parts (D291), and the asking opens and reads files of the
 system's each time, about a dozen calls. It is asked once, as the
 system's threads do not change while the database runs
 (`physical/parallel.rs`). The catalog's lists sorted by name, read at
-each statement's end to find the constraints a change may break, sort
-by a name made once for each entry, not at each comparison
+each statement's end to find the constraints a change may break, are
+sorted once: the catalog keeps its tables' names in that order, sorted
+as first asked and again once a table is added or removed
 (`catalog/memory.rs`).
 
 #### D406. A procedure's body is kept between CALLs

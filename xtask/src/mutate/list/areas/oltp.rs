@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 7] = [
+pub const OLTP: [Mutation; 8] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -75,6 +75,16 @@ pub const OLTP: [Mutation; 7] = [
         original: "        if !held {",
         replacement: "        if !held || true {",
         integration: &["kept_routines::a_body_that_reads_the_instant_takes_each_calls"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-table-order-kept-stale",
+        package: Package::Core,
+        breaks: "a table added to the catalog after its tables were listed is missing from the next listing",
+        file: "src/catalog/memory.rs",
+        original: "        self.tables.insert(desc.name.clone(), desc);\n        self.table_order = OnceLock::new();\n    }",
+        replacement: "        self.tables.insert(desc.name.clone(), desc);\n    }",
+        integration: &["information_schema::tables_made_and_dropped_are_listed_at_once"],
         unit: &[],
     },
 ];
