@@ -24,12 +24,15 @@ pub struct Statement {
 }
 
 impl Statement {
-    /// [§17.9 GR4] Its dynamic parameters' types, in order.
+    /// [§17.9 GR4] Its dynamic parameters' types, in order: its input
+    /// ones, of a CALL not those of output parameters alone.
     pub fn parameters(&self) -> &[ParameterType] {
         &self.parameters
     }
 
-    /// [§17.9 GR3] The columns of its rows, of a query; none of another.
+    /// [§17.9 GR3] The columns of its rows, of a query; of a CALL, one for
+    /// each `?` of an output parameter, whose values `execute` gives as a
+    /// row [ISO/IEC 9075-2:2023 §20.7 GR7a]; none of another.
     pub fn columns(&self) -> &[Column] {
         &self.columns
     }
@@ -114,8 +117,9 @@ impl<S: Read + Write> Connection<S> {
     }
 
     /// [§17.10, §17.14] Executes `statement` with `values`: a query's rows,
-    /// all of them, or another statement's completion; the transaction
-    /// ended with it under `set_autocommit`.
+    /// all of them; a CALL's output parameters' values, a row of its
+    /// columns; or another statement's completion; the transaction ended
+    /// with it under `set_autocommit`.
     ///
     /// # Errors
     ///

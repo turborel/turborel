@@ -458,7 +458,8 @@ impl Held {
     /// [§17.10, §17.14] Executes statement `at.0` with `values`; a
     /// query's cursor opened as `at.1`, of `attributes`, the transaction
     /// ending as it does if `ends`, at most `rows` of it sent, of the
-    /// columns Prepared gave: no Description.
+    /// columns Prepared gave: no Description. A CALL's output dynamic
+    /// parameters are sent as a row of those columns before its Complete.
     fn execute(
         &mut self,
         at: At,
@@ -468,7 +469,14 @@ impl Held {
     ) -> std::result::Result<Option<Reply>, Cut> {
         let prepared = self.statements.get(&at.0).ok_or_else(|| Cut::Failed(no_statement(at.0)))?;
         if !prepared.is_query() {
-            return self.session.execute_prepared(prepared, values).map(|c| Some(Reply::Complete(c.into()))).map_err(Cut::Failed);
+            let (done, outputs) = self.session.execute_prepared_out(prepared, values).map_err(Cut::Failed)?;
+            // [ISO/IEC 9075-2:2023 §20.7 GR7a] a CALL's output dynamic
+            // parameters, a row of the columns Prepared gave.
+            if prepared.has_outputs() {
+                let row = super::lobs::placed_row(&self.session, outputs, out.inline, &mut out.located).map_err(Cut::Failed)?;
+                out.rows(&mut vec![row]);
+            }
+            return Ok(Some(Reply::Complete(done.into())));
         }
         // [§17.14 GR6, §13.2 GR1]
         if self.cursors.contains_key(&at) {

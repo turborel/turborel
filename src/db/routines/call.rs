@@ -9,14 +9,16 @@
 //! NULL or DEFAULT of an input parameter, and DEFAULT of one both, are of
 //! Features T522 and T523, not supported [§10.4 CR6, CR7]. A target is a
 //! host parameter, an SQL parameter of the procedure whose body the CALL
-//! is, or a column of a BEFORE trigger's new transition variable [§6.4].
+//! is, or a column of a BEFORE trigger's new transition variable [§6.4];
+//! or, of a prepared CALL, a `?`, an output dynamic parameter, or one
+//! both input and output, of the parameter's type [§20.7 GR7a, SR5a].
 //!
 //! The arguments are evaluated, each value of an input parameter assigned
 //! to its type, an output parameter's null [§9.18 GR3, GR4c]. The body's
 //! statement then runs in the context of the procedure (`db/nested.rs`),
 //! as its owner, its parameters its dynamic values (`params/routine.rs`)
 //! [GR6, GR8]. Each output parameter's value is last assigned to its
-//! target [GR10b]. The procedure runs within the CALL statement, so its
+//! target [GR10b], a `?`'s its dynamic value. The procedure runs within the CALL statement, so its
 //! statements share its instant [GR6n] (US).
 
 use std::sync::Arc;
@@ -35,7 +37,7 @@ use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRo
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::execute;
 use crate::logical::{Expr, LogicalPlan};
-use crate::params::{Params, RoutineScope};
+use crate::params::{ParameterType, Params, RoutineScope};
 use crate::storage::Row;
 use crate::value::{Value, assign};
 
@@ -49,6 +51,51 @@ pub(crate) struct BoundCall {
     /// Each output parameter's ordinal position, from 0, and the target
     /// its value is assigned to.
     pub(crate) targets: Vec<(usize, ParameterSpecification)>,
+    /// [ISO/IEC 9075-2:2023 §20.7 GR7a] Each output parameter's ordinal
+    /// position, from 0, whose argument is a `?`, and that `?`'s place
+    /// among the statement's.
+    pub(crate) dynamic: Vec<(usize, usize)>,
+}
+
+/// The target of an output parameter's argument.
+enum Target {
+    /// A `<target specification>` other than a `?`.
+    Spec(ParameterSpecification),
+    /// [ISO/IEC 9075-2:2023 §6.4, §20.7 GR7a] A `<dynamic parameter
+    /// specification>` of a prepared CALL: its place among the
+    /// statement's.
+    Dynamic(usize),
+}
+
+/// [ISO/IEC 9075-2:2023 §6.4, §20.7 GR7a] The place of the `?` the
+/// argument `v` is, possibly in parentheses, if it is one.
+fn dynamic_of(v: &ValueExpression) -> Option<usize> {
+    if let ValueExpression::Nested(inner) = v {
+        return dynamic_of(inner);
+    }
+    if let ValueExpression::Value(ValueSpecification::Dynamic { index, .. }) = v { Some(*index) } else { None }
+}
+
+/// The output parameters' targets of a CALL being bound.
+#[derive(Default)]
+struct Outputs {
+    targets: Vec<(usize, ParameterSpecification)>,
+    dynamic: Vec<(usize, usize)>,
+}
+
+impl Outputs {
+    /// The output parameter `p`, the `k`-th, from 0, assigned to `t` in
+    /// `cx`: a `?` of `p`'s type [§20.7 SR5a].
+    fn push(&mut self, cx: Context<'_>, (k, p): (usize, &SqlParameter), t: Target) -> Result<()> {
+        match t {
+            Target::Spec(spec) => self.targets.push((k, spec)),
+            Target::Dynamic(index) => {
+                drop(cx.params.dynamic_typed(index, Some(ParameterType::Of(p.data_type.clone())))?);
+                self.dynamic.push((k, index));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §9.18 SR9h iii] The `<target specification>` the
@@ -160,37 +207,17 @@ impl State {
                 desc.name
             )));
         };
-        let (mut inputs, mut targets) = (Vec::new(), Vec::new());
+        let mut outputs = Outputs::default();
+        let mut inputs = Vec::new();
         for (k, (p, a)) in desc.parameters.iter().zip(arguments).enumerate() {
-            let target = match a {
-                SqlArgument::Value(v) => target_of(cx, v),
-                SqlArgument::Default(_) | SqlArgument::Null(_) => None,
-            };
-            let value = match (p.mode, a, target) {
-                (ParameterMode::In, SqlArgument::Value(v), _) => input(cx, p, v)?,
-                (ParameterMode::In, SqlArgument::Default(at) | SqlArgument::Null(at), _) => return defaulted("T522", 6, *at),
-                (ParameterMode::InOut, SqlArgument::Default(at), _) => return defaulted("T523", 7, *at),
-                (ParameterMode::Out, _, Some(t)) => {
-                    targets.push((k, t));
-                    Expr::Const(Value::Null)
-                }
-                (ParameterMode::InOut, SqlArgument::Value(v), Some(t)) => {
-                    targets.push((k, t));
-                    input(cx, p, v)?
-                }
-                (ParameterMode::Out, _, None)
-                | (ParameterMode::InOut, SqlArgument::Value(_), None)
-                | (ParameterMode::InOut, SqlArgument::Null(_), _) => {
-                    return no_target(&desc, (k, p.mode == ParameterMode::InOut), a);
-                }
-            };
-            inputs.push(value);
+            inputs.push(argument(cx, (&desc, k, p), a, &mut outputs)?);
         }
+        let Outputs { targets, dynamic } = outputs;
         let columns: Vec<OutColumn> = targets.iter().filter_map(|(k, _)| desc.parameters.get(*k)).map(out_column).collect();
         let specs: Vec<ParameterSpecification> = targets.iter().map(|(_, t)| t.clone()).collect();
         // [SR9h iii 4, 5] Each output parameter's type assignable to its target.
         check_targets(&columns, &specs, cx.params, "§9.18 SR9h iii", "§9.18 SR9h iii 4")?;
-        Ok(BoundCall { desc, inputs, targets })
+        Ok(BoundCall { desc, inputs, targets, dynamic })
     }
 
     /// Whether `call`, its names in schema `schema`, invokes a procedure
@@ -205,8 +232,41 @@ impl State {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §9.18 SR9h iii, iv] The value the `k`-th
+/// parameter `p` of `desc`, from 0, is given by its argument `a`, bound in
+/// `cx`, as its mode allows; the target of an output one kept in
+/// `outputs`.
+fn argument(
+    cx: Context<'_>,
+    (desc, k, p): (&SqlRoutineDesc, usize, &SqlParameter),
+    a: &SqlArgument,
+    outputs: &mut Outputs,
+) -> Result<Expr> {
+    let target = match a {
+        SqlArgument::Value(v) => target_of(cx, v).map(Target::Spec).or_else(|| dynamic_of(v).map(Target::Dynamic)),
+        SqlArgument::Default(_) | SqlArgument::Null(_) => None,
+    };
+    match (p.mode, a, target) {
+        (ParameterMode::In, SqlArgument::Value(v), _) => input(cx, p, v),
+        (ParameterMode::In, SqlArgument::Default(at) | SqlArgument::Null(at), _) => defaulted("T522", 6, *at),
+        (ParameterMode::InOut, SqlArgument::Default(at), _) => defaulted("T523", 7, *at),
+        (ParameterMode::Out, _, Some(t)) => {
+            outputs.push(cx, (k, p), t)?;
+            Ok(Expr::Const(Value::Null))
+        }
+        (ParameterMode::InOut, SqlArgument::Value(v), Some(t)) => {
+            let value = input(cx, p, v)?;
+            outputs.push(cx, (k, p), t)?;
+            Ok(value)
+        }
+        (ParameterMode::Out, _, None)
+        | (ParameterMode::InOut, SqlArgument::Value(_), None)
+        | (ParameterMode::InOut, SqlArgument::Null(_), _) => no_target(desc, (k, p.mode == ParameterMode::InOut), a),
+    }
+}
+
 /// An output parameter as a column whose value is assigned to its target.
-fn out_column(p: &SqlParameter) -> OutColumn {
+pub(in crate::db) fn out_column(p: &SqlParameter) -> OutColumn {
     OutColumn { name: Some(p.name.clone()), collation: None, data_type: p.data_type.clone(), not_null: false, origin: None }
 }
 
@@ -239,6 +299,10 @@ impl Session {
             self.run_body(cx, body, &mut inner)?;
         }
         let out = inner.dynamic_values();
+        // [ISO/IEC 9075-2:2023 §20.7 GR7a] a `?`'s value its output's.
+        for (k, index) in &bound.dynamic {
+            params.set_dynamic(*index, out.get(*k).cloned().unwrap_or(Value::Null))?;
+        }
         let returned: Vec<Value> = bound.targets.iter().map(|(k, _)| out.get(*k).cloned().unwrap_or(Value::Null)).collect();
         let specs: Vec<ParameterSpecification> = bound.targets.iter().map(|(_, t)| t.clone()).collect();
         assign_targets(

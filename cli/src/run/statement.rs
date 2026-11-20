@@ -145,7 +145,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         };
         let mut out = Out { main, tee: self.tee.as_mut(), pager };
         let width = self.terminal.screen.map(|s| s.width);
-        let fetch = self.vars.number(vars::FETCH_COUNT).filter(|n| *n > 0);
+        // A CALL of `?`s fetched as a statement prepared, all at once.
+        let fetch = self.vars.number(vars::FETCH_COUNT).filter(|n| *n > 0).or_else(|| super::statements::calls_out(sql).then_some(0));
         let mut printer = Printer::new(&mut out, &self.layout, width, how.expanded);
         let streamed = match fetch {
             Some(rows) => self.connection.fetch_into(sql, rows, &mut printer),

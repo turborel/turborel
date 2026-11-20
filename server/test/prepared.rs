@@ -31,6 +31,40 @@ fn keys(batch: &[Vec<Value>]) -> Vec<String> {
     batch.iter().map(|r| r[0].to_string()).collect()
 }
 
+/// Verifies: [ISO/IEC 9075-2:2023 §20.7 GR7a, SR5a, §20.10] a CALL
+/// prepared over a connection takes `?` as the argument of an OUT or
+/// INOUT parameter: Prepared describes its input parameters, an INOUT
+/// one's among them, and a column for each output; executed, its outputs'
+/// values come as a row of those columns before its completion, null of
+/// a row not found; a CALL of none completes as another statement does.
+#[test]
+fn a_prepared_call_sends_its_outputs_as_a_row() {
+    let db = database(3);
+    let x = db.session("X");
+    x.run("CREATE PROCEDURE FIND (IN WANTED INTEGER, OUT GOT INTEGER) READS SQL DATA SELECT K * 10 INTO GOT FROM T WHERE K = WANTED")
+        .unwrap();
+    x.run("CREATE PROCEDURE BUMP (INOUT N INTEGER, OUT SEEN VARCHAR(5)) READS SQL DATA SELECT N + MAX(K), 'X' INTO N, SEEN FROM T")
+        .unwrap();
+    x.run("CREATE PROCEDURE ADD_ROW (IN K INTEGER) MODIFIES SQL DATA INSERT INTO T VALUES (K)").unwrap();
+    x.commit().unwrap();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let find = c.prepare("CALL FIND(?, ?)").unwrap();
+    assert_eq!(find.parameters().len(), 1);
+    assert_eq!(find.columns().iter().map(|c| c.name.clone().unwrap_or_default()).collect::<Vec<_>>(), ["GOT"]);
+    let Outcome::Rows { columns, rows: got } = c.execute(&find, &[int(2)]).unwrap() else { panic!("rows") };
+    assert_eq!((columns.len(), keys(&got)), (1, vec!["20".to_owned()]));
+    let Outcome::Rows { rows: none, .. } = c.execute(&find, &[int(9)]).unwrap() else { panic!("rows") };
+    assert_eq!(keys(&none), ["NULL"]);
+    let bump = c.prepare("CALL BUMP(?, ?)").unwrap();
+    assert_eq!(bump.parameters().len(), 1);
+    let Outcome::Rows { rows: bumped, .. } = c.execute(&bump, &[int(4)]).unwrap() else { panic!("rows") };
+    assert_eq!(bumped[0].iter().map(ToString::to_string).collect::<Vec<_>>(), ["7", "X"]);
+    let add = c.prepare("CALL ADD_ROW(?)").unwrap();
+    assert!(add.columns().is_empty());
+    assert!(matches!(c.execute(&add, &[int(4)]).unwrap(), Outcome::Done(_)));
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6, §17.8, §17.10, §17.14,
 /// §17.15, §17.16, §17.7]; [DESIGN] RULES.md D45: a statement prepared over
 /// a connection is described, its parameters' types and its columns; a
