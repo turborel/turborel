@@ -246,9 +246,12 @@ impl Builder<'_> {
     fn explicit_content(&mut self, children: &[(At<'_>, &str)], local: Local) -> Result<Option<Particle>> {
         let Some((at, which)) = children.iter().find(|(_, l)| GROUPS.contains(l)) else { return Ok(None) };
         let own: Vec<(At<'_>, &str)> = at.children()?.into_iter().filter(|(_, l)| *l != "annotation").collect();
+        // [Schema1 Appendix A] minOccurs and maxOccurs are read, so of
+        // values not of their types refused, empty or not.
+        let (min, _) = at.occurs()?;
         let empty = match *which {
             "all" | "sequence" => own.is_empty(),
-            "choice" => own.is_empty() && at.occurs()?.0 == 0,
+            "choice" => own.is_empty() && min == 0,
             _ => false,
         };
         if empty {

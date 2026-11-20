@@ -11,6 +11,7 @@ use crate::xml::{Syntax, Whitespace, parse};
 mod complex;
 mod compose;
 mod depth;
+mod refusals;
 mod restriction;
 mod simple;
 
