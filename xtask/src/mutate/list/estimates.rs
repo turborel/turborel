@@ -93,7 +93,7 @@ pub const ESTIMATES: [Mutation; 8] = [
         breaks: "a node a rule rewrote is left to the next pass, so the rules take as many passes as when restarted",
         file: "src/optimizer.rs",
         original: "    while *budget > 0 {",
-        replacement: "    if *budget > 0 {",
+        replacement: "    for _ in 0..usize::from(*budget > 0) {",
         integration: &[],
         unit: &["optimizer::drivers::rewriting_a_node_again_takes_fewer_passes"],
     },
