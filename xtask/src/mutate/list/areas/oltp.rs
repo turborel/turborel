@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 4] = [
+pub const OLTP: [Mutation; 5] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -46,5 +46,15 @@ pub const OLTP: [Mutation; 4] = [
         replacement: "    matches!(slot.data_type, DataType::Boolean).then_some((column, Held::Slot(slot.index)))",
         integration: &[],
         unit: &["optimizer::transitivity::joined::tests::a_column_equal_to_an_exact_parameter_is_held_by_its_place"],
+    },
+    Mutation {
+        name: "oltp-budget-recorded-over-given",
+        package: Package::Core,
+        breaks: "a database opened again makes its pool in the budget it recorded, not the one given as it opens",
+        file: "src/db/files.rs",
+        original: "snapshot.memory.set_limit(crate::settings::budget_bytes(values.get(crate::settings::MEMORY_BUDGET_BYTES)));",
+        replacement: "snapshot.memory.set_limit(recorded(\"MEMORY.BUDGET_BYTES\").map_or(crate::memory::DEFAULT_BUDGET, |v| crate::settings::budget_bytes(&v)));",
+        integration: &["creation::the_budget_given_as_the_database_opens_holds_its_pool"],
+        unit: &[],
     },
 ];
