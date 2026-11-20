@@ -37,8 +37,10 @@
 //! summed, its zones settled and not, alone (`analytics/counts.rs`),
 //! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
 //! to `grouping`, groupings on one thread alone (`analytics/grouping.rs`),
-//! or to `late`, a column store's selective queries, the columns they keep
-//! few rows of read late, alone (`analytics/late.rs`).
+//! to `late`, a column store's selective queries, the columns they keep
+//! few rows of read late, alone (`analytics/late.rs`), or to
+//! `groupjoins`, groupings of joins on their keys and index joins by
+//! batch alone (`analytics/groupjoins.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -63,6 +65,8 @@ mod expressions;
 mod graph;
 #[path = "analytics/grouping.rs"]
 mod grouping;
+#[path = "analytics/groupjoins.rs"]
+mod groupjoins;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
@@ -135,6 +139,7 @@ fn main() {
     counts::workloads(&bench);
     decode::workloads(&bench);
     late::workloads(&bench);
+    groupjoins::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -148,6 +153,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
         "late" => late::workloads,
+        "groupjoins" => groupjoins::workloads,
         _ => return false,
     };
     run(bench);

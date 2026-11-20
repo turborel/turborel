@@ -378,6 +378,46 @@ OK
 (12 rows)
 ```
 
+A grouping on a join's key computed as a groupjoin (RULES.md D490),
+over PARTS and OFFERS above, on the two threads the example before set.
+Each part is one group, keyed by its
+PRIMARY KEY, so the parts are read into the table of groups first and
+each offer is fed to its part's group, no joined row made. A part no
+offer names is a group too, of the LEFT join, fed one row of nulls, so
+its COUNT(OFFERS.PRICE) is 0. `SET OPTIMIZER.GROUPJOIN = 'OFF'` leaves
+the grouping over the join.
+
+```sql
+EXPLAIN SELECT PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
+    FROM PARTS LEFT JOIN OFFERS ON PARTS.ID = OFFERS.PART GROUP BY PARTS.ID;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
+   Aggregate group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)]
+     Left outer join on PARTS.ID = OFFERS.PART
+       Scan ANN.PARTS
+       Scan ANN.OFFERS
+ -- rules: none
+ -- optimized:
+ Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
+   Aggregate group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)]
+     Left outer join on PARTS.ID = OFFERS.PART
+       Scan ANN.PARTS
+       Scan ANN.OFFERS
+ -- physical:
+ Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
+   Parallel  (degree=2)
+     LeftGroupJoin group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)] on PARTS.ID = OFFERS.PART  (hashed on PARTS.ID = OFFERS.PART)
+       Parallel  (degree=2)
+         SeqScan ANN.PARTS  (rows=1000, cost=900.0)
+       SeqScan ANN.OFFERS  (rows=5000, cost=4666.7)
+(20 rows)
+```
+
 ## STANDARD
 
 EXPLAIN is an extension of turborel. No part of ISO/IEC 9075 shows how

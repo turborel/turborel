@@ -11,6 +11,7 @@
 //! An unordered spatial join can instead buffer a bounded outer input
 //! and scan the table once when estimated cheaper (`indexed/adaptive.rs`).
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use super::super::entries::{Reading, fetch};
@@ -21,7 +22,7 @@ use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::Result;
 use crate::functions::ScalarRef;
-use crate::index::{Entries, Index, Key, KeyOrder};
+use crate::index::{Entries, Index, Key, KeyOrder, Probe};
 use crate::logical::{Cond, Truth};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
@@ -31,11 +32,13 @@ use crate::txn::{Stop, TxId, checked};
 use crate::value::Value;
 
 mod adaptive;
+mod batched;
 mod paired;
 mod preserved;
 mod refined;
 mod routed;
 
+use batched::Batched;
 use preserved::Matched;
 use refined::Binding;
 use routed::{Opened, Routes};
@@ -55,6 +58,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
         return failed(broken("an index join is not one"));
     };
     let inner = matches!(outer, Preserved::Inner);
+    let batched = batched_of((&probe, &index, spatial.is_none() && !matches!(outer, Preserved::Both(_))), db);
     let opened = opened(db, &table, &index)
         .and_then(|(storage, found, ix, routes)| Ok((storage, found, ix, routes, Matched::of(outer, &needed, db)?)));
     match opened {
@@ -70,7 +74,9 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
                     stop: db.tx.stop_of(tx),
                     located,
                     routes,
+                    ready: VecDeque::new(),
                 },
+                batched,
                 budget: prepared::budget(db).filter(|_| matches!(probe, JoinProbe::Predicate { .. })).map(Arc::clone),
                 prepared: None,
                 probe,
@@ -87,6 +93,15 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
         }
         Err(e) => failed(e),
     }
+}
+
+/// \[DESIGN\] (RULES.md D491) The batches an index join by `probe` of
+/// `index` reads its outer rows in, if `alone` it is neither spatial nor
+/// FULL, EXECUTOR.BATCHED_INDEX_JOINS is on, and the index's keys are
+/// unique (`indexed/batched.rs`).
+fn batched_of((probe, index, alone): (&JoinProbe, &str, bool), db: &State) -> Option<Batched> {
+    let on = if let Value::Char(s) = db.settings.get(crate::settings::EXECUTOR_BATCHED_INDEX_JOINS) { s != "OFF" } else { true };
+    (alone && on).then(|| db.catalog.index(index).and_then(|desc| Batched::of(probe, desc))).flatten()
 }
 
 /// What an index join of `table` by `index` reads: the table's rows, the
@@ -140,6 +155,9 @@ struct Probed {
     /// \[EXTENSION\] Of a partitioned table's template, each partition's
     /// index, a probe routed to those its values may be in.
     routes: Option<Routes>,
+    /// Of a probe by batch, the rows of its entries fetched already, each
+    /// taken in place of a fetch as its entry is (`indexed/batched.rs`).
+    ready: VecDeque<Option<Row>>,
 }
 
 impl Probed {
@@ -147,17 +165,23 @@ impl Probed {
     /// spatial predicate the region the index reads, or else the whole
     /// table (`exec/read.rs`). A NULL operand selects no entries.
     fn entries(&mut self, binding: &JoinProbe, row: &Row) -> Result<Entries> {
-        if let Some(stop) = &self.stop {
-            stop.check()?;
-        }
         let Some(probe) = binding.bind(row, self.ix.columns.len())? else {
             return Ok(Box::new(std::iter::empty()));
         };
-        Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
+        self.searched(&probe)
+    }
+
+    /// Records the comparison read by `probe`, or the region or the table,
+    /// and the entries it selects (`entries`).
+    fn searched(&mut self, probe: &Probe) -> Result<Entries> {
+        if let Some(stop) = &self.stop {
+            stop.check()?;
+        }
+        Asked::of(&*self.index, &self.ix, probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
         let entries = match &self.routes {
-            Some(routes) => routes.search(&probe),
-            None => Arc::clone(&self.index).search(&probe, KeyOrder::Ascending),
+            Some(routes) => routes.search(probe),
+            None => Arc::clone(&self.index).search(probe, KeyOrder::Ascending),
         };
         Ok(Box::new(checked(entries, self.stop.clone())))
     }
@@ -166,6 +190,9 @@ impl Probed {
     /// followed by its id if located.
     fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
+        if let Some(row) = self.ready.pop_front() {
+            return Ok(row);
+        }
         let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
         Ok(found.map(|(_, mut row)| {
             if self.located {
@@ -201,6 +228,9 @@ struct IndexJoin {
     /// adaptive join observes this work before requesting extra estimates.
     candidates: usize,
     output: Option<Columns>,
+    /// Of a join probing a unique index by batch, its outer rows read so
+    /// (`indexed/batched.rs`).
+    batched: Option<Batched>,
     /// A single spatial conjunct can refine borrowed rows before their
     /// selected output is built. Residuals retain the full row evaluator.
     refinement: Option<(Binding, ScalarRef)>,
@@ -221,8 +251,7 @@ impl IndexJoin {
                 return self.unmatched();
             }
             let Some((l, mut entries, found)) = self.current.take() else {
-                let Some(l) = self.left.next().transpose()? else { return self.unmatched() };
-                let entries = self.table.entries(&self.probe, &l)?;
+                let Some((l, entries)) = self.outer()? else { return self.unmatched() };
                 self.prepare(&l)?;
                 self.current = Some((l, entries, false));
                 self.candidates = 0;
@@ -250,6 +279,20 @@ impl IndexJoin {
                 return Ok(Step::Row(joined));
             }
         }
+    }
+
+    /// The next outer row and the entries its key selects: of a join by
+    /// batch, found already, their rows ready.
+    fn outer(&mut self) -> Result<Option<(Row, Entries)>> {
+        let Some(batched) = self.batched.as_mut() else {
+            let Some(l) = self.left.next().transpose()? else { return Ok(None) };
+            let entries = self.table.entries(&self.probe, &l)?;
+            return Ok(Some((l, entries)));
+        };
+        let Some((l, (found, failed))) = batched.next(&mut self.left, (&mut self.table, &self.probe))? else { return Ok(None) };
+        let (entries, rows): (Vec<_>, VecDeque<_>) = found.into_iter().unzip();
+        self.table.ready = rows;
+        Ok(Some((l, Box::new(entries.into_iter().map(Ok).chain(failed.map(Err))))))
     }
 
     /// `l` joined with the row of `entry`, if the version read has it and

@@ -147,6 +147,13 @@ fn outside(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
         outside(asked, left, deeper);
         return walk(asked, right, deeper);
     }
+    // A groupjoin's build, and the grouping it gives way to, are read
+    // apart from its probe's pipeline.
+    if let Plan::GroupJoin(g) = plan {
+        outside(asked, &mut g.probe, deeper);
+        walk(asked, &mut g.build, deeper);
+        return walk(asked, &mut g.instead, deeper);
+    }
     plan.each_input(&mut |input| outside(asked, input, deeper));
 }
 
@@ -163,6 +170,10 @@ fn filtered(plan: &Plan) -> bool {
 
 /// The rows a part rooted at `plan` reads, if it is one.
 fn rooted(plan: &Plan) -> Option<usize> {
+    // [DESIGN] a groupjoin's probe grouped by morsels (RULES.md D490).
+    if let Plan::GroupJoin(g) = plan {
+        return mergeable(&g.aggs).then(|| stream(&g.probe)).flatten();
+    }
     if let Plan::Aggregate { aggs, input, .. } = plan {
         return mergeable(aggs).then(|| stream(input)).flatten();
     }
@@ -247,7 +258,7 @@ fn mergeable(aggs: &[AggCall]) -> bool {
 
 /// Whether a worker evaluates `e` alone: it reads no subquery, invokes no
 /// routine, takes no sequence's value and holds no parameter's.
-fn calm(e: &Expr) -> bool {
+pub(super) fn calm(e: &Expr) -> bool {
     let own = match e {
         Expr::Subquery(..) | Expr::Invoked(_) | Expr::NextValue(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Domain(..) => false,
         Expr::Case(whens, _) => whens.iter().all(|(c, _)| calm_cond(c)),
@@ -267,7 +278,7 @@ fn calm(e: &Expr) -> bool {
 }
 
 /// Whether a worker evaluates `c` alone, as `calm` says of expressions.
-fn calm_cond(c: &Cond) -> bool {
+pub(super) fn calm_cond(c: &Cond) -> bool {
     let mut all = c.subqueries().is_empty();
     c.for_each_expr(&mut |e| all = all && calm(e));
     all

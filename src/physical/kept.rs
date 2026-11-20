@@ -170,7 +170,8 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => false,
+        | Plan::Parallel(..)
+        | Plan::GroupJoin(..) => false,
     }
 }
 

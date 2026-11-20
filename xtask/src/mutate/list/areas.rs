@@ -55,7 +55,7 @@ pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// The first half of the areas, in order.
-fn first() -> [&'static [Mutation]; 25] {
+fn first() -> [&'static [Mutation]; 26] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -74,6 +74,7 @@ fn first() -> [&'static [Mutation]; 25] {
         &super::distinct_predicate::DISTINCT_PREDICATE,
         &super::partitioned_joins::PARTITIONED_JOINS,
         &super::grouping_sets::GROUPING_SETS,
+        &super::groupjoins::GROUPJOINS,
         &super::listagg::LISTAGG,
         &super::null_ordering::NULL_ORDERING,
         &super::windows::WINDOWS,

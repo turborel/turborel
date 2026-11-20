@@ -51,6 +51,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         Plan::Parallel(p) => same_parallel(p, other),
         Plan::Product { .. }
         | Plan::HashJoin { .. }
+        | Plan::GroupJoin(..)
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::OuterJoin { .. }

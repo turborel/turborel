@@ -37,6 +37,8 @@ behind it, and each can be replaced or added to.
 - Row and columnar storage, chosen per table, the columnar store's filters
   judged in place and its other columns decoded of the rows kept alone.
 - DISTINCT set functions computed by two groupings, read by batches.
+- Groupjoins, a grouping on a join's key computed in the join's table,
+  in parallel too; index joins probing a unique index by sorted batches.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
 - One table of groups with typed keys and columns of set functions'

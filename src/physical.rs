@@ -26,6 +26,9 @@ pub use decided::Decided;
 pub(crate) mod estimate;
 mod expression_index;
 mod grouping;
+mod groupjoin;
+pub(crate) use groupjoin::groupjoined;
+pub use groupjoin::{GROUPJOIN, GroupJoin};
 mod indexed;
 mod join_probe;
 pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spatial, Supplied, Unmatched};
@@ -417,6 +420,8 @@ pub enum Plan {
     Polymorphic(Box<Polymorphic<Plan>>),
     /// \[DESIGN\] Its input run by morsels on threads at once, its rows in order (RULES.md D290).
     Parallel(Box<Parallel>),
+    /// \[DESIGN\] A grouping of a join computed in the join's table (`physical/groupjoin.rs`, RULES.md D490).
+    GroupJoin(Box<GroupJoin>),
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's
@@ -482,7 +487,9 @@ impl<'a> PhysicalPlanner<'a> {
             return self.build(logical, &[]).plan;
         }
         let estimates = Estimates::over(self.db, logical);
-        PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan
+        let plan = PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan;
+        // [DESIGN] groupings of joins computed as groupjoins (RULES.md D490).
+        groupjoined(self.db, plan)
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if

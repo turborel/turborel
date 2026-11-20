@@ -90,7 +90,8 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Parallel(..)
+        | Plan::GroupJoin(..) => None,
     }
 }
 
@@ -161,7 +162,8 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => false,
+        | Plan::Parallel(..)
+        | Plan::GroupJoin(..) => false,
     }
 }
 
@@ -258,7 +260,8 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => none,
+        | Plan::Parallel(..)
+        | Plan::GroupJoin(..) => none,
     };
     made(plan, (db, tx), deferred)
 }

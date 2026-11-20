@@ -230,6 +230,7 @@ fn annotate(plan: &mut Plan, note: &str) {
         Plan::Project { input, .. } => annotate(input, note),
         Plan::SeqScan { .. }
         | Plan::Parallel(_)
+        | Plan::GroupJoin(..)
         | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::Product { .. }

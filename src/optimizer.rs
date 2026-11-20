@@ -21,6 +21,7 @@ mod disjunctions;
 mod distinct_aggregates;
 mod elimination;
 mod folding;
+mod groupjoin;
 mod hoisting;
 mod inlining;
 mod limits;
@@ -61,6 +62,7 @@ pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
 pub use elimination::{ELIMINATE_JOINS, EliminateJoins};
 pub use folding::ConstantFolding;
+pub use groupjoin::{GROUPJOIN, GroupJoins};
 pub use hoisting::{HOIST_RAISING_EXPRESSIONS, HoistRaisingExpressions};
 pub use limits::{PUSH_LIMIT_THROUGH_UNION, PushLimitThroughUnion};
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
@@ -167,6 +169,8 @@ impl Optimizer {
         o.add(Box::new(PushHavingIntoWhere));
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
+        // Last: it rewrites nothing, its switch read as the plan is made.
+        o.add(Box::new(GroupJoins));
         o
     }
 

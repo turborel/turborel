@@ -67,6 +67,14 @@ impl Filling<'_> {
         Ok(Plan::Parallel(p))
     }
 
+    /// The set function `a`, its expressions filled.
+    fn agg(&self, a: AggCall) -> Result<AggCall> {
+        let arg = a.arg.map(|e| self.expr(e)).transpose()?;
+        let distribution =
+            a.distribution.map(|d| Ok::<_, SqlError>(Box::new(Distribution { fraction: self.expr(d.fraction.clone())?, ..*d })));
+        Ok(AggCall { arg, filter: a.filter.map(|c| self.cond(c)).transpose()?, distribution: distribution.transpose()?, ..a })
+    }
+
     fn plan(&self, plan: Plan) -> Result<Plan> {
         match plan {
             Plan::Project { exprs, detail, input } => {
@@ -81,15 +89,7 @@ impl Filling<'_> {
             Plan::SeqScan { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
             Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est } => {
-                let filled_agg = |a: AggCall| {
-                    let arg = a.arg.map(|e| self.expr(e)).transpose()?;
-                    let distribution = match a.distribution {
-                        Some(d) => Some(Box::new(Distribution { fraction: self.expr(d.fraction.clone())?, ..*d })),
-                        None => None,
-                    };
-                    Ok(AggCall { arg, filter: a.filter.map(|c| self.cond(c)).transpose()?, distribution, ..a })
-                };
-                let aggs = aggs.into_iter().map(filled_agg).collect::<Result<_>>()?;
+                let aggs = aggs.into_iter().map(|a| self.agg(a)).collect::<Result<_>>()?;
                 Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est })
             }
             Plan::Distinct { input, est } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est }),
@@ -104,6 +104,7 @@ impl Filling<'_> {
             Plan::MergeAppend { inputs, keys, detail } => Ok(Plan::MergeAppend { inputs: self.plans(inputs)?, keys, detail }),
             Plan::Product { .. }
             | Plan::HashJoin { .. }
+            | Plan::GroupJoin(..)
             | Plan::IndexJoin { .. }
             | Plan::MergeJoin(_)
             | Plan::OuterJoin { .. }

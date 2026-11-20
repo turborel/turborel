@@ -23,6 +23,7 @@ mod entries;
 mod eval;
 mod graph_table;
 mod group;
+mod groupjoin;
 mod held;
 mod invoked;
 mod join;
@@ -154,6 +155,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Polymorphic(..) => ptf::polymorphic,
         // [DESIGN] by morsels on the workers (RULES.md D290).
         Plan::Parallel(..) => parallel::parallel,
+        // [DESIGN] a grouping of a join computed in the join's table (RULES.md D490).
+        Plan::GroupJoin(..) => groupjoin::groupjoin,
     };
     run(plan, db, tx)
 }
@@ -188,7 +191,8 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Polymorphic(..)
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => failed(broken("a join is not one")),
+        | Plan::Parallel(..)
+        | Plan::GroupJoin(..) => failed(broken("a join is not one")),
     }
 }
 

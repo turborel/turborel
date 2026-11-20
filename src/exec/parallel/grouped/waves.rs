@@ -84,7 +84,11 @@ pub(super) fn waved(
     let work = Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
-        let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
+        let mut batches = pipeline.morsel_kept(m, (&db_for, tx))?;
+        // A groupjoin's probe rows, each tagged with its group (`joined.rs`).
+        if let Some(tag) = &making.tag {
+            batches = super::joined::tagged(tag, batches, &db_for);
+        }
         let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed))?;
         if table.len().saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= table.taken {
             return table.frozen().map(Handed::Whole);

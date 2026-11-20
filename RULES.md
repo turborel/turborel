@@ -378,6 +378,8 @@ verification approach DO-178C expects (§8).
 | D400 | DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's |
 | D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
 | D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
+| D490 | A grouping on a join's key is computed in the join's table, a groupjoin |
+| D491 | An index join probes a unique index for a batch of its outer rows, sorted by key |
 
 ### The project
 
@@ -10538,6 +10540,55 @@ A typed, temporary, system-versioned or partitioned table, a node or
 edge table, one a vector pipeline keeps and one of a column registered
 with a spatial or linear referencing system are known by name
 elsewhere, so none is renamed.
+
+#### D490. A grouping on a join's key is computed in the join's table, a groupjoin
+
+A grouping over a join on a key of one operand, the group operand, kept
+each of its rows as a joined row first, then found its group again by
+hashing the key a second time. Once the physical plan is made, each
+grouping of an inner hash join or of a LEFT join of keys alone, under
+projections of columns, is a groupjoin (`physical/groupjoin.rs`) where
+the grouping columns hold a unique set of the group operand among its
+key columns, null-safe or matched by keys on which a null matches
+nothing; every other grouping column is the group operand's, or of an
+inner join the other operand's key column whose value and type are its
+key's; every set function reads the other operand alone, none DISTINCT,
+filtered or an inverse distribution function, but a filter by the marker
+unnesting adds; and the keys are exact numbers, dates or truth values,
+which the executor's table matches as the join does. So each group is
+one row of the group operand and the rows it joined, as Moerkotte and
+Neumann (PVLDB 2011) show.
+
+It is planned in one of two forms, or left as it was, as the operands'
+estimates say. The memoizing form reads the group operand into the
+executor's table by its keys and feeds each row of the other, by batch,
+to the group its keys find, no joined row made (`exec/groupjoin.rs`);
+run in parallel, the other operand's morsels are tagged with their
+groups, found in the shared table of keys, and grouped by the tag as any
+grouping by batch (`exec/parallel/grouped/joined.rs`). The eager form of
+Fent and Neumann (PVLDB 2021), of an inner join alone, groups the other
+operand by its keys first and joins the groups; it is made only where
+early grouping can raise or warn of no row the join would not keep. Both
+give the grouping's groups in its order, the group operand's or that of
+each group's first joined row, and feed each set function its values in
+the join's order, so a sum of approximate numbers is the same sum. Of a
+LEFT join a group no row joined is fed one row of nulls, as the join
+gives it. A build past MEMORY.WORK_BYTES gives way to the grouping over
+the join (D38). OPTIMIZER.GROUPJOIN turns it off (D36).
+
+#### D491. An index join probes a unique index for a batch of its outer rows, sorted by key
+
+An index join probed its index once for each outer row as it came, in
+the outer rows' order. Of an equality on every column of a unique index,
+neither spatial nor FULL, it reads its outer rows by batch instead
+(`exec/join/indexed/batched.rs`): each row's probe bound, the probes
+sorted by their keys and each key searched for once, its row fetched
+then, so the index's pages and the table's are read in key order and a
+key that repeats is found once; then each outer row joined in its order
+with what its key found. A batch starts small and doubles to a bound, so
+a query that asks for few rows reads few beyond them. A failure binding,
+searching or fetching is raised at its row, after the rows before it.
+EXECUTOR.BATCHED_INDEX_JOINS turns it off (D36).
 
 ## 2. Project layout
 

@@ -35,7 +35,7 @@ use crate::exec::batch::{Fed, Taken};
 use crate::logical::AggCall;
 use crate::storage::{Batch, Row};
 use slots::{MAX_PROBE, Slots};
-use states::States;
+pub(in crate::exec) use states::States;
 
 /// The rows of a batch taken by a table's groups, to be fed to their
 /// states: each one's place among those given, its place in the batch,
@@ -199,6 +199,20 @@ impl<S: Columns> GroupTable<S> {
             self.rekeyed();
         }
         probe.found
+    }
+
+    /// The group of `key`, of hash `hash`, if it has one, the table left
+    /// as it is, so threads find groups in it at once (RULES.md D490); a
+    /// key's bytes made in `scratch`.
+    pub(in crate::exec) fn found(&self, hash: u64, key: Key<'_>, scratch: &mut Vec<u8>) -> Option<u32> {
+        let placed = if self.keyed.is_some() {
+            scratch.clear();
+            key.put(self.keys.width(), scratch);
+            self.seed.keyed(scratch)
+        } else {
+            hash
+        };
+        self.slots.find(placed, |g| self.keys.equal(crate::storage::mask::index(g), key, scratch)).found
     }
 
     /// Makes the group of `key`, of hash `hash`, its first row the

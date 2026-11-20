@@ -131,6 +131,8 @@ pub(super) fn parallel(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         partitioned::windowed
     } else if matches!(input, Plan::SetOp { .. }) {
         partitioned::set_operation
+    } else if matches!(input, Plan::GroupJoin(..)) {
+        grouped::group_joined
     } else {
         streamed
     };

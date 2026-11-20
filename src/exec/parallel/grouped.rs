@@ -27,7 +27,10 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 
+mod joined;
 mod waves;
+
+pub(super) use joined::group_joined;
 
 use super::batched::ByBatch;
 use super::pipeline::Pipeline;
@@ -38,6 +41,7 @@ use crate::db::State;
 use crate::error::{Result, SqlState};
 use crate::exec::batch::{Read, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
+use crate::exec::groupjoin::Tag;
 use crate::exec::table::Seed;
 use crate::exec::{RowIter, Runner, broken, eval, warn};
 use crate::functions::Accumulator;
@@ -87,6 +91,9 @@ struct Grouping {
     distinct: bool,
     read: Option<Read>,
     seed: Seed,
+    /// Of a groupjoin's probe, what tags each batch's rows with their
+    /// groups before they are grouped by that tag (`grouped/joined.rs`).
+    tag: Option<Arc<Tag>>,
 }
 
 impl Grouping {
@@ -109,10 +116,10 @@ impl Grouping {
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
-        (Grouping { spec, distinct: false, read: None, seed: db.functions.seed().clone() }, input)
+        (Grouping { spec, distinct: false, read: None, seed: db.functions.seed().clone(), tag: None }, input)
     } else if let Plan::Distinct { input, .. } = plan {
         let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
-        (Grouping { spec, distinct: true, read: None, seed: db.functions.seed().clone() }, input)
+        (Grouping { spec, distinct: true, read: None, seed: db.functions.seed().clone(), tag: None }, input)
     } else {
         return Err(broken("not a grouping run in parallel"));
     };

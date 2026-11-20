@@ -1,0 +1,51 @@
+//! The mutations of groupjoins and index joins by batch (RULES.md R-TEST-9,
+//! D490, D491): a LEFT join's unmatched groups, the order of groups by
+//! their first probe rows, the uniqueness that makes each group one row of
+//! the group operand, and the outer rows' order of a join by batch.
+
+use super::{Mutation, Package};
+
+/// The mutations of groupjoins and index joins by batch, in the order
+/// they run.
+pub const GROUPJOINS: [Mutation; 4] = [
+    Mutation {
+        name: "groupjoin-left-unmatched-dropped",
+        package: Package::Core,
+        breaks: "a LEFT join's group no row joined is left out, not fed a row of nulls",
+        file: "src/exec/groupjoin.rs",
+        original: "        let Some(values) = joined.or_else(|| empty.clone()) else { continue };",
+        replacement: "        let Some(values) = joined else { continue };",
+        integration: &["groupjoins::groupjoins_give_the_groupings_rows"],
+        unit: &[],
+    },
+    Mutation {
+        name: "groupjoin-first-order-skipped",
+        package: Package::Core,
+        breaks: "groups of a build that was the join's right operand come in the build's order, not their first probe rows'",
+        file: "src/exec/groupjoin.rs",
+        original: "    if g.by_first {",
+        replacement: "    if g.by_first && g.outer {",
+        integration: &["groupjoins::groupjoins_give_the_groupings_rows"],
+        unit: &[],
+    },
+    Mutation {
+        name: "groupjoin-uniqueness-unchecked",
+        package: Package::Core,
+        breaks: "a grouping whose columns hold no unique set of the group operand is planned as a groupjoin",
+        file: "src/physical/groupjoin/recognized.rs",
+        original: "    found_once(&kept, keys, |k| k.left)",
+        replacement: "    !keys.is_empty()",
+        integration: &["groupjoins::groupings_no_groupjoin_computes"],
+        unit: &[],
+    },
+    Mutation {
+        name: "batched-index-join-order-lost",
+        package: Package::Core,
+        breaks: "an index join by batch gives its outer rows last first",
+        file: "src/exec/join/indexed/batched.rs",
+        original: "        match self.queue.pop_front() {",
+        replacement: "        match self.queue.pop_back() {",
+        integration: &["index_join_batches::batches_of_outer_rows_join_as_rows_alone"],
+        unit: &[],
+    },
+];

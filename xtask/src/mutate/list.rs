@@ -37,6 +37,7 @@ mod graph_search;
 mod graph_syntax;
 mod graph_table;
 mod grouping_sets;
+mod groupjoins;
 mod guarded;
 mod hash;
 mod hypothetical;

@@ -3,8 +3,8 @@
 //! statement asks of them, its degree, the rows of its morsels and the
 //! least rows it reads in parallel.
 
-use super::builtin::{at_least, count, defined};
-use super::{Definition, Effect, Key};
+use super::builtin::{ON, SWITCHES, at_least, count, defined, text};
+use super::{Definition, Effect, Key, Kind};
 
 /// EXECUTOR.WORKERS.
 pub const EXECUTOR_WORKERS: Key = Key(82);
@@ -14,6 +14,8 @@ pub const EXECUTOR_DEGREE: Key = Key(83);
 pub const EXECUTOR_MORSEL_ROWS: Key = Key(84);
 /// EXECUTOR.PARALLEL_MIN_ROWS.
 pub const EXECUTOR_PARALLEL_MIN_ROWS: Key = Key(85);
+/// EXECUTOR.BATCHED_INDEX_JOINS (RULES.md D491).
+pub const EXECUTOR_BATCHED_INDEX_JOINS: Key = Key(86);
 
 /// \[DESIGN\] The default of EXECUTOR.MORSEL_ROWS: enough rows that taking a
 /// morsel costs little beside reading it, few enough that the last
@@ -32,8 +34,9 @@ const DATABASE: (bool, Effect) = (false, Effect::Statement);
 /// A setting a session may set for itself, from its next statement.
 const SESSION: (bool, Effect) = (true, Effect::Statement);
 
-/// The settings of parallel queries, in the order of their keys.
-pub(super) fn definitions() -> [Definition; 4] {
+/// The settings of parallel queries and of index joins by batch, in the
+/// order of their keys.
+pub(super) fn definitions() -> [Definition; 5] {
     [
         defined(
             ("EXECUTOR.WORKERS", at_least(0), count(0)),
@@ -54,6 +57,11 @@ pub(super) fn definitions() -> [Definition; 4] {
             ("EXECUTOR.PARALLEL_MIN_ROWS", at_least(0), count(DEFAULT_PARALLEL_MIN_ROWS)),
             SESSION,
             "The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.",
+        ),
+        defined(
+            ("EXECUTOR.BATCHED_INDEX_JOINS", Kind::Choice(SWITCHES), text(ON)),
+            SESSION,
+            "Whether an index join probes a unique index for a batch of its outer rows at a time, their keys sorted and each found once: ON; or for each outer row as it comes, OFF, as to compare the two. Its rows are the same either way.",
         ),
     ]
 }

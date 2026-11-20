@@ -76,7 +76,17 @@ impl Traversal {
         let stop = join.table.stop.clone();
         let pairs: KeyPairs = Box::new(checked(outer_tree.pairs(&inner_tree, &db.memory)?, stop.clone()));
         let reading = Reading::of(&ix, Some(&columns), found.key_projection());
-        let outer = Probed { storage, index: Arc::clone(found), ix, reading, tx, stop, located, routes: None };
+        let outer = Probed {
+            storage,
+            index: Arc::clone(found),
+            ix,
+            reading,
+            tx,
+            stop,
+            located,
+            routes: None,
+            ready: std::collections::VecDeque::new(),
+        };
         let kept = if join.nulls.is_none() { None } else { Some(Ids::new(db)?) };
         Ok(Some(Traversal { outer, filter, through, pairs, kept, columns }))
     }
