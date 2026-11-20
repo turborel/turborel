@@ -37,8 +37,10 @@
 //! summed, its zones settled and not, alone (`analytics/counts.rs`),
 //! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
 //! to `grouping`, groupings on one thread alone (`analytics/grouping.rs`),
-//! or to `late`, a column store's selective queries, the columns they keep
-//! few rows of read late, alone (`analytics/late.rs`).
+//! to `late`, a column store's selective queries, the columns they keep
+//! few rows of read late, alone (`analytics/late.rs`), or to `skipping`,
+//! a large column store table's filters, by what they skip, alone
+//! (`analytics/skipping.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -70,6 +72,8 @@ mod json;
 mod late;
 #[path = "analytics/parallel.rs"]
 mod parallel;
+#[path = "analytics/skipping.rs"]
+mod skipping;
 #[path = "analytics/social.rs"]
 mod social;
 #[path = "analytics/unnesting.rs"]
@@ -85,7 +89,7 @@ use turborel::db::{Database, Session};
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
 /// `grouping` for groupings on one thread, `late` for a column store's
-/// selective queries.
+/// selective queries, `skipping` for a large column store table's filters.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -148,6 +152,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
         "late" => late::workloads,
+        "skipping" => skipping::workloads,
         _ => return false,
     };
     run(bench);
