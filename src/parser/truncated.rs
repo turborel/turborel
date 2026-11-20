@@ -166,3 +166,64 @@ fn arrays_and_rows_cut_short() {
     let complete = complete_prefixes(text);
     assert_eq!(complete.len(), 3, "{complete:#?}");
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §11.63 to §11.71] user-defined casts,
+/// orderings and transforms, defined and dropped, cut short are refused
+/// (SQLCODE -102) but where what is read is a statement.
+#[test]
+fn casts_orderings_and_transforms_cut_short() {
+    let texts = [
+        ("CREATE CAST (S.PT AS CHARACTER VARYING(20)) WITH FUNCTION S.PT_NAME (S.PT) AS ASSIGNMENT", 3),
+        ("CREATE ORDERING FOR S.E ORDER FULL BY MAP WITH FUNCTION S.E_MAP (S.E)", 2),
+        ("CREATE ORDERING FOR E EQUALS ONLY BY STATE S.E_EQ", 2),
+        ("CREATE ORDERING FOR E ORDER FULL BY RELATIVE WITH FUNCTION E_CMP (E, E)", 1),
+        ("CREATE TRANSFORM FOR S.PT G1 (FROM SQL WITH FUNCTION PT_INT (PT), TO SQL WITH FUNCTION INT_PT (INTEGER))", 0),
+        ("DROP CAST (PT AS INTEGER) CASCADE", 0),
+        ("DROP ORDERING FOR S.E RESTRICT", 0),
+        ("DROP TRANSFORM ALL FOR S.PT CASCADE", 0),
+        ("DROP TRANSFORM G1 FOR PT RESTRICT", 0),
+    ];
+    let got: Vec<(&str, usize)> = texts.iter().map(|(text, _)| (*text, complete_prefixes(text).len())).collect();
+    assert_eq!(got, texts);
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §7.11] a `<JSON table>` of every kind of
+/// column, its behaviors, a nested path, a plan and ON ERROR cut short is
+/// refused (SQLCODE -102) but where what is read is a statement.
+#[test]
+fn json_table_cut_short() {
+    let text = "INSERT INTO T SELECT * FROM JSON_TABLE(CAST(D AS VARCHAR(99)) FORMAT JSON, 'lax $' AS R PASSING 1 AS X \
+                COLUMNS (N FOR ORDINALITY, V INTEGER PATH 'lax $.v' DEFAULT 0 ON EMPTY NULL ON ERROR, \
+                J VARCHAR(20) FORMAT JSON PATH 'lax $.j' WITH CONDITIONAL ARRAY WRAPPER KEEP QUOTES ON SCALAR STRING \
+                EMPTY ARRAY ON EMPTY ERROR ON ERROR, \
+                NESTED PATH 'lax $.a[*]' AS A COLUMNS (W INTEGER PATH 'lax $')) PLAN (R OUTER A) ERROR ON ERROR) AS JT (P, Q, S, U)";
+    let complete = complete_prefixes(text);
+    assert_eq!(complete.len(), 2, "{complete:#?}");
+}
+
+/// Verifies: [ISO/IEC 9075:1992 §11.4, §11.6, §10.6, §14.2] [X3.135-1986
+/// §5.25] constraints of every form with their attributes, SET
+/// CONSTRAINTS, and a query of grouping, windows, ordering and fetching
+/// cut short are refused (SQLCODE -102) but where what is read is a
+/// statement.
+#[test]
+fn constraints_and_queries_cut_short() {
+    let texts = [
+        (
+            "CREATE TABLE S.T (K INTEGER CONSTRAINT PK PRIMARY KEY, R INTEGER NOT NULL REFERENCES S.U (ID) ON DELETE CASCADE \
+             ON UPDATE SET NULL, C CHAR(2) CHECK (C <> 'X') DEFERRABLE INITIALLY DEFERRED, UNIQUE (R, C), \
+             CONSTRAINT FK FOREIGN KEY (R) REFERENCES S.U MATCH FULL ON DELETE SET DEFAULT NOT DEFERRABLE)",
+            0,
+        ),
+        ("SET CONSTRAINTS S.PK, FK DEFERRED", 0),
+        ("SET CONSTRAINTS ALL IMMEDIATE", 0),
+        (
+            "INSERT INTO T SELECT DISTINCT K, COUNT(*) FILTER (WHERE K > 1), SUM(N) OVER (PARTITION BY K ORDER BY N \
+             ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM S.T AS X (K, N) WHERE K BETWEEN 1 AND 9 GROUP BY ROLLUP (K, N) \
+             HAVING COUNT(*) > 0 WINDOW W AS (ORDER BY K) ORDER BY 1 DESC NULLS LAST OFFSET 1 ROW FETCH FIRST 2 ROWS WITH TIES",
+            15,
+        ),
+    ];
+    let got: Vec<(&str, usize)> = texts.iter().map(|(text, _)| (*text, complete_prefixes(text).len())).collect();
+    assert_eq!(got, texts);
+}
