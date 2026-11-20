@@ -8625,8 +8625,10 @@ case folding, its word composed first so `I` with a combining dot is
 `İ`. The seven languages read as bigrams fold and compose for
 compatibility (NFKC), so full-width Latin and half-width katakana are
 one with their usual forms. Each normalization was checked against the
-whole vocabulary of each language, and stemming a word normalized gives
-the stem of the word as Snowball's vocabulary writes it.
+whole vocabulary of each language. Normalizing changed 25,261 Greek
+words (final `ς` folds to `σ`) and 51 capitalized Irish ones, and
+stemming each gives the stem of the word as Snowball's vocabulary
+writes it, the Irish ones in lower case.
 
 #### D326. Each stemmer is tested on a deterministic sample of Snowball's vocabulary, the whole checked outside the tree
 

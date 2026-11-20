@@ -610,6 +610,170 @@ A word is kept to its first 256 characters, and a term in the index to
 its first 255 bytes. A longer word is found by that prefix and checked
 against the row.
 
+## Languages
+
+A FULLTEXT value names its language, and a document is read by that
+language's rules. These are the 43 languages the tokenizer knows. A
+stemmed language stems by Snowball's own stemmer for it, run as
+Snowball's program, and has Snowball's stop words where Snowball has a
+list. Chinese, Japanese, Korean, Thai, Lao, Khmer and Burmese are
+written without spaces between words, so a run of their letters is read
+as its overlapping pairs, each a word. No language is guessed from a
+text; a value without one is in ENGLISH.
+
+| Language | Stemmer | Stop words | Words |
+|---|---|---|---|
+| NONE | None | None | Words, accents taken off |
+| ARABIC | Snowball's Arabic | None | Words, accents kept |
+| ARMENIAN | Snowball's Armenian | None | Words, accents kept |
+| BASQUE | Snowball's Basque | None | Words, accents kept |
+| CATALAN | Snowball's Catalan | None | Words, accents kept, elisions taken off, `l·l` joined |
+| CZECH | Snowball's Czech | None | Words, accents kept |
+| DANISH | Snowball's Danish | Snowball's list | Words, accents kept |
+| DUTCH | Snowball's Dutch | Snowball's list | Words, accents kept |
+| ENGLISH | Snowball's English | Snowball's list | Words, accents taken off |
+| ESPERANTO | Snowball's Esperanto | None | Words, accents kept |
+| ESTONIAN | Snowball's Estonian | None | Words, accents kept |
+| FINNISH | Snowball's Finnish | Snowball's list | Words, accents kept |
+| FRENCH | Snowball's French | Snowball's list | Words, accents kept, elisions taken off |
+| GERMAN | Snowball's German | Snowball's list | Words, accents kept |
+| GREEK | Snowball's Greek | None | Words, accents kept |
+| HINDI | Snowball's Hindi | None | Words, accents kept |
+| HUNGARIAN | Snowball's Hungarian | Snowball's list | Words, accents kept |
+| INDONESIAN | Snowball's Indonesian | Snowball's list | Words, accents kept |
+| IRISH | Snowball's Irish | Snowball's list | Words, accents kept, elisions taken off |
+| ITALIAN | Snowball's Italian | Snowball's list | Words, accents kept, elisions taken off |
+| LITHUANIAN | Snowball's Lithuanian | None | Words, accents kept |
+| NEPALI | Snowball's Nepali | None | Words, accents kept |
+| NORWEGIAN | Snowball's Norwegian | Snowball's list | Words, accents kept |
+| PERSIAN | Snowball's Persian | None | Words, accents kept |
+| POLISH | Snowball's Polish | None | Words, accents kept |
+| PORTUGUESE | Snowball's Portuguese | Snowball's list | Words, accents kept |
+| ROMANIAN | Snowball's Romanian | None | Words, accents kept |
+| RUSSIAN | Snowball's Russian | Snowball's list | Words, accents kept |
+| SERBIAN | Snowball's Serbian | None | Words, accents kept |
+| SESOTHO | Snowball's Sesotho | Snowball's list | Words, accents kept |
+| SPANISH | Snowball's Spanish | Snowball's list | Words, accents kept |
+| SWEDISH | Snowball's Swedish | Snowball's list | Words, accents kept |
+| TAMIL | Snowball's Tamil | None | Words, accents kept |
+| TURKISH | Snowball's Turkish | None | Words, accents kept, `I` folded to `ı`, `İ` to `i` |
+| UKRAINIAN | Snowball's Ukrainian | Snowball's list | Words, accents kept |
+| YIDDISH | Snowball's Yiddish | None | Words, accents kept |
+| CHINESE | None | None | Character bigrams, full-width forms made one |
+| JAPANESE | None | None | Character bigrams, full-width forms made one |
+| KOREAN | None | None | Character bigrams, full-width forms made one |
+| THAI | None | None | Character bigrams, full-width forms made one |
+| LAO | None | None | Character bigrams, full-width forms made one |
+| KHMER | None | None | Character bigrams, full-width forms made one |
+| BURMESE | None | None | Character bigrams, full-width forms made one |
+
+Each value is read in its own language, and a pattern's word naming no
+language is read in its document's. French takes `l'` off `l'école`,
+German stems `Kinder` to `kind`, and Japanese is read as pairs:
+
+```sql
+CREATE TABLE NOTES (ID INTEGER PRIMARY KEY, BODY FULLTEXT);
+INSERT INTO NOTES VALUES
+    (1, FULLTEXT('Les enfants jouaient dans l''école.', 'FRENCH')),
+    (2, FULLTEXT('Die Kinder spielten im Garten.', 'GERMAN')),
+    (3, FULLTEXT('東京都庁は新宿にあります。', 'JAPANESE')),
+    (4, FULLTEXT('İstanbul ılık bir şehir.', 'TURKISH'));
+COMMIT;
+SELECT ID, BODY.TokenizeAndStem() AS STEMS FROM NOTES ORDER BY ID;
+```
+
+```
+OK
+OK
+OK
+           ID | STEMS
+--------------+--------------------------------------------------------------
+            1 | ARRAY['enfant', 'jou', 'écol']
+            2 | ARRAY['kind', 'spielt', 'gart']
+            3 | ARRAY['東京', '京都', '都庁', '庁は', 'は新', '新宿', '宿に', 'にあ', 'あり', 'りま', 'ます']
+            4 | ARRAY['istanbul', 'ılık', 'bir', 'şehir']
+(4 rows)
+```
+
+A stemmed word matches in each document's language. A word of several
+Japanese letters is the phrase of its pairs, and a single letter matches
+every pair holding it. In Turkish `İ` is the capital of `i` and `I` of
+`ı`, so `"İSTANBUL"` finds the city and `"ISTANBUL"` does not:
+
+```sql
+SELECT ID FROM NOTES WHERE BODY.Contains('FORM OF "école" | FORM OF "Kind"') = 1 ORDER BY ID;
+SELECT ID FROM NOTES WHERE BODY.Contains('"京都"') = 1;
+SELECT ID FROM NOTES WHERE BODY.Contains('"新"') = 1;
+SELECT ID FROM NOTES WHERE BODY.Contains('"İSTANBUL" & "ILIK"') = 1;
+SELECT ID FROM NOTES WHERE BODY.Contains('"ISTANBUL"') = 1;
+```
+
+```
+           ID
+--------------
+            1
+            2
+(2 rows)
+           ID
+--------------
+            3
+(1 row)
+           ID
+--------------
+            3
+(1 row)
+           ID
+--------------
+            4
+(1 row)
+           ID
+--------------
+(0 rows)
+```
+
+A full-text index reads each FullText document in its language too, and
+notes the languages its documents are in, so a search reads its pattern
+in each of them.
+
+### Snowball's license
+
+The stemmers' programs and the stop-word lists are Snowball's
+(snowballstem.org), kept unchanged in the source tree under
+`src/fulltext/text`. They are distributed under this notice:
+
+```
+Copyright (c) 2001, Dr Martin Porter
+Copyright (c) 2002, Richard Boulton
+Copyright (c) 2004,2005, Richard Boulton
+Copyright (c) 2013, Yoshiki Shibukawa
+Copyright (c) 2006-2025, Olly Betts
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright notice,
+     this list of conditions and the following disclaimer in the documentation
+     and/or other materials provided with the distribution.
+  3. Neither the name of the Snowball project nor the names of its contributors
+     may be used to endorse or promote products derived from this software
+     without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ## The Full-Text Information Schema
 
 FT_INFORMATION_SCHEMA has two views, which any user may read. FT_FEATURES

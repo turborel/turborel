@@ -50,7 +50,7 @@ fn found(a: &Session, pattern: &str) -> Vec<String> {
 }
 
 /// The patterns of the search tests, each with the IDs it finds.
-const CASES: [(&str, &[&str]); 18] = [
+const CASES: [(&str, &[&str]); 19] = [
     ("\"école\"", &["1"]),
     ("FORM OF \"écoles\"", &["1"]),
     ("FORM OF \"enfant\"", &["1"]),
@@ -63,10 +63,11 @@ const CASES: [(&str, &[&str]); 18] = [
     ("\"京\"", &["4", "5"]),
     ("\"北京大学\"", &["5"]),
     ("\"สวัสดี\"", &["6"]),
-    ("\"ISTANBUL\"", &["7"]),
+    ("\"İSTANBUL\"", &["7"]),
+    ("\"ISTANBUL\"", &[]),
     ("\"ILIK\"", &["7"]),
     ("FORM OF \"niño\"", &["8"]),
-    ("FORM OF \"child\"", &["9"]),
+    ("FORM OF \"plays\"", &["9"]),
     ("FORM OF \"children\" | FORM OF \"enfants\"", &["1", "9"]),
     ("SPANISH \"escuela\" & FORM OF \"jugar\"", &["8"]),
 ];
@@ -75,7 +76,7 @@ const CASES: [(&str, &[&str]); 18] = [
 /// §5.3.1 Description 3c] [EXTENSION] (RULES.md D320 to D324, D329)
 /// CONTAINS finds each document by its words read in its own language:
 /// stems by Snowball, an elided article taken off, accents kept, Turkish
-/// dotted and dotless I, character bigrams of Japanese, Chinese and Thai,
+/// dotted and dotless I apart, character bigrams of Japanese, Chinese and Thai,
 /// a single ideograph found in the bigrams holding it; alike with a
 /// full-text index of documents in many languages, which it reads.
 #[test]
@@ -85,6 +86,7 @@ fn contains_finds_words_in_each_language() {
     for (pattern, want) in CASES {
         assert_eq!(found(&a, pattern), want, "{pattern} unindexed");
     }
+    a.run("COMMIT WORK").unwrap();
     a.run("CREATE INDEX DOCS_BODY ON DOCS (BODY) USING fulltext").unwrap();
     for (pattern, want) in CASES {
         assert_eq!(found(&a, pattern), want, "{pattern} indexed");
@@ -111,8 +113,8 @@ fn tokenizing_methods_read_each_language() {
     assert_eq!(words(1, "TokenizeAndStem"), ["enfant", "jou", "écol", "villag"]);
     assert_eq!(words(2, "TokenizeAndStem"), ["kind", "spielt", "gross", "gart"]);
     assert_eq!(words(3, "Tokenize"), ["東京", "京都", "都庁", "庁は", "は新", "新宿", "宿に", "にあ", "あり", "りま", "ます"]);
-    let places = "SELECT T, P, C FROM DOCS, UNNEST(DOCS.BODY.TokenizePosition('CHARACTERS')) WITH ORDINALITY AS U (T, P, C, N) WHERE ID = 1 AND N = 4";
-    assert_eq!(rows(&a, places).unwrap(), ["école,28,5"]);
+    let places = "SELECT T, P, C FROM DOCS, UNNEST(DOCS.BODY.TokenizePosition('CHARACTERS')) WITH ORDINALITY AS U (T, P, C, N) WHERE ID = 1 AND N = 3";
+    assert_eq!(rows(&a, places).unwrap(), ["école,29,5"]);
 }
 
 /// Verifies: [ISO/IEC 13249-2:2002 §5.1.3] [EXTENSION] (RULES.md D324)
@@ -124,6 +126,39 @@ fn rank_ranks_each_language() {
     let a = filled(&db);
     let ranked = "SELECT ID FROM DOCS WHERE RANK(BODY, 'FORM OF \"école\" | \"東京\"') > 0 AND ID < 1000 ORDER BY ID";
     assert_eq!(rows(&a, ranked).unwrap(), ["1", "4"]);
+    a.run("COMMIT WORK").unwrap();
     a.run("CREATE INDEX DOCS_BODY ON DOCS (BODY) USING fulltext").unwrap();
     assert_eq!(rows(&a, ranked).unwrap(), ["1", "4"]);
+}
+
+/// Verifies: [ISO/IEC 13249-2:2002 §6.13.5, §8] [EXTENSION] (RULES.md
+/// D329) a thesaurus's synonyms expand a word of each language, a
+/// Japanese term read as bigrams and joined back, a French one with its
+/// accents kept.
+#[test]
+fn thesauri_expand_each_language() {
+    let db = Database::new();
+    let a = documents(
+        &db,
+        &[
+            "FULLTEXT('東京都に住む', 'JAPANESE')",
+            "FULLTEXT('首都で働く', 'JAPANESE')",
+            "FULLTEXT('Paris est la capitale', 'FRENCH')",
+            "FULLTEXT('Lyon est une métropole', 'FRENCH')",
+        ],
+    );
+    a.run("GRANT SELECT ON DOCS TO PUBLIC").unwrap();
+    a.run("COMMIT WORK").unwrap();
+    db.schema(super::thesaurus::TABLES).unwrap();
+    let t = db.session("FT_THESAURUS");
+    t.run("INSERT INTO TERM_DICTIONARY VALUES (1, '東京都', 'CITY'), (2, '首都', 'CITY'), (3, 'capitale', 'CITY'), (4, 'métropole', 'CITY')")
+        .unwrap();
+    t.run("INSERT INTO TERM_SYNONYM VALUES (1, 2, NULL, 'CITY'), (3, 4, NULL, 'CITY')").unwrap();
+    t.run("COMMIT WORK").unwrap();
+    let expanded = |term: &str| {
+        let pattern = format!("THESAURUS \"CITY\" EXPAND SYNONYM TERM OF \"{term}\"");
+        rows(&a, &format!("SELECT ID FROM DOCS WHERE CONTAINS(BODY, '{pattern}') = 1 ORDER BY ID")).unwrap()
+    };
+    assert_eq!(expanded("東京都"), ["1", "2"]);
+    assert_eq!(expanded("capitale"), ["3", "4"]);
 }
