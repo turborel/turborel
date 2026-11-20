@@ -1,6 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod altered_tables;
+mod analyze;
 mod batches;
 mod budget;
 // The count's, kept beside the other areas' files.
@@ -24,6 +25,7 @@ mod late;
 mod oltp;
 mod parallel;
 mod rewrites;
+mod sorts;
 mod tpcc;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
@@ -90,7 +92,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 39] {
+fn second() -> [&'static [Mutation]; 41] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -130,7 +132,9 @@ fn second() -> [&'static [Mutation]; 39] {
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
         &expr::EXPR,
+        &sorts::SORTS,
         &estimates::ESTIMATES,
+        &analyze::ANALYZE,
     ]
 }
 

@@ -358,6 +358,8 @@ verification approach DO-178C expects (§8).
 | D361 | A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept |
 | D362 | An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows |
 | D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
+| D364 | A sort orders rows by one string of bytes made of their keys, by radix sort if it is short, and merges its runs by a tree of losers |
+| D365 | A sort of which only the first rows are asked for takes a batch's rows by their keys' bytes, making only the rows it gives |
 | D366 | A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does |
 | D367 | A row made of a batch makes each of its cells a value alone, not its columns' every value |
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
@@ -366,6 +368,12 @@ verification approach DO-178C expects (§8).
 | D373 | A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot |
 | D374 | A filter goes into a set operation's operands and below a window's partitions, and FETCH FIRST into UNION ALL's operands, when the rows are the same |
 | D375 | A join is removed when it gives each row of the other operand once and nothing above reads it, by a unique key or a referential constraint not deferrable |
+| D376 | EXPLAIN ANALYZE runs a query and shows each operator's rows beside its estimate |
+| D377 | Cardinalities may be given the planner through the library in place of its estimates, to test it |
+| D378 | An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock |
+| D379 | A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read |
+| D380 | A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel |
+| D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -10060,6 +10068,80 @@ numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
 counted once an entry. A function that may warn has its body skipped
 and is called as a row's evaluation calls it.
 
+#### D364. A sort orders rows by one string of bytes made of their keys, by radix sort if it is short, and merges its runs by a tree of losers
+
+Each row's sort keys are made one string of bytes of a width fixed for
+the sort, whose order as bytes is the comparator's order of the rows
+(`exec/sort/normal.rs`), as Graefe's survey of sorting in database systems
+(2006) describes normalized keys. For each key in turn there is a byte
+placing a null first or last, as its null ordering says, whatever the
+direction (ISO/IEC 9075-2:2023 §10.10 GR1e ii), left out if no row's
+value is null, and then the value's bytes, every one inverted of a DESC
+key. An exact number is its units at the key's greatest scale less the
+least of them, big-endian, in as few bytes as the greatest less the least
+needs; an approximate number its bits in order, negative zero as zero; a
+datetime its instant in UTC and an interval its units, as exact numbers
+are; a truth value one byte. So a key of an integer from 0 to 200,000 is
+3 bytes, and three keys of a group, a nullable number and an integer fit 8.
+
+A character string is its first bytes padded with spaces, as a comparison
+pads the shorter string (X3.135-1986 §5.11 GR3), then a byte saying
+whether what is past them is less than spaces, equal or greater. A binary
+string, and so a key under a collation, whose sort key is bits (D60), is
+its first octets padded with zeros, then its length or one more than
+they hold. A string's bytes are as many as its longest value's, at most
+32, so keys of a long shared start, an order's or a customer's code, are
+told apart by their bytes and not compared whole. A string longer than
+its bytes whose rest is not spaces may tie with another and differ, so
+every byte after it is zero, the two rows' keys are equal, and the sort
+compares them whole. Keys of a type with no such form (DECFLOAT, a large
+object, a composite), of kinds not alike, or of exact numbers past 128
+bits, sort as before, by a prefix of the first key and the values
+(D38).
+
+Keys of at most 8 bytes are sorted as integers beside their rows' places
+by a least significant digit radix sort of 8-bit digits, which skips a
+digit every key shares, as the high digits of short keys are (Kim et al.,
+"Sort vs. Hash Revisited", PVLDB 2009); of at most 16 likewise, and
+longer ones as byte strings. The bytes every key shares first order
+nothing and are not read, so keys of strings of a long shared start are
+sorted by the bytes past it, as short keys if those are few. Every pass of the radix sort is stable and a
+comparison breaks ties by the place, so the sort is stable, as the
+standard's cursors and WITH TIES rely on. A sort's keys are made of its
+batches' vectors, a vector of one kind at a time, and the rows are made
+only as they are given or written.
+
+A sort past its work area makes the layout of its first run open to the
+later ones, every key nullable and every number at its whole width, and
+writes each row's key beside its vectors in the run's chunks. The runs
+are merged by a tree of losers (Knuth, vol. 3, §5.4.1), about log k
+comparisons a row and no heap's sift, comparing two rows' keys when both
+are of the shared layout, and their values otherwise or when their keys
+tie and may hide a difference. A tie goes to the earlier run. The chunks
+keep datetimes and truth values as vectors too. A sort run in parallel
+sorts each morsel's rows by their keys, moves each range's rows of every
+run to it in the runs' order and sorts the range again by its keys, which
+costs less than merging rows by the comparator and copies no row.
+
+#### D365. A sort of which only the first rows are asked for takes a batch's rows by their keys' bytes, making only the rows it gives
+
+A sort under FETCH FIRST (ISO/IEC 9075-2:2023 §7.17 GR5, GR7) of a
+stream's batches writes each batch's normal keys (D364) of an open layout
+made of the first batch, and once it holds as many rows as are asked,
+compares each row's key with the greatest held's. A row above it is
+passed over with nothing made, so of a long input most rows cost a key's
+bytes and a comparison. A row below it takes the greatest's place in a
+heap kept by the keys, then by the order rows came, so ties go to the
+earlier row, as the whole sort's do (`exec/sort/top/batched.rs`). Of
+WITH TIES the peers of the greatest are held too. A batch is held while a
+row of it is, and once the rows of the batches held are more than twice
+those asked, each batch of which fewer than a quarter of the rows are held
+is gathered to those rows, and every batch is once they take more than
+the work area. A batch whose keys the layout does not admit, or rows past
+the work area still, end it, and the rows held, in the order they
+came, and the rest are sorted as a whole sort sorts them, so the first
+rows given are the same.
+
 #### D366. A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does
 
 A column store's scan decodes a column whole to judge a conjunct of it
@@ -10293,6 +10375,164 @@ The constraint, the NOT NULL and the referenced key are not deferrable
 and of no period, and the columns of no collation. The rule is
 `eliminate_joins`.
 
+#### D376. EXPLAIN ANALYZE runs a query and shows each operator's rows beside its estimate
+
+`EXPLAIN ANALYZE <cursor specification>` plans the query as EXPLAIN
+does, runs it in the session's transaction under the locks a cursor of
+it takes, reads every row and drops it. Its rows are the lines of the
+physical plan, each operator's line followed by the estimate when its
+line shows none, then what it did, and a last line of the query's rows.
+An operator shows the rows it gave, the times it was opened when not
+once, an index nested loop its probes, and its time. One never opened
+shows `(never run)`, as a scan whose storage counted its table does.
+ANALYZE is no key word. It is read as this option only right after
+EXPLAIN and before a query's first token, and before a parenthesis only
+when the next token begins a query too, so a table named ANALYZE, or a
+table EXPLAIN whose correlation name ANALYZE lists its columns, is read
+as before. A data change statement is refused as EXPLAIN refuses one,
+so EXPLAIN ANALYZE changes nothing a query does not. A query that raises
+makes it raise the same exception (D15). It shows the physical plan
+alone, since the stages before it are EXPLAIN's and run nothing.
+`Session::explain_analyze` gives the same text and `Session::analyzed`
+each operator's line, depth, estimate, rows, openings, time and the
+tables below it, for a tool such as the joins benchmark's q-error report
+(`bench/joins/qerror.rs`). A subquery planned and run for each row it is
+evaluated of is no operator of the statement's plan and is not shown.
+
+#### D377. Cardinalities may be given the planner through the library in place of its estimates, to test it
+
+`Session::with_cardinalities` gives the planner rows in place of its
+estimates for every statement the session plans after, until it gives
+others or none (`physical/cardinality/injected.rs`). Each names a set of
+a query's relations by the names EXPLAIN shows them by, their
+correlation names, and gives the rows of their join with their filters.
+The estimator takes it for a table's read, a filter or a product that
+joins and filters exactly that set, and the join enumeration for any
+join of it, so every way of joining the set gives it those rows (D302).
+A set naming a relation the query has not, or two of one name, is left
+out. This is the experiment of Leis et al., "How Good Are Query
+Optimizers, Really?" (2015), section 4. With every intermediate result's
+true rows given, what is left of a bad plan is the cost model's and the
+search's. There is no SQL for it, since it is a tool for the planner's
+tests and benchmarks. The session's snapshot carries the rows, as it
+carries the session's own settings. A plan a prepared statement kept
+before they were given is kept still. A plan-space test runs the join workload under
+rows drawn from a fixed seed, which force other orders and methods, and
+each gives the rows it gives with none (`test/integration/plan_space.rs`).
+
+#### D378. An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock
+
+EXPLAIN ANALYZE wraps each operator of the chosen plan in a `Counted`
+node (`physical/analyzed.rs`), which the executor runs as its input,
+adding the rows it gives and the time each pull takes
+(`exec/counted.rs`). A plan made to run holds none, so a statement not
+analyzed pays one more arm of the executor's dispatch and nothing else.
+A batch is counted as one pull, its kept rows at once
+(`exec/batch/counted.rs`). The batch streams, a filter's conditions told
+its scan, a FETCH FIRST's bound and the storage's count of a table all
+look through the wrapper, so an analyzed plan runs as the plan run alone
+does. A part run in parallel counts its pipeline's operators by a step
+of their own, each morsel's rows added once (`exec/parallel/pipeline.rs`),
+and by batch once a batch. The part's mark is not wrapped and its top
+operator is. The sort below a window run in parallel is left bare, as
+the part sorts the window's rows itself. An iterator tallies its rows
+and time and adds them to its operator's count once, as it is dropped,
+so threads add once each and never contend a row at a time. Time is the
+database's clock's (D54), the operator's inputs' among it, and it is
+shown only when the clock moved while the query ran. So a test, which
+gives a clock that stands still (R-TEST-5), and the manual's examples
+show no time. An operator of a pipeline run in parallel has no time of
+its own, since its rows pass every step of the pipeline at once.
+
+#### D379. A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read
+
+A sort under FETCH FIRST (ISO/IEC 9075-2:2023 §7.17 GR5, GR7) of a
+stream whose batches hold every column of its rows tells the stream that
+only its keys' columns are read before it keeps its rows
+(`Deferred::topped`). The scan gives the other columns late (D361), and
+the top-N decodes them of the rows it gives alone, batch by batch, or of
+the rows it holds once it sorts them whole (`exec/sort/top/batched.rs`).
+It does so when it asks for less than a quarter of the input's estimated
+rows, or when there is no estimate, as decoding a column at most of its
+rows costs more than decoding it whole.
+
+When the first key's nulls sort last, the top-N also tells the scan a
+bound of that key (`storage::Threshold`), a conjunct of its own kind
+(`Conjunct::Dynamic`). Once it holds its first rows, it raises the bound
+to the first key of the greatest held, which only narrows. The scan
+passes over a group, or a chunk, whose least value is past it, ascending,
+or whose greatest is short of it, descending, as its zone maps tell
+(`summary.may_match`, `columns/scan.rs`). No row of such a group can be
+among the first, so the rows given are the same. The bound holds only
+exact numbers and datetimes, which compare as their stored bounds do,
+and judges no row. A row whose group is read is kept, and the top-N
+judges it. Under NULLS FIRST a null of a group past the bound would be
+among the first, so no bound is told. A filter whose condition can raise,
+a projection of an expression, or a join's operand tells none, as each
+row of theirs must be read for its errors or its matches.
+
+#### D380. A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel
+
+A whole sort whose input's batches hold every column of its rows gives
+its rows as batches (`stream::layout`, `exec/sort/out.rs`). Each batch of
+up to `BATCH_ROWS` rows in order is gathered of the batches it held, a
+column a vector of the kind every one held keeps it as, else values. A
+column every batch keeps as texts, one at least as texts of a store's
+dictionaries, is gathered as codes of one dictionary set up once for the
+sort, each store's dictionary in it once and each other batch's texts,
+so no text of a store's dictionary is copied and no other twice. So a projection, a grouping or a DISTINCT
+above a sort reads it as it reads a scan. A top-N's first rows are few, and are made batches of their rows.
+
+A vector of integers of one scale and no null is written into the sort's
+keys by `Kernels::normalize_i64`, so a kernel plug-in's wider
+instructions write them too (D354). The contract tests
+hold it to the portable loop. Any other column is written a value at a
+time as before (D364).
+
+A sort held in memory looks for a cancel (D44) before it sorts, and
+every 1,024 rows (`SORT_RUN_ROWS`) or each batch as it gives them. A
+run written to the spill area looks after each chunk. At a cancel it
+gives its error, and the same error at every ask after.
+
+A sort run in parallel reads each morsel by batch where its pipeline
+does (`morsel_kept`), and sorts it as batches, so a worker decodes no
+row it does not give. A whole sort keeps each morsel's run as sorted
+batches, gathered as above, and charges the work area their bytes, not
+those of rows. Once every run is in, the runs are made rows by the
+threads and merged by ranges if those rows fit too. Past the work area
+it no longer gives way to the serial sort. It writes the runs held, and
+each run after, to the spill area, a run of batches as a sort of batches
+writes its own but not sorted again, and merges them by the loser tree
+(D364). A sort of its first rows alone, up to a batch's rows of them,
+holds each morsel's run as the serial one holds a stream's (D365), the
+rows past the greatest held not taken, so only those the run keeps are
+sorted and made. Of more, nearly every row of a morsel is taken, so the
+morsel is sorted whole by its keys and only its first rows made.
+
+#### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
+
+The inner joins' equalities of two columns make classes of columns
+(D302), and the rows of a join are estimated by the class, whichever
+two of its columns the join holds. So `a.k = c.k AND b.k = c.k` joins
+`a` and `b` by `a.k = b.k` as the estimate sees it, though no conjunct
+reads both. The join enumeration takes that key too. A join of two
+sets no conjunct reads both of, as the FROM clause's order lets the
+enumeration make, judges the equality of one column of each of every
+class with a column on each side (`Model::implied_keys`), and that
+equality is a key of its hash, merge or index join. The plan is then
+never a product of the two whose rows the estimate counts as joined.
+The classes are made once with the model, and the join graph takes no
+edge of its own for such a pair, since an edge of each pair of a large
+class makes a clique the enumeration's search grows past.
+An equality implied is true of every row the stated ones keep, so the
+rows are those of the query as written [X3.135-1986 §5.20 GR2b]. A
+chain with an outer join takes no implied key, since its keys hold only
+above it. The FROM clause's tree, planned as written, makes a product
+of two such sets, so a tree with one is never kept in place of the
+enumerated plan (`physical/enumerate.rs`). A plan-space test runs the
+join workload under rows given that are up to a thousand times too few
+or too many, and each plan gives its rows well within a minute
+(`test/integration/plan_space.rs`).
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 
 A `?` in a row of an INSERT's VALUES, or of VALUES in a query expression

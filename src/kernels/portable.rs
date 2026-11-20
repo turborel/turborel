@@ -5,6 +5,7 @@
 
 pub mod gather;
 pub mod hash;
+pub mod normal;
 pub mod select;
 pub mod sum;
 pub mod unpack;
