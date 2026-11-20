@@ -55,7 +55,8 @@ use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
 ///   had, so the undo log's `restore` can never collide with a newer row.
 /// * `get` returns exactly the live row with that id; `scan` yields every live
 ///   row once, with its id, in an order of the engine's choosing; `row_count`
-///   is the number of live rows. An engine that cannot read a row (an I/O
+///   is the number of live rows; `count`, if it gives counts, sums to the
+///   rows `scan_batches` would give. An engine that cannot read a row (an I/O
 ///   error, a corrupt page) says so with an error, from `get` or as the
 ///   scan's next item, never by leaving the row out.
 /// * `update` and `delete` change a live row and fail, changing nothing, for
