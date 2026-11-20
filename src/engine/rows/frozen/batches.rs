@@ -7,6 +7,14 @@
 //! given. A vector of integers kept as runs says so (`Ints::with_runs`),
 //! so the filter and the set functions work once a run.
 //!
+//! Of a frozen run, the conjuncts the scan can judge (`columns/judged.rs`,
+//! RULES.md D360) are judged first, of their own columns alone, and the
+//! other columns decoded only at the rows they keep (`batches/run.rs`); the
+//! rows kept of a group's runs are gathered until they make half a batch,
+//! so batches stay large. A column asked for late (RULES.md D361) is not
+//! decoded at all, but given as the places of its rows in the group and
+//! the group to decode them of (`frozen/late.rs`).
+//!
 //! As a group is taken up, the pages of the chunks its runs are read from
 //! are asked to be read ahead, a window at a time (`columns/ahead.rs`);
 //! each chunk a run reads is opened once for the group's runs, and let go
@@ -25,24 +33,22 @@ use std::ops::Bound;
 use std::sync::Arc;
 
 use super::Directory;
+use super::late::FrozenLate;
 use super::merge::VECTOR_ROWS;
 use crate::engine::columns::ahead::GroupAhead;
 use crate::engine::columns::group::{Group, Summary};
+use crate::engine::columns::judged::Judgment;
 use crate::engine::columns::prepared::Prepared;
-use crate::engine::columns::scan::{
-    Reading, bools, bools_at, datetimes, datetimes_at, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values,
-    values_at,
-};
+use crate::engine::columns::scan::read_candidates;
 use crate::engine::rows::gathered::Gathering;
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
-use crate::engine::rows::sealing::Sealing;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::{Direction, Scan};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Column, Conjunction, Ramp, RowId};
-use crate::value::DataType;
-use crate::value::Value;
+use crate::storage::{BATCH_ROWS, Batch, Conjunction, LateSource, Ramp, RowId};
+
+mod run;
 
 /// \[DESIGN\] A column store table's batches.
 pub(in crate::engine::rows) struct Batched {
@@ -51,6 +57,15 @@ pub(in crate::engine::rows) struct Batched {
     columns: Vec<usize>,
     /// The condition, which skips chunks; the filter judges every row given.
     condition: Option<Conjunction>,
+    /// The conjuncts of the condition judged of a run before its other
+    /// columns are decoded (RULES.md D360).
+    judgment: Judgment,
+    /// The columns given late (RULES.md D361), and what the group being
+    /// read decodes them of, if any is.
+    late: Vec<usize>,
+    source: Option<Arc<dyn LateSource>>,
+    /// The places in the group being read of its rows kept, not yet given.
+    pending: Vec<u32>,
     /// Its groups, taken before its tree is read, held to the end.
     directory: Arc<Directory>,
     next_group: usize,
@@ -83,11 +98,16 @@ impl Batched {
         columns: Vec<usize>,
         condition: Option<Conjunction>,
     ) -> Batched {
+        let judgment = Judgment::of(condition.as_ref(), table.format.types());
         Batched {
             table,
             reader,
             columns,
             condition,
+            judgment,
+            late: Vec::new(),
+            source: None,
+            pending: Vec::new(),
             directory,
             next_group: 0,
             group: None,
@@ -115,6 +135,13 @@ impl Batched {
         Batched { delta, ramp: Ramp::whole(), ..Batched::new(table, (reader, directory), columns, condition) }
     }
 
+    /// As it is, `late`, those of its columns asked for late, given so
+    /// (RULES.md D361).
+    pub(in crate::engine::rows) fn with_late(mut self, late: &[usize]) -> Batched {
+        self.late = late.iter().copied().filter(|c| self.columns.contains(c)).collect();
+        self
+    }
+
     /// Takes up the next group, its runs a vector at most each, and the
     /// tree's entries in its range; whether there was one. A group the
     /// condition cannot match by its summary is passed over unread, the
@@ -133,7 +160,9 @@ impl Batched {
         let ids = group.row_ids(&pages)?;
         let vector = u32::try_from(VECTOR_ROWS).unwrap_or(u32::MAX);
         let candidates = read_candidates(&group, &pages, self.condition.as_ref())?;
-        self.ahead.take_up(&group, &self.columns, &candidates);
+        // A late column's pages are read only as it is decoded.
+        let eager: Vec<usize> = self.columns.iter().copied().filter(|c| !self.late.contains(c)).collect();
+        self.ahead.take_up(&group, &eager, &candidates);
         for (from, to) in candidates {
             let mut at = from;
             while at < to {
@@ -142,6 +171,10 @@ impl Batched {
                 at = end;
             }
         }
+        self.source = (!self.late.is_empty()).then(|| {
+            let source: Arc<dyn LateSource> = Arc::new(FrozenLate::new(Arc::clone(&self.table), Arc::clone(&entry), Arc::clone(&group)));
+            source
+        });
         self.group = Some((group, ids, shadowed));
         self.next_group = self.next_group.saturating_add(1);
         Ok(true)
@@ -149,8 +182,9 @@ impl Batched {
 
     /// The record, unsealed, of the tree's entry of `id`, `newest`, as the
     /// reader sees it, if it sees the row. Not judged here: the filter
-    /// judges every row given over its vectors, and judging a row here too
-    /// cost more than it saved, as of a frozen row (`run_batch`).
+    /// judges every row given over its vectors, and a record is decoded
+    /// whole whatever is judged of it (`gathered.rs`), so judging it here
+    /// would save no decoding, as judging a frozen run does (`run.rs`).
     fn delta_record(&self, (id, newest): (RowId, Vec<u8>)) -> Result<Option<Vec<u8>>> {
         let Some(record) = self.table.visible_from(newest, self.reader)? else { return Ok(None) };
         self.table.plain(id, &record).map(Some)
@@ -200,43 +234,6 @@ impl Batched {
         Ok(Some(gathering.take()))
     }
 
-    /// The batch of the run `from` to `to` of the group being read, if any
-    /// of its rows the tree has no entry for is given.
-    fn run_batch(&mut self, (from, to): (u32, u32)) -> Result<Option<Batch>> {
-        let Some(group) = self.group.as_ref().map(|(group, _, _)| Arc::clone(group)) else { return Ok(None) };
-        let pages = self.table.group_pages()?;
-        let types = self.table.format.types();
-        // A frozen row is not judged here, the filter judging every row
-        // given over its vectors (`exec/batch/judge.rs`): the conditions
-        // skipped the chunks they cannot match (`candidates`), and judging
-        // a row here too cost more than it saved.
-        let positions = self.unshadowed((from, to));
-        let rows = positions.as_ref().map_or_else(|| usize::try_from(to.saturating_sub(from)).unwrap_or(0), Vec::len);
-        if rows == 0 {
-            return Ok(None);
-        }
-        let whole = positions.as_ref().is_none_or(|p| u32::try_from(p.len()).ok() == Some(to.saturating_sub(from)));
-        let positions = positions.unwrap_or_default();
-        let mut batch = Batch { columns: Vec::with_capacity(self.columns.len()), rows };
-        for &c in &self.columns {
-            let column = match types.get(c) {
-                // A run whole is read a chunk at a time, each value once, as
-                // integers, approximate numbers or text if it is of them.
-                Some(t) => {
-                    let reading = (&pages, &mut self.prepared);
-                    if whole {
-                        run_column(&group, reading, (c, t), (from, to))?
-                    } else {
-                        positions_column(&group, reading, (c, t), &positions)?
-                    }
-                }
-                None => Column::from(vec![Value::Null; rows]),
-            };
-            batch.columns.push(column);
-        }
-        Ok(Some(batch))
-    }
-
     /// Whether the tree's entry of `id` was read with the groups' rows.
     fn was_read(&self, id: RowId) -> bool {
         let after = self.read.partition_point(|&(first, _)| first <= id);
@@ -277,64 +274,16 @@ impl Batched {
                     None => continue,
                 }
             }
+            // The rows kept of the group's last runs, before the next group.
+            if let Some(batch) = self.kept_batch()? {
+                return Ok(Some(batch));
+            }
             if self.next_group()? {
                 continue;
             }
             return self.delta_batch();
         }
     }
-}
-
-/// Column `c`, of type `t`, of the rows at positions `from` to `to` of
-/// `group`: as integers, approximate numbers or text if it is of them,
-/// else as values.
-fn run_column(
-    group: &Group,
-    (pages, prepared): Reading<'_, '_, Sealing>,
-    (c, t): (usize, &DataType),
-    (from, to): (u32, u32),
-) -> Result<Column> {
-    if let Some(ints) = ints(group, (pages, &mut *prepared), (c, t), (from, to))? {
-        return Ok(Column::Ints(ints));
-    }
-    if let Some(floats) = floats(group, (pages, &mut *prepared), (c, t), (from, to))? {
-        return Ok(Column::Floats(floats));
-    }
-    if let Some(datetimes) = datetimes(group, (pages, &mut *prepared), (c, t), (from, to))? {
-        return Ok(Column::Datetimes(datetimes));
-    }
-    if let Some(bools) = bools(group, (pages, &mut *prepared), (c, t), (from, to))? {
-        return Ok(Column::Bools(bools));
-    }
-    if let Some(texts) = texts(group, (pages, &mut *prepared), (c, t), (from, to))? {
-        return Ok(Column::Texts(texts));
-    }
-    Ok(Column::from(values(group, (pages, prepared), (c, t), (from, to))?))
-}
-
-/// As `run_column`, of the rows at `positions`.
-fn positions_column(
-    group: &Group,
-    (pages, prepared): Reading<'_, '_, Sealing>,
-    (c, t): (usize, &DataType),
-    positions: &[u32],
-) -> Result<Column> {
-    if let Some(ints) = ints_at(group, (pages, &mut *prepared), (c, t), positions)? {
-        return Ok(Column::Ints(ints));
-    }
-    if let Some(floats) = floats_at(group, (pages, &mut *prepared), (c, t), positions)? {
-        return Ok(Column::Floats(floats));
-    }
-    if let Some(datetimes) = datetimes_at(group, (pages, &mut *prepared), (c, t), positions)? {
-        return Ok(Column::Datetimes(datetimes));
-    }
-    if let Some(bools) = bools_at(group, (pages, &mut *prepared), (c, t), positions)? {
-        return Ok(Column::Bools(bools));
-    }
-    if let Some(texts) = texts_at(group, (pages, &mut *prepared), (c, t), positions)? {
-        return Ok(Column::Texts(texts));
-    }
-    Ok(Column::from(values_at(group, (pages, prepared), (c, t), positions)?))
 }
 
 impl Iterator for Batched {

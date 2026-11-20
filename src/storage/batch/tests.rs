@@ -219,6 +219,7 @@ fn kinds_and_values(batch: &Batch) -> Vec<(&'static str, Vec<String>)> {
         }
         Column::Values(_) => "values",
         Column::Nulls(_) => "nulls",
+        Column::Late(_) => "late",
     };
     batch.columns.iter().map(|c| (kind(c), shown(c.values()))).collect()
 }

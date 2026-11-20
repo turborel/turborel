@@ -88,7 +88,7 @@ impl Judged {
             Some(Column::Datetimes(column)) => kinds::datetimes(self, column, over, kernels),
             Some(Column::Bools(column)) => kinds::bools(self, column, over, kernels),
             Some(Column::Texts(column)) => texts::kept(self, column, over, kernels),
-            Some(Column::Values(_) | Column::Nulls(_)) | None => None,
+            Some(Column::Values(_) | Column::Nulls(_) | Column::Late(_)) | None => None,
         };
         if typed.is_some() {
             return typed;

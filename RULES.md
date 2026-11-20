@@ -350,6 +350,8 @@ verification approach DO-178C expects (§8).
 | D353 | ALP decimals are read by two multiplications with a stored pair of factors |
 | D354 | A batch keeps nulls as bitmaps, rows as selections, datetimes and truth values as vectors, its primitives in kernels |
 | D355 | A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange |
+| D360 | A column store's scan judges the conjuncts it is told of their own columns, then decodes the others at the rows kept alone |
+| D361 | A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -9727,6 +9729,97 @@ The constants are measured, not derived. A grouping of keys unique to
 each row never gains, whatever the threads, as the ordering of its
 groups alone costs the serial grouping's rows. One of few groups gains
 by nearly the degree.
+
+#### D360. A column store's scan judges the conjuncts it is told of their own columns, then decodes the others at the rows kept alone
+
+A filter over a scan of the column store tells the scan the simple
+conjuncts of its condition (D15), and the scan judges them itself, a run
+of a frozen group at a time, before it decodes the columns the filter
+does not read (`engine/columns/judged.rs`). This is late
+materialization in the scan, as Abadi, Myers, DeWitt and Madden,
+"Materialization Strategies in a Column-Oriented DBMS" (ICDE 2007),
+describe it. A conjunct of one column, a comparison with a constant, IS
+NULL, IN, NOT IN or an OR of these, of exact or approximate numbers,
+datetimes without a zone, truth values or character strings, is judged
+over that column's vector. Integers compare by the kernel, the constant
+folded once to their scale (`storage/batch/bound.rs`, shared with the
+filter), and integers read as runs with no null among them are judged
+once a run. A dictionary's texts are judged once an entry, its rows then
+by their codes. Anything else is judged a value at a time by
+`Conjunct::matches_key`, so what the scan keeps is what the conjunct
+keeps. The engine has no database to ask for its kernels, so the scan
+runs the portable ones.
+
+A VARCHAR column whose chunks are coded by a table of symbols is judged
+in place, no text decoded. FSST (Boncz, Neumann and Leis, PVLDB 2020,
+§5) encodes the constant and compares code strings, which holds only for
+strings compared octet by octet. SQL pads the shorter string with spaces
+(X3.135-1986 §5.11 GR5), so `'a'` equals `'a '`. Each text's symbols are
+compared instead with the constant's bytes as they are read, padded with
+spaces, the first byte that differs deciding (`Symbols::compare_padded`).
+Codes that are malformed where they are read fall back to decoding the
+chunk, which raises what is malformed as before.
+
+The rows kept are intersected with those the delta tree has no entry
+for, and the filter still judges every row the scan gives. A scan is
+told only conjuncts of a condition that cannot raise an error, so a row
+left out here is one the filter would leave out, and an error is raised
+as a row at a time raises it. A run of which one row in eight or more
+is kept is decoded whole, the columns decoded to judge it given as they
+are, every column with them (D361 gives none late), and the filter
+selects of it, since so many rows cost as little decoded whole as at
+their places. If the tree shadows some of its rows,
+it is decoded at the kept rows instead. Otherwise the places of the kept
+rows are held across the group's runs, and a batch is decoded of them once they make half a batch
+or the group ends, so a selective filter gives full batches rather than
+a few rows each.
+
+A column is decoded at its kept places alone (`columns/scan/positions.rs`).
+Places one after another are read as a range. Places that are at least
+one in eight of their span decode the span and pick from it, as a block
+of 64 values costs little more than one (D352). Sparser places are read
+one value at a time, a frame of reference's bits unpacked at the place
+alone (`Body::int_at`), a dictionary's codes too.
+
+#### D361. A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept
+
+A stream read by batches gives a scan's column late when no operator of
+the stream reads it before the stream is read whole, and a filter or an
+inner hash join of whose left operand it is lies above the scan
+(`exec/batch/late.rs`). The analysis walks the plan from the top. A
+filter reads the columns of its condition, all of them if it has a
+subquery. A projection of columns passes each on to the column it moves,
+and one that computes an expression reads every column. A join reads its
+keys. A late column is a `Column::Late` (`storage/batch/late.rs`),
+which holds the places of its rows in their frozen group, the source
+that decodes them, and, once a join gathered it, which place each row
+is. A join gathers
+the places, never a value. As the stream is read whole, by a grouping, a
+sort, a projection or the rows made of it, each batch's late columns are
+decoded of the rows kept alone (`Batch::resolve`), each place once and in
+ascending order, the others left null.
+
+The source holds the frozen group and the directory's entry of it, so
+the group's pages are not freed while a batch holding its rows lives
+(`engine/rows/frozen/late.rs`). A group is replaced, never changed, so
+what is decoded later is what the scan would have decoded then. The
+source keeps the chunks its last decoding opened, so the batches of a
+scan, decoded in its order, open each chunk about once (D352). A
+decoding takes them out and puts them back, never holding a lock while
+a page is unsealed (R-ERR-4), and a decoding on another thread at once
+opens its own. A damaged page is
+reported as its column is decoded, which only an error of the stored
+data, never one of a value, can be. A reader that reads a late column
+before it is resolved, which the executor does not plan, gets it decoded
+whole.
+
+A stream with no operator that drops rows decodes every column at once,
+as Abadi and others find early materialization faster where most rows
+are kept. A join's build side, a product, an outer join, a union and a
+part run in parallel decode their columns as before, since their rows
+are held, moved between threads, or kept in an order a late column's
+places would not follow. The first rows of a sort (FETCH FIRST) are kept
+by the row path, which reads every column.
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

@@ -22,6 +22,7 @@ mod groups;
 mod joined;
 mod judge;
 mod keyed;
+mod late;
 mod project;
 mod shaped;
 mod stream;
@@ -187,7 +188,9 @@ fn fed_group(
                 Some(Column::Floats(floats)) => state.update_floats(floats, Some(read_rows))?,
                 Some(Column::Values(values)) => state.update_many(values, Some(read_rows))?,
                 Some(Column::Texts(texts)) => state.update_texts(texts, Some(read_rows))?,
-                Some(column @ (Column::Datetimes(_) | Column::Bools(_))) => state.update_many(column.values(), Some(read_rows))?,
+                Some(column @ (Column::Datetimes(_) | Column::Bools(_) | Column::Late(_))) => {
+                    state.update_many(column.values(), Some(read_rows))?;
+                }
                 // Every value null, none taken.
                 Some(Column::Nulls(_)) | None => {}
             },
@@ -257,6 +260,7 @@ fn column_nulled(column: &Column, rows: Option<&[u32]>) -> bool {
         | Column::Datetimes(Datetimes { nulls, .. })
         | Column::Bools(Bools { nulls, .. }) => marked(nulls.as_ref(), rows),
         Column::Nulls(nulls) => rows.map_or(nulls.rows > 0, |r| !r.is_empty()),
+        Column::Late(late) => values_nulled(late.values(), rows),
     }
 }
 
@@ -314,7 +318,9 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[u32]>
                     Some(Column::Floats(floats)) => state.update_floats(floats, rows)?,
                     Some(Column::Values(values)) => state.update_many(values, rows)?,
                     Some(Column::Texts(texts)) => state.update_texts(texts, rows)?,
-                    Some(column @ (Column::Datetimes(_) | Column::Bools(_))) => state.update_many(column.values(), rows)?,
+                    Some(column @ (Column::Datetimes(_) | Column::Bools(_) | Column::Late(_))) => {
+                        state.update_many(column.values(), rows)?;
+                    }
                     // Every value null, none taken.
                     Some(Column::Nulls(_)) => {}
                     None => state.update_many(&[], rows)?,

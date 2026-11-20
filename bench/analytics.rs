@@ -33,7 +33,9 @@
 //! `parallel`, those run by morsels alone, to `distinct`, the DISTINCT
 //! set functions' alone, to `counts`, a row-store table counted and
 //! summed, its zones settled and not, alone (`analytics/counts.rs`), or
-//! to `decode`, the column store's decoding alone (`analytics/decode.rs`).
+//! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
+//! or to `late`, a column store's selective queries, the columns they keep
+//! few rows of read late, alone (`analytics/late.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -57,6 +59,8 @@ mod graph;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
+#[path = "analytics/late.rs"]
+mod late;
 #[path = "analytics/parallel.rs"]
 mod parallel;
 #[path = "analytics/social.rs"]
@@ -71,7 +75,8 @@ use turborel::db::{Database, Session};
 /// network's, `graph` for path search's on a graph in memory,
 /// `unnesting` for correlated subqueries', `parallel` for those run by
 /// morsels, `distinct` for the DISTINCT set functions', `counts` for a
-/// row-store table's counts, `decode` for the column store's decoding.
+/// row-store table's counts, `decode` for the column store's decoding,
+/// `late` for a column store's selective queries.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -86,28 +91,18 @@ const KEYS: u64 = 400_000;
 fn main() {
     let bench = Bench::new("analytics");
     let only = std::env::var(ONLY_VAR).unwrap_or_default();
-    if only == "social" {
-        social::workloads(&bench);
-        return;
-    }
-    if only == "graph" {
-        graph::workloads(&bench);
-        return;
-    }
-    if only == "unnesting" {
-        unnesting::workloads(&bench);
-        return;
-    }
-    if only == "counts" {
-        counts::workloads(&bench);
-        return;
-    }
-    if only == "decode" {
-        decode::workloads(&bench);
-        return;
-    }
-    if only == "parallel" {
-        parallel::workloads(&bench);
+    let alone: Option<fn(&Bench)> = match only.as_str() {
+        "social" => Some(social::workloads),
+        "graph" => Some(graph::workloads),
+        "unnesting" => Some(unnesting::workloads),
+        "counts" => Some(counts::workloads),
+        "decode" => Some(decode::workloads),
+        "parallel" => Some(parallel::workloads),
+        "late" => Some(late::workloads),
+        _ => None,
+    };
+    if let Some(workloads) = alone {
+        workloads(&bench);
         return;
     }
     let db = database();
@@ -131,6 +126,7 @@ fn main() {
     parallel::workloads(&bench);
     counts::workloads(&bench);
     decode::workloads(&bench);
+    late::workloads(&bench);
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,
