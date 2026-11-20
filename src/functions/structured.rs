@@ -311,3 +311,7 @@ impl ScalarFunction for Instanced {
         true
     }
 }
+
+// Unit tests: the types the functions report, and their refusals.
+#[cfg(test)]
+mod tests;

@@ -1306,7 +1306,7 @@ and cuts it into one run for each node under the root, then tiles each
 run the same way, down to leaves nine tenths full (Sort-Tile-Recursive
 packing, from the root down). So the nodes under any node tile its
 region and barely overlap. The sorts spill to temporary files past
-MEMORY.WORK_BYTES, so a large build stays within it. Rows that other
+their grants of MEMORY.WORK_BYTES, so a large build stays within them. Rows that other
 transactions write while the build runs go into the index as usual and
 are moved into the packed tree before it takes the index's place.
 Recovery rebuilds an index the same way. A delete or update that leaves
@@ -1702,7 +1702,7 @@ hundred blocks of the stops past 400 keep a null, which COUNT(S.ID)
 eliminates.
 
 A broad inner join that buffers one side to scan the other's table
-holds those rows within MEMORY.WORK_BYTES. Past it, they are written to
+holds those rows within its grant of MEMORY.WORK_BYTES. Past it, they are written to
 the spill area, and if the scan still costs less, both sides are split
 by a grid of envelopes and joined a cell at a time, a pair produced only
 in one cell. The rows are those of the join in memory, with the same

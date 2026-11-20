@@ -160,6 +160,9 @@ struct Admitted {
     session: Session,
     login: Login,
     granted: Capabilities,
+    /// What the login told of the session's settings, held so a statement
+    /// sends only what it changes.
+    told: status::Status,
 }
 
 /// What a Hello offers beside its credentials: the capabilities it asks
@@ -274,13 +277,14 @@ async fn authenticate(
     let threshold = settings::count(db, settings::COMPRESSION_MIN_BYTES);
     let offered = if threshold == 0 { Capabilities::all().without(COMPRESSION) } else { Capabilities::all() };
     let granted = Capabilities::of(&offer.capabilities).and(offered);
-    let mut replies = if granted.has(STATUS) { status::Status::default().begun(&session) } else { Vec::new() };
+    let mut told = status::Status::default();
+    let mut replies = if granted.has(STATUS) { told.begun(&session) } else { Vec::new() };
     let ready =
         Reply::Ready { authorization: authorization.clone(), key: key.key, capabilities: granted.names(), server: turborel::product() };
     replies.push(ready);
     wire.send_all(&replies).await?;
     wire.grant(granted.has(COMPRESSION).then_some(threshold), granted.has(DIAGNOSTICS));
-    Ok(Admitted { session, login: Login { key, user: member, authorization }, granted })
+    Ok(Admitted { session, login: Login { key, user: member, authorization }, granted, told })
 }
 
 /// Refuses `authorization` as a session's user (SQLSTATE 28000) if it is
@@ -369,11 +373,13 @@ fn limits(services: &Services) -> (usize, usize, usize) {
 /// comes back with the outcome, for the connection to close with. A Reset
 /// or a ChangeUser renews the session here (`native/renew.rs`).
 async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer), admitted: Admitted) -> (Wire, Result<()>) {
-    let Admitted { session, mut login, granted } = admitted;
+    let Admitted { session, mut login, granted, told } = admitted;
     let slot = Slot::new();
     let mut running = Running::new(services, present, login.user.as_deref());
     let serves = Serves { db: services.database().clone(), requests: Arc::clone(services.requests()) };
-    let mut lent = Lent::new(Held::new(session, serves, granted), wire);
+    let mut held = Held::new(session, serves, granted);
+    held.status = told;
+    let mut lent = Lent::new(held, wire);
     let ended = loop {
         let work = match next_work(&mut lent, (services, present), login.user.as_deref()).await {
             Ok(Next::Work(work)) => work,

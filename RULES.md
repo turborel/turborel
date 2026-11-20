@@ -292,6 +292,16 @@ verification approach DO-178C expects (§8).
 | D282 | A plug-in reads the settings a call runs with in a SETTINGS frame before it, and writes none but its own |
 | D283 | BUFFER EVICTION programs the pool's evictor, never called by the pool, and its death stops the node |
 | D284 | An eviction policy is weights of one score, read with no lock, with ranges weighed and pages kept |
+| D290 | A query runs by morsels on a shared pool of workers, the statement's thread among them |
+| D291 | The planner marks a part parallel by its rows, and EXPLAIN shows it |
+| D292 | A pipeline's morsels are its table's parts, and a hash join builds and probes by them |
+| D293 | Grouping and DISTINCT pre-aggregate by morsel and merge by partition |
+| D294 | A sort sorts morsels into runs and merges them by ranges |
+| D295 | Window functions, EXCEPT and INTERSECT run per partition of their key |
+| D296 | Every worker reads the statement's snapshot, and a part gives the rows its plan alone gives |
+| D297 | An index range scan splits at the B-link tree's inner keys |
+| D298 | An operator is granted part of the memory budget, up to MEMORY.WORK_BYTES |
+| D299 | Data changes stay serial, their reads may run in parallel |
 | D300 | Joins are ordered by dynamic programming over connected subgraphs, bushy trees among them |
 | D301 | Outer joins are reordered where the conflict rules of CD-C allow, and nowhere else |
 | D302 | Join rows are estimated from distinct values, by classes of equalities, at least one row |
@@ -329,6 +339,11 @@ verification approach DO-178C expects (§8).
 | D334 | A database counts its transactions committed and rolled back, shown in INFORMATION_SCHEMA.SERVER |
 | D335 | A connection whose request runs is watched for its client gone |
 | D336 | A prepared CALL's output dynamic parameters are its columns, sent as a row |
+| D340 | DISTINCT set functions are computed by two groupings, the rows grouped by their arguments first |
+| D341 | A set function without DISTINCT beside them is computed in parts, merged by its state or given whole |
+| D342 | DISTINCT functions of several arguments make each row once for each argument, marked, not one grouping each joined back |
+| D343 | A DISTINCT function's filter is a truth of each row, grouped by, and its argument is computed of the rows it admits |
+| D344 | A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once |
 | D350 | A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there |
 | D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
 
@@ -2234,7 +2249,7 @@ written back by a later one can overwrite a change committed between them. An en
 SERIALIZABLE.
 
 A transaction that names no level takes TRANSACTION.ISOLATION, READ COMMITTED
-by default as in PostgreSQL. The standard says SERIALIZABLE
+by default. The standard says SERIALIZABLE
 [ISO/IEC 9075:1992 §14.1 SR2], and that setting at SERIALIZABLE conforms.
 
 The coordinator's table locks (D28) remain for engines that leave
@@ -2280,8 +2295,7 @@ reader holds disk and not memory. A table's large objects are a space of
 immutable objects beside it, each owned by one row (D79).
 
 The column store suits scans of a few columns of many rows. New rows stay
-in the tree as a delta, as in SQL Server's deltastore, HyPer's Data Blocks
-and TiFlash's delta tree, which keeps writes and key lookups as fast as in
+in the tree as a delta, which keeps writes and key lookups as fast as in
 the row store. The maintenance thread freezes them into immutable groups of
 compressed column chunks (`engine/columns`) once COLUMNSTORE.FREEZE_ROWS
 rows are committed before every snapshot. The tradeoff is that a row
@@ -2610,8 +2624,8 @@ Undo is never refused by the budget, because a refusal would damage a table
 (D19). A failed statement's undo and a ROLLBACK reserve what they need even
 past the limit.
 
-An operator holding rows keeps up to MEMORY.WORK_BYTES in memory, then
-spills to a temporary pager file whose buffer pool is its area. Areas come
+An operator holding rows keeps up to its work grant in memory (D298),
+then spills to a temporary pager file whose buffer pool is its area. Areas come
 from the `Spill` extension point. A spill file's creation isn't made
 durable, because nothing reads it after a crash. Spill files live in `tmp/`
 of a database's directory, cleared at open, and pass through encodings
@@ -6337,7 +6351,7 @@ GRF-0034 is SQLSTATE 22W34, SQLCODE -301.
 
 #### D146. Each graph compatibility syntax compiles to the GPML pattern and binds through the one GRAPH_TABLE binder
 
-SQL Server's MATCH, PGQL's SELECT ... FROM MATCH and openCypher's MATCH
+The MATCH predicate of a WHERE clause, PGQL's SELECT ... FROM MATCH and openCypher's MATCH
 ... RETURN (GS §10) [EXTENSION] are front ends of the parser alone
 (`parser/graph/compat`, its `pgql` and `cypher`). Each compiles its query to
 the GPML AST of a GRAPH_TABLE and its relational query, so the one
@@ -8556,6 +8570,168 @@ policy pushed reweighs each frame once, and a page placed later takes
 its range's weight as it is placed. The score is computed per victim
 from atomics, so the hot path takes no lock and never calls the program.
 
+#### D290. A query runs by morsels on a shared pool of workers, the statement's thread among them
+
+Leis, Boncz, Kemper and Neumann, "Morsel-Driven Parallelism: A
+NUMA-Aware Query Evaluation Framework for the Many-Core Age" (2014),
+run a pipeline on small parts of its input, morsels, each taken by
+whichever thread is free, so the work balances itself without a
+partitioning chosen ahead. Turborel does the same. The thread manager
+owns one pool of workers per database (`threads/pool.rs`), named
+`turborel-exec-<n>` and sized by EXECUTOR.WORKERS, 0 being the
+machine's available parallelism. No query starts a thread. A part run
+in parallel offers its morsels to the pool and its own thread claims
+them too while it waits, so a part never waits on a worker that waits
+on it, and a full pool slows a query without stopping it. Each claim
+takes the next morsel by one atomic, which is the work stealing of the
+paper with a shared counter for the queues. A run takes at most
+EXECUTOR.DEGREE threads and stays at most twice its degree of morsels
+ahead of the one its consumer reads, so its held results stay bounded.
+Dispatch ignores NUMA nodes, as the code is portable and has no
+OS-specific placement.
+
+No operator passes rows to another between threads. A morsel goes
+through its whole pipeline on the thread that took it, and the
+operator ending the pipeline merges what each morsel made, so there is
+no exchange operator to plan or tune. Results are given in morsel
+order, which is the order the plan alone gives.
+
+#### D291. The planner marks a part parallel by its rows, and EXPLAIN shows it
+
+After the physical plan is chosen, one pass (`physical/parallel.rs`)
+marks each part worth running in parallel with a `Parallel` node and
+its degree, which EXPLAIN shows as `Parallel  (degree=n)`. A part is a
+pipeline of table scans, index range scans, filters, projections,
+hash joins' probes and UNION ALL, or one operator ending one, a
+grouping whose set functions keep states that merge, DISTINCT, a sort,
+window functions of a partitioning, EXCEPT or INTERSECT. The degree
+is the rows the part's tables held at planning divided by
+EXECUTOR.MORSEL_ROWS, capped by EXECUTOR.DEGREE and the workers. A part
+reading fewer than EXECUTOR.PARALLEL_MIN_ROWS rows, as a point query
+does, keeps its plan unchanged, so OLTP statements pay only for the
+walk. An expression a worker cannot evaluate alone keeps its pipeline
+on the statement's thread, a subquery's, a routine's, NEXT VALUE FOR's
+and an outer reference's among them, as do located scans, scans in a
+key order and a limit of few rows over an unfiltered stream. While
+EXECUTOR.BATCHES is on, a part reading a column store table with no
+hash join's probe and no window functions stays serial too, since
+the serial scan by batch makes no rows and outruns workers that make
+each. A join or window over one still runs in parallel.
+
+#### D292. A pipeline's morsels are its table's parts, and a hash join builds and probes by them
+
+An engine splits a scan into morsels by `TableStorage::split`. The row
+store cuts its frozen groups and its tree of row ids into ranges of
+about EXECUTOR.MORSEL_ROWS rows (`engine/rows/split.rs`), each read
+with the reader and the group directory taken once for the whole scan,
+so every morsel sees the snapshot the scan would. An engine that cannot
+split gives way to the serial plan. A morsel's rows go through the
+pipeline's steps one row at a time (`exec/parallel/pipeline.rs`). A
+hash join's built operand, if it is itself a large pipeline, is read
+by morsels, each splitting its rows into 64 partitions by key hash,
+and each partition's table is then built by a task of its own, as
+Leis et al. build into a shared table. Its probe is a step of the
+probing pipeline. A smaller operand is built on the statement's
+thread. The partitions keep each key's rows in build order, so a probe
+gives each row's matches in the order the serial join gives them.
+
+#### D293. Grouping and DISTINCT pre-aggregate by morsel and merge by partition
+
+Each morsel groups its own rows, writes each set function's state
+(`Accumulator::write_state`) and splits its groups into 64 partitions
+by key. Each partition is then merged by a task of its own
+(`Accumulator::merge`), taking the pieces in morsel order so each set
+function sees its values in the order it would alone. Each group is
+numbered by its first row's morsel and place, after the seeds, and the
+groups are given in that order, the order the serial grouping gives.
+DISTINCT is grouping by every column. A grouping with DISTINCT set
+functions, inverse distribution functions or a function keeping no
+mergeable state stays serial. Floating sums merged from partial sums
+may differ in their last bits from a serial sum, which SQL leaves
+implementation-dependent, and is the one difference allowed.
+
+#### D294. A sort sorts morsels into runs and merges them by ranges
+
+Each morsel's rows are sorted by a thread into a run, stable. Up to 64
+keys sampled of each run cut the runs into ranges, four per thread,
+and each range of every run is merged by a task of its own, a tie
+taken from the earlier run, so peers keep their input order as the
+serial sort keeps them. Ranges are given in order. A sort of its first
+rows keeps only those of each run. One whose limit keeps ties stays
+serial.
+
+#### D295. Window functions, EXCEPT and INTERSECT run per partition of their key
+
+A window's rows are read by morsels into 64 partitions by the hash of
+its partitioning, and EXCEPT's and INTERSECT's by the hash of their
+compared columns, so rows taken together share a partition. Each
+partition, held in a list that spills, runs through the serial
+operator on a thread of its own (`exec/parallel/partitioned.rs`). The
+outputs are merged back into serial order, a window's by its sort
+keys, a set operation's by the place each first operand's row carried
+through it. UNION is DISTINCT over UNION ALL and needs nothing more.
+
+#### D296. Every worker reads the statement's snapshot, and a part gives the rows its plan alone gives
+
+Every worker reads with the statement's transaction, so it sees one
+snapshot and the transaction's own uncommitted writes (D29). Each
+morsel checks the statement's cancellation as it starts (D44). A
+morsel's panic or error is recorded with its number, no morsel after
+the first failed one starts, and the error raised is the first in row
+order, after the rows before it, as the serial plan raises it. A part
+holds one work grant (D298), shared by its threads and split across
+its partitions' operators. A part that would hold more, or whose table
+cannot be split, gives way to its serial plan. It gives way as soon
+as what its first morsels hold, as much again for every morsel left,
+would pass the grant, so a grouping of many groups wastes a few
+morsels' work, not all of it. The serial plan spills, reading
+its rows again in the same snapshot. Results never depend on the
+degree, the morsel size or the timing of workers.
+
+#### D297. An index range scan splits at the B-link tree's inner keys
+
+An index range scan runs by morsels when its index can cut its range
+(`Index::ranges`). The B-link tree cuts at the keys of its highest
+inner level holding enough within the range (`engine/tree/cuts.rs`),
+read down from the root to the level above the leaves. A split or a
+merge running beside it can only make the parts uneven, since any
+sorted keys cut a range into parts holding each entry once (Lehman and
+Yao 1981, §4). Each part is scanned as the serial scan reads, leaf by
+leaf, and its rows fetched and checked the same way. Parts are in key
+order, so the rows come in the scan's order. A backward scan, one
+deciding entries itself (D85) and a located one stay serial.
+
+#### D298. An operator is granted part of the memory budget, up to MEMORY.WORK_BYTES
+
+A fixed small work area made large operators spill while the budget
+sat unused. An operator now takes a grant as it starts
+(`spill/grant.rs`), half of the budget left free, at most
+MEMORY.WORK_BYTES, default 256 MiB, reserved until it ends. Each grant
+after takes half of what is left, so the grants of all statements
+together never pass the budget however many sessions run, and they
+shrink as sessions grow. Where half the free budget is under 4 MiB an
+operator holds 4 MiB unreserved, as every operator did before grants,
+and a ceiling set below 4 MiB is held as set, so a session can still
+ask for small areas. A spill area's pool is at most 4 MiB, as rows are
+held of the grant, not the pool. The operators of a parallel part
+run inside the statement's grant, each given its share, and reserve
+nothing again, so one statement never takes the budget twice and its
+spill areas still find room. What holds rows outside operators,
+a cursor's read ahead, a change's chosen rows, temporary tables'
+pages, takes no grant and holds at most the lesser of
+MEMORY.WORK_BYTES and 4 MiB. Spilling never changes an answer, so a
+grant changes speed, not results.
+
+#### D299. Data changes stay serial, their reads may run in parallel
+
+INSERT, UPDATE, DELETE and MERGE write on the statement's thread. They
+choose every row before changing any (D38), so the query choosing
+them may run in parallel as any query does and still never sees the
+statement's own changes. Writing from several threads would need the
+undo log, locks, constraint checks and triggers to take one
+statement's work from many threads, for a gain only on bulk changes,
+and is left serial.
+
 #### D300. Joins are ordered by dynamic programming over connected subgraphs, bushy trees among them
 
 A chain of products, filters and outer joins of three to 128 relations
@@ -9238,6 +9414,119 @@ statement of columns reads them unchanged. EXECUTE puts them where its
 result using clause says and raises 07007 without one (§20.13 GR6,
 GR10). EXECUTE IMMEDIATE takes no such statement (§20.14 GR3).
 
+#### D340. DISTINCT set functions are computed by two groupings, the rows grouped by their arguments first
+
+A DISTINCT set function takes each value of its argument once
+[ISO/IEC 9075-2:2023 §10.9 GR7b i]. The executor kept, for each
+value of each group of each such function, a key in a bag of half the
+work area, built of three allocated parts and hashed three times, and a
+DISTINCT function sent its whole aggregation off the batch path, so it
+ran far slower than a grouping by its argument.
+
+The optimizer rule DISTINCT_AGGREGATES (`optimizer/distinct_aggregates.rs`)
+rewrites such an aggregation into two. The first groups the rows by the
+grouping columns and each DISTINCT argument. The second groups those
+groups by the grouping columns alone and gives each DISTINCT function,
+now without DISTINCT, the value of its argument of each group. Both are
+groupings the batch path makes where their input gives batches, with one
+key a row. A null of the argument is a group of the first, which the
+second takes out with the warning of §10.9 GR7a, as before. The values
+reach the function in the order their first rows came, each the first
+row's, so SUM and AVG add them as before, approximate numbers too. Groups
+of the second come in the order of their first rows. Groups of empty
+grouping sets are the second's alone, so of no rows COUNT is 0 and the
+others null. A collation's DISTINCT compares sort keys
+(`binder/expression.rs`), which the first grouping groups by, and a
+grouping by a collation keeps it in both.
+
+MAX and MIN lose DISTINCT, which does not change their result, a tie
+keeping the first value either way. The rule leaves an aggregation of an
+inverse distribution function, whose values the grouping sorts, and one
+whose set functions invoke a routine or draw a value of a sequence
+generator, which it would evaluate in another plan. Its setting,
+OPTIMIZER.DISTINCT_AGGREGATES, turns it off, as every rule's does (D35).
+
+#### D341. A set function without DISTINCT beside them is computed in parts, merged by its state or given whole
+
+A function without DISTINCT of the same aggregation must see every row
+of its group, but the first grouping splits a group by the DISTINCT
+arguments. It is computed there as a part (`functions/partial.rs`), a
+binary string never null. The part is the function's state where the
+function writes one (`Accumulator::write_state`, D38), and the second
+grouping merges the parts in the order they come. Every built-in state
+is of a total whose result does not depend on that order, which is why
+it is written at all.
+
+A function writing no state, as a sum of approximate numbers or a
+plug-in's, is computed whole instead. Each row is then made once more,
+marked as the copy of such functions (D342), whose first-level group is
+every row of its group, so the part is the function's result, judged
+there once, and the second grouping gives it. Its arithmetic and its
+errors are those of one grouping. A result a table may keep apart, a
+large object or an XML value, would be named in the part by an id alone,
+so an aggregation of such a function is left alone.
+
+#### D342. DISTINCT functions of several arguments make each row once for each argument, marked, not one grouping each joined back
+
+Functions of one argument and one filter share a slot. Of more than one
+slot, the first grouping must keep each slot's values apart, so each row
+is made once for each slot by a collection derived table of the markers
+1 to their number, as grouping sets are (`binder/grouping_sets.rs`). A slot's value
+column is its argument of the rows of its marker and null of the
+others, and the first grouping groups by the marker too. The second
+grouping gives each DISTINCT function the groups of its marker alone,
+and the functions without DISTINCT the parts of the first marker's rows,
+which are every row, or of their own marker's if computed whole.
+
+The other way is one two-level grouping for each argument and a join of
+their results on the grouping columns. It reads the input once for each
+argument, which a correlated, nondeterministic or costly input forbids
+or makes dear, and it needs a join on the grouping columns that treats
+nulls and collations as grouping does, and keeps the groups' order. The
+copies keep every group in one grouping, and a collection derived table
+reads the input once, at the price of rows made on the row path.
+
+Rows a table's scan gives, filtered and projected by expressions that
+give the same value of a row each time, are the same however often they
+are read. Of such rows, and slots without a filter, each copy reads them
+again (`optimizer/distinct_aggregates/copies.rs`): a UNION ALL of a
+projection of each, of the columns used, its marker and each slot's
+value, the argument or a null constant. Those are columns and constants,
+which the batch path takes, so the first grouping is fed by batches. A
+filtered slot, a join or another input keeps the collection derived
+table. One slot, the usual case, makes no copies.
+
+#### D343. A DISTINCT function's filter is a truth of each row, grouped by, and its argument is computed of the rows it admits
+
+A function's filter admits the rows it is true of [§10.9 GR4a], and an
+argument is not computed of the others. Of a slot with a filter, a
+projection computes the filter's truth of each row of its copy once, a
+BOOLEAN column, and the slot's value is its argument of the rows that
+truth admits, null of the others. The first grouping groups by the
+truth, and the second gives the function the groups the truth admitted.
+A null of rows the filter did not admit so neither reaches the function
+nor warns, and a division the filter guards raises nothing. Each
+expression is evaluated once a row, as before, so an error is raised of
+the rows it was (D15). A function without DISTINCT keeps its own filter
+in the first grouping, joined to its copy's marker by a CASE, so the
+filter is evaluated only of its copy's rows.
+
+#### D344. A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once
+
+Once the rule applies, no DISTINCT function remains where the batch path
+could take its aggregation. What it leaves is an inverse distribution
+function, a filter or an invoked routine, each of which keeps the
+aggregation on rows already, the rule turned off, and window functions,
+whose frames the rule does not rewrite. So the batch path takes no
+DISTINCT function. Its states would need a set of values for each group
+of each function, which is the executor's hash table to come.
+
+What stays on rows costs less. The key of a value taken, the group's
+key, the function's place and the value's normalized bytes, is made
+again in one buffer for each value, so a value seen allocates nothing.
+The bag (`exec/work.rs`) looks a key up once if it holds it and twice if
+not, where it hashed every new key three times, which the set operations,
+recursive queries and window functions using it gain too.
 #### D350. A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there
 
 A batch scan of a row-store table copied each entry's key and value out

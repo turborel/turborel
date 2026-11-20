@@ -369,7 +369,7 @@ impl Runner {
     /// they are its only run: one for each subquery of the statement, as
     /// each of its operators has a work area of its own.
     fn keep(&self, key: Run, outer: &[Value], found: &SubqueryRows) {
-        let limit = Work::new(&self.db).limit();
+        let limit = crate::settings::held_bytes(self.db.settings.get(crate::settings::MEMORY_WORK_BYTES));
         let rows = if found.spilled { limit } else { lock_builtin(&found.rows).held_bytes().saturating_mul(2) };
         let held = outer.iter().fold(0usize, |sum, v| sum.saturating_add(heap_bytes(v)));
         let of_key = outer.len().saturating_mul(size_of::<NormKey>()).saturating_add(held).saturating_add(ENTRY_BYTES);

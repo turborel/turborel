@@ -429,7 +429,8 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => None,
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => None,
     }
 }
 

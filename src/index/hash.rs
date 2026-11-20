@@ -39,7 +39,7 @@ use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
 use crate::spill::map::SpillMap;
-use crate::spill::{DEFAULT_SPILL_BATCH, DEFAULT_WORK_MEMORY, ListSpace, WorkAreas};
+use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, WORK_FLOOR, WorkAreas};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 use crate::value::{CompOp, DataType, Value};
@@ -49,8 +49,8 @@ const ROW_ID: usize = 8;
 
 /// \[DESIGN\] The bytes of the rows of a key given, held to give each once,
 /// before they spill to a work area: an operator's own, by default
-/// (`spill::DEFAULT_WORK_MEMORY`).
-const ONCE_BYTES: usize = DEFAULT_WORK_MEMORY;
+/// (`spill::WORK_FLOOR`).
+const ONCE_BYTES: usize = WORK_FLOOR;
 
 /// \[DESIGN\] How many of a key's entries a planner's estimate counts
 /// before it leaves the estimate to the planner's statistics.
@@ -454,3 +454,7 @@ impl Index for HashIndex {
 // R-TEST-2).
 #[cfg(test)]
 mod tests;
+
+// Unit tests: the queries a hash index answers none of, by the defaults.
+#[cfg(test)]
+mod defaults;

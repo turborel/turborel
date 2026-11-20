@@ -71,7 +71,8 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => None,
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => None,
     }
 }
 
@@ -132,7 +133,8 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => return columns,
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => return columns,
     };
     columns.extend(keys.iter().flat_map(|k| [k.left, k.right.saturating_add(width)]));
     columns
@@ -181,7 +183,8 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => no_join,
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => no_join,
     };
     made(plan, db, tx)
 }
@@ -336,7 +339,8 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => true,
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => true,
     }
 }
 

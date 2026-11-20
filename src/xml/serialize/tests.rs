@@ -101,3 +101,31 @@ fn sequences_are_normalized() {
     let attribute = Sequence::new(vec![Item::Node(Node::new(Arc::clone(&tree), tree.attributes(a).next().unwrap()))]);
     assert!(refused(&attribute, &PLAIN).contains("err:SENR0001"));
 }
+
+/// A document of one node, a comment of `comment` or a processing
+/// instruction of a target and content, as a builder adds it unchecked.
+fn of_one(comment: Option<&str>, pi: Option<(&str, &str)>) -> Sequence {
+    let mut builder = crate::xml::Builder::document();
+    if let Some(content) = comment {
+        builder.comment(content).unwrap();
+    }
+    if let Some((target, content)) = pi {
+        builder.processing_instruction(target, content).unwrap();
+    }
+    Sequence::document(builder.finish().unwrap())
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.15 GR11a] [Serialization §5]
+/// [XML §2.5 [15], §2.6 [16]] a comment holding `--` or ending with `-`,
+/// and a processing instruction holding `?>` or of a target no name or
+/// holding a colon, cannot be written as XML: err:SERE0003.
+#[test]
+fn comments_and_instructions_xml_cannot_hold_are_errors() {
+    for content in ["a--b", "a-"] {
+        assert!(refused(&of_one(Some(content), None), &PLAIN).contains("SERE0003"), "{content}");
+    }
+    for (target, content) in [("p", "a?>b"), ("1p", "x"), ("p:q", "x")] {
+        assert!(refused(&of_one(None, Some((target, content))), &PLAIN).contains("SERE0003"), "{target} {content}");
+    }
+    assert_eq!(serialize(&of_one(Some("a-b"), Some(("p", ""))), &PLAIN).unwrap(), "<!--a-b--><?p?>");
+}

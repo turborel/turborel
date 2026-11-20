@@ -56,6 +56,12 @@ impl Filling<'_> {
         plans.into_iter().map(|p| self.plan(p)).collect()
     }
 
+    /// The part run in parallel `p`, its plan filled.
+    fn parallel(&self, mut p: Box<crate::physical::Parallel>) -> Result<Plan> {
+        p.input = self.plan(p.input)?;
+        Ok(Plan::Parallel(p))
+    }
+
     fn plan(&self, plan: Plan) -> Result<Plan> {
         match plan {
             Plan::Project { exprs, detail, input } => {
@@ -89,6 +95,7 @@ impl Filling<'_> {
                 Ok(Plan::Limit { limit: Limit { offset, fetch }, input: Box::new(self.plan(*input)?) })
             }
             Plan::Append { left, right } => Ok(Plan::Append { left: Box::new(self.plan(*left)?), right: Box::new(self.plan(*right)?) }),
+            Plan::Parallel(p) => self.parallel(p),
             Plan::MergeAppend { inputs, keys, detail } => Ok(Plan::MergeAppend { inputs: self.plans(inputs)?, keys, detail }),
             Plan::Product { .. }
             | Plan::HashJoin { .. }

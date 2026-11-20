@@ -4,7 +4,9 @@ mod budget;
 // The count's, kept beside the other areas' files.
 #[path = "count.rs"]
 mod count;
+mod distinct_aggregates;
 mod joins;
+mod parallel;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
 mod unnesting;
@@ -68,7 +70,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 33] {
+fn second() -> [&'static [Mutation]; 34] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -102,6 +104,7 @@ fn second() -> [&'static [Mutation]; 33] {
         &super::vector::VECTOR,
         &super::delta_tables::DELTA_TABLES,
         &count::COUNT,
+        &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
     ]
 }
@@ -145,8 +148,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's last, as `last` holds no more.
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain([&super::transport::TRANSPORT[..]])
+    // The transport's and parallel queries' last, as `last` holds no more.
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain([&super::transport::TRANSPORT[..], &parallel::PARALLEL[..]])
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the
@@ -169,6 +172,7 @@ fn plugins() -> [&'static [Mutation]; 9] {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
+/// the memory budget's,
 /// the command-line client's, replication's, the server's, the native protocol's, the client library's,
 /// join enumeration's and the standard's gaps a benchmark found.
 fn last() -> [&'static [Mutation]; 48] {

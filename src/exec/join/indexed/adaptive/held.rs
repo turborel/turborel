@@ -31,7 +31,7 @@ pub(super) struct Held {
 impl Held {
     pub(super) fn new(db: &Arc<State>) -> Option<Self> {
         let bytes = metadata(ROWS);
-        let limit = Work::new(db).limit();
+        let limit = Work::ceiling_of(db);
         if bytes > limit {
             return None;
         }

@@ -91,7 +91,7 @@ impl RowTable {
     }
 
     /// The tree's entries from row `first` up to, not including, `end`.
-    fn range(table: &Arc<Self>, (first, end): (RowId, Option<RowId>)) -> Scan<TreeOf> {
+    pub(super) fn range(table: &Arc<Self>, (first, end): (RowId, Option<RowId>)) -> Scan<TreeOf> {
         let (low, high) = (key(first), end.map(key));
         let upper = high.as_ref().map_or(Bound::Unbounded, |h| Bound::Excluded(&h[..]));
         scan_of(TreeOf(Arc::clone(table)), Bound::Included(&low[..]), upper, Direction::Forward)

@@ -28,6 +28,7 @@ mod newest;
 mod options;
 mod region;
 mod rows;
+mod split;
 
 pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, FIRST_BATCH_ROWS, Floats, Ints, Nulls, Ramp, Texts, batches_of};
 pub use condition::{Condition, Conjunct, Conjunction};
@@ -38,6 +39,7 @@ pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodin
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
 pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
+pub use split::Split;
 
 use std::sync::Arc;
 
@@ -53,12 +55,11 @@ use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
 /// `test/integration/contracts.rs`):
 /// * `insert` returns an id that no live row has and that no deleted row ever
 ///   had, so the undo log's `restore` can never collide with a newer row.
-/// * `get` returns exactly the live row with that id; `scan` yields every live
-///   row once, with its id, in an order of the engine's choosing; `row_count`
-///   is the number of live rows; `count`, if it gives counts, sums to the
-///   rows `scan_batches` would give. An engine that cannot read a row (an I/O
-///   error, a corrupt page) says so with an error, from `get` or as the
-///   scan's next item, never by leaving the row out.
+/// * `get` returns exactly the live row with that id; `scan` yields every live row once, with its
+///   id, in an order of the engine's choosing; `row_count` is the number of live rows; `count`'s
+///   counts sum to the rows `scan_batches` gives. An engine that cannot read a row (an I/O error,
+///   a corrupt page) says so with an error, from `get` or as the scan's next item, never by
+///   leaving the row out.
 /// * `update` and `delete` change a live row and fail, changing nothing, for
 ///   an id that is not live. `restore` makes a deleted row live again under
 ///   its old id.
@@ -161,6 +162,14 @@ pub trait TableStorage: Send + Sync {
         };
         batches_of(rows, columns)
     }
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
+    /// `conditions`, split into morsels of about `rows` rows each, for
+    /// workers to read at once (RULES.md D290); none if it cannot split
+    /// them, or failed to, its scan then raising what failed. Default: none.
+    fn split(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, rows: usize) -> Option<Arc<dyn Split>> {
+        let _ = (tx, columns, conditions, rows);
+        None
+    }
     /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered`
     /// gives its rows, any first of them (RULES.md D31). Default: none.
     fn ordered_by(&self) -> Vec<usize> {
@@ -201,13 +210,16 @@ pub trait TableStorage: Send + Sync {
     fn reads_by_batch(&self) -> bool {
         false
     }
-    /// \[DESIGN\] (RULES.md D350) The rows `scan_batches` gives `tx` with
-    /// no conditions, counted faster than read. The counts sum to how many,
-    /// read once first asked for, each a cancel looked at before, as a
-    /// batch is, and the read noted as the scan's. None if it cannot count
-    /// them faster, the caller then scanning. Default none.
+    /// \[DESIGN\] (RULES.md D351) Counts that sum to the rows `scan_batches`
+    /// gives `tx` with no conditions, read once asked for, the read noted as
+    /// the scan's. None if it cannot count faster. Default none.
     fn count(self: Arc<Self>, _tx: TxId) -> Option<Counts> {
         None
+    }
+    /// \[DESIGN\] Whether it keeps its rows by column, so a serial scan by
+    /// batch outruns workers making rows (RULES.md D291). Default: false.
+    fn keeps_columns(&self) -> bool {
+        false
     }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
@@ -544,7 +556,6 @@ pub trait TableStorage: Send + Sync {
     fn keep_lobs(&self, _tx: TxId, _replacing: Option<RowId>, _row: &mut Row, _log: LobLog<'_>) -> Result<()> {
         Ok(())
     }
-
     /// \[DESIGN\] Keeps object `id` of `body` as the log recorded it
     /// (`keep_lobs`), if it does not hold it: recovery replays it
     /// (RULES.md D25, D79).
@@ -555,11 +566,9 @@ pub trait TableStorage: Send + Sync {
     fn apply_lob(&self, id: u64, _body: &[u8]) -> Result<()> {
         Err(SqlError::new(Code::Api, format!("[DESIGN] the table keeps no large object, and is given object {id} of the log")))
     }
-
     /// \[DESIGN\] Notes the objects `ids` as awaiting collection when the
     /// checkpoint recovery began from was taken (`stale_lobs`).
     fn note_stale_lobs(&self, _ids: &[u64]) {}
-
     /// \[DESIGN\] Ends recovery: frees the large objects it left that no
     /// row's newest version names (RULES.md D79).
     ///
@@ -569,7 +578,6 @@ pub trait TableStorage: Send + Sync {
     fn recovered(&self) -> Result<()> {
         Ok(())
     }
-
     /// \[DESIGN\] The large objects awaiting collection, which a crash
     /// would leave kept: a checkpoint logs them, for recovery from it to
     /// free (RULES.md D79).
@@ -580,7 +588,6 @@ pub trait TableStorage: Send + Sync {
     fn stale_lobs(&self) -> Result<Vec<u64>> {
         Ok(Vec::new())
     }
-
     /// Undo every change `tx` made that the engine keeps itself, and forget
     /// the transaction. Also called after a failed `validate`.
     ///

@@ -73,7 +73,8 @@ fn planned(
     heard: Option<&Warnings>,
 ) -> (LogicalPlan, Vec<&'static str>, Plan) {
     let (optimized, trace) = plugged::optimize(st, logical, (heard, &[]));
-    let physical = planner.plan(&optimized);
+    // [DESIGN] the parts worth running in parallel marked (RULES.md D291).
+    let physical = crate::physical::parallel(st, planner.plan(&optimized));
     (optimized, trace, physical)
 }
 

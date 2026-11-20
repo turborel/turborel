@@ -45,14 +45,14 @@ pub(super) struct Threshold {
 impl Threshold {
     pub(super) fn new(first: usize, db: &State) -> Option<Self> {
         let bytes = first.checked_mul(size_of::<Distance>())?;
-        if first == 0 || bytes > Work::new(db).limit() {
+        if first == 0 || bytes > Work::ceiling_of(db) {
             return None;
         }
         let mut held = db.memory.reserve(bytes, RESERVATION).ok()?;
         let mut heap = BinaryHeap::new();
         heap.try_reserve_exact(first).ok()?;
         let allocated = heap.capacity().checked_mul(size_of::<Distance>())?;
-        if allocated > Work::new(db).limit() {
+        if allocated > Work::ceiling_of(db) {
             return None;
         }
         held.resize(allocated).ok()?;
@@ -142,7 +142,7 @@ mod tests {
         let state = db.snapshot().unwrap();
         assert!(Threshold::new(0, &state).is_none());
         assert!(Threshold::new(usize::MAX, &state).is_none());
-        let too_many = Work::new(&state).limit().div_euclid(size_of::<Distance>()).saturating_add(1);
+        let too_many = Work::ceiling_of(&state).div_euclid(size_of::<Distance>()).saturating_add(1);
         assert!(Threshold::new(too_many, &state).is_none());
         state.memory.set_limit(state.memory.reserved());
         assert!(Threshold::new(1, &state).is_none());

@@ -8,8 +8,10 @@ use crate::error::Result;
 use crate::xml::AtomicType;
 
 mod calls;
+mod depth;
 mod exprs;
 mod kinds;
+mod operands;
 mod schemas;
 
 /// `text` compiled with static typing in effect, the variables `variables`

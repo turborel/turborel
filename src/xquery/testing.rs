@@ -157,3 +157,18 @@ pub(super) fn code_of(text: &str) -> String {
     let code = message.split_whitespace().find(|w| w.starts_with("err:")).map(|w| w.trim_end_matches(':').to_owned());
     code.unwrap_or(message)
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §7.3.2,
+/// §15.1.6] a query compiled with the tests' collations compares and
+/// keeps distinct strings by the collation it names: by CollationA, `-`
+/// and `*` are ignorable; by the unsplit collation, code points.
+#[test]
+fn queries_compare_by_the_tests_collations() {
+    let a = "urn:turborel:collation:COLLATION_A";
+    let unsplit = "urn:turborel:collation:UNSPLIT";
+    assert_eq!(run(&format!("compare('a-b*c', 'abc', '{a}')")), "0");
+    assert_eq!(run(&format!("compare('b', 'a-', '{a}')")), "1");
+    assert_eq!(run(&format!("count(distinct-values(('a-b', 'ab', '*ab*'), '{a}'))")), "1");
+    assert_eq!(run(&format!("compare('a', 'b', '{unsplit}')")), "-1");
+    assert_eq!(run(&format!("count(distinct-values(('a', 'a', 'b'), '{unsplit}'))")), "2");
+}

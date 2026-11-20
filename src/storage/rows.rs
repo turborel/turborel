@@ -8,6 +8,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::txn::{NO_TRANSACTION, TxId};
 use crate::value::{Decimal, Value};
 
+/// \[DESIGN\] What keeps and logs a table's large object's object
+/// (`TableStorage::keep_lobs`): given its id, its body and what keeps it.
+pub type LobLog<'a> = &'a mut dyn FnMut(u64, &[u8], &mut dyn FnMut() -> Result<()>) -> Result<()>;
+
 /// A row: one value per column, in column order.
 pub type Row = Vec<Value>;
 
@@ -78,10 +82,6 @@ pub type Rows = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 /// \[DESIGN\] Counts of a table's rows, which sum to how many there are
 /// (`TableStorage::count`), read as they are pulled.
 pub type Counts = Box<dyn Iterator<Item = Result<u64>> + Send>;
-
-/// \[DESIGN\] What keeps and logs a table's large object's object
-/// (`TableStorage::keep_lobs`): given its id, its body and what keeps it.
-pub type LobLog<'a> = &'a mut dyn FnMut(u64, &[u8], &mut dyn FnMut() -> Result<()>) -> Result<()>;
 
 /// Makes row `id` of `table` hold `row`, or be absent, through `get`,
 /// `update`, `restore` and `delete` outside any transaction, as the
