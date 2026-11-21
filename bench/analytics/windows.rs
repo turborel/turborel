@@ -70,6 +70,15 @@ fn database(n: u64) -> (Database, Session) {
     (db, s)
 }
 
+/// Runs `sql`, its rows each fetched, then commits: `n`, the rows read.
+fn fetched(s: &Session, sql: &str, n: u64) -> u64 {
+    let mut cursor = s.open_cursor(sql).unwrap();
+    while cursor.fetch().unwrap().is_some() {}
+    drop(cursor);
+    s.commit().unwrap();
+    n
+}
+
 /// The workloads of each table at each degree.
 pub fn workloads(bench: &Bench) {
     let n = rows();
@@ -79,11 +88,7 @@ pub fn workloads(bench: &Bench) {
             let sql = format!("SELECT COUNT(*), SUM(W) FROM (SELECT {call} AS W FROM {table}) AS Q");
             for degree in DEGREES {
                 s.run(&format!("SET EXECUTOR.DEGREE = {degree}")).unwrap();
-                bench.measure(Case::new(format!("window {name}{label}"), "rows").threads(degree), || {
-                    s.run(&sql).unwrap();
-                    s.commit().unwrap();
-                    n
-                });
+                bench.measure(Case::new(format!("window {name}{label}"), "rows").threads(degree), || fetched(&s, &sql, n));
             }
         }
     }

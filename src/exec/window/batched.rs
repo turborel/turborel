@@ -124,8 +124,9 @@ pub(in crate::exec) fn window_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> 
     let partition: Vec<SortKey> = w.partition.iter().map(|&c| SortKey::ascending(c)).collect();
     let both: Vec<SortKey> = partition.iter().chain(&w.order).copied().collect();
     let keyed = input_of(input, (partition.len(), &both), db, tx)?;
+    let limit = Work::of(db, tx).limit();
     let windowing = Windowing {
-        work: Work::of(db, tx),
+        limit,
         w,
         sorted: (partition, both),
         input: Some(keyed),
@@ -229,8 +230,8 @@ struct Windowing {
     held: Vec<Held>,
     /// The bytes they hold.
     bytes: usize,
-    /// Its work area, held so its grant is charged with the rows held.
-    work: Work,
+    /// The bytes of the work area.
+    limit: usize,
     /// The last row read.
     last: Option<Last>,
     /// Batches computed, to give.

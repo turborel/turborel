@@ -142,10 +142,14 @@ impl Bounds {
         (&self.start.edge, &self.end.edge, self.exclusion)
     }
 
-    /// Begins a partition: each pointer at its first row.
+    /// Begins a partition: each pointer at its first row, the segment each
+    /// read of the partition before let go, as the new one's segments are
+    /// numbered from the first again.
     pub(in crate::exec) fn reset(&mut self) {
         self.start.at = 0;
         self.end.at = 0;
+        self.start.reader = Reader::default();
+        self.end.reader = Reader::default();
     }
 
     /// Whether its frames only grow: each from the partition's first row,

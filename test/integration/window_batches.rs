@@ -125,18 +125,35 @@ fn fits(window: &str, frame: &str) -> String {
 #[test]
 fn windows_over_batches_are_those_of_rows() {
     let (_db, a) = tables();
+    all_alike(&a);
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §7.15 GR5] each window over batches of
+/// a sort that writes runs to its work area, its keys made of each batch,
+/// gives the rows the window gives a row at a time.
+#[test]
+fn windows_over_a_spilled_sort_are_those_of_rows() {
+    let (_db, a) = tables();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
+    exec(&a, "SET SPILL.BATCH_BYTES = 4096").unwrap();
+    all_alike(&a);
+}
+
+/// Checks every window and frame over both tables, over batches and a
+/// row at a time.
+fn all_alike(a: &Session) {
     for table in ["W", "WC"] {
         for window in WINDOWS {
             for f in UNFRAMED {
                 let sql = format!("SELECT I, {f} OVER ({window}) FROM {table}");
-                let (batched, by_rows) = both(&a, &sql);
+                let (batched, by_rows) = both(a, &sql);
                 assert_eq!(batched, by_rows, "{sql}");
             }
             for frame in FRAMES {
                 let frame = fits(window, frame);
                 for f in FRAMED {
                     let sql = format!("SELECT I, {f} OVER ({window} {frame}) FROM {table}");
-                    let (batched, by_rows) = both(&a, &sql);
+                    let (batched, by_rows) = both(a, &sql);
                     assert_eq!(batched, by_rows, "{sql}");
                 }
             }
