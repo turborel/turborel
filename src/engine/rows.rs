@@ -54,6 +54,7 @@ mod options;
 mod recovery;
 mod scan;
 mod sealing;
+mod sizes;
 mod split;
 mod stats;
 mod store;
@@ -318,7 +319,7 @@ impl TableStorage for RowTable {
 
     /// Of the column store, the columns COLUMNSTORE.ORDER names.
     fn ordered_by(&self) -> Vec<usize> {
-        self.frozen.columns().map(|c| c.order.places().to_vec()).unwrap_or_default()
+        self.frozen.columns().map(|c| c.order.places()).unwrap_or_default()
     }
 
     /// Of the column store, its groups' rows and the tree's merged in the
@@ -350,6 +351,10 @@ impl TableStorage for RowTable {
 
     fn row_count(&self) -> usize {
         self.counted.live.load(Ordering::Acquire)
+    }
+
+    fn sizes(&self) -> Option<crate::storage::TableSizes> {
+        self.measured()
     }
 
     /// A row of the tree costs 0.8, up to 1 as all its columns are read; a

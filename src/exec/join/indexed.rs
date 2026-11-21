@@ -11,7 +11,6 @@
 //! An unordered spatial join can instead buffer a bounded outer input
 //! and scan the table once when estimated cheaper (`indexed/adaptive.rs`).
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use super::super::entries::{Reading, fetch};
@@ -21,7 +20,7 @@ use super::super::{Db, RowIter, Runner, Subqueries, broken, eval_cond, execute, 
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::error::Result;
 use crate::functions::ScalarRef;
-use crate::index::{Entries, Index, Key, KeyOrder, Probe};
+use crate::index::{Entries, Index, Key, KeyOrder, Using};
 use crate::logical::{Cond, Truth};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
@@ -31,13 +30,11 @@ use crate::txn::{Stop, TxId, checked};
 use crate::value::Value;
 
 mod adaptive;
-mod batched;
 mod paired;
 mod preserved;
 mod refined;
 mod routed;
 
-use batched::Batched;
 use preserved::Matched;
 use refined::Binding;
 use routed::{Opened, Routes};
@@ -57,7 +54,13 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, t
         return failed(broken("an index join is not one"));
     };
     let inner = matches!(outer, Preserved::Inner);
-    let batched = batched_of((&probe, &index, spatial.is_none() && !matches!(outer, Preserved::Both(_))), db);
+    // Of a semi join or an antijoin, the first match decides each left row.
+    let first = match outer {
+        Preserved::Semi => Some(false),
+        Preserved::Anti => Some(true),
+        Preserved::Inner | Preserved::Outer | Preserved::Both(_) => None,
+    };
+    let nulls = (first.is_none() && !inner).then(|| vec![Value::Null; width]);
     let opened = opened(db, &table, &index)
         .and_then(|(storage, found, ix, routes)| Ok((storage, found, ix, routes, Matched::of(outer, &needed, db)?)));
     match opened {
@@ -73,14 +76,14 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, t
                     stop: db.tx.stop_of(tx),
                     located,
                     routes,
-                    ready: VecDeque::new(),
+                    using: Using::of(db.uses_of(&index)),
                 },
-                batched,
                 budget: prepared::budget(db).filter(|_| matches!(probe, JoinProbe::Predicate { .. })).map(Arc::clone),
                 prepared: None,
                 probe,
                 cond,
-                nulls: (!inner).then(|| vec![Value::Null; width]),
+                nulls,
+                first,
                 matched,
                 runner: Runner::new(db, tx),
                 current: None,
@@ -92,16 +95,6 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, t
         }
         Err(e) => failed(e),
     }
-}
-
-/// \[DESIGN\] (RULES.md D491) The batches an index join by `probe` of
-/// `index` reads its outer rows in, if `alone` it is neither spatial nor
-/// FULL, EXECUTOR.BATCHED_INDEX_JOINS is on, and the index's keys are
-/// unique (`indexed/batched.rs`).
-fn batched_of((probe, index, alone): (&JoinProbe, &str, bool), db: &Db) -> Option<Batched> {
-    (alone && db.settings.is_on(crate::settings::EXECUTOR_BATCHED_INDEX_JOINS))
-        .then(|| db.catalog.index(index).and_then(|desc| Batched::of(probe, desc)))
-        .flatten()
 }
 
 /// What an index join of `table` by `index` reads: the table's rows, the
@@ -150,9 +143,9 @@ struct Probed {
     /// \[EXTENSION\] Of a partitioned table's template, each partition's
     /// index, a probe routed to those its values may be in.
     routes: Option<Routes>,
-    /// Of a probe by batch, the rows of its entries fetched already, each
-    /// taken in place of a fetch as its entry is (`indexed/batched.rs`).
-    ready: VecDeque<Option<Row>>,
+    /// Its probes and the entries they gave, counted as the index's
+    /// (RULES.md D522).
+    using: Using,
 }
 
 impl Probed {
@@ -160,23 +153,18 @@ impl Probed {
     /// spatial predicate the region the index reads, or else the whole
     /// table (`exec/read.rs`). A NULL operand selects no entries.
     fn entries(&mut self, binding: &JoinProbe, row: &Row) -> Result<Entries> {
-        let Some(probe) = binding.bind(row, self.ix.columns.len())? else {
-            return Ok(Box::new(std::iter::empty()));
-        };
-        self.searched(&probe)
-    }
-
-    /// Records the comparison read by `probe`, or the region or the table,
-    /// and the entries it selects (`entries`).
-    fn searched(&mut self, probe: &Probe) -> Result<Entries> {
         if let Some(stop) = &self.stop {
             stop.check()?;
         }
-        Asked::of(&*self.index, &self.ix, probe).record(&*self.storage, self.tx)?;
+        let Some(probe) = binding.bind(row, self.ix.columns.len())? else {
+            return Ok(Box::new(std::iter::empty()));
+        };
+        Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
+        self.using.searched();
         let entries = match &self.routes {
-            Some(routes) => routes.search(probe),
-            None => Arc::clone(&self.index).search(probe, KeyOrder::Ascending),
+            Some(routes) => routes.search(&probe),
+            None => Arc::clone(&self.index).search(&probe, KeyOrder::Ascending),
         };
         Ok(Box::new(checked(entries, self.stop.clone())))
     }
@@ -185,15 +173,8 @@ impl Probed {
     /// followed by its id if located.
     fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
-        if let Some(row) = self.ready.pop_front() {
-            return Ok(row);
-        }
-        self.fetched(&key, id)
-    }
-
-    /// The row of the entry `key`, `id`, as `row` gives it.
-    fn fetched(&mut self, key: &Key, id: RowId) -> Result<Option<Row>> {
-        let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), key)?;
+        self.using.gave(1);
+        let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
         Ok(found.map(|(_, mut row)| {
             if self.located {
                 row.push(storage::located(id));
@@ -218,6 +199,9 @@ struct IndexJoin {
     prepared: Option<Cond>,
     /// Of a LEFT or FULL join, the nulls of a table row.
     nulls: Option<Vec<Value>>,
+    /// \[DESIGN\] Of a semi join, false, of an antijoin, true: each left
+    /// row is given alone, at its first match or of none (RULES.md D540).
+    first: Option<bool>,
     /// Of a FULL join, the table rows paired, and then those that were not.
     matched: Option<Matched>,
     runner: Runner,
@@ -228,9 +212,6 @@ struct IndexJoin {
     /// adaptive join observes this work before requesting extra estimates.
     candidates: usize,
     output: Option<Columns>,
-    /// Of a join probing a unique index by batch, its outer rows read so
-    /// (`indexed/batched.rs`).
-    batched: Option<Batched>,
     /// A single spatial conjunct can refine borrowed rows before their
     /// selected output is built. Residuals retain the full row evaluator.
     refinement: Option<(Binding, ScalarRef)>,
@@ -251,7 +232,8 @@ impl IndexJoin {
                 return self.unmatched();
             }
             let Some((l, mut entries, found)) = self.current.take() else {
-                let Some((l, entries)) = self.outer()? else { return self.unmatched() };
+                let Some(l) = self.left.next().transpose()? else { return self.unmatched() };
+                let entries = self.table.entries(&self.probe, &l)?;
                 self.prepare(&l)?;
                 self.current = Some((l, entries, false));
                 self.candidates = 0;
@@ -260,7 +242,11 @@ impl IndexJoin {
             let Some(entry) = entries.next() else {
                 self.prepared = None;
                 self.refinement = None;
-                // Its entries read: of a LEFT join, kept with nulls if none was.
+                // Its entries read: of an antijoin, kept alone if none was.
+                if let (Some(true), false) = (self.first, found) {
+                    return self.project(l).map(Step::Row);
+                }
+                // Of a LEFT join, kept with nulls if none was.
                 if let (Some(nulls), false) = (&self.nulls, found) {
                     let row = l.into_iter().chain(nulls.iter().cloned()).collect();
                     return self.project(row).map(Step::Row);
@@ -276,23 +262,20 @@ impl IndexJoin {
                 matched.add(id)?;
             }
             if let Some(joined) = kept? {
-                return Ok(Step::Row(joined));
+                return self.decided(joined);
             }
         }
     }
 
-    /// The next outer row and the entries its key selects: of a join by
-    /// batch, found already, their rows ready.
-    fn outer(&mut self) -> Result<Option<(Row, Entries)>> {
-        let Some(batched) = self.batched.as_mut() else {
-            let Some(l) = self.left.next().transpose()? else { return Ok(None) };
-            let entries = self.table.entries(&self.probe, &l)?;
-            return Ok(Some((l, entries)));
-        };
-        let Some((l, (found, failed))) = batched.next(&mut self.left, (&mut self.table, &self.probe))? else { return Ok(None) };
-        let (entries, rows): (Vec<_>, VecDeque<_>) = found.into_iter().unzip();
-        self.table.ready = rows;
-        Ok(Some((l, Box::new(entries.into_iter().map(Ok).chain(failed.map(Err))))))
+    /// The step of a pair the condition kept, `joined`: the pair; or of a
+    /// semi join its left row, or of an antijoin none, its other entries
+    /// left unread.
+    fn decided(&mut self, joined: Row) -> Result<Step> {
+        let Some(anti) = self.first else { return Ok(Step::Row(joined)) };
+        let Some((l, _, _)) = self.current.take() else { return Err(broken("an index semi join lost its left row")) };
+        self.prepared = None;
+        self.refinement = None;
+        if anti { Ok(Step::ProbeEnd) } else { self.project(l).map(Step::Row) }
     }
 
     /// `l` joined with the row of `entry`, if the version read has it and
@@ -333,6 +316,7 @@ impl IndexJoin {
         self.prepared = None;
         if self.output.is_some()
             && self.nulls.is_none()
+            && self.first.is_none()
             && let Some(binding) = Binding::of(self, row.len()).filter(|binding| binding.rest.is_none())
         {
             let function = binding.prepared(row, self.budget.as_ref())?;

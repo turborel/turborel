@@ -120,7 +120,9 @@ fn same_value(a: &DataType, b: &DataType) -> bool {
 /// The groupjoin the grouping `plan` is, if it is one (as the module
 /// says): its group operand the join's left or right, the left first.
 pub(super) fn recognized<'a>(plan: &'a Plan, db: &State) -> Option<Found<'a>> {
-    let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return None };
+    // A streamed grouping holds nothing and gives its groups in its keys'
+    // order (RULES.md D550): no groupjoin stands for it.
+    let Plan::Aggregate { groups, collations, aggs, seeds, input, streamed: false, .. } = plan else { return None };
     // Groups made before any row, or by a collation, are not one row each.
     if groups.is_empty() || !collations.is_empty() || !seeds.is_empty() {
         return None;

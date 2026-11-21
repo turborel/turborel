@@ -18,6 +18,21 @@ use crate::logical::Limit;
 use crate::physical::{JoinProbe, Plan, Preserved};
 use std::sync::Arc;
 
+/// Whether `one` and `other`, groupings, group by the same columns of
+/// inputs of one shape, as many set functions and seeds, both streamed or
+/// both hashed.
+fn same_aggregate(one: &Plan, other: &Plan) -> bool {
+    let (
+        Plan::Aggregate { groups, aggs, seeds, input, streamed, .. },
+        Plan::Aggregate { groups: groups2, aggs: aggs2, seeds: seeds2, input: input2, streamed: streamed2, .. },
+    ) = (one, other)
+    else {
+        return false;
+    };
+    let counts = (aggs.len(), seeds.len(), streamed) == (aggs2.len(), seeds2.len(), streamed2);
+    groups == groups2 && counts && same_shape(input, input2)
+}
+
 /// Whether `one` and `other` have one shape, as the module says.
 pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
     match one {
@@ -32,13 +47,10 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             let Plan::Project { exprs: exprs2, input: input2, .. } = other else { return false };
             exprs.len() == exprs2.len() && same_shape(input, input2)
         }
-        Plan::Aggregate { groups, aggs, seeds, input, .. } => {
-            let Plan::Aggregate { groups: groups2, aggs: aggs2, seeds: seeds2, input: input2, .. } = other else { return false };
-            groups == groups2 && aggs.len() == aggs2.len() && seeds.len() == seeds2.len() && same_shape(input, input2)
-        }
-        Plan::Distinct { input, .. } => {
-            let Plan::Distinct { input: input2, .. } = other else { return false };
-            same_shape(input, input2)
+        Plan::Aggregate { .. } => same_aggregate(one, other),
+        Plan::Distinct { input, streamed, .. } => {
+            let Plan::Distinct { input: input2, streamed: streamed2, .. } = other else { return false };
+            streamed == streamed2 && same_shape(input, input2)
         }
         Plan::Sort { keys, input, .. } => {
             let Plan::Sort { keys: keys2, input: input2, .. } = other else { return false };
@@ -56,6 +68,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         Plan::IndexJoin { .. } => same_index_join(one, other),
         Plan::MergeJoin(_)
         | Plan::GroupJoin(..)
+        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
@@ -360,8 +373,8 @@ mod tests {
         };
         assert!(same_shape(&sorted(false), &sorted(false)));
         assert!(!same_shape(&sorted(false), &sorted(true)), "another order");
-        let distinct = Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64 };
-        assert!(same_shape(&distinct, &Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64 }));
+        let distinct = Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64, streamed: false };
+        assert!(same_shape(&distinct, &Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64, streamed: false }));
         assert!(!same_shape(&distinct, &sorted(false)), "another operator");
         let product = |descending: bool| Plan::Product { left: Box::new(sorted(false)), right: Box::new(sorted(descending)), est: 0.0_f64 };
         assert!(same_shape(&product(false), &product(false)));

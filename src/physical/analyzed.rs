@@ -150,6 +150,7 @@ impl Plan {
                 | Plan::MergeJoin(_)
                 | Plan::RangeJoin(_)
                 | Plan::OuterJoin { .. }
+                | Plan::SemiJoin(_)
         )
     }
 
@@ -220,6 +221,7 @@ pub(crate) fn operators(plan: Plan, depth: usize, out: &mut Vec<Operator>) -> us
         | Plan::OuterJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::GroupJoin(_)
+        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
@@ -281,7 +283,7 @@ mod tests {
     /// depth, below a part's mark one deeper.
     #[test]
     fn each_operator_is_counted_but_a_parallel_mark() {
-        let distinct = Plan::Distinct { input: Box::new(values()), est: 1.0_f64 };
+        let distinct = Plan::Distinct { input: Box::new(values()), est: 1.0_f64, streamed: false };
         let part = Plan::Parallel(Box::new(Parallel { degree: 2, input: distinct }));
         let plan = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(part), most: None };
         let (counted, made) = counted(plan);

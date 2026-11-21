@@ -139,6 +139,7 @@ pub fn of_node(plan: &LogicalPlan, inner: &[Vec<Typed>], st: &State) -> Vec<Type
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Limit { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::SetOp { .. } => first,
         LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } => inner.concat(),
         LogicalPlan::Aggregate { groups, aggs, .. } => {

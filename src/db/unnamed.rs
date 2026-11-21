@@ -51,7 +51,7 @@ impl Session {
     /// The cursor of `sql`, with the parameters `params`, in the call
     /// `call`.
     pub(super) fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
-        let timed = super::slow::Timed::of(call.state(), || sql.to_owned(), (&self.auth(), &self.stop));
+        let timed = self.timed(call.state(), || sql.to_owned(), &self.stop.activity().text_of(sql));
         let spec = Self::parse_cursor(call.state(), sql, params)?;
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |st, tx| self.open_rows(st, tx, &spec, (params, None)))
@@ -92,6 +92,13 @@ impl Session {
             opened.paused();
         }
         self.replied(&tx, Ok(()))?;
-        Ok(Cursor { columns, rows, db: self.db.clone(), stop: Arc::clone(&self.stop), timed, zone: self.now.get().zone })
+        Ok(Cursor {
+            columns,
+            rows,
+            db: self.db.clone(),
+            stop: Arc::clone(&self.stop),
+            timed: timed.map(Box::new),
+            zone: self.now.get().zone,
+        })
     }
 }

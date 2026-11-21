@@ -32,7 +32,7 @@ pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
+pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of};
 pub use split::Split;
 
 use std::sync::Arc;
@@ -220,6 +220,11 @@ pub trait TableStorage: Send + Sync {
     }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
+    /// \[DESIGN\] The bytes it takes, without a pass over its rows
+    /// (TABLE_STATISTICS, RULES.md D522). Default: not known.
+    fn sizes(&self) -> Option<TableSizes> {
+        None
+    }
     /// `tx` is about to read, by `get`, the rows an index chose by
     /// `condition`: its result depends on every row the condition matches,
     /// which an engine checking serializability must count as read, rows
@@ -284,7 +289,6 @@ pub trait TableStorage: Send + Sync {
     fn scan_cost(&self, _columns: &[usize]) -> f64 {
         cost_of(self.row_count())
     }
-
     /// \[DESIGN\] The share of its rows a scan told `conditions`
     /// (`scan_where`) reads, from what the engine keeps of them, such as
     /// the least and greatest values of blocks of rows (RULES.md D31); the
@@ -293,25 +297,21 @@ pub trait TableStorage: Send + Sync {
     fn scan_share(&self, _conditions: &Conjunction) -> f64 {
         1.0_f64
     }
-
     /// Cost of one `get` by row id. Default: a random read in a row store.
     fn fetch_cost(&self) -> f64 {
         DEFAULT_FETCH_COST
     }
-
     /// Cost more of a page the buffer pool missed than of one it holds, of
     /// each an index's probe misses (`Index::probe_missed`). Default: none.
     fn miss_cost(&self) -> f64 {
         0.0_f64
     }
-
     /// What the engine knows of its rows, for the planner's estimates
     /// (`stats.rs`): each engine answers what its layout tells it. Default:
     /// nothing, and the planner assumes its defaults.
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         None
     }
-
     /// Gathers the statistics `statistics` gives anew, now. Default:
     /// nothing to gather.
     ///

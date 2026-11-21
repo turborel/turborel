@@ -1,8 +1,9 @@
-//! \[DESIGN\] The settings of join enumeration (RULES.md D305): which
-//! search plans a chain of joins, and the limits of the adaptive one's
-//! stages (`physical/enumerate.rs`); and whether a join comparing a value
-//! of each operand by order may be a range join (`physical/range.rs`,
-//! RULES.md D582).
+//! \[DESIGN\] The settings of join enumeration (RULES.md D305), which
+//! search plans a chain of joins and the limits of the adaptive one's
+//! stages (`physical/enumerate.rs`); whether a join comparing a value of
+//! each operand by order may be a range join (`physical/range.rs`,
+//! RULES.md D582); and whether a grouping may be streamed (D550,
+//! `physical/streamed.rs`).
 
 use super::builtin::{SESSION, count, defined, text};
 use super::{Definition, Key, Kind, ON, SWITCHES};
@@ -16,6 +17,8 @@ pub const DP_BUDGET: Key = Key(80);
 pub const LINEARIZED_RELATIONS: Key = Key(81);
 /// PLANNER.RANGE_JOINS.
 pub const RANGE_JOINS: Key = Key(88);
+/// PLANNER.STREAMED_GROUPING.
+pub const STREAMED_GROUPING: Key = Key(90);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
@@ -52,4 +55,14 @@ pub(super) fn range_joins() -> Definition {
         SESSION,
         "Whether a join whose condition compares a value of each table by <, <=, > or >=, a band or an overlap of periods among them, may sort one table and have each row of the other search it, rather than judge every pair. OFF plans such joins as nested loops, as to compare the two.",
     )
+}
+
+/// The setting of streamed groupings, at its key's place after the
+/// range joins'.
+pub(super) fn streamed() -> [Definition; 1] {
+    [defined(
+        ("PLANNER.STREAMED_GROUPING", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a grouping or DISTINCT whose rows come in the order of its keys, or cost less sorted, is made a group at a time as its rows come, with nothing held, ON, or always by a table of its groups, OFF, as to compare the two.",
+    )]
 }

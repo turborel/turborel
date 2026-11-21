@@ -26,7 +26,7 @@ use super::{Completion, Database, State};
 use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::exec::{HeldIter, HeldRows, RowIter, execute};
+use crate::exec::{Db, HeldIter, HeldRows, RowIter, execute};
 use crate::logical::LogicalPlan;
 use crate::physical::Plan;
 use crate::spill::ListSpace;
@@ -63,7 +63,7 @@ impl Stream {
     /// A lock is not granted; as `open`.
     pub(super) fn planned(st: &Arc<State>, tx: &Txn, logical: LogicalPlan) -> Result<Stream> {
         let (optimized, _, physical) = super::plan_heard(st, logical, Some(tx.stop.warnings()));
-        Stream::kept(st, tx, physical, optimized.tables().into())
+        Stream::kept(&Db::of(st), tx, physical, optimized.tables().into())
     }
 
     /// The rows of `physical`, a plan made to run, which reads `reads`,
@@ -73,7 +73,7 @@ impl Stream {
     /// # Errors
     ///
     /// A lock is not granted; as `open`.
-    pub(super) fn kept(st: &Arc<State>, tx: &Txn, physical: Plan, reads: Arc<[QualifiedName]>) -> Result<Stream> {
+    pub(super) fn kept(st: &Db, tx: &Txn, physical: Plan, reads: Arc<[QualifiedName]>) -> Result<Stream> {
         for t in reads.iter() {
             st.read_lock(tx, t)?;
         }
@@ -86,7 +86,7 @@ impl Stream {
     /// # Errors
     ///
     /// The plan, read now, raises one, or its rows cannot be held.
-    pub(super) fn open(physical: Plan, reads: Arc<[QualifiedName]>, st: &Arc<State>, tx: TxId) -> Result<Stream> {
+    pub(super) fn open(physical: Plan, reads: Arc<[QualifiedName]>, st: &Db, tx: TxId) -> Result<Stream> {
         let read_now = physical.can_raise();
         let buffered = !read_now && chunks::eligible(&physical);
         let space = st.list_space();
@@ -214,7 +214,7 @@ pub struct Cursor {
     /// Its session's, which cancels a fetch as a statement (RULES.md D44).
     pub(super) stop: Arc<Stop>,
     /// Its work, timed, to tell if it is slow (`db/slow.rs`).
-    pub(super) timed: Option<super::slow::Timed<String>>,
+    pub(super) timed: Option<Box<super::slow::Timed<String>>>,
     /// Its session's time zone displacement as it was opened, its times
     /// and timestamps without time zone shown in [ISO/IEC 9075:1992 §6.1
     /// GR5].
@@ -224,7 +224,9 @@ pub struct Cursor {
 impl Drop for Cursor {
     fn drop(&mut self) {
         if let Some(timed) = self.timed.take() {
-            timed.done(&self.db);
+            // Its rows go first, so what they read is counted in its tally.
+            lock_builtin(&self.rows).take();
+            timed.done(&self.db, &self.stop);
         }
     }
 }
@@ -247,6 +249,7 @@ impl Cursor {
         };
         if let Some(timed) = self.timed.as_mut() {
             timed.paused();
+            timed.rows(u64::from(matches!(next, Ok(Some(_)))));
         }
         let mut next = self.db.noted(next)?;
         if let Some(row) = next.as_mut() {

@@ -1,13 +1,14 @@
-//! The mutations of groupjoins and index joins by batch (RULES.md R-TEST-9,
-//! D490, D491): a LEFT join's unmatched groups, the order of groups by
-//! their first probe rows, the uniqueness that makes each group one row of
-//! the group operand, and the outer rows' order of a join by batch.
+//! The mutations of groupjoins (RULES.md R-TEST-9, D490): a LEFT join's
+//! unmatched groups, the order of groups by their first probe rows, the
+//! uniqueness that makes each group one row of the group operand, the
+//! planner's note that a grouping is over a join, and the sampled distinct
+//! values the choice of form reads.
 
 use super::{Mutation, Package};
 
-/// The mutations of groupjoins and index joins by batch, in the order
+/// The mutations of groupjoins, in the order
 /// they run.
-pub const GROUPJOINS: [Mutation; 7] = [
+pub const GROUPJOINS: [Mutation; 5] = [
     Mutation {
         name: "groupjoin-left-unmatched-dropped",
         package: Package::Core,
@@ -36,26 +37,6 @@ pub const GROUPJOINS: [Mutation; 7] = [
         original: "    found_once(&kept, keys, |k| k.left)",
         replacement: "    !keys.is_empty()",
         integration: &["groupjoins::groupings_no_groupjoin_computes"],
-        unit: &[],
-    },
-    Mutation {
-        name: "batched-index-join-order-lost",
-        package: Package::Core,
-        breaks: "an index join by batch gives its outer rows last first",
-        file: "src/exec/join/indexed/batched.rs",
-        original: "let Some((row, at)) = self.queue.pop_front() else",
-        replacement: "let Some((row, at)) = self.queue.pop_back() else",
-        integration: &["index_join_batches::batches_of_outer_rows_join_as_rows_alone"],
-        unit: &[],
-    },
-    Mutation {
-        name: "batched-index-join-repeat-taken",
-        package: Package::Core,
-        breaks: "an index join by batch gives a key's rows to the first of the outer rows that repeat it alone",
-        file: "src/exec/join/indexed/batched.rs",
-        original: "let taken = if *uses == 0 {",
-        replacement: "let taken = if *uses <= 1 {",
-        integration: &["index_join_batches::batches_of_outer_rows_join_as_rows_alone"],
         unit: &[],
     },
     Mutation {

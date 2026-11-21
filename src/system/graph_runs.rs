@@ -236,6 +236,6 @@ impl SystemTable for GraphAlgoRuns {
 
     fn rows(&self, seen: &Seen<'_>) -> Result<Vec<Row>> {
         let owner = seen.is_owner();
-        Ok(seen.state.graph_runs.runs().iter().filter(|r| owner || r.user == seen.auth).map(row).collect())
+        Ok(seen.state.ran.graph_runs.runs().iter().filter(|r| owner || r.user == seen.auth).map(row).collect())
     }
 }

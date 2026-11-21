@@ -29,6 +29,7 @@ fn edge_row() -> Row {
 fn every_kind() -> Vec<Record> {
     let changes = [
         Change::Insert { table: table(), generation: 0, row: 7, after: edge_row() },
+        Change::InsertRows { table: table(), generation: 3, rows: vec![(7, edge_row()), (9, vec![]), (u64::MAX, edge_row())] },
         Change::Update { table: table(), generation: u32::MAX, row: u64::MAX, before: vec![], after: edge_row() },
         Change::Delete { table: table(), generation: 7, row: 0, before: edge_row() },
         Change::Commit { at: 42, wall: 7 },
@@ -273,4 +274,19 @@ fn an_instant_out_of_range_is_corrupt() {
     written.put_i128(0);
     written.put_i128(i128::MAX);
     assert_eq!(now(&mut Reader::new(&written, "record")).err().map(|e| e.code), Some(Code::Corrupt));
+}
+
+/// Verifies: [EXTENSION] RULES.md D530: the record of rows inserted
+/// together, made from the rows as they are held, is the one
+/// `Record::encode` writes of them, and is read back as those rows.
+#[test]
+fn rows_inserted_together_are_one_record() {
+    let rows = vec![edge_row(), vec![], edge_row()];
+    let ids = [3, 4, u64::MAX];
+    let made = insert_rows_record(5, (&table(), 2), &ids, &rows);
+    let change = Change::InsertRows { table: table(), generation: 2, rows: ids.iter().copied().zip(rows.clone()).collect() };
+    assert_eq!(made, Record { tx: 5, change }.encode());
+    let read = Record::decode(&made, &TypeRegistry::default()).unwrap();
+    let Change::InsertRows { rows: back, generation, .. } = read.change else { panic!("{:?}", read.change) };
+    assert_eq!((generation, back.len(), read.tx), (2, 3, 5));
 }

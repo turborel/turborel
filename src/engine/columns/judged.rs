@@ -22,6 +22,8 @@
 //! column's vector cannot be judged over is left to the filter.
 
 mod coded;
+mod sketched;
+mod sorted;
 
 use std::cmp::Ordering;
 

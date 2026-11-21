@@ -21,8 +21,10 @@
 
 mod morsel;
 mod spilled;
+mod streamed;
 
 pub(in crate::exec) use morsel::morsel_groups;
+pub(in crate::exec) use streamed::streamed;
 
 use super::{Batches, Fed, Read, lanes};
 use crate::error::Result;

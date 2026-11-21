@@ -47,6 +47,8 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<usize> {
         Plan::Filter { cond, .. } => (!cond.can_raise() && !cond.has_subquery()).then_some(column),
         Plan::Project { exprs, .. } => moved(exprs, column).filter(|_| !exprs.iter().any(Expr::can_raise)),
         Plan::HashJoin { left, .. } => stream::layout(left, db).filter(|&(_, width)| column < width).map(|_| column),
+        // A semi join's columns are its left's (RULES.md D540).
+        Plan::SemiJoin(s) => stream::layout(&s.left, db).filter(|&(_, width)| column < width).map(|_| column),
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
@@ -122,6 +124,8 @@ pub(super) fn reaches(plan: &Plan, column: usize, db: &State) -> bool {
             input
         } else if let Plan::HashJoin { left, .. } = at {
             left
+        } else if let Plan::SemiJoin(s) = at {
+            &s.left
         } else {
             return false;
         };

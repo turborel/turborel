@@ -1,9 +1,7 @@
-//! How fast groupings of joins on a join's key run (RULES.md D490) and
-//! index joins of a unique index (RULES.md D491): over TPC-H-shaped tables
-//! of 15,000 customers, 150,000 orders and 600,000 line items, the
-//! shapes of queries 3, 13, 17 and 18, and an index join of a few thousand
-//! scattered order keys, each on the workers and on one thread; and an
-//! index join of a large table by batch and row by row. Run alone
+//! How fast groupings of joins on a join's key run (RULES.md D490): over
+//! TPC-H-shaped tables of 15,000 customers, 150,000 orders and 600,000
+//! line items, the shapes of queries 3, 13, 17 and 18, each on the
+//! workers and on one thread. Run alone
 //! with `ONLY_VAR` set to `groupjoins` (RULES.md R-BENCH-1).
 
 use super::harness::{Bench, Case, scatter};
@@ -17,12 +15,6 @@ const ORDERS: u64 = 10 * CUSTOMERS;
 const LINES: u64 = 4 * ORDERS;
 /// Parts.
 const PARTS: u64 = 20_000;
-/// Order keys picked, some twice, joined by the orders' index.
-const PICKED: u64 = 20_000;
-/// Rows of the large table an index join probes by batch or row by row.
-const LARGE: u64 = 2_000_000;
-/// Keys of the large table picked, joined by its index.
-const LARGE_PICKED: u64 = 20_000;
 /// Rows each INSERT of the setup writes.
 const PER_INSERT: u64 = 1_000;
 
@@ -36,8 +28,7 @@ fn database() -> Database {
          CREATE TABLE ORDERS (O_ORDERKEY INTEGER NOT NULL PRIMARY KEY, O_CUSTKEY INTEGER NOT NULL,
              O_TOTALPRICE DECIMAL(15,2) NOT NULL, O_ORDERDATE INTEGER, O_COMMENT VARCHAR(40))
          CREATE TABLE LINEITEM (L_ORDERKEY INTEGER NOT NULL, L_PARTKEY INTEGER NOT NULL, L_QUANTITY DECIMAL(15,2) NOT NULL,
-             L_EXTENDEDPRICE DECIMAL(15,2) NOT NULL, L_SHIPDATE INTEGER)
-         CREATE TABLE PICK (K INTEGER, V INTEGER)",
+             L_EXTENDEDPRICE DECIMAL(15,2) NOT NULL, L_SHIPDATE INTEGER)",
     )
     .unwrap();
     let s = db.session("B");
@@ -56,14 +47,13 @@ fn database() -> Database {
     fill("LINEITEM", LINES, &|n| {
         format!("({}, {}, {}, {}.{:02}, {})", n / 4, scatter(n, PARTS), 1 + n % 50, scatter(n, 90_000), n % 100, scatter(n, 2_400))
     });
-    fill("PICK", PICKED, &|n| format!("({}, {})", scatter(n, ORDERS), n % 10));
     s.commit().unwrap();
     db.maintain().unwrap();
     db
 }
 
 /// The queries measured: each case's name, its text and the rows it reads.
-const QUERIES: [(&str, &str, u64); 5] = [
+const QUERIES: [(&str, &str, u64); 4] = [
     (
         "Q13 shape, customers counted by their orders, a LEFT join grouped",
         "SELECT N, COUNT(*) FROM (SELECT C_CUSTKEY, COUNT(O_ORDERKEY) FROM CUSTOMER LEFT JOIN ORDERS
@@ -88,17 +78,10 @@ const QUERIES: [(&str, &str, u64); 5] = [
            AND L_QUANTITY < (SELECT 0.2 * AVG(L_QUANTITY) FROM LINEITEM WHERE L_PARTKEY = P_PARTKEY)",
         PARTS + 2 * LINES,
     ),
-    (
-        "an index join of 2,000 scattered order keys",
-        "SELECT COUNT(*), SUM(O_TOTALPRICE) FROM PICK JOIN ORDERS ON PICK.K = O_ORDERKEY WHERE PICK.V = 3",
-        PICKED,
-    ),
 ];
 
-/// Measures each of `QUERIES` on the workers and on one thread, then an
-/// index join of a large table by batch and row by row.
+/// Measures each of `QUERIES` on the workers and on one thread.
 pub fn workloads(bench: &Bench) {
-    batches(bench);
     let db = database();
     let s = db.session("B");
     for (degree, label) in [("0", ""), ("1", " (one thread)")] {
@@ -109,31 +92,6 @@ pub fn workloads(bench: &Bench) {
                 read
             });
         }
-    }
-}
-
-/// Measures an index join of `LARGE_PICKED` scattered keys of a table of
-/// `LARGE` rows, its index probed by batch and row by row.
-fn batches(bench: &Bench) {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE LARGE (K INTEGER NOT NULL PRIMARY KEY, V INTEGER) CREATE TABLE KEYS (K INTEGER)")
-        .unwrap();
-    let s = db.session("B");
-    for start in (0..LARGE).step_by(PER_INSERT as usize) {
-        let rows: Vec<String> = (start..LARGE.min(start + PER_INSERT)).map(|n| format!("({n}, {})", n % 1000)).collect();
-        s.run(&format!("INSERT INTO LARGE VALUES {}", rows.join(", "))).unwrap();
-    }
-    let keys: Vec<String> = (0..LARGE_PICKED).map(|n| format!("({})", scatter(n, LARGE))).collect();
-    s.run(&format!("INSERT INTO KEYS VALUES {}", keys.join(", "))).unwrap();
-    s.commit().unwrap();
-    db.maintain().unwrap();
-    let sql = "SELECT COUNT(*), SUM(LARGE.V) FROM KEYS JOIN LARGE ON KEYS.K = LARGE.K";
-    for (on, label) in [("ON", "by batch"), ("OFF", "row by row")] {
-        s.run(&format!("SET EXECUTOR.BATCHED_INDEX_JOINS = '{on}'")).unwrap();
-        bench.measure(Case::new(format!("an index join of 20,000 keys of 2,000,000 rows, {label}"), "rows"), || {
-            fetched(&s, sql);
-            LARGE_PICKED
-        });
     }
 }
 

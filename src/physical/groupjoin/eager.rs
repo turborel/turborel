@@ -54,6 +54,7 @@ pub(super) fn eager(found: &Found<'_>, plan: &Plan, db: &State) -> Option<(Plan,
         detail: if shown { format!("early, by the keys of {} for {detail}", found.joined) } else { String::new() },
         input: Box::new(found.probe.clone()),
         est: groups,
+        streamed: false,
     };
     let (keyed, count) = (found.keys.len(), found.aggs.len());
     let joined = if shown { found.joined.to_owned() } else { String::new() };

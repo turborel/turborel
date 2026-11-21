@@ -2,9 +2,10 @@
 //! executor's workers, shared by every statement of a database, and what a
 //! statement asks of them, its degree, the rows of its morsels and the
 //! least rows it reads in parallel; and whether a hash join filters its
-//! probing rows by its built ones' keys (RULES.md D369).
+//! probing rows by its built ones' keys (RULES.md D369); and whether a
+//! correlated subquery keeps its plan across its runs (RULES.md D675).
 
-use super::builtin::{OFF, ON, SWITCHES, at_least, count, defined, text};
+use super::builtin::{ON, SWITCHES, at_least, count, defined, text};
 use super::{Definition, Effect, Key, Kind};
 
 /// EXECUTOR.WORKERS.
@@ -19,8 +20,8 @@ pub const EXECUTOR_PARALLEL_MIN_ROWS: Key = Key(85);
 pub const EXECUTOR_KERNELS: Key = Key(86);
 /// EXECUTOR.RUNTIME_FILTERS.
 pub const EXECUTOR_RUNTIME_FILTERS: Key = Key(87);
-/// EXECUTOR.BATCHED_INDEX_JOINS (RULES.md D491).
-pub const EXECUTOR_BATCHED_INDEX_JOINS: Key = Key(89);
+/// EXECUTOR.KEEP_SUBQUERY_PLANS (RULES.md D675).
+pub const KEEP_SUBQUERY_PLANS: Key = Key(89);
 
 /// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
 const KERNELS_NAME_MAX: usize = 64;
@@ -42,8 +43,7 @@ const DATABASE: (bool, Effect) = (false, Effect::Statement);
 /// A setting a session may set for itself, from its next statement.
 const SESSION: (bool, Effect) = (true, Effect::Statement);
 
-/// The settings of parallel queries, of their kernels and runtime
-/// filters, in the order of their keys.
+/// The settings of parallel queries, in the order of their keys.
 pub(super) fn definitions() -> [Definition; 6] {
     [
         defined(
@@ -79,12 +79,12 @@ pub(super) fn definitions() -> [Definition; 6] {
     ]
 }
 
-/// EXECUTOR.BATCHED_INDEX_JOINS, at its key's place after the others
-/// (RULES.md D491).
-pub(super) fn batched_index_joins() -> Definition {
+/// EXECUTOR.KEEP_SUBQUERY_PLANS, at its key's place after the planner's
+/// range joins.
+pub(super) fn kept_subquery_plans() -> Definition {
     defined(
-        ("EXECUTOR.BATCHED_INDEX_JOINS", Kind::Choice(SWITCHES), text(OFF)),
+        ("EXECUTOR.KEEP_SUBQUERY_PLANS", Kind::Choice(SWITCHES), text(ON)),
         SESSION,
-        "Whether an index join probes a unique index for a batch of its outer rows at a time, their keys sorted and each found once: ON; or for each outer row as it comes, OFF, the default. Its rows are the same either way.",
+        "Whether a correlated subquery, once its first runs show the values of its outer references choose no other plan, keeps its plan made with them as parameters and fills it at each later run: ON; or plans it at each run with its values, OFF, as to compare the two. Its rows are the same either way.",
     )
 }

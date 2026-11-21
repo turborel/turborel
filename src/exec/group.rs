@@ -16,6 +16,9 @@
 //! of what is left, split so again (`group/distribution.rs`).
 
 mod distribution;
+mod streamed;
+
+pub(super) use streamed::{streamed_distinct, streamed_grouping};
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -322,6 +325,31 @@ fn feed(aggs: &[AggCall], group: &mut Group, row: &Row, fed: &mut Fed<'_>) -> Re
         }
     }
     Ok(())
+}
+
+/// What a set function takes of a row: nothing, its filter not true of
+/// it; the row, counted by COUNT(*); or its argument's value.
+pub(super) enum Argument {
+    Passed,
+    Counted,
+    Value(Value),
+}
+
+/// What the set function `a` takes of `row`, as a streamed grouping
+/// feeds it (`group/streamed.rs`), its argument computed by
+/// `runner`: [ISO/IEC 9075-2:2023 §10.9 GR4] nothing of a row its filter is
+/// not true of, the argument not computed; [ISO/IEC 9075:1992 §6.5 GR1b] a
+/// null argument warns as it is eliminated.
+pub(super) fn argument(a: &AggCall, row: &Row, runner: &Runner) -> Result<Argument> {
+    if !admitted(a.filter.as_ref(), row, runner)? {
+        return Ok(Argument::Passed);
+    }
+    let Some(e) = &a.arg else { return Ok(Argument::Counted) };
+    let v = eval(e, row, runner)?;
+    if v.is_null() {
+        warn(runner, SqlState::NULL_VALUE_ELIMINATED);
+    }
+    Ok(Argument::Value(v))
 }
 
 /// [ISO/IEC 9075-2:2023 §10.9 GR4] Whether a set function of the filter
