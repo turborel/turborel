@@ -16,6 +16,7 @@
 
 mod access;
 mod analyzed;
+mod blind;
 pub use analyzed::{Analyzed, Counted, NodeCount, Operator};
 pub(crate) use analyzed::{counted, millis, operators};
 mod built;
