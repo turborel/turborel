@@ -148,6 +148,7 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
