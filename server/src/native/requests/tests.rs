@@ -79,3 +79,30 @@ fn a_cursor_left_open_keeps_the_transaction_its_request_would_end() {
     assert!(matches!(rest.as_slice(), [Reply::Rows(_), Reply::Complete(Completed { active: true, .. })]), "{rest:?}");
     assert!(completed(&run(&mut held, execute(0, true))[1..], false));
 }
+
+/// Verifies: [DESIGN] RULES.md D42: a statement that fails with its
+/// Description and rows gathered, none sent ahead, sends neither, while a
+/// reply gathered before it, of a request pipelined ahead, and its own
+/// notices still go; one that failed after a batch was sent ahead keeps
+/// the rows gathered since, as its Description went with that batch.
+/// Regression test (R-TEST-7): a statement cancelled at its first fetch
+/// sent its Description before its Error, so a client printed the
+/// columns of a result it never had.
+#[test]
+fn a_statement_failed_before_its_rows_sends_no_description() {
+    let mut sink = |_: Vec<Reply>| Ok(());
+    let mut out = Outgoing::new(&mut sink, 1 << 20);
+    out.gathered.push(Reply::Pong);
+    let mark = out.mark();
+    out.gathered.push(Reply::Description(Vec::new()));
+    out.rows(&mut vec![Vec::new()]);
+    out.gathered.push(Reply::Suspended);
+    out.unanswered(mark);
+    assert!(matches!(out.gathered.as_slice(), [Reply::Pong, Reply::Suspended]), "{:?}", out.gathered);
+    let sent_ahead = out.mark();
+    out.gathered.push(Reply::Description(Vec::new()));
+    assert!(out.send().is_ok());
+    out.rows(&mut vec![Vec::new()]);
+    out.unanswered(sent_ahead);
+    assert!(matches!(out.gathered.as_slice(), [Reply::Rows(_)]), "its Description sent ahead, its rows go after");
+}
