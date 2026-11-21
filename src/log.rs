@@ -112,6 +112,18 @@ pub trait Log: Send + Sync {
     ///
     /// The log cannot store it (SQLCODE -915 for an I/O error).
     fn append(&self, record: &[u8]) -> Result<Lsn>;
+    /// \[DESIGN\] Appends each of `records`, in order, as `append` does
+    /// one: their positions, in the same order, each higher than the one
+    /// before; a record whose append begins meanwhile may take a position
+    /// among them. A transaction's records go so at its commit (RULES.md
+    /// D25). Default: `append` of each.
+    ///
+    /// # Errors
+    ///
+    /// As `append`; the records before the one refused may be appended.
+    fn append_all(&self, records: &[Vec<u8>]) -> Result<Vec<Lsn>> {
+        records.iter().map(|record| self.append(record)).collect()
+    }
     /// Makes the record at `through`, and every earlier one, durable.
     ///
     /// # Errors

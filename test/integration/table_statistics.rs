@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use turborel::clock::FixedClock;
 use turborel::db::Database;
+use turborel::threads::JobPolicy;
 
 use crate::common::rows;
 
@@ -14,9 +15,12 @@ use crate::common::rows;
 const NOW: i64 = 1_709_210_096_789_012;
 
 /// A database whose owner is OWNER, its clock at `NOW`, with X's tables T
-/// of 1,000 rows, an index on K, and U of 10 rows.
+/// of 1,000 rows, an index on K, and U of 10 rows. Its maintenance runs
+/// only as a test asks, so no pass settling the tables' zones meanwhile
+/// stamps them compacted before a test looks.
 fn owned() -> (Database, Arc<FixedClock>) {
     let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
     let clock = Arc::new(FixedClock::at(NOW));
     db.set_clock(Arc::clone(&clock) as Arc<dyn turborel::clock::Clock>).unwrap();
     db.create_user("OWNER", b"x").unwrap();

@@ -57,6 +57,13 @@ fn write_map(map: &RwLock<Xxh3Map<Key, usize>>) -> Map<'_> {
     map.write().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// \[DESIGN\] The largest buffer of a page emptied from a frame that is
+/// kept for the page read into it (RULES.md D474): a page read allocates
+/// and frees no buffer, where every miss freed one and allocated another,
+/// each taking the allocator's lock; one larger, of a page with an
+/// overflow, is let go.
+const REUSED_BYTES: usize = 64 * 1024;
+
 /// How a claimed frame is filled.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fill {
@@ -440,8 +447,8 @@ impl BufferPool {
     /// and the error returned.
     fn fill(&self, key: Key, claim: Claim, fill: Fill) -> Result<&Frame> {
         let frame = self.frame(claim.frame)?;
-        self.emptied(key, claim)?;
-        let mut content = Vec::new();
+        // [DESIGN] RULES.md D474: the buffer of the page it held, reused.
+        let mut content = self.emptied(key, claim)?;
         if fill == Fill::Read {
             count(&self.counters.misses);
             if let Err(e) = self.read_into(key, &mut content) {
@@ -457,9 +464,11 @@ impl BufferPool {
     }
 
     /// Empties `claim`'s frame, claimed for `key`, writing back what it
-    /// held if it must. If that fails, the frame is put back as it was and
+    /// held if it must: the buffer that held it, cleared, for the page
+    /// read into the frame, unless it grew past `REUSED_BYTES` (RULES.md
+    /// D474). If writing back fails, the frame is put back as it was and
     /// the error returned.
-    fn emptied(&self, key: Key, claim: Claim) -> Result<()> {
+    fn emptied(&self, key: Key, claim: Claim) -> Result<Vec<u8>> {
         let frame = self.frame(claim.frame)?;
         let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
         if let Some(old) = claim.write_back {
@@ -474,7 +483,9 @@ impl BufferPool {
                 map.remove(&old);
             }
         }
-        Ok(())
+        let mut reused = if old_content.capacity() > REUSED_BYTES { Vec::new() } else { old_content };
+        reused.clear();
+        Ok(reused)
     }
 
     /// Reads `key` from its file into `content`.

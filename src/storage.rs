@@ -511,11 +511,13 @@ pub trait TableStorage: Send + Sync {
     fn uncollected(&self) -> bool {
         false
     }
-    /// \[DESIGN\] Whether work is due that the engine leaves to the
-    /// database's maintenance thread (`maintain`), so no transaction's end
-    /// waits for it: asked after each `gc`, so it should be quick. Default:
-    /// none.
+    /// \[DESIGN\] Whether work is due that the engine leaves to the database's maintenance thread (`maintain`), so no
+    /// transaction's end waits for it: asked after each `gc`, so it should be quick. Default: none.
     fn maintenance_due(&self) -> bool {
+        false
+    }
+    /// Whether its statistics are due and a plan read them since their last pass (RULES.md D473). Default: no.
+    fn statistics_wanted(&self) -> bool {
         false
     }
     /// \[DESIGN\] Does some of the work due (`maintenance_due`), of rows
