@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use super::super::stream::{self, Batches, Kept};
 use super::{gathered, rows_of};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::{RowIter, broken, execute};
 use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Cell};
@@ -99,7 +99,7 @@ impl HeldRight {
 /// # Errors
 ///
 /// The operand's; a key column its batches lack (SQLCODE -910).
-pub(super) fn read(right: Plan, keys: &[JoinKey], limit: usize, (db, tx): (&Arc<State>, TxId)) -> Result<Read> {
+pub(super) fn read(right: Plan, keys: &[JoinKey], limit: usize, (db, tx): (&Db, TxId)) -> Result<Read> {
     let (columns, width) = stream::layout(&right, db).unwrap_or_default();
     let places: Vec<usize> = keys
         .iter()

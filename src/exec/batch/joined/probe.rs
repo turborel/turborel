@@ -18,8 +18,8 @@ use super::super::stream::{self, Batches, Kept};
 use super::held::{self, HeldRight, Read, Rest};
 use super::pairs::{Out, kept_rows};
 use super::{gathered, in_order, left_batches, left_late_batches, narrow_rows, parted};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::join::{Built, Full, Right, partitioned_joined};
 use crate::exec::work::Work;
 use crate::exec::{Runner, column, eval_cond};
@@ -48,7 +48,7 @@ pub(super) enum Kind {
 pub(super) fn probed(
     (left, right, keys): (Plan, Plan, Vec<JoinKey>),
     (kind, deferred): (Kind, Deferred),
-    db: &Arc<State>,
+    db: &Db,
     tx: TxId,
 ) -> Result<Batches> {
     let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
@@ -103,7 +103,7 @@ fn narrowed(
     (left, rest, keys): (Plan, Rest, Vec<JoinKey>),
     (joined, places): (Joined, Vec<JoinKey>),
     mut work: Work,
-    db: &Arc<State>,
+    db: &Db,
     tx: TxId,
 ) -> Result<Batches> {
     let place = |c: usize, of: &[usize]| of.iter().position(|&h| h == c).ok_or_else(|| crate::exec::broken("a join key its batch lacks"));

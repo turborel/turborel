@@ -17,6 +17,7 @@ use std::sync::Arc;
 use super::pipeline::{Branch, Pipeline, Step};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::batch::{Batches, Deferred, Shaped, filter_step, project_step, resolved, rows_of, through};
 use crate::exec::broken;
 use crate::storage::Row;
@@ -101,7 +102,7 @@ impl Pipeline {
     ///
     /// SQLCODE -910 if the pipeline is not read by batch, or `n` is past its
     /// last morsel.
-    pub(super) fn morsel_kept(&self, n: usize, (db, tx): (&Arc<State>, TxId)) -> Result<Batches> {
+    pub(super) fn morsel_kept(&self, n: usize, (db, tx): (&Db, TxId)) -> Result<Batches> {
         let by = self.batched.as_ref().ok_or_else(|| broken("a pipeline not read by batch"))?;
         let mut at = n;
         for ((branch, steps), late) in self.branches.iter().zip(&by.steps).zip(&by.late) {
@@ -122,7 +123,7 @@ impl Pipeline {
     /// # Errors
     ///
     /// As reading a row or a step fails, the rows before it given up.
-    pub(super) fn morsel_rows(&self, n: usize, (db, tx): (&Arc<State>, TxId), runner: &crate::exec::Runner) -> Result<Vec<Row>> {
+    pub(super) fn morsel_rows(&self, n: usize, (db, tx): (&Db, TxId), runner: &crate::exec::Runner) -> Result<Vec<Row>> {
         let Some(by) = &self.batched else { return self.morsel(n, runner) };
         rows_of(self.morsel_kept(n, (db, tx))?, by.layout.clone(), by.width).collect()
     }

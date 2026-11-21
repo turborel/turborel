@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::join::{Operand, equal, key};
 use crate::exec::{Runner, broken, execute};
 use crate::physical::{JoinKey, Plan};
@@ -79,7 +79,7 @@ impl Table {
 /// # Errors
 ///
 /// As reading the operand fails.
-pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Arc<State>, TxId), limit: &Limit) -> Result<Held<Arc<Table>>> {
+pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Arc<Table>>> {
     if let Plan::Parallel(p) = right
         && let Held::Kept(pipeline) = Pipeline::of(&p.input, (db, tx), limit)?
     {
@@ -102,11 +102,11 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Arc<State>, TxId
 fn parallel_built(
     pipeline: Pipeline,
     keys: &[JoinKey],
-    (db, tx): (&Arc<State>, TxId),
+    (db, tx): (&Db, TxId),
     (degree, limit): (usize, &Limit),
 ) -> Result<Held<Arc<Table>>> {
     let (pipeline, shared_keys) = (Arc::new(pipeline), Arc::new(keys.to_vec()));
-    let (count, db_for, keys_for) = (pipeline.count(), Arc::clone(db), Arc::clone(&shared_keys));
+    let (count, db_for, keys_for) = (pipeline.count(), db.clone(), Arc::clone(&shared_keys));
     let work = Box::new(move |m: usize| -> Result<Chunks> {
         let mut split: Chunks = (0..PARTS).map(|_| Vec::new()).collect();
         for row in pipeline.morsel(m, &Runner::new(&db_for, tx))? {

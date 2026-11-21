@@ -17,14 +17,13 @@ mod percent;
 
 use std::cmp::Ordering;
 use std::mem;
-use std::sync::Arc;
 
 use super::held::HeldRows;
 use super::sort::compare_rows;
 use super::subquery::{Runner, Subqueries};
 use super::{RowIter, broken, eval, failed};
-use crate::db::State;
 use crate::error::{Code, Result, SqlState, fail_with};
+use crate::exec::Db;
 use crate::logical::{Expr, Limit, Most, SortKey};
 use crate::physical::Plan;
 use crate::spill::ListSpace;
@@ -34,7 +33,7 @@ use crate::value::Value;
 
 /// The rows the limit `plan` keeps.
 #[inline(never)]
-pub(super) fn limited(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn limited(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Limit { limit, input, .. } = plan else { return failed(broken("a limit is not one")) };
     let drain = input.can_raise();
     let rows = |most: Option<Most>| {

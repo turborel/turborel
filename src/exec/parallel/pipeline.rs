@@ -23,6 +23,7 @@ use super::{Held, Limit};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::{Runner, broken, eval, eval_cond};
 use crate::logical::{Cond, Expr, Truth, pushed_conjuncts};
 use crate::physical::{NodeCount, Plan};
@@ -72,7 +73,7 @@ impl Pipeline {
     /// # Errors
     ///
     /// As building an operand fails.
-    pub(super) fn of(plan: &Plan, (db, tx): (&Arc<State>, TxId), limit: &Limit) -> Result<Held<Pipeline>> {
+    pub(super) fn of(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Pipeline>> {
         let rows = db.settings.count(EXECUTOR_MORSEL_ROWS).max(1);
         let mut branches = Vec::new();
         if !branched(plan, (db, tx, rows), limit, &mut branches)? {
@@ -127,7 +128,7 @@ fn scan_branch(
 
 /// Adds the branches of `plan` to `out`, each split into morsels of about
 /// `rows` rows: whether each could be, and each built operand held.
-fn branched(plan: &Plan, (db, tx, rows): (&Arc<State>, TxId, usize), limit: &Limit, out: &mut Vec<Branch>) -> Result<bool> {
+fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), limit: &Limit, out: &mut Vec<Branch>) -> Result<bool> {
     if let Plan::Append { left, right, .. } = plan {
         return Ok(branched(left, (db, tx, rows), limit, out)? && branched(right, (db, tx, rows), limit, out)?);
     }

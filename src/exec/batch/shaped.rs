@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::judge::Judging;
 use super::project::{Place, computed, place_of};
 use super::stream::{Batches, filtered, pick, picked};
-use crate::db::State;
+use crate::exec::Db;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr};
 use crate::physical::NodeCount;
@@ -52,7 +52,7 @@ pub(in crate::exec) fn project_step(exprs: &[Expr], layout: &[usize]) -> Option<
 
 /// `batches` taken through `steps`, the first first, their expressions
 /// evaluated for the statement of `tx`.
-pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&Arc<State>, TxId)) -> Batches {
+pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&Db, TxId)) -> Batches {
     steps.iter().fold(batches, |inner, step| match step {
         Shaped::Filter(judging) => filtered(inner, ((**judging).clone(), Runner::new(db, tx))),
         Shaped::Pick(picks) => {
