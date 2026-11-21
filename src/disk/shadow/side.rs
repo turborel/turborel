@@ -171,7 +171,7 @@ impl Spot {
     }
 
     /// The length of the block's payload.
-    fn payload_len(&self) -> usize {
+    pub(super) fn payload_len(&self) -> usize {
         self.within(self.first.saturating_add(self.count))
     }
 }
@@ -179,7 +179,7 @@ impl Spot {
 /// A side file and the granules whose newest content it holds, in it or
 /// in memory. The file is made when the first block is appended.
 pub(super) struct Side {
-    pub(super) blocks: Option<BlockFile>,
+    pub(super) blocks: Option<Arc<BlockFile>>,
     pub(super) granules: HashMap<u64, Spot>,
     /// Granules written while held: newer than those of `granules`.
     pub(super) held: HashMap<u64, Vec<u8>>,
@@ -213,7 +213,7 @@ impl Side {
     fn append_encoded(&mut self, at: &At, payload: &[u8]) -> Result<BlockId> {
         let blocks = match self.blocks.take() {
             Some(blocks) => blocks,
-            None => at.fresh_side(self.which)?,
+            None => Arc::new(at.fresh_side(self.which)?),
         };
         let appended = blocks.append(payload);
         self.blocks = Some(blocks);
@@ -224,15 +224,12 @@ impl Side {
     /// over the block of the same run if the run's granules are all still
     /// there, so a page written back again and again takes one block;
     /// else appended, as a granule of it written apart since has a later
-    /// block, which a commit copied after a crash would take over it. The granules' content is then that block's.
+    /// block, which a commit copied after a crash would take over it.
+    /// The granules' content is then that block's.
     pub(super) fn place(&mut self, at: &At, first: u64, content: Vec<u8>) -> Result<()> {
         let count = u64::try_from(content.len().checked_div(GRANULE).unwrap_or_default()).unwrap_or_default();
         let numbers = first..first.saturating_add(count);
-        let same = self
-            .granules
-            .get(&first)
-            .copied()
-            .filter(|spot| spot.first == first && spot.count == count && numbers.clone().all(|n| self.granules.get(&n) == Some(spot)));
+        let same = self.same_run(first, count);
         let payload = encode(&Op::Granule(first, content));
         let block = match (same, self.blocks.as_ref()) {
             (Some(spot), Some(blocks)) => blocks.overwrite(spot.block, &payload, spot.payload_len()).map(|()| spot.block)?,
@@ -245,6 +242,15 @@ impl Side {
             self.granules.insert(number, spot);
         }
         Ok(())
+    }
+
+    /// The spot of the run of `count` granules from `first`, if each of
+    /// them is still in that run's block.
+    pub(super) fn same_run(&self, first: u64, count: u64) -> Option<Spot> {
+        let mut numbers = first..first.saturating_add(count);
+        let spot = self.granules.get(&first).copied()?;
+        let whole = spot.first == first && spot.count == count;
+        (whole && numbers.all(|n| self.granules.get(&n) == Some(&spot))).then_some(spot)
     }
 
     /// Fills `out` from granule `number`'s content as it holds it, from

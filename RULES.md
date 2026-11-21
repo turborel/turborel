@@ -381,6 +381,7 @@ verification approach DO-178C expects (§8).
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
+| D472 | A page written back again is written over its side-file block with no lock held |
 
 ### The project
 
@@ -10716,6 +10717,21 @@ as it is written, so as a file is opened a block torn or changed before
 a commit block is refused, and a side file cut short has no commit
 block and is thrown away. An overwrite takes the length it writes over
 from the writer, not from the file.
+
+#### D472. A page written back again is written over its side-file block with no lock held
+
+A shadow file's writes and reads of its side file took its lock, a
+write exclusively, so while one page was written back every read of
+the file's other pages from the side file or the file waited for it;
+under a buffer pool smaller than its tables that wait was the most
+common one of a statement. A write of a run whose granules are all
+still in its block now marks those granules in flight under the lock,
+then writes the block over with no lock held, and lands them. A read
+of a granule in flight waits for it, so it sees one write or the
+other, never a mix; any other change of the file, as a seal, a cut or a
+first write of a page, waits until none is in flight
+(`disk/shadow/flight.rs`). A writer in flight takes no lock of the
+file to land, so a waiter may hold it.
 
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 

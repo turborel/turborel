@@ -63,6 +63,7 @@
 //! ```
 
 mod file;
+mod flight;
 mod side;
 
 use std::collections::HashMap;

@@ -132,3 +132,62 @@ fn blocks_read_unchecked_stay_within_the_file() {
     blocks.overwrite(id, b"TWELVE BYTES", 12).unwrap();
     assert_eq!(blocks.read(id).unwrap(), b"TWELVE BYTES");
 }
+
+/// Verifies: [DESIGN] RULES.md D472, pages written over with no lock
+/// held: two writers write their pages again and again while two readers
+/// read every page, and each page read is whole, of one write; a commit
+/// after takes each page's newest; each page still takes one block.
+#[test]
+fn pages_written_over_with_no_lock_read_whole() {
+    let disk = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&disk), hash());
+    let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+    let at = |page: usize| u64::try_from(page * PAGE).unwrap();
+    for page in 0..4 {
+        file.write_all_at(&[1_u8; PAGE], at(page)).unwrap();
+    }
+    let once = shadows.pending_bytes();
+    std::thread::scope(|s| {
+        for page in 0..2 {
+            let file = &file;
+            s.spawn(move || (2_u8..200).for_each(|round| file.write_all_at(&[round; PAGE], at(page)).unwrap()));
+        }
+        for _ in 0..2_u8 {
+            let file = &file;
+            s.spawn(move || {
+                for _ in 0..300_u16 {
+                    let mut back = vec![0_u8; 4 * PAGE];
+                    file.read_exact_at(&mut back, 0).unwrap();
+                    assert!(back.chunks(PAGE).all(|page| page.iter().all(|&b| b == page[0])), "whole pages");
+                }
+            });
+        }
+    });
+    assert_eq!(shadows.pending_bytes(), once, "written over in place");
+    shadows.commit().unwrap();
+    assert_eq!(content(&*disk), [vec![199_u8; 2 * PAGE], vec![1_u8; 2 * PAGE]].concat());
+}
+
+/// Verifies: [DESIGN] RULES.md D472, granules in flight: a run marked in
+/// flight refuses a second marking of any of its granules; a reader of
+/// one of them waits until it lands, one of another granule does not.
+#[test]
+fn a_reader_waits_for_its_granule_in_flight() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let flight = flight::Flight::new();
+    assert!(flight.take_off(4..6));
+    assert!(!flight.take_off(5..7), "granule 5 is in flight");
+    flight.wait_for(9);
+    let read = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            flight.wait_for(5);
+            read.store(true, Ordering::SeqCst);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!read.load(Ordering::SeqCst), "waiting while it flies");
+        flight.land(4..6);
+    });
+    assert!(read.load(Ordering::SeqCst));
+    assert!(flight.take_off(5..7), "landed");
+}

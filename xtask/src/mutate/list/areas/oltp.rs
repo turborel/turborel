@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 19] = [
+pub const OLTP: [Mutation; 20] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -195,9 +195,19 @@ pub const OLTP: [Mutation; 19] = [
         package: Package::Core,
         breaks: "a run whose granules were since written apart is written over in place, before their later blocks, so a commit copied after a crash takes the older content of the later blocks",
         file: "src/disk/shadow/side.rs",
-        original: "            spot.first == first && spot.count == count && numbers.clone().all(|n| self.granules.get(&n) == Some(spot))",
-        replacement: "            spot.first == first && spot.count == count",
+        original: "        (whole && numbers.all(|n| self.granules.get(&n) == Some(&spot))).then_some(spot)",
+        replacement: "        whole.then_some(spot)",
         integration: &[],
         unit: &["disk::shadow::tests::runs::a_page_written_whole_takes_one_block"],
+    },
+    Mutation {
+        name: "oltp-flight-marked-twice",
+        package: Package::Core,
+        breaks: "a run is marked in flight while a granule of it already is, so two writes of one page go over its block at once and the first to land frees readers while the second writes",
+        file: "src/disk/shadow/flight.rs",
+        original: "        if numbers.clone().any(|n| granules.contains(&n)) {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["disk::shadow::tests::runs::a_reader_waits_for_its_granule_in_flight"],
     },
 ];
