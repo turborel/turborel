@@ -57,7 +57,7 @@ use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Cond, Expr, SortKey, Truth};
 use crate::physical::Plan;
-use crate::storage::Row;
+use crate::storage::{Row, sized_row};
 use crate::system::SystemRead;
 use crate::txn::TxId;
 use crate::value::Value;
@@ -124,6 +124,8 @@ fn opened(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         Plan::IndexJoin { .. } => join::indexed,
         Plan::MergeJoin(_) => join::merged,
         Plan::RangeJoin(_) => join::ranged,
+        Plan::SemiJoin(_) => join::semi,
+        Plan::MarkJoin(_) => join::mark,
         // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
         Plan::Aggregate { .. } => grouped,
         // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
@@ -181,6 +183,8 @@ fn joined_plan(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -325,10 +329,10 @@ fn projected(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if exprs.iter().any(Expr::draws) {
         return Box::new(input.map(move |r| {
             let drawn = Drawn::new(&runner);
-            r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &drawn)).collect())
+            r.and_then(|row| sized_row(exprs.len(), exprs.iter().map(|e| eval(e, &row, &drawn))))
         }));
     }
-    Box::new(input.map(move |r| r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &runner)).collect())))
+    Box::new(input.map(move |r| r.and_then(|row| sized_row(exprs.len(), exprs.iter().map(|e| eval(e, &row, &runner))))))
 }
 
 /// Whether a query reads its tables a batch at a time where it can, as the

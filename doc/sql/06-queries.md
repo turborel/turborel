@@ -250,7 +250,10 @@ nested-loop join probing the other table's index, or a merge join where
 a side is read in its key's order already and that order pays, as when
 the query asks for it, or a range join. The rows of each set of tables are estimated
 from the distinct values of the joined columns, an equality that others
-imply counted once. A query with a condition that can raise an error, as
+imply counted once. Two tables joined on several columns are estimated
+by the values those columns hold together, so a join on all of a key's
+columns, or on a foreign key, keeps each row once, and no estimate
+passes the most rows the most frequent values could give. A query with a condition that can raise an error, as
 a division can, is planned in the greedy order described next, which
 keeps the errors raised the same whatever the order.
 
@@ -275,6 +278,20 @@ written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =
 'B2')` is a join on `P.K = L.K`, not a product filtered afterward. Each
 table is also filtered first by the OR of its own conditions, here
 `P.B = 'B1' OR P.B = 'B2'`. OPTIMIZER.FACTOR_DISJUNCTIONS turns this off.
+
+An index nested-loop join is taken only where its probes would stay
+cheap even if the other side gave several times the rows estimated, at
+most as many as the statistics allow, since an estimate too low makes
+its probes far dearer than one hash join. PLANNER.ESTIMATE_MARGIN sets
+how many times; 1 trusts the estimate.
+
+A query whose select list is MIN and MAX alone, with no GROUP BY, needs
+the values of the columns those functions read, not how often a join
+repeats them. Once its joins are ordered, each join of a table nothing
+above it reads is a semi join, which gives each row once at its first
+match. Joins that would multiply the rows many times make none. EXPLAIN
+shows HashSemiJoin and SemiIndexNestedLoop, and
+OPTIMIZER.SEMI_REDUCTION turns this off.
 
 SET PLANNER.JOIN_ENUMERATION = 'GREEDY' plans a session's joins in a
 left-deep order instead, each next join the cheapest, as to compare the
@@ -540,9 +557,9 @@ SELECT DEPT, NAME FROM STAFF GROUP BY DEPT;
 ```
 
 ```
- DEPT |                    N |                TOTAL
-------+----------------------+----------------------
- ENG  |                    2 |             15300.00
+ DEPT |                    N |                                    TOTAL
+------+----------------------+------------------------------------------
+ ENG  |                    2 |                                 15300.00
 (1 row)
 turborel: SQLCODE -103 (SQLSTATE 2A000): outside a set function, a grouped query may only reference grouping columns and columns functionally dependent on them (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 13)
 ```
@@ -623,12 +640,12 @@ SELECT DEPT, COUNT(*) AS N, SUM(SALARY) AS TOTAL, GROUPING(DEPT) AS G
 ```
 
 ```
- DEPT |                    N |                TOTAL |                    G
-------+----------------------+----------------------+----------------------
- ENG  |                    2 |             15300.00 |                    0
- OPS  |                    1 |              5400.00 |                    0
- NULL |                    1 |                 NULL |                    0
- NULL |                    4 |             20700.00 |                    1
+ DEPT |                    N |                                    TOTAL |                    G
+------+----------------------+------------------------------------------+----------------------
+ ENG  |                    2 |                                 15300.00 |                    0
+ OPS  |                    1 |                                  5400.00 |                    0
+ NULL |                    1 |                                     NULL |                    0
+ NULL |                    4 |                                 20700.00 |                    1
 (4 rows, with a warning: SQLSTATE 01003)
 ```
 
@@ -644,6 +661,26 @@ for each row. A scalar subquery of two rows for a row still fails with
 SQLCODE -811, and COUNT of a row with no match is still 0. A function
 that returns one value from a subquery of its parameters is unnested
 the same way, inlined where it is invoked.
+
+EXISTS, NOT EXISTS, IN and NOT IN of a subquery that is one of the
+conditions ANDed in a WHERE or HAVING clause become a semi join or an
+antijoin. Each outer row is kept at its first matching row, or kept for
+having none, and no row of the subquery is read twice for it. NOT IN
+keeps its exact meaning with nulls: a row is kept only if no value of
+the subquery equals it or may equal it. EXPLAIN shows HashSemiJoin,
+HashAntiJoin and their kin, and the setting OPTIMIZER.SEMI_JOINS turns
+the rewrite off.
+
+EXISTS, IN, NOT IN and the comparisons with SOME, ANY and ALL of a
+correlated subquery anywhere else, under OR or NOT, in a CASE or in the
+select list, become a mark join. Each outer row is given once with a
+mark of whether the subquery has a matching row, true, false or
+unknown, and the condition reads the mark. The subquery's rows are held
+once, by the values the outer rows are matched on, and no grouping of
+them is made. IN is unknown, never false, when a null among the
+subquery's values or the outer row's own null could have matched, as
+the standard asks. EXPLAIN shows HashMarkJoin or NestedLoopMarkJoin, and
+the setting OPTIMIZER.MARK_JOINS turns the rewrite off.
 
 A subquery stays nested if it invokes a function that is not
 deterministic or that may change data, takes a sequence's next value, is
@@ -699,9 +736,9 @@ SELECT NAME AS WHO, SALARY / 12 AS MONTHLY FROM STAFF WHERE ID = 1;
 --------------+--------------------------------+------+-------------+----------------------
             1 | Ada                            | ENG  |     7200.00 | Engineering
 (1 row)
- WHO                            |              MONTHLY
---------------------------------+----------------------
- Ada                            |               600.00
+ WHO                            |         MONTHLY
+--------------------------------+-----------------
+ Ada                            |          600.00
 (1 row)
 ```
 
@@ -785,12 +822,12 @@ SELECT NAME, DEPT, SALARY, RANK() OVER (ORDER BY SALARY DESC NULLS LAST) AS R,
 ```
 
 ```
- NAME                           | DEPT |      SALARY |                    R |           DEPT_TOTAL
---------------------------------+------+-------------+----------------------+----------------------
- Grace                          | ENG  |     8100.00 |                    1 |             15300.00
- Ada                            | ENG  |     7200.00 |                    2 |             15300.00
- Edsger                         | OPS  |     5400.00 |                    3 |              5400.00
- Barbara                        | NULL |        NULL |                    4 |                 NULL
+ NAME                           | DEPT |      SALARY |                    R |                               DEPT_TOTAL
+--------------------------------+------+-------------+----------------------+------------------------------------------
+ Grace                          | ENG  |     8100.00 |                    1 |                                 15300.00
+ Ada                            | ENG  |     7200.00 |                    2 |                                 15300.00
+ Edsger                         | OPS  |     5400.00 |                    3 |                                  5400.00
+ Barbara                        | NULL |        NULL |                    4 |                                     NULL
 (4 rows, with a warning: SQLSTATE 01003)
 ```
 
@@ -835,12 +872,12 @@ SELECT NAME, SALARY, COUNT(*) OVER (ORDER BY SALARY
 ```
 
 ```
- NAME                           |      SALARY |                    N |              RUNNING |                 NEAR
---------------------------------+-------------+----------------------+----------------------+----------------------
- Ada                            |     7200.00 |                    1 |              7200.00 |            7650.0000
- Grace                          |     8100.00 |                    2 |             15300.00 |            6900.0000
- Edsger                         |     5400.00 |                    3 |             20700.00 |            6750.0000
- Barbara                        |        NULL |                    4 |             20700.00 |            5400.0000
+ NAME                           |      SALARY |                    N |                                  RUNNING |                                     NEAR
+--------------------------------+-------------+----------------------+------------------------------------------+------------------------------------------
+ Ada                            |     7200.00 |                    1 |                                  7200.00 |                                7650.0000
+ Grace                          |     8100.00 |                    2 |                                 15300.00 |                                6900.0000
+ Edsger                         |     5400.00 |                    3 |                                 20700.00 |                                6750.0000
+ Barbara                        |        NULL |                    4 |                                 20700.00 |                                5400.0000
 (4 rows, with a warning: SQLSTATE 01003)
  NAME                           |      SALARY |               NEARBY
 --------------------------------+-------------+----------------------
@@ -968,12 +1005,12 @@ SELECT ROW_NUMBER(CURRENT_ROW) FROM STAFF;
 ```
 
 ```
-           ID | NAME                           |      SALARY |             WEIGHTED |       AFTER | LAST_ID
---------------+--------------------------------+-------------+----------------------+-------------+--------------------------------
-            1 | Ada                            |     7200.00 |             14400.00 |     8100.00 | Barbara
-            2 | Grace                          |     8100.00 |             23400.00 |     5400.00 | Barbara
-            3 | Edsger                         |     5400.00 |             18900.00 |        NULL | Barbara
-            4 | Barbara                        |        NULL |              5400.00 |        0.00 | Barbara
+           ID | NAME                           |      SALARY |                                 WEIGHTED |       AFTER | LAST_ID
+--------------+--------------------------------+-------------+------------------------------------------+-------------+--------------------------------
+            1 | Ada                            |     7200.00 |                                 14400.00 |     8100.00 | Barbara
+            2 | Grace                          |     8100.00 |                                 23400.00 |     5400.00 | Barbara
+            3 | Edsger                         |     5400.00 |                                 18900.00 |        NULL | Barbara
+            4 | Barbara                        |        NULL |                                  5400.00 |        0.00 | Barbara
 (4 rows, with a warning: SQLSTATE 01003)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a nested window function is only in the argument of a set function a window function contains [ISO/IEC 9075-2:2023 §6.11 SR1] (at character 7)
 ```
@@ -1010,11 +1047,11 @@ SELECT SUM(DISTINCT SALARY) OVER (ORDER BY ID) FROM STAFF;
 ```
 
 ```
- DEPT |                TOTAL |                    R
-------+----------------------+----------------------
- NULL |                 NULL |                    1
- ENG  |             15300.00 |                    2
- OPS  |              5400.00 |                    3
+ DEPT |                                    TOTAL |                    R
+------+------------------------------------------+----------------------
+ NULL |                                     NULL |                    1
+ ENG  |                                 15300.00 |                    2
+ OPS  |                                  5400.00 |                    3
 (3 rows, with a warning: SQLSTATE 01003)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a window function is only in the select list of a query specification [ISO/IEC 9075-2:2023 §6.10 SR2b] (at character 29)
            ID |                DEPTS
@@ -1096,12 +1133,12 @@ SELECT ID, SALARY - 1000 * ID AS SCORE FROM STAFF ORDER BY SALARY - 1000 * ID NU
  Grace
  Ada
 (4 rows)
-           ID |                SCORE
---------------+----------------------
-            4 |                 NULL
-            3 |              2400.00
-            2 |              6100.00
-            1 |              6200.00
+           ID |               SCORE
+--------------+---------------------
+            4 |                NULL
+            3 |             2400.00
+            2 |             6100.00
+            1 |             6200.00
 (4 rows)
 ```
 

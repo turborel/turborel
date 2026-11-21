@@ -38,6 +38,8 @@ pub(super) fn passes(logical: &LogicalPlan) -> bool {
         | LogicalPlan::Distinct { .. } => true,
         LogicalPlan::SetOp { op, all, .. } => *op == SetOp::Union && *all,
         LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
         | LogicalPlan::Limit { .. }

@@ -7,7 +7,8 @@
 //! last line of the query's rows and time. A query that raises an
 //! exception makes EXPLAIN ANALYZE raise it, as reading its rows would.
 //! A program reaches the same by `Session::explain_analyze`, or each
-//! operator's count by `Session::analyzed`.
+//! operator's count by `Session::analyzed`. A data change statement is
+//! run as `explain/changed.rs` runs it.
 
 use std::fmt::Write;
 use std::sync::Arc;
@@ -17,7 +18,9 @@ use super::super::{Cursor, Session, State, api};
 use super::{plan_rows, with_plugin_calls};
 use crate::error::Result;
 use crate::exec::{execute, storage_counted};
+use crate::lexer::lex;
 use crate::params::Params;
+use crate::parser::begins_change;
 use crate::physical::{Analyzed, Plan, counted, millis, operators};
 use crate::txn::Txn;
 
@@ -25,7 +28,9 @@ impl Session {
     /// \[EXTENSION\] EXPLAIN ANALYZE of `sql`, a `<cursor specification>`,
     /// its parameters the values in `params`: the query run in the
     /// session's transaction, every row read and dropped, and the text
-    /// EXPLAIN ANALYZE shows of it.
+    /// EXPLAIN ANALYZE shows of it. Of a data change statement, the
+    /// statement run in the session's transaction, its changes kept there
+    /// (RULES.md D622).
     ///
     /// # Errors
     ///
@@ -41,6 +46,9 @@ impl Session {
     ///
     /// As `explain_analyze`.
     pub fn analyzed(&self, sql: &str, params: &Params) -> Result<Analyzed> {
+        if changes(sql)? {
+            return self.analyzed_change(sql, params);
+        }
         let mut made = None;
         drop(self.analyzed_cursor(sql, params, &mut made)?);
         made.ok_or_else(|| api("[DESIGN] EXPLAIN ANALYZE ran no query"))
@@ -54,6 +62,11 @@ impl Session {
     ///
     /// As `explain_analyze`.
     pub(in crate::db) fn analyze_rows(&self, sql: &str) -> Result<Cursor> {
+        if changes(sql)? {
+            let text = self.analyzed_change(sql, &Params::new())?.text;
+            return self
+                .open_with((commands::EXPLAIN, commands::UNRECOGNIZED), |call| self.unnamed(call, None, |st, _| plan_rows(st, &text)));
+        }
         self.analyzed_cursor(sql, &Params::new(), &mut None)
     }
 
@@ -90,6 +103,17 @@ impl Session {
         operators(shown, 0, &mut found);
         Ok(Analyzed { operators: found, rows, micros, text })
     }
+}
+
+/// Whether `sql` is a data change statement (RULES.md D622), not a query.
+///
+/// # Errors
+///
+/// `sql` is not made of tokens.
+fn changes(sql: &str) -> Result<bool> {
+    let tokens = lex(sql)?;
+    let mut words = tokens.iter().map(|t| &t.tok);
+    Ok(begins_change(words.next(), words.next()))
 }
 
 /// Runs `plan` in `tx`, reading every row: how many, and the microseconds

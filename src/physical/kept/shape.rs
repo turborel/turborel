@@ -68,6 +68,8 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         Plan::IndexJoin { .. } => same_index_join(one, other),
         Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
@@ -90,13 +92,16 @@ fn same_product(one: &Plan, other: &Plan) -> bool {
     same_shape(left, left2) && same_shape(right, right2)
 }
 
-/// Whether `one` and `other` are hash joins by the same keys of inputs of
-/// one shape each (RULES.md D418).
+/// Whether `one` and `other` are hash joins of inputs of one shape each
+/// (RULES.md D418), by the same keys, or `other` by more: a plan made with
+/// values may join two columns equal to one value, which one made with two
+/// slots cannot know are equal (`optimizer/transitivity/joined.rs`,
+/// RULES.md D613), and that key drops no pair the rest of the plan keeps.
 fn same_hash_join(one: &Plan, other: &Plan) -> bool {
     let (Plan::HashJoin { left, right, keys, .. }, Plan::HashJoin { left: left2, right: right2, keys: keys2, .. }) = (one, other) else {
         return false;
     };
-    keys == keys2 && same_shape(left, left2) && same_shape(right, right2)
+    keys.iter().all(|k| keys2.contains(k)) && !keys.is_empty() && same_shape(left, left2) && same_shape(right, right2)
 }
 
 /// Whether `one` and `other` are inner index joins of one table, by one

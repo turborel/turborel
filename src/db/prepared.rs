@@ -18,12 +18,14 @@
 mod given;
 mod outputs;
 mod plans;
+mod shared;
 
 use std::sync::Arc;
 
 use outputs::Outputs;
-pub(super) use plans::{Keeping, KeptPlan, Key, Plans, moved, rows_of};
-pub(crate) use plans::{Learned, Learning};
+pub(super) use plans::{Fit, Keeping, KeptPlan, Key, Learnt, Plans};
+pub(crate) use plans::{Learned, Learning, MOST_LEARNING_RUNS};
+pub(crate) use shared::Shared;
 
 use super::area::commands::{self, Command};
 use super::collations::Collating;
@@ -330,7 +332,9 @@ impl Session {
         };
         let parameters = input_types(&params, &outputs)?;
         let collation = self.collation.borrow().clone();
-        let plans = Arc::default();
+        // Shared by the statements prepared alike (RULES.md D610).
+        let alike = format!("{kind:?}\u{0}{collation:?}\u{0}{parameters:?}\u{0}{sql}");
+        let plans = Arc::new(Plans::in_place(self.db.prepared().place(alike)));
         Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans, single_row, cursor, implicit, outputs })
     }
 
@@ -460,14 +464,18 @@ impl Session {
 
     /// [§17.9 GR5a] `values`, one for each of `p`'s parameters.
     fn values_for(p: &Prepared, values: &[Value]) -> Result<Params> {
-        if values.len() != p.parameters.len() {
-            let (given, taken) = (values.len(), p.parameters.len());
-            return Err(dynamic(
-                SqlState::USING_CLAUSE_MISMATCH,
-                format!("[ISO/IEC 9075:1992 §17.9 GR5a] {given} values for {taken} <dynamic parameter specification>s"),
-            ));
-        }
+        Self::one_each(p, values.len())?;
         Ok(Params::executing(values.to_vec()))
+    }
+
+    /// [§17.9 GR5a] That `given` values are one for each of `p`'s parameters.
+    fn one_each(p: &Prepared, given: usize) -> Result<()> {
+        if given == p.parameters.len() {
+            return Ok(());
+        }
+        let taken = p.parameters.len();
+        let msg = format!("[ISO/IEC 9075:1992 §17.9 GR5a] {given} values for {taken} <dynamic parameter specification>s");
+        Err(dynamic(SqlState::USING_CLAUSE_MISMATCH, msg))
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.10] Executes `p`, not a query,

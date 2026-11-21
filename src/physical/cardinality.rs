@@ -27,25 +27,32 @@
 //! distinct values among them, and a plan of nested groupings and outer
 //! joins would be estimated a number of times exponential in its depth.
 
+mod bounds;
+mod composite;
 mod groups;
 mod injected;
 mod joins;
+mod keys;
 mod lineage;
 mod nodes;
+mod semi;
 mod tables;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use super::{CostModel, PhysicalPlanner};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::index::Index;
-use crate::logical::LogicalPlan;
+use crate::logical::{Cond, LogicalPlan, filled_cond};
 use crate::stats::Statistics;
 use crate::storage::cost_of;
+use crate::value::Value;
 
+pub(super) use composite::Member;
 pub(in crate::physical) use groups::cardenas;
 pub use injected::Injected;
 pub(super) use joins::{Classes, find};
@@ -100,6 +107,12 @@ impl Card {
     pub(super) fn kept(self, fraction: f64) -> Card {
         Card { rows: at_least_one(self.rows * fraction.clamp(0.0, 1.0), self.rows), upper: self.upper }
     }
+
+    /// It, at most `upper` (RULES.md D385).
+    pub(super) fn bounded(self, upper: f64) -> Card {
+        let upper = self.upper.min(upper);
+        Card { rows: self.rows.min(upper), upper }
+    }
 }
 
 /// `rows`, at least one if the input it is of, `of`, has one.
@@ -116,6 +129,8 @@ pub(super) struct Estimates<'a> {
     rows: RefCell<HashMap<QualifiedName, Option<f64>>>,
     /// Each index's distinct keys, by its name, as its sketch counts them.
     keys: RefCell<HashMap<String, Option<f64>>>,
+    /// Each table's unique keys and referential constraints, by its name.
+    table_keys: RefCell<HashMap<QualifiedName, Rc<keys::TableKeys>>>,
     /// Each node's estimate, by its address, for the asking under way.
     memo: RefCell<HashMap<usize, Card>>,
     /// The addresses of the nodes of the plan being planned, and the
@@ -124,6 +139,9 @@ pub(super) struct Estimates<'a> {
     kept: RefCell<HashMap<usize, Card>>,
     /// How many askings are under way, nested.
     asking: Cell<usize>,
+    /// A prepared statement's values, of a plan made with its slots: each
+    /// slot estimated as its value is (RULES.md D613).
+    values: Option<&'a [Value]>,
 }
 
 impl<'a> Estimates<'a> {
@@ -131,16 +149,25 @@ impl<'a> Estimates<'a> {
     pub(super) fn new(db: &'a State) -> Estimates<'a> {
         let (stats, rows, keys) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
         let (memo, asking) = (RefCell::new(HashMap::new()), Cell::new(0));
-        let (planned, kept) = (HashSet::new(), RefCell::new(HashMap::new()));
-        Estimates { db, cost: db.cost(), stats, rows, keys, memo, asking, planned, kept }
+        let (planned, kept, table_keys) = (HashSet::new(), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
+        Estimates { db, cost: db.cost(), stats, rows, keys, table_keys, memo, asking, planned, kept, values: None }
     }
 
     /// An estimator over `db` for the planning of `plan`, whose nodes live
-    /// as long as it.
-    pub(super) fn over(db: &'a State, plan: &LogicalPlan) -> Estimates<'a> {
+    /// as long as it, its slots estimated by `values`, if given.
+    pub(super) fn over(db: &'a State, plan: &LogicalPlan, values: Option<&'a [Value]>) -> Estimates<'a> {
         let mut planned = HashSet::new();
         addresses(plan, &mut planned);
-        Estimates { planned, ..Estimates::new(db) }
+        Estimates { planned, values, ..Estimates::new(db) }
+    }
+
+    /// `cond`, each slot its value, if the estimator is given values and
+    /// it fills; else itself.
+    pub(super) fn valued<'c>(&self, cond: &'c Cond) -> std::borrow::Cow<'c, Cond> {
+        match self.values.and_then(|values| filled_cond(cond.clone(), values).ok()) {
+            Some(filled) => std::borrow::Cow::Owned(filled),
+            None => std::borrow::Cow::Borrowed(cond),
+        }
     }
 
     /// The state estimated of.
@@ -277,5 +304,7 @@ fn addresses(plan: &LogicalPlan, found: &mut HashSet<usize>) {
 
 // Unit tests: each node's rule, lineage, Cardenas' formula and classes on
 // synthetic catalogs (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod keyed_tests;
 #[cfg(test)]
 mod tests;

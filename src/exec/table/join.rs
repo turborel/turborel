@@ -20,7 +20,13 @@
 //! the rows of its hash by a binary search, those of one key in the order
 //! they were built either way, and a probe of a key no row has costs no
 //! walk of another key's many rows.
+//!
+//! \[DESIGN\] (RULES.md D601) A table of one key column of whole numbers
+//! dense in their span is direct instead (`direct.rs`): a probe gives it
+//! its key's number, not a hash (`Hashing::direct`), and finds the rows of
+//! that number at its place in the span.
 
+mod direct;
 mod equal;
 mod keys;
 mod placed;
@@ -28,6 +34,7 @@ mod placed;
 #[cfg(test)]
 mod tests;
 
+pub(in crate::exec) use direct::DENSE_SPAN;
 pub(in crate::exec) use equal::keys_equal;
 pub(in crate::exec) use keys::{Hashing, KeyHashes, values_hash};
 
@@ -60,6 +67,9 @@ pub(in crate::exec) struct JoinTable {
     hashes: Vec<u64>,
     /// How far a hash is turned to give its slot.
     shift: u32,
+    /// Of a direct table, its rows by their keys' places (RULES.md D601),
+    /// boxed, as an operator holds its table beside its state.
+    dense: Option<Box<direct::Dense>>,
 }
 
 impl JoinTable {
@@ -70,7 +80,7 @@ impl JoinTable {
         let keyed = misses.iter().filter(|&&m| !m).count();
         let slots = keyed.saturating_mul(2).max(MIN_SLOTS).checked_next_power_of_two().unwrap_or(MIN_SLOTS);
         let shift = u64::BITS.saturating_sub(slots.trailing_zeros());
-        let mut table = JoinTable { directory: vec![0; slots.saturating_add(1)], rows: Vec::new(), hashes: Vec::new(), shift };
+        let mut table = JoinTable { directory: vec![0; slots.saturating_add(1)], rows: Vec::new(), hashes: Vec::new(), shift, dense: None };
         let mut ends = vec![0_usize; slots.saturating_add(1)];
         let built = || hashes.iter().zip(misses).enumerate().filter(|(_, (_, m))| !**m).map(|(r, (&h, _))| (r, h));
         for (_, h) in built() {
@@ -88,14 +98,53 @@ impl JoinTable {
         table
     }
 
+    /// \[DESIGN\] (RULES.md D601) The direct table of the rows whose keys'
+    /// `numbers` are given, each the bits of its key's nearest `f64`
+    /// (`Hashing::direct`), but those `misses` marks; none unless they are
+    /// whole numbers dense in their span (`direct.rs`).
+    pub(in crate::exec) fn direct(numbers: &[u64], misses: &[bool]) -> Option<JoinTable> {
+        direct::Dense::of(numbers, misses).map(|dense| JoinTable { dense: Some(Box::new(dense)), ..JoinTable::default() })
+    }
+
+    /// The table of the rows of one key column, `place` of `batch`, of
+    /// whole numbers dense in their span, direct; none of another, so it
+    /// is hashed (RULES.md D601).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a value nests deeper than a type may.
+    pub(in crate::exec) fn dense_of(
+        batch: &crate::storage::Batch,
+        (places, nulls): (&[usize], &[bool]),
+        seed: &crate::exec::Seed,
+    ) -> crate::error::Result<Option<JoinTable>> {
+        let [place] = places else { return Ok(None) };
+        if !matches!(batch.columns.get(*place), Some(crate::storage::Column::Ints(_))) {
+            return Ok(None);
+        }
+        let mut numbers = KeyHashes::default();
+        numbers.of_batch((batch, None), (places, nulls), Hashing { seed, keyed: false, direct: true })?;
+        Ok(JoinTable::direct(&numbers.hashes, &numbers.misses))
+    }
+
+    /// Whether it is direct, its probes giving their keys' numbers, not
+    /// hashes (RULES.md D601).
+    pub(in crate::exec) fn is_direct(&self) -> bool {
+        self.dense.is_some()
+    }
+
     /// The slot of hash `h`: its high bits.
     fn slot(&self, h: u64) -> usize {
         usize::try_from(h.checked_shr(self.shift).unwrap_or(0)).unwrap_or(0)
     }
 
     /// The numbers of the rows whose hash is `h`, in the order they were
-    /// built: those its key may match, compared then (`keys_equal`).
+    /// built: those its key may match, compared then (`keys_equal`); of a
+    /// direct table, `h` the number of the key (RULES.md D601).
     pub(in crate::exec) fn candidates(&self, h: u64) -> Candidates<'_> {
+        if let Some(dense) = &self.dense {
+            return Candidates::Run(dense.candidates(h).iter());
+        }
         let at = self.slot(h);
         let Some(&word) = self.directory.get(at.saturating_add(1)) else { return Candidates::Run([].iter()) };
         if word & tag(h) == 0 {

@@ -8,6 +8,7 @@
 //! is checked in time near its targets' number, not its square.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use super::super::component::{ConstraintId, ElementId, IdentityCategory, IdentityConstraint, Schema};
 use super::super::xpath::{Path, Step as PathStep};
@@ -55,11 +56,41 @@ type KeySequence = Vec<Vec<Atomic>>;
 /// key-sequences are equal member for member, as Equal in [Schema2
 /// §4.2.1] compares values, exactly when their keys are; none if a value
 /// has no key, as such a key-sequence is equal to none.
-type Key = Vec<Vec<EqualityKey>>;
+#[derive(Debug)]
+struct Key(Vec<Vec<EqualityKey>>);
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Key) -> bool {
+        #[cfg(test)]
+        COMPARED.with(|c| c.set(c.get().saturating_add(1)));
+        self.0 == other.0
+    }
+}
+
+impl Eq for Key {}
+
+impl Hash for Key {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times two keys were compared on this thread, so a test
+    /// measures the work of checking a constraint, not its time.
+    static COMPARED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times two keys were compared on this thread so far.
+#[cfg(test)]
+pub(super) fn compared() -> usize {
+    COMPARED.with(std::cell::Cell::get)
+}
 
 /// The key of `k`.
 fn keyed(k: &KeySequence) -> Option<Key> {
-    k.iter().map(|field| field.iter().map(equality_key).collect::<Option<Vec<_>>>()).collect()
+    k.iter().map(|field| field.iter().map(equality_key).collect::<Option<Vec<_>>>()).collect::<Option<_>>().map(Key)
 }
 
 /// [Schema1 §3.11.5] A node table: each key-sequence's key, and its node,

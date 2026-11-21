@@ -2,7 +2,9 @@
 
 mod altered_tables;
 mod analyze;
+mod analyze_more;
 mod batches;
+mod btree;
 mod budget;
 mod bulk;
 // The count's, kept beside the other areas' files.
@@ -18,10 +20,12 @@ mod decode;
 mod distinct_aggregates;
 mod expr;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
+mod alloc;
 #[path = "estimates.rs"]
 mod estimates;
 mod group_table;
 mod insert_values;
+mod join_estimates;
 mod join_table;
 mod joins;
 mod late;
@@ -40,14 +44,18 @@ mod tpcc;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
+mod mark_joins;
+mod semi_joins;
+mod steady;
 mod unnesting;
 mod uuid;
+mod windows_batched;
 mod xxhash;
 
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 18] {
+pub fn core() -> [&'static [Mutation]; 21] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -65,18 +73,22 @@ pub fn core() -> [&'static [Mutation]; 18] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &btree::BTREE,
         &monitoring::MONITORING,
         &bulk::BULK,
+        &steady::STEADY_PLANS,
+        &alloc::ALLOC,
     ]
 }
 
-/// Every area's mutations, in order: the first half's, then the second's.
+/// Every area's mutations, in order: the first half's, the second's, then
+/// the planner's newest.
 pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
-    first().into_iter().chain(second())
+    first().into_iter().chain(second()).chain(planner())
 }
 
 /// The first half of the areas, in order.
-fn first() -> [&'static [Mutation]; 25] {
+fn first() -> [&'static [Mutation]; 26] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -92,6 +104,7 @@ fn first() -> [&'static [Mutation]; 25] {
         &super::composite::COMPOSITE,
         &super::distinct::DISTINCT,
         &super::bigint::BIGINT,
+        &super::wide_exact::WIDE_EXACT,
         &super::distinct_predicate::DISTINCT_PREDICATE,
         &super::partitioned_joins::PARTITIONED_JOINS,
         &super::grouping_sets::GROUPING_SETS,
@@ -107,7 +120,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 47] {
+fn second() -> [&'static [Mutation]; 46] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -152,11 +165,16 @@ fn second() -> [&'static [Mutation]; 47] {
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
+        &analyze_more::ANALYZE_MORE,
+        &windows_batched::WINDOWS_BATCHED,
         &statistics::STATISTICS,
-        &range_joins::RANGE_JOINS,
-        &cost_model::COST_MODEL,
-        &orders::ORDERS,
     ]
+}
+
+/// The planner's newest areas, in order: join estimates, range joins, the
+/// cost model and orders.
+fn planner() -> [&'static [Mutation]; 4] {
+    [&join_estimates::JOIN_ESTIMATES, &range_joins::RANGE_JOINS, &cost_model::COST_MODEL, &orders::ORDERS]
 }
 
 /// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's, the decode kernels' and late materialization's.
@@ -203,9 +221,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 
 /// The transport's, parallel queries', the client's step with its
 /// server, the decode kernels', declared types', batches', late
-/// materialization's, the table of groups', the join table's and
-/// XXH3's and skipping's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 11] {
+/// materialization's, the table of groups', the join table's, XXH3's,
+/// semi joins', mark joins' and skipping's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 13] {
     [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
@@ -217,6 +235,8 @@ fn closing() -> [&'static [Mutation]; 11] {
         &group_table::GROUP_TABLE,
         &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
+        &semi_joins::SEMI_JOINS,
+        &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
     ]
 }

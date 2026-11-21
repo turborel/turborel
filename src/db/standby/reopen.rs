@@ -64,11 +64,15 @@ impl Database {
     }
 
     /// \[DESIGN\] Whether the files in `dir` hold a checkpoint while the
-    /// log its replica keeps holds nothing: the replica's journal was
-    /// lost, and with it the records the checkpoint is recovered with, so
-    /// the files are of no use; the database is made again from nothing,
-    /// and takes the group's state (RULES.md D57). Only a database kept
-    /// by a group, whose log storage is set, is so.
+    /// log its replica keeps does not hold every record before the
+    /// checkpoint's position: the replica's journal was lost, or cut to
+    /// where it held the log through when a state transfer was installed,
+    /// as a view change may replace the records after. With them went the
+    /// records the transactions open at the checkpoint are undone with,
+    /// whose versions the checkpoint's pages hold, so the files are of no
+    /// use; the database is made again from nothing, and takes the group's
+    /// state (RULES.md D57). Only a database kept by a group, whose log
+    /// storage is set, is so.
     fn log_lost(&self, fs: &Arc<dyn FileSystem>, dir: &Path) -> Result<bool> {
         let Some(logs) = self.log_storage_set() else { return Ok(false) };
         let snapshot = self.snapshot()?;
@@ -86,9 +90,8 @@ impl Database {
             return Ok(false);
         }
         let Some(log) = logs.open(&place)? else { return Ok(false) };
-        // The position after the last record is 1 of a log holding none,
-        // never let go of any.
-        Ok(log.log.end() <= Lsn(1))
+        // The checkpoint holds every record before its position.
+        Ok(log.log.end() < image.through)
     }
 
     /// Once opened as `mode` says, from a checkpoint holding every record

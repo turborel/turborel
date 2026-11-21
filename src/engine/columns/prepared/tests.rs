@@ -54,7 +54,7 @@ fn group(pool: &BufferPool, file: FileId) -> (Pages<'_, Plain>, Group) {
     let pages = Pages { pool, file, capacity: 2048, sealing: &Plain, compress: true, pax: false, imprints: true };
     let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
     let all: Vec<Row> = (0..ROWS).map(row).collect();
-    let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[])).unwrap();
+    let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[], &[])).unwrap();
     (pages, group)
 }
 

@@ -16,15 +16,19 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
+use super::super::late::Deferred;
+use super::super::runtime::{self, Told};
 use super::super::stream::{self, Batches, Kept};
 use super::{gathered, rows_of};
+use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::table::{Candidates, Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal};
 use crate::exec::{RowIter, broken, execute};
 use crate::physical::{JoinKey, Plan};
-use crate::storage::Batch;
+use crate::storage::{Batch, Column};
 use crate::txn::TxId;
+use crate::value::Value;
 
 /// \[DESIGN\] (RULES.md D368) The bytes a built row costs its join beyond
 /// its values: its hash and number in the table, and two words of its
@@ -90,7 +94,13 @@ impl Rest {
 impl HeldRight {
     /// How it hashes its keys.
     fn hashing(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct() }
+    }
+
+    /// How it hashes its keys for a hashed table or a runtime filter,
+    /// never as a direct table's numbers (RULES.md D601).
+    fn hashed(&self) -> Hashing<'_> {
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: false }
     }
 
     /// Hashes the keys of the rows of `batch` at `rows`, its key columns at
@@ -140,7 +150,7 @@ impl HeldRight {
         }
         self.keyed = true;
         let mut built = KeyHashes::default();
-        built.of_batch((&self.batch, None), (&self.places, &self.nulls), self.hashing())?;
+        built.of_batch((&self.batch, None), (&self.places, &self.nulls), self.hashed())?;
         self.table = JoinTable::of(&built.hashes, &built.misses);
         Ok(())
     }
@@ -148,19 +158,28 @@ impl HeldRight {
 
 /// The right operand `right`, keyed by the right columns of `keys`, read
 /// and held while its vectors and its table hold no more than `limit`
-/// bytes, a runtime filter made of each of its keys at `filtered`.
+/// bytes, a runtime filter made of each of its keys at `filtered`; its
+/// rows those the runtime filters `told` it keep (RULES.md D600).
 ///
 /// # Errors
 ///
 /// The operand's; a key column its batches lack (SQLCODE -910).
-pub(super) fn read(right: Plan, (keys, filtered): (&[JoinKey], &[usize]), limit: usize, (db, tx): (&Db, TxId)) -> Result<Read> {
+pub(super) fn read(
+    right: Plan,
+    (keys, filtered, told): (&[JoinKey], &[usize], Vec<Told>),
+    limit: usize,
+    (db, tx): (&Db, TxId),
+) -> Result<Read> {
     let (columns, width) = stream::layout(&right, db).unwrap_or_default();
     let places: Vec<usize> = keys
         .iter()
         .map(|k| columns.iter().position(|&c| c == k.right).ok_or_else(|| broken("a join key the right operand's batch lacks")))
         .collect::<Result<_>>()?;
-    let mut batches: Batches =
-        if stream::reads_by_batch(&right, db) { stream::batches(right, db, tx)? } else { gathered(execute(right, db, tx), &columns) };
+    let mut batches: Batches = if stream::reads_by_batch(&right, db) {
+        stream::batches_with(right, (db, tx), &Deferred::default().with_told(told))?
+    } else {
+        runtime::applied(gathered(execute(right, db, tx), &columns), told, &columns, (db, false))
+    };
     let (mut parts, mut bytes) = (Vec::new(), 0_usize);
     for kept in batches.by_ref() {
         let (batch, rows) = kept?;
@@ -172,7 +191,12 @@ pub(super) fn read(right: Plan, (keys, filtered): (&[JoinKey], &[usize]), limit:
             return Ok(Read::Rest(Rest { batches: Box::new(read.into_iter().chain(batches)), columns, width }));
         }
     }
-    let batch = Batch::joined(parts);
+    let mut batch = Batch::joined(parts);
+    // Of an operand that gave no batch, a column of no row for each it
+    // holds, so a joined batch has the columns its layout says.
+    if batch.columns.len() < columns.len() {
+        batch.columns.resize_with(columns.len(), || Column::nulls(0));
+    }
     let nulls: Vec<bool> = keys.iter().map(|k| k.nulls).collect();
     let mut held = HeldRight {
         batch: Arc::new(batch),
@@ -185,37 +209,61 @@ pub(super) fn read(right: Plan, (keys, filtered): (&[JoinKey], &[usize]), limit:
         probing: KeyHashes::default(),
         filters: Vec::new(),
     };
-    // Of a join on no keys, every row of one hash, each a candidate.
-    let mut built = KeyHashes::default();
-    built.of_batch((&held.batch, None), (&held.places, &held.nulls), held.hashing())?;
-    held.table = JoinTable::of(&built.hashes, &built.misses);
-    held.filters = filters_of(&held, &built, filtered)?;
+    built(&mut held, filtered, dense_wanted(db))?;
     Ok(Read::Held(Box::new(held)))
 }
 
-/// The runtime filters of `held`'s keys at `filtered`, each a place
-/// among its keys (RULES.md D369), its rows' hashes of all its keys
-/// `built`: of a key alone, those hashes, else its own.
+/// Builds `held`'s table and its runtime filters of its keys at
+/// `filtered`: of one key of whole numbers dense in their span, a direct
+/// table if `dense` (RULES.md D601), else hashed; of a join on no keys,
+/// every row of one hash, each a candidate.
 ///
 /// # Errors
 ///
 /// SQLCODE -910 if a value nests deeper than a type may.
-fn filters_of(held: &HeldRight, built: &KeyHashes, filtered: &[usize]) -> Result<Vec<(usize, Arc<RuntimeFilter>)>> {
+fn built(held: &mut HeldRight, filtered: &[usize], dense: bool) -> Result<()> {
+    let direct = if dense { JoinTable::dense_of(&held.batch, (&held.places, &held.nulls), &held.seed)? } else { None };
+    let mut built = KeyHashes::default();
+    if let Some(table) = direct {
+        held.table = table;
+    } else {
+        built.of_batch((&held.batch, None), (&held.places, &held.nulls), held.hashed())?;
+        held.table = JoinTable::of(&built.hashes, &built.misses);
+    }
+    held.filters = filters_of(held, (!held.table.is_direct()).then_some(&built), filtered)?;
+    Ok(())
+}
+
+/// The runtime filters of `held`'s keys at `filtered`, each a place
+/// among its keys (RULES.md D369), its rows' hashes of all its keys
+/// `built`, if its table is hashed: of a key alone, those hashes, else
+/// its own.
+///
+/// # Errors
+///
+/// SQLCODE -910 if a value nests deeper than a type may.
+fn filters_of(held: &HeldRight, built: Option<&KeyHashes>, filtered: &[usize]) -> Result<Vec<(usize, Arc<RuntimeFilter>)>> {
     let mut filters = Vec::new();
     for &k in filtered {
         let (Some(&at), Some(&nulls)) = (held.places.get(k), held.nulls.get(k)) else { continue };
         let own;
-        let hashes = if held.places.len() == 1 {
+        let hashes = if let Some(built) = built.filter(|_| held.places.len() == 1) {
             built
         } else {
             let mut of_key = KeyHashes::default();
-            of_key.of_batch((&held.batch, None), (&[at], &[nulls]), held.hashing())?;
+            of_key.of_batch((&held.batch, None), (&[at], &[nulls]), held.hashed())?;
             own = of_key;
             &own
         };
-        if let Some(filter) = RuntimeFilter::of_built(&held.batch, (at, nulls), hashes, held.hashing()) {
+        if let Some(filter) = RuntimeFilter::of_built(&held.batch, (at, nulls), hashes, held.hashed()) {
             filters.push((k, Arc::new(filter)));
         }
     }
     Ok(filters)
+}
+
+/// Whether a hash join builds a direct table of keys dense in their span
+/// (EXECUTOR.DENSE_JOINS, RULES.md D601).
+pub(in crate::exec) fn dense_wanted(db: &State) -> bool {
+    if let Value::Char(s) = db.settings.get(crate::settings::EXECUTOR_DENSE_JOINS) { s != "OFF" } else { true }
 }

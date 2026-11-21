@@ -29,7 +29,8 @@ behind it, and each can be replaced or added to.
   [CONFORMANCE.md](CONFORMANCE.md), whose claimed features SQL_FEATURES shows.
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
-  control, a write-ahead log, checkpoints and recovery.
+  control, a write-ahead log written once per transaction at its commit,
+  checkpoints and recovery.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
 - [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
@@ -46,9 +47,12 @@ behind it, and each can be replaced or added to.
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
 - Hash joins probed a batch at a time in one tagged table, shared by
-  parallel morsels, telling the left's scan a range and Bloom filter.
+  parallel morsels, telling the left's scan a range and Bloom filter;
+  dense keys found by their place, their filter an exact bitmap.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
+- Window functions over batches, partitions found of the sort's keys by a
+  kernel, moving frames by prefix sums and segment trees.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
   losers, and FETCH FIRST that makes only the rows it gives, reading its
   other columns late and skipping groups past its bound.
@@ -59,28 +63,37 @@ behind it, and each can be replaced or added to.
   and every index method made on each partition.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.
-- Indexes as plug-ins. B-link trees, linear hash tables and R-trees over
+- Indexes as plug-ins. B-link trees, with prefix-truncated nodes, key heads
+  and leaf hints to their rows, linear hash tables and R-trees over
   points and rectangles are built in, R-trees packed when built and their
   emptied nodes reclaimed up to the root. Any other method registers with its
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match, and a row-store COUNT(*) is summed from its settled zones.
 - Column store skipping that survives writes: shadow bits and zones over
-  the delta, optional column imprints, and sorted dictionaries judged
-  by codes.
+  the delta, optional column imprints, column sketches of compressed
+  texts, and sorted dictionaries judged by codes.
+- Bulk loads by INSERT or copy that build empty indexes whole and write
+  column store rows straight into frozen groups.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables, on statistics of most common values, a
-  sample of rows for correlated conditions and indexes' joint key counts.
+  sample of rows for correlated conditions and indexes' joint key counts,
+  joins estimated by keys and bounded, index joins chosen robustly.
 - [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
   bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
-  query and shows each operator's rows beside its estimate, and a program
-  may give the planner true row counts to test its plans.
+  query or a data change and shows each operator's rows beside its
+  estimate, its batches, spills and index reads, and a program may give
+  the planner true row counts to test its plans.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
+- [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
+  for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
+  and joins under MIN and MAX reduced to semi joins; mark joins for
+  those under OR, in CASE and in select lists.
 - Joins removed on unique and foreign keys, filters and FETCH FIRST moved
   into set operations and below windows, and parts of conditions that can
   raise computed on the table they read, so joins over them are reordered.
@@ -141,6 +154,8 @@ behind it, and each can be replaced or added to.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.
+- Exact numbers of up to 38 digits, in arithmetic and in columns of
+  either store.
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
 - [UUIDs](doc/sql/02-data-types.md#uuids), with UUID_V4() and time-ordered

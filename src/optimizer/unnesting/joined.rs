@@ -35,7 +35,7 @@ pub(super) fn rewritten(node: &Node<'_>, target: &Target, bound: Bound, function
     let k = bound.keys.len();
     let w = node.input().width();
     let base = w.saturating_add(k.saturating_mul(2));
-    let with = Replacing { target, base, defaults: bound.defaults.as_deref(), unique: bound.unique };
+    let with = Replacing { target, base, defaults: bound.defaults.as_deref(), unique: bound.unique, mark: false };
     let per = if bound.unique && matches!(target.how, How::Value) {
         counted_once(bound.plan, k)?
     } else {
@@ -136,18 +136,27 @@ fn first(column: usize) -> AggCall {
 
 /// What a place the node used the subquery reads instead, which is the
 /// columns of its binding's row, from `base` on, and of a subquery made
-/// a grouping by its keys, the values it has of no row.
-struct Replacing<'a> {
+/// a grouping by its keys, the values it has of no row; or of a mark join,
+/// its mark at `base`.
+pub(super) struct Replacing<'a> {
     target: &'a Target,
     base: usize,
     defaults: Option<&'a [Expr]>,
     /// Each binding has at most one row, so a value is read as it is.
     unique: bool,
+    /// The column at `base` is a mark join's mark (RULES.md D641).
+    mark: bool,
 }
 
-impl Replacing<'_> {
+impl<'a> Replacing<'a> {
+    /// What reads the mark at column `base` of a mark join of `target`'s
+    /// subquery.
+    pub(super) fn marked_at(target: &'a Target, base: usize) -> Replacing<'a> {
+        Replacing { target, base, defaults: None, unique: true, mark: true }
+    }
+
     /// `c`, each place it uses the subquery replaced.
-    fn cond(&self, c: Cond) -> Cond {
+    pub(super) fn cond(&self, c: Cond) -> Cond {
         match c {
             Cond::And(a, b) => Cond::And(Box::new(self.cond(*a)), Box::new(self.cond(*b))),
             Cond::Or(a, b) => Cond::Or(Box::new(self.cond(*a)), Box::new(self.cond(*b))),
@@ -178,7 +187,7 @@ impl Replacing<'_> {
     }
 
     /// `e`, each place it uses the subquery replaced.
-    fn expr(&self, e: Expr) -> Expr {
+    pub(super) fn expr(&self, e: Expr) -> Expr {
         match e {
             Expr::Subquery(s, at) => {
                 if s.id() == self.target.id {
@@ -208,9 +217,14 @@ impl Replacing<'_> {
     }
 
     /// Of EXISTS, the marker not null; of a quantified comparison made
-    /// NOT EXISTS, null.
+    /// NOT EXISTS, null. Of a mark join, its mark, or of ALL, made SOME of
+    /// the comparison negated, NOT of it.
     fn marked(&self) -> Cond {
-        Cond::IsNull(Expr::Column(self.base), !self.target.negated)
+        if !self.mark {
+            return Cond::IsNull(Expr::Column(self.base), !self.target.negated);
+        }
+        let mark = Cond::Value(Expr::Column(self.base));
+        if self.target.negated { Cond::Not(Box::new(mark)) } else { mark }
     }
 
     /// The value of column `at` of the binding's one row, failing with

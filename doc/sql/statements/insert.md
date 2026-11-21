@@ -77,6 +77,15 @@ TABLE, NEW TABLE or FINAL TABLE around the statement
 The query may read another statement's rows the same way, as the one
 table reference of its FROM clause, and that statement runs first.
 
+An INSERT of 4096 rows or more into a table with an empty index, other
+than a unique one, is a load. It takes the table's lock alone, so other
+transactions wait to write the table until its transaction ends, and
+builds each such index whole from its rows as it ends. A table with a
+trigger, a foreign key or an assertion over it builds no index so.
+Such an INSERT into a table of the column store that holds no row yet
+to be frozen is a load too, and writes its rows straight into frozen
+groups, which other transactions see once it commits.
+
 ## RULES
 
 1. The table exists and is not read-only: a base table, or a view that

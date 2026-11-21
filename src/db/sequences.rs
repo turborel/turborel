@@ -25,11 +25,11 @@ use crate::catalog::{ColumnDesc, QualifiedName, SequenceDesc};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::log::record::{Change, Record};
 use crate::txn::{LockMode, NO_TRANSACTION};
-use crate::value::{DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value, pow10};
+use crate::value::{BIGINT_PRECISION, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value, pow10};
 
 /// [ISO/IEC 9075-2:2023 §11.72 SR6] The type of a sequence generator that
 /// names none (ID157): NUMERIC of the greatest precision, scale 0.
-pub(crate) const DEFAULT_TYPE: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+pub(crate) const DEFAULT_TYPE: DataType = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
 
 /// \[DESIGN\] RULES.md D62: the epochs of the counters of the sequence
 /// generators a statement defines, or restarts, in order: each given anew

@@ -44,7 +44,8 @@ pub(in crate::exec) struct SharedTable {
 impl SharedTable {
     /// The table of the operand's rows `parts`, batches of its columns
     /// `columns` of its rows `width` wide, every row kept, in order, joined
-    /// on `keys`, hashed by `seed`.
+    /// on `keys`, hashed by `seed`, or of keys dense in their span direct
+    /// if `dense` (RULES.md D601).
     ///
     /// # Errors
     ///
@@ -54,7 +55,7 @@ impl SharedTable {
         parts: Vec<Batch>,
         (columns, width): (Vec<usize>, usize),
         keys: &[JoinKey],
-        seed: Seed,
+        (seed, dense): (Seed, bool),
     ) -> Result<SharedTable> {
         let places = keys
             .iter()
@@ -76,27 +77,39 @@ impl SharedTable {
             keyed,
             shown: None,
         };
+        // A direct table of keys dense in their span if `dense` (RULES.md
+        // D601), else hashed.
+        if let Some(table) = if dense { JoinTable::dense_of(&shared.right, (&shared.places, &shared.nulls), &shared.seed)? } else { None } {
+            shared.table = table;
+            return Ok(shared);
+        }
         let mut built = KeyHashes::default();
-        built.of_batch((&shared.right, None), (&shared.places, &shared.nulls), shared.hashing())?;
+        built.of_batch((&shared.right, None), (&shared.places, &shared.nulls), shared.hashed())?;
         shared.table = JoinTable::of(&built.hashes, &built.misses);
         Ok(shared)
     }
 
     /// The table of the operand's `rows`, each `width` wide, kept in
     /// order, joined on `keys`, hashed by `seed`, a probe's batches holding
-    /// its columns `shown`.
+    /// its columns `shown`, of keys dense in their span direct if `dense`
+    /// (RULES.md D601).
     ///
     /// # Errors
     ///
     /// As `SharedTable::of`.
-    pub(in crate::exec) fn of_rows(rows: &[Row], width: usize, keys: &[JoinKey], (seed, shown): (Seed, Vec<usize>)) -> Result<SharedTable> {
+    pub(in crate::exec) fn of_rows(
+        rows: &[Row],
+        width: usize,
+        keys: &[JoinKey],
+        (seed, shown, dense): (Seed, Vec<usize>, bool),
+    ) -> Result<SharedTable> {
         let columns: Vec<usize> = (0..width).collect();
         let mut batch = Batch::empty(width);
         for row in rows {
             batch.push(row, &columns);
         }
         let parts = if batch.rows > 0 { vec![batch] } else { Vec::new() };
-        let mut shared = SharedTable::of(parts, (columns, width), keys, seed)?;
+        let mut shared = SharedTable::of(parts, (columns, width), keys, (seed, dense))?;
         shared.shown = Some(shown);
         Ok(shared)
     }
@@ -111,9 +124,9 @@ impl SharedTable {
         let mut told = Vec::new();
         for ((key, &at), &nulls) in keys.iter().zip(&self.places).zip(&self.nulls) {
             let mut hashes = KeyHashes::default();
-            hashes.of_batch((&self.right, None), (&[at], &[nulls]), self.hashing())?;
-            if let Some(filter) = RuntimeFilter::of_built(&self.right, (at, nulls), &hashes, self.hashing()) {
-                told.push(Told { filter: Arc::new(filter), column: key.left });
+            hashes.of_batch((&self.right, None), (&[at], &[nulls]), self.hashed())?;
+            if let Some(filter) = RuntimeFilter::of_built(&self.right, (at, nulls), &hashes, self.hashed()) {
+                told.push(Told::of(Arc::new(filter), key.left));
             }
         }
         Ok(told)
@@ -121,7 +134,13 @@ impl SharedTable {
 
     /// How it hashes its keys.
     fn hashing(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct() }
+    }
+
+    /// How it hashes its keys for a hashed table or a runtime filter,
+    /// never as a direct table's numbers (RULES.md D601).
+    fn hashed(&self) -> Hashing<'_> {
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: false }
     }
 
     /// The columns of the rows of a batch that probed it, of left batches

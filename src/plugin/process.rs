@@ -19,7 +19,7 @@ use crate::memory::{MemoryBudget, Reservation};
 use crate::sync::lock_builtin;
 use crate::threads::pipe_reader;
 
-use super::errors::{ended, unavailable, violation};
+use super::errors::{ended, unavailable, unwelcomed, violation};
 use super::limits::Limits;
 use super::wire::{HOST_CAPABILITIES, Hello, Message, Welcome, read_body, read_length, write_message};
 
@@ -80,20 +80,19 @@ pub(super) struct Process {
 }
 
 impl Process {
-    /// Starts `spawn`'s program and greets it, bounded by `limits`.
+    /// Starts `spawn`'s program and greets it, bounded by `limits`: the
+    /// start, spawning and WELCOME together, by `Limits::start_timeout`.
     ///
     /// # Errors
     ///
-    /// SQLSTATE 38T05 if it cannot be started; 38T01, 38T03 or 38T04 if
-    /// it does not answer HELLO with a WELCOME of protocol 1 and of its
-    /// manifest's name and kinds.
+    /// SQLSTATE 38T05 if it cannot be started; 38T02 if it gives no
+    /// WELCOME in time; 38T01, 38T03 or 38T04 if it ends first or does not
+    /// answer HELLO with a WELCOME of protocol 1 and of its manifest's
+    /// name and kinds.
     pub(super) fn start(spawn: &Spawn, limits: &Limits) -> Result<Process> {
-        let mut command = Command::new(&spawn.program);
-        command.current_dir(&spawn.directory).env_clear().stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        for (name, value) in KEPT_ENVIRONMENT.iter().filter_map(|n| std::env::var_os(n).map(|v| (n, v))) {
-            command.env(name, value);
-        }
-        let mut child = command.spawn().map_err(|e| unavailable(&format!("{} could not be started: {e}", spawn.program.display())))?;
+        let bound = limits.start_timeout();
+        let deadline = bound.and_then(|t| Instant::now().checked_add(t));
+        let mut child = spawned(spawn, deadline)?;
         let pipes = (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let (Some(stdin), Some(stdout), Some(stderr)) = pipes else {
             let _ = child.kill();
@@ -105,12 +104,13 @@ impl Process {
         let welcome = Welcome { protocol: 0, name: String::new(), version: String::new(), capabilities: Vec::new(), kinds: Vec::new() };
         let mut process = Process { child, stdin, frames, tail, welcome, settings_sent: Vec::new() };
         started?;
-        process.greet(spawn, limits)?;
+        process.greet(spawn, limits, (deadline, bound))?;
         Ok(process)
     }
 
-    /// Sends HELLO and takes the WELCOME.
-    fn greet(&mut self, spawn: &Spawn, limits: &Limits) -> Result<()> {
+    /// Sends HELLO and takes the WELCOME, waiting while the program runs
+    /// and its output is open, until `deadline` of the start's `bound`.
+    fn greet(&mut self, spawn: &Spawn, limits: &Limits, (deadline, bound): (Option<Instant>, Option<Duration>)) -> Result<()> {
         let hello = Hello {
             protocol: super::PROTOCOL,
             extension: spawn.extension.clone(),
@@ -120,11 +120,11 @@ impl Process {
             memory_bytes: limits.memory(),
         };
         self.send(&Message::Hello(hello))?;
-        let deadline = limits.timeout().and_then(|t| Instant::now().checked_add(t));
         let welcome = loop {
             let wait = deadline.map_or(Duration::MAX, |d| d.saturating_duration_since(Instant::now()));
             if wait.is_zero() {
-                return Err(ended("it gave no WELCOME within PLUGINS.CALL_TIMEOUT_MS"));
+                let ms = bound.map_or(0, |b| u64::try_from(b.as_millis()).unwrap_or(u64::MAX));
+                return Err(self.explained(unwelcomed(ms)));
             }
             match self.next(wait)? {
                 Next::Message(Message::Welcome(w), _) => break w,
@@ -222,6 +222,30 @@ impl Drop for Process {
         // it is waited for next.
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// `spawn`'s program started, in its directory with the environment
+/// kept. A start the system refuses as its executable is busy, as it is
+/// while a process another thread starts at that moment still holds the
+/// file open for writing until it runs its own program, is tried again
+/// until `deadline`; any other refusal fails at once.
+fn spawned(spawn: &Spawn, deadline: Option<Instant>) -> Result<Child> {
+    loop {
+        let mut command = Command::new(&spawn.program);
+        command.current_dir(&spawn.directory).env_clear().stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        for (name, value) in KEPT_ENVIRONMENT.iter().filter_map(|n| std::env::var_os(n).map(|v| (n, v))) {
+            command.env(name, value);
+        }
+        let e = match command.spawn() {
+            Ok(child) => return Ok(child),
+            Err(e) => e,
+        };
+        let busy = e.kind() == std::io::ErrorKind::ExecutableFileBusy;
+        if !busy || deadline.is_some_and(|d| Instant::now() >= d) {
+            return Err(unavailable(&format!("{} could not be started: {e}", spawn.program.display())));
+        }
+        std::thread::sleep(Duration::from_millis(super::pool::POLL_MS));
     }
 }
 

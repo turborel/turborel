@@ -1,14 +1,15 @@
 //! The mutations of prepared statements' kept plans (RULES.md R-TEST-9,
 //! D45): what a plan is kept with, a plan holding the statement's
-//! instant, a physical plan kept with its slots, filled at each
-//! execution (`physical/kept.rs`), a write's plan of its object rows kept
-//! so too, and a plan learned from executions whose plans keep one shape
-//! (`db/prepared/plans/learning.rs`).
+//! instant, a physical plan kept with its slots, read where they are at
+//! each execution (`physical/kept.rs`, D610), a write's plan of its object
+//! rows kept so too, a plan learned from executions whose plans keep one
+//! shape (`db/prepared/plans/learning.rs`), and what statements prepared
+//! alike share (`db/prepared/shared.rs`).
 
 use super::{Mutation, Package};
 
 /// The mutations of kept plans, in the order they run.
-pub const KEPT: [Mutation; 13] = [
+pub const KEPT: [Mutation; 16] = [
     Mutation {
         name: "kept-plan-definitions",
         package: Package::Core,
@@ -90,8 +91,8 @@ pub const KEPT: [Mutation; 13] = [
         package: Package::Core,
         breaks: "learned plans: a plan learned kept however its tables grow",
         file: "src/db/prepared/plans.rs",
-        original: "                if rows.as_deref().is_some_and(|rows| moved(self.st, &reads, rows)) {",
-        replacement: "                if rows.as_deref().is_some_and(|_| false) {",
+        original: "            Some(Fit::Moved) => Ok(false),",
+        replacement: "            Some(Fit::Moved) => Ok(true),",
         integration: &[],
         unit: &["db::prepared::plans::tests::a_learned_plan_is_learned_again_once_its_table_grows"],
     },
@@ -130,19 +131,49 @@ pub const KEPT: [Mutation; 13] = [
         package: Package::Core,
         breaks: "kept plans: a write's plan of its object rows made with its slots and never kept, so made again at each execution",
         file: "src/db/prepared/plans.rs",
-        original: "                self.keep(|k| k.physical = Physical::Fixed(Box::new(plan.clone()), Arc::clone(&reads), None))?;\n                Written::filled(w, Some((plan, reads)), values, budget)",
-        replacement: "                Written::filled(w, Some((plan, reads)), values, budget)",
+        original: "                self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;\n                let (plan, _) = plan.opened(Some(Arc::clone(&slots)), crate::optimizer::prepared::budget(self.st))?;\n                Written::slotted(w, Some((plan, reads)), slots)\n            }\n        }",
+        replacement: "                let (plan, _) = plan.opened(Some(Arc::clone(&slots)), crate::optimizer::prepared::budget(self.st))?;\n                Written::slotted(w, Some((plan, reads)), slots)\n            }\n        }",
         integration: &[],
         unit: &["db::prepared::plans::tests::a_point_write_keeps_its_plan_and_a_range_write_none"],
     },
     Mutation {
         name: "kept-write-unfilled",
         package: Package::Core,
-        breaks: "kept plans: a write's kept plan of its object rows run with its slots unfilled",
+        breaks: "kept plans: a write's kept plan of its object rows run with no values for its slots",
         file: "src/db/write.rs",
-        original: "            Some((plan, reads)) => ObjectRows::Kept(filled_plan(plan, values, budget)?, reads),",
-        replacement: "            Some((plan, reads)) => ObjectRows::Kept(plan, reads),",
+        original: "        Ok(Written { bound, rows, slots: Some(slots) })",
+        replacement: "        Ok(Written { bound, rows, slots: None }).map(|w| { drop(slots); w })",
         integration: &[],
         unit: &["db::prepared::plans::tests::a_point_write_keeps_its_plan_and_a_range_write_none"],
+    },
+    Mutation {
+        name: "kept-plan-shared",
+        package: Package::Core,
+        breaks: "kept plans: statements prepared alike in two sessions each made their own plan (D610)",
+        file: "src/db/prepared/shared.rs",
+        original: ".find(|place| place.alike == alike)",
+        replacement: ".find(|_| false)",
+        integration: &["kept_plans::statements_prepared_alike_in_two_sessions_share_their_plan"],
+        unit: &["db::prepared::shared::tests::statements_prepared_alike_share_a_place_while_one_is_held"],
+    },
+    Mutation {
+        name: "kept-plan-slot-read",
+        package: Package::Core,
+        breaks: "kept plans: every slot of a kept plan read as its first (D610)",
+        file: "src/exec/eval.rs",
+        original: "    let Some(value) = subqueries.slot(slot.index) else {",
+        replacement: "    let Some(value) = subqueries.slot(0) else {",
+        integration: &["kept_plans::a_prepared_statement_keeps_its_plan_between_executions"],
+        unit: &[],
+    },
+    Mutation {
+        name: "kept-positioned-slots",
+        package: Package::Core,
+        breaks: "kept plans: a kept positioned UPDATE's SET values evaluated with no values for their slots (D610)",
+        file: "src/db/cursor.rs",
+        original: "Hosted::in_db(Some(self), cx, &w.db(cx.st))",
+        replacement: "Hosted::new(Some(self), cx)",
+        integration: &[],
+        unit: &["db::dynamic::cursors::tests::an_updatable_dynamic_cursor_keeps_its_plan_between_opens"],
     },
 ];

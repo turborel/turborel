@@ -118,6 +118,7 @@ mod vector_indexes;
 mod view_defaults;
 mod vr;
 mod waits;
+mod wide_exact;
 mod width_bucket;
 mod window_distinct;
 mod window_nested;

@@ -26,7 +26,7 @@ use super::{Completion, Database, State};
 use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::exec::{HeldIter, HeldRows, RowIter, execute};
+use crate::exec::{Db, HeldIter, HeldRows, RowIter, execute};
 use crate::logical::LogicalPlan;
 use crate::physical::Plan;
 use crate::spill::ListSpace;
@@ -63,7 +63,7 @@ impl Stream {
     /// A lock is not granted; as `open`.
     pub(super) fn planned(st: &Arc<State>, tx: &Txn, logical: LogicalPlan) -> Result<Stream> {
         let (optimized, _, physical) = super::plan_heard(st, logical, Some(tx.stop.warnings()));
-        Stream::kept(st, tx, physical, optimized.tables().into())
+        Stream::kept(&Db::of(st), tx, physical, optimized.tables().into())
     }
 
     /// The rows of `physical`, a plan made to run, which reads `reads`,
@@ -73,7 +73,7 @@ impl Stream {
     /// # Errors
     ///
     /// A lock is not granted; as `open`.
-    pub(super) fn kept(st: &Arc<State>, tx: &Txn, physical: Plan, reads: Arc<[QualifiedName]>) -> Result<Stream> {
+    pub(super) fn kept(st: &Db, tx: &Txn, physical: Plan, reads: Arc<[QualifiedName]>) -> Result<Stream> {
         for t in reads.iter() {
             st.read_lock(tx, t)?;
         }
@@ -86,7 +86,7 @@ impl Stream {
     /// # Errors
     ///
     /// The plan, read now, raises one, or its rows cannot be held.
-    pub(super) fn open(physical: Plan, reads: Arc<[QualifiedName]>, st: &Arc<State>, tx: TxId) -> Result<Stream> {
+    pub(super) fn open(physical: Plan, reads: Arc<[QualifiedName]>, st: &Db, tx: TxId) -> Result<Stream> {
         let read_now = physical.can_raise();
         let buffered = !read_now && chunks::eligible(&physical);
         let space = st.list_space();

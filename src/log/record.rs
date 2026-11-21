@@ -9,7 +9,8 @@
 //! ```text
 //! record:  version u8 | kind u8 | transaction u64 | body
 //! insert (1):  table | generation u32 | row id u64 | after-image row
-//! update (2):  table | generation u32 | row id u64 | before-image row | after-image row
+//! update (2):  table | generation u32 | row id u64 | after-image row |
+//!              the before-image's columns changed (`record/images.rs`)
 //! delete (3):  table | generation u32 | row id u64 | before-image row
 //! commit (4):  commit timestamp u64 | wall time i128
 //! abort (5):   (nothing)
@@ -71,11 +72,12 @@ pub const RECORD_VERSION: u8 = 1;
 
 mod batch;
 mod definitions;
+mod images;
 mod kinds;
 mod lobs;
 pub mod marks;
 
-pub use batch::insert_rows_record;
+pub use batch::{insert_record, insert_rows_record};
 pub use definitions::DropTarget;
 use definitions::{
     create_index, defined, dropped, put_altered, put_create_index, put_defined, put_dropped, put_schema, put_sequence, schema, sequence,
@@ -405,7 +407,7 @@ impl Record {
             Change::Insert { table, generation, row, after } => put_row_change(&mut out, (table, *generation, *row), &[after]),
             Change::InsertRows { .. } => batch::put_change(&mut out, &self.change),
             Change::Update { table, generation, row, before, after } => {
-                put_row_change(&mut out, (table, *generation, *row), &[before, after]);
+                images::put_update(&mut out, (table, *generation, *row), before, after);
             }
             Change::Delete { table, generation, row, before } => put_row_change(&mut out, (table, *generation, *row), &[before]),
             Change::Commit { at, wall } => marks::put_commit(&mut out, *at, *wall),
@@ -468,9 +470,7 @@ impl Record {
         let change = match tag {
             INSERT => Change::Insert { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, after: row(&mut r)? },
             INSERT_ROWS => batch::rows_change(&mut r)?,
-            UPDATE => {
-                Change::Update { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, before: row(&mut r)?, after: row(&mut r)? }
-            }
+            UPDATE => images::update(&mut r)?,
             DELETE => Change::Delete { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, before: row(&mut r)? },
             COMMIT => marks::commit(&mut r)?,
             RESTORE_POINT => marks::point(&mut r)?,

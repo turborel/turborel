@@ -225,6 +225,14 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
             give(&mut r.left, work);
             give(&mut r.right, work);
         }
+        Plan::SemiJoin(s) => {
+            give(&mut s.left, work);
+            give(&mut s.right, work);
+        }
+        Plan::MarkJoin(m) => {
+            give(&mut m.left, work);
+            give(&mut m.right, work);
+        }
         Plan::Product { left, right, .. }
         | Plan::HashJoin { left, right, .. }
         | Plan::OuterJoin { left, right, .. }

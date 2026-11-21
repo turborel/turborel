@@ -20,7 +20,7 @@ pub const REKEY: [Mutation; 8] = [
         name: "rekey-log-segment",
         package: Package::Core,
         breaks: "the log goes on in its segment, in the old formats, after they change",
-        file: "src/log/file.rs",
+        file: "src/log/file/segments.rs",
         original: "        if self.rotate_asked.load(Ordering::Acquire) {\n            self.rotate_for_formats();",
         replacement: "        if self.rotate_asked.load(Ordering::Acquire) {\n            drop(());",
         integration: &["rekeying::files_follow_the_formats_set_at_once"],

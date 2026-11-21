@@ -16,11 +16,10 @@
 
 use std::mem;
 
-use super::Txn;
 use super::undo::Joined;
+use super::{LogPos, Txn};
 use crate::db::State;
 use crate::error::{Result, SqlError};
-use crate::log::record::{Change, Record};
 use crate::memory::Undoing;
 use crate::sync::lock_builtin;
 
@@ -69,14 +68,8 @@ impl Txn {
     /// Marks the changes since `from`, the place in the log of the first
     /// change after a mark, undone in the log, as `statement_undone` does a
     /// statement's.
-    pub(super) fn mark_undone(&self, from: Option<crate::log::Lsn>) {
-        let (Some(log), Some(from)) = (&self.log, from) else { return };
-        let record = Record { tx: self.id, change: Change::StatementUndone { from } }.encode();
-        // Appended with the state unlocked: the log is a plug-in (RULES.md
-        // R-ERR-4).
-        if log.append(&record).is_err() {
-            lock_builtin(&self.state).doomed.get_or_insert("changes undone to a mark could not be logged as undone");
-        }
+    pub(super) fn mark_undone(&self, from: Option<LogPos>) {
+        self.undone_from(from, "changes undone to a mark could not be logged as undone");
     }
 }
 
@@ -119,13 +112,22 @@ impl State {
 }
 
 impl super::TxState {
-    /// Notes `lsn`, the place in the log of a change, as the first after
-    /// each open mark that has none yet.
-    pub(super) fn logged_at(&mut self, lsn: crate::log::Lsn) {
+    /// Notes `at`, the place of a change, as the first of the statement
+    /// and after each open mark and savepoint that has none yet: whether
+    /// one took it.
+    pub(super) fn logged_at(&mut self, at: LogPos) -> bool {
+        let mut took = self.statement_from.is_none();
+        self.statement_from.get_or_insert(at);
         for from in self.marks_from.iter_mut().filter(|f| f.is_none()) {
-            *from = Some(lsn);
+            *from = Some(at);
+            took = true;
         }
-        self.savepoints.logged_at(lsn);
+        self.savepoints.logged_at(at) || took
+    }
+
+    /// The places of the statement, its marks and its savepoints.
+    pub(super) fn places(&mut self) -> impl Iterator<Item = &mut Option<LogPos>> {
+        std::iter::once(&mut self.statement_from).chain(self.marks_from.iter_mut()).chain(self.savepoints.places())
     }
 
     /// Forgets every mark, as a statement begins, which savepoints taken
