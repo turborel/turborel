@@ -293,7 +293,7 @@ pub struct Session {
     /// [ISO/IEC 9075-2:2023 §4.48.1, §19.13] Its default transform group
     /// name and its transform group names for user-defined types.
     /// Its own values of the settings a session may set (RULES.md D36).
-    own: RefCell<crate::settings::Own>,
+    own: RefCell<settings::OwnValues>,
     /// The default schema of its unqualified names [ISO/IEC 9075:1992
     /// §4.30, §16.2].
     schema: RefCell<String>,
@@ -393,7 +393,7 @@ impl Session {
             inner: RefCell::new(SessionState::default()),
             busy: Cell::new(false),
             deferral: RefCell::new(Deferral::default()),
-            own: RefCell::new(crate::settings::Own::default()),
+            own: RefCell::new(settings::OwnValues::default()),
             schema: RefCell::new(auth.to_owned()),
             collation: RefCell::new(None),
             prepared_collation: RefCell::new(collations::Collating::AsSet),

@@ -57,6 +57,7 @@ fn rewriting(delay: u32, fraction: f64) -> TableOptions {
             pax: false,
             imprints: true,
             sketch: Places::default(),
+            load: crate::engine::rows::options::LoadTo::Tree,
         }),
         ..TableOptions::default()
     }

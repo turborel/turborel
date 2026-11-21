@@ -15,7 +15,8 @@ enum Source {
     Owned(Vec<u8>),
     /// A version gathered into a batch not yet written, alone.
     Version(Arc<[u8]>),
-    /// A batch's record read from the log, holding many versions.
+    /// A batch's record, written to the log or read from it, holding many
+    /// versions.
     Record(Arc<Vec<u8>>),
 }
 

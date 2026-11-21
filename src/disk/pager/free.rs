@@ -44,8 +44,10 @@ impl FreeList {
         self.runs.iter().map(|(&start, &count)| Extent { start: PageId(start), count }).collect()
     }
 
-    /// Whether page `id` is free.
-    pub(super) fn is_free(&self, id: u64) -> bool {
+    /// Whether page `id` is free: of the tests, as the pager checks a page
+    /// by its bit (`in_use.rs`).
+    #[cfg(test)]
+    fn is_free(&self, id: u64) -> bool {
         self.runs.range(..=id).next_back().is_some_and(|(&start, &count)| id < start.saturating_add(count))
     }
 

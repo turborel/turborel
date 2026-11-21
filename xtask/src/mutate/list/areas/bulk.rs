@@ -9,7 +9,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of rows inserted together whose removal must fail their tests.
-pub const BULK: [Mutation; 10] = [
+pub const BULK: [Mutation; 11] = [
     Mutation {
         name: "bulk-record-rows-not-redone",
         package: Package::Core,
@@ -108,6 +108,16 @@ pub const BULK: [Mutation; 10] = [
         original: "        Ok(self.state()?.undo.loading.as_ref().and_then(|l| l.grouped))",
         replacement: "        Ok(self.state()?.undo.loading.as_ref().and_then(|_| None))",
         integration: &["bulk_groups::the_groups_of_a_load_are_undone_with_it"],
+        unit: &[],
+    },
+    Mutation {
+        name: "bulk-groups-unasked",
+        package: Package::Core,
+        breaks: "a load writes groups straight though its table leaves COLUMNSTORE.LOAD as TREE",
+        file: "src/engine/rows/frozen/stamped.rs",
+        original: "        let Some(columns) = (*read(&self.frozen.columns)?).filter(|c| c.load == LoadTo::Groups) else { return Ok(None) };",
+        replacement: "        let Some(columns) = *read(&self.frozen.columns)? else { return Ok(None) };",
+        integration: &["bulk_groups::a_load_goes_through_the_tree_unless_asked"],
         unit: &[],
     },
 ];

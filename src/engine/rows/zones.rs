@@ -169,6 +169,8 @@ pub(super) struct Zones {
     /// The zone a sum up looks from, so zones a reader keeps stale do not
     /// keep the others waiting.
     next_sum: AtomicUsize,
+    /// The zones looked at since the zones last rested (`REST`).
+    swept: AtomicUsize,
     /// When the zones were made, and the nanoseconds after it until which
     /// they are not due, 0 for none (`REST`).
     born: Instant,
@@ -272,6 +274,7 @@ impl Zones {
             stale: AtomicUsize::new(0),
             unsettled: AtomicUsize::new(0),
             next_sum: AtomicUsize::new(0),
+            swept: AtomicUsize::new(0),
             born: Instant::now(),
             rest_until: AtomicU64::new(0),
             format: RecordFormat::new(&kept_types),
@@ -554,3 +557,6 @@ use visible::Seen;
 // summed up as the undo store is truncated (RULES.md R-TEST-1, R-TEST-7).
 #[cfg(test)]
 mod tests;
+// Unit tests: the zones rest after a pass (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod rested;

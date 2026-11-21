@@ -5,8 +5,9 @@
 //! `turborel-read-ahead`).
 //! Its I/O threads are one for every two processors (`runtime`); its
 //! blocking pool, where statements run, may grow to twice MAX_WORKERS, as
-//! many waiting on a fast client for its next request as running a
-//! statement (`native/lent.rs`), MOST_LOGINS for the checks of logins, and
+//! many kept by connections, waiting on a fast client for its next request
+//! or a connection's home (`native/lent.rs`, `native/home.rs`), as running
+//! a statement, MOST_LOGINS for the checks of logins, and
 //! a few spare, but is made only as they need it, and no more than
 //! SERVER.WORKERS statements and SERVER.MAX_LOGINS checks run at once
 //! (`server.rs`, `logins.rs`). `turboreld` and the tests' servers are made

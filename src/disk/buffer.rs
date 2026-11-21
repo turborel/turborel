@@ -42,7 +42,7 @@ pub use ahead::{Ahead, AheadReader};
 pub use eviction::{Clock, Eviction};
 pub use policy::{DEFAULT_SAMPLE, EVICTED_KEPT, NEUTRAL, Policy, RANGES, Range, Report, Sampled, Table, Weighted};
 pub use policy::{EvictionSlot, MakeEviction};
-pub use pool::READ_AHEAD_PAGES;
+pub use pool::{Capture, READ_AHEAD_PAGES};
 pub use tally::Tally;
 
 use super::block::BlockFile;
@@ -167,6 +167,9 @@ struct Frame {
     key_id: AtomicU64,
     pins: AtomicUsize,
     dirty: AtomicBool,
+    /// Whether a checkpoint's capture owes its page as it is: changed
+    /// only under its latch (`pool/capture.rs`).
+    owed: AtomicBool,
     /// Set while the frame is filled or emptied: wait, then check it holds
     /// the page wanted. Read without a lock on every hit.
     loading: AtomicBool,
@@ -183,6 +186,7 @@ impl Frame {
             key_id: AtomicU64::new(0),
             pins: AtomicUsize::new(0),
             dirty: AtomicBool::new(false),
+            owed: AtomicBool::new(false),
             loading: AtomicBool::new(false),
             waiting: Mutex::new(()),
             changed: Signal::default(),
@@ -241,6 +245,8 @@ pub struct BufferPool {
     /// The pages its scans asked to be read ahead, not yet read, and what
     /// reads them (`ahead.rs`).
     queued: pool::Queued,
+    /// The checkpoint's capture under way, if one is (`pool/capture.rs`).
+    owed: pool::Owed,
     /// Its share of the database's memory budget, if it was made in one,
     /// held while it lives and given back as it is dropped.
     reservation: Option<Reservation>,
