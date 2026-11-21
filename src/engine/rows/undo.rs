@@ -363,8 +363,8 @@ fn record_of(number: u64, batch: &[Arc<[u8]>]) -> Stored {
     let mut spans = Vec::with_capacity(batch.len());
     for version in batch {
         record.put_bytes(version);
-        let end = record.len();
-        spans.push((end.saturating_sub(version.len()), end));
+        let (end, len) = (record.len(), version.len());
+        spans.push((end.saturating_sub(len), end));
     }
     Stored { number, record: Arc::new(record), spans }
 }
