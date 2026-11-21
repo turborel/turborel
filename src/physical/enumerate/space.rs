@@ -211,7 +211,10 @@ impl<'m> Space<'m> {
         let (left, right) = (self.table.get(&applied.left)?, self.table.get(&applied.right)?);
         let rows = self.model.joined_rows((applied.left, left.rows), (applied.right, right.rows), applied);
         let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
-        let keys = self.keys(applied, (applied.left, applied.right));
+        // Only a side of one relation knows the most rows of a column's
+        // value (`Model::joined_upper`), so the keys are found for it alone.
+        let one = Space::single(applied.left).or(Space::single(applied.right)).is_some();
+        let keys = if one { self.keys(applied, (applied.left, applied.right)) } else { Vec::new() };
         let upper = self.model.joined_upper((applied.left, left.upper), (applied.right, right.upper), (kind, &keys));
         Some((rows.min(upper), upper))
     }
