@@ -18,15 +18,13 @@
 
 mod groups;
 
-use std::sync::Arc;
-
 use super::Runner;
 use super::batch::{lanes, probe_layout, probed, read_for};
 use super::table::{GroupTable, Key, Seed, hash_rows, hash_values};
 use super::work::Work;
 use super::{RowIter, broken, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::logical::AggCall;
 use crate::physical::{GroupJoin, Plan};
 use crate::storage::sel::nth;
@@ -38,13 +36,13 @@ pub(in crate::exec) use groups::{Building, Groups, Tag};
 
 /// The rows of the groupjoin `plan`.
 #[inline(never)]
-pub(super) fn groupjoin(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn groupjoin(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::GroupJoin(g) = plan else { return failed(broken("a groupjoin is not one")) };
     run(*g, db, tx).unwrap_or_else(failed)
 }
 
 /// The rows of `g`, or of the grouping it stands for if it gives way.
-fn run(g: GroupJoin, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
+fn run(g: GroupJoin, db: &Db, tx: TxId) -> Result<RowIter> {
     let layout = probe_layout(&g.probe, g.widths.1, db);
     let probe_keys: Vec<usize> = g.keys.iter().map(|k| k.right).collect();
     let Some(read) = read_for(&probe_keys, &g.aggs, &layout) else { return Ok(execute(g.instead, db, tx)) };
@@ -107,7 +105,7 @@ pub(in crate::exec) type Gathered = (Vec<(Option<u32>, Row)>, Vec<Option<Row>>, 
 /// # Errors
 ///
 /// As a set function fails.
-pub(in crate::exec) fn given_rows((rows, mut results, firsts): Gathered, g: &GroupJoin, (db, tx): (&Arc<State>, TxId)) -> Result<Vec<Row>> {
+pub(in crate::exec) fn given_rows((rows, mut results, firsts): Gathered, g: &GroupJoin, (db, tx): (&Db, TxId)) -> Result<Vec<Row>> {
     let empty =
         if g.outer { Some(empty_results((&g.aggs, &g.marked), g.widths.1, (db.functions.seed(), &Runner::new(db, tx)))?) } else { None };
     let mut made = Vec::with_capacity(rows.len());

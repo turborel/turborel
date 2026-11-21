@@ -11,8 +11,8 @@
 use std::sync::Arc;
 
 use super::{Grouping, Spec, waves};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::batch::{Batches, Read, read_for};
 use crate::exec::groupjoin::{Building, Groups, Tag, given_rows};
 use crate::exec::parallel::pipeline::Pipeline;
@@ -30,7 +30,7 @@ use crate::txn::TxId;
 /// # Errors
 ///
 /// As reading either operand, or a set function, fails.
-pub(in crate::exec::parallel) fn group_joined(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
+pub(in crate::exec::parallel) fn group_joined(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
     let Plan::GroupJoin(g) = plan else { return Err(broken("a groupjoin run in parallel is not one")) };
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(&g.probe, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
@@ -78,7 +78,7 @@ fn by_group(runs: Vec<Vec<(u64, Row)>>, firsts: &mut [u64]) -> Result<Vec<Option
 }
 
 /// The batches of `batches`, each tagged by `tag` (`Tag::tagged`).
-pub(super) fn tagged(tag: &Arc<Tag>, batches: Batches, db: &Arc<State>) -> Batches {
-    let (tag, db) = (Arc::clone(tag), Arc::clone(db));
+pub(super) fn tagged(tag: &Arc<Tag>, batches: Batches, db: &Db) -> Batches {
+    let (tag, db) = (Arc::clone(tag), db.clone());
     Box::new(batches.map(move |kept| kept.map(|kept| tag.tagged(kept, (db.functions.seed(), db.functions.kernels())))))
 }

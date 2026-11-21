@@ -3,13 +3,12 @@
 //! EXECUTOR.BATCHES is on; else its rows gathered into batches of every
 //! column, so the groupjoin feeds its set functions by batch either way.
 
-use std::sync::Arc;
-
 use super::Batches;
 use super::joined::gathered;
 use super::stream::{self, layout};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::{batched, execute};
 use crate::physical::Plan;
 use crate::txn::TxId;
@@ -20,7 +19,7 @@ use crate::txn::TxId;
 /// # Errors
 ///
 /// As opening the stream fails.
-pub(in crate::exec) fn probed(plan: Plan, width: usize, (db, tx): (&Arc<State>, TxId)) -> Result<(Batches, Vec<usize>)> {
+pub(in crate::exec) fn probed(plan: Plan, width: usize, (db, tx): (&Db, TxId)) -> Result<(Batches, Vec<usize>)> {
     if batched(db) && layout(&plan, db).is_some() {
         let opened = stream::open(plan, db, tx)?;
         return Ok((opened.batches, opened.columns));
