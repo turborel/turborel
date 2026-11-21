@@ -87,7 +87,7 @@ impl BLinkTree {
             return self.replace_if(key, expected, value);
         }
         self.fits(key, value)?;
-        Ok(matches!(self.write_from(found.path, found.leaf, (key, value), Mode::ReplaceIf(expected))?, Written::Done(..)))
+        Ok(matches!(self.write_from(&found.path, found.leaf, (key, value), Mode::ReplaceIf(expected))?, Written::Done(..)))
     }
 
     /// Adds `key` with `value`; whether it did: not if `key` is already in
