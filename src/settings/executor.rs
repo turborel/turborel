@@ -20,7 +20,7 @@ pub const EXECUTOR_KERNELS: Key = Key(86);
 /// EXECUTOR.RUNTIME_FILTERS.
 pub const EXECUTOR_RUNTIME_FILTERS: Key = Key(87);
 /// EXECUTOR.BATCHED_INDEX_JOINS (RULES.md D491).
-pub const EXECUTOR_BATCHED_INDEX_JOINS: Key = Key(88);
+pub const EXECUTOR_BATCHED_INDEX_JOINS: Key = Key(89);
 
 /// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
 const KERNELS_NAME_MAX: usize = 64;
@@ -43,8 +43,8 @@ const DATABASE: (bool, Effect) = (false, Effect::Statement);
 const SESSION: (bool, Effect) = (true, Effect::Statement);
 
 /// The settings of parallel queries, of their kernels and runtime
-/// filters, and of index joins by batch, in the order of their keys.
-pub(super) fn definitions() -> [Definition; 7] {
+/// filters, in the order of their keys.
+pub(super) fn definitions() -> [Definition; 6] {
     [
         defined(
             ("EXECUTOR.WORKERS", at_least(0), count(0)),
@@ -76,10 +76,15 @@ pub(super) fn definitions() -> [Definition; 7] {
             SESSION,
             "Whether a hash join, once it has built its right operand, tells the scan of its left operand the least and greatest of its keys and filters the rows read by a Bloom filter of them: ON; or not, OFF, as to compare the two. Its rows are the same either way.",
         ),
-        defined(
-            ("EXECUTOR.BATCHED_INDEX_JOINS", Kind::Choice(SWITCHES), text(OFF)),
-            SESSION,
-            "Whether an index join probes a unique index for a batch of its outer rows at a time, their keys sorted and each found once: ON; or for each outer row as it comes, OFF, the default. Its rows are the same either way.",
-        ),
     ]
+}
+
+/// EXECUTOR.BATCHED_INDEX_JOINS, at its key's place after the others
+/// (RULES.md D491).
+pub(super) fn batched_index_joins() -> Definition {
+    defined(
+        ("EXECUTOR.BATCHED_INDEX_JOINS", Kind::Choice(SWITCHES), text(OFF)),
+        SESSION,
+        "Whether an index join probes a unique index for a batch of its outer rows at a time, their keys sorted and each found once: ON; or for each outer row as it comes, OFF, the default. Its rows are the same either way.",
+    )
 }

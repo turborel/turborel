@@ -284,6 +284,7 @@ mod ptf_statements;
 mod queries;
 mod query_expressions;
 mod random_queries;
+mod range_joins;
 mod read_ahead;
 mod recovery;
 mod referenceable_views;
