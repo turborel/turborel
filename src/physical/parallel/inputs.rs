@@ -30,7 +30,20 @@ impl Plan {
             Plan::Polymorphic(p) => p.inputs.iter_mut().for_each(each),
             Plan::MergeAppend { inputs, .. } => inputs.iter_mut().for_each(each),
             Plan::Parallel(p) => each(&mut p.input),
+            Plan::Counted(c) => each(&mut c.input),
             Plan::MergeJoin(m) => {
+                each(&mut m.left);
+                each(&mut m.right);
+            }
+            Plan::RangeJoin(r) => {
+                each(&mut r.left);
+                each(&mut r.right);
+            }
+            Plan::SemiJoin(s) => {
+                each(&mut s.left);
+                each(&mut s.right);
+            }
+            Plan::MarkJoin(m) => {
                 each(&mut m.left);
                 each(&mut m.right);
             }

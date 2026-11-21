@@ -16,8 +16,7 @@
 //! than its octets), rows of equal prefixes are of equal first keys, and
 //! only the rest are compared. A first key whose values are not all of one
 //! kind of these, or of a number whose floor cannot be found, sorts the
-//! rows whole. A spilled sort writes each row's prefix beside it, for its
-//! merge (`merge.rs`).
+//! rows whole. Keys of a normal form are sorted by it instead (`normal.rs`).
 
 use std::cmp::Ordering;
 
@@ -79,32 +78,6 @@ pub(super) enum Kind {
     Interval(bool),
     /// A binary string.
     Binary,
-}
-
-/// Every kind, in the order of their codes, from 1 (`Kind::code`).
-const KINDS: [Kind; 10] = [
-    Kind::Null,
-    Kind::Exact,
-    Kind::Char,
-    Kind::Approx,
-    Kind::Datetime(Moment::Date),
-    Kind::Datetime(Moment::Time),
-    Kind::Datetime(Moment::Timestamp),
-    Kind::Interval(true),
-    Kind::Interval(false),
-    Kind::Binary,
-];
-
-impl Kind {
-    /// Its code, as a spilled record keeps it: from 1, 0 meaning none.
-    pub(super) fn code(self) -> u8 {
-        KINDS.iter().position(|&k| k == self).and_then(|at| u8::try_from(at.saturating_add(1)).ok()).unwrap_or(0)
-    }
-
-    /// The kind of `code`, if one has it.
-    pub(super) fn of_code(code: u8) -> Option<Kind> {
-        KINDS.get(usize::from(code).checked_sub(1)?).copied()
-    }
 }
 
 /// Whether prefixes of values of kinds `a` and `b` are in their values'
@@ -307,8 +280,7 @@ mod tests {
     /// their zones, those of one instant alike; intervals by their units,
     /// past 64 bits not whole; binary strings octet by octet, then by
     /// length, past 7 octets not whole, the empty one least [ISO/IEC
-    /// 9075-2:2023 §8.2 GR5]. A plug-in's value has none;
-    /// every kind keeps its code.
+    /// 9075-2:2023 §8.2 GR5]. A plug-in's value has none.
     #[test]
     fn prefixes_of_datetimes_intervals_and_binary_strings_keep_order() {
         let of = |v: &Value| prefix_of(v, SortOrder::of(false, None)).unwrap();
@@ -330,8 +302,6 @@ mod tests {
         assert_eq!(bits.iter().map(|p| p.whole).collect::<Vec<bool>>(), [true, true, true, true, true, true, true, true, false, false]);
         assert_eq!(bits[8].bits, bits[9].bits, "alike past 7 octets");
         assert_eq!(prefix_of(&unregistered("POINT", "(1 2)", &[1_u8]), SortOrder::of(false, None)), None);
-        assert!(KINDS.iter().all(|&k| Kind::of_code(k.code()) == Some(k)));
-        assert_eq!((Kind::of_code(0_u8), Kind::of_code(u8::MAX)), (None, None));
     }
 
     /// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §5.11 GR3, GR4]: of two

@@ -29,6 +29,7 @@ mod outer;
 pub(crate) mod plugged;
 pub(crate) mod prepared;
 mod raising;
+mod reduced;
 mod setops;
 mod transitivity;
 pub(crate) mod unnesting;
@@ -42,7 +43,7 @@ use crate::db::State;
 use crate::logical::{Cond, Expr, LogicalPlan, Truth, and_all, cond_columns, map_cond_columns, split_and};
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
-pub use unnesting::{UNNEST_SUBQUERIES, UnnestSubqueries};
+pub use unnesting::{MARK_JOINS, MarkJoins, SEMI_JOINS, SemiJoins, UNNEST_SUBQUERIES, UnnestSubqueries};
 
 /// The names of the built-in rules, as EXPLAIN shows them and their
 /// settings name them (`switch_name`).
@@ -68,6 +69,7 @@ pub use limits::{PUSH_LIMIT_THROUGH_UNION, PushLimitThroughUnion};
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
 pub(crate) use raising::is_guarded;
 pub use raising::{PUSH_RAISING_FILTER_INTO_PRODUCT, PushRaisingFilterIntoProduct};
+pub use reduced::{SEMI_REDUCTION, SemiReduction};
 pub use setops::{PUSH_FILTER_THROUGH_SET_OPERATION, PushFilterThroughSetOperation};
 pub use transitivity::{PREDICATE_TRANSITIVITY, PredicateTransitivity};
 pub(crate) use views::substitute;
@@ -130,16 +132,30 @@ struct Switched {
 /// The rules, in the order they are tried, each turned on or off by a
 /// setting of its own (`switch_name`), so a session may turn one off for
 /// itself and the database's choice is kept with its definitions
-/// (RULES.md D36).
+/// (RULES.md D36). With them, the rows a session gave the planner in
+/// place of its estimates, in the session's own snapshot (RULES.md D377).
 #[derive(Clone)]
 pub struct Optimizer {
     rules: Vec<Switched>,
+    injected: Option<Arc<crate::physical::Injected>>,
 }
 
 impl Optimizer {
     /// An optimizer with no rules: plans are left as bound.
     pub fn empty() -> Optimizer {
-        Optimizer { rules: Vec::new() }
+        Optimizer { rules: Vec::new(), injected: None }
+    }
+
+    /// \[EXTENSION\] The rows given the planner in place of its
+    /// estimates, if any are (RULES.md D377).
+    pub(crate) fn injected(&self) -> Option<&crate::physical::Injected> {
+        self.injected.as_deref()
+    }
+
+    /// \[EXTENSION\] Gives the planner `injected` in place of its
+    /// estimates (RULES.md D377).
+    pub(crate) fn inject(&mut self, injected: Arc<crate::physical::Injected>) {
+        self.injected = Some(injected);
     }
 
     /// An optimizer with the built-in rules.
@@ -147,6 +163,10 @@ impl Optimizer {
         let mut o = Optimizer::empty();
         // Before the others, which then move the conditions they make.
         o.add(Box::new(InlineFunctions));
+        // Before unnesting, which would make the same subquery a join.
+        o.add(Box::new(SemiJoins));
+        // After semi joins, which take the conjuncts, before unnesting.
+        o.add(Box::new(MarkJoins));
         o.add(Box::new(UnnestSubqueries));
         o.add(Box::new(ConstantFolding));
         o.add(Box::new(SimplifyConditions));
@@ -166,6 +186,8 @@ impl Optimizer {
         o.add(Box::new(PushFilterThroughWindow));
         o.add(Box::new(PushLimitThroughUnion));
         o.add(Box::new(EliminateJoins));
+        // After the joins that cannot change the rows are gone.
+        o.add(Box::new(SemiReduction));
         o.add(Box::new(PushHavingIntoWhere));
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
@@ -479,6 +501,8 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         LogicalPlan::Filter { input, .. } => base_table(input),
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }

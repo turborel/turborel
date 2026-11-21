@@ -35,7 +35,7 @@ const COUNT_SHIFT: u32 = 24;
 const OFFSET_MASK: u32 = (1 << COUNT_SHIFT) - 1;
 /// The digest of the table as generated (`cargo xtask unicode`).
 #[cfg(test)]
-const DIGEST: u64 = 0x764b_7c80_7c0b_5ac9;
+const DIGEST: u64 = 0x7d1f_fd4e_c1cd_5ac9;
 
 /// One section: where it starts, its records and their size.
 #[derive(Debug, Clone, Copy, Default)]
@@ -199,10 +199,10 @@ impl Table {
     }
 }
 
-/// The digest of the table, by FNV-1a.
+/// The digest of the table, by XXH3-64.
 #[cfg(test)]
 fn digest() -> u64 {
-    crate::value::collation::fnv(BYTES)
+    crate::hash::xxhash::xxh3_64(BYTES)
 }
 
 #[cfg(test)]

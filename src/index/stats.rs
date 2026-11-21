@@ -25,7 +25,8 @@
 //! raises it, and the entries are counted in stripes, a thread's own, so
 //! threads writing the index share no counter.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -65,6 +66,11 @@ pub(crate) struct KeyCounts {
     asked: AtomicBool,
     /// Set while a thread makes that pass.
     counting: AtomicBool,
+    /// How many times a register was raised: the estimate's version.
+    raised: AtomicU64,
+    /// The estimate of the distinct keys at a version, as the planner
+    /// asks it many times while no register is raised.
+    estimated: Mutex<Option<(u64, f64)>>,
 }
 
 impl KeyCounts {
@@ -83,7 +89,8 @@ impl KeyCounts {
         let registers = (0..REGISTERS).map(|_| AtomicU8::new(0)).collect();
         let entries = (0..STRIPES).map(|_| Stripe::default()).collect();
         let (asked, counting) = (AtomicBool::new(false), AtomicBool::new(false));
-        KeyCounts { registers, entries, complete: AtomicBool::new(complete), asked, counting }
+        let (raised, estimated) = (AtomicU64::new(0), Mutex::new(None));
+        KeyCounts { registers, entries, complete: AtomicBool::new(complete), asked, counting, raised, estimated }
     }
 
     /// Its counts, as a locator holds them, if they are complete.
@@ -165,6 +172,12 @@ impl KeyCounts {
         u64::try_from(sum).unwrap_or_default()
     }
 
+    /// The live entries, if every key the index holds was counted: none
+    /// of an opened index before its pass.
+    pub(crate) fn entries(&self) -> Option<u64> {
+        self.complete.load(Ordering::Acquire).then(|| self.live())
+    }
+
     /// Counts an entry of key `key`, in bytes, added.
     pub(crate) fn added(&self, key: &[u8]) {
         let (register, rank) = placed(hash_of(key));
@@ -172,6 +185,7 @@ impl KeyCounts {
             && r.load(Ordering::Relaxed) < rank
         {
             r.fetch_max(rank, Ordering::Relaxed);
+            self.raised.fetch_add(1, Ordering::Release);
         }
         self.count_entries(1);
     }
@@ -189,8 +203,17 @@ impl KeyCounts {
             self.asked.store(true, Ordering::Release);
             return None;
         }
-        let registers: Vec<u8> = self.registers.iter().map(|r| r.load(Ordering::Relaxed)).collect();
-        Some(estimate_of(&registers).clamp(0.0_f64, count(self.live())))
+        let version = self.raised.load(Ordering::Acquire);
+        let kept = self.estimated.lock().ok().and_then(|e| *e).filter(|&(at, _)| at == version).map(|(_, estimate)| estimate);
+        let estimate = kept.unwrap_or_else(|| {
+            let registers: Vec<u8> = self.registers.iter().map(|r| r.load(Ordering::Relaxed)).collect();
+            let estimate = estimate_of(&registers);
+            if let Ok(mut e) = self.estimated.lock() {
+                *e = Some((version, estimate));
+            }
+            estimate
+        });
+        Some(estimate.clamp(0.0_f64, count(self.live())))
     }
 
     /// Whether the pass over its keys is due: they were asked for, and are

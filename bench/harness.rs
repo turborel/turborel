@@ -94,6 +94,8 @@ pub struct Bench {
     single: RefCell<HashMap<(String, usize), f64>>,
     /// What it has measured, so no result is reported twice.
     measured: RefCell<HashSet<(String, usize, usize)>>,
+    /// The median rate of each operation on each count of threads.
+    rates: RefCell<HashMap<(String, usize), f64>>,
 }
 
 impl Bench {
@@ -107,7 +109,14 @@ impl Bench {
             "{:<36} {:>7} {:>8} {:>14} {:<12} {:>7} {:>10} {:>8}",
             "operation", "threads", "bytes", "median", "", "spread", "MiB/s", "speedup"
         );
-        Bench { name, dir, out: RefCell::new(out), single: RefCell::new(HashMap::new()), measured: RefCell::new(HashSet::new()) }
+        Bench {
+            name,
+            dir,
+            out: RefCell::new(out),
+            single: RefCell::new(HashMap::new()),
+            measured: RefCell::new(HashSet::new()),
+            rates: RefCell::new(HashMap::new()),
+        }
     }
 
     /// The path of `file` in the benchmark's directory.
@@ -157,6 +166,12 @@ impl Bench {
         self.report(case, Rates { median: rates[RUNS / 2], low: rates[0], high: rates[RUNS - 1] });
     }
 
+    /// The median rate of `operation` on `threads` threads, if measured:
+    /// for a benchmark that derives figures from its rates.
+    pub fn rate(&self, operation: &str, threads: usize) -> Option<f64> {
+        self.rates.borrow().get(&(operation.to_owned(), threads)).copied()
+    }
+
     /// Prints a result, and appends it to the results file if there is one.
     fn report(&self, case: Case, rates: Rates) {
         let Case { operation, unit, threads, bytes } = case;
@@ -178,6 +193,7 @@ impl Bench {
             let (name, median, low, high) = (self.name, rates.median, rates.low, rates.high);
             writeln!(out, "{name}\t{operation}\t{threads}\t{bytes}\t{unit}\t{median:.3}\t{low:.3}\t{high:.3}").unwrap();
         }
+        self.rates.borrow_mut().insert((operation.clone(), threads), rates.median);
         if threads == 1 {
             self.single.borrow_mut().insert((operation, bytes), rates.median);
         }
@@ -220,9 +236,17 @@ pub fn scatter(n: u64, count: u64) -> u64 {
     n * SCATTER % count
 }
 
-/// CRC-32C, the checksum the benchmarks' files use.
+/// The variable that, set to `CRC`, checksums the benchmarks' files with
+/// CRC-32C rather than the default, for an A/B of the two.
+pub const CHECKSUM_VAR: &str = "TURBOREL_BENCH_CHECKSUM";
+
+/// The checksum the benchmarks' files use: the database's default,
+/// XXH3-64, or CRC-32C as `CHECKSUM_VAR` asks.
 pub fn crc() -> Arc<dyn HashFunction> {
-    Arc::new(Crc::new(CRC32_ISCSI).unwrap())
+    if env::var(CHECKSUM_VAR).is_ok_and(|v| v == "CRC") {
+        return Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+    }
+    Arc::new(turborel::hash::xxhash::Xxh3Hash)
 }
 
 /// A buffer pool of `frames` frames, with clock eviction.

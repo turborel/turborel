@@ -4,7 +4,7 @@
 //! `PROBES` of its bits, so a scan skips the parts an equality's values
 //! cannot be in. A value's bits are those of its bucket (`value::bucket`),
 //! the form every two values that compare equal share, hashed by
-//! MurmurHash3 x64-128 (`hash/murmur.rs`): the i-th bit is h1 + i × h2 of
+//! XXH3-128 (`hash/xxhash.rs`): the i-th bit is h1 + i × h2 of
 //! its two halves (Kirsch and Mitzenmacher, "Less Hashing, Same
 //! Performance: Building a Better Bloom Filter", 2006). Of a full part,
 //! about 10 bits a value, a value not in it is taken as in it about once in
@@ -14,7 +14,7 @@
 use super::group::{Filter, Group, PART_ROWS, Pages, Seal};
 use crate::disk::pager::PageId;
 use crate::error::Result;
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_128_halves;
 use crate::index::Probe;
 use crate::storage::{Condition, Conjunct};
 use crate::value::{Bucket, CompOp, Value, bucket};
@@ -84,7 +84,7 @@ pub fn hashed(v: &Value) -> Option<(u64, u64)> {
         // bucket of a key on which nulls match (`key_bucket`) alone.
         Bucket::Null => key.push(NULL_TAG),
     }
-    Some(murmur3_x64_128(&key, 0))
+    Some(xxh3_128_halves(&key, 0))
 }
 
 /// The byte and the bit in it of the `i`th probe of `hash`, of a filter of
@@ -157,7 +157,7 @@ fn asked(condition: &Conjunct) -> Option<(usize, &[Value])> {
             }
         }
         Conjunct::In { column, values } => Some((*column, values.as_slice())),
-        Conjunct::Null { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) => None,
+        Conjunct::Null { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
     }
 }
 
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn filters_are_packed_on_pages() {
         let (pool, file) = memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES << 4_i32), "a test").unwrap();
-        let pages = Pages { pool: &pool, file, capacity: 4000, sealing: &Plain, compress: true, pax: false };
+        let pages = Pages { pool: &pool, file, capacity: 4000, sealing: &Plain, compress: true, pax: false, imprints: true };
         let filters: Vec<Vec<u8>> = (0..7_i128).map(|n| filter_of(&[int(n)], FILTER_BYTES)).collect();
         let mut written = Vec::new();
         let places = write_filters(&pages, &filters, &mut written).unwrap();

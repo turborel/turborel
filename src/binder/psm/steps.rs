@@ -200,12 +200,20 @@ impl ProgramBinder<'_> {
             scope.cursors.push((name.clone(), key.clone()));
         }
         let (text, insensitive) = (f.text.clone(), f.insensitive);
-        let cursor = Cursor { name, key, query: leaf, text, insensitive, scroll: false, scope: Arc::clone(&self.scope) };
+        let nameless = name.is_empty();
+        let cursor = Cursor { name, key, query: leaf, text, insensitive, scroll: false, read_only: false, scope: Arc::clone(&self.scope) };
         self.cursors.push(cursor);
         self.cursor_columns.push(Vec::new());
         self.scope = Arc::new(scope);
         let loop_label = self.push_label(f.label.as_ref().map(|l| l.name.as_str()));
         let statements = self.statements(&f.statements)?;
+        // No statement can name a cursor of no `<cursor name>` [ISO/IEC
+        // 9075-4:2006 draft §14.13 SR4]: one whose body writes nothing is
+        // read only, as no change made while it is open can be seen through
+        // it (RULES.md D613).
+        if let Some(c) = self.cursors.get_mut(number) {
+            c.read_only = nameless && !statements.iter().any(Step::writes);
+        }
         Ok(Step::For(Box::new(ForEach { label: loop_label, cursor: number, slots, statements })))
     }
 

@@ -119,6 +119,10 @@ impl State {
             return Ok(false);
         }
         let mut worked = storage.maintain(self.tx.horizon(), now)?;
+        if worked {
+            // When it was last compacted (RULES.md D522).
+            lock.stamp(self.clock.now(), true);
+        }
         let mut failed = None;
         for index in self.indexes_of(table) {
             match index.maintain() {

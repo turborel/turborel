@@ -25,7 +25,8 @@ fn plain_at(plan: &LogicalPlan, depth: usize) -> bool {
         return false;
     }
     let own = match plan {
-        LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } => quiet_cond(cond),
+        LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } | LogicalPlan::SemiJoin { cond, .. } => quiet_cond(cond),
+        LogicalPlan::MarkJoin(m) => m.conds().all(quiet_cond),
         LogicalPlan::Project { exprs, .. } => exprs.iter().all(quiet),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().all(quiet),
         LogicalPlan::Aggregate { aggs, .. } => {

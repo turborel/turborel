@@ -25,6 +25,7 @@ use super::work::{Bag, Work};
 use super::{HeldRows, RowIter, broken, execute, failed};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
+use crate::exec::Db;
 use crate::logical::Fixpoint;
 use crate::physical::Plan;
 use crate::settings::MAX_ITERATIONS;
@@ -72,7 +73,7 @@ fn poisoned() -> SqlError {
 
 /// The rows of `plan`, a recursive stratum's member, for the statement of
 /// `tx`.
-pub(super) fn recursive(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn recursive(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Recursive { member, fixpoint } = plan else { return failed(broken("a recursive query is not one")) };
     let found = match fixpoint {
         Fixpoint::Whole(plans) => whole(member, &plans, db, tx),
@@ -88,7 +89,7 @@ pub(super) fn recursive(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// The rows of the work table `plan`, each read while the statement of
 /// `tx` is not cancelled.
-pub(super) fn work_table(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn work_table(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::WorkTable { rows: Some(rows), .. } = plan else { return failed(broken("a work table is read outside its recursive query")) };
     let mut place = 0_usize;
     let read = std::iter::from_fn(move || {
@@ -101,7 +102,7 @@ pub(super) fn work_table(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// [ISO/IEC 9075-2:2023 §7.17 GR2c ii 3, 4] Member `member`'s rows of the
 /// members' `plans`, as the General Rules find them.
-fn whole(member: usize, plans: &[Plan], db: &Arc<State>, tx: TxId) -> Result<HeldRows<Row>> {
+fn whole(member: usize, plans: &[Plan], db: &Db, tx: TxId) -> Result<HeldRows<Row>> {
     let limit = db.settings.count(MAX_ITERATIONS);
     let mut work: Vec<WorkRows> = plans.iter().map(|_| WorkRows::new(HeldRows::new(db.list_space()))).collect();
     let mut results = evaluated(plans, &work, db, tx)?;
@@ -126,14 +127,14 @@ fn grew(results: &[HeldRows<Row>], work: &[WorkRows]) -> Result<bool> {
 }
 
 /// The rows of each of `plans`, each reading the work tables `work`.
-fn evaluated(plans: &[Plan], work: &[WorkRows], db: &Arc<State>, tx: TxId) -> Result<Vec<HeldRows<Row>>> {
+fn evaluated(plans: &[Plan], work: &[WorkRows], db: &Db, tx: TxId) -> Result<Vec<HeldRows<Row>>> {
     plans.iter().map(|plan| added(execute(given(plan.clone(), work), db, tx), &mut None, db)).collect()
 }
 
 /// The rows of the member whose query is the UNION of `anchor` and `step`,
 /// `distinct` if UNION DISTINCT: `anchor`'s, then `step`'s over the rows
 /// last added, until it adds none.
-fn delta((anchor, step): (Plan, &Plan), distinct: bool, db: &Arc<State>, tx: TxId) -> Result<HeldRows<Row>> {
+fn delta((anchor, step): (Plan, &Plan), distinct: bool, db: &Db, tx: TxId) -> Result<HeldRows<Row>> {
     let limit = db.settings.count(MAX_ITERATIONS);
     let mut seen = distinct.then(|| Bag::new(Work::of(db, tx)));
     let mut all = HeldRows::new(db.list_space());
@@ -211,11 +212,24 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::Limit { input, .. } => give(input, work),
         Plan::Unnest(u) => give(&mut u.input, work),
         Plan::Parallel(p) => give(&mut p.input, work),
+        Plan::Counted(c) => give(&mut c.input, work),
         Plan::Window { window, .. } => give(&mut window.input, work),
         Plan::Recognize { recognize, .. } => give(&mut recognize.input, work),
         Plan::Polymorphic(p) => p.inputs.iter_mut().for_each(|input| give(input, work)),
         Plan::MergeAppend { inputs, .. } => inputs.iter_mut().for_each(|input| give(input, work)),
         Plan::MergeJoin(m) => {
+            give(&mut m.left, work);
+            give(&mut m.right, work);
+        }
+        Plan::RangeJoin(r) => {
+            give(&mut r.left, work);
+            give(&mut r.right, work);
+        }
+        Plan::SemiJoin(s) => {
+            give(&mut s.left, work);
+            give(&mut s.right, work);
+        }
+        Plan::MarkJoin(m) => {
             give(&mut m.left, work);
             give(&mut m.right, work);
         }

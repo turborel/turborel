@@ -65,6 +65,23 @@ impl Ending {
         drop(queue);
         self.turned.notify_all();
     }
+
+    /// A ticket, the next in line.
+    fn ticket(&self) -> u64 {
+        let mut queue = lock_builtin(&self.queue);
+        let ticket = queue.next;
+        queue.next = queue.next.saturating_add(1);
+        ticket
+    }
+
+    /// `ticket` given up before its turn, the turn passing over it.
+    fn leave(&self, ticket: u64) {
+        let mut queue = lock_builtin(&self.queue);
+        queue.left.push(ticket);
+        queue.settle();
+        drop(queue);
+        self.turned.notify_all();
+    }
 }
 
 /// A waiter's turn to try its write again, the transaction it waited for
@@ -134,9 +151,14 @@ impl Txn {
         if self.lock_wait == LockWait::NoWait {
             return Err(refused(format!("{what} is locked by another transaction; locking is no-wait")));
         }
+        // The ticket first, so a transaction counted as waiting
+        // (`Transactions::waiting`) already holds its place in line.
+        let ticket = ending.ticket();
         {
-            let mut waits_for = lock(&self.shared.waits_for)?;
+            let mut waits_for = lock(&self.shared.waits_for).inspect_err(|_| ending.leave(ticket))?;
             if super::locks::would_deadlock(&waits_for, self.id, &[writer]) {
+                drop(waits_for);
+                ending.leave(ticket);
                 return Err(refused(format!(
                     "waiting for {what} would deadlock with another transaction (roll back to release this transaction's locks)"
                 )));
@@ -144,19 +166,20 @@ impl Txn {
             waits_for.insert(self.id, vec![writer]);
         }
         let began = Instant::now();
-        let waited = self.queue_on(&ending, began).map_err(|e| if e.code == Code::Conflict { refused(e.msg.clone()) } else { e });
+        // [DESIGN] RULES.md D520: shown waiting, and for whom.
+        self.stop.activity().waits_for_lock(what.to_string(), writer);
+        let waited = self.queue_on((&ending, ticket), began).map_err(|e| if e.code == Code::Conflict { refused(e.msg.clone()) } else { e });
+        self.stop.activity().woke();
         lock(&self.shared.waits_for)?.remove(&self.id);
         // [DESIGN] RULES.md D240: the time waited, for the client.
         self.stop.served().waited(began.elapsed());
         waited.map(|()| Some(Turn(ending)))
     }
 
-    /// Takes a ticket on `ending` and waits for its turn, looking now and
-    /// then for a cancel or a timeout, which give the ticket up.
-    fn queue_on(&self, ending: &Ending, began: Instant) -> Result<()> {
+    /// Waits on `ending` for the turn of `ticket`, looking now and then
+    /// for a cancel or a timeout, which give the ticket up.
+    fn queue_on(&self, (ending, ticket): (&Ending, u64), began: Instant) -> Result<()> {
         let mut queue = lock_builtin(&ending.queue);
-        let ticket = queue.next;
-        queue.next = queue.next.saturating_add(1);
         loop {
             if queue.ended && queue.serving == ticket {
                 return Ok(());

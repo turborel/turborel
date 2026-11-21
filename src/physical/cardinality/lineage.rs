@@ -47,7 +47,9 @@ fn step(plan: &LogicalPlan, column: usize) -> Option<(&LogicalPlan, usize)> {
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. }
-        | LogicalPlan::Distinct { input } => Some((&**input, column)),
+        | LogicalPlan::Distinct { input }
+        | LogicalPlan::SemiJoin { left: input, .. } => Some((&**input, column)),
+        LogicalPlan::MarkJoin(m) => (column < m.left.width()).then_some((&m.left, column)),
         LogicalPlan::Window(w) => (column < w.input.width()).then_some((&w.input, column)),
         LogicalPlan::Project { exprs, input } => match exprs.get(column) {
             Some(Expr::Column(c)) => Some((&**input, *c)),

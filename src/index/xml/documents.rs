@@ -6,7 +6,7 @@
 //! a version's large objects before it takes back the version's entries,
 //! and recovery and a transaction's undo, once spilled, name an object by
 //! its id (RULES.md D79). So each (value, row) pair held is marked, by the
-//! value's identity: of a value its row holds itself, the MurmurHash3 of
+//! value's identity: of a value its row holds itself, the XXH3-128 of
 //! its octets, which are there to derive its entries again; of one held
 //! as a large object, the object's id, which its table never gives twice,
 //! under which the index keeps the entries it made, by row, to take them
@@ -15,7 +15,7 @@
 //! each version of a row holding it (`Index`).
 //!
 //! ```text
-//! marker:    5 | 0, then the MurmurHash3 x64 128 of the octets, or 1, then
+//! marker:    5 | 0, then the XXH3-128 of the octets, or 1, then
 //!            the object's id u64 | row u64 -> count u32
 //! document:  6 | object's id u64 | row u64 | ORDPATH -> count u32, path's
 //!            id, kind, the string value, the number value
@@ -43,7 +43,7 @@ use super::keys::{
 use super::{Method, XmlIndex, too_long};
 use crate::engine::tree::{Direction, Update};
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_128_halves;
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 use crate::value::Value;
@@ -109,7 +109,7 @@ fn octets_of(lob: &Lob) -> Result<Vec<u8>> {
 fn identity(held: &Held) -> Vec<u8> {
     match held {
         Held::Octets(octets) => {
-            let (a, b) = murmur3_x64_128(octets, 0);
+            let (a, b) = xxh3_128_halves(octets, 0);
             [&[OCTETS][..], &a.to_be_bytes(), &b.to_be_bytes()].concat()
         }
         Held::Object { id, .. } => [&[OBJECT][..], &id.to_be_bytes()].concat(),

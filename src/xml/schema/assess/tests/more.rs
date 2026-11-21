@@ -182,19 +182,40 @@ fn block_default_blocks() {
     assert!(breaks(&all, &typed).contains("cvc-elt.4.3"));
 }
 
-/// How many items `identity_constraints_scale` validates.
-const MANY: usize = 20_000;
+/// How many items `identity_constraints_scale` validates, the fewer and
+/// the more.
+const SIZES: [usize; 2] = [2_000, 8_000];
 
-/// The longest validating `MANY` items may take: far more than they take
-/// with key-sequences hashed, far less than comparing every pair would.
-const BOUNDED: std::time::Duration = std::time::Duration::from_secs(30);
+/// The most key comparisons an item may cost: hashed, a lookup compares
+/// a key with the few of its bucket alone; comparing every pair would
+/// cost each item as many as the items before it.
+const PER_ITEM: usize = 4;
+
+/// The key comparisons validating a document of `many` items under the
+/// constraints of `body` costs: valid, and invalid with one key twice or
+/// one reference to no key.
+fn comparisons(body: &str, many: usize) -> usize {
+    let items = |k: &dyn Fn(usize) -> usize| {
+        let to = |i: usize| many.saturating_sub(1).saturating_sub(i);
+        (0..many).map(|i| format!(r#"<i k="{}" n="n{i}" to="{}.0"/>"#, k(i), to(i))).collect::<Vec<_>>().concat()
+    };
+    let before = identity::compared();
+    valid(body, &format!("<r>{}</r>", items(&|i| i)));
+    let twice = format!("<r>{}</r>", items(&|i| if i == many.saturating_sub(1) { 0 } else { i }));
+    assert!(broken(body, &twice).contains("cvc-identity-constraint.4.2.2"));
+    let dangling = format!("<r>{}<i k=\"{many}\" n=\"x\" to=\"-1\"/></r>", items(&|i| i));
+    assert!(broken(body, &dangling).contains("cvc-identity-constraint.4.3"));
+    identity::compared().saturating_sub(before)
+}
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.22] [Schema1 §3.11.4
-/// cvc-identity-constraint, §3.11.5] a document of `MANY` items under a
-/// key, a unique constraint and a keyref of them is validated in a
-/// bounded time, its key-sequences hashed rather than compared pair by
-/// pair: valid, and invalid with one key twice or one reference to no
-/// key.
+/// cvc-identity-constraint, §3.11.5] a document of many items under a
+/// key, a unique constraint and a keyref of them is validated by work
+/// linear in its items, its key-sequences hashed rather than compared
+/// pair by pair: the key comparisons counted stay within a few per item
+/// at each size, so four times the items cost at most a bounded multiple
+/// of the work. Valid, and invalid with one key twice or one reference
+/// to no key.
 #[test]
 fn identity_constraints_scale() {
     let body = r#"<xs:element name="r"><xs:complexType><xs:sequence>
@@ -204,16 +225,11 @@ fn identity_constraints_scale() {
         <xs:key name="k"><xs:selector xpath="i"/><xs:field xpath="@k"/></xs:key>
         <xs:unique name="n"><xs:selector xpath=".//i"/><xs:field xpath="@n"/></xs:unique>
         <xs:keyref name="to" refer="k"><xs:selector xpath="i"/><xs:field xpath="@to"/></xs:keyref></xs:element>"#;
-    let items = |k: &dyn Fn(usize) -> usize| {
-        let to = |i: usize| MANY.saturating_sub(1).saturating_sub(i);
-        (0..MANY).map(|i| format!(r#"<i k="{}" n="n{i}" to="{}.0"/>"#, k(i), to(i))).collect::<Vec<_>>().concat()
-    };
-    let started = std::time::Instant::now();
-    valid(body, &format!("<r>{}</r>", items(&|i| i)));
-    let twice = format!("<r>{}</r>", items(&|i| if i == MANY.saturating_sub(1) { 0 } else { i }));
-    assert!(broken(body, &twice).contains("cvc-identity-constraint.4.2.2"));
-    let dangling = format!("<r>{}<i k=\"{MANY}\" n=\"x\" to=\"-1\"/></r>", items(&|i| i));
-    assert!(broken(body, &dangling).contains("cvc-identity-constraint.4.3"));
-    let took = started.elapsed();
-    assert!(took < BOUNDED, "{took:?}");
+    for many in SIZES {
+        let made = comparisons(body, many);
+        // Three documents, each checked by three constraints.
+        let items = many.saturating_mul(9);
+        // The key given twice is found by comparing it, so the count is live.
+        assert!(made > 0 && made <= items.saturating_mul(PER_ITEM), "{made} key comparisons for {many} items");
+    }
 }

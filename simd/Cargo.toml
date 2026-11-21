@@ -1,0 +1,58 @@
+[package]
+name = "turborel-simd"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Vector-instruction kernels for turborel (RULES.md D354, D460): SSE2, AVX2, AVX-512 and NEON loops chosen at run time, each equal to the core's portable one, given to a database as its Kernels."
+license = "BSD-2-Clause-Patent"
+repository = "https://github.com/turborel/turborel"
+readme = "../README.md"
+keywords = ["simd", "xxhash", "database", "turborel"]
+categories = ["algorithms", "database"]
+autotests = false
+
+[dependencies]
+turborel = { version = "0.0.0", path = ".." }
+
+[dev-dependencies]
+turborel-test-support = { path = "../support", features = ["database"] }
+
+# The workspace's lints (RULES.md §3), but for `unsafe`: this crate is the
+# one place intrinsics are called (RULES.md D460), each unsafe block alone
+# and with its SAFETY comment.
+[lints.rust]
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+must_use_candidate = "allow"
+doc_markdown = "allow"
+unnested_or_patterns = "allow"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+indexing_slicing = "warn"
+exit = "warn"
+arithmetic_side_effects = "warn"
+as_conversions = "warn"
+integer_division = "warn"
+default_numeric_fallback = "warn"
+wildcard_enum_match_arm = "warn"
+cognitive_complexity = "warn"
+excessive_nesting = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+shadow_unrelated = "warn"
+mem_forget = "warn"
+mod_module_files = "warn"
+allow_attributes_without_reason = "warn"
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "warn"

@@ -9,9 +9,12 @@ mod backup;
 mod commands;
 mod delta;
 mod embedding;
+mod explain;
 mod extensions;
+mod graph;
 mod hybrid;
 mod information;
+mod monitoring;
 mod partitioning;
 mod uuids;
 mod vector;
@@ -27,8 +30,6 @@ use turborel_cli::{Command, Dialer, Input, Io, Terminal};
 use turborel_client::agent::Agent;
 
 use crate::common::{Running, Scratch, command, options, start};
-
-mod graph;
 
 /// What the manual's examples show a null value as.
 const NULL_SHOWN: &str = "NULL";
@@ -329,16 +330,6 @@ fn the_savepoint_examples_run_as_printed() {
     }
     let scratch = Scratch::new("manual-savepoints");
     assert!(ann.section("user/06-transactions.md", "## Savepoints", &scratch) > 0, "the section shows its examples");
-}
-
-/// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of EXPLAIN run as
-/// printed, as ANN, the client showing its plan's lines as rows.
-#[test]
-fn the_explain_examples_run_as_printed() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
-    let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/statements/explain.md") > 0, "it shows its examples' output");
 }
 
 /// Verifies: [EXTENSION] RULES.md R-DOC-8, D92: the examples of

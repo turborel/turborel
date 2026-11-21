@@ -6,13 +6,11 @@
 //! (`TableStorage::visible_to_all`); of any other, by the call on its row,
 //! as a filter would.
 
-use std::sync::Arc;
-
 use super::super::entries::{Reading, fetch};
 use super::super::{Runner, eval_cond};
 use crate::catalog::{KeyShape, QualifiedName};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::functions::ScalarRef;
 use crate::geometry::fixed_srid;
 use crate::index::Key;
@@ -49,7 +47,7 @@ impl Deciding {
     /// The decision of the conjunct `decided` of a scan of `table`
     /// reading no column if `unread`, each row followed by its id if
     /// `located`.
-    pub(super) fn new(decided: Decided, db: &Arc<State>, tx: TxId, table: &QualifiedName, (unread, located): (bool, bool)) -> Deciding {
+    pub(super) fn new(decided: Decided, db: &Db, tx: TxId, table: &QualifiedName, (unread, located): (bool, bool)) -> Deciding {
         let desc = db.catalog.table(table);
         let width = desc.map(|t| if located { t.columns.len() } else { 0 });
         let srid = desc.and_then(|t| t.columns.get(decided.column)).and_then(|c| fixed_srid(&c.data_type));
@@ -72,13 +70,18 @@ impl Deciding {
             Some(Err(error)) => Err(error),
             Some(Ok(Some(true))) => {
                 if let Some(width) = self.width.filter(|_| self.unread && storage.visible_to_all(id)) {
+                    reading.entry();
                     return Ok(Some(vec![Value::Null; width]));
                 }
                 Ok(fetch(storage, ix, reading, (tx, id), key)?.map(|(_, row)| row))
             }
-            Some(Ok(Some(false) | None)) => Ok(None),
+            Some(Ok(Some(false) | None)) => {
+                reading.entry();
+                Ok(None)
+            }
             None => {
                 let Some((_, row)) = fetch(storage, ix, reading, (tx, id), key)? else { return Ok(None) };
+                reading.rechecked();
                 Ok((eval_cond(&self.cond, &row, &self.runner)? == Truth::True).then_some(row))
             }
         }

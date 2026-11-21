@@ -6,9 +6,10 @@
 //! RIGHT join of its operands swapped; an index nested-loop join whose
 //! index cannot be probed by the left's values (`physical/indexed.rs`) is
 //! a hash join instead; a merge join's operand not in its key's order is
-//! sorted. The columns of a join are its left operand's then its right's,
-//! and a projection over the whole puts them back in the FROM clause's
-//! order.
+//! sorted; a semi join or an antijoin is hashed, the left built if it has
+//! fewer rows, or probes an index. The columns of a join are its left
+//! operand's then its right's, a semi join's its left's alone, and a
+//! projection over the whole puts them back in the FROM clause's order.
 
 use super::bits::Set;
 use super::conflicts::Kind;
@@ -16,11 +17,12 @@ use super::extract::Query;
 use super::model::{Model, Order};
 use super::space::{Method, Space, Tree};
 use crate::logical::{Cond, Expr, OuterJoin, SortKey, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
-use crate::physical::indexed::{Equijoin, alike, index_join};
+use crate::physical::indexed::{EquiKind, Equijoin, alike, index_join};
 use crate::physical::join::{JoinKey, Parted, hashed, hashed_outer};
+use crate::physical::semi::{Semi, semi_plan};
 use crate::physical::shown::Shown;
 use crate::physical::{MergeJoin, PhysicalPlanner, Plan};
-use crate::value::DataType;
+use crate::value::{CompOp, DataType};
 
 /// A realized plan: the plan, the relations whose columns it gives, in
 /// order, and the order of its rows.
@@ -58,22 +60,22 @@ impl Context<'_> {
     /// The class of orders of the column at `place` of the columns of
     /// `layout`.
     fn class_at(&self, layout: &[usize], place: usize) -> Option<usize> {
-        let col = (0..self.query.width).find(|&c| self.place_of(layout, c) == Some(place))?;
+        let col = (0..self.query.columns()).find(|&c| self.place_of(layout, c) == Some(place))?;
         self.model.order_of(col).map(|(class, _)| class)
     }
 
     /// The width of the columns of `layout`.
-    fn width(&self, layout: &[usize]) -> usize {
+    pub(super) fn width(&self, layout: &[usize]) -> usize {
         layout.iter().filter_map(|&r| self.query.leaves.get(r)).map(|l| l.width).sum()
     }
 
     /// `c`, over the chain's columns, over those of `layout`.
-    fn mapped(&self, c: &Cond, layout: &[usize]) -> Cond {
+    pub(super) fn mapped(&self, c: &Cond, layout: &[usize]) -> Cond {
         map_cond_columns(c.clone(), &|col| self.place_of(layout, col).unwrap_or(col))
     }
 
     /// The names of the columns of `layout`, if the plan is shown.
-    fn names(&self, layout: &[usize], shown: bool) -> Option<Vec<String>> {
+    pub(super) fn names(&self, layout: &[usize], shown: bool) -> Option<Vec<String>> {
         shown.then(|| layout.iter().filter_map(|&r| self.query.leaves.get(r)).flat_map(|l| l.plan.names()).collect())
     }
 
@@ -88,7 +90,7 @@ impl Context<'_> {
     fn split_keys(&self, (left, right): (&[usize], &[usize]), conds: &[Cond]) -> (Vec<(usize, usize)>, Vec<Cond>) {
         let (mut keys, mut rest) = (Vec::new(), Vec::new());
         for c in conds {
-            let pair = if let Cond::Compare(Expr::Column(a), crate::value::CompOp::Eq, Expr::Column(b)) = c {
+            let pair = if let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c {
                 match (self.place_of(left, *a), self.place_of(right, *b), self.place_of(left, *b), self.place_of(right, *a)) {
                     (Some(x), Some(y), _, _) | (_, _, Some(x), Some(y)) => Some((x, y)),
                     (None | Some(_), None | Some(_), None | Some(_), None | Some(_)) => None,
@@ -105,7 +107,9 @@ impl Context<'_> {
     }
 
     /// The conjuncts a join of `sets` judges: its operator's condition's,
-    /// or the inner joins' conjuncts that read both.
+    /// or the inner joins' conjuncts that read both, or, if none does, the
+    /// equalities their keys imply of a column of each
+    /// (`Model::implied_keys`, RULES.md D387).
     fn conds(&self, op: Option<usize>, (l, r): (Set, Set)) -> Vec<Cond> {
         if let Some(cond) = op.and_then(|o| self.query.preds.get(o)).and_then(Option::as_ref) {
             let mut out = Vec::new();
@@ -114,7 +118,12 @@ impl Context<'_> {
         }
         let s = l | r;
         let straddles = |reads: Set| reads & !s == 0 && reads & !l != 0 && reads & !r != 0;
-        self.query.conjuncts.iter().filter(|(_, c)| straddles(self.query.reads(c))).map(|(_, c)| c.clone()).collect()
+        let stated: Vec<Cond> =
+            self.query.conjuncts.iter().filter(|(_, c)| straddles(self.query.reads(c))).map(|(_, c)| c.clone()).collect();
+        if !stated.is_empty() {
+            return stated;
+        }
+        self.model.implied_keys((l, r)).into_iter().map(|(a, b)| Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b))).collect()
     }
 }
 
@@ -177,8 +186,20 @@ impl PhysicalPlanner<'_> {
                 }
             }
             (Method::Merge(class), Kind::Inner | Kind::Left) => self.merge_realized(cx, (class, kind), (l, r), (&conds, est)),
+            // A range join that cannot be made is a nested loop (`enumerate/ranged.rs`).
+            (Method::Range, Kind::Inner | Kind::Left) => match self.range_realized(cx, kind, (&l, &r), (&conds, rows, est)) {
+                Some(done) => Some(done),
+                None => self.realize_join(cx, (Method::Nested, kind), (l, r), (conds, rows, est)),
+            },
+            (Method::Index, Kind::Semi | Kind::Anti) => match self.index_realized(cx, kind, (&l, &r), (&conds, rows.0)) {
+                Some(done) => Some(done),
+                None => Some(self.semi_realized(cx, kind, (l, r), (&conds, rows, est))),
+            },
+            (Method::Hash | Method::Nested | Method::Merge(_) | Method::Range, Kind::Semi | Kind::Anti) => {
+                Some(self.semi_realized(cx, kind, (l, r), (&conds, rows, est)))
+            }
             (Method::Hash, Kind::Inner) => Some(self.hash_realized(cx, (l, r), &conds, (rows, est))),
-            (Method::Hash | Method::Nested | Method::Index | Method::Merge(_), Kind::Left | Kind::Full) => {
+            (Method::Hash | Method::Nested | Method::Index | Method::Merge(_), Kind::Left | Kind::Full) | (Method::Range, Kind::Full) => {
                 Some(self.outer_realized(cx, kind, (l, r), (&conds, rows, est)))
             }
             (Method::Nested, Kind::Inner) => {
@@ -226,8 +247,8 @@ impl PhysicalPlanner<'_> {
         let swap = rows.0 < rows.1 && (kind == Kind::Full || l.order == Order::None);
         let of = match (kind, swap) {
             (Kind::Full, true | false) => OuterJoin::Full,
-            (Kind::Left | Kind::Inner, true) => OuterJoin::Right,
-            (Kind::Left | Kind::Inner, false) => OuterJoin::Left,
+            (Kind::Left | Kind::Inner | Kind::Semi | Kind::Anti, true) => OuterJoin::Right,
+            (Kind::Left | Kind::Inner | Kind::Semi | Kind::Anti, false) => OuterJoin::Left,
         };
         let (l, r) = if swap { (r, l) } else { (l, r) };
         let shape = joined_shape(&l, &r);
@@ -241,6 +262,26 @@ impl PhysicalPlanner<'_> {
         let widths = (width, cx.width(&r.layout));
         let plan = hashed_outer(of, (l.plan, r.plan), Parted::of(&cond, width), (widths, detail, shown, est));
         Realized { plan, layout, order, shape }
+    }
+
+    /// A semi join or an antijoin, hashed on its equalities, the left
+    /// built if it has fewer rows, else nested (`physical/semi.rs`). Its
+    /// columns are its left's, in their order.
+    fn semi_realized(
+        &self,
+        cx: &Context<'_>,
+        kind: Kind,
+        (l, r): (Realized, Realized),
+        (conds, rows, est): (&[Cond], (f64, f64), f64),
+    ) -> Realized {
+        let shape = joined_shape(&l, &r);
+        let pair: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
+        let widths = (cx.width(&l.layout), cx.width(&r.layout));
+        let cond = and_all(conds.iter().map(|c| cx.mapped(c, &pair)).collect()).unwrap_or(Cond::Const(crate::logical::Truth::True));
+        let names = cx.names(&pair, self.shown);
+        let semi = Semi { anti: kind == Kind::Anti, cond, widths, build_left: rows.0 < rows.1 };
+        let plan = semi_plan(semi, (l.plan, r.plan), (Shown::of(names.as_deref()), est));
+        Realized { plan, layout: l.layout, order: l.order, shape }
     }
 
     /// An index nested-loop join of `l` and the relation `r` reads, if an
@@ -259,7 +300,7 @@ impl PhysicalPlanner<'_> {
             return None;
         }
         let type_at = |place: usize| -> Option<DataType> {
-            let col = (0..cx.query.width).find(|&c| cx.place_of(&l.layout, c) == Some(place))?;
+            let col = (0..cx.query.columns()).find(|&c| cx.place_of(&l.layout, c) == Some(place))?;
             let left_leaf = cx.query.leaves.get(cx.query.rel_of(col)?)?;
             self.column_type(&left_leaf.plan, col.checked_sub(left_leaf.start)?)
         };
@@ -268,8 +309,10 @@ impl PhysicalPlanner<'_> {
         let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
         let rest = rest.iter().map(|c| cx.mapped(c, &layout)).collect();
         let names = cx.names(&layout, self.shown);
-        let join = Equijoin { width: cx.width(&l.layout), keys: &pairs, rest, outer: kind == Kind::Left };
+        let join = Equijoin { width: cx.width(&l.layout), keys: &pairs, rest, outer: equi_kind(kind) };
         let plan = index_join(probing, join, (l.plan.clone(), rows), Shown::of(names.as_deref()));
+        // A semi join's columns are its left's alone.
+        let layout = if join_alone(kind) { l.layout.clone() } else { layout };
         Some(Realized { plan, layout, order: l.order, shape: joined_shape(l, r) })
     }
 
@@ -331,6 +374,21 @@ fn label(plan: &crate::logical::LogicalPlan) -> String {
 
 /// Whether `c` is the equality of the pair's columns `left` and `right`.
 fn is_key(c: &Cond, (left, right): (usize, usize)) -> bool {
-    let Cond::Compare(Expr::Column(first), crate::value::CompOp::Eq, Expr::Column(second)) = c else { return false };
+    let Cond::Compare(Expr::Column(first), CompOp::Eq, Expr::Column(second)) = c else { return false };
     (*first, *second) == (left, right) || (*first, *second) == (right, left)
+}
+
+/// Which rows of its left an index join of kind `kind` gives.
+fn equi_kind(kind: Kind) -> EquiKind {
+    match kind {
+        Kind::Inner | Kind::Full => EquiKind::Inner,
+        Kind::Left => EquiKind::Left,
+        Kind::Semi => EquiKind::Semi,
+        Kind::Anti => EquiKind::Anti,
+    }
+}
+
+/// Whether a join of kind `kind` gives its left's columns alone.
+pub(super) fn join_alone(kind: Kind) -> bool {
+    matches!(kind, Kind::Semi | Kind::Anti)
 }

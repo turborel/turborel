@@ -33,6 +33,8 @@ mod late;
 mod merge;
 mod ordered;
 mod rewrite;
+mod shadow_bits;
+mod stamped;
 
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -42,10 +44,12 @@ use std::time::Instant;
 pub(super) use batches::Batched;
 pub(super) use merge::{Merged, Merging};
 pub(super) use ordered::Ordered;
+use shadow_bits::ShadowBits;
+pub(super) use stamped::Loads;
 
 use super::options::Columns;
 use super::sealing::Sealing;
-use super::version::{Maker, Version};
+use super::version::Version;
 use super::{RowTable, corrupt};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
@@ -117,11 +121,16 @@ impl Seal for Sealing {
 /// and no reader holds it.
 pub(super) struct Entry {
     pub(super) summary: Summary,
+    /// The rows of its range the tree may have entries for
+    /// (`shadow_bits.rs`).
+    pub(super) shadow: ShadowBits,
     headers: Arc<HeaderCache>,
     pool: Arc<BufferPool>,
     file: FileId,
     /// Its pages, once it is retired.
     retired: Mutex<Option<Vec<PageId>>>,
+    /// Who made it, if not committed before every snapshot (`stamped.rs`).
+    made: AtomicU64,
 }
 
 impl Drop for Entry {
@@ -147,6 +156,11 @@ impl Entry {
 #[derive(Default)]
 pub(super) struct Directory {
     pub(super) groups: Vec<Arc<Entry>>,
+    /// Whether a group is not committed before every snapshot, so a reader
+    /// takes the groups it sees (`stamped.rs`).
+    pending: bool,
+    /// The directory it is the part of, held with it.
+    _whole: Option<Arc<Directory>>,
 }
 
 impl Directory {
@@ -196,6 +210,15 @@ pub(super) struct Frozen {
     /// The least row id a freeze under way may freeze, `NOT_FREEZING` if
     /// none is: a deletion of a row from it on is kept (`freeze.rs`).
     freezing_from: AtomicU64,
+    /// One past the last row id of its groups, 0 if it has none: a write
+    /// of a row from it on marks no group's shadow bits.
+    groups_end: AtomicU64,
+    /// Whether scans trust the shadow bits, as they do but in tests that
+    /// read the tree over every group as if every bit were set.
+    trust_bits: std::sync::atomic::AtomicBool,
+    /// A load whose rows go straight to groups, and the groups recovery
+    /// has yet to settle (`stamped.rs`).
+    loads: Loads,
 }
 
 /// What `Frozen::freezing_from` holds while no freeze is under way.
@@ -214,6 +237,9 @@ impl Frozen {
             tried: Mutex::new(None),
             shadowed: AtomicU64::new(0),
             freezing_from: AtomicU64::new(NOT_FREEZING),
+            groups_end: AtomicU64::new(0),
+            trust_bits: std::sync::atomic::AtomicBool::new(true),
+            loads: Loads::default(),
         }
     }
 
@@ -251,7 +277,8 @@ impl RowTable {
         let capacity = self.pool.capacity(self.file)?.saturating_sub(self.sealing.overhead()).saturating_sub(LINK);
         let compress = self.frozen.columns().is_none_or(|c| c.compress);
         let pax = self.frozen.columns().is_some_and(|c| c.pax);
-        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress, pax })
+        let imprints = self.frozen.columns().is_some_and(|c| c.imprints);
+        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress, pax, imprints })
     }
 
     /// The group of `entry`: its header as held, else read and held.
@@ -307,13 +334,15 @@ impl RowTable {
         id >= self.frozen.freezing_from.load(Ordering::SeqCst) || self.frozen.directory().is_ok_and(|d| d.holding(id).is_some())
     }
 
-    /// A version of row `id`, committed before every snapshot, holding its
-    /// frozen values, and the pages of its values out of line; none if no
-    /// group holds it.
+    /// A version of row `id`, made as its group was (`stamped.rs`), holding
+    /// its frozen values, and the pages of its values out of line; none if
+    /// no group holds it.
     pub(super) fn frozen_version(&self, id: RowId) -> Result<Option<(Vec<u8>, Vec<PageId>)>> {
-        let Some(row) = self.frozen_row(id, None)? else { return Ok(None) };
+        let directory = self.frozen.directory()?;
+        let Some(maker) = directory.holding(id).map(|e| self.group_maker(e)) else { return Ok(None) };
+        let Some(row) = self.frozen_in(&directory, id, None)? else { return Ok(None) };
         let (record, pages) = self.encode(id, &row)?;
-        Ok(Some((Version { maker: Maker::Committed(0), deleted: false, older: None, record: &record }.encode(), pages)))
+        Ok(Some((Version { maker, deleted: false, older: None, record: &record }.encode(), pages)))
     }
 
     /// Loads the directory whose first page is `first`, as the meta page
@@ -324,29 +353,32 @@ impl RowTable {
         }
         let pages = self.group_pages()?;
         let (bytes, _) = group::read_chain(&pages, PageId(first))?;
-        let (count, rest) = bytes.split_first_chunk::<4>().ok_or_else(|| corrupt("its groups' directory is too short"))?;
-        let count = usize::try_from(u32::from_le_bytes(*count)).map_err(|_| corrupt("its groups' directory is too long"))?;
+        let (count, stamps, rest) = stamped::counted(&bytes)?;
         let summaries = group::read_summaries(rest, self.format.types())?;
         if summaries.len() != count {
             return Err(corrupt("its groups' directory is not whole"));
         }
-        let groups: Vec<Arc<Entry>> = summaries.into_iter().map(|s| self.entry(s)).collect();
+        let groups = self.unstamped(summaries.into_iter().map(|s| self.entry(s)).collect(), &stamps);
         if groups.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a.summary.last >= b.summary.first)) {
             return Err(corrupt("its groups' row ids overlap"));
         }
-        *crate::sync::write(&self.frozen.directory)? = Arc::new(Directory { groups });
+        let end = groups.last().map_or(0, |e| e.summary.last.saturating_add(1));
+        *crate::sync::write(&self.frozen.directory)? = Arc::new(Directory::of(groups));
+        self.frozen.groups_end.store(end, Ordering::SeqCst);
         self.frozen.stored.store(first, Ordering::Release);
-        Ok(())
+        self.mark_opened()
     }
 
     /// The group `summary` sums up, as an entry of the directory.
     fn entry(&self, summary: Summary) -> Arc<Entry> {
         Arc::new(Entry {
+            shadow: ShadowBits::new(summary.first, summary.last),
             summary,
             headers: Arc::clone(&self.headers),
             pool: Arc::clone(&self.pool),
             file: self.file,
             retired: Mutex::new(None),
+            made: AtomicU64::new(0),
         })
     }
 
@@ -361,7 +393,7 @@ impl RowTable {
     /// Stores `directory`, and names it in the meta page; frees the one
     /// stored before.
     fn store_directory(&self, directory: &Directory) -> Result<()> {
-        let mut bytes = u32::try_from(directory.groups.len()).map_err(|_| corrupt("it has too many groups"))?.to_le_bytes().to_vec();
+        let mut bytes = stamped::count_of(directory)?;
         for e in &directory.groups {
             group::put_summary(&mut bytes, &e.summary, self.format.types())?;
         }
@@ -391,7 +423,7 @@ impl RowTable {
                 let to = from.saturating_add(u32::try_from(chunk.len()).unwrap_or(u32::MAX));
                 let found = crate::engine::columns::scan::rows(&group, &pages, types, &all, (from, to))?;
                 for (&id, row) in chunk.iter().zip(found) {
-                    self.unless_shadowed(id, row, &mut each)?;
+                    self.unless_shadowed((entry, id), row, &mut each)?;
                 }
             }
         }
@@ -400,8 +432,8 @@ impl RowTable {
 
     /// Gives `each` frozen row `id`, `row`, unless an entry of the tree
     /// stands for it.
-    fn unless_shadowed(&self, id: RowId, row: Row, each: &mut impl FnMut(RowId, Row) -> Result<()>) -> Result<()> {
-        if self.tree.get(&super::key(id))?.is_some() {
+    fn unless_shadowed(&self, (entry, id): (&Entry, RowId), row: Row, each: &mut impl FnMut(RowId, Row) -> Result<()>) -> Result<()> {
+        if self.may_shadow(entry, id) && self.tree.get(&super::key(id))?.is_some() {
             return Ok(());
         }
         each(id, row)

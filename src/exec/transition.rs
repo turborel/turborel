@@ -12,8 +12,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use super::{HeldRows, RowIter, broken, failed};
-use crate::db::State;
 use crate::error::{Result, SqlError};
+use crate::exec::Db;
 use crate::physical::Plan;
 use crate::spill::ListSpace;
 use crate::storage::Row;
@@ -65,7 +65,7 @@ fn poisoned() -> SqlError {
 
 /// The rows of the transition table `plan`, each read while the statement
 /// of `tx` is not cancelled.
-pub(super) fn transition(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn transition(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Transition { rows } = plan else { return failed(broken("a transition table's read is not one")) };
     let mut place = 0_usize;
     let read = std::iter::from_fn(move || {

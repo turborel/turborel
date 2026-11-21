@@ -31,6 +31,8 @@ fn projected_probes_renew_locality_without_dropping_read_state() {
                 open: Some((NO_TRANSACTION, 4, Arc::clone(&bookkeeping))),
             },
             projection,
+            notes: None,
+            counts: [0; 3],
         };
         let allocation = reading.near.bytes.as_ptr();
         reading.next_probe();
@@ -39,7 +41,7 @@ fn projected_probes_renew_locality_without_dropping_read_state() {
         assert_eq!(reading.near.at, Some(3));
         assert_eq!(reading.near.bytes, [1, 2, 3]);
         assert_eq!(reading.near.bytes.as_ptr(), allocation);
-        let (tx, table, held) = reading.near.open.unwrap();
+        let (tx, table, held) = reading.near.open.take().unwrap();
         assert_eq!((tx, table), (NO_TRANSACTION, 4));
         assert!(Arc::ptr_eq(&held, &bookkeeping));
     }

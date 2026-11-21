@@ -17,7 +17,7 @@
 //! iv, GR5b iii 4]. Anything else is judged as `Expr::can_raise` judges it,
 //! and a column of no known type as of no exact type.
 
-use super::{Cond, Expr, LogicalPlan};
+use super::{Cond, Expr, LogicalPlan, Slot};
 use crate::catalog::Catalog;
 use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, constant_prefix};
 
@@ -104,13 +104,13 @@ fn expr_raises(e: &Expr, types: Types<'_>, depth: usize) -> bool {
     match e {
         Expr::Arith(a, op, b) => parts || !arith_safe((a, *op, b), types, deeper),
         Expr::Cast(x, to) => parts || !widens(x, to, types, deeper),
-        Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) => true,
+        // A `?` cut by its cast warns as it is evaluated (RULES.md D391), as
+        // `Expr::can_raise` says.
+        Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) | Expr::Warned(..) => true,
         Expr::Call(f, _) => parts || (!f.0.raise_free() && (!f.0.index_predicate() || !f.0.deterministic())),
         Expr::Truth(c) => cond_raises(c, types, deeper),
         Expr::Case(whens, _) => parts || whens.iter().any(|(c, _)| cond_raises(c, types, deeper)),
-        Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::SortKey(..) | Expr::Warned(..) => {
-            parts
-        }
+        Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::SortKey(..) => parts,
     }
 }
 
@@ -180,7 +180,10 @@ fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
         }
         Expr::Const(Value::Exact(d)) => Some((d.digits().max(d.scale), d.scale)),
         Expr::Neg(x) => exact_shape(x, types, deeper),
-        Expr::Cast(_, DataType::Exact { precision, scale, .. }) => Some((*precision, *scale)),
+        // A slot's value is of its type, cast to it as it is filled or
+        // assigned (RULES.md D613).
+        Expr::Cast(_, DataType::Exact { precision, scale, .. })
+        | Expr::Dynamic(Slot { data_type: DataType::Exact { precision, scale, .. }, .. }) => Some((*precision, *scale)),
         Expr::Arith(a, op, b) => arith_shape((a, *op, b), types, deeper),
         Expr::Const(_)
         | Expr::Cast(..)
@@ -229,7 +232,11 @@ fn column_type(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: 
     let deeper = depth.saturating_add(1);
     match plan {
         LogicalPlan::Scan { table, .. } => catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),
-        LogicalPlan::Filter { input, .. } => column_type(input, column, catalog, deeper),
+        LogicalPlan::Filter { input, .. } | LogicalPlan::SemiJoin { left: input, .. } => column_type(input, column, catalog, deeper),
+        LogicalPlan::MarkJoin(m) => match column.checked_sub(m.left.width()) {
+            Some(_) => Some(DataType::Boolean),
+            None => column_type(&m.left, column, catalog, deeper),
+        },
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
             Some(at) => column_type(right, at, catalog, deeper),
             None => column_type(left, column, catalog, deeper),

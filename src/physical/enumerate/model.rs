@@ -11,7 +11,10 @@
 //! (`physical/estimate.rs`). A join is estimated to give at least one row,
 //! if its operands' product has one, so no estimate of zero makes every
 //! join over it free (Leis et al., "How Good Are Query Optimizers,
-//! Really?", 2015, §3.4).
+//! Really?", 2015, §3.4). Each set also has an upper bound, which its rows
+//! never pass (`physical/cardinality/bounds.rs`, RULES.md D385): a join to
+//! one relation gives each row of the other operand at most the most rows
+//! of one value of that relation's column it equates.
 
 use super::bits::{Set, bit, members};
 use super::conflicts::Kind;
@@ -34,6 +37,11 @@ pub(super) enum Order {
 pub(super) struct Rel {
     /// Its estimated rows.
     pub(super) rows: f64,
+    /// At most this many.
+    pub(super) upper: f64,
+    /// Of its columns a key of the chain uses, by the chain's places, the
+    /// most rows of one value.
+    pub(super) most: Vec<(usize, f64)>,
     /// The costs of reading it: in no order, then in each order it gives.
     pub(super) reads: Vec<(Order, f64)>,
     /// The plan of each of those reads, kept for the realized plan, which
@@ -42,6 +50,14 @@ pub(super) struct Rel {
     /// Of its columns, by the chain's places, those an index of its table
     /// answers an equality of, and the cost of each probe.
     pub(super) probes: Vec<(usize, f64)>,
+    /// \[DESIGN\] (RULES.md D652) The rows its read gives a parallel part,
+    /// its stream's, 0 if it is none (`enumerate/weighed.rs`).
+    pub(super) held: f64,
+    /// \[DESIGN\] (RULES.md D651) The bytes a row of it holds.
+    pub(super) bytes: f64,
+    /// \[DESIGN\] (RULES.md D652) The share of each thread past the first
+    /// a part reading it gains (`cost/parallel.rs`).
+    pub(super) gain: f64,
 }
 
 /// A conjunct of an inner join: the relations it reads, the operator it is
@@ -87,6 +103,15 @@ pub(super) struct Model {
     pub(super) want_class: Option<usize>,
     /// The weights.
     pub(super) cost: CostModel,
+    /// \[EXTENSION\] The rows given of sets of its relations in place of
+    /// their estimates (`physical/cardinality/injected.rs`, RULES.md D377).
+    pub(super) injected: Vec<(Set, f64)>,
+    /// The classes of columns the inner joins' keys make equal, each with
+    /// the relations its columns are of (`implied_classes`, RULES.md D387).
+    pub(super) implied: Vec<(Vec<usize>, Set)>,
+    /// Which conjuncts and predicates a range join searches by
+    /// (`enumerate/ranged.rs`, RULES.md D580).
+    pub(super) ranged: super::ranged::Ranges,
 }
 
 impl Model {
@@ -103,6 +128,59 @@ impl Model {
     /// The relations conjunct `c` reads.
     pub(super) fn reads_of(&self, c: usize) -> Set {
         self.conjuncts.get(c).map_or(0, |c| c.reads)
+    }
+
+    /// \[DESIGN\] (RULES.md D387) The classes of columns the inner joins'
+    /// keys make equal; none of a chain with an outer join, whose keys hold
+    /// only above it. Made once, as the model is.
+    pub(super) fn key_classes(&self) -> Vec<Vec<usize>> {
+        if self.kinds.iter().any(|&k| k != Kind::Inner) {
+            return Vec::new();
+        }
+        let mut classes: Vec<Vec<usize>> = Vec::new();
+        for (a, b) in self.conjuncts.iter().filter_map(|c| c.key) {
+            let mut merged = vec![a, b];
+            classes.retain(|class| {
+                let joins = class.contains(&a) || class.contains(&b);
+                if joins {
+                    merged.extend(class);
+                }
+                !joins
+            });
+            merged.sort_unstable();
+            merged.dedup();
+            classes.push(merged);
+        }
+        classes
+    }
+
+    /// The equalities of a column of `l` and one of `r` the inner joins'
+    /// keys imply through others, of a join no conjunct of which reads
+    /// both: one of each class with a column on each side, the left's
+    /// first. `joined_rows` counts a class's fraction of any join that
+    /// holds two of its columns, so such a join judges these, and is never
+    /// a product (RULES.md D387).
+    pub(super) fn implied_keys(&self, (l, r): (Set, Set)) -> Vec<(usize, usize)> {
+        let side = |class: &[usize], s: Set| class.iter().copied().find(|&c| self.holds(s, c));
+        self.implied
+            .iter()
+            .filter(|&&(_, rels)| rels & l != 0 && rels & r != 0)
+            .filter_map(|(class, _)| Some((side(class, l)?, side(class, r)?)))
+            .collect()
+    }
+
+    /// `key_classes`, each with the relations its columns are of, so a
+    /// join whose sets hold none of a class's on one side passes it by a
+    /// test of bits.
+    pub(super) fn implied_classes(&self) -> Vec<(Vec<usize>, Set)> {
+        let rels = |class: &[usize]| class.iter().filter_map(|&c| self.rel_of(c)).fold(0, |s, r| s | bit(r));
+        self.key_classes()
+            .into_iter()
+            .map(|class| {
+                let of = rels(&class);
+                (class, of)
+            })
+            .collect()
     }
 
     /// The relation whose column the chain's column `column` is.
@@ -125,11 +203,6 @@ impl Model {
         }
     }
 
-    /// The cost of sorting `rows` rows.
-    pub(super) fn sort(&self, rows: f64) -> f64 {
-        self.cost.sort(rows)
-    }
-
     /// The fraction of the product of the relations of `s` the
     /// equalities of the classes keep: of each class, one in as many as
     /// each of its members in `s` but the least distinct has values.
@@ -146,6 +219,9 @@ impl Model {
     /// The rows of the join of `left` and `right`, each a set and its
     /// rows, applying `applied`.
     pub(super) fn joined_rows(&self, (s1, r1): (Set, f64), (s2, r2): (Set, f64), applied: &Applied) -> f64 {
+        if let Some(&(_, given)) = self.injected.iter().find(|(s, _)| *s == s1 | s2) {
+            return given;
+        }
         let product = r1 * r2;
         let fraction = if let Some(pred) = applied.op.and_then(|o| self.preds.get(o)).and_then(Option::as_ref) {
             pred.fraction
@@ -157,12 +233,47 @@ impl Model {
         };
         let joined = product * fraction;
         let kind = applied.op.map_or(Kind::Inner, |o| self.kind_of(o));
+        // A semi join keeps the share of the left's rows the pairs reach,
+        // at most each, an antijoin the rest: shares of the left, so every
+        // order of the set's joins gives it the same rows (RULES.md D540).
+        let reached = r1 * (r2 * fraction).min(1.0_f64);
         let rows = match kind {
             Kind::Inner => joined,
             Kind::Left => joined.max(r1),
             Kind::Full => joined.max(r1).max(r2),
+            Kind::Semi => reached,
+            Kind::Anti => (r1 - reached).max(r1.min(1.0_f64)),
         };
         rows.max(product.min(1.0_f64))
+    }
+
+    /// The bound of the rows of the join of `left` and `right`, each a set
+    /// and its bound, of kind `kind` on the equalities `keys`, each a
+    /// column of the left and one of the right: their bounds' product, or
+    /// where one side is one relation, the other's bound times the most
+    /// rows of one value of its column; a LEFT join's at most adds the
+    /// left's rows, a FULL join's both operands', and a semi join or
+    /// antijoin keeps at most its left's. A set holding a relation
+    /// of rows given in place of the estimates has none, as those rows
+    /// overrule the statistics the bound is drawn from (RULES.md D377).
+    pub(super) fn joined_upper(&self, (s1, u1): (Set, f64), (s2, u2): (Set, f64), (kind, keys): (Kind, &[(usize, usize)])) -> f64 {
+        if self.injected.iter().any(|&(given, _)| given & (s1 | s2) != 0) {
+            return f64::INFINITY;
+        }
+        let most = |s: Set, column: usize| {
+            let rel = super::space::Space::single(s)?;
+            self.rels.get(rel)?.most.iter().find(|(c, _)| *c == column).map(|(_, m)| *m)
+        };
+        let by_right = keys.iter().filter_map(|&(_, b)| most(s2, b)).map(|m| u1 * m);
+        let by_left = keys.iter().filter_map(|&(a, _)| most(s1, a)).map(|m| u2 * m);
+        let inner = by_right.chain(by_left).fold(u1 * u2, f64::min);
+        match kind {
+            Kind::Inner => inner,
+            Kind::Left => inner + u1,
+            Kind::Full => inner + u1 + u2,
+            // Each left row at most once.
+            Kind::Semi | Kind::Anti => u1,
+        }
     }
 
     /// The kind of operator `op`: inner unless it has a predicate's kind.

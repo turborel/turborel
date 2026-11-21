@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use super::store::Store;
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::{Runner, eval, eval_cond};
 use crate::graph::binding::PathBinding;
 use crate::graph::program::{Bound, CostFn, Filter, Predicate, VarId};
@@ -24,7 +24,7 @@ const DESTINATION_AT: usize = 3;
 
 /// \[EXTENSION\] A GRAPH_TABLE's search of one input row.
 pub(super) struct Shared {
-    pub(super) db: Arc<State>,
+    pub(super) db: Db,
     pub(super) tx: TxId,
     pub(super) graph: Arc<GraphMatch>,
     pub(super) store: Arc<Store>,
@@ -38,7 +38,7 @@ pub(super) struct Shared {
 impl Shared {
     /// It with `fixed` the bindings of other path patterns read.
     pub(super) fn with_fixed(&self, fixed: Vec<Option<PathBinding>>) -> Shared {
-        let (db, graph, store) = (Arc::clone(&self.db), Arc::clone(&self.graph), Arc::clone(&self.store));
+        let (db, graph, store) = (self.db.clone(), Arc::clone(&self.graph), Arc::clone(&self.store));
         Shared { db, tx: self.tx, graph, store, operands: self.operands.clone(), fixed }
     }
 

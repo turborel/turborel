@@ -13,7 +13,7 @@ fn int(n: i128) -> Value {
 
 /// What `p` keeps of its physical plan, written.
 fn physical(p: &Prepared) -> String {
-    format!("{:?}", lock(&p.plans.kept).unwrap().as_ref().map(|k| &k.physical))
+    format!("{:?}", read(&p.plans.kept.kept).unwrap().as_ref().map(|k| &k.physical))
 }
 
 fn spatial_table() -> (Database, Session) {
@@ -175,13 +175,14 @@ fn a_query_whose_values_choose_its_paths_stops_learning() {
     assert_eq!(range.plans_made(), 1);
 }
 
-/// Verifies: [DESIGN] RULES.md D45: a plan learned is learned again once
-/// a table it reads gains more rows than its statistics are gathered again
-/// for, the execution that finds it so planned with its values.
+/// Verifies: [DESIGN] RULES.md D45, D613: a plan learned that reads a
+/// table whole is learned again once the table gains more rows than its
+/// statistics are gathered again for, the execution that finds it so
+/// planned with its values.
 #[test]
 fn a_learned_plan_is_learned_again_once_its_table_grows() {
     let (_db, s) = table();
-    let range = s.prepare("SELECT C FROM P WHERE A BETWEEN ? AND ?").unwrap();
+    let range = s.prepare("SELECT C FROM P WHERE C BETWEEN ? AND ?").unwrap();
     for n in 0..=i128::from(LEARNED_RUNS) {
         drop(s.open_prepared(&range, &[int(n + 3), int(n + 4)]).unwrap());
     }
@@ -196,7 +197,7 @@ fn a_learned_plan_is_learned_again_once_its_table_grows() {
 /// object rows are one probe fixing a whole unique key keeps that plan,
 /// made with its slots, from the execution that bound it, and fills it at
 /// each execution, writing the row its values name and no other; one
-/// whose object rows' paths follow its values keeps none. Neither binds
+/// whose object rows' paths follow its values learns (D422). Neither binds
 /// again.
 #[test]
 fn a_point_write_keeps_its_plan_and_a_range_write_none() {
@@ -212,7 +213,7 @@ fn a_point_write_keeps_its_plan_and_a_range_write_none() {
     s.execute_prepared(&delete, &[int(5), int(5)]).unwrap();
     assert!(physical(&delete).starts_with("Some(Fixed"), "{}", physical(&delete));
     s.execute_prepared(&range, &[int(1)]).unwrap();
-    assert!(physical(&range).contains("Varies"), "{}", physical(&range));
+    assert!(physical(&range).contains("Learning"), "{}", physical(&range));
     let sum = |sql: &str| s.open_cursor(sql).unwrap().fetch().unwrap().and_then(|r| r.into_iter().next()).map(|v| v.to_string());
     assert_eq!(sum("SELECT SUM(C) FROM P WHERE C >= 1000 AND A < 100"), Some("2033".to_owned()), "rows 11 and 22, row 0 set to 0 since");
     assert_eq!(sum("SELECT COUNT(*) FROM P"), Some("1198".to_owned()), "rows 44 and 55 deleted");

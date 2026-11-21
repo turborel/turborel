@@ -1,6 +1,6 @@
 //! \[EXTENSION\] PARTITION BY HASH (RULES.md D154): a partition of MODULUS
 //! m and REMAINDER r holds the keys whose hash h has h mod m = r. The hash
-//! is MurmurHash3's (`hash/murmur.rs`) of the key's values in their
+//! is XXH3-64's (`hash/xxhash.rs`) of the key's values in their
 //! normalized form (`Value::norm`), so values equal as they compare
 //! [X3.135-1986 §5.11] hash alike, on any machine.
 //!
@@ -12,11 +12,11 @@
 use super::{HASH, MODULUS, PartitionStrategy, REMAINDER, Restriction, refused, scalar_key};
 use crate::catalog::PartitionBound;
 use crate::error::Result;
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_64_with_seed;
 use crate::value::{DataType, NormKey, Value};
 
 /// \[DESIGN\] The seed of the key's hash: fixed, as stored rows depend on it.
-const SEED: u32 = 0;
+const SEED: u64 = 0;
 
 /// \[DESIGN\] The most combinations of equal values `admits` hashes; past
 /// it a partition is admitted unhashed.
@@ -125,7 +125,7 @@ pub fn key_hash(key: &[Value]) -> u64 {
     for v in key {
         put_norm(&mut bytes, &v.norm());
     }
-    murmur3_x64_128(&bytes, SEED).0
+    xxh3_64_with_seed(&bytes, SEED)
 }
 
 /// A normalized value in the bytes hashed. A kind no hash key holds

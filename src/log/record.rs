@@ -41,6 +41,7 @@
 //! stale objects (23): checkpoint's position u64 | table | ids (count
 //!              u32, each u64)
 //! restore point (25): name | wall time i128
+//! insert rows (26): as `record/batch.rs` says
 //! table:   authorization identifier | identifier
 //! options: count u32, each: name | value
 //! zone:    time zone displacement in minutes, i128
@@ -68,11 +69,13 @@ use crate::value::types::TypeRegistry;
 /// The version of the format this code writes and reads.
 pub const RECORD_VERSION: u8 = 1;
 
+mod batch;
 mod definitions;
 mod kinds;
 mod lobs;
 pub mod marks;
 
+pub use batch::{insert_record, insert_rows_record};
 pub use definitions::DropTarget;
 use definitions::{
     create_index, defined, dropped, put_altered, put_create_index, put_defined, put_dropped, put_schema, put_sequence, schema, sequence,
@@ -80,8 +83,9 @@ use definitions::{
 use lobs::{lob_change, put_lob_change};
 
 use kinds::{
-    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, LOB_PUT, LOB_STALE,
-    OWNER, RECONFIGURATION, RESTORE_POINT, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, SPATIAL, STALE, STATEMENT_UNDONE, UPDATE, USER,
+    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, INSERT_ROWS, LOB_PUT,
+    LOB_STALE, OWNER, RECONFIGURATION, RESTORE_POINT, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, SPATIAL, STALE, STATEMENT_UNDONE, UPDATE,
+    USER,
 };
 pub use kinds::{KINDS, REPLICATED};
 
@@ -98,6 +102,16 @@ pub enum Change {
         row: RowId,
         /// The row inserted.
         after: Row,
+    },
+    /// \[EXTENSION\] Rows inserted together, each with its row id, as so
+    /// many `Insert`s (RULES.md D530).
+    InsertRows {
+        /// Their table.
+        table: QualifiedName,
+        /// The generation of the table's storage (`TableDesc::generation`).
+        generation: u32,
+        /// Each row's id and the row inserted.
+        rows: Vec<(RowId, Row)>,
     },
     /// A row updated, as it was and as it became.
     Update {
@@ -389,6 +403,7 @@ impl Record {
         out.put_u64(self.tx);
         match &self.change {
             Change::Insert { table, generation, row, after } => put_row_change(&mut out, (table, *generation, *row), &[after]),
+            Change::InsertRows { .. } => batch::put_change(&mut out, &self.change),
             Change::Update { table, generation, row, before, after } => {
                 put_row_change(&mut out, (table, *generation, *row), &[before, after]);
             }
@@ -426,10 +441,7 @@ impl Record {
                 put_value(&mut out, value.as_ref().unwrap_or(&Value::Null));
             }
             Change::User { name, verifier } => put_user(&mut out, name, verifier.as_deref()),
-            Change::RoleCreator { name, allowed } => {
-                out.put_str(name);
-                out.put_u8(u8::from(*allowed));
-            }
+            Change::RoleCreator { name, allowed } => put_creator(&mut out, name, *allowed),
             Change::Spatial(change) => crate::catalog::codec::put_spatial_change(&mut out, change),
         }
         out
@@ -455,6 +467,7 @@ impl Record {
         let tx = r.u64()?;
         let change = match tag {
             INSERT => Change::Insert { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, after: row(&mut r)? },
+            INSERT_ROWS => batch::rows_change(&mut r)?,
             UPDATE => {
                 Change::Update { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, before: row(&mut r)?, after: row(&mut r)? }
             }
@@ -517,6 +530,12 @@ fn put_user(out: &mut Vec<u8>, name: &str, verifier: Option<&[u8]>) {
     if let Some(verifier) = verifier {
         out.put_bytes(verifier);
     }
+}
+
+/// A role creator's name, and whether it may create roles.
+fn put_creator(out: &mut Vec<u8>, name: &str, allowed: bool) {
+    out.put_str(name);
+    out.put_u8(u8::from(allowed));
 }
 
 /// What `put_user` wrote, as a change.

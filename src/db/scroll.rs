@@ -258,6 +258,9 @@ fn sort_of(plan: Plan) -> std::result::Result<(Vec<SortKey>, Plan), Box<Plan>> {
             | Plan::OuterJoin { .. }
             | Plan::IndexJoin { .. }
             | Plan::MergeJoin(_)
+            | Plan::RangeJoin(_)
+            | Plan::SemiJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::Aggregate { .. }
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }
@@ -270,7 +273,8 @@ fn sort_of(plan: Plan) -> std::result::Result<(Vec<SortKey>, Plan), Box<Plan>> {
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }
-            | Plan::Parallel(..)) => return Err(Box::new(other)),
+            | Plan::Parallel(..)
+            | Plan::Counted(_)) => return Err(Box::new(other)),
         }
     }
 }
@@ -299,6 +303,9 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             | Plan::OuterJoin { .. }
             | Plan::IndexJoin { .. }
             | Plan::MergeJoin(_)
+            | Plan::RangeJoin(_)
+            | Plan::SemiJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::Aggregate { .. }
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }
@@ -311,7 +318,8 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }
-            | Plan::Parallel(..)) => {
+            | Plan::Parallel(..)
+            | Plan::Counted(_)) => {
                 layers.reverse();
                 return (layers, other);
             }

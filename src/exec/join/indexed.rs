@@ -16,12 +16,11 @@ use std::sync::Arc;
 use super::super::entries::{Reading, fetch};
 use super::super::project::Columns;
 use super::super::read::Asked;
-use super::super::{RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
+use super::super::{Db, RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
-use crate::db::State;
 use crate::error::Result;
 use crate::functions::ScalarRef;
-use crate::index::{Entries, Index, Key, KeyOrder};
+use crate::index::{Entries, Index, Key, KeyOrder, Using};
 use crate::logical::{Cond, Truth};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
@@ -44,17 +43,41 @@ use routed::{Opened, Routes};
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
-pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     projected(plan, None, db, tx)
 }
 
 /// Fuse a column projection into a join, preserving its full predicate.
 #[inline(never)]
-pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, tx: TxId) -> RowIter {
+    let db_for = db.clone();
+    projected_over(plan, (output, Box::new(move |left| execute(left, &db_for, tx))), db, tx)
+}
+
+/// What gives the rows of a join's operand, of its plan.
+pub(in crate::exec) type Reads = Box<dyn FnOnce(Plan) -> RowIter + Send>;
+
+/// \[DESIGN\] (RULES.md D600) The rows of the index join `plan`, its left
+/// operand's rows those `read` gives of it, as a stream told a runtime
+/// filter gives them.
+#[inline(never)]
+pub(in crate::exec) fn indexed_over(plan: Plan, read: Reads, db: &Db, tx: TxId) -> RowIter {
+    projected_over(plan, (None, read), db, tx)
+}
+
+/// `projected`, the rows of its left operand those `read` gives.
+fn projected_over(plan: Plan, (output, read): (Option<Columns>, Reads), db: &Db, tx: TxId) -> RowIter {
     let Plan::IndexJoin { outer, spatial, left, table, index, probe, cond, width, columns: needed, located, .. } = plan else {
         return failed(broken("an index join is not one"));
     };
     let inner = matches!(outer, Preserved::Inner);
+    // Of a semi join or an antijoin, the first match decides each left row.
+    let first = match outer {
+        Preserved::Semi => Some(false),
+        Preserved::Anti => Some(true),
+        Preserved::Inner | Preserved::Outer | Preserved::Both(_) => None,
+    };
+    let nulls = (first.is_none() && !inner).then(|| vec![Value::Null; width]);
     let opened = opened(db, &table, &index)
         .and_then(|(storage, found, ix, routes)| Ok((storage, found, ix, routes, Matched::of(outer, &needed, db)?)));
     match opened {
@@ -70,12 +93,14 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
                     stop: db.tx.stop_of(tx),
                     located,
                     routes,
+                    using: Using::of(db.uses_of(&index)),
                 },
                 budget: prepared::budget(db).filter(|_| matches!(probe, JoinProbe::Predicate { .. })).map(Arc::clone),
                 prepared: None,
                 probe,
                 cond,
-                nulls: (!inner).then(|| vec![Value::Null; width]),
+                nulls,
+                first,
                 matched,
                 runner: Runner::new(db, tx),
                 current: None,
@@ -83,7 +108,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
                 output,
                 refinement: None,
             };
-            driven(joined, (spatial, *left), (inner, needed.into_vec()), db)
+            driven(joined, (spatial, *left, read), (inner, needed.into_vec()), db)
         }
         Err(e) => failed(e),
     }
@@ -92,7 +117,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
 /// What an index join of `table` by `index` reads: the table's rows, the
 /// index, its key's shape, and \[EXTENSION\] of a partitioned table's
 /// template, the routes of its probes (`indexed/routed.rs`).
-fn opened(db: &Arc<State>, table: &QualifiedName, index: &str) -> Result<Opened> {
+fn opened(db: &Db, table: &QualifiedName, index: &str) -> Result<Opened> {
     if let Some((storage, found, ix, routes)) = routed::opened(db, table, index)? {
         return Ok((storage, found, ix, routes));
     }
@@ -101,23 +126,23 @@ fn opened(db: &Arc<State>, table: &QualifiedName, index: &str) -> Result<Opened>
     Ok((storage, Arc::clone(db.index_of(index)?), ix, None))
 }
 
-/// `joined` driven by the rows of `left`, or, of a spatial join, perhaps
+/// `joined` driven by the rows of `left`, as `read` gives them, or, of a spatial join, perhaps
 /// by a scan of its table (`indexed/adaptive.rs`) or a traversal of both
 /// tables' trees (`indexed/paired.rs`).
 fn driven(
     mut joined: IndexJoin,
-    (spatial, left): (Option<Box<Spatial>>, Plan),
+    (spatial, left, read): (Option<Box<Spatial>>, Plan, Reads),
     (inner, needed): (bool, Vec<usize>),
-    db: &Arc<State>,
+    db: &Db,
 ) -> RowIter {
     match spatial.map(|spatial| *spatial) {
         Some(Spatial::Paired(paired)) => paired::start(joined, (*paired, left), db),
         Some(Spatial::Adaptive) => {
-            joined.left = execute(left, db, joined.table.tx);
+            joined.left = read(left);
             if inner { adaptive::start(joined, needed, db) } else { Box::new(joined) }
         }
         None => {
-            joined.left = execute(left, db, joined.table.tx);
+            joined.left = read(left);
             Box::new(joined)
         }
     }
@@ -140,6 +165,9 @@ struct Probed {
     /// \[EXTENSION\] Of a partitioned table's template, each partition's
     /// index, a probe routed to those its values may be in.
     routes: Option<Routes>,
+    /// Its probes and the entries they gave, counted as the index's
+    /// (RULES.md D522).
+    using: Using,
 }
 
 impl Probed {
@@ -155,6 +183,7 @@ impl Probed {
         };
         Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
+        self.using.searched();
         let entries = match &self.routes {
             Some(routes) => routes.search(&probe),
             None => Arc::clone(&self.index).search(&probe, KeyOrder::Ascending),
@@ -166,6 +195,7 @@ impl Probed {
     /// followed by its id if located.
     fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
+        self.using.gave(1);
         let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
         Ok(found.map(|(_, mut row)| {
             if self.located {
@@ -191,6 +221,9 @@ struct IndexJoin {
     prepared: Option<Cond>,
     /// Of a LEFT or FULL join, the nulls of a table row.
     nulls: Option<Vec<Value>>,
+    /// \[DESIGN\] Of a semi join, false, of an antijoin, true: each left
+    /// row is given alone, at its first match or of none (RULES.md D540).
+    first: Option<bool>,
     /// Of a FULL join, the table rows paired, and then those that were not.
     matched: Option<Matched>,
     runner: Runner,
@@ -231,7 +264,11 @@ impl IndexJoin {
             let Some(entry) = entries.next() else {
                 self.prepared = None;
                 self.refinement = None;
-                // Its entries read: of a LEFT join, kept with nulls if none was.
+                // Its entries read: of an antijoin, kept alone if none was.
+                if let (Some(true), false) = (self.first, found) {
+                    return self.project(l).map(Step::Row);
+                }
+                // Of a LEFT join, kept with nulls if none was.
                 if let (Some(nulls), false) = (&self.nulls, found) {
                     let row = l.into_iter().chain(nulls.iter().cloned()).collect();
                     return self.project(row).map(Step::Row);
@@ -247,9 +284,20 @@ impl IndexJoin {
                 matched.add(id)?;
             }
             if let Some(joined) = kept? {
-                return Ok(Step::Row(joined));
+                return self.decided(joined);
             }
         }
+    }
+
+    /// The step of a pair the condition kept, `joined`: the pair; or of a
+    /// semi join its left row, or of an antijoin none, its other entries
+    /// left unread.
+    fn decided(&mut self, joined: Row) -> Result<Step> {
+        let Some(anti) = self.first else { return Ok(Step::Row(joined)) };
+        let Some((l, _, _)) = self.current.take() else { return Err(broken("an index semi join lost its left row")) };
+        self.prepared = None;
+        self.refinement = None;
+        if anti { Ok(Step::ProbeEnd) } else { self.project(l).map(Step::Row) }
     }
 
     /// `l` joined with the row of `entry`, if the version read has it and
@@ -290,6 +338,7 @@ impl IndexJoin {
         self.prepared = None;
         if self.output.is_some()
             && self.nulls.is_none()
+            && self.first.is_none()
             && let Some(binding) = Binding::of(self, row.len()).filter(|binding| binding.rest.is_none())
         {
             let function = binding.prepared(row, self.budget.as_ref())?;
@@ -321,6 +370,7 @@ impl Iterator for IndexJoin {
 mod tests {
     use super::*;
     use crate::catalog::{MemoryCatalog, QualifiedName, TableDesc};
+    use crate::db::State;
     use crate::engine::rows::{ROW_STORE, RowStore, TableOptions};
     use crate::error::Code;
     use crate::storage::StorageEngine;
@@ -352,7 +402,8 @@ mod tests {
     /// rather than panicking (RULES.md R-ERR-1).
     #[test]
     fn a_join_of_what_is_not_there_is_reported() {
-        let code = |st: &Arc<State>, plan: Plan| indexed(plan, st, NO_TRANSACTION).collect::<Result<Vec<Row>>>().err().map(|e| e.code);
+        let code =
+            |st: &Arc<State>, plan: Plan| indexed(plan, &Db::of(st), NO_TRANSACTION).collect::<Result<Vec<Row>>>().err().map(|e| e.code);
         let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
         let empty = Arc::new(State::with_builtins(Box::new(MemoryCatalog::default())));
         assert_eq!(code(&empty, Plan::Values { rows: Vec::new(), detail: String::new() }), Some(Code::Api));

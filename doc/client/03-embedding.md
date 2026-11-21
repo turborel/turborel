@@ -152,6 +152,12 @@ fn main() -> Result<(), turborel::error::SqlError> {
 `explain` gives the text of a query's plan that [EXPLAIN](../sql/statements/explain.md)
 shows as rows, without running it, its parameters of the values a
 `Params` gives. `physical_plan` gives the physical plan alone.
+`explain_analyze` runs the query and gives the text EXPLAIN ANALYZE
+shows, and `analyzed` gives each operator's line, estimate, rows, loops
+and time as an `Analyzed`. `with_cardinalities` gives the planner row
+counts in place of its estimates for every statement the session plans
+after, each for a set of a query's relations named by their correlation
+names. An empty `Injected` brings the estimates back.
 
 ## Parameters
 
@@ -227,8 +233,9 @@ fn main() -> Result<(), turborel::error::SqlError> {
 statement stays valid across transactions. A query, an INSERT, and a
 searched or positioned UPDATE or DELETE keep their plan between
 executions, a query also when SQL text opens it as a dynamic cursor:
-each execution puts its values in the kept plan and chooses indexes by
-them. A query, a searched UPDATE or a searched DELETE that finds one
+each execution reads its values where the kept plan names them, the
+plan itself never copied, and a plan whose paths follow them is chosen
+by them. A query, a searched UPDATE or a searched DELETE that finds one
 row by a unique key, `WHERE K = ?` of a PRIMARY KEY or UNIQUE column K,
 keeps its access path too, so its executions choose nothing. Another query keeps its access paths once
 five executions in a row choose the same ones, as `WHERE K BETWEEN ? AND
@@ -242,8 +249,11 @@ among them), when a setting of the database or
 of the session is set, or when the session's schema, authorization
 identifier or time zone changes; a plan that holds the statement's
 instant, of CURRENT_TIMESTAMP in the statement or a view it reads, or of
-a DEFAULT it writes, is made at each execution. `plans_made` counts the plans a statement's
-executions made.
+a DEFAULT it writes, is made at each execution. A statement prepared
+alike in another session of the database, of the same text, collation
+and parameter types, shares what the first keeps, and its executions
+take the kept plan while what it was made with holds for them.
+`plans_made` counts the plans a statement's executions made.
 
 ```rust
 use turborel::db::Database;

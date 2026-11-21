@@ -6,7 +6,7 @@
 
 use super::group::{Group, PART_ROWS, Pages, Seal};
 use super::prepared::Prepared;
-use super::{Chunk, bloom, padding};
+use super::{Chunk, bloom, imprints, padding};
 use crate::error::Result;
 use crate::storage::{Column, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Row, Texts};
 use crate::value::datetime::Moment;
@@ -45,8 +45,26 @@ pub fn candidates(group: &Group, conditions: Option<&Conjunction>) -> Vec<(u32, 
 ///
 /// As `Pages::with`.
 pub fn read_candidates<S: Seal>(group: &Group, pages: &Pages<'_, S>, conditions: Option<&Conjunction>) -> Result<Vec<(u32, u32)>> {
+    read_ordered(group, pages, conditions).map(|(runs, _)| runs)
+}
+
+/// As `read_candidates`, narrowed further by imprints, each conjunct's
+/// at the grain of their blocks (`imprints.rs`, RULES.md D511); and, of a
+/// group with imprints, the places of `conditions`' conjuncts, narrowest
+/// first, by the rows each alone keeps of the group by its zone maps and
+/// imprints, so a scan judges first the one that keeps fewest.
+///
+/// # Errors
+///
+/// As `Pages::with`.
+pub fn read_ordered<S: Seal>(
+    group: &Group,
+    pages: &Pages<'_, S>,
+    conditions: Option<&Conjunction>,
+) -> Result<(imprints::Runs, Vec<usize>)> {
     let mut runs = candidates(group, conditions);
-    for condition in conditions.iter().flat_map(|c| c.conjuncts()) {
+    let Some(conditions) = conditions.filter(|_| !runs.is_empty()) else { return Ok((runs, Vec::new())) };
+    for condition in conditions.conjuncts() {
         if runs.is_empty() {
             break;
         }
@@ -54,11 +72,32 @@ pub fn read_candidates<S: Seal>(group: &Group, pages: &Pages<'_, S>, conditions:
             runs = both(&runs, &kept);
         }
     }
-    Ok(runs)
+    // Without imprints the order stays as written: by zone maps alone, a
+    // conjunct keeping fewer parts may keep more rows, and cost more.
+    if !group.imprinted() {
+        return Ok((runs, Vec::new()));
+    }
+    let all = [(0, group.rows)];
+    let mut kept: Vec<(usize, u64)> = conditions.conjuncts().iter().map(|c| rows_of(&kept_by(group, c))).enumerate().collect();
+    for (n, alone) in imprints::each_kept(group, pages, conditions, &all)? {
+        if let Some(k) = kept.get_mut(n) {
+            k.1 = rows_of(&alone);
+        }
+        if !runs.is_empty() {
+            runs = both(&runs, &imprints::bridged(&alone));
+        }
+    }
+    kept.sort_by_key(|&(_, rows)| rows);
+    Ok((runs, kept.into_iter().map(|(n, _)| n).collect()))
+}
+
+/// The rows of `runs`.
+fn rows_of(runs: &[(u32, u32)]) -> u64 {
+    runs.iter().map(|(from, to)| u64::from(to.saturating_sub(*from))).sum()
 }
 
 /// The runs in both `a` and `b`, each in order and apart.
-fn both(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
+pub(super) fn both(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
     let mut out = Vec::new();
     let (mut i, mut j) = (0_usize, 0_usize);
     while let (Some(&(a_from, a_to)), Some(&(b_from, b_to))) = (a.get(i), b.get(j)) {
@@ -76,16 +115,35 @@ fn both(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
 }
 
 /// The runs of positions of `group`'s rows that `condition` may match, in
-/// order: every row if it reads more than one column; else those of the
-/// parts of its column's chunks, `PART_ROWS` rows each, whose values may
-/// match: by their least and greatest values, or, for IS NULL and IS NOT
-/// NULL, their nulls.
+/// order: those of the parts of its column's chunks, `PART_ROWS` rows
+/// each, whose values may match: by their least and greatest values, or,
+/// for IS NULL and IS NOT NULL, their nulls; of a conjunct of several
+/// columns, those of the parts of each that it may match with the others'
+/// values anywhere in the group (RULES.md D511).
 fn kept_by(group: &Group, condition: &Conjunct) -> Vec<(u32, u32)> {
-    let all = vec![(0, group.rows)];
     let columns = condition.columns();
-    let [column] = columns.as_slice() else { return all };
-    let Some(zones) = group.columns.get(*column) else { return all };
-    let mut bounds: Vec<Option<(Value, Value)>> = vec![None; column.saturating_add(1)];
+    let width = columns.iter().max().map_or(0, |c| c.saturating_add(1));
+    // Of a conjunct of several columns, each column's parts with the
+    // others' bounds over the group: the rows of every one it may match.
+    let mut runs = vec![(0, group.rows)];
+    for &column in &columns {
+        let mut bounds: Vec<Option<(Value, Value)>> = vec![None; width];
+        for &other in columns.iter().filter(|&&o| o != column) {
+            if let (Some(slot), Some(zones)) = (bounds.get_mut(other), group.columns.get(other)) {
+                *slot = imprints::whole(zones);
+            }
+        }
+        runs = both(&runs, &kept_of(group, condition, (column, bounds)));
+    }
+    runs
+}
+
+/// The runs of positions of `group`'s rows, of the parts of `column`'s
+/// chunks, `condition` may match, of `bounds` of the other columns it
+/// reads.
+fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Vec<Option<(Value, Value)>>)) -> Vec<(u32, u32)> {
+    let column = &column;
+    let Some(zones) = group.columns.get(*column) else { return vec![(0, group.rows)] };
     let mut runs: Vec<(u32, u32)> = Vec::new();
     let parts = zones.iter().flat_map(|zone| {
         let end = zone.run.first.saturating_add(zone.run.rows);
@@ -101,7 +159,12 @@ fn kept_by(group: &Group, condition: &Conjunct) -> Vec<(u32, u32)> {
         let may = match condition {
             Conjunct::Null { not: false, .. } => part.nulls > 0,
             Conjunct::Null { not: true, .. } => part.nulls < to.saturating_sub(from),
-            Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) => condition.may_match(&bounds),
+            Conjunct::Condition(_)
+            | Conjunct::In { .. }
+            | Conjunct::NotIn { .. }
+            | Conjunct::Any(_)
+            | Conjunct::Dynamic { .. }
+            | Conjunct::Spans { .. } => condition.may_match(&bounds),
         };
         if !may {
             continue;

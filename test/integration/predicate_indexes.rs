@@ -39,7 +39,9 @@ fn candidates_are_rechecked_against_the_whole_condition() {
         for (sql, expected) in queries.iter().zip(scanned) {
             assert_eq!(rows(&s, sql).unwrap(), expected, "{sql}");
             let shown = plan(&s, sql);
-            assert!(shown.contains("IndexScan") && shown.contains("Filter NEXT_TO"), "{shown}");
+            // The filter rechecks NEXT_TO, its conjuncts in the order their ranks give (RULES.md D650).
+            let rechecks = shown.lines().any(|line| line.trim_start().starts_with("Filter") && line.contains("NEXT_TO"));
+            assert!(shown.contains("IndexScan") && rechecks, "{shown}");
             assert!(!shown.contains("IndexOnlyScan"), "{shown}");
         }
         assert!(seen.lock().unwrap().iter().any(|(_, argument, _)| *argument == 1));

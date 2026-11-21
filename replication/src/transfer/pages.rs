@@ -50,9 +50,11 @@ impl PageDifferences {
     }
 }
 
-/// FNV-1a of `bytes`: what a block hashes to.
+/// What a block hashes to: XXH3-64 of its bytes (RULES.md D460), so a
+/// block kept here is taken for the primary's only when they agree on
+/// every bit the hash sees.
 fn hash(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+    turborel::hash::xxhash::xxh3_64(bytes)
 }
 
 /// A request, as a frame: the tag, the fetch's number, what for, of which

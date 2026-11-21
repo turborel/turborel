@@ -51,6 +51,8 @@ impl State {
     /// As for `commit`; and the error of `publish`, the transaction having
     /// committed.
     pub(crate) fn commit_publishing(&self, tx: &Txn, publish: &mut dyn FnMut(Timestamp) -> Result<()>) -> Result<()> {
+        // A load under way is ended before it commits (RULES.md D532).
+        self.end_load(tx)?;
         let (joined, wrote) = {
             let mut st = tx.state()?;
             // One that wrote keeps its participants, for its rollback if the commit fails; one that read alone
@@ -79,21 +81,24 @@ impl State {
         let validated =
             tx.check_definitions().and_then(|()| tx.check_undone()).and_then(|()| self.validate_participants(tx, &joined)).and_then(
                 |(participants, mut committing)| {
-                    let lsn = tx.append_commit(committing.at, self.clock.now())?;
+                    let now = self.clock.now();
+                    let lsn = tx.append_commit(committing.at, now)?;
                     if lsn.is_some() {
                         committing.syncs();
                     }
-                    Ok((participants, committing, lsn))
+                    Ok((participants, committing, (lsn, now)))
                 },
             );
         match validated {
-            Ok((participants, committing, lsn)) => {
+            Ok((participants, committing, (lsn, now))) => {
                 // Phase 2 uses storages already found, so it cannot fail part
                 // way. Each engine makes the changes committed at once, as
                 // the row store does with one store (RULES.md D440).
                 for storage in &participants {
                     storage.commit(tx.id, committing.at);
                 }
+                // When each table it wrote last changed (RULES.md D522).
+                tx.stamp_written(now);
                 let at = committing.at;
                 let published = publish(at);
                 // The commit has reached every engine: it has ended, and is

@@ -1,35 +1,31 @@
-//! \[DESIGN\] RULES.md D38: a spilled sort's runs, and their merge. A run
-//! is written as chunks of its rows, each a record, their vectors and each
-//! row's head beside them (`chunk.rs`): a tag of the kind of its first
-//! key's prefix (`prefix.rs`), if its value has one, and of whether the
-//! prefix holds the value whole; and the prefix. The merge reads each run
-//! a batch of records at a time (`SpillRun::into_batches`), each chunk's
-//! vectors once, and orders the runs' next rows by their prefixes,
-//! comparing the rows' values where they lie in their vectors only when
-//! prefixes of kinds alike tie, or either has none; a row is made of its
-//! values only when it is given. A pass that writes a run again writes the
-//! rows merged as chunks of as many rows as its runs' first chunks held,
-//! the most of them. Rows of equal prefixes held whole are compared by the
-//! other keys alone. A tie goes to the earlier run, so the merge is
+//! \[DESIGN\] RULES.md D38, D364: a spilled sort's runs, and their merge. A
+//! run is written as chunks of its rows, each a record, their vectors and
+//! their normal keys beside them (`chunk.rs`). The merge reads each run a
+//! batch of records at a time (`SpillRun::into_batches`), each chunk's
+//! vectors once, and gives the runs' next rows in order by a tree of losers
+//! (`merge/losers.rs`). Two rows of keys of one layout are ordered by their
+//! keys' bytes, and only if those are equal and may hide a difference, by
+//! the rows' values where they lie in their vectors; rows of keys of two
+//! layouts, or of none, by their values. A row is made of its values only
+//! when it is given. A pass that writes a run again writes the rows merged
+//! as chunks of as many rows as its runs' first chunks held, the most of
+//! them, with their keys. A tie goes to the earlier run, so the merge is
 //! stable, and its order is the one comparing the rows whole gives
 //! (`compare_rows`).
 
+mod losers;
+
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::sync::Arc;
 
-use super::chunk::{Chunk, Pick, chunk, put_chunk};
-use super::prefix::{Kind, Prefix, alike};
+use super::chunk::{Chunk, Keys, Pick, chunk, put_chunk};
 use super::vectors::{compare_cells, row_of};
 use crate::error::{Code, Result, SqlError};
 use crate::logical::SortKey;
 use crate::spill::{Batch, Batches, SpillRun, SpilledLobs};
 use crate::storage::Row;
 use crate::value::types::TypeRegistry;
-
-/// A tag's bit saying its prefix holds its value whole; the rest are its
-/// kind's code (`Kind::code`), 0 if it has none.
-const WHOLE: u8 = 0x80;
+use losers::Losers;
 
 /// What a merge orders rows by: the keys, the types beyond the
 /// standard its rows' values may be of, to decode them, and the sources
@@ -48,12 +44,6 @@ impl Order {
     }
 }
 
-/// The head of a row whose first key's value has `prefix`: its tag and
-/// its prefix.
-pub(super) fn head(prefix: Option<Prefix>) -> (u8, u64) {
-    prefix.map_or((0, 0), |p| (if p.whole { p.kind.code() | WHOLE } else { p.kind.code() }, p.bits))
-}
-
 /// A chunk shorter than its rows say.
 fn short() -> SqlError {
     SqlError::new(Code::Corrupt, "[DESIGN] a sorted run's chunk is short")
@@ -67,22 +57,20 @@ fn short() -> SqlError {
 /// The runs' own; SQLCODE -916 of a record not a chunk.
 pub(super) fn merge(order: &Arc<Order>, runs: Vec<Box<dyn SpillRun>>) -> Result<Merge> {
     let mut sources = Vec::with_capacity(runs.len());
+    let mut each = 0_usize;
     for run in runs {
-        let records = Batch::default();
-        sources.push(Source { batches: run.into_batches()?, records, record: 0, chunk: Arc::new(empty()), next: 0 });
+        let mut source = Source { batches: run.into_batches()?, records: Batch::default(), record: 0, chunk: Arc::new(empty()), at: 0 };
+        source.next_chunk(order)?;
+        each = each.max(source.chunk.batch.rows);
+        sources.push(source);
     }
-    let mut merge = Merge { order: Arc::clone(order), sources, heads: BinaryHeap::new(), each: 0 };
-    for source in 0..merge.sources.len() {
-        merge.refill(source)?;
-        let rows = merge.sources.get(source).map_or(0, |s| s.chunk.batch.rows);
-        merge.each = merge.each.max(rows);
-    }
-    Ok(merge)
+    let losers = Losers::new(sources.len(), |a, b| before(&order.keys, &sources, a, b));
+    Ok(Merge { order: Arc::clone(order), sources, losers, each })
 }
 
 /// A chunk of no row.
 fn empty() -> Chunk {
-    Chunk { tags: Vec::new(), prefixes: Vec::new(), batch: crate::storage::Batch { columns: Vec::new(), rows: 0 } }
+    Chunk { layout: 0, truncates: false, width: 0, keys: Vec::new(), batch: crate::storage::Batch { columns: Vec::new(), rows: 0 } }
 }
 
 /// A run being merged: its batches of records, the one being read and
@@ -93,38 +81,88 @@ struct Source {
     records: Batch,
     record: usize,
     chunk: Arc<Chunk>,
-    next: usize,
+    at: usize,
 }
 
-/// Runs being merged: each one's next row in the heap, first the least;
+impl Source {
+    /// Its next row, where it lies; none once it has given every one.
+    fn head(&self) -> Option<(&Chunk, usize)> {
+        (self.at < self.chunk.batch.rows).then_some((&*self.chunk, self.at))
+    }
+
+    /// Reads its next chunk of a row or more, if any, as `order` reads it.
+    fn next_chunk(&mut self, order: &Order) -> Result<()> {
+        self.at = 0;
+        loop {
+            while self.record >= self.records.len() {
+                let Some(records) = self.batches.next() else {
+                    self.chunk = Arc::new(empty());
+                    return Ok(());
+                };
+                (self.records, self.record) = (records?, 0);
+            }
+            let record = self.records.get(self.record).ok_or_else(short)?;
+            self.chunk = Arc::new(chunk(record, &order.types, &order.lobs)?);
+            self.record = self.record.saturating_add(1);
+            if self.chunk.batch.rows > 0 {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Moves past its next row.
+    fn advance(&mut self, order: &Order) -> Result<()> {
+        self.at = self.at.saturating_add(1);
+        if self.at >= self.chunk.batch.rows { self.next_chunk(order) } else { Ok(()) }
+    }
+}
+
+/// Whether the next row of source `a` of `sources` goes before source
+/// `b`'s under `keys`. A run that has given every row goes last, and a tie
+/// goes to the earlier run.
+fn before(keys: &[SortKey], sources: &[Source], a: usize, b: usize) -> bool {
+    let heads = sources.get(a).and_then(Source::head).zip(Some(sources.get(b).and_then(Source::head)));
+    match heads {
+        Some((x, Some(y))) => compared(keys, x, y).then(a.cmp(&b)).is_lt(),
+        Some((_, None)) => true,
+        None => sources.get(b).and_then(Source::head).is_none() && a < b,
+    }
+}
+
+/// The order of row `ax` of chunk `x` and row `ay` of `y` under `keys`
+/// [X3.135-1986 §8.3 GR3b]: by their keys, if of one layout, and by their
+/// values if those are equal and may hide a difference, or of no layout.
+fn compared(keys: &[SortKey], (x, ax): (&Chunk, usize), (y, ay): (&Chunk, usize)) -> Ordering {
+    if x.layout != 0 && x.layout == y.layout {
+        let by_keys = x.key(ax).cmp(y.key(ay));
+        if by_keys.is_ne() || !x.truncates {
+            return by_keys;
+        }
+    }
+    compare_cells(keys, (&x.batch, ax), (&y.batch, ay))
+}
+
+/// Runs being merged: each one's next row a leaf of the tree of losers;
 /// and the rows of a chunk a pass writes.
 pub(super) struct Merge {
     order: Arc<Order>,
     sources: Vec<Source>,
-    heads: BinaryHeap<Head>,
+    losers: Losers,
     each: usize,
 }
 
 impl Merge {
-    /// Puts the next row of `source`, if any, in the heap.
-    fn refill(&mut self, source: usize) -> Result<()> {
-        let Some(from) = self.sources.get_mut(source) else { return Ok(()) };
-        while from.next >= from.chunk.batch.rows {
-            while from.record >= from.records.len() {
-                let Some(records) = from.batches.next() else { return Ok(()) };
-                (from.records, from.record) = (records?, 0);
-            }
-            let record = from.records.get(from.record).ok_or_else(short)?;
-            (from.chunk, from.next) = (Arc::new(chunk(record, &self.order.types, &self.order.lobs)?), 0);
-            from.record = from.record.saturating_add(1);
-        }
-        let at = from.next;
-        from.next = at.saturating_add(1);
-        let tag = *from.chunk.tags.get(at).ok_or_else(short)?;
-        let prefix = *from.chunk.prefixes.get(at).ok_or_else(short)?;
-        let (chunk, order) = (Arc::clone(&from.chunk), Arc::clone(&self.order));
-        self.heads.push(Head { tag, prefix, chunk, at, source, order });
-        Ok(())
+    /// The next row's chunk and place, and the source past it; none once
+    /// every run has given every row.
+    fn taken(&mut self) -> Result<Option<(Arc<Chunk>, usize)>> {
+        let winner = self.losers.winner();
+        let Some(source) = self.sources.get_mut(winner) else { return Ok(None) };
+        let Some((_, at)) = source.head() else { return Ok(None) };
+        let chunk = Arc::clone(&source.chunk);
+        source.advance(&self.order)?;
+        let (keys, sources) = (&self.order.keys, &self.sources);
+        self.losers.replay(|a, b| before(keys, sources, a, b));
+        Ok(Some((chunk, at)))
     }
 
     /// Writes the rows, merged, to `run`, as chunks of as many rows as its
@@ -135,9 +173,8 @@ impl Merge {
     /// The runs' own.
     pub(super) fn write_to(mut self, run: &mut dyn SpillRun) -> Result<()> {
         let (mut pending, mut out) = (Vec::with_capacity(self.each), Vec::new());
-        while let Some(head) = self.heads.pop() {
-            self.refill(head.source)?;
-            pending.push(head);
+        while let Some(taken) = self.taken()? {
+            pending.push(taken);
             if pending.len() >= self.each.max(1) {
                 written(&mut pending, run, (&mut out, &self.order.lobs))?;
             }
@@ -147,14 +184,16 @@ impl Merge {
 }
 
 /// Writes `pending`, if any, to `run` as a chunk, made in `out`, naming
-/// what `lobs` holds; then none are pending.
-fn written(pending: &mut Vec<Head>, run: &mut dyn SpillRun, (out, lobs): (&mut Vec<u8>, &SpilledLobs)) -> Result<()> {
-    if pending.is_empty() {
-        return Ok(());
-    }
-    let heads: Vec<(u8, u64)> = pending.iter().map(|h| (h.tag, h.prefix)).collect();
-    let rows: Vec<Pick<'_>> = pending.iter().map(|h| (&h.chunk.batch, h.at)).collect();
-    put_chunk(&heads, &rows, out, lobs);
+/// what `lobs` holds, with their keys if all are of one layout; then none
+/// are pending.
+fn written(pending: &mut Vec<(Arc<Chunk>, usize)>, run: &mut dyn SpillRun, (out, lobs): (&mut Vec<u8>, &SpilledLobs)) -> Result<()> {
+    let Some((first, _)) = pending.first() else { return Ok(()) };
+    let (layout, truncates, width) = (first.layout, first.truncates, first.width);
+    let alike = layout != 0 && pending.iter().all(|(c, _)| c.layout == layout);
+    let bytes: Vec<u8> = if alike { pending.iter().flat_map(|(c, at)| c.key(*at).iter().copied()).collect() } else { Vec::new() };
+    let keys = if alike { Keys { layout, truncates, width, bytes: &bytes } } else { Keys::default() };
+    let rows: Vec<Pick<'_>> = pending.iter().map(|(c, at)| (&c.batch, *at)).collect();
+    put_chunk(keys, &rows, out, lobs);
     run.push(out)?;
     pending.clear();
     Ok(())
@@ -164,69 +203,18 @@ impl Iterator for Merge {
     type Item = Result<Row>;
 
     fn next(&mut self) -> Option<Result<Row>> {
-        let head = self.heads.pop()?;
-        let row = row_of(&head.chunk.batch, head.at);
-        Some(self.refill(head.source).map(|()| row))
-    }
-}
-
-/// A run's next row, read where it lies in its chunk. The heap's greatest
-/// is the least row, of the earliest run among equal ones.
-struct Head {
-    tag: u8,
-    prefix: u64,
-    chunk: Arc<Chunk>,
-    at: usize,
-    source: usize,
-    order: Arc<Order>,
-}
-
-impl Head {
-    /// Its prefix's kind, if it has one.
-    fn kind(&self) -> Option<Kind> {
-        Kind::of_code(self.tag & !WHOLE)
-    }
-
-    /// The order of its row and `other`'s [X3.135-1986 §8.3 GR3b]: by
-    /// their prefixes, if of kinds alike and unequal; else by the keys
-    /// after the first, if both prefixes hold their values whole, or by
-    /// every key, compared where the values lie.
-    fn order(&self, other: &Head) -> Ordering {
-        let by_prefix = self.kind().zip(other.kind()).is_some_and(|(a, b)| alike(a, b));
-        if by_prefix && self.prefix != other.prefix {
-            return self.prefix.cmp(&other.prefix);
+        match self.taken() {
+            Ok(Some((chunk, at))) => Some(Ok(row_of(&chunk.batch, at))),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
         }
-        let keys = &self.order.keys;
-        let whole = by_prefix && self.tag & other.tag & WHOLE != 0;
-        let ties = if whole { keys.get(1..).unwrap_or_default() } else { keys.as_slice() };
-        compare_cells(ties, (&self.chunk.batch, self.at), (&other.chunk.batch, other.at))
     }
 }
-
-impl Ord for Head {
-    fn cmp(&self, other: &Head) -> Ordering {
-        other.order(self).then(other.source.cmp(&self.source))
-    }
-}
-
-impl PartialOrd for Head {
-    fn partial_cmp(&self, other: &Head) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for Head {
-    fn eq(&self, other: &Head) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl Eq for Head {}
 
 #[cfg(test)]
 mod tests {
     use super::super::compare_rows;
-    use super::super::prefix::prefix_of;
+    use super::super::normal::{Layout, Shape, encode_row, seen_rows};
     use super::*;
     use crate::spill::testing::{Held, areas};
     use crate::spill::{Area, SpillArea};
@@ -245,29 +233,42 @@ mod tests {
         Vectors { columns, rows: rows.len() }
     }
 
-    /// Writes `rows`, sorted by `keys`, to `run` in chunks of 3 rows.
-    fn write(keys: &[SortKey], rows: &[Row], run: &mut dyn SpillRun) {
+    /// Writes `rows`, sorted by `keys`, to `run` in chunks of 3 rows, with
+    /// keys of `layout` numbered `number` if given.
+    fn write(rows: &[Row], layout: Option<(&Layout, u32)>, run: &mut dyn SpillRun) {
         let mut out = Vec::new();
         for chunk in rows.chunks(3) {
             let batch = vectors(chunk);
             let picks: Vec<Pick<'_>> = (0..chunk.len()).map(|r| (&batch, r)).collect();
-            let heads: Vec<(u8, u64)> =
-                chunk.iter().map(|row| head(keys.first().and_then(|k| prefix_of(&row[k.column], k.order())))).collect();
-            put_chunk(&heads, &picks, &mut out, &SpilledLobs::new());
+            let mut bytes = Vec::new();
+            let keys = layout.map_or_else(Keys::default, |(layout, number)| {
+                for row in chunk {
+                    let mut key = vec![0_u8; layout.width];
+                    encode_row(layout, row, &mut key).unwrap();
+                    bytes.extend(key);
+                }
+                Keys { layout: number, truncates: layout.truncates, width: layout.width, bytes: &bytes }
+            });
+            put_chunk(keys, &picks, &mut out, &SpilledLobs::new());
             run.push(&out).unwrap();
         }
     }
 
     /// Runs of `rows`, `each` to a run, each sorted by `keys`, stably, and
-    /// written as a spilled sort writes them.
+    /// written as a spilled sort writes them: with keys of one open layout
+    /// if the rows have one, every third run of none, and the second of
+    /// one of its own.
     fn runs(keys: &[SortKey], rows: &[Row], each: usize) -> Vec<Box<dyn SpillRun>> {
         let area = area();
+        let layout = Layout::new(keys, &seen_rows(keys, rows), Shape::Open);
         rows.chunks(each)
-            .map(|chunk| {
+            .enumerate()
+            .map(|(n, chunk)| {
                 let mut sorted = chunk.to_vec();
                 sorted.sort_by(|a, b| compare_rows(keys, a, b));
                 let mut run = area.run().unwrap();
-                write(keys, &sorted, &mut *run);
+                let number = if n == 1 { 2 } else { 1 };
+                write(&sorted, layout.as_ref().filter(|_| n % 3 != 2).map(|l| (l, number)), &mut *run);
                 run
             })
             .collect()
@@ -299,18 +300,17 @@ mod tests {
         (once, twice, whole)
     }
 
-    /// Verifies: [DESIGN] RULES.md D38 [X3.135-1986 §8.3 GR3b]: runs of
-    /// chunks of vectors merged by their rows' prefixes, in one pass or in
-    /// several, each writing chunks again, give the rows in the order
-    /// comparing them whole gives, stably: ASC and DESC, nulls among them
-    /// first or last [ISO/IEC 9075-2:2023 §10.10 GR1e ii], of integers
-    /// whose prefixes hold them whole, ties broken by the next key; of
-    /// strings longer than a prefix, alike in it; of binary strings long,
-    /// short and empty, whose prefix is a null's under NULLS FIRST
-    /// ascending; of exact numbers past 64 bits; of no key, the runs' order
-    /// kept.
+    /// Verifies: [DESIGN] RULES.md D38, D364 [X3.135-1986 §8.3 GR3b]: runs
+    /// of chunks of vectors merged by a tree of losers, by their rows' keys
+    /// of one layout, of two, or of none, in one pass or in several, each
+    /// writing chunks again, give the rows in the order comparing them
+    /// whole gives, stably: ASC and DESC, nulls among them
+    /// first or last [ISO/IEC 9075-2:2023 §10.10 GR1e ii], of integers,
+    /// ties broken by the next key; of strings longer than their keys hold,
+    /// alike in them; of binary strings long, short and empty; of exact
+    /// numbers past 64 bits; of no key, the runs' order kept.
     #[test]
-    fn merged_by_prefixes_as_compared_whole() {
+    fn merged_by_keys_as_compared_whole() {
         let int = |n: i128| Value::Exact(Decimal::new(n, 0_u32));
         let columns: [Box<dyn Fn(i128) -> Value>; 4] = [
             Box::new(move |n| if n % 7_i128 == 0 { Value::Null } else { int(n * 7919_i128 % 13_i128) }),
@@ -340,33 +340,18 @@ mod tests {
         assert_eq!(format!("{once:?} {twice:?}"), format!("{whole:?} {whole:?}"), "no key");
     }
 
-    /// Verifies: [DESIGN] RULES.md D38: a row whose tag is of a kind no
-    /// prefix has is ordered by its values whole; a record not a chunk, or
-    /// a chunk cut short, fails the merge as its run is read (SQLCODE
-    /// -916).
+    /// Verifies: [DESIGN] RULES.md D38: a record not a chunk, or a chunk
+    /// cut short, fails the merge as its run is read (SQLCODE -916).
     #[test]
-    fn records_unknown_or_broken() {
+    fn records_broken() {
         let keys = [SortKey::ascending(0)];
         let order = Arc::new(Order::new(&keys, TypeRegistry::default(), SpilledLobs::new()));
         let (area, mut out) = (area(), Vec::new());
-        let mut unknown = Vec::new();
-        for n in [3_i128, 1_i128] {
-            let mut run = area.run().unwrap();
-            let batch = vectors(&[vec![Value::Exact(Decimal::new(n, 0_u32))]]);
-            put_chunk(&[(WHOLE | 0x7f_u8, 0_u64)], &[(&batch, 0_usize)], &mut out, &SpilledLobs::new());
-            run.push(&out).unwrap();
-            unknown.push(run);
-        }
-        let rows = merge(&order, unknown).unwrap().collect::<Result<Vec<Row>>>().unwrap();
-        assert_eq!(
-            format!("{rows:?}"),
-            format!("{:?}", [[Value::Exact(Decimal::new(1_i128, 0_u32))], [Value::Exact(Decimal::new(3_i128, 0_u32))]])
-        );
         let mut short = area.run().unwrap();
         short.push(&[1_u8, 2_u8]).unwrap();
         assert_eq!(merge(&order, vec![short]).err().map(|e| e.code), Some(Code::Corrupt));
         let batch = vectors(&[vec![Value::Char("a string longer than a prefix".into())]]);
-        put_chunk(&[(0_u8, 0_u64)], &[(&batch, 0_usize)], &mut out, &SpilledLobs::new());
+        put_chunk(Keys::default(), &[(&batch, 0_usize)], &mut out, &SpilledLobs::new());
         out.truncate(out.len() - 3);
         let mut cut = area.run().unwrap();
         cut.push(&out).unwrap();

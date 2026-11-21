@@ -28,8 +28,8 @@ use super::super::work::Work;
 use super::super::{RowIter, Runner, eval_cond, execute, failed};
 use super::rescan::{Pass, Rescanned};
 use super::{Operand, equal, key};
-use crate::db::State;
 use crate::error::{Code, Result, SqlError};
+use crate::exec::Db;
 use crate::logical::{Cond, OuterJoin, Truth};
 use crate::physical::{JoinKey, Own, Plan};
 use crate::spill::{SpillRun, row_bytes};
@@ -120,11 +120,11 @@ pub(in crate::exec) struct Joining {
 /// inlined into `execute`, whose frame every level of a plan adds to the
 /// stack (RULES.md R-CF-6).
 #[inline(never)]
-pub(in crate::exec) fn outer(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn outer(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::OuterJoin { kind, left, right, keys, cond, own, widths, .. } = plan else {
         return failed(SqlError::new(Code::Api, "[DESIGN] an outer join is not one"));
     };
-    let later = Arc::clone(db);
+    let later = db.clone();
     let left_rows = move || execute(*left, &later, tx);
     outer_of(Joining { kind, keys, cond, own, widths }, execute(*right, db, tx), left_rows, (db, tx))
 }
@@ -134,7 +134,7 @@ pub(in crate::exec) fn outer(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// they were read. Never inlined into its callers, whose frames are on the
 /// stack while the operands are made (RULES.md R-CF-6).
 #[inline(never)]
-fn outer_of(joining: Joining, right: RowIter, left: impl FnOnce() -> RowIter, (db, tx): (&Arc<State>, TxId)) -> RowIter {
+fn outer_of(joining: Joining, right: RowIter, left: impl FnOnce() -> RowIter, (db, tx): (&Db, TxId)) -> RowIter {
     let spec = match spec_of(joining, (db, tx)) {
         Ok(spec) => spec,
         Err(e) => return failed(e),
@@ -162,7 +162,7 @@ fn outer_of(joining: Joining, right: RowIter, left: impl FnOnce() -> RowIter, (d
 /// # Errors
 ///
 /// An operand's own condition of a join on no keys (SQLCODE -910).
-pub(in crate::exec) fn spec_of(joining: Joining, (db, tx): (&Arc<State>, TxId)) -> Result<Spec> {
+pub(in crate::exec) fn spec_of(joining: Joining, (db, tx): (&Db, TxId)) -> Result<Spec> {
     let Joining { kind, keys, cond, own, widths } = joining;
     // An operand's own conditions are judged before its rows are matched
     // by keys; with none, every pair is judged, all of its condition.
@@ -478,6 +478,7 @@ impl Iterator for OuterRows {
 mod tests {
     use super::*;
     use crate::catalog::MemoryCatalog;
+    use crate::db::State;
     use crate::txn::NO_TRANSACTION;
 
     /// Verifies: [DESIGN] RULES.md D15: an outer join on no keys whose
@@ -499,7 +500,7 @@ mod tests {
             detail: String::new(),
             est: 0.0_f64,
         };
-        let code = outer(plan, &st, NO_TRANSACTION).collect::<Result<Vec<Row>>>().err().map(|e| e.code);
+        let code = outer(plan, &Db::of(&st), NO_TRANSACTION).collect::<Result<Vec<Row>>>().err().map(|e| e.code);
         assert_eq!(code, Some(Code::Api));
     }
 }

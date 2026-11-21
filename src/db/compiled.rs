@@ -9,7 +9,7 @@ use crate::binder::{DescribedKey, OutColumn, described_key, family_in, member_pl
 use crate::catalog::QualifiedName;
 use crate::error::{Result, Warnings};
 use crate::logical::LogicalPlan;
-use crate::optimizer::{INLINE_FUNCTIONS, UNNEST_SUBQUERIES, plugged};
+use crate::optimizer::{INLINE_FUNCTIONS, MARK_JOINS, SEMI_JOINS, UNNEST_SUBQUERIES, plugged};
 use crate::params::Params;
 use crate::physical::{PhysicalPlanner, Plan};
 use crate::value::Value;
@@ -41,9 +41,16 @@ pub(super) fn plan_rows(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&
     (optimized, trace, physical)
 }
 
+/// As `plan_rows`, its paths chosen by `values` and its `?`s left slots,
+/// as `plan_slotted` plans a query (RULES.md D422).
+pub(super) fn plan_rows_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
+    let (optimized, _) = plugged::optimize(st, logical, (None, ROW_ACCESS_OFF));
+    PhysicalPlanner::slotted(st, values).plan(&optimized)
+}
+
 /// The rules a plan of a table's rows read with their ids is optimized
 /// without, which would join other tables' rows with them.
-const ROW_ACCESS_OFF: &[&str] = &[UNNEST_SUBQUERIES, INLINE_FUNCTIONS];
+const ROW_ACCESS_OFF: &[&str] = &[SEMI_JOINS, MARK_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS];
 
 /// As `plan`, an extension's optimizer rule skipped raising its warning
 /// to `heard` (RULES.md D277).

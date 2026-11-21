@@ -22,6 +22,8 @@
 //! column's vector cannot be judged over is left to the filter.
 
 mod coded;
+mod sketched;
+mod sorted;
 
 use std::cmp::Ordering;
 
@@ -40,6 +42,8 @@ use crate::value::{CompOp, DataType, Decimal, Value, compare_strings};
 /// true of a null.
 #[derive(Debug, Clone)]
 struct Pred {
+    /// Its conjunct's place in the condition.
+    at: usize,
     column: usize,
     conjunct: Conjunct,
     of_null: bool,
@@ -71,17 +75,24 @@ impl Judgment {
     pub fn of(condition: Option<&Conjunction>, types: &[DataType]) -> Judgment {
         let preds = condition
             .iter()
-            .flat_map(|c| c.conjuncts())
-            .filter(|c| judged_conjunct(c))
-            .filter_map(|c| {
+            .flat_map(|c| c.conjuncts().iter().enumerate())
+            .filter(|(_, c)| judged_conjunct(c))
+            .filter_map(|(at, c)| {
                 let columns = c.columns();
                 let [column] = columns.as_slice() else { return None };
                 let column = *column;
                 types.get(column).filter(|t| judged_type(t))?;
-                Some(Pred { column, conjunct: c.clone(), of_null: c.matches_key(&[&Value::Null]) })
+                Some(Pred { at, column, conjunct: c.clone(), of_null: c.matches_key(&[&Value::Null]) })
             })
             .collect();
         Judgment { preds }
+    }
+
+    /// Puts its conjuncts in the order of `order`, their places in the
+    /// condition, narrowest first (`scan::read_ordered`, RULES.md D511);
+    /// one `order` leaves out after the rest, as they were.
+    pub fn order_by(&mut self, order: &[usize]) {
+        self.preds.sort_by_key(|p| order.iter().position(|&at| at == p.at).unwrap_or(usize::MAX));
     }
 
     /// Whether it judges nothing.
@@ -134,6 +145,9 @@ fn judged_conjunct(conjunct: &Conjunct) -> bool {
     match conjunct {
         Conjunct::Any(each) => each.iter().all(judged_leaf),
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } => judged_leaf(conjunct),
+        // A sort's bound, and a join's spans, pass over groups and parts
+        // alone (RULES.md D379, D600).
+        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => false,
     }
 }
 
@@ -144,7 +158,7 @@ fn judged_leaf(conjunct: &Conjunct) -> bool {
         | Conjunct::Null { .. }
         | Conjunct::In { .. }
         | Conjunct::NotIn { .. } => true,
-        Conjunct::Condition(_) | Conjunct::Any(_) => false,
+        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => false,
     }
 }
 
@@ -200,7 +214,13 @@ impl Pred {
     fn compared(&self) -> Option<(CompOp, &Value)> {
         match &self.conjunct {
             Conjunct::Condition(Condition { probe: Probe::Compare { op, value }, .. }) => Some((*op, value)),
-            Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) => None,
+            Conjunct::Condition(_)
+            | Conjunct::Null { .. }
+            | Conjunct::In { .. }
+            | Conjunct::NotIn { .. }
+            | Conjunct::Any(_)
+            | Conjunct::Dynamic { .. }
+            | Conjunct::Spans { .. } => None,
         }
     }
 
@@ -291,6 +311,7 @@ fn text_keeps(conjunct: &Conjunct, order: &dyn Fn(&str) -> Option<Ordering>) -> 
         // Each operand of one column, never itself an OR (`judged_conjunct`).
         Conjunct::Any(each) => each.iter().try_fold(false, |any, c| Some(any | leaf_text_keeps(c, order)?)),
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } => leaf_text_keeps(conjunct, order),
+        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
     }
 }
 
@@ -307,7 +328,7 @@ fn leaf_text_keeps(conjunct: &Conjunct, order: &dyn Fn(&str) -> Option<Ordering>
         Conjunct::Condition(Condition { probe: Probe::Compare { op, value: Value::Char(c) }, .. }) => Some(holds(*op, order(c))),
         Conjunct::In { values, .. } => values.iter().try_fold(false, |any, v| Some(any | equal(v)?)),
         Conjunct::NotIn { values, .. } => values.iter().try_fold(true, |all, v| Some(all & apart(v)?)),
-        Conjunct::Condition(_) | Conjunct::Any(_) => None,
+        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
     }
 }
 

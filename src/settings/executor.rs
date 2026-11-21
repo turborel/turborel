@@ -1,10 +1,14 @@
 //! \[DESIGN\] The settings of parallel queries (RULES.md D290, D291): the
 //! executor's workers, shared by every statement of a database, and what a
 //! statement asks of them, its degree, the rows of its morsels and the
-//! least rows it reads in parallel.
+//! least rows it reads in parallel; and whether a hash join filters its
+//! probing rows by its built ones' keys (RULES.md D369); and whether a
+//! correlated subquery keeps its plan across its runs (RULES.md D675);
+//! and whether a hash join of dense keys finds its rows by their places
+//! (RULES.md D601).
 
-use super::builtin::{at_least, count, defined};
-use super::{Definition, Effect, Key};
+use super::builtin::{ON, SWITCHES, at_least, count, defined, text};
+use super::{Definition, Effect, Key, Kind};
 
 /// EXECUTOR.WORKERS.
 pub const EXECUTOR_WORKERS: Key = Key(82);
@@ -14,6 +18,18 @@ pub const EXECUTOR_DEGREE: Key = Key(83);
 pub const EXECUTOR_MORSEL_ROWS: Key = Key(84);
 /// EXECUTOR.PARALLEL_MIN_ROWS.
 pub const EXECUTOR_PARALLEL_MIN_ROWS: Key = Key(85);
+/// EXECUTOR.KERNELS (RULES.md D460).
+pub const EXECUTOR_KERNELS: Key = Key(86);
+/// EXECUTOR.RUNTIME_FILTERS.
+pub const EXECUTOR_RUNTIME_FILTERS: Key = Key(87);
+/// EXECUTOR.KEEP_SUBQUERY_PLANS (RULES.md D675).
+pub const KEEP_SUBQUERY_PLANS: Key = Key(89);
+/// EXECUTOR.DENSE_JOINS (RULES.md D601), at its key's place after the
+/// planner's estimate margin.
+pub const EXECUTOR_DENSE_JOINS: Key = Key(92);
+
+/// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
+const KERNELS_NAME_MAX: usize = 64;
 
 /// \[DESIGN\] The default of EXECUTOR.MORSEL_ROWS: enough rows that taking a
 /// morsel costs little beside reading it, few enough that the last
@@ -33,7 +49,7 @@ const DATABASE: (bool, Effect) = (false, Effect::Statement);
 const SESSION: (bool, Effect) = (true, Effect::Statement);
 
 /// The settings of parallel queries, in the order of their keys.
-pub(super) fn definitions() -> [Definition; 4] {
+pub(super) fn definitions() -> [Definition; 6] {
     [
         defined(
             ("EXECUTOR.WORKERS", at_least(0), count(0)),
@@ -55,5 +71,34 @@ pub(super) fn definitions() -> [Definition; 4] {
             SESSION,
             "The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.",
         ),
+        defined(
+            ("EXECUTOR.KERNELS", Kind::Text { max: KERNELS_NAME_MAX }, text("")),
+            SESSION,
+            "The kernels a statement's batches run on: PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD.",
+        ),
+        defined(
+            ("EXECUTOR.RUNTIME_FILTERS", Kind::Choice(SWITCHES), text(ON)),
+            SESSION,
+            "Whether a hash join, once it has built its right operand, tells the scan of its left operand the least and greatest of its keys and filters the rows read by a Bloom filter of them: ON; or not, OFF, as to compare the two. Its rows are the same either way.",
+        ),
     ]
+}
+
+/// EXECUTOR.KEEP_SUBQUERY_PLANS, at its key's place after the planner's
+/// range joins.
+pub(super) fn kept_subquery_plans() -> Definition {
+    defined(
+        ("EXECUTOR.KEEP_SUBQUERY_PLANS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a correlated subquery, once its first runs show the values of its outer references choose no other plan, keeps its plan made with them as parameters and fills it at each later run: ON; or plans it at each run with its values, OFF, as to compare the two. Its rows are the same either way.",
+    )
+}
+
+/// EXECUTOR.DENSE_JOINS (RULES.md D601).
+pub(super) fn dense_joins() -> Definition {
+    defined(
+        ("EXECUTOR.DENSE_JOINS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a hash join whose one key is of whole numbers dense in their span, at most four times as wide as its built rows, finds a probe's rows at its key's place in the span, no hash made: ON; or hashes every key, OFF, as to compare the two. Its rows are the same either way.",
+    )
 }

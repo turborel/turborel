@@ -1,19 +1,25 @@
 //! \[DESIGN\] The steps a morsel's batches are taken through (RULES.md
 //! D290, D354): a filter's, judged over the vectors (`judge.rs`), a
 //! projection's, of columns moved (`stream::pick`) or of expressions
-//! evaluated (`project::computed`), each by the functions the serial
+//! evaluated (`project::computed`), a hash join's probe of a table its
+//! built operand made (`joined/shared.rs`), each by the functions the serial
 //! stream applies, so a morsel by batch gives the rows its pipeline row by
 //! row would, in the order, and raises its error after the rows before it
 //! (RULES.md D15).
 
 use std::sync::Arc;
 
+use super::joined::SharedTable;
 use super::judge::Judging;
 use super::project::{Place, computed, place_of};
+use super::runtime::{Told, applied};
 use super::stream::{Batches, filtered, pick, picked};
-use crate::db::State;
+use crate::exec::Db;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr};
+use crate::noted::Noted;
+use crate::physical::NodeCount;
+use crate::storage::Sel;
 use crate::txn::TxId;
 
 /// A step of a pipeline over its batches.
@@ -25,6 +31,33 @@ pub(in crate::exec) enum Shaped {
     Pick(Vec<usize>),
     /// [X3.135-1986 §5.25 GR2] each expression evaluated of its vectors.
     Compute(Vec<Place>),
+    /// [X3.135-1986 §5.20 GR2b] each row joined with each built row whose
+    /// keys, of its vectors at these places, equal its own.
+    Probe(Arc<SharedTable>, Vec<usize>),
+    /// \[DESIGN\] (RULES.md D389) the rows a hash join's runtime filters
+    /// keep, of batches of this layout, above the operator they stop at.
+    Runtime(Vec<Told>, Vec<usize>),
+    /// \[EXTENSION\] the rows kept counted, a batch at a time, as a
+    /// counted operator's (RULES.md D378).
+    Count(Arc<NodeCount>),
+}
+
+/// The step of `told`, runtime filters, over batches of `layout`.
+pub(in crate::exec) fn runtime_step(told: &[Told], layout: &[usize]) -> Shaped {
+    Shaped::Runtime(told.to_vec(), layout.to_vec())
+}
+
+/// The step of a probe of `table` by keys of the columns `left` of
+/// batches of `layout` of rows `width` wide, and the layout and width
+/// after it; none if a key's column is not among the layout's.
+pub(in crate::exec) fn probe_step(
+    table: &Arc<SharedTable>,
+    left: &[usize],
+    (layout, width): (&[usize], usize),
+) -> Option<(Shaped, Vec<usize>, usize)> {
+    let places = left.iter().map(|c| layout.iter().position(|l| l == c)).collect::<Option<Vec<usize>>>()?;
+    let (after, joined) = table.joined_layout((layout, width));
+    Some((Shaped::Probe(Arc::clone(table), places), after, joined))
 }
 
 /// The step of a filter by `cond` over batches of `layout`, the columns of
@@ -47,7 +80,7 @@ pub(in crate::exec) fn project_step(exprs: &[Expr], layout: &[usize]) -> Option<
 
 /// `batches` taken through `steps`, the first first, their expressions
 /// evaluated for the statement of `tx`.
-pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&Arc<State>, TxId)) -> Batches {
+pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&Db, TxId)) -> Batches {
     steps.iter().fold(batches, |inner, step| match step {
         Shaped::Filter(judging) => filtered(inner, ((**judging).clone(), Runner::new(db, tx))),
         Shaped::Pick(picks) => {
@@ -55,5 +88,25 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&A
             Box::new(inner.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows))))
         }
         Shaped::Compute(places) => computed(inner, places.clone(), Runner::new(db, tx)),
+        Shaped::Probe(table, places) => probed(inner, Arc::clone(table), places.clone()),
+        Shaped::Runtime(told, layout) => applied(inner, told.clone(), layout, (db, false)),
+        Shaped::Count(count) => {
+            let count = Arc::clone(count);
+            Box::new(inner.inspect(move |kept| {
+                if let Ok((batch, rows)) = kept {
+                    count.stepped(u64::try_from(rows.as_ref().map_or(batch.rows, Sel::len)).unwrap_or(u64::MAX));
+                    count.notes().add(Noted::Batches, 1);
+                }
+            }))
+        }
     })
+}
+
+/// `batches`, each kept row joined with each built row of `table` its
+/// keys at `places` match, in order; an error after the pairs before it.
+fn probed(batches: Batches, table: Arc<SharedTable>, places: Vec<usize>) -> Batches {
+    Box::new(batches.flat_map(move |kept| match kept {
+        Ok((batch, rows)) => table.probed((&batch, rows.as_deref()), (&places, None)),
+        Err(e) => vec![Err(e)],
+    }))
 }

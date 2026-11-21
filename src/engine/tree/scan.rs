@@ -18,11 +18,15 @@
 //!   would make a split change a third node, which the paper's proofs do
 //!   not cover (§6.2, Lemma 2).
 //!
+//! \[EXTENSION\] A scan made for an operator EXPLAIN ANALYZE counts notes
+//! each leaf it reads of it (`noted.rs`, RULES.md D621).
+//!
 //! Entries added or removed while a scan runs may or may not be seen, as
 //! the scan reaches their leaf before or after the change; isolation is
 //! the transaction layer's (RULES.md D29).
 
 use std::ops::{Bound, Deref};
+use std::sync::Arc;
 
 use super::node::{KeyRef, Node};
 use super::reclaim::Entered;
@@ -30,6 +34,7 @@ use super::{BLinkTree, Path, Target, corrupt};
 use crate::disk::buffer::Ahead;
 use crate::disk::pager::PageId;
 use crate::error::Result;
+use crate::noted::{self, Noted, Notes};
 
 mod visit;
 
@@ -80,6 +85,8 @@ pub struct Scan<T: Deref<Target = BLinkTree>> {
     /// Its epoch, counted while it lives: it holds a leaf's page number
     /// between reads (`reclaim.rs`).
     entered: Entered,
+    /// The notes of the operator it reads for, if it is counted.
+    notes: Option<Arc<Notes>>,
 }
 
 impl<T: Deref<Target = BLinkTree>> Drop for Scan<T> {
@@ -109,6 +116,7 @@ pub fn scan_of<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<&[u8]>, upper
         last: None,
         ahead: Ahead::default(),
         entered,
+        notes: noted::noting(),
     }
 }
 
@@ -231,6 +239,7 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
             }
         };
         self.next = Next::Done;
+        noted::add(self.notes.as_deref(), Noted::Leaves, 1);
         match self.direction {
             Direction::Forward => {
                 if let Some((key, _)) = taken.found.last() {

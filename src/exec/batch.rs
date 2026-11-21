@@ -18,6 +18,7 @@
 //! (`keyed.rs`).
 
 mod count;
+mod counted;
 mod expr;
 mod groups;
 mod joined;
@@ -25,26 +26,30 @@ mod judge;
 mod keyed;
 mod late;
 mod project;
+mod runtime;
 mod shaped;
 mod stream;
+mod told;
 
 use std::sync::Arc;
 
 pub(crate) use count::storage_counted;
 use expr::Program;
 pub(super) use groups::morsel_groups;
-pub(super) use joined::rows_of;
-pub(super) use keyed::{Keyed, kept, put_key, whole_width};
+pub(super) use joined::{SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
+pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
 pub(super) use late::{Deferred, resolved};
 use project::Place;
 pub(super) use project::{projectable, projected};
-pub(super) use shaped::{Shaped, filter_step, project_step, through};
-pub(super) use stream::Batches;
+pub(super) use runtime::{Told, taken as runtime_taken, wanted};
+pub(super) use shaped::{Shaped, filter_step, probe_step, project_step, runtime_step, through};
+pub(super) use stream::{Batches, Kept};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
 use crate::error::{Result, SqlState};
-use crate::functions::Accumulator;
+use crate::exec::Db;
+use crate::functions::{Accumulator, Columnar, ColumnarKind};
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
 use crate::storage::mask::index;
@@ -99,7 +104,7 @@ pub(in crate::exec) fn read_for(groups: &[usize], aggs: &[AggCall], layout: &[us
 
 /// What `plan` reads, if it is an aggregation read by batches: of a
 /// subtree that gives them (`stream::layout`).
-fn read_of(plan: &Plan, db: &State) -> Option<Read> {
+pub(super) fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return None };
     // Batches key groups by their values, not by a collation's sort keys,
     // and make none before their rows.
@@ -130,7 +135,7 @@ pub(super) fn distinct_groupable(plan: &Plan, db: &State) -> Option<usize> {
 /// them, none of no rows.
 #[inline(never)]
 pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
-    let Plan::Distinct { input, est } = plan else { return plan };
+    let Plan::Distinct { input, est, streamed } = plan else { return plan };
     Plan::Aggregate {
         groups: (0..width).collect(),
         collations: Vec::new(),
@@ -139,17 +144,31 @@ pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
         detail: String::new(),
         input,
         est,
+        streamed,
     }
 }
 
 /// Whether `plan` is an aggregation read by batches.
 pub(super) fn aggregable(plan: &Plan, db: &State) -> bool {
-    read_of(plan, db).is_some()
+    let Plan::Aggregate { input, .. } = plan else { return false };
+    stream::untold(input) && read_of(plan, db).is_some()
+}
+
+/// \[DESIGN\] (RULES.md D600, D15) Whether `plan` is a grouping read by
+/// batches that takes a runtime filter of a grouping column to its input
+/// (`told.rs`): by some column, each set function COUNT, MIN or MAX, of
+/// every row or of a column, none of which can raise. SUM and AVG can
+/// overflow, so a group a filter dropped could have raised an error.
+pub(super) fn filterable(plan: &Plan, db: &State) -> bool {
+    let Plan::Aggregate { groups, aggs, .. } = plan else { return false };
+    let kept = |a: &AggCall| matches!(a.func.0.columnar(), Some(Columnar(ColumnarKind::Count | ColumnarKind::Min | ColumnarKind::Max)));
+    let taken = |r: Read| r.taken.iter().all(|t| matches!(t, Taken::Count | Taken::Column(_)));
+    !groups.is_empty() && aggs.iter().all(kept) && read_of(plan, db).is_some_and(taken)
 }
 
 /// The rows of the aggregation `plan`, one read by batches (`aggregable`).
-pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIter {
-    let (Some(read), Plan::Aggregate { aggs, input, .. }) = (read_of(&plan, db), plan) else {
+pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
+    let (Some(read), Plan::Aggregate { aggs, input, streamed, .. }) = (read_of(&plan, db), plan) else {
         return failed(super::broken("an aggregation not read by batches"));
     };
     // A bare COUNT(*), counted by the table's storage if it can (`count.rs`).
@@ -165,6 +184,11 @@ pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIte
             Ok(row) => Box::new(std::iter::once(Ok(row))),
             Err(e) => failed(e),
         };
+    }
+    // Its rows in the order of its grouping columns, a group at a time
+    // (`groups/streamed.rs`, RULES.md D551).
+    if streamed {
+        return groups::streamed(read, aggs, (db, tx), stream.batches);
     }
     groups::grouped_all(&read, &aggs, (db, tx), stream.batches).unwrap_or_else(failed)
 }
@@ -436,6 +460,7 @@ mod tests {
             detail: String::new(),
             input: Box::new(scan()),
             est: 0.0_f64,
+            streamed: false,
         };
         assert!(aggregable(&aggregate(Vec::new(), Vec::new()), &st));
         assert!(!aggregable(&aggregate(vec![Vec::new()], Vec::new()), &st));

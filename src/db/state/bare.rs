@@ -10,7 +10,7 @@ use super::State;
 use crate::catalog::Catalog;
 use crate::engine::MemoryPages;
 use crate::functions::Registry;
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::Xxh3Map;
 use crate::memory::MemoryBudget;
 use crate::optimizer::Optimizer;
 use crate::settings::Settings;
@@ -31,7 +31,7 @@ impl State {
             index_options: Vec::new(),
             methods: HashMap::new(),
             placement: HashMap::new(),
-            hashes: crate::hash::crc::builtin(),
+            hashes: crate::hash::builtin(),
             collations: crate::value::collation::builtin().into_iter().map(|c| (c.name().to_owned(), c)).collect(),
             encodings: Arc::default(),
             created: false,
@@ -40,9 +40,10 @@ impl State {
             settings: Settings::default(),
             users: Users::default(),
             system: crate::system::builtin(),
-            storage: MurmurMap::default(),
-            locks: MurmurMap::default(),
+            storage: Xxh3Map::default(),
+            locks: Xxh3Map::default(),
             indexes: HashMap::new(),
+            index_uses: Xxh3Map::default(),
             functions: Registry::with_set_functions(),
             xquery_functions: crate::xquery::Library::builtin(),
             types: TypeRegistry::builtin(),
@@ -53,7 +54,6 @@ impl State {
             extensions: Arc::default(),
             extension_host: Arc::new(crate::plugin::Host::new(Arc::clone(memory))),
             clock: Arc::new(crate::clock::SystemClock),
-            uuids: Arc::default(),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
             memory: Arc::clone(memory),
@@ -63,7 +63,7 @@ impl State {
             work: Arc::clone(&work),
             temp_lobs: Arc::new(crate::spill::TempLobStore::new(work)),
             jobs: Arc::default(),
-            graph_runs: Arc::default(),
+            ran: Arc::default(),
             ahead: crate::disk::buffer::AheadReader::new(),
             rekey: Arc::default(),
             files: Arc::default(),

@@ -54,6 +54,8 @@ impl Rule for EliminateJoins {
             LogicalPlan::Filter { cond, input: chain } => referential::eliminated(exprs, cond, chain, catalog),
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
+            | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Project { .. }
             | LogicalPlan::Distinct { .. }
@@ -142,6 +144,8 @@ fn table_of(plan: &LogicalPlan) -> Option<(&crate::catalog::QualifiedName, Optio
         LogicalPlan::Scan { located: true, .. }
         | LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }

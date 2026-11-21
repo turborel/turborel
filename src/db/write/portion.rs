@@ -13,7 +13,6 @@ use crate::db::integrity::Effects;
 use crate::db::{State, StatementContext};
 use crate::error::Result;
 use crate::exec::{HeldRows, Subqueries, eval};
-use crate::logical::filled_expr;
 use crate::storage::Row;
 
 /// The rows kept of a statement's parts outside the portion.
@@ -49,10 +48,7 @@ impl Leftovers {
         // The part before has the portion's start as its end, the part
         // after the portion's end as its start.
         for (bound, column) in [(before, end), (after, start)] {
-            let value = match &w.values {
-                Some(values) => eval(&filled_expr(bound.clone(), values)?, old, subqueries)?,
-                None => eval(bound, old, subqueries)?,
-            };
+            let value = eval(bound, old, subqueries)?;
             if value.is_null() {
                 continue;
             }
