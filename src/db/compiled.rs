@@ -41,6 +41,13 @@ pub(super) fn plan_rows(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&
     (optimized, trace, physical)
 }
 
+/// As `plan_rows`, its paths chosen by `values` and its `?`s left slots,
+/// as `plan_slotted` plans a query (RULES.md D422).
+pub(super) fn plan_rows_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
+    let (optimized, _) = plugged::optimize(st, logical, (None, ROW_ACCESS_OFF));
+    PhysicalPlanner::slotted(st, values).plan(&optimized)
+}
+
 /// The rules a plan of a table's rows read with their ids is optimized
 /// without, which would join other tables' rows with them.
 const ROW_ACCESS_OFF: &[&str] = &[SEMI_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS];

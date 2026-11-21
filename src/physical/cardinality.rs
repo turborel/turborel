@@ -33,6 +33,7 @@ mod joins;
 mod lineage;
 mod nodes;
 mod semi;
+mod tables;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
