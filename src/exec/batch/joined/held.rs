@@ -16,6 +16,8 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
+use super::super::late::Deferred;
+use super::super::runtime::{self, Told};
 use super::super::stream::{self, Batches, Kept};
 use super::{gathered, rows_of};
 use crate::error::Result;
@@ -23,7 +25,7 @@ use crate::exec::Db;
 use crate::exec::table::{Candidates, Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal};
 use crate::exec::{RowIter, broken, execute};
 use crate::physical::{JoinKey, Plan};
-use crate::storage::Batch;
+use crate::storage::{Batch, Column};
 use crate::txn::TxId;
 
 /// \[DESIGN\] (RULES.md D368) The bytes a built row costs its join beyond
@@ -148,19 +150,28 @@ impl HeldRight {
 
 /// The right operand `right`, keyed by the right columns of `keys`, read
 /// and held while its vectors and its table hold no more than `limit`
-/// bytes, a runtime filter made of each of its keys at `filtered`.
+/// bytes, a runtime filter made of each of its keys at `filtered`; its
+/// rows those the runtime filters `told` it keep (RULES.md D600).
 ///
 /// # Errors
 ///
 /// The operand's; a key column its batches lack (SQLCODE -910).
-pub(super) fn read(right: Plan, (keys, filtered): (&[JoinKey], &[usize]), limit: usize, (db, tx): (&Db, TxId)) -> Result<Read> {
+pub(super) fn read(
+    right: Plan,
+    (keys, filtered, told): (&[JoinKey], &[usize], Vec<Told>),
+    limit: usize,
+    (db, tx): (&Db, TxId),
+) -> Result<Read> {
     let (columns, width) = stream::layout(&right, db).unwrap_or_default();
     let places: Vec<usize> = keys
         .iter()
         .map(|k| columns.iter().position(|&c| c == k.right).ok_or_else(|| broken("a join key the right operand's batch lacks")))
         .collect::<Result<_>>()?;
-    let mut batches: Batches =
-        if stream::reads_by_batch(&right, db) { stream::batches(right, db, tx)? } else { gathered(execute(right, db, tx), &columns) };
+    let mut batches: Batches = if stream::reads_by_batch(&right, db) {
+        stream::batches_with(right, (db, tx), &Deferred::default().with_told(told))?
+    } else {
+        runtime::applied(gathered(execute(right, db, tx), &columns), told, &columns, (db, false))
+    };
     let (mut parts, mut bytes) = (Vec::new(), 0_usize);
     for kept in batches.by_ref() {
         let (batch, rows) = kept?;
@@ -172,7 +183,12 @@ pub(super) fn read(right: Plan, (keys, filtered): (&[JoinKey], &[usize]), limit:
             return Ok(Read::Rest(Rest { batches: Box::new(read.into_iter().chain(batches)), columns, width }));
         }
     }
-    let batch = Batch::joined(parts);
+    let mut batch = Batch::joined(parts);
+    // Of an operand that gave no batch, a column of no row for each it
+    // holds, so a joined batch has the columns its layout says.
+    if batch.columns.len() < columns.len() {
+        batch.columns.resize_with(columns.len(), || Column::nulls(0));
+    }
     let nulls: Vec<bool> = keys.iter().map(|k| k.nulls).collect();
     let mut held = HeldRight {
         batch: Arc::new(batch),

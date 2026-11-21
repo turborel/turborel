@@ -23,6 +23,7 @@
 //! its transaction, as it reaches the flag, wherever its rows are pulled;
 //! and what a server takes of them for its client (`stop/served.rs`).
 
+mod activity;
 mod served;
 
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ use super::TxId;
 use crate::error::{Code, Result, SqlError, Warnings};
 use crate::sync::lock_builtin;
 
+pub use activity::{Activity, Now, Tallied, Tallies, Tally, Waiting};
 pub use served::{MAX_NOTES, Served};
 
 /// The flag a session's statements look at.
@@ -63,6 +65,8 @@ pub struct Stop {
     warnings: Warnings,
     /// What a server takes of its statements for its client.
     served: Served,
+    /// What the session does now, and what its statements did.
+    activity: Activity,
 }
 
 /// \[DESIGN\] Looks at a `Stop` as rows are read between two readings of
@@ -84,6 +88,7 @@ impl Default for Stop {
             epoch: Instant::now(),
             warnings: Warnings::default(),
             served: Served::default(),
+            activity: Activity::default(),
         }
     }
 }
@@ -133,6 +138,12 @@ impl Stop {
     /// (RULES.md D187, D191, D194).
     pub fn served(&self) -> &Served {
         &self.served
+    }
+
+    /// \[DESIGN\] What the session does now, and what its statements did
+    /// (RULES.md D520, D521).
+    pub fn activity(&self) -> &Activity {
+        &self.activity
     }
 
     /// The warnings the session's statement raises as it runs, taken as it
@@ -237,6 +248,7 @@ impl Stops {
 
     /// Notes `stop` as what cancels `tx`'s statements.
     pub(crate) fn insert(&self, tx: TxId, stop: Arc<Stop>) {
+        stop.activity.began_transaction(tx);
         if let Some(shard) = self.shard(tx) {
             lock_builtin(shard).insert(tx, stop);
         }
@@ -249,8 +261,9 @@ impl Stops {
 
     /// Forgets `tx`'s, as it ends.
     pub(crate) fn remove(&self, tx: TxId) {
-        if let Some(shard) = self.shard(tx) {
-            lock_builtin(shard).remove(&tx);
+        let removed = self.shard(tx).and_then(|shard| lock_builtin(shard).remove(&tx));
+        if let Some(stop) = removed {
+            stop.activity.ended_transaction(tx);
         }
     }
 }
@@ -266,25 +279,80 @@ pub(crate) fn checked<T>(
 where
     T: Send + 'static,
 {
-    let mut cut: Option<SqlError> = None;
-    let mut rows = rows;
-    std::iter::from_fn(move || {
-        if let Some(e) = &cut {
+    counted(rows, stop, |_| 0)
+}
+
+/// \[DESIGN\] `checked`, each item of `rows` weighed by `weigh` as rows
+/// read: a row of a table or an index one, a batch its rows. The weights
+/// are added up as the rows are read and given to `stop`'s session's
+/// count once they are dropped (`Activity::read`), so a row read costs no
+/// atomic count (RULES.md D521).
+pub(crate) fn counted<T>(
+    rows: impl Iterator<Item = Result<T>> + Send + 'static,
+    stop: Option<Arc<Stop>>,
+    weigh: fn(&T) -> u64,
+) -> impl Iterator<Item = Result<T>> + Send + 'static
+where
+    T: Send + 'static,
+{
+    Checked { rows, stop, weigh, read: 0, cut: None }
+}
+
+/// The rows of `counted`.
+struct Checked<I, T> {
+    rows: I,
+    stop: Option<Arc<Stop>>,
+    weigh: fn(&T) -> u64,
+    /// Their weights, not yet given to the count.
+    read: u64,
+    /// The error that cut them short, if one did.
+    cut: Option<SqlError>,
+}
+
+impl<I: Iterator<Item = Result<T>>, T> Iterator for Checked<I, T> {
+    type Item = Result<T>;
+
+    fn next(&mut self) -> Option<Result<T>> {
+        if let Some(e) = &self.cut {
             return Some(Err(e.clone()));
         }
         let looked = |flag: &Option<Arc<Stop>>| flag.as_deref().map_or(Ok(()), Stop::check);
-        let read = looked(&stop).and_then(|()| {
-            let row = rows.next();
-            looked(&stop).map(|()| row)
+        let read = looked(&self.stop).and_then(|()| {
+            let row = self.rows.next();
+            looked(&self.stop).map(|()| row)
         });
         match read {
-            Ok(row) => row,
+            Ok(row) => {
+                match &row {
+                    Some(Ok(row)) => self.read = self.read.saturating_add((self.weigh)(row)),
+                    Some(Err(_)) => {}
+                    // The last read: counted now, not once the rows are
+                    // dropped, which may be after their statement ends.
+                    None => self.flush(),
+                }
+                row
+            }
             Err(e) => {
-                cut = Some(e.clone());
+                self.cut = Some(e.clone());
                 Some(Err(e))
             }
         }
-    })
+    }
+}
+
+impl<I, T> Checked<I, T> {
+    /// Gives the weights read to the count.
+    fn flush(&mut self) {
+        if let Some(stop) = self.stop.as_deref().filter(|_| self.read > 0) {
+            stop.activity.read(std::mem::take(&mut self.read));
+        }
+    }
+}
+
+impl<I, T> Drop for Checked<I, T> {
+    fn drop(&mut self) {
+        self.flush();
+    }
 }
 
 #[cfg(test)]

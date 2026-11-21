@@ -376,7 +376,9 @@ turborel: SQLCODE -301 (SQLSTATE 22003): the exact numeric result needs more tha
 INTEGER holds 2147483647, and more: it is NUMERIC(10, 0), of ten
 digits. A type is shown, in messages and in the Information Schema, by
 the name it was written with, INTEGER or DECIMAL(5,2); a type computed,
-of a sum or a literal, as NUMERIC or FLOAT. The name is no part of the
+of a sum or a literal, as NUMERIC or FLOAT. Values of one type written
+alike keep its name when brought together, so a UNION of two INTEGER
+columns is INTEGER, and of INTEGER and SMALLINT NUMERIC. The name is no part of the
 type: INTEGER and NUMERIC(10, 0) are one type, so a foreign key of one
 references the other.
 

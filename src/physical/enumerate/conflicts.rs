@@ -27,6 +27,11 @@ pub(super) enum Kind {
     Left,
     /// The FULL outer join.
     Full,
+    /// The semi join, its left operand's rows a row of its right matches
+    /// (RULES.md D540).
+    Semi,
+    /// The antijoin, its left operand's rows no row of its right matches.
+    Anti,
 }
 
 impl Kind {
@@ -66,21 +71,26 @@ fn both_strong(a: &Shape, b: &Shape) -> bool {
     a.strong && b.strong
 }
 
-/// Table 2: assoc(◦a, ◦b), `(e1 ◦a e2) ◦b e3 ≡ e1 ◦a (e2 ◦b e3)`.
+/// Table 2: assoc(◦a, ◦b), `(e1 ◦a e2) ◦b e3 ≡ e1 ◦a (e2 ◦b e3)`. A semi
+/// join or an antijoin below gives no column of e2 for ◦b to read, so none
+/// reassociates over it.
 fn assoc(a: &Shape, b: &Shape) -> bool {
     match (a.kind, b.kind) {
-        (Kind::Inner, Kind::Inner | Kind::Left) => true,
+        (Kind::Inner, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) => true,
         (Kind::Left | Kind::Full, Kind::Left) | (Kind::Full, Kind::Full) => both_strong(a, b),
-        (Kind::Inner, Kind::Full) | (Kind::Left, Kind::Inner | Kind::Full) | (Kind::Full, Kind::Inner) => false,
+        (Kind::Inner, Kind::Full)
+        | (Kind::Left, Kind::Inner | Kind::Full | Kind::Semi | Kind::Anti)
+        | (Kind::Full, Kind::Inner | Kind::Semi | Kind::Anti)
+        | (Kind::Semi | Kind::Anti, Kind::Inner | Kind::Left | Kind::Full | Kind::Semi | Kind::Anti) => false,
     }
 }
 
 /// Table 3: l-asscom(◦a, ◦b), `(e1 ◦a e2) ◦b e3 ≡ (e1 ◦b e3) ◦a e2`.
 fn left_asscom(a: &Shape, b: &Shape) -> bool {
     match (a.kind, b.kind) {
-        (Kind::Inner | Kind::Left, Kind::Inner | Kind::Left) => true,
+        (Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) => true,
         (Kind::Left, Kind::Full) | (Kind::Full, Kind::Left | Kind::Full) => both_strong(a, b),
-        (Kind::Full, Kind::Inner) | (Kind::Inner, Kind::Full) => false,
+        (Kind::Full, Kind::Inner | Kind::Semi | Kind::Anti) | (Kind::Inner | Kind::Semi | Kind::Anti, Kind::Full) => false,
     }
 }
 
@@ -89,9 +99,9 @@ fn right_asscom(a: &Shape, b: &Shape) -> bool {
     match (a.kind, b.kind) {
         (Kind::Inner, Kind::Inner) => true,
         (Kind::Full, Kind::Full) => both_strong(a, b),
-        (Kind::Inner, Kind::Left | Kind::Full)
-        | (Kind::Left, Kind::Inner | Kind::Left | Kind::Full)
-        | (Kind::Full, Kind::Inner | Kind::Left) => false,
+        (Kind::Inner, Kind::Left | Kind::Full | Kind::Semi | Kind::Anti)
+        | (Kind::Left | Kind::Semi | Kind::Anti, Kind::Inner | Kind::Left | Kind::Full | Kind::Semi | Kind::Anti)
+        | (Kind::Full, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) => false,
     }
 }
 
@@ -178,5 +188,23 @@ mod tests {
         assert!(!obeyed(&rules, bit(1) | bit(2)));
         assert!(obeyed(&rules, bit(0) | bit(2)));
         assert!(obeyed(&rules, bit(0) | bit(1) | bit(2)));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D540: an inner join reassociates over
+    /// a semi join or an antijoin below it, and nothing reassociates over
+    /// a semi join above; semi joins and antijoins commute on the left
+    /// with inner and LEFT joins and with each other, never with a FULL
+    /// one, and never on the right; neither commutes.
+    #[test]
+    fn semi_joins_move_as_the_tables_say() {
+        let r = (bit(0), bit(1));
+        let (inner, left, full) = (shape(Kind::Inner, r, 0), shape(Kind::Left, r, 0), shape(Kind::Full, r, 0));
+        let (semi, anti) = (shape(Kind::Semi, r, 0), shape(Kind::Anti, r, 0));
+        assert!(assoc(&inner, &semi) && assoc(&inner, &anti));
+        assert!(!assoc(&semi, &inner) && !assoc(&anti, &inner) && !assoc(&left, &semi) && !assoc(&full, &anti));
+        assert!(left_asscom(&semi, &inner) && left_asscom(&anti, &left) && left_asscom(&semi, &anti));
+        assert!(!left_asscom(&semi, &full) && !left_asscom(&full, &anti));
+        assert!(!right_asscom(&inner, &semi) && !right_asscom(&semi, &inner) && !right_asscom(&anti, &anti));
+        assert!(!Kind::Semi.commutes() && !Kind::Anti.commutes());
     }
 }

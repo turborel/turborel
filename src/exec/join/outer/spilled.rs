@@ -16,9 +16,7 @@
 //! [X3.135-1986 §5.11 GR2]: it goes straight to the rows of a preserved
 //! side.
 
-use std::hash::{BuildHasher, RandomState};
-
-use super::super::super::partition::{merge_all, numbered, unnumbered};
+use super::super::super::partition::{drawn, merge_all, numbered, unnumbered};
 use super::super::super::work::Work;
 use super::super::super::{RowIter, failed};
 use super::super::{Operand, key};
@@ -113,7 +111,8 @@ fn pair(
 /// How an outer join's rows are partitioned: by a hash of their key
 /// values, into as many partitions as the work area writes at once.
 pub(super) struct Parts {
-    hasher: RandomState,
+    /// The seed of its hash, XXH3-64, drawn at random (`partition::drawn`).
+    seed: u64,
     count: usize,
 }
 
@@ -122,13 +121,14 @@ impl Parts {
         if spec.keys.is_empty() {
             return Err(lost());
         }
-        Ok(Parts { hasher: RandomState::new(), count: work.width().min(work.partitions()) })
+        Ok(Parts { seed: drawn(), count: work.width().min(work.partitions()) })
     }
 
     /// The partition of key values `b`.
     fn of(&self, b: &[Bucket]) -> usize {
         let n = u64::try_from(self.count).unwrap_or(1);
-        usize::try_from(self.hasher.hash_one(bucket_key(b)).checked_rem(n).unwrap_or_default()).unwrap_or_default()
+        usize::try_from(crate::hash::xxhash::xxh3_64_with_seed(&bucket_key(b), self.seed).checked_rem(n).unwrap_or_default())
+            .unwrap_or_default()
     }
 
     /// `count` new runs of `work`, each with no bytes yet.

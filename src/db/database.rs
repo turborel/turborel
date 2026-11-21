@@ -9,10 +9,12 @@ use std::thread::{self, ThreadId};
 pub(super) mod ended;
 mod handles;
 mod service;
+mod turn;
 
 pub use ended::{EndedCounts, TransactionsEnded};
 use handles::Program;
 pub(crate) use handles::WeakDatabase;
+use turn::Turn;
 
 use super::background::Background;
 use super::files::DatabaseFiles;
@@ -96,21 +98,9 @@ struct Shared {
     /// Its services: opened again in place, it begins another, and the
     /// sessions of earlier ones are refused (`database/service.rs`).
     service: AtomicU64,
-}
-
-/// One thread's turn to change the definitions. Dropping it ends the turn.
-struct Turn<'a> {
-    shared: &'a Shared,
-}
-
-impl Drop for Turn<'_> {
-    fn drop(&mut self) {
-        // The slot is only ever set and cleared, so a lock poisoned by a
-        // panicking thread still guards a valid slot.
-        let mut changing = self.shared.changing.lock().unwrap_or_else(PoisonError::into_inner);
-        *changing = None;
-        self.shared.turn_ended.notify_one();
-    }
+    /// What its prepared statements keep, shared by its sessions
+    /// (`prepared/shared.rs`, RULES.md D610).
+    prepared: super::prepared::Shared,
 }
 
 impl Default for Database {
@@ -127,6 +117,7 @@ impl Database {
     }
 
     fn over(mut state: State) -> Self {
+        state.published();
         // Its backups' views read what its background work keeps (RULES.md D166).
         let backups = Arc::default();
         crate::system::backup_tables(&mut state.system, &backups);
@@ -147,6 +138,7 @@ impl Database {
             opening: Mutex::new(None),
             service: AtomicU64::new(0),
             ended: Arc::default(),
+            prepared: super::prepared::Shared::default(),
         });
         db.serve_read_ahead();
         db
@@ -196,6 +188,11 @@ impl Database {
         self.tell_formats()
     }
 
+    /// What its prepared statements keep (RULES.md D610).
+    pub(super) fn prepared(&self) -> &super::prepared::Shared {
+        &self.0.prepared
+    }
+
     /// Its background work.
     pub(super) fn background(&self) -> &Background {
         &self.0.background
@@ -221,8 +218,7 @@ impl Database {
         let mut next = State::clone(&*self.snapshot()?);
         next.generation = next.generation.saturating_add(1);
         let out = change(&mut next)?;
-        // What spills is encrypted while anything is (RULES.md D48).
-        next.work.set_encodings(next.spill_encodings());
+        next.published();
         *write(&self.0.current)? = Arc::new(next);
         Ok(out)
     }

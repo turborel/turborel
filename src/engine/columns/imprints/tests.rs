@@ -102,7 +102,7 @@ fn imprints_never_leave_out_a_matching_row() {
     for (s, shape) in SHAPES.into_iter().enumerate() {
         let all: Vec<Row> = (0..ROWS).map(|n| row(n, shape)).collect();
         let ids: Vec<RowId> = (1..=u64::try_from(ROWS).unwrap()).collect();
-        let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[])).unwrap();
+        let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[], &[])).unwrap();
         let back = read(&pages, group.header[0], &TYPES).unwrap();
         assert_eq!(format!("{:?}", back.edges), format!("{:?}", group.edges), "edges read back");
         // Scattered values, the first shape's, get none.
@@ -120,7 +120,7 @@ fn imprints_never_leave_out_a_matching_row() {
     }
     let skewed: Vec<Row> = (0..ROWS).map(|n| row(n, SHAPES[2])).collect();
     let ids: Vec<RowId> = (1..=u64::try_from(ROWS).unwrap()).collect();
-    let group = Group::write(&pages, &TYPES, (&ids, &skewed), (&[], &[])).unwrap();
+    let group = Group::write(&pages, &TYPES, (&ids, &skewed), (&[], &[], &[])).unwrap();
     let one = Conjunction(vec![compare(0, CompOp::Eq, int(4320))]);
     let rows = |runs: &[(u32, u32)]| runs.iter().map(|(f, t)| t - f).sum::<u32>();
     let narrowed = rows(&read_candidates(&group, &pages, Some(&one)).unwrap());
@@ -172,7 +172,7 @@ fn conjuncts_are_ordered_narrowest_first() {
     let pages = Pages { pool: &pool, file, capacity: 4096, sealing: &Plain, compress: true, pax: false, imprints: true };
     let all: Vec<Row> = (0..ROWS).map(|n| row(n, SHAPES[1])).collect();
     let ids: Vec<RowId> = (1..=u64::try_from(ROWS).unwrap()).collect();
-    let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[])).unwrap();
+    let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[], &[])).unwrap();
     let wide = compare(2, CompOp::Gt, int(10));
     let narrow = compare(0, CompOp::Lt, int(100));
     let (_, order) = read_ordered(&group, &pages, Some(&Conjunction(vec![wide, narrow]))).unwrap();

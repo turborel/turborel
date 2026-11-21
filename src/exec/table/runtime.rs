@@ -10,6 +10,15 @@
 //! the join hashes them (`join/keys.rs`), applied to each batch the scan
 //! gives (`kept`), before any column given late is decoded.
 //!
+//! Of an exact key of a build of no more than `SPANS_MAX_ROWS` rows, its
+//! distinct values too (RULES.md D600), as Qiao, Boncz and Zhang's RPT+
+//! (PVLDB 2026) cascade a range, then a key set, then a Bloom filter: of
+//! no more than `KEYSET_MAX` of them, each a span the scan is told and a
+//! set a vector of exact numbers finds each row's key in exactly, at any
+//! scale, in place of the Bloom filter, which judges a vector of others;
+//! of more, the spans between the `SPANS - 1` widest gaps among them, so
+//! a store skips a group or part that lies in a gap.
+//!
 //! A row it drops is one the join drops: its key outside the range, or
 //! not in the filter, matches no built key, and a null matches none but
 //! on a key whose nulls match, of which no range is made and whose
@@ -39,6 +48,20 @@ pub(in crate::exec) const BLOOM_MAX_ROWS: usize = 4 << 20;
 /// the keys it does not hold pass it, of 4 bits a key in blocks of 512.
 const BITS_PER_KEY: usize = 8;
 
+/// \[DESIGN\] (RULES.md D600) The most distinct keys a filter holds as a
+/// set: a row's found by halving in a dozen steps, about a Bloom
+/// filter's hash and read.
+pub(in crate::exec) const KEYSET_MAX: usize = 4_096;
+
+/// \[DESIGN\] (RULES.md D600) The most spans of more keys a scan is told:
+/// enough to skip what lies in their widest gaps, few enough that a zone
+/// finds its span in six steps.
+const SPANS: usize = 64;
+
+/// \[DESIGN\] (RULES.md D600) The most built rows whose keys are sorted
+/// for a key set or spans, a sort that costs little beside the build.
+const SPANS_MAX_ROWS: usize = 1 << 20;
+
 /// \[DESIGN\] The batches a filter judges before it may stop.
 pub(in crate::exec) const TRIED: usize = 16;
 
@@ -57,6 +80,12 @@ pub(in crate::exec) struct RuntimeFilter {
     /// The least and greatest of an exact key's built values, as units of
     /// their scale.
     range: Option<(i64, i64, u32)>,
+    /// The distinct values of an exact key, ascending, as units of the
+    /// range's scale, of no more than `KEYSET_MAX`.
+    keys: Option<Vec<i64>>,
+    /// The spans of an exact key's values the scan is told, as units of
+    /// the range's scale, ascending and apart.
+    spans: Option<Vec<(i64, i64)>>,
     /// The words of a blocked Bloom filter of the keys' hashes, if made.
     bloom: Option<Vec<u64>>,
     seed: Seed,
@@ -81,6 +110,12 @@ impl RuntimeFilter {
     ) -> Option<RuntimeFilter> {
         let range = built.columns.get(at).and_then(|c| if nulls { None } else { range_of(c) });
         let held = hashes.misses.iter().filter(|&&m| !m).count();
+        let (keys, spans) = if let (Some(_), Some(Column::Ints(ints)), true) = (range, built.columns.get(at), built.rows <= SPANS_MAX_ROWS)
+        {
+            keyset_of(ints)
+        } else {
+            (None, None)
+        };
         let bloom = (held <= BLOOM_MAX_ROWS).then(|| bloom_of(hashes, held));
         if range.is_none() && bloom.is_none() {
             return None;
@@ -89,6 +124,8 @@ impl RuntimeFilter {
         Some(RuntimeFilter {
             nulls,
             range,
+            keys,
+            spans,
             bloom,
             seed,
             keyed,
@@ -99,20 +136,24 @@ impl RuntimeFilter {
     }
 
     /// The conjuncts a scan of column `column` is told of its range: the
-    /// key at least its least and at most its greatest.
+    /// key at least its least and at most its greatest; and its spans, if
+    /// it has them (RULES.md D600).
     pub(in crate::exec) fn range_conjuncts(&self, column: usize) -> Vec<Conjunct> {
         let Some((least, most, scale)) = self.range else { return Vec::new() };
-        let bound = |op, units: i64| {
-            let value = Value::Exact(Decimal::new(i128::from(units), scale));
-            Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value } })
-        };
-        vec![bound(CompOp::Ge, least), bound(CompOp::Le, most)]
+        let exact = |units: i64| Value::Exact(Decimal::new(i128::from(units), scale));
+        let bound =
+            |op, units: i64| Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value: exact(units) } });
+        let mut told = vec![bound(CompOp::Ge, least), bound(CompOp::Le, most)];
+        if let Some(spans) = &self.spans {
+            told.push(Conjunct::Spans { column, spans: spans.iter().map(|&(a, b)| (exact(a), exact(b))).collect() });
+        }
+        told
     }
 
-    /// Whether it holds a Bloom filter, of no more than `BLOOM_MAX_ROWS`
-    /// built rows.
+    /// Whether it judges each row past its range: by its Bloom filter, of
+    /// no more than `BLOOM_MAX_ROWS` built rows, or its key set.
     pub(in crate::exec) fn blooms(&self) -> bool {
-        self.bloom.is_some()
+        self.bloom.is_some() || self.keys.is_some()
     }
 
     /// Whether it still judges rows: not once its first `TRIED` batches
@@ -127,8 +168,9 @@ impl RuntimeFilter {
 
     /// The rows of `batch` at `rows`, or of all, whose key, of its column
     /// at `at`, the filter may hold, in order: of an exact key, those in
-    /// its range, if `range` asks; then those its Bloom filter holds, if
-    /// `bloom` asks.
+    /// its range, if `range` asks; then, if `bloom` asks, those its key
+    /// set holds, of a vector of exact numbers, else those its Bloom
+    /// filter holds.
     ///
     /// # Errors
     ///
@@ -148,6 +190,14 @@ impl RuntimeFilter {
         } else {
             given
         };
+        let set = self.keys.as_ref().filter(|_| bloom).zip(self.range).zip(batch.columns.get(at));
+        if let Some(((keys, (_, _, scale)), Column::Ints(ints))) = set {
+            let held = |u: i64| at_scale(u, ints.scale, scale).is_some_and(|k| keys.binary_search(&k).is_ok());
+            let kept: Vec<usize> =
+                ranged.into_iter().filter(|&r| !ints.is_null(r) && ints.units.get(r).is_some_and(|&u| held(u))).collect();
+            self.count((rows.map_or(batch.rows, <[u32]>::len), kept.len()));
+            return Ok(crate::storage::sel::rows_of(kept));
+        }
         let kept = match self.bloom.as_ref().filter(|_| bloom) {
             Some(words) => {
                 let mut hashes = KeyHashes::default();
@@ -179,6 +229,55 @@ fn range_of(column: &Column) -> Option<(i64, i64, u32)> {
     let held = ints.units.iter().enumerate().filter(|&(r, _)| !ints.is_null(r)).map(|(_, &u)| u);
     let (least, most) = held.fold(None, |m: Option<(i64, i64)>, u| Some(m.map_or((u, u), |(l, h)| (l.min(u), h.max(u)))))?;
     Some((least, most, ints.scale))
+}
+
+/// The units `units` of scale `from` as units of scale `to`, if a value
+/// of that scale is equal to them.
+fn at_scale(units: i64, from: u32, to: u32) -> Option<i64> {
+    let ten = |d: u32| 10_i64.checked_pow(d);
+    if from > to {
+        let by = ten(from.saturating_sub(to))?;
+        (units.checked_rem(by) == Some(0)).then(|| units.checked_div(by)).flatten()
+    } else {
+        units.checked_mul(ten(to.saturating_sub(from))?)
+    }
+}
+
+/// A filter's key set, if any, and the spans a scan is told, if any.
+type KeySet = (Option<Vec<i64>>, Option<Vec<(i64, i64)>>);
+
+/// The distinct values of `ints` not null, ascending, if no more than
+/// `KEYSET_MAX`; and the spans a scan is told of them: each a span, or of
+/// more, the spans between the `SPANS - 1` widest gaps of more than one
+/// unit, none if there is no such gap (RULES.md D600).
+fn keyset_of(ints: &crate::storage::Ints) -> KeySet {
+    let mut keys: Vec<i64> = ints.units.iter().enumerate().filter(|&(r, _)| !ints.is_null(r)).map(|(_, &u)| u).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    if keys.len() <= KEYSET_MAX {
+        let spans = keys.iter().map(|&k| (k, k)).collect();
+        return (Some(keys), Some(spans));
+    }
+    let mut gaps: Vec<(i64, usize)> = keys
+        .windows(2)
+        .enumerate()
+        .filter_map(|(n, w)| w.first().zip(w.get(1)).map(|(a, b)| (b.saturating_sub(*a), n)))
+        .filter(|&(g, _)| g > 1)
+        .collect();
+    if gaps.is_empty() {
+        return (None, None);
+    }
+    gaps.sort_unstable_by(|a, b| b.cmp(a));
+    gaps.truncate(SPANS.saturating_sub(1));
+    let mut cuts: Vec<usize> = gaps.into_iter().map(|(_, n)| n).collect();
+    cuts.sort_unstable();
+    let (mut spans, mut start) = (Vec::with_capacity(cuts.len().saturating_add(1)), 0);
+    for cut in cuts {
+        spans.extend(keys.get(start).zip(keys.get(cut)).map(|(&a, &b)| (a, b)));
+        start = cut.saturating_add(1);
+    }
+    spans.extend(keys.get(start).zip(keys.last()).map(|(&a, &b)| (a, b)));
+    (None, Some(spans))
 }
 
 /// A blocked Bloom filter of the hashes of `hashes` not misses, `held` of
@@ -232,7 +331,7 @@ mod tests {
         let kept = kept(&f, &probes);
         assert!(built.iter().all(|&k| kept.contains(&u32::try_from(k).unwrap())), "every built key kept");
         assert!(kept.len() < 1_100, "few of the 2,000 keys not built kept, found {}", kept.len());
-        assert_eq!(f.range_conjuncts(4).len(), 2);
+        assert_eq!(f.range_conjuncts(4).len(), 3, "the range and the spans of its keys");
     }
 
     /// Verifies: [DESIGN] RULES.md D369 (MC/DC): a filter judges its first
@@ -251,5 +350,27 @@ mod tests {
         }
         assert!(!all.judging(), "every row kept");
         assert!(few.judging(), "no row kept");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D600 (MC/DC): a build of few keys is a
+    /// set, each key a span, judged exactly, with no Bloom filter; one of
+    /// more keys with gaps is spans cut at its widest gaps, every key in
+    /// one; one of no gap wider than a unit has none.
+    #[test]
+    fn few_keys_are_a_set_and_more_are_spans() {
+        let few = filter(&[9, 3, 3, 700]);
+        assert_eq!(few.keys.as_deref(), Some(&[3_i64, 9, 700][..]));
+        assert!(few.blooms());
+        assert_eq!(kept(&few, &[300, 400, 900, 70_000, 70_001]), vec![0, 2, 3], "exactly the keys at another scale");
+        assert_eq!(few.range_conjuncts(0).len(), 3, "the range and the spans");
+        let most = i64::try_from(KEYSET_MAX).unwrap();
+        let wide: Vec<i64> = (0..most + 100).map(|k| k * 10 - k % 50 * 9).collect();
+        let (keys, spans) = keyset_of(&Ints::new(wide.clone(), 0, None));
+        let spans = spans.unwrap();
+        assert!(keys.is_none() && spans.len() == SPANS, "{} spans", spans.len());
+        assert!(wide.iter().all(|k| spans.iter().any(|(a, b)| (a..=b).contains(&k))), "every key in a span");
+        assert!(spans.iter().zip(spans.iter().skip(1)).all(|(a, b)| a.1 < b.0), "ascending and apart");
+        let dense: Vec<i64> = (0..=most).collect();
+        assert_eq!(keyset_of(&Ints::new(dense, 0, None)), (None, None));
     }
 }

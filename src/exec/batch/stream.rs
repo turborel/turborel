@@ -32,7 +32,7 @@ use crate::exec::Runner;
 use crate::logical::{Cond, Expr, Window, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{Batch, Column, Conjunct, Conjunction, Sel};
-use crate::txn::{TxId, checked};
+use crate::txn::{TxId, counted};
 
 /// A batch, and the rows of it a filter kept, if one did.
 pub(in crate::exec) type Kept = (Batch, Option<Sel>);
@@ -56,7 +56,7 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         Plan::Filter { input, .. } => layout(input, db),
         // [EXTENSION] a counted operator's, its input's (RULES.md D378).
         Plan::Counted(c) => layout(&c.input, db),
-        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::layout(plan, db),
+        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) => joined::layout(plan, db),
         Plan::Project { exprs, input, .. } => {
             let (columns, _) = layout(input, db)?;
             exprs.iter().all(|e| place_of(e, &columns).is_some()).then(|| ((0..exprs.len()).collect(), exprs.len()))
@@ -169,6 +169,7 @@ pub(in crate::exec) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         Plan::Product { left, right, .. } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
         }
+        Plan::SemiJoin(s) => reads_by_batch(&s.left, db) && reads_by_batch(&s.right, db),
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
@@ -203,7 +204,9 @@ fn ordered_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     if let Plan::SeqScan { table, columns, order, backward, most, .. } = &plan {
         let storage = Arc::clone(db.storage_of(table)?);
         if let Some(batches) = storage.scan_ordered_batches(tx, columns, (order, *backward, *most), None) {
-            return Ok(Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None)))));
+            return Ok(Box::new(
+                counted(batches, db.tx.stop_of(tx), |b| u64::try_from(b.rows).unwrap_or(u64::MAX)).map(|b| b.map(|b| (b, None))),
+            ));
         }
     }
     let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
@@ -265,10 +268,15 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferre
             return judged_above(plan, (db, tx), &deferred.clone().with_told(kept), here);
         }
     }
-    let made: Batched = match &plan {
+    made_of(&plan)(plan, (db, tx), deferred)
+}
+
+/// The function that gives the batches of a plan of `plan`'s kind.
+fn made_of(plan: &Plan) -> Batched {
+    match plan {
         Plan::SeqScan { .. } => scan_batches,
         Plan::Filter { .. } => filter_batches,
-        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::batches_with,
+        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) => joined::batches_with,
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
         Plan::Counted(_) => super::counted::batches,
@@ -293,8 +301,7 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferre
         Plan::Parallel(..) => parallel_batches,
         Plan::Sort { .. } => sorted_batches,
         Plan::Limit { .. } => topped_batches,
-    };
-    made(plan, (db, tx), deferred)
+    }
 }
 
 /// The batches of `plan`, a pipeline run in parallel, in order
@@ -371,7 +378,10 @@ fn none(_plan: Plan, _at: (&Db, TxId), _deferred: &Deferred) -> Result<Batches> 
 /// As `open`.
 fn judged_above(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred, here: Vec<Told>) -> Result<Batches> {
     let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
-    Ok(runtime::applied(batches_with(plan, (db, tx), deferred)?, here, &columns, (db, false)))
+    // Its operator's own batches: an inner hash join's filter its right
+    // alone takes is among those it is told and judged above it too.
+    let made = made_of(&plan)(plan, (db, tx), deferred)?;
+    Ok(runtime::applied(made, here, &columns, (db, false)))
 }
 
 /// The batches of `scan`, a table's scan: in an order if it is in one.
@@ -485,7 +495,8 @@ fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred,
         pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.extend(more);
     }
     let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), &deferred.late_of(scan.1));
-    let batches: Batches = Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None))));
+    let batches: Batches =
+        Box::new(counted(batches, db.tx.stop_of(tx), |b| u64::try_from(b.rows).unwrap_or(u64::MAX)).map(|b| b.map(|b| (b, None))));
     Ok(runtime::applied(batches, told.to_vec(), scan.1, (db, true)))
 }
 

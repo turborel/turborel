@@ -20,7 +20,7 @@ use super::super::{Db, RowIter, Runner, Subqueries, broken, eval_cond, execute, 
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::error::Result;
 use crate::functions::ScalarRef;
-use crate::index::{Entries, Index, Key, KeyOrder};
+use crate::index::{Entries, Index, Key, KeyOrder, Using};
 use crate::logical::{Cond, Truth};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
@@ -54,6 +54,13 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, t
         return failed(broken("an index join is not one"));
     };
     let inner = matches!(outer, Preserved::Inner);
+    // Of a semi join or an antijoin, the first match decides each left row.
+    let first = match outer {
+        Preserved::Semi => Some(false),
+        Preserved::Anti => Some(true),
+        Preserved::Inner | Preserved::Outer | Preserved::Both(_) => None,
+    };
+    let nulls = (first.is_none() && !inner).then(|| vec![Value::Null; width]);
     let opened = opened(db, &table, &index)
         .and_then(|(storage, found, ix, routes)| Ok((storage, found, ix, routes, Matched::of(outer, &needed, db)?)));
     match opened {
@@ -69,12 +76,14 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, t
                     stop: db.tx.stop_of(tx),
                     located,
                     routes,
+                    using: Using::of(db.uses_of(&index)),
                 },
                 budget: prepared::budget(db).filter(|_| matches!(probe, JoinProbe::Predicate { .. })).map(Arc::clone),
                 prepared: None,
                 probe,
                 cond,
-                nulls: (!inner).then(|| vec![Value::Null; width]),
+                nulls,
+                first,
                 matched,
                 runner: Runner::new(db, tx),
                 current: None,
@@ -134,6 +143,9 @@ struct Probed {
     /// \[EXTENSION\] Of a partitioned table's template, each partition's
     /// index, a probe routed to those its values may be in.
     routes: Option<Routes>,
+    /// Its probes and the entries they gave, counted as the index's
+    /// (RULES.md D522).
+    using: Using,
 }
 
 impl Probed {
@@ -149,6 +161,7 @@ impl Probed {
         };
         Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
+        self.using.searched();
         let entries = match &self.routes {
             Some(routes) => routes.search(&probe),
             None => Arc::clone(&self.index).search(&probe, KeyOrder::Ascending),
@@ -160,6 +173,7 @@ impl Probed {
     /// followed by its id if located.
     fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
+        self.using.gave(1);
         let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
         Ok(found.map(|(_, mut row)| {
             if self.located {
@@ -185,6 +199,9 @@ struct IndexJoin {
     prepared: Option<Cond>,
     /// Of a LEFT or FULL join, the nulls of a table row.
     nulls: Option<Vec<Value>>,
+    /// \[DESIGN\] Of a semi join, false, of an antijoin, true: each left
+    /// row is given alone, at its first match or of none (RULES.md D540).
+    first: Option<bool>,
     /// Of a FULL join, the table rows paired, and then those that were not.
     matched: Option<Matched>,
     runner: Runner,
@@ -225,7 +242,11 @@ impl IndexJoin {
             let Some(entry) = entries.next() else {
                 self.prepared = None;
                 self.refinement = None;
-                // Its entries read: of a LEFT join, kept with nulls if none was.
+                // Its entries read: of an antijoin, kept alone if none was.
+                if let (Some(true), false) = (self.first, found) {
+                    return self.project(l).map(Step::Row);
+                }
+                // Of a LEFT join, kept with nulls if none was.
                 if let (Some(nulls), false) = (&self.nulls, found) {
                     let row = l.into_iter().chain(nulls.iter().cloned()).collect();
                     return self.project(row).map(Step::Row);
@@ -241,9 +262,20 @@ impl IndexJoin {
                 matched.add(id)?;
             }
             if let Some(joined) = kept? {
-                return Ok(Step::Row(joined));
+                return self.decided(joined);
             }
         }
+    }
+
+    /// The step of a pair the condition kept, `joined`: the pair; or of a
+    /// semi join its left row, or of an antijoin none, its other entries
+    /// left unread.
+    fn decided(&mut self, joined: Row) -> Result<Step> {
+        let Some(anti) = self.first else { return Ok(Step::Row(joined)) };
+        let Some((l, _, _)) = self.current.take() else { return Err(broken("an index semi join lost its left row")) };
+        self.prepared = None;
+        self.refinement = None;
+        if anti { Ok(Step::ProbeEnd) } else { self.project(l).map(Step::Row) }
     }
 
     /// `l` joined with the row of `entry`, if the version read has it and
@@ -284,6 +316,7 @@ impl IndexJoin {
         self.prepared = None;
         if self.output.is_some()
             && self.nulls.is_none()
+            && self.first.is_none()
             && let Some(binding) = Binding::of(self, row.len()).filter(|binding| binding.rest.is_none())
         {
             let function = binding.prepared(row, self.budget.as_ref())?;

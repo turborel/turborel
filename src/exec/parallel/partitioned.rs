@@ -17,7 +17,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::pipeline::Pipeline;
-use super::probe::PARTS;
+use super::probe::{PARTS, part_of};
 use super::run::Morsels;
 use super::sorted::merge_by;
 use super::{Held, Limit};
@@ -98,14 +98,6 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -
     Ok(Held::Kept(limit.keeping(Box::new(rows))))
 }
 
-/// The partition of a row whose key's normal bytes are `key`: of their
-/// XXH3 (RULES.md D460), so the partitions do not depend on a hasher's
-/// seed or version.
-fn part_of_key(key: &[u8]) -> usize {
-    let low = crate::hash::xxhash::xxh3_64(key);
-    usize::try_from(low.checked_rem(u64::try_from(PARTS).unwrap_or(u64::MAX)).unwrap_or_default()).unwrap_or_default()
-}
-
 /// A list of `share` bytes of `db`'s work areas.
 fn space(db: &State, share: usize) -> ListSpace {
     ListSpace {
@@ -130,13 +122,13 @@ fn split(
 ) -> Result<Held<(Parts, Option<usize>)>> {
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, db_for) = (Arc::new(pipeline), db.clone());
-    let count = pipeline.count();
+    let (count, seed) = (pipeline.count(), db.functions.seed().clone());
     let work = Box::new(move |m: usize| {
         let mut parts: Vec<Vec<Row>> = (0..PARTS).map(|_| Vec::new()).collect();
         let mut width = None;
         let base = i128::try_from(m).unwrap_or(i128::MAX).checked_shl(PLACE_BITS).unwrap_or(i128::MAX);
         for (place, mut row) in (0_i128..).zip(pipeline.morsel(m, &Runner::new(&db_for, tx))?) {
-            let p = key(&row).map_or(0, |k| part_of_key(&norm_row(&k)));
+            let p = key(&row).map_or(0, |k| part_of(&norm_row(&k), &seed));
             width = width.or(Some(row.len()));
             if numbered {
                 row.push(Value::Exact(Decimal::new(base.saturating_add(place), 0)));

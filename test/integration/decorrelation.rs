@@ -3,11 +3,12 @@
 //! binding of its outer references [X3.135-1986 §5.21 GR3, §5.23 GR4].
 
 mod functions;
+mod semi;
 mod tpch;
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
-use turborel::optimizer::{INLINE_FUNCTIONS, UNNEST_SUBQUERIES};
+use turborel::optimizer::{INLINE_FUNCTIONS, SEMI_JOINS, UNNEST_SUBQUERIES};
 use turborel::params::Params;
 
 use crate::common::{Rng, count, set_rule};
@@ -27,26 +28,29 @@ pub fn outcome(s: &Session, sql: &str) -> Result<Vec<String>, Code> {
 /// The outcome of `sql` unnested and nested, the rules on, then off.
 pub fn both(db: &Database, s: &Session, sql: &str) -> (Result<Vec<String>, Code>, Result<Vec<String>, Code>) {
     let unnested = outcome(s, sql);
-    set_rule(db, UNNEST_SUBQUERIES, false);
-    set_rule(db, INLINE_FUNCTIONS, false);
+    for rule in [SEMI_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS] {
+        set_rule(db, rule, false);
+    }
     let nested = outcome(s, sql);
-    set_rule(db, UNNEST_SUBQUERIES, true);
-    set_rule(db, INLINE_FUNCTIONS, true);
+    for rule in [SEMI_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS] {
+        set_rule(db, rule, true);
+    }
     (unnested, nested)
 }
 
-/// Whether the plan of `sql` is unnested: the rule applied, and no
-/// subquery left in the plan run.
+/// Whether the plan of `sql` is unnested: a rule that unnests applied,
+/// and no subquery left in the plan run.
 pub fn unnested(s: &Session, sql: &str) -> bool {
     let plan = s.explain(sql, &Params::new()).unwrap_or_else(|e| panic!("{sql}: {e}"));
     let rules = plan.lines().find(|l| l.starts_with("-- rules:")).unwrap_or_default().to_owned();
     let physical = plan.split("-- physical:").nth(1).unwrap_or_default();
-    rules.contains(UNNEST_SUBQUERIES) && !physical.contains("Subquery")
+    let applied = rules.contains(UNNEST_SUBQUERIES) || rules.contains(SEMI_JOINS);
+    applied && !physical.contains("Subquery")
 }
 
 /// Schema A: R (K, V, C) and S (K, W, C), of small values, nulls and
 /// strings that differ in trailing spaces alone among them.
-fn random_tables(seed: u64) -> Database {
+pub fn random_tables(seed: u64) -> Database {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE R (K INTEGER, V INTEGER, C VARCHAR(5)) CREATE TABLE S (K INTEGER, W INTEGER, C VARCHAR(5))")
         .unwrap();
@@ -195,6 +199,11 @@ fn explain_shows_the_unnested_plan() {
     set_rule(&db, UNNEST_SUBQUERIES, false);
     assert!(!unnested(&s, q));
     set_rule(&db, UNNEST_SUBQUERIES, true);
+    set_rule(&db, SEMI_JOINS, false);
+    set_rule(&db, UNNEST_SUBQUERIES, false);
+    assert!(!unnested(&s, "SELECT K FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K)"));
+    set_rule(&db, UNNEST_SUBQUERIES, true);
+    set_rule(&db, SEMI_JOINS, true);
     s.run("CREATE FUNCTION MAYBE (X INTEGER) RETURNS INTEGER NOT DETERMINISTIC CONTAINS SQL RETURN X").unwrap();
     assert!(!unnested(&s, "SELECT K FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = MAYBE(R.K))"));
     assert!(!unnested(&s, "SELECT K FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K AND MAYBE(S.W) > 0)"));

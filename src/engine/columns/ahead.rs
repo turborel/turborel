@@ -86,6 +86,8 @@ mod tests {
             order: Vec::new(),
             pax: false,
             edges: Vec::new(),
+            sketched: Vec::new(),
+            sketches: Vec::new(),
             header: Vec::new(),
         };
         let mut ahead = GroupAhead::default();

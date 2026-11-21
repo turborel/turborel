@@ -16,11 +16,11 @@ use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::exec::Db;
-use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe};
+use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe, Used, used};
 use crate::logical::{Cond, Most, SortKey, pushed_conjuncts};
-use crate::physical::Plan;
+use crate::physical::{Plan, ProbeSlot};
 use crate::storage::{self, Condition, Conjunction, Row, RowId, ScanOrder, TableStorage};
-use crate::txn::{TxId, checked};
+use crate::txn::{TxId, checked, counted};
 use crate::value::SortOrder;
 
 /// A table to read: its name, the columns read, and whether each row is
@@ -66,7 +66,7 @@ fn ordered_scan(
     };
     let stop = db.tx.stop_of(tx);
     if let Some(rows) = Arc::clone(&storage).scan_ordered(tx, columns, (order, backward, most), condition) {
-        return Box::new(checked(rows.map(move |read| read.map(|r| read_row(located, r))), stop));
+        return Box::new(counted(rows.map(move |read| read.map(|r| read_row(located, r))), stop, |_| 1));
     }
     let read = match condition {
         Some(c) => storage.scan_where(tx, columns, c),
@@ -75,7 +75,7 @@ fn ordered_scan(
     // Sorted as ORDER BY sorts, in a work area that spills (RULES.md D38).
     // A row's id, last, is no sort key.
     let keys: Vec<SortKey> = order.iter().map(|&column| SortKey::new(column, SortOrder::of(backward, None))).collect();
-    let rows: RowIter = Box::new(checked(read.map(move |r| r.map(|r| read_row(located, r))), stop));
+    let rows: RowIter = Box::new(counted(read.map(move |r| r.map(|r| read_row(located, r))), stop, |_| 1));
     match most {
         Some(rows_asked) => sort::first(&keys, rows, Most { rows: rows_asked, ties: false }, db, tx),
         None => sort::sort(&keys, rows, db, tx),
@@ -93,7 +93,7 @@ fn scanned((table, columns, located): ReadOf<'_>, condition: Option<&Conjunction
                 Some(c) => storage.scan_where(tx, columns, c),
                 None => storage.scan(tx, columns),
             };
-            Box::new(checked(read.map(move |r| r.map(|r| read_row(located, r))), db.tx.stop_of(tx)))
+            Box::new(counted(read.map(move |r| r.map(|r| read_row(located, r))), db.tx.stop_of(tx), |_| 1))
         }
         Err(e) => failed(e),
     }
@@ -122,8 +122,12 @@ pub(super) fn filtered_input(input: Plan, cond: &Cond, db: &Db, tx: TxId) -> Row
 /// stack (RULES.md R-CF-6), as are the helpers below.
 #[inline(never)]
 pub(super) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
-    let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, located, decided, .. } = plan else {
+    let Plan::IndexScan { table, index, probe, slots, reverse, covering, columns: needed, located, decided, .. } = plan else {
         return failed(broken("an index scan is not one"));
+    };
+    let probe = match slotted(probe, &slots, db) {
+        Ok(probe) => probe,
+        Err(e) => return failed(e),
     };
     if let Probe::Xml(asked) = &probe
         && asked.answered
@@ -138,7 +142,7 @@ pub(super) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         Ok(Found { storage, ix, entries, projection, read }) => match read.record(&*storage, tx) {
             Ok(()) => {
                 let mut reading = Reading::of(&ix, Some(&needed), projection);
-                let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+                let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
                     let row = |(key, id)| {
                         let row = match &deciding {
                             Some(deciding) => deciding.row((&*storage, &ix), &mut reading, (tx, id), &key)?,
@@ -156,13 +160,26 @@ pub(super) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     }
 }
 
+/// `probe`, its slots placed with their values in `db` (RULES.md D610).
+///
+/// # Errors
+///
+/// As `Db::probe`.
+pub(super) fn slotted(probe: Probe, slots: &[ProbeSlot], db: &Db) -> Result<Probe> {
+    if slots.is_empty() {
+        return Ok(probe);
+    }
+    Ok(db.probe(&probe, slots)?.into_owned())
+}
+
 /// What an index found: its entries, and how to read their rows.
 pub(super) struct Found {
     pub(super) storage: Arc<dyn TableStorage>,
     /// The index's key.
     pub(super) ix: KeyShape,
-    /// The entries, in index order or reversed, read as they are taken.
-    pub(super) entries: IndexEntries,
+    /// The entries, in index order or reversed, read as they are taken,
+    /// counted as the index's (RULES.md D522).
+    pub(super) entries: Used<IndexEntries>,
     /// Present only when entries contain projections of the original keys.
     pub(super) projection: Option<Arc<dyn KeyProjection>>,
     /// What the probe read, which callers record before taking an entry.
@@ -208,10 +225,11 @@ pub(super) fn probe_index(
     let ix =
         db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
     let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };
+    let uses = db.uses_of(index);
     let index = db.index_of(index)?;
     let projection = index.key_projection();
     let read = Asked::of(&**index, &ix, probe);
-    let entries = Arc::clone(index).search_for(probe, order, reading);
+    let entries = used(Arc::clone(index).search_for(probe, order, reading), uses);
     Ok(Found { storage, ix, entries, projection, read })
 }
 
