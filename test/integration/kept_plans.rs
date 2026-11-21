@@ -445,3 +445,44 @@ fn a_learned_range_plan_gives_each_executions_rows() {
         assert_eq!(prepared.plans_made(), 1, "{form}");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D610: a statement prepared alike in two
+/// sessions makes one plan, which the second takes while the first is
+/// held; a session of another authorization, or a statement of another
+/// text, makes its own; and a definition changed makes it again, each execution giving the rows the
+/// statement written with its values gives.
+#[test]
+fn statements_prepared_alike_in_two_sessions_share_their_plan() {
+    let (db, s) = schema();
+    let other = db.session("X");
+    let sql = "SELECT K, S FROM T WHERE K = ?";
+    let (first, second) = (s.prepare(sql).unwrap(), other.prepare(sql).unwrap());
+    assert_eq!(opened(&s, &first, &[int(3)]), ["3,S3"]);
+    assert_eq!(opened(&other, &second, &[int(4)]), ["4,S4"]);
+    assert_eq!([first.plans_made(), second.plans_made()], [1, 0], "the second took the first's plan");
+    let update = |session: &Session, k: i128| {
+        let p = session.prepare("UPDATE T SET N = ? WHERE K = ?").unwrap();
+        session.execute_prepared(&p, &[int(k * 10), int(k)]).unwrap();
+        session.commit().unwrap();
+        p
+    };
+    let (kept, again) = (update(&s, 5), update(&other, 6));
+    assert_eq!((kept.plans_made(), again.plans_made()), (1, 0), "a write's too, while the first is held");
+    drop((kept, again));
+    assert_eq!(update(&s, 7).plans_made(), 1, "made again once none held it");
+    assert_eq!(rows(&s, "SELECT N FROM T WHERE K IN (5, 6, 7) ORDER BY K").unwrap(), ["50", "60", "70"]);
+    let spaced = other.prepare("SELECT K, S FROM T WHERE K =  ?").unwrap();
+    assert_eq!(opened(&other, &spaced, &[int(5)]), ["5,S5"]);
+    assert_eq!(spaced.plans_made(), 1, "another text");
+    s.run("GRANT SELECT ON T TO Y").unwrap();
+    s.commit().unwrap();
+    let y = db.session("Y");
+    exec(&y, "SET SCHEMA 'X'").unwrap();
+    let theirs = y.prepare(sql).unwrap();
+    assert_eq!(opened(&y, &theirs, &[int(7)]), ["7,S7"]);
+    assert_eq!(theirs.plans_made(), 1, "another authorization");
+    db.create_index("T_K", "X.T", &["K"], "btree").unwrap();
+    assert_eq!(opened(&other, &second, &[int(8)]), ["8,S8"]);
+    assert_eq!(opened(&s, &first, &[int(9)]), ["9,S9"]);
+    assert_eq!([first.plans_made(), second.plans_made()], [1, 1], "made again once, after the index");
+}

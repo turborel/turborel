@@ -25,7 +25,9 @@ use crate::value::{CompOp, DataType, Value};
 mod filled;
 mod shape;
 
-pub(crate) use filled::{filled_plan, filled_plan_as_is};
+#[cfg(test)]
+use filled::filled_plan;
+pub(crate) use filled::{Kept, filled_plan_as_is, prepared_plan};
 
 pub(crate) use shape::same_shape;
 
@@ -178,12 +180,30 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
     }
 }
 
-/// `plan`, an index scan, each `?` of its probe filled with its value, as
-/// `placing` says.
+/// `probe`, each of `slots` placed with its value of `values`: as it is
+/// if it has none, else a copy (RULES.md D610).
+///
+/// # Errors
+///
+/// As `place`.
+pub(crate) fn placed<'p>(probe: &'p Probe, slots: &[ProbeSlot], values: &[Value]) -> Result<std::borrow::Cow<'p, Probe>> {
+    if slots.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(probe));
+    }
+    let mut copy = probe.clone();
+    for s in slots {
+        place(&mut copy, s, values, Placing::Cast)?;
+    }
+    Ok(std::borrow::Cow::Owned(copy))
+}
+
+/// `plan`, an index scan, each `?` of its probe filled with its value,
+/// as `placing` says, so it has no slot left to place as it opens
+/// (RULES.md D610).
 fn filled_scan(mut plan: Plan, values: &[Value], placing: Placing) -> Result<Plan> {
     if let Plan::IndexScan { probe, slots, .. } = &mut plan {
-        for s in slots.iter() {
-            place(probe, s, values, placing)?;
+        for s in std::mem::take(slots) {
+            place(probe, &s, values, placing)?;
         }
     }
     Ok(plan)

@@ -428,6 +428,7 @@ verification approach DO-178C expects (§8).
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
+| D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
@@ -12199,6 +12200,42 @@ planner choose range joins (D580). OFF plans such joins as nested loops,
 or hash joins on their equalities, as to compare the two. Period
 predicates are still read as comparisons (D581) when it is OFF, so their
 equalities can be a hash join's keys.
+
+#### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
+
+A kept plan (D45, D414, D422) was copied at each execution, its slots
+replaced by the execution's values and its scalar calls folded again, so
+a point query or write paid for a whole plan's copy and walk before it
+read a row. Now a kept plan is prepared once, its scalar calls folded
+as it is kept, and held behind a shared pointer. An execution opens it
+in a `Db` (`exec/db.rs`), the state with its statement's slot values,
+which every operator hands to those it opens and to the runner of its
+subqueries. The evaluator reads a slot's value from there and casts it
+to the slot's type as it is read, and an index scan places its probe's
+slots as it opens. An UPDATE's SET values and its search condition read
+their slots the same way, and an INSERT's row of values too. A kept
+procedure body's leaf reads its frame's values as slots and its outer
+values as outer references where they stand (`exec/program/framed.rs`),
+and its subqueries' kept plans read those values as slots.
+
+A kept plan holding a scalar call that takes a slot is filled and
+prepared again at each execution, as it was, since a call prepared from
+its constant operands (`optimizer/prepared.rs`) is prepared from the
+execution's values. A plan that is not kept, as one whose paths follow
+its values, is still planned with them filled in, so its paths are
+chosen by them. A MERGE keeps its bound statement and fills it at each
+execution, its join planned with its values.
+
+What a prepared statement keeps is shared by every session of the
+database that prepares a statement alike in its text, its collation and
+its parameters' types (`db/prepared/shared.rs`). Each execution takes a
+kept plan only while the definitions, the authorization, the schema, the
+time zone and the settings are those it was kept with, so a change of
+the definitions or of privileges drops it, and a learned plan is learned
+again once a table it reads moves as its statistics would be gathered
+again for (D422). The places are found by an XXH3 hash of what the
+statements were prepared alike in (D460), compared whole, and a place no
+statement holds is gone.
 
 #### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
 
