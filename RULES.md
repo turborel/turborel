@@ -419,6 +419,7 @@ verification approach DO-178C expects (§8).
 | D448 | SERIALIZABLE certifies by column, and skips the check when no one read |
 | D449 | A row's turn passed wakes only the waiter whose turn it is |
 | D450 | A served session's transactions are collected once their reply is sent |
+| D452 | A READ COMMITTED UPDATE that only adds to a column reserves its increments, applied as its transaction commits |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
@@ -13072,3 +13073,41 @@ one. Until then, the end of any other transaction collects the noted
 tables as it would any awaiting, and a checkpoint waits for them
 (`gc_waiting`). The horizon rule is unchanged, so no version a snapshot
 can read is removed; collection only comes a little later.
+
+#### D452. A READ COMMITTED UPDATE that only adds to a column reserves its increments, applied as its transaction commits
+
+A searched UPDATE such as `SET YTD = YTD + ?` held its row from the
+statement to its transaction's end, so every other transaction adding
+to that row waited the whole of it.
+
+Such an UPDATE now reserves its increment instead (`db/escrow.rs`,
+`txn/escrow.rs`), where TRANSACTION.ESCROW is ON, as it is by default.
+Its transaction applies its reservations as it commits, before its
+commit record, each row's as one ordinary write of the row over its
+newest version. A crash before then loses only what was never
+committed, and recovery replays the application as any other write.
+
+It applies only where nothing could see a sum before it is applied.
+
+- The transaction reads at READ COMMITTED and waits for locks.
+- Every SET item adds to or subtracts from an exact numeric column a
+  value that reads no row, table, routine or sequence.
+- The condition reads no table and none of those columns.
+- The table's engine keeps versions. It is not typed or partitioned and
+  has no trigger, delta table, view check, portion, generated column,
+  CHECK or assertion.
+- No key, index or domain names the column.
+
+The increment is reserved only while the column's value plus every
+increment reserved on it, the positive ones together and the negative
+ones together, stays within the column's type. Otherwise the row is
+written as any other, after the reservations, so an overflow raises at
+its own statement.
+
+A reservation guards its column and those its condition reads. Another
+transaction's write that changes one of them, or deletes the row, waits
+for the reserver as for a held row. A write of other columns goes on. A
+transaction reads its own sums. Before one of its statements reads a
+column it reserved on, it applies its reservations on that table, and
+undoing the statement puts them back. A rollback or a rollback to a
+savepoint takes back the reservations made since.

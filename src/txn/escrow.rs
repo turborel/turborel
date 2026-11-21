@@ -162,19 +162,25 @@ impl Escrow {
 }
 
 impl Txn {
-    /// \[DESIGN\] The increments it reserved, by table, each table's in the
-    /// order of its rows (RULES.md D452): of the tables it holds a lock on,
-    /// as each table it reserves in is.
+    /// \[DESIGN\] Notes that it reserves increments in `escrow`'s table, so
+    /// it applies them as it commits and they end with it (RULES.md D452).
+    pub(crate) fn escrowing(&self, escrow: &Arc<Escrow>) {
+        let mut state = lock_builtin(&self.state);
+        if !state.escrowed.iter().any(|e| Arc::ptr_eq(e, escrow)) {
+            state.escrowed.push(Arc::clone(escrow));
+        }
+    }
+
+    /// \[DESIGN\] The increments it reserved, by table in the order of their
+    /// names, each table's in the order of its rows (RULES.md D452).
     pub(crate) fn reserved(&self) -> Vec<(QualifiedName, Vec<(RowId, Reservation)>)> {
-        let held: Vec<_> = lock_builtin(&self.state).held.iter().map(|lock| Arc::clone(&lock.escrow)).collect();
-        let mut tables: Vec<(QualifiedName, Vec<(RowId, Reservation)>)> = held
+        let escrowed = lock_builtin(&self.state).escrowed.clone();
+        let mut tables: Vec<(QualifiedName, Vec<(RowId, Reservation)>)> = escrowed
             .iter()
-            .filter(|escrow| escrow.any())
             .filter_map(|escrow| Some((lock_builtin(&escrow.table).clone()?, escrow.of(self.id))))
             .filter(|(_, own)| !own.is_empty())
             .collect();
         tables.sort_by(|a, b| a.0.cmp(&b.0));
-        tables.dedup_by(|a, b| a.0 == b.0);
         tables
     }
 }

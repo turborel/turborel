@@ -102,7 +102,7 @@ fn many_sessions_adding_leave_the_sums_of_the_locked_path() {
         left.push((table(&s), rows(&s, "SELECT SUM(X), SUM(Y), SUM(N) FROM T").unwrap()));
     }
     assert_eq!(left[0], left[1], "escrow on, then off");
-    assert_eq!(left[0].1, ["520.00 | -320 | 160"]);
+    assert_eq!(left[0].1, ["520.00,-320,160"]);
 }
 
 /// Verifies: [DESIGN] RULES.md D452: an increment reserved holds no row:
@@ -166,7 +166,7 @@ fn a_reservation_guards_its_column_and_its_condition() {
     b.run("UPDATE T SET N = 7 WHERE ID = 3").unwrap();
     b.commit().unwrap();
     a.commit().unwrap();
-    assert_eq!(rows(&a, "SELECT X, N FROM T WHERE ID = 3").unwrap(), ["101.00 | 7"]);
+    assert_eq!(rows(&a, "SELECT X, N FROM T WHERE ID = 3").unwrap(), ["101.00,7"]);
 }
 
 /// Verifies: [DESIGN] RULES.md D452; [ISO/IEC 9075:1992 §9.2 GR3b]: an
@@ -220,7 +220,7 @@ fn rollbacks_take_increments_back() {
         a.run("UPDATE T SET X = X + 2 WHERE ID = 1").unwrap();
         assert_eq!(exec(&a, "UPDATE T SET N = 1 / (X - X) WHERE ID = 1").err(), Some(Code::Data), "{escrow}");
         a.commit().unwrap();
-        assert_eq!(table(&a)[0], "1 | 103.00 | 0 | 0", "{escrow}");
+        assert_eq!(table(&a)[0], "1,103.00,0,0", "{escrow}");
     }
 }
 
@@ -269,7 +269,7 @@ fn an_increment_read_back_holds_its_row_and_another_column_goes_on() {
     thread::sleep(Duration::from_millis(50));
     order.commit().unwrap();
     paid.join().unwrap().unwrap();
-    assert_eq!(table(&order)[3], "4 | 107.50 | 0 | 1");
+    assert_eq!(table(&order)[3], "4,107.50,0,1");
 }
 
 /// Verifies: [DESIGN] RULES.md D25, D452: increments committed are

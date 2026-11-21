@@ -72,7 +72,6 @@
 //! waits for every commit before it to end, whatever tables they touch.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread::ThreadId;
@@ -97,6 +96,7 @@ mod logging;
 mod marks;
 mod owed;
 mod reading;
+mod release;
 mod row_waits;
 mod savepoints;
 mod stop;
@@ -198,6 +198,8 @@ pub(crate) struct TxState {
     statement_savepoints: Vec<(Joined, u64)>,
     /// The table locks it holds, released when it ends.
     held: Vec<Arc<TableLock>>,
+    /// The escrows of the tables it reserved increments in (RULES.md D452).
+    escrowed: Vec<Arc<escrow::Escrow>>,
     /// Whether it wrote a change to the log, so its end must be logged too.
     logged: bool,
     /// The snapshots it read at before its current one that it keeps
@@ -549,30 +551,6 @@ impl Txn {
     /// Records the thread its running call is on, or that none runs.
     pub(crate) fn runs_on(&self, thread: Option<ThreadId>) {
         *lock_builtin(&self.running) = thread;
-    }
-
-    /// Releases every table lock it holds and wakes the transactions waiting
-    /// for them, and forgets its snapshot. Called when it ends, and again
-    /// when it is dropped, which finds nothing left to release.
-    fn release(&self) {
-        let held = mem::take(&mut lock_builtin(&self.state).held);
-        for table in held {
-            // [DESIGN] RULES.md D452: its increments reserved end with it,
-            // before the writers waiting for them go on.
-            if table.escrow.any() {
-                table.escrow.end(self.id);
-            }
-            table.release(self.id);
-        }
-        // [DESIGN] RULES.md D442: the waiters for its rows go on, in turn.
-        self.shared.ends.end(self.id);
-        let pinned = mem::take(&mut lock_builtin(&self.state).pinned);
-        if self.open.swap(false, Ordering::AcqRel) {
-            self.shared.clock.end(self.id, self.snapshot());
-            for at in pinned {
-                self.shared.clock.end(self.id, at);
-            }
-        }
     }
 }
 

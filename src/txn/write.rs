@@ -190,6 +190,36 @@ impl State {
         Ok(())
     }
 
+    /// \[DESIGN\] Of a write of row `id` by `tx`, unless it applies
+    /// increments (`fold`): the escrow's epoch before it, or another
+    /// transaction whose reservation it waits for first (RULES.md D452).
+    fn unreserved(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), (write, fold): (&Write, bool)) -> Result<std::result::Result<Option<u64>, TxId>> {
+        if fold {
+            return Ok(Ok(None));
+        }
+        let epoch = self.lock_of(table)?.escrow.epoch();
+        Ok(self.reserved_by(tx, (table, id), write)?.map_or(Ok(Some(epoch)), Err))
+    }
+
+    /// Once `write` of row `id` replaced `old`: the version it ended kept
+    /// in `history`, if its table keeps one, as `stamp` says; a reservation
+    /// taken since `epoch` waited for. The row replaced.
+    fn written(
+        &self,
+        tx: &Txn,
+        (table, id): (&QualifiedName, RowId),
+        (old, history): (Row, Option<QualifiedName>),
+        (write, stamp, epoch): (&Write, Option<&Stamp>, Option<u64>),
+    ) -> Result<Row> {
+        if let (Some(history), Some(stamp)) = (history, stamp) {
+            self.insert_row(tx, &history, &stamp.ended(&old))?;
+        }
+        if let Some(epoch) = epoch {
+            self.reserved_since(tx, (table, id), (&old, write), epoch)?;
+        }
+        Ok(old)
+    }
+
     /// \[DESIGN\] Another transaction whose increments reserved on row `id`
     /// `write` by `tx` must wait for (RULES.md D452): one guarding a column
     /// the write changes, or any, for a delete.
@@ -237,12 +267,14 @@ impl State {
             }
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
-            let epoch = if fold { None } else { Some(self.lock_of(table)?.escrow.epoch()) };
-            if let Some(by) = if fold { None } else { self.reserved_by(tx, (table, id), &write)? } {
-                drop(turn.take());
-                turn = tx.wait_for_row(&format_args!("a row of {table}"), by)?;
-                continue;
-            }
+            let epoch = match self.unreserved(tx, (table, id), (&write, fold))? {
+                Ok(epoch) => epoch,
+                Err(by) => {
+                    drop(turn.take());
+                    turn = tx.wait_for_row(&format_args!("a row of {table}"), by)?;
+                    continue;
+                }
+            };
             let attempt = {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
@@ -252,15 +284,7 @@ impl State {
             // write refused once as the waiter's snapshot is past is tried
             // again over the version committed, before the next waiter's.
             let e = match attempt {
-                Ok((old, history)) => {
-                    if let (Some(history), Some(stamp)) = (history, &stamp) {
-                        self.insert_row(tx, &history, &stamp.ended(&old))?;
-                    }
-                    if let Some(epoch) = epoch {
-                        self.reserved_since(tx, (table, id), (&old, &write), epoch)?;
-                    }
-                    return Ok(Some(old));
-                }
+                Ok((old, history)) => return self.written(tx, (table, id), (old, history), (&write, stamp.as_ref(), epoch)).map(Some),
                 Err(e) => e,
             };
             tries = tries.saturating_add(1);

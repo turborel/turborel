@@ -139,6 +139,7 @@ impl State {
     fn take(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), now: &Row, (deltas, guarded): (&[(usize, Value)], u64)) -> Result<usize> {
         let lock = self.lock_of(table)?;
         let Some(desc) = self.catalog.table(table) else { return Ok(0) };
+        tx.escrowing(&lock.escrow);
         for (n, (c, delta)) in deltas.iter().enumerate() {
             let (Some(from @ Value::Exact(_)), Some(column)) = (now.get(*c), desc.columns.get(*c)) else { return Ok(n) };
             let reservation = Reservation { tx: tx.id, column: *c, delta: delta.clone(), guarded };
