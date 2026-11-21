@@ -82,7 +82,7 @@ pub const MARK_JOINS: [Mutation; 7] = [
         file: SIDE,
         original: "Ok(or(any(&self.whole, &b, (l, marker))?, of_nulls))",
         replacement: "any(&self.whole, &b, (l, marker))",
-        integration: &[MATCHED],
+        integration: &[NULLS, MATCHED],
         unit: &[],
     },
 ];

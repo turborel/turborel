@@ -103,7 +103,7 @@ fn checked(db: &Database, s: &Session, spilled: bool) {
 /// rows the subquery has run for each row, and unnested as an outer join
 /// of counted bindings: over random tables of nulls, duplicates and
 /// trailing spaces, with indexes and without, by batches and row by row,
-/// and with a work area small enough that the held rows spill.
+/// and with a work area at its least.
 #[test]
 fn mark_joins_match_the_subqueries() {
     for seed in [0x3A2C_0000_0000_0001, 0x3A2C_0000_0000_0002, 0x3A2C_0000_0000_0003] {
@@ -127,7 +127,7 @@ fn mark_joins_match_the_subqueries() {
 /// negations; a row's IN false where one value differs, though another is
 /// null, and unknown where none differs but one is null; EXISTS true or
 /// false alone. Each as the subquery run for each
-/// row gives it, the rule on and off.
+/// row gives it, the rule on and off, held in memory and spilled.
 #[test]
 fn marks_of_nulls_and_empty_sets() {
     let db = Database::new();
@@ -166,14 +166,26 @@ fn marks_of_nulls_and_empty_sets() {
             ["[FALSE]", "[FALSE]", "[TRUE]", "[FALSE]", "[FALSE]", "[TRUE]", "[FALSE]", "[FALSE]"],
         ),
     ];
+    marked_as(&db, &s, &all, cases);
+    // Rows of keys and values no row of R has: none changes a mark, and
+    // past a work area at its least the held rows spill.
+    let filler: Vec<String> = (0..2_000).map(|n| format!("({}, {})", 100 + n, 1_000 + n)).collect();
+    s.run(&format!("INSERT INTO S VALUES {}", filler.join(", "))).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(65_536, 0))).unwrap();
+    marked_as(&db, &s, &all, cases);
+}
+
+/// Checks that each query of `cases` gives the rows `all` their marks, the
+/// rule on and off and unnested otherwise.
+fn marked_as(db: &Database, s: &Session, all: &[&str; 8], cases: &[(&str, [&str; 8])]) {
     for (q, marks) in cases {
         let mut want: Vec<String> = all.iter().zip(marks).map(|(row, m)| format!("{row},{m}")).collect();
         want.sort();
-        assert!(physical(&s, q).contains("MarkJoin"), "{q}");
-        let (on, off) = both(&db, &s, q);
+        assert!(physical(s, q).contains("MarkJoin"), "{q}");
+        let (on, off) = both(db, s, q);
         assert_eq!(on, Ok(want.clone()), "{q}");
         assert_eq!(off, Ok(want.clone()), "{q}");
-        assert_eq!(counted_otherwise(&db, &s, q), Ok(want), "{q}");
+        assert_eq!(counted_otherwise(db, s, q), Ok(want), "{q}");
     }
 }
 
