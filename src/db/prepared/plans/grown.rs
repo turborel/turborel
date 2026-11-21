@@ -148,6 +148,7 @@ fn probed(plan: &Plan, st: &State, found: &mut Vec<(QualifiedName, Vec<usize>)>)
         | Plan::Nearest(_)
         | Plan::MergeJoin(_)
         | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::RangeJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
