@@ -137,6 +137,30 @@ impl Held {
     }
 }
 
+impl Outgoing<'_> {
+    /// Where a request's replies begin: how many times what was gathered
+    /// was sent ahead, and how many replies are gathered.
+    pub(super) fn mark(&self) -> (usize, usize) {
+        (self.sends, self.gathered.len())
+    }
+
+    /// \[DESIGN\] RULES.md D42: a statement that failed, none of its result
+    /// sent ahead since `mark`, sends none of it, its Description and
+    /// Rows gathered dropped, so its client is told only the failure, as a
+    /// statement cancelled before its first row is. Its notices and status
+    /// still go.
+    pub(super) fn unanswered(&mut self, (sends, from): (usize, usize)) {
+        if self.sends != sends {
+            return;
+        }
+        let mut at = 0_usize;
+        self.gathered.retain(|r| {
+            at = at.saturating_add(1);
+            at <= from || !matches!(r, Reply::Description(_) | Reply::Rows(_))
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

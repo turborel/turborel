@@ -42,7 +42,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub(super) use self::batches::streamed_batches;
 use self::pipeline::Pipeline;
 pub(super) use self::probe::pipelined;
-use self::run::Morsels;
+pub(super) use self::run::Morsels;
 use super::{RowIter, Runner, broken, execute, failed};
 use crate::db::State;
 use crate::error::Result;

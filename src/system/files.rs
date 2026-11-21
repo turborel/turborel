@@ -12,7 +12,7 @@ use crate::catalog::ColumnDesc;
 use crate::error::Result;
 use crate::storage::Row;
 use crate::value::Spelled;
-use crate::value::{DataType, Decimal, MAX_EXACT_PRECISION, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Decimal, Value};
 
 /// \[DESIGN\] The longest path shown.
 const PATH_LENGTH: u32 = 1024;
@@ -32,7 +32,7 @@ impl SystemTable for Files {
     fn columns(&self) -> Vec<ColumnDesc> {
         let count = |name: &str| ColumnDesc {
             name: name.to_owned(),
-            data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
+            data_type: DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric },
             not_null: true,
             default: None,
             domain: None,

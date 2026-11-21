@@ -138,8 +138,6 @@ SELECT * FROM JSON_TABLE('{"a":', 'lax $' COLUMNS (A INTEGER) ERROR ON ERROR) AS
             A
 --------------
 (0 rows)
-            A
---------------
 turborel: SQLCODE -301 (SQLSTATE 22032): the string is not a JSON text: a value is missing (at character 6) [ISO/IEC 9075-2:2023 §9.42 GR3a iii 1]
 ```
 

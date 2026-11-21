@@ -42,10 +42,10 @@ pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
 pub(super) use late::{Deferred, resolved};
 pub(super) use probed::{probe_layout, probed};
 use project::Place;
-pub(super) use project::{projectable, projected};
+pub(super) use project::{projectable, projected, vector_of};
 pub(super) use runtime::{Told, taken as runtime_taken, wanted};
 pub(super) use shaped::{Shaped, filter_step, probe_step, project_step, runtime_step, through};
-pub(super) use stream::{Batches, Kept};
+pub(super) use stream::{Batches, Kept, layout, reads_by_batch, whole_batches};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
@@ -113,7 +113,7 @@ pub(super) fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     if !collations.is_empty() || !seeds.is_empty() {
         return None;
     }
-    let (columns, _) = stream::layout(input, db)?;
+    let (columns, _) = layout(input, db)?;
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
     Some(Read { taken: taken(aggs, &columns)?, groups: at })
 }

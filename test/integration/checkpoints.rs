@@ -118,6 +118,8 @@ fn the_log_is_truncated_behind_the_checkpoint() {
     assert!(before > 3, "{before} segments");
     let held = db.session("APP");
     held.run("INSERT INTO T VALUES (5000, 'held')").unwrap();
+    // Its record written now, as a checkpoint would write it (RULES.md D470).
+    db.write_held().unwrap();
     let s = db.session("APP");
     for k in 1_000..1_300 {
         s.run(&format!("INSERT INTO T VALUES ({k}, 'more')")).unwrap();

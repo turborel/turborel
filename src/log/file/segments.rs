@@ -6,12 +6,48 @@ use std::sync::{Arc, PoisonError};
 
 use super::{FileLog, Segment, add, segment_file, segment_name};
 use crate::diagnostics::Event;
-use crate::disk::block::BlockId;
+use crate::disk::block::{BlockFile, BlockId};
 use crate::disk::io::Durability;
 use crate::error::{Result, SqlError};
 use crate::sync::lock_builtin;
 
 impl FileLog {
+    /// Writes `count` records of `bytes` bytes to the active segment with
+    /// `write`: its number, and what `write` returned. A segment that
+    /// cannot be begun leaves this one growing past its size; the records
+    /// are appended either way, a failure told, and a failed seal kept to
+    /// fail the next sync.
+    pub(super) fn on_active<T>(&self, write: impl FnOnce(&BlockFile) -> Result<T>, count: usize, bytes: usize) -> Result<(u64, T)> {
+        if self.rotate_asked.load(Ordering::Acquire) {
+            self.rotate_for_formats();
+        }
+        let segment = self.take_active();
+        let written = write(&segment.blocks);
+        segment.finished();
+        let written = written?;
+        add(&self.counters.appends, u64::try_from(count).unwrap_or(u64::MAX));
+        add(&self.counters.appended_bytes, u64::try_from(bytes).unwrap_or(u64::MAX));
+        if segment.blocks.end().0 >= self.options.segment_size {
+            self.rotate(&segment);
+        }
+        Ok((segment.number, written))
+    }
+
+    /// How many of `records`, at least one, the active segment has room
+    /// for, by their lengths.
+    pub(super) fn fitting(&self, records: &[Vec<u8>]) -> usize {
+        let end = self.active.read().unwrap_or_else(PoisonError::into_inner).blocks.end().0;
+        let mut room = self.options.segment_size.saturating_sub(end);
+        let fit = records
+            .iter()
+            .take_while(|record| {
+                let len = u64::try_from(record.len()).unwrap_or(u64::MAX);
+                room.checked_sub(len).map(|left| room = left).is_some()
+            })
+            .count();
+        fit.max(1)
+    }
+
     /// Begins the segment after `full`, if `full` is still the current one
     /// and no other thread is beginning one; then seals `full`. A segment
     /// that cannot be begun is told, once until one is; a seal that fails
