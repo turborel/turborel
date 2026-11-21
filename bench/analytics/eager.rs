@@ -24,7 +24,7 @@ const SUPPLIERS: u64 = 1_000;
 const PER_INSERT: u64 = 1_000;
 
 /// The queries, each with the name it is reported by.
-const QUERIES: [(&str, &str); 6] = [
+const QUERIES: [(&str, &str); 7] = [
     (
         "Q3-shaped, revenue of unshipped orders",
         "SELECT L_ORDERKEY, SUM(L_EXTENDEDPRICE * (1 - L_DISCOUNT)) AS REVENUE, O_ORDERDATE, O_SHIPPRIORITY
@@ -66,6 +66,11 @@ const QUERIES: [(&str, &str); 6] = [
     (
         "suppliers' balances by nation over the line items",
         "SELECT S_NATIONKEY, SUM(S_ACCTBAL), COUNT(*) FROM LINEITEM JOIN SUPPLIER ON L_SUPPKEY = S_SUPPKEY GROUP BY S_NATIONKEY",
+    ),
+    (
+        "line items to few groups before a selective join",
+        "SELECT N_NAME, SUM(L_QUANTITY), COUNT(*) FROM LINEITEM, SUPPLIER, NATION
+          WHERE L_SUPPKEY = S_SUPPKEY AND S_NATIONKEY = N_NATIONKEY AND S_ACCTBAL > 8000 GROUP BY N_NAME",
     ),
 ];
 
@@ -142,13 +147,16 @@ fn fetched(s: &Session, sql: &str) -> u64 {
     rows
 }
 
-/// Each query at one thread, as planned and with eager aggregation off.
+/// Each query at one thread, as planned, as written and grouped first.
 pub fn workloads(bench: &Bench) {
     let (_db, s) = database();
     s.run("SET EXECUTOR.DEGREE = 1").unwrap();
-    for (switch, label) in [("ON", ""), ("OFF", " (eager off)")] {
-        // A build without the setting runs the queries as planned.
+    // As planned, planned as written, and grouped first wherever it may
+    // be (PLANNER.EAGER_GAIN past any ratio), so the costs' choice can be
+    // judged against both. A build without the settings runs them as planned.
+    for (switch, gain, label) in [("ON", "TO DEFAULT", ""), ("OFF", "TO DEFAULT", " (eager off)"), ("ON", "= 1000000", " (eager forced)")] {
         let _ = s.run(&format!("SET OPTIMIZER.EAGER_AGGREGATION = '{switch}'"));
+        let _ = s.run(&format!("SET PLANNER.EAGER_GAIN {gain}"));
         for (name, sql) in QUERIES {
             bench.measure(Case::new(format!("{name}{label}"), "rows"), || {
                 fetched(&s, sql);
