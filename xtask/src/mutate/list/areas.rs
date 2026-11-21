@@ -26,6 +26,7 @@ mod late;
 mod oltp;
 mod orders;
 mod parallel;
+mod range_joins;
 mod rewrites;
 mod skipping;
 mod sorts;
@@ -99,7 +100,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 43] {
+fn second() -> [&'static [Mutation]; 44] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -143,6 +144,7 @@ fn second() -> [&'static [Mutation]; 43] {
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
         &statistics::STATISTICS,
+        &range_joins::RANGE_JOINS,
         &orders::ORDERS,
     ]
 }

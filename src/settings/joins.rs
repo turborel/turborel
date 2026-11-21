@@ -1,7 +1,9 @@
 //! \[DESIGN\] The settings of join enumeration (RULES.md D305), which
 //! search plans a chain of joins and the limits of the adaptive one's
-//! stages (`physical/enumerate.rs`), and whether a grouping may be
-//! streamed (D550, `physical/streamed.rs`).
+//! stages (`physical/enumerate.rs`); whether a join comparing a value of
+//! each operand by order may be a range join (`physical/range.rs`,
+//! RULES.md D582); and whether a grouping may be streamed (D550,
+//! `physical/streamed.rs`).
 
 use super::builtin::{SESSION, count, defined, text};
 use super::{Definition, Key, Kind, ON, SWITCHES};
@@ -13,8 +15,10 @@ pub const JOIN_ENUMERATION: Key = Key(79);
 pub const DP_BUDGET: Key = Key(80);
 /// PLANNER.LINEARIZED_RELATIONS.
 pub const LINEARIZED_RELATIONS: Key = Key(81);
+/// PLANNER.RANGE_JOINS.
+pub const RANGE_JOINS: Key = Key(88);
 /// PLANNER.STREAMED_GROUPING.
-pub const STREAMED_GROUPING: Key = Key(88);
+pub const STREAMED_GROUPING: Key = Key(89);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
@@ -44,8 +48,17 @@ pub(super) fn definitions() -> [Definition; 3] {
     ]
 }
 
+/// PLANNER.RANGE_JOINS, at its key's place after the executor's settings.
+pub(super) fn range_joins() -> Definition {
+    defined(
+        ("PLANNER.RANGE_JOINS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a join whose condition compares a value of each table by <, <=, > or >=, a band or an overlap of periods among them, may sort one table and have each row of the other search it, rather than judge every pair. OFF plans such joins as nested loops, as to compare the two.",
+    )
+}
+
 /// The setting of streamed groupings, at its key's place after the
-/// executor's.
+/// range joins'.
 pub(super) fn streamed() -> [Definition; 1] {
     [defined(
         ("PLANNER.STREAMED_GROUPING", Kind::Choice(SWITCHES), text(ON)),

@@ -49,6 +49,8 @@ pub use parallel::Parallel;
 pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
 mod probe;
 mod project;
+mod range;
+pub use range::{Bound, Pruned, RangeJoin};
 mod raising;
 mod recognized;
 mod shown;
@@ -267,6 +269,8 @@ pub enum Plan {
     },
     /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
     MergeJoin(Box<MergeJoin>),
+    /// \[DESIGN\] A range join (`physical/range.rs`, RULES.md D580).
+    RangeJoin(Box<RangeJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
     Aggregate {
         /// The grouping columns of `input`.
@@ -564,6 +568,9 @@ impl<'a> PhysicalPlanner<'a> {
         let goal = self.divided(|| kept(self));
         if let Some(read) = goal.filtered_read(cond, input, (want, above)) {
             return read;
+        }
+        if let Some(join) = self.range_join(cond, input, want) {
+            return join;
         }
         if let Some(join) = self.hash_join(cond, input, want) {
             return join;
