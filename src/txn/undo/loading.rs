@@ -159,6 +159,8 @@ fn of(index: &Arc<dyn Index>, entry: UndoEntry) -> Option<Vec<(Key, RowId)>> {
         | UndoEntry::Deleted { .. }
         | UndoEntry::Updated { .. }
         | UndoEntry::IndexInserted { .. }
-        | UndoEntry::IndexRemoved { .. } => None,
+        | UndoEntry::IndexRemoved { .. }
+        | UndoEntry::Escrowed { .. }
+        | UndoEntry::Folded { .. } => None,
     }
 }

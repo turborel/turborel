@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use turborel::db::Database;
 use turborel::txn::LockWait;
+use turborel::value::Value;
 
 use crate::common::rows;
 
@@ -72,6 +73,8 @@ fn many_writers_of_one_row_lose_nothing_and_are_never_refused_4_28() {
 #[test]
 fn a_procedure_statement_after_a_wait_reads_what_was_committed_4_28() {
     let db = database();
+    // Its increment waits for the row's writer, not reserved (RULES.md D452).
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".to_owned())).unwrap();
     let a = db.session("A");
     a.run(
         "CREATE PROCEDURE P () MODIFIES SQL DATA BEGIN DECLARE X INTEGER; \
