@@ -119,6 +119,7 @@ mod recovery;
 mod rekey;
 mod revoke;
 mod roles;
+mod rollback;
 mod routines;
 mod running;
 pub(crate) mod savepoints;
@@ -294,7 +295,7 @@ pub struct Session {
     /// [ISO/IEC 9075-2:2023 §4.48.1, §19.13] Its default transform group
     /// name and its transform group names for user-defined types.
     /// Its own values of the settings a session may set (RULES.md D36).
-    own: RefCell<crate::settings::Own>,
+    own: RefCell<settings::OwnValues>,
     /// The default schema of its unqualified names [ISO/IEC 9075:1992
     /// §4.30, §16.2].
     schema: RefCell<String>,
@@ -394,7 +395,7 @@ impl Session {
             inner: RefCell::new(SessionState::default()),
             busy: Cell::new(false),
             deferral: RefCell::new(Deferral::default()),
-            own: RefCell::new(crate::settings::Own::default()),
+            own: RefCell::new(settings::OwnValues::default()),
             schema: RefCell::new(auth.to_owned()),
             collation: RefCell::new(None),
             prepared_collation: RefCell::new(collations::Collating::AsSet),
@@ -524,59 +525,6 @@ impl Session {
         if wrote {
             self.db.written(&tables);
         }
-        ended
-    }
-
-    /// [X3.135-1986 §8.9] ROLLBACK WORK.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -914 if a change could not be undone; the transaction still ends,
-    /// and the tables concerned are damaged (RULES.md D19). SQLCODE -910 if
-    /// called back from a plug-in.
-    pub fn rollback(&self) -> Result<()> {
-        let call = self.enter()?;
-        self.emptied((commands::ROLLBACK_WORK, commands::UNRECOGNIZED));
-        self.diagnosed(self.db.noted(self.rollback_in(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
-    }
-
-    /// [X3.135-1986 §7.1 GR2, ISO/IEC 9075:1992 §20.1 GR2a] Ends the
-    /// session's transaction after its last statement: committed or rolled
-    /// back as SESSION.COMMIT_AT_END says, and rolled back if a constraint is not
-    /// satisfied; its failure returned, where dropping the session would
-    /// lose it. A server calls it when its client terminates the session,
-    /// which then has no transaction left to end when it is dropped.
-    ///
-    /// # Errors
-    ///
-    /// As `commit`'s, or `rollback`'s, as SESSION.COMMIT_AT_END says.
-    pub fn end(&self) -> Result<()> {
-        let ending = self.session_end(self.enter()?.state());
-        match ending {
-            SessionEnd::Commit => self.commit(),
-            SessionEnd::Rollback => self.rollback(),
-        }
-    }
-
-    fn rollback_in(&self, st: &State) -> Result<()> {
-        // The changes of definitions are forgotten; the published ones have
-        // the storage of every table its changes are undone in.
-        let ending = self.end_transaction();
-        let id = ending.as_ref().map(|tx| tx.id);
-        let ended = match (ending, self.take_staged()) {
-            (Some(tx), None) => st.rollback(&tx),
-            (Some(tx), Some(staged)) => {
-                staged.discard();
-                self.db.snapshot().and_then(|published| published.rollback(&tx))
-            }
-            (None, _) => return Ok(()),
-        };
-        // [X3.135-1986 §8.9] Ended, every change undone or not (RULES.md D19).
-        self.transaction_ended(false);
-        self.locators_ended(false);
-        self.temporaries_ended(st, id);
-        self.db.checkpoint_if_due();
-        self.db.maintain_if_due();
         ended
     }
 }

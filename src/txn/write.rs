@@ -17,15 +17,21 @@ use crate::log::record::{Change, insert_record};
 use crate::storage::{Row, RowId, TableStorage, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
+use escrowed::Guarded;
 
-/// \[DESIGN\] What a write finds of the reservations of its row (RULES.md
-/// D452).
-enum Guard {
-    /// None it must wait for: the escrow's epoch before the write, unless
-    /// it applies increments.
-    Clear(Option<u64>),
-    /// It waited for one: it looks again.
-    Waited,
+mod escrowed;
+
+/// What a writer refused does next (RULES.md D442, D747).
+enum Next {
+    /// Waits for the open transaction that changed the row.
+    Wait(TxId),
+    /// Tries its write again.
+    Again,
+    /// Is refused: the row changed since its snapshot, and it rechecks nothing.
+    Refused,
+    /// Rechecks its search condition over the row's newest committed
+    /// version, of this stamp, none if deleted.
+    Over(Timestamp, Option<Row>),
 }
 
 impl State {
@@ -182,82 +188,6 @@ impl State {
         self.change_row(tx, (table, id), (Write::Update(row.clone()), true), Some(recheck))
     }
 
-    /// \[DESIGN\] Once `write` of row `id` by `tx` replaced `old`: if a
-    /// reservation was taken since the epoch `epoch` and guards a column it
-    /// changed, waits for its transaction to end (RULES.md D452).
-    fn reserved_since(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), (old, write): (&Row, &Write), epoch: u64) -> Result<()> {
-        let lock = self.lock_of(table)?;
-        if lock.escrow.epoch() == epoch {
-            return Ok(());
-        }
-        let changed = match write {
-            Write::Delete => None,
-            Write::Update(row) => Some(super::escrow::changed(old, row)),
-        };
-        if let Some(by) = lock.escrow.blocking(tx.id, id, changed) {
-            drop(tx.wait_for_row(&format_args!("a row of {table}"), by)?);
-        }
-        Ok(())
-    }
-
-    /// \[DESIGN\] Of a write of row `id` by `tx`, unless it applies
-    /// increments (`fold`): the escrow's epoch before it; none once it
-    /// waited for another transaction's reservation, its `turn` taken, so
-    /// it looks again (RULES.md D452).
-    fn unreserved(
-        &self,
-        tx: &Txn,
-        (table, id): (&QualifiedName, RowId),
-        (write, fold): (&Write, bool),
-        turn: &mut Option<super::row_waits::Turn>,
-    ) -> Result<Guard> {
-        if fold {
-            return Ok(Guard::Clear(None));
-        }
-        let epoch = self.lock_of(table)?.escrow.epoch();
-        let Some(by) = self.reserved_by(tx, (table, id), write)? else { return Ok(Guard::Clear(Some(epoch))) };
-        drop(turn.take());
-        *turn = tx.wait_for_row(&format_args!("a row of {table}"), by)?;
-        Ok(Guard::Waited)
-    }
-
-    /// Once `write` of row `id` replaced `old`: the version it ended kept
-    /// in `history`, if its table keeps one, as `stamp` says; a reservation
-    /// taken since `epoch` waited for. The row replaced.
-    fn written(
-        &self,
-        tx: &Txn,
-        (table, id): (&QualifiedName, RowId),
-        (old, history): (Row, Option<QualifiedName>),
-        (write, stamp, epoch): (&Write, Option<&Stamp>, Option<u64>),
-    ) -> Result<Row> {
-        if let (Some(history), Some(stamp)) = (history, stamp) {
-            self.insert_row(tx, &history, &stamp.ended(&old))?;
-        }
-        if let Some(epoch) = epoch {
-            self.reserved_since(tx, (table, id), (&old, write), epoch)?;
-        }
-        Ok(old)
-    }
-
-    /// \[DESIGN\] Another transaction whose increments reserved on row `id`
-    /// `write` by `tx` must wait for (RULES.md D452): one guarding a column
-    /// the write changes, or any, for a delete.
-    fn reserved_by(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), write: &Write) -> Result<Option<TxId>> {
-        let lock = self.lock_of(table)?;
-        if !lock.escrow.any() {
-            return Ok(None);
-        }
-        let changed = match write {
-            Write::Delete => None,
-            Write::Update(row) => {
-                let newest = self.storage_of(table)?.newest(tx.id, id)?;
-                Some(newest.row.map_or(u64::MAX, |old| super::escrow::changed(&old, row)))
-            }
-        };
-        Ok(lock.escrow.blocking(tx.id, id, changed))
-    }
-
     /// `write` of row `id`, tried again as long as another transaction's
     /// change refuses it and LOCKS.WAIT lets it wait: once that
     /// transaction ends, over the version it committed, if `recheck`
@@ -285,60 +215,117 @@ impl State {
             if let Write::Update(row) = &mut write {
                 self.keep_lobs(tx, table, Some(id), row)?;
             }
-            // [DESIGN] RULES.md D452: not over the columns another
-            // transaction's increments reserved guard, until it ends.
-            let Guard::Clear(epoch) = self.unreserved(tx, (table, id), (&write, fold), &mut turn)? else { continue };
-            let attempt = {
+            let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
                 self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
+            };
+            // [DESIGN] RULES.md D452: not over the columns another
+            // transaction's increments reserved guard, until it ends.
+            let attempt = match self.unreserved(tx, (table, id), (&write, fold), (&mut turn, write_once))? {
+                Guarded::Written(attempt) => attempt,
+                Guarded::Waited => continue,
             };
             // The turn is kept until the write is made or given up: a
             // write refused once as the waiter's snapshot is past is tried
             // again over the version committed, before the next waiter's.
             let e = match attempt {
-                Ok((old, history)) => return self.written(tx, (table, id), (old, history), (&write, stamp.as_ref(), epoch)).map(Some),
+                Ok((old, history)) => return self.written(tx, (old, history), stamp.as_ref()).map(Some),
                 Err(e) => e,
             };
             tries = tries.saturating_add(1);
-            let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
-            if !waits || self.capabilities(table)?.concurrency == Concurrency::Coordinator {
+            if !self.waits(tx, table, &e, tries)? {
                 return Err(self.refused(tx, table, id, e));
             }
-            let newest = self.storage_of(table)?.newest(tx.id, id)?;
-            if let Some(writer) = newest.writer {
-                drop(turn.take());
-                turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
-                seen = None;
-                continue;
+            let check = recheck.as_mut().filter(|_| !tx.one_snapshot());
+            let before = seen.take().map(|(at, _)| at);
+            match self.next_unwritten(tx, (table, id), check.is_some(), &mut turn)? {
+                Next::Wait(_) | Next::Again => {}
+                Next::Refused => return Err(e),
+                Next::Over(_, None) => return Ok(None),
+                Next::Over(committed, Some(row)) => {
+                    let Some(check) = check else { return Err(e) };
+                    write = match check(&row)? {
+                        Again::Update(row) => Write::Update(row),
+                        Again::Delete => Write::Delete,
+                        Again::Skip => return Ok(None),
+                    };
+                    // A recheck of a version newer than the last is no
+                    // failed try (RULES.md D454).
+                    if before != Some(committed) {
+                        tries = 0;
+                    }
+                    seen = Some((committed, row));
+                }
             }
-            // Its writer rolled back as this one looked.
-            if newest.stamp <= tx.snapshot() {
-                seen = None;
-                continue;
-            }
-            // [§4.28] Committed since its one snapshot: what it read changed.
-            // [DESIGN] RULES.md D441: whether rechecked or refused, what it
-            // tells rests on that commit.
-            tx.depend(newest.stamp);
-            let Some(check) = recheck.as_mut().filter(|_| !tx.one_snapshot()) else { return Err(e) };
-            let Some(row) = newest.row else { return Ok(None) };
-            write = match check(&row)? {
-                Again::Update(row) => Write::Update(row),
-                Again::Delete => Write::Delete,
-                Again::Skip => return Ok(None),
-            };
-            seen = Some((newest.stamp, row));
         }
+    }
+
+    /// \[DESIGN\] RULES.md D454: what a writer refused at row `id` of
+    /// `table` does next once no transaction is writing the row, waited
+    /// for in `turn` (`next_after`). The row is looked at again after each
+    /// wait, so a waiter goes from its wait straight to the version
+    /// committed meanwhile.
+    fn next_unwritten(
+        &self,
+        tx: &Txn,
+        (table, id): (&QualifiedName, RowId),
+        rechecks: bool,
+        turn: &mut Option<super::row_waits::Turn>,
+    ) -> Result<Next> {
+        loop {
+            match self.next_after(tx, (table, id), rechecks)? {
+                Next::Wait(writer) => {
+                    drop(turn.take());
+                    *turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
+                }
+                next @ (Next::Again | Next::Refused | Next::Over(..)) => return Ok(next),
+            }
+        }
+    }
+
+    /// Whether a writer refused by `e`, after `tries` refusals, waits and
+    /// tries the row of `table` again.
+    fn waits(&self, tx: &Txn, table: &QualifiedName, e: &SqlError, tries: usize) -> Result<bool> {
+        let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
+        Ok(waits && self.capabilities(table)?.concurrency != Concurrency::Coordinator)
+    }
+
+    /// What a writer refused at row `id` of `table` does next, its writer
+    /// and stamp read with no older version (RULES.md D747); the row read
+    /// only if it `rechecks`.
+    fn next_after(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), rechecks: bool) -> Result<Next> {
+        let storage = self.storage_of(table)?;
+        let (writer, committed) = storage.newest_writer(tx.id, id)?;
+        if let Some(writer) = writer {
+            return Ok(Next::Wait(writer));
+        }
+        // Its writer rolled back as this one looked.
+        if committed <= tx.snapshot() {
+            return Ok(Next::Again);
+        }
+        // [§4.28] Committed since its one snapshot: what it read changed.
+        // [DESIGN] RULES.md D441: whether rechecked or refused, what it
+        // tells rests on that commit.
+        tx.depend(committed);
+        if !rechecks {
+            return Ok(Next::Refused);
+        }
+        let newest = storage.newest(tx.id, id)?;
+        // Changed again as this one looked: the write is tried again.
+        if newest.writer.is_some() || newest.stamp != committed {
+            return Ok(Next::Again);
+        }
+        Ok(Next::Over(committed, newest.row))
     }
 
     /// `e`, the refusal of a write of row `id` of `table`: a conflict is
     /// told once the commit it met, if one did, is durable (RULES.md D441).
     fn refused(&self, tx: &Txn, table: &QualifiedName, id: RowId, e: SqlError) -> SqlError {
         if e.code == Code::Conflict
-            && let Ok(newest) = self.storage_of(table).and_then(|storage| storage.newest(tx.id, id))
+            && let Ok((_, stamp)) = self.storage_of(table).and_then(|storage| storage.newest_writer(tx.id, id))
         {
-            tx.depend(newest.stamp);
+            tx.depend(stamp);
         }
         e
     }
@@ -499,9 +486,11 @@ pub(crate) enum Again {
 /// committed after its snapshot (`State::rewrite_row`).
 pub(crate) type Recheck<'a> = &'a mut dyn FnMut(&Row) -> Result<Again>;
 
-/// \[DESIGN\] How many times a row's write is refused by another
-/// transaction's change before the statement is, bounding the waits for
-/// an engine whose answers disagree.
+/// \[DESIGN\] How many times in a row a row's write is refused by another
+/// transaction's change with no recheck of a newer version between,
+/// before the statement is: a bound only for
+/// an engine whose answers disagree, never for a row in demand, so READ
+/// COMMITTED waits until its lock timeout or a deadlock (RULES.md D454).
 const MOST_CONFLICTS: usize = 64;
 
 impl Txn {

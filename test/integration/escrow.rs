@@ -108,6 +108,34 @@ fn many_sessions_adding_leave_the_sums_of_the_locked_path() {
     assert_eq!(left[0].1, ["520.00,-320,160"]);
 }
 
+/// Verifies: [DESIGN] RULES.md D452: sessions adding to a row while
+/// others write the column they add to, each holding the row a moment
+/// before it commits, are never refused: a write never waits for a
+/// reservation while it holds the row, so no wait closes a cycle; and
+/// every increment is applied.
+#[test]
+fn increments_and_writes_of_one_column_never_deadlock() {
+    let db = database("ON");
+    let threads: Vec<_> = (0..24)
+        .map(|t| {
+            let s = db.session("A");
+            let sql = if t % 3 == 0 { "UPDATE T SET X = X * 1 WHERE ID = 1" } else { "UPDATE T SET X = X + 1 WHERE ID = 1" };
+            thread::spawn(move || {
+                for _ in 0..20 {
+                    s.run(sql).map_err(|e| e.msg)?;
+                    thread::sleep(Duration::from_millis(1));
+                    s.commit().map_err(|e| e.msg)?;
+                }
+                Ok::<(), String>(())
+            })
+        })
+        .collect();
+    for t in threads {
+        assert_eq!(t.join().unwrap(), Ok(()));
+    }
+    assert_eq!(value(&db.session("A"), "X", 1), "420.00");
+}
+
 /// Verifies: [DESIGN] RULES.md D452: an increment reserved holds no row:
 /// another session's increment of the row goes on, where the locked path
 /// waits; both are applied.

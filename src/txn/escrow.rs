@@ -11,7 +11,7 @@
 //! read) or deleting the row: such a write waits for it, as for a lock
 //! (`txn/write.rs`).
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::catalog::QualifiedName;
@@ -21,6 +21,12 @@ use crate::storage::{Row, RowId, column_bit, same};
 use crate::sync::lock_builtin;
 use crate::txn::{TxId, Txn};
 use crate::value::Value;
+
+/// The shards of a table's rows a write and a reservation exclude each
+/// other by (`Escrow::exclusive`).
+const TURNS: usize = 32;
+/// `TURNS`, as a row id's divisor.
+const TURNS_U64: u64 = 32;
 
 /// An increment reserved on a column of a row.
 #[derive(Clone, Debug)]
@@ -42,11 +48,12 @@ pub(crate) struct Escrow {
     /// How many reservations are held: an ordinary write looks no further
     /// while none is.
     held: AtomicUsize,
-    /// Moved before each reservation is taken. A write reads it before it
-    /// looks for reservations and again once written, and looks again if
-    /// it moved: a reservation taken meanwhile either finds the write
-    /// pending and is taken back, or is found by the write.
-    epoch: AtomicU64,
+    /// Held, by a row's shard, while a write looks for the row's
+    /// reservations and is made, and while a reservation is taken and the
+    /// row looked at again: a reservation either finds the write pending
+    /// and is taken back, or is found by the write before it is made, so
+    /// no write waits for a reservation while it holds the row.
+    turns: [Mutex<()>; TURNS],
     rows: Mutex<Xxh3Map<RowId, Vec<Reservation>>>,
     /// The table's name, as its first reservation named it.
     table: Mutex<Option<QualifiedName>>,
@@ -58,9 +65,12 @@ impl Escrow {
         self.held.load(Ordering::Acquire) > 0
     }
 
-    /// Its epoch now.
-    pub(crate) fn epoch(&self) -> u64 {
-        self.epoch.load(Ordering::SeqCst)
+    /// `f`'s result, run while no write of row `id` or reservation on it
+    /// is between its look and its change.
+    pub(crate) fn exclusive<T>(&self, id: RowId, f: impl FnOnce() -> T) -> T {
+        let shard = usize::try_from(id % TURNS_U64).ok().and_then(|at| self.turns.get(at));
+        let _turn = shard.map(lock_builtin);
+        f()
     }
 
     /// Another transaction than `tx` holding a reservation of row `id` that
@@ -88,7 +98,6 @@ impl Escrow {
         fits: impl FnOnce(&[Reservation]) -> Result<bool>,
     ) -> Result<bool> {
         lock_builtin(&self.table).get_or_insert_with(|| table.clone());
-        self.epoch.fetch_add(1, Ordering::SeqCst);
         let mut rows = lock_builtin(&self.rows);
         let held = rows.entry(id).or_default();
         if !fits(held)? {

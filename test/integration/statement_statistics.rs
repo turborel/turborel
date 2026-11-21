@@ -154,3 +154,32 @@ fn a_spilled_sort_counts_its_bytes() {
                    WHERE STATEMENT_TEXT LIKE 'SELECT K FROM T%' ORDER BY STATEMENT_TEXT";
     assert_eq!(rows(&db.session("OWNER"), spilled).unwrap(), ["SELECT K FROM T ORDER BY K DESC,TRUE", "SELECT K FROM T WHERE K = ?,FALSE"]);
 }
+
+/// Verifies: [DESIGN] RULES.md D521: a session that runs as another user
+/// tallies its statements under that user, by name, and under the first
+/// again once it runs as them again; the user it runs as is kept with its
+/// tallies, so a statement by the same user as the last takes no lock to
+/// find them. The owner's session sets the identifier [ISO/IEC 9075:1992
+/// §16.4 GR5].
+#[test]
+fn a_session_tallies_each_user_it_runs_as() {
+    let db = owned();
+    db.create_user("Y", b"x").unwrap();
+    let s = db.session("OWNER");
+    let users = "SELECT 1 FROM INFORMATION_SCHEMA.USERS";
+    for run_as in ["'Y'", "'OWNER'"] {
+        rows(&s, users).unwrap();
+        s.commit().unwrap();
+        s.run(&format!("SET SESSION AUTHORIZATION {run_as}")).unwrap();
+    }
+    rows(&s, users).unwrap();
+    s.commit().unwrap();
+    let reader = db.session("OWNER");
+    // Each SELECT's text and calls.
+    let selects = |user: &str| -> Vec<String> {
+        let all = tallies(&reader, user).into_iter().filter(|t| t.starts_with("SELECT ? FROM"));
+        all.filter_map(|t| t.rsplit_once(',').map(|(called, _)| called.to_owned())).collect()
+    };
+    assert_eq!(selects("OWNER"), ["SELECT ? FROM INFORMATION_SCHEMA.USERS,2"], "the owner's, before and after");
+    assert_eq!(selects("Y"), ["SELECT ? FROM INFORMATION_SCHEMA.USERS,1"], "Y's");
+}

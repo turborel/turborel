@@ -38,7 +38,7 @@ impl Drop for Committing<'_> {
     fn drop(&mut self) {
         self.shared.clock.end_commit(self.at);
         if !self.syncing {
-            self.shared.clock.end_sync(self.at);
+            self.shared.clock.end_syncs(std::iter::once(self.at));
         }
     }
 }
@@ -58,11 +58,6 @@ impl Transactions {
     /// until the commit ends.
     pub(super) fn commit_timestamp(&self) -> Committing<'_> {
         Committing { shared: self, at: self.clock.take_commit(), syncing: false }
-    }
-
-    /// The commit at `at`, ended, has its commit record synced.
-    pub(super) fn synced_commit(&self, at: Timestamp) {
-        self.clock.end_sync(at);
     }
 
     /// Returns once every commit up to `at` is durable, so a snapshot

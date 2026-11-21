@@ -219,7 +219,7 @@ pub struct Cursor {
     /// Its session's, which cancels a fetch as a statement (RULES.md D44).
     pub(super) stop: Arc<Stop>,
     /// Its work, timed, to tell if it is slow (`db/slow.rs`).
-    pub(super) timed: Option<Box<super::slow::Timed<String>>>,
+    pub(super) timed: Option<super::slow::Timed<String>>,
     /// Its session's time zone displacement as it was opened, its times
     /// and timestamps without time zone shown in [ISO/IEC 9075:1992 §6.1
     /// GR5].

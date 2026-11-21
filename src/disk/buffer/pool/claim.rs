@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use super::{Claim, Latch, try_latch};
 use crate::disk::buffer::{BufferPool, Key, UNDO_WAITS, all_held, count};
 use crate::error::Result;
-use crate::hash::xxhash::Xxh3Map;
+use crate::hash::xxhash::{Xxh3Map, Xxh3Set};
 use crate::sync::lock_builtin;
 
 /// \[DESIGN\] The first sleep of a thread waiting for frames latched by
@@ -99,29 +99,24 @@ impl Busy {
 
 /// The frames a claim found held in this round of proposals, so the
 /// eviction policy is not asked for them again, and whether any was only
-/// latched. Allocated only when a frame is found held, so a claim that
-/// takes the first frame proposed allocates nothing.
+/// latched. A set of those frames alone, empty until a frame is found
+/// held: a claim that finds one held costs what it tried, never a mark
+/// for each frame of the pool, which may hold millions.
 #[derive(Default)]
 struct Tried {
-    frames: Vec<bool>,
+    frames: Xxh3Set<usize>,
     latched: bool,
 }
 
 impl Tried {
     /// Whether frame `index` was tried.
     fn has(&self, index: usize) -> bool {
-        self.frames.get(index).copied().unwrap_or(false)
+        !self.frames.is_empty() && self.frames.contains(&index)
     }
 
-    /// Notes frame `index`, of a pool of `frames`, tried: only latched if
-    /// `latched`.
-    fn note(&mut self, index: usize, frames: usize, latched: bool) {
-        if self.frames.is_empty() {
-            self.frames.resize(frames, false);
-        }
-        if let Some(tried) = self.frames.get_mut(index) {
-            *tried = true;
-        }
+    /// Notes frame `index` tried: only latched if `latched`.
+    fn note(&mut self, index: usize, latched: bool) {
+        self.frames.insert(index);
         self.latched |= latched;
     }
 }
@@ -169,8 +164,8 @@ impl BufferPool {
             match self.evict(key, index)? {
                 Attempt::Taken(claim) => return Ok(Some(self.placed(claim, key))),
                 Attempt::Mapped => return Ok(None),
-                Attempt::Held | Attempt::NoneEmpty => tried.note(index, self.frames.len(), false),
-                Attempt::Latched => tried.note(index, self.frames.len(), true),
+                Attempt::Held | Attempt::NoneEmpty => tried.note(index, false),
+                Attempt::Latched => tried.note(index, true),
             }
         }
     }
@@ -237,8 +232,11 @@ impl BufferPool {
         frame.pins.fetch_add(1, Ordering::AcqRel);
         frame.set_key(Some(key));
         frame.loading.store(true, Ordering::Release);
+        // Owed, it is captured as a dirty page is written back, counted in
+        // flight before the latch is let go (`capture.rs`).
+        let owed = old.is_some_and(|_| self.owed_taken(frame));
         drop(latch);
         let dirty = frame.dirty.swap(false, Ordering::AcqRel);
-        Ok(Claim { frame: index, write_back: old.filter(|_| dirty) })
+        Ok(Claim { frame: index, write_back: old.filter(|_| dirty || owed), owed })
     }
 }

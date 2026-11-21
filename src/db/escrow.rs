@@ -99,12 +99,21 @@ impl State {
             if changed(seen, &now) & read != 0 {
                 return Ok(false);
             }
-            let taken = self.take(tx, (table, id), &now, (deltas, guarded))?;
-            if taken < deltas.len() {
-                return self.give_back(tx, (table, id), deltas.get(..taken).unwrap_or_default()).map(|()| false);
+            // Taken, and the row looked at again, while no write of it is
+            // between its look and its change; taken back at once if short.
+            let escrow = Arc::clone(&self.lock_of(table)?.escrow);
+            let (whole, still) = escrow.exclusive(id, || -> Result<(bool, bool)> {
+                let taken = self.take(tx, (table, id), &now, (deltas, guarded))?;
+                let still = taken == deltas.len() && self.escrowed_row(tx, (table, id), (guarded, false))?.is(&now, guarded);
+                if !still {
+                    self.give_back(tx, (table, id), deltas.get(..taken).unwrap_or_default())?;
+                }
+                Ok((taken == deltas.len(), still))
+            })?;
+            if !whole {
+                return Ok(false);
             }
-            if self.escrowed_row(tx, (table, id), (guarded, false))?.is(&now, guarded) {
-                let escrow = Arc::clone(&self.lock_of(table)?.escrow);
+            if still {
                 for (column, _) in deltas {
                     tx.log(UndoEntry::Escrowed { table: table.clone(), escrow: Arc::clone(&escrow), id, column: *column })?;
                 }
@@ -115,7 +124,6 @@ impl State {
                 }
                 return Ok(true);
             }
-            self.give_back(tx, (table, id), deltas)?;
         }
         Ok(false)
     }

@@ -24,6 +24,8 @@ pub fn plannings() -> u64 {
 mod tests {
     use super::*;
 
+    /// Verifies: [DESIGN] RULES.md D613: each planning counts once, on the
+    /// thread that made it, and another thread's count starts at none.
     #[test]
     fn each_planning_counts_once_on_its_thread() {
         let before = plannings();

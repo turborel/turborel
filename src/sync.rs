@@ -57,6 +57,18 @@ pub(crate) fn lock_builtin<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Takes for reading a read-write lock of a built-in engine or index that
+/// runs no plug-in code while holding it, as `lock_builtin` does a mutex.
+pub(crate) fn read_builtin<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Takes for writing a read-write lock of a built-in engine or index that
+/// runs no plug-in code while holding it, as `lock_builtin` does a mutex.
+pub(crate) fn write_builtin<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(PoisonError::into_inner)
+}
+
 // Unit tests: a lock poisoned by a panicking thread is reported, not
 // unwrapped (RULES.md R-ERR-1, R-TEST-2 robustness).
 #[cfg(test)]
