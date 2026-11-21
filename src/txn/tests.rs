@@ -68,7 +68,7 @@ fn participants_end_where_they_joined() {
 /// however late they begin, and once it has ended they read at it; the
 /// horizon is the oldest open snapshot, counted once per transaction, ended
 /// once whether by `release` or by being dropped, and with none open the
-/// stable timestamp.
+/// durable timestamp, a commit that syncs nothing durable as it ends.
 #[test]
 fn snapshots_never_count_a_commit_under_way() {
     let shared = Arc::new(Transactions::default());
@@ -89,7 +89,7 @@ fn snapshots_never_count_a_commit_under_way() {
     drop(b);
     assert_eq!(shared.horizon(), c.snapshot());
     drop((a, c));
-    assert_eq!(shared.horizon(), at, "none open: the stable timestamp");
+    assert_eq!(shared.horizon(), at, "none open: the durable timestamp");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.28] (RULES.md D29): a

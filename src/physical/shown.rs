@@ -127,6 +127,7 @@ impl Plan {
             }
             Plan::Polymorphic(p) => writeln!(out, "{pad}Polymorphic table function {}", p.function()),
             Plan::Parallel(p) => writeln!(out, "{pad}Parallel  (degree={})", p.degree),
+            Plan::Counted(c) => return write_counted(c, out, depth),
         };
         self.write_inputs(out, depth.saturating_add(1));
     }
@@ -140,7 +141,8 @@ impl Plan {
             | Plan::Values { .. }
             | Plan::System { .. }
             | Plan::WorkTable { .. }
-            | Plan::Transition { .. } => {}
+            | Plan::Transition { .. }
+            | Plan::Counted(_) => {}
             Plan::Recursive { fixpoint, .. } => {
                 let (first, second, rest) = fixpoint.plans();
                 for p in first.into_iter().chain(second).chain(rest) {
@@ -208,7 +210,6 @@ fn write_unnest(u: &Unnest<Plan>, out: &mut String, pad: &str) -> std::fmt::Resu
     }
 }
 
-// Unit tests: a plan shown is described, one run is not (RULES.md R-TEST-1).
 /// The line of a nearest read: its index, measure and cost, and how it
 /// reads, certified or approximate (R13.5).
 fn nearest_line(read: &super::NearestRead) -> String {
@@ -219,6 +220,61 @@ fn nearest_line(read: &super::NearestRead) -> String {
     )
 }
 
+/// \[EXTENSION\] (RULES.md D376) Writes the counted operator `c`, `depth`
+/// levels below the top, its line followed by what it did: its rows, the
+/// times it was opened if not once, an index join's probes, which are its
+/// outer rows, and its time if its clock moved; and its estimate before
+/// them, if its line shows none.
+fn write_counted(c: &super::Counted, out: &mut String, depth: usize) {
+    let mut text = String::new();
+    c.input.write(&mut text, depth);
+    let (head, rest) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+    // Writing to a String cannot fail.
+    let _ = writeln!(out, "{head}{}", counted_note(c));
+    out.push_str(rest);
+}
+
+/// What EXPLAIN ANALYZE adds to the line of the counted operator `c`.
+fn counted_note(c: &super::Counted) -> String {
+    let est = match (c.input.shows_estimate(), c.input.est()) {
+        (false, Some(est)) => format!("  (est. rows={est:.0})"),
+        (true, _) | (false, None) => String::new(),
+    };
+    let count = &c.count;
+    if count.opens() == 0 {
+        return format!("{est}  (never run)");
+    }
+    let mut actual = format!("rows={}", count.rows());
+    if count.opens() > 1 {
+        let _ = write!(actual, ", loops={}", count.opens());
+    }
+    if let Plan::IndexJoin { left, .. } = &c.input
+        && let Plan::Counted(outer) = &**left
+    {
+        let _ = write!(actual, ", probes={}", outer.count.rows());
+    }
+    if let Some(micros) = count.micros() {
+        let _ = write!(actual, ", time={}", millis(micros));
+    }
+    format!("{est}  (actual {actual})")
+}
+
+/// `micros` microseconds, as milliseconds to the microsecond.
+pub(crate) fn millis(micros: u64) -> String {
+    const PER_MILLI: u64 = 1_000;
+    format!("{}.{:03} ms", micros.checked_div(PER_MILLI).unwrap_or_default(), micros.checked_rem(PER_MILLI).unwrap_or_default())
+}
+
+impl Plan {
+    /// Whether its own line shows its estimate: a table's read's, an
+    /// index join's, a filter's of a table's read.
+    fn shows_estimate(&self) -> bool {
+        matches!(self, Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::Filter { of_read: true, .. })
+    }
+}
+
+// Unit tests: a plan shown is described, one run is not; what a counted
+// operator adds to its line (RULES.md R-TEST-1).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +288,32 @@ mod tests {
         assert_eq!(Shown::of(None).text(|n| n.join(", ")), "");
         assert_eq!(Shown::of(Some(&names)).names().map(<[String]>::len), Some(2));
         assert!(Shown::of(None).names().is_none());
+    }
+
+    /// The counted list of one row of one value, its line `Values 1`.
+    fn counted_values() -> super::super::Counted {
+        let input = Plan::Values { rows: vec![vec![crate::logical::Expr::Const(crate::value::Value::Null)]], detail: "1".into() };
+        super::super::Counted { count: std::sync::Arc::default(), input }
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D376, D378, R-TEST-8: a counted
+    /// operator's line is followed by its estimate, as its line shows none,
+    /// then never run, if it was not opened; else its rows, its openings
+    /// past one, and its time once its clock moved, in milliseconds to the
+    /// microsecond.
+    #[test]
+    fn a_counted_operator_shows_what_it_did() {
+        let c = counted_values();
+        let shown = || Plan::Counted(Box::new(c.clone())).explain();
+        assert_eq!(shown(), "Values 1  (est. rows=1)  (never run)\n");
+        c.count.opened();
+        c.count.add(1, 1_234);
+        assert_eq!(shown(), "Values 1  (est. rows=1)  (actual rows=1)\n");
+        c.count.opened();
+        c.count.show_time(true);
+        assert_eq!(shown(), "Values 1  (est. rows=1)  (actual rows=1, loops=2, time=1.234 ms)\n");
+        c.count.stepped(2);
+        assert_eq!(shown(), "Values 1  (est. rows=1)  (actual rows=3, loops=2)\n", "a step has no time of its own");
+        assert_eq!(millis(5), "0.005 ms");
     }
 }

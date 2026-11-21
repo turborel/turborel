@@ -33,9 +33,10 @@
 //! table. A transaction that wrote nothing commits at its snapshot and is
 //! never checked (`txn.rs`).
 //!
-//! Commit stamps the transaction's versions with its commit timestamp. A
-//! version that can't be stamped still counts as committed, through a table
-//! of late stamps that reads consult, and is stamped later.
+//! Commit stores the commit timestamp in the store's status table, which
+//! makes every version the transaction wrote committed at once; each is
+//! stamped with it after the transaction's locks are released, and read
+//! through the status table until then (`stamps.rs`, `status.rs`).
 //!
 //! Rollback puts back the entries its changes replaced, newest first. A
 //! failed statement does so back to its savepoint. What an undone change
@@ -69,12 +70,16 @@ mod lists;
 mod open;
 mod pending;
 mod reads;
+mod stamps;
+mod status;
 mod versions;
 mod write;
 
 use lists::decode_change;
 pub(in crate::engine::rows) use reads::Read;
 use reads::{Changed, Reads};
+use stamps::Unstamped;
+pub(in crate::engine::rows) use status::Statuses;
 
 use super::options::Bounds;
 use super::version::{Maker, Version};
@@ -233,11 +238,7 @@ enum Dead {
     Undone(Lsn),
 }
 
-/// Transactions committed whose versions are not all stamped yet.
-type Late = Xxh3Map<TxId, (Timestamp, Option<Vec<RowId>>)>;
-
 /// \[DESIGN\] The versions bookkeeping of a table.
-#[derive(Default)]
 pub(super) struct Versions {
     open: RwLock<Xxh3Map<TxId, Arc<Mutex<Open>>>>,
     validated: Mutex<Vec<Validated>>,
@@ -257,10 +258,10 @@ pub(super) struct Versions {
     /// it, and what commits at or before it superseded may be gone from
     /// the undo store (`RowTable::unpinned`).
     collected: AtomicU64,
-    /// Transactions committed whose versions are not all stamped yet: when
-    /// they committed, and the rows left to stamp; none if they could not
-    /// be read back, so it is never stamped and stays.
-    late: RwLock<Late>,
+    /// The statuses of the store's writing transactions (`status.rs`).
+    statuses: Arc<Statuses>,
+    /// Commits whose versions here are not all stamped yet (`stamps.rs`).
+    unstamped: Mutex<Vec<Unstamped>>,
     /// The most rows of a transaction's reads, or writes, tracked one by
     /// one (TRANSACTIONS.TRACKED_ROWS), and the bytes of its changes held
     /// (TRANSACTIONS.HELD_BYTES); and the store's defaults of them.
@@ -273,10 +274,25 @@ pub(super) struct Versions {
 
 impl Versions {
     /// The bookkeeping of a table keeping `bounds` of its transactions,
-    /// spilling to the work areas of `work`.
-    pub(super) fn bounded(bounds: Bounds, work: Arc<RwLock<Option<Arc<WorkAreas>>>>) -> Versions {
+    /// spilling to the work areas of `work`, its transactions' statuses in
+    /// `statuses`, its store's.
+    pub(super) fn bounded(bounds: Bounds, work: Arc<RwLock<Option<Arc<WorkAreas>>>>, statuses: Arc<Statuses>) -> Versions {
         let (tracked, held) = (AtomicUsize::new(bounds.tracked), AtomicUsize::new(bounds.held));
-        Versions { tracked, held, base: bounds, work, ..Versions::default() }
+        Versions {
+            open: RwLock::default(),
+            validated: Mutex::default(),
+            garbage: Mutex::default(),
+            undone: Mutex::default(),
+            garbage_due: AtomicU64::default(),
+            validated_due: AtomicU64::default(),
+            collected: AtomicU64::default(),
+            statuses,
+            unstamped: Mutex::default(),
+            tracked,
+            held,
+            base: bounds,
+            work,
+        }
     }
 
     /// Keeps what `desc` sets, else the store's defaults.
@@ -303,19 +319,17 @@ impl Versions {
 }
 
 impl RowTable {
-    /// Who made a version, counting a committed transaction whose stamp is
-    /// late as committed.
+    /// Who made a version, a transaction committed but not yet stamped in
+    /// it counted as committed (`status.rs`).
     pub(super) fn maker(&self, version: &Version<'_>) -> Maker {
         match version.maker {
-            Maker::Open(by) => {
-                let late = self.versions.late.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-                late.get(&by).map_or(Maker::Open(by), |&(at, _)| Maker::Committed(at))
-            }
+            Maker::Open(by) => self.versions.statuses.committed(by).map_or(Maker::Open(by), Maker::Committed),
             committed @ Maker::Committed(_) => committed,
         }
     }
 
     pub(super) fn begin_open(&self, tx: TxId, snapshot: Timestamp) {
+        self.seen(snapshot);
         let mut open = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let changes = SpillList::new(self.versions.space());
         let made = || Open {
@@ -335,6 +349,7 @@ impl RowTable {
     /// From now, `tx` reads as `mode` says.
     pub(super) fn read_mode_of(&self, tx: TxId, mode: ReadMode) -> Result<()> {
         let open = self.open_of(tx)?;
+        self.seen(mode.snapshot);
         let mut open = lock_builtin(&open);
         open.snapshot = open.snapshot.max(mode.snapshot);
         open.checked = mode.checked && !open.preserving;
@@ -449,6 +464,7 @@ impl RowTable {
             lock_builtin(&open).ended = true;
         }
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
+        self.versions.statuses.abort(tx);
         undone
     }
 

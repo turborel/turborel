@@ -4,6 +4,7 @@
 //! INSERT, searched UPDATE and searched DELETE in it keeping its plan.
 
 use turborel::db::{Database, Session};
+use turborel::value::{Decimal, Value};
 
 /// Schema A: S (W, I, Q), stock by warehouse and item, and H (W, I, WHEN_AT),
 /// a history; and P, a procedure that takes `n` of an item from stock,
@@ -138,4 +139,142 @@ fn a_kept_leaf_reads_the_row_each_calls_values_name() {
     let mut read = rows(&a, "SELECT W, LOW FROM L");
     read.sort();
     assert_eq!(read, ["1,1003", "1,1040", "2,2007", "2,NULL"]);
+}
+
+/// Verifies: [DESIGN] RULES.md D414, a query of a kept body that reads a
+/// range of rows learns its plan with slots over its first CALLs and
+/// keeps it, and every CALL, before and after, reads the rows its own
+/// values name: a count below a bound, and the least item at or above it.
+#[test]
+fn a_kept_leaf_learns_its_plan_and_reads_each_calls_rows() {
+    let (_db, a) = defined();
+    let more: Vec<String> = (51..=600_i64).flat_map(|i| (1..=2_i64).map(move |w| format!("({w}, {i}, 0)"))).collect();
+    a.run(&format!("INSERT INTO S VALUES {}", more.join(", "))).unwrap();
+    a.run("UPDATE S SET Q = MOD(I * 7, 100) + W").unwrap();
+    a.run(
+        "CREATE PROCEDURE RANGE_OF (IN WH INTEGER, IN BELOW INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE N INTEGER;
+           DECLARE LEAST INTEGER;
+           SET N = (SELECT COUNT(*) FROM S WHERE W = WH AND Q < BELOW);
+           SELECT MIN(I) INTO LEAST FROM S WHERE W = WH AND Q >= BELOW;
+           INSERT INTO L VALUES (N, LEAST);
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    let calls: Vec<(i64, i64)> = (0..14_i64).map(|k| (1 + k % 2, (k * 37) % 103)).collect();
+    let mut expected = Vec::new();
+    for (w, below) in &calls {
+        let n = rows(&a, &format!("SELECT COUNT(*) FROM S WHERE W = {w} AND Q < {below}"));
+        let least = rows(&a, &format!("SELECT MIN(I) FROM S WHERE W = {w} AND Q >= {below}"));
+        expected.push(format!("{},{}", n.join(""), least.join("")));
+        a.run(&format!("CALL RANGE_OF({w}, {below})")).unwrap();
+    }
+    a.commit().unwrap();
+    let mut read = rows(&a, "SELECT W, LOW FROM L");
+    read.sort();
+    expected.sort();
+    assert_eq!(read, expected);
+}
+
+/// Verifies: [ISO/IEC 9075-4:2006 draft §12.2, §14.13]; [DESIGN] RULES.md
+/// D416, a local cursor and a FOR statement's cursor of a kept body, each
+/// opened from the specification and plan it keeps, read the rows each
+/// CALL's values name: before the stock changes, after it changes, and
+/// after an index is made over what they read.
+#[test]
+fn a_kept_bodys_cursors_read_each_calls_rows() {
+    let (_db, a) = defined();
+    a.run("UPDATE S SET Q = MOD(I * 7, 30) + W").unwrap();
+    a.run(
+        "CREATE PROCEDURE LOWS (IN WH INTEGER, IN BELOW INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE N INTEGER DEFAULT 0;
+           DECLARE FIRST_I INTEGER;
+           DECLARE ITEM INTEGER;
+           DECLARE C CURSOR FOR SELECT I FROM S WHERE W = WH AND Q < BELOW ORDER BY I;
+           SET N = (SELECT COUNT(*) FROM S WHERE W = WH AND Q < BELOW);
+           IF N > 0 THEN
+             OPEN C;
+             FETCH C INTO FIRST_I;
+             CLOSE C;
+           END IF;
+           SET N = 0;
+           FOR R AS SELECT Q FROM S WHERE W = WH AND Q >= BELOW DO
+             SET N = N + R.Q;
+           END FOR;
+           INSERT INTO L VALUES (FIRST_I, N);
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    let mut expected = Vec::new();
+    for round in 0..3_i64 {
+        if round == 1 {
+            a.run("UPDATE S SET Q = Q + 3 WHERE MOD(I, 4) = 0").unwrap();
+        }
+        if round == 2 {
+            a.commit().unwrap();
+            a.run("CREATE INDEX S_WQ ON S (W, Q)").unwrap();
+        }
+        for (w, below) in (0..8_i64).map(|k| (1 + k % 2, 4 + (k * 11) % 27)) {
+            let first = rows(&a, &format!("SELECT MIN(I) FROM S WHERE W = {w} AND Q < {below}"));
+            let sum = rows(&a, &format!("SELECT COALESCE(SUM(Q), 0) FROM S WHERE W = {w} AND Q >= {below}"));
+            expected.push(format!("{},{}", first.join(""), sum.join("")));
+            a.run(&format!("CALL LOWS({w}, {below})")).unwrap();
+        }
+    }
+    a.commit().unwrap();
+    let mut read = rows(&a, "SELECT W, LOW FROM L");
+    read.sort();
+    expected.sort();
+    assert_eq!(read, expected);
+}
+
+/// Verifies: [DESIGN] RULES.md D418, a query of a kept body that joins two
+/// tables, a variable named for a column of each, learns its plan, its
+/// variable one slot, and every CALL reads the row its own values name:
+/// those whose values happen to be equal and those whose are not, before
+/// and after it is learned; and a prepared join learns its plan alike.
+#[test]
+fn a_kept_join_learns_its_plan_and_reads_each_calls_row() {
+    let (_db, a) = defined();
+    a.run("CREATE TABLE WH (W INTEGER NOT NULL PRIMARY KEY, TAX INTEGER)").unwrap();
+    a.run("INSERT INTO WH VALUES (1, 100), (2, 200)").unwrap();
+    a.run(
+        "CREATE PROCEDURE JOINED (IN WH_ID INTEGER, IN ITEM INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE QT INTEGER;
+           DECLARE T INTEGER;
+           SELECT Q, TAX INTO QT, T FROM S, WH WHERE WH.W = WH_ID AND S.W = WH_ID AND I = ITEM;
+           INSERT INTO L VALUES (QT, T);
+         END",
+    )
+    .unwrap();
+    a.run("UPDATE S SET Q = I * 10 + W").unwrap();
+    a.commit().unwrap();
+    let calls: Vec<(i64, i64)> = (0..16_i64).map(|k| (1 + k % 2, 1 + (k * 7) % 50)).chain([(1, 1), (2, 2), (2, 1)]).collect();
+    let mut expected = Vec::new();
+    for (w, i) in &calls {
+        expected.push(format!("{},{}", i * 10 + w, w * 100));
+        a.run(&format!("CALL JOINED({w}, {i})")).unwrap();
+    }
+    a.commit().unwrap();
+    let mut read = rows(&a, "SELECT W, LOW FROM L");
+    read.sort();
+    expected.sort();
+    assert_eq!(read, expected);
+    let p = a.prepare("SELECT Q, TAX FROM S, WH WHERE WH.W = ? AND S.W = WH.W AND I = ?").unwrap();
+    for (w, i) in calls {
+        let mut c = a.open_prepared(&p, &[number(w), number(i)]).unwrap();
+        let row = c.fetch().unwrap().unwrap();
+        let shown: Vec<String> = row.iter().map(|v| v.to_string().trim_end().to_owned()).collect();
+        assert_eq!(shown, vec![(i * 10 + w).to_string(), (w * 100).to_string()]);
+    }
+}
+
+/// The exact number `n`.
+fn number(n: i64) -> Value {
+    Value::Exact(Decimal::new(i128::from(n), 0))
 }

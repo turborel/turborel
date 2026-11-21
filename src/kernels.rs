@@ -102,6 +102,21 @@ pub trait Kernels: Send + Sync {
     fn xxh3_scramble(&self, acc: &mut [u64; xxhash::ACC_NB], key: &xxhash::Stripe) {
         xxhash::Scalar.scramble(acc, key);
     }
+    /// Writes into `keys`, one key of `width` bytes after another, at byte
+    /// `at` of each, the value of `values` at each of `rows`: its distance
+    /// above `base` as `bytes` big-endian bytes, each inverted if `invert`,
+    /// as a sort's normal keys hold an integer (RULES.md D364, D380). None
+    /// if a value is below `base` or past `bytes`, a row past the end, or
+    /// the field past a key.
+    fn normalize_i64(
+        &self,
+        (values, rows): (&[i64], &[u32]),
+        (base, bytes, invert): (i64, usize, bool),
+        (width, at): (usize, usize),
+        keys: &mut [u8],
+    ) -> Option<()> {
+        portable::normal::normalize_i64((values, rows), (base, bytes, invert), (width, at), keys)
+    }
 }
 
 /// A database's kernels run XXH3's long inputs' loops: XXH3 of a vector's

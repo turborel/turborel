@@ -87,6 +87,12 @@ pub(super) struct Model {
     pub(super) want_class: Option<usize>,
     /// The weights.
     pub(super) cost: CostModel,
+    /// \[EXTENSION\] The rows given of sets of its relations in place of
+    /// their estimates (`physical/cardinality/injected.rs`, RULES.md D377).
+    pub(super) injected: Vec<(Set, f64)>,
+    /// The classes of columns the inner joins' keys make equal, each with
+    /// the relations its columns are of (`implied_classes`, RULES.md D387).
+    pub(super) implied: Vec<(Vec<usize>, Set)>,
 }
 
 impl Model {
@@ -103,6 +109,59 @@ impl Model {
     /// The relations conjunct `c` reads.
     pub(super) fn reads_of(&self, c: usize) -> Set {
         self.conjuncts.get(c).map_or(0, |c| c.reads)
+    }
+
+    /// \[DESIGN\] (RULES.md D387) The classes of columns the inner joins'
+    /// keys make equal; none of a chain with an outer join, whose keys hold
+    /// only above it. Made once, as the model is.
+    pub(super) fn key_classes(&self) -> Vec<Vec<usize>> {
+        if self.kinds.iter().any(|&k| k != Kind::Inner) {
+            return Vec::new();
+        }
+        let mut classes: Vec<Vec<usize>> = Vec::new();
+        for (a, b) in self.conjuncts.iter().filter_map(|c| c.key) {
+            let mut merged = vec![a, b];
+            classes.retain(|class| {
+                let joins = class.contains(&a) || class.contains(&b);
+                if joins {
+                    merged.extend(class);
+                }
+                !joins
+            });
+            merged.sort_unstable();
+            merged.dedup();
+            classes.push(merged);
+        }
+        classes
+    }
+
+    /// The equalities of a column of `l` and one of `r` the inner joins'
+    /// keys imply through others, of a join no conjunct of which reads
+    /// both: one of each class with a column on each side, the left's
+    /// first. `joined_rows` counts a class's fraction of any join that
+    /// holds two of its columns, so such a join judges these, and is never
+    /// a product (RULES.md D387).
+    pub(super) fn implied_keys(&self, (l, r): (Set, Set)) -> Vec<(usize, usize)> {
+        let side = |class: &[usize], s: Set| class.iter().copied().find(|&c| self.holds(s, c));
+        self.implied
+            .iter()
+            .filter(|&&(_, rels)| rels & l != 0 && rels & r != 0)
+            .filter_map(|(class, _)| Some((side(class, l)?, side(class, r)?)))
+            .collect()
+    }
+
+    /// `key_classes`, each with the relations its columns are of, so a
+    /// join whose sets hold none of a class's on one side passes it by a
+    /// test of bits.
+    pub(super) fn implied_classes(&self) -> Vec<(Vec<usize>, Set)> {
+        let rels = |class: &[usize]| class.iter().filter_map(|&c| self.rel_of(c)).fold(0, |s, r| s | bit(r));
+        self.key_classes()
+            .into_iter()
+            .map(|class| {
+                let of = rels(&class);
+                (class, of)
+            })
+            .collect()
     }
 
     /// The relation whose column the chain's column `column` is.
@@ -146,6 +205,9 @@ impl Model {
     /// The rows of the join of `left` and `right`, each a set and its
     /// rows, applying `applied`.
     pub(super) fn joined_rows(&self, (s1, r1): (Set, f64), (s2, r2): (Set, f64), applied: &Applied) -> f64 {
+        if let Some(&(_, given)) = self.injected.iter().find(|(s, _)| *s == s1 | s2) {
+            return given;
+        }
         let product = r1 * r2;
         let fraction = if let Some(pred) = applied.op.and_then(|o| self.preds.get(o)).and_then(Option::as_ref) {
             pred.fraction

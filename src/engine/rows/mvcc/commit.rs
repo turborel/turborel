@@ -1,14 +1,13 @@
-//! Validation and commit of a transaction in a table (RULES.md D29, D38):
-//! the two-sided check of its reads and writes against those validated
-//! before and after it, and the stamping of its versions, its garbage made
-//! a segment of its changes at a time. See `mvcc.rs`.
+//! Validation of a transaction in a table (RULES.md D29, D38): the
+//! two-sided check of its reads and writes against those validated before
+//! and after it. Its commit is `stamps.rs`'s. See `mvcc.rs`.
 
 use std::mem;
 use std::sync::atomic::Ordering;
 
 use super::lists::decode_change;
 use super::reads::Changed;
-use super::{Change, Dead, Maker, Validated, Version};
+use super::{Maker, Validated, Version};
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::xxhash::Xxh3Set;
@@ -86,95 +85,5 @@ impl RowTable {
             return Ok(None);
         }
         self.decode(id, version.record, None).map(Some)
-    }
-
-    /// Adds to `dead` the garbage `change` of `tx`, committed at `at`,
-    /// leaves; whether its row could not be stamped. An object made for
-    /// no version it wrote, as for an attempt that failed, is no one's,
-    /// and freed now.
-    fn committed(&self, (tx, at): (TxId, Timestamp), change: Change, adopted: &Xxh3Set<u64>, dead: &mut Vec<Dead>) -> bool {
-        if change.made {
-            if !adopted.contains(&change.id) {
-                self.free_objects(&[change.id]);
-            }
-            return false;
-        }
-        if !change.dropped.is_empty() {
-            dead.push(Dead::Objects(change.dropped));
-        }
-        // The first change of a row stamps it; its later ones find it
-        // stamped.
-        let late = match self.stamp(tx, change.id, at) {
-            Ok(true) => {
-                dead.push(Dead::Deletion(change.id));
-                false
-            }
-            Ok(false) => false,
-            Err(_) => true,
-        };
-        // A version superseded leaves its zone not visible until it is
-        // collected, with its index entries (`rows/zones.rs`).
-        match (change.before, change.appended) {
-            (Some(own), _) => {
-                self.zones.superseded(change.id, true);
-                dead.push(Dead::Own(change.id, own));
-            }
-            (None, Some(appended)) => {
-                self.zones.superseded(change.id, true);
-                dead.push(Dead::Older(change.id, appended));
-            }
-            (None, None) => {}
-        }
-        late
-    }
-
-    /// Stamps the versions of `tx` with `at`, and makes garbage of what they
-    /// superseded, for when `at` is past the horizon.
-    pub(in crate::engine::rows) fn commit_open(&self, tx: TxId, at: Timestamp) {
-        let removed = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
-        let Some(open) = removed else { return };
-        let (changes, adopted) = {
-            let mut open = lock_builtin(&open);
-            open.ended = true;
-            (mem::take(&mut open.changes), mem::take(&mut open.adopted))
-        };
-        if changes.is_empty() {
-            return;
-        }
-        let count = u64::try_from(changes.len()).unwrap_or(u64::MAX);
-        let (mut late, mut lost) = (Vec::new(), false);
-        // A segment at a time: its garbage added before the next is read.
-        for segment in changes.into_segments(false, &decode_change) {
-            let Ok(segment) = segment else {
-                lost = true;
-                continue;
-            };
-            let mut dead = Vec::new();
-            for change in segment {
-                let id = change.id;
-                if self.committed((tx, at), change, &adopted, &mut dead) {
-                    late.push(id);
-                }
-            }
-            self.add_garbage(at, dead);
-        }
-        if lost || !late.is_empty() {
-            let rows = (!lost).then_some(late);
-            self.versions.late.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(tx, (at, rows));
-        }
-        self.gathered.changed(count);
-    }
-
-    /// Stamps the newest version of row `id`, made by `tx`, committed at
-    /// `at`; whether it is a deletion.
-    pub(super) fn stamp(&self, tx: TxId, id: RowId, at: Timestamp) -> Result<bool> {
-        let k = key(id);
-        let Some(newest) = self.tree.get(&k)? else { return Ok(false) };
-        let version = Version::parse(&newest)?;
-        if version.maker != Maker::Open(tx) {
-            return Ok(false);
-        }
-        self.tree.replace(&k, &Version { maker: Maker::Committed(at), ..version }.encode())?;
-        Ok(version.deleted)
     }
 }
