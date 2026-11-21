@@ -12349,6 +12349,12 @@ copy's execution. A copy takes its executions a group's rows at a time
 once its load writes groups, so each group is whole
 (`Session::load_rows`).
 
+A table writes its loads so only if it sets COLUMNSTORE.LOAD to GROUPS;
+by default, TREE, a load goes through its tree. Its rows are then
+frozen on the maintenance thread beside the load, off the load's time,
+where a group the load writes is on its own time. GROUPS suits a table
+read right after the load commits, its rows already in groups.
+
 Such a group is stamped with who made it. While its transaction is
 open, only that transaction sees its rows; once it commits, each
 snapshot at or after its commit does; once that commit is before every
