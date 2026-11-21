@@ -81,7 +81,7 @@ impl BLinkTree {
     /// # Errors
     ///
     /// As `insert`.
-    pub fn replace_found(&self, found: Descended, key: &[u8], (expected, value): (&[u8], &[u8])) -> Result<bool> {
+    pub fn replace_found(&self, found: &Descended, key: &[u8], (expected, value): (&[u8], &[u8])) -> Result<bool> {
         let _guard = self.epochs.guard();
         if self.epochs.stamp() != found.stamp {
             return self.replace_if(key, expected, value);

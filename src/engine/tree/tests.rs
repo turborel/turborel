@@ -553,11 +553,11 @@ fn a_write_starts_where_its_read_found_the_key() {
     let (old, found) = tree.get_for_write(&key(0)).unwrap().unwrap();
     assert_eq!(old, b"zero");
     fill(&tree, 5_000);
-    assert!(tree.replace_found(found, &key(0), (b"zero", b"ZERO")).unwrap(), "moved right past the splits");
+    assert!(tree.replace_found(&found, &key(0), (b"zero", b"ZERO")).unwrap(), "moved right past the splits");
     assert_eq!(tree.get(&key(0)).unwrap(), Some(b"ZERO".to_vec()));
     let (_, six) = tree.get_for_write(&key(6)).unwrap().unwrap();
     tree.replace(&key(6), b"six").unwrap();
-    assert!(!tree.replace_found(six, &key(6), (&VALUE, b"SIX")).unwrap(), "changed since it was read");
+    assert!(!tree.replace_found(&six, &key(6), (&VALUE, b"SIX")).unwrap(), "changed since it was read");
     let (_, middle) = tree.get_for_write(&key(2_500)).unwrap().unwrap();
     for n in 2_000..3_000 {
         tree.delete(&key(n)).unwrap();
@@ -567,7 +567,7 @@ fn a_write_starts_where_its_read_found_the_key() {
     for n in 10_000..14_000 {
         assert!(tree.insert(&key(n), &VALUE).unwrap());
     }
-    assert!(tree.replace_found(middle, &key(2_500), (&VALUE, b"middle")).unwrap(), "its leaf freed and taken again: descended");
+    assert!(tree.replace_found(&middle, &key(2_500), (&VALUE, b"middle")).unwrap(), "its leaf freed and taken again: descended");
     assert_eq!(tree.get(&key(2_500)).unwrap(), Some(b"middle".to_vec()));
     assert!(tree.get_for_write(&key(4_000_000)).unwrap().is_none());
 }
