@@ -9,7 +9,8 @@
 //! ```text
 //! record:  version u8 | kind u8 | transaction u64 | body
 //! insert (1):  table | generation u32 | row id u64 | after-image row
-//! update (2):  table | generation u32 | row id u64 | before-image row | after-image row
+//! update (2):  table | generation u32 | row id u64 | after-image row |
+//!              the before-image's columns changed (`record/images.rs`)
 //! delete (3):  table | generation u32 | row id u64 | before-image row
 //! commit (4):  commit timestamp u64 | wall time i128
 //! abort (5):   (nothing)
@@ -69,6 +70,7 @@ use crate::value::types::TypeRegistry;
 pub const RECORD_VERSION: u8 = 1;
 
 mod definitions;
+mod images;
 mod kinds;
 mod lobs;
 pub mod marks;
@@ -390,7 +392,7 @@ impl Record {
         match &self.change {
             Change::Insert { table, generation, row, after } => put_row_change(&mut out, (table, *generation, *row), &[after]),
             Change::Update { table, generation, row, before, after } => {
-                put_row_change(&mut out, (table, *generation, *row), &[before, after]);
+                images::put_update(&mut out, (table, *generation, *row), before, after);
             }
             Change::Delete { table, generation, row, before } => put_row_change(&mut out, (table, *generation, *row), &[before]),
             Change::Commit { at, wall } => marks::put_commit(&mut out, *at, *wall),
@@ -455,9 +457,7 @@ impl Record {
         let tx = r.u64()?;
         let change = match tag {
             INSERT => Change::Insert { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, after: row(&mut r)? },
-            UPDATE => {
-                Change::Update { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, before: row(&mut r)?, after: row(&mut r)? }
-            }
+            UPDATE => images::update(&mut r)?,
             DELETE => Change::Delete { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, before: row(&mut r)? },
             COMMIT => marks::commit(&mut r)?,
             RESTORE_POINT => marks::point(&mut r)?,

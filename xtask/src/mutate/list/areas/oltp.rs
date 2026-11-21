@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 23] = [
+pub const OLTP: [Mutation; 24] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -239,5 +239,15 @@ pub const OLTP: [Mutation; 23] = [
         replacement: "        let mut content = self.emptied(key, claim).map(|_| Vec::new())?;",
         integration: &[],
         unit: &["disk::buffer::tests::a_page_read_takes_the_buffer_of_the_page_it_replaces"],
+    },
+    Mutation {
+        name: "oltp-update-logs-whole-before",
+        package: Package::Core,
+        breaks: "an update's log record holds every column of the row before, changed or not, so an update of one column of a wide row logs the row twice",
+        file: "src/log/record/images.rs",
+        original: "        if out.get(span).is_none_or(|now| *now != *was) {",
+        replacement: "        if true {",
+        integration: &[],
+        unit: &["log::record::images::tests::an_update_logs_the_columns_it_changed"],
     },
 ];

@@ -408,6 +408,7 @@ verification approach DO-178C expects (§8).
 | D472 | A page written back again is written over its side-file block with no lock held |
 | D473 | The maintenance job gathers a table's statistics only once a plan has read them since its last pass |
 | D474 | A page read into a frame takes the buffer of the page it replaces |
+| D475 | An update's log record holds the row after whole and of the row before only the columns changed |
 
 ### The project
 
@@ -11440,6 +11441,20 @@ so a miss allocates nothing in the pool. A buffer grown past
 `REUSED_BYTES`, as a page with an overflow grows it, is let go, so a
 frame keeps no more than a page's worth once that page leaves
 (`disk/buffer/pool.rs`).
+
+#### D475. An update's log record holds the row after whole and of the row before only the columns changed
+
+An update logged both of its row's images whole (D25), so an update of
+one column of a wide row wrote the row twice, and the log grew by as
+much as the row's two images for every such change. Its record now
+holds the row after whole and, of the row before, each column whose
+value's bytes differ, with its position. Read back, the row before is
+the row after with those columns put back, so redo, undo, recovery,
+backups and replicas meet both images whole as before. A column is
+changed if its bytes differ, so a value equal to another but written
+apart, as a decimal of another scale, is kept as it was. A row before
+of another width than the row after is written whole
+(`log/record/images.rs`).
 
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
