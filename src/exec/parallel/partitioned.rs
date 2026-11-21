@@ -121,13 +121,13 @@ fn split(
 ) -> Result<Held<(Parts, Option<usize>)>> {
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
-    let count = pipeline.count();
+    let (count, seed) = (pipeline.count(), db.functions.seed().clone());
     let work = Box::new(move |m: usize| {
         let mut parts: Vec<Vec<Row>> = (0..PARTS).map(|_| Vec::new()).collect();
         let mut width = None;
         let base = i128::try_from(m).unwrap_or(i128::MAX).checked_shl(PLACE_BITS).unwrap_or(i128::MAX);
         for (place, mut row) in (0_i128..).zip(pipeline.morsel(m, &Runner::new(&db_for, tx))?) {
-            let p = key(&row).map_or(0, |k| part_of(&norm_row(&k)));
+            let p = key(&row).map_or(0, |k| part_of(&norm_row(&k), &seed));
             width = width.or(Some(row.len()));
             if numbered {
                 row.push(Value::Exact(Decimal::new(base.saturating_add(place), 0)));
