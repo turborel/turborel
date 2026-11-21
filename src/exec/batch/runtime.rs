@@ -80,6 +80,9 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         }
         // A semi join's columns are its left's (RULES.md D540).
         Plan::SemiJoin(s) => stream::layout(&s.left, db).filter(|&(_, width)| column < width).map(|_| (column, false)),
+        // A mark join gives every left row on, its columns the left's then
+        // the mark (RULES.md D643).
+        Plan::MarkJoin(m) => stream::layout(&m.left, db).filter(|&(_, width)| column < width).map(|_| (column, false)),
         // A whole sort of a stream's every column keeps a row's place.
         Plan::Sort { most: None, .. } => stream::layout(plan, db).map(|_| (column, false)),
         Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => {
@@ -155,6 +158,7 @@ fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::Transition { .. }
         | Plan::Parallel(..)
         | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Counted(_) => None,
     }
 }
@@ -279,6 +283,8 @@ fn below(plan: &Plan) -> Option<&Plan> {
         Plan::HashJoin { left, .. } | Plan::IndexJoin { left, .. } => Some(left),
         Plan::Counted(c) => Some(&c.input),
         Plan::SemiJoin(s) => Some(&s.left),
+        // A mark join gives every left row on (RULES.md D643).
+        Plan::MarkJoin(m) => Some(&m.left),
         Plan::MergeJoin(m) => Some(&m.left),
         Plan::SeqScan { .. }
         | Plan::IndexScan { .. }

@@ -238,8 +238,9 @@ fn annotate(plan: &mut Plan, note: &str) {
             detail.push_str(note);
         }
         Plan::MergeJoin(m) => m.detail.push_str(note),
-        Plan::SemiJoin(s) => s.detail.push_str(note),
         Plan::RangeJoin(r) => r.detail.push_str(note),
+        Plan::SemiJoin(s) => s.detail.push_str(note),
+        Plan::MarkJoin(m) => m.detail.push_str(note),
         Plan::IndexJoin { detail, .. } => *detail = format!("{detail}{note}").into(),
         Plan::Project { input, .. } => annotate(input, note),
         Plan::SeqScan { .. }

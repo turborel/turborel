@@ -130,9 +130,11 @@ fn measured(bench: &Bench, s: &Session, (name, sql): (&str, &str), degrees: &[us
 pub fn workloads(bench: &Bench) {
     let (_db, s) = database();
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    // Degree 1 alone when the system has one thread, so no case is measured twice under one name.
+    let degrees: &[usize] = if threads > 1 { &[1, threads] } else { &[1] };
     for (table, label) in [("JF", ""), ("JFC", " (columnstore)")] {
         for (name, sql) in QUERIES {
-            measured(bench, &s, (&format!("{name}{label}"), &sql.replace("{t}", table)), &[1, threads]);
+            measured(bench, &s, (&format!("{name}{label}"), &sql.replace("{t}", table)), degrees);
         }
         // Of a build without the setting, as it was: the same runs.
         let _ = s.run("SET EXECUTOR.RUNTIME_FILTERS = 'OFF'");

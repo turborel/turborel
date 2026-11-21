@@ -301,6 +301,10 @@ pub(crate) struct Cursor {
     pub(crate) insensitive: bool,
     /// Whether it is SCROLL.
     pub(crate) scroll: bool,
+    /// Whether it is read only though its text does not say so: a FOR
+    /// statement's of no `<cursor name>`, whose body runs no statement
+    /// that may write (`Step::writes`, RULES.md D613).
+    pub(crate) read_only: bool,
     /// The scope of its specification's variables.
     pub(crate) scope: Arc<RoutineScope>,
 }
@@ -396,6 +400,19 @@ impl Contained {
 }
 
 impl Step {
+    /// Whether it, or a step it holds at any depth, runs a statement of
+    /// the session or a CALL, either of which may write SQL-data.
+    pub(crate) fn writes(&self) -> bool {
+        let mut work = vec![self];
+        while let Some(step) = work.pop() {
+            if matches!(step, Step::Statement(_) | Step::Call(_)) {
+                return true;
+            }
+            work.extend(step.steps());
+        }
+        false
+    }
+
     /// The steps it holds directly.
     pub(crate) fn steps(&self) -> Vec<&Step> {
         match self {

@@ -334,6 +334,7 @@ fn collapse(db: &State, plan: LogicalPlan, has_where: bool) -> Result<ViewBase> 
             other @ (LogicalPlan::Product { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Project { .. }
             | LogicalPlan::Distinct { .. }
