@@ -136,8 +136,13 @@ fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t): (&Zone, &DataType), mut bytes:
 
 impl Chunk<'_> {
     /// As `ints`, of what is made of it once, `made`.
-    pub(super) fn ints_made(&self, (from, to): (usize, usize), outs: (&mut Vec<i64>, &mut Mask), made: &Made) -> Option<()> {
-        self.ints_with((from, to), outs, made.words.as_deref())
+    pub(super) fn ints_made(
+        &self,
+        (from, to): (usize, usize),
+        outs: (&mut Vec<i64>, &mut Mask),
+        (made, kernels): (&Made, &dyn crate::kernels::Kernels),
+    ) -> Option<()> {
+        self.ints_with((from, to), outs, (made.words.as_deref(), kernels))
     }
 
     /// \[DESIGN\] (RULES.md D360) Its value at position `n`, of 8 bytes, as

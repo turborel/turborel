@@ -359,6 +359,7 @@ impl Database {
     pub fn register_engine(&self, engine: Box<dyn StorageEngine>) -> Result<()> {
         let (name, engine): (_, Arc<dyn StorageEngine>) = (engine.name(), Arc::from(engine));
         engine.attach(&self.host()?)?;
+        engine.use_kernels(self.snapshot()?.functions.kernels_shared());
         let done = self.change(|st| {
             // [EXTENSION] RULES.md D41: a table option is one plug-in's.
             if let Some(o) = engine.table_options().iter().find(|o| st.table_options.iter().any(|(_, p)| p.name == o.name)) {

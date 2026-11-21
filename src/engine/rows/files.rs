@@ -31,6 +31,9 @@ pub struct TableFiles {
     /// The database's work areas, once the store is attached: where its
     /// transactions' changes spill (RULES.md D38).
     pub(super) work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
+    /// The kernels its tables decode and judge their vectors on, once its
+    /// store is told them (RULES.md D570); until then, the portable ones.
+    pub(super) kernels: Kernels,
     /// Held shared while a table freezes rows into a column group, and
     /// exclusively while a checkpoint is captured, so none captures half
     /// a group (`rows/frozen.rs`).
@@ -70,6 +73,7 @@ impl TableFiles {
             sealed: Arc::new(AtomicU64::new(0)),
             shadows: None,
             work: Arc::default(),
+            kernels: Arc::default(),
             freezes: Arc::default(),
             headers: Arc::default(),
             zones: Arc::default(),
@@ -90,4 +94,15 @@ impl TableFiles {
     pub fn undo(&self) -> &UndoStore {
         &self.undo
     }
+
+    /// The kernels its tables run on now: those its store was told, else
+    /// the portable ones.
+    pub(super) fn kernels(&self) -> Arc<dyn crate::kernels::Kernels> {
+        let told = self.kernels.read().map_or_else(|e| e.into_inner().clone(), |held| held.clone());
+        told.unwrap_or_else(|| Arc::new(crate::kernels::Portable))
+    }
 }
+
+/// The kernels a store's tables run on, once it is told them, shared by
+/// the store and its files.
+pub(super) type Kernels = Arc<RwLock<Option<Arc<dyn crate::kernels::Kernels>>>>;

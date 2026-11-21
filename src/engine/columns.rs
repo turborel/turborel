@@ -251,12 +251,17 @@ impl<'a> Chunk<'a> {
     /// to `units`, and whether each is null to `nulls`
     /// (`encoded::Body::ints`): none if its encoding does not hold them.
     pub fn ints(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Mask)) -> Option<()> {
-        self.ints_with((from, to), (units, nulls), None)
+        self.ints_with((from, to), (units, nulls), (None, &crate::kernels::Portable))
     }
 
     /// As `ints`, of a dictionary whose entries as integers are `entries`
     /// if given, read once for the runs of a group (`prepared.rs`).
-    fn ints_with(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Mask), entries: Option<&[i64]>) -> Option<()> {
+    fn ints_with(
+        &self,
+        (from, to): (usize, usize),
+        (units, nulls): (&mut Vec<i64>, &mut Mask),
+        entries: (Option<&[i64]>, &dyn crate::kernels::Kernels),
+    ) -> Option<()> {
         if to > self.count || from > to {
             return None;
         }

@@ -1,82 +1,191 @@
-//! \[DESIGN\] Kernels on x86-64: SSE2, which every such processor has,
-//! AVX2 and AVX-512 Foundation, a module each of `#[target_feature]`
-//! functions, and what they share. XXH3's loops (`xxhash.h`'s
-//! `XXH3_accumulate_512_sse2`, `_avx2`, `_avx512` and their
-//! `XXH3_scrambleAcc_*`): a lane's 32-bit halves multiply into 64 bits
-//! (`mul_epu32`), and its input moves to its neighbour by a shuffle of
-//! 32-bit words, as the scalar loop adds it to `acc[i ^ 1]`; the
-//! accumulators stay in registers across a block's stripes.
-//!
-//! Ported from xxHash, whose notice it keeps, as its license asks:
-//!
-//! ```text
-//! xxHash - Extremely Fast Hash algorithm
-//! Copyright (C) 2012-2023 Yann Collet
-//!
-//! BSD 2-Clause License (https://www.opensource.org/licenses/bsd-license.php)
-//!
-//! Redistribution and use in source and binary forms, with or without
-//! modification, are permitted provided that the following conditions are
-//! met:
-//!
-//!    * Redistributions of source code must retain the above copyright
-//!      notice, this list of conditions and the following disclaimer.
-//!    * Redistributions in binary form must reproduce the above
-//!      copyright notice, this list of conditions and the following disclaimer
-//!      in the documentation and/or other materials provided with the
-//!      distribution.
-//!
-//! THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-//! "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-//! LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-//! A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-//! OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-//! SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-//! LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-//! DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-//! THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-//! (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-//! OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//!
-//! You can contact the author at:
-//!   - xxHash homepage: https://www.xxhash.com
-//!   - xxHash source repository: https://github.com/Cyan4973/xxHash
-//! ```
+//! \[DESIGN\] Kernels on x86-64 (RULES.md D570): the instruction sets a
+//! `Simd` may hold, each made only of a level the processor has, and each
+//! kernel's choice among its bodies by the set. SSE2 is every x86-64
+//! processor's, and the compiler already builds the portable bodies for
+//! it, so a kernel no SSE2 instruction speeds runs its portable body
+//! there; AVX2 and AVX-512 have their own bodies (`select.rs`, `sum.rs`,
+//! `alp.rs`), XXH3's loops theirs at each set (`xxh3.rs`).
 
-use turborel::hash::xxhash::{ACC_NB, SECRET_CONSUME_RATE};
+use turborel::hash::xxhash::{ACC_NB, Scalar, Stripe, Stripes as _, keyed};
+use turborel::kernels::{AlpScale, Given, portable};
+use turborel::value::CompOp;
 
-pub(crate) mod avx2;
-pub(crate) mod avx512;
-pub(crate) mod sse2;
+use crate::Level;
 
-/// `_MM_SHUFFLE(1, 0, 3, 2)`: each lane's two 32-bit words swapped with
-/// its neighbour's, the swap of `acc[i ^ 1]`.
-pub(crate) const SWAP_LANES: i32 = 0b0100_1110;
-/// `XXH_PRIME32_1`, the scramble's multiplier, as a 32-bit word.
-pub(crate) const PRIME32_1: i32 = 0x9E37_79B1_u32.cast_signed();
-/// The scramble's shift.
-pub(crate) const SCRAMBLE_SHIFT: u32 = 47;
-/// Bits in half a lane.
-pub(crate) const HALF: u32 = 32;
-/// The half-lane shift, as the intrinsics take it.
-pub(crate) const HALF_I32: i32 = HALF.cast_signed();
-/// The scramble's shift, as the intrinsics take it.
-pub(crate) const SHIFT_I32: i32 = SCRAMBLE_SHIFT.cast_signed();
+mod alp;
+mod select;
+mod sum;
+pub(crate) mod xxh3;
 
-/// Where the bytes at `at` of the key of the `n`th stripe start in
-/// `secret`: `n` times `SECRET_CONSUME_RATE`, plus `at`.
-pub(crate) fn key_at(secret: &[u8], n: usize, at: usize) -> *const u8 {
-    secret.as_ptr().wrapping_add(n.wrapping_mul(SECRET_CONSUME_RATE).wrapping_add(at))
+/// \[DESIGN\] The instructions a `Simd` runs on: made only by `isa`, of a
+/// level the processor has, so a `#[target_feature]` function of its set
+/// called on it runs on instructions the processor has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Isa {
+    /// The portable bodies.
+    Portable,
+    /// SSE2.
+    Sse2,
+    /// AVX2 and x86-64-v3's other instructions.
+    Avx2,
+    /// AVX-512 F, BW, DQ, VL and CD, and AVX2's.
+    Avx512,
 }
 
-/// The accumulators as bytes, to load and store them as vectors.
-pub(crate) fn acc_bytes(acc: &[u64; ACC_NB]) -> [u8; 64] {
-    let mut bytes = [0; 64];
-    bytes.as_chunks_mut::<8>().0.iter_mut().zip(acc).for_each(|(b, a)| *b = a.to_ne_bytes());
-    bytes
+/// The portable set, which needs no instruction detected.
+pub(crate) const PORTABLE: Isa = Isa::Portable;
+
+/// Whether the processor has every instruction of AVX2's level.
+fn has_avx2() -> bool {
+    std::arch::is_x86_feature_detected!("avx2")
+        && std::arch::is_x86_feature_detected!("bmi1")
+        && std::arch::is_x86_feature_detected!("bmi2")
+        && std::arch::is_x86_feature_detected!("popcnt")
+        && std::arch::is_x86_feature_detected!("lzcnt")
+        && std::arch::is_x86_feature_detected!("fma")
+        && std::arch::is_x86_feature_detected!("f16c")
+        && std::arch::is_x86_feature_detected!("sse4.2")
 }
 
-/// The accumulators of their bytes, as `acc_bytes` wrote them.
-pub(crate) fn acc_words(bytes: &[u8; 64], acc: &mut [u64; ACC_NB]) {
-    acc.iter_mut().zip(bytes.as_chunks::<8>().0).for_each(|(a, b)| *a = u64::from_ne_bytes(*b));
+/// Whether the processor has every instruction of AVX-512's level.
+fn has_avx512() -> bool {
+    has_avx2()
+        && std::arch::is_x86_feature_detected!("avx512f")
+        && std::arch::is_x86_feature_detected!("avx512bw")
+        && std::arch::is_x86_feature_detected!("avx512dq")
+        && std::arch::is_x86_feature_detected!("avx512vl")
+        && std::arch::is_x86_feature_detected!("avx512cd")
+}
+
+/// The instructions of `level`, if the processor has them: the only maker
+/// of an `Isa` but the portable one.
+pub(crate) fn isa(level: Level) -> Option<Isa> {
+    match level {
+        Level::Portable => Some(Isa::Portable),
+        Level::Sse2 => std::arch::is_x86_feature_detected!("sse2").then_some(Isa::Sse2),
+        Level::Avx2 => has_avx2().then_some(Isa::Avx2),
+        Level::Avx512 => has_avx512().then_some(Isa::Avx512),
+        Level::Neon => None,
+    }
+}
+
+/// `Kernels::select_i64`: of all rows on AVX2 or AVX-512, of a selection
+/// by the portable body, whose loads are each a row's.
+pub(crate) fn select_i64(isa: Isa, values: &[i64], pred: (CompOp, i64), given: Given<'_>, out: &mut Vec<u32>) {
+    let (nulls, None) = given else { return portable::select::select_i64(values, pred, given, out) };
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::select::select_i64(values, pred, given, out),
+        Isa::Avx2 => select::i64_avx2(values, pred, nulls, out),
+        Isa::Avx512 => select::i64_avx512(values, pred, nulls, out),
+    }
+}
+
+/// `Kernels::select_f64`, as `select_i64`.
+pub(crate) fn select_f64(isa: Isa, values: &[f64], pred: (CompOp, f64), given: Given<'_>, out: &mut Vec<u32>) {
+    let (nulls, None) = given else { return portable::select::select_f64(values, pred, given, out) };
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::select::select_f64(values, pred, given, out),
+        Isa::Avx2 => select::f64_avx2(values, pred, nulls, out),
+        Isa::Avx512 => select::f64_avx512(values, pred, nulls, out),
+    }
+}
+
+/// `Kernels::select_mask`, as `select_i64`.
+pub(crate) fn select_mask(isa: Isa, bits: &[u64], given: Given<'_>, out: &mut Vec<u32>) {
+    let (nulls, None) = given else { return portable::select::select_mask(bits, given, out) };
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::select::select_mask(bits, given, out),
+        Isa::Avx2 | Isa::Avx512 => select::mask(isa, bits, nulls, out),
+    }
+}
+
+/// `Kernels::select_codes`, as `select_i64`.
+pub(crate) fn select_codes(isa: Isa, codes: &[u32], keep: &[u64], given: Given<'_>, out: &mut Vec<u32>) {
+    let (nulls, None) = given else { return portable::select::select_codes(codes, keep, given, out) };
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::select::select_codes(codes, keep, given, out),
+        Isa::Avx2 | Isa::Avx512 => select::codes(isa, (codes, keep), nulls, out),
+    }
+}
+
+/// `Kernels::sum_i64`: of all rows on AVX2 or AVX-512, of a selection by
+/// the portable body.
+pub(crate) fn sum_i64(isa: Isa, values: &[i64], sel: Option<&[u32]>) -> i128 {
+    let None = sel else { return portable::sum::sum_i64(values, sel) };
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::sum::sum_i64(values, sel),
+        Isa::Avx2 => sum::sum_avx2(values),
+        Isa::Avx512 => sum::sum_avx512(values),
+    }
+}
+
+/// `Kernels::min_max_i64`, as `sum_i64`.
+pub(crate) fn min_max_i64(isa: Isa, values: &[i64], given: Given<'_>) -> Option<(i64, i64)> {
+    let (nulls, None) = given else { return portable::sum::min_max_i64(values, given) };
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::sum::min_max_i64(values, given),
+        Isa::Avx2 => sum::min_max_avx2(values, nulls),
+        Isa::Avx512 => sum::min_max_avx512(values, nulls),
+    }
+}
+
+/// `Kernels::gather_i64`: by the vector gathers of AVX2 or AVX-512.
+pub(crate) fn gather_i64(isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::gather::gather_i64(values, sel, out),
+        Isa::Avx2 => sum::gather_avx2(values, sel, out),
+        Isa::Avx512 => sum::gather_avx512(values, sel, out),
+    }
+}
+
+/// `Kernels::alp_decode`: four or eight values a step on AVX2 or AVX-512.
+pub(crate) fn alp_decode(isa: Isa, words: &mut [i64], scale: AlpScale) {
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::alp::alp_decode(words, scale),
+        Isa::Avx2 => alp::decode_avx2(words, scale),
+        Isa::Avx512 => alp::decode_avx512(words, scale),
+    }
+}
+
+/// `Kernels::normalize_i64`: the portable body at every set, whose
+/// byte swap is one instruction a key and whose stores are each a key's.
+pub(crate) fn normalize_i64(
+    _isa: Isa,
+    given: (&[i64], &[u32]),
+    shape: (i64, usize, bool),
+    place: (usize, usize),
+    keys: &mut [u8],
+) -> Option<()> {
+    portable::normal::normalize_i64(given, shape, place, keys)
+}
+
+/// `Kernels::xxh3_accumulate` at each set.
+pub(crate) fn xxh3_accumulate(isa: Isa, acc: &mut [u64; ACC_NB], stripes: &[Stripe], secret: &[u8]) {
+    let stripes = keyed(stripes, secret);
+    match isa {
+        Isa::Portable => Scalar.accumulate(acc, stripes, secret),
+        // SAFETY: an `Isa` of SSE2 is made only where the processor has it
+        // (`isa`), all a `#[target_feature]` function of it asks; the
+        // stripes are those whose keys the secret holds (`keyed`), all the
+        // function reads of it.
+        Isa::Sse2 => unsafe { xxh3::sse2::xxh3_accumulate(acc, stripes, secret) },
+        // SAFETY: as above, of AVX2.
+        Isa::Avx2 => unsafe { xxh3::avx2::xxh3_accumulate(acc, stripes, secret) },
+        // SAFETY: as above, of AVX-512.
+        Isa::Avx512 => unsafe { xxh3::avx512::xxh3_accumulate(acc, stripes, secret) },
+    }
+}
+
+/// `Kernels::xxh3_scramble` at each set.
+pub(crate) fn xxh3_scramble(isa: Isa, acc: &mut [u64; ACC_NB], key: &Stripe) {
+    match isa {
+        Isa::Portable => Scalar.scramble(acc, key),
+        // SAFETY: an `Isa` of SSE2 is made only where the processor has it
+        // (`isa`); a scramble reads no more than its key.
+        Isa::Sse2 => unsafe { xxh3::sse2::xxh3_scramble(acc, key) },
+        // SAFETY: as above, of AVX2.
+        Isa::Avx2 => unsafe { xxh3::avx2::xxh3_scramble(acc, key) },
+        // SAFETY: as above, of AVX-512.
+        Isa::Avx512 => unsafe { xxh3::avx512::xxh3_scramble(acc, key) },
+    }
 }

@@ -128,6 +128,9 @@ pub struct RowStore {
     tables: Mutex<HashMap<QualifiedName, TableOptions>>,
     /// The database's work areas, once attached, shared with its tables.
     work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
+    /// The kernels its tables decode and judge on, once told (RULES.md
+    /// D570): its files', shared.
+    kernels: files::Kernels,
     /// The database's encodings, once attached: those its tables' option
     /// ENCODINGS names.
     encodings: Mutex<Arc<Encodings>>,
@@ -175,6 +178,9 @@ pub struct RowTable {
     discarded: AtomicBool,
     /// How its rows are sealed (`rows/sealing.rs`), its zone maps too.
     sealing: Arc<Sealing>,
+    /// The kernels its frozen groups are decoded and judged on (RULES.md
+    /// D570): its store's as it was opened.
+    kernels: Arc<dyn crate::kernels::Kernels>,
     /// Its frozen row groups, of the column store (`rows/frozen.rs`).
     frozen: Frozen,
     /// Held shared while it freezes rows (`TableFiles::freezes`).

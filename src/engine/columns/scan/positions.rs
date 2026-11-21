@@ -117,7 +117,7 @@ fn words_at<S: Seal>(
             continue;
         }
         let held = prepared.with(pages, (column, zone, t), |chunk, made| {
-            Ok(words_of((chunk, made), (zone.run.first, these), (&mut units, &mut nulls), &mut span))
+            Ok(words_of((chunk, made, pages.kernels), (zone.run.first, these), (&mut units, &mut nulls), &mut span))
         })?;
         if held.is_none() {
             return Ok(None);
@@ -137,7 +137,7 @@ fn words_at<S: Seal>(
 /// scan that kept few rows of a chunk unpacks no others. None if its
 /// encoding does not hold them.
 fn words_of(
-    (chunk, made): (&Chunk<'_>, &Made),
+    (chunk, made, kernels): (&Chunk<'_>, &Made, &dyn crate::kernels::Kernels),
     (first, these): (u32, &[u32]),
     (units, nulls): (&mut Vec<i64>, &mut Mask),
     span: &mut (Vec<i64>, Mask),
@@ -146,7 +146,7 @@ fn words_of(
     let (low, high) = (at(*these.first()?), at(*these.last()?));
     let width = high.checked_sub(low)?.saturating_add(1);
     if width == these.len() {
-        return chunk.ints_made((low, high.saturating_add(1)), (units, nulls), made);
+        return chunk.ints_made((low, high.saturating_add(1)), (units, nulls), (made, kernels));
     }
     if !dense(these.len(), width) {
         for &p in these {
@@ -158,7 +158,7 @@ fn words_of(
     let (words, marks) = span;
     words.clear();
     *marks = Mask::default();
-    chunk.ints_made((low, high.saturating_add(1)), (words, marks), made)?;
+    chunk.ints_made((low, high.saturating_add(1)), (words, marks), (made, kernels))?;
     for &p in these {
         let n = at(p).saturating_sub(low);
         units.push(words.get(n).copied().unwrap_or(0));

@@ -46,8 +46,8 @@ fn judged_as_values(column: &Column, values: &[Value], conjuncts: &[Conjunct], w
         let pred = Pred { column: 0, conjunct: conjunct.clone(), of_null: conjunct.matches_key(&[&Value::Null]) };
         let expected =
             |rows: &[u32]| -> Vec<u32> { rows.iter().copied().filter(|&r| conjunct.matches_key(&[&values[index(r)]])).collect() };
-        assert_eq!(pred.kept(column, None), Some(expected(&all)), "{what}: {conjunct:?}");
-        assert_eq!(pred.kept(column, Some(&given)), Some(expected(&given)), "{what}, every third: {conjunct:?}");
+        assert_eq!(pred.kept(column, None, &crate::kernels::Portable), Some(expected(&all)), "{what}: {conjunct:?}");
+        assert_eq!(pred.kept(column, Some(&given), &crate::kernels::Portable), Some(expected(&given)), "{what}, every third: {conjunct:?}");
     }
 }
 

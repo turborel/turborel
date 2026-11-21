@@ -90,6 +90,16 @@ pub trait Kernels: Send + Sync {
     fn unpack(&self, bytes: &[u8], (bits, least): (u32, i64), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         portable::unpack::unpack(bytes, (bits, least), (from, to), out)
     }
+    /// Makes each of `words`, an n of a chunk of decimals of magnitude
+    /// below 2^51, the bits, as a signed integer, of its approximate
+    /// number by `scale` (RULES.md D353): n made an `f64` exactly by the
+    /// magic number 2^52 + 2^51, then multiplied by the factors or divided
+    /// by the power. An n of 2^51 or more gives what the same bit
+    /// operations give of it, of no use.
+    fn alp_decode(&self, words: &mut [i64], scale: AlpScale) {
+        portable::alp::alp_decode(words, scale);
+    }
+
     /// XXH3's accumulation of `stripes` into `acc`, the `n`th keyed by the
     /// 64 bytes of `secret` at `8 n` (`hash::xxhash::Stripes::accumulate`,
     /// RULES.md D460): the loop of a long input's hash that wider
@@ -128,6 +138,28 @@ impl xxhash::Stripes for dyn Kernels + '_ {
     }
     fn scramble(&self, acc: &mut [u64; xxhash::ACC_NB], key: &xxhash::Stripe) {
         self.xxh3_scramble(acc, key);
+    }
+}
+
+/// \[DESIGN\] How a chunk of decimals' n are made its approximate numbers
+/// (RULES.md D353): multiplied by 10^f, then by 10^-e, or divided by
+/// 10^e, as of a chunk written before the factors were.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AlpScale {
+    /// Multiplied by the first, then by the second.
+    Factored(f64, f64),
+    /// Divided by it.
+    Divided(f64),
+}
+
+impl AlpScale {
+    /// The value of `n`, an integer held exactly.
+    #[inline]
+    pub fn of(self, n: f64) -> f64 {
+        match self {
+            AlpScale::Factored(power, fraction) => n * power * fraction,
+            AlpScale::Divided(power) => n / power,
+        }
     }
 }
 

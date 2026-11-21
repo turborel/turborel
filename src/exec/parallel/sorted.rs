@@ -119,8 +119,8 @@ fn morsel_run(pipeline: &Pipeline, m: usize, (keys, most): (&[SortKey], Option<u
         let kept = pipeline.morsel_kept(m, (db, tx))?;
         return match most.map(|n| (n, n <= FEW_FIRST)) {
             Some((n, true)) => first_of_morsel(keys, kept, n, (db, tx)).map(Run::Rows),
-            Some((n, false)) => sorted_morsel(keys, kept, n, db.functions.kernels_shared()).map(Run::Rows),
-            None => sorted_morsel_batches(keys, kept, db.functions.kernels_shared()).map(Run::Batches),
+            Some((n, false)) => sorted_morsel(keys, kept, n, crate::db::kernels::chosen(db)).map(Run::Rows),
+            None => sorted_morsel_batches(keys, kept, crate::db::kernels::chosen(db)).map(Run::Batches),
         };
     }
     let mut run = sorted_rows(keys, pipeline.morsel_rows(m, (db, tx), &Runner::new(db, tx))?);

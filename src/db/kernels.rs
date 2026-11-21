@@ -31,6 +31,9 @@ impl Database {
                 return Err(api(format!("[DESIGN] the kernels {held} are registered; a database takes one set")));
             }
             st.functions.set_kernels(Arc::clone(&kernels));
+            for engine in st.engines.values() {
+                engine.use_kernels(Arc::clone(&kernels));
+            }
             Ok(())
         })
     }

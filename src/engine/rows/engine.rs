@@ -30,6 +30,9 @@ impl StorageEngine for RowStore {
         self.use_encodings(Arc::clone(&host.encodings));
         Ok(())
     }
+    fn use_kernels(&self, kernels: Arc<dyn crate::kernels::Kernels>) {
+        *self.kernels.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(kernels);
+    }
     fn table_options(&self) -> Vec<crate::storage::TableOption> {
         options::declared(self.defaults)
     }

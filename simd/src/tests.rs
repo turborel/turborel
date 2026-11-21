@@ -17,6 +17,28 @@ fn every_available_set_keeps_the_contract() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D570: the kernels of every instruction set
+/// this processor has give what the portable bodies give, bit for bit, of
+/// random inputs of every length, alignment, width and operator, nulls and
+/// selections (`KERNEL_SEEDS` seeds from `KERNEL_SEEDS_FROM` if set, as
+/// `cargo xtask kernels` sets them).
+#[test]
+fn every_available_set_gives_the_portable_results() {
+    for level in Simd::levels() {
+        let simd = Simd::with_level(level).unwrap();
+        turborel_test_support::differential::differential(&simd, turborel_test_support::differential::seeds(400));
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D460, D570: a `Simd` is made only of a
+/// level the processor has, whose name it keeps.
+#[test]
+fn a_level_lacked_makes_no_kernels() {
+    for level in [Level::Sse2, Level::Avx2, Level::Avx512, Level::Neon] {
+        assert_eq!(Simd::with_level(level).map(|s| s.level()), level.available().then_some(level), "{level:?}");
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D460: the portable set is always there, the
 /// widest available is chosen, and a set the processor lacks is refused.
 #[test]

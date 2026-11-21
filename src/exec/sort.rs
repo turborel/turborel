@@ -91,7 +91,7 @@ pub(super) fn first_batches(
     db: &State,
     tx: TxId,
 ) -> RowIter {
-    match top::top_batches(keys, input, most, &mut Work::of(db, tx), db.functions.kernels_shared()) {
+    match top::top_batches(keys, input, most, &mut Work::of(db, tx), crate::db::kernels::chosen(db)) {
         Ok(rows) => rows,
         Err(e) => failed(e),
     }
@@ -108,7 +108,7 @@ pub(super) fn first_batches(
 /// As reading the input, or a spill, fails.
 pub(super) fn first_of_morsel(keys: &[SortKey], input: super::batch::Batches, most: usize, (db, tx): (&State, TxId)) -> Result<Vec<Row>> {
     let most = (Most { rows: most, ties: false }, None);
-    top::top_batches(keys, input, most, &mut Work::of(db, tx), db.functions.kernels_shared())?.collect()
+    top::top_batches(keys, input, most, &mut Work::of(db, tx), crate::db::kernels::chosen(db))?.collect()
 }
 
 /// `sort`'s work.

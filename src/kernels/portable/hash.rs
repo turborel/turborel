@@ -8,6 +8,7 @@ use crate::storage::mask::index;
 
 /// Appends to `out` the hash of each of `values` at `sel`, or of all, by
 /// `seed`; that of 0 for a row past the end.
+#[inline]
 pub fn hash_i64(values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
     let hashed = |v: i64| fmix64(seed ^ v.cast_unsigned());
     match sel {
