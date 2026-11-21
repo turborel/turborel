@@ -11482,7 +11482,11 @@ few. A page the list takes for its own record is in use; a free run set
 aside while the file is cut stays free, as it is. The file manager
 stamps a use by the monotonic clock, each thread's stamps rising, with
 no write any other file shares; the least recently used file is still
-the one closed first, a tie going to the file opened first. A miss reads
+the one closed first, a tie going to the file opened first. The count was
+not split into stripes by thread, summed when read, as the hits of the
+pool are (`disk/buffer/hits.rs`): a sum orders nothing, and a stripe's
+count says only how often its threads used files, not which file one
+used last, so eviction would lose its order. A miss reads
 into the buffer of the page it evicts, emptied, unless that buffer grew
 past a page or two; and the pager cuts the page it read to its body in
 place instead of copying it.
