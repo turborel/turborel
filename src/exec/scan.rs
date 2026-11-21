@@ -15,6 +15,7 @@ use super::{RowIter, broken, execute, failed, sort};
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
+use crate::exec::Db;
 use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe, Used, used};
 use crate::logical::{Cond, Most, SortKey, pushed_conjuncts};
 use crate::physical::Plan;
@@ -37,7 +38,7 @@ pub(super) fn read_row(located: bool, (id, mut row): (RowId, Row)) -> Row {
 
 /// The rows of the scan `plan`.
 #[inline(never)]
-pub(super) fn scanned_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn scanned_plan(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::SeqScan { table, columns, order, backward, most, located, .. } = plan else { return failed(broken("a scan is not one")) };
     if order.is_empty() {
         return scanned((&table, &columns, located), None, db, tx);
@@ -56,7 +57,7 @@ fn ordered_scan(
     (table, columns, located): ReadOf<'_>,
     (order, backward, most): ScanOrder<'_>,
     condition: Option<&Conjunction>,
-    db: &Arc<State>,
+    db: &Db,
     tx: TxId,
 ) -> RowIter {
     let storage = match db.storage_of(table) {
@@ -84,7 +85,7 @@ fn ordered_scan(
 /// The rows of `table`'s columns `columns`, only those `condition` may
 /// match if given.
 #[inline(never)]
-fn scanned((table, columns, located): ReadOf<'_>, condition: Option<&Conjunction>, db: &Arc<State>, tx: TxId) -> RowIter {
+fn scanned((table, columns, located): ReadOf<'_>, condition: Option<&Conjunction>, db: &Db, tx: TxId) -> RowIter {
     match db.storage_of(table) {
         Ok(storage) => {
             let storage = Arc::clone(storage);
@@ -100,7 +101,7 @@ fn scanned((table, columns, located): ReadOf<'_>, condition: Option<&Conjunction
 
 /// The rows of `input`, under a filter on `cond`: a scan is told the
 /// conditions, if it has simple ones (`logical::pushed_conjuncts`).
-pub(super) fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn filtered_input(input: Plan, cond: &Cond, db: &Db, tx: TxId) -> RowIter {
     match (input, pushed_conjuncts(cond)) {
         (Plan::SeqScan { table, columns, order, backward, located, .. }, Some(condition)) => {
             if order.is_empty() {
@@ -120,7 +121,7 @@ pub(super) fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId
 /// inlined into `execute`, whose frame every level of a plan adds to the
 /// stack (RULES.md R-CF-6), as are the helpers below.
 #[inline(never)]
-pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, located, decided, .. } = plan else {
         return failed(broken("an index scan is not one"));
     };

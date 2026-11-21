@@ -13,8 +13,8 @@
 use std::sync::Arc;
 
 use super::{RowIter, Runner, broken, eval, eval_cond, execute, failed, warn};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::json::{Cursor, JsonTable};
 use crate::logical::{Truth, Unnest};
 use crate::physical::Plan;
@@ -24,7 +24,7 @@ use crate::value::Value;
 
 /// The rows of `plan`, a JSON table over its input.
 #[inline(never)]
-pub(super) fn json_table(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn json_table(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Unnest(u) = plan else { return failed(broken("a JSON table is not one")) };
     let (u, input) = u.split();
     let Some(table) = u.json.clone() else { return failed(broken("a JSON table has no table")) };

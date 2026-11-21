@@ -28,8 +28,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use super::{RowIter, Runner, Subqueries, broken, eval, eval_cond, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::graph::binding::PathBinding;
 use crate::graph::matching::{PathMatches, matches};
 use crate::graph::program::{PathPattern, VarId};
@@ -46,14 +46,14 @@ use store::Store;
 
 /// The rows of `plan`, a GRAPH_TABLE over its input.
 #[inline(never)]
-pub(super) fn graph_table(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn graph_table(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Unnest(u) = plan else { return failed(broken("a GRAPH_TABLE is not one")) };
     let (u, input) = u.split();
     let Some(graph) = u.graph.clone() else { return failed(broken("a GRAPH_TABLE has no graph")) };
     let rows = Rows {
         input: execute(input, db, tx),
         runner: Runner::new(db, tx),
-        db: Arc::clone(db),
+        db: db.clone(),
         tx,
         u,
         graph,
@@ -79,7 +79,7 @@ struct Opened {
 struct Rows {
     input: RowIter,
     runner: Runner,
-    db: Arc<State>,
+    db: Db,
     tx: TxId,
     u: Unnest<()>,
     graph: Arc<GraphMatch>,
@@ -192,7 +192,7 @@ impl Rows {
         let opened = self.opened.as_ref().ok_or_else(|| broken("a GRAPH_TABLE's graph is not open"))?;
         let (store, starts, earlier) = (Arc::clone(&opened.store), opened.starts.clone(), opened.earlier.clone());
         let fixed = vec![None; self.graph.paths.len()];
-        let shared = Arc::new(Shared { db: Arc::clone(&self.db), tx: self.tx, graph: Arc::clone(&self.graph), store, operands, fixed });
+        let shared = Arc::new(Shared { db: self.db.clone(), tx: self.tx, graph: Arc::clone(&self.graph), store, operands, fixed });
         let (mut patterns, mut found, mut tags) = (Vec::new(), Vec::new(), Vec::new());
         for (pattern, bindings, read) in self.searched(&shared, (&starts, &earlier))? {
             patterns.push(pattern);

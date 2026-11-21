@@ -12,8 +12,8 @@ use std::sync::Arc;
 use super::entries::{Reading, fetch};
 use super::{RowIter, Runner, Subqueries, broken, eval, eval_cond, failed};
 use crate::catalog::{IndexDesc, KeyShape};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::index::{Key, NeighbourEntries, Probe};
 use crate::logical::Truth;
 use crate::physical::{NearestRead, Plan};
@@ -23,7 +23,7 @@ use crate::value::Value;
 use threshold::Threshold;
 
 #[inline(never)]
-pub(super) fn nearest(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn nearest(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Nearest(read) = plan else { return failed(broken("a nearest read is not one")) };
     match open(*read, db, tx) {
         Ok(rows) => rows,
@@ -31,7 +31,7 @@ pub(super) fn nearest(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     }
 }
 
-fn open(read: NearestRead, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
+fn open(read: NearestRead, db: &Db, tx: TxId) -> Result<RowIter> {
     if let Some(stop) = db.tx.stop_of(tx) {
         stop.check()?;
     }
@@ -56,13 +56,13 @@ fn open(read: NearestRead, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
     let reading = Reading::of(&key, Some(&read.columns), projection);
     // Counted as the index's search (RULES.md D522).
     let entries = Box::new(checked(crate::index::used(entries, db.uses_of(&read.index)), db.tx.stop_of(tx)));
-    let rows = Search { read, storage, key, reading, entries, threshold, runner, db: Arc::clone(db), tx, ended: false, tail: None };
+    let rows = Search { read, storage, key, reading, entries, threshold, runner, db: db.clone(), tx, ended: false, tail: None };
     Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
 }
 
 /// The fallback computes the same filter and measure lazily. After an
 /// exhausted candidate traversal, only NULL distances remain to add.
-fn scanned(read: NearestRead, storage: Arc<dyn TableStorage>, db: &Arc<State>, tx: TxId, nulls: bool) -> RowIter {
+fn scanned(read: NearestRead, storage: Arc<dyn TableStorage>, db: &Db, tx: TxId, nulls: bool) -> RowIter {
     let runner = Runner::new(db, tx);
     let entries = checked(storage.scan(tx, &read.columns), db.tx.stop_of(tx));
     let rows = entries.filter_map(move |entry| {
@@ -101,7 +101,7 @@ struct Search {
     entries: NeighbourEntries,
     threshold: Threshold,
     runner: Runner,
-    db: Arc<State>,
+    db: Db,
     tx: TxId,
     ended: bool,
     tail: Option<RowIter>,

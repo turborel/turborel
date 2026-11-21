@@ -24,8 +24,8 @@ use std::sync::Arc;
 use super::super::work::Work;
 use super::super::{RowIter, Runner, broken, eval_cond, execute, failed};
 use super::rescan::{Pass, Rescanned};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::logical::{Cond, Expr, Truth};
 use crate::physical::{self, Bound, JoinKey, Plan, Pruned};
 use crate::spill::row_bytes;
@@ -60,7 +60,7 @@ pub(super) enum Searched {
 /// The rows of the range join `plan`. Never inlined into `execute`, whose
 /// frame every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
-pub(in crate::exec) fn ranged(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn ranged(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::RangeJoin(plan) = plan else { return failed(broken("a range join is not one")) };
     let physical::RangeJoin { outer, left, right, keys, sorted, lower, upper, pruned, cond, full, widths, .. } = *plan;
     let joining = Joining {

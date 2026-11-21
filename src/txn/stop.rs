@@ -157,6 +157,12 @@ impl Stop {
         u64::try_from(self.epoch.elapsed().as_nanos()).unwrap_or(u64::MAX).max(1)
     }
 
+    /// The generation of the windows open now, or of the last: a reader
+    /// that sees it change is in another window.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
     /// Cancels what runs in the windows open now, if any is.
     pub fn cancel(&self) {
         // The generation is read first: if the windows close and others

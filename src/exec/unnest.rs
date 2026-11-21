@@ -13,8 +13,8 @@
 use std::sync::Arc;
 
 use super::{RowIter, Runner, broken, eval, eval_cond, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::logical::{Truth, Unnest};
 use crate::physical::Plan;
 use crate::storage::Row;
@@ -23,7 +23,7 @@ use crate::value::{Decimal, Value};
 
 /// The rows of `plan`, a collection derived table over its input.
 #[inline(never)]
-pub(super) fn unnested(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn unnested(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Unnest(u) = plan else { return failed(broken("a collection derived table is not one")) };
     let (u, input) = u.split();
     let (rows, runner) = (execute(input, db, tx), Runner::new(db, tx));
