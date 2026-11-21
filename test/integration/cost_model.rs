@@ -162,3 +162,29 @@ fn a_sort_past_its_grant_gives_way_to_the_index_order() {
     }
     assert!(decided, "no estimate where the grant chose the index");
 }
+
+/// Verifies: [DESIGN] (RULES.md D651, D550) a hashed grouping is priced
+/// past its grant: G's 500 groups of 8 rows each are hashed and their
+/// groups sorted within the default grant, but past a grant of 64 KiB
+/// their rows would be partitioned and spilled, and the rows are sorted
+/// and streamed instead; the rows are the same.
+#[test]
+fn a_grouping_past_its_grant_streams_over_a_sort() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION G CREATE TABLE S (G INTEGER, V INTEGER)").unwrap();
+    let s = db.session("G");
+    let rows: Vec<String> = (0..4_000).map(|k| format!("({}, {k})", (k * 7) % 500)).collect();
+    s.run(&format!("INSERT INTO S VALUES {}", rows.join(", "))).unwrap();
+    s.commit().unwrap();
+    db.maintain().unwrap();
+    let sql = "SELECT G, COUNT(*), SUM(V) FROM S GROUP BY G ORDER BY G";
+    let physical = |s: &Session| s.explain(sql, &Params::new()).unwrap().split("-- physical:").nth(1).unwrap_or_default().to_owned();
+    let held = physical(&s);
+    assert!(held.contains("Aggregate") && !held.contains("Aggregate streamed"), "{held}");
+    let rows = crate::common::rows(&s, sql).unwrap();
+    exec(&s, "SET MEMORY.WORK_BYTES = 65536").unwrap();
+    let spilled = physical(&s);
+    assert!(spilled.contains("Aggregate streamed") && spilled.contains("Sort"), "{spilled}");
+    assert_eq!(crate::common::rows(&s, sql).unwrap(), rows);
+    assert_eq!(rows.len(), 500);
+}

@@ -38,7 +38,10 @@ pub const COST_MODEL: [Mutation; 5] = [
         file: "src/physical/cost/spill.rs",
         original: "    moved * (per_row + SPILLED_BYTE * bytes)",
         replacement: "    0.0_f64 * moved * per_row * bytes",
-        integration: &["cost_model::a_sort_past_its_grant_gives_way_to_the_index_order"],
+        integration: &[
+            "cost_model::a_sort_past_its_grant_gives_way_to_the_index_order",
+            "cost_model::a_grouping_past_its_grant_streams_over_a_sort",
+        ],
         unit: &[
             "physical::cost::tests::rows_past_the_grant_are_spilled_once_more",
             "physical::enumerate::weighed::tests::a_build_past_its_grant_costs_its_spill",

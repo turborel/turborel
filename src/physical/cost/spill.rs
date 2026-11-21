@@ -84,6 +84,14 @@ pub(in crate::physical) fn hash_spilled((built, bytes): (f64, f64), probing: f64
     moved_past((built, bytes), (built + probing, PARTITIONED_ROW), grant)
 }
 
+/// The cost more of a hashed grouping holding `groups` groups of `bytes`
+/// bytes each and given `rows` rows, past a grant of `grant` bytes: its
+/// rows partitioned, written and read back once more, as a hash join's
+/// operands are (`bench/analytics/costs.rs`, its grouping spilled).
+pub(in crate::physical) fn grouped_spilled((groups, bytes): (f64, f64), rows: f64, grant: f64) -> f64 {
+    moved_past((groups, bytes), (rows, PARTITIONED_ROW), grant)
+}
+
 /// The cost more of a sort of `rows` rows of `bytes` bytes past a grant
 /// of `grant` bytes: its runs written and merged once.
 pub(in crate::physical) fn sort_spilled((rows, bytes): (f64, f64), grant: f64) -> f64 {
