@@ -212,11 +212,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::Limit { input, .. } => give(input, work),
         Plan::Unnest(u) => give(&mut u.input, work),
         Plan::Parallel(p) => give(&mut p.input, work),
-        Plan::GroupJoin(g) => {
-            give(&mut g.build, work);
-            give(&mut g.probe, work);
-            give(&mut g.instead, work);
-        }
+        Plan::GroupJoin(g) => [&mut g.build, &mut g.probe, &mut g.instead].into_iter().for_each(|p| give(p, work)),
         Plan::Counted(c) => give(&mut c.input, work),
         Plan::Window { window, .. } => give(&mut window.input, work),
         Plan::Recognize { recognize, .. } => give(&mut recognize.input, work),
@@ -226,13 +222,17 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
             give(&mut m.left, work);
             give(&mut m.right, work);
         }
+        Plan::RangeJoin(r) => {
+            give(&mut r.left, work);
+            give(&mut r.right, work);
+        }
         Plan::SemiJoin(s) => {
             give(&mut s.left, work);
             give(&mut s.right, work);
         }
-        Plan::RangeJoin(r) => {
-            give(&mut r.left, work);
-            give(&mut r.right, work);
+        Plan::MarkJoin(m) => {
+            give(&mut m.left, work);
+            give(&mut m.right, work);
         }
         Plan::Product { left, right, .. }
         | Plan::HashJoin { left, right, .. }

@@ -318,6 +318,10 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Sort { input, .. }
             | LogicalPlan::Limit { input, .. }
             | LogicalPlan::SemiJoin { left: input, .. } => self.column_type(input, column),
+            LogicalPlan::MarkJoin(m) => match column.checked_sub(m.left.width()) {
+                Some(_) => Some(DataType::Boolean),
+                None => self.column_type(&m.left, column),
+            },
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
                 Some(of_right) => self.column_type(right, of_right),
                 None => self.column_type(left, column),
@@ -390,8 +394,9 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
@@ -452,6 +457,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }

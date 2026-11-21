@@ -37,7 +37,7 @@ use std::sync::Arc;
 pub(crate) use count::storage_counted;
 use expr::Program;
 pub(super) use groups::morsel_groups;
-pub(super) use joined::{SharedTable, TABLE_ROW_BYTES, gathered, rows_of};
+pub(super) use joined::{SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
 pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
 pub(super) use late::{Deferred, resolved};
 pub(super) use probed::{probe_layout, probed};

@@ -367,6 +367,7 @@ pub(super) fn passing(plan: &LogicalPlan) -> Option<Passing> {
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Values { .. }

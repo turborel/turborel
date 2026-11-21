@@ -55,6 +55,7 @@ impl Rule for EliminateJoins {
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Project { .. }
             | LogicalPlan::Distinct { .. }
@@ -144,6 +145,7 @@ fn table_of(plan: &LogicalPlan) -> Option<(&crate::catalog::QualifiedName, Optio
         | LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }

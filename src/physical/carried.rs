@@ -23,8 +23,9 @@ impl Plan {
             | Plan::Limit { est, .. }
             | Plan::Window { est, .. } => Some(*est),
             Plan::MergeJoin(m) => Some(m.est),
-            Plan::SemiJoin(s) => Some(s.est),
             Plan::RangeJoin(r) => Some(r.est),
+            Plan::SemiJoin(s) => Some(s.est),
+            Plan::MarkJoin(m) => Some(m.est),
             Plan::Project { input, .. } | Plan::Sort { input, .. } => input.est(),
             Plan::Parallel(p) => p.input.est(),
             Plan::GroupJoin(g) => Some(g.est),

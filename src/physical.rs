@@ -30,6 +30,7 @@ mod enumerate;
 pub use decided::Decided;
 pub(crate) mod estimate;
 mod expression_index;
+mod filtered;
 mod goals;
 mod grouping;
 mod groupjoin;
@@ -56,10 +57,12 @@ mod probe;
 mod project;
 mod range;
 pub use range::{Bound, Pruned, RangeJoin};
+mod mark;
 mod raising;
 mod recognized;
 mod robust;
 mod semi;
+pub use mark::{MarkJoin, MarkMethod};
 pub use semi::{SemiJoin, SemiMethod};
 mod shown;
 pub(crate) mod spatial;
@@ -83,7 +86,6 @@ use crate::exec::{TransitionRows, WorkRows};
 use crate::index::Probe;
 use crate::logical::{
     AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Polymorphic, Recognize, SetOp, SortKey, Unnest, Window,
-    judged_by_sets, render_cond,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -278,10 +280,12 @@ pub enum Plan {
     },
     /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
     MergeJoin(Box<MergeJoin>),
-    /// \[DESIGN\] A semi join or an antijoin (`physical/semi.rs`, RULES.md D540).
-    SemiJoin(Box<SemiJoin>),
     /// \[DESIGN\] A range join (`physical/range.rs`, RULES.md D580).
     RangeJoin(Box<RangeJoin>),
+    /// \[DESIGN\] A semi join or an antijoin (`physical/semi.rs`, RULES.md D540).
+    SemiJoin(Box<SemiJoin>),
+    /// \[DESIGN\] A mark join (`physical/mark.rs`, RULES.md D642).
+    MarkJoin(Box<MarkJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
     Aggregate {
         /// The grouping columns of `input`.
@@ -547,6 +551,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
             LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_join((*anti, cond), (left, right), want),
+            LogicalPlan::MarkJoin(m) => self.mark_join(m, want),
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
             LogicalPlan::Distinct { input } => self.distinct(input, want),
@@ -570,33 +575,6 @@ impl<'a> PhysicalPlanner<'a> {
                 names: p.names.clone(),
             }))),
         }
-    }
-
-    /// A filter directly on a table, or over a table's read and a guard
-    /// (`physical/access/guarded.rs`), becomes part of the access path,
-    /// told the columns the node above reads, `above`, if known; any other
-    /// keeps the order of its input, its long IN lists judged by sets
-    /// (`logical::judged_by_sets`).
-    fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey], above: Option<&[usize]>) -> Built {
-        // A row goal is of the rows the filter keeps: its input is read
-        // for as many more as it drops (`goals.rs`). A join divides its
-        // own.
-        let kept = |p: &PhysicalPlanner<'_>| p.per_row(p.estimating(|e| e.filter_card(cond, input)).rows, input);
-        let goal = self.divided(|| kept(self));
-        if let Some(read) = goal.filtered_read(cond, input, (want, above)) {
-            return read;
-        }
-        if let Some(join) = self.range_join(cond, input) {
-            return join;
-        }
-        if let Some(join) = self.hash_join(cond, input, want) {
-            return join;
-        }
-        let est = self.estimating(|e| e.filter_card(cond, input)).rows;
-        let b = goal.build_node(input, want);
-        let cond = judged_by_sets(cond.clone());
-        let detail = self.described(input, |names| render_cond(&cond, names));
-        Built { plan: Plan::Filter { cond, detail, est, of_read: false, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 }
 

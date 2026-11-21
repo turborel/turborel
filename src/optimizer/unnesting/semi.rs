@@ -78,7 +78,7 @@ fn semi_joined(node: &Node<'_>, cond: &Cond, found: &Found, ctx: &RuleContext<'_
         None => input.clone(),
     };
     let w = input.width();
-    if let Some((on, right)) = direct(sub, w) {
+    if let Some((on, right, _)) = direct(sub, w) {
         return Some(LogicalPlan::SemiJoin { anti, cond: on, left: Box::new(left), right: Box::new(right) });
     }
     let bound = simple::pulled(sub, &ctx.db.functions).filter(|b| b.defaults.is_none());
@@ -185,12 +185,13 @@ fn use_of(c: &Cond, target: &Target) -> Option<bool> {
 }
 
 /// The condition of the semi join of rows `w` columns wide with the
-/// subquery `sub`'s rows, and the plan of those, if under its projections,
+/// subquery `sub`'s rows, the plan of those, and the subquery's columns
+/// over that plan's if they are not its columns, if under its projections,
 /// a DISTINCT and its filters it reads no outer reference, and the
 /// conjuncts of those filters that do read one cannot raise and hold no
 /// subquery.
-fn direct(sub: &Subquery, w: usize) -> Option<(Cond, LogicalPlan)> {
-    let (conjuncts, body, _) = peeled(&sub.plan, 0)?;
+pub(super) fn direct(sub: &Subquery, w: usize) -> Option<(Cond, LogicalPlan, Option<Vec<Expr>>)> {
+    let (conjuncts, body, map) = peeled(&sub.plan, 0)?;
     if plan_has_outer(&body) {
         return None;
     }
@@ -208,7 +209,7 @@ fn direct(sub: &Subquery, w: usize) -> Option<(Cond, LogicalPlan)> {
         Some(c) => LogicalPlan::Filter { cond: c, input: Box::new(body) },
         None => body,
     };
-    Some((cond, right))
+    Some((cond, right, map))
 }
 
 /// What `peeled` makes of a plan: the conjuncts of its filters and the
@@ -242,6 +243,7 @@ fn peeled(plan: &LogicalPlan, depth: usize) -> Option<Peeled> {
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }

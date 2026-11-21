@@ -198,8 +198,9 @@ impl Filling<'_> {
             Plan::Product { .. } | Plan::HashJoin { .. } | Plan::IndexJoin { .. } => self.join(plan),
             Plan::MergeJoin(_)
             | Plan::GroupJoin(..)
-            | Plan::SemiJoin(_)
             | Plan::RangeJoin(_)
+            | Plan::SemiJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::OuterJoin { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }
