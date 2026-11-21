@@ -13,7 +13,7 @@
 //! differ only in what the tokenizer drops, as trailing spaces, or case
 //! once words are normalized, are one document and project alike, as
 //! equal keys must [ISO/IEC 13249-2:2002 (CD, SC32 N0640) §4.5]. Hashing
-//! is MurmurHash3 x64 128-bit (`hash/murmur.rs`), chained over blocks so a
+//! is XXH3-128 (`hash/xxhash.rs`), chained over blocks so a
 //! document of any length is never held whole: stable across runs and
 //! platforms, as the tree keeps it.
 
@@ -23,14 +23,14 @@ use super::keys::{DocHash, HASH_BYTES};
 use crate::error::{Code, Result, SqlError};
 use crate::fulltext::text::{StopWords, Tokens, tokenize_with};
 use crate::fulltext::{Language, Languages, Token};
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_128_halves;
 use crate::index::{Key, KeyProjection};
 use crate::value::lob::{LobChars, LobKind};
 use crate::value::{Binary, Value};
 
 /// \[DESIGN\] The seed of the document hash: fixed, so the hash is the
 /// same in every run. Its bytes spell "FTX1".
-const HASH_SEED: u32 = 0x4654_5831;
+const HASH_SEED: u64 = 0x4654_5831;
 /// \[DESIGN\] The bytes of tokens hashed into one block of the chain.
 const HASH_BLOCK: usize = 4_096;
 /// Bytes of a hash's half.
@@ -149,9 +149,9 @@ impl Hasher {
     }
 }
 
-/// MurmurHash3 x64 128-bit of `bytes`, its halves little-endian.
+/// XXH3-128 of `bytes`, its halves little-endian, the low first.
 fn digest(bytes: &[u8]) -> DocHash {
-    let (low, high) = murmur3_x64_128(bytes, HASH_SEED);
+    let (low, high) = xxh3_128_halves(bytes, HASH_SEED);
     let mut out = [0_u8; HASH_BYTES];
     let (first, second) = out.split_at_mut(HALF);
     first.copy_from_slice(&low.to_le_bytes());

@@ -37,7 +37,6 @@ use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::{DEFAULT_PAGE_SIZE, Pager};
 use crate::error::SqlError;
 use crate::hash::HashFunction;
-use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::memory::MemoryBudget;
 use crate::sync::lock_builtin;
 use crate::value::DataType;
@@ -62,7 +61,7 @@ pub(crate) fn memory_file(budget: &Arc<MemoryBudget>, what: &str) -> Result<(Arc
 /// As `memory_file`, its pool of `bytes`.
 fn memory_file_of(budget: &Arc<MemoryBudget>, bytes: usize, what: &str) -> Result<(Arc<BufferPool>, FileId), SqlError> {
     let fs = MemoryFileSystem::within(Arc::clone(budget), &format!("the pages of {what}"));
-    let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI)?);
+    let hash: Arc<dyn HashFunction> = Arc::new(crate::hash::xxhash::Xxh3Hash);
     let pager = Pager::create(&fs, Path::new("/pages"), hash, Pipeline::none(), DEFAULT_PAGE_SIZE)?;
     let pool = Arc::new(BufferPool::in_budget(budget, (bytes, pager.page_size()), what)?);
     let file = pool.add_pager(Arc::new(pager));

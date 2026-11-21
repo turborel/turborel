@@ -104,7 +104,7 @@ impl Counts {
     fn hash_batch(&mut self, batch: &Batch, rows: Option<&[u32]>) {
         self.columns.clear();
         self.columns.extend(0..batch.columns.len());
-        hash_rows(batch, (&self.columns, rows), (self.db.functions.seed(), self.db.functions.kernels()), &mut self.hashes);
+        hash_rows(batch, (&self.columns, rows), (self.db.functions.seed(), &*crate::db::kernels::chosen(&self.db)), &mut self.hashes);
     }
 
     /// Each group's key's bytes and count, then the keys `rest`.

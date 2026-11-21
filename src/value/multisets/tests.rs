@@ -23,7 +23,7 @@ fn literals(of: &[Value]) -> Vec<String> {
 
 /// The hash `Hash` gives `k`.
 fn hash_of(k: &BagKey) -> u64 {
-    let mut h = DefaultHasher::new();
+    let mut h = crate::hash::xxhash::Xxh3Hasher::default();
     k.hash(&mut h);
     h.finish()
 }

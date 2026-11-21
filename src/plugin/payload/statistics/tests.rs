@@ -9,15 +9,16 @@ fn n(x: i128) -> Value {
     Value::Exact(Decimal::new(x, 0))
 }
 
-/// Verifies: [DESIGN] RULES.md D278, D279: a table's statistics, each
-/// column's bounds, histogram and frequencies, an index's, none known,
+/// Verifies: [DESIGN] RULES.md D278, D279, D381: a table's statistics,
+/// each column's bounds, histogram, frequencies and common values, a
+/// column's with none, an index's, none known,
 /// and each question read back as written; a question of no kind is
 /// refused.
 #[test]
 fn statistics_read_back_as_written() {
     let f = Frequencies { most: 3.0, median: 1.0, p90: 2.0, p99: 3.0 };
-    let column =
-        ColumnAnswer { distinct: 4.0, nulls: 0.25, bounds: Some((n(1), n(9))), histogram: vec![n(1), n(5), n(9)], frequencies: Some(f) };
+    let (bounds, histogram, common) = (Some((n(1), n(9))), vec![n(1), n(5), n(9)], vec![(n(7), 0.5_f64), (n(2), 0.125_f64)]);
+    let column = ColumnAnswer { distinct: 4.0, nulls: 0.25, bounds, histogram, frequencies: Some(f), common };
     let t = TableAnswer { rows: 20.0, width: -1.0, refresh: 7, columns: vec![column, ColumnAnswer::default()] };
     let mut out = Vec::new();
     put_table(&mut out, Some(&t)).unwrap();
@@ -55,4 +56,17 @@ fn an_answer_is_read_as_statistics() {
     assert!(t.histogram(0).is_none(), "an empty histogram is none");
     let told = answer_of(&t, 2);
     assert_eq!((told.rows, told.columns.len(), told.columns[0].distinct, told.columns[1].distinct), (100.0_f64, 2, 4.0_f64, -1.0_f64));
+}
+
+/// Verifies: [DESIGN] RULES.md D381: a plug-in's common values are read
+/// as the planner's, a common value its own share, another the rest
+/// shared among the other distinct values; and told a plug-in as kept.
+#[test]
+fn a_plugins_common_values_are_read_as_statistics() {
+    let common = vec![(n(1), 0.5_f64)];
+    let column = ColumnAnswer { distinct: 6.0, nulls: 0.0, bounds: Some((n(0), n(9))), common, ..ColumnAnswer::default() };
+    let t = TableAnswer { rows: 100.0, width: -1.0, refresh: 0, columns: vec![column] };
+    let (heavy, other) = (t.selectivity(0, CompOp::Eq, &n(1)).unwrap(), t.selectivity(0, CompOp::Eq, &n(2)).unwrap());
+    assert!((heavy - 0.5_f64).abs() < 1e-9_f64 && (other - 0.1_f64).abs() < 1e-9_f64, "{heavy} {other}");
+    assert_eq!(answer_of(&t, 1).columns[0].common.len(), 1);
 }

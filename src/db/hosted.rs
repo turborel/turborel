@@ -135,20 +135,6 @@ impl Database {
         self.snapshot()?.extension_host.eviction.set(make);
         Ok(())
     }
-
-    /// \[EXTENSION\] Sets the kernels the executor's batches run on, the
-    /// built-in portable ones or a crate's in their place, for the
-    /// statements that begin after it (RULES.md D354).
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the database is closed or a lock is poisoned.
-    pub fn set_kernels(&self, kernels: Arc<dyn crate::kernels::Kernels>) -> Result<()> {
-        self.change(|st| {
-            st.functions.set_kernels(kernels);
-            Ok(())
-        })
-    }
 }
 
 /// `st`, or SQLSTATE 38T11 if a host plug-in's failure stopped the node.

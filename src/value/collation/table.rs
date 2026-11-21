@@ -20,13 +20,10 @@ const BYTES: &[u8] = include_bytes!("unicode13.bin");
 const MAGIC: &[u8; 8] = b"TBUCA130";
 /// The bytes before the first section: the magic and eight counts.
 const HEADER: usize = 40;
-/// The digest of the table as generated (`cargo xtask unicode`).
+/// The digest of the table as generated (`cargo xtask unicode`): its
+/// XXH3-64 (RULES.md D460).
 #[cfg(test)]
-pub(super) const DIGEST: u64 = 0x32fd_464e_0802_3215;
-#[cfg(test)]
-const FNV_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-#[cfg(test)]
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+pub(super) const DIGEST: u64 = 0x5bae_4fdb_baa2_fd52;
 /// The flag of a character that begins a contraction.
 const BEGINS_CONTRACTION: u32 = 1 << 31;
 /// Where a record's count sits above its offset.
@@ -259,16 +256,10 @@ impl Table {
     }
 }
 
-/// The table's FNV-1a digest, to hold it to `DIGEST`.
+/// The table's XXH3-64 digest, to hold it to `DIGEST`.
 #[cfg(test)]
 pub(super) fn digest() -> u64 {
-    fnv(BYTES)
-}
-
-/// The FNV-1a digest of `bytes`.
-#[cfg(test)]
-pub(crate) fn fnv(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(FNV_BASIS, |hash, &b| (hash ^ u64::from(b)).wrapping_mul(FNV_PRIME))
+    crate::hash::xxhash::xxh3_64(BYTES)
 }
 
 /// A record's count and offset, in one number.
