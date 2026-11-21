@@ -159,9 +159,12 @@ fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Ve
         let may = match condition {
             Conjunct::Null { not: false, .. } => part.nulls > 0,
             Conjunct::Null { not: true, .. } => part.nulls < to.saturating_sub(from),
-            Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) | Conjunct::Dynamic { .. } => {
-                condition.may_match(&bounds)
-            }
+            Conjunct::Condition(_)
+            | Conjunct::In { .. }
+            | Conjunct::NotIn { .. }
+            | Conjunct::Any(_)
+            | Conjunct::Dynamic { .. }
+            | Conjunct::Spans { .. } => condition.may_match(&bounds),
         };
         if !may {
             continue;

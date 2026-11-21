@@ -250,7 +250,10 @@ nested-loop join probing the other table's index, or a merge join where
 a side is read in its key's order already and that order pays, as when
 the query asks for it, or a range join. The rows of each set of tables are estimated
 from the distinct values of the joined columns, an equality that others
-imply counted once. A query with a condition that can raise an error, as
+imply counted once. Two tables joined on several columns are estimated
+by the values those columns hold together, so a join on all of a key's
+columns, or on a foreign key, keeps each row once, and no estimate
+passes the most rows the most frequent values could give. A query with a condition that can raise an error, as
 a division can, is planned in the greedy order described next, which
 keeps the errors raised the same whatever the order.
 
@@ -291,6 +294,12 @@ groups first only where it estimates the plan does at most
 PLANNER.EAGER_GAIN of the work of the plan as written, and
 OPTIMIZER.EAGER_AGGREGATION turns it off. EXPLAIN shows `(eager: ...)`
 on such a grouping.
+
+An index nested-loop join is taken only where its probes would stay
+cheap even if the other side gave several times the rows estimated, at
+most as many as the statistics allow, since an estimate too low makes
+its probes far dearer than one hash join. PLANNER.ESTIMATE_MARGIN sets
+how many times; 1 trusts the estimate.
 
 A query whose select list is MIN and MAX alone, with no GROUP BY, needs
 the values of the columns those functions read, not how often a join

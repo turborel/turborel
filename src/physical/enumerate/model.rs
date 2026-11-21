@@ -11,7 +11,10 @@
 //! (`physical/estimate.rs`). A join is estimated to give at least one row,
 //! if its operands' product has one, so no estimate of zero makes every
 //! join over it free (Leis et al., "How Good Are Query Optimizers,
-//! Really?", 2015, §3.4).
+//! Really?", 2015, §3.4). Each set also has an upper bound, which its rows
+//! never pass (`physical/cardinality/bounds.rs`, RULES.md D385): a join to
+//! one relation gives each row of the other operand at most the most rows
+//! of one value of that relation's column it equates.
 
 use super::bits::{Set, bit, members};
 use super::conflicts::Kind;
@@ -34,6 +37,11 @@ pub(super) enum Order {
 pub(super) struct Rel {
     /// Its estimated rows.
     pub(super) rows: f64,
+    /// At most this many.
+    pub(super) upper: f64,
+    /// Of its columns a key of the chain uses, by the chain's places, the
+    /// most rows of one value.
+    pub(super) most: Vec<(usize, f64)>,
     /// The costs of reading it: in no order, then in each order it gives.
     pub(super) reads: Vec<(Order, f64)>,
     /// The plan of each of those reads, kept for the realized plan, which
@@ -42,6 +50,14 @@ pub(super) struct Rel {
     /// Of its columns, by the chain's places, those an index of its table
     /// answers an equality of, and the cost of each probe.
     pub(super) probes: Vec<(usize, f64)>,
+    /// \[DESIGN\] (RULES.md D652) The rows its read gives a parallel part,
+    /// its stream's, 0 if it is none (`enumerate/weighed.rs`).
+    pub(super) held: f64,
+    /// \[DESIGN\] (RULES.md D651) The bytes a row of it holds.
+    pub(super) bytes: f64,
+    /// \[DESIGN\] (RULES.md D652) The share of each thread past the first
+    /// a part reading it gains (`cost/parallel.rs`).
+    pub(super) gain: f64,
 }
 
 /// A conjunct of an inner join: the relations it reads, the operator it is
@@ -187,11 +203,6 @@ impl Model {
         }
     }
 
-    /// The cost of sorting `rows` rows.
-    pub(super) fn sort(&self, rows: f64) -> f64 {
-        self.cost.sort(rows)
-    }
-
     /// The fraction of the product of the relations of `s` the
     /// equalities of the classes keep: of each class, one in as many as
     /// each of its members in `s` but the least distinct has values.
@@ -234,6 +245,35 @@ impl Model {
             Kind::Anti => (r1 - reached).max(r1.min(1.0_f64)),
         };
         rows.max(product.min(1.0_f64))
+    }
+
+    /// The bound of the rows of the join of `left` and `right`, each a set
+    /// and its bound, of kind `kind` on the equalities `keys`, each a
+    /// column of the left and one of the right: their bounds' product, or
+    /// where one side is one relation, the other's bound times the most
+    /// rows of one value of its column; a LEFT join's at most adds the
+    /// left's rows, a FULL join's both operands', and a semi join or
+    /// antijoin keeps at most its left's. A set holding a relation
+    /// of rows given in place of the estimates has none, as those rows
+    /// overrule the statistics the bound is drawn from (RULES.md D377).
+    pub(super) fn joined_upper(&self, (s1, u1): (Set, f64), (s2, u2): (Set, f64), (kind, keys): (Kind, &[(usize, usize)])) -> f64 {
+        if self.injected.iter().any(|&(given, _)| given & (s1 | s2) != 0) {
+            return f64::INFINITY;
+        }
+        let most = |s: Set, column: usize| {
+            let rel = super::space::Space::single(s)?;
+            self.rels.get(rel)?.most.iter().find(|(c, _)| *c == column).map(|(_, m)| *m)
+        };
+        let by_right = keys.iter().filter_map(|&(_, b)| most(s2, b)).map(|m| u1 * m);
+        let by_left = keys.iter().filter_map(|&(a, _)| most(s1, a)).map(|m| u2 * m);
+        let inner = by_right.chain(by_left).fold(u1 * u2, f64::min);
+        match kind {
+            Kind::Inner => inner,
+            Kind::Left => inner + u1,
+            Kind::Full => inner + u1 + u2,
+            // Each left row at most once.
+            Kind::Semi | Kind::Anti => u1,
+        }
     }
 
     /// The kind of operator `op`: inner unless it has a predicate's kind.

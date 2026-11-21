@@ -72,14 +72,16 @@ behind it, and each can be replaced or added to.
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables, on statistics of most common values, a
-  sample of rows for correlated conditions and indexes' joint key counts.
+  sample of rows for correlated conditions and indexes' joint key counts,
+  joins estimated by keys and bounded, index joins chosen robustly.
 - [Eager aggregation](doc/sql/06-queries.md#how-joins-are-planned-extension),
   a grouping over joins computed in part below them where the costs say so.
 - [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
   bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
-  query and shows each operator's rows beside its estimate, and a program
-  may give the planner true row counts to test its plans.
+  query or a data change and shows each operator's rows beside its
+  estimate, its batches, spills and index reads, and a program may give
+  the planner true row counts to test its plans.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.

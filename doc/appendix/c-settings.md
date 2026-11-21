@@ -102,6 +102,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | PLANNER.DP_BUDGET | 10000 | INTEGER FROM 1 TO 1000000 | at once | *session* |
 | PLANNER.EAGER_GAIN | 7E-1 | NUMBER FROM 0E0 TO 1E6 | at once | *session* |
 | PLANNER.EQUAL_SELECTIVITY | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
+| PLANNER.ESTIMATE_MARGIN | 8E0 | NUMBER FROM 1E0 TO 1E6 | at once | *session* |
 | PLANNER.INDEX_DESCENT_COST | 6E0 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | PLANNER.JOIN_ENUMERATION | ADAPTIVE | ONE OF ADAPTIVE, GREEDY | at once | *session* |
 | PLANNER.LINEARIZED_RELATIONS | 100 | INTEGER FROM 2 TO 128 | at once | *session* |
@@ -223,6 +224,7 @@ Each in a sentence:
 - **PLANNER.DP_BUDGET**: The connected subsets of a query's joined tables up to which ADAPTIVE join ordering finds the cheapest plan exactly. Past it the search is linearized, and parts of a greedy plan are planned again by dynamic programming until this many table entries are made.
 - **PLANNER.EAGER_GAIN**: How much less work a grouping over joins, planned with one of its tables grouped first by the columns the joins and the grouping read, must be estimated to do than the grouping planned as written, to be planned so. 0 never groups first, and a value past 1 groups first even where that is estimated to cost more, as to compare the two.
 - **PLANNER.EQUAL_SELECTIVITY**: The fraction of rows an equality keeps when the statistics do not tell.
+- **PLANNER.ESTIMATE_MARGIN**: How many times its estimated rows the planner takes a join's operand to give at worst, at most the bound its statistics prove, as it weighs probing an index for each of them against hashing: it takes the method whose cost is nearest the cheapest at both. 1 trusts the estimate alone.
 - **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, its page held by the buffer pool, a row read in sequence costing 1.
 - **PLANNER.JOIN_ENUMERATION**: How the joins of a query are ordered. ADAPTIVE orders them by dynamic programming over bushy plans, outer joins among them, linearized or guided greedily as the query grows, and GREEDY orders them left-deep, each next join the cheapest, as to compare the two.
 - **PLANNER.LINEARIZED_RELATIONS**: The most tables ADAPTIVE join ordering plans whole by linearized dynamic programming when exact search is past its budget, and the size of the parts of a greedy plan it plans again so for larger queries.
@@ -232,7 +234,7 @@ Each in a sentence:
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.
 - **PLANNER.SORT_COMPARE_COST**: The cost of one comparison of a sort, a row read in sequence costing 1.
 - **PLANNER.STREAMED_GROUPING**: Whether a grouping or DISTINCT whose rows come in the order of its keys, or cost less sorted, is made a group at a time as its rows come, with nothing held, ON, or always by a table of its groups, OFF, as to compare the two.
-- **PLUGINS.CALL_TIMEOUT_MS**: The milliseconds a call of a plug-in may take before its process is stopped and the call fails with SQLSTATE 38T02; 0 for no limit.
+- **PLUGINS.CALL_TIMEOUT_MS**: The milliseconds a call of a plug-in may take before its process is stopped and the call fails with SQLSTATE 38T02; 0 for no limit. A program starting has as long to answer HELLO, but never less than two minutes.
 - **PLUGINS.CANCEL_GRACE_MS**: The milliseconds a plug-in has to answer a cancelled call before its process is stopped.
 - **PLUGINS.DIRECTORIES**: The directories an extension's plug-in may be in, separated by ';', each holding any directory below it; empty, as it is until the host sets it, for none. The host sets it as the database opens; SQL may not.
 - **PLUGINS.HOST**: The host plug-ins the node starts before the database opens, each name=directory, its program's SHA-256 digest pinned by @digest after the directory, separated by ';'; empty, as it is until the host sets it, for none. The host sets it; SQL may not.

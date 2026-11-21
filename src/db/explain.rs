@@ -6,6 +6,7 @@
 //! (`explain/analyzed.rs`).
 
 mod analyzed;
+mod changed;
 mod injected;
 
 use std::sync::Arc;
@@ -19,6 +20,7 @@ use crate::error::Result;
 use crate::params::Params;
 use crate::physical::Plan;
 use crate::value::{DataType, Value};
+pub(super) use changed::analyzing;
 
 /// The name of EXPLAIN's one column.
 const PLAN_COLUMN: &str = "PLAN";

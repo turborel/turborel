@@ -1,15 +1,16 @@
-//! \[DESIGN\] The settings of join enumeration (RULES.md D305), which
-//! search plans a chain of joins and the limits of the adaptive one's
-//! stages (`physical/enumerate.rs`); whether a join comparing a value of
-//! each operand by order may be a range join (`physical/range.rs`,
+//! \[DESIGN\] The settings of join enumeration (RULES.md D305): which
+//! search plans a chain of joins, and the limits of the adaptive one's
+//! stages (`physical/enumerate.rs`); whether a join comparing a value
+//! of each operand by order may be a range join (`physical/range.rs`,
 //! RULES.md D582); whether a grouping may be streamed (D550,
-//! `physical/streamed.rs`); and how much a grouping over joins with a
-//! table grouped first must gain to be planned so (`physical/eager.rs`,
-//! RULES.md D663).
+//! `physical/streamed.rs`); how far an estimate is distrusted as a
+//! join's method is chosen (`physical/robust.rs`); and how much a grouping
+//! over joins with a table grouped first must gain to be planned so
+//! (`physical/eager.rs`, RULES.md D663).
 
 use super::builtin::{SESSION, count, defined, text};
 use super::{Definition, Key, Kind, ON, SWITCHES};
-use crate::physical::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_EAGER_GAIN, DEFAULT_LINEARIZED, ENUMERATIONS};
+use crate::physical::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_EAGER_GAIN, DEFAULT_ESTIMATE_MARGIN, DEFAULT_LINEARIZED, ENUMERATIONS, MOST_ESTIMATE_MARGIN};
 use crate::value::Value;
 
 /// PLANNER.JOIN_ENUMERATION.
@@ -22,8 +23,11 @@ pub const LINEARIZED_RELATIONS: Key = Key(81);
 pub const RANGE_JOINS: Key = Key(88);
 /// PLANNER.STREAMED_GROUPING.
 pub const STREAMED_GROUPING: Key = Key(90);
-/// PLANNER.EAGER_GAIN.
-pub const EAGER_GAIN: Key = Key(91);
+/// PLANNER.ESTIMATE_MARGIN, at its key's place after the streamed groupings'
+/// setting (RULES.md D386).
+pub const ESTIMATE_MARGIN: Key = Key(91);
+/// PLANNER.EAGER_GAIN, at its key's place after the estimate margin's.
+pub const EAGER_GAIN: Key = Key(92);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
@@ -76,7 +80,16 @@ pub(super) fn streamed() -> [Definition; 1] {
     )]
 }
 
-/// PLANNER.EAGER_GAIN, at its key's place after the streamed groupings'.
+/// PLANNER.ESTIMATE_MARGIN (RULES.md D386).
+pub(super) fn margin() -> Definition {
+    defined(
+        ("PLANNER.ESTIMATE_MARGIN", Kind::Number { min: 1.0_f64, max: MOST_ESTIMATE_MARGIN }, Value::Approx(DEFAULT_ESTIMATE_MARGIN)),
+        SESSION,
+        "How many times its estimated rows the planner takes a join's operand to give at worst, at most the bound its statistics prove, as it weighs probing an index for each of them against hashing: it takes the method whose cost is nearest the cheapest at both. 1 trusts the estimate alone.",
+    )
+}
+
+/// PLANNER.EAGER_GAIN, at its key's place after the estimate margin's.
 pub(super) fn eager_gain() -> Definition {
     defined(
         ("PLANNER.EAGER_GAIN", Kind::Number { min: 0.0, max: MOST_GAIN }, Value::Approx(DEFAULT_EAGER_GAIN)),
