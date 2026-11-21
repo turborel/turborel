@@ -140,8 +140,9 @@ fn outcomes_have_their_sqlstates() {
     assert_eq!(b.run("UPDATE T SET F = 8 WHERE ID = 1").unwrap_err().sqlstate().as_str(), "TB911", "the statement is undone");
     a.commit().unwrap();
     b.rollback().unwrap();
-    rows(&a, "SELECT ID FROM U").unwrap();
-    rows(&b, "SELECT ID FROM T").unwrap();
+    // Each reads the column the other changes (RULES.md D448).
+    rows(&a, "SELECT CODE FROM U").unwrap();
+    rows(&b, "SELECT F FROM T").unwrap();
     a.run("UPDATE T SET F = 1 WHERE ID = 2").unwrap();
     b.run("UPDATE U SET CODE = 'Q' WHERE CODE = 'A'").unwrap();
     a.commit().unwrap();

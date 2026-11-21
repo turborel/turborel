@@ -407,7 +407,7 @@ fn a_zone_is_summed_up_with_no_older_version_read() {
     assert_eq!(undo_reads(), 0, "the undo store not read");
     assert!(stale(&table) && reads(&table, &equal(0, 10), id) && reads(&table, &equal(0, 20), id), "both held");
     table.rollback(10).unwrap();
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     summed(&table, 1);
     assert!(!stale(&table) && !reads(&table, &equal(0, 20), id), "narrowed to the versions put back");
     table.begin(11, 1).unwrap();
@@ -442,7 +442,7 @@ fn a_zone_summed_up_at_a_horizon_before_a_collection_reads_at_the_collection() {
     table.validate(tx, 2).unwrap();
     table.commit(tx, 2);
     // The horizon was read as 1; the collection at 2 comes first.
-    table.gc(2, &mut |_, _| true).unwrap();
+    table.gc(2, &mut |_, _, _| true).unwrap();
     assert_eq!(table.sum_zones(1, true).map_err(|e| e.code), Ok(true), "summed up, up to date");
     assert!(!reads(&table, &equal(0, 1), id), "narrowed to the commit's version");
     assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 2)), ["2"]);

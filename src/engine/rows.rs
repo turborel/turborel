@@ -64,7 +64,6 @@ mod values;
 mod version;
 mod zones;
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -76,25 +75,24 @@ use ids::{key, no_row, row_id};
 use lobs::LobSpace;
 pub use meta::TABLE_FORMAT;
 use meta::{locator_of, meta_content};
-use mvcc::{Past, Read, Versions};
+use mvcc::{Past, Read, Versions, columns_mask};
 pub use options::{DEFAULT_HELD_BYTES, DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
 use sealing::Sealing;
 use stats::Gathered;
+pub use store::RowStore;
 pub use undo::UndoStore;
 use zones::{Replaced, Zones};
 
 use super::columns::cache;
 use super::record::{RecordFormat, Spill};
 use super::tree::BLinkTree;
-use crate::catalog::{QualifiedName, TableDesc};
+use crate::catalog::TableDesc;
 use crate::disk::buffer::{BufferPool, FileId};
-use crate::disk::encoding::Encodings;
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
-use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Near, Newest, Region, Row, RowId, Rows, ScanOrder, Split, TableStorage};
+use crate::storage::{Condition, Conjunction, Garbage, Near, Newest, Region, Removed, Row, RowId, Rows, ScanOrder, Split, TableStorage};
 use crate::txn::{Concurrency, NO_TRANSACTION, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
 /// The name of the row store.
@@ -113,38 +111,6 @@ const VERSION: usize = 17;
 
 fn corrupt(why: &str) -> SqlError {
     SqlError::new(Code::Corrupt, format!("[DESIGN] a row-store table is malformed: {why}"))
-}
-
-/// \[DESIGN\] The row store: tables as B-link trees of row versions, in
-/// one pager file of a buffer pool, older versions in an undo store.
-pub struct RowStore {
-    /// Where its tables are; for a store in memory, made when the first
-    /// table is.
-    files: Mutex<Option<TableFiles>>,
-    /// Its pages in memory, for files made in memory: of a budget of its
-    /// own until it is attached to a database's (`attach`).
-    memory: Arc<crate::engine::MemoryPages>,
-    defaults: TableOptions,
-    /// Options for tables not yet created, by name.
-    tables: Mutex<HashMap<QualifiedName, TableOptions>>,
-    /// The database's work areas, once attached, shared with its tables.
-    work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
-    /// The database's encodings, once attached: those its tables' option
-    /// ENCODINGS names.
-    encodings: Mutex<Arc<Encodings>>,
-    /// Its name: `ROW_STORE`, or `COLUMN_STORE`, whose tables freeze their
-    /// rows.
-    name: &'static str,
-    /// Whether it checkpoints its files: not the column store sharing the
-    /// row store's, which checkpoints them for both.
-    checkpoints: bool,
-    /// The headers of its tables' frozen row groups held in memory, of
-    /// the database's budget once attached (`columns/cache.rs`).
-    headers: Arc<cache::HeaderCache>,
-    /// STORAGE.SYSTEM_CACHE_BYTES, as its tables over files on a disk
-    /// price their fetches by it; none for a store in memory, whose files
-    /// are all held.
-    system_cache: Option<Arc<AtomicU64>>,
 }
 
 /// \[DESIGN\] A table of the row store.
@@ -246,6 +212,10 @@ impl TableStorage for RowTable {
 
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
         self.write_over(tx, id, row, Past::Stamp(seen)).map(drop)
+    }
+
+    fn keep_entries(&self, tx: TxId, id: RowId, unchanged: u64) -> u64 {
+        self.keep_columns(tx, id, unchanged)
     }
 
     /// Puts row `id` back, or replaces it if it is there; ids given from
@@ -404,7 +374,7 @@ impl TableStorage for RowTable {
         self.gather_wanted()
     }
 
-    fn garbage(self: Arc<Self>, as_of: Timestamp) -> Rows {
+    fn garbage(self: Arc<Self>, as_of: Timestamp) -> Garbage {
         self.pending(Box::new(move |at, _| at <= as_of), None)
     }
 
@@ -521,7 +491,9 @@ impl TableStorage for RowTable {
     }
 
     fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {
-        self.note_read(tx, || Read::Condition(Conjunction::of(condition.clone())))
+        // RULES.md D448: a covering scan consumes the index's columns;
+        // any other reads each row it chose by id, with its columns.
+        self.note_read(tx, || Read::Condition(Conjunction::of(condition.clone()), columns_mask(condition.columns.iter().copied())))
     }
 
     fn read_by_region(&self, tx: TxId, region: &Region) -> Result<()> {
@@ -541,7 +513,11 @@ impl TableStorage for RowTable {
         self.awaits_collection()
     }
 
-    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
+    fn collection_due(&self, horizon: Timestamp) -> bool {
+        self.due_at(horizon)
+    }
+
+    fn gc(&self, horizon: Timestamp, removed: Removed<'_>) -> Result<()> {
         self.collect(horizon, removed)
     }
 
@@ -571,7 +547,8 @@ impl TableStorage for RowTable {
     }
 
     fn versions(self: Arc<Self>, horizon: Timestamp, as_of: Timestamp, columns: &[usize]) -> Rows {
-        let unreadable = self.pending(Box::new(move |at, own| if own { at <= as_of } else { at <= horizon }), Some(columns));
+        let keep: Box<dyn Fn(Timestamp, bool) -> bool + Send> = Box::new(move |at, own| if own { at <= as_of } else { at <= horizon });
+        let unreadable = self.pending(keep, Some(columns)).map(|read| read.map(|(id, row, _)| (id, row)));
         let frozen = match self.frozen.directory() {
             Ok(directory) => Merged::new(Arc::clone(&self), (Merging::FrozenOnly, directory), columns.to_vec(), None),
             Err(e) => return Box::new(std::iter::once(Err(e))),

@@ -14,7 +14,7 @@ use super::Dead;
 use super::lists::decode_dead;
 use crate::engine::rows::RowTable;
 use crate::error::Result;
-use crate::storage::{Row, RowId, Rows};
+use crate::storage::{Garbage, Kept, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::Timestamp;
 
@@ -31,13 +31,13 @@ struct Pending {
     timestamps: Vec<Timestamp>,
     at: usize,
     segment: usize,
-    buffer: VecDeque<Dead>,
+    buffer: VecDeque<(Timestamp, Dead)>,
 }
 
 impl RowTable {
     /// The rows of the versions awaiting collection that `keep` takes, as
     /// they are pulled, `columns` decoded, or all.
-    pub(in crate::engine::rows) fn pending(self: &Arc<Self>, keep: Keep, columns: Option<&[usize]>) -> Rows {
+    pub(in crate::engine::rows) fn pending(self: &Arc<Self>, keep: Keep, columns: Option<&[usize]>) -> Garbage {
         let timestamps = lock_builtin(&self.versions.garbage).keys().copied().collect();
         let columns = columns.map(<[usize]>::to_vec);
         Box::new(Pending { table: Arc::clone(self), keep, columns, timestamps, at: 0, segment: 0, buffer: VecDeque::new() })
@@ -88,7 +88,7 @@ impl Pending {
             };
             self.segment = self.segment.saturating_add(1);
             let keep = &self.keep;
-            self.buffer.extend(items.into_iter().filter(|item| own(item).is_some_and(|own| keep(at, own))));
+            self.buffer.extend(items.into_iter().filter(|item| own(item).is_some_and(|own| keep(at, own))).map(|item| (at, item)));
             if !self.buffer.is_empty() {
                 return Ok(true);
             }
@@ -98,7 +98,7 @@ impl Pending {
 }
 
 impl Iterator for Pending {
-    type Item = Result<(RowId, Row)>;
+    type Item = Result<(RowId, Row, Kept)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {

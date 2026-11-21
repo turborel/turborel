@@ -15,6 +15,7 @@ mod batch;
 mod condition;
 mod cost;
 mod engine;
+mod kept;
 mod loading;
 mod newest;
 mod options;
@@ -29,6 +30,7 @@ pub use batch::{
 pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
+pub use kept::{COLUMN_BITS, Garbage, Kept, Removed, column_bit, same, unchanged};
 pub use loading::Loading;
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
@@ -158,11 +160,7 @@ pub trait TableStorage: Send + Sync {
     /// them at a time: the values of `columns`, a vector for each, in the order asked (RULES.md D31), of `_late` late if it can (D361).
     /// Default: `scan_where`'s rows, gathered, none late.
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, _late: &[usize]) -> Batches {
-        let rows = match conditions {
-            Some(c) => self.scan_where(tx, columns, c),
-            None => self.scan(tx, columns),
-        };
-        batches_of(rows, columns)
+        batch::scanned(self, tx, columns, conditions)
     }
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, split into morsels of about `rows` rows each, for workers to
     /// read at once (RULES.md D290); none if it cannot split them, or failed to, its scan then raising what failed. Default: none.
@@ -274,10 +272,12 @@ pub trait TableStorage: Send + Sync {
     /// SQLCODE -911 if another open transaction changed the row, or its
     /// newest committed version's stamp is not `seen`; as `update`.
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, _seen: Timestamp) -> Result<()> {
-        match row {
-            Some(row) => self.update(tx, id, row),
-            None => self.delete(tx, id),
-        }
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row))
+    }
+    /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` replaced shares the entries of
+    /// each index whose key reads only columns of `unchanged`: those columns, which `gc` gives back. Default: none.
+    fn keep_entries(&self, _tx: TxId, _id: RowId, _unchanged: u64) -> u64 {
+        0
     }
 
     // ----- Cost model. Units: 1.0 = reading one whole row in sequence. -----
@@ -446,17 +446,15 @@ pub trait TableStorage: Send + Sync {
     fn durable_through(&self) -> Lsn {
         Lsn(0)
     }
-    /// The rows of the versions superseded by commits at or before `as_of`
-    /// but not yet collected, whose index entries collection (`gc`) would
-    /// take back, with their ids, read as they are pulled: what a checkpoint
-    /// logs, so recovery takes them back if the crash lost the collection
-    /// (`db/checkpoint.rs`). Collection of the table is held back while
-    /// they are read. Default: none, for an engine keeping no versions.
+    /// The rows of the versions superseded by commits at or before `as_of` not yet collected, whose index entries
+    /// `gc` would take back, with their ids and what their successors kept (RULES.md D443), read as pulled: what a
+    /// checkpoint logs, so recovery takes them back if a crash lost the collection (`db/checkpoint.rs`); the
+    /// table's collection held back meanwhile. Default: none, for an engine keeping no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read a version; the checkpoint fails.
-    fn garbage(self: Arc<Self>, _as_of: Timestamp) -> Rows {
+    fn garbage(self: Arc<Self>, _as_of: Timestamp) -> Garbage {
         Box::new(std::iter::empty())
     }
     /// What finds this table again when the database is opened
@@ -489,25 +487,24 @@ pub trait TableStorage: Send + Sync {
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
         rows::applied(self, id, row)
     }
-    /// Garbage collection of versions: removes the versions of rows that no
-    /// transaction reading at or after `horizon` can read, and gives each
-    /// removed version's row, with its id, to `removed` as it goes, so
-    /// their index entries are removed too (one each: `Index`), none held
-    /// all together. `removed` says whether every entry was: of a row
-    /// whose entries are not, `visible_to_all` is false until each is
-    /// (`taken_back`).
-    /// Called after a transaction that joined the table ends. Default:
-    /// nothing, for an engine that keeps no versions.
+    /// Garbage collection of versions: removes the versions of rows that no transaction reading at or after
+    /// `horizon` can read, and gives each removed version's row, with its id and what its successor kept, to
+    /// `removed` as it goes, so their index entries are removed too (one each: `Index`), none held all together.
+    /// `removed` says whether every entry was: of a row whose entries are not, `visible_to_all` is false until
+    /// each is (`taken_back`). Called after a transaction that joined the table ends. Default: nothing, for an
+    /// engine that keeps no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read or remove them; they stay for a later call.
-    fn gc(&self, _horizon: Timestamp, _removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
+    fn gc(&self, _horizon: Timestamp, _removed: Removed<'_>) -> Result<()> {
         Ok(())
     }
-    /// Whether versions of it await collection (`gc`), so it is collected
-    /// as any transaction ends, though none touches it. Default: none, for
-    /// an engine that keeps no versions.
+    /// \[DESIGN\] Whether a transaction's end collects it at `horizon` now, or leaves it for later (RULES.md D451).
+    fn collection_due(&self, _horizon: Timestamp) -> bool {
+        true
+    }
+    /// Whether versions of it await collection (`gc`), so it is collected as any transaction ends. Default: none.
     fn uncollected(&self) -> bool {
         false
     }

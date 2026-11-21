@@ -31,10 +31,12 @@
 
 mod adjacency_index;
 mod alter_columns;
+mod certified_columns;
 mod collated_indexes;
 mod collation_derivation;
 mod collation_usage;
 mod collations;
+mod collection;
 mod commit_restore;
 mod commit_visibility;
 mod common;
@@ -210,6 +212,7 @@ mod json_functions;
 mod json_index;
 mod json_table;
 mod json_type;
+mod kept_entries;
 mod kept_plans;
 mod kept_routines;
 mod kept_set_plans;
@@ -295,6 +298,7 @@ mod query_expressions;
 mod random_queries;
 mod range_joins;
 mod read_ahead;
+mod read_committed_waits;
 mod recovery;
 mod referenceable_views;
 mod refusals;

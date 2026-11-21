@@ -7,15 +7,25 @@
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 10] = [
+pub const READERS: [Mutation; 11] = [
     Mutation {
         name: "reader-collects-nothing",
         package: Package::Core,
         breaks: "read-only path: a transaction that wrote nothing leaves the tables awaiting collection to the next writer",
         file: "src/txn/end.rs",
-        original: "        if self.tx.awaiting.load(Ordering::Acquire) {",
+        original: "        if self.tx.awaiting.load(Ordering::Acquire) && !self.tx.read_collecting.swap(true, Ordering::AcqRel) {",
         replacement: "        if false {",
         integration: &["mvcc::an_idle_tables_garbage_is_collected_once_readers_end"],
+        unit: &[],
+    },
+    Mutation {
+        name: "reader-collecting-kept",
+        package: Package::Core,
+        breaks: "read-only path: an end that collected keeps the mark that one is collecting, so no later one collects (RULES.md D453)",
+        file: "src/txn/end.rs",
+        original: "            self.tx.read_collecting.store(false, Ordering::Release);",
+        replacement: "",
+        integration: &["collection::reading_ends_collect_one_at_a_time_and_leave_nothing"],
         unit: &[],
     },
     Mutation {
@@ -23,8 +33,8 @@ pub const READERS: [Mutation; 10] = [
         package: Package::Core,
         breaks: "read-only path: the flag of tables awaiting collection never set, so no reader collects them",
         file: "src/txn/end.rs",
-        original: "            self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);",
-        replacement: "            self.tx.awaiting.store(false, Ordering::Release);",
+        original: "            }\n            self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);\n        };",
+        replacement: "            }\n            self.tx.awaiting.store(false, Ordering::Release);\n        };",
         integration: &["mvcc::an_idle_tables_garbage_is_collected_once_readers_end"],
         unit: &[],
     },
@@ -103,8 +113,8 @@ pub const READERS: [Mutation; 10] = [
         package: Package::Core,
         breaks: "read-only path: a row read by id not recorded, so a commit is not checked against it",
         file: "src/engine/rows/mvcc/open.rs",
-        original: "        self.record(open, || Read::Row(id));",
-        replacement: "        let _ = id;",
+        original: "        self.record(open, || Read::Row(id, columns));",
+        replacement: "        let _ = (id, columns);",
         integration: &["isolation::constraints_are_checked_serializably_at_every_level_4_28"],
         unit: &[],
     },
