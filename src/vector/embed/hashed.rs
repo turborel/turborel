@@ -14,7 +14,7 @@
 //!   inverted index.
 //!
 //! A token is a run of letters and digits, in lower case. Equal texts
-//! give equal vectors on every machine, as the hash is MurmurHash3 x64 128
+//! give equal vectors on every machine, as the hash is XXH3-128
 //! of the feature's UTF-8 with a fixed seed, and sums run in token order.
 
 use std::collections::BTreeMap;
@@ -24,7 +24,7 @@ use super::bind::DIMENSIONS;
 use super::{Embedder, ModelShape, configure_shape, number_option};
 use crate::catalog::ModelOption;
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_128_halves;
 use crate::vector::chunk::Span;
 use crate::vector::{Element, Layout, Vector};
 
@@ -37,7 +37,7 @@ pub const HASH_SPARSE: &str = "HASH_SPARSE";
 /// Its vocabulary.
 pub const HASH_SPARSE_DIMS: u32 = 1 << 20;
 /// \[DESIGN\] The seed of every feature's hash, fixed for all time.
-const SEED: u32 = 0x454d_4244;
+const SEED: u64 = 0x454d_4244;
 /// What parts the tokens of an n-gram in its hashed bytes.
 const JOINER: u8 = 0x1f;
 /// The most tokens an n-gram has.
@@ -80,9 +80,9 @@ impl HashedEmbedder {
             for run in tokens.windows(n) {
                 let joined: Vec<&[u8]> = run.iter().map(String::as_bytes).collect();
                 let bytes = joined.join(&JOINER);
-                let (high, low) = murmur3_x64_128(&bytes, SEED);
-                let dim = u32::try_from(high.rem_euclid(u64::from(self.shape.dims))).unwrap_or(0);
-                out.push((dim, low & 1 == 1));
+                let (low, high) = xxh3_128_halves(&bytes, SEED);
+                let dim = u32::try_from(low.rem_euclid(u64::from(self.shape.dims))).unwrap_or(0);
+                out.push((dim, high & 1 == 1));
             }
         }
         out

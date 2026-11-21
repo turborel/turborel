@@ -15,15 +15,12 @@ use super::semver::{Range, Version};
 use super::*;
 use crate::plugin::limits::Directories;
 
-/// A stand-in digest: four FNV-1a hashes of differing seeds.
+/// A stand-in digest: two XXH3-128 hashes of differing seeds.
 fn toy(bytes: &[u8]) -> Digest {
     let mut out = [0_u8; 32];
-    for (lane, chunk) in out.chunks_mut(8).enumerate() {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ u64::try_from(lane).unwrap();
-        for b in bytes {
-            h = (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
-        }
-        chunk.copy_from_slice(&h.to_le_bytes());
+    for (lane, chunk) in out.chunks_mut(16).enumerate() {
+        let seed = u64::try_from(lane).unwrap();
+        chunk.copy_from_slice(&crate::hash::xxhash::xxh3_128_with_seed(bytes, seed).to_be_bytes());
     }
     out
 }

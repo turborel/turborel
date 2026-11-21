@@ -389,7 +389,7 @@ fn corrupt(why: &str) -> SqlError {
 
 /// The key of an entry of `row` and vector hash `hash` in the map.
 fn place_key(row: u64, hash: u64) -> u64 {
-    crate::engine::hnsw::random::mixed(row ^ crate::engine::hnsw::random::mixed(hash))
+    crate::hash::xxhash::xxh3_64_words(&[row, hash], 0)
 }
 
 /// An entry's place: its list and page, packed; none if either is past

@@ -143,8 +143,8 @@ files, given back with the request again, at most 64 pieces an answer.
 A request served costs one call and one more a piece. Fetching, the
 requests BEGIN and TAKE give are sent, and the answers taken, until TAKE
 says the fetch is done. Its files are then copied out by CHUNK, one call
-a chunk. Each chunk carries a digest, the first half of MurmurHash3 x64
-128 of its bytes, which the host checks before it writes the chunk to
+a chunk. Each chunk carries a digest, XXH3-64 of its bytes, which the
+host checks before it writes the chunk to
 the database's `transfer/` directory. Nothing is installed until every
 file is staged and made durable, and a program that ends mid-chunk stops
 the node. The replica started again clears `transfer/` and fetches

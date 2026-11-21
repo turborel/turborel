@@ -220,9 +220,17 @@ pub fn scatter(n: u64, count: u64) -> u64 {
     n * SCATTER % count
 }
 
-/// CRC-32C, the checksum the benchmarks' files use.
+/// The variable that, set to `CRC`, checksums the benchmarks' files with
+/// CRC-32C rather than the default, for an A/B of the two.
+pub const CHECKSUM_VAR: &str = "TURBOREL_BENCH_CHECKSUM";
+
+/// The checksum the benchmarks' files use: the database's default,
+/// XXH3-64, or CRC-32C as `CHECKSUM_VAR` asks.
 pub fn crc() -> Arc<dyn HashFunction> {
-    Arc::new(Crc::new(CRC32_ISCSI).unwrap())
+    if env::var(CHECKSUM_VAR).is_ok_and(|v| v == "CRC") {
+        return Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+    }
+    Arc::new(turborel::hash::xxhash::Xxh3Hash)
 }
 
 /// A buffer pool of `frames` frames, with clock eviction.

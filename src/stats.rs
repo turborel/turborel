@@ -40,7 +40,7 @@ pub use parts::{Histogram, Sampling};
 use parts::{HyperLogLog, Reservoir, count};
 
 use crate::geometry::Geometry;
-use crate::hash::murmur::MurmurBuildHasher;
+use crate::hash::xxhash::Xxh3BuildHasher;
 use crate::storage::Row;
 use crate::value::{CompOp, Value, compare};
 
@@ -218,7 +218,7 @@ impl ColumnBuilder {
         }
         self.sketch.add(value);
         if let Some(seen) = self.seen.as_mut() {
-            let times = seen.entry(MurmurBuildHasher::default().hash_one(value.norm())).or_default();
+            let times = seen.entry(Xxh3BuildHasher::default().hash_one(value.norm())).or_default();
             *times = times.saturating_add(1);
         }
         if Geometry::is_geometry(value) {

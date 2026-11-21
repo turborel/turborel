@@ -15,8 +15,13 @@ pub const EXECUTOR_DEGREE: Key = Key(83);
 pub const EXECUTOR_MORSEL_ROWS: Key = Key(84);
 /// EXECUTOR.PARALLEL_MIN_ROWS.
 pub const EXECUTOR_PARALLEL_MIN_ROWS: Key = Key(85);
+/// EXECUTOR.KERNELS (RULES.md D460).
+pub const EXECUTOR_KERNELS: Key = Key(86);
 /// EXECUTOR.RUNTIME_FILTERS.
-pub const EXECUTOR_RUNTIME_FILTERS: Key = Key(86);
+pub const EXECUTOR_RUNTIME_FILTERS: Key = Key(87);
+
+/// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
+const KERNELS_NAME_MAX: usize = 64;
 
 /// \[DESIGN\] The default of EXECUTOR.MORSEL_ROWS: enough rows that taking a
 /// morsel costs little beside reading it, few enough that the last
@@ -36,7 +41,7 @@ const DATABASE: (bool, Effect) = (false, Effect::Statement);
 const SESSION: (bool, Effect) = (true, Effect::Statement);
 
 /// The settings of parallel queries, in the order of their keys.
-pub(super) fn definitions() -> [Definition; 5] {
+pub(super) fn definitions() -> [Definition; 6] {
     [
         defined(
             ("EXECUTOR.WORKERS", at_least(0), count(0)),
@@ -57,6 +62,11 @@ pub(super) fn definitions() -> [Definition; 5] {
             ("EXECUTOR.PARALLEL_MIN_ROWS", at_least(0), count(DEFAULT_PARALLEL_MIN_ROWS)),
             SESSION,
             "The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.",
+        ),
+        defined(
+            ("EXECUTOR.KERNELS", Kind::Text { max: KERNELS_NAME_MAX }, text("")),
+            SESSION,
+            "The kernels a statement's batches run on: PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD.",
         ),
         defined(
             ("EXECUTOR.RUNTIME_FILTERS", Kind::Choice(SWITCHES), text(ON)),
