@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::catalog::{Catalog, QualifiedName};
+use crate::catalog::QualifiedName;
 use crate::db::{Database, Session, State};
 use crate::settings::MEMORY_WORK_BYTES;
 
