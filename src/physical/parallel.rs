@@ -68,14 +68,22 @@ struct Asked<'a> {
 /// The threads the system runs at once, as EXECUTOR.WORKERS of 0 asks.
 pub(crate) fn workers_of(db: &State) -> usize {
     match db.settings.count(EXECUTOR_WORKERS) {
-        0 => *SYSTEM_THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)),
+        0 => system_threads(),
         n => n,
     }
 }
 
-/// \[DESIGN\] The threads the system runs at once, asked of it once
-/// (RULES.md D405): the asking reads files of the system's at each call,
-/// which a statement planned would pay each time.
+/// \[DESIGN\] (RULES.md D405, D682) The threads the system runs at once,
+/// asked of it once, as the first database starts (`Database::over`), by
+/// the thread starting it, and kept: asked as each statement is planned,
+/// it read files of the system's each time, and a thread held to fewer
+/// processors than the process has, as a statement's may be, saw only
+/// those.
+pub(crate) fn system_threads() -> usize {
+    *SYSTEM_THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))
+}
+
+/// The threads the system runs at once, as `system_threads` asked them.
 static SYSTEM_THREADS: OnceLock<usize> = OnceLock::new();
 
 impl<'a> Asked<'a> {
@@ -292,4 +300,27 @@ fn calm_cond(c: &Cond) -> bool {
     let mut all = c.subqueries().is_empty();
     c.for_each_expr(&mut |e| all = all && calm(e));
     all
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::{Decimal, Value};
+
+    /// Verifies: [DESIGN] RULES.md D405, D682: once a database starts, the
+    /// system's threads are kept, and EXECUTOR.WORKERS of 0 is planned by
+    /// them, however many times and from whichever thread it is asked.
+    #[test]
+    fn workers_of_none_set_are_the_threads_kept_as_a_database_starts() {
+        let db = crate::db::Database::new();
+        let kept = SYSTEM_THREADS.get().copied();
+        assert!(kept.is_some_and(|n| n >= 1), "kept as it started");
+        db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(0, 0))).unwrap();
+        let state = db.snapshot().unwrap();
+        let asked = std::thread::scope(|s| s.spawn(|| workers_of(&state)).join().unwrap());
+        assert_eq!(Some(asked), kept);
+        assert_eq!(Some(workers_of(&state)), kept);
+        db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(3, 0))).unwrap();
+        assert_eq!(workers_of(&db.snapshot().unwrap()), 3, "a setting is what it says");
+    }
 }

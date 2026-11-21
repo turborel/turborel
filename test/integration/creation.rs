@@ -255,3 +255,43 @@ fn a_database_in_memory_refuses_settings_fixed_at_creation() {
     assert_eq!(in_sql, Some(Code::SyntaxRule), "in SQL too, a Syntax Rule's");
     db.set_setting("STORAGE.POOL_BYTES", &number(16 * 8192)).unwrap();
 }
+
+/// Verifies: [DESIGN] RULES.md D298, D683: a buffer pool of more than half
+/// the memory budget leaves an operator's grant half of what is left, so a
+/// hash join of a right operand of tens of thousands of rows, a few
+/// megabytes, holds it in memory, as it spills in the floor's work area.
+/// Regression test (R-TEST-7): grants kept half the whole budget, so such
+/// a pool left every operator the floor, and the join spilled.
+#[test]
+fn a_pool_of_most_of_the_budget_leaves_a_hash_join_room() {
+    let scratch = Scratch::new("creation-grant");
+    let db = Database::new();
+    db.set_setting("MEMORY.BUDGET_BYTES", &number(160 << 20)).unwrap();
+    db.set_setting("STORAGE.POOL_BYTES", &number(88 << 20)).unwrap();
+    db.open_files(&os(), &scratch.path("db"), &OpenOptions::default()).unwrap();
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    let wide: Vec<String> = (1..=12).map(|n| format!("P{n}")).collect();
+    let made = format!(
+        "CREATE SCHEMA AUTHORIZATION X CREATE TABLE D (N INTEGER) CREATE TABLE A (K INTEGER) CREATE TABLE B (K INTEGER, {} BIGINT)",
+        wide.join(" BIGINT, ")
+    );
+    db.schema(&made).unwrap();
+    let s = db.session("X");
+    s.run("INSERT INTO D VALUES (0), (1), (2), (3), (4), (5), (6), (7), (8), (9)").unwrap();
+    let numbers = "SELECT A.N * 10000 + B.N * 1000 + C.N * 100 + D.N * 10 + E.N FROM D A, D B, D C, D D, D E";
+    s.run(&format!("INSERT INTO B SELECT K{} FROM ({numbers}) AS T (K) WHERE K < 36000", ", K".repeat(12))).unwrap();
+    s.run(&format!("INSERT INTO A {numbers}")).unwrap();
+    s.run("SET EXECUTOR.DEGREE = 1").unwrap();
+    let summed = wide.iter().map(|p| format!("B.{p}")).collect::<Vec<_>>().join(" + ");
+    let joined = |name: &str| format!("SELECT COUNT(*) AS {name}, SUM({summed}) FROM A JOIN B ON A.K = B.K");
+    let plan = s.physical_plan(&joined("HELD"), &turborel::params::Params::new()).unwrap();
+    assert!(plan.contains("HashJoin") && !plan.contains("Parallel"), "{plan}");
+    let all = vec![format!("36000,{}", 12_i64 * 35999 * 18000)];
+    assert_eq!(rows(&s, &joined("HELD")), Ok(all.clone()));
+    s.run(&format!("SET MEMORY.WORK_BYTES = {}", 4 << 20)).unwrap();
+    assert_eq!(rows(&s, &joined("FLOOR")), Ok(all));
+    let spilled = "SELECT BYTES_SPILLED > 0 FROM INFORMATION_SCHEMA.STATEMENT_STATISTICS \
+                   WHERE STATEMENT_TEXT LIKE 'SELECT COUNT (*) AS %' ORDER BY STATEMENT_TEXT";
+    assert_eq!(rows(&db.session("OWNER"), spilled).unwrap(), ["TRUE", "FALSE"], "spilled at the floor, held as granted");
+}

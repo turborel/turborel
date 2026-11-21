@@ -530,7 +530,7 @@ impl Database {
         let sizes = (place.layout.pool_bytes, pager.page_size());
         let made =
             BufferPool::in_budget_evicting(&st.memory, sizes, "the buffer pool of the data file", &|n| st.extension_host.eviction.make(n));
-        let pool = Arc::new(made?);
+        let pool = Arc::new(made?.standing());
         st.ahead.serve(&pool);
         let file = pool.add_pager(Arc::new(pager));
         let _ = place.data.set((Arc::clone(&pool), file));
