@@ -19,13 +19,11 @@
 //!
 //! The left is read in order, so the rows are in its order.
 
-use std::sync::Arc;
-
 use super::super::work::Work;
 use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed};
 use super::{Built, Full, Operand, Rescanned, Right, equal, key};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::hash::xxhash::Xxh3Map;
 use crate::logical::{Cond, Truth};
 use crate::physical::{JoinKey, Plan, SemiJoin, SemiMethod};
@@ -38,7 +36,7 @@ use crate::value::{Bucket, key_equal};
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
-pub(in crate::exec) fn semi(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn semi(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::SemiJoin(s) = plan else { return failed(broken("a semi join is not one")) };
     let SemiJoin { anti, method, left, right, keys, cond, .. } = *s;
     let judge = Judge { keys, cond, anti, runner: Runner::new(db, tx) };
@@ -201,7 +199,7 @@ impl Iterator for HashSemi {
 }
 
 /// The right semi join: the left held and marked, the right read once.
-fn built_left(judge: Judge, (left, right): (Plan, Plan), work: Work, (db, tx): (&Arc<State>, TxId)) -> Result<RowIter> {
+fn built_left(judge: Judge, (left, right): (Plan, Plan), work: Work, (db, tx): (&Db, TxId)) -> Result<RowIter> {
     let mut rows = execute(left, db, tx);
     let (mut held, mut bytes) = (Vec::new(), 0_usize);
     let mut index: Xxh3Map<Vec<Bucket>, Vec<usize>> = Xxh3Map::default();
