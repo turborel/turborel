@@ -241,7 +241,8 @@ impl RowTable {
         if version.deleted {
             return Ok(true);
         }
-        let gone = removed(id, self.decode(id, version.record, None)?, kept);
+        // One whose every entry its successor shares is not read (RULES.md D750).
+        let gone = !removed.needs(kept) || removed.removed(id, self.decode(id, version.record, None)?, kept);
         self.free_values(id, version.record);
         Ok(gone)
     }

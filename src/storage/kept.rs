@@ -30,7 +30,49 @@ pub const COLUMN_BITS: usize = 64;
 /// \[DESIGN\] Where a collection gives each version it removes: its row id,
 /// its row and what its successor kept; whether every index entry of it
 /// is gone (`TableStorage::gc`).
-pub type Removed<'a> = &'a mut dyn FnMut(RowId, Row, Kept) -> bool;
+pub type Removed<'a> = &'a mut dyn Removal;
+
+/// \[DESIGN\] What a collection does with each version it removes: the
+/// row of one it `needs` is read and given to `removed`; one it does not
+/// need, every entry of it shared with its successor, is not read, its
+/// entries counted gone (RULES.md D750).
+pub trait Removal {
+    /// Whether a version its successor `kept` has entries of its own to
+    /// take back, so its row is read. Default: every one has.
+    fn needs(&self, _kept: Kept) -> bool {
+        true
+    }
+
+    /// Takes back the entries of row `id`, the row of a version removed,
+    /// that its successor `kept`: whether every one is gone.
+    fn removed(&mut self, id: RowId, row: Row, kept: Kept) -> bool;
+}
+
+/// Every version's row is read and given to the function.
+impl<F: FnMut(RowId, Row, Kept) -> bool> Removal for F {
+    fn removed(&mut self, id: RowId, row: Row, kept: Kept) -> bool {
+        self(id, row, kept)
+    }
+}
+
+/// \[DESIGN\] A removal that reads only the versions `needs` says, giving
+/// their rows to `removed` (`Removal`).
+pub struct Needed<N, R> {
+    /// As `Removal::needs`.
+    pub needs: N,
+    /// As `Removal::removed`.
+    pub removed: R,
+}
+
+impl<N: Fn(Kept) -> bool, R: FnMut(RowId, Row, Kept) -> bool> Removal for Needed<N, R> {
+    fn needs(&self, kept: Kept) -> bool {
+        (self.needs)(kept)
+    }
+
+    fn removed(&mut self, id: RowId, row: Row, kept: Kept) -> bool {
+        (self.removed)(id, row, kept)
+    }
+}
 
 /// \[DESIGN\] The versions awaiting collection, read as they are pulled,
 /// each with what its successor kept (`TableStorage::garbage`).

@@ -29,7 +29,7 @@ pub use batch::{
 pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
-pub use kept::{COLUMN_BITS, Garbage, Kept, Removed, column_bit, same, unchanged};
+pub use kept::{COLUMN_BITS, Garbage, Kept, Needed, Removal, Removed, column_bit, same, unchanged};
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;

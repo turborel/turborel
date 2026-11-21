@@ -33,6 +33,7 @@ mod orders;
 mod parallel;
 mod range_joins;
 mod rewrites;
+mod row_path;
 mod set_types;
 mod skipping;
 mod sorts;
@@ -50,7 +51,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 18] {
+pub fn core() -> [&'static [Mutation]; 19] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -68,6 +69,7 @@ pub fn core() -> [&'static [Mutation]; 18] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &row_path::ROW_PATH,
         &monitoring::MONITORING,
         &bulk::BULK,
     ]

@@ -13,7 +13,8 @@ use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
-use crate::log::record::{Change, insert_record};
+use crate::log::record::{delete_record, insert_record, update_record};
+use crate::log::sealed::seal_plain;
 use crate::storage::{Row, RowId, TableStorage, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
 use crate::value::Value;
@@ -70,18 +71,26 @@ impl State {
         self.indexes.get(name).map(Arc::clone).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {name} does not exist")))
     }
 
-    /// Logs the insert of `row` as row `id` of `table`: unless its rows are
-    /// sealed, made from the row as it is held (RULES.md D531).
+    /// Logs the insert of `row` as row `id` of `table`, made from the row
+    /// as it is held (RULES.md D531).
     fn log_insert(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        let generation = self.generation_of(table);
-        if let Some(seal) = self.seal_of(table)? {
-            let change = Change::Insert { table: table.clone(), generation, row: id, after: row.clone() };
-            return tx.log_sealed(change, Some((&*seal, id)));
-        }
+        self.log_row(tx, (table, id), |generation| insert_record(tx.id, (table, generation), id, row))
+    }
+
+    /// Logs the record `record` makes, given the generation of `table`'s
+    /// storage, of a change of its row `id`, sealed if its rows are; none
+    /// made without a log. Made from the images as the statement holds
+    /// them, none copied for it (RULES.md D750).
+    fn log_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), record: impl FnOnce(u32) -> Vec<u8>) -> Result<()> {
+        let seal = self.seal_of(table)?;
         if tx.log.is_none() {
             return Ok(());
         }
-        tx.log_encoded(&insert_record(tx.id, (table, generation), id, row), 1)
+        let plain = record(self.generation_of(table));
+        match seal {
+            Some(pipeline) => tx.log_encoded(&seal_plain(&plain, id, &pipeline)?, 1),
+            None => tx.log_encoded(&plain, 1),
+        }
     }
 
     /// [X3.135-1986 §8.7] Inserts `row`, with its index entries, under its
@@ -309,14 +318,7 @@ impl State {
             tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(storage), id, old: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            let change = Change::Update {
-                table: table.clone(),
-                generation: self.generation_of(table),
-                row: id,
-                before: old.clone(),
-                after: row.clone(),
-            };
-            tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
+            self.log_row(tx, (table, id), |generation| update_record(tx.id, (table, generation), id, (old, row)))?;
         }
         // An engine keeping versions keeps the old version's entries for
         // the readers that still see it, until the version is removed
@@ -379,8 +381,7 @@ impl State {
             tx.log(UndoEntry::Deleted { table: table.clone(), storage: Arc::clone(storage), id, row: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            let change = Change::Delete { table: table.clone(), generation: self.generation_of(table), row: id, before: old.clone() };
-            tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
+            self.log_row(tx, (table, id), |generation| delete_record(tx.id, (table, generation), id, old))?;
         }
         Ok(())
     }

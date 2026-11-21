@@ -75,7 +75,7 @@ mod kinds;
 mod lobs;
 pub mod marks;
 
-pub use batch::{insert_record, insert_rows_record};
+pub use batch::{delete_record, insert_record, insert_rows_record, update_record};
 pub use definitions::DropTarget;
 use definitions::{
     create_index, defined, dropped, put_altered, put_create_index, put_defined, put_dropped, put_schema, put_sequence, schema, sequence,

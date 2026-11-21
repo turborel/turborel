@@ -446,6 +446,7 @@ verification approach DO-178C expects (§8).
 | D652 | A join's method is chosen seeing the degree its part will run at |
 | D653 | A hash join's cost counts the probing rows its runtime filter leaves |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
+| D750 | A row change is logged from its images as the statement holds them, and collection reads no version whose every entry its successor shares |
 
 ### The project
 
@@ -12681,6 +12682,23 @@ executor stops judging by one. Only inner joins count it, since the
 preserved side of an outer join keeps every row. With EXECUTOR.BATCHES
 or EXECUTOR.RUNTIME_FILTERS OFF, none is counted. So join orders put a
 selective build where its filter reaches the scan it drops rows of.
+
+#### D750. A row change is logged from its images as the statement holds them, and collection reads no version whose every entry its successor shares
+
+An update's and a delete's log records were built as a change holding
+copies of the rows before and after, written out and dropped, and a
+sealed table's insert copied its row the same way. Each record is now
+written straight from the rows the statement holds
+(`record::update_record`, `record::delete_record`), and sealed from
+those bytes (`sealed::seal_plain`). The bytes are those `Record::encode`
+writes, so recovery and every reader of the log see no change.
+
+Collection read and decoded the row of every version it removed, to take
+back its index entries. A version whose successor shares every entry of
+it (D443) has none to take back. So collection asks first whether a
+version needs its row (`storage::Removal`), and frees one that does not
+without reading it. A table with an index sharing nothing, or a
+partition under a global index (D157), needs every row, as before.
 
 ## 2. Project layout
 
