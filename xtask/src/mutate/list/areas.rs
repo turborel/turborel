@@ -73,9 +73,10 @@ pub fn core() -> [&'static [Mutation]; 18] {
     ]
 }
 
-/// Every area's mutations, in order: the first half's, then the second's.
+/// Every area's mutations, in order: the first half's, the second's, then
+/// the planner's newest.
 pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
-    first().into_iter().chain(second())
+    first().into_iter().chain(second()).chain(planner())
 }
 
 /// The first half of the areas, in order.
@@ -110,7 +111,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 49] {
+fn second() -> [&'static [Mutation]; 45] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -157,11 +158,13 @@ fn second() -> [&'static [Mutation]; 49] {
         &analyze::ANALYZE,
         &analyze_more::ANALYZE_MORE,
         &statistics::STATISTICS,
-        &join_estimates::JOIN_ESTIMATES,
-        &range_joins::RANGE_JOINS,
-        &cost_model::COST_MODEL,
-        &orders::ORDERS,
     ]
+}
+
+/// The planner's newest areas, in order: join estimates, range joins, the
+/// cost model and orders.
+fn planner() -> [&'static [Mutation]; 4] {
+    [&join_estimates::JOIN_ESTIMATES, &range_joins::RANGE_JOINS, &cost_model::COST_MODEL, &orders::ORDERS]
 }
 
 /// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's, the decode kernels' and late materialization's.
