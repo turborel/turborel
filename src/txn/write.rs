@@ -247,7 +247,12 @@ impl State {
     /// `table` once no transaction is writing it, waited for in `turn`.
     /// The row is read again after each wait, so a waiter goes from its
     /// wait straight to the version committed meanwhile.
-    fn newest_unwritten(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), turn: &mut Option<super::row_waits::Turn>) -> Result<Newest> {
+    fn newest_unwritten(
+        &self,
+        tx: &Txn,
+        (table, id): (&QualifiedName, RowId),
+        turn: &mut Option<super::row_waits::Turn>,
+    ) -> Result<Newest> {
         let mut newest = self.storage_of(table)?.newest(tx.id, id)?;
         while let Some(writer) = newest.writer {
             drop(turn.take());
