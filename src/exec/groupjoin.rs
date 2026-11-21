@@ -17,6 +17,7 @@
 //! (RULES.md D38).
 
 mod groups;
+mod right;
 
 use super::Runner;
 use super::batch::{lanes, probe_layout, probed, read_for};
@@ -33,6 +34,7 @@ use crate::txn::TxId;
 use crate::value::Value;
 use groups::null_key;
 pub(in crate::exec) use groups::{Building, Groups, Tag};
+pub(in crate::exec) use right::RightBytes;
 
 /// The rows of the groupjoin `plan`.
 #[inline(never)]
@@ -48,7 +50,7 @@ fn run(g: GroupJoin, db: &Db, tx: TxId) -> Result<RowIter> {
     let Some(read) = read_for(&probe_keys, &g.aggs, &layout) else { return Ok(execute(g.instead, db, tx)) };
     let (seed, runner) = (db.functions.seed().clone(), Runner::new(db, tx));
     let table = GroupTable::new(g.keys.len(), &g.aggs, &seed, usize::MAX);
-    let how = Building { keys: &g.keys, columns: &g.columns, outer: g.outer };
+    let how = Building { keys: &g.keys, columns: &g.columns, outer: g.outer, right: g.by_first };
     let (build, build_columns) = probed(g.build.clone(), g.widths.0, (db, tx))?;
     let ceiling = (&seed, runner.kernels(), Work::ceiling_of(db));
     let Some(mut groups) = Groups::built(table, (build, &build_columns), how, ceiling)? else {
@@ -57,10 +59,15 @@ fn run(g: GroupJoin, db: &Db, tx: TxId) -> Result<RowIter> {
     let (batches, _) = probed(g.probe.clone(), g.widths.1, (db, tx))?;
     let nulls: Vec<bool> = g.keys.iter().map(|k| k.nulls).collect();
     let (mut hashes, mut scratch, mut number) = (Vec::new(), Vec::new(), 0_u64);
+    let right = RightBytes::new(Work::ceiling_of(db));
     for kept in batches {
         let (batch, rows) = kept?;
         let rows = rows.as_ref().map(Sel::as_slice);
         let count = rows.map_or(batch.rows, <[u32]>::len);
+        // The probe the join holds past its work area: its grouping's order.
+        if !g.by_first && !right.read(&batch, count) {
+            return Ok(execute(g.instead, db, tx));
+        }
         hash_rows(&batch, (&read.groups, rows), (&seed, runner.kernels()), &mut hashes);
         for (n, &hash) in hashes.iter().enumerate() {
             let r = nth(rows, n);

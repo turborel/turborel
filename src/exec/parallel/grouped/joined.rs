@@ -14,7 +14,7 @@ use super::{Grouping, Spec, waves};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::{Batches, Read, read_for};
-use crate::exec::groupjoin::{Building, Groups, Tag, given_rows};
+use crate::exec::groupjoin::{Building, Groups, RightBytes, Tag, given_rows};
 use crate::exec::parallel::pipeline::Pipeline;
 use crate::exec::parallel::{Held, Limit};
 use crate::exec::table::GroupTable;
@@ -37,7 +37,7 @@ pub(in crate::exec::parallel) fn group_joined(plan: &Plan, (db, tx): (&Db, TxId)
     let Some(layout) = pipeline.batched.as_ref().map(|by| by.layout.clone()) else { return Ok(Held::GaveWay) };
     let Some(read) = read_for(&[], &g.aggs, &layout) else { return Ok(Held::GaveWay) };
     let seed = db.functions.seed().clone();
-    let how = Building { keys: &g.keys, columns: &g.columns, outer: g.outer };
+    let how = Building { keys: &g.keys, columns: &g.columns, outer: g.outer, right: g.by_first };
     let keyed = GroupTable::of_keys(g.keys.len(), &seed);
     let (build, build_columns) = crate::exec::batch::probed(g.build.clone(), g.widths.0, (db, tx))?;
     let ceiling = (&seed, db.functions.kernels(), crate::exec::work::Work::ceiling_of(db));
@@ -45,12 +45,17 @@ pub(in crate::exec::parallel) fn group_joined(plan: &Plan, (db, tx): (&Db, TxId)
     let Some(Groups { table, rows, mut firsts }) = grouped else { return Ok(Held::GaveWay) };
     let places = g.keys.iter().map(|k| layout.iter().position(|&c| c == k.right)).collect::<Option<Vec<_>>>();
     let Some(places) = places else { return Ok(Held::GaveWay) };
-    let tag = Arc::new(Tag { table, places, nulls: g.keys.iter().map(|k| k.nulls).collect() });
+    let right = (!g.by_first).then(|| RightBytes::new(crate::exec::work::Work::ceiling_of(db)));
+    let tag = Arc::new(Tag { table, places, nulls: g.keys.iter().map(|k| k.nulls).collect(), right });
     // The tag is the column after the batch's own.
     let read = Read { taken: read.taken, groups: vec![layout.len()] };
     let spec = Spec { groups: vec![0], collations: Vec::new(), aggs: g.aggs.clone(), seeds: Vec::new() };
     let grouping = Arc::new(Grouping { spec, distinct: false, read: Some(read), seed, tag: Some(tag) });
     let Held::Kept(runs) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
+    // The probe the join holds past its work area: its grouping's order.
+    if grouping.tag.as_ref().and_then(|t| t.right.as_ref()).is_some_and(RightBytes::past) {
+        return Ok(Held::GaveWay);
+    }
     let results = by_group(runs, &mut firsts)?;
     let made = given_rows((rows, results, firsts), g, (db, tx))?;
     Ok(Held::Kept(limit.keeping(Box::new(made.into_iter().map(Ok)))))

@@ -10,6 +10,7 @@
 use crate::error::Result;
 use crate::exec::batch::{Batches, Kept};
 use crate::exec::broken;
+use crate::exec::groupjoin::RightBytes;
 use crate::exec::table::{Columns, GroupTable, Key, Seed, hash_rows};
 use crate::kernels::Kernels;
 use crate::physical::JoinKey;
@@ -38,6 +39,9 @@ pub(in crate::exec) struct Building<'a> {
     pub(in crate::exec) keys: &'a [JoinKey],
     pub(in crate::exec) columns: &'a [usize],
     pub(in crate::exec) outer: bool,
+    /// Whether the group operand is the join's right operand, held by the
+    /// join, which its groups then give way past (`right.rs`).
+    pub(in crate::exec) right: bool,
 }
 
 /// Where each of `columns` is among the vectors of a batch of `layout`.
@@ -52,8 +56,9 @@ fn placed(columns: impl Iterator<Item = usize>, layout: &[usize]) -> Result<Vec<
 impl<S: Columns> Groups<S> {
     /// The groups of the rows of the batches `build`, of `layout`, in
     /// `table`, as `how` says, keyed by hashes of `seed` and `kernels`;
-    /// none if they hold more than `limit` bytes, as the groupjoin then
-    /// gives way (RULES.md D38).
+    /// none if they hold more than `limit` bytes, or are the join's right
+    /// operand and it would hold more, as the groupjoin then gives way
+    /// (RULES.md D38).
     ///
     /// # Errors
     ///
@@ -68,9 +73,13 @@ impl<S: Columns> Groups<S> {
         let kept_at = placed(how.columns.iter().copied(), layout)?;
         let nulls: Vec<bool> = how.keys.iter().map(|k| k.nulls).collect();
         let (mut rows, mut bytes, mut number, mut hashes) = (Vec::new(), 0_usize, 0_u64, Vec::new());
+        let joined = RightBytes::new(limit);
         for batch in build {
             let (batch, given) = batch?;
             let given = given.as_ref().map(Sel::as_slice);
+            if how.right && !joined.read(&batch, given.map_or(batch.rows, <[u32]>::len)) {
+                return Ok(None);
+            }
             hash_rows(&batch, (&keys, given), (seed, kernels), &mut hashes);
             for (n, &hash) in hashes.iter().enumerate() {
                 let r = nth(given, n);
@@ -125,6 +134,9 @@ pub(in crate::exec) struct Tag {
     pub(in crate::exec) table: GroupTable<()>,
     pub(in crate::exec) places: Vec<usize>,
     pub(in crate::exec) nulls: Vec<bool>,
+    /// Of a probe that is the join's right operand, its bytes read
+    /// (`right.rs`).
+    pub(in crate::exec) right: Option<RightBytes>,
 }
 
 impl Tag {
@@ -133,6 +145,9 @@ impl Tag {
     /// by `seed` and `kernels`.
     pub(in crate::exec) fn tagged(&self, (mut batch, rows): Kept, (seed, kernels): (&Seed, &dyn Kernels)) -> Kept {
         let given = rows.as_ref().map(Sel::as_slice);
+        if let Some(right) = &self.right {
+            right.read(&batch, given.map_or(batch.rows, <[u32]>::len));
+        }
         let mut hashes = Vec::new();
         hash_rows(&batch, (&self.places, given), (seed, kernels), &mut hashes);
         let (mut units, mut kept, mut scratch) = (vec![0_i64; batch.rows], Vec::new(), Vec::new());

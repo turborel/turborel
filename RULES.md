@@ -11583,7 +11583,9 @@ each group's first joined row, and feed each set function its values in
 the join's order, so a sum of approximate numbers is the same sum. Of a
 LEFT join a group no row joined is fed one row of nulls, as the join
 gives it. A build past MEMORY.WORK_BYTES gives way to the grouping over
-the join (D38). OPTIMIZER.GROUPJOIN turns it off (D36).
+the join (D38), and so does a groupjoin whose join would hold its right
+operand past it, as that join then gives its rows partition by
+partition (`exec/groupjoin/right.rs`). OPTIMIZER.GROUPJOIN turns it off (D36).
 
 #### D491. An index join probes a unique index for a batch of its outer rows, sorted by key
 
