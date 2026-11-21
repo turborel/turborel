@@ -4294,6 +4294,20 @@ no key word either. The library's `Session::analyzed` gives each
 operator's counts, and `Session::with_cardinalities` gives the planner
 row counts in place of its estimates (D377, `db/explain/analyzed.rs`).
 
+The standard is silent on all of what follows, so each is turborel's
+choice. An operator's line also shows what it did beside its rows, each
+only when it did any: its batches and their mean rows, what it spilled
+past its work area as bytes, partitions and passes, and of an index read
+the entries it took, the rows it fetched and those it judged again, and
+the leaf pages it read of a B-tree, an index's or its table's (D620, D621, `noted.rs`).
+
+`EXPLAIN ANALYZE` also takes INSERT, UPDATE, DELETE and MERGE. The
+statement runs for real in the session's transaction, which keeps its
+changes until it commits or rolls back. Its plan is headed by a line
+naming the statement and its table with the rows it changed (D622,
+`db/explain/changed.rs`). EXPLAIN without ANALYZE still takes only a
+query.
+
 ### Plug-ins
 
 Plug-ins cover storage engines, index methods, functions, optimizer rules,

@@ -425,6 +425,9 @@ verification approach DO-178C expects (§8).
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
+| D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
+| D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
+| D622 | EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
@@ -10586,8 +10589,7 @@ ANALYZE is no key word. It is read as this option only right after
 EXPLAIN and before a query's first token, and before a parenthesis only
 when the next token begins a query too, so a table named ANALYZE, or a
 table EXPLAIN whose correlation name ANALYZE lists its columns, is read
-as before. A data change statement is refused as EXPLAIN refuses one,
-so EXPLAIN ANALYZE changes nothing a query does not. A query that raises
+as before. A data change statement is run and counted as D622 says. A query that raises
 makes it raise the same exception (D15). It shows the physical plan
 alone, since the stages before it are EXPLAIN's and run nothing.
 `Session::explain_analyze` gives the same text and `Session::analyzed`
@@ -12123,64 +12125,6 @@ or hash joins on their equalities, as to compare the two. Period
 predicates are still read as comparisons (D581) when it is OFF, so their
 equalities can be a hash join's keys.
 
-#### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
-
-A kept plan (D45, D414, D422) was copied at each execution, its slots
-replaced by the execution's values and its scalar calls folded again, so
-a point query or write paid for a whole plan's copy and walk before it
-read a row. Now a kept plan is prepared once, its scalar calls folded
-as it is kept, and held behind a shared pointer. An execution opens it
-in a `Db` (`exec/db.rs`), the state with its statement's slot values,
-which every operator hands to those it opens and to the runner of its
-subqueries. The evaluator reads a slot's value from there and casts it
-to the slot's type as it is read, and an index scan places its probe's
-slots as it opens. An UPDATE's SET values and its search condition read
-their slots the same way, and an INSERT's row of values too. A kept
-procedure body's leaf reads its frame's values as slots and its outer
-values as outer references where they stand (`exec/program/framed.rs`),
-and its subqueries' kept plans read those values as slots.
-
-A kept plan holding a scalar call that takes a slot is filled and
-prepared again at each execution, as it was, since a call prepared from
-its constant operands (`optimizer/prepared.rs`) is prepared from the
-execution's values. A plan that is not kept, as one whose paths follow
-its values, is still planned with them filled in, so its paths are
-chosen by them. A MERGE keeps its bound statement and fills it at each
-execution, its join planned with its values.
-
-What a prepared statement keeps is shared by every session of the
-database that prepares a statement alike in its text, its collation and
-its parameters' types (`db/prepared/shared.rs`). Each execution takes a
-kept plan only while the definitions, the authorization, the schema, the
-time zone and the settings are those it was kept with, so a change of
-the definitions or of privileges drops it, and a learned plan is learned
-again once a table it reads moves as its statistics would be gathered
-again for (D422). The places are found by an XXH3 hash of what the
-statements were prepared alike in (D460), compared whole, and a place no
-statement holds is gone.
-
-#### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
-
-The batch filter passes each conjunct only the rows the one before it
-kept (D354), so the order of a filter's conjuncts decides how many rows
-each one judges. The planner orders the conjuncts of a filter over a
-table read in ascending order of rank, a conjunct's cost a row over
-the share of rows it drops, as Hellerstein and Stonebraker order a
-selection's predicates (SIGMOD 1993). Conjuncts of equal rank keep the
-written order (`physical/cost/conjuncts.rs`). A column compared with a
-constant or tested for null costs least. A set of constants searched
-costs more, then a comparison of expressions, then a pattern, and a
-conjunct with a subquery comes last. A filter one of whose conjuncts
-can raise an error keeps the written order, because each of its
-conjuncts is judged of every row anyway (D15).
-
-The weights the planner prices operators by are measured by
-`bench/analytics/costs.rs` (`TURBOREL_BENCH_ANALYTICS_ONLY=costs`). It
-times a scan by batch and a row at a time, of the row store and the
-column store, a hash join, groupings of few and of many groups, a sort,
-each of those past a small work area, and a part on several threads.
-It then prints each weight in rows of the row store's scan, the unit of
-the planner's costs.
 #### D600. A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans
 
 A runtime filter (D369) went down a hash join's left operand alone, and
@@ -12261,6 +12205,120 @@ itself, and warns if a row it dropped held a null in a set function's
 column. A grouping of none, or of COUNT(*) alone, tells its input's
 scans the filter, so a scan below it skips what the filter drops.
 
+#### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
+
+A kept plan (D45, D414, D422) was copied at each execution, its slots
+replaced by the execution's values and its scalar calls folded again, so
+a point query or write paid for a whole plan's copy and walk before it
+read a row. Now a kept plan is prepared once, its scalar calls folded
+as it is kept, and held behind a shared pointer. An execution opens it
+in a `Db` (`exec/db.rs`), the state with its statement's slot values,
+which every operator hands to those it opens and to the runner of its
+subqueries. The evaluator reads a slot's value from there and casts it
+to the slot's type as it is read, and an index scan places its probe's
+slots as it opens. An UPDATE's SET values and its search condition read
+their slots the same way, and an INSERT's row of values too. A kept
+procedure body's leaf reads its frame's values as slots and its outer
+values as outer references where they stand (`exec/program/framed.rs`),
+and its subqueries' kept plans read those values as slots.
+
+A kept plan holding a scalar call that takes a slot is filled and
+prepared again at each execution, as it was, since a call prepared from
+its constant operands (`optimizer/prepared.rs`) is prepared from the
+execution's values. A plan that is not kept, as one whose paths follow
+its values, is still planned with them filled in, so its paths are
+chosen by them. A MERGE keeps its bound statement and fills it at each
+execution, its join planned with its values.
+
+What a prepared statement keeps is shared by every session of the
+database that prepares a statement alike in its text, its collation and
+its parameters' types (`db/prepared/shared.rs`). Each execution takes a
+kept plan only while the definitions, the authorization, the schema, the
+time zone and the settings are those it was kept with, so a change of
+the definitions or of privileges drops it, and a learned plan is learned
+again once a table it reads moves as its statistics would be gathered
+again for (D422). The places are found by an XXH3 hash of what the
+statements were prepared alike in (D460), compared whole, and a place no
+statement holds is gone.
+
+#### D620. EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made
+
+Each counted operator has notes beside its rows (`noted.rs`). While a
+counted operator is opened and while each of its rows or batches is
+pulled, its notes are the thread's, put back as they were after, so
+work done below a pull is noted of the innermost operator pulled and an
+input's own pulls note theirs. What does the work takes the thread's
+notes once, as it is made, and adds to them as it works. A spill area
+made so is wrapped (`spill/noted.rs`): each table and run it makes is
+one partition, each record written to them adds its bytes, and each
+time it reads back after writing is a pass, so partitions written then
+read are one pass and each level of a merge another. A part run in
+parallel gives each worker the notes of the thread that started it
+(`exec/parallel/run.rs`), so the part's top operator notes what its
+workers spill. A statement not analyzed has no notes, so each thing made
+for it reads the thread's once and notes nothing, never a row at a time.
+The thread's notes are scoped to one pull and restored after it, as the
+thread's warnings are, so they are no global state (R-SAFE-2).
+EXPLAIN ANALYZE shows `spilled=N bytes, partitions=P, passes=Q` on the
+line of an operator that spilled, and nothing of one that did not.
+
+#### D621. EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks
+
+An operator run by batches notes each batch it gives, by its counted
+wrapper or by its step of a pipeline run in parallel, and EXPLAIN
+ANALYZE shows `batches=B, mean rows=M`, its rows over its batches
+rounded. One run a row at a time shows none. An index scan's reading
+(`exec/entries.rs`) counts each entry it takes, each row it fetches by
+an entry's row id, and each row whose condition it judges again of the
+row as the index could not decide it of the entry (D85), and notes them
+once, as it is dropped. A scan of a B-link tree notes each leaf it reads
+(`engine/tree/scan.rs`), an index's or the tree a table of the row
+store is kept in, so a scan of such a table shows its leaves too. Each
+shows as `entries=`, `leaf pages=`,
+`fetched=` and `rechecked=`, a count of none left out. An index nested
+loop's probes note alike, of the join.
+
+#### D622. EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read
+
+`EXPLAIN ANALYZE` takes a data change statement as well as a query,
+read so when INSERT, UPDATE or DELETE, or MERGE followed by INTO,
+follows ANALYZE. EXPLAIN alone still takes only a query, as it runs
+nothing. The statement runs for real, as it would run alone, in the
+session's transaction, so its changes stay until the transaction ends
+and a ROLLBACK undoes them. The session's `Stop`, which the statement
+reaches through its transaction, is told to want a counted plan
+(`txn/stop/changed.rs`). The first plan the statement makes of the
+rows it reads takes the want and is counted as a query's plan is
+(`db/explain/changed.rs`): an INSERT's query, an UPDATE's or DELETE's
+object rows (`exec/entries.rs` reads a counted access too), MERGE's
+joined rows. So a plan a trigger it fires makes after is not. The text
+heads the plan with a line naming the statement and its table with
+`actual rows changed=N`, and ends with the rows changed. A statement
+that makes no such plan, as an INSERT of VALUES, shows the head line
+alone. A statement that raises makes EXPLAIN ANALYZE raise the same,
+undone as any failed statement is.
+#### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
+
+The batch filter passes each conjunct only the rows the one before it
+kept (D354), so the order of a filter's conjuncts decides how many rows
+each one judges. The planner orders the conjuncts of a filter over a
+table read in ascending order of rank, a conjunct's cost a row over
+the share of rows it drops, as Hellerstein and Stonebraker order a
+selection's predicates (SIGMOD 1993). Conjuncts of equal rank keep the
+written order (`physical/cost/conjuncts.rs`). A column compared with a
+constant or tested for null costs least. A set of constants searched
+costs more, then a comparison of expressions, then a pattern, and a
+conjunct with a subquery comes last. A filter one of whose conjuncts
+can raise an error keeps the written order, because each of its
+conjuncts is judged of every row anyway (D15).
+
+The weights the planner prices operators by are measured by
+`bench/analytics/costs.rs` (`TURBOREL_BENCH_ANALYTICS_ONLY=costs`). It
+times a scan by batch and a row at a time, of the row store and the
+column store, a hash join, groupings of few and of many groups, a sort,
+each of those past a small work area, and a part on several threads.
+It then prints each weight in rows of the row store's scan, the unit of
+the planner's costs.
 #### D675. A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run
 
 A correlated subquery left nested ran once for each distinct set of its

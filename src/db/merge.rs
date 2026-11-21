@@ -242,7 +242,7 @@ fn locked_rows(StatementContext { st, tx }: StatementContext<'_>, bound: &BoundM
     for t in optimized.tables().into_iter().chain(clause_tables(bound)) {
         st.read_lock(tx, &t)?;
     }
-    Ok(physical)
+    Ok(super::explain::analyzing(tx, st, (physical, Some(&optimized))))
 }
 
 /// The tables the subqueries of the clauses of `bound` read: of their
