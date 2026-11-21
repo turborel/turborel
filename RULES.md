@@ -11439,7 +11439,10 @@ captures each still owed under its read latch, then each copy
 (`disk/buffer/pool/capture.rs`). A capture is written into the sealed
 batch, held in memory, newer than its blocks and older than anything
 written since, so a read finds it only where nothing newer was written
-(`DiskFile::write_captured_at`). The walk waits for evictions capturing
+(`DiskFile::write_captured_at`). A capture changes nothing a write in
+flight writes over or a read waits for (D472), so it waits for none, and
+holds the file's lock only to put granules copied before it took it.
+The walk waits for evictions capturing
 before the batch is committed. This is the two versions of Ren et al.
 2016's CALC at the grain of a page, where the frame's latch gives the
 exclusion; memory is bounded by the pages written during one walk.

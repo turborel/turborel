@@ -451,22 +451,30 @@ impl DiskFile for ShadowFile {
 
     /// \[DESIGN\] RULES.md D590: while held, into the batch held, as any
     /// write; once sealed, into the sealed batch, whose granules are
-    /// newer than its blocks and older than what was written since.
+    /// newer than its blocks and older than what was written since. A
+    /// capture into the sealed batch changes nothing a write in flight
+    /// (D472) writes over or a read waits for, so it waits for none: the
+    /// lock is held only to put its granules, copied before it is taken.
     fn write_captured_at(&self, data: &[u8], at: u64) -> Result<()> {
-        let mut pending = self.0.settled()?;
-        if pending.holding {
-            return self.0.write_locked(&mut pending, data, at);
-        }
         let (first, within) = granule_of(at);
         let end = at.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
         let refused = || SqlError::new(Code::Api, "[DESIGN] RULES.md D590: a capture is whole granules within the sealed batch");
-        let sealed = pending.sealed.as_mut().and_then(Arc::get_mut).filter(|s| within == 0 && end <= s.size).ok_or_else(refused)?;
-        if data.is_empty() || data.len().checked_rem(GRANULE) != Some(0) {
+        if within != 0 || data.is_empty() || data.len().checked_rem(GRANULE) != Some(0) {
             return Err(refused());
         }
-        for (number, granule) in (first..).zip(data.chunks(GRANULE)) {
-            sealed.side.held.insert(number, granule.to_vec());
+        let granules: Vec<(u64, Vec<u8>)> = (first..).zip(data.chunks(GRANULE).map(<[u8]>::to_vec)).collect();
+        let mut pending = write(&self.0.pending)?;
+        if pending.holding {
+            // Held, it is a write as any, which waits for those in flight;
+            // looked at again once they land, as the batch may be sealed.
+            drop(pending);
+            pending = self.0.settled()?;
+            if pending.holding {
+                return self.0.write_locked(&mut pending, data, at);
+            }
         }
+        let sealed = pending.sealed.as_mut().and_then(Arc::get_mut).filter(|s| end <= s.size).ok_or_else(refused)?;
+        sealed.side.held.extend(granules);
         Ok(())
     }
 
