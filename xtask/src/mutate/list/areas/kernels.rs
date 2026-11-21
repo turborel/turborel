@@ -1,8 +1,8 @@
 //! The mutations of the kernels' use and their vector bodies (RULES.md
 //! R-TEST-9, D570): a sum of integers that keeps its nulls' units, one
 //! that adds by the kernels past the bound where a partial sum could
-//! overflow, a gathering that drops its rows' nulls, and a selection's
-//! extremes that keep a null row's value.
+//! overflow, a gathering that drops its rows' nulls, and the vector
+//! extremes of a dense selection that take rows not picked.
 
 use super::super::{Mutation, Package};
 
@@ -44,12 +44,12 @@ pub const KERNELS: [Mutation; 4] = [
         unit: &["storage::batch::gathered::tests::integers_gathered_by_the_kernels_keep_their_nulls"],
     },
     Mutation {
-        name: "simd-picked-nulls-kept",
+        name: "simd-picks-dropped",
         package: Package::Simd,
-        breaks: "a selection's extremes on AVX2 or AVX-512 take a null row's value",
-        file: "simd/src/x86/picked.rs",
-        original: "let held = nulls.and_then(|m| m.gathered(chunk));",
-        replacement: "let held: Option<Mask> = nulls.and(None);",
+        breaks: "the extremes of a dense selection take rows not picked",
+        file: "simd/src/x86/sum.rs",
+        original: "    all & picked & !null",
+        replacement: "    all & !null",
         integration: &[],
         unit: &["tests::every_available_set_gives_the_portable_results"],
     },

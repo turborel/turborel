@@ -125,7 +125,7 @@ fn nulls(rng: &mut Rng, len: usize) -> Option<Mask> {
 
 /// A selection of rows below `len`, ascending, or none.
 fn selection(rng: &mut Rng, len: usize) -> Option<Vec<u32>> {
-    let density = rng.pick(&[0, 1, 30, 90, 100, 101]);
+    let density = rng.pick(&[0, 1, 20, 25, 30, 90, 100, 101]);
     (density <= 100).then(|| (0..len as u32).filter(|_| rng.below(100) < density).collect())
 }
 
@@ -195,6 +195,14 @@ fn aggregates(kernels: &dyn Kernels, rng: &mut Rng, (seed, len): (u64, usize)) {
     assert_eq!(kernels.sum_i64(ints, Some(&picks)), Portable.sum_i64(ints, Some(&picks)), "sum_i64 picked, seed {seed}");
     let picked = (nulls.as_ref(), Some(&picks[..]));
     assert_eq!(kernels.min_max_i64(ints, picked), Portable.min_max_i64(ints, picked), "min_max_i64 picked, seed {seed}");
+    // A window of rows picked densely, from a row of any block, sometimes
+    // past the end: either side of the share a masked run takes.
+    let from = rng.below(len as u64 + 1) as u32;
+    let share = rng.pick(&[3, 4, 5]);
+    let window: Vec<u32> = (from..from + rng.below(600) as u32).filter(|_| rng.below(share) == 0).collect();
+    assert_eq!(kernels.sum_i64(ints, Some(&window)), Portable.sum_i64(ints, Some(&window)), "sum_i64 window, seed {seed}");
+    let windowed = (nulls.as_ref(), Some(&window[..]));
+    assert_eq!(kernels.min_max_i64(ints, windowed), Portable.min_max_i64(ints, windowed), "min_max_i64 window, seed {seed}");
     let within: Vec<u32> = picks.iter().copied().filter(|&r| (r as usize) < len).collect();
     let held = (nulls.as_ref(), Some(&within[..]));
     assert_eq!(kernels.min_max_i64(ints, held), Portable.min_max_i64(ints, held), "min_max_i64 within, seed {seed}");

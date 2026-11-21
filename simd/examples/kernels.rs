@@ -195,6 +195,12 @@ fn main() {
             line("sum_i64", "half picked", size, &sets, |k| {
                 black_box(k.sum_i64(black_box(&ints), Some(&sel)));
             });
+            for share in [3_u32, 4, 5, 8] {
+                let picks: Vec<u32> = (0..size as u32).filter(|r| r % share == 0).collect();
+                line("sum_i64", &format!("1 in {share} picked"), picks.len(), &sets, |k| {
+                    black_box(k.sum_i64(black_box(&ints), Some(&picks)));
+                });
+            }
             for few in [16_usize, 64, 256] {
                 let picks: Vec<u32> = sel.iter().copied().step_by(7).take(few).collect();
                 line("sum_i64", &format!("{} picked", picks.len()), picks.len(), &sets, |k| {
@@ -212,6 +218,12 @@ fn main() {
             line("min_max_i64", "half picked", size, &sets, |k| {
                 black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), Some(&sel))));
             });
+            for share in [3_u32, 4, 5, 8] {
+                let picks: Vec<u32> = (0..size as u32).filter(|r| r % share == 0).collect();
+                line("min_max_i64", &format!("1 in {share} picked"), picks.len(), &sets, |k| {
+                    black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), Some(&picks))));
+                });
+            }
             for few in [16_usize, 64, 256] {
                 let picks: Vec<u32> = sel.iter().copied().step_by(7).take(few).collect();
                 line("min_max_i64", &format!("{} picked", picks.len()), picks.len(), &sets, |k| {

@@ -11649,7 +11649,11 @@ halves unsigned and count the negatives, exactly the portable sum;
 gathers load masked, a row past the end giving 0; decimals are made by
 the portable body's operations in its order, with no fused multiply. A
 kernel no instruction of a set speeds, or the selection-given form of a
-selection or sum, whose loads are each a row's, runs its portable body.
+selection, runs its portable body. A sum or extremes of a selection that
+picks at least a quarter of the rows it spans runs the loop of all rows
+over them, the rows not picked masked off as nulls are; of fewer, the
+portable body, whose loads are each a picked row's, since the vector
+gathers measured slower than it at every size.
 Every body gives the portable body's result bit for bit, which the
 differential tests (`support/src/differential.rs`) hold it to, on random
 inputs of every length and alignment at every set the processor has.

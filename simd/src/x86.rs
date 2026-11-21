@@ -19,7 +19,6 @@ use crate::Level;
 mod alp;
 mod distance;
 mod hash;
-mod picked;
 mod select;
 mod sum;
 pub(crate) mod xxh3;
@@ -115,15 +114,19 @@ pub(crate) fn select_codes(isa: Isa, codes: &[u32], keep: &[u64], given: Given<'
     }
 }
 
-/// `Kernels::sum_i64`: of all rows on AVX2 or AVX-512, of a selection
-/// gathered a block at a time (`picked.rs`).
+/// `Kernels::sum_i64`: of all rows on AVX2 or AVX-512; of a selection
+/// that picks at least a quarter of the rows it spans, the loop of all
+/// rows masked to the rows picked; of fewer, by the portable body, whose
+/// loads are each a picked row's (RULES.md D570).
 pub(crate) fn sum_i64(isa: Isa, values: &[i64], sel: Option<&[u32]>) -> i128 {
     match (isa, sel) {
         (Isa::Portable | Isa::Sse2, _) => portable::sum::sum_i64(values, sel),
         (Isa::Avx2, None) => sum::sum_avx2(values),
         (Isa::Avx512, None) => sum::sum_avx512(values),
-        (Isa::Avx2, Some(sel)) => picked::sum_at(picked::Wide::Avx2, values, sel),
-        (Isa::Avx512, Some(sel)) => picked::sum_at(picked::Wide::Avx512, values, sel),
+        (Isa::Avx2, Some(picks)) => sum::sum_picked(sum::Wide::Avx2, values, picks).unwrap_or_else(|| portable::sum::sum_i64(values, sel)),
+        (Isa::Avx512, Some(picks)) => {
+            sum::sum_picked(sum::Wide::Avx512, values, picks).unwrap_or_else(|| portable::sum::sum_i64(values, sel))
+        }
     }
 }
 
@@ -133,8 +136,12 @@ pub(crate) fn min_max_i64(isa: Isa, values: &[i64], given: Given<'_>) -> Option<
         (Isa::Portable | Isa::Sse2, _) => portable::sum::min_max_i64(values, given),
         (Isa::Avx2, (nulls, None)) => sum::min_max_avx2(values, nulls),
         (Isa::Avx512, (nulls, None)) => sum::min_max_avx512(values, nulls),
-        (Isa::Avx2, (nulls, Some(sel))) => picked::min_max_at(picked::Wide::Avx2, values, (nulls, sel)),
-        (Isa::Avx512, (nulls, Some(sel))) => picked::min_max_at(picked::Wide::Avx512, values, (nulls, sel)),
+        (Isa::Avx2, (nulls, Some(picks))) => {
+            sum::min_max_picked(sum::Wide::Avx2, values, (nulls, picks)).unwrap_or_else(|| portable::sum::min_max_i64(values, given))
+        }
+        (Isa::Avx512, (nulls, Some(picks))) => {
+            sum::min_max_picked(sum::Wide::Avx512, values, (nulls, picks)).unwrap_or_else(|| portable::sum::min_max_i64(values, given))
+        }
     }
 }
 
