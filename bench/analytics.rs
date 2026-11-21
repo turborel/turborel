@@ -43,7 +43,9 @@
 //! (`analytics/late.rs`), to `skipping`, a large column store table's
 //! filters, by what they skip, alone (`analytics/skipping.rs`), or to
 //! `sorts`, ORDER BY and top-N alone
-//! (`analytics/sorts.rs`).
+//! (`analytics/sorts.rs`), or to `costs`, the operators whose speeds
+//! the planner's weights stand for, and the weights they give, alone
+//! (`analytics/costs.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -58,6 +60,8 @@
 
 #[path = "analytics/bands.rs"]
 mod bands;
+#[path = "analytics/costs.rs"]
+mod costs;
 #[path = "analytics/counts.rs"]
 mod counts;
 #[path = "analytics/decode.rs"]
@@ -100,7 +104,8 @@ use turborel::db::{Database, Session};
 /// `grouping` for groupings on one thread, `joins` for hash joins, `late`
 /// for a column store's selective queries, `skipping` for a large column
 /// store table's filters, `sorts` for ORDER BY and top-N, `bands` and
-/// `bands-large` for joins on comparisons by order.
+/// `bands-large` for joins on comparisons by order, `costs` for the
+/// planner's weights.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -162,6 +167,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "social" => social::workloads,
         "graph" => graph::workloads,
         "unnesting" => unnesting::workloads,
+        "costs" => costs::workloads,
         "counts" => counts::workloads,
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
