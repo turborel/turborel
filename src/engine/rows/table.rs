@@ -98,6 +98,9 @@ impl RowTable {
 
     fn with(files: &TableFiles, found: Found, types: &[DataType], options: TableOptions) -> Result<RowTable> {
         let Found { meta, tree, reserved, zones: directory, rows, lobs } = found;
+        // Keyed by row id: its rows' leaves are noted for their index
+        // entries' hints (RULES.md D500).
+        tree.note_rows();
         let counted = Arc::new(Counted::new((&files.pool, files.file), meta, rows));
         files.note_counted(&counted)?;
         let sealing = Arc::new(Sealing::plain());

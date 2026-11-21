@@ -46,7 +46,7 @@ use crate::physical::Plan;
 use crate::storage::{Row, batches_of};
 use crate::txn::{TxId, checked};
 use crate::value::Value;
-pub(in crate::exec) use held::TABLE_ROW_BYTES;
+pub(in crate::exec) use held::{TABLE_ROW_BYTES, dense_wanted};
 use probe::Kind;
 pub(in crate::exec) use shared::SharedTable;
 

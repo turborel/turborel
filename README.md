@@ -46,7 +46,8 @@ behind it, and each can be replaced or added to.
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
 - Hash joins probed a batch at a time in one tagged table, shared by
-  parallel morsels, telling the left's scan a range and Bloom filter.
+  parallel morsels, telling the left's scan a range and Bloom filter;
+  dense keys found by their place, their filter an exact bitmap.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
@@ -59,7 +60,8 @@ behind it, and each can be replaced or added to.
   and every index method made on each partition.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.
-- Indexes as plug-ins. B-link trees, linear hash tables and R-trees over
+- Indexes as plug-ins. B-link trees, with prefix-truncated nodes, key heads
+  and leaf hints to their rows, linear hash tables and R-trees over
   points and rectangles are built in, R-trees packed when built and their
   emptied nodes reclaimed up to the root. Any other method registers with its
   own options, and a cost-based planner chooses among them for filters

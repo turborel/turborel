@@ -214,7 +214,7 @@ impl BLinkTree {
             return Ok(());
         }
         node::set_right(&mut self.pool.write(self.file, left)?, right)?;
-        *self.pool.write(self.file, leaf)? = node::deleted(right)?;
+        *self.pool.write(self.file, leaf)? = node::deleted(right, self.meta.0)?;
         {
             let mut page = self.pool.write(self.file, parent)?;
             node::set_child(&mut page, at, right)?;

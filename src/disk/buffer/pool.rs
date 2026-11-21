@@ -405,7 +405,7 @@ impl BufferPool {
     /// was loading when pinned, seen under the shard's lock, as a frame
     /// starts loading, and a page mapped to a loading frame is unmapped,
     /// only under the shard's exclusive lock.
-    fn pin_mapped(&self, key: Key) -> Result<Option<(usize, bool)>> {
+    pub(super) fn pin_mapped(&self, key: Key) -> Result<Option<(usize, bool)>> {
         let map = self.shared_map(key)?;
         let Some(&index) = map.get(&key) else { return Ok(None) };
         let frame = self.frame(index)?;
@@ -418,7 +418,7 @@ impl BufferPool {
     /// pinned holds `key` and cannot change page while pinned; one that was
     /// is checked, whether or not it is loading still: it may have been
     /// filled for another page while `key` was written back, or emptied.
-    fn settled_holding(&self, (index, loading): (usize, bool), key: Key) -> Result<Option<&Frame>> {
+    pub(super) fn settled_holding(&self, (index, loading): (usize, bool), key: Key) -> Result<Option<&Frame>> {
         let frame = self.frame(index)?;
         // Not loading when pinned, it cannot start to while pinned.
         let waited = loading && frame.settled();

@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 
 use super::super::super::State;
 use super::super::super::compiled::{plan, plan_slotted};
-use super::super::super::prepared::{Learned, Learning, moved, rows_of};
+use super::super::super::prepared::{Fit, Learned, Learning, Learnt};
 use crate::catalog::{QualifiedName, SequenceDesc};
 use crate::error::{Result, Warnings};
 use crate::exec::{Db, Slots, Subqueries, SubqueryRows, execute};
@@ -51,12 +51,13 @@ pub(in crate::db) struct LeafPlan {
 #[derive(Debug)]
 enum Physical {
     /// Its plan with slots, the tables it reads and, of a plan learned,
-    /// their rows as it was learned.
-    Fixed(Arc<Kept>, Arc<[QualifiedName]>, Option<Arc<[usize]>>),
+    /// what it is measured from (`prepared/plans/grown.rs`).
+    Fixed(Arc<Kept>, Arc<[QualifiedName]>, Option<Learnt>),
     /// Its plan learning.
     Learning(Learning),
-    /// Planned at each run.
-    Varies,
+    /// Planned at each run; with what its tables were as it stopped
+    /// learning, if it did, so it learns again once one drifts.
+    Varies(Option<Learnt>),
 }
 
 impl LeafPlan {
@@ -69,31 +70,56 @@ impl LeafPlan {
     ///
     /// As `logical::filled`; SQLCODE -910 if a lock is poisoned.
     fn physical(&self, st: &State, outer: &[Value]) -> Result<Option<(Plan, Option<Slots>)>> {
-        let now = std::mem::replace(&mut *lock(&self.kept)?, Physical::Varies);
-        let learning = match now {
-            Physical::Varies => return Ok(None),
+        let held = std::mem::replace(&mut *lock(&self.kept)?, Physical::Varies(None));
+        let learning = match held {
+            Physical::Varies(stopped) => {
+                if !stopped.as_ref().is_some_and(|s| matches!(s.now(st), Fit::Moved)) {
+                    *lock(&self.kept)? = Physical::Varies(stopped);
+                    return Ok(None);
+                }
+                Learning::default()
+            }
             Physical::Learning(learning) => learning,
-            Physical::Fixed(plan, reads, rows) => {
-                if !rows.as_deref().is_some_and(|rows| moved(st, &reads, rows)) {
+            Physical::Fixed(plan, reads, learnt) => {
+                let kept = match learnt.as_ref().map(|l| l.now(st)) {
+                    None | Some(Fit::Still) => Some(learnt),
+                    Some(Fit::Grown(grown)) => Some(Some(grown)),
+                    Some(Fit::Moved) => None,
+                };
+                if let Some(still) = kept {
                     let opened = plan.opened(Some(outer.into()), crate::optimizer::prepared::budget(st));
-                    *lock(&self.kept)? = Physical::Fixed(plan, reads, rows);
+                    *lock(&self.kept)? = Physical::Fixed(plan, reads, still);
                     return opened.map(Some);
                 }
                 Learning::default()
             }
         };
+        self.learned(st, outer, learning).map(Some)
+    }
+
+    /// A learning run of its plan for `outer`, which `learning` says it
+    /// learned before: planned with them, which it runs, and with slots.
+    ///
+    /// # Errors
+    ///
+    /// As `physical`.
+    fn learned(&self, st: &State, outer: &[Value], learning: Learning) -> Result<(Plan, Option<Slots>)> {
         let (optimized, _, custom) = plan(st, filled(self.slotted.clone(), outer)?);
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
-        let physical = match learning.after(&custom, plan_slotted(st, self.slotted.clone(), outer)).outcome() {
-            Learned::Kept(slotted) => match prepared_plan(*slotted, crate::optimizer::prepared::budget(st)) {
-                Ok(slotted) => Physical::Fixed(Arc::new(slotted), Arc::clone(&reads), Some(rows_of(st, &reads))),
-                Err(_) => Physical::Varies,
-            },
+        let slotted_plan = plan_slotted(st, self.slotted.clone(), outer);
+        let physical = match learning.after(&custom, slotted_plan).outcome() {
+            Learned::Kept(slotted) => {
+                let learnt = Learnt::of(st, &reads, &slotted);
+                match prepared_plan(*slotted, crate::optimizer::prepared::budget(st)) {
+                    Ok(slotted) => Physical::Fixed(Arc::new(slotted), reads, Some(learnt)),
+                    Err(_) => Physical::Varies(None),
+                }
+            }
             Learned::Learning(learning) => Physical::Learning(learning),
-            Learned::Stopped => Physical::Varies,
+            Learned::Stopped => Physical::Varies(Some(Learnt::rows(st, &reads))),
         };
         *lock(&self.kept)? = physical;
-        Ok(Some((custom, None)))
+        Ok((custom, None))
     }
 }
 

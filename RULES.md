@@ -417,6 +417,8 @@ verification approach DO-178C expects (§8).
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
+| D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
+| D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 | D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
@@ -435,7 +437,9 @@ verification approach DO-178C expects (§8).
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
+| D601 | A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
+| D613 | A kept statement or body plans nothing again in a steady state: its instant is a slot, its probes take slot arithmetic, and a plan of index probes is learned again only once a probe outgrows it |
 | D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
 | D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
 | D622 | EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read |
@@ -2393,9 +2397,10 @@ TABLES.ENGINE, and moves by ALTER TABLE ... USING.
 The row store suits SQL's point reads, updates and cursors, and is the base
 other layouts build on. Each table is a B-link tree (Lehman and Yao, 1981)
 keyed by a logical 64-bit row id. Row ids are stable, so indexes never need
-rewriting. The newest version of a row is in the tree and older ones are in
-an undo store, which is on disk for a database in a directory, so a long
-reader holds disk and not memory. A table's large objects are a space of
+rewriting. An index entry carries a hint to its row's table leaf, so a
+lookup by key descends one tree (D500). The newest version of a row is in
+the tree and older ones are in an undo store, which is on disk for a
+database in a directory, so a long reader holds disk and not memory. A table's large objects are a space of
 immutable objects beside it, each owned by one row (D79).
 
 The column store suits scans of a few columns of many rows. New rows stay
@@ -7013,7 +7018,11 @@ cast to or from any type but character and binary, a type modifier,
 fields a query reaches into, or a collation. Its values are those its
 program made, so a program that changes its text form for the same
 value changes no stored value. A snapshot writes its extensions first,
-so the types they bring are known as its tables are read.
+so the types they bring are known as its tables are read. A type is
+kept per database, keyed by the number its plug-in host is given, so
+two databases in one process with the same extension each make their
+values through their own processes, under their own settings, and each
+counts its own calls.
 
 #### D224. A plug-in storage engine keeps the rows, and the coordinator keeps the transactions
 
@@ -8291,7 +8300,9 @@ A client that shuts its side after its requests, without Terminate, has
 each request that came whole answered, in order, then its connection
 closed and its session rolled back, a connection lost [ISO/IEC 9075:1992
 §20.1 GR2a]: requests are taken from the inbox before it is read again,
-so the end of the stream is met only once they are done. Over TLS the
+so the end of the stream is met only once they are done. The last of
+them runs with nothing sent ahead, so a watch that finds the stream
+ended while it runs takes the client for gone and cancels it (D335). Over TLS the
 end is close_notify; a socket closed without it is a failure, never an
 end, whether the runtime or the worker reads it (D230).
 
@@ -9668,9 +9679,13 @@ byte every LOOK_AGAIN, on a thread of the blocking pool, as the copy
 shares the socket's mode and may wait a moment. No byte to read, or an
 error, is the client gone, and what runs is cancelled as an operator's
 ending cancels it (D44). The connection then ends and its session rolls
-back. A byte waiting is a request sent ahead and tells nothing. So a
-client that sent one and closed, or closed TLS with its closing alert,
-is found only once the statement ends. A request answered within
+back. A byte waiting is a request sent ahead and tells nothing, and so
+is the end of the stream while the connection's inbox holds bytes the
+client sent ahead, already read from the socket (`Wire::note_ahead`), so
+a client that shut its side after its requests hears each of them
+answered but the last (D234), however long they run. So a client that
+sent one and closed, or closed TLS with its closing alert, is found only
+once the statement ends. A request answered within
 LOOK_AGAIN is never looked at, so the fast path costs nothing.
 
 #### D336. A prepared CALL's output dynamic parameters are its columns, sent as a row
@@ -12478,6 +12493,43 @@ itself, and warns if a row it dropped held a null in a set function's
 column. A grouping of none, or of COUNT(*) alone, tells its input's
 scans the filter, so a scan below it skips what the filter drops.
 
+#### D601. A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span
+
+A hash join whose one key is a vector of exact numbers, every built
+value whole and below 2^51 in magnitude, and whose span, the greatest
+less the least and one, is at most `DENSE_SPAN`, 4, times the rows it
+builds, builds a direct table (exec/table/join/direct.rs). Pedreira et
+al. (VLDB 2022, §4.5.2) index an array by a key of a small range, and
+Boncz, Zukowski and Nes (CIDR 2005, §4.1.2) join a key to a dense row
+number by its place. A probe gives its key's number as the bits of its
+nearest double, as a hashed table's probe would hash it (D369), and
+finds the rows at that number's place in the span. A number that is a
+fraction or lies outside the span finds none. Each row found is
+compared by its keys, as a hashed table's candidates are, so the rows
+a probe finds are the same either way.
+
+The rows are put by a counting sort of their keys, which keeps each
+key's rows in the order built, so the join's rows come in the order a
+hashed table gives (D368). Its places and rows take 20 bytes a row at
+most, below the 32 a hashed table's row is charged. On a key whose
+nulls match, as a join a subquery is unnested into matches its outer
+references by IS NOT DISTINCT FROM, a null is given as a not-a-number
+of no place in the span, and its rows are kept apart in the order
+built. A spilled join builds each partition's table of its own rows,
+direct if their keys are dense in their own span, so the test costs a
+pass of the partition's keys.
+
+A runtime filter of keys dense in their range, at most `DENSE_SPAN`
+times the rows built, is a bitmap of the range, a bit a value, in
+place of the key set and the Bloom filter. It finds a row's key
+exactly, with no false hit, in fewer bits a key than the Bloom
+filter's 8. The filter's hashes are always the hashed table's, never a
+direct table's numbers.
+
+EXECUTOR.DENSE_JOINS, ON by default, turns direct tables on and off for
+a session's statements, as to compare the two. Its rows are the same
+either way.
+
 #### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
 
 A kept plan (D45, D414, D422) was copied at each execution, its slots
@@ -12513,6 +12565,52 @@ again once a table it reads moves as its statistics would be gathered
 again for (D422). The places are found by an XXH3 hash of what the
 statements were prepared alike in (D460), compared whole, and a place no
 statement holds is gone.
+
+#### D613. A kept statement or body plans nothing again in a steady state: its instant is a slot, its probes take slot arithmetic, and a plan of index probes is learned again only once a probe outgrows it
+
+A procedure called again and again with new values should make no plan
+after its first calls. `physical::plannings()` counts the physical plans
+the thread makes, wherever they start, and an order entry test
+(`tpcc_plans.rs`) asserts that each of its five procedures makes none
+once warm. Five things kept them planning.
+
+A statement that reads its instant (CURRENT_TIMESTAMP and the others of
+ISO/IEC 9075-2:2023 §6.43) bound it as a constant, so its binding was
+held and bound and planned at each execution. A prepared statement's
+write, and an INSERT of one or of a kept body, now binds the instant as
+the slot past its `?`s (`Params::clock_slot`), which each execution
+fills with its statement's instant, the one value every read of it in the
+statement gives [ISO/IEC 9075:1992 §6.8 GR3]. A CAST of a date or a
+timestamp reads only the session's displacement, which a kept plan
+compares, so it holds no instant.
+
+A comparison of a column with a slot plus or minus a constant probes an
+index as one with a slot does. The probe carries its expression and
+evaluates it as it is placed, cast to the column's type as the plan made
+with values casts it. Arithmetic of slots and constants alone is judged
+by their types for whether it can raise (D373), so a sum that cannot
+overflow its type no longer keeps the comparison out of the index.
+
+The estimates of a learning run read a slot's value, so the plan made
+with slots and the plan made with values are costed alike and agree. A
+hash join whose keys the plan made with values has more of, keys that
+equal two columns to one value give, is of the same shape.
+
+A FOR statement's cursor of no `<cursor name>` can be named by no
+statement [ISO/IEC 9075-4:2006 draft §14.13 SR4]. When its body runs no
+statement and no CALL, no change can be made while it is open, so it is
+opened read only, from the plan its body keeps, not planned again for an
+update at each open. A body that writes opens it as before.
+
+A plan learned is learned again once a table it reads drifts (D610). A
+plan that reads every table only through index probes is not: it is
+learned again only once a probe's estimated rows per probe, its table's
+rows over the distinct values of the columns it fixes, grows past ten
+times its figure as the plan was learned (`prepared/plans/grown.rs`).
+Until then each drift moves the rows it is measured from. A statement or
+leaf whose plans varied tries to learn again once a table it reads
+drifts, so a plan that varied while its tables were small can be kept
+once they settle.
 
 #### D620. EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made
 
@@ -12707,6 +12805,86 @@ preserved side of an outer join keeps every row. With EXECUTOR.BATCHES
 or EXECUTOR.RUNTIME_FILTERS OFF, none is counted. So join orders put a
 selective build where its filter reaches the scan it drops rows of.
 
+#### D500. B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf
+
+A lookup by key took two descents from the root, one of the index's tree
+and one of the table's, each latching every level. Each node search
+parsed a slot, an offset and a length per probe and compared whole keys.
+
+A node now keeps once the bytes its keys share, and its slots hold beside
+each offset the key's head, the first two bytes of the rest of the key,
+compared as one integer. Sixteen heads sampled evenly from the slots sit
+in the header as hints and narrow a search before it starts. A node also
+names its tree, by the tree's meta page. This follows Müller, Benson and
+Leis, "B-Trees Are Back", 2025, sections 3 and 4 (`engine/tree/node.rs`).
+
+- A node built keeps what its first and last keys share, which every key
+  between them shares. The rightmost node of a level keeps one too.
+- A key inserted that does not begin with the prefix shortens it, and the
+  node is built again. Keys appended to the rightmost node do that as
+  they pass a byte's boundary, once in 256 keys at most.
+- A node filled by inserts keeps the prefix it was built with, none for
+  a new tree's first leaf. Before a full node splits, it is built again,
+  its prefix what its first and last keys now share, and the entry goes
+  in without a split if it then fits. A loaded tree counts each node's
+  keys past the prefix they share as it fills the node.
+- The paper's heads are four bytes. Two are kept, as they come after the
+  prefix, where they tell most keys of a node apart. A slot then costs two
+  bytes more than an offset alone, and an index entry four more for its
+  hint. A node whose keys share six bytes or more, as integer keys of a
+  few hundred in a node do, holds at least as many entries as before.
+- Heads order as keys do or are equal, so a search reads a key's tail
+  only where heads are equal.
+
+An index entry's value starts with a hint, the page of the table's leaf
+its row was in when the entry was written, as four bytes. The count of
+versions follows only when it is above one. A table's tree notes, per
+thread, the leaf each row is written into or scanned from, and an index
+entry written next for that row takes it (`engine/tree/hints.rs`). An
+index read notes each entry's hint the same way, and the table's read of
+the row tries that leaf before it descends (`engine/tree/near.rs`).
+
+A hint is a guess and is checked before it is trusted, so a stale one
+costs at most a few page reads and never a wrong answer.
+
+- The page is used only if a frame holds it now. A freed page has left
+  the pool, so no free page is read.
+- It must be a leaf of the table's tree, not deleted, whose first key is
+  at or below the key. A leaf of the tree holds no key below its range,
+  so it is the key's leaf if its range reaches the key.
+- Past its high key, the key moved right in a split, and the read follows
+  up to four right links (Lehman and Yao 1981, section 4). Otherwise it
+  descends.
+- A hint is never repaired by a write. Row ids come in blocks per thread,
+  so a table's leaves fill once and seldom split afterwards.
+
+The limits of an index key and of a tree's entry shrink by the header's
+growth and the head beside each slot (CONFORMANCE.md, Limits). Formats
+stay at version 1, changed in place.
+
+#### D501. An index fetch checks a row's key in place, and a search decodes a key once for its entries
+
+An index holds the entries of versions a reader may not see (D34). So a
+row found by an entry is kept only if the version the reader sees has the
+entry's key. That check made a key of the row, copying each key column,
+and compared it with the entry's decoded key. Each search also copied its
+probe and the key's types, and decoded every entry's key, even where many
+entries share one.
+
+The check is unchanged in what it keeps, and cheaper (`exec/entries.rs`,
+`index/blink.rs`).
+
+- Of a key of columns with no collation, expression or projection, each
+  value of the entry's key is compared with the row's column in place. A
+  key made of the row would hold exactly those values, so the answer is
+  the same.
+- A search keeps the last key it decoded and its bytes. An entry of the
+  same bytes takes that key, as decoding the same bytes gives the same
+  key. Entries of a key not unique, read in order, are decoded once.
+- The probe is copied only by a search whose range is not exact, the one
+  case that checks entries against it. The key's types are shared by
+  every search of the index.
+
 #### D655. A table read's filter is estimated to keep at least a row of a read of one or more
 
 The estimator's cards keep at least a row of an input that has one
@@ -12734,10 +12912,11 @@ a table of n rows keeps n times the guess, at least a row.
 A row store table's statistics live in memory. A table opened had none
 until a query first planned with it (D35), so the first statements of a
 server started on a loaded database planned blind, and a plan made so of
-TPC-H's query 21 ran many times longer than one with statistics. A table opened that holds rows is now due as it opens, and the
-maintenance the database asks for as it opens (`due_at_open`) gathers
-its statistics in the background, a sampled pass of a large table, so
-they are there soon after the server starts. Planning still never waits for them. An
+TPC-H's query 21 ran many times longer than one with statistics. A
+table opened that holds rows is now due as it opens, and the maintenance
+the database asks for as it opens (`due_at_open`) gathers its statistics
+in the background, a sampled pass of a large table, so they are there
+soon after the server starts. Planning still never waits for them. An
 empty table opened is due when first asked for, as before.
 
 ## 2. Project layout
