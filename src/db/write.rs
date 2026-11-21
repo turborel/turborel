@@ -432,6 +432,8 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         return Ok(None);
     }
     let columns = set_columns(&w);
+    // [DESIGN] RULES.md D452: increments reserved, the rows left unwritten.
+    let escrow = super::escrow::escrow_of(st, tx, &w, effects);
     let hosted = Hosted::in_db(effects.host, cx, &w.db(st));
     let runner = hosted.runner();
     let mut leftovers = portion::Leftovers::of(st, &w)?;
@@ -441,7 +443,13 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     // A row another transaction changed is written in the version it
     // committed, if it is still one to change, its values computed from it.
     let mut again: HashMap<RowId, Option<Row>> = HashMap::new();
-    changes.visit(&mut |(id, _, new)| {
+    changes.visit(&mut |(id, seen, new)| {
+        if let Some(guarded) = escrow
+            && let Some(deltas) = super::escrow::deltas(&w, (seen, new), &hosted)?
+            && st.reserve_row(tx, (&w.bound.table, *id), (seen, &deltas, guarded))?
+        {
+            return Ok(());
+        }
         // [EXTENSION] a row its key moves to another partition (RULES.md D155).
         if st.moves((&w.bound.named, &w.bound.table), new) {
             return super::partitions::move_row(cx, (&w, runner), (*id, new), (effects, &mut again));

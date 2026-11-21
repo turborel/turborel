@@ -369,8 +369,8 @@ impl Session {
         let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
         check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
         let (optimized, _, physical) = plan_heard(cx.st, bound.plan, Some(cx.tx.stop.warnings()));
-        for t in optimized.tables() {
-            cx.st.read_lock(cx.tx, &t)?;
+        for (t, needed) in optimized.columns_read() {
+            cx.st.read_lock_of(cx.tx, (&t, needed))?;
         }
         let rows: Vec<Row> = execute(physical, cx.st, cx.tx.id).take(CARDINALITY_PROBE_ROWS).collect::<Result<_>>()?;
         match rows.as_slice() {

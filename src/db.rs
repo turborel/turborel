@@ -84,6 +84,7 @@ mod direct;
 mod domains;
 mod drop;
 mod embedding;
+mod escrow;
 pub(crate) use embedding::model_named;
 pub(crate) mod dynamic;
 mod execute;
@@ -489,8 +490,10 @@ impl Session {
 
     fn commit_in(&self, st: &Arc<State>) -> Result<()> {
         let open = self.inner.borrow().tx.clone();
+        // [DESIGN] RULES.md D452: its increments reserved applied first, so
+        // its constraints are checked of the rows it leaves.
         if let Some(tx) = open
-            && let Err(e) = self.check_at_commit(st, &tx)
+            && let Err(e) = st.fold(&tx).and_then(|()| self.check_at_commit(st, &tx))
         {
             // [ISO/IEC 9075:1992 §14.3 GR5a] its changes canceled.
             self.rollback_in(st)?;

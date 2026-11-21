@@ -88,6 +88,7 @@ mod capabilities;
 mod clock;
 mod durable;
 mod end;
+pub(crate) mod escrow;
 mod followed;
 mod kept;
 mod lobs;
@@ -556,6 +557,11 @@ impl Txn {
     fn release(&self) {
         let held = mem::take(&mut lock_builtin(&self.state).held);
         for table in held {
+            // [DESIGN] RULES.md D452: its increments reserved end with it,
+            // before the writers waiting for them go on.
+            if table.escrow.any() {
+                table.escrow.end(self.id);
+            }
             table.release(self.id);
         }
         // [DESIGN] RULES.md D442: the waiters for its rows go on, in turn.

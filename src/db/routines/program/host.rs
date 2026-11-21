@@ -134,8 +134,8 @@ impl Host for SessionHost<'_, '_> {
 
     fn rows(&self, leaf: &Leaf, frame: &Params, limit: Option<usize>) -> Result<Vec<Row>> {
         self.with(|cx| {
-            for t in leaf.query.plan.tables() {
-                cx.st.read_lock(cx.tx, &t)?;
+            for (t, needed) in leaf.query.plan.columns_read() {
+                cx.st.read_lock_of(cx.tx, (&t, needed))?;
             }
             // A runner of its own, so no rows kept are read after a
             // statement changed them.
