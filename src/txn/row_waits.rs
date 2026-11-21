@@ -166,7 +166,10 @@ impl Txn {
             waits_for.insert(self.id, vec![writer]);
         }
         let began = Instant::now();
+        // [DESIGN] RULES.md D520: shown waiting, and for whom.
+        self.stop.activity().waits_for_lock(what.to_string(), writer);
         let waited = self.queue_on((&ending, ticket), began).map_err(|e| if e.code == Code::Conflict { refused(e.msg.clone()) } else { e });
+        self.stop.activity().woke();
         lock(&self.shared.waits_for)?.remove(&self.id);
         // [DESIGN] RULES.md D240: the time waited, for the client.
         self.stop.served().waited(began.elapsed());

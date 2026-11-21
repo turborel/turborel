@@ -129,6 +129,9 @@ behind it, and each can be replaced or added to.
 - [Backups](doc/operator/10-backups.md), full and incremental, taken
   online by BACKUP DATABASE, verified and restored offline, and recovery
   to a point in time through an archive of the log, to pluggable targets.
+- [Monitoring](doc/operator/11-monitoring.md): each connection's running
+  statement and what it waits on, statistics of every statement run, and
+  each table's size and last change and each index's searches.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.

@@ -1,10 +1,21 @@
-//! \[DESIGN\] What an index is asked for (`Probe`), and whether a key
-//! answers it, by the [X3.135-1986 §5.11] comparison rules, as storage
-//! checks entries under its locks.
+//! \[DESIGN\] What an index is asked for (`Probe`), in which order
+//! (`KeyOrder`), and whether a key answers it, by the [X3.135-1986 §5.11]
+//! comparison rules, as storage checks entries under its locks.
 
 use super::xml;
 use crate::functions::ScalarRef;
 use crate::value::{CompOp, Value, compare};
+
+/// \[DESIGN\] The order an ordered method's search gives its entries in
+/// (`IndexMethod::ordered`); a method that is not ordered gives them in
+/// its own, whichever is asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOrder {
+    /// Ascending keys, by the [X3.135-1986 §5.11] comparison rules.
+    Ascending,
+    /// Descending keys.
+    Descending,
+}
 
 /// \[EXTENSION\] A function call used to find rows through an index, such
 /// as `f(column, ?)` (RULES.md D34). The function must opt in through

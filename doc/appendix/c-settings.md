@@ -124,6 +124,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | SPILL.PARTITION_DEPTH | 8 | INTEGER FROM 0 TO 64 | at once | *session* |
 | SQL.FUNCTION_CALLS | ON | ONE OF ON, OFF | at once | *session* |
 | STATEMENT.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| STATEMENTS.KEPT | 1000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | STORAGE.CHECKSUM | XXH3_64 | A HASH FUNCTION | when the database is made |  |
 | STORAGE.CHECKSUM_KEY | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once |  |
 | STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
@@ -238,6 +239,7 @@ Each in a sentence:
 - **SPILL.PARTITION_DEPTH**: The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.
 - **SQL.FUNCTION_CALLS**: Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF. A definition, as a CHECK, is checked as it is written, and keeps its calls whatever the setting is later.
 - **STATEMENT.TIMEOUT_MS**: The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.
+- **STATEMENTS.KEPT**: The most statements, by normalized text and user, INFORMATION_SCHEMA.STATEMENT_STATISTICS keeps, each session's and those of sessions ended alike, past which a new one takes the place of the one called least; 0 keeps none, and setting it to 0 forgets them all.
 - **STORAGE.CHECKSUM**: The hash function every file is checksummed with.
 - **STORAGE.CHECKSUM_KEY**: The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.
 - **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through from now on, by commas, in order; none if empty. What was written through others before is read through them while they are registered, and written again through these by the job turborel-rekey.

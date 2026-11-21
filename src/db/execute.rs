@@ -10,7 +10,7 @@ use super::integrity::Effects;
 use super::prepared::{Keeping, Plans};
 use super::triggers::{Event, instead_for};
 use super::write::{Written, delete_rows, update_rows};
-use super::{Call, Completion, Session, StatementContext, slow};
+use super::{Call, Completion, Session, StatementContext};
 use crate::ast::{
     AlterAction, DropObject, IndexStatement, PrivilegeDefinition, PrivilegeObject, RevokeStatement, SchemaStatement, SearchCondition,
     SetClause, SqlStatement, TableName, TableStorage,
@@ -55,6 +55,15 @@ impl Session {
         self.execute(sql, &mut Params::new())
     }
 
+    /// `call`'s work timed as that of `sql`, whose text `plans` keeps if
+    /// it is prepared, else the session's activity (`db/slow.rs`).
+    fn time_call<'a>(&self, call: &mut Call<'a>, sql: &'a str, plans: Option<&Plans>) {
+        let direct = plans.is_none().then(|| self.stop.activity().text_of(sql));
+        if let Some(statement) = plans.map(|p| p.text(sql)).or(direct.as_ref()) {
+            call.timed = self.timed(call.state(), || sql, statement);
+        }
+    }
+
     /// `execute`, of a statement prepared, if `prepared` names EXECUTE or
     /// EXECUTE IMMEDIATE, which runs it (`execute_prepared`), with the
     /// plans it keeps: the diagnostics area then names that, and the
@@ -63,7 +72,7 @@ impl Session {
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(Command, &Plans)>) -> Result<Completion> {
         self.wait_if_hinted(sql)?;
         let mut call = self.enter()?;
-        call.timed = slow::Timed::of(call.state(), || sql, (&self.auth(), &self.stop));
+        self.time_call(&mut call, sql, prepared.map(|(_, plans)| plans));
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
         let parsed = Self::parsed(&call, sql, params, keeping.as_ref()).and_then(|s| super::embedding::blob_given(s, params));
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the

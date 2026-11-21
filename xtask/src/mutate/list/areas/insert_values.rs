@@ -1,12 +1,13 @@
 //! The mutations of an INSERT's rows (RULES.md R-TEST-9, D390, D391): a
 //! `?` typed by another row's literal, not its object column, and a `?`
 //! cut by its cast without the warning, bound as a constant, as a CALL's
-//! argument is, or filled in a kept plan's slot.
+//! argument is, or filled in a kept plan's slot, or warned only by a
+//! cursor that reads its rows at OPEN.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of an INSERT's rows.
-pub const INSERT_VALUES: [Mutation; 3] = [
+pub const INSERT_VALUES: [Mutation; 4] = [
     Mutation {
         name: "insert-parameter-literal-typed",
         package: Package::Core,
@@ -38,6 +39,16 @@ pub const INSERT_VALUES: [Mutation; 3] = [
         original: "            Ok((v, warning)) => warned(v, warning),",
         replacement: "            Ok((v, warning)) => warned(v, warning.filter(|_| false)),",
         integration: &["insert_values::a_parameter_cut_by_its_cast_is_warned_of_20_11"],
+        unit: &[],
+    },
+    Mutation {
+        name: "cursor-warned-streamed",
+        package: Package::Core,
+        breaks: "a cursor whose plan holds a `?` its cast cut reads its rows as fetched, after its completion, so 01004 is lost [§3.3.4.1]",
+        file: "src/logical/expr.rs",
+        original: "            | Expr::Warned(..) => true,",
+        replacement: "            | Expr::Warned(..) => !matches!(self, Expr::Warned(..)),",
+        integration: &["warnings::a_cursor_compared_with_a_parameter_cut_warns_with_or_without_order_by"],
         unit: &[],
     },
 ];
