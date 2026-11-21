@@ -82,12 +82,20 @@ impl BufferPool {
         // does not hold, may evict a page owed as soon as it is marked.
         *self.owed.plan.write().unwrap_or_else(PoisonError::into_inner) = Some((file, Arc::clone(&capturing)));
         let mut capture = Capture::default();
-        for (index, frame) in self.frames.iter().enumerate() {
+        // The frames made dirty (`dirty.rs`), not every frame: a page owed
+        // leaves the list, as it is clean, and the walk takes it; one left
+        // dirty is listed again for the flush after.
+        let listed = self.dirtied_taken();
+        for (at, &index) in listed.iter().enumerate() {
+            let Ok(frame) = self.frame(index) else { continue };
+            frame.listed.store(false, Ordering::SeqCst);
             frame.settled();
             let key = match self.pin_dirty(frame) {
                 Ok(Some(key)) => key,
                 Ok(None) => continue,
                 Err(e) => {
+                    self.made_dirty(frame);
+                    self.dirtied_put_back(listed.iter().skip(at.saturating_add(1)));
                     self.abandon(capture);
                     return Err(e);
                 }
@@ -97,8 +105,10 @@ impl BufferPool {
             let latch = frame.content.read().unwrap_or_else(PoisonError::into_inner);
             if key.file == file && pager.deferrable(PageId(key.id), latch.len(), &capturing) {
                 frame.owed.store(true, Ordering::Release);
-                frame.dirty.store(false, Ordering::Release);
+                frame.dirty.store(false, Ordering::SeqCst);
                 capture.pages.push((index, key));
+            } else {
+                self.made_dirty(frame);
             }
             drop((latch, pin));
         }
@@ -145,7 +155,7 @@ impl BufferPool {
             let Some(frame) = self.frames.get(index) else { continue };
             let _latch = frame.content.read().unwrap_or_else(PoisonError::into_inner);
             if frame.key() == Some(key) && frame.owed.swap(false, Ordering::AcqRel) {
-                frame.dirty.store(true, Ordering::Release);
+                self.made_dirty(frame);
             }
         }
         self.landed();
@@ -172,7 +182,7 @@ impl BufferPool {
         frame.owed.store(false, Ordering::Release);
         let captured = pager.captured(PageId(key.id), &latch, capturing);
         if captured.is_err() {
-            frame.dirty.store(true, Ordering::Release);
+            self.made_dirty(frame);
         }
         captured
     }
@@ -191,7 +201,7 @@ impl BufferPool {
         if frame.owed.load(Ordering::Acquire) {
             self.owed_copy(frame, &content);
         }
-        frame.dirty.store(true, Ordering::Release);
+        self.dirty_latched(frame);
         PageMut { content, _pin: pin }
     }
 

@@ -532,6 +532,10 @@ impl TableStorage for RowTable {
         self.newest_of(tx, id)
     }
 
+    fn newest_writer(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        self.writer_of(tx, id)
+    }
+
     /// Statistics due are gathered too.
     fn uncollected(&self) -> bool {
         self.awaits_collection()
@@ -551,12 +555,15 @@ impl TableStorage for RowTable {
     /// pass or `now` (`rows/stats.rs`), zones summed up as the next's,
     /// freezing as the next's: freezing as this one's too if no zone could
     /// be summed up, as one of a commit too recent waits for the horizon
-    /// (`rows/zones.rs`).
+    /// (`rows/zones.rs`). Zones resting, or waiting, are not summed up as
+    /// another table's work or an index's calls this, unless `now`
+    /// (RULES.md D772).
     fn maintain(&self, horizon: Timestamp, now: bool) -> Result<bool> {
         if self.gather_if_due(now) {
             return Ok(true);
         }
-        if self.zones.due() && self.sum_zones(horizon)? {
+        let summing = if now { self.zones.due() } else { self.zones.wanted() };
+        if summing && self.sum_zones(horizon, now)? {
             return Ok(true);
         }
         self.settle_groups(horizon)?;

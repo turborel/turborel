@@ -1,18 +1,20 @@
 //! The mutations of a row store's zone maintenance (RULES.md R-TEST-9):
 //! a write staling its zone only when a bound may move inward, a zone settled
-//! from its rows' newest versions, and the rest after a pass.
+//! from its rows' newest versions, the rest after a pass, a zone summed up
+//! in its loose columns alone from its rows' newest versions once no reader
+//! reads an older one, and hot zones waiting longer.
 
 use super::{Mutation, Package};
 
 /// The mutations of zone maintenance, in the order they run.
-pub const ZONES: [Mutation; 6] = [
+pub const ZONES: [Mutation; 11] = [
     Mutation {
         name: "zone-stale-inside",
         package: Package::Core,
         breaks: "zone maintenance: a value changed strictly inside its zone's bounds stales the zone, summed up again for nothing",
-        file: "src/engine/rows/zones.rs",
-        original: "            !same && !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now))",
-        replacement: "            !same",
+        file: "src/engine/rows/zones/loose.rs",
+        original: "            zone.loose & bit(place) == 0 && !same && !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now))",
+        replacement: "            zone.loose & bit(place) == 0 && !same",
         integration: &[],
         unit: &["engine::rows::zones::tests::a_write_inside_its_zones_bounds_stales_nothing"],
     },
@@ -20,9 +22,9 @@ pub const ZONES: [Mutation; 6] = [
         name: "zone-stale-kept",
         package: Package::Core,
         breaks: "zone maintenance: a write keeping a value on its zone's bound stales the zone, summed up again for nothing",
-        file: "src/engine/rows/zones.rs",
-        original: "            !same && !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now))",
-        replacement: "            !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now))",
+        file: "src/engine/rows/zones/loose.rs",
+        original: "            zone.loose & bit(place) == 0 && !same && !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now))",
+        replacement: "            zone.loose & bit(place) == 0 && !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now))",
         integration: &[],
         unit: &["engine::rows::zones::tests::a_write_inside_its_zones_bounds_stales_nothing"],
     },
@@ -30,7 +32,7 @@ pub const ZONES: [Mutation; 6] = [
         name: "zone-stale-grown",
         package: Package::Core,
         breaks: "zone maintenance: a value on the greatest bound grown past it stales the zone, so a running total keeps it summed up again",
-        file: "src/engine/rows/zones.rs",
+        file: "src/engine/rows/zones/loose.rs",
         original: "compare(was, greatest) == Some(Ordering::Less) || moved == Some(Ordering::Greater);",
         replacement: "compare(was, greatest) == Some(Ordering::Less);",
         integration: &[],
@@ -40,7 +42,7 @@ pub const ZONES: [Mutation; 6] = [
         name: "zone-unstale-inward",
         package: Package::Core,
         breaks: "zone maintenance: a value on the least bound moved inside it leaves the zone not stale, wider than its rows for good",
-        file: "src/engine/rows/zones.rs",
+        file: "src/engine/rows/zones/loose.rs",
         original: "compare(least, was) == Some(Ordering::Less) || moved == Some(Ordering::Less);",
         replacement: "compare(least, was) == Some(Ordering::Less) || moved.is_some();",
         integration: &[],
@@ -65,5 +67,58 @@ pub const ZONES: [Mutation; 6] = [
         replacement: "",
         integration: &[],
         unit: &["engine::rows::zones::rested::zones_rest_after_a_pass_over_every_zone_due"],
+    },
+    Mutation {
+        name: "zone-loose-all-replaced",
+        package: Package::Core,
+        breaks: "zone maintenance: a sum up of a zone's loose columns replaces every column's bounds, those it did not read emptied, so a scan skips rows it must read",
+        file: "src/engine/rows/zones/loose.rs",
+        original: "        if (0..columns).all(|place| loose & bit(place) != 0) {",
+        replacement: "        if columns > 0 {",
+        integration: &[],
+        unit: &["engine::rows::zones::costs::a_zone_is_summed_up_in_its_loose_columns_alone"],
+    },
+    Mutation {
+        name: "zone-summed-recent",
+        package: Package::Core,
+        breaks: "zone maintenance: a zone is narrowed to its rows' newest versions while a reader may still read an older one, so its scan skips the older value",
+        file: "src/engine/rows/zones/summed.rs",
+        original: "            if seen == Seen::Recent {\n                return Ok(None);\n            }\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::rows::zones::tests::a_zone_is_summed_up_with_no_older_version_read"],
+    },
+    Mutation {
+        name: "zone-hot-unwaited",
+        package: Package::Core,
+        breaks: "zone maintenance: a hot zone never waits longer, so a zone written without pause is summed up at every pass",
+        file: "src/engine/rows/zones/summed.rs",
+        original: "        self.wait = if hot { self.wait.saturating_mul(2).clamp(nanos(REST), nanos(MOST_WAIT)) } else { 0 };",
+        replacement: "        self.wait = 0;",
+        integration: &[],
+        unit: &[
+            "engine::rows::zones::costs::a_hot_zone_waits_twice_as_long_each_time",
+            "engine::rows::zones::costs::a_hot_table_is_not_summed_up_at_every_pass",
+        ],
+    },
+    Mutation {
+        name: "zone-wait-ignored",
+        package: Package::Core,
+        breaks: "zone maintenance: a zone still waiting is summed up, so hot zones are summed up at every pass",
+        file: "src/engine/rows/zones/summed.rs",
+        original: "            let ready = clock.is_none_or(|clock| zone.ready(clock));",
+        replacement: "            let ready = clock.is_none_or(|_| true);",
+        integration: &[],
+        unit: &["engine::rows::zones::costs::a_hot_table_is_not_summed_up_at_every_pass"],
+    },
+    Mutation {
+        name: "zone-rest-bypassed",
+        package: Package::Core,
+        breaks: "zone maintenance: a table's maintenance called for other work sums up its zones while they rest",
+        file: "src/engine/rows.rs",
+        original: "        let summing = if now { self.zones.due() } else { self.zones.wanted() };",
+        replacement: "        let summing = self.zones.due();",
+        integration: &[],
+        unit: &["engine::rows::zones::costs::resting_zones_are_summed_up_only_now"],
     },
 ];

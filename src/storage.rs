@@ -132,8 +132,7 @@ pub trait TableStorage: Send + Sync {
     /// # Errors
     ///
     /// As `get`.
-    fn get_columns(&self, tx: TxId, id: RowId, columns: &[usize]) -> Result<Option<Row>> {
-        let _ = columns;
+    fn get_columns(&self, tx: TxId, id: RowId, _columns: &[usize]) -> Result<Option<Row>> {
         self.get(tx, id)
     }
     /// \[DESIGN\] As `get`, or `get_columns` of `columns` if named, `near`
@@ -142,8 +141,7 @@ pub trait TableStorage: Send + Sync {
     /// # Errors
     ///
     /// As `get`.
-    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
-        let _ = near;
+    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, _near: &mut Near) -> Result<Option<Row>> {
         columns.map_or_else(|| self.get(tx, id), |columns| self.get_columns(tx, id, columns))
     }
     /// Every live row, once each, with its id. The rows have every column at its position, but only those in `columns` need hold their
@@ -168,8 +166,7 @@ pub trait TableStorage: Send + Sync {
     }
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, split into morsels of about `rows` rows each, for workers to
     /// read at once (RULES.md D290); none if it cannot split them, or failed to, its scan then raising what failed. Default: none.
-    fn split(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, rows: usize) -> Option<Arc<dyn Split>> {
-        let _ = (tx, columns, conditions, rows);
+    fn split(self: Arc<Self>, _tx: TxId, _columns: &[usize], _conditions: Option<&Conjunction>, _rows: usize) -> Option<Arc<dyn Split>> {
         None
     }
     /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered` gives its rows, any first of them (RULES.md D31). Default: none.
@@ -182,12 +179,11 @@ pub trait TableStorage: Send + Sync {
     /// out any after them, as FETCH FIRST asks (`exec/limit.rs`). Default: none.
     fn scan_ordered(
         self: Arc<Self>,
-        tx: TxId,
-        columns: &[usize],
-        (keys, backward, most): ScanOrder<'_>,
-        conditions: Option<&Conjunction>,
+        _tx: TxId,
+        _columns: &[usize],
+        _order: ScanOrder<'_>,
+        _conditions: Option<&Conjunction>,
     ) -> Option<Rows> {
-        let _ = (tx, columns, keys, backward, most, conditions);
         None
     }
     /// \[DESIGN\] The rows `scan_ordered` gives, by batch, of `columns`;
@@ -257,23 +253,27 @@ pub trait TableStorage: Send + Sync {
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
         Ok(Newest::of(self.get(tx, id)?))
     }
+    /// \[DESIGN\] Of `newest`, the writer and the stamp alone, read with no older version (RULES.md D747). Default: `newest`'s.
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    fn newest_writer(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        self.newest(tx, id).map(|newest| (newest.writer, newest.stamp))
+    }
 
     /// \[EXTENSION\] As `update` with `row`, or `delete` with none, of the
-    /// newest committed version of row `id`, whose stamp `newest` gave as
-    /// `seen`, though it committed after `tx`'s snapshot: how a statement
-    /// reading at a snapshot of its own [ISO/IEC 9075:1992 §4.28] changes a
-    /// row another transaction changed meanwhile, its search condition
-    /// checked by the caller against that version (RULES.md D29). Default:
-    /// `update` or `delete`, for an engine whose isolation is the
-    /// coordinator's, where no version is newer than the transaction sees;
-    /// an engine declaring `Concurrency::Engine` implements it.
+    /// newest committed version of row `id`, whose stamp `newest` gave as `seen`, though it committed after `tx`'s snapshot: how a
+    /// statement reading at a snapshot of its own [ISO/IEC 9075:1992 §4.28] changes a row another transaction changed meanwhile, its
+    /// search condition checked by the caller against that version (RULES.md D29). Default: `update` or `delete`, for an engine whose
+    /// isolation is the coordinator's, where no version is newer than the transaction sees; an engine declaring `Concurrency::Engine`
+    /// implements it.
     ///
     /// # Errors
     ///
     /// SQLCODE -911 if another open transaction changed the row, or its
     /// newest committed version's stamp is not `seen`; as `update`.
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
-        let _ = seen;
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, _seen: Timestamp) -> Result<()> {
         match row {
             Some(row) => self.update(tx, id, row),
             None => self.delete(tx, id),

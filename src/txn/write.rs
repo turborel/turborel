@@ -14,8 +14,21 @@ use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::log::record::{Change, insert_record};
 use crate::storage::{Row, RowId};
-use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
+use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
+
+/// What a writer refused does next (RULES.md D442, D747).
+enum Next {
+    /// Waits for the open transaction that changed the row.
+    Wait(TxId),
+    /// Tries its write again.
+    Again,
+    /// Is refused: the row changed since its snapshot, and it rechecks nothing.
+    Refused,
+    /// Rechecks its search condition over the row's newest committed
+    /// version, of this stamp, none if deleted.
+    Over(Timestamp, Option<Row>),
+}
 
 impl State {
     /// The indexes `table`'s rows have entries in: its own, each entry of
@@ -208,44 +221,74 @@ impl State {
                 Err(e) => e,
             };
             tries = tries.saturating_add(1);
-            let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
-            if !waits || self.capabilities(table)?.concurrency == Concurrency::Coordinator {
+            if !self.waits(tx, table, &e, tries)? {
                 return Err(self.refused(tx, table, id, e));
             }
-            let newest = self.storage_of(table)?.newest(tx.id, id)?;
-            if let Some(writer) = newest.writer {
-                drop(turn.take());
-                turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
-                seen = None;
-                continue;
+            let check = recheck.as_mut().filter(|_| !tx.one_snapshot());
+            match self.next_after(tx, (table, id), check.is_some())? {
+                Next::Wait(writer) => {
+                    drop(turn.take());
+                    turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
+                    seen = None;
+                }
+                Next::Again => seen = None,
+                Next::Refused => return Err(e),
+                Next::Over(_, None) => return Ok(None),
+                Next::Over(committed, Some(row)) => {
+                    let Some(check) = check else { return Err(e) };
+                    write = match check(&row)? {
+                        Again::Update(row) => Write::Update(row),
+                        Again::Delete => Write::Delete,
+                        Again::Skip => return Ok(None),
+                    };
+                    seen = Some((committed, row));
+                }
             }
-            // Its writer rolled back as this one looked.
-            if newest.stamp <= tx.snapshot() {
-                seen = None;
-                continue;
-            }
-            // [§4.28] Committed since its one snapshot: what it read changed.
-            // [DESIGN] RULES.md D441: whether rechecked or refused, what it
-            // tells rests on that commit.
-            tx.depend(newest.stamp);
-            let Some(check) = recheck.as_mut().filter(|_| !tx.one_snapshot()) else { return Err(e) };
-            let Some(row) = newest.row else { return Ok(None) };
-            write = match check(&row)? {
-                Again::Update(row) => Write::Update(row),
-                Again::Delete => Write::Delete,
-                Again::Skip => return Ok(None),
-            };
-            seen = Some((newest.stamp, row));
         }
+    }
+
+    /// Whether a writer refused by `e`, after `tries` refusals, waits and
+    /// tries the row of `table` again.
+    fn waits(&self, tx: &Txn, table: &QualifiedName, e: &SqlError, tries: usize) -> Result<bool> {
+        let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
+        Ok(waits && self.capabilities(table)?.concurrency != Concurrency::Coordinator)
+    }
+
+    /// What a writer refused at row `id` of `table` does next, its writer
+    /// and stamp read with no older version (RULES.md D747); the row read
+    /// only if it `rechecks`.
+    fn next_after(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), rechecks: bool) -> Result<Next> {
+        let storage = self.storage_of(table)?;
+        let (writer, committed) = storage.newest_writer(tx.id, id)?;
+        if let Some(writer) = writer {
+            return Ok(Next::Wait(writer));
+        }
+        // Its writer rolled back as this one looked.
+        if committed <= tx.snapshot() {
+            return Ok(Next::Again);
+        }
+        // [§4.28] Committed since its one snapshot: what it read changed.
+        // [DESIGN] RULES.md D441: whether rechecked or refused, what it
+        // tells rests on that commit.
+        tx.depend(committed);
+        if !rechecks {
+            return Ok(Next::Refused);
+        }
+        let newest = storage.newest(tx.id, id)?;
+        // Changed again as this one looked: the write is tried again.
+        if newest.writer.is_some() || newest.stamp != committed {
+            return Ok(Next::Again);
+        }
+        Ok(Next::Over(committed, newest.row))
     }
 
     /// `e`, the refusal of a write of row `id` of `table`: a conflict is
     /// told once the commit it met, if one did, is durable (RULES.md D441).
     fn refused(&self, tx: &Txn, table: &QualifiedName, id: RowId, e: SqlError) -> SqlError {
         if e.code == Code::Conflict
-            && let Ok(newest) = self.storage_of(table).and_then(|storage| storage.newest(tx.id, id))
+            && let Ok((_, stamp)) = self.storage_of(table).and_then(|storage| storage.newest_writer(tx.id, id))
         {
-            tx.depend(newest.stamp);
+            tx.depend(stamp);
         }
         e
     }

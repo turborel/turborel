@@ -20,6 +20,7 @@ mod declared_types;
 // more modules.
 #[path = "decode.rs"]
 mod decode;
+mod dirty_frames;
 mod distinct_aggregates;
 mod expr;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
@@ -59,7 +60,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 24] {
+pub fn core() -> [&'static [Mutation]; 25] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -85,6 +86,7 @@ pub fn core() -> [&'static [Mutation]; 24] {
         &steady::STEADY_PLANS,
         &alloc::ALLOC,
         &commit_path::COMMIT_PATH,
+        &dirty_frames::DIRTY_FRAMES,
     ]
 }
 
