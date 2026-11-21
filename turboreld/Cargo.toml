@@ -17,6 +17,9 @@ turborel = { version = "0.0.0", path = ".." }
 turborel-server = { version = "0.0.0", path = "../server" }
 # Compression for the database's files and tables (RULES.md D48).
 turborel-lz4 = { version = "0.0.0", path = "../lz4" }
+# The kernels on vector instructions, XXH3's loops among them (RULES.md
+# D460).
+turborel-simd = { version = "0.0.0", path = "../simd" }
 # Encryption for the database's files and tables, its keys from a
 # directory the operator keeps, and cryptographic checksums (RULES.md D26,
 # D48).

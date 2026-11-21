@@ -188,13 +188,13 @@ fn malformed_pages_are_refused() {
 }
 
 /// Verifies: [DESIGN] CONFORMANCE.md, Limits: the longest entry a hash
-/// table holds is 8,116 bytes at 8 KiB pages and 65,460 at 64 KiB, with
-/// CRC-32C page checksums.
+/// table holds is 8,112 bytes at 8 KiB pages and 65,456 at 64 KiB, with
+/// the default XXH3-64 page checksums.
 #[test]
 fn the_longest_entry_is_as_documented() {
-    for (page_size, most) in [(8_192_u32, 8_116_usize), (65_536, 65_460)] {
+    for (page_size, most) in [(8_192_u32, 8_112_usize), (65_536, 65_456)] {
         let pager =
-            Pager::create(&MemoryFileSystem::new(), Path::new("/t"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), page_size)
+            Pager::create(&MemoryFileSystem::new(), Path::new("/t"), Arc::new(crate::hash::xxhash::Xxh3Hash), Pipeline::none(), page_size)
                 .unwrap();
         let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
         let file = pool.add_pager(Arc::new(pager));

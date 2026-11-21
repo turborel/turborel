@@ -26,6 +26,13 @@
 //! (RULES.md D407); one whose changes outnumber the rows of the last pass,
 //! and REFRESH_ROWS more, is not made to wait. One thread gathers at a
 //! time; another finding them due meanwhile leaves them.
+//!
+//! A sampled pass tells the builder which run of row ids each row is of,
+//! so a value seen in one run alone counts as seen once (RULES.md D381).
+//! Each pass notes, of each column, whether its greatest value rose past
+//! the last pass's, so a column growing with insertion is known; and the
+//! planner reads the statistics told how many rows were written since
+//! and how many the table holds now (`stats/since.rs`).
 
 use std::ops::Bound;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -41,9 +48,11 @@ use crate::catalog::TableDesc;
 use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::stats::parts::count;
-use crate::stats::{StatsBuilder, TableStats};
+use crate::stats::since::{Changed, GROWING};
+use crate::stats::{Statistics, StatsBuilder, TableStats};
 use crate::sync::{read, write};
 use crate::txn::{NO_TRANSACTION, TxId};
+use crate::value::compare;
 
 /// \[DESIGN\] The rows a pass over a large table reads, about: three times
 /// the values a column's sample keeps (`parts::SAMPLE_VALUES`), so the
@@ -61,12 +70,9 @@ const PASS_SPACING: u32 = 50;
 
 /// Whether a sampled pass of a table of `rows` rows reads the run of row
 /// ids `chunk`: with a chance of `SAMPLED_ROWS` in `rows`, by a hash of
-/// the run (SplitMix64's finalizer), the same each time.
+/// the run (XXH3-64 of its number, RULES.md D460), the same each time.
 fn sampled(chunk: u64, rows: u64) -> bool {
-    let mut z = chunk ^ SAMPLE_SEED;
-    z = (z ^ (z >> 30_u32)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27_u32)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^= z >> 31_u32;
+    let z = crate::hash::xxhash::Words::new(SAMPLE_SEED).hash(chunk);
     z.checked_rem(rows).is_none_or(|r| r < SAMPLED_ROWS)
 }
 
@@ -180,6 +186,29 @@ impl Gathered {
     pub(super) fn get(&self) -> Option<Arc<TableStats>> {
         read(&self.stats).ok()?.clone()
     }
+
+    /// The statistics of the last pass, as `asked_for` gives them, read
+    /// after the rows written since, the table holding `live` rows.
+    pub(super) fn answer(&self, live: u64) -> Option<Arc<dyn Statistics>> {
+        let stats = self.asked_for()?;
+        Some(Changed::of(stats, self.changes.load(Ordering::Relaxed), live))
+    }
+}
+
+/// Notes in `stats` of each column at how many passes in a row its
+/// greatest value rose past `previous`'s, the last pass's. A pass that
+/// finds the same greatest value keeps the count, as one soon after
+/// another, by maintenance and then by ANALYZE, says nothing of growth.
+fn risen(stats: &mut TableStats, previous: Option<&TableStats>) {
+    let Some(previous) = previous else { return };
+    for (column, before) in stats.columns.iter_mut().zip(&previous.columns) {
+        let order = column.max.as_ref().zip(before.max.as_ref()).and_then(|(now, then)| compare(now, then));
+        column.rises = match order {
+            Some(std::cmp::Ordering::Greater) => before.rises.saturating_add(1).min(GROWING),
+            Some(std::cmp::Ordering::Equal) => before.rises,
+            Some(std::cmp::Ordering::Less) | None => 0,
+        };
+    }
 }
 
 impl RowTable {
@@ -211,7 +240,7 @@ impl RowTable {
                 let Some(record) = visible.flatten() else { continue };
                 let id = row_id(&key)?;
                 let row = self.decode(id, &record, None)?;
-                builder.run(id.checked_div(CHUNK_IDS).unwrap_or(0));
+                builder.at_run(id.checked_div(CHUNK_IDS).unwrap_or(0));
                 builder.add(&row, record.len());
             }
         }
@@ -220,14 +249,16 @@ impl RowTable {
         let mut record = Vec::new();
         self.each_unshadowed(&directory, |id, row| {
             if read(id) {
-                builder.run(id.checked_div(CHUNK_IDS).unwrap_or(0));
                 record.clear();
                 self.format.encode(&row, &mut record)?;
+                builder.at_run(id.checked_div(CHUNK_IDS).unwrap_or(0));
                 builder.add(&row, record.len());
             }
             Ok(())
         })?;
-        let stats = Arc::new(if sampling { builder.finish_sampled(rows) } else { builder.finish() });
+        let mut stats = if sampling { builder.finish_sampled(rows) } else { builder.finish() };
+        risen(&mut stats, self.gathered.get().as_deref());
+        let stats = Arc::new(stats);
         *write(&self.gathered.stats)? = Some(Arc::clone(&stats));
         self.gathered.rows.store(stats.rows, Ordering::Relaxed);
         self.gathered.changes.fetch_sub(before, Ordering::Relaxed);
@@ -294,7 +325,8 @@ mod tests {
     use crate::value::{DataType, Decimal, Spelled, Value};
 
     /// A table of `rows` rows, its first column 0 to `rows - 1`, its
-    /// second that modulo 10.
+    /// second that modulo 10, its third that divided by 64, each value of
+    /// the third held by rows next to each other.
     fn table_of(rows: u64) -> RowTable {
         let fs = MemoryFileSystem::new();
         let crc = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
@@ -302,12 +334,15 @@ mod tests {
         let pool = Arc::new(BufferPool::new(1024, Box::new(Clock::new(1024))).unwrap());
         let file = pool.add_pager(pager);
         let int = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
-        let table =
-            RowTable::create(&TableFiles::new(pool, file, Arc::new(MemoryLog::new())), &[int.clone(), int], TableOptions::default())
-                .unwrap();
+        let table = RowTable::create(
+            &TableFiles::new(pool, file, Arc::new(MemoryLog::new())),
+            &[int.clone(), int.clone(), int],
+            TableOptions::default(),
+        )
+        .unwrap();
         for n in 0..rows {
             let value = |v: u64| Value::Exact(Decimal::new(i128::from(v), 0));
-            table.insert(NO_TRANSACTION, vec![value(n), value(n % 10)]).unwrap();
+            table.insert(NO_TRANSACTION, vec![value(n), value(n % 10), value(n.div_euclid(64))]).unwrap();
         }
         table
     }
@@ -329,9 +364,45 @@ mod tests {
         assert!(near < 0.1_f64, "{} distinct of every value", all.distinct);
         assert!((ten.distinct - 10.0_f64).abs() < 0.5_f64, "{} distinct of ten", ten.distinct);
         assert!(all.unbounded && ten.unbounded);
+        // A value of the third is in one run of row ids alone: counted as
+        // seen once, the distinct values scale to the table's.
+        let clustered = stats.columns[2].distinct / f64::from(u32::try_from(rows.div_euclid(64)).unwrap());
+        assert!((clustered - 1.0_f64).abs() < 0.25_f64, "{} distinct of clustered values", stats.columns[2].distinct);
+        assert!(stats.sample.as_ref().is_some_and(|s| s.rows().len() == crate::stats::sample::SAMPLE_ROWS));
         let small = table_of(1_000).gather().unwrap();
         assert_eq!(small.rows, 1_000);
         assert!(!small.columns[0].unbounded && !small.columns[1].unbounded, "read whole");
+        assert_eq!(small.sample.as_ref().map(|s| s.rows().len()), Some(1_000));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D381: a pass notes of each column at
+    /// how many passes in a row its greatest value rose, so a column
+    /// growing with insertion is known after two, and one that did not
+    /// rise is not; a pass finding the same greatest value keeps the
+    /// count; the statistics read after rows are written answer
+    /// by the change, a range past the greatest value keeping the share
+    /// written since.
+    #[test]
+    fn a_column_rising_at_each_pass_is_known_to_grow() {
+        let table = table_of(1_000);
+        let value = |v: u64| Value::Exact(Decimal::new(i128::from(v), 0));
+        let first = table.gather().unwrap();
+        assert_eq!(first.columns[0].rises, 0);
+        for round in 1..=2_u64 {
+            for n in 0..100 {
+                table.insert(NO_TRANSACTION, vec![value(round * 10_000 + n), value(n % 10), value(0)]).unwrap();
+            }
+            let stats = table.gather().unwrap();
+            assert_eq!(stats.columns[0].rises, u8::try_from(round).unwrap());
+            assert_eq!(stats.columns[1].rises, 0, "its greatest value did not rise");
+        }
+        assert_eq!(table.gather().unwrap().columns[0].rises, 2, "a pass finding the same greatest keeps the count");
+        for n in 0..120 {
+            table.insert(NO_TRANSACTION, vec![value(30_000 + n), value(1), value(0)]).unwrap();
+        }
+        let read = table.statistics().unwrap();
+        let past = read.selectivity(0, crate::value::CompOp::Gt, &value(25_000)).unwrap();
+        assert!((past - 0.1_f64).abs() < 0.001_f64, "the share written since: {past}");
     }
 
     /// Verifies: [DESIGN] RULES.md D31, statistics: a sampled pass reads

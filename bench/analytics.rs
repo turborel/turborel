@@ -37,10 +37,14 @@
 //! summed, its zones settled and not, alone (`analytics/counts.rs`),
 //! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
 //! to `grouping`, groupings on one thread alone (`analytics/grouping.rs`),
-//! to `late`, a column store's selective queries, the columns they keep
-//! few rows of read late, alone (`analytics/late.rs`), to `groupjoins`,
-//! groupings of joins on their keys and index joins by batch alone
-//! (`analytics/groupjoins.rs`), or to `sorts`, ORDER BY and top-N alone
+//! to `groupjoins`, groupings of joins on their keys and index joins by
+//! batch alone (`analytics/groupjoins.rs`),
+//! to `joins`, hash joins and their runtime filters alone
+//! (`analytics/joins.rs`), to `late`, a column store's selective
+//! queries, the columns they keep few rows of read late, alone
+//! (`analytics/late.rs`), to `skipping`, a large column store table's
+//! filters, by what they skip, alone (`analytics/skipping.rs`), or to
+//! `sorts`, ORDER BY and top-N alone
 //! (`analytics/sorts.rs`).
 
 #![allow(
@@ -69,12 +73,16 @@ mod grouping;
 #[path = "analytics/groupjoins.rs"]
 mod groupjoins;
 mod harness;
+#[path = "analytics/joins.rs"]
+mod joins;
 #[path = "analytics/json.rs"]
 mod json;
 #[path = "analytics/late.rs"]
 mod late;
 #[path = "analytics/parallel.rs"]
 mod parallel;
+#[path = "analytics/skipping.rs"]
+mod skipping;
 #[path = "analytics/social.rs"]
 mod social;
 #[path = "analytics/sorts.rs"]
@@ -91,8 +99,9 @@ use turborel::db::{Database, Session};
 /// morsels, `distinct` for the DISTINCT set functions', `expressions`
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
-/// `grouping` for groupings on one thread, `late` for a column store's
-/// selective queries, `sorts` for ORDER BY and top-N.
+/// `grouping` for groupings on one thread, `joins` for hash joins, `late`
+/// for a column store's selective queries, `skipping` for a large column
+/// store table's filters, `sorts` for ORDER BY and top-N.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -143,6 +152,7 @@ fn main() {
     decode::workloads(&bench);
     late::workloads(&bench);
     groupjoins::workloads(&bench);
+    joins::workloads(&bench);
     sorts::workloads(&bench);
 }
 
@@ -158,6 +168,8 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "parallel" => parallel::workloads,
         "late" => late::workloads,
         "groupjoins" => groupjoins::workloads,
+        "joins" => joins::workloads,
+        "skipping" => skipping::workloads,
         "sorts" => sorts::workloads,
         _ => return false,
     };

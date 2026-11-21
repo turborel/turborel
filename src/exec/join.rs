@@ -147,6 +147,17 @@ impl Built {
         Ok(())
     }
 
+    /// Its rows held in memory, those of each bucket after those of the
+    /// bucket before, each bucket's in order, taken from it; none if its
+    /// rows are in a table of the spill area.
+    pub(in crate::exec) fn taken_rows(&mut self) -> Option<Vec<Row>> {
+        if self.spilled.is_some() {
+            return None;
+        }
+        self.buckets.clear();
+        Some(std::mem::take(&mut self.held).into_iter().flatten().collect())
+    }
+
     /// Its buckets held in memory, each with its rows, in order.
     fn into_buckets(self) -> impl Iterator<Item = (Vec<Bucket>, Vec<Row>)> {
         let mut held = self.held;

@@ -1,5 +1,5 @@
 //! The example's host objects a call or two serves (RULES.md D229): the
-//! encoding XOR, the checksum FNV, the clock SYSTEM, the keyring DERIVED,
+//! encoding XOR, the checksum XXH64, the clock SYSTEM, the keyring DERIVED,
 //! the package cryptography DIGESTS, the served connections NOTED and the
 //! job TICK. A file `crash.<what>` in the plug-in's directory makes the
 //! process exit as it does `what`, for the tests that kill it at bad
@@ -23,7 +23,7 @@ pub fn crash_if(what: &str) {
 pub fn with(plugin: Plugin) -> Plugin {
     plugin
         .host_encoding("XOR", Xor)
-        .host_checksum("FNV", Fnv)
+        .host_checksum("XXH64", Xxh64Sum)
         .host_clock("SYSTEM", System)
         .host_keyring("DERIVED", Derived)
         .host_crypto("DIGESTS", Digests)
@@ -31,9 +31,13 @@ pub fn with(plugin: Plugin) -> Plugin {
         .host_job("TICK", Tick)
 }
 
-/// FNV-1a of `parts`, as if joined.
-pub fn fnv(parts: &[&[u8]]) -> u64 {
-    parts.iter().flat_map(|p| p.iter()).fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3))
+/// XXH64 of `parts`, as if joined, seed 0.
+pub fn xxh64_of(parts: &[&[u8]]) -> u64 {
+    let mut state = turborel::hash::xxhash::Xxh64::new(0);
+    for part in parts {
+        state.update(part);
+    }
+    state.digest()
 }
 
 /// Each byte XORed with its argument's first byte, 0x5A if it has none:
@@ -59,13 +63,13 @@ impl PageEncoding for Xor {
     }
 }
 
-/// FNV-1a, 8 bytes.
-struct Fnv;
+/// XXH64, 8 bytes, big-endian, xxHash's canonical form.
+struct Xxh64Sum;
 
-impl Checksum for Fnv {
+impl Checksum for Xxh64Sum {
     fn hash(&mut self, parts: &[Vec<u8>]) -> Vec<u8> {
         let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
-        fnv(&parts).to_le_bytes().to_vec()
+        xxh64_of(&parts).to_be_bytes().to_vec()
     }
 }
 
@@ -88,7 +92,7 @@ impl Keys for Derived {
         let mut key = [0_u8; 32];
         for (i, chunk) in key.chunks_mut(8).enumerate() {
             let salt = u8::try_from(i).unwrap_or(0);
-            chunk.copy_from_slice(&fnv(&[name.as_bytes(), &[salt]]).to_le_bytes());
+            chunk.copy_from_slice(&xxh64_of(&[name.as_bytes(), &[salt]]).to_le_bytes());
         }
         Ok(Some(key))
     }

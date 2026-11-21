@@ -237,7 +237,7 @@ fn a_damaged_log_is_refused_and_a_torn_one_reported() {
     // records, the crash before the rest.
     std::fs::write(&segment, &bytes).unwrap();
     let filled = BlockOptions { ahead: 1, ..BlockOptions::default() };
-    let (blocks, _) = BlockFile::open(&OsFileSystem, &segment, &[crate::common::crc32c()], &[], filled).unwrap();
+    let (blocks, _) = BlockFile::open(&OsFileSystem, &segment, &turborel::hash::builtin(), &[], filled).unwrap();
     let records_end = usize::try_from(blocks.end().0).unwrap();
     drop(blocks);
     let mut torn = bytes.clone();

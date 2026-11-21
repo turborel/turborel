@@ -117,7 +117,7 @@ impl Estimates<'_> {
         let product = cards.iter().map(|c| c.rows).product::<f64>();
         let upper = cards.iter().map(|c| c.upper).product::<f64>();
         let mut parents: Vec<usize> = (0..span(&chain)).collect();
-        let mut rest = 1.0_f64;
+        let mut others = Vec::new();
         let mut pairs = Vec::new();
         for c in &chain.conds {
             match equated(c, &chain) {
@@ -128,9 +128,11 @@ impl Estimates<'_> {
                     }
                     pairs.push((a, b));
                 }
-                None => rest *= self.share(c, Over::One(plan)),
+                None => others.push(c.clone()),
             }
         }
+        // The other conjuncts of each table together (D382).
+        let rest = self.conjunction(&others, Over::One(plan));
         let classes = self.classes_of(&chain, &parents, &pairs);
         let fraction = classes.fraction(|_| true) * rest;
         Card { rows: at_least_one(product * fraction, product), upper }

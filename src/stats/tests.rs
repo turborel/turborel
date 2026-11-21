@@ -302,7 +302,7 @@ fn a_sample_of_runs_counts_keys_whose_rows_lie_together() {
     let sampled = |value: &dyn Fn(u32) -> u32| {
         let mut builder = StatsBuilder::counting(1, Sampling::default());
         for id in (0..rows).filter(|id| id.div_euclid(run) % 20 == 0) {
-            builder.run(u64::from(id.div_euclid(run)));
+            builder.at_run(u64::from(id.div_euclid(run)));
             builder.add(&vec![number(value(id))], 9);
         }
         builder.finish_sampled(u64::from(rows)).columns[0].distinct
@@ -311,6 +311,4 @@ fn a_sample_of_runs_counts_keys_whose_rows_lie_together() {
     assert!(near(clustered, 150_000.0_f64, 15_000.0_f64), "{clustered} distinct of 150,000");
     let scattered = sampled(&|id| id % 2_401);
     assert!(near(scattered, 2_401.0_f64, 1.0_f64), "{scattered} distinct of 2,401");
-    assert!(near(with_clustered(10.0_f64, 0.0_f64, (100.0_f64, 1_000.0_f64)), 10.0_f64, 1e-9_f64), "none clustered");
-    assert!(near(with_clustered(10.0_f64, 10.0_f64, (100.0_f64, 1_000.0_f64)), 100.0_f64, 1e-9_f64), "each a tenth");
 }

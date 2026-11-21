@@ -29,6 +29,7 @@ mod outer;
 mod pairs;
 mod parted;
 mod probe;
+mod shared;
 
 use std::sync::Arc;
 
@@ -43,7 +44,9 @@ use crate::physical::Plan;
 use crate::storage::{Row, batches_of};
 use crate::txn::{TxId, checked};
 use crate::value::Value;
+pub(in crate::exec) use held::TABLE_ROW_BYTES;
 use probe::Kind;
+pub(in crate::exec) use shared::SharedTable;
 
 /// The operands of `plan`, if it is a join: a product, a hash join or an
 /// outer join.
@@ -159,6 +162,8 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
     if let Plan::HashJoin { left, right, keys, .. } = plan {
         let width = stream::layout(&left, db).map_or(0, |(_, width)| width);
         let below = if deferred.any() { deferred.left_of(&keys, width) } else { Deferred::default() };
+        // The filters told it reach it of its left's columns (`runtime::taken`).
+        let below = below.with_told(deferred.filters().to_vec());
         return Ok(Box::new(checked(probe::probed((*left, *right, keys), (Kind::Inner, below), db, tx)?, stop)));
     }
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))
@@ -303,7 +308,7 @@ pub(in crate::exec) fn rows_of(batches: Batches, columns: Vec<usize>, width: usi
 }
 
 /// `rows`, joined, gathered into batches of their values of `columns`.
-pub(super) fn gathered(rows: RowIter, columns: &[usize]) -> Batches {
+pub(in crate::exec) fn gathered(rows: RowIter, columns: &[usize]) -> Batches {
     // Rows with no id, which a batch does not keep.
     Box::new(batches_of(Box::new(rows.map(|r| r.map(|row| (0, row)))), columns).map(|b| b.map(|b| (b, None))))
 }
@@ -365,8 +370,10 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..)
         | Plan::GroupJoin(..) => true,
+        // A pipeline run in parallel gives its batches in its morsels'
+        // order (`parallel/batches.rs`), as its plan alone would.
+        Plan::Parallel(p) => !crate::exec::parallel::pipelined(&p.input) || in_order(&p.input),
     }
 }
 
@@ -380,7 +387,8 @@ mod tests {
     /// Verifies: [DESIGN] RULES.md D31: whether a join's left operand is
     /// asked for its rows in an order: a scan in none is not; the rows of
     /// two streams, one after the other, are if either is; a plan that
-    /// gives no batches is taken to be, so its order is kept.
+    /// gives no batches is taken to be, so its order is kept; a pipeline
+    /// run in parallel is as its plan.
     #[test]
     fn rows_asked_for_in_an_order() {
         let scan = || {
@@ -401,5 +409,9 @@ mod tests {
         assert!(in_order(&Plan::Append { left: scan(), right: values(), est: 0.0_f64 }));
         assert!(in_order(&Plan::Append { left: values(), right: scan(), est: 0.0_f64 }));
         assert!(!in_order(&Plan::Append { left: scan(), right: scan(), est: 0.0_f64 }));
+        // A pipeline run in parallel keeps its morsels' order (RULES.md D389).
+        let parallel = |input: Box<Plan>| Plan::Parallel(Box::new(crate::physical::Parallel { degree: 4, input: *input }));
+        assert!(!in_order(&parallel(scan())));
+        assert!(in_order(&parallel(values())));
     }
 }

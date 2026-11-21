@@ -13,7 +13,7 @@ use std::io::{Read, Write};
 use turborel_plugin::host::{CatalogKeeper, LogStore, Records, SpillStore};
 use turborel_plugin::{Answer, Plugin, PluginError};
 
-use super::host_small::{crash_if, fnv, note};
+use super::host_small::{crash_if, note, xxh64_of};
 
 /// The plug-in, with these objects.
 pub fn with(plugin: Plugin) -> Plugin {
@@ -22,7 +22,7 @@ pub fn with(plugin: Plugin) -> Plugin {
 
 /// The file of `dir`'s store of `what`.
 fn file_of(dir: &str, what: &str) -> String {
-    format!("{what}-{:016x}", fnv(&[dir.as_bytes()]))
+    format!("{what}-{:016x}", xxh64_of(&[dir.as_bytes()]))
 }
 
 /// An I/O error, as the program's.

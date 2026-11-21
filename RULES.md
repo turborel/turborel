@@ -362,6 +362,8 @@ verification approach DO-178C expects (§8).
 | D365 | A sort of which only the first rows are asked for takes a batch's rows by their keys' bytes, making only the rows it gives |
 | D366 | A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does |
 | D367 | A row made of a batch makes each of its cells a value alone, not its columns' every value |
+| D368 | A hash join's right operand is put in one table of slots holding their rows side by side, tag bits in each slot's word, and probed a batch at a time |
+| D369 | A hash join tells its left operand a range and a Bloom filter of its built keys, judged at the scan, and a table of many equal hashes hashes its texts again by a keyed hash |
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
 | D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
 | D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
@@ -373,7 +375,11 @@ verification approach DO-178C expects (§8).
 | D378 | An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock |
 | D379 | A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read |
 | D380 | A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel |
+| D381 | A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree |
+| D382 | A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff |
+| D383 | An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count |
 | D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
+| D389 | A pipeline run in parallel under an operator that is not one is read by batch, its scans told its hash joins' runtime filters, a scan's range judged once, and a spilled join's partitions picked by its table's hash and probed by batch |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -394,11 +400,16 @@ verification approach DO-178C expects (§8).
 | D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
 | D419 | A row of values that reads nothing is evaluated, not planned |
 | D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
+| D421 | A row's constraint that cannot be deferred is checked as the statement's end gathers its checks |
+| D422 | A kept UPDATE or DELETE learns its object rows' plan with slots as a query does |
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
+| D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D490 | A grouping on a join's key is computed in the join's table, a groupjoin |
 | D491 | An index join probes a unique index for a batch of its outer rows, sorted by key |
+| D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
+| D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 
 ### The project
 
@@ -2317,7 +2328,8 @@ no other.
 
 Below every engine, log and index sit portable file I/O, a block manager,
 a pager, a buffer pool with pluggable eviction, an encoding pipeline and
-pluggable hash functions (CRCs for checksums, MurmurHash3 for hash tables).
+pluggable hash functions (XXH3 for checksums and hash tables, the CRCs for
+checksums, D460).
 None knows what's above it, so each layer can be tested, fault-injected and
 benchmarked alone. We never use mmap, because it leaves write order to the
 operating system and breaks write-ahead logging. File formats are the same
@@ -2785,7 +2797,9 @@ A connection's place is given back before its socket closes, so a client
 reconnecting at the limit isn't refused (`holding.rs`).
 
 An operator ends a connection with `END CONNECTION id`, or cancels its work
-with `CANCEL CONNECTION id` (owner only, SQLCODE -104). The core reaches the
+with `CANCEL CONNECTION id` (owner only, SQLCODE -104). A connection that
+ends with a reply telling why has its row taken out before that reply, since
+its client takes the reply for the close (`native.rs`). The core reaches the
 server through the extension point `ServedConnections`. The other extension
 points are `auth::Authenticator`, `transport::Listener` and
 `server::Protocol`.
@@ -3739,7 +3753,7 @@ A document is parsed as the query operators parse it, WITHOUT UNIQUE
 KEYS. A value of the JSON type gives its item already parsed.
 
 A document posts terms (`index/json/terms.rs`). Each is 16 bytes, the
-hash of a path and the hash of a value, both MurmurHash3. A path is the
+hash of a path and the hash of a value, both XXH3-64. A path is the
 chain of member names from the root, array steps dropped, so `$.a[3].b`
 and `$.a.b` are one path. Every node posts its path with no value, and
 every scalar posts its path with its canonical value. Numbers are
@@ -5248,7 +5262,7 @@ An index is given a row's value whole, but may not be able to read it as
 it takes its entries back: garbage collection frees a version's large
 objects before its entries, and recovery and a spilled undo name an
 object by its id (D79). So each (value, row) pair held is marked by the
-value's identity: of a value its row holds, its octets' MurmurHash3, the
+value's identity: of a value its row holds, its octets' XXH3-128, the
 octets there to derive its entries again; of one held as a large object,
 the object's id, never given twice, under which the index keeps the
 entries it made, by row, and takes them back, or adds them again, with no
@@ -7443,7 +7457,7 @@ a key's types and a bound, tells whether two siblings' bounds overlap
 and whether a bound holds a key, routes a key among siblings, and judges
 whether a bound may hold a row meeting a read's restrictions. The
 framework keeps the DEFAULT partition, which no strategy sees. HASH
-hashes a key's parts by their normalized bytes with MurmurHash3 x64 128
+hashes a key's parts by their normalized bytes with XXH3-64
 and a fixed seed, the same on any machine, so a row's partition never
 depends on where it was written. A HASH bound's modulus divides or is
 divided by each sibling's, so the remainders of a tree cover each hash
@@ -7603,7 +7617,7 @@ client of the server, all through one path (`db/backup/take.rs`). It
 checkpoints, then exports the checkpoint's files while holding the
 checkpoint turn shared, so no later checkpoint frees a page it copies,
 while readers and writers go on. Each file is read in chunks of 64 KiB,
-each with its MurmurHash3 digest in the manifest. The checkpoint's image
+each with its XXH3-128 digest in the manifest. The checkpoint's image
 follows, and then the log's records from the image's recovery start to
 the log's end as the copy finishes, made durable first. The backup holds
 every transaction those records commit, and recovery from it is
@@ -9720,7 +9734,7 @@ rows a comparison with a constant is true of, of bits set, of a
 dictionary's codes kept, an exact sum, the extremes, a gather, the
 unpacking of a frame of reference's bit-packed values (D352). Each has a
 portable body, branch-free where a branch would be mispredicted, which is
-what a database runs unless it is given others (`Database::set_kernels`).
+what a database runs unless it is given others (`Database::register_kernels`).
 A crate of kernels for one processor's instructions implements the same
 trait and passes the same contract (`support/src/kernels.rs`), so the
 core keeps no unsafe code and no code of one system.
@@ -10191,6 +10205,86 @@ column's values instead made every row's value of the vector the first
 time any was read, which a projection of few kept rows paid for every
 row of the batch. The values are the same either way.
 
+#### D368. A hash join's right operand is put in one table of slots holding their rows side by side, tag bits in each slot's word, and probed a batch at a time
+
+A hash join of streams holds its right operand as one batch (D31) and
+puts it in a join's table (`exec/table/join.rs`). The table hashes a
+key a vector at a time (`join/keys.rs`), as the key's bucket says it
+matches (`value::key_bucket`). An exact number hashes by the bits of
+its nearest approximate number, so 2, 2.0 and 2.000 hash alike in a
+vector of integers of any scale, of approximate numbers or of values.
+A CHAR hashes less its trailing spaces. A null is a miss, and no row
+matches it, but of a key on which a null matches a null, where it
+hashes as one value.
+
+The table has a power of two slots, at least two a row, a slot the high
+bits of a hash. Each slot's word in a directory holds where its rows end
+and, above that, 16 tag bits, one set by four low bits of each of its
+rows' hashes. A probe whose bit is not set is turned away by that word
+alone. A slot's rows and their hashes lie side by side in two vectors,
+not chained one to the next, so a probe reads them in order. The rows
+of a slot are in the order they were built. A slot of more than eight
+rows is sorted by hash, stably, and searched, so a key of many rows
+costs a probe of another key in that slot no walk of them, and the rows
+of one key still come in build order. A probe compares a candidate's
+keys in place of the vectors that hold them (`join/equal.rs`), integers
+of two scales rescaled, and of any other pair of vectors as values
+(`value::key_equal`).
+
+Each batch of the left operand is hashed once and probes the table, its
+pairs gathered into batches of each side's vectors as they are, in the
+order of the left's rows and then of the build. An outer join's held
+right is probed by the hashes of each left batch too.
+
+A pipeline run in parallel (D292) builds one such table of its built
+operand, of the batches its morsels give in morsel order, put together
+by the statement's thread, which no thread writes again
+(`batch/joined/shared.rs`). Its morsels read by batch probe it a batch
+at a time, a step of their batches like a filter or a projection
+(`batch/shaped.rs`), so a pipeline with a hash join is read by batch
+as one without. A pipeline read by rows probes it a row at a time.
+
+A right operand past its work area is partitioned as before (D38). Each
+pair of partitions held in memory puts its right in a table and its
+left's rows probe it a batch at a time (`batch/joined/parted.rs`). A
+partition too large even partitioned again is built in a table of the
+spill area and probed a row at a time.
+
+#### D369. A hash join tells its left operand a range and a Bloom filter of its built keys, judged at the scan, and a table of many equal hashes hashes its texts again by a keyed hash
+
+An inner hash join of a held right operand makes runtime filters of its
+built keys (`exec/table/runtime.rs`). A key of integers of one scale,
+none null, gives the least and greatest. Any key of up to 4M built rows
+gives a blocked Bloom filter of 8 bits a row, each key setting 4 bits of
+one 512-bit block (`kernels/portable/bloom.rs`), so a probe of it reads
+one block. Its hash is the table's.
+
+The join tells the filters to its left operand's stream, each of the
+left column of its key (`batch/runtime.rs`). A filter whose condition
+cannot raise and reads no subquery, a projection that moves the column
+as it is, and the left operand of an inner hash join take them down
+toward the scan. A scan in no order adds the range to the conjuncts it
+judges, so a column store's zone maps and its kernels skip what lies
+outside it (D360), and judges the Bloom filter of each batch it gives
+before any column given late is decoded (D361). Any other operator
+judges the filters of the batches it gives. A filter dropping a row
+below an operator that could raise of it would hide the error the row
+path raises (D15), so no filter goes below one.
+
+A filter that keeps nearly every row costs more than it saves. Each
+counts the rows it judges and keeps of its first 16 batches, and stops
+judging if they kept more than nine in ten. The setting
+EXECUTOR.RUNTIME_FILTERS (ON by default) turns the filters off, for a
+session.
+
+A join's table counts the candidates of a probe's hash whose keys are
+not equal. Past 1024, as rows chosen to share a hash would make, it
+hashes its texts and other bytes again by SipHash keyed by the
+database's seed, as a table of groups does (D357), and is built again.
+A number, datetime or truth value hashes by a bijection of its bits,
+so two such keys of one hash are equal. A table a parallel pipeline
+shares, which no probe may build again, hashes texts so from the first.
+
 #### D370. One estimator gives every plan node its rows, from the base tables under its columns
 
 The join enumeration, the greedy order, a hash join's build side, the
@@ -10514,6 +10608,146 @@ rows past the greatest held not taken, so only those the run keeps are
 sorted and made. Of more, nearly every row of a morsel is taken, so the
 morsel is sorted whole by its keys and only its first rows made.
 
+#### D381. A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree
+
+A statistics pass keeps, of each column, up to 32 values that its sample
+holds at least twice and at least one and a half times as often as the
+average distinct value, each with the share of the table's rows it holds
+(`stats/common.rs`). The histogram is drawn from the sample without them,
+an end-biased histogram (Ioannidis and Poosala, SIGMOD 1995). An equality
+with a common value keeps its share, and with any other value the rest of
+the rows shared among the other distinct values. An order comparison
+keeps the common values on its side and the histogram's share of the
+rest. A histogram alone gives every value of a bucket its average share,
+so a value held by half a table was estimated as rare as any other, and
+an index was read for it. The sample is sorted, so a value's repeats are
+one run and the list costs no second pass. A string the sample cuts is
+never common, since no value equals the part kept.
+
+A sampled pass reads runs of 128 row ids, and rows near in a table often
+share a value. Each value's repeats within one run count once before its
+distinct values are scaled (Chaudhuri, Das and Srivastava, SIGMOD 2004),
+so a clustered column is not taken for one of few values.
+
+The row store answers with the rows written since the pass and the rows
+it holds now (`stats/since.rs`). Once rows were written, the least and
+greatest values are no longer bounds, so a range past the greatest keeps
+at least what an equality would. A column whose greatest value rose at
+each of the last two passes that found it changed grows with insertion,
+and a range past it keeps the share of rows written since. A pass that
+finds the same greatest value, as one soon after another may, keeps the
+count. A column whose distinct values
+were within 5% of its rows is a key, and its distinct values grow with
+the rows.
+
+A LIKE whose constant pattern begins with characters keeps the strings
+from that prefix up to the next one, by the common values and the
+histogram, never less than an equality with the prefix keeps, and a
+part of them if the rest of the pattern asks more than `%`
+(`physical/estimate/like.rs`): the share of the sampled strings with the
+prefix that the whole pattern keeps, if the sample holds at least 8 of
+them, as no synopsis tells how often characters follow others, else a
+quarter. Within a histogram's bucket a string is placed by its first
+four characters past the bucket's bounds' common prefix, read as a
+fraction whose digits are each character's place among those the
+bounds span, widened to the digits or the letters when the bounds' lie
+among them, so a prefix narrower than a bucket keeps its part of it
+(`stats/parts.rs`).
+
+A B-link index counts the entries of a range of keys it need not check
+up to 128 of them. Past that it descends to each bound, taking at each
+node the share of its children left of the child it follows, and gives
+the difference of the two shares times its live entries
+(`engine/tree/estimate.rs`), never fewer than it counted (D302). A range
+of any size is so estimated in a few pages, where counting up to 1,000
+entries read up to eight leaves and gave nothing past them. Within a
+B-tree's factor of two in how full its nodes are, the estimate is within
+one and a half times the entries on trees filled in key order or not.
+
+The plug-in STATISTICS payload carries each column's common values at
+format 1, none from a plug-in that sends none.
+
+#### D382. A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff
+
+A statistics pass keeps up to 1,024 whole rows by Vitter's Algorithm R
+over the rows it reads, from a fixed seed (`stats/sample.rs`). A string
+is kept as its first 256 characters and a large object as an empty one.
+The sample is in memory only and is neither sent to nor asked of
+plug-ins.
+
+The planner estimates a table's conjuncts together
+(`physical/estimate/conjunction.rs`). Those on one column are one range,
+so a BETWEEN keeps the rows between its bounds and not the product of
+each half. Equalities with constants whose columns an index's key
+answers are one factor (D383). A conjunction of two or more conjuncts
+over two or more columns, or with a conjunct no column's synopsis
+answers, is evaluated on the sample when each of its conjuncts can be,
+deterministic and of no subquery, routine, sequence value or `?` not yet
+given (`physical/estimate/sampled.rs`). Of n rows, k kept give k/n when
+k is at least 8 or the sample is the whole table, which it is of a table
+of up to 1,024 rows. Fewer give the synopses' estimate, at most
+(k + 3(1 - f))/n of a sample of the share f of the table: the rule of
+three, the bound an empty sample allows (Hertzschuch et al., SIGMOD
+2021), narrowed as the sample nears the whole table. The sample costs at
+most 1,024 evaluations however large the table, so small tables are
+sampled too, where the sample is most of the table and a conjunction
+that keeps no row is estimated to keep none. The sample remembers what
+was asked of it, up to 1,024 answers, each kept under a fingerprint of
+the conjuncts' columns, operators and constants in any order, hashed by
+XXH3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
+statement it plans again: it never changes, so an answer holds until the
+next pass replaces it. An index remembers its distinct keys' estimate
+until a register of its sketch is raised. Of fewer, equalities of two or more
+columns with constants not common take the columns' joint distinct
+values in the sample instead, scaled to the table as a column's are
+(`physical/estimate/joint.rs`): a combination the sample holds keeps the
+rows present over them, where the product of each column's share takes
+every pair as possible and falls ten times and more below the truth of
+correlated columns. A combination the sample does not hold keeps, by
+Good and Turing, the share of rows of combinations seen once among the
+combinations never seen, so values that never go together, of columns
+whose every combination the sample saw more than once, keep no row. A
+row whose evaluation fails counts as
+kept and nothing is raised, as planning raises nothing of a condition
+the statement evaluates (D15). The sample answers a city and its country,
+a column compared with another and a pattern with a leading wildcard,
+which synopses of single columns cannot.
+
+The factors left combine by exponential backoff, the most selective
+whole, the next by its square root, the third its fourth root and the
+fourth its eighth, the rest ignored (`physical/estimate/backoff.rs`).
+Multiplying them is right only of independent columns, and conjuncts
+written together seldom are, so an estimate by the product falls below
+the truth by every correlation, and a join ordered on it multiplies the
+error. Backoff errs between the product and the most selective conjunct
+alone.
+
+A filter's conjuncts are grouped by the scan their columns come from,
+and a filter over a table's access takes its conjuncts the same way, so
+the plan's estimate and the join enumeration's agree (D370). The sample
+costs at most 1,024 evaluations of each conjunct of a conjunction it
+estimates, and is never asked of a filter of one conjunct a synopsis
+answers, nor of a probe of a unique key, so point queries never pay it.
+
+Rejected. A per-column sketch kept as rows are written is the most
+accurate distinct count but costs a hash of each written column on every
+insert and update. Multi-dimensional histograms are costly to build and
+poor beyond two columns, where the sample answers any number.
+
+#### D383. An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count
+
+An index's sketch counts every key written to it (`index/stats.rs`), so
+its distinct keys are the distinct combinations of its key's columns,
+correlated columns counted once. The state answers
+`Statistics::group_distinct` from the table's indexes of plain columns
+(`stats/keyed.rs`): of columns that are exactly an index's key, its
+distinct keys, and of columns holding a unique key's, the rows. A
+column alone in an index's key takes the index's count for its distinct
+values, which saw every key where a sample scales from some. An
+equality of each of an index's columns with a constant then keeps one
+row in its distinct keys and not the product of each column's share.
+Each index's count is taken once for the statistics one planning asks.
+
 #### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
 
 The inner joins' equalities of two columns make classes of columns
@@ -10538,6 +10772,58 @@ enumerated plan (`physical/enumerate.rs`). A plan-space test runs the
 join workload under rows given that are up to a thousand times too few
 or too many, and each plan gives its rows well within a minute
 (`test/integration/plan_space.rs`).
+
+#### D389. A pipeline run in parallel under an operator that is not one is read by batch, its scans told its hash joins' runtime filters, a scan's range judged once, and a spilled join's partitions picked by its table's hash and probed by batch
+
+A part the planner runs in parallel (D291) under an operator that is
+not one, as an outer join's operand, gave its rows one at a time, so
+the operator read it row by row where it reads the plan alone by
+batch. On many threads such a join ran slower than on one. A pipeline
+so placed is now read by batch (`parallel/batches.rs`). Its morsels go
+through its steps by batch on the threads, and their batches come in
+morsel order, each morsel's in order, as its rows did. A pipeline whose
+morsels are not read by batch gives way to its plan alone.
+
+A pipeline's hash join builds its operand before its probing side is
+split (D292). Its runtime filters (D369) now go down that side as the
+serial stream takes them (`parallel/pipeline.rs`). A scan is told each
+range among the conjuncts its split judges, so a morsel skips what lies
+outside it at any degree. A step right after the operator a filter
+stops at judges the filters of a morsel's batches. A morsel read a row
+at a time passes that step by, which only spares the join rows it
+would drop. A morsel's scan judges no Bloom filter. Measured, judging
+one in each morsel cost more than the probes it spared, as the
+morsel's batches are decoded whole and its threads share the filter's
+counts.
+
+A Bloom filter costs a hash and a block read a row, and a range
+compare costs less. A scan's range is judged among its conjuncts, by
+which a store skips what lies outside it, and the filter does not judge
+it again. Its Bloom filter is judged of the rows the scan gives, before
+any column it gives late is decoded (D361), and stops after its first
+batches if it keeps most of their rows (D369), so where it saves no
+work it costs those batches alone. Measured, a filter of a few thousand
+built keys over a scan of no late column still drops rows for less
+than a probe of the join's table costs, so the size of a build does not
+decide it. Above an operator a filter stops at, its range and its Bloom
+filter are judged, under the same stop.
+
+A filter goes below a projection only if none of its expressions can
+raise (D15), as below a filter. A part hoisted under its guard (D373)
+is computed by such a projection over the product of its operand and
+the guard, so no filter enters the operand the guard asks has a row,
+and a raise the standard's evaluation makes is never lost to a row the
+filter would drop.
+
+A right operand partitioned past its work area (D38) where the left's
+order is kept (`exec/join/partitioned.rs`) picks each row's partition
+by bits of its key's hash as a join's table hashes it, above the 4 bits
+its tag takes, by a seed drawn for each partitioning, so a partitioning
+again splits by another hash. Each pair's right partition held in
+memory is put in a join's table (D368) and its left's rows probe it a
+batch at a time, each joined row written with its left row's number and
+merged back into the left's order as before.
+
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 
 A `?` in a row of an INSERT's VALUES, or of VALUES in a query expression
@@ -11048,6 +11334,30 @@ variable at each line, and the copies were a fiftieth of it. A value of
 the type's length is now kept as it is (`types/character.rs`), the value
 the cut and the padding would give.
 
+#### D421. A row's constraint that cannot be deferred is checked as the statement's end gathers its checks
+
+A statement's end gathered a check of each constraint of each row it
+wrote, each naming its table and constraint, held them in a list, and
+then found each constraint again by name to check it. An order entry
+writes a dozen rows of tables with NOT NULL constraints only, and the
+gathering, the list and the finding were most of its statements' ends.
+A row's constraint that cannot be deferred, gathered while no check is
+held before it, is now checked at once, as it would be the first of the
+list (`db/integrity/gather.rs`). What may wait, or follows a check held,
+is held as before, so checks are made in the order they were.
+
+#### D422. A kept UPDATE or DELETE learns its object rows' plan with slots as a query does
+
+A kept UPDATE or DELETE kept the plan of its object rows only if it was
+one probe of a whole unique key (D45); any other was optimized and
+planned again at each run. A table of few rows, as an order entry's
+districts, is read whole and filtered rather than probed, so each of
+its order entries planned its district's update again. Such a write now
+learns its plan as a query does (D414): each of its first runs plans its
+object rows with its values, which it runs, and with its slots, and the
+one with slots is kept once `LEARNED_RUNS` in a row give both one shape,
+to be learned again once a table it reads gains or loses rows as its
+statistics would be gathered again for (`db/prepared/plans.rs`).
 #### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
 
 The row store stamped each changed row with its commit timestamp, a tree
@@ -11176,6 +11486,63 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+#### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
+
+The engine hashed with MurmurHash3, FNV-1a, SplitMix64's finalizer, the
+standard library's SipHash and a few mixes of its own, each chosen where
+it was written. It now hashes with xxHash (`hash/xxhash.rs`), Yann
+Collet's XXH64, XXH3-64 and XXH3-128 ported from the reference C, with
+their seeds, custom secrets and streaming states. Each gives the
+reference's value for every input, seed and secret: the published
+sanity vectors are the module's test, and a differential test against
+the C library, kept outside the repository, checked every length to 4
+KiB and inputs to 16 MiB, at every alignment and every split of a
+stream. A digest is xxHash's canonical form, big-endian (D30), as the
+ids 14, XXH3-64, and 15, XXH3-128, name it in file formats.
+
+The port keeps xxHash's BSD 2-Clause notice in its files, and a binary
+distribution reproduces it in its documentation; the license sits within
+the project's own.
+
+Hash tables, Bloom filters, partitions, sketches, samplers, the buffer
+pool's shards and every digest of a table or a package hash by XXH3. A
+key of one or two words hashes by XXH3's own short-input path of 8 or 16
+bytes (`Words`), a few multiplications, never a mix of the engine's own. The engine's hash maps hash by `Xxh3Hasher`, XXH3-64 of the
+bytes a key writes. A table of groups still falls back to SipHash keyed
+by the database's seed when a probe runs long (D357): xxHash's
+specification says it does not resist keys chosen to collide, and a
+seed does not change that. R-SAFE-6 holds every new hash to this
+choice.
+
+XXH3-64 checksums every block, page, log segment and spill page by
+default (STORAGE.CHECKSUM), in place of CRC-32/ISCSI: XXH3 hashes a page
+several times as fast as the CRCs' slicing-by-16, which the core,
+without unsafe code, cannot run on the processor's CRC instructions. Its
+digest is 8 bytes, so a page's body is 4 bytes shorter and an index
+key's limit 1 byte. The CRCs remain built in for files that name them.
+The side files' framing is as it was.
+
+The loops of an input past 240 bytes, accumulate and scramble, are
+`Kernels` methods (`xxh3_accumulate`, `xxh3_scramble`) whose portable
+bodies are the core's. The crate `turborel-simd` (`simd/`), outside the
+core as D3 asks and depending on nothing but it, gives them on SSE2,
+AVX2, AVX-512 and NEON, a module for each level (`x86/`, `aarch64/`),
+each held to the portable bodies bit for bit by the kernels' contract.
+A `Simd` is made only of a level the processor has (`detect`,
+`with_level`), which every unsafe call of a `#[target_feature]` function
+rests on, a SAFETY comment on each block. It is the only crate that
+writes unsafe code, its own lints allowing it and denying an unsafe
+operation outside a block and a block without its comment.
+
+A database takes one registered set of kernels
+(`Database::register_kernels`, `db/kernels.rs`), before it opens its
+tables, as it takes an encoding; a second is refused (SQLCODE -910).
+`turboreld` registers `Simd::detect()`. EXECUTOR.KERNELS = 'PORTABLE'
+runs a session's statements on the portable bodies, to diagnose the
+registered set, which each statement chooses as it begins. Kernels are
+a built-in registration only: a call a batch across a process boundary
+would cost more than the kernel saves, so no out-of-process plug-in is
+one.
 #### D490. A grouping on a join's key is computed in the join's table, a groupjoin
 
 A grouping over a join on a key of one operand, the group operand, kept
@@ -11225,6 +11592,90 @@ a query that asks for few rows reads few beyond them. A failure binding,
 searching or fetching is raised at its row, after the rows before it.
 It runs while EXECUTOR.BATCHED_INDEX_JOINS is ON, OFF by default (D36).
 
+#### D510. A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows
+
+A scan of the column store read the tree over each group's range of row
+ids, to find the rows changed or deleted since the group was frozen,
+even when none was. Each group now keeps in memory a bitmap of the rows
+of its range the tree may have an entry for, a bit a row, or a bit a
+block of ids if its range is wider than 65,536
+(`engine/rows/frozen/shadow_bits.rs`). A scan reads the tree only over
+the ranges of set bits, and not at all for a group no write touched;
+past 64 ranges it reads the group's range whole. The bits are a
+superset, so what a reader sees is unchanged.
+
+A writer sets a row's bit after its entry is written, if a group of the
+directory holds the row. A group published sets the bits of every entry
+the tree holds in its range after it is in the directory, but those of
+the rows it froze as they were, which are taken out once no reader
+needs them. So either the writer finds the group, or the group finds
+the writer's entry, and no change is missed. Bits are never cleared: a
+rewrite makes a new group, marked as it is published. A table opened
+marks them from one scan of the tree over its groups' ranges. A write
+of a row past every group, as nearly every insert is, costs one atomic
+load.
+
+The tree of a column store table keeps zone maps of 1,024 row ids, as a
+row store table does (D31), kept in memory alone. They hold the tree's
+rows, not the frozen ones: a freeze leaves the zones of the rows it took
+out stale, so the maintenance thread sums them up again from the tree,
+and a zone of no row takes no memory for its bounds. A scan reads the
+tree's rows last only of the zones its conditions may match, so a
+filter skips the delta as it skips frozen parts. Rows of a group passed
+over by its summary are read this way too, and their zones hold every
+version a reader may read, so none is missed.
+
+Rejected were positional delta trees (Héman, Zukowski, Nes, Sidirourgos
+and Boncz, SIGMOD 2010) and base and tail pages with lineage (Sadoghi
+et al., L-Store, 2018): both replace the tree, which already holds the
+row versions and their undo.
+
+#### D511. A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first
+
+The least and greatest values of 1,024 rows skip a part only if no row
+of it may match. On a column in no order they almost never do, and on
+one in near order they skip at a grain sixteen times the decoders' block.
+A group now keeps column imprints (Sidirourgos and Kersten, SIGMOD
+2013) of each column of exact numbers, datetimes and character strings,
+if COLUMNSTORE.IMPRINTS is ON (`engine/columns/imprints.rs`). The
+group's values are cut into at most 64 bins by edges drawn from a sorted
+sample of them, an equi-depth histogram, each value of few its own bin.
+Each 64 rows get a word, a bit for each bin a value of them falls in. A
+conjunct of the column makes a mask of the bins it may match, by the
+test the zone maps take (`Condition::may_match`) of each bin's bounds,
+so the mask is never narrower than the conjunct. A block whose word
+shares no bit with it is skipped. A null sets no bit, so a conjunct true
+of a null is not judged by imprints. The words of a part are kept
+together on pages of their own, read only by a scan whose condition can
+use them, and the edges in the group's header.
+
+Approximate numbers are left out, as a value no comparison orders would
+fall in a bin the mask may not hold. Imprints are not compressed: the
+words of a part take 128 bytes, a byte for 8 rows.
+
+Of each group, the scan orders the conjuncts it judges by the rows each
+keeps alone, by its zone maps and imprints, fewest first, so the
+narrowest is judged over the whole run and the others only over the rows
+it keeps. A conjunct of several columns, which the zone maps passed
+whole, now keeps the parts of each of its columns it may match with the
+others' values anywhere in the group.
+
+Imprints pay on columns in near order and on values rare among skewed
+ones. Of a column whose values are scattered evenly, 64 rows set most
+of the bits, so a narrow condition keeps most blocks, and the few it
+skips cut the scan's runs short, which costs more than judging them. A
+column whose blocks fall in more than a quarter of the bins on average
+therefore gets no imprints, as its group is written, and costs neither
+the words nor their reading. A scan skips only gaps of at least four
+blocks between the runs imprints keep. Even so, a scan whose runs
+imprints cut short pays more to start each than it saves, on the
+analytics bench's columns, so the option is OFF by default, for a table
+whose columns come in long stretches to turn on. Rejected was the positional SMA
+of Data Blocks (Lang et al., SIGMOD 2016), which narrows sorted columns
+alike but cannot skip a block of a rare value among skewed ones.
+
+A run the imprints leave short is gathered with the scan's other runs
+into full batches, not given alone (`frozen/batches/run.rs`).
 ## 2. Project layout
 
 ```
@@ -11358,11 +11809,12 @@ under a target's directory is a module of that target.
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-SAFE-1 | No `unsafe` code. | `unsafe_code = "forbid"` |
+| R-SAFE-1 | No `unsafe` code, but in the crate `turborel-simd` (D460), where each block **shall** follow a check of the processor's features and carry a SAFETY comment. | `unsafe_code = "forbid"`; `undocumented_unsafe_blocks` in `simd/` |
 | R-SAFE-2 | No `mem::forget`, `process::exit` or global mutable state. | `mem_forget`, `exit`; review |
 | R-SAFE-3 | `dyn Trait` **shall** appear only at the extension points listed atop `src/db.rs`, the traits they hand out, the storage foundation's traits (D30), and row streams, and at a boundary that keeps a proof of `Send` or `Sync` within the compiler's default recursion limit, marked `[DESIGN]`. Each extension trait **shall** document its contract; every built-in implementation **shall** pass the same contract tests. | review; tests |
 | R-SAFE-4 | Each dependency **shall** have a §1 decision covering rationale, version, license and review; only cryptography and compression plug-ins, the server crate and the command-line client may have any (D3, D26, D42, D46, D48). | review |
 | R-SAFE-5 | No thread **shall** be started except through the thread manager (`src/threads.rs`, D55), and none unnamed. | xtask; review |
+| R-SAFE-6 | Every hash table, filter, partitioner, sketch, sampler and digest **shall** hash by XXH3 or XXH64 (`src/hash/xxhash.rs`), a checksum by them or the CRC family, and an attacker's keys by SipHash where D357 falls back to it; none by an identity, a bare multiply, FNV or a mix of its own (D460). | review only: clippy cannot tell a hash from arithmetic |
 
 ---
 

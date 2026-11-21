@@ -44,6 +44,8 @@ behind it, and each can be replaced or added to.
 - One table of groups with typed keys and columns of set functions'
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
+- Hash joins probed a batch at a time in one tagged table, shared by
+  parallel morsels, telling the left's scan a range and Bloom filter.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
@@ -65,7 +67,8 @@ behind it, and each can be replaced or added to.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
-  queries of a hundred tables.
+  queries of a hundred tables, on statistics of most common values, a
+  sample of rows for correlated conditions and indexes' joint key counts.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
   query and shows each operator's rows beside its estimate, and a program
   may give the planner true row counts to test its plans.
@@ -228,6 +231,8 @@ behind it, and each can be replaced or added to.
   grouping granted their share of it and spilling to disk past it.
 - [Parallel queries](doc/operator/04-settings.md#parallel-queries) run by
   morsels on a shared pool of workers, the same rows on any number of threads.
+- [xxHash](doc/operator/07-encryption.md#hash-functions) for every checksum,
+  hash table and filter, XXH3 vectorized on SSE2, AVX2, AVX-512 and NEON.
 
 ## Quick start
 

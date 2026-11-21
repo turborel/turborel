@@ -6,17 +6,15 @@
 use std::fs::OpenOptions as FileOptions;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
 
 use turborel::db::{Completion, Database, OpenOptions, Opened};
 use turborel::error::Code;
-use turborel::hash::HashFunction;
 use turborel::log::record::{Change, Record};
 use turborel::log::{FileLog, FileLogOptions, Log};
 use turborel::params::Params;
 use turborel::txn::NO_TRANSACTION;
 
-use crate::common::{Scratch, crc32c, exec, os, rows};
+use crate::common::{Scratch, exec, os, rows};
 use crate::logs::{self, BuiltIn, answers, define_kept, fill_kept};
 
 /// The database in `dir`, its log the built-in (`logs::open_kept`).
@@ -68,8 +66,7 @@ fn a_torn_catalog_record_is_cut_off() {
     db.close().unwrap();
     drop(db);
     // A record appended to the log after the clean close: not reopened.
-    let hash: Arc<dyn HashFunction> = crc32c();
-    let (log, _) = FileLog::open(os(), &dir.join("log"), &[hash], &[], FileLogOptions::default()).unwrap();
+    let (log, _) = FileLog::open(os(), &dir.join("log"), &turborel::hash::builtin(), &[], FileLogOptions::default()).unwrap();
     let at = log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode()).unwrap();
     log.sync(at).unwrap();
     drop(log);

@@ -17,11 +17,16 @@
 //! comparison rules, so a value not of the column's type finds exactly the
 //! keys it should. A search reads a leaf at a time as its entries are
 //! taken (`engine/tree/scan.rs`), forward, or backward for descending keys.
-//! An estimate counts the entries a probe selects up to `MOST_COUNTED`:
-//! past that, it is not cheap, and the planner estimates from the table's
-//! statistics instead, no fewer than it counted (RULES.md D302), as it does at once for every entry, which no count
-//! tells it more of. Counted, a range's entries are found by their places
-//! in each leaf, none copied, unless each key is to be checked.
+//! An estimate of a range whose keys need no check counts its entries up
+//! to `SMALL_COUNT`; past that, it takes the share of the tree between a
+//! descent to each bound, times the entries (`engine/tree/estimate.rs`,
+//! RULES.md D381), no fewer than it counted (D302), so a range of any
+//! size is estimated in a few pages. A range whose keys are each checked
+//! is counted up to `MOST_COUNTED`: past that, it is not cheap, and the
+//! planner estimates from the table's statistics instead, no fewer than
+//! it counted, as it does at once for every entry, which no count tells
+//! it more of. Counted, a range's entries are found by their places in
+//! each leaf, none copied, unless each key is to be checked.
 
 use std::ops::{Bound, Deref};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,7 +42,9 @@ use crate::engine::tree::{BLinkTree, Direction, LEAST_LOOKUPS, Update, scan_of};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
+use crate::physical::parallel_rows as rows_of;
 use crate::spill::{Area, WorkAreas, sorted_records};
+use crate::stats::parts::count;
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 use crate::value::{CompOp, DataType, Value};
@@ -48,6 +55,10 @@ const ROW_ID: usize = 8;
 /// (RULES.md D36): what an index method spends on its own estimate, as
 /// it states its costs.
 const MOST_COUNTED: usize = 1_000;
+/// \[DESIGN\] The most entries of a range of unchecked keys an estimate
+/// counts before it takes the range's share of the tree instead: about a
+/// leaf's, so a small range is counted exactly in a page or two.
+const SMALL_COUNT: usize = 128;
 
 /// \[DESIGN\] The built-in ordered index method: B-link trees in one pager
 /// file.
@@ -458,8 +469,13 @@ impl Index for BLinkIndex {
         }
         let range = self.range(probe);
         if let Some(r) = range.as_ref().filter(|r| !r.checked) {
-            let scan = scan_of(&self.tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), Direction::Forward);
-            return scan.counted(MOST_COUNTED).ok().flatten();
+            let (lower, upper) = (r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice));
+            if let Some(counted) = scan_of(&self.tree, lower, upper, Direction::Forward).counted(SMALL_COUNT).ok()? {
+                return Some(counted);
+            }
+            let share = self.tree.range_share(lower, upper).ok()?;
+            let entries = self.keys.entries().map(|n| share * count(n))?;
+            return Some(rows_of(entries).max(SMALL_COUNT.saturating_add(1)));
         }
         let mut counted = 0_usize;
         for entry in self.entries(&self.tree, probe, (false, Direction::Forward)) {
