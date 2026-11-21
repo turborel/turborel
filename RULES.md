@@ -422,6 +422,7 @@ verification approach DO-178C expects (§8).
 | D530 | The rows of an INSERT and of a bulk copy go in together, a batch at a time, one log record each |
 | D531 | Rows inserted together are read where their statement holds them, and each batch takes one undo entry an index |
 | D532 | A load into a table builds each empty index but a unique one whole from its sorted entries as it ends, under the table's lock held alone |
+| D533 | A load into a column store table holding no row past its groups writes its batches straight as frozen groups, stamped with who made them |
 | D550 | A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less |
 | D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
 | D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
@@ -12053,6 +12054,39 @@ index held back. Index entries are not logged; recovery mends the
 indexes as before (D25). An index built whole has the distinct keys one
 built row by row has, and its range estimates come within a tenth of
 the other's, its pages being fuller.
+#### D533. A load into a column store table holding no row past its groups writes its batches straight as frozen groups, stamped with who made them
+
+A column store table's rows go to its tree and are frozen into groups
+once committed before every snapshot (D31). A load so wrote each row
+twice, and read it back between. So a load (D532) into a column store
+table that holds no row past its last group as it begins, under the
+table's lock held alone, writes each batch straight as a group, sorted,
+with its filters and sketches, as a freeze writes one
+(`engine/rows/frozen/stamped.rs`). Its rows are logged as any others
+(D530). A batch is of COLUMNSTORE.GROUP_ROWS rows, of an INSERT, or a
+copy's execution.
+
+Such a group is stamped with who made it. While its transaction is
+open, only that transaction sees its rows; once it commits, each
+snapshot at or after its commit does; once that commit is before every
+snapshot, the stamp goes, and the group is as any other. A directory
+notes whether any group is stamped, so a reader of one holding none
+takes it whole by one comparison; else it takes a view of the groups
+it sees. A row of a stamped group changed is changed over a version
+made by its transaction, so an older snapshot still finds no row. A
+group's making is undone as its transaction's other changes are, by a
+statement's failure, a savepoint rolled back or a rollback, taking it
+out of the directory. A row the transaction inserts through the tree
+ends the load's groups, so no row of it lies between two groups where
+no freeze reaches. A rewrite waits for a group's stamp to go.
+
+A directory stored names the transaction of each group made by one open
+then. Opened after a crash, the table holds such groups apart, and
+recovery, once it has read which transactions committed, keeps each
+group whose transaction's rows it neither redoes nor undoes, as
+committed before it, and drops the others, the directory stored again
+before their pages are freed, so their rows come back only by redo, of
+a transaction that committed.
 #### D550. A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less
 
 A grouping whose rows come in the order of its grouping columns makes

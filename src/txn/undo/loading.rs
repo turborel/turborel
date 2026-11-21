@@ -64,6 +64,15 @@ impl Txn {
         Ok(true)
     }
 
+    /// The table a load under way is into, if one is.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the transaction's state is poisoned.
+    pub(crate) fn loading_table(&self) -> Result<Option<QualifiedName>> {
+        Ok(self.state()?.undo.loading.as_ref().map(|l| l.table.clone()))
+    }
+
     /// The indexes whose entries a load into `table` holds back, if one is
     /// under way; none if none is, or one into another table.
     ///
