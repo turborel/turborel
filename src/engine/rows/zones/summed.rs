@@ -37,8 +37,39 @@ impl Zones {
         u64::try_from(self.born.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
 
+    /// Notes `looked` more zones looked at, of `zones`: whether every zone
+    /// has been since the zones last rested, as a pass over them is then
+    /// done, though as many as `MOST_SUMMED` were due again in it. Zones
+    /// writes keep stale, their rows' older versions readable as each is
+    /// summed up, are then summed up once a `REST`, not over and over.
+    fn swept(&self, looked: usize, zones: usize) -> bool {
+        let swept = self.swept.fetch_add(looked, AtomicOrdering::AcqRel).saturating_add(looked);
+        swept >= zones
+    }
+
+    /// The next zones due, `MOST_SUMMED` at most, from where the last sum
+    /// up left off: each with its changes, and whether it is stale. The
+    /// zones rest if those are all, or once every zone has been looked at
+    /// since they last rested (`swept`).
+    fn due_zones(&self) -> Result<Vec<(usize, u64, bool)>> {
+        let map = read(&self.map)?;
+        let from = self.next_sum.load(AtomicOrdering::Acquire).min(map.zones.len());
+        let mut looked = 0_usize;
+        let order = (from..map.zones.len()).chain(0..from).inspect(|_| looked = looked.saturating_add(1));
+        let stale = order.filter_map(|at| {
+            let zone = lock_builtin(map.zones.get(at)?);
+            (zone.stale || zone.unsettled).then(|| (at, zone.changes, zone.stale))
+        });
+        let due: Vec<(usize, u64, bool)> = stale.take(MOST_SUMMED).collect();
+        if self.swept(looked, map.zones.len()) || due.len() < MOST_SUMMED {
+            self.rest();
+        }
+        Ok(due)
+    }
+
     /// Rests the zones for `REST`, a pass over every zone due done.
     fn rest(&self) {
+        self.swept.store(0, AtomicOrdering::Release);
         let rest = u64::try_from(REST.as_nanos()).unwrap_or(u64::MAX);
         self.rest_until.store(self.elapsed().saturating_add(rest), AtomicOrdering::Release);
     }
@@ -52,22 +83,10 @@ impl RowTable {
     /// besides their newest stays stale, to be summed up again once none
     /// does; one of a commit too recent stays unsettled. One unsettled
     /// alone is settled from its rows' newest versions, its bounds kept
-    /// (`RowTable::settled_of`). Once every zone due was looked at, the
-    /// zones rest (`REST`).
+    /// (`RowTable::settled_of`). Once every zone due was looked at, or every
+    /// zone since they last rested, the zones rest (`REST`).
     pub(in crate::engine::rows) fn sum_zones(&self, horizon: Timestamp) -> Result<bool> {
-        let due: Vec<(usize, u64, bool)> = {
-            let map = read(&self.zones.map)?;
-            let from = self.zones.next_sum.load(AtomicOrdering::Acquire).min(map.zones.len());
-            let order = (from..map.zones.len()).chain(0..from);
-            let stale = order.filter_map(|at| {
-                let zone = lock_builtin(map.zones.get(at)?);
-                (zone.stale || zone.unsettled).then(|| (at, zone.changes, zone.stale))
-            });
-            stale.take(MOST_SUMMED).collect()
-        };
-        if due.len() < MOST_SUMMED {
-            self.zones.rest();
-        }
+        let due = self.zones.due_zones()?;
         let mut done = false;
         for &(at, changes, stale) in &due {
             let summed = if stale { Some(self.zone_of(at, horizon)?) } else { None };
