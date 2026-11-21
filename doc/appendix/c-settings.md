@@ -106,6 +106,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | PLANNER.RANGE_SELECTIVITY | 3.333333333333333E-1 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.REORDER_GAIN | 9E-1 | NUMBER FROM 0E0 TO 9.99E-1 | at once |  |
 | PLANNER.SORT_COMPARE_COST | 1E-1 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
+| PLANNER.STREAMED_GROUPING | ON | ONE OF ON, OFF | at once | *session* |
 | PLUGINS.CALL_TIMEOUT_MS | 30000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | PLUGINS.CANCEL_GRACE_MS | 1000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | PLUGINS.DIRECTORIES | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once | *node* |
@@ -222,6 +223,7 @@ Each in a sentence:
 - **PLANNER.RANGE_SELECTIVITY**: The fraction of rows an order comparison, a pattern or a subquery keeps when the statistics do not tell.
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.
 - **PLANNER.SORT_COMPARE_COST**: The cost of one comparison of a sort, a row read in sequence costing 1.
+- **PLANNER.STREAMED_GROUPING**: Whether a grouping or DISTINCT whose rows come in the order of its keys, or cost less sorted, is made a group at a time as its rows come, with nothing held, ON, or always by a table of its groups, OFF, as to compare the two.
 - **PLUGINS.CALL_TIMEOUT_MS**: The milliseconds a call of a plug-in may take before its process is stopped and the call fails with SQLSTATE 38T02; 0 for no limit.
 - **PLUGINS.CANCEL_GRACE_MS**: The milliseconds a plug-in has to answer a cancelled call before its process is stopped.
 - **PLUGINS.DIRECTORIES**: The directories an extension's plug-in may be in, separated by ';', each holding any directory below it; empty, as it is until the host sets it, for none. The host sets it as the database opens; SQL may not.

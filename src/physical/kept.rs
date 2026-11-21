@@ -524,7 +524,7 @@ mod tests {
             scan("I", Probe::Prefix { equal: vec![int(1)], then: None }, vec![ProbeSlot { place: Place::Low, slot: slot(0) }]);
         assert_eq!(filled_plan(low_of_prefix, &[int(1)]).unwrap_err().code, Code::Api, "a bound of no range");
         let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", Probe::All, Vec::new())), most: None };
-        assert!(filled_plan(Plan::Distinct { input: Box::new(sorted), est: 0.0_f64 }, &[]).is_ok());
+        assert!(filled_plan(Plan::Distinct { input: Box::new(sorted), est: 0.0_f64, streamed: false }, &[]).is_ok());
         let probed =
             || scan("I", Probe::Prefix { equal: vec![Value::Null], then: None }, vec![ProbeSlot { place: Place::Key(0), slot: slot(0) }]);
         let product = Plan::Product { left: Box::new(probed()), right: Box::new(probed()), est: 0.0_f64 };

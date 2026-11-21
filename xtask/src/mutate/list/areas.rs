@@ -25,6 +25,7 @@ mod joins;
 mod late;
 mod monitoring;
 mod oltp;
+mod orders;
 mod parallel;
 mod range_joins;
 mod rewrites;
@@ -150,6 +151,7 @@ fn second() -> [&'static [Mutation]; 44] {
         &analyze::ANALYZE,
         &statistics::STATISTICS,
         &range_joins::RANGE_JOINS,
+        &orders::ORDERS,
     ]
 }
 
