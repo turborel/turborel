@@ -53,7 +53,7 @@ pub(super) fn hold_back(st: &State, tx: &Txn, together: &mut Together<'_>) -> Re
         // Under the lock, again: no other transaction's row went in meanwhile.
         together.grouped = grouping.map(|_| grouped(tx, together)).transpose()?.flatten();
         let held: Vec<_> = together.indexes.iter().filter(|ix| ix.loads()).map(|ix| Arc::clone(&ix.index)).collect();
-        let begun = (!held.is_empty() || together.grouped.is_some()) && tx.begin_load(together.table, held.clone())?;
+        let begun = (!held.is_empty() || together.grouped.is_some()) && tx.begin_load(together.table, held.clone(), together.grouped)?;
         Ok(begun.then_some(held))
     });
     match begun {
