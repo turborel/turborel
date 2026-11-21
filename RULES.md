@@ -403,7 +403,7 @@ verification approach DO-178C expects (§8).
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
-| D470 | A transaction's log records are held until its commit and written with its commit record in one write |
+| D470 | A transaction's log records are held until its commit and written in one write before its commit record |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
 | D472 | A page written back again is written over its side-file block with no lock held |
 
@@ -11071,17 +11071,17 @@ file log gives the end of its segment's blocks the group's sync made
 durable (`log/file/segments.rs`). A log syncing nothing, and the
 default, claim just past the record asked for.
 
-#### D470. A transaction's log records are held until its commit and written with its commit record in one write
+#### D470. A transaction's log records are held until its commit and written in one write before its commit record
 
 Each row change was its own append to the log (D25): a frame, a
 checksum, a reservation, a positional write and an in-order publish
 per change, so an order entry wrote the log thirty times, and its
 appenders waited on each other's publishes. A transaction now encodes
 each record as it changes a row and holds it in a buffer of its own; at
-its commit the records held and its commit record go to the log
-together (`Log::append_all`), which the file log writes as one run of
-blocks, each framed and checksummed as before, with one reservation,
-one write and one publish (`disk/block/batch.rs`). Readers, recovery,
+its commit the records held go to the log together
+(`Log::append_all`), before its commit record, which the file log
+writes as one run of blocks, each framed and checksummed as before,
+with one reservation, one write and one publish (`disk/block/batch.rs`). Readers, recovery,
 backups and replicas meet the same records at their own positions.
 
 The data file moves only at a checkpoint, and a checkpoint, with its
@@ -11093,8 +11093,10 @@ own and holds on from there. A rollback whose records were all held
 writes nothing, and a statement, mark or savepoint undone while its
 records are held drops them; one whose first record was written logs
 the records from it undone, as before, by the position a write noted
-for it. Conflicting changes are ordered by their commits (D29), and
-so are their records. A definition a transaction logs apart from its
+for it. A commit writes what it holds before it takes its commit
+timestamp, so while it holds that timestamp, and other commits wait
+on it, it writes only its commit record. Conflicting changes are
+ordered by their commits (D29), and so are their records. A definition a transaction logs apart from its
 records writes them first (`txn/pending.rs`).
 
 #### D471. A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it

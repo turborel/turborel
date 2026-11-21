@@ -271,8 +271,8 @@ pub fn kinds(log: &dyn Log) -> Vec<String> {
 
 /// A transaction's inserts, updates and deletes, logged to `log` with
 /// their row ids and images, then its commit record with its commit
-/// timestamp, all under its transaction id, in one run of records
-/// (RULES.md D470); COMMIT returns once the commit record is synced.
+/// timestamp, all under its transaction id: its records in one run as
+/// it commits, its commit record after them (RULES.md D470); COMMIT returns once the commit record is synced.
 pub fn a_commit_is_its_record_made_durable(log: Arc<dyn Log>) {
     let (db, log) = logged(log);
     let s = db.session("APP");
@@ -283,7 +283,7 @@ pub fn a_commit_is_its_record_made_durable(log: Arc<dyn Log>) {
     assert!(records(&*log).is_empty(), "held until the commit");
     s.commit().unwrap();
     assert_eq!(kinds(&*log), ["Insert", "Update", "Delete", "Commit"]);
-    assert_eq!(*log.runs.lock().unwrap(), [4], "one run");
+    assert_eq!(*log.runs.lock().unwrap(), [3, 1], "one run, then the commit record");
     let all = records(&*log);
     assert!(all.iter().all(|(_, r)| r.tx == tx));
     let (commit_lsn, commit) = all.last().unwrap();

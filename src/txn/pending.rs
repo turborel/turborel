@@ -1,9 +1,10 @@
 //! \[DESIGN\] A transaction's log records held until it commits (RULES.md
 //! D25, D470): each row change is encoded as it is made, as before, but
 //! kept in the transaction's own buffer, with no lock another session
-//! takes and no write; at its commit the records and the commit record go
-//! to the log together, one write (`Log::append_all`). So a transaction
-//! writes the log once, where it wrote it for every change.
+//! takes and no write; at its commit the records go to the log together,
+//! one write (`Log::append_all`), before it takes its commit timestamp,
+//! and its commit record after. So a transaction writes the log twice,
+//! where it wrote it for every change.
 //!
 //! The data file moves only at a checkpoint, so no page holding a change
 //! is durable before a checkpoint is; and a checkpoint, while its gate is
@@ -276,8 +277,10 @@ impl Txn {
         tx_log.write(&self.shared, self.id, None).map(|_| ())
     }
 
-    /// Writes what it holds and then `last`, its commit record, in one run:
-    /// `last`'s position.
+    /// Writes what it still holds and then `last`, its commit record, in one
+    /// run: `last`'s position. What it held is written before, as its commit
+    /// begins (`Txn::write_held_first`), unless that failed or the database
+    /// took no change.
     ///
     /// # Errors
     ///
