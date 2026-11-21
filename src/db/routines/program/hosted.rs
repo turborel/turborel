@@ -21,7 +21,7 @@ use crate::error::{Code, Result, SqlError, Warnings};
 use crate::exec::{Db, Ended, Runner, Subqueries, SubqueryRows, eval};
 use crate::logical::{Expr, Invocation, LogicalPlan, Subquery};
 use crate::params::Params;
-use crate::storage::Row;
+use crate::storage::{Row, sized_row};
 use crate::value::Value;
 
 /// \[DESIGN\] A statement's runner, with the session that runs a function
@@ -116,12 +116,16 @@ pub(in crate::db) fn hosted_rows(plan: &LogicalPlan, hosted: &Hosted<'_>) -> Opt
             return Some(Err(e));
         }
     }
-    let row_of = |exprs: &[Expr], input: &Row| exprs.iter().map(|e| eval(e, input, hosted)).collect::<Result<Row>>();
-    Some(
-        rows.iter()
-            .map(|r| row_of(r, &Row::new()).and_then(|values| projected.map_or(Ok(values.clone()), |p| row_of(p, &values))))
-            .collect(),
-    )
+    let row_of = |exprs: &[Expr], input: &Row| sized_row(exprs.len(), exprs.iter().map(|e| eval(e, input, hosted)));
+    // A row of no projection is the values themselves, not a copy.
+    let made = |r: &Vec<Expr>| {
+        let values = row_of(r, &Row::new())?;
+        match projected {
+            Some(p) => row_of(p, &values),
+            None => Ok(values),
+        }
+    };
+    Some(rows.iter().map(made).collect())
 }
 
 impl Session {

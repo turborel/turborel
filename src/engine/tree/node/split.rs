@@ -4,7 +4,7 @@
 //! is built with its own prefix, what its first and last keys share with
 //! its new high key.
 
-use super::build::{Shape, built};
+use super::build::{Shape, built, built_size};
 use super::{KeyRef, child_of, corrupt, entry_size};
 use crate::disk::pager::PageId;
 use crate::error::Result;
@@ -24,7 +24,10 @@ pub(in crate::engine::tree) struct Halves {
 /// by bytes, unless inserts run in key order through the node and `run`
 /// is the index of the entry added: then the entries before it stay, and
 /// it starts the right half, marked as inserted last there, so the run
-/// goes on (see `node.rs`).
+/// goes on (see `node.rs`). Either way the split moves to the nearest
+/// entry at which both halves fit `capacity`, each built with its own
+/// prefix: a key without the prefix the node's keys share takes it from
+/// the half it joins, whose keys then take their whole length.
 ///
 /// # Errors
 ///
@@ -33,7 +36,7 @@ pub(in crate::engine::tree) fn split(
     shape: &Shape<'_>,
     entries: &[(KeyRef<'_>, &[u8])],
     run: Option<usize>,
-    new: PageId,
+    (new, capacity): (PageId, usize),
 ) -> Result<Halves> {
     let leaf = shape.level == 0;
     // A leaf keeps the separator, its highest key; an inner node gives it
@@ -42,21 +45,50 @@ pub(in crate::engine::tree) fn split(
     // A run starts the right half at the entry added: in a leaf, the one
     // before it is the separator; in an inner node it goes up.
     let at_run = run.and_then(|at| at.checked_sub(1)).filter(|&before| before <= most);
-    let middle = at_run.unwrap_or_else(|| balance(entries).min(most));
-    let (last, value) = *entries.get(middle).ok_or_else(|| corrupt("a split is past its entries"))?;
-    let last = last.to_vec();
-    // A leaf's high key need only part its last key from the right half's
-    // first: the shortest that does, so the levels above hold short keys.
-    let separator = match (leaf, entries.get(middle.saturating_add(1))) {
-        (true, Some((first, _))) => shortest_between(&last, &first.to_vec()).to_vec(),
-        (true, None) | (false, _) => last,
-    };
+    let start = at_run.unwrap_or_else(|| balance(entries).min(most));
+    let middle = fitting(shape, entries, (start, most), capacity);
+    let (_, value) = *entries.get(middle).ok_or_else(|| corrupt("a split is past its entries"))?;
+    let separator = separator(entries, middle, leaf);
     let (left_end, right_first) = if leaf { (middle.saturating_add(1), PageId(0)) } else { (middle, child_of(value)?) };
     let left_entries = entries.get(..left_end).unwrap_or_default();
     let right_entries = entries.get(middle.saturating_add(1)..).unwrap_or_default();
     let left = built(&Shape { high: Some(&separator), right: Some(new), ..*shape }, left_entries, None, None)?;
     let right = built(&Shape { first: right_first, ..*shape }, right_entries, at_run.map(|_| 0), None)?;
     Ok(Halves { left, right, separator })
+}
+
+/// The separator of a split at entry `at`: its key, or of a leaf the
+/// shortest key parting it from the next, so the levels above hold short
+/// keys.
+fn separator(entries: &[(KeyRef<'_>, &[u8])], at: usize, leaf: bool) -> Vec<u8> {
+    let last = entries.get(at).map(|(k, _)| k.to_vec()).unwrap_or_default();
+    match (leaf, entries.get(at.saturating_add(1))) {
+        (true, Some((first, _))) => shortest_between(&last, &first.to_vec()).to_vec(),
+        (true, None) | (false, _) => last,
+    }
+}
+
+/// The bytes of the left and right halves of a split at entry `at`.
+fn sizes(shape: &Shape<'_>, entries: &[(KeyRef<'_>, &[u8])], at: usize) -> (usize, usize) {
+    let leaf = shape.level == 0;
+    let left_end = if leaf { at.saturating_add(1) } else { at };
+    let left = built_size(separator(entries, at, leaf).len(), entries.get(..left_end).unwrap_or_default());
+    let right = built_size(shape.high.map_or(0, <[u8]>::len), entries.get(at.saturating_add(1)..).unwrap_or_default());
+    (left, right)
+}
+
+/// The split point nearest `start`, up to `most`, at which both halves fit
+/// `capacity`; `start` if none does.
+fn fitting(shape: &Shape<'_>, entries: &[(KeyRef<'_>, &[u8])], (start, most): (usize, usize), capacity: usize) -> usize {
+    let fits = |at: usize| {
+        let (left, right) = sizes(shape, entries, at);
+        left <= capacity && right <= capacity
+    };
+    (0..=most)
+        .flat_map(|d| [start.checked_sub(d), start.checked_add(d).filter(|&at| at <= most && d > 0)])
+        .flatten()
+        .find(|&at| fits(at))
+        .unwrap_or(start)
 }
 
 /// \[DESIGN\] Suffix truncation (Bayer and Unterauer, "Prefix B-Trees",
