@@ -467,6 +467,7 @@ verification approach DO-178C expects (§8).
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
 | D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
 | D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
+| D747 | A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it |
 
 ### The project
 
@@ -13332,6 +13333,19 @@ go back to most. A version of a batch gone is read from the log as before.
 A store of pages (temporary tables) keeps none, as its pages are in the
 buffer pool already. The log is never synced (D31), so a crash loses
 nothing it needs. Recovery starts with no open snapshot.
+
+#### D747. A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it
+
+A write refused because another transaction changed the row asked the
+engine for the row's newest state (`TableStorage::newest`), which decodes
+the pending row and reads the committed version below it from the undo
+store. A writer only needs to know whom to wait for and the stamp of the
+newest commit, and with many sessions on a few hot rows it asked again at
+every refusal. `TableStorage::newest_writer` gives the writer and the
+stamp alone, which the row store reads from the newest version's maker
+(`RowTable::writer_of`). The row is read only when the statement rechecks
+its search condition over a version committed after its snapshot, and if
+the row changed again in between, the write is tried again.
 
 ## 2. Project layout
 
