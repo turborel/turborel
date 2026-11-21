@@ -37,16 +37,19 @@ fn finds(content: &[u8], keys: &[Vec<u8>], probes: &[Vec<u8>]) {
 }
 
 /// Verifies: [DESIGN] RULES.md D500, prefix truncation: a node keeps once
-/// what its first key shares with its high key, and gives every key back
-/// whole; a key without the prefix is found below or above every entry; a
-/// key inserted below the first that shares less shortens the prefix, the
-/// node built again, its keys still whole; the rightmost node keeps none.
+/// what its first key shares with its last, after its high key, and gives
+/// every key back whole; a key without the prefix is found below or above
+/// every entry; a key inserted below the first or above the last that
+/// shares less shortens the prefix, the node built again, its keys still
+/// whole; the rightmost node keeps a prefix too.
 #[test]
 fn prefixes_are_kept_once_and_keys_read_whole() {
     let mut content = leaf(Some(b"index 0018"), Some(PageId(9)), &[(b"index 0011 a", b"1"), (b"index 0012 b", b"2")]);
     let node = Node::parse(&content).unwrap();
     assert_eq!(node.prefix, b"index 001");
-    assert!(content.len() < leaf(None, None, &[(b"index 0011 a", b"1"), (b"index 0012 b", b"2")]).len() + b"index 0018".len());
+    // The header, the high key, the prefix, and each entry's tail of 3
+    // bytes, value of 1, two lengths and a slot.
+    assert_eq!(content.len(), HEADER + 10 + 9 + 2 * (3 + 1 + 2 * LEN + SLOT));
     assert_eq!((node.search(b"apple").unwrap(), node.search(b"index 002").unwrap()), (Err(0), Err(2)));
     assert_eq!((node.search(b"index 00").unwrap(), node.search(b"index 001").unwrap()), (Err(0), Err(0)));
     let bigger = leaf(Some(b"index 0018"), Some(PageId(9)), &[(b"index 0011 a", b"1"), (b"index 0012 b", b"2")]);
@@ -58,8 +61,11 @@ fn prefixes_are_kept_once_and_keys_read_whole() {
     assert_eq!(shorter.prefix, b"index 00");
     assert_eq!(keys(&content), [&b"index 0005"[..], b"index 001", b"index 0011 a", b"index 0012 b"]);
     assert_eq!((shorter.search(b"index 001").unwrap(), shorter.last_insert().unwrap()), (Ok(1), Some(1)));
-    let rightmost = leaf(None, None, &[(b"index 0011 a", b"1"), (b"index 0012 b", b"2")]);
-    assert_eq!(Node::parse(&rightmost).unwrap().prefix, b"");
+    let mut rightmost = leaf(None, None, &[(b"index 0011 a", b"1"), (b"index 0012 b", b"2")]);
+    assert_eq!(Node::parse(&rightmost).unwrap().prefix, b"index 001");
+    insert(&mut rightmost, 2, b"index 0020", b"3").unwrap();
+    assert_eq!(Node::parse(&rightmost).unwrap().prefix, b"index 00", "appended past a byte's boundary");
+    assert_eq!(keys(&rightmost), [&b"index 0011 a"[..], b"index 0012 b", b"index 0020"]);
 }
 
 /// Verifies: [DESIGN] RULES.md D500, key heads and hints: in nodes of
@@ -102,7 +108,7 @@ fn heads_and_hints_find_every_key() {
 
 /// Verifies: [DESIGN] RULES.md D500, a node names its tree: a node built,
 /// both halves of its split, a node compacted and a leaf deleted keep the
-/// tree's meta page; a damaged prefix length past the high key is refused.
+/// tree's meta page; a damaged prefix length past the node is refused.
 #[test]
 fn a_node_names_its_tree() {
     let content = leaf(None, None, &[(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]);
@@ -114,6 +120,6 @@ fn a_node_names_its_tree() {
     let gone = deleted(PageId(4), TREE).unwrap();
     assert!(Node::parse(&gone).unwrap().deleted && Node::parse(&gone).unwrap().tree == TREE);
     let mut long = leaf(Some(b"m"), Some(PageId(9)), &[(b"b", b"2")]);
-    long[PREFIX_AT] = 5;
+    long[PREFIX_AT..PREFIX_AT + 2].copy_from_slice(&u16::MAX.to_le_bytes());
     assert_eq!(Node::parse(&long).err().map(|e| e.code), Some(Code::Corrupt));
 }

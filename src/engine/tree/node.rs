@@ -5,7 +5,7 @@
 //! value replaced by one of its length is written over, nothing moved.
 //!
 //! ```text
-//! header (100 bytes, integers little-endian):
+//! header (68 bytes, integers little-endian):
 //!   level u8 (0: a leaf), flags u8 (1: it has a high key; 2: it is
 //!   deleted, its right link leading to the node that took its range,
 //!   `reclaim.rs`), entries u16,
@@ -13,17 +13,18 @@
 //!   high key length u16, right neighbour u64 (none: all ones),
 //!   first child u64 (inner nodes; 0 in a leaf),
 //!   last insert u16 (the slot of the entry inserted last; none: all ones),
-//!   prefix length u16 (the first bytes of the high key, which every key
-//!   of the node begins with),
+//!   prefix length u16 (the bytes every key of the node begins with),
 //!   tree u64 (the meta page of the tree it belongs to),
 //!   hints, 16 key heads (those of the slots at sixteen even steps
 //!   through the slots, while there are at least 32)
 //! high key
+//! prefix
 //! heap:   entries, each tail length u16, tail (the key past the prefix),
 //!         value length u16, value, in the order they were added, or in
 //!         key order once rebuilt
 //! slots:  for each entry, in key order, its offset in the heap u16, and
-//!         its head: the first 4 bytes of its tail, zeros past its end
+//!         its head: the first 2 bytes of its tail, zeros past its end,
+//!         big-endian
 //! ```
 //!
 //! A node holds the keys above its left neighbour's high key, up to and
@@ -35,12 +36,15 @@
 //!
 //! **Prefixes and heads** (Müller, Benson and Leis, "B-Trees Are Back",
 //! 2025, §3-4). A node built keeps once the bytes its first key shares with
-//! its high key, which every key between them shares. A key inserted below
-//! the first that does not share them shortens the prefix, the node built
-//! again (`build.rs`). A search compares heads, 4-byte integers beside the
-//! slots, and reads a tail only where the heads are equal. The hints narrow
-//! it to one sixteenth of the slots before it starts. The rightmost node of
-//! a level, the one appended to, keeps no prefix.
+//! its last, which every key between them shares. A key inserted that does
+//! not share them shortens the prefix, the node built again (`build.rs`),
+//! as when keys appended to the rightmost node of a level pass a byte's
+//! boundary. A search compares heads, 2-byte integers beside the slots,
+//! and reads a tail only where the heads are equal. The hints narrow it to
+//! one sixteenth of the slots before it starts. Heads of two bytes, after
+//! the prefix, tell most keys of a node apart and cost a slot two bytes
+//! less than the paper's four, so a node holds as many entries as one with
+//! no prefix and no heads would.
 //!
 //! **Where a full node splits** (an extension: Lehman and Yao split a node
 //! into halves, §3.1.3(b)). In the middle, by bytes, unless inserts are
@@ -77,9 +81,9 @@ use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 
 /// Bytes of a node's header.
-pub(super) const HEADER: usize = 100;
+pub(super) const HEADER: usize = 68;
 /// Bytes of an entry beyond its key and value: two lengths and its slot.
-pub(super) const ENTRY_OVERHEAD: usize = 10;
+pub(super) const ENTRY_OVERHEAD: usize = 8;
 /// Bytes of an inner entry's value, a page number.
 pub(super) const CHILD: usize = 8;
 
@@ -106,7 +110,7 @@ const DELETED: u8 = 2;
 /// Bytes of a length field, and of a slot's offset.
 const LEN: usize = 2;
 /// Bytes of a slot: its offset and its key's head.
-const SLOT: usize = 6;
+const SLOT: usize = 4;
 const NO_PAGE: u64 = u64::MAX;
 
 fn corrupt(why: &str) -> SqlError {
@@ -123,9 +127,10 @@ fn u16_at(bytes: &[u8], at: usize) -> Result<usize> {
     Ok(usize::from(u16::from_le_bytes(field)))
 }
 
-fn u32_at(bytes: &[u8], at: usize) -> Result<u32> {
-    let field = <[u8; 4]>::try_from(slice(bytes, at, 4)?).map_err(|_| corrupt("a field runs past its end"))?;
-    Ok(u32::from_be_bytes(field))
+/// A key head at `at`, big-endian, so heads order as their bytes do.
+fn head_at(bytes: &[u8], at: usize) -> Result<u16> {
+    let field = <[u8; 2]>::try_from(slice(bytes, at, 2)?).map_err(|_| corrupt("a field runs past its end"))?;
+    Ok(u16::from_be_bytes(field))
 }
 
 fn u64_at(bytes: &[u8], at: usize) -> Result<u64> {
@@ -188,8 +193,9 @@ impl<'a> Node<'a> {
         if high.is_some() != right.is_some() && !deleted {
             return Err(corrupt("it has a high key but no right neighbour, or one but not the other"));
         }
-        let prefix = high_key.get(..u16_at(bytes, PREFIX_AT)?).ok_or_else(|| corrupt("its prefix is longer than its high key"))?;
-        let heap = HEADER.saturating_add(high_len);
+        let prefix_at = HEADER.saturating_add(high_len);
+        let prefix = slice(bytes, prefix_at, u16_at(bytes, PREFIX_AT)?).map_err(|_| corrupt("its prefix runs past its end"))?;
+        let heap = prefix_at.saturating_add(prefix.len());
         let slots = count
             .checked_mul(SLOT)
             .and_then(|s| bytes.len().checked_sub(s))
@@ -233,8 +239,8 @@ impl<'a> Node<'a> {
     }
 
     /// The head of entry `i`'s key.
-    fn head(&self, i: usize) -> Result<u32> {
-        u32_at(self.bytes, self.slot(i)?.saturating_add(LEN))
+    fn head(&self, i: usize) -> Result<u16> {
+        head_at(self.bytes, self.slot(i)?.saturating_add(LEN))
     }
 
     /// Entry `i`'s tail, the key past the prefix, and where its value's
@@ -316,12 +322,12 @@ impl<'a> Node<'a> {
 
     /// The slots a key of head `head` may be among, as the hints bound it:
     /// past every hint below it, up to the first above it.
-    fn hinted(&self, head: u32) -> Result<(usize, usize)> {
+    fn hinted(&self, head: u16) -> Result<(usize, usize)> {
         let (mut low, mut high) = (0, self.count);
         let Some(step) = hint_step(self.count) else { return Ok((low, high)) };
         for i in 0..HINTS {
             let at = step.saturating_mul(i.saturating_add(1));
-            let hint = u32_at(self.bytes, HINTS_AT.saturating_add(i.saturating_mul(key::HEAD)))?;
+            let hint = head_at(self.bytes, HINTS_AT.saturating_add(i.saturating_mul(key::HEAD)))?;
             if hint < head {
                 low = at.saturating_add(1);
             } else if hint > head {

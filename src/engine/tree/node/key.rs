@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 /// \[DESIGN\] Bytes of a key head: the first bytes of a key's tail, kept
 /// beside its slot and compared as one integer (Müller, Benson and Leis,
 /// "B-Trees Are Back", 2025, §3).
-pub(in crate::engine::tree) const HEAD: usize = 4;
+pub(in crate::engine::tree) const HEAD: usize = 2;
 
 /// A key of a node: its prefix, shared by the node's keys, then its tail.
 #[derive(Clone, Copy, Debug)]
@@ -75,20 +75,20 @@ impl<'a> KeyRef<'a> {
         self.prefix.starts_with(head) && (rest.is_empty() || self.tail.starts_with(rest))
     }
 
-    /// The bytes it shares from the start with the key `other`.
-    pub(in crate::engine::tree) fn common(&self, other: &[u8]) -> usize {
-        self.prefix.iter().chain(self.tail).zip(other).take_while(|(a, b)| a == b).count()
+    /// The bytes it begins with that `other` begins with too.
+    pub(in crate::engine::tree) fn common_with(&self, other: &KeyRef<'_>) -> usize {
+        self.prefix.iter().chain(self.tail).zip(other.prefix.iter().chain(other.tail)).take_while(|(a, b)| a == b).count()
     }
 }
 
 /// The head of `tail`: its first `HEAD` bytes, zeros past its end, as a
 /// big-endian integer, so heads order as their tails do, or are equal.
-pub(in crate::engine::tree) fn head_of(tail: &[u8]) -> u32 {
+pub(in crate::engine::tree) fn head_of(tail: &[u8]) -> u16 {
     let mut head = [0_u8; HEAD];
     for (to, from) in head.iter_mut().zip(tail) {
         *to = *from;
     }
-    u32::from_be_bytes(head)
+    u16::from_be_bytes(head)
 }
 
 /// The bytes `a` and `b` share from the start.

@@ -5159,9 +5159,9 @@ These figures assume the default 4-byte CRC-32C checksum.
 
 | Page size | B-link tree index | Hash index |
 |---|---|---|
-| 4 KiB | 942 bytes | |
-| 8 KiB (default) | 1,966 bytes | 8,116 bytes |
-| 64 KiB | 16,302 bytes | 65,460 bytes |
+| 4 KiB | 960 bytes | |
+| 8 KiB (default) | 1,984 bytes | 8,116 bytes |
+| 64 KiB | 16,320 bytes | 65,460 bytes |
 
 A B-link node must hold at least four entries to split, and each counts a value
 of 8 bytes and a slot with its key's head (RULES.md D500). A row's long values go out of line, but an index key is compared in

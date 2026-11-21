@@ -31,6 +31,24 @@ struct Filling {
     bytes: usize,
 }
 
+impl Filling {
+    /// The bytes it takes with an entry of `key`, of `size` bytes whole,
+    /// added (`within`).
+    fn with(&self, key: &[u8], size: usize) -> usize {
+        within(&self.entries, self.bytes, (key, size))
+    }
+}
+
+/// The bytes a node of `entries`, `bytes` with their keys whole, takes with
+/// an entry of `key`, `size` bytes whole, added: its keys kept past the
+/// prefix they share with its first, which they share, in key order, with
+/// `key` too (RULES.md D500).
+fn within(entries: &Entries, bytes: usize, (key, size): (&[u8], usize)) -> usize {
+    let prefix = entries.first().map_or(0, |(first, _)| first.iter().zip(key).take_while(|(a, b)| a == b).count());
+    let kept = entries.len().saturating_add(1).saturating_mul(prefix);
+    bytes.saturating_add(size).saturating_add(prefix).saturating_sub(kept)
+}
+
 impl BLinkTree {
     /// Loads `entries`, in key order, keys unique, into the tree, which is
     /// empty, and which nothing else reads or writes until it returns.
@@ -55,7 +73,7 @@ impl BLinkTree {
             }
             let size = node::entry_size(&key, &value);
             // Room for the high key too, which is no longer than the last.
-            if !leaf.entries.is_empty() && leaf.bytes.saturating_add(size).saturating_add(key.len()) > target {
+            if !leaf.entries.is_empty() && leaf.with(&key, size).saturating_add(key.len()) > target {
                 let next = self.placeholder()?;
                 let high = leaf.entries.last().map(|(last, _)| node::shortest_between(last, &key).to_vec()).unwrap_or_default();
                 self.write_node(
@@ -94,7 +112,7 @@ impl BLinkTree {
         let (mut first, mut entries, mut bytes) = (children.first().copied().unwrap_or(PageId(0)), Vec::new(), HEADER);
         for (separator, child) in separators.iter().zip(children.iter().skip(1)) {
             let size = node::entry_size(separator, &[0; CHILD]);
-            if bytes.saturating_add(size).saturating_add(room) > target {
+            if within(&entries, bytes, (separator, size)).saturating_add(room) > target {
                 // The separator goes up, and the child starts the next node.
                 nodes.push((first, std::mem::take(&mut entries)));
                 up.push(separator.clone());

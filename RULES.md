@@ -10944,21 +10944,28 @@ A lookup by key took two descents from the root, one of the index's tree
 and one of the table's, each latching every level. Each node search
 parsed a slot, an offset and a length per probe and compared whole keys.
 
-A node now keeps once the bytes its keys share, the first bytes of its
-high key, and its slots hold beside each offset the key's head: the
-first four bytes of the rest of the key, compared as one integer. Sixteen
-heads sampled evenly from the slots sit in the header as hints and narrow
-a search before it starts. A node also names its tree, by the tree's meta
-page. This follows Müller, Benson and Leis, "B-Trees Are Back", 2025,
-sections 3 and 4 (`engine/tree/node.rs`).
+A node now keeps once the bytes its keys share, and its slots hold beside
+each offset the key's head, the first two bytes of the rest of the key,
+compared as one integer. Sixteen heads sampled evenly from the slots sit
+in the header as hints and narrow a search before it starts. A node also
+names its tree, by the tree's meta page. This follows Müller, Benson and
+Leis, "B-Trees Are Back", 2025, sections 3 and 4 (`engine/tree/node.rs`).
 
-- A node built keeps what its first and last keys share with its high
-  key, which every key between them shares. The rightmost node of a level
-  keeps none, as keys are appended past its end.
+- A node built keeps what its first and last keys share, which every key
+  between them shares. The rightmost node of a level keeps one too.
 - A key inserted that does not begin with the prefix shortens it, and the
-  node is built again. Only a key below the node's first can do that,
-  after an emptied leaf gave its range to its right neighbour or in the
-  leftmost node of a level.
+  node is built again. Keys appended to the rightmost node do that as
+  they pass a byte's boundary, once in 256 keys at most.
+- A node filled by inserts keeps the prefix it was built with, none for
+  a new tree's first leaf. Before a full node splits, it is built again,
+  its prefix what its first and last keys now share, and the entry goes
+  in without a split if it then fits. A loaded tree counts each node's
+  keys past the prefix they share as it fills the node.
+- The paper's heads are four bytes. Two are kept, as they come after the
+  prefix, where they tell most keys of a node apart. A slot then costs two
+  bytes more than an offset alone, and an index entry four more for its
+  hint. A node whose keys share six bytes or more, as integer keys of a
+  few hundred in a node do, holds at least as many entries as before.
 - Heads order as keys do or are equal, so a search reads a key's tail
   only where heads are equal.
 

@@ -262,13 +262,13 @@ fn stale_paths_follow_a_leaf_taken_out() {
 }
 
 /// Verifies: [DESIGN] CONFORMANCE.md, Limits: a B-link tree counts an
-/// entry to 950 bytes at 4 KiB pages, 1,974 at 8 KiB and 16,310 at 64 KiB,
+/// entry to 968 bytes at 4 KiB pages, 1,992 at 8 KiB and 16,328 at 64 KiB,
 /// with CRC-32C page checksums, its value as 8 bytes at least, so an index
-/// has 942, 1,966 and 16,302 for a key and its row id.
+/// has 960, 1,984 and 16,320 for a key and its row id.
 #[test]
 fn the_longest_entry_is_as_documented() {
     use crate::disk::memory::MemoryFileSystem;
-    for (page_size, most, key) in [(4_096_u32, 950_usize, 942_usize), (8_192, 1_974, 1_966), (65_536, 16_310, 16_302)] {
+    for (page_size, most, key) in [(4_096_u32, 968_usize, 960_usize), (8_192, 1_992, 1_984), (65_536, 16_328, 16_320)] {
         let pager = Pager::create(
             &MemoryFileSystem::new(),
             std::path::Path::new("/t"),

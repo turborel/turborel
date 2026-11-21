@@ -441,7 +441,9 @@ impl BLinkTree {
                 Slot::Insert(_) => live.saturating_add(old).saturating_add(added),
                 Slot::Replace(_) => live.saturating_sub(old).saturating_add(added),
             };
-            if new_run || after > self.capacity {
+            let fits =
+                after <= self.capacity || (!new_run && matches!(slot, Slot::Insert(_)) && self.fits_compacted(&mut page, key, added)?);
+            if new_run || !fits {
                 page.clone()
             } else {
                 let at = match slot {
@@ -459,6 +461,20 @@ impl BLinkTree {
             }
         };
         self.split(held.id, &copy, (key, value), slot).map(Some)
+    }
+
+    /// Whether an entry of `key`, `added` bytes whole, fits the node `page`
+    /// holds once it is built again, its garbage gone and its prefix what
+    /// its first and last keys now share (RULES.md D500); if it does, the
+    /// node is left built again.
+    fn fits_compacted(&self, page: &mut Vec<u8>, key: &[u8], added: usize) -> Result<bool> {
+        let compacted = node::compact(page)?;
+        let grown = node::grown(&Node::parse(&compacted)?, key);
+        let fits = compacted.len().saturating_add(grown).saturating_add(added) <= self.capacity;
+        if fits {
+            *page = compacted;
+        }
+        Ok(fits)
     }
 
     /// Splits node `id`, whose content was `copy`, making `slot`'s change
