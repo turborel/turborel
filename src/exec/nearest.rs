@@ -54,7 +54,8 @@ fn open(read: NearestRead, db: &Db, tx: TxId) -> Result<RowIter> {
     let projection = index.key_projection();
     let Some(entries) = index.nearest(&query, &db.memory)? else { return Ok(scanned(read, storage, db, tx, false)) };
     let reading = Reading::of(&key, Some(&read.columns), projection);
-    let entries = Box::new(checked(entries, db.tx.stop_of(tx)));
+    // Counted as the index's search (RULES.md D522).
+    let entries = Box::new(checked(crate::index::used(entries, db.uses_of(&read.index)), db.tx.stop_of(tx)));
     let rows = Search { read, storage, key, reading, entries, threshold, runner, db: db.clone(), tx, ended: false, tail: None };
     Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
 }

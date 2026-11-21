@@ -41,7 +41,7 @@ impl Analysis {
                 self.rolled_back.insert(record.tx, lsn);
                 self.transactions.insert(record.tx);
             }
-            Change::Insert { .. } | Change::Update { .. } | Change::Delete { .. } | Change::LobPut { .. } => {
+            Change::Insert { .. } | Change::InsertRows { .. } | Change::Update { .. } | Change::Delete { .. } | Change::LobPut { .. } => {
                 self.transactions.insert(record.tx);
             }
             Change::Schema { .. }

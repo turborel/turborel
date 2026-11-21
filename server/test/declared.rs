@@ -129,3 +129,30 @@ fn offering(server: &Running, offer: Offer) -> turborel_client::connection::Conn
     let stream = std::net::TcpStream::connect(server.address).unwrap();
     turborel_client::connection::Connection::open_offering(stream, ("Z", &mut Trust), offer).unwrap()
 }
+
+/// Verifies: [DESIGN] RULES.md D396: the library manual's example, a
+/// prepared VALUES of a CAST to INTEGER and one to DECIMAL(9,2), whose
+/// columns are written as declared to a client granted `declared-types`,
+/// and as their tags say to one that asked for nothing; a UNION of two
+/// INTEGER columns is INTEGER, and of INTEGER and SMALLINT a type
+/// computed. Regression test: the VALUES was NUMERIC(10,0) and
+/// NUMERIC(9,2) whether told or not, which the manual's example did not
+/// say.
+#[test]
+fn a_cast_is_written_as_the_type_it_casts_to() {
+    let db = database();
+    let server = start(&db, &[]);
+    let sql = "VALUES (CAST(1 AS INTEGER), CAST(2.5 AS DECIMAL(9,2)))";
+    let mut c = turborel_client::connection::connect(server.address, "Z", &mut Trust).unwrap();
+    let typed = c.prepare(sql).unwrap();
+    let written: Vec<String> = typed.columns().iter().map(turborel_protocol::Column::type_written).collect();
+    let mut first = offering(&server, Offer::none());
+    let plain: Vec<String> = first.prepare(sql).unwrap().columns().iter().map(turborel_protocol::Column::type_written).collect();
+    assert_eq!(
+        (written, plain),
+        (vec!["INTEGER".to_owned(), "DECIMAL(9,2)".to_owned()], vec!["NUMERIC(10,0)".to_owned(), "NUMERIC(9,2)".to_owned()])
+    );
+    let mut union = |sql: &str| c.prepare(sql).unwrap().columns()[0].type_written();
+    assert_eq!(union("SELECT I FROM T UNION SELECT I FROM T"), "INTEGER");
+    assert_eq!(union("SELECT I FROM T UNION SELECT S FROM T"), "NUMERIC(10,0)");
+}
