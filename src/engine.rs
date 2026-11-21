@@ -63,7 +63,7 @@ fn memory_file_of(budget: &Arc<MemoryBudget>, bytes: usize, what: &str) -> Resul
     let fs = MemoryFileSystem::within(Arc::clone(budget), &format!("the pages of {what}"));
     let hash: Arc<dyn HashFunction> = Arc::new(crate::hash::xxhash::Xxh3Hash);
     let pager = Pager::create(&fs, Path::new("/pages"), hash, Pipeline::none(), DEFAULT_PAGE_SIZE)?;
-    let pool = Arc::new(BufferPool::in_budget(budget, (bytes, pager.page_size()), what)?);
+    let pool = Arc::new(BufferPool::in_budget(budget, (bytes, pager.page_size()), what)?.standing());
     let file = pool.add_pager(Arc::new(pager));
     Ok((pool, file))
 }
