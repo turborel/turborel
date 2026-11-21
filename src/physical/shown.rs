@@ -65,6 +65,8 @@ impl Plan {
             super::Preserved::Inner => "",
             super::Preserved::Outer => "LeftOuter",
             super::Preserved::Both(_) => "FullOuter",
+            super::Preserved::Semi => "Semi",
+            super::Preserved::Anti => "Anti",
         };
         match spatial.as_deref() {
             Some(super::Spatial::Adaptive) => writeln!(
@@ -108,6 +110,7 @@ impl Plan {
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
             Plan::MergeJoin(m) => writeln!(out, "{pad}{}MergeJoin {}", if m.outer { "Left" } else { "" }, m.detail),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
+            Plan::SemiJoin(s) => writeln!(out, "{pad}{} {}", s.operator(), s.detail),
             Plan::IndexJoin { .. } => self.write_index_join(out, &pad),
             Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
             Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
@@ -173,6 +176,10 @@ impl Plan {
             Plan::MergeJoin(m) => {
                 m.left.write(out, depth);
                 m.right.write(out, depth);
+            }
+            Plan::SemiJoin(s) => {
+                s.left.write(out, depth);
+                s.right.write(out, depth);
             }
         }
     }

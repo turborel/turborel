@@ -27,6 +27,11 @@ pub(super) enum Kind {
     Left,
     /// The FULL outer join.
     Full,
+    /// The semi join, its left operand's rows a row of its right matches
+    /// (RULES.md D540).
+    Semi,
+    /// The antijoin, its left operand's rows no row of its right matches.
+    Anti,
 }
 
 impl Kind {
@@ -66,21 +71,26 @@ fn both_strong(a: &Shape, b: &Shape) -> bool {
     a.strong && b.strong
 }
 
-/// Table 2: assoc(◦a, ◦b), `(e1 ◦a e2) ◦b e3 ≡ e1 ◦a (e2 ◦b e3)`.
+/// Table 2: assoc(◦a, ◦b), `(e1 ◦a e2) ◦b e3 ≡ e1 ◦a (e2 ◦b e3)`. A semi
+/// join or an antijoin below gives no column of e2 for ◦b to read, so none
+/// reassociates over it.
 fn assoc(a: &Shape, b: &Shape) -> bool {
     match (a.kind, b.kind) {
-        (Kind::Inner, Kind::Inner | Kind::Left) => true,
+        (Kind::Inner, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) => true,
         (Kind::Left | Kind::Full, Kind::Left) | (Kind::Full, Kind::Full) => both_strong(a, b),
-        (Kind::Inner, Kind::Full) | (Kind::Left, Kind::Inner | Kind::Full) | (Kind::Full, Kind::Inner) => false,
+        (Kind::Inner, Kind::Full)
+        | (Kind::Left, Kind::Inner | Kind::Full | Kind::Semi | Kind::Anti)
+        | (Kind::Full, Kind::Inner | Kind::Semi | Kind::Anti)
+        | (Kind::Semi | Kind::Anti, Kind::Inner | Kind::Left | Kind::Full | Kind::Semi | Kind::Anti) => false,
     }
 }
 
 /// Table 3: l-asscom(◦a, ◦b), `(e1 ◦a e2) ◦b e3 ≡ (e1 ◦b e3) ◦a e2`.
 fn left_asscom(a: &Shape, b: &Shape) -> bool {
     match (a.kind, b.kind) {
-        (Kind::Inner | Kind::Left, Kind::Inner | Kind::Left) => true,
+        (Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) => true,
         (Kind::Left, Kind::Full) | (Kind::Full, Kind::Left | Kind::Full) => both_strong(a, b),
-        (Kind::Full, Kind::Inner) | (Kind::Inner, Kind::Full) => false,
+        (Kind::Full, Kind::Inner | Kind::Semi | Kind::Anti) | (Kind::Inner | Kind::Semi | Kind::Anti, Kind::Full) => false,
     }
 }
 
@@ -89,9 +99,9 @@ fn right_asscom(a: &Shape, b: &Shape) -> bool {
     match (a.kind, b.kind) {
         (Kind::Inner, Kind::Inner) => true,
         (Kind::Full, Kind::Full) => both_strong(a, b),
-        (Kind::Inner, Kind::Left | Kind::Full)
-        | (Kind::Left, Kind::Inner | Kind::Left | Kind::Full)
-        | (Kind::Full, Kind::Inner | Kind::Left) => false,
+        (Kind::Inner, Kind::Left | Kind::Full | Kind::Semi | Kind::Anti)
+        | (Kind::Left | Kind::Semi | Kind::Anti, Kind::Inner | Kind::Left | Kind::Full | Kind::Semi | Kind::Anti)
+        | (Kind::Full, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) => false,
     }
 }
 

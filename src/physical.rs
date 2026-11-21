@@ -50,6 +50,8 @@ mod probe;
 mod project;
 mod raising;
 mod recognized;
+mod semi;
+pub use semi::{SemiJoin, SemiMethod};
 mod shown;
 pub(crate) mod spatial;
 
@@ -265,6 +267,8 @@ pub enum Plan {
     },
     /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
     MergeJoin(Box<MergeJoin>),
+    /// \[DESIGN\] A semi join or an antijoin (`physical/semi.rs`, RULES.md D540).
+    SemiJoin(Box<SemiJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
     Aggregate {
         /// The grouping columns of `input`.

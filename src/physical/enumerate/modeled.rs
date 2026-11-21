@@ -121,7 +121,7 @@ impl PhysicalPlanner<'_> {
     /// other operators each in its own unless an inner one joins it; none
     /// if a column's distinct values are not known.
     fn classed(&self, q: &Query, inner: &[Option<(usize, usize)>], pred_keys: &[Vec<(usize, usize)>]) -> Option<Classed> {
-        let mut parents: Vec<usize> = (0..q.width).collect();
+        let mut parents: Vec<usize> = (0..q.columns()).collect();
         for &(a, b) in inner.iter().flatten() {
             let (ra, rb) = (find(&parents, a), find(&parents, b));
             if let Some(p) = parents.get_mut(ra) {
