@@ -46,6 +46,7 @@ use std::sync::Arc;
 use super::{CostModel, PhysicalPlanner};
 use crate::catalog::QualifiedName;
 use crate::db::State;
+use crate::hash::xxhash::Xxh3BuildHasher;
 use crate::index::Index;
 use crate::logical::{Cond, LogicalPlan, filled_cond};
 use crate::stats::Statistics;
@@ -130,7 +131,7 @@ pub(super) struct Estimates<'a> {
     /// Each index's distinct keys, by its name, as its sketch counts them.
     keys: RefCell<HashMap<String, Option<f64>>>,
     /// Each table's unique keys and referential constraints, by its name.
-    table_keys: RefCell<HashMap<QualifiedName, Rc<keys::TableKeys>>>,
+    table_keys: RefCell<HashMap<QualifiedName, Rc<keys::TableKeys>, Xxh3BuildHasher>>,
     /// Each node's estimate, by its address, for the asking under way.
     memo: RefCell<HashMap<usize, Card>>,
     /// The addresses of the nodes of the plan being planned, and the
@@ -149,7 +150,7 @@ impl<'a> Estimates<'a> {
     pub(super) fn new(db: &'a State) -> Estimates<'a> {
         let (stats, rows, keys) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
         let (memo, asking) = (RefCell::new(HashMap::new()), Cell::new(0));
-        let (planned, kept, table_keys) = (HashSet::new(), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
+        let (planned, kept, table_keys) = (HashSet::new(), RefCell::new(HashMap::new()), RefCell::new(HashMap::default()));
         Estimates { db, cost: db.cost(), stats, rows, keys, table_keys, memo, asking, planned, kept, values: None }
     }
 
