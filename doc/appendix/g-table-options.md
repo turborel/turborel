@@ -21,6 +21,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 | COLUMNSTORE.GROUP_ROWS | 65536 | INTEGER FROM 2048 TO 65536 | in place |
 | COLUMNSTORE.IMPRINTS | OFF | ONE OF ON, OFF | in place |
 | COLUMNSTORE.LAYOUT | COLUMNS | ONE OF COLUMNS, PAX | in place |
+| COLUMNSTORE.LOAD | TREE | ONE OF TREE, GROUPS | in place |
 | COLUMNSTORE.ORDER | none | AT MOST 8 OF THE TABLE'S COLUMNS, BY COMMAS | in place |
 | COLUMNSTORE.REWRITE_FRACTION | 0.2 | NUMBER FROM 0 TO 1 | in place |
 | COLUMNSTORE.SKETCH | none | AT MOST 8 OF THE TABLE'S COLUMNS, BY COMMAS | in place |
@@ -42,6 +43,7 @@ Each in a sentence:
 - **COLUMNSTORE.GROUP_ROWS**: The rows of each group a table of the column store freezes; groups frozen before keep theirs.
 - **COLUMNSTORE.IMPRINTS**: Whether a table of the column store keeps, of the groups it freezes from then on, imprints of each column of exact numbers, datetimes or character strings: of each 64 rows, the bins of the group's values they fall in, so a comparison, IN or LIKE prefix skips stretches of rows that cannot match within 1024; ON or OFF.
 - **COLUMNSTORE.LAYOUT**: How a table of the column store lays out the groups it freezes: COLUMNS, each column's values on pages of their own, so a scan of a few columns reads only theirs; PAX, each page a range of rows, a chunk of each column on it, so a row read whole reads one page. Groups frozen before are written again so in the background.
+- **COLUMNSTORE.LOAD**: How a load into a table of the column store holding no row past its groups writes its rows: TREE, through the table's tree, frozen into groups in the background as any rows; GROUPS, each batch straight as a frozen group, seen by others once its transaction commits, on the load's own time.
 - **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.
 - **COLUMNSTORE.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.
 - **COLUMNSTORE.SKETCH**: The columns, by commas, of which a table of the column store keeps a sketch of each group it freezes, a byte of each row ordered as its value, if the column is VARCHAR and its values are compressed by a table of symbols, so a comparison, IN or LIKE prefix compares the texts of few rows, groups frozen before written again so in the background; none if empty.

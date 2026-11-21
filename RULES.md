@@ -456,6 +456,8 @@ verification approach DO-178C expects (§8).
 | D652 | A join's method is chosen seeing the degree its part will run at |
 | D653 | A hash join's cost counts the probing rows its runtime filter leaves |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
+| D682 | The system's threads are asked once, by the thread starting the first database |
+| D683 | Work grants share half of what the buffer pools leave of the budget |
 | D695 | Exact numbers hold 38 digits, and BIGINT, counts and a column of 18 or fewer keep 64 bits |
 | D696 | The precision of an exact sum, difference or product is the digits its operands' types give, up to 38 |
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
@@ -12308,6 +12310,12 @@ copy's execution. A copy takes its executions a group's rows at a time
 once its load writes groups, so each group is whole
 (`Session::load_rows`).
 
+A table writes its loads so only if it sets COLUMNSTORE.LOAD to GROUPS;
+by default, TREE, a load goes through its tree. Its rows are then
+frozen on the maintenance thread beside the load, off the load's time,
+where a group the load writes is on its own time. GROUPS suits a table
+read right after the load commits, its rows already in groups.
+
 Such a group is stamped with who made it. While its transaction is
 open, only that transaction sees its rows; once it commits, each
 snapshot at or after its commit does; once that commit is before every
@@ -12448,6 +12456,12 @@ judged as before, and the sketch is never read for it. What the scan
 keeps is what the conjunct keeps, as a code is said to keep or leave
 its rows only where every value it holds orders alike against every
 constant.
+
+A run of which fewer than one row of each eight is asked for, as a
+narrower conjunct judged before leaves it, is compared row by row
+without the sketch (`SPARSE` in `judged/coded.rs`). Of so few rows,
+reading the codes and judging each code of the group cost more than
+comparing the texts asked for.
 
 Columns of numbers and datetimes get none, as decoding their frames of
 reference costs about what reading a byte a row costs, and so do texts
@@ -12801,8 +12815,10 @@ plan that reads every table only through index probes is not: it is
 learned again only once a probe's estimated rows per probe, its table's
 rows over the distinct values of the columns it fixes, grows past ten
 times its figure as the plan was learned (`prepared/plans/grown.rs`).
-Until then each drift moves the rows it is measured from. A statement or
-leaf whose plans varied tries to learn again once a table it reads
+Until then each drift moves the rows it is measured from. A figure taken
+before its table had statistics is the whole table's rows, so a plan
+learned then is learned again once they are gathered, its figures taken
+anew. A statement or leaf whose plans varied tries to learn again once a table it reads
 drifts, so a plan that varied while its tables were small can be kept
 once they settle.
 
@@ -12941,6 +12957,34 @@ nothing. EXECUTOR.KEEP_SUBQUERY_PLANS,
 ON by default and of a session's scope, turns it off, as to compare the
 two.
 
+#### D682. The system's threads are asked once, by the thread starting the first database
+
+EXECUTOR.WORKERS of 0 sizes the workers and every parallel part's
+degree by the threads the system runs at once (D290, D291), asked once
+(D405). It was asked as the first statement was planned, by that
+statement's thread. A thread held to fewer processors than its process,
+as a session's thread may be, saw only those, and every part after was
+planned for them. It is now asked as the first database starts
+(`Database::over`), by the thread starting it, and kept for every
+statement after (`physical::system_threads`).
+
+#### D683. Work grants share half of what the buffer pools leave of the budget
+
+Grants kept half the whole budget for what reserves beside them (D298).
+A buffer pool is reserved of the same budget, and one of more than half
+of it left the grants nothing. Every operator then held the floor, and a
+hash join whose right operand was a few megabytes was partitioned and
+spilled, while the same join run in parallel was granted its ceiling.
+A database's buffer pools now reserve their bytes as standing, held
+while it is open (`Reservation::stand`). Grants share half of what the
+standing reservations leave, and the other half stays for spill areas,
+which a statement reserves and which never shrink the grants' share. A
+database's areas count the bytes their grants hold, and a grant takes
+half of the share they left. Every grant is reserved of the budget, so
+however many run at once they never take more than is free
+(`spill/grant.rs`). The planner's estimate of an operator's grant, by
+which it costs what the operator spills (D651), is the same function's
+(`WorkAreas::would_grant`).
 #### D651. Costs count what an operator spills past its grant, at its rows' width
 
 A hash join's build, a hashed grouping and a sort were priced as if they
