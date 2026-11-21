@@ -16,8 +16,23 @@
 //! or not, the key present or not. A key past the leaf's range is looked
 //! for in its right neighbour, as a descent moves right (Lehman and Yao
 //! 1981, §4): a link read from a leaf in the tree names no page freed, as
-//! a leaf is unlinked before it is retired. Any other read descends.
+//! a leaf is unlinked before it is retired.
+//!
+//! A read of a table's row with no leaf to start from tries the leaf noted
+//! for the row (`hints.rs`, RULES.md D500), the hint its index entry
+//! carried. It is trusted as the remembered leaf is, but for the stamp,
+//! as it may come from anywhere: only if a frame holds it now, so no
+//! page is read that may be free, and it is a leaf of this tree, not
+//! deleted, whose first key is at or below the key. A page reused by
+//! another tree names that tree; one freed has left the pool, its frame
+//! emptied (`BufferPool::free`); and a leaf of this tree not deleted holds
+//! no key below its range. Past its high key, the key moved right with a
+//! split, and the read follows the right links a few leaves, as a descent
+//! would. Any other read descends.
 
+use std::cmp::Ordering;
+
+use super::hints;
 use super::node::Node;
 use super::{BLinkTree, Path, Target};
 use crate::error::Result;
@@ -29,6 +44,9 @@ const MOST_MISSES: u8 = 8;
 /// \[DESIGN\] The leaves a read tries before it descends: the one it knows
 /// and its right neighbour, where a scan's next key goes when it leaves one.
 const LEAVES_TRIED: usize = 2;
+/// \[DESIGN\] The right links a read from a noted leaf follows before it
+/// descends: splits since the note, each moving keys only right.
+const HOPS: usize = 4;
 
 impl BLinkTree {
     /// Whether `key` is in the tree; its value left in `near`, which is
@@ -41,6 +59,9 @@ impl BLinkTree {
         let _guard = self.epochs.guard();
         let stamp = self.epochs.stamp();
         if let Some(found) = self.in_leaf(key, stamp, near)? {
+            return Ok(found);
+        }
+        if let Some(found) = self.hinted(key, stamp, near)? {
             return Ok(found);
         }
         let (bytes, at) = (&mut near.bytes, &mut near.at);
@@ -72,9 +93,51 @@ impl BLinkTree {
     }
 }
 
+impl BLinkTree {
+    /// Whether `key` is in the tree, if the leaf noted for its row answers,
+    /// or one right of it within `HOPS` links.
+    fn hinted(&self, key: &[u8], stamp: u64, near: &mut Near) -> Result<Option<bool>> {
+        let Some(mut id) = self.row_of(key).and_then(hints::leaf_of) else { return Ok(None) };
+        let Some(mut page) = self.pool.read_resident(self.file, id)? else { return Ok(None) };
+        for hop in 0..=HOPS {
+            let right = {
+                // Of no use, rather than malformed: it may be any page.
+                let Ok(node) = Node::parse(&page) else { return Ok(None) };
+                if hop == 0 && !trusted(&node, self.meta.0, key)? {
+                    return Ok(None);
+                }
+                if answers(&node, key)? {
+                    self.tally.lookup();
+                    super::count(&self.counters.hinted);
+                    near.misses = 0;
+                    near.leaf = Some((id, stamp));
+                    return copied(&node, key, (&mut near.bytes, &mut near.at)).map(Some);
+                }
+                node.right.filter(|_| node.level == 0 && (node.deleted || !node.covers(key)))
+            };
+            let Some(right) = right else { return Ok(None) };
+            drop(page);
+            super::count(&self.counters.right_moves);
+            id = right.0;
+            page = self.pool.read(self.file, id)?;
+        }
+        Ok(None)
+    }
+}
+
+/// Whether `node`, a page noted, may be trusted as a leaf of the tree
+/// whose meta page is `tree`, for `key`: one not deleted, its first key at
+/// or below `key`.
+fn trusted(node: &Node<'_>, tree: u64, key: &[u8]) -> Result<bool> {
+    if node.tree != tree || node.level != 0 || node.deleted || node.len() == 0 {
+        return Ok(false);
+    }
+    Ok(node.key(0)?.cmp_bytes(key) != Ordering::Greater)
+}
+
 /// Whether leaf `node` is the one for `key`.
 fn answers(node: &Node<'_>, key: &[u8]) -> Result<bool> {
-    Ok(node.level == 0 && !node.deleted && node.len() > 0 && node.covers(key) && node.key(0)? <= key)
+    Ok(node.level == 0 && !node.deleted && node.len() > 0 && node.covers(key) && node.key(0)?.cmp_bytes(key) != Ordering::Greater)
 }
 
 /// Whether `leaf` holds `key`, its value copied to `bytes` and its place
@@ -85,7 +148,7 @@ fn copied(leaf: &Node<'_>, key: &[u8], (bytes, at): (&mut Vec<u8>, &mut Option<u
     bytes.clear();
     let next = at.and_then(|at| at.checked_add(1)).filter(|&next| next < leaf.len());
     let found = match next {
-        Some(next) if leaf.key(next)? == key => Ok(next),
+        Some(next) if leaf.key(next)?.is(key) => Ok(next),
         _ => leaf.search(key)?,
     };
     *at = found.ok();

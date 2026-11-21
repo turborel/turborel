@@ -249,19 +249,26 @@ fn grouped(s: &Session, (first, groups): (i64, i64), (per, from): (i64, i64)) {
 /// Verifies: [DESIGN] RULES.md D613, a plan kept that reads only through an
 /// index's probes is kept as its table grows fivefold with its rows per
 /// probe as they were, and is learned again once its rows per probe grow
-/// past ten times what they were as it was learned.
+/// past ten times what they were as it was learned. Its statistics are
+/// gathered after each load, so each figure is measured from them, not
+/// from whether a pass of the maintenance thread happened to come first
+/// (RULES.md D473).
 #[test]
 fn a_probes_plan_is_learned_again_only_once_its_rows_per_probe_outgrow_it() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE G (G INTEGER NOT NULL, K INTEGER NOT NULL, V INTEGER, PRIMARY KEY (G, K))")
         .unwrap();
     let s = db.session("X");
-    grouped(&s, (1, 100), (2, 1));
+    let loaded = |groups, rows| {
+        grouped(&s, groups, rows);
+        db.maintain().unwrap();
+    };
+    loaded((1, 100), (2, 1));
     let p = s.prepare("SELECT K, V FROM G WHERE G = ?").unwrap();
     assert!(group_plannings(&s, &p, 40) > 0, "learned");
     assert_eq!(group_plannings(&s, &p, 40), 0, "kept");
-    grouped(&s, (101, 400), (2, 1));
+    loaded((101, 400), (2, 1));
     assert_eq!(group_plannings(&s, &p, 40), 0, "five times the rows, as many of each group");
-    grouped(&s, (1, 500), (30, 3));
+    loaded((1, 500), (30, 3));
     assert!(group_plannings(&s, &p, 40) > 0, "sixteen times the rows of each group");
 }

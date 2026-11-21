@@ -345,6 +345,8 @@ fn a_transaction_keeping_the_log_is_told() {
     let (db, kept) = overdue_after_one(&scratch, &os());
     let idle = db.session("A");
     idle.run("INSERT INTO T VALUES (0)").unwrap();
+    // Written, as a checkpoint writes it, it keeps the log (RULES.md D470).
+    db.write_held().unwrap();
     let a = db.session("A");
     for k in 1..turborel::db::OVERDUE {
         a.run(&format!("INSERT INTO T VALUES ({k})")).unwrap();

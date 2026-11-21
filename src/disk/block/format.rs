@@ -111,17 +111,29 @@ pub(super) fn read_header(bytes: &[u8], hashes: &[Arc<dyn HashFunction>], path: 
 ///
 /// SQLCODE -910 if the payload is longer than `max`.
 pub(super) fn frame(hash: &dyn HashFunction, payload: &[u8], max: u32) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(frame_len(payload.len(), hash.digest_len()));
+    frame_into(hash, payload, max, &mut out)?;
+    Ok(out)
+}
+
+/// As `frame`, the block's bytes added to the end of `out`: blocks
+/// appended together are framed into one buffer, written at once
+/// (`BlockFile::append_all`).
+///
+/// # Errors
+///
+/// As `frame`; `out` is then unchanged.
+pub(super) fn frame_into(hash: &dyn HashFunction, payload: &[u8], max: u32, out: &mut Vec<u8>) -> Result<()> {
     let len = u32::try_from(payload.len()).ok().filter(|&n| n <= max).ok_or_else(|| {
         SqlError::new(Code::Api, format!("[DESIGN] a block of {} bytes is longer than the limit of {max}", payload.len()))
     })?;
     let len_bytes = len.to_le_bytes();
     let digest = hash.hash_parts(&[&len_bytes, payload]);
-    let mut out = Vec::with_capacity(frame_len(payload.len(), hash.digest_len()));
     out.extend_from_slice(&len_bytes);
     out.extend_from_slice(digest.as_bytes());
     out.extend_from_slice(payload);
     out.extend_from_slice(&len_bytes);
-    Ok(out)
+    Ok(())
 }
 
 /// The bytes of a block whose payload has `len` bytes.

@@ -291,6 +291,8 @@ fn a_failed_seal_stops_the_database() {
     for k in 0..40_i32 {
         a.run(&format!("INSERT INTO T VALUES ({k}, 'row {k}')")).unwrap();
     }
+    // Written, as a checkpoint writes them (RULES.md D470).
+    db.write_held().unwrap();
     assert_eq!(faults.injected(), 1, "a seal failed");
     faults.clear();
     assert_eq!(a.commit().err().map(|e| e.code), Some(Code::InDoubt));

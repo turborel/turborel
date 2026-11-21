@@ -417,6 +417,15 @@ verification approach DO-178C expects (§8).
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
+| D470 | A transaction's log records are held until its commit and written with its commit record in one write |
+| D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
+| D472 | A page written back again is written over its side-file block with no lock held |
+| D473 | The maintenance job gathers a table's statistics only once a plan has read them since its last pass |
+| D474 | A page read into a frame takes the buffer of the page it replaces |
+| D475 | An update's log record holds the row after whole and of the row before only the columns changed |
+| D476 | A value on a zone's bound changed to one past it leaves the zone not stale |
+| D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
+| D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 | D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
@@ -2254,7 +2263,11 @@ every departure.
 A database following a group refuses what it would log (SQLCODE -917) and
 keeps serving reads. It recovers from its last checkpoint alone
 (`Database::open_following`), because its log's later records may not be
-committed.
+committed. A log that no longer holds every record before that
+checkpoint's position, lost or cut back to where a state transfer left
+it, makes its files of no use, since the transactions open at the
+checkpoint cannot be undone without those records. The database is then
+made again from nothing and takes the group's state.
 
 These were approved with this decision.
 
@@ -2397,9 +2410,10 @@ TABLES.ENGINE, and moves by ALTER TABLE ... USING.
 The row store suits SQL's point reads, updates and cursors, and is the base
 other layouts build on. Each table is a B-link tree (Lehman and Yao, 1981)
 keyed by a logical 64-bit row id. Row ids are stable, so indexes never need
-rewriting. The newest version of a row is in the tree and older ones are in
-an undo store, which is on disk for a database in a directory, so a long
-reader holds disk and not memory. A table's large objects are a space of
+rewriting. An index entry carries a hint to its row's table leaf, so a
+lookup by key descends one tree (D500). The newest version of a row is in
+the tree and older ones are in an undo store, which is on disk for a
+database in a directory, so a long reader holds disk and not memory. A table's large objects are a space of
 immutable objects beside it, each owned by one row (D79).
 
 The column store suits scans of a few columns of many rows. New rows stay
@@ -11523,6 +11537,69 @@ file log gives the end of its segment's blocks the group's sync made
 durable (`log/file/segments.rs`). A log syncing nothing, and the
 default, claim just past the record asked for.
 
+#### D470. A transaction's log records are held until its commit and written with its commit record in one write
+
+Each row change was its own append to the log (D25): a frame, a
+checksum, a reservation, a positional write and an in-order publish per
+change, so an order entry wrote the log thirty times, and its appenders
+waited on each other's publishes. A transaction now encodes each record
+as it changes a row and holds it in a buffer of its own; at its commit
+the records held and its commit record go to the log together
+(`Log::append_all`), which the file log writes as one run of blocks,
+each framed and checksummed as before, with one reservation, one write
+and one publish (`disk/block/batch.rs`). Readers, recovery, backups and
+replicas meet the same records at their own positions, and only those
+written: a transaction whose records are all still held is in no log,
+so a primary's failure loses it as recovery would, and a backup
+promoted has none of it to abort.
+
+The data file moves only at a checkpoint, and a checkpoint, with its
+gate shut, first writes every open transaction's held records, so the
+image never holds a change whose record follows it in the log; that
+write also notes the transaction's first record, from which recovery
+reads. A transaction holding more than 1 MiB writes it as a run of its
+own and holds on from there. A rollback whose records were all held
+writes nothing, and a statement, mark or savepoint undone while its
+records are held drops them; one whose first record was written logs
+the records from it undone, as before, by the position a write noted
+for it. Conflicting changes are ordered by their commits (D29), and so
+are their records. A definition a transaction logs apart from its
+records writes them first (`txn/pending.rs`).
+
+#### D471. A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it
+
+A shadow file's side file (D30) held each 4 KiB granule as its own
+block, so a page written back took two or more blocks, and every read
+of it from the side file read and checksummed each block apart, then
+the pager checksummed the page again. A write of whole granules now
+goes as one block, its run, written over in place while it stays one
+run; a granule written in part takes a block of its own.
+
+The writer knows where each granule's content lies in its side file,
+so a read takes it with one positional read and no checksum
+(`disk/block/trusted.rs`), as a read of the file's own bytes does: what
+it holds is checked where it is used, as a page by its own checksum
+over its body and number. Every block is still framed and checksummed
+as it is written, so as a file is opened a block torn or changed before
+a commit block is refused, and a side file cut short has no commit
+block and is thrown away. An overwrite takes the length it writes over
+from the writer, not from the file.
+
+#### D472. A page written back again is written over its side-file block with no lock held
+
+A shadow file's writes and reads of its side file took its lock, a
+write exclusively, so while one page was written back every read of
+the file's other pages from the side file or the file waited for it;
+under a buffer pool smaller than its tables that wait was the most
+common one of a statement. A write of a run whose granules are all
+still in its block now marks those granules in flight under the lock,
+then writes the block over with no lock held, and lands them. A read
+of a granule in flight waits for it, so it sees one write or the
+other, never a mix; any other change of the file, as a seal, a cut or a
+first write of a page, waits until none is in flight
+(`disk/shadow/flight.rs`). A writer in flight takes no lock of the
+file to land, so a waiter may hold it.
+
 ### Order entry execution
 
 #### D413. MIN or MAX of a column known not null is read from the first row in order
@@ -11800,6 +11877,66 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+#### D473. The maintenance job gathers a table's statistics only once a plan has read them since its last pass
+
+A table's statistics were gathered again whenever its changes passed
+their share of its rows (D31), spaced by D407, whether or not anything
+read them. Under an order entry workload every plan is a probe of a
+unique key kept from the start, so no plan reads them, yet the tables
+that churn were sampled again and again, and the pass took the cores
+the sessions run on. A table now notes when a planning reads its
+statistics, and the maintenance job gathers it only if one did since
+its last pass began, and the table is due and spaced as before. The
+read that makes statistics due wanted notes the table for the
+maintenance job, as a commit to it would, so a table changed enough and
+then read with no write after is gathered too. A table
+opened and asked for its first statistics is gathered as before, and
+ANALYZE and the maintenance asked to run now gather at once
+(`engine/rows/stats.rs`). A sampled pass of a table of the column store
+decodes the frozen rows of its sample alone, where it decoded every
+frozen row and kept the sampled (`engine/rows/frozen.rs`).
+
+#### D474. A page read into a frame takes the buffer of the page it replaces
+
+Each page a frame was given freed the buffer of the page it held and
+allocated another for the page read: two calls of the allocator per
+miss, each taking a lock of an arena the session threads share, and
+with many sessions missing at once they waited on each other there. A
+frame emptied now hands its buffer, cleared, to the page read into it,
+so a miss allocates nothing in the pool, and a page's body read from
+its file is the page read cut to its front, not a copy of it
+(`disk/pager/sealed.rs`). A buffer grown past `REUSED_BYTES`, as a page
+with an overflow grows it, is let go, so a frame keeps no more than a
+page's worth once that page leaves (`disk/buffer/pool.rs`).
+
+#### D475. An update's log record holds the row after whole and of the row before only the columns changed
+
+An update logged both of its row's images whole (D25), so an update of
+one column of a wide row wrote the row twice, and the log grew by as
+much as the row's two images for every such change. Its record now
+holds the row after whole and, of the row before, each column whose
+value's bytes differ, with its position. Read back, the row before is
+the row after with those columns put back, so redo, undo, recovery,
+backups and replicas meet both images whole as before. A column is
+changed if its bytes differ, so a value equal to another but written
+apart, as a decimal of another scale, is kept as it was. A row before
+of another width than the row after is written whole
+(`log/record/images.rs`).
+
+#### D476. A value on a zone's bound changed to one past it leaves the zone not stale
+
+A write staled its zone unless each value it replaced lay strictly
+inside the zone's bounds or was kept, so the maintenance thread summed
+the zone up again from every version of its rows (D31). A count, a
+running total or a next number grows at each write, and the row holding
+the greatest of a zone is the one most often written, so under an order
+entry workload nearly every zone of the tables written was summed up
+again each second, and the pass took a core of its own. A value on a
+bound changed to one past it now leaves the bound reached, by the row
+written, as the zone is widened to hold it, so the zone stays as narrow
+as its rows. A value on a bound changed back inside it, or deleted, or a
+null changed, stales the zone as before (`engine/rows/zones.rs`).
+
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
 The engine hashed with MurmurHash3, FNV-1a, SplitMix64's finalizer, the
@@ -12901,6 +13038,86 @@ executor stops judging by one. Only inner joins count it, since the
 preserved side of an outer join keeps every row. With EXECUTOR.BATCHES
 or EXECUTOR.RUNTIME_FILTERS OFF, none is counted. So join orders put a
 selective build where its filter reaches the scan it drops rows of.
+
+#### D500. B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf
+
+A lookup by key took two descents from the root, one of the index's tree
+and one of the table's, each latching every level. Each node search
+parsed a slot, an offset and a length per probe and compared whole keys.
+
+A node now keeps once the bytes its keys share, and its slots hold beside
+each offset the key's head, the first two bytes of the rest of the key,
+compared as one integer. Sixteen heads sampled evenly from the slots sit
+in the header as hints and narrow a search before it starts. A node also
+names its tree, by the tree's meta page. This follows Müller, Benson and
+Leis, "B-Trees Are Back", 2025, sections 3 and 4 (`engine/tree/node.rs`).
+
+- A node built keeps what its first and last keys share, which every key
+  between them shares. The rightmost node of a level keeps one too.
+- A key inserted that does not begin with the prefix shortens it, and the
+  node is built again. Keys appended to the rightmost node do that as
+  they pass a byte's boundary, once in 256 keys at most.
+- A node filled by inserts keeps the prefix it was built with, none for
+  a new tree's first leaf. Before a full node splits, it is built again,
+  its prefix what its first and last keys now share, and the entry goes
+  in without a split if it then fits. A loaded tree counts each node's
+  keys past the prefix they share as it fills the node.
+- The paper's heads are four bytes. Two are kept, as they come after the
+  prefix, where they tell most keys of a node apart. A slot then costs two
+  bytes more than an offset alone, and an index entry four more for its
+  hint. A node whose keys share six bytes or more, as integer keys of a
+  few hundred in a node do, holds at least as many entries as before.
+- Heads order as keys do or are equal, so a search reads a key's tail
+  only where heads are equal.
+
+An index entry's value starts with a hint, the page of the table's leaf
+its row was in when the entry was written, as four bytes. The count of
+versions follows only when it is above one. A table's tree notes, per
+thread, the leaf each row is written into or scanned from, and an index
+entry written next for that row takes it (`engine/tree/hints.rs`). An
+index read notes each entry's hint the same way, and the table's read of
+the row tries that leaf before it descends (`engine/tree/near.rs`).
+
+A hint is a guess and is checked before it is trusted, so a stale one
+costs at most a few page reads and never a wrong answer.
+
+- The page is used only if a frame holds it now. A freed page has left
+  the pool, so no free page is read.
+- It must be a leaf of the table's tree, not deleted, whose first key is
+  at or below the key. A leaf of the tree holds no key below its range,
+  so it is the key's leaf if its range reaches the key.
+- Past its high key, the key moved right in a split, and the read follows
+  up to four right links (Lehman and Yao 1981, section 4). Otherwise it
+  descends.
+- A hint is never repaired by a write. Row ids come in blocks per thread,
+  so a table's leaves fill once and seldom split afterwards.
+
+The limits of an index key and of a tree's entry shrink by the header's
+growth and the head beside each slot (CONFORMANCE.md, Limits). Formats
+stay at version 1, changed in place.
+
+#### D501. An index fetch checks a row's key in place, and a search decodes a key once for its entries
+
+An index holds the entries of versions a reader may not see (D34). So a
+row found by an entry is kept only if the version the reader sees has the
+entry's key. That check made a key of the row, copying each key column,
+and compared it with the entry's decoded key. Each search also copied its
+probe and the key's types, and decoded every entry's key, even where many
+entries share one.
+
+The check is unchanged in what it keeps, and cheaper (`exec/entries.rs`,
+`index/blink.rs`).
+
+- Of a key of columns with no collation, expression or projection, each
+  value of the entry's key is compared with the row's column in place. A
+  key made of the row would hold exactly those values, so the answer is
+  the same.
+- A search keeps the last key it decoded and its bytes. An entry of the
+  same bytes takes that key, as decoding the same bytes gives the same
+  key. Entries of a key not unique, read in order, are decoded once.
+- The probe is copied only by a search whose range is not exact, the one
+  case that checks entries against it. The key's types are shared by
+  every search of the index.
 
 ## 2. Project layout
 

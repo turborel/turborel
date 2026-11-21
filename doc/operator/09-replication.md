@@ -58,7 +58,9 @@ it, the primary among them, and fetches the primary's database if its
 own is behind. A node whose `log/` directory is lost while its database's
 files remain starts over from nothing, as the files cannot be recovered
 without the log, and fetches the primary's database: nothing need be
-copied by hand. A node started over an empty directory without
+copied by hand. So it is too for a node whose log no longer reaches its
+database's last checkpoint, as a crash just after it fetched a database
+can leave it. A node started over an empty directory without
 `--owner` waits so too, as it cannot tell a new group from one that
 holds a log elsewhere: it is a new member, or one whose directory was
 lost, and takes the group's state.
