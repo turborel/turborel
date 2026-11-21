@@ -46,22 +46,48 @@ impl RowTable {
     /// more: a freeze may have taken out the entry of a row frozen, the same
     /// row then read from its group (`rows/frozen.rs`); else it conflicts.
     pub(in crate::engine::rows) fn write_version(&self, tx: TxId, id: RowId, record: Option<&[u8]>, past: Past) -> Result<Option<Vec<u8>>> {
+        self.write_sharing(tx, id, (record, past), &[]).map(|written| written.map(|(replaced, _)| replaced))
+    }
+
+    /// As `write_version`, and of `share`, the columns the new version
+    /// keeps as the one it replaced holds them, noted with its change
+    /// (`Change::kept`, RULES.md D750); none outside a transaction.
+    pub(in crate::engine::rows) fn write_sharing(
+        &self,
+        tx: TxId,
+        id: RowId,
+        (record, past): (Option<&[u8]>, Past),
+        share: &[usize],
+    ) -> Result<Option<(Vec<u8>, Vec<usize>)>> {
         if tx == NO_TRANSACTION {
             return self.write_latest(id, record).map(|()| None);
         }
-        if let Some(replaced) = self.try_write(tx, id, record, past)? {
+        if let Some(replaced) = self.try_write(tx, id, (record, past), share)? {
             return Ok(Some(replaced));
         }
-        self.try_write(tx, id, record, past)?.map(Some).ok_or_else(conflict)
+        self.try_write(tx, id, (record, past), share)?.map(Some).ok_or_else(conflict)
     }
 
-    /// `write_version`'s work: the version it replaced, none if the entry
-    /// it read was gone or changed by then.
-    fn try_write(&self, tx: TxId, id: RowId, record: Option<&[u8]>, past: Past) -> Result<Option<Vec<u8>>> {
+    /// `write_sharing`'s work: the version it replaced, and the columns of
+    /// `share` kept; none if the entry it read was gone or changed by then.
+    fn try_write(
+        &self,
+        tx: TxId,
+        id: RowId,
+        (record, past): (Option<&[u8]>, Past),
+        share: &[usize],
+    ) -> Result<Option<(Vec<u8>, Vec<usize>)>> {
         let open = self.open_of(tx)?;
         let snapshot = lock_builtin(&open).snapshot;
         let k = key(id);
         let Some((newest, thawed)) = self.newest_or_frozen(id)? else { return no_row(id) };
+        // Compared before anything is written, so a failure leaves nothing;
+        // of a deletion, refused below, nothing.
+        let replaced = Version::parse(&newest)?;
+        let kept = match record.filter(|_| !share.is_empty() && !replaced.deleted) {
+            Some(new) => self.alike(id, (replaced.record, new), share)?,
+            None => Vec::new(),
+        };
         self.versions.statuses.claim(tx);
         let (older, appended) = self.older_of((tx, snapshot), id, &newest, past)?;
         let (dropped, added) = self.owned_change(id, Version::parse(&newest)?.record, record)?;
@@ -87,8 +113,9 @@ impl RowTable {
         let before = appended.is_none().then(|| newest.clone());
         let mut open = lock_builtin(&open);
         open.adopted.extend(added);
-        open.changes.push(Change::of_row(id, before, appended, dropped), &mut encode_change)?;
-        Ok(Some(newest))
+        let change = Change { kept: kept.clone(), ..Change::of_row(id, before, appended, dropped) };
+        open.changes.push(change, &mut encode_change)?;
+        Ok(Some((newest, kept)))
     }
 
     /// The older version a new one of row `id` by `tx`, of `snapshot`,
@@ -178,7 +205,10 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let mut open = lock_builtin(&open);
         open.made.insert(id);
-        open.changes.push(Change { id, before: None, appended: None, dropped: Vec::new(), made: true, group: false }, &mut encode_change)
+        open.changes.push(
+            Change { id, before: None, appended: None, dropped: Vec::new(), made: true, group: false, kept: Vec::new() },
+            &mut encode_change,
+        )
     }
 
     /// Notes the segments `ids`, made by `tx`, as parts of a directory it

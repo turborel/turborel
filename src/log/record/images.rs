@@ -14,12 +14,42 @@
 //!
 //! A column is changed if its value's bytes differ, so values that compare
 //! equal but are written apart, as a decimal of another scale, are kept.
+//!
+//! An update's or a delete's record is made from the images as their
+//! statement holds them, never copied for it (`update_record`,
+//! `delete_record`, RULES.md D750).
 
-use super::{Change, put_table, table};
+use super::kinds::{DELETE, UPDATE};
+use super::{Change, RECORD_VERSION, put_row_change, put_table, table};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::{Row, RowId};
+use crate::txn::TxId;
+
+/// \[DESIGN\] The bytes of the record of transaction `tx` making row `id`
+/// of `table`'s storage of `generation` `after` from `before`, as
+/// `Record::encode` writes a `Change::Update`, made from the rows as they
+/// are held.
+pub fn update_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, (before, after): (&Row, &Row)) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.put_u8(RECORD_VERSION);
+    out.put_u8(UPDATE);
+    out.put_u64(tx);
+    put_update(&mut out, (table, generation, id), before, after);
+    out
+}
+
+/// \[DESIGN\] As `update_record`, of a `Change::Delete` of row `id`, which
+/// was `before`.
+pub fn delete_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, before: &Row) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.put_u8(RECORD_VERSION);
+    out.put_u8(DELETE);
+    out.put_u64(tx);
+    put_row_change(&mut out, (table, generation, id), &[before]);
+    out
+}
 use crate::value::codec::{put_row, put_value, row, value};
 
 /// The row before follows whole.

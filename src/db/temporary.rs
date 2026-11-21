@@ -37,7 +37,7 @@ use crate::catalog::{IndexDesc, QualifiedName, TableDesc, TemporaryKind};
 use crate::error::Result;
 use crate::index::Index;
 use crate::settings::{MEMORY_WORK_BYTES, held_bytes};
-use crate::storage::TableStorage;
+use crate::storage::{Removal, Row, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::{TableLock, Timestamp, TxId, remove_entries};
 use pages::Place;
@@ -202,7 +202,8 @@ impl Instance {
             .collect();
         // An entry not taken back is left: an instance is read by no
         // index-only scan, so its readers check the rows of its entries.
-        let _ = rows.gc(Timestamp::MAX, &mut |id, row| remove_entries(&indexes, id, &row).is_empty());
+        let removed = &mut |id, row: Row, kept: &[usize]| remove_entries(&indexes, id, (&row, kept)).is_empty();
+        let _ = rows.gc(Timestamp::MAX, &mut Removal { needs: &|_| true, removed });
     }
 
     /// An instance of `desc`, its rows and entries made as they are first

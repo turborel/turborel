@@ -110,11 +110,11 @@ fn versions_of_a_row_share_its_objects_and_free_what_they_drop() {
     table.update(12, id, replaced).unwrap();
     table.validate(12, 4).unwrap();
     table.commit(12, 4);
-    table.gc(3, &mut |_, _| true).unwrap();
+    table.gc(3, &mut crate::storage::Removal { needs: &|_| true, removed: &mut |_, _, _| true }).unwrap();
     assert_eq!(objects(&table), 2 * (segments + 1), "a reader at 3 may read them");
     assert_eq!(text(&table, 20, id), first, "the older version read whole");
     table.commit(20, 3);
-    table.gc(4, &mut |_, _| true).unwrap();
+    table.gc(4, &mut crate::storage::Removal { needs: &|_| true, removed: &mut |_, _, _| true }).unwrap();
     assert_eq!(objects(&table), segments + 1, "freed once collected");
     assert_eq!(text(&table, NO_TRANSACTION, other), first);
 }

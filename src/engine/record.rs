@@ -438,6 +438,23 @@ impl RecordFormat {
         })
     }
 
+    /// Whether column `i` holds the same value in records `a` and `b`, as
+    /// their bytes show it: null in both, or inline in both with the same
+    /// bytes. A value out of line is not compared, and taken as changed.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if either is not a record of this format.
+    pub fn same_inline(&self, a: &[u8], b: &[u8], i: usize) -> Result<bool> {
+        Ok(match (self.field(a, i)?, self.field(b, i)?) {
+            (Field::Null, Field::Null) => true,
+            (Field::Inline(left), Field::Inline(right)) => left == right,
+            (Field::Null, Field::Inline(_) | Field::Outside(_))
+            | (Field::Inline(_), Field::Null | Field::Outside(_))
+            | (Field::Outside(_), _) => false,
+        })
+    }
+
     /// The values a record keeps out of line.
     ///
     /// # Errors

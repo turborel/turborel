@@ -290,3 +290,18 @@ fn rows_inserted_together_are_one_record() {
     let Change::InsertRows { rows: back, generation, .. } = read.change else { panic!("{:?}", read.change) };
     assert_eq!((generation, back.len(), read.tx), (2, 3, 5));
 }
+
+/// Verifies: [DESIGN] RULES.md D750: the records of an update and a delete
+/// made from the rows as they are held are the bytes `Record::encode`
+/// writes of their changes, and read back as them.
+#[test]
+fn records_made_from_held_rows_are_their_changes() {
+    let (before, mut after) = (edge_row(), edge_row());
+    after[2] = Value::Char("changed".into());
+    let update = Change::Update { table: table(), generation: 3, row: 9, before: before.clone(), after: after.clone() };
+    let made = update_record(4, (&table(), 3), 9, (&before, &after));
+    assert_eq!(made, Record { tx: 4, change: update }.encode());
+    assert_eq!(Record::decode(&made, &TypeRegistry::default()).unwrap().encode(), made, "read back as written");
+    let delete = Change::Delete { table: table(), generation: 3, row: 9, before: before.clone() };
+    assert_eq!(delete_record(4, (&table(), 3), 9, &before), Record { tx: 4, change: delete }.encode());
+}

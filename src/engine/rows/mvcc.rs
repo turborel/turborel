@@ -158,6 +158,10 @@ struct Change {
     /// Whether it is not a row's change but a group's making, of a load:
     /// `id` is its first row's (`frozen/stamped.rs`).
     group: bool,
+    /// Of the columns its writer asked about, those it left as they were,
+    /// whose index entries the version it replaced keeps for its own
+    /// (`Sharing`, RULES.md D750).
+    kept: Vec<usize>,
 }
 
 impl Change {
@@ -165,7 +169,7 @@ impl Change {
     /// committed one it appended at `appended`, or neither, dropping the
     /// objects `dropped`.
     fn of_row(id: RowId, before: Option<Vec<u8>>, appended: Option<Lsn>, dropped: Vec<u64>) -> Change {
-        Change { id, before, appended, dropped, made: false, group: false }
+        Change { id, before, appended, dropped, made: false, group: false, kept: Vec::new() }
     }
 }
 
@@ -225,10 +229,12 @@ impl Validated {
 /// What a commit made garbage, once it is past the horizon.
 #[derive(Clone)]
 enum Dead {
-    /// A version the transaction made and then replaced itself.
-    Own(RowId, Vec<u8>),
-    /// The committed version it replaced, in the undo store.
-    Older(RowId, Lsn),
+    /// A version the transaction made and then replaced itself, and the
+    /// columns the change over it left as they were (`Change::kept`).
+    Own(RowId, Vec<u8>, Vec<usize>),
+    /// The committed version it replaced, in the undo store, and the
+    /// columns kept as for `Own`.
+    Older(RowId, Lsn, Vec<usize>),
     /// A row it deleted, whose deletion then leaves the tree.
     Deletion(RowId),
     /// The large objects a change dropped (`rows/lobs/owned.rs`), freed
@@ -480,7 +486,7 @@ impl RowTable {
     /// its other changes (`frozen/stamped.rs`).
     pub(super) fn note_group(&self, tx: TxId, first: RowId) -> Result<()> {
         let open = self.open_of(tx)?;
-        let change = Change { id: first, before: None, appended: None, dropped: Vec::new(), made: false, group: true };
+        let change = Change { id: first, before: None, appended: None, dropped: Vec::new(), made: false, group: true, kept: Vec::new() };
         lock_builtin(&open).changes.push(change, &mut encode_change).map(drop)
     }
 
@@ -515,21 +521,24 @@ impl RowTable {
 
     /// Every version of row `id`, whose newest version is `newest`,
     /// committed at or before `as_of`, that a reader at or after `horizon`
-    /// may read.
+    /// may read, but those appended to the undo store where `shared` says,
+    /// whose entry the version after shares (RULES.md D750).
     pub(super) fn versions_of(
         &self,
         id: RowId,
         newest: Vec<u8>,
         (horizon, as_of): (Timestamp, Timestamp),
-        columns: &[usize],
+        (columns, shared): (&[usize], &Xxh3Set<u64>),
     ) -> Result<Vec<(RowId, Row)>> {
         let mut found = Vec::new();
         let mut bytes = Held::from(newest);
+        let mut appended: Option<Lsn> = None;
         loop {
             let (older, readable_before) = {
                 let version = Version::parse(&bytes)?;
                 let maker = self.maker(&version);
-                if let (Maker::Committed(at), false) = (maker, version.deleted)
+                let passed = appended.is_some_and(|lsn| shared.contains(&lsn.0));
+                if let (Maker::Committed(at), false, false) = (maker, version.deleted, passed)
                     && at <= as_of
                 {
                     found.push((id, self.decode(id, version.record, Some(columns))?));
@@ -543,7 +552,7 @@ impl RowTable {
                 (version.older, still)
             };
             match older.filter(|_| readable_before) {
-                Some(at) => bytes = self.undo.read(at)?,
+                Some(lsn) => (bytes, appended) = (self.undo.read(lsn)?, Some(lsn)),
                 None => return Ok(found),
             }
         }

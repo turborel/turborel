@@ -69,8 +69,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use files::TableFiles;
+use frozen::Frozen;
 pub use frozen::SYSTEM_CACHE_BYTES;
-use frozen::{Frozen, Merged, Merging};
 use ids::IdBlocks;
 use ids::{key, no_row, row_id};
 use lobs::LobSpace;
@@ -94,7 +94,9 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Near, Newest, Region, Row, RowId, Rows, ScanOrder, Split, TableStorage};
+use crate::storage::{
+    Condition, Conjunction, Near, Newest, Region, Removal, Row, RowId, Rows, ScanOrder, Sharing, Split, SupersededRows, TableStorage,
+};
 use crate::txn::{Concurrency, NO_TRANSACTION, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
 /// The name of the row store.
@@ -234,6 +236,10 @@ impl TableStorage for RowTable {
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
         self.write_over(tx, id, None, Past::Snapshot).map(drop)
+    }
+
+    fn sharing(&self) -> Option<&dyn Sharing> {
+        Some(self)
     }
 
     fn replace(&self, tx: TxId, id: RowId, row: Option<Row>) -> Result<Row> {
@@ -404,7 +410,7 @@ impl TableStorage for RowTable {
         self.gather_wanted()
     }
 
-    fn garbage(self: Arc<Self>, as_of: Timestamp) -> Rows {
+    fn garbage(self: Arc<Self>, as_of: Timestamp) -> SupersededRows {
         self.pending(Box::new(move |at, _| at <= as_of), None)
     }
 
@@ -537,8 +543,8 @@ impl TableStorage for RowTable {
         self.awaits_collection()
     }
 
-    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
-        self.collect(horizon, removed)
+    fn gc(&self, horizon: Timestamp, removal: &mut Removal<'_>) -> Result<()> {
+        self.collect(horizon, removal)
     }
 
     /// Statistics to gather; zones to sum up; rows to freeze, groups to
@@ -564,23 +570,7 @@ impl TableStorage for RowTable {
     }
 
     fn versions(self: Arc<Self>, horizon: Timestamp, as_of: Timestamp, columns: &[usize]) -> Rows {
-        let unreadable = self.pending(Box::new(move |at, own| if own { at <= as_of } else { at <= horizon }), Some(columns));
-        let frozen = match self.frozen.directory() {
-            Ok(directory) => Merged::new(Arc::clone(&self), (Merging::FrozenOnly, directory), columns.to_vec(), None),
-            Err(e) => return Box::new(std::iter::once(Err(e))),
-        };
-        let columns = columns.to_vec();
-        // Held to the end, so no entry of a row frozen meanwhile is taken
-        // out before it is read.
-        let held = self.frozen.directory();
-        Box::new(unreadable.chain(frozen).chain(Self::entries(&self).flat_map(move |entry| {
-            let _held = &held;
-            let found = entry.and_then(|(key, newest)| self.versions_of(row_id(&key)?, newest, (horizon, as_of), &columns));
-            match found {
-                Ok(found) => found.into_iter().map(Ok).collect::<Vec<_>>(),
-                Err(e) => vec![Err(e)],
-            }
-        })))
+        self.index_versions((horizon, as_of), columns)
     }
 }
 

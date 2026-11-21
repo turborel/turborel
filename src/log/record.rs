@@ -82,6 +82,7 @@ pub use definitions::DropTarget;
 use definitions::{
     create_index, defined, dropped, put_altered, put_create_index, put_defined, put_dropped, put_schema, put_sequence, schema, sequence,
 };
+pub use images::{delete_record, update_record};
 use lobs::{lob_change, put_lob_change};
 
 use kinds::{

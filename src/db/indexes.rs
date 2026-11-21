@@ -2,8 +2,9 @@
 //! (RULES.md D27).
 //!
 //! An index holds an entry for every version of a row that has its key,
-//! which garbage collection takes back when it removes the version
-//! (`Index`). Building one while transactions write the table, without
+//! but one a run of versions of one key shares (RULES.md D750), which
+//! garbage collection takes back when it removes the version (`Index`).
+//! Building one while transactions write the table, without
 //! stopping them:
 //!
 //! 1. **Published** with the gate shut, so no write or commit is half done:

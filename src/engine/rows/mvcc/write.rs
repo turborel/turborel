@@ -1,15 +1,28 @@
 //! A row's change by a transaction through the row store's trait methods
-//! (`TableStorage::update`, `delete`, `write_newest`): its version written,
-//! its zone widened, and its counts kept.
+//! (`TableStorage::update`, `delete`, `write_newest`, `Sharing::share`):
+//! its version written, its zone widened, and its counts kept.
 
 use std::sync::atomic::Ordering;
 
 use super::Past;
-use crate::engine::rows::RowTable;
 use crate::engine::rows::version::Version;
+use crate::engine::rows::{RowTable, no_row};
 use crate::error::Result;
-use crate::storage::{Row, RowId};
-use crate::txn::TxId;
+use crate::storage::{Row, RowId, Sharing};
+use crate::txn::{Timestamp, TxId};
+
+impl Sharing for RowTable {
+    fn share(&self, tx: TxId, id: RowId, (row, seen): (Row, Option<Timestamp>), columns: &[usize]) -> Result<(Row, Vec<usize>)> {
+        let past = seen.map_or(Past::Snapshot, Past::Stamp);
+        let (record, pages) = self.encode(id, &row)?;
+        let written = self.write_sharing(tx, id, (Some(&record), past), columns).inspect_err(|_| self.free(&pages))?;
+        let Some((replaced, kept)) = written else { return no_row(id) };
+        self.widen_over(id, Some(&row), Some(&replaced));
+        self.counted_change(tx);
+        let old = self.replaced(id, Some(&replaced))?.map_or_else(|| no_row(id), Ok)?;
+        Ok((old, kept))
+    }
+}
 
 impl RowTable {
     /// Row `id` made `row` by `tx`, or deleted with none, its newest

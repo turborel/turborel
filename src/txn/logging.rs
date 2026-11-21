@@ -221,10 +221,10 @@ impl Txn {
     /// # Errors
     ///
     /// As `log_change`.
-    pub(crate) fn log_encoded(&self, bytes: &[u8], changes: u64) -> Result<()> {
+    pub(crate) fn log_encoded(&self, bytes: Vec<u8>, changes: u64) -> Result<()> {
         let Some(log) = &self.log else { return Ok(()) };
         self.shared.taking_changes()?;
-        self.hold(log, bytes.to_vec())?;
+        self.hold(log, bytes)?;
         self.shared.logged.fetch_add(changes.saturating_sub(1), Ordering::Relaxed);
         Ok(())
     }

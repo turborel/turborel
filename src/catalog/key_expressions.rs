@@ -94,6 +94,20 @@ impl IndexDesc {
         reads_of(&self.columns, &self.expressions)
     }
 
+    /// Whether its entry of a row's version serves the version after too,
+    /// which left the columns `kept` as they were (`storage::shares_entry`,
+    /// RULES.md D750).
+    pub fn shares_entry(&self, kept: &[usize]) -> bool {
+        if kept.is_empty() {
+            return false;
+        }
+        if self.expressions.is_empty() {
+            crate::storage::shares_entry(&self.columns, kept)
+        } else {
+            crate::storage::shares_entry(&self.reads(), kept)
+        }
+    }
+
     /// Each key part's expression as written, with its place in the key.
     pub fn texts(&self) -> Vec<(usize, String)> {
         self.expressions.iter().map(|e| (e.part, e.text.clone())).collect()

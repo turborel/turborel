@@ -26,7 +26,7 @@ use crate::index::{DISKANN_METHOD, DiskAnnMethod, HNSW_METHOD, HnswMethod, IVF_M
 use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Newest, Region, Row, RowId, Rows, StorageEngine, TableStorage};
+use crate::storage::{Condition, Conjunction, Newest, Region, Removal, Row, RowId, Rows, StorageEngine, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
@@ -352,8 +352,8 @@ impl TableStorage for Rows_ {
     fn durable_through(&self) -> Lsn {
         Lsn(u64::MAX)
     }
-    fn gc(&self, horizon: Timestamp, removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
-        self.made().map_or(Ok(()), |rows| rows.gc(horizon, removed))
+    fn gc(&self, horizon: Timestamp, removal: &mut Removal<'_>) -> Result<()> {
+        self.made().map_or(Ok(()), |rows| rows.gc(horizon, removal))
     }
     fn uncollected(&self) -> bool {
         self.made().is_some_and(|rows| rows.uncollected())

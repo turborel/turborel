@@ -463,6 +463,7 @@ verification approach DO-178C expects (§8).
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
+| D750 | A row's versions share an index entry while the columns its key reads are unchanged, and a write logs its images as it holds them |
 
 ### The project
 
@@ -2587,7 +2588,8 @@ a storage lock held (D27, D42, R-ERR-4).
 
 A comparison scan is index-only when every column it reads is in the key,
 of a type the key codec gives back exactly (`engine::key::restores`). A versioned
-engine keeps an entry per version, so a row is made from its entry only
+engine keeps an entry per version, or one a run of versions of one key
+shares (D750), so a row is made from its entry only
 where every reader sees that row's one version
 (`TableStorage::visible_to_all`). An entry that collection fails to take
 back is owed (`txn/owed.rs`), and a close owing any is not clean.
@@ -13207,6 +13209,35 @@ values, and so do results past 18 digits, which the set functions add
 in 128 bits (D32). A path in 128 bits for whole vectors would double the
 width of every vector of integers, or add a second kind of them to
 every kernel, for values that are rare.
+
+#### D750. A row's versions share an index entry while the columns its key reads are unchanged, and a write logs its images as it holds them
+
+On the row store each version of a row had its own entry in every index,
+taken back when collection removed the version. So an update that changed
+no key still added an entry to every index, and collection later took the
+old one back: two index writes for nothing, on most updates of an OLTP
+load. Now the engine compares, as it writes the new version, the stored
+bytes of the columns the table's index keys read, and notes those left as
+they were with the version replaced (`Sharing::share`). The writer adds no
+entry to an index whose key reads only kept columns, and collection takes
+back no entry of that index with the version replaced: its entry serves
+the new version too, readers at either snapshot finding the row through
+it, as they find any version by its row. A run of versions of one key so
+holds one entry, made by its first version and taken back with its last.
+The rule is one predicate (`storage::shares_entry`), asked by the writer,
+collection, an index build (`TableStorage::versions`) and a checkpoint's
+record of the entries awaiting collection (`TableStorage::garbage`), so
+none takes back an entry another did not add. The columns kept are noted,
+not a flag, so an index built later, whose key reads a column the writer
+did not ask about, counts that column as changed. A value out of line,
+compared only by reference, counts as changed too. An engine that does
+not share entries, a temporary table's or a plug-in's, keeps one entry a
+version.
+
+The log records of an insert, an update and a delete are made from the
+rows as the statement holds them (`update_record`, `delete_record`),
+sealed from those bytes if the table's rows are, never from a copy of
+both images made for a `Change`.
 
 ## 2. Project layout
 

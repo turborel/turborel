@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::owed::{Entry, Owed};
-use super::{Committing, Joined, Timestamp, Transactions, Txn, UndoFailure};
+use super::{Committing, Joined, TableLock, Timestamp, Transactions, Txn, UndoFailure};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::index::{Index, Key};
 use crate::memory::Undoing;
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Removal, Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 
 impl State {
@@ -234,52 +234,59 @@ impl State {
         if lock.collection_held() || lock.changed_after(self.generation) {
             return Some(true);
         }
-        {
-            // The table's indexes, found as the first version is removed:
-            // most calls remove none, so most never look them up.
-            let found: OnceCell<Vec<Found<'_>>> = OnceCell::new();
-            let indexes: OnceCell<Vec<(&dyn Index, &IndexDesc)>> = OnceCell::new();
-            let of_table = || {
-                self.catalog
-                    .indexes(table)
-                    .into_iter()
-                    .filter_map(|ix| Some((ix.name.as_str(), self.index_of(&ix.name).ok()?, ix)))
-                    .collect()
-            };
-            // The entries owed first; then each version's go as it is
-            // removed, an entry not taken back owed (`txn/owed.rs`). A
-            // failure leaves the rest of the garbage for a later call.
-            lock.owed.retry(&|name, index| self.index_of(name).is_ok_and(|now| Arc::ptr_eq(now, index)));
-            // [EXTENSION] The global indexes over a partition's rows, whose
-            // entries go with its versions; one not taken back is passed
-            // over by every reader, which reads its row again (RULES.md D157).
-            let globals: OnceCell<Vec<Global>> = OnceCell::new();
-            let over = || {
-                let all = self.globals_over(table).into_iter();
-                all.filter_map(|(ix, partition)| Some((Arc::clone(self.index_of(&ix.name).ok()?), ix, partition))).collect()
-            };
-            let _ = storage.gc(horizon, &mut |id, row| {
-                remove_global(globals.get_or_init(over), id, &row);
-                let found = found.get_or_init(of_table);
-                let indexes = indexes.get_or_init(|| found.iter().map(|&(_, index, ix)| (&**index, ix)).collect());
-                let failed = remove_entries(indexes, id, &row);
-                let entries: Vec<Entry> = failed
-                    .into_iter()
-                    .filter_map(|(at, key)| {
-                        found.get(at).map(|&(name, index, _)| Entry { name: name.to_owned(), index: Arc::clone(index), key })
-                    })
-                    .collect();
-                let gone = entries.is_empty();
-                if !gone {
-                    lock.owed.add(Owed { row: id, storage: Arc::clone(storage), entries });
-                }
-                gone
-            });
-        }
+        self.collect_versions(table, (storage, lock), horizon);
         if storage.maintenance_due() {
             self.tx.note_maintenance(table);
         }
         Some(storage.uncollected())
+    }
+
+    /// Removes `table`'s versions no reader at or after `horizon` reads,
+    /// through `storage`, each version's index entries with it, those not
+    /// taken back owed under `lock` (`txn/owed.rs`).
+    fn collect_versions(&self, table: &QualifiedName, (storage, lock): (&Arc<dyn TableStorage>, &TableLock), horizon: Timestamp) {
+        // The table's indexes, found as the first version is removed:
+        // most calls remove none, so most never look them up.
+        let found: OnceCell<Vec<Found<'_>>> = OnceCell::new();
+        let indexes: OnceCell<Vec<(&dyn Index, &IndexDesc)>> = OnceCell::new();
+        let of_table = || {
+            self.catalog.indexes(table).into_iter().filter_map(|ix| Some((ix.name.as_str(), self.index_of(&ix.name).ok()?, ix))).collect()
+        };
+        // The entries owed first; then each version's go as it is
+        // removed, an entry not taken back owed (`txn/owed.rs`). A
+        // failure leaves the rest of the garbage for a later call.
+        lock.owed.retry(&|name, index| self.index_of(name).is_ok_and(|now| Arc::ptr_eq(now, index)));
+        // [EXTENSION] The global indexes over a partition's rows, whose
+        // entries go with its versions; one not taken back is passed
+        // over by every reader, which reads its row again (RULES.md D157).
+        let globals: OnceCell<Vec<Global>> = OnceCell::new();
+        let over = || {
+            let all = self.globals_over(table).into_iter();
+            all.filter_map(|(ix, partition)| Some((Arc::clone(self.index_of(&ix.name).ok()?), ix, partition))).collect()
+        };
+        // A version whose every entry the next shares is not read (RULES.md D750).
+        let needs = |kept: &[usize]| {
+            let local = found.get_or_init(of_table).iter().any(|&(_, _, ix)| !ix.shares_entry(kept));
+            local || globals.get_or_init(over).iter().any(|(_, ix, _)| !ix.shares_entry(kept))
+        };
+        let removed = &mut |id, row: Row, kept: &[usize]| {
+            remove_global(globals.get_or_init(over), id, (&row, kept));
+            let found = found.get_or_init(of_table);
+            let indexes = indexes.get_or_init(|| found.iter().map(|&(_, index, ix)| (&**index, ix)).collect());
+            let failed = remove_entries(indexes, id, (&row, kept));
+            let entries: Vec<Entry> = failed
+                .into_iter()
+                .filter_map(|(at, key)| {
+                    found.get(at).map(|&(name, index, _)| Entry { name: name.to_owned(), index: Arc::clone(index), key })
+                })
+                .collect();
+            let gone = entries.is_empty();
+            if !gone {
+                lock.owed.add(Owed { row: id, storage: Arc::clone(storage), entries });
+            }
+            gone
+        };
+        let _ = storage.gc(horizon, &mut Removal { needs: &needs, removed });
     }
 
     /// [X3.135-1986 §8.9 GR1, GR3] cancel every change and terminate the transaction.
@@ -320,11 +327,15 @@ impl State {
 
 /// Removes the entries of row `id`, a version collected, of `row`, from
 /// `indexes`, each with its columns, of those it holds
-/// (`IndexDesc::entry_of`). Those that cannot be are left: their places among
-/// `indexes`, and their keys.
-pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, row: &Row) -> Vec<(usize, Key)> {
+/// (`IndexDesc::entry_of`), but those the version after shares, which kept
+/// the columns `kept` (RULES.md D750). Those that cannot be are left: their
+/// places among `indexes`, and their keys.
+pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, (row, kept): (&Row, &[usize])) -> Vec<(usize, Key)> {
     let mut failed = Vec::new();
     for (at, (index, ix)) in indexes.iter().enumerate() {
+        if ix.shares_entry(kept) {
+            continue;
+        }
         if let Some(key) = ix.entry_of(row)
             && index.remove(&key, id).is_err()
         {
@@ -342,10 +353,11 @@ type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
 type Global = (Arc<dyn Index>, IndexDesc, u64);
 
 /// \[EXTENSION\] Removes the entries of row `id`, a version collected, of
-/// `row`, from the global indexes `globals` over its partition. One not
-/// taken back is passed over by every reader (RULES.md D157).
-fn remove_global(globals: &[Global], id: RowId, row: &Row) {
-    for (index, ix, partition) in globals {
+/// `row`, from the global indexes `globals` over its partition, as
+/// `remove_entries` does. One not taken back is passed over by every reader
+/// (RULES.md D157).
+fn remove_global(globals: &[Global], id: RowId, (row, kept): (&Row, &[usize])) {
+    for (index, ix, partition) in globals.iter().filter(|(_, ix, _)| !ix.shares_entry(kept)) {
         if let (Some(key), Ok(entry)) = (ix.entry_of(row), crate::db::partitions::global::packed(*partition, id)) {
             let _ = index.remove(&key, entry);
         }

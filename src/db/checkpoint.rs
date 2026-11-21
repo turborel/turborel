@@ -476,8 +476,8 @@ impl State {
         for (storage, indexes, lock, name) in &stale.tables {
             if !indexes.is_empty() {
                 for read in Arc::clone(storage).garbage(stale.as_of) {
-                    let (row, values) = read?;
-                    log_entries(&*log, (through, indexes), row, &values)?;
+                    let (row, values, kept) = read?;
+                    log_entries(&*log, (through, indexes), row, (&values, &kept))?;
                 }
             }
             // [DESIGN] RULES.md D79: the large objects it would leave kept.
@@ -550,8 +550,9 @@ impl State {
 /// Logs the entry of row `row`, of `values`, in each of `indexes` that
 /// holds its key (`IndexDesc::entry_of`), stale as of the checkpoint
 /// through `through`.
-fn log_entries(log: &dyn Log, (through, indexes): (Lsn, &[IndexDesc]), row: RowId, values: &Row) -> Result<()> {
-    for ix in indexes {
+fn log_entries(log: &dyn Log, (through, indexes): (Lsn, &[IndexDesc]), row: RowId, (values, kept): (&Row, &[usize])) -> Result<()> {
+    // Not an entry the version after shares, which collection keeps (RULES.md D750).
+    for ix in indexes.iter().filter(|ix| !ix.shares_entry(kept)) {
         let Some(key) = ix.entry_of(values) else { continue };
         let change = Change::Stale { through, index: ix.name.clone(), row, key: key.0 };
         log.append(&Record { tx: NO_TRANSACTION, change }.encode())?;

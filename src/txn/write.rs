@@ -12,9 +12,10 @@ use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
-use crate::log::record::{Change, insert_record};
-use crate::storage::{Row, RowId};
-use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
+use crate::log::record::{delete_record, insert_record, update_record};
+use crate::log::sealed::seal_plain;
+use crate::storage::{Row, RowId, TableStorage};
+use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
 
 impl State {
@@ -69,18 +70,13 @@ impl State {
         self.indexes.get(name).map(Arc::clone).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {name} does not exist")))
     }
 
-    /// Logs the insert of `row` as row `id` of `table`: unless its rows are
-    /// sealed, made from the row as it is held (RULES.md D531).
+    /// Logs the insert of `row` as row `id` of `table`, made from the row
+    /// as it is held, sealed if its rows are (RULES.md D531, D750).
     fn log_insert(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        let generation = self.generation_of(table);
-        if let Some(seal) = self.seal_of(table)? {
-            let change = Change::Insert { table: table.clone(), generation, row: id, after: row.clone() };
-            return tx.log_sealed(change, Some((&*seal, id)));
-        }
         if tx.log.is_none() {
             return Ok(());
         }
-        tx.log_encoded(&insert_record(tx.id, (table, generation), id, row), 1)
+        self.log_record(tx, table, id, insert_record(tx.id, (table, self.generation_of(table)), id, row))
     }
 
     /// [X3.135-1986 §8.7] Inserts `row`, with its index entries, under its
@@ -262,29 +258,34 @@ impl State {
         seen: Option<&(Timestamp, Row)>,
     ) -> Result<(Row, Option<QualifiedName>)> {
         let storage = self.storage_of(table)?;
-        let new = match write {
-            Write::Update(row) => Some(row.clone()),
-            Write::Delete => None,
-        };
+        let indexes = self.table_indexes(table);
+        // Of an engine sharing entries, the columns their keys read, to
+        // learn which the update keeps (RULES.md D750).
+        let share = if matches!(write, Write::Update(_)) && storage.sharing().is_some() { key_reads(&indexes) } else { Vec::new() };
+        let no_row = || SqlError::new(Code::Api, format!("[DESIGN] no row {id} in {table}"));
         // The row replaced, as the write found it, not read before it
         // (RULES.md D417); of a system-time period, read first, so the
         // period refuses the write before it is made.
-        let (old, history) = match (seen, system) {
+        let (old, history, kept) = match (seen, system) {
             (Some((stamp, row)), _) => {
                 let history = Self::history_of(system, row)?;
-                storage.write_newest(tx.id, id, new, *stamp)?;
-                (row.clone(), history)
+                let (_, kept) = rewrite(&**storage, (tx.id, id), (write, Some(*stamp)), &share)?;
+                (row.clone(), history, kept)
             }
             (None, Some(_)) => {
-                let row = storage.get(tx.id, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id} in {table}")))?;
+                let row = storage.get(tx.id, id)?.ok_or_else(no_row)?;
                 let history = Self::history_of(system, &row)?;
-                (storage.replace(tx.id, id, new)?, history)
+                let (old, kept) = rewrite(&**storage, (tx.id, id), (write, None), &share)?;
+                (old.ok_or_else(no_row)?, history, kept)
             }
-            (None, None) => (storage.replace(tx.id, id, new)?, None),
+            (None, None) => {
+                let (old, kept) = rewrite(&**storage, (tx.id, id), (write, None), &share)?;
+                (old.ok_or_else(no_row)?, None, kept)
+            }
         };
         match write {
-            Write::Update(row) => self.updated(tx, (table, id), (&old, row))?,
-            Write::Delete => self.deleted(tx, table, id, &old)?,
+            Write::Update(row) => self.updated(tx, (table, id), (&old, row), (&indexes, &kept))?,
+            Write::Delete => self.deleted(tx, (table, id), &old, &indexes)?,
         }
         Ok((old, history))
     }
@@ -300,61 +301,110 @@ impl State {
     }
 
     /// Of row `id` of `table` made `row` from `old`: what undoes it, its
-    /// log record and its index entries.
-    fn updated(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), (old, row): (&Row, &Row)) -> Result<()> {
+    /// log record and its entries in `indexes`, the update having kept the
+    /// columns `kept` (RULES.md D750).
+    fn updated(
+        &self,
+        tx: &Txn,
+        (table, id): (&QualifiedName, RowId),
+        (old, row): (&Row, &Row),
+        (indexes, kept): Indexed<'_>,
+    ) -> Result<()> {
         let storage = self.storage_of(table)?;
         let caps = self.capabilities(table)?;
         if caps.undo == Undo::Log {
             tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(storage), id, old: old.clone() })?;
         }
-        if Self::logs_changes(caps.persistence) {
-            let change = Change::Update {
-                table: table.clone(),
-                generation: self.generation_of(table),
-                row: id,
-                before: old.clone(),
-                after: row.clone(),
-            };
-            tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
+        if Self::logs_changes(caps.persistence) && tx.log.is_some() {
+            let record = update_record(tx.id, (table, self.generation_of(table)), id, (old, row));
+            self.log_record(tx, table, id, record)?;
         }
         // An engine keeping versions keeps the old version's entries for
         // the readers that still see it, until the version is removed
-        // (`TableStorage::gc`); the new version gets entries of its own.
+        // (`TableStorage::gc`); the new version gets entries of its own,
+        // but where the old one's serves it, its key's columns kept.
         let versions = caps.concurrency != Concurrency::Coordinator;
-        for (ix, partition) in self.table_indexes(table) {
+        for (ix, partition) in indexes {
             // RULES.md D92: an entry of one row's one version keeps
             // its key while the columns its expressions read are unchanged.
             if !versions && ix.has_expressions() && ix.unchanged(old, row) {
                 continue;
             }
-            let entry = Self::entry_id(partition, id)?;
-            if !versions {
-                self.index_remove(tx, &ix, old, entry)?;
+            if ix.shares_entry(kept) {
+                continue;
             }
-            self.index_add(tx, &ix, row, entry)?;
+            let entry = Self::entry_id(*partition, id)?;
+            if !versions {
+                self.index_remove(tx, ix, old, entry)?;
+            }
+            self.index_add(tx, ix, row, entry)?;
         }
         Ok(())
     }
 
     /// Of row `id` of `table`, `old`, deleted, as `updated` says.
-    fn deleted(&self, tx: &Txn, table: &QualifiedName, id: RowId, old: &Row) -> Result<()> {
+    fn deleted(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), old: &Row, indexes: &[(IndexDesc, Option<u64>)]) -> Result<()> {
         let storage = self.storage_of(table)?;
         let caps = self.capabilities(table)?;
         // An engine keeping versions keeps the deleted version's entries
         // until it is removed, as for an update.
         if caps.concurrency == Concurrency::Coordinator {
-            for (ix, partition) in self.table_indexes(table) {
-                self.index_remove(tx, &ix, old, Self::entry_id(partition, id)?)?;
+            for (ix, partition) in indexes {
+                self.index_remove(tx, ix, old, Self::entry_id(*partition, id)?)?;
             }
         }
         if caps.undo == Undo::Log {
             tx.log(UndoEntry::Deleted { table: table.clone(), storage: Arc::clone(storage), id, row: old.clone() })?;
         }
-        if Self::logs_changes(caps.persistence) {
-            let change = Change::Delete { table: table.clone(), generation: self.generation_of(table), row: id, before: old.clone() };
-            tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
+        if Self::logs_changes(caps.persistence) && tx.log.is_some() {
+            let record = delete_record(tx.id, (table, self.generation_of(table)), id, old);
+            self.log_record(tx, table, id, record)?;
         }
         Ok(())
+    }
+
+    /// Logs `record`, of row `id` of `table`, made from the images as the
+    /// statement holds them, sealed if its rows are (RULES.md D750).
+    fn log_record(&self, tx: &Txn, table: &QualifiedName, id: RowId, record: Vec<u8>) -> Result<()> {
+        let record = match self.seal_of(table)? {
+            Some(seal) => seal_plain(&record, id, &seal)?,
+            None => record,
+        };
+        tx.log_encoded(record, 1)
+    }
+}
+
+/// The indexes of a row's table and the columns its update kept.
+type Indexed<'a> = (&'a [(IndexDesc, Option<u64>)], &'a [usize]);
+
+/// The columns the keys of `indexes` read, ascending, each once.
+fn key_reads(indexes: &[(IndexDesc, Option<u64>)]) -> Vec<usize> {
+    let mut reads: Vec<usize> = indexes.iter().flat_map(|(ix, _)| ix.reads()).collect();
+    reads.sort_unstable();
+    reads.dedup();
+    reads
+}
+
+/// `write` of row `id`, by `storage`, over the version committed at `seen`
+/// if given: the row it replaced, unless `seen`; and of `share`, the
+/// columns an engine sharing index entries kept (RULES.md D750).
+fn rewrite(
+    storage: &dyn TableStorage,
+    (tx, id): (TxId, RowId),
+    (write, seen): (&Write, Option<Timestamp>),
+    share: &[usize],
+) -> Result<(Option<Row>, Vec<usize>)> {
+    let sharing = storage.sharing().filter(|_| !share.is_empty());
+    let new = match (write, sharing) {
+        (Write::Update(row), Some(sharing)) => {
+            return sharing.share(tx, id, (row.clone(), seen), share).map(|(old, kept)| (Some(old), kept));
+        }
+        (Write::Update(row), None) => Some(row.clone()),
+        (Write::Delete, _) => None,
+    };
+    match seen {
+        Some(stamp) => storage.write_newest(tx, id, new, stamp).map(|()| (None, Vec::new())),
+        None => storage.replace(tx, id, new).map(|old| (Some(old), Vec::new())),
     }
 }
 

@@ -112,6 +112,20 @@ impl RowTable {
         Ok(row)
     }
 
+    /// Of `columns`, those whose values records `old` and `new` of row `id`
+    /// hold alike, as their bytes show (`RecordFormat::same_inline`), in
+    /// their order: the columns a write left as they were (RULES.md D750).
+    pub(in crate::engine::rows) fn alike(&self, id: RowId, (old, new): (&[u8], &[u8]), columns: &[usize]) -> Result<Vec<usize>> {
+        let (old, new) = (self.sealing.plain_record(id, old)?, self.sealing.plain_record(id, new)?);
+        let mut kept = Vec::with_capacity(columns.len());
+        for &c in columns {
+            if self.format.same_inline(&old, &new, c)? {
+                kept.push(c);
+            }
+        }
+        Ok(kept)
+    }
+
     /// Adds the row `record` holds, row `id`'s, to `into`, each column
     /// decoded straight into its vector (`gathered.rs`).
     pub(in crate::engine::rows) fn gather_record(&self, (id, record): (RowId, &[u8]), into: &mut Gathering) -> Result<()> {
