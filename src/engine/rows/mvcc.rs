@@ -86,6 +86,7 @@ use super::version::{Maker, Version};
 use super::{RowTable, key};
 use crate::catalog::TableDesc;
 use crate::disk::pager::PageId;
+use crate::engine::tree::Descended;
 use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::{MurmurMap, MurmurSet};
 use crate::log::Lsn;
@@ -115,8 +116,9 @@ pub(super) enum Past {
 }
 
 /// A row's newest version, and, if it is one made of its frozen values,
-/// the pages of its values out of line (`RowTable::newest_or_frozen`).
-type Found = (Vec<u8>, Option<Vec<PageId>>);
+/// the pages of its values out of line; else where the tree's descent
+/// found it (`RowTable::newest_or_frozen`).
+type Found = (Vec<u8>, std::result::Result<Descended, Vec<PageId>>);
 
 /// Who reads.
 #[derive(Debug, Clone, Copy)]

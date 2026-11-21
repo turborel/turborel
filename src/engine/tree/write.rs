@@ -54,6 +54,42 @@ impl BLinkTree {
         Ok(value)
     }
 
+    /// \[DESIGN\] As `get`, for a write over the value found
+    /// (`replace_found`), which then starts from the leaf this descent
+    /// reached (RULES.md D446).
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    pub fn get_for_write(&self, key: &[u8]) -> Result<Option<(Vec<u8>, Descended)>> {
+        let _guard = self.epochs.guard();
+        let stamp = self.epochs.stamp();
+        let mut path = Path { tallied: true, ..Path::default() };
+        let (leaf, value) = self.descend(Target::Key(key), 0, &mut path, |leaf| match leaf.search(key)? {
+            Ok(at) => Ok(Some(leaf.entry(at)?.1.to_vec())),
+            Err(_) => Ok(None),
+        })?;
+        path.tallied = false;
+        Ok(value.map(|value| (value, Descended { path, leaf, stamp })))
+    }
+
+    /// As `replace_if`, from where `get_for_write`'s descent reached: the
+    /// leaf it found is still in the tree while no leaf was retired since
+    /// (`reclaim.rs`), split or not, which the write moves right across;
+    /// else a descent of its own.
+    ///
+    /// # Errors
+    ///
+    /// As `insert`.
+    pub fn replace_found(&self, found: Descended, key: &[u8], (expected, value): (&[u8], &[u8])) -> Result<bool> {
+        let _guard = self.epochs.guard();
+        if self.epochs.stamp() != found.stamp {
+            return self.replace_if(key, expected, value);
+        }
+        self.fits(key, value)?;
+        Ok(matches!(self.write_from(found.path, found.leaf, (key, value), Mode::ReplaceIf(expected))?, Written::Done(_)))
+    }
+
     /// Adds `key` with `value`; whether it did: not if `key` is already in
     /// the tree, which is left as it was.
     ///
@@ -253,4 +289,12 @@ impl BLinkTree {
         }
         Ok(())
     }
+}
+
+/// \[DESIGN\] Where `BLinkTree::get_for_write`'s descent found a key: the
+/// path to its leaf, the leaf, and the tree's stamp then.
+pub struct Descended {
+    path: Path,
+    leaf: PageId,
+    stamp: u64,
 }

@@ -400,6 +400,7 @@ verification approach DO-178C expects (§8).
 | D443 | An update shares the index entries of the version it replaced where it keeps every column the key reads |
 | D444 | A validated transaction's images are decoded only when a reader's conditions are checked against them |
 | D445 | One transaction's end collects a table at a time; the others pass it over |
+| D446 | A row's write starts from the leaf its read of the newest version found |
 
 ### The project
 
@@ -11262,6 +11263,21 @@ The semantics hold for these reasons.
   removed. A collection passed over is only later, never wrong.
 - A table passed over stays noted, so the next end of any transaction
   collects it (D29).
+
+#### D446. A row's write starts from the leaf its read of the newest version found
+
+A row store's write read the row's newest version from the tree, then
+wrote its new one over it with a second descent from the root, each
+latching the inner nodes every thread shares.
+
+The read now keeps where its descent ended (`BLinkTree::get_for_write`),
+and the write starts from that leaf (`replace_found`), comparing the
+entry under the leaf's lock as before. A leaf split since is crossed by
+moving right (Lehman and Yao, 1981, §5). A leaf is freed only after it
+is retired, which moves the tree's stamp, and only once no operation
+entered before is under way (`reclaim.rs`). So the write starts from the
+leaf only while the stamp is the one the read saw, and descends again
+otherwise.
 
 ## 2. Project layout
 
