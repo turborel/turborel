@@ -229,8 +229,7 @@ impl Session {
         self.settle_cursors(st, &target.name);
         // [ISO/IEC 9075-2:2023 §15.11 GR4] its BEFORE triggers first.
         let mut rows = effects.before_insert(cx, &target.name, rows)?;
-        // [X3.135-1986 §8.7 GR1c], [EXTENSION] in the partition that holds it (RULES.md D155).
-        // [EXTENSION] a batch at a time where it may be (RULES.md D530).
+        // [X3.135-1986 §8.7 GR1c], [EXTENSION] in its partition (RULES.md D155), a batch at a time where it may be (D530).
         bulk::insert_held((st, tx), &target.name, &mut rows, &mut effects, params.load())?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
