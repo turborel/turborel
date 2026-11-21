@@ -456,6 +456,11 @@ verification approach DO-178C expects (§8).
 | D652 | A join's method is chosen seeing the degree its part will run at |
 | D653 | A hash join's cost counts the probing rows its runtime filter leaves |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
+| D695 | Exact numbers hold 38 digits, and BIGINT, counts and a column of 18 or fewer keep 64 bits |
+| D696 | The precision of an exact sum, difference or product is the digits its operands' types give, up to 38 |
+| D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
+| D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
+| D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
 
 ### The project
 
@@ -643,7 +648,8 @@ of which no conjunct is true or raises, and stay over the product of the
 index's rows and the guard, so each is evaluated on the rows the index
 gives while the guard has a row, and on none while it has none. SUM and AVG judge only their final result, never a
 running sum, so row order can't decide an overflow [ISO/IEC 9075:1992 §6.5
-GR2b iv] (`functions/sum.rs`).
+GR2b iv] (`functions/sum.rs`). The running sum is kept in 128 bits, and
+one past them is the limit -900 (D18).
 
 There are two exceptions. EXISTS stops at the first row its subquery's
 condition keeps, which §8.8 GR1 allows because that row decides the
@@ -2828,7 +2834,10 @@ SERVER.WORKERS blocking workers, and authentication on at most
 SERVER.MAX_LOGINS other threads. A worker writes the replies of the request
 it runs, a batch of SERVER.BATCH_BYTES at a time, each within
 SERVER.IDLE_TIMEOUT_MS, so a slow client holds its worker and a batch of
-memory, no more. A fast client's next request the worker reads itself. The
+memory, no more. A statement that fails, or is cancelled, before a batch
+of its result is sent sends only its failure, its notices and status
+with it, so a client never shows the columns of a result it never had
+(`Outgoing::unanswered`). A fast client's next request the worker reads itself. The
 socket is handed to it, the runtime's interest in it given up, and it waits
 a millisecond or so apart from the runtime (`transport::Direct`), its
 permit to run statements given up meanwhile. So a request answered wakes
@@ -3874,7 +3883,7 @@ any row (`index/expression.rs`). D15 then holds for a lookup by it: a
 probe that skips rows skips no error a scan would raise. The analysis
 admits a column, a constant, a negation of a number, and a sum,
 difference or product of exact numerics whose result precision, by
-X3.135-1986 §5.9 SR4, fits 18 digits. It also admits a CASE whose
+X3.135-1986 §5.9 SR4, fits 38 digits (D695). It also admits a CASE whose
 conditions cannot raise and whose results are admitted. A call is
 admitted if it is deterministic, reads no session context and its
 function says so (`ScalarFunction::index_safe`, false by default). UPPER
@@ -10286,8 +10295,9 @@ next value or a call that needs the statement is evaluated a row at a
 time, inside the tree, and so is a subtree deeper than `MAX_DEPTH`.
 
 Integer arithmetic runs in `i64` with overflowing operations and a flag
-of the batch. An overflow, or a result of 18 digits or more, which no
-decimal holds (§5.9 GR6a), sets it, and a set flag gives no vector.
+of the batch. An overflow, or a result of more than 18 digits, which
+64 bits do not always hold (D699), sets it, and a set flag gives no
+vector; the rows then compute it in 128 bits or raise (§5.9 GR6a).
 Approximate arithmetic sets it of a divisor of 0 or a result not finite.
 A row that is null never sets it, its slot written 0. A row that would
 raise a warning gives no vector either, as the first warning raised is
@@ -10642,11 +10652,12 @@ hoisted onto the operand it reads.
 Whether an expression can raise is judged by the declared types of its
 columns (`logical/raises.rs`). A sum or difference of exact numbers whose
 digits before the point, one more than the larger's, and after it, the
-larger scale, are 18 or fewer cannot raise, nor a product of 18 or fewer
+larger scale, are 38 or fewer cannot raise, nor a product of 38 or fewer
 digits in all [X3.135-1986 §5.9 SR4b, GR6a], nor a quotient by a
 constant of magnitude at least 1 whose digits and the dividend's scale
-are 18 or fewer, nor a CAST that widens. Anything else, an approximate
-number among it, a column of no known type, or more than 18 digits, can.
+are 38 or fewer, nor a CAST that widens. Anything else, an approximate
+number among it, a column of no known type, or more than 38 digits, can
+(D695).
 The enumeration's leaves (`physical/enumerate/extract.rs`) use the same
 judgement, so a conjunct of such arithmetic no longer holds a chain.
 
@@ -13067,6 +13078,99 @@ The check is unchanged in what it keeps, and cheaper (`exec/entries.rs`,
 - The probe is copied only by a search whose range is not exact, the one
   case that checks entries against it. The key's types are shared by
   every search of the index.
+
+#### D695. Exact numbers hold 38 digits, and BIGINT, counts and a column of 18 or fewer keep 64 bits
+
+The precision of an exact numeric type is implementation-defined, its
+maximum too [ISO/IEC 9075-2:2023 §6.1 SR27a, IL043], and so is the
+precision of an arithmetic result [§6.30 SR1c, IV136]. It was 18 digits,
+which a 64-bit integer holds, while a value's units were already 128
+bits. TPC-H query 11 multiplies a sum of DECIMAL(15,2) by a constant of
+scale 10, a value of 19 digits, and it raised 22003. So
+`MAX_EXACT_PRECISION` is 38, the most digits 128 bits always hold, for a
+declared type, a literal and every result, and a result past it raises
+22003 as before. `NARROW_EXACT_PRECISION`, 18, is the storage's limit
+and the batch's (D698, D699). BIGINT stays NUMERIC(18,0), and the types
+of counts, lengths, positions, GROUPING and a sequence generator's
+default are BIGINT's, so their columns and vectors keep 64 bits.
+NUMERIC and DECIMAL of no precision stay 18 digits, and so does a JSON
+number held exact (`JSON_EXACT_DIGITS`, D84), past which it is DECFLOAT,
+as JSON's integers of 19 and 20 digits are identifiers more often than
+amounts.
+
+#### D696. The precision of an exact sum, difference or product is the digits its operands' types give, up to 38
+
+With every result of 38 digits, a column made of any expression by
+CREATE TABLE AS would be wide (D698) and kept in 128 bits. A sum or
+difference of `(p1, s1)` and `(p2, s2)` is now of max(p1 - s1, p2 - s2)
++ 1 digits before the point and max(s1, s2) after, a product of p1 + p2
+digits [§6.30 SR1c ii, iii], each up to 38 (`value::bound_of`, which
+the analysis of what can raise uses too, D373). A quotient's type keeps
+room for its integer digits (D697). SUM and AVG of exact numbers are of
+38 digits at their operand's scale [§10.9 SR7g ii], so a sum of a column
+of 18 digits does not raise, nor does a sum of quotients of INTEGER
+values, whose scale is at most 11, before its integer part has 27 digits. Two values of 38 digits can pass
+the 128 bits a running sum is kept in, the limit -900 (D15, D18). A type is a bound of its values, not their width, so the batch
+and the row paths look at values (D699), and a value past a narrower
+type's precision raises only when it is assigned to it.
+
+#### D697. A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units
+
+The standard leaves a quotient's precision and scale to the
+implementation [X3.135-1986 §5.9 SR4d, ISO/IEC 9075-2:2023 §6.30 SR1c
+iv]. A quotient that took every fractional digit 38 digits leave made
+1 / 3 a value of 38 digits, and a sum of a few hundred such passed 38
+digits, or the 128 bits a running sum is kept in, at a total near 170.
+
+So a quotient of `(p1, s1)` by `(p2, s2)` is typed with I = p1 - s1 + s2
+integer digits, the most a divisor of at least 10^-s2 gives, and scale
+max(6, s1 + p2 + 1), at most the 38 - I digits I leaves
+(`value::quotient_bound`). Its values follow the rule by themselves
+(`Decimal::checked_div`): scale max(6, s1 + d2 + 1, s2), d2 the divisor's
+digits, or less by as many digits as the integer part has past 38,
+truncated toward zero, its trailing zeros dropped down to max(s1, s2).
+1 / 3 is 0.333333, 7 / 2 is 3.5. A value's scale is at most its type's
+but where the type's is cut for its integer digits and the value has
+fewer. The leading digit is never lost [GR6b]: the scale is past both the
+dividend's scale and the divisor's digits. SUM and AVG of a quotient
+keep its scale and have the rest of 38 digits for the integer part.
+
+Its units at that scale, a × 10^(s + s2 - s1) / b, need more than 128
+bits on the way when a has many digits, so they are computed by long
+division of the magnitudes (`value/decimal/quotient.rs`), each step
+appending as many digits as the remainder times a power of ten holds,
+and one at a time by ten additions when the divisor is past a tenth of
+the range. A quotient whose integer digits leave fewer fractional ones
+is computed again at the scale they leave.
+Trailing zeros are stripped by powers of ten from 10^16 down, not one
+at a time.
+
+#### D698. A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values
+
+A record keeps an exact column's units at its scale in 8 bytes, the
+column store's encodings take them as integers, and a scan gathers them
+into a batch's integers (`storage::Ints`). A column of 19 to 38 digits
+is kept in 16 bytes, little-endian, and its key in 16 bytes, big-endian,
+its sign bit flipped, so keys order as values do
+(`value/types/exact.rs`). The file formats change in place. A column
+store chunk of such a column is of fixed fields, a dictionary or a
+constant, as any other of 16 bytes, and its values are read as values,
+not integers (`types::narrow_scale`), by a scan, a scan's judging and
+the row store's gathering. A column of 18 digits or fewer is kept and
+read as before.
+
+#### D699. A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128
+
+A batch's exact arithmetic (D362) stays in `i64`, its flag set by a
+result of more than 18 digits as well as by an overflow, and a batch
+whose flag is set is evaluated a row at a time, in 128 bits, which gives
+the wide result or raises. Most values fit 64 bits whatever their
+type's precision, as TPC-H's prices and quantities do, so the vector
+path is taken as before. A wide column's values reach the batch as
+values, and so do results past 18 digits, which the set functions add
+in 128 bits (D32). A path in 128 bits for whole vectors would double the
+width of every vector of integers, or add a second kind of them to
+every kernel, for values that are rare.
 
 ## 2. Project layout
 

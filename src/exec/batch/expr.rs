@@ -21,8 +21,9 @@
 //! none: the caller evaluates that batch again a row at a time, in order,
 //! so the error raised is the first row's and the rows before it come
 //! first, as row by row (RULES.md D15). Integer arithmetic sets a flag of
-//! the batch on overflow or on a result past `MAX_EXACT_PRECISION`
-//! digits; any flag gives none. Nothing a vector path computes is seen
+//! the batch on overflow or on a result past `NARROW_EXACT_PRECISION`
+//! digits; any flag gives none, and the rows compute it in 128 bits.
+//! Nothing a vector path computes is seen
 //! but through its result, so evaluating a batch twice changes nothing.
 
 mod arith;

@@ -66,7 +66,8 @@ fn set_functions_fed_vectors_total_as_values() {
             }
         }
     }
-    let huge = vec![exact(i128::from(u64::MAX).checked_mul(1_000_000_000_000_000_000).unwrap(), 0); 3];
+    // Three of 5 × 10^37 sum past 38 digits.
+    let huge = vec![exact(5_i128.checked_mul(10_i128.pow(37)).unwrap(), 0); 3];
     let (one, many) = both_ways(&Sum, numbers.clone(), (&huge, None));
     assert!(one.contains("Err") && one == many, "out of range alike: {many}");
     let mut count = Count.accumulator(numbers);
