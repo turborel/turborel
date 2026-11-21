@@ -11492,10 +11492,11 @@ The semantics hold for these reasons.
   by a projection. A FULL join stays as it was.
 
 The cost counts each operand's rows read, the sort of the right, two
-searches for each left row and the pairs found and kept. It is weighed
-against the nested loop, the hash join on any equalities and an index
-probed by the comparisons, both ways round, and in join enumeration
-(D303) as one more method of each pair of relations.
+searches for each left row, and the pairs found, as a hash join's
+matches are counted. It is weighed against the nested loop, the hash
+join on any equalities and an index probed by the comparisons, both ways
+round, and in join enumeration (D303) as one more method of each pair of
+relations.
 
 #### D581. A period predicate of two period references is the comparisons of its bounds
 
