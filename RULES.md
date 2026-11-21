@@ -373,6 +373,9 @@ verification approach DO-178C expects (§8).
 | D378 | An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock |
 | D379 | A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read |
 | D380 | A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel |
+| D381 | A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree |
+| D382 | A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff |
+| D383 | An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count |
 | D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
@@ -394,6 +397,8 @@ verification approach DO-178C expects (§8).
 | D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
 | D419 | A row of values that reads nothing is evaluated, not planned |
 | D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
+| D421 | A row's constraint that cannot be deferred is checked as the statement's end gathers its checks |
+| D422 | A kept UPDATE or DELETE learns its object rows' plan with slots as a query does |
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
@@ -401,6 +406,7 @@ verification approach DO-178C expects (§8).
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
 | D472 | A page written back again is written over its side-file block with no lock held |
+| D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D590 | A checkpoint captures its pages copy on write, writers held only while it notes them |
 | D591 | A page read or written shares no lock or counter with every other I/O of its file |
 
@@ -2792,7 +2798,9 @@ A connection's place is given back before its socket closes, so a client
 reconnecting at the limit isn't refused (`holding.rs`).
 
 An operator ends a connection with `END CONNECTION id`, or cancels its work
-with `CANCEL CONNECTION id` (owner only, SQLCODE -104). The core reaches the
+with `CANCEL CONNECTION id` (owner only, SQLCODE -104). A connection that
+ends with a reply telling why has its row taken out before that reply, since
+its client takes the reply for the close (`native.rs`). The core reaches the
 server through the extension point `ServedConnections`. The other extension
 points are `auth::Authenticator`, `transport::Listener` and
 `server::Protocol`.
@@ -10521,6 +10529,146 @@ rows past the greatest held not taken, so only those the run keeps are
 sorted and made. Of more, nearly every row of a morsel is taken, so the
 morsel is sorted whole by its keys and only its first rows made.
 
+#### D381. A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree
+
+A statistics pass keeps, of each column, up to 32 values that its sample
+holds at least twice and at least one and a half times as often as the
+average distinct value, each with the share of the table's rows it holds
+(`stats/common.rs`). The histogram is drawn from the sample without them,
+an end-biased histogram (Ioannidis and Poosala, SIGMOD 1995). An equality
+with a common value keeps its share, and with any other value the rest of
+the rows shared among the other distinct values. An order comparison
+keeps the common values on its side and the histogram's share of the
+rest. A histogram alone gives every value of a bucket its average share,
+so a value held by half a table was estimated as rare as any other, and
+an index was read for it. The sample is sorted, so a value's repeats are
+one run and the list costs no second pass. A string the sample cuts is
+never common, since no value equals the part kept.
+
+A sampled pass reads runs of 128 row ids, and rows near in a table often
+share a value. Each value's repeats within one run count once before its
+distinct values are scaled (Chaudhuri, Das and Srivastava, SIGMOD 2004),
+so a clustered column is not taken for one of few values.
+
+The row store answers with the rows written since the pass and the rows
+it holds now (`stats/since.rs`). Once rows were written, the least and
+greatest values are no longer bounds, so a range past the greatest keeps
+at least what an equality would. A column whose greatest value rose at
+each of the last two passes that found it changed grows with insertion,
+and a range past it keeps the share of rows written since. A pass that
+finds the same greatest value, as one soon after another may, keeps the
+count. A column whose distinct values
+were within 5% of its rows is a key, and its distinct values grow with
+the rows.
+
+A LIKE whose constant pattern begins with characters keeps the strings
+from that prefix up to the next one, by the common values and the
+histogram, never less than an equality with the prefix keeps, and a
+part of them if the rest of the pattern asks more than `%`
+(`physical/estimate/like.rs`): the share of the sampled strings with the
+prefix that the whole pattern keeps, if the sample holds at least 8 of
+them, as no synopsis tells how often characters follow others, else a
+quarter. Within a histogram's bucket a string is placed by its first
+four characters past the bucket's bounds' common prefix, read as a
+fraction whose digits are each character's place among those the
+bounds span, widened to the digits or the letters when the bounds' lie
+among them, so a prefix narrower than a bucket keeps its part of it
+(`stats/parts.rs`).
+
+A B-link index counts the entries of a range of keys it need not check
+up to 128 of them. Past that it descends to each bound, taking at each
+node the share of its children left of the child it follows, and gives
+the difference of the two shares times its live entries
+(`engine/tree/estimate.rs`), never fewer than it counted (D302). A range
+of any size is so estimated in a few pages, where counting up to 1,000
+entries read up to eight leaves and gave nothing past them. Within a
+B-tree's factor of two in how full its nodes are, the estimate is within
+one and a half times the entries on trees filled in key order or not.
+
+The plug-in STATISTICS payload carries each column's common values at
+format 1, none from a plug-in that sends none.
+
+#### D382. A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff
+
+A statistics pass keeps up to 1,024 whole rows by Vitter's Algorithm R
+over the rows it reads, from a fixed seed (`stats/sample.rs`). A string
+is kept as its first 256 characters and a large object as an empty one.
+The sample is in memory only and is neither sent to nor asked of
+plug-ins.
+
+The planner estimates a table's conjuncts together
+(`physical/estimate/conjunction.rs`). Those on one column are one range,
+so a BETWEEN keeps the rows between its bounds and not the product of
+each half. Equalities with constants whose columns an index's key
+answers are one factor (D383). A conjunction of two or more conjuncts
+over two or more columns, or with a conjunct no column's synopsis
+answers, is evaluated on the sample when each of its conjuncts can be,
+deterministic and of no subquery, routine, sequence value or `?` not yet
+given (`physical/estimate/sampled.rs`). Of n rows, k kept give k/n when
+k is at least 8 or the sample is the whole table, which it is of a table
+of up to 1,024 rows. Fewer give the synopses' estimate, at most
+(k + 3(1 - f))/n of a sample of the share f of the table: the rule of
+three, the bound an empty sample allows (Hertzschuch et al., SIGMOD
+2021), narrowed as the sample nears the whole table. The sample costs at
+most 1,024 evaluations however large the table, so small tables are
+sampled too, where the sample is most of the table and a conjunction
+that keeps no row is estimated to keep none. The sample remembers what
+was asked of it, up to 1,024 answers, each kept under a fingerprint of
+the conjuncts' columns, operators and constants in any order, hashed by
+XXH3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
+statement it plans again: it never changes, so an answer holds until the
+next pass replaces it. An index remembers its distinct keys' estimate
+until a register of its sketch is raised. Of fewer, equalities of two or more
+columns with constants not common take the columns' joint distinct
+values in the sample instead, scaled to the table as a column's are
+(`physical/estimate/joint.rs`): a combination the sample holds keeps the
+rows present over them, where the product of each column's share takes
+every pair as possible and falls ten times and more below the truth of
+correlated columns. A combination the sample does not hold keeps, by
+Good and Turing, the share of rows of combinations seen once among the
+combinations never seen, so values that never go together, of columns
+whose every combination the sample saw more than once, keep no row. A
+row whose evaluation fails counts as
+kept and nothing is raised, as planning raises nothing of a condition
+the statement evaluates (D15). The sample answers a city and its country,
+a column compared with another and a pattern with a leading wildcard,
+which synopses of single columns cannot.
+
+The factors left combine by exponential backoff, the most selective
+whole, the next by its square root, the third its fourth root and the
+fourth its eighth, the rest ignored (`physical/estimate/backoff.rs`).
+Multiplying them is right only of independent columns, and conjuncts
+written together seldom are, so an estimate by the product falls below
+the truth by every correlation, and a join ordered on it multiplies the
+error. Backoff errs between the product and the most selective conjunct
+alone.
+
+A filter's conjuncts are grouped by the scan their columns come from,
+and a filter over a table's access takes its conjuncts the same way, so
+the plan's estimate and the join enumeration's agree (D370). The sample
+costs at most 1,024 evaluations of each conjunct of a conjunction it
+estimates, and is never asked of a filter of one conjunct a synopsis
+answers, nor of a probe of a unique key, so point queries never pay it.
+
+Rejected. A per-column sketch kept as rows are written is the most
+accurate distinct count but costs a hash of each written column on every
+insert and update. Multi-dimensional histograms are costly to build and
+poor beyond two columns, where the sample answers any number.
+
+#### D383. An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count
+
+An index's sketch counts every key written to it (`index/stats.rs`), so
+its distinct keys are the distinct combinations of its key's columns,
+correlated columns counted once. The state answers
+`Statistics::group_distinct` from the table's indexes of plain columns
+(`stats/keyed.rs`): of columns that are exactly an index's key, its
+distinct keys, and of columns holding a unique key's, the rows. A
+column alone in an index's key takes the index's count for its distinct
+values, which saw every key where a sample scales from some. An
+equality of each of an index's columns with a constant then keeps one
+row in its distinct keys and not the product of each column's share.
+Each index's count is taken once for the statistics one planning asks.
+
 #### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
 
 The inner joins' equalities of two columns make classes of columns
@@ -11055,6 +11203,30 @@ variable at each line, and the copies were a fiftieth of it. A value of
 the type's length is now kept as it is (`types/character.rs`), the value
 the cut and the padding would give.
 
+#### D421. A row's constraint that cannot be deferred is checked as the statement's end gathers its checks
+
+A statement's end gathered a check of each constraint of each row it
+wrote, each naming its table and constraint, held them in a list, and
+then found each constraint again by name to check it. An order entry
+writes a dozen rows of tables with NOT NULL constraints only, and the
+gathering, the list and the finding were most of its statements' ends.
+A row's constraint that cannot be deferred, gathered while no check is
+held before it, is now checked at once, as it would be the first of the
+list (`db/integrity/gather.rs`). What may wait, or follows a check held,
+is held as before, so checks are made in the order they were.
+
+#### D422. A kept UPDATE or DELETE learns its object rows' plan with slots as a query does
+
+A kept UPDATE or DELETE kept the plan of its object rows only if it was
+one probe of a whole unique key (D45); any other was optimized and
+planned again at each run. A table of few rows, as an order entry's
+districts, is read whole and filtered rather than probed, so each of
+its order entries planned its district's update again. Such a write now
+learns its plan as a query does (D414): each of its first runs plans its
+object rows with its values, which it runs, and with its slots, and the
+one with slots is kept once `LEARNED_RUNS` in a row give both one shape,
+to be learned again once a table it reads gains or loses rows as its
+statistics would be gathered again for (`db/prepared/plans.rs`).
 #### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
 
 The row store stamped each changed row with its commit timestamp, a tree
@@ -11370,6 +11542,43 @@ registered set, which each statement chooses as it begins. Kernels are
 a built-in registration only: a call a batch across a process boundary
 would cost more than the kernel saves, so no out-of-process plug-in is
 one.
+#### D510. A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows
+
+A scan of the column store read the tree over each group's range of row
+ids, to find the rows changed or deleted since the group was frozen,
+even when none was. Each group now keeps in memory a bitmap of the rows
+of its range the tree may have an entry for, a bit a row, or a bit a
+block of ids if its range is wider than 65,536
+(`engine/rows/frozen/shadow_bits.rs`). A scan reads the tree only over
+the ranges of set bits, and not at all for a group no write touched;
+past 64 ranges it reads the group's range whole. The bits are a
+superset, so what a reader sees is unchanged.
+
+A writer sets a row's bit after its entry is written, if a group of the
+directory holds the row. A group published sets the bits of every entry
+the tree holds in its range after it is in the directory, but those of
+the rows it froze as they were, which are taken out once no reader
+needs them. So either the writer finds the group, or the group finds
+the writer's entry, and no change is missed. Bits are never cleared: a
+rewrite makes a new group, marked as it is published. A table opened
+marks them from one scan of the tree over its groups' ranges. A write
+of a row past every group, as nearly every insert is, costs one atomic
+load.
+
+The tree of a column store table keeps zone maps of 1,024 row ids, as a
+row store table does (D31), kept in memory alone. They hold the tree's
+rows, not the frozen ones: a freeze leaves the zones of the rows it took
+out stale, so the maintenance thread sums them up again from the tree,
+and a zone of no row takes no memory for its bounds. A scan reads the
+tree's rows last only of the zones its conditions may match, so a
+filter skips the delta as it skips frozen parts. Rows of a group passed
+over by its summary are read this way too, and their zones hold every
+version a reader may read, so none is missed.
+
+Rejected were positional delta trees (Héman, Zukowski, Nes, Sidirourgos
+and Boncz, SIGMOD 2010) and base and tail pages with lineage (Sadoghi
+et al., L-Store, 2018): both replace the tree, which already holds the
+row versions and their undo.
 
 ## 2. Project layout
 

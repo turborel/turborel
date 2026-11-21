@@ -27,7 +27,7 @@ use crate::error::{Error, Result};
 use crate::files;
 
 /// The packages whose coverage is measured.
-pub const PACKAGES: [&str; 10] = [
+pub const PACKAGES: [&str; 11] = [
     "turborel",
     "turborel-protocol",
     "turborel-plugin",
@@ -38,9 +38,10 @@ pub const PACKAGES: [&str; 10] = [
     "turborel-lz4",
     "turborel-aes",
     "turborel-replication",
+    "turborel-simd",
 ];
 /// The measured sources, relative to the workspace root.
-const MEASURED_DIRS: [&str; 10] = [
+const MEASURED_DIRS: [&str; 11] = [
     files::LIBRARY_DIR,
     files::PROTOCOL_DIR,
     files::PLUGIN_DIR,
@@ -51,6 +52,7 @@ const MEASURED_DIRS: [&str; 10] = [
     files::LZ4_DIR,
     files::AES_DIR,
     files::REPLICATION_DIR,
+    files::SIMD_DIR,
 ];
 /// Builds the example plug-in into the instrumented build directory, which
 /// a test build leaves out. The plug-in tests start it as a program of its

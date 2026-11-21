@@ -110,8 +110,7 @@ impl RowTable {
     fn zone_of(&self, at: usize, horizon: Timestamp) -> Result<Zone> {
         let first = u64::try_from(at).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
         let (low, high) = (key(first), key(first.saturating_add(ZONE_ROWS)));
-        let kept = &self.zones.kept;
-        let mut zone = Zone::empty(kept.len(), true);
+        let mut zone = Zone::empty(true);
         zone.stale = false;
         for entry in self.tree.scan(Bound::Included(&low[..]), Bound::Excluded(&high[..]), Direction::Forward) {
             let (k, newest) = entry?;
@@ -140,7 +139,7 @@ impl RowTable {
                 let version = Version::parse(&bytes)?;
                 if !version.deleted {
                     let row = self.decode(id, version.record, Some(kept))?;
-                    zone.hold(kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
+                    zone.hold(kept.len(), kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
                 }
                 // Versions before one committed at or before the horizon
                 // no reader reads.

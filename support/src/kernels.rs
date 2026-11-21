@@ -84,8 +84,8 @@ pub fn contract(kernels: &dyn Kernels) {
         aggregates(kernels, len);
     }
     unpacking(kernels);
-    normalizing(kernels);
     xxh3_stripes(kernels);
+    normalizing(kernels);
 }
 
 /// Bytes of a fixed pattern, each of the low byte of an odd multiple.

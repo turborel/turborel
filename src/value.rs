@@ -37,7 +37,9 @@ pub use datetime::Datetime;
 pub use decfloat::DecFloat;
 pub use decimal::{Decimal, pow10};
 pub use distinct::{distinct, key_bucket, key_equal};
-pub use like::{LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern, constant_prefix, like};
+pub use like::{
+    LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern, constant_prefix, constant_rest_is_any, like,
+};
 pub use operators::{ArithOp, CompOp, arith};
 pub use order::SortOrder;
 pub use spelled::{Spelled, spelling};

@@ -102,6 +102,7 @@ pub trait Kernels: Send + Sync {
     fn xxh3_scramble(&self, acc: &mut [u64; xxhash::ACC_NB], key: &xxhash::Stripe) {
         xxhash::Scalar.scramble(acc, key);
     }
+
     /// Writes into `keys`, one key of `width` bytes after another, at byte
     /// `at` of each, the value of `values` at each of `rows`: its distance
     /// above `base` as `bytes` big-endian bytes, each inverted if `invert`,

@@ -23,6 +23,7 @@ use super::{Directory, Entry, Retiring};
 use crate::engine::columns::group::Group;
 use crate::engine::rows::options::{Columns, Places};
 use crate::engine::rows::version::{Maker, Version};
+use crate::engine::rows::zones::ZONE_ROWS;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
 use crate::error::Result;
@@ -214,8 +215,16 @@ impl RowTable {
             if let (Some(o), Some(pages)) = (old, old_pages) {
                 o.retire(pages);
             }
-            mem::replace(&mut *held, next)
+            let end = next.groups.last().map_or(0, |e| e.summary.last.saturating_add(1));
+            let before = mem::replace(&mut *held, next);
+            self.frozen.groups_end.store(end, Ordering::SeqCst);
+            before
         };
+        // After it is in the directory: a writer that did not find it wrote
+        // its entry before this reads the tree (`shadow_bits.rs`).
+        if let Some(m) = &made {
+            self.mark_published(m, &entries)?;
+        }
         lock_builtin(&self.frozen.retiring).push(Retiring { before: Arc::downgrade(&before), entries });
         drop(before);
         self.retire_unread()
@@ -231,9 +240,17 @@ impl RowTable {
             retiring.drain(..unread).collect::<Vec<_>>()
         };
         for retired in ready {
+            let mut zone = None;
             for (id, bytes) in retired.entries {
                 if self.tree.delete_if(&key(id), &bytes)? {
                     self.free_values(id, Version::parse(&bytes)?.record);
+                }
+                // Its zone may be wider than the tree's rows now, to be
+                // summed up again (`rows/zones.rs`).
+                let at = id.checked_div(ZONE_ROWS);
+                if zone != at {
+                    self.zones.undone(id);
+                    zone = at;
                 }
             }
         }

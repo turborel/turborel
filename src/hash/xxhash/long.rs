@@ -250,6 +250,26 @@ fn head(secret: &[u8]) -> &Head {
     secret.first_chunk::<SECRET_SIZE_MIN>().unwrap_or(DEFAULT_HEAD)
 }
 
+/// `XXH3_64bits_withSeed` of an input of at most 16 bytes, by the path of
+/// 0 to 16 bytes, called straight.
+#[inline]
+pub(super) fn hash64_head(input: &[u8], seed: u64) -> u64 {
+    short::hash64_0to16(input, DEFAULT_HEAD, seed)
+}
+
+/// XXH3-64 of at most 128 bytes, seed `seed` and the default secret: the
+/// short and mid inputs' paths called straight, with no secret to choose
+/// and no long input to rule out, as a hash map's key wants. Past 128
+/// bytes, the general path.
+#[inline]
+pub(super) fn hash64_short_key(input: &[u8], seed: u64) -> u64 {
+    match input.len() {
+        0..=SHORT_MAX => short::hash64_0to16(input, DEFAULT_HEAD, seed),
+        17..=MID_SHORT_MAX => mid::hash64_17to128(input, DEFAULT_HEAD, seed),
+        _ => super::xxh3_64_with_seed(input, seed),
+    }
+}
+
 /// `XXH3_64bits_internal`: XXH3-64 of `input`, `seed` and `secret`. The
 /// seed changes only inputs of up to 240 bytes, as the reference's: a long
 /// one's seed is in its secret.

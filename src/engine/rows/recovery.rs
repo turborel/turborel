@@ -73,6 +73,7 @@ impl RowTable {
             None => self.tree.insert(&k, &version).map(|_| None),
         });
         let old = written.inspect_err(|_| self.free(&pages))?;
+        self.mark_shadow(id);
         // A frozen row with no entry was there already.
         let was = match &old {
             Some(o) => Version::parse(o).is_ok_and(|v| !v.deleted),
@@ -96,6 +97,7 @@ impl RowTable {
                 self.tree.insert(&k, &deletion)?;
                 self.frozen.shadow();
             }
+            self.mark_shadow(id);
             old
         } else {
             self.tree.delete(&k)?
