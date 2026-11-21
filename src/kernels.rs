@@ -120,7 +120,6 @@ pub trait Kernels: Send + Sync {
     }
 }
 
-
 /// A database's kernels run XXH3's long inputs' loops: XXH3 of a vector's
 /// long values hashes by `hash::xxhash::xxh3_64_on(kernels, ...)`.
 impl xxhash::Stripes for dyn Kernels + '_ {

@@ -225,8 +225,8 @@ fn a_longer_secret_makes_longer_blocks() {
 fn the_hasher_is_xxh3_of_the_bytes_written() {
     use std::hash::{BuildHasher, Hasher};
     let buffer = sanity_buffer();
-    for len in [0, 1, 8, 63, 64, 65, 200, 1000, 4000] {
-        for pieces in [1, 3, 64] {
+    for len in [0, 1, 8, 16, 17, 63, 64, 65, 128, 129, 200, 1000, 4000] {
+        for pieces in [1, 3, 16, 64] {
             let mut hasher = Xxh3BuildHasher::with_seed(9).build_hasher();
             buffer[..len].chunks(pieces).for_each(|piece| hasher.write(piece));
             assert_eq!(hasher.finish(), xxh3_64_with_seed(&buffer[..len], 9), "len {len} pieces {pieces}");
