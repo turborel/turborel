@@ -7,12 +7,14 @@
 //! the row it wrote as the row it replaced; a kept hash join's inner
 //! input left unfilled; a node's edges not acted on; a row drawing a
 //! generator's next value evaluated as one that reads nothing; a short
-//! fixed-length string cast without its padding.
+//! fixed-length string cast without its padding; a deferrable row
+//! constraint checked at once; a kept write keeping the plan one run
+//! made with its values.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 11] = [
+pub const TPCC: [Mutation; 13] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -121,6 +123,29 @@ pub const TPCC: [Mutation; 11] = [
         original: "if units.count(&s) == usize::try_from(length).unwrap_or(usize::MAX) {",
         replacement: "if units.count(&s) <= usize::try_from(length).unwrap_or(usize::MAX) {",
         integration: &["rows::cast_and_assigned_6_13"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-deferrable-checked-at-once",
+        package: Package::Core,
+        breaks: "a row's deferrable constraint is checked as the statement's end gathers it, not when deferred",
+        file: "src/db/integrity/gather.rs",
+        original: "out.is_empty() && !c.attributes.deferrable",
+        replacement: "out.is_empty()",
+        integration: &[
+            "deferred::deferred_constraints_wait_for_commit_10_6",
+            "statement_ends::immediate_row_checks_come_around_deferred_ones",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-write-learns-values",
+        package: Package::Core,
+        breaks: "a kept write keeps the plan one run made with its values, not the one with its slots",
+        file: "src/db/prepared/plans.rs",
+        original: "let learned = was.after(&plan, super::super::plan_rows_slotted(self.st, w.rows.clone(), values));",
+        replacement: "let learned = was.after(&plan, plan.clone());",
+        integration: &["kept_routines::a_kept_write_learns_its_plan_and_changes_each_calls_rows"],
         unit: &[],
     },
 ];

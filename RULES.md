@@ -394,6 +394,8 @@ verification approach DO-178C expects (§8).
 | D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
 | D419 | A row of values that reads nothing is evaluated, not planned |
 | D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
+| D421 | A row's constraint that cannot be deferred is checked as the statement's end gathers its checks |
+| D422 | A kept UPDATE or DELETE learns its object rows' plan with slots as a query does |
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
@@ -11048,6 +11050,30 @@ variable at each line, and the copies were a fiftieth of it. A value of
 the type's length is now kept as it is (`types/character.rs`), the value
 the cut and the padding would give.
 
+#### D421. A row's constraint that cannot be deferred is checked as the statement's end gathers its checks
+
+A statement's end gathered a check of each constraint of each row it
+wrote, each naming its table and constraint, held them in a list, and
+then found each constraint again by name to check it. An order entry
+writes a dozen rows of tables with NOT NULL constraints only, and the
+gathering, the list and the finding were most of its statements' ends.
+A row's constraint that cannot be deferred, gathered while no check is
+held before it, is now checked at once, as it would be the first of the
+list (`db/integrity/gather.rs`). What may wait, or follows a check held,
+is held as before, so checks are made in the order they were.
+
+#### D422. A kept UPDATE or DELETE learns its object rows' plan with slots as a query does
+
+A kept UPDATE or DELETE kept the plan of its object rows only if it was
+one probe of a whole unique key (D45); any other was optimized and
+planned again at each run. A table of few rows, as an order entry's
+districts, is read whole and filtered rather than probed, so each of
+its order entries planned its district's update again. Such a write now
+learns its plan as a query does (D414): each of its first runs plans its
+object rows with its values, which it runs, and with its slots, and the
+one with slots is kept once `LEARNED_RUNS` in a row give both one shape,
+to be learned again once a table it reads gains or loses rows as its
+statistics would be gathered again for (`db/prepared/plans.rs`).
 #### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
 
 The row store stamped each changed row with its commit timestamp, a tree
