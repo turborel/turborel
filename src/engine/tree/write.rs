@@ -4,7 +4,7 @@
 //! the tree (`tree.rs`, §5).
 
 use super::node::{self, CHILD, Node};
-use super::{BLinkTree, Path, Slot, Target};
+use super::{BLinkTree, Path, Slot, Split, Target};
 use crate::disk::pager::PageId;
 use crate::engine::locks::NodeLock;
 use crate::error::{Code, Result, SqlError};
@@ -34,8 +34,8 @@ pub enum Update {
 pub(super) enum Written {
     /// Nothing: the key was present for an insert, absent for a replace.
     Refused,
-    /// The change, and the value replaced, if any.
-    Done(Option<Vec<u8>>),
+    /// The change: the value replaced, if any, and the leaf the entry is in.
+    Done(Option<Vec<u8>>, PageId),
 }
 
 impl BLinkTree {
@@ -81,13 +81,13 @@ impl BLinkTree {
     /// # Errors
     ///
     /// As `insert`.
-    pub fn replace_found(&self, found: Descended, key: &[u8], (expected, value): (&[u8], &[u8])) -> Result<bool> {
+    pub fn replace_found(&self, found: &Descended, key: &[u8], (expected, value): (&[u8], &[u8])) -> Result<bool> {
         let _guard = self.epochs.guard();
         if self.epochs.stamp() != found.stamp {
             return self.replace_if(key, expected, value);
         }
         self.fits(key, value)?;
-        Ok(matches!(self.write_from(found.path, found.leaf, (key, value), Mode::ReplaceIf(expected))?, Written::Done(_)))
+        Ok(matches!(self.write_from(&found.path, found.leaf, (key, value), Mode::ReplaceIf(expected))?, Written::Done(..)))
     }
 
     /// Adds `key` with `value`; whether it did: not if `key` is already in
@@ -97,7 +97,7 @@ impl BLinkTree {
     ///
     /// SQLCODE -910 if the entry is longer than `max_entry`; as `get`.
     pub fn insert(&self, key: &[u8], value: &[u8]) -> Result<bool> {
-        Ok(matches!(self.write(key, value, Mode::Insert)?, Written::Done(_)))
+        Ok(matches!(self.write(key, value, Mode::Insert)?, Written::Done(..)))
     }
 
     /// Replaces the value of `key` with `value`; the value replaced, read
@@ -109,7 +109,7 @@ impl BLinkTree {
     /// As `insert`.
     pub fn replace(&self, key: &[u8], value: &[u8]) -> Result<Option<Vec<u8>>> {
         Ok(match self.write(key, value, Mode::Replace)? {
-            Written::Done(old) => old,
+            Written::Done(old, _) => old,
             Written::Refused => None,
         })
     }
@@ -121,7 +121,7 @@ impl BLinkTree {
     ///
     /// As `insert`.
     pub fn replace_if(&self, key: &[u8], expected: &[u8], value: &[u8]) -> Result<bool> {
-        Ok(matches!(self.write(key, value, Mode::ReplaceIf(expected))?, Written::Done(_)))
+        Ok(matches!(self.write(key, value, Mode::ReplaceIf(expected))?, Written::Done(..)))
     }
 
     /// Removes `key` if its value is still `expected`, compared under the
@@ -158,7 +158,7 @@ impl BLinkTree {
             Ok(at) => Ok(Some((at, node.entry(at)?.1.to_vec()))),
             Err(_) => Ok(None),
         })?;
-        let Some((at, old)) = found.filter(|(_, old)| expected.is_none_or(|e| e == old.as_slice())) else { return Ok(None) };
+        let Some((at, old)) = found.filter(|(_, old)| expected.is_none_or(|e| e == *old)) else { return Ok(None) };
         self.remove_at(path, held, at)?;
         Ok(Some(old))
     }
@@ -225,7 +225,7 @@ impl BLinkTree {
             (Update::Put(value), Err(at)) => (Slot::Insert(at), value),
         };
         self.fits(key, &value)?;
-        self.place(path, held, (key, &value), slot).map(|()| alone)
+        self.place(&path, held, (key, &value), slot).map(|_| alone)
     }
 
     /// Refuses an entry longer than `max_entry`.
@@ -249,12 +249,17 @@ impl BLinkTree {
         self.fits(key, value)?;
         let mut path = Path::default();
         let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
-        self.write_from(path, leaf, (key, value), mode)
+        let written = self.write_from(&path, leaf, (key, value), mode)?;
+        // A table's row: its leaf noted for its index entries (`hints.rs`).
+        if let (Written::Done(_, into), Some(row)) = (&written, self.row_of(key)) {
+            super::hints::note(row, into.0);
+        }
+        Ok(written)
     }
 
     /// The rest of `write`, from `leaf`, reached by `path`: either may be
     /// out of date, the leaf split or the tree grown since they were read.
-    pub(super) fn write_from(&self, path: Path, leaf: PageId, (key, value): (&[u8], &[u8]), mode: Mode<'_>) -> Result<Written> {
+    pub(super) fn write_from(&self, path: &Path, leaf: PageId, (key, value): (&[u8], &[u8]), mode: Mode<'_>) -> Result<Written> {
         let mut held = self.locks.lock(leaf)?;
         let replace = !matches!(mode, Mode::Insert);
         let found = self.move_right(&mut held, key, |node| match node.search(key)? {
@@ -272,21 +277,40 @@ impl BLinkTree {
             (Err(at), Mode::Insert) => (Slot::Insert(at), None),
             (Ok(_), Mode::Insert) | (Err(_), Mode::Replace | Mode::ReplaceIf(_)) => return Ok(Written::Refused),
         };
-        self.place(path, held, (key, value), slot)?;
-        Ok(Written::Done(old))
+        let into = self.place(path, held, (key, value), slot)?;
+        Ok(Written::Done(old, into))
     }
 
     /// Makes `slot`'s change in the leaf `held`, reached by `path`, and
-    /// posts the splits it causes up the tree.
-    pub(super) fn place<'a>(&'a self, mut path: Path, mut held: NodeLock<'a>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<()> {
-        let mut split = self.change(&held, key, value, slot)?;
-        while let Some(done) = split {
-            let Some((parent, at)) = self.lock_parent(&mut path, &done)? else { break };
-            // The child's lock is released only now, with the parent's
-            // held and moved right (§5).
-            held = parent;
-            split = self.change(&held, &done.separator, &done.right.0.to_le_bytes(), Slot::Insert(at))?;
+    /// posts the splits it causes up the tree. The leaf the entry is in:
+    /// the right page of the highest separator it is past, if any.
+    pub(super) fn place<'a>(&'a self, path: &Path, held: NodeLock<'a>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<PageId> {
+        let splits = self.change(&held, key, value, slot)?;
+        let leaf = splits
+            .iter()
+            .filter(|s| key > s.separator.as_slice())
+            .max_by(|a, b| a.separator.cmp(&b.separator))
+            .map_or(held.id, |s| s.right);
+        self.post(path, held, splits)?;
+        Ok(leaf)
+    }
+
+    /// Posts `splits` of node `held`, reached by `path`, to the level
+    /// above, and the splits that causes, up the tree. The child's lock is
+    /// released only once the first parent's is held and moved right
+    /// (§5); a further split of one change, its page reached meanwhile
+    /// through the right links, is posted after, as a split past the top
+    /// of a path is (`fit.rs`).
+    fn post<'a>(&'a self, path: &Path, held: NodeLock<'a>, splits: Vec<Split>) -> Result<()> {
+        let mut held = Some(held);
+        for done in splits {
+            let mut up = Path { stack: path.stack.clone(), ..Path::default() };
+            let Some((parent, at)) = self.lock_parent(&mut up, &done)? else { continue };
+            drop(held.take());
+            let more = self.change(&parent, &done.separator, &done.right.0.to_le_bytes(), Slot::Insert(at))?;
+            self.post(&up, parent, more)?;
         }
+        drop(held);
         Ok(())
     }
 }

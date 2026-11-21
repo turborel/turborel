@@ -29,6 +29,21 @@ use crate::settings::LOG_SYNC_AFTER_MS;
 pub const SYNC_AFTER_MS: u64 = 1000;
 
 impl Database {
+    /// \[DESIGN\] Writes to the log the records open transactions hold
+    /// (RULES.md D470), as a checkpoint does before it takes the log's end:
+    /// for a program that reads the log of a database while transactions
+    /// are open, which then finds their changes so far, and for tests.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed; the log's, the transaction
+    /// whose records could not be written then able only to roll back.
+    pub fn write_held(&self) -> Result<()> {
+        let st = self.snapshot()?;
+        let _shut = st.tx.gate.shut();
+        st.tx.write_held()
+    }
+
     /// Asks for the log sync job, LOG.SYNC_AFTER_MS from now, if a commit
     /// left the log unsynced since it was last asked for, and the setting
     /// is not 0.

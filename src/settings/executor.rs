@@ -3,7 +3,9 @@
 //! statement asks of them, its degree, the rows of its morsels and the
 //! least rows it reads in parallel; and whether a hash join filters its
 //! probing rows by its built ones' keys (RULES.md D369); and whether a
-//! correlated subquery keeps its plan across its runs (RULES.md D675).
+//! correlated subquery keeps its plan across its runs (RULES.md D675);
+//! and whether a hash join of dense keys finds its rows by their places
+//! (RULES.md D601).
 
 use super::builtin::{ON, SWITCHES, at_least, count, defined, text};
 use super::{Definition, Effect, Key, Kind};
@@ -22,6 +24,9 @@ pub const EXECUTOR_KERNELS: Key = Key(86);
 pub const EXECUTOR_RUNTIME_FILTERS: Key = Key(87);
 /// EXECUTOR.KEEP_SUBQUERY_PLANS (RULES.md D675).
 pub const KEEP_SUBQUERY_PLANS: Key = Key(89);
+/// EXECUTOR.DENSE_JOINS (RULES.md D601), at its key's place after the
+/// planner's estimate margin.
+pub const EXECUTOR_DENSE_JOINS: Key = Key(92);
 
 /// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
 const KERNELS_NAME_MAX: usize = 64;
@@ -86,5 +91,14 @@ pub(super) fn kept_subquery_plans() -> Definition {
         ("EXECUTOR.KEEP_SUBQUERY_PLANS", Kind::Choice(SWITCHES), text(ON)),
         SESSION,
         "Whether a correlated subquery, once its first runs show the values of its outer references choose no other plan, keeps its plan made with them as parameters and fills it at each later run: ON; or plans it at each run with its values, OFF, as to compare the two. Its rows are the same either way.",
+    )
+}
+
+/// EXECUTOR.DENSE_JOINS (RULES.md D601).
+pub(super) fn dense_joins() -> Definition {
+    defined(
+        ("EXECUTOR.DENSE_JOINS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a hash join whose one key is of whole numbers dense in their span, at most four times as wide as its built rows, finds a probe's rows at its key's place in the span, no hash made: ON; or hashes every key, OFF, as to compare the two. Its rows are the same either way.",
     )
 }

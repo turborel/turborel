@@ -4,8 +4,12 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use super::MAX_EXACT_PRECISION;
+use super::{ArithOp, MAX_EXACT_PRECISION};
 use crate::error::{Code, Result, SqlState, fail_with};
+
+mod quotient;
+
+pub use quotient::{MIN_QUOTIENT_SCALE, quotient_bound};
 
 /// An exact number: `units` × 10^-`scale`.
 #[derive(Debug, Clone, Copy)]
@@ -26,6 +30,22 @@ pub fn pow10(n: u32) -> Option<i128> {
     RADIX_I128.checked_pow(n)
 }
 
+/// [X3.135-1986 §5.9 SR4b, SR4c] The precision and scale every value of
+/// `op` of exact values within `(p1, s1)` and `(p2, s2)` is within, its
+/// precision not capped: of a sum or difference, a digit before the point
+/// more than the wider operand has, at the larger scale; of a product, the
+/// digits of both, at the sum of the scales. None of a quotient, whose
+/// scale is each value's own (`Decimal::checked_div`).
+pub fn bound_of(op: ArithOp, (p1, s1): (u32, u32), (p2, s2): (u32, u32)) -> Option<(u32, u32)> {
+    let (w1, w2) = (p1.saturating_sub(s1), p2.saturating_sub(s2));
+    let (whole, scale) = match op {
+        ArithOp::Add | ArithOp::Sub => (w1.max(w2).saturating_add(1), s1.max(s2)),
+        ArithOp::Mul => (w1.saturating_add(w2), s1.saturating_add(s2)),
+        ArithOp::Div => return None,
+    };
+    Some((whole.saturating_add(scale), scale))
+}
+
 fn too_big<T>() -> Result<T> {
     fail_with(
         Code::Data,
@@ -42,8 +62,7 @@ impl Decimal {
 
     /// Number of significant decimal digits in the value.
     pub fn digits(&self) -> u32 {
-        // An i128 has at most 39 digits.
-        u32::try_from(self.units.unsigned_abs().to_string().len()).unwrap_or(u32::MAX)
+        self.units.unsigned_abs().checked_ilog10().map_or(1, |l| l.saturating_add(1))
     }
 
     pub(super) fn fits(&self, precision: u32, scale: u32) -> bool {
@@ -105,73 +124,6 @@ impl Decimal {
         match (self.units.checked_mul(o.units), self.scale.checked_add(o.scale)) {
             (Some(u), Some(scale)) => Decimal::new(u, scale).checked(),
             _ => too_big(),
-        }
-    }
-
-    /// [X3.135-1986 §5.9 SR4d] precision and scale of a quotient are
-    /// implementor-defined; [X3.135-1986 §5.9 GR6b] it "shall not lose any
-    /// leading significant digits". \[DESIGN\] We give it the largest scale,
-    /// up to `MAX_EXACT_PRECISION`, at which it fits in `MAX_EXACT_PRECISION`
-    /// digits, truncate toward zero, and drop trailing fractional zeros down
-    /// to max(s1, s2): 1 / 3 is 0.333333333333333333, 6 / 2 is 3, 1 / 4 is
-    /// 0.25. The scale so depends on the value; the static type's scale,
-    /// max(s1, s2), is the least (`binder::exact_result_type`).
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -301 for a zero divisor, a quotient whose integer part needs
-    /// more than `MAX_EXACT_PRECISION` digits, or a nonzero quotient smaller
-    /// than 10^-`MAX_EXACT_PRECISION`, either of which would lose leading
-    /// digits.
-    pub fn checked_div(self, o: Decimal) -> Result<Decimal> {
-        if o.units == 0 {
-            return fail_with(Code::Data, SqlState::DIVISION_BY_ZERO, "[X3.135-1986 §5.9 GR5] a divisor shall not be 0");
-        }
-        let floor = self.scale.max(o.scale);
-        let found = (0..=MAX_EXACT_PRECISION)
-            .rev()
-            .find_map(|s| self.units_over(o, s).map(|q| Decimal::new(q, s)).filter(|d| d.fits(MAX_EXACT_PRECISION, MAX_EXACT_PRECISION)));
-        let Some(mut q) = found else { return too_big() };
-        if q.units == 0 && self.units != 0 {
-            return fail_with(
-                Code::Data,
-                SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
-                format!("[X3.135-1986 §5.9 GR6b] the quotient is below 10^-{MAX_EXACT_PRECISION}, so it would lose its leading digits"),
-            );
-        }
-        while q.scale > floor && q.units % RADIX_I128 == 0 {
-            q = Decimal::new(q.units.checked_div(RADIX_I128).unwrap_or_default(), q.scale.saturating_sub(1));
-        }
-        Ok(q)
-    }
-
-    /// The units of this value divided by `o` at scale `s`, truncated toward
-    /// zero, if they fit an `i128`: (a / 10^s1) / (b / 10^s2) × 10^s, that is
-    /// a × 10^(s + s2 - s1) / b.
-    fn units_over(self, o: Decimal, s: u32) -> Option<i128> {
-        let up = s.checked_add(o.scale)?;
-        if up >= self.scale {
-            self.units.checked_mul(pow10(up.checked_sub(self.scale)?)?)?.checked_div(o.units)
-        } else {
-            self.units.checked_div(o.units.checked_mul(pow10(self.scale.checked_sub(up)?)?)?)
-        }
-    }
-
-    /// This value divided by `o` at scale `scale`, truncated toward zero:
-    /// for a quotient whose scale is fixed, as AVG's
-    /// (`functions::AVG_EXTRA_SCALE`).
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -301 for a zero divisor, or a quotient that does not fit
-    /// `MAX_EXACT_PRECISION` digits at that scale.
-    pub fn quotient_at(self, o: Decimal, scale: u32) -> Result<Decimal> {
-        if o.units == 0 {
-            return fail_with(Code::Data, SqlState::DIVISION_BY_ZERO, "[X3.135-1986 §5.9 GR5] a divisor shall not be 0");
-        }
-        match self.units_over(o, scale) {
-            Some(q) => Decimal::new(q, scale).checked(),
-            None => too_big(),
         }
     }
 
@@ -327,31 +279,5 @@ mod tests {
         for zero in [Decimal::new(0, 0), Decimal::new(0, 3)] {
             assert_eq!(Decimal::new(1, 0).checked_div(zero).unwrap_err().code, Code::Data);
         }
-    }
-
-    /// Verifies: [X3.135-1986 §5.9 SR4d, GR6b] a quotient loses no leading
-    /// significant digit: it has the most fractional digits that fit 18
-    /// digits, truncated toward zero, trailing zeros dropped down to the
-    /// operands' larger scale; an integer part past 18 digits, or a nonzero
-    /// quotient below 10^-18, is refused with SQLCODE -301 rather than given
-    /// wrong. At a fixed scale, as for AVG, it is truncated there.
-    #[test]
-    fn quotients_keep_their_leading_digits() {
-        let q = |a: i128, sa: u32, b: i128, sb: u32| Decimal::new(a, sa).checked_div(Decimal::new(b, sb)).map(|d| d.to_string());
-        assert_eq!(q(1, 0, 3, 0).unwrap(), "0.333333333333333333");
-        assert_eq!(q(2, 0, 3, 0).unwrap(), "0.666666666666666666", "truncated, not rounded");
-        assert_eq!(q(6, 0, 2, 0).unwrap(), "3");
-        assert_eq!(q(1, 0, 4, 0).unwrap(), "0.25");
-        assert_eq!(q(-7, 0, 2, 0).unwrap(), "-3.5");
-        assert_eq!(q(1050, 2, 2, 0).unwrap(), "5.25");
-        assert_eq!(q(600, 2, 2, 0).unwrap(), "3.00", "not below the operands' scale");
-        assert_eq!(q(10, 0, 3, 0).unwrap(), "3.33333333333333333", "18 digits in all");
-        assert_eq!(q(1, 18, 1_000, 0).unwrap_err().code, Code::Data, "below 10^-18");
-        assert_eq!(q(999_999_999_999_999_999, 0, 1, 2).unwrap_err().code, Code::Data, "an integer part of 20 digits");
-        assert_eq!(q(999_999_999_999_999_999, 0, 1, 0).unwrap(), "999999999999999999");
-        let at = |a: i128, b: i128, scale: u32| Decimal::new(a, 0).quotient_at(Decimal::new(b, 0), scale).map(|d| d.to_string());
-        assert_eq!(at(5, 3, 2).unwrap(), "1.66");
-        assert_eq!(at(1, 0, 2).unwrap_err().code, Code::Data);
-        assert_eq!(at(999_999_999_999_999_999, 1, 2).unwrap_err().code, Code::Data, "past 18 digits at that scale");
     }
 }

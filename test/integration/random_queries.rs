@@ -171,8 +171,10 @@ fn predicate(rng: &mut Rng, scope: &Scope) -> String {
     }
 }
 
-/// IN of a subquery, EXISTS of a correlated one, or a comparison with a
-/// scalar subquery of a set function; past one level deep, a comparison.
+/// IN of a subquery, uncorrelated or correlated, EXISTS of a correlated
+/// one, a quantified comparison with a correlated one, or a comparison
+/// with a scalar subquery of a set function; past one level deep, a
+/// comparison.
 fn subquery_predicate(rng: &mut Rng, scope: &Scope, not: &str) -> String {
     if scope.depth > 0 {
         return format!("{} {} {}", scope.number(rng), rng.pick(&COMPARISONS), rng.number());
@@ -182,9 +184,24 @@ fn subquery_predicate(rng: &mut Rng, scope: &Scope, not: &str) -> String {
     let table = rng.pick(&TABLES);
     let column = rng.pick(&NUMBERS);
     let filter = condition(rng, &inner, 1_usize);
-    match rng.below(3_usize) {
+    match rng.below(5_usize) {
         0 => format!("{} {not}IN (SELECT {name}.{column} FROM {table} {name} WHERE {filter})", scope.number(rng)),
         1 => format!("{not}EXISTS (SELECT * FROM {table} {name} WHERE {name}.{column} = {} AND {filter})", scope.number(rng)),
+        // Correlated, which under OR or NOT is a mark join (RULES.md D641).
+        2 => format!(
+            "{} {not}IN (SELECT {name}.{column} FROM {table} {name} WHERE {name}.{} = {} AND {filter})",
+            scope.number(rng),
+            rng.pick(&NUMBERS),
+            scope.number(rng)
+        ),
+        3 => format!(
+            "{not}{} {} {} (SELECT {name}.{column} FROM {table} {name} WHERE {name}.{} = {} AND {filter})",
+            scope.number(rng),
+            rng.pick(&COMPARISONS),
+            rng.pick(&["SOME", "ALL"]),
+            rng.pick(&NUMBERS),
+            scope.number(rng)
+        ),
         _ => {
             let function = rng.pick(&["MAX", "MIN", "COUNT", "SUM"]);
             format!(
@@ -306,7 +323,8 @@ fn plan() -> (u64, u64) {
 
 /// Verifies: [DESIGN] RULES.md D15, D31: random queries of joins (inner,
 /// outer, full, products), WHERE of AND, OR, NOT, comparisons, IN,
-/// BETWEEN, LIKE and IS NULL, subqueries (IN, EXISTS correlated, scalar),
+/// BETWEEN, LIKE and IS NULL, subqueries (IN, EXISTS and quantified
+/// comparisons correlated, scalar),
 /// set functions with and without DISTINCT, GROUP BY and HAVING, DISTINCT,
 /// UNION, EXCEPT and INTERSECT, and ORDER BY, over tables of both stores,
 /// give the same outcome with every optimizer rule on and off, read by

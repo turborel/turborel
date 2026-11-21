@@ -731,7 +731,7 @@ Feature T071 (BIGINT data type).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
-| BIGINT | §4.5.2, §6.1 SR30 | Exact numeric of scale 0 and decimal precision 18 (IV032), no less than INTEGER's 10. It is NUMERIC(18, 0), one type with it whatever the name, so it compares, is assigned, cast and summed as any exact number, and a value past 18 digits is SQLSTATE 22003. A 64-bit integer of 19 digits does not fit. |
+| BIGINT | §4.5.2, §6.1 SR30 | Exact numeric of scale 0 and decimal precision 18 (IV032), no less than INTEGER's 10. It is NUMERIC(18, 0), one type with it whatever the name, so it compares, is assigned, cast and summed as any exact number, and a value past 18 digits is SQLSTATE 22003 when it is assigned to it. A 64-bit integer of 19 digits does not fit. |
 | Its name | §4.5.2 | Kept as written, in messages, the catalog and the Information Schema's DATA_TYPE 'BIGINT', NUMERIC_PRECISION 18, NUMERIC_PRECISION_RADIX 10, NUMERIC_SCALE 0. |
 | Identity columns and sequences | §11.4 SR13, §11.72 SR4 | Of BIGINT, counting to 999999999999999999 if no maximum is written. |
 | Descriptor areas | §20.1 Table 30, SR6g, SR7k, §20.10 GR7d | TYPE 25, PRECISION 18 and SCALE 0 as DESCRIBE sets them. An item of TYPE 25 takes a BIGINT value and gives one to a BIGINT target alone, else 22005. |
@@ -3693,7 +3693,7 @@ or `hash` (RULES.md D92).
 
 | Use | Behaviour |
 |---|---|
-| Admitted | A column, a constant, a negation, a sum, difference or product of exact numbers fitting 18 digits, a CASE of such, UPPER, LOWER, and JSON_VALUE, JSON_QUERY and JSON_EXISTS that cannot raise and read no time zone. |
+| Admitted | A column, a constant, a negation, a sum, difference or product of exact numbers fitting 38 digits, a CASE of such, UPPER, LOWER, and JSON_VALUE, JSON_QUERY and JSON_EXISTS that cannot raise and read no time zone. |
 | Refused | A quotient, a sum or product that can overflow, a CAST, a subquery, CURRENT_DATE and other possibly non-deterministic functions, JSON ERROR ON ERROR, a path with datetime(), time_tz() or timestamp_tz(), a method other than btree or hash, each SQLCODE -103. |
 | Planner | `=`, ranges, BETWEEN and IN of an expression of the same canonical form probe it; ORDER BY of a never-null one reads a btree index in order. |
 | Maintenance | INSERT, UPDATE of an input column, DELETE, rollback, recovery, ALTER TABLE and temporary tables. Renaming an input column is refused, and dropping one drops the index. |
@@ -4792,7 +4792,7 @@ topic. The Where column names the file that implements each.
 | 86 §5.5 SR3 precision of NUMERIC and DECIMAL when omitted | 18 | `value.rs` |
 | 2023 §6.1 GR3 (IA227) a length in octets as characters | The same number, the most characters so many octets hold | `value/types/character.rs` |
 | 86 §5.5 SR7–SR9 precision of DECIMAL, INTEGER, SMALLINT | As specified, 10, 5 | `value.rs` |
-| 2023 §6.1 SR30 (IV032) the radix and precision of BIGINT | Decimal, as INTEGER's and SMALLINT's, of 18 digits, the most an exact value holds | `value.rs` |
+| 2023 §6.1 SR30 (IV032) the radix and precision of BIGINT | Decimal, as INTEGER's and SMALLINT's, of 18 digits, the most a 64-bit integer always holds (RULES.md D695) | `value.rs` |
 | 86 §5.5 SR10–SR12 FLOAT, REAL, DOUBLE PRECISION | 24 bits if p ≤ 24, else 53. REAL 24, DOUBLE PRECISION 53, FLOAT with no precision 53. | `parser/data_type.rs`, `value.rs` |
 | 2023 §6.9 SR10b (IV081), §7.13 SR17m iii (IV183) the type of the result of a grouping operation | Exact numeric of scale 0 and precision 18, the type BIGINT's, which holds GROUPING of up to 59 columns | `binder/grouping_sets.rs` |
 | 2023 §10.9 SR11d (IA044) the type and maximum length of LISTAGG's result | CHARACTER VARYING of 32,767 characters, the longest varying character string, of CLOB arguments too | `functions/listagg.rs` |
@@ -4806,7 +4806,9 @@ topic. The Where column names the file that implements each.
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |
 | 86 §5.9 SR4b, c precision of sums and products | 18 | `binder/expression.rs` |
-| 86 §5.9 SR4d precision and scale of quotients | 18 digits, at the largest scale (at most 18) that fits, truncated toward zero, trailing zeros dropped down to max(s1, s2) | `value/decimal.rs`, `binder/expression.rs` |
+| 86 §5.9 SR4d precision and scale of quotients | Of `(p1, s1)` by `(p2, s2)`, I = p1 - s1 + s2 integer digits and scale max(6, s1 + p2 + 1), at most 38 - I; each value at scale max(6, s1 + d2 + 1, s2), d2 its divisor's digits, fewer as its integer part needs, truncated toward zero, trailing zeros dropped down to max(s1, s2) (RULES.md D697) | `value/decimal/quotient.rs`, `binder/arithmetic.rs` |
+| 2023 §6.30 SR1c (IV136) precision of sums, differences and products | Of a sum or difference, max(p1 - s1, p2 - s2) + 1 + max(s1, s2) digits; of a product, p1 + p2; each at most 38 (RULES.md D696) | `value/decimal.rs`, `binder/arithmetic.rs` |
+| 2023 §10.9 SR7g ii, iii (IV167, IV168) the exact types of SUM and AVG | 38 digits, of the argument's scale; AVG's scale more by `AVG_EXTRA_SCALE`, at most 38 | `functions/totals.rs` |
 | 86 §8.3 GR3b vii; 2023 §10.10 SR3, ID133, where nulls sort, the `<null ordering>` implied | Greater than every value, so last ascending and first descending, as NULLS LAST of ASC and NULLS FIRST of DESC | `value.rs`, `value/order.rs` |
 | §6.1 SR2 the national character set | SQL_TEXT, the one there is. NATIONAL CHARACTER is CHARACTER. | `parser/data_type.rs`, `lexer.rs` |
 | §6.13 SR3a VL and FL, the longest varying and fixed-length strings | 32767 characters each | `value.rs` |
@@ -5156,10 +5158,10 @@ SQLCODE -900 (RULES.md D18).
 |---|---|---|---|
 | BINARY and BINARY VARYING length | 32,767 octets | 2023 §6.1 SR4 requires only a length above 0. | `value.rs`, `parser/data_type.rs` |
 | CHARACTER length | 32,767 characters | 86 §5.5 SR2 requires only a length above 0. Values are stored padded to their length [86 §8.7 GR7b], so without a limit `CHAR(4000000000)` could allocate about 4 GB for each value. | `value.rs`, `parser/data_type.rs` |
-| Exact precision | 18 digits, for NUMERIC, DECIMAL and exact literals | 86 §5.5 SR6, SR7 and 86 §5.2 SR4 set no maximum. | `value.rs`, `parser/data_type.rs`, `parser/literal.rs` |
+| Exact precision | 38 digits, for NUMERIC, DECIMAL, exact literals and every exact result; a column of more than 18 kept in 128 bits (RULES.md D695, D698) | 86 §5.5 SR6, SR7 and 86 §5.2 SR4 set no maximum; 2023 §6.1 SR27a leaves it implementation-defined (IL043). | `value.rs`, `parser/data_type.rs`, `parser/literal.rs`, `value/types/exact.rs` |
 | FLOAT precision | 53 binary digits, and approximate literals within the range of a double | 86 §5.5 SR10 allows more precision than asked for, but sets no maximum. | `parser/data_type.rs`, `parser/literal.rs` |
 | `<unsigned integer>` | 4,294,967,295 | 86 §5.2 sets no maximum. | `parser.rs` |
-| A sum of SUM or AVG on the way to its total | 128 bits, past some 10^20 exact values of 18 digits, or 10^18 intervals of 9 digits of days | §6.5 GR2b iv judges only the total against the range of the result, so whether a sum raises does not depend on the order of its rows (RULES.md D15). Each sum before it is kept wider than the result, but not without bound. | `functions/sum.rs` |
+| A sum of SUM or AVG on the way to its total | 128 bits, past some 10^20 exact values of 18 digits, two of 38, or 10^18 intervals of 9 digits of days; the total is judged against 38 digits | §6.5 GR2b iv judges only the total against the range of the result, so whether a sum raises does not depend on the order of its rows (RULES.md D15). Each sum before it is kept wider than the result, but not without bound. | `functions/sum.rs` |
 | Multiset cardinality | 65,535 elements | §4.12.3 sets no maximum, and §10.9 GR3b names multiset value overflow, 2200Q, for a result past what its site holds. The limit is an array's maximum cardinality, so a multiset casts to an array of it. | `value/types/multiset.rs` |
 | SQL descriptor areas | 64 at once, of a session | §17.2 GR3 leaves the number to the implementation, and names no exception past it. Direct SQL allocates them, a server's clients among it. | `db/dynamic/areas.rs` |
 | Regular expression size | 8,192 instructions compiled, about as many characters and quantified repeats, and groups 64 deep | §9.28 sets no limit. A counted repeat is compiled once for each count, so `a{9000}` passes it. | `regex/compile.rs`, `regex/parse.rs` |
@@ -5173,8 +5175,8 @@ SQLCODE -900 (RULES.md D18).
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 | SQL/JSON item nesting | 128 levels of arrays and objects, of JSON text parsed and of an item compared or serialized | §9.42 sets no limit, and RFC 8259 §9 lets a parser limit the depth of nesting. Every walk of an item recurses, and the limit bounds it (RULES.md R-CF-6). | `json.rs`, `json/text.rs`, `json/item.rs`, `json/serialize.rs` |
 | SQL/JSON path nesting | 64 levels of a path's syntax tree, `$` one of them, so at most 63 accessors or operators in a row, and parentheses, filters, subscripts and signs nested at most 64 deep | §9.46 sets no limit. The parser and the evaluator recurse over the tree, which has no counter of its own, and the limit bounds both (RULES.md R-CF-6). | `json/path.rs`, `json/path/parse.rs` |
-| SQL/JSON numbers | An exact number within DECFLOAT's range, a HexIntegerLiteral's too, and an approximate one within a double's, of JSON text and of a path | RFC 8259 §6 and §9 let an implementation limit the range and precision of numbers. An exact number of more than 18 digits is a DECFLOAT, rounded to 34 (RULES.md D84), and no type holds one past DECFLOAT's range. | `json/text.rs`, `json/path/lex.rs` |
-| SQL/JSON item method precisions | 18 digits of decimal(); 6 digits of a second's fraction of time(), time_tz(), timestamp() and timestamp_tz(), of a string datetime() reads, and of a template's FFn | §9.46 sets none. The methods cast to DECIMAL and to the datetime types [GR11g ii 6 C XII, XVI to XIX], and datetime() makes a datetime [VII], which hold no more digits here (Exact precision above). | `json/path/parse/method.rs`, `json/path/eval/methods/datetime.rs` |
+| SQL/JSON numbers | An exact number within DECFLOAT's range, a HexIntegerLiteral's too, and an approximate one within a double's, of JSON text and of a path | RFC 8259 §6 and §9 let an implementation limit the range and precision of numbers. An exact number of more than 18 digits is a DECFLOAT, rounded to 34 (RULES.md D84, D695), and no type holds one past DECFLOAT's range. | `json/text.rs`, `json/path/lex.rs` |
+| SQL/JSON item method precisions | 38 digits of decimal(); 6 digits of a second's fraction of time(), time_tz(), timestamp() and timestamp_tz(), of a string datetime() reads, and of a template's FFn | §9.46 sets none. The methods cast to DECIMAL and to the datetime types [GR11g ii 6 C XII, XVI to XIX], and datetime() makes a datetime [VII], which hold no more digits here (Exact precision above). | `json/path/parse/method.rs`, `json/path/eval/methods/datetime.rs` |
 | A large object read as SQL/JSON | 262,144 octets, a chunk, of a character large object read whole as JSON text, as a PASSING argument or as a constructor's input or name | The text is held in memory whole to be parsed, as a LIKE pattern of a large object is, and to the same bound. | `json/query.rs`, `json/construct.rs`, `json/predicate.rs`, `functions/lobs/like.rs` |
 | JSON object members and array elements | 1,048,576 of an object or an array constructed, one more SQLSTATE 2203E or 2203D | §6.34 GR2d ii 3, GR3c ii 2, GR4b ii 2 and §10.11 GR4b ii 4, GR5g leave the number to the implementation (IL051, IL052) and name these exceptions past it. The limit bounds what an aggregate holds. | `json/construct.rs` |
 
@@ -5183,12 +5185,12 @@ These figures assume the default 8-byte XXH3-64 checksum.
 
 | Page size | B-link tree index | Hash index |
 |---|---|---|
-| 4 KiB | 982 bytes | |
-| 8 KiB (default) | 2,006 bytes | 8,112 bytes |
-| 64 KiB | 16,342 bytes | 65,456 bytes |
+| 4 KiB | 959 bytes | |
+| 8 KiB (default) | 1,983 bytes | 8,112 bytes |
+| 64 KiB | 16,319 bytes | 65,456 bytes |
 
 A B-link node must hold at least four entries to split, and each counts a value
-of 8 bytes. A row's long values go out of line, but an index key is compared in
+of 8 bytes and a slot with its key's head (RULES.md D500). A row's long values go out of line, but an index key is compared in
 its node, so it stays whole. A table's rows are not limited this way.
 STORAGE.PAGE_BYTES, chosen when the database is created, raises the limit. The
 code is in `index/blink.rs`, `index/hash.rs` and `engine/tree.rs`.

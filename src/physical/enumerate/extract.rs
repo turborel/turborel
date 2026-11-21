@@ -85,6 +85,7 @@ pub(super) fn is_chain(plan: &LogicalPlan) -> bool {
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. }
         | LogicalPlan::Unnest(..)
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
         | LogicalPlan::Polymorphic(..) => false,
@@ -146,6 +147,7 @@ fn raw(plan: &LogicalPlan, (start, cx): (usize, Cx<'_>), leaves: &mut Vec<Leaf>,
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. }
         | LogicalPlan::Unnest(..)
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
         | LogicalPlan::Polymorphic(..) => Some(leaf(plan, start, leaves)),

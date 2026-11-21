@@ -66,7 +66,7 @@ impl Boxed {
             read.clear();
             read.extend(run.iter().filter_map(|&at| pending.read.get(at).copied()));
             let Some(acc) = self.accs.get_mut(crate::storage::mask::index(g)) else { continue };
-            fed_group(std::slice::from_mut(acc), (taken, scratch, runner), (batch, lanes), (&given, &read))?;
+            fed_group(std::iter::once(acc), (taken, scratch, runner), (batch, lanes), (&given, &read))?;
         }
         Ok(())
     }

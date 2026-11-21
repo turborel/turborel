@@ -1,8 +1,9 @@
 //! \[DESIGN\] Bulk copy in (RULES.md D195): CopyIn names a table and its
 //! columns; CopyData sends rows, as many as the client likes at a time,
 //! with no reply; CopyEnd ends it, its reply a Complete of the rows
-//! inserted or the copy's Error. The rows go in `BATCH` at a time, each
-//! batch by one execution of a prepared INSERT of one row, given them all
+//! inserted or the copy's Error. The rows go in `BATCH` at a time, or a
+//! group's rows at a time once its load writes them straight to groups
+//! (RULES.md D533), each batch by one execution of a prepared INSERT of one row, given them all
 //! (`Session::execute_prepared_rows`), so the server inserts them together
 //! (RULES.md D530); each value is assigned to its column as INSERT assigns,
 //! so a string too long is refused, not cut [ISO/IEC 9075:1992 §13.8 GR4b
@@ -55,6 +56,10 @@ struct Insert {
     waiting: Vec<Row>,
     /// The rows inserted, or waiting, so far.
     rows: u64,
+    /// The rows an execution takes: `BATCH`, or a group's once the load
+    /// writes its rows straight to groups, so each is whole (RULES.md
+    /// D533).
+    batch: usize,
 }
 
 /// `name` as a `<delimited identifier>` [ISO/IEC 9075:1992 §5.2], a quote
@@ -111,7 +116,7 @@ fn prepared(session: &Session, table: &str, columns: &[String]) -> Result<Insert
     };
     let one = session.prepare(&insert_text(&table, &columns))?;
     let types = one.parameters().iter().map(|t| t.clone().data_type()).collect();
-    Ok(Insert { one, types, waiting: Vec::with_capacity(BATCH), rows: 0 })
+    Ok(Insert { one, types, waiting: Vec::with_capacity(BATCH), rows: 0, batch: BATCH })
 }
 
 /// `row`, the copy's `n`th from 1, its values assigned to `types`: refused
@@ -185,7 +190,7 @@ impl Insert {
             self.rows = self.rows.saturating_add(1);
             let n = self.rows;
             self.waiting.push(assigned(row, &self.types, n).map_err(|e| e.with_detail(format!("row {n} of the copy")))?);
-            if self.waiting.len() == BATCH {
+            if self.waiting.len() >= self.batch {
                 self.insert_waiting(session, Load::Going)?;
             }
         }
@@ -196,9 +201,10 @@ impl Insert {
     /// by one execution, tried again a row at a time if it fails, to name
     /// the row that fails, and the load then ended alone if that ends it.
     fn insert_waiting(&mut self, session: &Session, load: Load) -> Result<()> {
-        let rows = std::mem::replace(&mut self.waiting, Vec::with_capacity(BATCH));
+        let rows = std::mem::replace(&mut self.waiting, Vec::with_capacity(self.batch));
         let first = self.rows.saturating_sub(u64::try_from(rows.len()).unwrap_or(0));
         if session.execute_prepared_rows(&self.one, &rows, load).is_ok() {
+            self.batch = session.load_rows().map_or(BATCH, |grouped| grouped.max(BATCH));
             return Ok(());
         }
         for (at, row) in (1_u64..).zip(&rows) {

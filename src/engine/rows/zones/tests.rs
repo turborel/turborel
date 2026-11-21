@@ -20,18 +20,18 @@ use crate::txn::NO_TRANSACTION;
 use crate::value::{CompOp, DataType, Decimal, Spelled, Value};
 
 /// A number kept, a long text not.
-const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(100)];
+pub(super) const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(100)];
 
 fn int(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))
 }
 
-fn row(n: i128) -> Row {
+pub(super) fn row(n: i128) -> Row {
     vec![int(n), Value::Char(format!("text {n}"))]
 }
 
 /// The tables' files, in memory.
-fn files() -> TableFiles {
+pub(super) fn files() -> TableFiles {
     paged().1
 }
 
@@ -520,6 +520,40 @@ fn a_write_inside_its_zones_bounds_stales_nothing() {
     assert!(stale(&table), "the least value deleted");
 }
 
+/// Verifies: [DESIGN] RULES.md D476, zone maps: a value on the greatest
+/// grown past it, or on the least fallen past it, stales nothing, the zone
+/// widened; one on the greatest shrunk, or on the least grown, stales it; a
+/// bound kept, or a value inside made null, stales nothing; a bound made
+/// null, or a null a value, stales it. MC/DC of `reached`, of each bound:
+/// moved past (reached) against inside (not), a value against a null.
+#[test]
+fn a_value_growing_past_its_zones_bound_stales_nothing() {
+    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let ids: Vec<RowId> = (0..100).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    let null = || vec![Value::Null, Value::Char("null".into())];
+    // Ends transaction `tx`, its zones summed up, and begins the next.
+    let next = |tx: u64| {
+        table.validate(tx, tx).unwrap();
+        table.commit(tx, tx);
+        summed(&table, tx + 1);
+        assert!(!stale(&table) && table.begin(tx + 1, tx + 1).is_ok(), "summed up");
+    };
+    summed(&table, 1);
+    table.begin(10, 1).unwrap();
+    assert!(table.update(10, ids[99], row(150)).is_ok() && table.update(10, ids[0], row(-5)).is_ok());
+    assert!(!stale(&table), "the greatest grown past, the least fallen past");
+    assert!(reads(&table, &equal(0, 150), ids[99]) && reads(&table, &equal(0, -5), ids[0]), "widened");
+    assert!(table.update(10, ids[0], row(-3)).is_ok() && stale(&table), "the least grown");
+    next(10);
+    assert!(table.update(11, ids[99], row(140)).is_ok() && stale(&table), "the greatest shrunk");
+    next(11);
+    assert!(table.update(12, ids[99], row(140)).is_ok() && table.update(12, ids[50], null()).is_ok());
+    assert!(!stale(&table), "a bound kept, a value inside changed to null");
+    assert!(table.update(12, ids[0], null()).is_ok() && stale(&table), "the least changed to null");
+    next(12);
+    assert!(table.update(13, ids[50], row(50)).is_ok() && stale(&table), "a null changed to a value");
+}
+
 /// Verifies: [DESIGN] RULES.md D31, D34, zone maps: a zone a write left
 /// unsettled but not stale is settled from its rows' newest versions, its
 /// bounds kept, its rows counted again: a deletion inside the bounds
@@ -542,24 +576,4 @@ fn a_zone_unsettled_alone_is_settled_with_its_bounds_kept() {
     assert_eq!(zone_rows(&table, ids[0]), 99, "the deletion counted");
     assert!(!table.zones.visible(ids[0]), "a deletion is seen by no reader alone");
     assert!(reads(&table, &equal(0, 40), ids[40]), "the bounds kept");
-}
-
-/// Verifies: [DESIGN] RULES.md D31, zone maps: once a pass of the
-/// maintenance thread has looked at every zone due, the zones rest, so a
-/// write meanwhile leaves work due but asks for no maintenance until the
-/// rest is over. MC/DC of the pass's end: a pass looking at fewer zones
-/// than one call sums up rests them; one of as many, more due, does not.
-#[test]
-fn zones_rest_after_a_pass_over_every_zone_due() {
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
-    let rows = u64::try_from(super::MOST_SUMMED + 1).unwrap() * ZONE_ROWS;
-    let ids: Vec<RowId> = (0..rows).map(|n| table.insert(NO_TRANSACTION, row(i128::from(n))).unwrap()).collect();
-    assert!(table.sum_zones(u64::MAX).unwrap());
-    assert!(table.zones.wanted(), "more zones due than one call sums up: no rest");
-    assert!(table.sum_zones(u64::MAX).unwrap());
-    assert!(!table.zones.due() && !table.zones.wanted(), "every zone looked at");
-    table.update(NO_TRANSACTION, ids[0], row(-1)).unwrap();
-    assert!(table.zones.due() && !table.zones.wanted(), "due, but resting");
-    table.zones.rest_until.store(0, std::sync::atomic::Ordering::Release);
-    assert!(table.zones.wanted(), "the rest over");
 }

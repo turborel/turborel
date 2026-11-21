@@ -28,7 +28,7 @@ use crate::exec::Db;
 use crate::index::{Key, KeyPairs, Probe, Using};
 use crate::logical::{Cond, Truth};
 use crate::physical::{Paired, Plan};
-use crate::storage::{Condition, Region, Row, RowId};
+use crate::storage::{Condition, Region, Row, RowId, sized_row};
 use crate::txn::checked;
 
 /// The join of `paired`'s table with `join`'s by their trees, or, if
@@ -100,7 +100,7 @@ impl Traversal {
         }
         let Some(through) = &self.through else { return Ok(Some(row)) };
         let taken = through.iter().map(|&c| row.get(c).cloned().ok_or_else(|| broken("a traversal's outer column is missing")));
-        taken.collect::<Result<Row>>().map(Some)
+        sized_row(through.len(), taken).map(Some)
     }
 }
 

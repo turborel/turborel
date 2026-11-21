@@ -46,6 +46,9 @@ const BLOOM: &str = "COLUMNSTORE.BLOOM";
 const LAYOUT: &str = "COLUMNSTORE.LAYOUT";
 const IMPRINTS: &str = "COLUMNSTORE.IMPRINTS";
 const SKETCH: &str = "COLUMNSTORE.SKETCH";
+const LOAD: &str = "COLUMNSTORE.LOAD";
+/// What COLUMNSTORE.LOAD takes.
+const LOADS: &[&str] = &["TREE", "GROUPS"];
 /// What COLUMNSTORE.COMPRESSION takes.
 const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
 /// What COLUMNSTORE.LAYOUT takes.
@@ -123,6 +126,19 @@ pub struct Columns {
     /// The columns each group keeps sketches of, if they take them
     /// (`engine/columns/sketch.rs`), in the order of their places.
     pub sketch: Places,
+    /// Where a load writes its rows (RULES.md D533).
+    pub load: LoadTo,
+}
+
+/// \[DESIGN\] Where a load into a table of the column store writes its
+/// rows (RULES.md D533).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LoadTo {
+    /// Through its tree, frozen into groups in the background.
+    #[default]
+    Tree,
+    /// Each batch straight as a frozen group.
+    Groups,
 }
 
 /// \[DESIGN\] Columns of a table by their places in the row, at most
@@ -168,6 +184,7 @@ impl Default for Columns {
             pax: false,
             imprints: false,
             sketch: Places::default(),
+            load: LoadTo::Tree,
         }
     }
 }
@@ -240,7 +257,7 @@ pub(super) fn declared(defaults: TableOptions) -> Vec<TableOption> {
         TableOption::new(
             (REFRESH_FRACTION, Kind::Number { min: 0.0_f64, max: 1_000.0_f64 }, Value::Approx(stats.fraction)),
             Rebuild::No,
-            "The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again.",
+            "The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again, once a plan has read them since.",
         ),
         TableOption::new(
             (REFRESH_ROWS, Kind::Integer { min: 0, max: i128::from(i64::MAX) }, whole(stats.rows)),
@@ -330,6 +347,11 @@ fn skipping_declared(cols: Columns) -> Vec<TableOption> {
             Rebuild::No,
             "The columns, by commas, of which a table of the column store keeps a sketch of each group it freezes, a byte of each row ordered as its value, if the column is VARCHAR and its values are compressed by a table of symbols, so a comparison, IN or LIKE prefix compares the texts of few rows, groups frozen before written again so in the background; none if empty.",
         ),
+        TableOption::new(
+            (LOAD, Kind::Choice(LOADS), Value::Char(if cols.load == LoadTo::Groups { "GROUPS" } else { "TREE" }.into())),
+            Rebuild::No,
+            "How a load into a table of the column store holding no row past its groups writes its rows: TREE, through the table's tree, frozen into groups in the background as any rows; GROUPS, each batch straight as a frozen group, seen by others once its transaction commits, on the load's own time.",
+        ),
     ]
 }
 
@@ -404,6 +426,7 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         pax: set(LAYOUT).map_or(c.pax, |v| v.to_string().trim_end() == "PAX"),
         imprints: set(IMPRINTS).map_or(c.imprints, |v| v.to_string().trim_end() != "OFF"),
         sketch: set(SKETCH).map_or(c.sketch, |v| places_of(desc, v)),
+        load: set(LOAD).map_or(c.load, |v| if v.to_string().trim_end() == "GROUPS" { LoadTo::Groups } else { LoadTo::Tree }),
     });
     out
 }

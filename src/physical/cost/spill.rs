@@ -22,7 +22,6 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::physical::PhysicalPlanner;
 use crate::settings::MEMORY_WORK_BYTES;
-use crate::spill::WORK_FLOOR;
 use crate::storage::cost_of;
 
 /// \[DESIGN\] The cost of a row written to the spill area and read back
@@ -45,15 +44,11 @@ pub(in crate::physical) const ENTRY_BYTES: f64 = 16.0;
 pub(in crate::physical) const COLUMN_BYTES: f64 = 8.0;
 
 /// The bytes an operator would be granted if it started as the statement
-/// of `db` is planned: half of the grants' share of the budget free, at
-/// most MEMORY.WORK_BYTES, at least the floor, or the ceiling itself
-/// below the floor (`spill/grant.rs`).
+/// of `db` is planned, as its grant takes them (`spill/grant.rs`, RULES.md
+/// D683): half of the grants' share left, at most MEMORY.WORK_BYTES, at
+/// least the floor, or the ceiling itself below the floor.
 pub(crate) fn grant_bytes(db: &State) -> f64 {
-    let ceiling = crate::settings::work_bytes(db.settings.get(MEMORY_WORK_BYTES));
-    let limit = db.memory.limit();
-    let free = limit.saturating_sub(db.memory.reserved()).saturating_sub(limit >> 1_u32);
-    let granted = if ceiling <= WORK_FLOOR { ceiling } else { ceiling.min(free >> 1_u32).max(WORK_FLOOR) };
-    cost_of(granted)
+    cost_of(db.work.would_grant(crate::settings::work_bytes(db.settings.get(MEMORY_WORK_BYTES))))
 }
 
 /// The bytes a row of `columns` columns held by an operator takes, of

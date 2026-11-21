@@ -57,6 +57,13 @@ fn write_map(map: &RwLock<Xxh3Map<Key, usize>>) -> Map<'_> {
     map.write().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// \[DESIGN\] The largest buffer of a page emptied from a frame that is
+/// kept for the page read into it (RULES.md D474): a page read allocates
+/// and frees no buffer, where every miss freed one and allocated another,
+/// each taking the allocator's lock; one larger, of a page with an
+/// overflow, is let go.
+const REUSED_BYTES: usize = 64 * 1024;
+
 /// How a claimed frame is filled.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fill {
@@ -101,7 +108,7 @@ impl BufferPool {
             hints: super::hits::Hints::new(frames),
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
             queued: Queued::default(),
-            _reservation: None,
+            reservation: None,
         })
     }
 
@@ -132,7 +139,17 @@ impl BufferPool {
         let frames = bytes.checked_div(page_size).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a page has at least one byte"))?.max(1);
         let reservation = budget.reserve(frames.saturating_mul(page_size), what)?;
         let pool = BufferPool::new(frames, eviction(frames))?;
-        Ok(BufferPool { _reservation: Some(reservation), ..pool })
+        Ok(BufferPool { reservation: Some(reservation), ..pool })
+    }
+
+    /// It, its reservation standing while the database is open (RULES.md
+    /// D683): a database's pool, not a statement's spill area's.
+    #[must_use]
+    pub fn standing(mut self) -> BufferPool {
+        if let Some(held) = &mut self.reservation {
+            held.stand();
+        }
+        self
     }
 
     /// Registers a pager file, read and written through the pool.
@@ -405,7 +422,7 @@ impl BufferPool {
     /// was loading when pinned, seen under the shard's lock, as a frame
     /// starts loading, and a page mapped to a loading frame is unmapped,
     /// only under the shard's exclusive lock.
-    fn pin_mapped(&self, key: Key) -> Result<Option<(usize, bool)>> {
+    pub(super) fn pin_mapped(&self, key: Key) -> Result<Option<(usize, bool)>> {
         let map = self.shared_map(key)?;
         let Some(&index) = map.get(&key) else { return Ok(None) };
         let frame = self.frame(index)?;
@@ -418,7 +435,7 @@ impl BufferPool {
     /// pinned holds `key` and cannot change page while pinned; one that was
     /// is checked, whether or not it is loading still: it may have been
     /// filled for another page while `key` was written back, or emptied.
-    fn settled_holding(&self, (index, loading): (usize, bool), key: Key) -> Result<Option<&Frame>> {
+    pub(super) fn settled_holding(&self, (index, loading): (usize, bool), key: Key) -> Result<Option<&Frame>> {
         let frame = self.frame(index)?;
         // Not loading when pinned, it cannot start to while pinned.
         let waited = loading && frame.settled();
@@ -440,8 +457,8 @@ impl BufferPool {
     /// and the error returned.
     fn fill(&self, key: Key, claim: Claim, fill: Fill) -> Result<&Frame> {
         let frame = self.frame(claim.frame)?;
-        self.emptied(key, claim)?;
-        let mut content = Vec::new();
+        // [DESIGN] RULES.md D474: the buffer of the page it held, reused.
+        let mut content = self.emptied(key, claim)?;
         if fill == Fill::Read {
             count(&self.counters.misses);
             if let Err(e) = self.read_into(key, &mut content) {
@@ -457,9 +474,11 @@ impl BufferPool {
     }
 
     /// Empties `claim`'s frame, claimed for `key`, writing back what it
-    /// held if it must. If that fails, the frame is put back as it was and
+    /// held if it must: the buffer that held it, cleared, for the page
+    /// read into the frame, unless it grew past `REUSED_BYTES` (RULES.md
+    /// D474). If writing back fails, the frame is put back as it was and
     /// the error returned.
-    fn emptied(&self, key: Key, claim: Claim) -> Result<()> {
+    fn emptied(&self, key: Key, claim: Claim) -> Result<Vec<u8>> {
         let frame = self.frame(claim.frame)?;
         let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
         if let Some(old) = claim.write_back {
@@ -474,7 +493,9 @@ impl BufferPool {
                 map.remove(&old);
             }
         }
-        Ok(())
+        let mut reused = if old_content.capacity() > REUSED_BYTES { Vec::new() } else { old_content };
+        reused.clear();
+        Ok(reused)
     }
 
     /// Reads `key` from its file into `content`.

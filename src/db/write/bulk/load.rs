@@ -40,22 +40,58 @@ impl Indexed {
 /// As `State::acquire`; SQLCODE -910 if the transaction's state is
 /// poisoned.
 pub(super) fn hold_back(st: &State, tx: &Txn, together: &mut Together<'_>) -> Result<()> {
-    let held = match tx.held_back(together.table)? {
-        Some(held) => held,
-        None if together.indexes.iter().any(Indexed::loads) => {
-            st.acquire(tx, together.table, LockMode::Exclusive)?;
-            let held: Vec<_> = together.indexes.iter().filter(|ix| ix.loads()).map(|ix| Arc::clone(&ix.index)).collect();
-            if held.is_empty() || !tx.begin_load(together.table, held.clone())? {
-                return Ok(());
-            }
-            held
+    if let Some(held) = tx.held_back(together.table)? {
+        together.grouped = grouped(tx, together)?;
+        holding(together, &held);
+        return Ok(());
+    }
+    let grouping = grouped(tx, together)?;
+    if grouping.is_none() && !together.indexes.iter().any(Indexed::loads) {
+        return Ok(());
+    }
+    let begun = st.acquire(tx, together.table, LockMode::Exclusive).and_then(|()| {
+        // Under the lock, again: no other transaction's row went in meanwhile.
+        together.grouped = grouping.map(|_| grouped(tx, together)).transpose()?.flatten();
+        let held: Vec<_> = together.indexes.iter().filter(|ix| ix.loads()).map(|ix| Arc::clone(&ix.index)).collect();
+        let begun = (!held.is_empty() || together.grouped.is_some()) && tx.begin_load(together.table, held.clone(), together.grouped)?;
+        Ok(begun.then_some(held))
+    });
+    match begun {
+        Ok(Some(held)) => holding(together, &held),
+        Ok(None) => ungrouped(tx, together),
+        Err(e) => {
+            ungrouped(tx, together);
+            return Err(e);
         }
-        None => return Ok(()),
-    };
+    }
+    Ok(())
+}
+
+/// Of the rows of `together`, how many a group takes if its storage writes
+/// the load's rows straight as groups (RULES.md D533), as it begins or
+/// goes on.
+fn grouped(tx: &Txn, together: &Together<'_>) -> Result<Option<usize>> {
+    let Some(loading) = together.storage.loading() else { return Ok(None) };
+    let grouped = loading.begin_load(tx.id)?;
+    if grouped.is_none() {
+        loading.end_load(tx.id);
+    }
+    Ok(grouped)
+}
+
+/// The rows of `together` going to its tree, not as groups.
+fn ungrouped(tx: &Txn, together: &mut Together<'_>) {
+    if let Some(loading) = together.storage.loading() {
+        loading.end_load(tx.id);
+    }
+    together.grouped = None;
+}
+
+/// Marks the indexes of `together` that `held` holds back.
+fn holding(together: &mut Together<'_>, held: &[Arc<dyn crate::index::Index>]) {
     for ix in &mut together.indexes {
         ix.held = held.iter().any(|h| std::ptr::addr_eq(Arc::as_ptr(h), Arc::as_ptr(&ix.index)));
     }
-    Ok(())
 }
 
 impl State {
@@ -87,6 +123,11 @@ pub(in crate::db) fn end(st: &State, tx: &Txn, load: Option<Load>) -> Result<()>
         return Ok(());
     }
     let _gate = st.tx.gate.enter();
+    if let Some(table) = tx.loading_table()?
+        && let Some(loading) = st.storage_of(&table)?.loading()
+    {
+        loading.end_load(tx.id);
+    }
     tx.end_load(&mut |index, entries| {
         if index.holds_none() {
             return index.load(entries, (&st.work, st.load_area()));

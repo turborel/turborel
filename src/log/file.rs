@@ -63,7 +63,10 @@ use crate::hash::HashFunction;
 use crate::sync::{Signal, lock_builtin};
 
 mod open;
+mod reader;
 mod segments;
+
+use reader::Reader;
 
 /// Bits of a position that hold the block id within its segment: segments
 /// of up to 1 TiB, and 2^24 of them.
@@ -478,22 +481,24 @@ impl Log for FileLog {
     }
 
     fn append(&self, record: &[u8]) -> Result<Lsn> {
-        if self.rotate_asked.load(Ordering::Acquire) {
-            self.rotate_for_formats();
+        let (number, id) = self.on_active(|blocks| blocks.append(record), 1, record.len())?;
+        Ok(lsn(number, id))
+    }
+
+    /// As many as the active segment has room for go in one write
+    /// (`BlockFile::append_all`), at least one, then the rest, so a run
+    /// grows a segment past its size no more than one record does.
+    fn append_all(&self, records: &[Vec<u8>]) -> Result<Vec<Lsn>> {
+        let mut lsns = Vec::with_capacity(records.len());
+        let mut rest = records;
+        while !rest.is_empty() {
+            let (now, later) = rest.split_at_checked(self.fitting(rest)).unwrap_or((rest, &[]));
+            let bytes = now.iter().map(Vec::len).sum();
+            let (number, ids) = self.on_active(|blocks| blocks.append_all(now), now.len(), bytes)?;
+            lsns.extend(ids.into_iter().map(|id| lsn(number, id)));
+            rest = later;
         }
-        let segment = self.take_active();
-        let appended = segment.blocks.append(record);
-        segment.finished();
-        let id = appended?;
-        add(&self.counters.appends, 1);
-        add(&self.counters.appended_bytes, u64::try_from(record.len()).unwrap_or(u64::MAX));
-        if segment.blocks.end().0 >= self.options.segment_size {
-            // A segment that cannot be begun leaves this one growing past
-            // its size; the record is appended either way, a failure told,
-            // and a failed seal kept to fail the next sync.
-            self.rotate(&segment);
-        }
-        Ok(lsn(segment.number, id))
+        Ok(lsns)
     }
 
     fn sync(&self, through: Lsn) -> Result<()> {
@@ -524,7 +529,14 @@ impl Log for FileLog {
     }
 
     fn read_from(&self, from: Lsn) -> Records<'_> {
-        Box::new(Reader { log: self, at: from, payload: Vec::new() })
+        Box::new(Reader::new(self, from))
+    }
+
+    /// As the default, its record not copied out of the reader: an undo
+    /// store reads its older versions one record at a time.
+    fn read_at(&self, at: Lsn) -> Result<Option<Vec<u8>>> {
+        let mut reader = Reader::new(self, at);
+        Ok(reader.step().transpose()?.filter(|&found| found == at).map(|_| reader.taken()))
     }
 
     fn truncate_before(&self, before: Lsn) -> Result<()> {
@@ -547,44 +559,5 @@ impl Log for FileLog {
     fn end(&self) -> Lsn {
         let active = self.active.read().unwrap_or_else(PoisonError::into_inner);
         lsn(active.number, active.blocks.end())
-    }
-}
-
-/// Reads a file log's records in order, segment after segment.
-struct Reader<'a> {
-    log: &'a FileLog,
-    at: Lsn,
-    payload: Vec<u8>,
-}
-
-impl Iterator for Reader<'_> {
-    type Item = Result<(Lsn, Vec<u8>)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let (number, id) = split(self.at);
-            // The first segment kept at or after the position's.
-            let segment = lock_builtin(&self.log.segments).range(number..).next().map(|(_, s)| Arc::clone(s))?;
-            let id = if segment.number == number { id.max(segment.blocks.first()) } else { segment.blocks.first() };
-            if id >= segment.blocks.end() {
-                if self.log.segment(segment.number.saturating_add(1)).is_none() {
-                    self.at = lsn(segment.number, id);
-                    return None;
-                }
-                self.at = lsn(segment.number.saturating_add(1), BlockId(0));
-                continue;
-            }
-            return Some(match segment.blocks.read_into(id, &mut self.payload) {
-                Ok(next) => {
-                    self.at = lsn(segment.number, next);
-                    Ok((lsn(segment.number, id), self.payload.clone()))
-                }
-                Err(e) => {
-                    // Stop after an error rather than repeat it.
-                    self.at = Lsn(u64::MAX);
-                    Err(e)
-                }
-            });
-        }
     }
 }
