@@ -18,7 +18,7 @@ const FETCHED: &str = "engine::rows::frozen::shadowed::rows_fetched_in_batches_a
 const ORDERED: &str = "engine::columns::imprints::tests::conjuncts_are_ordered_narrowest_first";
 
 /// Mechanisms whose removal must fail the skipping's requirements.
-pub const SKIPPING: [Mutation; 15] = [
+pub const SKIPPING: [Mutation; 17] = [
     Mutation {
         name: "shadow-bits-writer",
         package: Package::Core,
@@ -166,6 +166,26 @@ pub const SKIPPING: [Mutation; 15] = [
         file: "src/engine/rows/frozen/fetch.rs",
         original: "                frozen.push((id, n));",
         replacement: "",
+        integration: &[],
+        unit: &[FETCHED],
+    },
+    Mutation {
+        name: "fetch-alone",
+        package: Package::Core,
+        breaks: "a batch of few rows to a chunk reads no value of them",
+        file: "src/engine/rows/frozen/fetch.rs",
+        original: "positions.iter().map(|&p| group.value(&pages, (c, t), p))",
+        replacement: "positions.iter().map(|_| Ok(Value::Null))",
+        integration: &[],
+        unit: &[FETCHED],
+    },
+    Mutation {
+        name: "fetch-dense",
+        package: Package::Core,
+        breaks: "a batch of many rows to a chunk reads no value of them",
+        file: "src/engine/rows/frozen/fetch.rs",
+        original: "values_at(group, (&pages, &mut prepared), (c, t), &positions)?",
+        replacement: "vec![Value::Null; positions.len()]",
         integration: &[],
         unit: &[FETCHED],
     },
