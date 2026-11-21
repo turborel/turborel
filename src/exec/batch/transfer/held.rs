@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use super::super::late::{Deferred, resolved};
 use super::super::runtime::Told;
 use super::super::stream::{self, Batches, Kept};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::broken;
 use crate::physical::Plan;
 use crate::txn::TxId;
@@ -65,7 +65,7 @@ impl HeldLeaf {
     ///
     /// SQLCODE -910 if it was read before or its lock was poisoned; its
     /// plan's errors.
-    pub(in crate::exec) fn batches(&self, (db, tx): (&Arc<State>, TxId)) -> Result<Batches> {
+    pub(in crate::exec) fn batches(&self, (db, tx): (&Db, TxId)) -> Result<Batches> {
         let rows = self.0.rows.lock().map_err(|_| broken("a held leaf's lock was poisoned"))?.take();
         match rows.ok_or_else(|| broken("a held leaf was read twice"))? {
             Rows::Held(kept) => Ok(Box::new(kept.into_iter().map(Ok))),

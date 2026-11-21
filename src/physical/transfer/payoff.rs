@@ -63,8 +63,8 @@ pub(super) fn planned(db: &State, plan: &Plan) -> Option<(Vec<Step>, String)> {
     }
     let rows: Vec<f64> = found.iter().map(|l| l.est().unwrap_or(1.0_f64).max(1.0_f64)).collect();
     let keys = keys(plan, db);
-    let steps: Vec<Step> = keys.iter().map(|k| k.step).collect();
-    let (up, down) = schedule(&rows, &steps)?;
+    let edges: Vec<Step> = keys.iter().map(|k| k.step).collect();
+    let (up, down) = schedule(&rows, &edges)?;
     let mut reduced: Vec<Reduced<'_>> = found.iter().zip(&rows).map(|(&leaf, &rows)| Reduced { planned: rows, rows, leaf }).collect();
     let (mut steps, mut gain) = (Vec::new(), -PHASE_ROWS);
     for step in up.into_iter().chain(down).filter(|s| allowed(&keys, *s)) {

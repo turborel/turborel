@@ -30,6 +30,7 @@ use super::runtime::{self, Told};
 use super::stream::{self, Batches, Kept};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::table::{Hashing, KeyHashes, RuntimeFilter};
 use crate::exec::work::Work;
 use crate::exec::{RowIter, broken, failed};
@@ -58,7 +59,7 @@ struct Slot {
 /// # Errors
 ///
 /// A leaf's errors; SQLCODE -910 of a held leaf read twice.
-pub(super) fn batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+pub(super) fn batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Transfer(t) = plan else { return Err(broken("a predicate transfer is not one")) };
     match *t {
         Transfer::Held(leaf) => leaf.batches((db, tx)),
@@ -85,7 +86,7 @@ impl Iterator for Holding {
 }
 
 /// The rows of `plan`, a phase or a held leaf, each of its width.
-pub(in crate::exec) fn rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn rows(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Some((columns, width)) = stream::layout(&plan, db) else { return failed(broken("a predicate transfer gives no batches")) };
     match batches(plan, (db, tx), &Deferred::default()) {
         Ok(batches) => rows_of(batches, columns, width),
@@ -121,7 +122,7 @@ pub(super) fn layout(t: &Transfer, db: &State) -> Option<(Vec<usize>, usize)> {
 /// # Errors
 ///
 /// As `batches`.
-fn ran(phase: Phase, (db, tx): (&Arc<State>, TxId)) -> Result<(Plan, Work)> {
+fn ran(phase: Phase, (db, tx): (&Db, TxId)) -> Result<(Plan, Work)> {
     let Phase { mut input, steps, .. } = phase;
     let mut slots: Vec<Slot> = Vec::new();
     leaves_mut(&mut input, &mut |_, leaf| {
@@ -162,12 +163,7 @@ impl Slot {
     /// # Errors
     ///
     /// Its plan's errors; SQLCODE -910 of a column its batches lack.
-    fn filter(
-        &mut self,
-        (column, nulls): (usize, bool),
-        (db, tx): (&Arc<State>, TxId),
-        room: &mut usize,
-    ) -> Result<Option<Arc<RuntimeFilter>>> {
+    fn filter(&mut self, (column, nulls): (usize, bool), (db, tx): (&Db, TxId), room: &mut usize) -> Result<Option<Arc<RuntimeFilter>>> {
         let at = self.layout.0.iter().position(|&c| c == column).ok_or_else(|| broken("a key column a leaf's batch lacks"))?;
         let waiting = std::mem::take(&mut self.waiting);
         let told: Vec<Told> = waiting.iter().map(|(_, t)| t.clone()).collect();
@@ -197,7 +193,7 @@ impl Slot {
     /// # Errors
     ///
     /// As `filter`.
-    fn finished(self, db: &Arc<State>) -> Result<Plan> {
+    fn finished(self, db: &Db) -> Result<Plan> {
         let Slot { plan, layout, kept, past: _, judged: mut all, waiting } = self;
         if let Some(kept) = kept {
             let told = waiting.into_iter().map(|(_, t)| t).collect();
@@ -218,7 +214,7 @@ impl Slot {
 /// # Errors
 ///
 /// SQLCODE -910 if a value nests deeper than a type may.
-fn judged(kept: Vec<Kept>, told: Vec<Told>, columns: &[usize], db: &Arc<State>) -> Result<Vec<Kept>> {
+fn judged(kept: Vec<Kept>, told: Vec<Told>, columns: &[usize], db: &Db) -> Result<Vec<Kept>> {
     if told.is_empty() {
         return Ok(kept);
     }

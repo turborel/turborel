@@ -51,6 +51,7 @@ pub(crate) use transfer::{batch_layout, transferable};
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
 use crate::error::{Result, SqlState};
+use crate::exec::Db;
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
@@ -155,7 +156,7 @@ pub(super) fn aggregable(plan: &Plan, db: &State) -> bool {
 }
 
 /// The rows of the aggregation `plan`, one read by batches (`aggregable`).
-pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIter {
+pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
     let (Some(read), Plan::Aggregate { aggs, input, .. }) = (read_of(&plan, db), plan) else {
         return failed(super::broken("an aggregation not read by batches"));
     };

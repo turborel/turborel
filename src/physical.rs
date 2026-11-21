@@ -559,7 +559,7 @@ impl<'a> PhysicalPlanner<'a> {
         if let Some(read) = self.filtered_read(cond, input, (want, above)) {
             return read;
         }
-        if let Some(join) = self.range_join(cond, input, want) {
+        if let Some(join) = self.range_join(cond, input) {
             return join;
         }
         if let Some(join) = self.hash_join(cond, input, want) {

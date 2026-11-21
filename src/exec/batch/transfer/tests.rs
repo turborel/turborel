@@ -6,7 +6,7 @@ use crate::storage::{Column, Ints, Sel};
 
 /// A batch of a key of `keys` and a wider vector beside it.
 fn batch(keys: &[i64]) -> Kept {
-    let wide: Vec<i64> = keys.iter().map(|k| k * 1_000).collect();
+    let wide: Vec<i64> = keys.iter().map(|k| k.saturating_mul(1_000)).collect();
     let columns = vec![Column::Ints(Ints::new(wide, 0, None)), Column::Ints(Ints::new(keys.to_vec(), 0, None))];
     (Batch { columns, rows: keys.len() }, None)
 }
@@ -27,9 +27,9 @@ fn a_leaf_is_held_within_its_room() {
     assert_eq!(kept.first().map(|(b, _)| b.columns.len()), Some(2_usize));
     assert!(room < 1_usize << 20_u32, "the held batches take their bytes");
     let mut tight = 8_usize;
-    let (kept, whole) = held(read(vec![batch(&[1, 2]), batch(&[3])]), 1, &mut tight).unwrap();
-    assert!(!whole);
-    assert!(kept.iter().all(|(b, _)| b.columns.len() == 1), "the key's vector alone");
+    let (keys, all) = held(read(vec![batch(&[1, 2]), batch(&[3])]), 1, &mut tight).unwrap();
+    assert!(!all);
+    assert!(keys.iter().all(|(b, _)| b.columns.len() == 1), "the key's vector alone");
     assert_eq!(tight, 8_usize);
 }
 
@@ -45,5 +45,5 @@ fn a_filter_is_made_of_the_rows_kept() {
     let held = filter.kept((&probe, 0), (None, (true, true)), st.functions.kernels()).unwrap();
     assert!(held.contains(&0_u32) && held.contains(&2_u32) && held.contains(&3_u32), "every key held: {held:?}");
     let none = filter_of(&[], (0, false), &st).unwrap().unwrap();
-    assert!(none.kept((&probe, 0), (None, (false, true)), st.functions.kernels()).unwrap().is_empty());
+    assert_eq!(none.kept((&probe, 0), (None, (false, true)), st.functions.kernels()).unwrap(), Vec::<u32>::new());
 }

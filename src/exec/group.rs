@@ -19,14 +19,13 @@ mod distribution;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::sync::Arc;
 
 use self::distribution::{Pick, Sorted, Sorting, picked_of, picks, seeded};
 use super::partition::{Partitioner, merge_all, numbered, unnumbered};
 use super::work::{Bag, Work};
 use super::{RowIter, Runner, column, eval, eval_cond, failed, warn};
-use crate::db::State;
 use crate::error::{Result, SqlState};
+use crate::exec::Db;
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Cond, Truth};
 use crate::spill::{Records, SpillRun, norm_row, put_norm, row_bytes};
@@ -96,7 +95,7 @@ pub(super) type Finished = Vec<(u64, Row)>;
 /// every row. Never inlined into the caller, whose frame is on the stack
 /// while its input is made (RULES.md R-CF-6).
 #[inline(never)]
-pub(super) fn grouping(spec: Spec, input: RowIter, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn grouping(spec: Spec, input: RowIter, db: &Db, tx: TxId) -> RowIter {
     Grouper::new(spec, db, tx).grouped(input).unwrap_or_else(failed)
 }
 
@@ -157,7 +156,7 @@ impl Grouper {
     /// A grouping under `spec`, in a work area of `db`, read as `tx` sees
     /// it, split in two if a set function is DISTINCT, and what is left in
     /// two again if one is an inverse distribution function.
-    fn new(spec: Spec, db: &Arc<State>, tx: TxId) -> Grouper {
+    fn new(spec: Spec, db: &Db, tx: TxId) -> Grouper {
         let mut work = Work::of(db, tx);
         let bag = spec.aggs.iter().any(|a| a.distinct).then(|| work.split());
         let sorts = spec.aggs.iter().any(|a| a.distribution.is_some()).then(|| work.split());
@@ -366,8 +365,10 @@ fn joins_argument(distinct: bool, v: &Value, first: impl FnOnce() -> Result<bool
 mod tests {
     use super::*;
     use crate::catalog::MemoryCatalog;
+    use crate::db::State;
     use crate::txn::NO_TRANSACTION;
     use crate::value::Decimal;
+    use std::sync::Arc;
 
     /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.13 GR2a] a seed is a
     /// group even of no rows, its set functions fed nothing; rows of its
@@ -386,7 +387,7 @@ mod tests {
         let int = |n: i128| Value::Exact(Decimal::new(n, 0));
         let grouped = |input: Vec<Row>| {
             let spec = Spec { groups: vec![0], collations: Vec::new(), aggs: vec![agg.clone()], seeds: vec![vec![int(9)]] };
-            let rows = grouping(spec, Box::new(input.into_iter().map(Ok)), &db, NO_TRANSACTION);
+            let rows = grouping(spec, Box::new(input.into_iter().map(Ok)), &Db::of(&db), NO_TRANSACTION);
             rows.map(|r| r.unwrap().iter().map(|v| format!("{v:?}")).collect::<Vec<_>>().join(",")).collect::<Vec<_>>()
         };
         let (nine, five) = (format!("{:?}", int(9)), format!("{:?}", int(5)));
