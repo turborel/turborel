@@ -15,7 +15,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::log::record::{Change, insert_record};
 use crate::storage::{Row, RowId, TableStorage, unchanged};
-use crate::txn::{Concurrency, LockWait, Timestamp, Txn, TxId, Undo};
+use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
 
 impl State {
@@ -193,7 +193,12 @@ impl State {
     /// \[DESIGN\] Of a write of row `id` by `tx`, unless it applies
     /// increments (`fold`): the escrow's epoch before it, or another
     /// transaction whose reservation it waits for first (RULES.md D452).
-    fn unreserved(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), (write, fold): (&Write, bool)) -> Result<std::result::Result<Option<u64>, TxId>> {
+    fn unreserved(
+        &self,
+        tx: &Txn,
+        (table, id): (&QualifiedName, RowId),
+        (write, fold): (&Write, bool),
+    ) -> Result<std::result::Result<Option<u64>, TxId>> {
         if fold {
             return Ok(Ok(None));
         }

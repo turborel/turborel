@@ -17,15 +17,31 @@ use crate::error::{Code, Result, SqlError};
 
 /// [X3.135-1986 §5.11 GR5] compare character strings after padding the shorter with spaces.
 /// The collating sequence is implementor-defined [X3.135-1986 §5.11 GR6]: Unicode scalar order.
+///
+/// Compared as UTF-8 bytes, whose order is that of the scalars they encode,
+/// counting no characters: over the bytes both strings have, then the rest
+/// of the longer against the spaces the shorter is padded with. That rest
+/// begins a character, as the shorter ends one, so its first byte not a
+/// space decides: below a space only for a scalar below one, as a
+/// character of several bytes begins with a byte past every ASCII one.
 pub fn compare_strings(left: &str, right: &str) -> Ordering {
-    let length = left.chars().count().max(right.chars().count());
-    padded(left, length).cmp(padded(right, length))
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    let common = left.len().min(right.len());
+    let (Some((left_head, left_rest)), Some((right_head, right_rest))) = (left.split_at_checked(common), right.split_at_checked(common))
+    else {
+        return left.cmp(right);
+    };
+    left_head.cmp(right_head).then_with(|| against_spaces(left_rest)).then_with(|| against_spaces(right_rest).reverse())
 }
 
-/// The characters of `s` followed by spaces, `length` in all.
-fn padded(s: &str, length: usize) -> impl Iterator<Item = char> + '_ {
-    s.chars().chain(std::iter::repeat(' ')).take(length)
+/// How `rest`, the end of the longer of two strings, compares with the
+/// spaces the shorter is padded with.
+fn against_spaces(rest: &[u8]) -> Ordering {
+    rest.iter().find(|&&b| b != SPACE).map_or(Ordering::Equal, |b| b.cmp(&SPACE))
 }
+
+/// The pad character's byte in UTF-8 [X3.135-1986 §5.11 GR5].
+const SPACE: u8 = b' ';
 
 /// `a` and `b`, one a large object: as its kind compares them if held
 /// inline; else none, as `compare_checked` reads them.
@@ -523,6 +539,9 @@ fn compare_magnitudes(a: &str, b: &str) -> Ordering {
 // Unit tests: comparisons across kinds of value, and nested too deep.
 #[cfg(test)]
 mod kinds;
+// Unit tests: character strings compared padded, byte by byte.
+#[cfg(test)]
+mod strings;
 
 // Unit tests: comparison decisions (RULES.md R-TEST-1, R-TEST-8).
 #[cfg(test)]

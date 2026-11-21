@@ -31,17 +31,17 @@ fn raises(e: &Expr, first: &DataType, second: &DataType) -> bool {
 
 /// Verifies: [X3.135-1986 §5.9 SR4b, GR6a] [DESIGN] RULES.md D373: a sum
 /// or difference of exact columns cannot raise while its digits before
-/// the point and after it are 17 or 18 in all, and can at 19; a column of
+/// the point and after it are 37 or 38 in all, and can at 39; a column of
 /// no known type, or an approximate one, can.
 #[test]
-fn sums_raise_past_eighteen_digits() {
+fn sums_raise_past_thirty_eight_digits() {
     let sum = arith(Expr::Column(0), ArithOp::Add, Expr::Column(1));
     let difference = arith(Expr::Column(0), ArithOp::Sub, Expr::Column(1));
-    assert!(!raises(&sum, &exact(16, 0), &exact(15, 0)), "17 digits");
-    assert!(!raises(&sum, &exact(17, 0), &exact(17, 0)), "18 digits");
-    assert!(raises(&sum, &exact(18, 0), &exact(1, 0)), "19 digits");
-    assert!(!raises(&difference, &exact(15, 2), &exact(9, 3)), "14 and 3 digits");
-    assert!(raises(&difference, &exact(17, 2), &exact(9, 3)), "16 and 3 digits");
+    assert!(!raises(&sum, &exact(36, 0), &exact(15, 0)), "37 digits");
+    assert!(!raises(&sum, &exact(37, 0), &exact(37, 0)), "38 digits");
+    assert!(raises(&sum, &exact(38, 0), &exact(1, 0)), "39 digits");
+    assert!(!raises(&difference, &exact(35, 2), &exact(9, 3)), "34 and 3 digits");
+    assert!(raises(&difference, &exact(37, 2), &exact(9, 3)), "36 and 3 digits");
     assert!(!raises(&arith(Expr::Column(0), ArithOp::Add, number(1, 0)), &exact(10, 0), &exact(1, 0)), "INTEGER + 1");
     assert!(raises(&sum, &DataType::Approximate { precision: 53, spelled: Spelled::Numeric }, &exact(1, 0)));
     assert!(can_raise_typed(&sum, &|_| None), "no known type");
@@ -50,34 +50,29 @@ fn sums_raise_past_eighteen_digits() {
 }
 
 /// Verifies: [X3.135-1986 §5.9 SR4c, GR6a] [DESIGN] RULES.md D373: a
-/// product of exact columns cannot raise while its precisions sum to 17
-/// or 18, and can at 19.
+/// product of exact columns cannot raise while its precisions sum to 37
+/// or 38, and can at 39: INTEGER * INTEGER cannot.
 #[test]
-fn products_raise_past_eighteen_digits() {
+fn products_raise_past_thirty_eight_digits() {
     let product = arith(Expr::Column(0), ArithOp::Mul, Expr::Column(1));
-    assert!(!raises(&product, &exact(9, 0), &exact(8, 0)), "17 digits");
-    assert!(!raises(&product, &exact(9, 2), &exact(9, 2)), "18 digits");
-    assert!(raises(&product, &exact(10, 0), &exact(9, 0)), "19 digits");
-    assert!(raises(&product, &exact(10, 0), &exact(10, 0)), "INTEGER * INTEGER");
+    assert!(!raises(&product, &exact(19, 0), &exact(18, 0)), "37 digits");
+    assert!(!raises(&product, &exact(19, 2), &exact(19, 2)), "38 digits");
+    assert!(raises(&product, &exact(20, 0), &exact(19, 0)), "39 digits");
+    assert!(!raises(&product, &exact(10, 0), &exact(10, 0)), "INTEGER * INTEGER");
 }
 
-/// Verifies: [X3.135-1986 §5.9 GR5, GR6b] [DESIGN] RULES.md D373: a
-/// quotient by a constant cannot raise when the constant is at least 1 in
-/// magnitude and its digits before the point and the dividend's scale sum
-/// to at most 18; by 0, by a column, by less than 1 or past 18 digits it
-/// can.
-///
-/// Decision `at_least_one && whole + scale <= 18` in `quotient_fits`.
-/// MC/DC: (T T) false; (F T) true shows `at_least_one`; (T F) true shows
-/// the digits.
+/// Verifies: [X3.135-1986 §5.9 GR5, GR6b] [DESIGN] RULES.md D373, D697:
+/// a quotient by a constant cannot raise when the constant is at least 1
+/// in magnitude, its scale giving way to the dividend's integer digits,
+/// even of 38; by 0, by a column or by less than 1 it can. Decision
+/// `at_least_one` in `quotient_fits`: true and false each shown.
 #[test]
 fn quotients_by_constants_raise_only_when_small_or_long() {
     let by = |divisor: Expr| arith(Expr::Column(0), ArithOp::Div, divisor);
-    assert!(!raises(&by(number(4, 0)), &exact(10, 2), &exact(1, 0)), "T T");
-    assert!(!raises(&by(number(-25, 1)), &exact(10, 2), &exact(1, 0)), "T T, -2.5");
-    assert!(raises(&by(number(5, 1)), &exact(10, 2), &exact(1, 0)), "F T, 0.5");
-    assert!(raises(&by(number(10, 0)), &exact(18, 17), &exact(1, 0)), "T F, 2 + 17 digits");
-    assert!(!raises(&by(number(10, 0)), &exact(18, 16), &exact(1, 0)), "T T, 2 + 16 digits");
+    assert!(!raises(&by(number(4, 0)), &exact(10, 2), &exact(1, 0)), "at least 1");
+    assert!(!raises(&by(number(-25, 1)), &exact(10, 2), &exact(1, 0)), "-2.5");
+    assert!(raises(&by(number(5, 1)), &exact(10, 2), &exact(1, 0)), "0.5");
+    assert!(!raises(&by(number(10, 0)), &exact(38, 0), &exact(1, 0)), "38 integer digits");
     assert!(raises(&by(number(0, 0)), &exact(10, 2), &exact(1, 0)), "0");
     assert!(raises(&by(Expr::Column(1)), &exact(10, 2), &exact(10, 0)), "a column");
     let twice = arith(by(number(4, 0)), ArithOp::Add, number(1, 0));
@@ -113,7 +108,7 @@ fn widening_casts_cannot_raise() {
 /// false; (T F) true; (F T) true.
 #[test]
 fn conditions_raise_through_their_typed_parts() {
-    let types = |c: usize| [exact(10, 0), exact(18, 0)].get(c).cloned();
+    let types = |c: usize| [exact(10, 0), exact(38, 0)].get(c).cloned();
     let safe = || Cond::Compare(arith(Expr::Column(0), ArithOp::Add, number(1, 0)), CompOp::Gt, Expr::Column(1));
     let risky = || Cond::Compare(arith(Expr::Column(1), ArithOp::Add, number(1, 0)), CompOp::Gt, Expr::Column(0));
     assert!(safe().can_raise() && !cond_can_raise_typed(&safe(), &types));

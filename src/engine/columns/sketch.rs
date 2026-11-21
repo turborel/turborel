@@ -388,6 +388,12 @@ impl Held {
         self.verdicts.clear();
     }
 
+    /// Whether it holds nothing of the group: no codes read, no code judged.
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.columns.is_empty() && self.verdicts.is_empty()
+    }
+
     /// What each code says of the conjunct at `at`, made by `made` if not
     /// made before of this group.
     pub fn verdicts(&mut self, at: usize, made: impl FnOnce() -> Option<Verdicts>) -> Option<Verdicts> {

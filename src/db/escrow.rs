@@ -7,17 +7,17 @@
 use std::sync::Arc;
 
 use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
+use crate::db::State;
 use crate::db::integrity::Effects;
 use crate::db::write::Written;
+use crate::error::Result;
+use crate::exec::{Subqueries, eval};
 use crate::logical::{Cond, Expr, LogicalPlan, cond_columns, expr_columns};
 use crate::settings::ON;
 use crate::settings::escrow::TRANSACTION_ESCROW;
-use crate::db::State;
-use crate::error::Result;
 use crate::storage::{Row, RowId};
 use crate::txn::escrow::{Reservation, bit, changed};
 use crate::txn::{Again, Concurrency, LockWait, Txn, UndoEntry};
-use crate::exec::{Subqueries, eval};
 use crate::value::{ArithOp, DataType, Decimal, Value, arith, assign};
 
 /// The rule a reservation's bound is told by when a sum leaves its
@@ -136,7 +136,13 @@ impl State {
 
     /// Reserves `deltas` on row `id`, now `now`, in order, as long as each
     /// fits: how many were.
-    fn take(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), now: &Row, (deltas, guarded): (&[(usize, Value)], u64)) -> Result<usize> {
+    fn take(
+        &self,
+        tx: &Txn,
+        (table, id): (&QualifiedName, RowId),
+        now: &Row,
+        (deltas, guarded): (&[(usize, Value)], u64),
+    ) -> Result<usize> {
         let lock = self.lock_of(table)?;
         let Some(desc) = self.catalog.table(table) else { return Ok(0) };
         tx.escrowing(&lock.escrow);
@@ -293,7 +299,8 @@ pub(super) fn escrow_of(st: &Arc<State>, tx: &Txn, w: &Written, effects: &Effect
 pub(super) fn deltas(w: &Written, (seen, new): (&Row, &Row), subqueries: &dyn Subqueries) -> Result<Option<Vec<(usize, Value)>>> {
     let mut out = Vec::new();
     for (c, e) in &w.bound.set {
-        let (Some(Expr::Arith(_, op, d)), Some(column), Some(from), Some(to)) = (e, w.bound.desc.columns.get(*c), seen.get(*c), new.get(*c))
+        let (Some(Expr::Arith(_, op, d)), Some(column), Some(from), Some(to)) =
+            (e, w.bound.desc.columns.get(*c), seen.get(*c), new.get(*c))
         else {
             return Ok(None);
         };

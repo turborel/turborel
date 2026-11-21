@@ -151,8 +151,9 @@ fn a_driver_job_serves_its_database() {
 /// again from a journal holding another primary's log and no state, a
 /// transaction of it left open: it recovers at once, alone, in view 0;
 /// its driver job delivers the log to its database, which follows, then
-/// promotes it; the promotion's abort record of the transaction left open
-/// is synced on the job's own thread, the built-in wait moving the driver
+/// promotes it; the promotion's abort record of the transaction left open,
+/// past the records a transaction holds (RULES.md D470) so they are in
+/// the log, is synced on the job's own thread, the built-in wait moving the driver
 /// on there; the database holds the row committed, not the one left
 /// open, and serves.
 #[test]
@@ -161,11 +162,15 @@ fn a_promotion_syncs_on_the_drivers_own_thread() {
     let primary = Database::new();
     let logged: Arc<dyn Log> = source.clone();
     primary.set_log(logged).unwrap();
-    primary.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER)").unwrap();
+    primary.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER) CREATE TABLE U (V CHARACTER(1000))").unwrap();
     let s = primary.session("APP");
     s.run("INSERT INTO T VALUES (1)").unwrap();
     s.commit().unwrap();
     s.run("INSERT INTO T VALUES (2)").unwrap();
+    // Past the 1 MiB a transaction holds, its records are written open.
+    for _ in 0_u32..1200_u32 {
+        s.run("INSERT INTO U VALUES ('X')").unwrap();
+    }
     let records: Vec<Vec<u8>> = source.read_from(Lsn(0_u64)).map(|r| r.unwrap().1).collect();
     let (mut journal, _) = LogJournal::open(Arc::new(MemoryLog::new())).unwrap();
     for (i, record) in records.iter().enumerate() {

@@ -6,7 +6,7 @@ use super::builtin::{SESSION, defined, text};
 use super::{Definition, Key, Kind, ON, SWITCHES};
 
 /// TRANSACTION.ESCROW, at its key's place after the others.
-pub const TRANSACTION_ESCROW: Key = Key(92);
+pub const TRANSACTION_ESCROW: Key = Key(93);
 
 /// TRANSACTION.ESCROW's definition.
 pub(super) fn escrow() -> Definition {

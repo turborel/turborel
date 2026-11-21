@@ -11,8 +11,8 @@
 //! read) or deleting the row: such a write waits for it, as for a lock
 //! (`txn/write.rs`).
 
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::catalog::QualifiedName;
 use crate::error::Result;

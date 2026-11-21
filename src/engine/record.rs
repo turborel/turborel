@@ -301,7 +301,7 @@ impl RecordFormat {
     /// SQLCODE -916 if `bytes` are not a record of this format, or a value
     /// fetched is not as long as its reference says; `fetch`'s errors.
     pub fn decode_with(&self, bytes: &[u8], fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>) -> Result<Row> {
-        (0..self.types.len()).map(|i| self.column_with(bytes, i, fetch)).collect()
+        self.decode_some(bytes, None, fetch)
     }
 
     /// The row a record holds, with only `columns` decoded: the others NULL,
@@ -326,7 +326,19 @@ impl RecordFormat {
         columns: &[usize],
         fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>,
     ) -> Result<Row> {
-        (0..self.types.len()).map(|i| if columns.contains(&i) { self.column_with(bytes, i, fetch) } else { Ok(Value::Null) }).collect()
+        self.decode_some(bytes, Some(columns), fetch)
+    }
+
+    /// The row a record holds, `columns` decoded, or all, the others NULL:
+    /// sized once, as a row is decoded for every one read, and a vector
+    /// collected through `Result` would grow from a few values by doubling.
+    fn decode_some(&self, bytes: &[u8], columns: Option<&[usize]>, fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>) -> Result<Row> {
+        let mut row = Vec::with_capacity(self.types.len());
+        for i in 0..self.types.len() {
+            let wanted = columns.is_none_or(|columns| columns.contains(&i));
+            row.push(if wanted { self.column_with(bytes, i, fetch)? } else { Value::Null });
+        }
+        Ok(row)
     }
 
     /// Column `i` of a record, decoding nothing else.

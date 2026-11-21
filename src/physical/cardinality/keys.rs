@@ -119,6 +119,7 @@ impl Estimates<'_> {
                 }
                 LogicalPlan::Product { .. }
                 | LogicalPlan::OuterJoin { .. }
+                | LogicalPlan::MarkJoin(_)
                 | LogicalPlan::SetOp { .. }
                 | LogicalPlan::System { .. }
                 | LogicalPlan::Values { .. }

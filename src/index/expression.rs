@@ -21,7 +21,7 @@ use crate::exec::{NoSubqueries, eval};
 use crate::logical::{Expr, expr_columns, render_expr};
 use crate::storage::Row;
 use crate::value::collation::SORT_KEY;
-use crate::value::{ArithOp, DataType, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{ArithOp, DataType, MAX_EXACT_PRECISION, Spelled, Value, bound_of};
 
 /// An argument of a call in a key expression, as the called function
 /// judges whether the call can raise (`ScalarFunction::index_safe`).
@@ -242,13 +242,7 @@ fn exact_arith(a: Option<&DataType>, op: ArithOp, b: Option<&DataType>) -> Optio
     let (Some(DataType::Exact { precision: pa, scale: sa, .. }), Some(DataType::Exact { precision: pb, scale: sb, .. })) = (a, b) else {
         return None;
     };
-    let (ia, ib) = (pa.saturating_sub(*sa), pb.saturating_sub(*sb));
-    let (whole, scale) = match op {
-        ArithOp::Add | ArithOp::Sub => (ia.max(ib).saturating_add(1), (*sa).max(*sb)),
-        ArithOp::Mul => (ia.saturating_add(ib), sa.saturating_add(*sb)),
-        ArithOp::Div => return None,
-    };
-    let precision = whole.saturating_add(scale);
+    let (precision, scale) = bound_of(op, (*pa, *sa), (*pb, *sb))?;
     (precision <= MAX_EXACT_PRECISION).then_some(DataType::Exact { precision, scale, spelled: Spelled::Numeric })
 }
 

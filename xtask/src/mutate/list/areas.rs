@@ -4,6 +4,7 @@ mod altered_tables;
 mod analyze;
 mod analyze_more;
 mod batches;
+mod btree;
 mod budget;
 mod bulk;
 // The count's, kept beside the other areas' files.
@@ -19,6 +20,7 @@ mod decode;
 mod distinct_aggregates;
 mod expr;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
+mod alloc;
 #[path = "estimates.rs"]
 mod estimates;
 mod group_table;
@@ -42,15 +44,18 @@ mod tpcc;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
+mod mark_joins;
 mod semi_joins;
+mod steady;
 mod unnesting;
 mod uuid;
+mod windows_batched;
 mod xxhash;
 
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 18] {
+pub fn core() -> [&'static [Mutation]; 21] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -68,8 +73,11 @@ pub fn core() -> [&'static [Mutation]; 18] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &btree::BTREE,
         &monitoring::MONITORING,
         &bulk::BULK,
+        &steady::STEADY_PLANS,
+        &alloc::ALLOC,
     ]
 }
 
@@ -80,7 +88,7 @@ pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// The first half of the areas, in order.
-fn first() -> [&'static [Mutation]; 25] {
+fn first() -> [&'static [Mutation]; 26] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -96,6 +104,7 @@ fn first() -> [&'static [Mutation]; 25] {
         &super::composite::COMPOSITE,
         &super::distinct::DISTINCT,
         &super::bigint::BIGINT,
+        &super::wide_exact::WIDE_EXACT,
         &super::distinct_predicate::DISTINCT_PREDICATE,
         &super::partitioned_joins::PARTITIONED_JOINS,
         &super::grouping_sets::GROUPING_SETS,
@@ -111,7 +120,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 45] {
+fn second() -> [&'static [Mutation]; 46] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -157,6 +166,7 @@ fn second() -> [&'static [Mutation]; 45] {
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
         &analyze_more::ANALYZE_MORE,
+        &windows_batched::WINDOWS_BATCHED,
         &statistics::STATISTICS,
     ]
 }
@@ -212,8 +222,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// The transport's, parallel queries', the client's step with its
 /// server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
-/// semi joins' and skipping's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 12] {
+/// semi joins', mark joins' and skipping's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 13] {
     [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
@@ -226,6 +236,7 @@ fn closing() -> [&'static [Mutation]; 12] {
         &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
         &semi_joins::SEMI_JOINS,
+        &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
     ]
 }

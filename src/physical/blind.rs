@@ -20,6 +20,8 @@
 
 mod width;
 
+use width::Sized;
+
 use super::{JoinKey, JoinProbe, PhysicalPlanner, Plan, Preserved, SemiJoin, SemiMethod};
 use crate::functions::{Registry, Standard};
 use crate::logical::{AggCall, Cond, Expr, cond_columns, expr_columns, map_cond_columns, map_expr_columns};
@@ -57,6 +59,11 @@ impl Gone {
     fn moved(&self, c: usize) -> usize {
         self.at(c).unwrap_or(c)
     }
+
+    /// How many columns were taken away.
+    fn count(&self) -> usize {
+        self.0.iter().fold(0, |n, &(_, count)| n.saturating_add(count))
+    }
 }
 
 /// Whether `aggs` are MIN and MAX alone, which the reduction takes.
@@ -86,26 +93,26 @@ impl PhysicalPlanner<'_> {
     /// reads its columns `read`, its joins made semi joins where nothing
     /// above reads their right operand, and `aggs` renumbered so.
     pub(super) fn blind_joins(&self, plan: Plan, (groups, aggs, read): (&[usize], Vec<AggCall>, &[usize])) -> (Plan, Vec<AggCall>) {
-        let on = self.db.optimizer.enabled(SEMI_REDUCTION, &self.db.settings);
-        if !groups.is_empty() || !on || !blind(&aggs, &self.db.functions) {
+        if !groups.is_empty() || !blind(&aggs, &self.db.functions) || !self.db.optimizer.enabled(SEMI_REDUCTION, &self.db.settings) {
             return (plan, aggs);
         }
-        let (plan, gone) = self.reduced(plan, read);
+        let sizes = self.sized(&plan);
+        let (plan, gone) = self.reduced(plan, &sizes, read);
         (plan, aggs.into_iter().map(|a| renumbered(a, &gone)).collect())
     }
 
-    /// `plan` of which the operators above read the columns `needed`,
-    /// reduced, and the columns it took away.
-    fn reduced(&self, plan: Plan, needed: &[usize]) -> (Plan, Gone) {
+    /// `plan`, of the widths `sizes`, of which the operators above read
+    /// the columns `needed`, reduced, and the columns it took away.
+    fn reduced(&self, plan: Plan, sizes: &Sized, needed: &[usize]) -> (Plan, Gone) {
         match plan {
             Plan::Filter { cond, detail, est, of_read, input } => {
-                let (input, gone) = self.reduced(*input, &with_cond(needed, Some(&cond)));
+                let (input, gone) = self.reduced(*input, sizes.kid(0), &with_cond(needed, Some(&cond)));
                 let cond = map_cond_columns(cond, &|c| gone.moved(c));
                 (Plan::Filter { cond, detail, est, of_read, input: Box::new(input) }, gone)
             }
-            Plan::Project { exprs, detail, input } => (self.projected((exprs, detail, *input), needed), Gone::default()),
-            Plan::HashJoin { left, right, keys, detail, est } => self.hash_reduced((*left, *right), (keys, detail, est), needed),
-            Plan::IndexJoin { .. } => self.index_reduced(plan, needed),
+            Plan::Project { exprs, detail, input } => (self.projected((exprs, detail, *input), sizes.kid(0), needed), Gone::default()),
+            Plan::HashJoin { left, right, keys, detail, est } => self.hash_reduced((*left, *right), (keys, detail, est), (sizes, needed)),
+            Plan::IndexJoin { .. } => self.index_reduced(plan, (sizes, needed)),
             other @ (Plan::Nearest(_)
             | Plan::SeqScan { .. }
             | Plan::IndexScan { .. }
@@ -114,6 +121,7 @@ impl PhysicalPlanner<'_> {
             | Plan::MergeJoin(_)
             | Plan::SemiJoin(_)
             | Plan::RangeJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::Aggregate { .. }
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }
@@ -138,12 +146,12 @@ impl PhysicalPlanner<'_> {
     /// A projection of `exprs` over `input`, of whose columns those above
     /// read `needed`: its input reduced for the expressions read, and of
     /// the others, each that reads a column taken away a null.
-    fn projected(&self, (exprs, detail, input): (Vec<Expr>, String, Plan), needed: &[usize]) -> Plan {
+    fn projected(&self, (exprs, detail, input): (Vec<Expr>, String, Plan), sizes: &Sized, needed: &[usize]) -> Plan {
         let mut reads = Vec::new();
         for e in exprs.iter().enumerate().filter(|(n, _)| needed.contains(n)).map(|(_, e)| e) {
             expr_columns(e, &mut reads);
         }
-        let (input, gone) = self.reduced(input, &reads);
+        let (input, gone) = self.reduced(input, sizes, &reads);
         if gone.0.is_empty() {
             return Plan::Project { exprs, detail, input: Box::new(input) };
         }
@@ -168,10 +176,9 @@ impl PhysicalPlanner<'_> {
         &self,
         (left, right): (Plan, Plan),
         (keys, detail, est): (Vec<JoinKey>, String, f64),
-        needed: &[usize],
+        (sizes, needed): (&Sized, &[usize]),
     ) -> (Plan, Gone) {
-        let widths = (self.width(&left), self.width(&right));
-        let (Some(lw), Some(rw)) = widths else {
+        let (Some(lw), Some(rw)) = (sizes.of(0), sizes.of(1)) else {
             return (Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail, est }, Gone::default());
         };
         let mut of_left: Vec<usize> = needed.iter().copied().filter(|&c| c < lw).collect();
@@ -179,15 +186,15 @@ impl PhysicalPlanner<'_> {
         let mut of_right: Vec<usize> = needed.iter().filter_map(|&c| c.checked_sub(lw)).collect();
         let semi = of_right.is_empty();
         of_right.extend(keys.iter().map(|k| k.right));
-        let (left, gl) = self.reduced(left, &of_left);
-        let (right, gr) = self.reduced(right, &of_right);
+        let (left, gl) = self.reduced(left, sizes.kid(0), &of_left);
+        let (right, gr) = self.reduced(right, sizes.kid(1), &of_right);
         let keys: Vec<JoinKey> =
             keys.into_iter().map(|k| JoinKey { left: gl.moved(k.left), right: gr.moved(k.right), nulls: k.nulls }).collect();
         if !semi {
             let gone = gl.beside(gr, lw);
             return (Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail, est }, gone);
         }
-        let now = (self.width(&left).unwrap_or(lw), self.width(&right).unwrap_or(rw));
+        let now = (lw.saturating_sub(gl.count()), rw.saturating_sub(gr.count()));
         let est = left.est().map_or(est, |rows| rows.min(est));
         let method = SemiMethod::Hash;
         let joined = SemiJoin { anti: false, method, left, right, keys, cond: None, widths: now, detail, est };
@@ -198,9 +205,9 @@ impl PhysicalPlanner<'_> {
     /// match if none of `needed` is of its table and its condition cannot
     /// raise, its left reduced either way, if its probe's columns can be
     /// renumbered.
-    fn index_reduced(&self, plan: Plan, needed: &[usize]) -> (Plan, Gone) {
-        let known = if let Plan::IndexJoin { outer: Preserved::Inner, spatial: None, left, probe, .. } = &plan {
-            self.width(left).filter(|_| probe_columns_known(probe))
+    fn index_reduced(&self, plan: Plan, (sizes, needed): (&Sized, &[usize])) -> (Plan, Gone) {
+        let known = if let Plan::IndexJoin { outer: Preserved::Inner, spatial: None, probe, .. } = &plan {
+            sizes.of(0).filter(|_| probe_columns_known(probe))
         } else {
             None
         };
@@ -227,8 +234,8 @@ impl PhysicalPlanner<'_> {
         let semi = !needed.iter().any(|&c| c >= lw) && !cond.as_ref().is_some_and(Cond::can_raise);
         let mut of_left: Vec<usize> = with_cond(needed, cond.as_ref()).into_iter().filter(|&c| c < lw).collect();
         of_left.extend(probe_columns(&probe));
-        let (reduced, gone) = self.reduced(*outer_rows, &of_left);
-        let now = self.width(&reduced).unwrap_or(lw);
+        let (reduced, gone) = self.reduced(*outer_rows, sizes.kid(0), &of_left);
+        let now = lw.saturating_sub(gone.count());
         let pair = |c: usize| if c < lw { gone.moved(c) } else { c.saturating_sub(lw).saturating_add(now) };
         let cond = cond.map(|c| map_cond_columns(c, &pair));
         let probe = renumbered_probe(probe, &gone);

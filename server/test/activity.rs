@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use turborel::clock::FixedClock;
 use turborel::db::Database;
@@ -15,9 +15,8 @@ use crate::common::{rows, start};
 
 /// 2026-11-20 12:00:00 UTC, in microseconds from 1970.
 const NOON: i64 = 1_795_176_000_000_000;
-/// How long a test looks for a wait before it fails: a bound for a run
-/// that never gets there, not a time any wait is expected to take.
-const PATIENCE: Duration = Duration::from_secs(120);
+/// How many times a test looks for a wait, a few milliseconds apart.
+const LOOKS: usize = 2_000;
 
 /// A database whose owner is OWNER, with X's table T of the row 1, its
 /// clock standing at `NOON`.
@@ -62,20 +61,21 @@ fn a_connection_shows_its_statement_and_its_transaction() {
 }
 
 /// What `reader` reads of connection `id`'s wait: what it waits on, the
-/// lock's name and its holder; looked at, a few milliseconds apart, until
-/// it reads `expected`, so neither a slow start nor a state passed through
-/// on the way fails it, or until `PATIENCE` is spent.
-fn wait_of(reader: &turborel::db::Session, id: u64, expected: &str) -> String {
+/// lock's name and its holder; once it waits on `on`, or after `LOOKS`
+/// looks. A request waits for a worker before it runs, so a connection
+/// on its way to a lock may first show WORKER.
+fn wait_of(reader: &turborel::db::Session, id: u64, on: &str) -> String {
     let sql = format!("SELECT WAITING_ON, LOCK_NAME LIKE '%T%', LOCK_HOLDER FROM INFORMATION_SCHEMA.CONNECTIONS WHERE ID = {id}");
-    let began = Instant::now();
-    loop {
-        let seen = turborel_test_support::database::rows(reader, &sql).unwrap().concat();
+    let mut seen = String::new();
+    for _ in 0..LOOKS {
+        seen = turborel_test_support::database::rows(reader, &sql).unwrap().concat();
         reader.rollback().unwrap();
-        if seen == expected || began.elapsed() > PATIENCE {
-            return seen;
+        if seen.starts_with(on) {
+            break;
         }
         thread::sleep(Duration::from_millis(5));
     }
+    seen
 }
 
 /// Verifies: [DESIGN] RULES.md D520: a connection waiting for a row
@@ -93,7 +93,7 @@ fn a_connection_shows_the_lock_it_waits_on() {
         waiter
     });
     let owner = db.session("OWNER");
-    assert_eq!(wait_of(&owner, 2, "LOCK,TRUE,1"), "LOCK,TRUE,1", "the row, held by the first");
+    assert_eq!(wait_of(&owner, 2, "LOCK"), "LOCK,TRUE,1", "the row, held by the first");
     holder.query("ROLLBACK").unwrap();
     let mut waiter = waiting.join().unwrap();
     let after = "SELECT ID, WAITING_ON FROM INFORMATION_SCHEMA.CONNECTIONS ORDER BY ID";
@@ -116,13 +116,13 @@ fn a_connection_shows_it_waits_for_a_worker() {
         waiter
     });
     let owner = db.session("OWNER");
-    assert_eq!(wait_of(&owner, 1, "LOCK,TRUE,NULL"), "LOCK,TRUE,NULL", "held by no connection");
+    assert_eq!(wait_of(&owner, 1, "LOCK"), "LOCK,TRUE,NULL", "held by no connection");
     let mut queued = server.connect("X");
     let asking = thread::spawn(move || {
         queued.query("VALUES 1").unwrap();
         queued
     });
-    assert_eq!(wait_of(&owner, 2, "WORKER,NULL,NULL"), "WORKER,NULL,NULL", "the only worker waits on the row");
+    assert_eq!(wait_of(&owner, 2, "WORKER"), "WORKER,NULL,NULL", "the only worker waits on the row");
     holder.rollback().unwrap();
     let mut waiter = waiting.join().unwrap();
     asking.join().unwrap();

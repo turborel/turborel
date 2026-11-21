@@ -251,9 +251,14 @@ impl State {
     /// and none is while none awaits, nor is the gate taken. It notes no
     /// maintenance: a table's is noted as a writer collects it, and noted
     /// again after each round while still due (`db/maintenance.rs`).
+    ///
+    /// \[DESIGN\] One such end collects at a time (RULES.md D453): another
+    /// ending meanwhile passes by, as the one collecting collects the same
+    /// tables, and any later end collects what it leaves.
     pub(crate) fn gc_read(&self) {
-        if self.tx.awaiting.load(Ordering::Acquire) {
+        if self.tx.awaiting.load(Ordering::Acquire) && !self.tx.read_collecting.swap(true, Ordering::AcqRel) {
             self.gc(std::iter::empty());
+            self.tx.read_collecting.store(false, Ordering::Release);
         }
     }
 
@@ -277,6 +282,11 @@ impl State {
         }
         // One collector at a time (RULES.md D445): another ending now finds
         // the work under way and passes the table over, noted as awaiting.
+        // Nor, at a transaction's end, before it is worth its cost (RULES.md
+        // D451); a checkpoint's collection, which waits, takes everything.
+        if !wait && !storage.collection_due(horizon) {
+            return Some(true);
+        }
         let Some(_collecting) = lock.try_collect(wait) else { return Some(true) };
         {
             // The table's indexes, found as the first version is removed:

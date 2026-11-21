@@ -9,10 +9,11 @@
 //!
 //! So a value outlives its program: one kept is read, compared and shown
 //! with the extension's processes stopped, or the extension gone. A type
-//! is the same kind (`Kind`) in every state of the process that has its
-//! extension, kept once (`kind_of`), as a column's type holds its kind by
-//! a `'static` reference; it makes its values through the newest of its
-//! extension's pools still running (`attach`).
+//! is the same kind (`Kind`) in every state of the database that has its
+//! extension, kept once per database (`type_of`), as a column's type holds
+//! its kind by a `'static` reference; it makes its values through the
+//! newest of that database's pools of its extension still running
+//! (`attach`), never another database's in the same process.
 //!
 //! What a plug-in type cannot do: take parameters, be cast to or from
 //! any type but a character or binary string and itself, or order its
@@ -37,6 +38,8 @@ use super::{Link, answer, counted, leaked};
 
 /// A plug-in's type.
 pub struct PluginType {
+    /// The database it is of (`Host::owner`), 0 for none.
+    owner: u64,
     name: &'static str,
     extension: String,
     ordered: bool,
@@ -50,20 +53,23 @@ impl std::fmt::Debug for PluginType {
     }
 }
 
-/// The types made, by extension, name and order, each with its kind.
-type Kinds = BTreeMap<(String, String, bool), (&'static PluginType, Kind)>;
+/// The types made, by database, extension, name and order, each with its
+/// kind.
+type Kinds = BTreeMap<(u64, String, String, bool), (&'static PluginType, Kind)>;
 
-/// The type `name` of `extension`, ORDERED or not, and its kind: the same
-/// each time asked in the process.
-pub fn type_of(extension: &str, name: &str, ordered: bool) -> (&'static PluginType, Kind) {
+/// The type `name` of `extension`, ORDERED or not, of the database
+/// `owner` (`Host::owner`), and its kind: the same each time that
+/// database asks, and another for each other database in the process, so
+/// its values are made by that database's own processes.
+pub fn type_of(owner: u64, extension: &str, name: &str, ordered: bool) -> (&'static PluginType, Kind) {
     static KINDS: OnceLock<Mutex<Kinds>> = OnceLock::new();
     let mut kinds = lock_builtin(KINDS.get_or_init(Mutex::default));
-    let key = (extension.to_owned(), name.to_owned(), ordered);
+    let key = (owner, extension.to_owned(), name.to_owned(), ordered);
     if let Some(found) = kinds.get(&key) {
         return *found;
     }
     let made: &'static PluginType =
-        Box::leak(Box::new(PluginType { name: leaked(name), extension: extension.to_owned(), ordered, pools: Mutex::default() }));
+        Box::leak(Box::new(PluginType { owner, name: leaked(name), extension: extension.to_owned(), ordered, pools: Mutex::default() }));
     let as_type: &'static dyn SqlType = made;
     let kind: Kind = Box::leak(Box::new(as_type));
     kinds.insert(key, (made, kind));
@@ -81,7 +87,7 @@ pub fn type_of(extension: &str, name: &str, ordered: bool) -> (&'static PluginTy
 pub fn declare(manifest: &str, types: &mut crate::value::types::TypeRegistry) -> Result<()> {
     let manifest = crate::plugin::Manifest::parse(manifest)?;
     for d in manifest.objects.iter().filter(|d| d.kind == ObjectKind::Type) {
-        types.add_kind(type_of(&manifest.name, &d.name, d.ordered()).1)?;
+        types.add_kind(type_of(types.owner(), &manifest.name, &d.name, d.ordered()).1)?;
     }
     Ok(())
 }
@@ -103,7 +109,7 @@ fn forms(bytes: &[u8]) -> Option<Made> {
 impl PluginType {
     /// Its kind, as the process keeps it.
     pub fn kind(&self) -> Kind {
-        type_of(&self.extension, self.name, self.ordered).1
+        type_of(self.owner, &self.extension, self.name, self.ordered).1
     }
 
     /// Its type.

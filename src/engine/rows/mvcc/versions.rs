@@ -75,7 +75,7 @@ impl RowTable {
         // In the tree, written from the leaf the read found it in, with no
         // second descent (RULES.md D446).
         let (written, thawed) = match found {
-            Ok(descended) => (self.tree.replace_found(descended, &k, (&newest, &new))?, None),
+            Ok(descended) => (self.tree.replace_found(&descended, &k, (&newest, &new))?, None),
             Err(pages) => (self.tree.insert(&k, &new)?, Some(pages)),
         };
         if !written {

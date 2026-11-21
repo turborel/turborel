@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use turborel::clock::FixedClock;
 use turborel::db::Database;
+use turborel::threads::JobPolicy;
 
 use crate::common::rows;
 
@@ -14,9 +15,12 @@ use crate::common::rows;
 const NOW: i64 = 1_709_210_096_789_012;
 
 /// A database whose owner is OWNER, its clock at `NOW`, with X's tables T
-/// of 1,000 rows, an index on K, and U of 10 rows.
+/// of 1,000 rows, an index on K, and U of 10 rows. Its maintenance runs
+/// only as a test asks, so no pass settling the tables' zones meanwhile
+/// stamps them compacted before a test looks.
 fn owned() -> (Database, Arc<FixedClock>) {
     let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
     let clock = Arc::new(FixedClock::at(NOW));
     db.set_clock(Arc::clone(&clock) as Arc<dyn turborel::clock::Clock>).unwrap();
     db.create_user("OWNER", b"x").unwrap();
@@ -81,8 +85,11 @@ fn a_column_stores_groups_are_counted_and_its_compaction_stamped() {
     let (db, _clock) = owned();
     db.schema("CREATE SCHEMA AUTHORIZATION C CREATE TABLE G (K INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)").unwrap();
     let c = db.session("C");
-    let values: Vec<String> = (0..4096).map(|k| format!("({k})")).collect();
-    c.run(&format!("INSERT INTO G VALUES {}", values.join(", "))).unwrap();
+    // Two INSERTs, neither a load, whose rows a load would freeze itself.
+    for first in [0, 2048] {
+        let values: Vec<String> = (first..first + 2048).map(|k| format!("({k})")).collect();
+        c.run(&format!("INSERT INTO G VALUES {}", values.join(", "))).unwrap();
+    }
     c.commit().unwrap();
     let sql = "SELECT ROW_COUNT, BYTES > 0, LAST_COMPACTED IS NULL FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_NAME = 'G'";
     let owner = db.session("OWNER");

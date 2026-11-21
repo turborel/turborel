@@ -16,6 +16,7 @@ mod condition;
 mod cost;
 mod engine;
 mod kept;
+mod loading;
 mod newest;
 mod options;
 mod region;
@@ -30,11 +31,12 @@ pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
 pub use kept::{COLUMN_BITS, Garbage, Kept, Removed, column_bit, same, unchanged};
+pub use loading::Loading;
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of};
+pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of, sized_row};
 pub use split::Split;
 
 use std::sync::Arc;
@@ -76,6 +78,11 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine cannot store the row; the statement fails.
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId>;
+
+    /// \[EXTENSION\] Its side of a load, if it writes a load's rows straight as frozen groups (RULES.md D533).
+    fn loading(&self) -> Option<&dyn Loading> {
+        None
+    }
     /// \[DESIGN\] As `insert` of a copy of `row`, which an engine storing rows encoded need not make: rows inserted together are
     /// still held by their statement (RULES.md D531). Default: `insert` of a clone.
     ///
@@ -146,10 +153,8 @@ pub trait TableStorage: Send + Sync {
     /// engine cannot read is an error item, after which the scan may end. The scan holds what it reads (`self`), so it can outlive the call
     /// that started it: a cursor reads its rows as it is fetched from.
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows;
-    /// As `scan`, for a statement that keeps only rows `conditions` all
-    /// match, and checks every row itself: an engine may leave out rows that
-    /// do not match, and, checking serializability, count only those that
-    /// do as read. Default: `scan`.
+    /// As `scan`, for a statement that keeps only rows `conditions` all match, and checks every row itself: an engine may leave
+    /// out rows that do not match, and, checking serializability, count only those that do as read. Default: `scan`.
     fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], _conditions: &Conjunction) -> Rows {
         self.scan(tx, columns)
     }
@@ -198,16 +203,13 @@ pub trait TableStorage: Send + Sync {
     ) -> Option<Batches> {
         self.scan_ordered(tx, columns, order, conditions).map(|rows| batches_of(rows, columns))
     }
-    /// \[DESIGN\] Whether `scan_batches` gives its rows without making each,
-    /// so a statement given rows a few at a time, a cursor's, reads them by
-    /// batch too, a batch read ahead of what it is given. Default: false,
-    /// its batches being its rows gathered, read ahead for nothing.
+    /// \[DESIGN\] Whether `scan_batches` gives its rows without making each, so a statement given rows a few at a time, a cursor's,
+    /// reads them by batch too, a batch read ahead of what it is given. Default: false, its batches being its rows gathered.
     fn reads_by_batch(&self) -> bool {
         false
     }
-    /// \[DESIGN\] (RULES.md D351) Counts that sum to the rows `scan_batches`
-    /// gives `tx` with no conditions, read once asked for, the read noted as
-    /// the scan's. None if it cannot count faster. Default none.
+    /// \[DESIGN\] (RULES.md D351) Counts that sum to the rows `scan_batches` gives `tx` with no conditions, read once asked for,
+    /// the read noted as the scan's. None if it cannot count faster. Default none.
     fn count(self: Arc<Self>, _tx: TxId) -> Option<Counts> {
         None
     }
@@ -272,16 +274,11 @@ pub trait TableStorage: Send + Sync {
     ///
     /// SQLCODE -911 if another open transaction changed the row, or its
     /// newest committed version's stamp is not `seen`; as `update`.
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
-        let _ = seen;
-        match row {
-            Some(row) => self.update(tx, id, row),
-            None => self.delete(tx, id),
-        }
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, _seen: Timestamp) -> Result<()> {
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row))
     }
-    /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` just replaced shares, with
-    /// the new one, the entries of every index whose key reads only columns of `unchanged`; the columns of those
-    /// noted, which `gc` gives back with the version. Default: none, every entry the new version's own.
+    /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` replaced shares the entries of
+    /// each index whose key reads only columns of `unchanged`: those columns, which `gc` gives back. Default: none.
     fn keep_entries(&self, _tx: TxId, _id: RowId, _unchanged: u64) -> u64 {
         0
     }
@@ -452,11 +449,10 @@ pub trait TableStorage: Send + Sync {
     fn durable_through(&self) -> Lsn {
         Lsn(0)
     }
-    /// The rows of the versions superseded by commits at or before `as_of` but not yet collected, whose index
-    /// entries collection (`gc`) would take back, with their ids and what their successors kept (RULES.md D443),
-    /// read as they are pulled: what a checkpoint logs, so recovery takes them back if the crash lost the
-    /// collection (`db/checkpoint.rs`). Collection of the table is held back while they are read. Default: none,
-    /// for an engine keeping no versions.
+    /// The rows of the versions superseded by commits at or before `as_of` not yet collected, whose index entries
+    /// `gc` would take back, with their ids and what their successors kept (RULES.md D443), read as pulled: what a
+    /// checkpoint logs, so recovery takes them back if a crash lost the collection (`db/checkpoint.rs`); the
+    /// table's collection held back meanwhile. Default: none, for an engine keeping no versions.
     ///
     /// # Errors
     ///
@@ -507,13 +503,21 @@ pub trait TableStorage: Send + Sync {
     fn gc(&self, _horizon: Timestamp, _removed: Removed<'_>) -> Result<()> {
         Ok(())
     }
+    /// \[DESIGN\] Whether a transaction's end collects it at `horizon` now, or leaves it for later (RULES.md D451).
+    fn collection_due(&self, _horizon: Timestamp) -> bool {
+        true
+    }
     /// Whether versions of it await collection (`gc`), so it is collected as any transaction ends. Default: none.
     fn uncollected(&self) -> bool {
         false
     }
-    /// \[DESIGN\] Whether work is due that the engine leaves to the database's maintenance thread (`maintain`), so
-    /// no transaction's end waits for it: asked after each `gc`, so it should be quick. Default: none.
+    /// \[DESIGN\] Whether work is due that the engine leaves to the database's maintenance thread (`maintain`), so no
+    /// transaction's end waits for it: asked after each `gc`, so it should be quick. Default: none.
     fn maintenance_due(&self) -> bool {
+        false
+    }
+    /// Whether its statistics are due and a plan read them since their last pass (RULES.md D473). Default: no.
+    fn statistics_wanted(&self) -> bool {
         false
     }
     /// \[DESIGN\] Does some of the work due (`maintenance_due`), of rows

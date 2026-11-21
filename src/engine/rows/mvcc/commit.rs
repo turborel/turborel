@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering;
 use super::lists::decode_change;
 use super::reads::{EVERY_COLUMN, changed_columns};
 use super::{Images, Maker, Reads, Validated, Version};
+use crate::engine::rows::undo::Held;
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::xxhash::Xxh3Set;
@@ -117,7 +118,7 @@ impl RowTable {
     /// found is an error, which refuses the transaction validated.
     fn changed_by(&self, id: RowId, (tx, at): (TxId, Timestamp)) -> Result<[Option<Row>; 2]> {
         let Some(newest) = self.tree.get(&key(id))? else { return Ok([None, None]) };
-        let mut bytes = newest;
+        let mut bytes = Held::from(newest);
         loop {
             let version = Version::parse(&bytes)?;
             let maker = self.maker(&version);

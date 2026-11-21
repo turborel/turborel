@@ -71,7 +71,7 @@ pub(super) fn definitions() -> [Definition; 9] {
         ),
         database(
             ("PLUGINS.CALL_TIMEOUT_MS", COUNT, count(DEFAULT_CALL_TIMEOUT_MS)),
-            "The milliseconds a call of a plug-in may take before its process is stopped and the call fails with SQLSTATE 38T02; 0 for no limit.",
+            "The milliseconds a call of a plug-in may take before its process is stopped and the call fails with SQLSTATE 38T02; 0 for no limit. A program starting has as long to answer HELLO, but never less than two minutes.",
         ),
         database(
             ("PLUGINS.MAX_MESSAGE_BYTES", COUNT, count(DEFAULT_MAX_MESSAGE_BYTES)),

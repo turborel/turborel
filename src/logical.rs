@@ -15,6 +15,7 @@ mod fixpoint;
 mod graph;
 mod invoked;
 mod limit;
+mod mark;
 mod pattern;
 mod program;
 mod ptf;
@@ -41,6 +42,7 @@ pub use graph::{
 };
 pub use invoked::Invocation;
 pub use limit::{Fetch, Hints, Limit, Most, Search, SearchTarget, Strategy};
+pub use mark::{MARK_COLUMN, MarkJoin};
 pub use pattern::{Matching, Navigated, PatternAggregate, PatternValue, Recognize, RowsPerMatch, Skip, Slotted, Variable, WindowMatching};
 pub(crate) use program::{
     Assign, Block, Branches, Called, Contained, Cursor, CursorAction, CursorStep, Declared, ForEach, Handled, Handler, Initial, Into, Leaf,
@@ -321,6 +323,12 @@ pub enum LogicalPlan {
     /// up to the greatest cardinality, an element past a collection's
     /// cardinality null.
     Unnest(Box<Unnest<LogicalPlan>>),
+    /// \[DESIGN\] A mark join (`logical/mark.rs`, RULES.md D640): each row
+    /// of `left`, with a column of whether a row of `right` matches it,
+    /// true, false or unknown. Only the optimizer makes one, of a subquery
+    /// of existence or a quantified comparison a semi join cannot take
+    /// (`optimizer/unnesting/marked.rs`).
+    MarkJoin(Box<MarkJoin>),
     /// [ISO/IEC 9075-2:2023 §7.15] The window functions of one window
     /// partitioning and ordering over the rows of `input`.
     Window(Box<Window<LogicalPlan>>),
@@ -389,6 +397,7 @@ impl LogicalPlan {
             | LogicalPlan::Sort { input, .. }
             | LogicalPlan::Limit { input, .. } => (Some(input), None, &[]),
             LogicalPlan::Unnest(u) => (Some(&u.input), None, &[]),
+            LogicalPlan::MarkJoin(m) => (Some(&m.left), Some(&m.right), &[]),
             LogicalPlan::Window(w) => (Some(&w.input), None, &[]),
             LogicalPlan::Recognize(r) => (Some(&r.input), None, &[]),
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.plans(),
@@ -425,6 +434,11 @@ impl LogicalPlan {
             LogicalPlan::Unnest(u) => {
                 let mut n = u.input.names();
                 n.extend(u.names.iter().cloned());
+                n
+            }
+            LogicalPlan::MarkJoin(m) => {
+                let mut n = m.left.names();
+                n.push(MARK_COLUMN.to_owned());
                 n
             }
             LogicalPlan::Window(w) => {
@@ -517,6 +531,7 @@ impl LogicalPlan {
             LogicalPlan::Project { exprs, .. } => exprs.len(),
             LogicalPlan::SetOp { left, .. } | LogicalPlan::SemiJoin { left, .. } => left.width(),
             LogicalPlan::Unnest(u) => u.input.width().saturating_add(u.names.len()),
+            LogicalPlan::MarkJoin(m) => m.left.width().saturating_add(1),
             LogicalPlan::Window(w) => w.input.width().saturating_add(w.calls.len()),
             LogicalPlan::Recognize(_) => self.names().len(),
             LogicalPlan::Values { types, .. } => types.len(),
@@ -570,6 +585,10 @@ impl LogicalPlan {
             | LogicalPlan::Sort { input, .. }
             | LogicalPlan::Limit { input, .. } => f(input),
             LogicalPlan::Unnest(u) => f(&mut u.input),
+            LogicalPlan::MarkJoin(m) => {
+                f(&mut m.left);
+                f(&mut m.right);
+            }
             LogicalPlan::Window(w) => f(&mut w.input),
             LogicalPlan::Recognize(r) => f(&mut r.input),
         }
