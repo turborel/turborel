@@ -274,16 +274,11 @@ pub trait TableStorage: Send + Sync {
     ///
     /// SQLCODE -911 if another open transaction changed the row, or its
     /// newest committed version's stamp is not `seen`; as `update`.
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
-        let _ = seen;
-        match row {
-            Some(row) => self.update(tx, id, row),
-            None => self.delete(tx, id),
-        }
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, _seen: Timestamp) -> Result<()> {
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row))
     }
-    /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` just replaced shares, with
-    /// the new one, the entries of every index whose key reads only columns of `unchanged`; the columns of those
-    /// noted, which `gc` gives back with the version. Default: none, every entry the new version's own.
+    /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` replaced shares the entries of
+    /// each index whose key reads only columns of `unchanged`: those columns, which `gc` gives back. Default: none.
     fn keep_entries(&self, _tx: TxId, _id: RowId, _unchanged: u64) -> u64 {
         0
     }
@@ -454,11 +449,10 @@ pub trait TableStorage: Send + Sync {
     fn durable_through(&self) -> Lsn {
         Lsn(0)
     }
-    /// The rows of the versions superseded by commits at or before `as_of` but not yet collected, whose index
-    /// entries collection (`gc`) would take back, with their ids and what their successors kept (RULES.md D443),
-    /// read as they are pulled: what a checkpoint logs, so recovery takes them back if the crash lost the
-    /// collection (`db/checkpoint.rs`). Collection of the table is held back while they are read. Default: none,
-    /// for an engine keeping no versions.
+    /// The rows of the versions superseded by commits at or before `as_of` not yet collected, whose index entries
+    /// `gc` would take back, with their ids and what their successors kept (RULES.md D443), read as pulled: what a
+    /// checkpoint logs, so recovery takes them back if a crash lost the collection (`db/checkpoint.rs`); the
+    /// table's collection held back meanwhile. Default: none, for an engine keeping no versions.
     ///
     /// # Errors
     ///
