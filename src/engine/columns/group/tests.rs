@@ -100,6 +100,28 @@ fn groups_read_back() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D533, a load's group written on threads:
+/// its columns written by two or three threads, each a share of them, give
+/// the group one thread writes, column for column, every value read back.
+#[test]
+fn a_group_written_on_threads_is_the_one_written_alone() {
+    let (pool, file) = file();
+    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false, imprints: true };
+    let ids: Vec<RowId> = (0..3000).collect();
+    let all: Vec<Row> = (0..3000).map(row).collect();
+    let zones = |g: &Group| {
+        g.columns.iter().map(|c| c.iter().map(|z| (z.run.rows, z.nulls, format!("{:?}", z.bounds))).collect::<Vec<_>>()).collect::<Vec<_>>()
+    };
+    let alone = Group::write_on(1, &pages, &TYPES, (&ids, &all), (&[], &[], &[])).unwrap();
+    for threads in [2, 3, 8] {
+        let shared = Group::write_on(threads, &pages, &TYPES, (&ids, &all), (&[], &[], &[])).unwrap();
+        assert_eq!(zones(&shared), zones(&alone), "{threads} threads");
+        let back = rows(&shared, &pages, &TYPES, &[0, 1, 2], (0, 3000)).unwrap();
+        let shown = |rs: &[Row]| rs.iter().map(|r| r.iter().map(ToString::to_string).collect::<Vec<_>>()).collect::<Vec<_>>();
+        assert_eq!(shown(&back), shown(&all), "{threads} threads");
+    }
+}
+
 /// Of a condition of two columns, the parts the first may match, the
 /// second's values anywhere in the group (RULES.md D511): every row it
 /// matches among them, and fewer than all.

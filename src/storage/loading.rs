@@ -21,12 +21,13 @@ pub trait Loading {
     /// Writes `rows`, of `tx`, as a group seen by `tx` alone until it
     /// commits, undone as its other changes are: their ids, in order; none
     /// if its load no longer goes straight to groups, a row of it having
-    /// gone to the tree.
+    /// gone to the tree. Its columns are written on up to `threads`
+    /// threads at once.
     ///
     /// # Errors
     ///
     /// Writing the group fails.
-    fn insert_group(&self, tx: TxId, rows: &[Row]) -> Result<Option<Vec<RowId>>>;
+    fn insert_group(&self, tx: TxId, rows: &[Row], threads: usize) -> Result<Option<Vec<RowId>>>;
 
     /// Ends the load of `tx`, if one is under way: rows it inserts from
     /// now on go to the tree.

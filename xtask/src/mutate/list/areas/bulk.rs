@@ -9,7 +9,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of rows inserted together whose removal must fail their tests.
-pub const BULK: [Mutation; 10] = [
+pub const BULK: [Mutation; 11] = [
     Mutation {
         name: "bulk-record-rows-not-redone",
         package: Package::Core,
@@ -109,5 +109,15 @@ pub const BULK: [Mutation; 10] = [
         replacement: "        Ok(self.state()?.undo.loading.as_ref().and_then(|_| None))",
         integration: &["bulk_groups::the_groups_of_a_load_are_undone_with_it"],
         unit: &[],
+    },
+    Mutation {
+        name: "bulk-group-share-cut",
+        package: Package::Core,
+        breaks: "a thread writing a load's group writes only the first column of its share",
+        file: "src/engine/columns/group/zones.rs",
+        original: "                    let share = types.iter().enumerate().skip(from).take(each);",
+        replacement: "                    let share = types.iter().enumerate().skip(from).take(1);",
+        integration: &[],
+        unit: &["engine::columns::group::tests::a_group_written_on_threads_is_the_one_written_alone"],
     },
 ];

@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use super::super::{Fields, bloom};
 use super::{PART_ROWS, Pages, Part, Run, Seal, Zone, count32};
 use crate::disk::pager::PageId;
-use crate::error::Result;
+use crate::error::{Code, Result, SqlError};
 use crate::storage::Row;
 use crate::value::{DataType, Value, compare};
 
@@ -54,6 +54,58 @@ pub(super) fn write_column<S: Seal>(
         put_filters(pages, (&values, &mut zones), written)?;
     }
     Ok(zones)
+}
+
+/// Writes each column of `rows`, of `types`, as `write_column` does, on
+/// up to `threads` threads at once, each a share of the columns: their
+/// zones, in order. Every page written is added to `written`, so a failure
+/// frees them all.
+pub(super) fn write_columns<S: Seal + Sync>(
+    pages: &Pages<'_, S>,
+    types: &[DataType],
+    (rows, bloom): (&[Row], &[usize]),
+    (threads, written): (usize, &mut Vec<PageId>),
+) -> Result<Vec<Vec<Zone>>> {
+    let one = |c: usize, t: &DataType, w: &mut Vec<PageId>| write_column(pages, t, (rows, c, bloom.contains(&c)), w);
+    if threads <= 1 || types.len() < 2 {
+        return types.iter().enumerate().map(|(c, t)| one(c, t, written)).collect();
+    }
+    let each = types.len().div_ceil(threads);
+    let one = &one;
+    let shares: Vec<Share> = std::thread::scope(|scope| {
+        let started: Vec<_> = (0..types.len())
+            .step_by(each)
+            .map(|from| {
+                scope.spawn(move || {
+                    let mut mine = Vec::new();
+                    let share = types.iter().enumerate().skip(from).take(each);
+                    let zones = share.map(|(c, t)| one(c, t, &mut mine)).collect();
+                    (zones, mine)
+                })
+            })
+            .collect();
+        started.into_iter().map(|s| s.join().unwrap_or_else(|_| (Err(failed()), Vec::new()))).collect()
+    });
+    let mut columns = Vec::with_capacity(types.len());
+    let mut first = None;
+    for (zones, mine) in shares {
+        written.extend(mine);
+        match zones {
+            Ok(zones) => columns.extend(zones),
+            Err(e) => first = first.or(Some(e)),
+        }
+    }
+    first.map_or(Ok(columns), Err)
+}
+
+/// A share of a group's columns as one thread wrote it: their zones, and
+/// the pages it wrote.
+type Share = (Result<Vec<Vec<Zone>>>, Vec<PageId>);
+
+/// A thread writing a share of a group's columns that ended without
+/// finishing.
+fn failed() -> SqlError {
+    SqlError::new(Code::Api, "[DESIGN] a thread writing a frozen row group's columns failed")
 }
 
 /// The zone of the chunk of `run`, of the values of its column `values`:
