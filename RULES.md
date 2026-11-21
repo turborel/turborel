@@ -465,6 +465,8 @@ verification approach DO-178C expects (§8).
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
+| D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
+| D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
 
 ### The project
 
@@ -13296,6 +13298,40 @@ values, and so do results past 18 digits, which the set functions add
 in 128 bits (D32). A path in 128 bits for whole vectors would double the
 width of every vector of integers, or add a second kind of them to
 every kernel, for values that are rare.
+
+#### D745. The undo store's batches in memory are found through shards locked for reading, with no lock all readers share
+
+One lock guarded the undo store's batches (D31), the batch being gathered,
+those being written, and those read back from the log. Every append took it,
+and so did every read of an older version, by a scan's visibility check, a
+UNIQUE check, a commit's validation and garbage collection. With many
+sessions on a few hot rows, readers queued behind each other and behind
+appends on that lock. Batches in memory are now held in shards by their
+number, each shard under a read-write lock (`undo/resident.rs`). A reader
+takes one shard's lock for reading only as long as it takes to count a share
+of the version, which is a range of the batch's record or a version gathered
+alone, so it decodes nothing and copies nothing. Readers never wait on one
+another, and wait on an append only for a version of the batch being
+gathered. Consecutive batches fall in different shards. The lock of the
+appends is taken by a reader only for a version memory no longer holds,
+to learn where the log has it.
+
+#### D746. Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them
+
+A batch was let go once written to the log, and a reader of one of its
+versions read the batch back with a system call, kept among the last few
+read. With many sessions, readers of open snapshots went back to more
+batches than the few kept, and read the log at nearly every older version.
+A batch written now stays in memory as the record it was written as, until
+the store is truncated past it, which happens once no pinned version is in
+it (`undo/kept.rs`). The batches kept are bounded by a sixteenth of the
+memory budget, reserved of it as they are kept and given back as they go,
+standing as a buffer pool's pages do (D683). Past the bound, or when the
+budget refuses, the oldest go first, as the newest are what open snapshots
+go back to most. A version of a batch gone is read from the log as before.
+A store of pages (temporary tables) keeps none, as its pages are in the
+buffer pool already. The log is never synced (D31), so a crash loses
+nothing it needs. Recovery starts with no open snapshot.
 
 ## 2. Project layout
 
