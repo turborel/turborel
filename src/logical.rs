@@ -484,7 +484,9 @@ impl LogicalPlan {
         {
             let mut read = Vec::new();
             g.tables.iter().for_each(|t| t.collect_tables(&mut read));
-            read.iter().for_each(|t| add(t, u64::MAX));
+            for t in &read {
+                add(t, u64::MAX);
+            }
         }
         for input in self.inputs() {
             input.collect_columns(out);

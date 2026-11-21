@@ -17,7 +17,7 @@ use crate::settings::ON;
 use crate::settings::escrow::TRANSACTION_ESCROW;
 use crate::storage::{Row, RowId};
 use crate::txn::escrow::{Reservation, bit, changed};
-use crate::txn::{Again, Concurrency, LockWait, Txn, UndoEntry};
+use crate::txn::{Again, Concurrency, LockWait, Timestamp, Txn, UndoEntry};
 use crate::value::{ArithOp, DataType, Decimal, Value, arith, assign};
 
 /// The rule a reservation's bound is told by when a sum leaves its
@@ -32,8 +32,9 @@ const LAST: usize = 63;
 
 /// A row as a reservation finds it.
 enum Settled {
-    /// No change of the guarded columns pending: the row.
-    Row(Row),
+    /// No change of the guarded columns pending: the row, and the commit
+    /// timestamp of its version.
+    Row(Row, Timestamp),
     /// Absent or deleted.
     Gone,
     /// A change pending, or waited for: to be read again.
@@ -45,7 +46,7 @@ impl Settled {
     /// them pending.
     fn is(&self, row: &Row, guarded: u64) -> bool {
         match self {
-            Settled::Row(now) => changed(row, now) & guarded == 0,
+            Settled::Row(now, _) => changed(row, now) & guarded == 0,
             Settled::Gone | Settled::Again => false,
         }
     }
@@ -90,8 +91,8 @@ impl State {
         let added = deltas.iter().fold(0, |mask, (c, _)| mask | bit(*c));
         let read = if added & bit(LAST) == 0 { guarded & !added } else { guarded };
         for _ in 0..TRIES {
-            let now = match self.escrowed_row(tx, (table, id), (guarded, true))? {
-                Settled::Row(now) => now,
+            let (now, stamp) = match self.escrowed_row(tx, (table, id), (guarded, true))? {
+                Settled::Row(now, stamp) => (now, stamp),
                 Settled::Gone => return Ok(false),
                 Settled::Again => continue,
             };
@@ -106,6 +107,11 @@ impl State {
                 let escrow = Arc::clone(&self.lock_of(table)?.escrow);
                 for (column, _) in deltas {
                     tx.log(UndoEntry::Escrowed { table: table.clone(), escrow: Arc::clone(&escrow), id, column: *column })?;
+                }
+                // [DESIGN] RULES.md D441: a sum bounded by a commit past its
+                // snapshot is told once that commit is durable.
+                if stamp > tx.snapshot() {
+                    tx.depend(stamp);
                 }
                 return Ok(true);
             }
@@ -126,7 +132,7 @@ impl State {
             Some(Some(pending)) => changed(&row, pending) & guarded != 0,
         };
         if !touched {
-            return Ok(Settled::Row(row));
+            return Ok(Settled::Row(row, newest.stamp));
         }
         if let Some(writer) = newest.writer.filter(|_| wait) {
             drop(tx.wait_for_row(&format_args!("a row of {table}"), writer)?);
@@ -221,7 +227,7 @@ impl State {
         let mut at = 0;
         while let Some((id, _)) = own.get(at) {
             let id = *id;
-            let row: Vec<&Reservation> = own[at..].iter().take_while(|(of, _)| *of == id).map(|(_, r)| r).collect();
+            let row: Vec<&Reservation> = own.get(at..).unwrap_or_default().iter().take_while(|(of, _)| *of == id).map(|(_, r)| r).collect();
             at = at.saturating_add(row.len());
             self.fold_one(tx, (table, id), (&row, &types))?;
         }
@@ -269,18 +275,15 @@ pub(super) fn escrow_of(st: &Arc<State>, tx: &Txn, w: &Written, effects: &Effect
     let engine = st.capabilities(&b.table).is_ok_and(|caps| matches!(caps.concurrency, Concurrency::Engine { .. }));
     // Its application waits for a row as it commits, as a statement
     // waiting for locks would, never refused for want of waiting.
-    let waits = !tx.one_snapshot() && tx.lock_wait == LockWait::Wait && engine;
-    if !waits || !quiet || !plain || !(on && !st.split(&b.table)) {
+    let waits = !tx.one_snapshot() && tx.lock_wait == LockWait::Wait && engine && quiet;
+    if !waits || !plain || !on || st.split(&b.table) {
         return None;
     }
     let mut columns = Vec::new();
     for (c, e) in &b.set {
         columns.push(increment(*c, e.as_ref()?)?);
     }
-    let read = match &b.rows {
-        LogicalPlan::Filter { cond, .. } => condition_columns(cond)?,
-        _ => Vec::new(),
-    };
+    let read = if let LogicalPlan::Filter { cond, .. } = &b.rows { condition_columns(cond)? } else { Vec::new() };
     if columns.iter().any(|c| read.contains(c) || !st.free(&b.table, &b.desc, *c)) {
         return None;
     }
@@ -304,8 +307,8 @@ pub(super) fn deltas(w: &Written, (seen, new): (&Row, &Row), subqueries: &dyn Su
         else {
             return Ok(None);
         };
-        let e = eval(d, seen, subqueries)?;
-        let delta = if matches!(op, ArithOp::Sub) { arith(ArithOp::Sub, &Value::Exact(Decimal::new(0, 0)), &e)? } else { e };
+        let added = eval(d, seen, subqueries)?;
+        let delta = if matches!(op, ArithOp::Sub) { arith(ArithOp::Sub, &Value::Exact(Decimal::new(0, 0)), &added)? } else { added };
         let held = assign(delta.clone(), &column.data_type, BOUND).ok();
         let sum = arith(ArithOp::Add, from, &delta).ok().and_then(|sum| assign(sum, &column.data_type, BOUND).ok());
         if !(equal(held.as_ref(), &delta) && equal(sum.as_ref(), to)) {

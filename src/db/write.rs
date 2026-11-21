@@ -479,15 +479,28 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         }
         Ok(())
     })?;
-    if !w.bound.checks.is_empty() {
-        let checked = |row: &Row| check_option(&w.bound.checks, [row], ("X3.135-1986 §8.12 GR4", runner));
-        changes.visit(&mut |(id, _, new)| match again.get(id) {
-            Some(None) => Ok(()),
-            Some(Some(row)) => checked(row),
-            None => checked(new),
-        })?;
-    }
+    checked_again(&w, &mut changes, &again, runner)?;
     leftovers.insert(cx, &w, effects).map(|()| Some(changes.len().saturating_sub(again.values().filter(|r| r.is_none()).count())))
+}
+
+/// [X3.135-1986 §8.12 GR4] Of the UPDATE `w` through a view WITH CHECK
+/// OPTION, that each row of `changes` it wrote, as `again` holds it if
+/// written over another's commit, is one of the view's.
+fn checked_again(
+    w: &Written,
+    changes: &mut HeldRows<(RowId, Row, Row)>,
+    again: &HashMap<RowId, Option<Row>>,
+    runner: &Runner,
+) -> Result<()> {
+    if w.bound.checks.is_empty() {
+        return Ok(());
+    }
+    let checked = |row: &Row| check_option(&w.bound.checks, [row], ("X3.135-1986 §8.12 GR4", runner));
+    changes.visit(&mut |(id, _, new)| match again.get(id) {
+        Some(None) => Ok(()),
+        Some(Some(row)) => checked(row),
+        None => checked(new),
+    })
 }
 
 /// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it

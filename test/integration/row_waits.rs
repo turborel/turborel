@@ -11,6 +11,7 @@ use std::thread;
 use turborel::db::{Completion, Database, Session};
 use turborel::error::{Code, SqlError};
 use turborel::txn::LockWait;
+use turborel::value::Value;
 
 use crate::common::rows;
 
@@ -19,6 +20,9 @@ use crate::common::rows;
 fn database() -> Database {
     let db = Database::new();
     db.set_lock_wait(LockWait::Wait).unwrap();
+    // Rows written and held, as every test here is of: increments are not
+    // reserved (RULES.md D452).
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".to_owned())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER)").unwrap();
     let s = db.session("A");
     s.run("INSERT INTO T VALUES (1, 10), (2, 20)").unwrap();

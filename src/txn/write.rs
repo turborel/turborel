@@ -18,6 +18,16 @@ use crate::storage::{Row, RowId, TableStorage, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
 
+/// \[DESIGN\] What a write finds of the reservations of its row (RULES.md
+/// D452).
+enum Guard {
+    /// None it must wait for: the escrow's epoch before the write, unless
+    /// it applies increments.
+    Clear(Option<u64>),
+    /// It waited for one: it looks again.
+    Waited,
+}
+
 impl State {
     /// The indexes `table`'s rows have entries in: its own, each entry of
     /// the row's id, and \[EXTENSION\] of a partition, the global indexes
@@ -191,19 +201,24 @@ impl State {
     }
 
     /// \[DESIGN\] Of a write of row `id` by `tx`, unless it applies
-    /// increments (`fold`): the escrow's epoch before it, or another
-    /// transaction whose reservation it waits for first (RULES.md D452).
+    /// increments (`fold`): the escrow's epoch before it; none once it
+    /// waited for another transaction's reservation, its `turn` taken, so
+    /// it looks again (RULES.md D452).
     fn unreserved(
         &self,
         tx: &Txn,
         (table, id): (&QualifiedName, RowId),
         (write, fold): (&Write, bool),
-    ) -> Result<std::result::Result<Option<u64>, TxId>> {
+        turn: &mut Option<super::row_waits::Turn>,
+    ) -> Result<Guard> {
         if fold {
-            return Ok(Ok(None));
+            return Ok(Guard::Clear(None));
         }
         let epoch = self.lock_of(table)?.escrow.epoch();
-        Ok(self.reserved_by(tx, (table, id), write)?.map_or(Ok(Some(epoch)), Err))
+        let Some(by) = self.reserved_by(tx, (table, id), write)? else { return Ok(Guard::Clear(Some(epoch))) };
+        drop(turn.take());
+        *turn = tx.wait_for_row(&format_args!("a row of {table}"), by)?;
+        Ok(Guard::Waited)
     }
 
     /// Once `write` of row `id` replaced `old`: the version it ended kept
@@ -272,14 +287,7 @@ impl State {
             }
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
-            let epoch = match self.unreserved(tx, (table, id), (&write, fold))? {
-                Ok(epoch) => epoch,
-                Err(by) => {
-                    drop(turn.take());
-                    turn = tx.wait_for_row(&format_args!("a row of {table}"), by)?;
-                    continue;
-                }
-            };
+            let Guard::Clear(epoch) = self.unreserved(tx, (table, id), (&write, fold), &mut turn)? else { continue };
             let attempt = {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
