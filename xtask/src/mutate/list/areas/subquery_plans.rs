@@ -1,8 +1,8 @@
 //! The mutations of correlated subqueries' plans kept across their runs
-//! (RULES.md R-TEST-9, D675): a value of another kind filled into a kept
-//! plan, a timestamp typed as a date, a value cast to its slot's type, a plan learned and not kept, a
-//! null typing a slot, a unique probe left to learn, and a plan of slots
-//! of its own kept.
+//! (RULES.md R-TEST-9, D675): a null or a value of another kind filled
+//! into a kept plan, a timestamp typed as a date, a value cast to its
+//! slot's type, a plan learned and not kept, a null typing a slot, a
+//! unique probe left to learn, and a plan of slots of its own kept.
 
 use super::super::{Mutation, Package};
 
@@ -18,14 +18,24 @@ const KINDS: &str = "exec::subquery::planned::tests::a_kept_plan_fits_values_of_
 const WAITS: &str = "exec::subquery::planned::tests::a_null_waits_and_a_kind_no_slot_takes_plans_each_run";
 
 /// The mutations of kept subquery plans.
-pub const SUBQUERY_PLANS: [Mutation; 7] = [
+pub const SUBQUERY_PLANS: [Mutation; 8] = [
     Mutation {
         name: "subplan-fits",
         package: Package::Core,
+        breaks: "a null is filled into the kept plan, its probe finding the rows of null keys",
+        file: PLANNED,
+        original: ".all(|(v, t)| slot_type(v).is_some_and(|own| discriminant(&own) == discriminant(t)))",
+        replacement: ".all(|(v, t)| v.is_null() || slot_type(v).is_some_and(|own| discriminant(&own) == discriminant(t)))",
+        integration: &[],
+        unit: &[UNIQUE, KINDS],
+    },
+    Mutation {
+        name: "subplan-kind",
+        package: Package::Core,
         breaks: "a value of another kind than its slot's is filled into the kept plan",
         file: PLANNED,
-        original: ".all(|(v, t)| v.is_null() || slot_type(v).is_some_and(|own| discriminant(&own) == discriminant(t)))",
-        replacement: ".all(|(v, t)| v.is_null() || slot_type(v).is_some_and(|own| discriminant(&own) == discriminant(t)) || true)",
+        original: "discriminant(&own) == discriminant(t)",
+        replacement: "discriminant(&own) == discriminant(&own)",
         integration: &[],
         unit: &[UNIQUE, KINDS],
     },

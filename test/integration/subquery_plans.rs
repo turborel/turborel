@@ -77,7 +77,7 @@ const QUERIES: &[&str] = &[
     "SELECT D, (SELECT AVG(W) FROM U WHERE U.D = T.D) FROM T",
     "SELECT D, (SELECT COUNT(*) FROM U WHERE U.D < T.D AND U.K > 100) FROM T",
     "SELECT K FROM T WHERE EXISTS (SELECT * FROM U WHERE U.K > T.K AND U.W < T.K)",
-    "SELECT K FROM T WHERE K IN (SELECT W FROM U WHERE U.K = T.K + 1)",
+    "SELECT K FROM T WHERE MOD(K + 1, 10) IN (SELECT MOD(W, 10) FROM U WHERE U.K = T.K + 1)",
     "SELECT K FROM T WHERE K >= ALL (SELECT W FROM U WHERE U.K = T.K)",
     "SELECT K, C, (SELECT SUM(W) FROM U WHERE U.K = T.K AND U.C = T.C) FROM T",
     "SELECT K, (SELECT COUNT(*) FROM U WHERE U.K = T.K AND EXISTS (SELECT * FROM U U2 WHERE U2.W = U.W AND U2.K <> T.K)) FROM T",
@@ -86,7 +86,7 @@ const QUERIES: &[&str] = &[
     "SELECT K, (SELECT COUNT(*) FROM U WHERE U.D = T.K) FROM T",
     "SELECT K, D, (SELECT COUNT(*) FROM U WHERE U.D = CASE WHEN T.K > 40 THEN T.D ELSE T.K END) FROM T",
     "SELECT C, (SELECT COUNT(*) FROM U WHERE U.C = TRIM(T.C)) FROM T",
-    "SELECT C, (SELECT COUNT(*) FROM U WHERE U.CI = TRIM(T.C)) FROM T",
+    "SELECT C, (SELECT COUNT(*) FROM U WHERE U.CI = TRIM(T.C) COLLATE CASE_INSENSITIVE) FROM T",
     "SELECT C, (SELECT COUNT(*) FROM U WHERE U.C = TRIM(T.C) COLLATE CASE_INSENSITIVE) FROM T",
     "SELECT TS, (SELECT COUNT(*) FROM U WHERE U.TS = T.TS) FROM T",
     "SELECT TS, (SELECT COUNT(*) FROM U WHERE U.DT = CAST(T.TS AS DATE)) FROM T",
@@ -96,7 +96,8 @@ const QUERIES: &[&str] = &[
 /// The rows of `sql`, sorted, with EXECUTOR.KEEP_SUBQUERY_PLANS `keep`.
 fn kept_or_not(s: &Session, sql: &str, keep: &str) -> Vec<String> {
     exec(s, &format!("SET EXECUTOR.KEEP_SUBQUERY_PLANS = '{keep}'")).unwrap();
-    let found = sorted(s, sql);
+    let mut found = rows(s, sql).unwrap_or_else(|code| panic!("{sql}: {code:?}"));
+    found.sort();
     exec(s, "SET EXECUTOR.KEEP_SUBQUERY_PLANS = 'ON'").unwrap();
     found
 }
@@ -117,11 +118,16 @@ fn kept_subquery_plans_give_what_each_run_planned_gives() {
         db.set_setting("EXECUTOR.DECORRELATE_AFTER_RUNS", &crate::common::number(after)).unwrap();
         for sql in QUERIES {
             let planned = kept_or_not(&s, sql, "OFF");
-            assert!(!planned.is_empty(), "{sql}");
+            assert_ne!(planned, Vec::<String>::new(), "{sql}");
             assert_eq!(kept_or_not(&s, sql, "ON"), planned, "{sql}, after {after}");
         }
     }
 }
+
+/// A correlated subquery run for each of `R`'s eight rows, more than the
+/// runs it learns its plan over, its rows for each spilling at the least
+/// work area.
+const SPILLED: &str = "SELECT K FROM R WHERE K * 7 IN (SELECT G FROM U WHERE U.K >= R.K)";
 
 /// Verifies: [DESIGN] RULES.md D38, D675: with MEMORY.WORK_BYTES at its
 /// least, a correlated subquery whose plan is kept, its rows for each
@@ -129,25 +135,23 @@ fn kept_subquery_plans_give_what_each_run_planned_gives() {
 /// each run.
 #[test]
 fn kept_subquery_plans_spill_as_planned_ones() {
-    const SPILLED: &str = "SELECT K FROM T WHERE K < 40 AND K * 7 IN (SELECT G FROM U WHERE U.K >= T.K)";
     let db = Database::new();
     filled(&db);
     set_rule(&db, UNNEST_SUBQUERIES, false);
     let s = db.session("S");
     let in_memory = kept_or_not(&s, SPILLED, "OFF");
-    assert!(!in_memory.is_empty());
+    assert_ne!(in_memory, Vec::<String>::new());
     db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
     assert_eq!(kept_or_not(&s, SPILLED, "ON"), in_memory);
     assert_eq!(kept_or_not(&s, SPILLED, "OFF"), in_memory);
 }
 
-/// Verifies: [DESIGN] RULES.md D44, D675: a statement cancelled as a run of
-/// its correlated subquery, by the plan kept, reads its spilled rows back
-/// fails (SQLCODE -920), and the session's next statement gives the rows
-/// it gives uncancelled.
+/// Verifies: [DESIGN] RULES.md D44, D675: a statement cancelled as the
+/// last run of its correlated subquery, by the plan kept, reads its
+/// spilled rows back fails (SQLCODE -920), and the session's next
+/// statement gives the rows it gives uncancelled.
 #[test]
 fn a_cancel_stops_a_run_of_a_kept_subquery_plan() {
-    const SPILLED: &str = "SELECT K FROM T WHERE K < 40 AND K * 7 IN (SELECT G FROM U WHERE U.K >= T.K)";
     let db = Database::new();
     filled(&db);
     set_rule(&db, UNNEST_SUBQUERIES, false);
@@ -156,32 +160,46 @@ fn a_cancel_stops_a_run_of_a_kept_subquery_plan() {
     let cancelling = CancelAt::default();
     db.set_spill(Box::new(cancelling.clone())).unwrap();
     db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
-    cancelling.arm(&s, READ_BACKS);
+    // The read-backs of a whole statement counted, so the last, of the
+    // last run, cancels it.
+    assert_eq!(sorted(&s, SPILLED), expected);
+    let read_backs = cancelling.seen();
+    assert!(read_backs > 0, "its runs spilled");
+    cancelling.arm(&s, read_backs);
     assert_eq!(rows(&s, SPILLED).err(), Some(Code::Cancelled));
     assert!(cancelling.fired());
     assert_eq!(sorted(&s, SPILLED), expected, "the next statement runs");
 }
 
-/// The spilled runs read back before the cancel: past the runs a
-/// subquery learns its plan over, so the run cancelled is by the plan kept.
-const READ_BACKS: usize = 20;
+/// The read-backs left before a cancel, those seen since last asked, and
+/// the session's canceller.
+#[derive(Default)]
+struct Counter {
+    left: usize,
+    seen: usize,
+    stop: Option<Arc<Stop>>,
+}
 
-/// The session's canceller, and the read-backs left before it cancels.
-type Armed = Arc<Mutex<(usize, Option<Arc<Stop>>)>>;
+type Armed = Arc<Mutex<Counter>>;
 
-/// The built-in provider, whose runs, once armed (`CancelAt::arm`), cancel
-/// what the session runs when as many runs as it was armed with are read
-/// back.
+/// The built-in provider, whose runs count their read-backs and, once
+/// armed (`CancelAt::arm`), cancel what the session runs when as many runs
+/// as it was armed with are read back.
 #[derive(Clone, Default)]
 struct CancelAt(Armed);
 
 impl CancelAt {
     fn arm(&self, s: &Session, after: usize) {
-        *self.0.lock().unwrap() = (after, Some(s.canceller()));
+        *self.0.lock().unwrap() = Counter { left: after, seen: 0, stop: Some(s.canceller()) };
     }
 
     fn fired(&self) -> bool {
-        self.0.lock().unwrap().1.is_none()
+        self.0.lock().unwrap().stop.is_none()
+    }
+
+    /// The read-backs since it was last asked.
+    fn seen(&self) -> usize {
+        std::mem::take(&mut self.0.lock().unwrap().seen)
     }
 }
 
@@ -207,15 +225,16 @@ impl SpillArea for CancelAtArea {
 
 struct CancelAtRun(Box<dyn SpillRun>, Armed);
 
-/// Counts a read-back of `armed`, cancelling at the last.
+/// Counts a read-back of `armed`, cancelling at the last it was armed for.
 fn read_back(armed: &Armed) {
     let mut armed = armed.lock().unwrap();
-    if armed.1.is_none() {
+    armed.seen = armed.seen.saturating_add(1);
+    if armed.stop.is_none() {
         return;
     }
-    armed.0 = armed.0.saturating_sub(1);
-    if armed.0 == 0 {
-        armed.1.take().unwrap().cancel();
+    armed.left = armed.left.saturating_sub(1);
+    if armed.left == 0 {
+        armed.stop.take().unwrap().cancel();
     }
 }
 

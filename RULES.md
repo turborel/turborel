@@ -11758,8 +11758,12 @@ choose until values that would choose another arrive, the trade D45
 already makes.
 
 A run is planned alone, the plan still kept, when a value is of
-another kind than its slot's. A null says nothing of its kind, so a
-subquery learns from its first run with none. A subquery whose outer
+another kind than its slot's, or null. Bound, a comparison with a null
+is unknown and reads nothing, where a probe by it would find the rows
+whose key is null. A null says nothing of its kind either, so a
+subquery learns from its first run with none. Within a kind a value is
+placed as it is whatever its scale, length or precision, as an index
+places it (`physical/probe.rs`). A subquery whose outer
 value is of a kind no index places as it is (a large object, a
 collection, a row, a structured, JSON, XML or extension value), or
 whose plan holds a slot of its own, is planned at each run. The rows

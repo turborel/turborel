@@ -21,8 +21,8 @@ fn state(unique: bool) -> Arc<State> {
     let key = if unique { ", UNIQUE (K)" } else { "" };
     db.schema(&format!("CREATE SCHEMA AUTHORIZATION A CREATE TABLE U (K INTEGER NOT NULL, W INTEGER{key})")).unwrap();
     let s = db.session("A");
-    let keys = if unique { 200 } else { 10 };
-    let rows: Vec<String> = (0..200).map(|n| format!("({}, {n})", n % keys)).collect();
+    let keys: usize = if unique { 200 } else { 10 };
+    let rows: Vec<String> = (0..200_usize).map(|n| format!("({}, {n})", n.checked_rem(keys).unwrap())).collect();
     s.run(&format!("INSERT INTO U VALUES {}", rows.join(", "))).unwrap();
     s.commit().unwrap();
     if !unique {
@@ -76,9 +76,9 @@ fn named(p: &Planned) -> &'static str {
 /// plan with slots over its first runs, each run given the plan made
 /// with its values, and once runs in a row agree, after the first, keeps it:
 /// each later run is given it filled with its value as it is, a probe of
-/// the index by that value, of the shape the plan made with it has: a
-/// null, and a decimal of another scale than the first value's, not cast
-/// to its slot's type.
+/// the index by that value, of the shape the plan made with it has, a
+/// decimal of another scale than the first value's not cast to its slot's
+/// type; a null's run is planned by it alone, the plan still kept.
 #[test]
 fn a_subquery_keeps_its_plan_once_its_runs_agree() {
     let st = state(false);
@@ -97,8 +97,10 @@ fn a_subquery_keeps_its_plan_once_its_runs_agree() {
     assert!(same_shape(&plan, &custom), "{plan:?}");
     assert_eq!(shown(probe(&plan)), shown(Some(&Probe::Compare { op: CompOp::Eq, value: int(7) })));
     assert_eq!(named(&now), "kept");
+    let custom_null = PhysicalPlanner::new(&st).plan(&runner.optimized(sq.bound(&[Value::Null])));
     let (null, now) = runner.planned(&sq, &[Value::Null], now);
-    assert_eq!(shown(probe(&null)), shown(Some(&Probe::Compare { op: CompOp::Eq, value: Value::Null })), "a null is placed as it is");
+    assert_eq!(format!("{null:?}"), format!("{custom_null:?}"), "a null's run planned by it, not probing for nulls");
+    assert_eq!(named(&now), "kept");
     let half = Value::Exact(Decimal::new(25, 1));
     let (scaled, _) = runner.planned(&sq, std::slice::from_ref(&half), now);
     assert_eq!(shown(probe(&scaled)), shown(Some(&Probe::Compare { op: CompOp::Eq, value: half })), "of another scale, not cast");
@@ -107,8 +109,8 @@ fn a_subquery_keeps_its_plan_once_its_runs_agree() {
 /// Verifies: [DESIGN] RULES.md D675: a plan with slots that is one probe of
 /// a whole unique key is kept from the first run; a run whose value is of
 /// another kind than its slot's is planned alone, by its value, and the
-/// plan stays kept. MC/DC pairs of fitting: a null fits; a value of the
-/// kind fits; of another kind, not.
+/// plan stays kept. MC/DC pairs of fitting: a value of the kind fits; a
+/// null, or one of another kind, not.
 #[test]
 fn a_unique_probe_is_kept_at_once_and_a_value_of_another_kind_is_planned_alone() {
     let st = state(true);
@@ -117,7 +119,7 @@ fn a_unique_probe_is_kept_at_once_and_a_value_of_another_kind_is_planned_alone()
     let (_, kept) = runner.planned(&sq, &[int(3)], Planned::Untried);
     assert_eq!(named(&kept), "kept");
     let Planned::Kept(slotted, _) = &kept else { panic!("kept") };
-    assert!(slotted.fits(&[int(4)]) && slotted.fits(&[Value::Null]));
+    assert!(slotted.fits(&[int(4)]) && !slotted.fits(&[Value::Null]));
     assert!(!slotted.fits(&[Value::Char("4".into())]) && !slotted.fits(&[]), "another kind, or no value");
     let (plan, still) = runner.planned(&sq, &[Value::Approx(4.0_f64)], kept);
     assert_eq!(named(&still), "kept");
@@ -175,7 +177,7 @@ fn a_kept_plan_fits_values_of_its_slots_kinds_alone() {
     let time = Value::Datetime(crate::value::datetime::Datetime { moment: Moment::Time, ..date });
     let slotted = |first: &Value| Slotted { types: vec![slot_type(first).unwrap()], plan: subquery().plan };
     let of_stamp = slotted(&stamp(0));
-    assert!(of_stamp.fits(&[stamp(6)]) && !of_stamp.fits(&[Value::Datetime(date)]) && !of_stamp.fits(&[time.clone()]));
+    assert!(of_stamp.fits(&[stamp(6)]) && !of_stamp.fits(&[Value::Datetime(date)]) && !of_stamp.fits(std::slice::from_ref(&time)));
     let of_date = slotted(&Value::Datetime(date));
     assert!(of_date.fits(&[Value::Datetime(date)]) && !of_date.fits(&[stamp(0)]) && !of_date.fits(&[time]));
     let of_number = slotted(&int(1));

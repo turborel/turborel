@@ -16,9 +16,9 @@
 //! subquery whose plans keep changing is planned at each run after
 //! `MOST_LEARNING_RUNS`; one whose outer value is of a kind no index
 //! places as it is, or whose plan holds slots of its own, at each run from
-//! the first; and a run whose value is of another kind than its slot's is
-//! planned alone. Null values say nothing of their kind, so a subquery
-//! learns from its first run with none.
+//! the first; and a run whose value is null, or of another kind than its
+//! slot's, is planned alone. Null values say nothing of their kind, so a
+//! subquery learns from its first run with none.
 
 use std::mem::discriminant;
 
@@ -58,17 +58,17 @@ pub(super) struct Slotted {
 }
 
 impl Slotted {
-    /// Whether `outer` are values of its slots' kinds, or nulls. A kept
+    /// Whether `outer` are values of its slots' kinds, none null. A kept
     /// plan holds a value of its slot's kind as binding it would: an index
     /// places every value of a kind its column takes as it is, whatever
     /// its precision, scale or length (`physical/probe.rs`), so the kind
     /// alone is checked, and a value of another kind has its run planned.
+    /// A null is planned too: bound, a comparison with it is unknown and
+    /// reads nothing, where a probe by it would find the rows whose key
+    /// is null.
     fn fits(&self, outer: &[Value]) -> bool {
         outer.len() == self.types.len()
-            && outer
-                .iter()
-                .zip(&self.types)
-                .all(|(v, t)| v.is_null() || slot_type(v).is_some_and(|own| discriminant(&own) == discriminant(t)))
+            && outer.iter().zip(&self.types).all(|(v, t)| slot_type(v).is_some_and(|own| discriminant(&own) == discriminant(t)))
     }
 }
 
