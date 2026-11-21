@@ -24,6 +24,7 @@ mod captured;
 mod format;
 mod formats;
 mod free;
+mod in_use;
 mod known;
 mod live;
 mod named;
@@ -157,6 +158,9 @@ pub struct Pager {
     resettled: AtomicBool,
     page_size: usize,
     free: Mutex<FreeList>,
+    /// The pages in use, as the free list says, read with no lock
+    /// (`in_use.rs`).
+    in_use: in_use::InUse,
     /// Pages written to the file: past them a page reads as new.
     on_file: AtomicU64,
     sync_state: Mutex<SyncState>,
@@ -270,6 +274,7 @@ impl Pager {
         pager.settled = Mutex::new(Formats { encodings: ids, key });
         pager.pipeline = Encoded::Named(Named::new(pipeline, encodings, path));
         *lock_builtin(&pager.free) = FreeList::new(meta.pages);
+        pager.in_use.mark(&[Extent { start: PageId(0), count: meta.pages }], true);
         lock_builtin(&pager.sync_state).sequence = meta.sequence;
         pager.on_file.store(on_file, Ordering::Release);
         pager.load_free_list(meta, on_file)?;
@@ -288,6 +293,7 @@ impl Pager {
             resettled: AtomicBool::new(false),
             page_size,
             free: Mutex::new(FreeList::new(0)),
+            in_use: in_use::InUse::new(),
             on_file: AtomicU64::new(0),
             sync_state: Mutex::new(SyncState { running: false, sequence: 0, trunk: Vec::new() }),
             synced: Condvar::new(),
@@ -315,6 +321,7 @@ impl Pager {
         }
         let mut free = lock_builtin(&self.free);
         free.free(&runs).map_err(|why| self.damaged(&format!("its free list is wrong: {why}")))?;
+        self.in_use.mark(&runs, false);
         free.grow_free(on_file).map_err(|why| self.damaged(&format!("its free list is wrong: {why}")))?;
         drop(free);
         lock_builtin(&self.sync_state).trunk = trunk;
@@ -407,12 +414,6 @@ impl Pager {
         extents
     }
 
-    /// Takes `count` pages from the free list, for the pager's own use or
-    /// the layer above's.
-    fn allocated(&self, count: u64) -> Vec<Extent> {
-        lock_builtin(&self.free).allocate(count)
-    }
-
     /// Frees the pages of `extents`, and any overflow pages of their
     /// content. A page that can no longer be read keeps its overflow pages
     /// in use, which is safe: they are only lost space.
@@ -450,7 +451,7 @@ impl Pager {
     /// other pages, can be followed, and freed content does not linger.
     fn release(&self, extents: &[Extent]) -> Result<()> {
         self.zero_all(extents)?;
-        lock_builtin(&self.free).free(extents).map_err(|why| SqlError::new(Code::Api, format!("[DESIGN] cannot free: {why}")))
+        self.freed(extents).map_err(|why| SqlError::new(Code::Api, format!("[DESIGN] cannot free: {why}")))
     }
 
     /// Zeroes the pages of `extents`.
@@ -471,18 +472,6 @@ impl Pager {
             let len = usize::try_from(pages).unwrap_or_default().saturating_mul(self.page_size);
             self.file.write_all_at(&vec![0; len], self.offset(at)?)?;
             at = at.saturating_add(pages);
-        }
-        Ok(())
-    }
-
-    /// Checks that page `id` is in use, as `read` and `write` need.
-    fn check_in_use(&self, id: PageId) -> Result<()> {
-        let free = lock_builtin(&self.free);
-        if id.0 >= free.pages() || free.is_free(id.0) {
-            return Err(SqlError::new(
-                Code::Api,
-                format!("[DESIGN] page {} of {} is not allocated: its file has {} pages", id.0, self.path.display(), free.pages()),
-            ));
         }
         Ok(())
     }

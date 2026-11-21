@@ -5,6 +5,7 @@ mod analyze;
 mod batches;
 mod budget;
 mod checkpoint;
+mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
 #[path = "count.rs"]
@@ -38,7 +39,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 17] {
+pub fn core() -> [&'static [Mutation]; 18] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -57,6 +58,7 @@ pub fn core() -> [&'static [Mutation]; 17] {
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
         &checkpoint::CHECKPOINT,
+        &io_path::IO_PATH,
     ]
 }
 

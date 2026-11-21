@@ -75,6 +75,10 @@ enum Fill {
 /// files spread alike.
 const SHARD_SHIFT: u32 = 56;
 
+/// \[DESIGN\] (RULES.md D591) The most a frame's buffer may hold to be
+/// reused for the page read into it next: a page or two, not a large one.
+const REUSED: usize = 1 << 16;
+
 /// A frame claimed for a page: its index, and the page it held, if that
 /// page was dirty and must be written back, or owed to a checkpoint's
 /// capture (`capture.rs`), and which.
@@ -454,8 +458,7 @@ impl BufferPool {
     /// and the error returned.
     fn fill(&self, key: Key, claim: Claim, fill: Fill) -> Result<&Frame> {
         let frame = self.frame(claim.frame)?;
-        self.emptied(key, claim)?;
-        let mut content = Vec::new();
+        let mut content = self.emptied(key, claim)?;
         if fill == Fill::Read {
             count(&self.counters.misses);
             if let Err(e) = self.read_into(key, &mut content) {
@@ -471,9 +474,10 @@ impl BufferPool {
     }
 
     /// Empties `claim`'s frame, claimed for `key`, writing back what it
-    /// held if it must. If that fails, the frame is put back as it was and
-    /// the error returned.
-    fn emptied(&self, key: Key, claim: Claim) -> Result<()> {
+    /// held if it must: its buffer, emptied, for the page read into it next
+    /// (RULES.md D591), unless it grew past `REUSED`. If that fails, the
+    /// frame is put back as it was and the error returned.
+    fn emptied(&self, key: Key, claim: Claim) -> Result<Vec<u8>> {
         let frame = self.frame(claim.frame)?;
         let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
         if let Some(old) = claim.write_back {
@@ -489,7 +493,9 @@ impl BufferPool {
                 map.remove(&old);
             }
         }
-        Ok(())
+        let mut buffer = if old_content.capacity() <= REUSED { old_content } else { Vec::new() };
+        buffer.clear();
+        Ok(buffer)
     }
 
     /// Reads `key` from its file into `content`.

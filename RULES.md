@@ -402,6 +402,7 @@ verification approach DO-178C expects (§8).
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
 | D472 | A page written back again is written over its side-file block with no lock held |
 | D590 | A checkpoint captures its pages copy on write, writers held only while it notes them |
+| D591 | A page read or written shares no lock or counter with every other I/O of its file |
 
 ### The project
 
@@ -11288,6 +11289,29 @@ every page owed dirty again. A
 checkpoint that fails after its seal and before its walk, as when its
 log cannot be synced, has its walk ended and its batch committed by the
 next, before that one holds anything, so at most one batch is sealed.
+
+#### D591. A page read or written shares no lock or counter with every other I/O of its file
+
+Three things every page read did wrote a cache line every other thread's
+reads wrote too. The pager checked that the page was allocated under the
+free list's lock, the file manager stamped the file's last use from one
+counter shared by every file, and a miss allocated a new buffer for the
+page while the frame's old one was dropped. Under many threads these
+lines moved from core to core on each read.
+
+The pager now keeps a bit for each page in use, set as pages are
+allocated and cleared as they are freed, under the free list's lock so
+it says what the list says, and a read or write checks the bit with no
+lock (`disk/pager/in_use.rs`). The bits are in chunks that double in
+size, made as their first page is allocated, so a file of any size has a
+few. A page the list takes for its own record is in use; a free run set
+aside while the file is cut stays free, as it is. The file manager
+stamps a use by the monotonic clock, each thread's stamps rising, with
+no write any other file shares; the least recently used file is still
+the one closed first, a tie going to the file opened first. A miss reads
+into the buffer of the page it evicts, emptied, unless that buffer grew
+past a page or two; and the pager cuts the page it read to its body in
+place instead of copying it.
 
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
