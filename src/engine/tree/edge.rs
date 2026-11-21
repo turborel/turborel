@@ -52,7 +52,7 @@ impl BLinkTree {
         if !near::trusted(&node, self.meta.0, key)? {
             return Ok(None);
         }
-        count(&self.counters.edge_writes);
+        self.counters.edge_writes.add();
         Ok(Some(PageId(id)))
     }
 

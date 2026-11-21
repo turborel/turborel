@@ -4,6 +4,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::BLinkTree;
+use crate::sync::thread_stripe;
+
+/// \[DESIGN\] Stripes of a counter every read or write may move.
+const STRIPES: usize = 16;
 
 /// The counters of a tree, for the heuristics above it (RULES.md D30).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -32,9 +36,39 @@ pub(super) struct Counters {
     pub(super) root_splits: AtomicU64,
     pub(super) right_moves: AtomicU64,
     pub(super) unlinked: AtomicU64,
-    pub(super) hinted: AtomicU64,
-    pub(super) edge_writes: AtomicU64,
+    pub(super) hinted: Striped,
+    pub(super) edge_writes: Striped,
     pub(super) contention_splits: AtomicU64,
+}
+
+/// A stripe of a `Striped` counter, alone on its cache lines.
+#[repr(align(128))]
+#[derive(Default)]
+struct Lane(AtomicU64);
+
+/// A counter that reads and writes of one tree move on every thread, kept
+/// by stripe, as the pool's tallies are (`disk/buffer/tally.rs`), so the
+/// threads moving it seldom share a cache line.
+pub(super) struct Striped(Box<[Lane]>);
+
+impl Default for Striped {
+    fn default() -> Striped {
+        Striped((0..STRIPES).map(|_| Lane::default()).collect())
+    }
+}
+
+impl Striped {
+    /// Adds 1 on the thread's stripe.
+    pub(super) fn add(&self) {
+        if let Some(lane) = self.0.get(thread_stripe(STRIPES)) {
+            count(&lane.0);
+        }
+    }
+
+    /// The sum of its stripes.
+    fn sum(&self) -> u64 {
+        self.0.iter().map(|lane| lane.0.load(Ordering::Relaxed)).fold(0_u64, u64::wrapping_add)
+    }
 }
 
 /// Adds 1 to `counter`; it would wrap only after 2^64.
@@ -73,8 +107,8 @@ impl BLinkTree {
             root_splits: get(&c.root_splits),
             right_moves: get(&c.right_moves),
             unlinked: get(&c.unlinked),
-            hinted: get(&c.hinted),
-            edge_writes: get(&c.edge_writes),
+            hinted: c.hinted.sum(),
+            edge_writes: c.edge_writes.sum(),
             contention_splits: get(&c.contention_splits),
         }
     }

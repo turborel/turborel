@@ -108,7 +108,7 @@ impl BLinkTree {
                 }
                 if answers(&node, key)? {
                     self.tally.lookup();
-                    super::count(&self.counters.hinted);
+                    self.counters.hinted.add();
                     near.misses = 0;
                     near.leaf = Some((id, stamp));
                     return copied(&node, key, (&mut near.bytes, &mut near.at)).map(Some);
