@@ -86,12 +86,15 @@ impl Estimates<'_> {
         };
         let mut reached = vec![false; cards.len()];
         let mut bound = 1.0_f64;
+        // Each equality's most rows of one value of either side, asked once.
+        let most = |(to, column): (usize, usize)| leaves.get(to).map(|leaf| self.most_of(leaf, column));
+        let steps: Vec<((usize, usize), Option<f64>)> =
+            keys.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).map(|(f, t)| ((f.0, t.0), most(t))).collect();
         while let Some(open) = least(&reached) {
-            let joined = keys
+            let joined = steps
                 .iter()
-                .flat_map(|&(a, b)| [(a, b), (b, a)])
-                .filter(|((from, _), (to, _))| reached.get(*from).copied().unwrap_or(false) && !reached.get(*to).copied().unwrap_or(true))
-                .filter_map(|(_, (to, column))| Some((to, self.most_of(leaves.get(to)?, column))))
+                .filter(|((from, to), _)| reached.get(*from).copied().unwrap_or(false) && !reached.get(*to).copied().unwrap_or(true))
+                .filter_map(|&((_, to), times)| Some((to, times?)))
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             let (rel, times) = joined.unwrap_or(open);
             if let Some(r) = reached.get_mut(rel) {

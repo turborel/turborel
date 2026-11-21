@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use super::bits::{Set, bit, count, members, within};
 use super::space::Space;
+use crate::hash::xxhash::Xxh3BuildHasher;
 
 /// A node of the greedy tree: its set, and its operands' nodes if a join.
 #[derive(Debug, Clone, Copy)]
@@ -65,7 +66,7 @@ impl Space<'_> {
         let mut forest: Vec<usize> = (0..nodes.len()).collect();
         // Each pair's rows, kept across the steps: a step changes only the
         // pairs of the tree it makes.
-        let mut known: HashMap<(Set, Set), Option<f64>> = HashMap::new();
+        let mut known: HashMap<(Set, Set), Option<f64>, Xxh3BuildHasher> = HashMap::default();
         while forest.len() > 1 {
             let (first, second) = self.smallest_join(&nodes, &forest, &mut known)?;
             let (left, right) = (*forest.get(first)?, *forest.get(second)?);
@@ -83,7 +84,12 @@ impl Space<'_> {
     /// Of the trees `forest` of `nodes`, the places of the two that may
     /// be joined giving fewest rows, each pair's rows found once and kept
     /// in `known`.
-    fn smallest_join(&self, nodes: &[Node], forest: &[usize], known: &mut HashMap<(Set, Set), Option<f64>>) -> Option<(usize, usize)> {
+    fn smallest_join(
+        &self,
+        nodes: &[Node],
+        forest: &[usize],
+        known: &mut HashMap<(Set, Set), Option<f64>, Xxh3BuildHasher>,
+    ) -> Option<(usize, usize)> {
         let set = |i: usize| forest.get(i).and_then(|&f| nodes.get(f)).map_or(0, |n| n.set);
         let pairs = (0..forest.len()).flat_map(|i| (i.saturating_add(1)..forest.len()).map(move |j| (i, j)));
         pairs
