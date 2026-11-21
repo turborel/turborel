@@ -436,6 +436,9 @@ verification approach DO-178C expects (§8).
 | D474 | A page read into a frame takes the buffer of the page it replaces |
 | D475 | An update's log record holds the row after whole and of the row before only the columns changed |
 | D476 | A value on a zone's bound changed to one past it leaves the zone not stale |
+| D770 | A zone is stale per column, and summed up from its rows' newest versions alone, once the horizon has passed them |
+| D771 | A zone due again soon after it was looked at waits twice as long each time, to a limit |
+| D772 | A table's maintenance sums up no zone while its zones rest, unless asked to now |
 | D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
 | D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
@@ -482,6 +485,7 @@ verification approach DO-178C expects (§8).
 | D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
 | D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
 | D747 | A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it |
+| D760 | A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values |
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
@@ -12048,6 +12052,46 @@ written, as the zone is widened to hold it, so the zone stays as narrow
 as its rows. A value on a bound changed back inside it, or deleted, or a
 null changed, stales the zone as before (`engine/rows/zones.rs`).
 
+#### D770. A zone is stale per column, and summed up from its rows' newest versions alone, once the horizon has passed them
+
+A zone a write left wider than its rows was summed up in every column
+kept, from every version of its rows a reader might still read, so the
+maintenance thread decoded each version whole and read each older one
+back from the undo store. Under an order entry workload every table is
+written without pause, so that pass took most of a core, made a share of
+all undo reads that no transaction asked for, and allocated in the same
+arenas as the serving threads. A zone now notes which columns it may be
+wider in, a bit each, and a write sets only the bits of the columns whose
+bound it may leave unreached (D476). A sum up decodes those columns
+alone, one value at a time with no row made, and keeps the others'
+bounds. It reads only the rows' newest versions. While one is not yet
+committed at or before the horizon (or the table's latest collection),
+a reader may still read an older version, which the zone holds since the
+write widened it, so the zone is left as it is and summed up once the
+horizon has passed (`engine/rows/zones/loose.rs`,
+`engine/rows/zones/summed.rs`).
+
+#### D771. A zone due again soon after it was looked at waits twice as long each time, to a limit
+
+The zones rest a second after each pass (D31), but a zone written
+without pause was due at every pass and summed up once a second. Each
+zone now keeps when the maintenance thread last looked at it and how long
+it waits after that. A zone looked at again within four of its waits, a
+second at least, is hot, and its wait doubles from one second to 32. One
+looked at after a longer quiet waits none, so a zone written now and then
+is narrowed and settled a second later as before. A hot zone narrows and
+settles up to its wait later. `Database::maintain` passes over no wait
+(`engine/rows/zones/summed.rs`).
+
+#### D772. A table's maintenance sums up no zone while its zones rest, unless asked to now
+
+The maintenance job calls a table's maintenance while any of its work is
+due, its statistics or an index's key counts among them, and goes round
+again at once while any call did some. The row store summed up zones due
+at each call, resting or not, so other work kept the zones summed up
+without rest. A call now sums up zones only once their rest is over,
+unless it is asked to do its work now (`engine/rows.rs`).
+
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
 The engine hashed with MurmurHash3, FNV-1a, SplitMix64's finalizer, the
@@ -13527,6 +13571,21 @@ stamp alone, which the row store reads from the newest version's maker
 (`RowTable::writer_of`). The row is read only when the statement rechecks
 its search condition over a version committed after its snapshot, and if
 the row changed again in between, the write is tried again.
+
+#### D760. A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values
+
+A plan made with slots, to be kept, is estimated with the values of the
+execution that makes it (D613). Filling a slot of a bound such as
+`OL_O_ID >= ST_O_ID - 20` leaves a difference of two constants, which no
+estimate reads as one, so the bound took the default share of a range
+while the plan made with the values had it folded. The rows of a few
+orders' lines were then estimated many times over, and the join over
+them weighed its index probes at those rows (D386). As ORDER_LINE grew,
+STOCK-LEVEL kept a hash join reading STOCK whole instead of probing its
+key for each line. Each compared sum or difference of constants alone
+is now folded to its value as the estimate fills its slots
+(`physical/estimate/valued.rs`), and one that raises an error is left
+as it is, for the execution to raise.
 
 #### D767. A connection's requests run on one thread of its own, its home
 

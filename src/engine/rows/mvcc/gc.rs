@@ -74,6 +74,12 @@ impl RowTable {
         failure.map_or(Ok(()), Err)
     }
 
+    /// `horizon`, or the table's latest collection if later: no reader is
+    /// before either.
+    pub(in crate::engine::rows) fn collected_horizon(&self, horizon: Timestamp) -> Timestamp {
+        horizon.max(self.versions.collected.load(Ordering::SeqCst))
+    }
+
     /// What `read` makes of the entry `newest` of the row of key `k`, read by
     /// a pass with no transaction open, the maintenance thread's, at
     /// `horizon`, or the table's latest collection if later: none if the
