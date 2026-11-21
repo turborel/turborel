@@ -99,7 +99,8 @@ fn a_load_goes_straight_to_groups_its_transaction_alone_sees() {
 /// §14.3]; [EXTENSION] RULES.md D533: the groups of a load are undone by a
 /// savepoint rolled back, by a statement of the load failing, the groups
 /// of its executions before kept, and by a rollback; a load after loads
-/// again, each of a copy's executions a group.
+/// again, each of a copy's executions a group, and tells a copy the rows
+/// of a group, so its executions make whole ones.
 #[test]
 fn the_groups_of_a_load_are_undone_with_it() {
     let db = database();
@@ -116,8 +117,11 @@ fn the_groups_of_a_load_are_undone_with_it() {
     assert_eq!(found(&s).0, 4096, "the failed execution undone alone");
     s.rollback().unwrap();
     assert_eq!(found(&s).0, 0, "a rollback");
+    assert_eq!(s.load_rows(), None, "no load under way");
     s.execute_prepared_rows(&p, &given(0, ROWS), Load::Going).unwrap();
+    assert_eq!(s.load_rows(), Some(4096), "a copy's executions take a group's rows");
     s.execute_prepared_rows(&p, &[], Load::Ending).unwrap();
+    assert_eq!(s.load_rows(), None, "ended");
     s.commit().unwrap();
     assert_eq!(found(&s).0, usize::try_from(ROWS).unwrap());
     assert!(all_frozen(&s), "no row through the tree");

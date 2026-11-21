@@ -12064,7 +12064,9 @@ table's lock held alone, writes each batch straight as a group, sorted,
 with its filters and sketches, as a freeze writes one
 (`engine/rows/frozen/stamped.rs`). Its rows are logged as any others
 (D530). A batch is of COLUMNSTORE.GROUP_ROWS rows, of an INSERT, or a
-copy's execution.
+copy's execution. A copy takes its executions a group's rows at a time
+once its load writes groups, so each group is whole
+(`Session::load_rows`).
 
 Such a group is stamped with who made it. While its transaction is
 open, only that transaction sees its rows; once it commits, each

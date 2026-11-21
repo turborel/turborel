@@ -20,11 +20,13 @@ use crate::storage::RowId;
 use crate::txn::Txn;
 
 /// A load under way: into which table, from which place of the undo log
-/// on, and the indexes whose entries it holds back.
+/// on, the indexes whose entries it holds back, and the rows of a group if
+/// its rows go straight to groups (RULES.md D533).
 pub(crate) struct Loading {
     table: QualifiedName,
     pub(super) mark: usize,
     indexes: Vec<Arc<dyn Index>>,
+    grouped: Option<usize>,
 }
 
 /// What ends a load: called with each index held back and its entries, in
@@ -49,19 +51,30 @@ impl Txn {
     }
 
     /// Begins a load into `table`, holding back the entries of `indexes`
-    /// from here on, unless one is under way: whether it began.
+    /// from here on, its rows going straight to groups of `grouped` rows if
+    /// given, unless one is under way: whether it began.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if the transaction's state is poisoned.
-    pub(crate) fn begin_load(&self, table: &QualifiedName, indexes: Vec<Arc<dyn Index>>) -> Result<bool> {
+    pub(crate) fn begin_load(&self, table: &QualifiedName, indexes: Vec<Arc<dyn Index>>, grouped: Option<usize>) -> Result<bool> {
         let mut st = self.state()?;
         if st.undo.loading.is_some() {
             return Ok(false);
         }
         let mark = st.undo.mark();
-        st.undo.loading = Some(Loading { table: table.clone(), mark, indexes });
+        st.undo.loading = Some(Loading { table: table.clone(), mark, indexes, grouped });
         Ok(true)
+    }
+
+    /// The rows of a group, if a load under way writes its rows straight
+    /// to groups (RULES.md D533).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the transaction's state is poisoned.
+    pub(crate) fn load_rows(&self) -> Result<Option<usize>> {
+        Ok(self.state()?.undo.loading.as_ref().and_then(|l| l.grouped))
     }
 
     /// The table a load under way is into, if one is.
