@@ -108,7 +108,7 @@ impl PhysicalPlanner<'_> {
     /// `alt` planned whole, estimated by its own estimator, and shown as a
     /// grouping of a relation grouped first.
     fn eager_planned(&self, alt: &LogicalPlan, want: &[SortKey]) -> Built {
-        let estimates = Estimates::over(self.db, alt);
+        let estimates = Estimates::over(self.db, alt, self.values);
         let mut built = PhysicalPlanner { est: Some(&estimates), ..*self }.build_node(alt, want);
         if let Plan::Aggregate { detail, .. } = &mut built.plan
             && self.shown

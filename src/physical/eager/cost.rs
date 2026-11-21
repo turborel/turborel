@@ -95,6 +95,12 @@ fn joined(build: f64, probe: f64) -> f64 {
     (build + probe) * hashed(build, (JOIN_FEW, JOIN_LARGE))
 }
 
+/// The work of a join hashing the fewer of `left` and `right` rows and
+/// probing with the rest, none dropped first.
+fn paired(left: f64, right: f64) -> f64 {
+    joined(left.min(right), left.max(right))
+}
+
 /// The work of an inner hash join of `left` and `right` rows giving
 /// `own`, its runtime filter made if `filters`: the filter judges each
 /// probing row and keeps for hashing only those a built key matches, as
@@ -103,7 +109,7 @@ fn joined(build: f64, probe: f64) -> f64 {
 fn filtered((left, right, own): (f64, f64, f64), filters: bool) -> f64 {
     let (build, probe) = (left.min(right), left.max(right));
     if !filters {
-        return joined(build, probe);
+        return paired(left, right);
     }
     let per_row = hashed(build, (JOIN_FEW, JOIN_LARGE));
     let kept = (own.max(build) / probe).min(1.0_f64);
@@ -122,15 +128,11 @@ fn work_at(plan: &Plan, (depth, filters): (usize, bool)) -> f64 {
         Plan::Filter { cond, input, .. } => w(input) + rows(input) * (ROW_STEP + conjuncts(cond) * COLUMN_VALUE),
         Plan::Project { input, .. } => w(input) + rows(input) * ROW_STEP,
         Plan::HashJoin { left, right, .. } => w(left) + w(right) + filtered((rows(left), rows(right), own), filters) + own * ROW_STEP,
-        Plan::OuterJoin { left, right, .. } => {
-            w(left) + w(right) + joined(rows(left).min(rows(right)), rows(left).max(rows(right))) + own * ROW_STEP
-        }
-        // A semi join hashes, marks or reads each row of both as a hash
-        // join builds and probes them.
-        Plan::SemiJoin(j) => {
-            let (l, r) = (rows(&j.left), rows(&j.right));
-            w(&j.left) + w(&j.right) + joined(l.min(r), l.max(r)) + own * ROW_STEP
-        }
+        Plan::OuterJoin { left, right, .. } => w(left) + w(right) + paired(rows(left), rows(right)) + own * ROW_STEP,
+        // A semi or mark join hashes, marks or reads each row of both as a
+        // hash join builds and probes them.
+        Plan::SemiJoin(j) => w(&j.left) + w(&j.right) + paired(rows(&j.left), rows(&j.right)) + own * ROW_STEP,
+        Plan::MarkJoin(j) => w(&j.left) + w(&j.right) + paired(rows(&j.left), rows(&j.right)) + own * ROW_STEP,
         Plan::Product { left, right, .. } => w(left) + w(right) + own * PRODUCT_ROW,
         Plan::IndexJoin { left, cost, .. } => w(left) + cost + own * ROW_STEP,
         Plan::MergeJoin(m) => w(&m.left) + w(&m.right) + (rows(&m.left) + rows(&m.right) + own) * ROW_STEP,
