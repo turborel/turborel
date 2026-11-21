@@ -16,9 +16,11 @@
 //!              each one's digits and exceptions (`alp.rs`)
 //! FSST:        texts, each as codes of a table of their common substrings
 //!              (`fsst.rs`)
-//! DICTIONARY:  bits u8 | entries u32 | (entries + 1) × u32, where each
-//!              entry begins and the last ends | the entries | count × bits,
-//!              bit-packed, each value's entry, a null's 0
+//! DICTIONARY:  bits u8, its high bit set if the entries are in order as
+//!              strings compare (`SORTED`) | entries u32 | (entries + 1) ×
+//!              u32, where each entry begins and the last ends | the
+//!              entries | count × bits, bit-packed, each value's entry, a
+//!              null's 0
 //! ```
 //!
 //! Integers are little-endian. Each value is as its type writes it in a
@@ -26,6 +28,7 @@
 //! reading it plain, a value at a time: frame of reference needs only that
 //! a field be 8 bytes, any 8 bytes being a signed integer.
 
+mod dictionary;
 mod words;
 
 use std::collections::HashMap;
@@ -52,6 +55,9 @@ const FRAMED: usize = 8;
 const MOST_ENTRIES: usize = 1 << 16;
 /// The bits of a code of the most entries.
 const MOST_CODE_BITS: u32 = 16;
+/// The bit of a dictionary's bits byte set if its entries are in order
+/// (RULES.md D512).
+const SORTED: u8 = 0x80;
 
 /// How a chunk's values are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,7 +213,7 @@ impl<'f> Sizer<'f> {
 }
 
 /// Appends `fields` to `out` as `plan` writes them, of texts by `table`.
-pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], table: Option<&Table>, out: &mut Vec<u8>) -> Result<()> {
+pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], (table, sorted): (Option<&Table>, bool), out: &mut Vec<u8>) -> Result<()> {
     match plan {
         Plan::Fixed(width) => {
             out.extend_from_slice(&word(width)?);
@@ -233,7 +239,7 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], table: Option<&Tabl
             out.extend_from_slice(one);
         }
         Plan::Frame(least, bits) => framed(fields, (least, bits), out),
-        Plan::Dictionary(bits) => dictionary(fields, bits, out)?,
+        Plan::Dictionary(bits) => dictionary::write(fields, (bits, sorted), out)?,
         Plan::Runs(least, bits) => super::runs::encode(fields, (least, bits), out)?,
         Plan::Alp(factors, least, bits) => super::alp::encode(fields, (factors, least, bits), out)?,
         Plan::Fsst => super::fsst::encode(fields, table.ok_or_else(|| corrupt("texts have no table"))?, out)?,
@@ -253,41 +259,6 @@ fn framed(fields: &[Option<Vec<u8>>], (least, bits): (i64, u32), out: &mut Vec<u
     pack(deltas, bits, out);
 }
 
-/// Appends `fields` as a dictionary of their values, each one's entry in a
-/// code of `bits`, bit-packed.
-fn dictionary(fields: &[Option<Vec<u8>>], bits: u32, out: &mut Vec<u8>) -> Result<()> {
-    let mut places: HashMap<&[u8], usize> = HashMap::new();
-    let mut entries: Vec<&[u8]> = Vec::new();
-    let codes: Vec<u64> = fields
-        .iter()
-        .map(|f| {
-            f.as_deref().map_or(0, |f| {
-                *places.entry(f).or_insert_with(|| {
-                    entries.push(f);
-                    entries.len().saturating_sub(1)
-                })
-            })
-        })
-        .map(|c| u64::try_from(c).unwrap_or(u64::MAX))
-        .collect();
-    if entries.len() > MOST_ENTRIES {
-        return Err(too_large());
-    }
-    out.push(u8::try_from(bits).unwrap_or(u8::MAX));
-    out.extend_from_slice(&word(entries.len())?);
-    let mut at = 0_usize;
-    out.extend_from_slice(&word(at)?);
-    for entry in &entries {
-        at = at.checked_add(entry.len()).ok_or_else(too_large)?;
-        out.extend_from_slice(&word(at)?);
-    }
-    for e in &entries {
-        out.extend_from_slice(e);
-    }
-    pack(codes.into_iter(), bits, out);
-    Ok(())
-}
-
 /// Of a dictionary of texts, its entries as text, one after another, and
 /// where each ends.
 #[derive(Debug, Clone, Default)]
@@ -302,7 +273,7 @@ pub(super) enum Body<'a> {
     Varying { offsets: &'a [u8], values: &'a [u8] },
     Constant { field: &'a [u8] },
     Frame { least: i64, bits: u32, deltas: &'a [u8] },
-    Dictionary { bits: u32, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
+    Dictionary { bits: u32, sorted: bool, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
     Runs(Runs<'a>),
     Alp(Alp<'a>),
     Fsst(Coded<'a>),
@@ -341,7 +312,8 @@ pub(super) fn body<'a>(kind: u8, count: usize, (bytes, at): (&'a [u8], usize), t
             Ok(Body::Frame { least, bits, deltas })
         }
         DICTIONARY => {
-            let bits = u32::from(*rest.first().ok_or_else(|| corrupt("it is too short"))?);
+            let byte = *rest.first().ok_or_else(|| corrupt("it is too short"))?;
+            let (bits, sorted) = (u32::from(byte & !SORTED), byte & SORTED != 0);
             if bits > MOST_CODE_BITS {
                 return Err(corrupt("its codes are wider than 16 bits"));
             }
@@ -357,7 +329,7 @@ pub(super) fn body<'a>(kind: u8, count: usize, (bytes, at): (&'a [u8], usize), t
                 entries_at.saturating_add(entries_len),
                 packed_len(count, bits).ok_or_else(|| corrupt("its codes are too long"))?,
             )?;
-            Ok(Body::Dictionary { bits, offsets, entries: held, codes })
+            Ok(Body::Dictionary { bits, sorted, offsets, entries: held, codes })
         }
         RUNS => Ok(Body::Runs(Runs::parse(rest, count)?)),
         ALP => Ok(Body::Alp(Alp::parse(rest, count)?)),
