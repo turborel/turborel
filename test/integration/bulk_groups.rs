@@ -18,7 +18,7 @@ const ROWS: i64 = 12_000;
 /// The schema S with T, of the column store in groups of 4096 rows: a key,
 /// a value scrambled, and a CHECK.
 const SCHEMA: &str = "CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER PRIMARY KEY, A INTEGER NOT NULL, \
-                      C INTEGER CHECK (C >= 0)) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 4096)";
+                      C INTEGER CHECK (C >= 0)) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 4096, COLUMNSTORE.LOAD = 'GROUPS')";
 
 /// A database of `SCHEMA`, its background work done only when asked.
 fn database() -> Database {
@@ -125,6 +125,37 @@ fn the_groups_of_a_load_are_undone_with_it() {
     s.commit().unwrap();
     assert_eq!(found(&s).0, usize::try_from(ROWS).unwrap());
     assert!(all_frozen(&s), "no row through the tree");
+}
+
+/// Verifies: [EXTENSION] RULES.md D533: a load into a table of the
+/// column store that leaves COLUMNSTORE.LOAD as TREE goes through its tree,
+/// no group written, a copy told no group's rows; set to GROUPS in place,
+/// the next load goes straight to groups.
+#[test]
+fn a_load_goes_through_the_tree_unless_asked() {
+    let tree = || {
+        let db = Database::new();
+        db.set_job_policy(JobPolicy::Manual).unwrap();
+        db.schema(&SCHEMA.replace(", COLUMNSTORE.LOAD = 'GROUPS'", "")).unwrap();
+        db
+    };
+    let db = tree();
+    let s = db.session("S");
+    let p = s.prepare("INSERT INTO T (K, A, C) VALUES (?, ?, ?)").unwrap();
+    s.execute_prepared_rows(&p, &given(0, 5000), Load::Going).unwrap();
+    assert_eq!(s.load_rows(), None, "no group's rows told");
+    s.execute_prepared_rows(&p, &[], Load::Ending).unwrap();
+    s.commit().unwrap();
+    assert_eq!(found(&s).0, 5000);
+    assert!(!all_frozen(&s), "its rows in the tree");
+    let asked = tree();
+    let a = asked.session("S");
+    a.run("ALTER TABLE T SET (COLUMNSTORE.LOAD = 'GROUPS')").unwrap();
+    a.commit().unwrap();
+    inserted(&a, (0, 5000));
+    a.commit().unwrap();
+    assert_eq!(found(&a).0, 5000);
+    assert!(all_frozen(&a), "straight to groups once asked");
 }
 
 /// The bytes of T as TABLE_STATISTICS shows them.

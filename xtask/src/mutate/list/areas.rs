@@ -7,6 +7,8 @@ mod batches;
 mod btree;
 mod budget;
 mod bulk;
+mod checkpoint;
+mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
 mod cost_model;
@@ -56,7 +58,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 21] {
+pub fn core() -> [&'static [Mutation]; 23] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -74,6 +76,8 @@ pub fn core() -> [&'static [Mutation]; 21] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &checkpoint::CHECKPOINT,
+        &io_path::IO_PATH,
         &btree::BTREE,
         &monitoring::MONITORING,
         &bulk::BULK,
@@ -89,7 +93,7 @@ pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// The first half of the areas, in order.
-fn first() -> [&'static [Mutation]; 26] {
+fn first() -> [&'static [Mutation]; 27] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -106,6 +110,7 @@ fn first() -> [&'static [Mutation]; 26] {
         &super::distinct::DISTINCT,
         &super::bigint::BIGINT,
         &super::wide_exact::WIDE_EXACT,
+        &super::call_floor::CALL_FLOOR,
         &super::distinct_predicate::DISTINCT_PREDICATE,
         &super::partitioned_joins::PARTITIONED_JOINS,
         &super::grouping_sets::GROUPING_SETS,

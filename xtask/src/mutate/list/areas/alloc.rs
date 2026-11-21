@@ -1,8 +1,10 @@
 //! The mutations of the allocations taken out of the row store's reads
-//! (RULES.md R-TEST-9): an undo batch's versions shared where its record
-//! holds them, the batches read kept, a version narrowed to its record,
-//! a record's columns decoded as asked, a file log's record taken out of
-//! its reader, and character strings compared byte by byte, padded.
+//! and writes (RULES.md R-TEST-9): an undo batch's versions shared where
+//! its record holds them, the batches read kept, a version narrowed to its
+//! record, a record's columns decoded as asked and written in place, a
+//! file log's record taken out of its reader, character strings compared
+//! byte by byte, padded, and zones kept due resting after a pass over
+//! every zone.
 
 use super::super::{Mutation, Package};
 
@@ -16,7 +18,7 @@ const READ_BACK: &str = "engine::rows::undo::tests::batched_versions_read_back_a
 const PADDED: &str = "value::comparison::strings::shorter_string_padded_with_spaces";
 
 /// Mechanisms of the row store's reads without copies whose removal must fail their tests.
-pub const ALLOC: [Mutation; 7] = [
+pub const ALLOC: [Mutation; 9] = [
     Mutation {
         name: "alloc-undo-span-length",
         package: Package::Core,
@@ -86,5 +88,25 @@ pub const ALLOC: [Mutation; 7] = [
         replacement: "map_or(Ordering::Equal, |_| Ordering::Greater)",
         integration: &[],
         unit: &[PADDED, "value::comparison::strings::bytes_compare_in_scalar_order"],
+    },
+    Mutation {
+        name: "alloc-zones-swept-no-rest",
+        package: Package::Core,
+        breaks: "zones writes keep due never rest while a call finds as many due as it sums up, so the maintenance thread sums them up over and over",
+        file: "src/engine/rows/zones/summed.rs",
+        original: "        if self.swept(looked, map.zones.len()) || due.len() < MOST_SUMMED {",
+        replacement: "        if due.len() < MOST_SUMMED {",
+        integration: &[],
+        unit: &["engine::rows::zones::rested::zones_kept_due_rest_after_a_pass_over_every_zone"],
+    },
+    Mutation {
+        name: "alloc-record-failed-left",
+        package: Package::Core,
+        breaks: "a record refused part way is left in the buffer it was written into",
+        file: "src/engine/record.rs",
+        original: "                out.truncate(base);\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::record::tests::records_are_appended_and_a_failed_one_leaves_none"],
     },
 ];

@@ -10,9 +10,11 @@
 //! 1. takes the log's end, L: the checkpoint holds every change logged
 //!    before it;
 //! 2. has every engine capture what it holds through L
-//!    (`StorageEngine::checkpoint`): the row store writes its pages and its
-//!    pager's free list into its shadowed file (`disk/shadow.rs`), no sync,
-//!    and seals that batch; what plug-ins write meanwhile to their
+//!    (`StorageEngine::checkpoint`): the row store marks the pages changed
+//!    since the last checkpoint owed to this one, copying none (RULES.md
+//!    D590), writes those it cannot capture later and its pager's free
+//!    list into its shadowed file (`disk/shadow.rs`), no sync, and seals
+//!    that batch; what plug-ins write meanwhile to their
 //!    shadowed directories (RULES.md D56) is held in memory, then sealed;
 //!    and holds back collection of every table with indexes or large
 //!    object columns, noting the last commit captured;
@@ -34,8 +36,9 @@
 //!    the files are as the last image left them until step 5;
 //! 5. commits the plug-ins' sealed batch, then has every engine make its
 //!    capture durable (`StorageEngine::checkpoint_finish`): the row store
-//!    commits the sealed batch, so after a crash its tables are as they
-//!    were at L;
+//!    writes each page owed into the sealed batch as it was at L, a writer
+//!    having copied any it changed since, then commits the batch, so after
+//!    a crash its tables are as they were at L;
 //! 6. records the image in the catalog file: the definitions, each table's
 //!    and index's locator, L, and the position of the first record of the oldest
 //!    transaction open at L, from which recovery reads the log;

@@ -64,7 +64,7 @@ fn stale_paths_move_right_and_find_their_parent_again() {
     let before = tree.counts();
     // Longer than the room its prefix left in the full leaf.
     let long = [7_u8; 400];
-    assert!(matches!(tree.write_from(path, first, (&key(0), &long), Mode::Insert).unwrap(), Written::Done(None, _)));
+    assert!(matches!(tree.write_from(&path, first, (&key(0), &long), Mode::Insert).unwrap(), Written::Done(None, _)));
     let after = tree.counts();
     assert!(after.splits > before.splits && after.root_splits == before.root_splits, "the full leaf split; no new root");
     assert_eq!(tree.get(&key(0)).unwrap(), Some(long.to_vec()));
@@ -73,7 +73,7 @@ fn stale_paths_move_right_and_find_their_parent_again() {
     assert_eq!(tree.delete_from(&Path::default(), first, &key(19_000), None).unwrap(), Some(VALUE.to_vec()));
     assert!(tree.counts().right_moves > after.right_moves + 400, "moved right across the leaves");
     assert_eq!(tree.get(&key(19_000)).unwrap(), None);
-    assert!(matches!(tree.write_from(Path::default(), first, (&key(19_000), b"back"), Mode::Insert).unwrap(), Written::Done(None, _)));
+    assert!(matches!(tree.write_from(&Path::default(), first, (&key(19_000), b"back"), Mode::Insert).unwrap(), Written::Done(None, _)));
     assert_eq!(tree.get(&key(19_000)).unwrap(), Some(b"back".to_vec()));
     expected.reverse();
     assert_eq!(keys(&tree, Direction::Backward), expected);
@@ -248,7 +248,7 @@ fn stale_paths_follow_a_leaf_taken_out() {
     assert!(Node::parse(&page).unwrap().deleted, "kept, marked, while an operation may hold it");
     drop(page);
     let moved = in_leaf[0];
-    assert!(matches!(tree.write_from(path, leaf, (&key(moved), &VALUE), Mode::Insert).unwrap(), Written::Done(None, _)));
+    assert!(matches!(tree.write_from(&path, leaf, (&key(moved), &VALUE), Mode::Insert).unwrap(), Written::Done(None, _)));
     assert_eq!(tree.get(&key(moved)).unwrap(), Some(VALUE.to_vec()));
     assert_eq!(tree.delete_from(&Path::default(), leaf, &key(moved), None).unwrap(), Some(VALUE.to_vec()));
     seen.extend(scan.map(|e| e.unwrap().0));
@@ -547,3 +547,6 @@ mod hinted;
 
 // Threads writing and reading at once, against models.
 mod stress;
+
+// Splits of leaves whose keys share a long prefix (RULES.md D500).
+mod shared;

@@ -46,8 +46,8 @@ pub const DEFAULT_MAX_OPEN: usize = 1024;
 /// looks again, if no file done with one wakes it first.
 const LOOK_AGAIN: Duration = Duration::from_millis(10);
 
-/// \[DESIGN\] A database's files: those it holds now, the most it may
-/// hold open, and a clock of their uses.
+/// \[DESIGN\] A database's files: those it holds now, and the most it may
+/// hold open.
 #[derive(Default)]
 pub struct Registry {
     files: Mutex<HashMap<u64, Weak<Handle>>>,
@@ -56,8 +56,6 @@ pub struct Registry {
     limit: AtomicUsize,
     /// The files open now.
     open: AtomicUsize,
-    /// The uses so far, each file's last kept as its place in the order.
-    clock: AtomicU64,
     /// Woken as a file is done being read or written, for one waiting.
     done: Signal,
     waiting: Mutex<()>,
@@ -243,7 +241,7 @@ impl Registry {
     fn evict(&self, asking: u64, failed: &mut Vec<SqlError>) -> bool {
         let mut handles: Vec<(u64, Arc<Handle>)> =
             self.locked().iter().filter(|(id, _)| **id != asking).filter_map(|(id, h)| Some((*id, h.upgrade()?))).collect();
-        handles.sort_by_key(|(_, h)| (h.dirty.load(Ordering::Acquire), h.used.load(Ordering::Relaxed)));
+        handles.sort_by_key(|(id, h)| (h.dirty.load(Ordering::Acquire), h.used.load(Ordering::Relaxed), *id));
         for (_, handle) in handles {
             let closing = handle.close_if_idle(true);
             failed.extend(closing.failed);
@@ -309,7 +307,7 @@ impl Handle {
     /// Does `op` with its descriptor, counted as `what`, its use marked.
     fn with<T>(&self, id: u64, what: Use, op: impl FnOnce(&dyn DiskFile) -> Result<T>) -> Result<T> {
         let held = self.held(id)?;
-        self.used.store(self.registry.clock.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
+        self.used.store(stamp(), Ordering::Relaxed);
         if let Some(count) = self.counts.get(what.at()) {
             count.fetch_add(1, Ordering::Relaxed);
         }
@@ -402,6 +400,25 @@ impl Handle {
     }
 }
 
+/// \[DESIGN\] When a file is used, as its place in the order of uses
+/// (RULES.md D591): nanoseconds of the monotonic clock since the first
+/// stamp, later than the thread's last, so one thread's uses never tie.
+/// Each read or write is stamped so with no write any other file shares,
+/// where a count of uses shared by every file was a cache line each I/O
+/// of every thread wrote.
+fn stamp() -> u64 {
+    static FIRST: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    thread_local! {
+        static LAST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    let now = u64::try_from(FIRST.get_or_init(std::time::Instant::now).elapsed().as_nanos()).unwrap_or(u64::MAX);
+    LAST.with(|last| {
+        let stamp = now.max(last.get().saturating_add(1));
+        last.set(stamp);
+        stamp
+    })
+}
+
 /// The error of a descriptor closed under a read or write, which the
 /// handle's lock never lets be.
 fn closed() -> SqlError {
@@ -484,7 +501,7 @@ impl FileSystem for FileManager {
             path: path.to_path_buf(),
             reopen,
             file: RwLock::new(Some(file)),
-            used: AtomicU64::new(self.registry.clock.fetch_add(1, Ordering::Relaxed)),
+            used: AtomicU64::new(stamp()),
             counts: Default::default(),
             registry: Arc::clone(&self.registry),
             dirty: AtomicBool::new(false),
