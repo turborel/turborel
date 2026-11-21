@@ -430,6 +430,7 @@ mod vectors;
 mod views;
 mod warnings;
 mod width_bucket;
+mod window_batches;
 mod window_distinct;
 mod window_nested;
 mod window_nested_rules;

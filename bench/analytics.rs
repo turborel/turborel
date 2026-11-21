@@ -77,6 +77,8 @@ mod social;
 mod sorts;
 #[path = "analytics/unnesting.rs"]
 mod unnesting;
+#[path = "analytics/windows.rs"]
+mod windows;
 
 use harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
@@ -88,7 +90,8 @@ use turborel::db::{Database, Session};
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
 /// `grouping` for groupings on one thread, `late` for a column store's
-/// selective queries, `sorts` for ORDER BY and top-N.
+/// selective queries, `sorts` for ORDER BY and top-N, `windows` for
+/// window functions of every frame type.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -139,6 +142,7 @@ fn main() {
     decode::workloads(&bench);
     late::workloads(&bench);
     sorts::workloads(&bench);
+    windows::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -153,6 +157,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "parallel" => parallel::workloads,
         "late" => late::workloads,
         "sorts" => sorts::workloads,
+        "windows" => windows::workloads,
         _ => return false,
     };
     run(bench);

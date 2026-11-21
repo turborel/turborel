@@ -19,11 +19,13 @@ mod keyed;
 mod merge;
 mod normal;
 mod out;
+mod peers;
 mod prefix;
 mod top;
 mod vectors;
 
 pub(super) use keyed::sorted_rows;
+pub(super) use peers::{KeyedBatches, RunKeys, alike_cells, keys_of, sorted_keyed};
 pub(super) use vectors::{rows_of_batches, sort_batches, sorted_morsel, sorted_morsel_batches, sorted_out};
 
 use std::cmp::Ordering;

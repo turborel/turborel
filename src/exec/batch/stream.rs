@@ -65,6 +65,13 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
             let (columns, width) = layout(input, db)?;
             columns.iter().copied().eq(0..width).then(|| ((0..width).collect(), width))
         }
+        // [ISO/IEC 9075-2:2023 §7.15] a window over batches gives its
+        // input's columns and a column of each call (RULES.md D560).
+        Plan::Window { window, .. } => {
+            let width = crate::exec::batch::whole_width(&window.input, db)?;
+            let all = width.checked_add(window.calls.len())?;
+            crate::exec::window::admits_batches(window).then(|| ((0..all).collect(), all))
+        }
         // A top-N's first rows, few, made batches (D380).
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }).then(|| layout(input, db)).flatten(),
         Plan::Append { .. } => {
@@ -94,7 +101,6 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::System { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
-        | Plan::Window { .. }
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
@@ -151,6 +157,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, most: None, .. } => reads_by_batch(input, db),
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }) && reads_by_batch(input, db),
         Plan::Counted(c) => reads_by_batch(&c.input, db),
+        Plan::Window { window, .. } => reads_by_batch(&window.input, db),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
         Plan::Product { left, right, .. } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
@@ -168,7 +175,6 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::System { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
-        | Plan::Window { .. }
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
@@ -216,7 +222,7 @@ pub(super) fn open(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Stream> {
 /// # Errors
 ///
 /// As `open`.
-pub(super) fn whole_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(in crate::exec) fn whole_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let width = layout(&plan, db).map_or(0, |(_, width)| width);
     Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width))?))
 }
@@ -252,6 +258,7 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
         Plan::Counted(_) => super::counted::batches,
+        Plan::Window { .. } => window_batches,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
@@ -264,7 +271,6 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         | Plan::System { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
-        | Plan::Window { .. }
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
@@ -303,6 +309,16 @@ fn topped_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferre
     let rows = crate::exec::execute(plan, db, tx).map(|row| row.map(|r| (crate::storage::RowId::default(), r)));
     let batches = crate::storage::batches_of(Box::new(rows), &(0..width).collect::<Vec<_>>());
     Ok(Box::new(batches.map(|b| b.map(|b| (b, None)))))
+}
+
+/// \[DESIGN\] (RULES.md D560) The batches of `plan`, a window over
+/// batches (`window/batched.rs`).
+///
+/// # Errors
+///
+/// As its input's batches.
+fn window_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferred) -> Result<Batches> {
+    crate::exec::window::window_batches(plan, db, tx)
 }
 
 /// Of a plan that gives no batches: none.

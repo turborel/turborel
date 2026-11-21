@@ -397,6 +397,7 @@ verification approach DO-178C expects (§8).
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
+| D560 | Window functions run over batches, partitions and peers found by a kernel over the sort's keys, giving way to the rows' form for errors and the work area |
 
 ### The project
 
@@ -11174,6 +11175,46 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+
+
+#### D560. Window functions run over batches, partitions and peers found by a kernel over the sort's keys, giving way to the rows' form for errors and the work area
+
+A window reads its input's batches (`exec/window/batched.rs`). Of a sort
+the planner placed under it by its partitioning's and ordering's keys,
+each batch comes beside the normal keys the sort made of its rows
+(D364), so no key is written twice; of any other input, each batch's
+keys are written of it alone. Where a row begins a partition or a peer
+group is found by `Kernels::boundaries`, each row's key bytes compared
+with the row's before it, of the partitioning's bytes and of all. Rows
+of equal bytes whose key cuts a string short are compared by their
+values. The first row of a batch is compared with the last of the batch
+before: by bytes when both are of the sort's one layout, else by values.
+The kernel's contract tests hold every implementation to the portable
+loop (D354).
+
+A batch is held until a partition begins in it, then cut there. Every
+partition of the rows held before the cut is whole, and each call's
+values of them are computed as vectors: ranks by arithmetic of places
+and peer groups; LEAD, LAG and the value functions by picking places,
+under IGNORE NULLS through a prefix count of the values not null; every
+frame's bounds at once, as the rows' form finds them one after another.
+COUNT, and SUM and AVG of exact numbers of one scale, take differences
+of prefix sums in 128 bits; MIN and MAX of such numbers read a segment
+tree; SUM and AVG of approximate numbers add in the rows' order, as
+their accumulator does, so no answer rounds otherwise; any other set
+function is computed as the rows' form computes it, by an accumulator
+that grows, a tree of states, or each frame. Each is finished by the
+set function's own finishing, so results and errors are its own.
+
+The window gives way to the rows' form (D38, D15) for the rows held and
+all after them: where an argument is not evaluated by vectors without a
+warning or an error, where a call raises an error, and where the rows
+held pass half the work area, so the rows' form spills them. Calls only
+the rows' form computes (nested window functions, row pattern measures,
+filtered, DISTINCT or inverse distribution set functions) leave the
+whole window to it. EXECUTOR.BATCHES OFF runs every window a row at a
+time. A window run in parallel splits its rows into partitions by a
+MurmurHash3 of their partitioning's normal bytes (D357).
 
 ## 2. Project layout
 

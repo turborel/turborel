@@ -105,6 +105,17 @@ pub trait Kernels: Send + Sync {
     ) -> Option<()> {
         portable::normal::normalize_i64((values, rows), (base, bytes, invert), (width, at), keys)
     }
+
+    /// Appends to `out` the words of a mask of the `keys.len() / width`
+    /// keys of `width` bytes each, a sort's normal keys in order: bit `r`
+    /// set, for `r` from 1, if bytes `from` up to `to` of key `r` differ
+    /// from those of key `r - 1`, as a window finds where its partitions
+    /// and peer groups begin (RULES.md D560). Bit 0 is never set, nor any
+    /// past the last key; of a width of 0, or a span of no bytes or past a
+    /// key, none is.
+    fn boundaries(&self, keys: &[u8], width: usize, span: (usize, usize), out: &mut Vec<u64>) {
+        portable::boundaries::boundaries(keys, width, span, out);
+    }
 }
 
 /// \[DESIGN\] The built-in kernels: every portable body, as written.

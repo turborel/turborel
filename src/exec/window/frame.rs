@@ -136,6 +136,12 @@ impl Bounds {
         Ok(Bounds::new(start, end, frame.exclusion))
     }
 
+    /// Its start's edge, its end's, and what it leaves out, as a window
+    /// over batches finds its frames (`batched/frames.rs`).
+    pub(in crate::exec) fn edges(&self) -> (&Edge, &Edge, Exclusion) {
+        (&self.start.edge, &self.end.edge, self.exclusion)
+    }
+
     /// Begins a partition: each pointer at its first row.
     pub(in crate::exec) fn reset(&mut self) {
         self.start.at = 0;
@@ -235,7 +241,7 @@ impl Side {
 /// Whether a pointer stops at a row of the order `order` to its bound's
 /// target: the start at the first not before it, the end at the first
 /// after it.
-fn passed(order: Ordering, end: bool) -> bool {
+pub(in crate::exec) fn passed(order: Ordering, end: bool) -> bool {
     match order {
         Ordering::Less => false,
         Ordering::Equal => !end,
@@ -245,14 +251,14 @@ fn passed(order: Ordering, end: bool) -> bool {
 
 /// [GR5b i 2] The place `count` rows before (`back`) or after `place`,
 /// never before the partition's first or past its last, of `len` rows.
-fn counted(place: usize, (back, count): (bool, usize), len: usize) -> usize {
+pub(in crate::exec) fn counted(place: usize, (back, count): (bool, usize), len: usize) -> usize {
     if back { place.saturating_sub(count) } else { place.saturating_add(count).min(len) }
 }
 
 /// [GR5b i 1 B I 2 b ii, III 2 b ii] The range key `key` moved by `by`:
 /// less if `subtract`. A datetime moved by a year-month interval to a day
 /// its month has not is that month's last day [GR5b i 1 A].
-fn moved(key: &Value, by: &Value, subtract: bool) -> Result<Value> {
+pub(in crate::exec) fn moved(key: &Value, by: &Value, subtract: bool) -> Result<Value> {
     if let (Value::Datetime(d), Value::Interval(i)) = (key, by) {
         return shift_clamped(d, i, subtract);
     }

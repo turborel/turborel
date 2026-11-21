@@ -3,6 +3,7 @@
 //! instruction of one machine's named, each the default of its
 //! `Kernels` method and the reference its contract tests compare with.
 
+pub mod boundaries;
 pub mod gather;
 pub mod hash;
 pub mod normal;

@@ -38,9 +38,9 @@ pub(super) use joined::rows_of;
 pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
 pub(super) use late::{Deferred, resolved};
 use project::Place;
-pub(super) use project::{projectable, projected};
+pub(super) use project::{projectable, projected, vector_of};
 pub(super) use shaped::{Shaped, filter_step, project_step, through};
-pub(super) use stream::Batches;
+pub(super) use stream::{Batches, whole_batches};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;

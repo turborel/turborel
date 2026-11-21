@@ -32,6 +32,7 @@ mod txn_layer;
 // modules.
 mod unnesting;
 mod uuid;
+mod windows_batched;
 
 use super::Mutation;
 
@@ -94,7 +95,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 41] {
+fn second() -> [&'static [Mutation]; 42] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -137,6 +138,7 @@ fn second() -> [&'static [Mutation]; 41] {
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
+        &windows_batched::WINDOWS_BATCHED,
     ]
 }
 
