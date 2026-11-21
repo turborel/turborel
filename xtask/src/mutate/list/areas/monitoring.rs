@@ -15,7 +15,7 @@ pub const MONITORING: [Mutation; 11] = [
         package: Package::Server,
         breaks: "a wait for a row is not noted, so CONNECTIONS shows the waiting connection waiting on nothing",
         file: "src/txn/row_waits.rs",
-        original: "        self.stop.activity().waits_for_lock(what.to_string(), writer);\n",
+        original: "        self.stop.activity().waits_for_lock(format!(\"a row of {table}\"), writer);\n",
         replacement: "",
         integration: &["activity::a_connection_shows_the_lock_it_waits_on"],
         unit: &[],

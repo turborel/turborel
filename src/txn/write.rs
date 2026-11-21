@@ -201,6 +201,11 @@ impl State {
             // again over the version committed, before the next waiter's.
             let e = match attempt {
                 Ok((old, history)) => {
+                    // [DESIGN] RULES.md D743: the row's line behind it
+                    // queues on this transaction, unwoken.
+                    if let Some(turn) = &turn {
+                        turn.hand_over(tx, (table, id));
+                    }
                     if let (Some(history), Some(stamp)) = (history, &stamp) {
                         self.insert_row(tx, &history, &stamp.ended(&old))?;
                     }
@@ -216,7 +221,7 @@ impl State {
             let newest = self.storage_of(table)?.newest(tx.id, id)?;
             if let Some(writer) = newest.writer {
                 drop(turn.take());
-                turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
+                turn = tx.wait_for_row((table, id), writer)?;
                 seen = None;
                 continue;
             }

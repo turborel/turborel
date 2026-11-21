@@ -1,18 +1,19 @@
 //! The mutations of a row's second writer waiting (RULES.md R-TEST-9, D28,
 //! D29): the wait, the deadlock refusal, the re-check of the version the
-//! first committed, and the served default; and of signals (D27), a waiter
-//! counted and a notify made while one waits.
+//! first committed, the served default, and a row's waiters handed to its
+//! next writer (D743); and of signals (D27), a waiter counted and a notify
+//! made while one waits.
 
 use super::{Mutation, Package};
 
 /// The mutations of row waits and signals, in the order they run.
-pub const WAITS: [Mutation; 9] = [
+pub const WAITS: [Mutation; 12] = [
     Mutation {
         name: "row-wait-skipped",
         package: Package::Core,
         breaks: "a row's second writer is refused at once instead of waiting for the first",
         file: "src/txn/write.rs",
-        original: "                turn = tx.wait_for_row(&format_args!(\"a row of {table}\"), writer)?;",
+        original: "                turn = tx.wait_for_row((table, id), writer)?;",
         replacement: "                return Err(e);",
         integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
         unit: &[],
@@ -96,5 +97,35 @@ pub const WAITS: [Mutation; 9] = [
         replacement: "        if self.waiting.load(Ordering::SeqCst) == 0 {\n            self.condvar.notify_all();",
         integration: &[],
         unit: &["sync::signal::tests::a_notify_wakes_each_thread_counted_waiting"],
+    },
+    Mutation {
+        name: "row-handover-moves-none",
+        package: Package::Core,
+        breaks: "a row's waiters stay on the ended writer's end, each waking to find the next writer (D743)",
+        file: "src/txn/row_waits.rs",
+        original: "            let moves = seat.row.1 == id && ",
+        replacement: "            let moves = false && seat.row.1 == id && ",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
+    },
+    Mutation {
+        name: "row-handover-moves-other-rows",
+        package: Package::Core,
+        breaks: "a hand-over moves the waiters for other rows of the ended writer too (D743)",
+        file: "src/txn/row_waits.rs",
+        original: "            let moves = seat.row.1 == id && seat.row.0 == *table && ",
+        replacement: "            let moves = ",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
+    },
+    Mutation {
+        name: "row-handover-out-of-order",
+        package: Package::Core,
+        breaks: "a hand-over seats the moved waiters out of their order (D743)",
+        file: "src/txn/row_waits.rs",
+        original: "        moving.sort_unstable_by_key(|&(t, _)| t);\n",
+        replacement: "",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
     },
 ];

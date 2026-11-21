@@ -473,6 +473,7 @@ verification approach DO-178C expects (§8).
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
+| D743 | A row's waiters move, unwoken, to the end of the waiter that writes it next |
 
 ### The project
 
@@ -13323,6 +13324,28 @@ values, and so do results past 18 digits, which the set functions add
 in 128 bits (D32). A path in 128 bits for whole vectors would double the
 width of every vector of integers, or add a second kind of them to
 every kernel, for values that are rare.
+
+#### D743. A row's waiters move, unwoken, to the end of the waiter that writes it next
+
+D442 and D449 queued a row's waiters on its writer's end and woke them
+one at a time once it ended. The first wrote the row and became its
+writer. Each waiter behind it then still woke in its turn, tried its
+write, found the first the row's new writer and queued again on its end.
+On a hot row, every writer's end woke every waiter in the line once,
+each only to sleep again.
+
+A waiter now sits in a seat of its own, which holds the row it would
+change and where it stands, an end and a ticket there. A waiter whose
+turn's write is made hands the seats behind it for the same row to its
+own end, in their order, without waking them (`Turn::hand_over`). Each
+then waits for it in the graph, as it would after waking to find it.
+Seats for other rows stay and go on as before. A seat whose wait on the
+new writer would deadlock stays too, to wake and find that itself. A
+waiter that gives up leaves the line its seat is in, wherever a
+hand-over moved it.
+
+This does not stop a transaction that never waited from writing the
+row first, between its writer's end and its first waiter's write.
 
 ## 2. Project layout
 
