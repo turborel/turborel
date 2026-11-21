@@ -547,3 +547,6 @@ mod hinted;
 
 // Threads writing and reading at once, against models.
 mod stress;
+
+// Writers on hot nodes (RULES.md D503).
+mod hot;

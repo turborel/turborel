@@ -128,7 +128,7 @@ impl BLinkTree {
 /// Whether `node`, a page noted, may be trusted as a leaf of the tree
 /// whose meta page is `tree`, for `key`: one not deleted, its first key at
 /// or below `key`.
-fn trusted(node: &Node<'_>, tree: u64, key: &[u8]) -> Result<bool> {
+pub(super) fn trusted(node: &Node<'_>, tree: u64, key: &[u8]) -> Result<bool> {
     if node.tree != tree || node.level != 0 || node.deleted || node.len() == 0 {
         return Ok(false);
     }

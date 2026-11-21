@@ -392,6 +392,7 @@ verification approach DO-178C expects (§8).
 | D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
 | D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
 | D502 | Each frame keeps a version word, and descents read inner nodes from per-thread copies it validates |
+| D503 | A writer owns a node through its frame; keys in order go to the rightmost leaf with no descent; a leaf writers wait for splits early |
 
 ### The project
 
@@ -11055,6 +11056,39 @@ The semantics hold for these reasons.
   is never taken for one of its own.
 - Leaves are not copied. A leaf's read latches it, so what a reader finds
   in a leaf is as before.
+
+#### D503. A writer owns a node through its frame; keys in order go to the rightmost leaf with no descent; a leaf writers wait for splits early
+
+Writers of a B-link tree kept each other off a node through a table of
+held locks, in shards by page number. Each lock and each release took a
+shard's mutex, and every release woke whoever waited on the shard.
+
+A writer now owns the node through the frame that holds it
+(`disk/buffer/owned.rs`). The frame keeps an ownership word beside its
+latch, taken by one atomic exchange when no one else holds it, and stays
+pinned while owned, so it keeps the same page. A writer that finds the
+page owned counts itself, then waits on the frame's signal. The owner
+wakes waiters only if one counted itself, under the lock the waiter
+looks under, so no wake is missed. The order writers own nodes in is
+D31's, bottom to top and left to right, so they never deadlock.
+
+The tree remembers the rightmost leaf when an entry goes past its end,
+and writes the next key there with no descent if the leaf may be
+trusted as a noted leaf is (D500). A frame holds it, it is a leaf of
+the tree, not deleted, with no right neighbour, and its first key is at
+or below the key. A leaf the tree's epochs have not freed while the
+write runs is one the write may lock and move right from, as from a
+leaf its descent found. A split of it finds its parent again from the
+root, as a split past the top of a remembered path does.
+
+A frame counts the writers that waited for it. A leaf at least three
+quarters full that 32 writers waited for is split at its middle by the
+next entry written into it, though the entry fits, so the writers of
+its keys go to two leaves (Alhomssi and Leis, "Contention and Space
+Management in B-Trees", CIDR 2021). An entry past the end of
+the rightmost leaf never splits it early, so leaves of keys written in
+order stay full. The split is D31's split, so readers, recovery and
+the format are as before.
 
 ## 2. Project layout
 

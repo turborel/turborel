@@ -61,7 +61,7 @@ fn write_map(map: &RwLock<MurmurMap<Key, usize>>) -> Map<'_> {
 
 /// How a claimed frame is filled.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Fill {
+pub(super) enum Fill {
     /// With its page's content, read from its file.
     Read,
     /// With no content: a page just allocated.
@@ -390,7 +390,7 @@ impl BufferPool {
 impl BufferPool {
     /// Pins the frame holding `key`, filling one if none does; the hint of
     /// `key` the frame. Whether it filled one.
-    fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
+    pub(super) fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
         loop {
             if let Some(pinned) = self.pin_mapped(key)? {
                 if let Some(frame) = self.settled_holding(pinned, key)? {

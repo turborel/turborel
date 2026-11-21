@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 10] = [
+pub const BTREE: [Mutation; 14] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -104,5 +104,45 @@ pub const BTREE: [Mutation; 10] = [
         replacement: "c.file == file && c.id == id",
         integration: &[],
         unit: &["engine::tree::tests::hinted::descents_read_inner_nodes_from_current_copies"],
+    },
+    Mutation {
+        name: "btree-owner-not-waited",
+        package: Package::Core,
+        breaks: "two writers own one page at once, so a change of one is lost",
+        file: "src/disk/buffer/owned.rs",
+        original: "        if self.owned.compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed).is_ok() {\n            return false;\n        }",
+        replacement: "        if self.owned.compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed).is_ok() || true {\n            return false;\n        }",
+        integration: &[],
+        unit: &["disk::buffer::owned::tests::owners_of_a_page_take_turns"],
+    },
+    Mutation {
+        name: "btree-edge-untrusted",
+        package: Package::Core,
+        breaks: "a key below the rightmost leaf is written into it, out of order",
+        file: "src/engine/tree/edge.rs",
+        original: "        if !near::trusted(&node, self.meta.0, key)? {",
+        replacement: "        if node.len() == 0 {",
+        integration: &[],
+        unit: &["engine::tree::tests::hot::keys_in_order_go_to_the_rightmost_leaf_with_no_descent"],
+    },
+    Mutation {
+        name: "btree-edge-kept-stale",
+        package: Package::Core,
+        breaks: "a remembered node that is not the rightmost leaf takes a write with no descent",
+        file: "src/engine/tree/edge.rs",
+        original: "        if node.right.is_some() || node.tree != self.meta.0 || node.level != 0 || node.deleted {",
+        replacement: "        if node.tree != self.meta.0 || node.deleted {",
+        integration: &[],
+        unit: &["engine::tree::tests::hot::a_leaf_no_longer_the_rightmost_is_forgotten"],
+    },
+    Mutation {
+        name: "btree-crowded-ignored",
+        package: Package::Core,
+        breaks: "a leaf writers keep waiting for is never split early",
+        file: "src/engine/tree/edge.rs",
+        original: "held.contended() >= CONTENDED;",
+        replacement: "held.contended() >= CONTENDED.saturating_mul(1000);",
+        integration: &[],
+        unit: &["engine::tree::tests::hot::a_leaf_writers_wait_for_is_split_early"],
     },
 ];

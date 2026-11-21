@@ -29,18 +29,20 @@
 mod ahead;
 mod eviction;
 mod hits;
+mod owned;
 mod policy;
 mod pool;
 mod tally;
 mod versions;
 
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 pub use ahead::{Ahead, AheadReader};
 pub use eviction::{Clock, Eviction};
+pub use owned::Owned;
 pub use policy::{DEFAULT_SAMPLE, EVICTED_KEPT, NEUTRAL, Policy, RANGES, Range, Report, Sampled, Table, Weighted};
 pub use policy::{EvictionSlot, MakeEviction};
 pub use pool::READ_AHEAD_PAGES;
@@ -183,6 +185,11 @@ struct Frame {
     version: AtomicU64,
     /// Its place among the pool's frames.
     index: usize,
+    /// Whether a writer owns its page, and how many wait to, and have
+    /// waited since the count was cleared (`owned.rs`, RULES.md D503).
+    owned: AtomicBool,
+    owners_waiting: AtomicU32,
+    contended: AtomicU32,
 }
 
 impl Frame {
@@ -198,6 +205,9 @@ impl Frame {
             content: RwLock::new(Vec::new()),
             version: AtomicU64::new(0),
             index,
+            owned: AtomicBool::new(false),
+            owners_waiting: AtomicU32::new(0),
+            contended: AtomicU32::new(0),
         }
     }
 

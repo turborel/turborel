@@ -5,8 +5,8 @@
 
 use super::node::{self, CHILD, Node};
 use super::{BLinkTree, Path, Slot, Target};
+use crate::disk::buffer::Owned as NodeLock;
 use crate::disk::pager::PageId;
-use crate::engine::locks::NodeLock;
 use crate::error::{Code, Result, SqlError};
 
 /// What a write asks of the entry it finds.
@@ -117,7 +117,7 @@ impl BLinkTree {
     /// The rest of `delete`, from `leaf`, reached by `path`, which may have
     /// split since it was read; only if the value is `expected`, if given.
     pub(super) fn delete_from(&self, path: &Path, leaf: PageId, key: &[u8], expected: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
-        let mut held = self.locks.lock(leaf)?;
+        let mut held = self.lock(leaf)?;
         let found = self.move_right(&mut held, key, |node| match node.search(key)? {
             Ok(at) => Ok(Some((at, node.entry(at)?.1.to_vec()))),
             Err(_) => Ok(None),
@@ -166,7 +166,7 @@ impl BLinkTree {
         let _guard = self.epochs.guard();
         let mut path = Path::default();
         let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
-        let mut held = self.locks.lock(leaf)?;
+        let mut held = self.lock(leaf)?;
         let begins = key.get(..prefix).unwrap_or(key);
         let (found, alone) = self.move_right(&mut held, key, |node| {
             let found = match node.search(key)? {
@@ -212,7 +212,10 @@ impl BLinkTree {
         let _guard = self.epochs.guard();
         self.fits(key, value)?;
         let mut path = Path::default();
-        let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
+        let leaf = match self.edge_for(key)? {
+            Some(leaf) => leaf,
+            None => self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?.0,
+        };
         let written = self.write_from(path, leaf, (key, value), mode)?;
         // A table's row: its leaf noted for its index entries (`hints.rs`).
         if let (Written::Done(_, into), Some(row)) = (&written, self.row_of(key)) {
@@ -224,11 +227,15 @@ impl BLinkTree {
     /// The rest of `write`, from `leaf`, reached by `path`: either may be
     /// out of date, the leaf split or the tree grown since they were read.
     pub(super) fn write_from(&self, path: Path, leaf: PageId, (key, value): (&[u8], &[u8]), mode: Mode<'_>) -> Result<Written> {
-        let mut held = self.locks.lock(leaf)?;
+        let mut held = self.lock(leaf)?;
         let replace = !matches!(mode, Mode::Insert);
+        let mut past_the_end = false;
         let found = self.move_right(&mut held, key, |node| match node.search(key)? {
             Ok(at) => Ok(Ok((at, if replace { node.entry(at)?.1.to_vec() } else { Vec::new() }))),
-            Err(at) => Ok(Err(at)),
+            Err(at) => {
+                past_the_end = node.level == 0 && node.right.is_none() && at == node.len();
+                Ok(Err(at))
+            }
         })?;
         let (slot, old) = match (found, mode) {
             (Ok((at, old)), Mode::Replace) => (Slot::Replace(at), Some(old)),
@@ -242,6 +249,9 @@ impl BLinkTree {
             (Ok(_), Mode::Insert) | (Err(_), Mode::Replace | Mode::ReplaceIf(_)) => return Ok(Written::Refused),
         };
         let into = self.place(path, held, (key, value), slot)?;
+        if past_the_end {
+            self.note_edge(into);
+        }
         Ok(Written::Done(old, into))
     }
 

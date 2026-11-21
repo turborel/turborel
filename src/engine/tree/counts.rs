@@ -20,6 +20,10 @@ pub struct TreeCounts {
     /// Reads of a table's row the leaf noted for it answered, with no
     /// descent (`hints.rs`).
     pub hinted: u64,
+    /// Entries written into the rightmost leaf with no descent.
+    pub edge_writes: u64,
+    /// Leaves split early as writers waited for them.
+    pub contention_splits: u64,
 }
 
 #[derive(Default)]
@@ -29,6 +33,8 @@ pub(super) struct Counters {
     pub(super) right_moves: AtomicU64,
     pub(super) unlinked: AtomicU64,
     pub(super) hinted: AtomicU64,
+    pub(super) edge_writes: AtomicU64,
+    pub(super) contention_splits: AtomicU64,
 }
 
 /// Adds 1 to `counter`; it would wrap only after 2^64.
@@ -68,6 +74,8 @@ impl BLinkTree {
             right_moves: get(&c.right_moves),
             unlinked: get(&c.unlinked),
             hinted: get(&c.hinted),
+            edge_writes: get(&c.edge_writes),
+            contention_splits: get(&c.contention_splits),
         }
     }
 }
