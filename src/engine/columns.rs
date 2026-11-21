@@ -34,6 +34,7 @@ mod packed;
 pub mod prepared;
 mod runs;
 pub mod scan;
+pub mod sketch;
 
 pub(crate) use packed::unpack_words;
 

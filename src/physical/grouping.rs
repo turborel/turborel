@@ -32,9 +32,13 @@ impl PhysicalPlanner<'_> {
         let width = groups.len().saturating_add(aggs.len());
         let streamable = streamable(collations, seeds.len(), aggs);
         let g = Grouping { input, keys: groups, reads: Some(&reads), groups: est, width, streamable };
+        // Of MIN and MAX alone, its input's joins made semi joins where they
+        // can be (`physical/blind.rs`, RULES.md D542).
+        let unseeded = if seeds.is_empty() { groups.as_slice() } else { &[0] };
         let make = |rows: Plan, streamed: bool| {
-            let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
-            Plan::Aggregate { groups, collations, aggs, seeds, detail: detail.clone(), input: Box::new(rows), est, streamed }
+            let (reduced, aggs) = self.blind_joins(rows, (unseeded, aggs.clone(), &reads));
+            let (groups, collations, seeds) = (groups.clone(), collations.clone(), seeds.clone());
+            Plan::Aggregate { groups, collations, aggs, seeds, detail: detail.clone(), input: Box::new(reduced), est, streamed }
         };
         let plain = self.grouped(g, &inner, make);
         // [DESIGN] or with a relation of its joins grouped first (RULES.md D660).

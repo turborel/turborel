@@ -16,6 +16,7 @@
 
 mod access;
 mod analyzed;
+mod blind;
 pub use analyzed::{Analyzed, Counted, NodeCount, Operator};
 pub(crate) use analyzed::{counted, millis, operators};
 mod built;
@@ -55,6 +56,8 @@ mod range;
 pub use range::{Bound, Pruned, RangeJoin};
 mod raising;
 mod recognized;
+mod semi;
+pub use semi::{SemiJoin, SemiMethod};
 mod shown;
 pub(crate) mod spatial;
 mod streamed;
@@ -271,6 +274,8 @@ pub enum Plan {
     },
     /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
     MergeJoin(Box<MergeJoin>),
+    /// \[DESIGN\] A semi join or an antijoin (`physical/semi.rs`, RULES.md D540).
+    SemiJoin(Box<SemiJoin>),
     /// \[DESIGN\] A range join (`physical/range.rs`, RULES.md D580).
     RangeJoin(Box<RangeJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
@@ -532,6 +537,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Filter { cond, input } => self.filter(cond, input, want, None),
             LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
+            LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_join((*anti, cond), (left, right), want),
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
             LogicalPlan::Distinct { input } => self.distinct(input, want),

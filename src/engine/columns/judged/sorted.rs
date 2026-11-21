@@ -107,7 +107,7 @@ fn first_where(count: usize, holds: &dyn Fn(usize) -> Option<bool>) -> Option<us
 
 /// The strings `conjunct` compares a text with, pushed to `out`: none,
 /// of a bound a sort raises as it runs, as no constant holds it.
-fn constants_of<'c>(conjunct: &'c Conjunct, out: &mut Vec<&'c str>) -> Option<()> {
+pub(super) fn constants_of<'c>(conjunct: &'c Conjunct, out: &mut Vec<&'c str>) -> Option<()> {
     let strings = |values: &'c [Value], into: &mut Vec<&'c str>| {
         into.extend(values.iter().filter_map(|v| if let Value::Char(c) = v { Some(c.as_str()) } else { None }));
     };

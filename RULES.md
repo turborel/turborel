@@ -322,6 +322,9 @@ verification approach DO-178C expects (§8).
 | D317 | EXPLAIN shows the unnested plan, and both rules have their own settings |
 | D318 | Side effects, non-deterministic functions, UNIQUE, MATCH and a few operators keep a subquery nested |
 | D319 | A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct |
+| D540 | A semi join and an antijoin are join kinds of their own, enumerated with the others under CD-C's conflict rules |
+| D541 | A subquery of existence that is a conjunct of WHERE or HAVING is made a semi join or an antijoin before it is unnested otherwise |
+| D542 | Under MIN and MAX alone, a join whose right operand nothing above reads is a semi join |
 | D320 | A language stems by Snowball's own program, run by an interpreter of the Snowball language |
 | D321 | A language is a built-in profile of normalization, stems, stop words and cutting, named in English |
 | D322 | French, Italian, Catalan and Irish take elisions off their words, and Catalan joins a middle dot |
@@ -412,6 +415,7 @@ verification approach DO-178C expects (§8).
 | D520 | CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session |
 | D521 | Statements are tallied by normalized text and user, each session in its own tallies |
 | D522 | Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes |
+| D525 | A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code |
 | D530 | The rows of an INSERT and of a bulk copy go in together, a batch at a time, one log record each |
 | D550 | A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less |
 | D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
@@ -9199,6 +9203,87 @@ be of a predefined type other than a large object, made of columns by
 arithmetic, casts and sort keys (`optimizer/unnesting/typed.rs`). Any
 other binding keeps its subquery nested.
 
+#### D540. A semi join and an antijoin are join kinds of their own, enumerated with the others under CD-C's conflict rules
+
+`LogicalPlan::SemiJoin` gives the rows of its left operand that a row of
+its right matches, or of an antijoin that none does, each once and in
+the left's order. Its columns are its left's alone, and its condition is
+over the pair's. Join enumeration takes it into a chain as it takes an
+outer join: its right operand's relations are numbered past the chain's
+columns, since no node above reads them, and the conflict rules of
+Moerkotte, Fender and Eich, "On the Correct and Complete Enumeration of
+the Core Search Space" (2013), Tables 2 and 3, say where it may move. An
+inner join reassociates over a semi join or an antijoin below it, they
+commute on the left with inner and LEFT joins and with each other, and
+nothing else moves past them. Its rows are estimated as a share of its
+left's, the share of the left's distinct keys the right holds, so every
+order of a set gives the same rows (D302).
+
+It is run hashed on its equalities, the right built, or the left when it
+has fewer estimated rows, with a mark for each row; by an index of the
+right's table, each probe stopping at the first match; or nested, the
+right held, of a condition with no equality. Every way stops at a left
+row's first match, so the rest of its condition is evaluated on fewer
+pairs than a join would; the optimizer makes semi joins only of
+conditions that cannot raise (D15). EXPLAIN names it HashSemiJoin,
+HashAntiJoin, HashRightSemiJoin, HashRightAntiJoin, NestedLoopSemiJoin,
+NestedLoopAntiJoin, or SemiIndexNestedLoop and AntiIndexNestedLoop.
+
+#### D541. A subquery of existence that is a conjunct of WHERE or HAVING is made a semi join or an antijoin before it is unnested otherwise
+
+The rule `semi_joins`, set by OPTIMIZER.SEMI_JOINS, runs before
+`unnest_subqueries`. A conjunct that is EXISTS of a correlated subquery,
+NOT EXISTS, a quantified comparison made EXISTS (D315), an uncorrelated
+IN, or NOT of a quantified comparison becomes the semi join or antijoin
+of the node's input with the subquery's rows. Where the subquery reads
+its outer references only in its filters, under projections and a
+DISTINCT, those conjuncts are the join's condition, after Neumann and
+Kemper's §2, so no domain of bindings is computed; otherwise the
+bindings' rows are those unnesting makes (D312, D314) and the join is on
+their keys. The other conjuncts filter the input below the join, so they
+are still evaluated on every row.
+
+`NOT (x = SOME s)`, a NOT IN, keeps a row if no row's comparison is true
+or unknown, the antijoin on `(x = y) IS NOT FALSE`, which a null on
+either side satisfies [ISO/IEC 9075:1992 §8.7 GR2]; `NOT (x op ALL s)` is
+the semi join on `(x op y) IS FALSE`. An uncorrelated NOT IN stays a
+subquery, which the executor hashes once. The rule leaves a subquery
+that can raise, one under OR, and one of an impure plan; and it is off,
+with the other unnesting rules, for a plan that finds the rows a
+searched change updates (D318).
+
+#### D542. Under MIN and MAX alone, a join whose right operand nothing above reads is a semi join
+
+MIN and MAX give one value of a multiset and of its set (Yan and
+Larson, VLDB 1995), so the rows a join repeats need not be made. Of a
+grouping of no grouping columns whose every set function is MIN or MAX,
+the physical planner walks the plan of its input, its joins already
+ordered as they cost least, from the top, with the columns the operators
+above each one read (`physical/blind.rs`, OPTIMIZER.SEMI_REDUCTION). An
+inner hash join of whose right operand nothing above reads a column is
+made a hashed semi join, and an inner index join of whose table nothing
+above reads is made one that stops at each left row's first match (D540).
+Each left row is given once rather than once for each match, so the
+joins above it see fewer rows. The columns of the operators above are
+renumbered, and a projection gives a null for a column nothing above
+reads that its input no longer has.
+
+The reduction is of the plan the join enumeration chose and not of the
+logical plan before it. A chain rewritten as semi joins along its join
+tree, the bottom-up pass of Yannakakis' algorithm (Lanzinger, Pichler
+and Selzer, PVLDB 2025), drives every semi join from the relations the
+set functions read, so it must scan them whole, where the plan without
+it reaches them by an index from a few selective rows. Each join made a
+semi join here keeps the order and the method chosen, so none does more
+work than it did. The setting stays an optimizer rule's, whose rule
+rewrites no logical plan, so it is turned off as the others are.
+
+An index join whose condition can raise is left, as the first match
+stops it judging the other pairs (D15); a hash join's keys cannot raise,
+and the conditions above it judge rows it gives either way. A grouping
+with grouping columns is left, as are set functions of DISTINCT: those
+drop duplicates by their own grouping by the argument (D340).
+
 ### Full-text languages
 
 #### D320. A language stems by Snowball's own program, run by an interpreter of the Snowball language
@@ -11888,6 +11973,66 @@ input whole before it gives a row, and the goal stops there.
 The goal changes only the choice of an ordered read. A wrong estimate
 costs time, never rows, as the FETCH FIRST still counts the rows it
 gives.
+
+#### D525. A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code
+
+A condition of a VARCHAR coded by a table of symbols (`fsst.rs`) was
+judged of every row's codes, each compared with the constants in place
+(D360). Of texts of many values, such as web addresses, that was the
+slowest filter a column store table ran. Neither a dictionary in order
+(D512) nor imprints (D511) serve them, as their chunks hold few rows to
+a value, and their values are scattered.
+
+A group now keeps a column sketch (Hentschel, Kester and Idreos, SIGMOD
+2018) of each column COLUMNSTORE.SKETCH names, if it is VARCHAR and one
+of its chunks is coded by symbols (`engine/columns/sketch.rs`). Edges
+are drawn from a sorted sample of the group's values, an equi-depth
+histogram of at most 255 codes. A value found in a share of the sample
+larger than a bin's, up to 64 of them, is an edge with a code of its
+own, a point, and the code below it holds the values between it and the
+edge before; each other code holds the values above the edge before up
+to its own. Of a column of no more than 127 values in the sample, each
+is a point. Each row gets a byte, its value's code, and a null the code
+255. Codes order as the values do, by the order comparisons of the
+default collation take (`compare_strings`), which bytes give of UTF-8
+padded with spaces (`padded_order`). The codes of a part are kept
+together on pages of their own, as many parts' as a page holds, read
+only by a scan that judges a conjunct of the column; the edges in the
+group's header.
+
+A scan judges a conjunct of such a column once a code, of each group
+(`engine/columns/judged/sketched.rs`). A binary search places each
+string constant among the edges. Against a constant, every value of a
+code orders alike, told by places alone, unless the code's bin holds
+the constant between its bounds. So the conjunct is true of every value
+of a code, false of every one, or, of a code a constant falls within, a
+boundary. A row of a chunk coded by symbols is then kept or left by its
+code alone, and only a row of a boundary code is compared as before. A
+comparison, a range, a LIKE prefix (as the two comparisons the planner
+pushes), IN, NOT IN and an OR of these leave at most a code a constant
+to compare, and an equality of a point none. A null's code is judged as
+the conjunct is of a null. A conjunct of a column of another collation
+reaches the scan as sort keys, never string constants (D512), so it is
+judged as before, and the sketch is never read for it. What the scan
+keeps is what the conjunct keeps, as a code is said to keep or leave
+its rows only where every value it holds orders alike against every
+constant.
+
+Columns of numbers and datetimes get none, as decoding their frames of
+reference costs about what reading a byte a row costs, and so do texts
+coded by a dictionary, which a dictionary in order judges by codes
+already. The option names columns as COLUMNSTORE.BLOOM does, and groups
+frozen before it is changed are written again in the background. A group
+keeps the places the option named as it was written, in its header and
+its summary, so a column named that takes no sketch is not written again
+and again. The codes take a byte a row.
+
+Rejected was BitWeaving (D352 stands), which packs codes vertically for
+predicates over words: a byte a row compared by a table of verdicts is
+read as fast as the scan's other work, and keeps the group's layout.
+Rejected too were codes drawn from the imprints' edges: their 64 bins
+leave a boundary code four times as wide, and a column without imprints
+would have none.
 
 #### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
 

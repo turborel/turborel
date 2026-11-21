@@ -1,6 +1,7 @@
 //! \[DESIGN\] A frozen row group's header, written and read back as
 //! `group.rs` describes it.
 
+use super::super::sketch::Edges;
 use super::summary::{Overall, Summary};
 use super::{Filter, GROUP_FORMAT, Group, Pages, Part, Run, Seal, Zone, corrupt, count32, read_chain};
 use crate::disk::pager::PageId;
@@ -49,10 +50,7 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
     put_u64(&mut out, group.first);
     put_u64(&mut out, group.last);
     put_u32(&mut out, group.rows);
-    put_u32(&mut out, count32(group.order.len())?);
-    for &place in &group.order {
-        put_u32(&mut out, u32::try_from(place).map_err(|_| corrupt("a column's place is too large"))?);
-    }
+    put_places(&mut out, &group.order)?;
     out.push(u8::from(group.pax));
     for runs in [&group.ids, &group.by_id] {
         put_u32(&mut out, count32(runs.len())?);
@@ -73,6 +71,7 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
                 put_bounds(&mut out, part.bounds.as_ref(), t)?;
                 put_filter(&mut out, part.filter);
                 put_filter(&mut out, part.imprint);
+                put_filter(&mut out, part.sketch);
             }
         }
     }
@@ -82,7 +81,24 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
             put_bound(&mut out, edge, t)?;
         }
     }
+    put_places(&mut out, &group.sketched)?;
+    for (edges, t) in group.sketches.iter().zip(types) {
+        put_u32(&mut out, count32(edges.each().count())?);
+        for (text, point) in edges.each() {
+            out.push(u8::from(point));
+            put_bound(&mut out, &Value::Char(text.to_owned()), t)?;
+        }
+    }
     Ok(out)
+}
+
+/// Appends the places of columns `places`.
+fn put_places(out: &mut Vec<u8>, places: &[usize]) -> Result<()> {
+    put_u32(out, count32(places.len())?);
+    for &place in places {
+        put_u32(out, u32::try_from(place).map_err(|_| corrupt("a column's place is too large"))?);
+    }
+    Ok(())
 }
 
 /// Appends where a part's filter or imprints are, if they are.
@@ -161,7 +177,29 @@ impl<'a> Reader<'a> {
     }
 
     fn part(&mut self, t: &DataType) -> Result<Part> {
-        Ok(Part { nulls: self.u32()?, bounds: self.bounds(t)?, filter: self.filter()?, imprint: self.filter()? })
+        Ok(Part { nulls: self.u32()?, bounds: self.bounds(t)?, filter: self.filter()?, imprint: self.filter()?, sketch: self.filter()? })
+    }
+
+    fn places(&mut self) -> Result<Vec<usize>> {
+        (0..self.count()?).map(|_| self.count()).collect()
+    }
+
+    /// A column's sketch's edges, of type `t`.
+    fn sketch(&mut self, t: &DataType) -> Result<Edges> {
+        let (mut texts, mut points) = (Vec::new(), Vec::new());
+        for _ in 0..self.count()? {
+            points.push(match self.byte()? {
+                0 => false,
+                1 => true,
+                _ => return Err(corrupt("a sketch's edge is of another format")),
+            });
+            let Value::Char(text) = self.bound(t)? else { return Err(corrupt("a sketch's edge is not a string")) };
+            texts.push(text);
+        }
+        if texts.is_empty() {
+            return Ok(Edges::default());
+        }
+        Edges::new(texts, points).ok_or_else(|| corrupt("a sketch's edges are not in order"))
     }
 
     fn zone(&mut self, t: &DataType) -> Result<Zone> {
@@ -188,7 +226,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
         return Err(corrupt("its header is of another format"));
     }
     let (first_id, last, rows) = (r.u64()?, r.u64()?, r.u32()?);
-    let order = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
+    let order = r.places()?;
     let pax = r.layout()?;
     let ids = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     let by_id = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
@@ -201,10 +239,12 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
         columns.push(zones);
     }
     let edges = types.iter().map(|t| (0..r.count()?).map(|_| r.bound(t)).collect::<Result<Vec<_>>>()).collect::<Result<Vec<_>>>()?;
+    let named = r.places()?;
+    let sketches = types.iter().map(|t| r.sketch(t)).collect::<Result<Vec<_>>>()?;
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }
-    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, edges, header })
+    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, edges, sketched: named, sketches, header })
 }
 
 /// Appends `summary`, its columns of `types`, as a table's directory holds
@@ -213,7 +253,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
 /// ```text
 /// summary:  header page u64 | first id u64 | last id u64 | rows u32 |
 ///           order u32 | each: column u32 | blooms u32 | each: column u32 |
-///           layout u8 (1 of the hybrid) |
+///           sketched u32 | each: column u32 | layout u8 (1 of the hybrid) |
 ///           columns u32 | each: nulls u32 | bounds u8 | least | greatest
 /// ```
 ///
@@ -226,11 +266,8 @@ pub fn put_summary(out: &mut Vec<u8>, summary: &Summary, types: &[DataType]) -> 
     put_u64(out, summary.first);
     put_u64(out, summary.last);
     put_u32(out, summary.rows);
-    for places in [&summary.order, &summary.blooms] {
-        put_u32(out, count32(places.len())?);
-        for &place in places {
-            put_u32(out, u32::try_from(place).map_err(|_| corrupt("a column's place is too large"))?);
-        }
+    for places in [&summary.order, &summary.blooms, &summary.sketched] {
+        put_places(out, places)?;
     }
     out.push(u8::from(summary.pax));
     put_u32(out, count32(summary.columns.len())?);
@@ -251,14 +288,13 @@ pub fn read_summaries(bytes: &[u8], types: &[DataType]) -> Result<Vec<Summary>> 
     let mut out = Vec::new();
     while !r.0.is_empty() {
         let (header, first, last, rows) = (PageId(r.u64()?), r.u64()?, r.u64()?, r.u32()?);
-        let order = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
-        let blooms = (0..r.count()?).map(|_| r.count()).collect::<Result<Vec<usize>>>()?;
+        let (order, blooms, sketched) = (r.places()?, r.places()?, r.places()?);
         let pax = r.layout()?;
         if r.count()? != types.len() {
             return Err(corrupt("its summary's columns are not its table's"));
         }
         let columns = types.iter().map(|t| Ok(Overall { nulls: r.u32()?, bounds: r.bounds(t)? })).collect::<Result<Vec<_>>>()?;
-        out.push(Summary { header, first, last, rows, order, blooms, pax, columns });
+        out.push(Summary { header, first, last, rows, order, blooms, sketched, pax, columns });
     }
     Ok(out)
 }
