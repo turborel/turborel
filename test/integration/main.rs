@@ -172,6 +172,7 @@ mod graph_compat;
 mod graph_ddl;
 mod graph_native;
 mod graph_table;
+mod group_commit;
 mod grouping_sets;
 mod guarded_reads;
 mod held_lobs;

@@ -465,6 +465,8 @@ verification approach DO-178C expects (§8).
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
+| D740 | Commits waiting for a sync form a group whose leader syncs once for all, marks them durable in one pass and wakes each alone |
+| D741 | A log appender waiting for the blocks before its own to be published is woken alone, by the one that publishes up to it |
 | D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
 | D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
 
@@ -13298,6 +13300,64 @@ values, and so do results past 18 digits, which the set functions add
 in 128 bits (D32). A path in 128 bits for whole vectors would double the
 width of every vector of integers, or add a second kind of them to
 every kernel, for values that are rare.
+
+#### D740. Commits waiting for a sync form a group whose leader syncs once for all, marks them durable in one pass and wakes each alone
+
+Each committer synced its commit record itself (D441). The file log
+grouped the syncs under one lock and woke every waiter through one
+condition variable when a sync ended. Each committer then marked its own
+commit durable on the clock, and waited for the durable timestamp on a
+second shared condition variable, which every move of it woke whole.
+So each sync woke every committer twice, they crowded onto two locks,
+and a commit covered by a sync waited for its own thread to be run
+again before the durable timestamp could pass it.
+
+Group commit now sits in the transaction layer (`txn/group.rs`). A
+committer queues its commit record's position and commit timestamp with
+a ticket of its own. The first to come while no sync runs leads. It
+syncs the log through the last record queued, and the sync's reach
+covers every record appended before it began. Under the queue's lock it
+takes every commit whose record that reach covers, then marks them all
+durable on the clock in one pass (`Clock::end_syncs`) and wakes each
+alone. The commits that came during the sync and were not covered are
+the next group. The first of them is woken to lead, and syncs once for
+all of them. The queue's lock is held only to add a commit or take a
+group, never during the sync, so appends, commits and their waits go on
+while the log syncs. A thread waiting for the durable timestamp parks
+under the timestamp it waits for (`Clock::wait_durable`), and whoever
+moves the durable timestamp wakes only those it reached.
+
+The semantics hold for these reasons.
+
+- A commit is marked durable only by a sync whose reach covers its
+  record, as `Log::sync_reached` promises (D410). The durable timestamp
+  still passes a commit only once every commit before it is marked, so
+  what a snapshot holds is still a prefix recovery keeps (D441).
+- A commit returns as before, once the durable timestamp reaches it.
+- A failed sync fails every commit of its group and every one queued
+  behind it, none marked durable. It halts the durable timestamp and
+  stops the database's changes as before, and every wait for the durable
+  timestamp ends.
+- A ticket's state is set before its thread is woken, so a wake-up is
+  never lost. A park that returns early looks again, and a bounded poll
+  only bounds a defect's cost.
+
+#### D741. A log appender waiting for the blocks before its own to be published is woken alone, by the one that publishes up to it
+
+A block file publishes its blocks in order (D30), so an appender whose
+write finished waits until every block before its own is published.
+Those that had to wait slept on one condition variable, and every
+publish woke all of them, though only the one whose block came next
+could go on. The commit records of many committers are appended to the
+log this way, so under load each commit woke every appender queued
+behind it.
+
+An appender that must wait now parks under the offset its block starts
+at (`disk/block.rs`). The appender that publishes up to that offset
+wakes it, and no other. A write that fails wakes them all, as they then
+fail too. The order of publication, and what a reader or a sync sees, are
+D30's as before. An appender is counted before it looks at the published
+end, under the lock a waker takes, so a publish after its look wakes it.
 
 #### D745. The undo store's batches in memory are found through shards locked for reading, with no lock all readers share
 
