@@ -151,10 +151,12 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 pub fn workloads(bench: &Bench) {
     let (_db, s) = database();
     s.run("SET EXECUTOR.DEGREE = 1").unwrap();
-    // As planned, planned as written, and grouped first wherever it may
-    // be (PLANNER.EAGER_GAIN past any ratio), so the costs' choice can be
-    // judged against both. A build without the settings runs them as planned.
-    for (switch, gain, label) in [("ON", "TO DEFAULT", ""), ("OFF", "TO DEFAULT", " (eager off)"), ("ON", "= 1000000", " (eager forced)")] {
+    // As planned, planned as written, and grouped first wherever it is
+    // estimated within tenfold of the plan as written, so the costs' choice
+    // can be judged against both. A plan estimated far worse is left out of
+    // the forced runs, as it would not finish. A build without the settings
+    // runs them as planned.
+    for (switch, gain, label) in [("ON", "TO DEFAULT", ""), ("OFF", "TO DEFAULT", " (eager off)"), ("ON", "= 10", " (eager forced)")] {
         let _ = s.run(&format!("SET OPTIMIZER.EAGER_AGGREGATION = '{switch}'"));
         let _ = s.run(&format!("SET PLANNER.EAGER_GAIN {gain}"));
         for (name, sql) in QUERIES {

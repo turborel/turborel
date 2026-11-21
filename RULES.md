@@ -427,6 +427,7 @@ verification approach DO-178C expects (§8).
 | D661 | A part of a built-in set function is kept in the built-in's column of states |
 | D662 | COUNT and exact SUM and AVG of values each of n rows take each as the state of n values |
 | D663 | PLANNER.EAGER_GAIN sets how much less work a plan grouped first must do, OPTIMIZER.EAGER_AGGREGATION turns it off |
+| D664 | A grouping's and a hash join's row weigh more as the table they hash into grows, as measured |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
@@ -12210,14 +12211,34 @@ round otherwise.
 #### D663. PLANNER.EAGER_GAIN sets how much less work a plan grouped first must do, OPTIMIZER.EAGER_AGGREGATION turns it off
 
 A plan grouped first is taken when its estimated work is at most
-PLANNER.EAGER_GAIN times that of the plan as written, 0.7 by default and
-of a session's scope: estimates of groups are less sure than those of
-rows, and eager aggregation loses as much as it wins where they are
-wrong (Fent and Neumann, 2021). 0 never groups first; above 1 a plan
+PLANNER.EAGER_GAIN times that of the plan as written, of a session's
+scope. Its default lies between the estimated ratios of the measured
+queries that ran faster grouped first and those that ran slower, short
+of 1 because estimates of groups are less sure than those of rows, and
+eager aggregation loses as much as it wins where they are wrong (Fent
+and Neumann, 2021). 0 never groups first; above 1 a plan
 grouped first is taken even where it is estimated to cost more, which
 tests use to compare the plans. OPTIMIZER.EAGER_AGGREGATION is the
 switch of a rule that rewrites nothing (`optimizer/eager.rs`), as the
 choice is made with the physical plan.
+
+#### D664. A grouping's and a hash join's row weigh more as the table they hash into grows, as measured
+
+Eager aggregation trades rows a join hashes for rows a grouping hashes,
+so its choice turns on what each costs, and both grow as their table
+outgrows the caches. The weights of `eager/cost.rs` are those the
+calibration bench measures (D650), in rows of the row store's scan by
+batch: a grouping's row into few groups and into a group each, a hash
+join's row of a table as large, a value kept in a column of states as a
+conjunct judged by batch, one an accumulator takes as a conjunct judged
+a row at a time, and a row an operator gives as a sort's comparison.
+Between the small table and the large one measured, a row's weight is
+taken by the logarithm of its table's rows. A hash join's small weight
+is the grouping's at the ratio the two measure of the large table. The
+planner's own hash join weight is to grow with its build the same way
+(D650), and that function then takes the place of this one. Both plans
+are weighed by the same functions, so the ratio the gain judges (D663)
+compares like with like.
 
 #### D675. A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run
 
