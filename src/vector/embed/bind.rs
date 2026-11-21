@@ -124,13 +124,10 @@ fn own_options(options: &[ModelOption], batch: usize, on_error: OnError) -> Resu
     Ok((version, batch, on_error))
 }
 
-/// A fingerprint of a model's octets, so a binding is known again
-/// without keeping them twice.
+/// A fingerprint of a model's octets, XXH3-64 (RULES.md D460), so a
+/// binding is known again without keeping them twice.
 fn fingerprint(blob: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    blob.hash(&mut hasher);
-    hasher.finish()
+    crate::hash::xxhash::xxh3_64(blob)
 }
 
 /// The stand-in of the plug-in `name`, not registered, of a model of

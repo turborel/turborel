@@ -16,7 +16,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 
 use super::distinct::{distinct, key_bucket};
 use super::types::composite::rows_hold;
@@ -350,9 +350,11 @@ pub fn is_set(xs: &[Value]) -> Result<bool> {
     Ok(all.len() == xs.len())
 }
 
-/// The hash of `b`, the same in each call.
+/// The hash of `b`, the same in each call, on every machine and build:
+/// XXH3-64 of what it writes (RULES.md D460), as a column's Bloom filters
+/// keep a multiset's bucket.
 fn hashed(b: &impl Hash) -> u64 {
-    let mut h = DefaultHasher::new();
+    let mut h = crate::hash::xxhash::Xxh3Hasher::default();
     b.hash(&mut h);
     h.finish()
 }
