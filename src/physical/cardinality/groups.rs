@@ -72,7 +72,7 @@ impl Estimates<'_> {
 
     /// The distinct keys an index of `table` whose key is exactly the
     /// columns `keys`, sorted, counts, if one does and knows.
-    fn sketched(&self, table: &QualifiedName, keys: &[usize]) -> Option<f64> {
+    pub(super) fn sketched(&self, table: &QualifiedName, keys: &[usize]) -> Option<f64> {
         let db = self.db();
         let exact = |columns: &[usize]| {
             let mut sorted = columns.to_vec();

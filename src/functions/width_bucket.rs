@@ -20,7 +20,7 @@ use std::sync::{Arc, OnceLock};
 use super::ScalarFunction;
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::params::ParameterType;
-use crate::value::{DataType, DecFloat, Decimal, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value, cast, compare, pow10};
+use crate::value::{BIGINT_PRECISION, DataType, DecFloat, Decimal, MAX_DECFLOAT_PRECISION, Spelled, Value, cast, compare, pow10};
 
 /// [ISO/IEC 9075-2:2023 §6.31] WIDTH_BUCKET, no key word of SQL-92.
 pub const WIDTH_BUCKET: &str = "WIDTH_BUCKET";
@@ -30,7 +30,7 @@ const COUNT: usize = 3;
 
 /// \[EXTENSION\] The type a `?` count takes: NUMERIC(P, 0), P the greatest
 /// precision, as SUBSTRING's length [ISO/IEC 9075:1992 §17.6 GR5c].
-const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+const COUNTED: DataType = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
 
 /// The bits of a `u128`, each of which a product is built from.
 const U128_BITS: u32 = u128::BITS;

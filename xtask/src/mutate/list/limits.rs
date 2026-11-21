@@ -255,7 +255,7 @@ pub const LIMITS: [Mutation; 22] = [
         name: "limit-first-through-a-filter",
         package: Package::Core,
         breaks: "a filter divides the first rows read below it by the share of rows it keeps",
-        file: "src/physical.rs",
+        file: "src/physical/filtered.rs",
         original: "        let goal = self.divided(|| kept(self));",
         replacement: "        let goal = *self;",
         integration: &[PRICED],

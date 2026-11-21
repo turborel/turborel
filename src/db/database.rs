@@ -437,14 +437,13 @@ impl Database {
         })
     }
 
-    /// \[DESIGN\] Runs `change` on the weights used by the physical planner, as
-    /// `with_optimizer` runs its closure. The changed weights are kept only if
-    /// every one is finite and not negative.
+    /// \[DESIGN\] Runs `change` on the physical planner's weights, as
+    /// `with_optimizer` runs its closure, keeping them only if valid.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if called back as `with_optimizer` says, or if `change`
-    /// leaves a weight NaN, infinite or negative; the weights are then unchanged.
+    /// leaves a weight outside its range; the weights are then unchanged.
     pub fn with_cost_model<T>(&self, change: impl FnOnce(&mut CostModel) -> T) -> Result<T> {
         self.change(|st| {
             let mut cost = st.cost();
@@ -457,6 +456,7 @@ impl Database {
                 ("PLANNER.RANGE_SELECTIVITY", cost.range_selectivity),
                 ("PLANNER.NULL_FRACTION", cost.null_fraction),
                 ("PLANNER.REORDER_GAIN", cost.reorder_gain),
+                ("PLANNER.ESTIMATE_MARGIN", cost.estimate_margin),
             ];
             for (name, weight) in weights {
                 st.define_setting(name, Some(&Value::Approx(weight)))?;

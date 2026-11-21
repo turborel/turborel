@@ -42,7 +42,7 @@ pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, values: Option<&[Value]
             let (value, slot) = constant(other, values)?;
             let predicate = Box::new(Predicate { function: function.clone(), column, argument: Some(argument) });
             let probe = Probe::Predicate { predicate, value };
-            let slots = slot.into_iter().map(|slot| ProbeSlot { place: Place::PredicateValue, slot }).collect();
+            let slots = slot.into_iter().map(|slot| ProbeSlot::of(Place::PredicateValue, slot)).collect();
             // D34: even an exact index leaves the full WHERE check in place.
             Some(Candidate { slots, ..Candidate::one(probe, (vec![at], 0, all, true)) })
         })

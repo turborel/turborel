@@ -28,7 +28,7 @@ use super::strings::{character, text};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::params::ParameterType;
 use crate::regex::{LobText, Regex};
-use crate::value::{CharUnits, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, CharUnits, DataType, Decimal, Spelled, Value};
 use subject::short;
 
 /// [ISO/IEC 9075-2:2023 §8.7] LIKE_REGEX, no key word of SQL-92.
@@ -56,7 +56,7 @@ pub const REGEX_FUNCTIONS: [&str; 4] = [OCCURRENCES_REGEX, POSITION_REGEX, SUBST
 
 /// [§6.31 SR1] The type of a count or a position: exact numeric of the
 /// greatest precision, scale 0 (IV137).
-const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+const COUNTED: DataType = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
 
 /// The regular expression function `name`, a new one; none if it is no
 /// such function.

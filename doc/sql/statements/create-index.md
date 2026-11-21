@@ -217,7 +217,7 @@ no column the expression reads leaves its entry as it is.
 An expression is a key part only if it can raise no error of any row
 and gives the same value of the same row every time (RULES.md
 D92): a column, a constant, a negation, a sum, difference or
-product of exact numbers whose every value fits 18 digits, a CASE of
+product of exact numbers whose every value fits 38 digits, a CASE of
 such, UPPER and LOWER of a character string, and JSON_VALUE,
 JSON_QUERY and JSON_EXISTS of a character string or JSON column that
 give null or a constant on an error, read no time zone (no `datetime()`,
@@ -570,11 +570,11 @@ OK
 --------------
             2
 (1 row)
-           ID |                GROSS
---------------+----------------------
-            2 |                   84
-            1 |                  125
-            3 |                  210
+           ID |         GROSS
+--------------+---------------
+            2 |            84
+            1 |           125
+            3 |           210
 (3 rows)
            ID
 --------------

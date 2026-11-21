@@ -13,8 +13,8 @@ use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::routines::{Hosted, hosted_rows};
 use super::{Session, State, StatementContext, plan, plan_rows, rule, set_columns};
-use crate::ast::{ColumnName, InsertSource, InsertStatement, Overriding, QueryExpression, SelectList, SelectSublist, TableName};
-use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
+use crate::ast::{InsertSource, InsertStatement, QueryExpression, SelectList, SelectSublist};
+use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, qualify};
 use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
@@ -29,11 +29,13 @@ use crate::value::{Value, assign};
 mod bulk;
 mod degree;
 mod given;
+mod into;
 mod portion;
 pub(crate) mod system_time;
 
 use degree::degree_at;
 pub(super) use given::not_given;
+pub(super) use into::{INSERT_RULES, InsertInto, InsertRules, object_columns};
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
@@ -204,8 +206,8 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
-        let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
-        let slots = keeping.and(params.dynamic_slots());
+        let (target, query, clocked) = self.insert_bound(st, stmt, params, keeping)?;
+        let slots = keeping.and_then(|k| Some(k.slots_of(params.dynamic_slots()?, clocked)));
         let rows = if let Some(given) = params.given() {
             // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
             given::given_rows(st, (stmt, &target), given, &Runner::new(st, tx.id))?
@@ -222,14 +224,15 @@ impl Session {
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted, though its
         // statement-level triggers execute [ISO/IEC 9075-2:2023 §4.46.2].
         if rows.is_empty() && effects.triggered.is_none() {
+            // [EXTENSION] of none that ends a load, the load ended (RULES.md D532).
+            bulk::load::end(st, tx, params.load())?;
             return Ok(0);
         }
         self.settle_cursors(st, &target.name);
         // [ISO/IEC 9075-2:2023 §15.11 GR4] its BEFORE triggers first.
         let mut rows = effects.before_insert(cx, &target.name, rows)?;
-        // [X3.135-1986 §8.7 GR1c], [EXTENSION] in the partition that holds it (RULES.md D155).
-        // [EXTENSION] a batch at a time where it may be (RULES.md D530).
-        bulk::insert_held(st, tx, &target.name, &mut rows, &mut effects)?;
+        // [X3.135-1986 §8.7 GR1c], [EXTENSION] in its partition (RULES.md D155), a batch at a time where it may be (D530).
+        bulk::insert_held((st, tx), &target.name, &mut rows, &mut effects, params.load())?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
             rows.visit(&mut |row| check_option(&target.checks, [row], ("X3.135-1986 §8.7 GR2", &runner)))?;
@@ -242,29 +245,31 @@ impl Session {
 
     /// The table `stmt` inserts into and the plan of the rows its query
     /// gives, if it has one: of a prepared statement, as it keeps them,
-    /// its slots unfilled, for `query_rows` to read (RULES.md D45, D610).
+    /// its slots unfilled, for `query_rows` to read (RULES.md D45, D610);
+    /// and whether the plan reads the statement's instant as a slot
+    /// (RULES.md D613).
     fn insert_bound(
         &self,
         st: &State,
         stmt: &InsertStatement,
         params: &Params,
         keeping: Option<&Keeping<'_>>,
-    ) -> Result<(Target, Option<LogicalPlan>)> {
-        if let Some(KeptPlan::Insert(target, query)) = keeping.map(Keeping::plan).transpose()?.flatten() {
+    ) -> Result<(Target, Option<LogicalPlan>, bool)> {
+        if let Some((KeptPlan::Insert(target, query), clocked)) = keeping.map(Keeping::plan_clocked).transpose()?.flatten() {
             let authorization = self.authorization();
             let target = Arc::unwrap_or_clone(target).refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
-            return Ok((target, query));
+            return Ok((target, query, clocked));
         }
-        let kept = keeping.map(|_| params.keeping());
+        let kept = keeping.map(|_| params.keeping_clocked());
         let binding = kept.as_ref().unwrap_or(params);
         let target = self.insert_target(st, stmt, (binding.noted(), binding.horizon()))?;
         let query = match &stmt.source {
             InsertSource::Query(query) => Some(self.insert_query(st, &target, query, binding)?),
             InsertSource::DefaultValues => None,
         };
-        let Some(k) = keeping else { return Ok((target, query)) };
-        k.made((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())))?;
-        Ok((target, query))
+        let Some(k) = keeping else { return Ok((target, query, false)) };
+        k.made_clocked((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())), binding.clocked())?;
+        Ok((target, query, binding.clocked()))
     }
 
     /// [X3.135-1986 §8.7 SR1-SR4] the table `stmt` inserts into, which is
@@ -342,53 +347,6 @@ impl Session {
     }
 }
 
-/// What an INSERT, or a MERGE's WHEN NOT MATCHED clause, inserts into: its
-/// table, its `<insert column list>`, if written, the values it gives and
-/// its `<override clause>`, and the rules it cites.
-pub(super) struct InsertInto<'a> {
-    pub(super) table: &'a TableName,
-    pub(super) columns: Option<&'a [ColumnName]>,
-    pub(super) given: (Inserted<'a>, Option<Overriding>),
-    pub(super) rules: &'a InsertRules,
-    /// The columns seen of the table without a column list: a triggered
-    /// action's, as they were when its trigger was defined [ISO/IEC
-    /// 9075-2:2023 §11.21 GR2, Note 561].
-    pub(super) horizon: &'a Horizon,
-}
-
-/// The rules an insert cites, each in full: of a read-only table, of a
-/// column of its column list its table lacks, of one listed twice, and of
-/// the privileges it needs.
-pub(super) struct InsertRules {
-    pub(super) read_only: &'static str,
-    pub(super) missing: &'static str,
-    pub(super) twice: &'static str,
-    pub(super) privilege: &'static str,
-}
-
-/// [X3.135-1986 §8.7 SR1 to SR3] The rules of an INSERT.
-pub(super) const INSERT_RULES: InsertRules = InsertRules {
-    read_only: "X3.135-1986 §8.7 SR2",
-    missing: "X3.135-1986 §8.7 SR3",
-    twice: "X3.135-1986 §8.7 SR3",
-    privilege: "X3.135-1986 §8.7 SR1",
-};
-
-/// The columns `columns` of the table or view `name` that `list` names,
-/// by their positions, in order: each a column of it, none named twice.
-pub(super) fn object_columns(name: &QualifiedName, columns: &[ColumnDesc], list: &[ColumnName], rules: &InsertRules) -> Result<Vec<usize>> {
-    let mut cols = Vec::new();
-    for ColumnName { name: c, at } in list {
-        let missing = || no_column(name, format!("[{}] {name} has no column {c}", rules.missing), c).or_at(*at);
-        let i = columns.iter().position(|d| d.name == *c).ok_or_else(missing)?;
-        if cols.contains(&i) {
-            return Err(rule(format!("[{}] column {c} is listed twice", rules.twice)).or_at(*at));
-        }
-        cols.push(i);
-    }
-    Ok(cols)
-}
-
 /// [X3.135-1986 §8.7 GR3, GR4; ISO/IEC 9075:1992 §13.8 GR3, GR4] the
 /// candidate rows of a `<query expression>`, bound as `logical`, one for
 /// each row of its result, which is evaluated in full before any row is
@@ -422,7 +380,7 @@ fn query_rows(
     for t in optimized.tables() {
         st.read_lock(tx, &t)?;
     }
-    for values in execute(physical, st, tx.id) {
+    for values in execute(super::explain::analyzing(tx, st, (physical, Some(&optimized))), st, tx.id) {
         rows.push(target.candidate(st, values?, &hosted)?)?;
     }
     Ok(rows)
@@ -453,11 +411,14 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
     for t in reads.into_iter().chain(bound.set_tables()) {
         st.read_lock(tx, &t)?;
     }
-    let physical = match (kept, logical) {
-        (Some((physical, _)), _) => physical,
-        (None, logical) => plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone())).2,
+    let (physical, optimized) = match (kept, logical) {
+        (Some((physical, _)), _) => (physical, None),
+        (None, logical) => {
+            let (optimized, _, physical) = plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone()));
+            (physical, Some(optimized))
+        }
     };
-    let entries = row_entries(physical, &db, tx.id)?;
+    let entries = row_entries(super::explain::analyzing(tx, st, (physical, optimized.as_ref())), &db, tx.id)?;
     Ok((Written { bound, rows: ObjectRows::Bound, slots }, entries))
 }
 

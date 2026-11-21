@@ -31,6 +31,7 @@ mod list;
 mod lobs;
 pub(crate) mod map;
 mod named;
+mod noted;
 pub(crate) mod paged;
 mod sort;
 #[cfg(test)]
@@ -289,7 +290,12 @@ impl WorkAreas {
     /// SQLCODE -918 if the budget cannot grant it; the provider's errors.
     pub fn area(&self, area: Area) -> Result<Box<dyn SpillArea>> {
         let (spill, temp) = self.place.read().unwrap_or_else(PoisonError::into_inner).clone();
-        spill.area(&self.memory, &temp, area)
+        let made = spill.area(&self.memory, &temp, area)?;
+        // [EXTENSION] of an operator EXPLAIN ANALYZE counts, noted (RULES.md D620).
+        Ok(match crate::noted::noting() {
+            Some(notes) => noted::noted(made, notes),
+            None => made,
+        })
     }
 
     /// What makes its areas.

@@ -75,6 +75,7 @@ impl At {
 
 /// What a side file's block says.
 pub(super) enum Op {
+    /// The content of a run of whole granules, from the first's number.
     Granule(u64, Vec<u8>),
     Size(u64),
     Commit,
@@ -115,7 +116,14 @@ pub(super) fn encode(op: &Op) -> Vec<u8> {
 pub(super) fn decode(bytes: &[u8]) -> Result<Op> {
     let mut r = Reader::new(bytes, "shadow block");
     let op = match r.u8()? {
-        KIND_GRANULE => Op::Granule(r.u64()?, r.take(GRANULE)?.to_vec()),
+        KIND_GRANULE => {
+            let first = r.u64()?;
+            let content = r.rest().to_vec();
+            if content.is_empty() || content.len().checked_rem(GRANULE) != Some(0) {
+                return Err(r.corrupt("its granules are not whole"));
+            }
+            Op::Granule(first, content)
+        }
         KIND_SIZE => Op::Size(r.u64()?),
         KIND_COMMIT => Op::Commit,
         KIND_LIMIT => Op::Limit(r.u64()?),
@@ -125,6 +133,11 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Op> {
     };
     r.finish()?;
     Ok(op)
+}
+
+/// The error for a granule held shorter than a granule.
+fn short(number: u64) -> SqlError {
+    SqlError::new(Code::Corrupt, format!("[DESIGN] granule {number} of a shadow file is held short"))
 }
 
 /// The granule `number`'s offset in the file.
@@ -137,11 +150,37 @@ pub(super) fn granule_of(position: u64) -> (u64, usize) {
     (position >> GRANULE_BITS, usize::try_from(position & (GRANULE_BYTES - 1)).unwrap_or_default())
 }
 
+/// The bytes before a granule block's content: its kind and first number.
+const GRANULE_HEAD: usize = 9;
+
+/// Where a granule's newest content is in a side file: the block of the
+/// run of granules written with it, the run's first granule, and how many
+/// it has.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Spot {
+    pub(super) block: BlockId,
+    first: u64,
+    count: u64,
+}
+
+impl Spot {
+    /// Where granule `number`'s content starts in the block's payload.
+    fn within(&self, number: u64) -> usize {
+        let index = usize::try_from(number.saturating_sub(self.first)).unwrap_or(usize::MAX);
+        GRANULE_HEAD.saturating_add(index.saturating_mul(GRANULE))
+    }
+
+    /// The length of the block's payload.
+    pub(super) fn payload_len(&self) -> usize {
+        self.within(self.first.saturating_add(self.count))
+    }
+}
+
 /// A side file and the granules whose newest content it holds, in it or
 /// in memory. The file is made when the first block is appended.
 pub(super) struct Side {
-    pub(super) blocks: Option<BlockFile>,
-    pub(super) granules: HashMap<u64, BlockId>,
+    pub(super) blocks: Option<Arc<BlockFile>>,
+    pub(super) granules: HashMap<u64, Spot>,
     /// Granules written while held: newer than those of `granules`.
     pub(super) held: HashMap<u64, Vec<u8>>,
     /// Granules with a block in the file that a cut left no longer the
@@ -169,37 +208,75 @@ impl Side {
         self.blocks.as_ref().map_or(0, |b| b.end().0.saturating_sub(b.first().0))
     }
 
-    /// Appends `op`, the side file made first if it is not yet.
-    pub(super) fn append(&mut self, at: &At, op: &Op) -> Result<BlockId> {
+    /// Appends `payload`, an encoded operation, the side file made first
+    /// if it is not yet.
+    fn append_encoded(&mut self, at: &At, payload: &[u8]) -> Result<BlockId> {
         let blocks = match self.blocks.take() {
             Some(blocks) => blocks,
-            None => at.fresh_side(self.which)?,
+            None => Arc::new(at.fresh_side(self.which)?),
         };
-        let appended = blocks.append(&encode(op));
+        let appended = blocks.append(payload);
         self.blocks = Some(blocks);
         appended
     }
 
-    /// Puts `op`, granule `number`'s content, over the granule's block if
-    /// it has one, so a page written back again and again takes one block;
-    /// else appends it.
-    pub(super) fn place(&mut self, at: &At, number: u64, op: &Op) -> Result<BlockId> {
-        match (self.granules.get(&number), self.blocks.as_ref()) {
-            (Some(&block), Some(blocks)) => blocks.overwrite(block, &encode(op)).map(|()| block),
-            _ => self.append(at, op),
+    /// Puts `content`, a run of whole granules from `first`, in one block:
+    /// over the block of the same run if the run's granules are all still
+    /// there, so a page written back again and again takes one block;
+    /// else appended, as a granule of it written apart since has a later
+    /// block, which a commit copied after a crash would take over it.
+    /// The granules' content is then that block's.
+    pub(super) fn place(&mut self, at: &At, first: u64, content: Vec<u8>) -> Result<()> {
+        let count = u64::try_from(content.len().checked_div(GRANULE).unwrap_or_default()).unwrap_or_default();
+        let numbers = first..first.saturating_add(count);
+        let same = self.same_run(first, count);
+        let payload = encode(&Op::Granule(first, content));
+        let block = match (same, self.blocks.as_ref()) {
+            (Some(spot), Some(blocks)) => blocks.overwrite(spot.block, &payload, spot.payload_len()).map(|()| spot.block)?,
+            _ => self.append_encoded(at, &payload)?,
+        };
+        let spot = Spot { block, first, count };
+        for number in numbers {
+            self.held.remove(&number);
+            self.stale.remove(&number);
+            self.granules.insert(number, spot);
         }
+        Ok(())
+    }
+
+    /// The spot of the run of `count` granules from `first`, if each of
+    /// them is still in that run's block.
+    pub(super) fn same_run(&self, first: u64, count: u64) -> Option<Spot> {
+        let mut numbers = first..first.saturating_add(count);
+        let spot = self.granules.get(&first).copied()?;
+        let whole = spot.first == first && spot.count == count;
+        (whole && numbers.all(|n| self.granules.get(&n) == Some(&spot))).then_some(spot)
+    }
+
+    /// Fills `out` from granule `number`'s content as it holds it, from
+    /// byte `within` of it, if it does: in memory or with one read of its
+    /// block, unchecked, as the file's own bytes are read (RULES.md D471).
+    /// Whether it holds it.
+    pub(super) fn copy_held(&self, number: u64, within: usize, out: &mut [u8]) -> Result<bool> {
+        if let Some(content) = self.held.get(&number) {
+            let to = within.saturating_add(out.len());
+            out.copy_from_slice(content.get(within..to).ok_or_else(|| short(number))?);
+            return Ok(true);
+        }
+        let (Some(spot), Some(blocks)) = (self.granules.get(&number), self.blocks.as_ref()) else { return Ok(false) };
+        blocks.read_payload_at(spot.block, spot.within(number).saturating_add(within), out)?;
+        Ok(true)
+    }
+
+    /// Whether it holds granule `number`'s content.
+    pub(super) fn holds(&self, number: u64) -> bool {
+        self.held.contains_key(&number) || self.granules.contains_key(&number)
     }
 
     /// The content of granule `number` as it holds it, if it does.
     pub(super) fn held(&self, number: u64) -> Result<Option<Vec<u8>>> {
-        if let Some(content) = self.held.get(&number) {
-            return Ok(Some(content.clone()));
-        }
-        let (Some(&at), Some(blocks)) = (self.granules.get(&number), self.blocks.as_ref()) else { return Ok(None) };
-        let Op::Granule(_, content) = decode(&blocks.read(at)?)? else {
-            return Err(SqlError::new(Code::Corrupt, "[DESIGN] a shadow block of a granule holds something else"));
-        };
-        Ok(Some(content))
+        let mut content = vec![0; GRANULE];
+        Ok(self.copy_held(number, 0, &mut content)?.then_some(content))
     }
 
     /// Forgets the granules wholly past `size`, of those before granule
@@ -272,8 +349,10 @@ fn apply(at: &At, ops: Vec<Op>) -> Result<()> {
     let (mut newest, mut size) = (BTreeMap::new(), None);
     for op in ops {
         match op {
-            Op::Granule(number, content) => {
-                newest.insert(number, content);
+            Op::Granule(first, content) => {
+                for (number, granule) in (first..).zip(content.chunks(GRANULE)) {
+                    newest.insert(number, granule.to_vec());
+                }
             }
             Op::Stale(number) => {
                 newest.remove(&number);

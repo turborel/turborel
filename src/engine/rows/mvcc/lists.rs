@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! change:  row id u64, or object id; flags u8, 1 if it has a position
-//!          appended, 2 if it made an object; the position u64 if it has
+//!          appended, 2 if it made an object, 4 a group; the position u64 if it has
 //!          one; the objects it dropped, their count u32 and each id u64;
 //!          then the entry it replaced, if its own
 //! garbage: kind u8, then by kind: 0 own version, its row id and bytes;
@@ -40,6 +40,8 @@ impl ListItem for Dead {
 
 /// The flag of a change that made an object.
 const MADE: u8 = 2;
+/// The flag of a change that made a group (`frozen/stamped.rs`).
+const GROUP: u8 = 4;
 
 /// Writes `ids`, their count then each.
 fn put_ids(ids: &[u64], out: &mut Vec<u8>) {
@@ -59,7 +61,7 @@ fn read_ids(r: &mut Reader<'_>) -> Result<Vec<u64>> {
 pub(super) fn encode_change(change: &Change) -> Vec<u8> {
     let mut out = Vec::new();
     out.put_u64(change.id);
-    out.put_u8(u8::from(change.appended.is_some()) | if change.made { MADE } else { 0 });
+    out.put_u8(u8::from(change.appended.is_some()) | if change.made { MADE } else { 0 } | if change.group { GROUP } else { 0 });
     if let Some(at) = change.appended {
         out.put_u64(at.0);
     }
@@ -76,7 +78,8 @@ pub(super) fn decode_change(record: &[u8]) -> Result<Change> {
     let appended = if flags & 1 == 1 { Some(Lsn(r.u64()?)) } else { None };
     let dropped = read_ids(&mut r)?;
     let rest = r.rest();
-    Ok(Change { id, before: (!rest.is_empty()).then(|| rest.to_vec()), appended, dropped, made: flags & MADE == MADE })
+    let (made, group) = (flags & MADE == MADE, flags & GROUP == GROUP);
+    Ok(Change { id, before: (!rest.is_empty()).then(|| rest.to_vec()), appended, dropped, made, group })
 }
 
 /// `dead` as a record.
@@ -139,12 +142,13 @@ mod tests {
             Change::of_row(1, None, None, Vec::new()),
             Change::of_row(2, Some(vec![1, 2, 3]), None, vec![7, 8]),
             Change::of_row(3, None, Some(Lsn(9)), vec![5]),
-            Change { id: 4, before: None, appended: None, dropped: Vec::new(), made: true },
+            Change { id: 4, before: None, appended: None, dropped: Vec::new(), made: true, group: false },
+            Change { id: 5, before: None, appended: None, dropped: Vec::new(), made: false, group: true },
         ] {
             let back = decode_change(&encode_change(&change)).unwrap();
             assert_eq!(
-                (back.id, back.before.clone(), back.appended, back.dropped.clone(), back.made),
-                (change.id, change.before.clone(), change.appended, change.dropped.clone(), change.made)
+                (back.id, back.before.clone(), back.appended, back.dropped.clone(), back.made, back.group),
+                (change.id, change.before.clone(), change.appended, change.dropped.clone(), change.made, change.group)
             );
             assert!(back.bytes() >= FIXED);
         }

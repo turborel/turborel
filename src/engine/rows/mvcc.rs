@@ -75,7 +75,7 @@ mod status;
 mod versions;
 mod write;
 
-use lists::decode_change;
+use lists::{decode_change, encode_change};
 pub(in crate::engine::rows) use reads::Read;
 use reads::{Changed, Reads};
 use stamps::Unstamped;
@@ -155,6 +155,9 @@ struct Change {
     /// Whether it is not a row's change but a large object's making: `id`
     /// is the object's.
     made: bool,
+    /// Whether it is not a row's change but a group's making, of a load:
+    /// `id` is its first row's (`frozen/stamped.rs`).
+    group: bool,
 }
 
 impl Change {
@@ -162,7 +165,7 @@ impl Change {
     /// committed one it appended at `appended`, or neither, dropping the
     /// objects `dropped`.
     fn of_row(id: RowId, before: Option<Vec<u8>>, appended: Option<Lsn>, dropped: Vec<u64>) -> Change {
-        Change { id, before, appended, dropped, made: false }
+        Change { id, before, appended, dropped, made: false, group: false }
     }
 }
 
@@ -415,6 +418,9 @@ impl RowTable {
     /// Undoes `change` of `tx`: the entry it replaced put back, or the row
     /// it added taken out.
     fn undo_change(&self, tx: TxId, change: Change) -> Result<()> {
+        if change.group {
+            return self.unpublish_group(tx, change.id);
+        }
         if change.made {
             self.free_objects(&[change.id]);
             return Ok(());
@@ -466,6 +472,14 @@ impl RowTable {
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
         self.versions.statuses.abort(tx);
         undone
+    }
+
+    /// Notes the group `tx` made, holding row `first`, to be undone with
+    /// its other changes (`frozen/stamped.rs`).
+    pub(super) fn note_group(&self, tx: TxId, first: RowId) -> Result<()> {
+        let open = self.open_of(tx)?;
+        let change = Change { id: first, before: None, appended: None, dropped: Vec::new(), made: false, group: true };
+        lock_builtin(&open).changes.push(change, &mut encode_change).map(drop)
     }
 
     /// How many changes `tx` has made, those from now on begun apart: its

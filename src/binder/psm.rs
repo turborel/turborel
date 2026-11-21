@@ -296,6 +296,7 @@ impl ProgramBinder<'_> {
             text: local.text.clone(),
             insensitive: local.insensitive,
             scroll: local.scroll,
+            read_only: false,
             scope: Arc::new(scope.clone()),
         };
         self.cursors.push(cursor);

@@ -42,11 +42,14 @@ const POWERS: [f64; 23] = [
 ];
 
 /// How a join hashes its keys: by its database's seed, and whether a text
-/// is hashed by SipHash keyed by it (RULES.md D369).
+/// is hashed by SipHash keyed by it (RULES.md D369); and whether a number
+/// is given as itself, the bits of its nearest `f64`, to a direct table,
+/// not hashed (RULES.md D601).
 #[derive(Clone, Copy)]
 pub(in crate::exec) struct Hashing<'s> {
     pub(in crate::exec) seed: &'s Seed,
     pub(in crate::exec) keyed: bool,
+    pub(in crate::exec) direct: bool,
 }
 
 /// The hashes of the keys of a batch's rows, and of each, whether it is a
@@ -117,7 +120,7 @@ fn hash_column(
 ) -> Result<()> {
     let null = |miss: &mut bool| {
         *miss = *miss || !nulls;
-        how.seed.null()
+        how.null()
     };
     let places = (0..count).map(|n| nth(rows, n));
     match column {
@@ -232,9 +235,16 @@ impl Hashing<'_> {
         self.seed.word(w)
     }
 
-    /// The hash of a number whose nearest `f64` is `f`.
+    /// The hash of a number whose nearest `f64` is `f`; given to a
+    /// direct table, the bits of `f` itself, -0 as 0 (RULES.md D601).
     fn number(self, f: f64) -> u64 {
-        self.seed.word(canonical(f))
+        if self.direct { canonical(f) } else { self.seed.word(canonical(f)) }
+    }
+
+    /// The hash of a null on a key whose nulls match; given to a direct
+    /// table, `NULL_NUMBER` (RULES.md D601).
+    fn null(self) -> u64 {
+        if self.direct { super::direct::NULL_NUMBER } else { self.seed.null() }
     }
 
     /// The hash of a character string's text `text`, its trailing spaces
@@ -247,11 +257,11 @@ impl Hashing<'_> {
     /// The hash of bucket `b`, as of a value of it.
     fn bucket(self, b: &Bucket) -> u64 {
         match b {
-            Bucket::Number(bits) => self.word(*bits),
+            Bucket::Number(bits) => self.number(f64::from_bits(*bits)),
             Bucket::Char(s) => self.text(s),
             Bucket::Instant(utc) => self.word(utc.cast_unsigned()),
             Bucket::Bool(t) => self.word(u64::from(*t)),
-            Bucket::Null => self.seed.null(),
+            Bucket::Null => self.null(),
             Bucket::Binary(_) | Bucket::Span(_) | Bucket::Extension(_) | Bucket::Composite(_) | Bucket::Bag(_) => {
                 let bytes = crate::spill::bucket_key(std::slice::from_ref(b));
                 if self.keyed { self.seed.keyed(&bytes) } else { self.seed.bytes(&bytes) }

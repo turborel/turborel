@@ -54,6 +54,16 @@ pub fn timed_out(ms: u64) -> SqlError {
     failed(TIMED_OUT, &format!("the plug-in call ran past PLUGINS.CALL_TIMEOUT_MS, {ms} ms, and its process was stopped"))
 }
 
+/// 38T02: the program started gave no WELCOME within `ms` milliseconds.
+pub fn unwelcomed(ms: u64) -> SqlError {
+    failed(
+        TIMED_OUT,
+        &format!(
+            "the plug-in gave no WELCOME within {ms} ms of its start, PLUGINS.CALL_TIMEOUT_MS or the least a start is given if more, and its process was stopped"
+        ),
+    )
+}
+
 /// 38T03: the program broke the protocol, `why`.
 pub fn violation(why: &str) -> SqlError {
     failed(VIOLATION, &format!("the plug-in broke protocol 1: {why}"))

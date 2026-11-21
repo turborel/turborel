@@ -10,6 +10,7 @@ use super::{Chunk, bloom, imprints, padding};
 use crate::error::Result;
 use crate::storage::{Column, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Row, Texts};
 use crate::value::datetime::Moment;
+use crate::value::types::narrow_scale;
 use crate::value::{DataType, Value};
 
 mod positions;
@@ -159,9 +160,12 @@ fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Ve
         let may = match condition {
             Conjunct::Null { not: false, .. } => part.nulls > 0,
             Conjunct::Null { not: true, .. } => part.nulls < to.saturating_sub(from),
-            Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) | Conjunct::Dynamic { .. } => {
-                condition.may_match(&bounds)
-            }
+            Conjunct::Condition(_)
+            | Conjunct::In { .. }
+            | Conjunct::NotIn { .. }
+            | Conjunct::Any(_)
+            | Conjunct::Dynamic { .. }
+            | Conjunct::Spans { .. } => condition.may_match(&bounds),
         };
         if !may {
             continue;
@@ -264,8 +268,8 @@ fn float_of(word: i64) -> f64 {
 
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
 /// positions `from` to `to` of `group`, as integers (`storage::Ints`), if
-/// `t` is an exact numeric type, which a record writes as its units in 8
-/// bytes, and every chunk's encoding holds integers.
+/// `t` is an exact numeric type of no more digits than 64 bits hold
+/// (`narrow_scale`), which a record writes as its units in 8 bytes, and every chunk's encoding holds integers.
 ///
 /// # Errors
 ///
@@ -276,9 +280,9 @@ pub fn ints<S: Seal>(
     (column, t): (usize, &DataType),
     (from, to): (u32, u32),
 ) -> Result<Option<Ints>> {
-    let DataType::Exact { scale, .. } = t else { return Ok(None) };
+    let Some(scale) = narrow_scale(t) else { return Ok(None) };
     Ok(words(group, (pages, prepared), (column, t), (from, to))?.map(|((units, nulls), runs)| {
-        let ints = Ints::new(units, *scale, nulls_of(nulls));
+        let ints = Ints::new(units, scale, nulls_of(nulls));
         match runs {
             Some(ends) => ints.with_runs(ends),
             None => ints,

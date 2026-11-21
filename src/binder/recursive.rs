@@ -406,7 +406,8 @@ fn distributes(plan: &LogicalPlan, distinct: bool) -> bool {
         | LogicalPlan::Window(_)
         | LogicalPlan::Recognize(_)
         | LogicalPlan::Polymorphic(_)
-        | LogicalPlan::SemiJoin { .. } => false,
+        | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_) => false,
         // Its rows are found of each row of its input alone.
         LogicalPlan::Unnest(u) => distributes(&u.input, distinct),
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => one_side(left, right, distinct),
@@ -453,6 +454,7 @@ fn reads_work(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }

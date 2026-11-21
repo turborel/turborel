@@ -2,7 +2,8 @@
 //! whose right operand reads a table, its left operand's rows each probe an
 //! index of the table for the values of its first columns the equalities give,
 //! rather than the table being read whole into a hash table, when the left's
-//! rows are estimated few enough that their probes cost less than that read.
+//! rows are estimated few enough that their probes cost less than that read,
+//! and would at the most rows the estimate may be wrong by (D386).
 //! An operand reading its table through a projection of its columns, as a
 //! derived table's does, is probed as the table, the join under a projection
 //! giving the operand's columns; and a RIGHT outer join as the LEFT one of its
@@ -23,9 +24,9 @@
 
 use std::sync::Arc;
 
-use super::cost::HASH_ROW;
 use super::estimate::Known;
 use super::join::Flip;
+use super::robust::{Linear, choose, pessimistic};
 use super::shown::Shown;
 use super::{JoinComparison, JoinProbe, PhysicalPlanner, Plan, Preserved};
 
@@ -202,9 +203,11 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
 impl PhysicalPlanner<'_> {
     /// How `right` is probed for the rows of `left` joined on the
     /// equalities `keys`, and `left`'s estimated rows, if it reads a table
-    /// one of whose indexes they probe, and those rows' probes are
-    /// estimated to cost less than the hash join they replace: `read`, the
-    /// read of its rows the hash join's right operand would be
+    /// one of whose indexes they probe, and the probes are of less regret
+    /// than the hash join they replace (`physical/robust.rs`, RULES.md
+    /// D386): at `left`'s estimate and at its pessimistic rows, its bound
+    /// or its estimate times PLANNER.ESTIMATE_MARGIN, each probe against
+    /// `read`, the read of its rows the hash join's right operand would be
     /// (`access_cost`), and each row of either operand hashed (`HASH_ROW`).
     pub(super) fn probed_instead(
         &self,
@@ -214,9 +217,12 @@ impl PhysicalPlanner<'_> {
     ) -> Option<(Probing, f64)> {
         let of_kind = |l: usize, t: &DataType| self.column_type(left, l).is_some_and(|lt| alike(&lt, t));
         let probing = self.probing(right, keys, &of_kind)?;
-        let rows = self.rows_of(left);
-        let hashed = HASH_ROW * (rows + self.rows_of(right));
-        (rows * probing.cost < access_cost(read)? + hashed).then_some((probing, rows))
+        let card = self.card(left);
+        let hash = self.hash_linear((left, right), (read, access_cost(read)?));
+        let index = Linear { fixed: 0.0_f64, per_row: probing.cost };
+        let worst = pessimistic(card.rows, card.upper, self.weights().estimate_margin);
+        let probes = choose(&[(false, hash), (true, index)], (card.rows, worst)).unwrap_or(false);
+        probes.then_some((probing, card.rows))
     }
 
     /// The cheapest index of the table `right` reads, filtered by a
@@ -312,6 +318,10 @@ impl PhysicalPlanner<'_> {
             | LogicalPlan::Sort { input, .. }
             | LogicalPlan::Limit { input, .. }
             | LogicalPlan::SemiJoin { left: input, .. } => self.column_type(input, column),
+            LogicalPlan::MarkJoin(m) => match column.checked_sub(m.left.width()) {
+                Some(_) => Some(DataType::Boolean),
+                None => self.column_type(&m.left, column),
+            },
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
                 Some(of_right) => self.column_type(right, of_right),
                 None => self.column_type(left, column),
@@ -384,8 +394,9 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
@@ -445,6 +456,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }

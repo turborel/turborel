@@ -195,13 +195,24 @@ pub struct RowTable {
 
 impl TableStorage for RowTable {
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId> {
+        self.insert_from(tx, &row)
+    }
+
+    fn loading(&self) -> Option<&dyn crate::storage::Loading> {
+        Some(self)
+    }
+
+    /// Encoded as it is held, never copied.
+    fn insert_from(&self, tx: TxId, row: &Row) -> Result<RowId> {
+        // Past the groups of a load, so its rows go to the tree from now on.
+        self.end_direct(tx);
         let id = self.next_id()?;
-        let (record, pages) = self.encode(id, &row)?;
+        let (record, pages) = self.encode(id, row)?;
         match self.insert_version(tx, id, &record) {
             Ok(true) => {
                 // Widened once written, so a zone summed meanwhile either
                 // read the row or is summed again (`rows/zones.rs`).
-                self.zones.widen(id, Some(&row), Replaced::Nothing);
+                self.zones.widen(id, Some(row), Replaced::Nothing);
                 self.counted.live.fetch_add(1, Ordering::AcqRel);
                 self.counted_change(tx);
                 Ok(id)
@@ -389,6 +400,10 @@ impl TableStorage for RowTable {
         self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
     }
 
+    fn statistics_wanted(&self) -> bool {
+        self.gather_wanted()
+    }
+
     fn garbage(self: Arc<Self>, as_of: Timestamp) -> Rows {
         self.pending(Box::new(move |at, _| at <= as_of), None)
     }
@@ -470,6 +485,7 @@ impl TableStorage for RowTable {
 
     fn commit(&self, tx: TxId, at: Timestamp) {
         self.commit_open(tx, at);
+        self.stamp_groups(tx, at);
         self.note_commit(at);
     }
 
@@ -478,6 +494,7 @@ impl TableStorage for RowTable {
     }
 
     fn rollback(&self, tx: TxId) -> Result<()> {
+        self.end_direct(tx);
         self.end_open(tx)
     }
 
@@ -527,7 +544,7 @@ impl TableStorage for RowTable {
     /// Statistics to gather; zones to sum up; rows to freeze, groups to
     /// write again, entries to take out.
     fn maintenance_due(&self) -> bool {
-        self.gather_wanted() || self.zones.wanted() || self.freeze_wanted()
+        self.gather_wanted() || self.zones.wanted() || self.freeze_wanted() || self.groups_pending()
     }
 
     /// Statistics gathered as one call's work, once spaced from the last
@@ -536,12 +553,13 @@ impl TableStorage for RowTable {
     /// be summed up, as one of a commit too recent waits for the horizon
     /// (`rows/zones.rs`).
     fn maintain(&self, horizon: Timestamp, now: bool) -> Result<bool> {
-        if self.gather_wanted() && self.gather_if_due(now) {
+        if self.gather_if_due(now) {
             return Ok(true);
         }
         if self.zones.due() && self.sum_zones(horizon)? {
             return Ok(true);
         }
+        self.settle_groups(horizon)?;
         self.freeze_due(horizon)
     }
 

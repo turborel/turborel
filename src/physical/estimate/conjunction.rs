@@ -28,6 +28,15 @@ const MOST_GROUPED: usize = 6;
 /// The share of rows the conjuncts `conds`, over one table's columns,
 /// keep together, by what is `known`.
 pub fn conjunction(conds: &[Cond], known: Known<'_>) -> f64 {
+    // Its slots read as their values, of a plan made with them (`valued.rs`).
+    if let Some(filled) = conds.iter().map(super::valued::filled).collect::<Option<Vec<Cond>>>() {
+        return of_conds(&filled, known);
+    }
+    of_conds(conds, known)
+}
+
+/// `conjunction`, of `conds` as they are.
+fn of_conds(conds: &[Cond], known: Known<'_>) -> f64 {
     // One conjunct a synopsis answers is never asked of the sample, nor
     // combined with another: its own estimate, found without walking it
     // for the sample's sake.

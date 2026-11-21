@@ -82,7 +82,7 @@ pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, types: &[DataType], val
             for (n, field) in fields.into_iter().enumerate() {
                 let (value, slot) = predicate::constant(field, values)?;
                 row.push(value);
-                slots.extend(slot.map(|slot| ProbeSlot { place: Place::PredicateField(n), slot }));
+                slots.extend(slot.map(|slot| ProbeSlot::of(Place::PredicateField(n), slot)));
             }
             let predicate = Box::new(Predicate { function: function.clone(), column: 0, argument: None });
             let probe = Probe::Predicate { predicate, value: Value::Row(row.into()) };

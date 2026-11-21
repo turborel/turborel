@@ -15,7 +15,6 @@
 //! order the operand gives them, so a probing row's matches come in the
 //! order they would alone.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use super::pipeline::Pipeline;
@@ -24,7 +23,7 @@ use super::{Held, Limit};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::{SharedTable, TABLE_ROW_BYTES};
-use crate::exec::{Runner, execute};
+use crate::exec::{Runner, Seed, execute};
 use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Row};
 use crate::txn::TxId;
@@ -39,11 +38,12 @@ pub(super) struct Table {
     pub(super) shared: Arc<SharedTable>,
 }
 
-/// The partition of the key `b`.
-pub(super) fn part_of(b: &impl Hash) -> usize {
-    let mut hasher = DefaultHasher::new();
-    b.hash(&mut hasher);
-    usize::try_from(hasher.finish()).unwrap_or_default().checked_rem(PARTS).unwrap_or_default()
+/// \[DESIGN\] The partition of the key `key`, the bytes of a group's
+/// values, by its XXH3 seeded by the database's seed, so the morsels of a
+/// query agree on each key's partition (RULES.md D357).
+pub(super) fn part_of(key: &[u8], seed: &Seed) -> usize {
+    let parts = u64::try_from(PARTS).unwrap_or(1);
+    seed.xxh3(key).checked_rem(parts).and_then(|p| usize::try_from(p).ok()).unwrap_or_default()
 }
 
 impl Table {
@@ -103,7 +103,8 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit
     }
     let width = width_of(&rows, keys);
     let parts = vec![batch_of(&rows, width)];
-    let shared = SharedTable::of(parts, ((0..width).collect(), width), keys, db.functions.seed().clone())?;
+    let shared =
+        SharedTable::of(parts, ((0..width).collect(), width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
     Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
 }
 
@@ -121,8 +122,9 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
         Plan::Nearest(_)
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
@@ -191,6 +193,33 @@ fn parallel_built(
     });
     // A morsel of no rows may hold no vectors.
     parts.retain(|b| b.rows > 0);
-    let shared = SharedTable::of(parts, (columns, width), keys, db.functions.seed().clone())?;
+    let shared = SharedTable::of(parts, (columns, width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
     Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
+}
+
+// Unit tests: a key's partition (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::{PARTS, part_of};
+    use crate::exec::Seed;
+
+    /// Verifies: [DESIGN] RULES.md D357: a key's partition is the same each
+    /// time a query's seed is asked it, so its morsels agree, and keys
+    /// spread over the partitions; under another seed it is the XXH3 of
+    /// that seed.
+    #[test]
+    fn a_key_keeps_its_partition_within_a_query() {
+        let seed = Seed::fixed(0x5EED);
+        let keys: Vec<Vec<u8>> = (0_u32..4_096).map(|k| k.to_le_bytes().to_vec()).collect();
+        let first: Vec<usize> = keys.iter().map(|k| part_of(k, &seed)).collect();
+        assert!(keys.iter().zip(&first).all(|(k, &p)| part_of(k, &seed) == p), "the same partition again");
+        assert!(first.iter().all(|&p| p < PARTS));
+        let mut used = first.clone();
+        used.sort_unstable();
+        used.dedup();
+        assert_eq!(used.len(), PARTS, "every partition takes keys");
+        let other = Seed::fixed(0xD1FF);
+        let moved = keys.iter().zip(&first).filter(|&(k, &p)| part_of(k, &other) != p).count();
+        assert!(moved * 2 > keys.len(), "another seed parts the keys anew, {moved} moved");
+    }
 }

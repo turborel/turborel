@@ -76,11 +76,10 @@ use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread::ThreadId;
-use std::time::{Duration, Instant};
 
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlError};
-use crate::log::{Log, Lsn};
+use crate::log::Log;
 use crate::sync::{Gate, lock, lock_builtin};
 
 mod access;
@@ -94,6 +93,7 @@ mod locks;
 mod logging;
 mod marks;
 mod owed;
+mod pending;
 mod reading;
 mod row_waits;
 mod savepoints;
@@ -111,6 +111,7 @@ pub(crate) use locks::TableLock;
 use locks::WaitsFor;
 pub(crate) use logging::Held;
 pub(crate) use marks::Mark;
+use pending::{First, LogPos, Pending};
 pub use reading::{ReadMode, Reading};
 use stop::Stops;
 pub(crate) use stop::Window;
@@ -201,11 +202,11 @@ pub(crate) struct TxState {
     /// counted open until it ends, as a locator holds a value read at one
     /// (`Txn::pin_snapshot`, RULES.md D79).
     pinned: Vec<Timestamp>,
-    /// The position of the current statement's first change in the log.
-    statement_from: Option<Lsn>,
+    /// The place of the current statement's first change in the log.
+    statement_from: Option<LogPos>,
     /// Of each mark open within the current statement, innermost last, the
-    /// position of its first change in the log (`marks.rs`).
-    marks_from: Vec<Option<Lsn>>,
+    /// place of its first change in the log (`marks.rs`).
+    marks_from: Vec<Option<LogPos>>,
     /// Its savepoints (`txn/savepoints.rs`).
     savepoints: savepoints::Savepoints,
     /// Whether it has written a table: one that has not commits at its
@@ -223,10 +224,15 @@ pub(crate) struct TxState {
     /// engine, once it wrote one: a write of the other kind mixes them
     /// (`txn/logging.rs`).
     first_write_external: Option<bool>,
+    /// Whether it wrote a table of an engine that makes its own writes
+    /// durable (`Persistence::Forced`): its records are then written as
+    /// made, before the engine's writes can be (`txn/pending.rs`).
+    forced: bool,
     /// The rows whose entry in a unique index, named, was the key's only
     /// one as it was last inserted (`Index::insert_alone`): no other row
-    /// to look for at a statement's end (`db/assignment.rs`).
-    alone: HashSet<(String, crate::storage::RowId)>,
+    /// to look for at a statement's end (`db/assignment.rs`); by index, so
+    /// a row is looked up by the index's name as it is held.
+    alone: HashMap<String, HashSet<crate::storage::RowId>>,
     /// Of each table of an assertion's kept totals and form, the row it
     /// wrote of its change, each statement's added to it
     /// (`db/assertions/kept.rs`).
@@ -249,6 +255,8 @@ pub(crate) struct Transactions {
     firsts: Mutex<BTreeMap<TxId, First>>,
     /// Row changes logged since the database was opened.
     pub(crate) logged: AtomicU64,
+    /// The records open transactions hold (`txn/pending.rs`).
+    pending: Pending,
     /// Of those, the ones the last checkpoint taken holds: those after it
     /// count toward the next (CHECKPOINT.AFTER_CHANGES).
     checkpointed: AtomicU64,
@@ -321,14 +329,6 @@ impl Transactions {
     }
 }
 
-/// The first record an open transaction logged: its position, the row
-/// changes logged before it, and when.
-struct First {
-    at: Lsn,
-    logged: u64,
-    when: Instant,
-}
-
 impl Default for Transactions {
     fn default() -> Self {
         Transactions {
@@ -338,6 +338,7 @@ impl Default for Transactions {
             gate: Gate::default(),
             firsts: Mutex::new(BTreeMap::new()),
             logged: AtomicU64::new(0),
+            pending: Pending::default(),
             checkpointed: AtomicU64::new(0),
             builds: Mutex::new(0),
             built: Condvar::new(),
@@ -386,6 +387,7 @@ impl Transactions {
             running: Arc::new(Mutex::new(None)),
             stop,
             stamp: OnceLock::new(),
+            pending: OnceLock::new(),
             depends: AtomicU64::new(0),
         }
     }
@@ -408,18 +410,6 @@ impl Transactions {
         self.clock.highest()
     }
 
-    /// The position of the first record of the oldest open transaction
-    /// that logged one, if any.
-    pub(crate) fn oldest_logged(&self) -> Option<Lsn> {
-        lock_builtin(&self.firsts).values().map(|first| first.at).min()
-    }
-
-    /// Notes that `tx` logged its first record at `at`.
-    pub(crate) fn first_logged(&self, tx: TxId, at: Lsn) {
-        let logged = self.logged.load(Ordering::Relaxed);
-        lock_builtin(&self.firsts).entry(tx).or_insert(First { at, logged, when: Instant::now() });
-    }
-
     /// Row changes logged since the last checkpoint taken.
     pub(crate) fn since_checkpoint(&self) -> u64 {
         self.logged.load(Ordering::Relaxed).saturating_sub(self.checkpointed.load(Ordering::Relaxed))
@@ -428,15 +418,6 @@ impl Transactions {
     /// Notes a checkpoint taken, holding the first `logged` row changes.
     pub(crate) fn checkpointed(&self, logged: u64) {
         self.checkpointed.fetch_max(logged, Ordering::Relaxed);
-    }
-
-    /// Of the oldest open transaction that logged a record, from whose
-    /// first the log is kept: the row changes logged since, its own among
-    /// them, and how long ago it logged it.
-    pub(crate) fn pinned(&self) -> Option<(u64, Duration)> {
-        let firsts = lock_builtin(&self.firsts);
-        let oldest = firsts.values().min_by_key(|first| first.at)?;
-        Some((self.logged.load(Ordering::Relaxed).saturating_sub(oldest.logged), oldest.when.elapsed()))
     }
 
     /// How many transactions are open.
@@ -480,6 +461,8 @@ pub(crate) struct Txn {
     /// [ISO/IEC 9075-2:2023 §4.44] Its transaction timestamp, in
     /// microseconds of UTC, once its first change set it (`Txn::stamp`).
     stamp: OnceLock<i64>,
+    /// The records it holds, once it holds one (`txn/pending.rs`).
+    pending: OnceLock<Arc<pending::TxLog>>,
     /// The latest commit not yet durable it read past its snapshot
     /// (`txn/durable.rs`), 0 for none.
     depends: AtomicU64,
@@ -518,24 +501,29 @@ impl Txn {
     /// for each statement, it takes a new one if `fresh` says so: when its
     /// session has no cursor open, which reads at the one it has.
     ///
+    /// Whether a load is under way in it (RULES.md D532), which a statement
+    /// that is no part of it ends first.
+    ///
     /// # Errors
     ///
     /// SQLCODE -910 if its lock is poisoned; a participant's, told of the
     /// new snapshot.
-    pub(crate) fn begin_statement(&self, fresh: impl FnOnce() -> bool) -> Result<()> {
+    pub(crate) fn begin_statement(&self, fresh: impl FnOnce() -> bool) -> Result<bool> {
         self.check_definitions()?;
-        {
+        let loads = {
             let mut st = self.state()?;
             st.statement_start = st.undo.mark();
             st.statement_savepoints.clear();
             st.statement_from = None;
             st.clear_marks();
-        }
+            self.settle_places(&mut st);
+            st.undo.loads()
+        };
         if self.reading == Reading::Statement && self.open.load(Ordering::Acquire) && fresh() {
             self.snapshot.store(self.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);
             self.tell_participants()?;
         }
-        Ok(())
+        Ok(loads)
     }
 
     /// Records the thread its running call is on, or that none runs.
@@ -566,10 +554,12 @@ impl Txn {
 impl Drop for Txn {
     fn drop(&mut self) {
         self.release();
-        // Only one that logged a record has a first to forget.
-        if self.state.get_mut().map_or(true, |st| st.logged) {
+        // Only one whose records were written before its end has a first
+        // to forget.
+        if self.pinned_log() {
             lock_builtin(&self.shared.firsts).remove(&self.id);
         }
+        self.forget_held();
         self.shared.stops.remove(self.id);
         self.shared.active.fetch_sub(1, Ordering::SeqCst);
     }

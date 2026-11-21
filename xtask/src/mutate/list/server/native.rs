@@ -2,13 +2,14 @@
 //! D185 to D199): what is granted, what a completion carries, the
 //! transaction a cursor ends, the conditions and diagnostics a client is
 //! told, a copy's failing row, the session put back by Reset, a SET
-//! that never waits on a replica, the server's time for a statement, and
-//! the row of a connection ended.
+//! that never waits on a replica, the server's time for a statement, the
+//! row of a connection ended, a half-closed client's requests held, and
+//! a failed statement's result unsent.
 
 use super::super::{Mutation, Package};
 
 /// The native protocol's mutations, in the order they run.
-pub const NATIVE: [Mutation; 17] = [
+pub const NATIVE: [Mutation; 19] = [
     Mutation {
         name: "native-compression-at-zero",
         package: Package::Server,
@@ -74,8 +75,8 @@ pub const NATIVE: [Mutation; 17] = [
         package: Package::Server,
         breaks: "a copy's value its column refuses fails with no detail naming its row",
         file: "server/src/native/copy.rs",
-        original: "self.waiting.push(assigned(row, self.one.parameters(), n).map_err(|e| e.with_detail(format!(\"row {n} of the copy\")))?);",
-        replacement: "self.waiting.push(assigned(row, self.one.parameters(), n)?);",
+        original: "self.waiting.push(assigned(row, &self.types, n).map_err(|e| e.with_detail(format!(\"row {n} of the copy\")))?);",
+        replacement: "self.waiting.push(assigned(row, &self.types, n)?);",
         integration: &["copying::rows_are_copied_in_all_or_nothing"],
         unit: &[],
     },
@@ -178,5 +179,25 @@ pub const NATIVE: [Mutation; 17] = [
         replacement: "",
         integration: &["ending::a_connection_ended_is_not_listed_once_its_client_is_told"],
         unit: &[],
+    },
+    Mutation {
+        name: "native-watch-ignores-inbox",
+        package: Package::Server,
+        breaks: "a half-closed client taken for gone while its inbox holds requests sent ahead, so what runs is cancelled",
+        file: "server/src/transport/watch.rs",
+        original: "Ok(read) => read == 0 && !self.ahead.as_ref().is_some_and(|a| a.load(Ordering::Acquire)),",
+        replacement: "Ok(read) => read == 0 && self.ahead.as_ref().is_none_or(|a| !a.load(Ordering::Acquire) || true),",
+        integration: &["transport::a_half_closed_clients_long_request_runs_to_its_end"],
+        unit: &[],
+    },
+    Mutation {
+        name: "native-failed-result-sent",
+        package: Package::Server,
+        breaks: "a statement failed at its first fetch sends its Description before its Error, so a client shows columns of no result",
+        file: "server/src/native/requests/replied.rs",
+        original: "at <= from || !matches!(r, Reply::Description(_) | Reply::Rows(_))",
+        replacement: "at <= from || matches!(r, Reply::Description(_) | Reply::Rows(_)) || true",
+        integration: &[],
+        unit: &["native::requests::tests::a_statement_failed_before_its_rows_sends_no_description"],
     },
 ];

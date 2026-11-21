@@ -41,7 +41,7 @@ use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
 use turborel::txn::Stop;
-use turborel::value::{CharUnits, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use turborel::value::{BIGINT_PRECISION, CharUnits, DataType, Decimal, Spelled, Value};
 
 use crate::auth::Peer;
 
@@ -302,7 +302,7 @@ pub(crate) fn count(n: u64) -> Value {
 
 /// A column of counts, named `name`.
 pub(crate) fn counted(name: &str) -> ColumnDesc {
-    let data_type = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+    let data_type = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
     ColumnDesc { name: name.to_owned(), data_type, not_null: true, default: None, domain: None, collation: None, generated: None }
 }
 
