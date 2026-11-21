@@ -1,5 +1,5 @@
 //! The mutations of the column store's skipping (RULES.md R-TEST-9,
-//! D510-D512): the shadow bits a write and a group published set, the
+//! D510-D513): the shadow bits a write and a group published set, the
 //! zones of the tree's rows a scan reads the delta by, and imprints, their
 //! masks and the order conjuncts are judged in, and dictionaries in order.
 
@@ -13,10 +13,12 @@ const KEPT: &str = "engine::columns::imprints::tests::imprints_never_leave_out_a
 const MASKS: &str = "engine::columns::imprints::tests::masks_are_of_the_bins_a_condition_may_match";
 /// Dictionaries in order.
 const SORTED: &str = "engine::columns::judged::sorted::tests::dictionaries_in_order_judge_by_codes";
+/// Rows fetched in batches.
+const FETCHED: &str = "engine::rows::frozen::shadowed::rows_fetched_in_batches_are_those_got_one_by_one";
 const ORDERED: &str = "engine::columns::imprints::tests::conjuncts_are_ordered_narrowest_first";
 
 /// Mechanisms whose removal must fail the skipping's requirements.
-pub const SKIPPING: [Mutation; 13] = [
+pub const SKIPPING: [Mutation; 15] = [
     Mutation {
         name: "shadow-bits-writer",
         package: Package::Core,
@@ -146,5 +148,25 @@ pub const SKIPPING: [Mutation; 13] = [
         replacement: "Some(order(e)? == Ordering::Greater)",
         integration: &[],
         unit: &[SORTED],
+    },
+    Mutation {
+        name: "fetch-by-group",
+        package: Package::Core,
+        breaks: "the frozen rows of a batch are taken by group unsorted, so a row is looked for in another's group",
+        file: "src/engine/rows/frozen/fetch.rs",
+        original: "        frozen.sort_unstable();",
+        replacement: "",
+        integration: &[],
+        unit: &[FETCHED],
+    },
+    Mutation {
+        name: "fetch-frozen",
+        package: Package::Core,
+        breaks: "a batch reads no frozen row",
+        file: "src/engine/rows/frozen/fetch.rs",
+        original: "                frozen.push((id, n));",
+        replacement: "",
+        integration: &[],
+        unit: &[FETCHED],
     },
 ];
