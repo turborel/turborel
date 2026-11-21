@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 6] = [
+pub const BTREE: [Mutation; 8] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -64,5 +64,25 @@ pub const BTREE: [Mutation; 6] = [
         replacement: "        Some(_) => old.map_or(Ok(hints::NO_LEAF), hint_of),",
         integration: &[],
         unit: &["index::blink::tests::entries_carry_the_leaf_noted_for_their_row"],
+    },
+    Mutation {
+        name: "btree-fetch-any-version",
+        package: Package::Core,
+        breaks: "a row found by an entry is kept whatever key the version the reader sees has",
+        file: "src/index/key.rs",
+        original: "row.get(column).is_some_and(|v| total_cmp(v, value) == Ordering::Equal);",
+        replacement: "row.get(column).is_some_and(|v| total_cmp(v, value) == Ordering::Equal || true);",
+        integration: &["btree_layout::a_row_is_found_by_the_key_its_seen_version_has"],
+        unit: &[],
+    },
+    Mutation {
+        name: "btree-decoded-key-kept",
+        package: Package::Core,
+        breaks: "a search gives the key it last decoded for an entry of other bytes",
+        file: "src/index/blink.rs",
+        original: "        if let Some(key) = self.key.as_ref().filter(|_| self.bytes == bytes) {",
+        replacement: "        if let Some(key) = self.key.as_ref() {",
+        integration: &[],
+        unit: &["index::blink::tests::a_key_is_decoded_once_for_its_entries"],
     },
 ];

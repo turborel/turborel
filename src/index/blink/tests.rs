@@ -409,3 +409,23 @@ fn entries_carry_the_leaf_noted_for_their_row() {
         (1..=3).map(|row| (hint_of(&value(&loaded, row)).unwrap(), count_of(&value(&loaded, row)).unwrap())).collect();
     assert_eq!(held, [(501, 1), (502, 2), (503, 1)]);
 }
+
+/// Verifies: [DESIGN] RULES.md D501: a search decodes a key once for the
+/// entries of one key and again for each other key, each decoded whole.
+#[test]
+fn a_key_is_decoded_once_for_its_entries() {
+    let types = [MONEY, DataType::character(4)];
+    let index = index(&types);
+    let key = |units| Key(vec![exact(units, 2), Value::Char("ab  ".into())]);
+    let mut last = Decoded::default();
+    let (one, two) = (index.prefix(&key(100)).unwrap(), index.prefix(&key(250)).unwrap());
+    assert_eq!(last.of(&one, &types).unwrap(), key(100));
+    assert_eq!((last.bytes.as_slice(), last.key.clone()), (one.as_slice(), Some(key(100))));
+    assert_eq!(last.of(&one, &types).unwrap(), key(100));
+    assert_eq!(last.of(&two, &types).unwrap(), key(250));
+    assert_eq!(last.key, Some(key(250)));
+    for row in 1..=5 {
+        index.insert(key(100), row).unwrap();
+    }
+    assert_eq!(found(&index, CompOp::Eq, exact(100, 2)), [1, 2, 3, 4, 5]);
+}

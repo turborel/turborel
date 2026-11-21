@@ -91,3 +91,42 @@ fn prefixed_nodes_and_hinted_rows_recover_after_a_crash() {
     assert_eq!(rows(&r, "SELECT COUNT(*) FROM OL WHERE W = 1 AND D = 1").unwrap(), ["155"]);
     drop((db, s, crashed));
 }
+
+/// Verifies: [DESIGN] RULES.md D34, D501: an index holds the entries of
+/// versions a reader may not see, and a row found by one is kept only if
+/// the version the reader sees has the entry's key, checked in place. A
+/// reader at a snapshot before an update of an indexed column finds the
+/// row by its old key and not its new one, by equality, by a range and by
+/// a key not unique; a reader after it, the other way.
+#[test]
+fn a_row_is_found_by_the_key_its_seen_version_has() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, K INTEGER, G INTEGER, PRIMARY KEY (ID))").unwrap();
+    db.create_index("T_K", "APP.T", &["K"], "btree").unwrap();
+    db.create_index("T_G", "APP.T", &["G", "K"], "btree").unwrap();
+    let s = db.session("APP");
+    for id in 1..=200 {
+        s.run(&format!("INSERT INTO T VALUES ({id}, {id}, {})", id % 4)).unwrap();
+    }
+    s.commit().unwrap();
+    let old = db.session("APP");
+    old.run("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").unwrap();
+    let probes = [
+        "SELECT ID FROM T WHERE K = 50",
+        "SELECT ID FROM T WHERE K = 5000",
+        "SELECT ID FROM T WHERE K BETWEEN 49 AND 51",
+        "SELECT COUNT(*) FROM T WHERE G = 2",
+        "SELECT ID FROM T WHERE G = 2 AND K = 50",
+    ];
+    let before: Vec<Vec<String>> = probes.iter().map(|q| sorted(&old, q)).collect();
+    assert_eq!(before, [vec!["50"], vec![], vec!["49", "50", "51"], vec!["50"], vec!["50"]]);
+    s.run("UPDATE T SET K = 5000, G = 3 WHERE ID = 50").unwrap();
+    s.commit().unwrap();
+    let after: Vec<Vec<String>> = probes.iter().map(|q| sorted(&old, q)).collect();
+    assert_eq!(after, before, "the snapshot's versions, by their keys");
+    let new = db.session("APP");
+    let seen: Vec<Vec<String>> = probes.iter().map(|q| sorted(&new, q)).collect();
+    assert_eq!(seen, [vec![], vec!["50"], vec!["49", "51"], vec!["49"], vec![]]);
+    let plan = new.physical_plan(probes[0], &Params::new()).unwrap();
+    assert!(plan.contains("T_K"), "{plan}");
+}

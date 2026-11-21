@@ -152,7 +152,7 @@ impl IndexMethod for BTreeMethod {
 /// dropped, so its pages are freed when it goes.
 struct BLinkIndex {
     tree: BLinkTree,
-    types: Vec<DataType>,
+    types: Arc<[DataType]>,
     discarded: AtomicBool,
     /// Its distinct keys, counted as written, or by maintenance once asked
     /// for (`index/stats.rs`).
@@ -161,7 +161,7 @@ struct BLinkIndex {
 
 impl BLinkIndex {
     fn with(tree: BLinkTree, columns: &[DataType], keys: KeyCounts) -> BLinkIndex {
-        BLinkIndex { tree, types: columns.to_vec(), discarded: AtomicBool::new(false), keys }
+        BLinkIndex { tree, types: Arc::from(columns), discarded: AtomicBool::new(false), keys }
     }
 }
 
@@ -294,7 +294,7 @@ impl BLinkIndex {
             return None;
         }
         let (mut prefix, mut checked) = (Vec::new(), false);
-        for (value, data_type) in equal.iter().zip(&self.types) {
+        for (value, data_type) in equal.iter().zip(self.types.iter()) {
             let Some(at) = anchor(value, data_type) else { return Some(Range::all(true)) };
             checked |= !at.exact;
             // The first anchor's key is the prefix so far, not copied.
@@ -348,19 +348,48 @@ impl BLinkIndex {
     ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
         let checked = range.as_ref().is_some_and(|r| r.checked);
         let scan = range.map(|r| scan_of(tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), direction));
-        let (probe, types) = (probe.clone(), self.types.clone());
+        // The probe is copied only to check entries by, and the types are
+        // shared, so an exact probe's search copies neither.
+        let (probe, types) = (checked.then(|| probe.clone()), Arc::clone(&self.types));
+        let mut last = Decoded::default();
         scan.into_iter().flatten().filter_map(move |entry| {
             let found = entry.and_then(|(entry, value)| {
                 let (key, row) = split(&entry)?;
                 noted(row, &value)?;
-                let key = (decoded || checked).then(|| decode_key(key, &types).map(Key)).transpose()?;
+                let key = (decoded || checked).then(|| last.of(key, &types)).transpose()?;
                 Ok((key, row))
             });
             match found {
-                Ok((key, row)) => (!checked || key.as_ref().is_some_and(|k| probe.answers(&k.0))).then_some(Ok((key, row))),
+                Ok((key, row)) => {
+                    let answers = |p: &Probe| key.as_ref().is_some_and(|k| p.answers(&k.0));
+                    probe.as_ref().is_none_or(answers).then_some(Ok((key, row)))
+                }
                 Err(e) => Some(Err(e)),
             }
         })
+    }
+}
+
+/// The last key a search decoded, by its bytes: entries of one key, as an
+/// equality probe of a key not unique finds, are decoded once
+/// (RULES.md D501).
+#[derive(Default)]
+struct Decoded {
+    bytes: Vec<u8>,
+    key: Option<Key>,
+}
+
+impl Decoded {
+    /// The key whose encoding is `bytes`, of columns of `types`.
+    fn of(&mut self, bytes: &[u8], types: &[DataType]) -> Result<Key> {
+        if let Some(key) = self.key.as_ref().filter(|_| self.bytes == bytes) {
+            return Ok(key.clone());
+        }
+        let key = Key(decode_key(bytes, types)?);
+        self.bytes.clear();
+        self.bytes.extend_from_slice(bytes);
+        self.key = Some(key.clone());
+        Ok(key)
     }
 }
 
