@@ -42,6 +42,8 @@ behind it, and each can be replaced or added to.
 - One table of groups with typed keys and columns of set functions'
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
+- Hash joins probed a batch at a time in one tagged table, shared by
+  parallel morsels, telling the left's scan a range and Bloom filter.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
