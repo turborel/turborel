@@ -10,7 +10,7 @@ use crate::engine::columns::scan::{candidates, read_candidates, rows};
 use crate::engine::{MEMORY_POOL_BYTES, memory_file};
 use crate::index::Probe;
 use crate::memory::MemoryBudget;
-use crate::storage::{Condition, Conjunct, Conjunction};
+use crate::storage::{Condition, Conjunct, Conjunction, Threshold};
 use crate::value::{CompOp, Decimal, Spelled};
 
 mod truncated;
@@ -149,6 +149,35 @@ fn scans_skip_chunks_a_condition_cannot_match() {
     let listed = Conjunction(vec![Conjunct::In { column: 2, values: vec![int(10), int(30)] }]);
     let kept: u32 = candidates(&group, Some(&listed)).iter().map(|(from, to)| to.saturating_sub(*from)).sum();
     assert!((200..4000).contains(&kept), "the parts of the 200 rows of 10 and 30, not all: {kept}");
+}
+
+/// Verifies: [DESIGN] RULES.md D379, a top-N's bound told the scan: of no
+/// bound yet, every chunk is a candidate; ascending, raised to 1,500, only
+/// the chunks of K up to it, every row of them kept, none judged; raised
+/// below the group's least, none, and the group's summary rules it out;
+/// descending, the chunks of K from the bound on.
+#[test]
+fn a_top_bound_skips_chunks_past_it() {
+    let (pool, file) = file();
+    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain, compress: true, pax: false };
+    let group = written(&pages, (1, 1), 4000);
+    let read = |t: &Arc<Threshold>| {
+        let told = Conjunction(vec![Conjunct::Dynamic { column: 0, threshold: Arc::clone(t) }]);
+        candidates(&group, Some(&told)).iter().map(|(from, to)| to.saturating_sub(*from)).sum::<u32>()
+    };
+    let ascending = Arc::new(Threshold::new(false));
+    assert_eq!(read(&ascending), 4000, "no bound yet");
+    ascending.raise(&int(1500));
+    let kept = read(&ascending);
+    assert!((1500..4000).contains(&kept), "the chunks of K up to 1,500: {kept}");
+    ascending.raise(&int(-1));
+    assert_eq!(read(&ascending), 0, "below the least");
+    let told = Conjunction(vec![Conjunct::Dynamic { column: 0, threshold: Arc::clone(&ascending) }]);
+    assert!(!Summary::of(&group, group.header[0]).may_match(Some(&told)), "the group ruled out");
+    let descending = Arc::new(Threshold::new(true));
+    descending.raise(&int(3500));
+    let from = read(&descending);
+    assert!((500..4000).contains(&from), "the chunks of K from 3,500: {from}");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, frozen row groups: a group of no rows,

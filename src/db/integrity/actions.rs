@@ -90,6 +90,12 @@ impl State {
     /// foreign key has an action. The values the statement gave are kept
     /// [GR7] only of the tables an action may give values to.
     pub(super) fn referential_actions(self: &Arc<Self>, tx: &Txn, effects: &mut Effects<'_>) -> Result<()> {
+        // None looked for where no table has a foreign key or is a node
+        // table (RULES.md D415).
+        let constrained = self.catalog.constrained();
+        if !constrained.foreign_keys && !constrained.nodes {
+            return Ok(());
+        }
         let acted: Vec<&QualifiedName> = self.catalog.tables().into_iter().filter(|t| self.acts_on(&t.name)).map(|t| &t.name).collect();
         // [EXTENSION] (§4.2, R12.1) a node deleted acts on its edges.
         let nodes = self.catalog.tables().into_iter().any(|t| self.has_edges(&t.name));

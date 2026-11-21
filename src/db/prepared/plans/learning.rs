@@ -29,7 +29,7 @@ pub(super) const MOST_LEARNING_RUNS: u8 = 20;
 
 /// What a query learning its plan has learned (`Physical::Learning`).
 #[derive(Debug, Clone, Default)]
-pub(super) struct Learning {
+pub(in crate::db) struct Learning {
     /// The plan the last execution made with its slots, if of the shape of
     /// the one made with its values.
     last: Option<Box<Plan>>,
@@ -43,7 +43,7 @@ pub(super) struct Learning {
 impl Learning {
     /// After an execution that planned `custom` with its values and
     /// `slotted` with its slots.
-    pub(super) fn after(self, custom: &Plan, slotted: Plan) -> Learning {
+    pub(in crate::db) fn after(self, custom: &Plan, slotted: Plan) -> Learning {
         let shaped = same_shape(&slotted, custom);
         let continued = shaped && self.last.as_deref().is_some_and(|last| same_shape(last, &slotted));
         let agreed = if continued { self.agreed.saturating_add(1) } else { u8::from(shaped) };
@@ -52,24 +52,45 @@ impl Learning {
 
     /// What is kept of the query after it: its plan with slots, once
     /// learned, reading `reads`, of `rows`; nothing, once learning fails.
-    pub(super) fn kept(mut self, reads: &Arc<[QualifiedName]>, rows: Arc<[usize]>) -> Physical {
+    pub(super) fn kept(self, reads: &Arc<[QualifiedName]>, rows: Arc<[usize]>) -> Physical {
+        match self.outcome() {
+            Learned::Kept(plan) => Physical::Fixed(plan, Arc::clone(reads), Some(rows)),
+            Learned::Learning(learning) => Physical::Learning(learning),
+            Learned::Stopped => Physical::Varies,
+        }
+    }
+
+    /// What it has learned: its plan with slots, once learned; that it
+    /// stopped, once learning fails; else itself, learning on.
+    pub(in crate::db) fn outcome(mut self) -> Learned {
         if self.agreed >= LEARNED_RUNS
             && let Some(plan) = self.last.take()
         {
-            return Physical::Fixed(plan, Arc::clone(reads), Some(rows));
+            return Learned::Kept(plan);
         }
-        if self.runs >= MOST_LEARNING_RUNS { Physical::Varies } else { Physical::Learning(self) }
+        if self.runs >= MOST_LEARNING_RUNS { Learned::Stopped } else { Learned::Learning(self) }
     }
 }
 
+/// What a plan learning has learned after an execution (`Learning::outcome`).
+#[derive(Debug)]
+pub(in crate::db) enum Learned {
+    /// Its plan with slots, kept.
+    Kept(Box<Plan>),
+    /// Not yet learned, so it learns on.
+    Learning(Learning),
+    /// Its plans keep changing, so it is planned at each execution.
+    Stopped,
+}
+
 /// The rows of each table of `reads` in `st`.
-pub(super) fn rows_of(st: &State, reads: &[QualifiedName]) -> Arc<[usize]> {
+pub(in crate::db) fn rows_of(st: &State, reads: &[QualifiedName]) -> Arc<[usize]> {
     reads.iter().map(|t| st.row_count(t).unwrap_or(0)).collect()
 }
 
 /// Whether a table of `reads` has gained or lost too many of the `rows`
 /// it had in `st` for a plan learned then (`drifted`).
-pub(super) fn moved(st: &State, reads: &[QualifiedName], rows: &[usize]) -> bool {
+pub(in crate::db) fn moved(st: &State, reads: &[QualifiedName], rows: &[usize]) -> bool {
     reads.iter().zip(rows).any(|(t, &was)| drifted(was, st.row_count(t).unwrap_or(0)))
 }
 

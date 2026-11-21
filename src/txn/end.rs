@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::owed::{Entry, Owed};
-use super::{Committing, Joined, Timestamp, Transactions, TxId, Txn, UndoFailure};
+use super::{Committing, Joined, Timestamp, Transactions, Txn, UndoFailure};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -22,18 +22,20 @@ use crate::sync::lock_builtin;
 impl State {
     /// [X3.135-1986 §8.2 GR1, GR3] terminate the transaction and commit its
     /// changes: two-phase across the participants, at one commit timestamp.
-    /// Between the phases its commit record is made durable (RULES.md D25):
-    /// that is the moment it commits. If a participant refuses, or the
+    /// Between the phases its commit record is written; its locks are
+    /// released, and then the record is synced, the moment it commits
+    /// (RULES.md D25, D441). It returns once its commit is durable, so its
+    /// session's next snapshot counts it. If a participant refuses, or the
     /// commit record cannot be written, the whole transaction is rolled back
-    /// instead. Its locks are released at the end.
+    /// instead.
     ///
     /// # Errors
     ///
     /// As for rollback, and SQLCODE -922 if the commit record was written
-    /// but could not be synced: the transaction is in doubt, phase 2 not
-    /// run, so no snapshot counts it; its locks and versions stay held, for
-    /// the caller to keep until the database is dropped, and recovery
-    /// commits it if the log holds its commit record (RULES.md D25).
+    /// but it, or one before it, could not be synced: the transaction is in
+    /// doubt, never durable, so no snapshot counts it, for the caller to
+    /// keep until the database is dropped; recovery commits it if the log
+    /// holds its commit record (RULES.md D25).
     pub(crate) fn commit(&self, tx: &Txn) -> Result<()> {
         self.commit_publishing(tx, &mut |_| Ok(()))
     }
@@ -65,7 +67,9 @@ impl State {
             }
             tx.release();
             self.gc_read();
-            return Ok(());
+            // [DESIGN] RULES.md D441: what it read past its snapshot is
+            // durable before it says it committed.
+            return tx.replied(Ok(()));
         }
         // The commit record and the versions stamped are one change to a
         // checkpoint.
@@ -73,56 +77,80 @@ impl State {
         // Under the gate: an index published shut is either seen here, or
         // published after this commit, which it then counts.
         let validated =
-            tx.check_definitions().and_then(|()| tx.check_undone()).and_then(|()| self.validate_participants(tx.id, &joined)).and_then(
-                |(participants, committing)| {
-                    let synced = tx.commit_record(committing.at, self.clock.now())?;
-                    Ok((participants, committing, synced))
+            tx.check_definitions().and_then(|()| tx.check_undone()).and_then(|()| self.validate_participants(tx, &joined)).and_then(
+                |(participants, mut committing)| {
+                    let lsn = tx.append_commit(committing.at, self.clock.now())?;
+                    if lsn.is_some() {
+                        committing.syncs();
+                    }
+                    Ok((participants, committing, lsn))
                 },
             );
         match validated {
-            // In doubt: never made visible, its locks and versions held
-            // for its session to keep, as recovery decides it (RULES.md
-            // D25).
-            Ok((_, committing, Err(in_doubt))) => {
-                drop(committing);
-                drop(gate);
-                Err(in_doubt)
-            }
-            Ok((participants, committing, Ok(()))) => {
-                // Phase 2 uses storages already found, so it cannot fail part way.
-                for storage in participants {
+            Ok((participants, committing, lsn)) => {
+                // Phase 2 uses storages already found, so it cannot fail part
+                // way. Each engine makes the changes committed at once, as
+                // the row store does with one store (RULES.md D440).
+                for storage in &participants {
                     storage.commit(tx.id, committing.at);
                 }
                 let at = committing.at;
                 let published = publish(at);
-                // The commit has reached every engine: snapshots may now
-                // count it.
+                // The commit has reached every engine: it has ended, and is
+                // durable once its record is synced.
                 drop(committing);
-                drop(gate);
+                // [DESIGN] RULES.md D441: its locks go before the sync, so
+                // the next writer of its rows goes on at once.
                 tx.release();
-                // [DESIGN] RULES.md D29: not before every commit before it
-                // has ended, so its session's next snapshot counts it.
-                self.tx.wait_stable(at);
+                // [DESIGN] RULES.md D440: written in place once its locks
+                // are released, and before the gate lets a checkpoint
+                // capture the pages, whose record syncs this one's.
+                for storage in participants {
+                    storage.settle(tx.id);
+                }
+                drop(gate);
+                let durable = self.durable(tx, lsn, at);
                 self.gc(joined.iter().map(|j| &*j.table));
-                published
+                durable.and(published)
             }
             Err(e) => {
                 drop(gate);
                 self.rollback(tx)?;
                 // The transaction was rolled back: a conflict is a
                 // serialization failure [ISO/IEC 9075:1992 §22.1].
-                Err(if e.code == Code::Conflict { e.with_state(SqlState::SERIALIZATION_FAILURE) } else { e })
+                tx.replied(Err(if e.code == Code::Conflict { e.with_state(SqlState::SERIALIZATION_FAILURE) } else { e }))
             }
         }
     }
 
+    /// \[DESIGN\] Syncs the commit record of `tx`, committed at `at`, at
+    /// `lsn` if it has one to sync, and returns once every commit up to `at`
+    /// is durable: not before every commit before it is, so its session's
+    /// next snapshot counts it (RULES.md D29, D441).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -922 if its sync, or one before, failed: it is in doubt.
+    fn durable(&self, tx: &Txn, lsn: Option<crate::log::Lsn>, at: Timestamp) -> Result<()> {
+        if let Some(lsn) = lsn {
+            tx.sync_commit(lsn)?;
+            self.tx.synced_commit(at);
+        }
+        self.tx.wait_durable(at)
+    }
+
     /// Phase 1: takes the commit timestamp, and asks every participant in
     /// `joined` to validate at it. Nothing has committed if this fails.
-    fn validate_participants<'j>(&self, tx: TxId, joined: &'j [Joined]) -> Result<(Vec<&'j dyn TableStorage>, Committing<'_>)> {
+    fn validate_participants<'j>(&self, tx: &Txn, joined: &'j [Joined]) -> Result<(Vec<&'j dyn TableStorage>, Committing<'_>)> {
         let committing = self.tx.commit_timestamp();
         let at = committing.at;
         for Joined { table, storage } in joined {
-            if let Err(e) = storage.validate(tx, at) {
+            if let Err(e) = storage.validate(tx.id, at) {
+                // [DESIGN] RULES.md D441: the refusal rests on commits
+                // before it, told once they are durable.
+                if e.code == Code::Conflict {
+                    tx.depend(at.saturating_sub(1));
+                }
                 // A conflict keeps its code, so the program can tell it to
                 // run the transaction again (RULES.md D29).
                 let code = if e.code == Code::Conflict { Code::Conflict } else { Code::CommitFailed };

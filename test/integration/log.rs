@@ -323,3 +323,27 @@ fn segments_keep_zeros_ahead_until_sealed() {
     let next = log.append(&record(60)).unwrap();
     assert_eq!(all(&log, positions[59]).last().map(|r| r.0), Some(next));
 }
+
+/// Verifies: [DESIGN] RULES.md D410, a sync reports how far the log is
+/// durable: the file log's sync of an early record reaches past every
+/// record appended before it began, and one of a later record reaches
+/// past it; a file log syncing nothing, and the memory log, claim just
+/// past the record asked for.
+#[test]
+fn a_sync_reports_the_position_it_made_durable() {
+    let scratch = Scratch::new("sync-reached");
+    let log = file_log(&scratch.path("data"), FileLogOptions::default());
+    let first = log.append(&record(1)).unwrap();
+    let last = (2..5).map(|n| log.append(&record(n)).unwrap()).last().unwrap();
+    let reached = log.sync_reached(first).unwrap();
+    assert!(reached > last, "the group's sync covers what was appended before it: {reached:?} {last:?}");
+    assert_eq!(log.sync_reached(first).unwrap(), reached, "nothing more to sync");
+    let later = log.append(&record(5)).unwrap();
+    assert!(log.sync_reached(later).unwrap() > later);
+    let unsynced = file_log(&scratch.path("none"), FileLogOptions { durability: Durability::None, ..FileLogOptions::default() });
+    let at = unsynced.append(&record(1)).unwrap();
+    assert_eq!(unsynced.sync_reached(at).unwrap(), Lsn(at.0 + 1));
+    let memory = MemoryLog::new();
+    let at = memory.append(&record(1)).unwrap();
+    assert_eq!(memory.sync_reached(at).unwrap(), Lsn(at.0 + 1));
+}
