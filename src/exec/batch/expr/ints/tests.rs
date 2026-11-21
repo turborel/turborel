@@ -9,7 +9,7 @@ fn ints(units: Vec<i64>, scale: u32) -> Ints {
 
 /// Verifies: [X3.135-1986 §5.9 SR4b, SR4c] a sum is at the greater
 /// scale, each operand scaled to it; a product at the sum of the scales;
-/// a quotient not computed over integers; a product whose scale passes 18
+/// a quotient not computed over integers; a product whose scale passes 38
 /// none.
 #[test]
 fn scales_are_those_decimals_give() {
@@ -21,12 +21,14 @@ fn scales_are_those_decimals_give() {
     let product = arith(ArithOp::Mul, (&Exact::Column(&a), &Exact::Const(3, 1)), 2).unwrap();
     assert_eq!((product.units.clone(), product.scale), (vec![450, -75], 3));
     assert!(arith(ArithOp::Div, (&Exact::Column(&a), &Exact::Column(&b)), 2).is_none());
-    assert!(arith(ArithOp::Mul, (&Exact::Column(&a), &Exact::Const(1, 17)), 2).is_none(), "scale 19");
+    let fine = arith(ArithOp::Mul, (&Exact::Column(&a), &Exact::Const(1, 17)), 2).unwrap();
+    assert_eq!((fine.units.clone(), fine.scale), (vec![150, -25], 19), "scale 19");
+    assert!(arith(ArithOp::Mul, (&Exact::Column(&a), &Exact::Const(1, 37)), 2).is_none(), "scale 39");
 }
 
 /// Verifies: [X3.135-1986 §5.9 GR1, GR6a] a null is null of a null, its
 /// slot 0, its overflow no flag; one of a row not null gives none, past
-/// 64 bits or of 18 digits.
+/// 64 bits or of 19 digits, which the rows compute in 128 bits.
 #[test]
 fn the_flag_counts_rows_not_null() {
     let nulls = Some(Mask::from_bools(&[false, true]));
@@ -35,7 +37,7 @@ fn the_flag_counts_rows_not_null() {
     assert_eq!(made.units, vec![2, 0], "the null's slot 0");
     assert!(made.is_null(1) && !made.is_null(0));
     let big = ints(vec![1, 999_999_999_999_999_999], 0);
-    assert!(arith(ArithOp::Add, (&Exact::Column(&big), &Exact::Const(1, 0)), 2).is_none(), "18 digits");
+    assert!(arith(ArithOp::Add, (&Exact::Column(&big), &Exact::Const(1, 0)), 2).is_none(), "19 digits");
     assert!(arith(ArithOp::Mul, (&Exact::Column(&big), &Exact::Const(i64::MAX, 0)), 2).is_none(), "past 64 bits");
     assert!(negated(&ints(vec![i64::MIN], 0)).is_none());
 }

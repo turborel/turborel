@@ -129,7 +129,7 @@ fn the_bank_graph_is_described_4_1() {
             "PHONE,2,DIGITS,DIGITS,CHARACTER VARYING(20)",
             "PLACE,1,CITY_NAME,CITY_NAME,CHARACTER VARYING(20)",
             "TRANSFER,1,AMOUNT,AMOUNT,DECIMAL(10,2)",
-            "TRANSFER,2,CENTS,AMOUNT * 100,NUMERIC(18,2)",
+            "TRANSFER,2,CENTS,AMOUNT * 100,NUMERIC(13,2)",
         ]
     );
     assert_eq!(from("PG_KEY_COLUMNS", "ELEMENT_TABLE_ALIAS, ORDINAL_POSITION, COLUMN_NAME").len(), 7);

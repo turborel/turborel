@@ -11,7 +11,7 @@ pub const BIGINT: [Mutation; 6] = [
         package: Package::Core,
         breaks: "BIGINT is INTEGER's precision, so it holds no more than ten digits",
         file: "src/value.rs",
-        original: "pub const BIGINT_PRECISION: u32 = MAX_EXACT_PRECISION;",
+        original: "pub const BIGINT_PRECISION: u32 = NARROW_EXACT_PRECISION;",
         replacement: "pub const BIGINT_PRECISION: u32 = INTEGER_PRECISION;",
         integration: &["bigint::the_bigint_type_6_1"],
         unit: &[],
