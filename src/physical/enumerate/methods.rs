@@ -38,13 +38,13 @@ struct Sides<'e> {
 
 impl Space<'_> {
     /// The plans of the join of the sets `l` and `r`, the left and right
-    /// operands, applying `applied`, giving `rows` rows: the cheapest of
-    /// each method for each plan of the left.
-    pub(super) fn offers(&self, applied: &Applied, (l, r): (Set, Set), rows: f64) -> Vec<(Cand, Tree)> {
+    /// operands, applying `applied` on the equalities `keys` of the left's
+    /// columns and the right's (`Space::keys`), giving `rows` rows: the
+    /// cheapest of each method for each plan of the left.
+    pub(super) fn offers(&self, applied: &Applied, (l, r): (Set, Set), (rows, keys): (f64, &[(usize, usize)])) -> Vec<(Cand, Tree)> {
         let (Some(left), Some(right)) = (self.table.get(&l), self.table.get(&r)) else { return Vec::new() };
         let sides = Sides { left, right };
         let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
-        let keys = self.keys(applied, (l, r));
         let mut out = Vec::new();
         let Some(build) = right.best() else { return out };
         let tree = |how: Method, (a, b): (usize, usize)| Tree::Join { how, op: applied.op, left: a, right: b, sets: (l, r) };
@@ -57,7 +57,7 @@ impl Space<'_> {
                 continue;
             }
             let hash = Linear { fixed: build.cost + HASH_ROW * right.rows, per_row: HASH_ROW };
-            let probed = self.probe_cost(kind, &keys, r).map(|probe| Linear { fixed: 0.0_f64, per_row: probe });
+            let probed = self.probe_cost(kind, keys, r).map(|probe| Linear { fixed: 0.0_f64, per_row: probe });
             let how = probed.map_or(Method::Hash, |index| self.robust(&sides, hash, index));
             let cost = match how {
                 Method::Index => probed.unwrap_or(hash),
@@ -65,9 +65,7 @@ impl Space<'_> {
             };
             out.push((Cand { cost: base + cost.at(left.rows), order, tree: 0 }, tree(how, (cand.tree, build.tree))));
         }
-        out.extend(
-            self.merges(&sides, kind, &keys, rows).into_iter().map(|(cand, class, trees)| (cand, tree(Method::Merge(class), trees))),
-        );
+        out.extend(self.merges(&sides, kind, keys, rows).into_iter().map(|(cand, class, trees)| (cand, tree(Method::Merge(class), trees))));
         out
     }
 

@@ -172,10 +172,11 @@ impl<'m> Space<'m> {
     }
 
     /// The rows of the join of `s1` and `s2` applying `applied`, and its
-    /// bound, if both have entries: the set's, if it has one already, so
+    /// bound by the equalities `keys` of the left's columns and the
+    /// right's, if both have entries: the set's, if it has one already, so
     /// that every plan of a set is costed by the same rows; else of this
     /// pair, the rows at most the bound.
-    pub(super) fn rows_of(&self, applied: &Applied) -> Option<(f64, f64)> {
+    pub(super) fn rows_of(&self, applied: &Applied, keys: &[(usize, usize)]) -> Option<(f64, f64)> {
         let s = applied.left | applied.right;
         if let Some(entry) = self.table.get(&s) {
             return Some((entry.rows, entry.upper));
@@ -183,11 +184,7 @@ impl<'m> Space<'m> {
         let (left, right) = (self.table.get(&applied.left)?, self.table.get(&applied.right)?);
         let rows = self.model.joined_rows((applied.left, left.rows), (applied.right, right.rows), applied);
         let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
-        // Only a side of one relation knows the most rows of a column's
-        // value (`Model::joined_upper`), so the keys are found for it alone.
-        let one = Space::single(applied.left).or(Space::single(applied.right)).is_some();
-        let keys = if one { self.keys(applied, (applied.left, applied.right)) } else { Vec::new() };
-        let upper = self.model.joined_upper((applied.left, left.upper), (applied.right, right.upper), (kind, &keys));
+        let upper = self.model.joined_upper((applied.left, left.upper), (applied.right, right.upper), (kind, keys));
         Some((rows.min(upper), upper))
     }
 
@@ -205,21 +202,25 @@ impl<'m> Space<'m> {
         if rows <= left.upper.min(right.upper).min(left.upper * right.upper) {
             return Some(rows);
         }
-        self.rows_of(applied).map(|(bounded, _)| bounded)
+        self.rows_of(applied, &self.keys(applied, (applied.left, applied.right))).map(|(bounded, _)| bounded)
     }
 
     /// Joins `s1` and `s2` if they may be, offering each plan of the join
     /// to their union's entry (`enumerate/methods.rs`); whether they were.
     pub(super) fn join(&mut self, s1: Set, s2: Set) -> bool {
         let Some(applied) = self.applies(s1, s2) else { return false };
-        let Some((rows, upper)) = self.rows_of(&applied) else { return false };
+        // The keys of one side's columns and the other's, found once for
+        // the bound and the plans of either side's order.
+        let keys = self.keys(&applied, (applied.left, applied.right));
+        let Some((rows, upper)) = self.rows_of(&applied, &keys) else { return false };
         self.pairs = self.pairs.saturating_add(1);
         let s = s1 | s2;
         self.table.entry(s).or_insert_with(|| Entry { rows, upper, cands: Vec::new() });
         let kind = applied.op.and_then(|o| self.graph.ops.get(o)).map_or(Kind::Inner, |o| o.shape.kind);
         let sides = [(applied.left, applied.right), (applied.right, applied.left)];
         for &(l, r) in sides.iter().take(if kind.commutes() { 2 } else { 1 }) {
-            for (cand, tree) in self.offers(&applied, (l, r), rows) {
+            let keyed: Vec<(usize, usize)> = if l == applied.left { keys.clone() } else { keys.iter().map(|&(a, b)| (b, a)).collect() };
+            for (cand, tree) in self.offers(&applied, (l, r), (rows, &keyed)) {
                 if !self.table.get(&s).is_some_and(|entry| entry.takes(&cand)) {
                     continue;
                 }
