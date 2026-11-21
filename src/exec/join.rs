@@ -7,8 +7,10 @@
 //! outgrows the work area (`exec/join/rescan.rs`); and an outer join's is
 //! either (`exec/join/outer.rs`); an index nested-loop join holds nothing,
 //! each left row probing an index (`exec/join/indexed.rs`); a merge join
-//! holds the run of right rows of one key (`exec/join/merge.rs`); a range
-//! join holds its right operand sorted (`exec/join/range.rs`).
+//! holds the run of right rows of one key (`exec/join/merge.rs`); a semi
+//! join or an antijoin gives each left row once, or none
+//! (`exec/join/semi.rs`); a range join holds its right operand sorted
+//! (`exec/join/range.rs`).
 
 mod indexed;
 mod merge;
@@ -16,6 +18,7 @@ mod outer;
 mod partitioned;
 mod range;
 mod rescan;
+mod semi;
 
 pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
@@ -26,15 +29,15 @@ pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub(in crate::exec) use partitioned::{Partitions, Pending, joined as partitioned_joined};
 pub(super) use range::ranged;
 pub(in crate::exec) use rescan::{Pass, Rescanned, product};
+pub(super) use semi::semi;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use super::work::Work;
 use super::{RowIter, broken, column, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::physical::{JoinKey, Plan};
 use crate::spill::{Records, SpillTable, SpilledLobs, bucket_key, row_bytes};
 use crate::storage::Row;
@@ -48,7 +51,7 @@ use crate::value::{Bucket, key_bucket, key_equal};
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
-pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<JoinKey>>, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<JoinKey>>, db: &Db, tx: TxId) -> RowIter {
     let mut work = Work::of(db, tx);
     let Some(keys) = keys else {
         return match Rescanned::of(execute(right, db, tx), &mut work) {

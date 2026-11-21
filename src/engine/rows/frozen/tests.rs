@@ -56,6 +56,7 @@ fn rewriting(delay: u32, fraction: f64) -> TableOptions {
             bloom: Places::default(),
             pax: false,
             imprints: true,
+            sketch: Places::default(),
         }),
         ..TableOptions::default()
     }

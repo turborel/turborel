@@ -18,7 +18,7 @@ use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, 
 use crate::binder::{self, OutColumn, bind_select};
 use crate::catalog::QualifiedName;
 use crate::error::{At, Code, Result, fail};
-use crate::exec::execute;
+use crate::exec::{Db, execute};
 use crate::params::Params;
 use crate::parser::Parser;
 use crate::settings::FUNCTION_CALLS;
@@ -139,8 +139,9 @@ impl Session {
             let (columns, logical) = self.cursor_bound(st, spec, params, None)?;
             return Ok((columns, Stream::planned(st, tx, logical)?.read_now()?));
         }
-        if let Some((columns, physical, reads)) = keeping.map(|k| k.physical(params.dynamic_values())).transpose()?.flatten() {
-            return Ok((columns, Stream::kept(st, tx, physical, reads)?));
+        if let Some((columns, physical, reads, slots)) = keeping.map(|k| k.physical(params)).transpose()?.flatten() {
+            let db = slots.map_or_else(|| Db::of(st), |slots| Db::slotted(st, slots));
+            return Ok((columns, Stream::kept(&db, tx, physical, reads)?));
         }
         let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
         Ok((columns, Stream::planned(st, tx, logical)?))
@@ -394,7 +395,7 @@ impl Session {
         for t in w.bound.set_tables() {
             st.read_lock(tx, &t)?;
         }
-        let runner = Hosted::new(Some(self), cx);
+        let runner = Hosted::in_db(Some(self), cx, &w.db(cx.st));
         let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.9 GR9", &runner))?;
         let mut effects = self.effects(st);
         // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.

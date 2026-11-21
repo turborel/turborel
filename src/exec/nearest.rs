@@ -12,10 +12,10 @@ use std::sync::Arc;
 use super::entries::{Reading, fetch};
 use super::{RowIter, Runner, Subqueries, broken, eval, eval_cond, failed};
 use crate::catalog::{IndexDesc, KeyShape};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::index::{Key, NeighbourEntries, Probe};
-use crate::logical::Truth;
+use crate::logical::{Truth, filled_expr};
 use crate::physical::{NearestRead, Plan};
 use crate::storage::{Condition, Row, RowId, TableStorage};
 use crate::txn::{TxId, checked};
@@ -23,7 +23,7 @@ use crate::value::Value;
 use threshold::Threshold;
 
 #[inline(never)]
-pub(super) fn nearest(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn nearest(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Nearest(read) = plan else { return failed(broken("a nearest read is not one")) };
     match open(*read, db, tx) {
         Ok(rows) => rows,
@@ -31,11 +31,21 @@ pub(super) fn nearest(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     }
 }
 
-fn open(read: NearestRead, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
+/// `read`, the distance operand of its measure, a slot of a kept plan,
+/// given its statement's value (RULES.md D610).
+fn slotted_measure(mut read: NearestRead, db: &Db) -> Result<NearestRead> {
+    if let Some(slots) = db.slots() {
+        read.measure = filled_expr(read.measure, slots)?;
+    }
+    Ok(read)
+}
+
+fn open(read: NearestRead, db: &Db, tx: TxId) -> Result<RowIter> {
     if let Some(stop) = db.tx.stop_of(tx) {
         stop.check()?;
     }
     let storage = Arc::clone(db.storage_of(&read.table)?);
+    let read = slotted_measure(read, db)?;
     let Some(mut query) = read.query() else { return Err(broken("a nearest read has no constant distance operand")) };
     // A score's bounds and its calls read one snapshot (D87).
     if read.approximate.is_some() {
@@ -54,14 +64,15 @@ fn open(read: NearestRead, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
     let projection = index.key_projection();
     let Some(entries) = index.nearest(&query, &db.memory)? else { return Ok(scanned(read, storage, db, tx, false)) };
     let reading = Reading::of(&key, Some(&read.columns), projection);
-    let entries = Box::new(checked(entries, db.tx.stop_of(tx)));
-    let rows = Search { read, storage, key, reading, entries, threshold, runner, db: Arc::clone(db), tx, ended: false, tail: None };
+    // Counted as the index's search (RULES.md D522).
+    let entries = Box::new(checked(crate::index::used(entries, db.uses_of(&read.index)), db.tx.stop_of(tx)));
+    let rows = Search { read, storage, key, reading, entries, threshold, runner, db: db.clone(), tx, ended: false, tail: None };
     Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
 }
 
 /// The fallback computes the same filter and measure lazily. After an
 /// exhausted candidate traversal, only NULL distances remain to add.
-fn scanned(read: NearestRead, storage: Arc<dyn TableStorage>, db: &Arc<State>, tx: TxId, nulls: bool) -> RowIter {
+fn scanned(read: NearestRead, storage: Arc<dyn TableStorage>, db: &Db, tx: TxId, nulls: bool) -> RowIter {
     let runner = Runner::new(db, tx);
     let entries = checked(storage.scan(tx, &read.columns), db.tx.stop_of(tx));
     let rows = entries.filter_map(move |entry| {
@@ -100,7 +111,7 @@ struct Search {
     entries: NeighbourEntries,
     threshold: Threshold,
     runner: Runner,
-    db: Arc<State>,
+    db: Db,
     tx: TxId,
     ended: bool,
     tail: Option<RowIter>,

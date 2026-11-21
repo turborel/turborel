@@ -131,3 +131,33 @@ fn a_set_function_that_eliminates_a_null_warns_6_5() {
     assert_eq!((done, p.value("X").to_string()), (Ok(Completion::Warning(SqlState::NULL_VALUE_ELIMINATED)), "2".to_owned()));
     a.rollback().unwrap();
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §20.11 GR6c ii 2 B, §6.13 GR12d ii,
+/// ISO/IEC 9075:1992 §3.3.4.1] RULES.md D391, D15: a cursor of a prepared
+/// query whose `?`, compared with a VARCHAR(4) column, its cast cuts
+/// completes with 01004 whether or not the query orders its rows, read
+/// row by row and by batches, executed again from its kept plan too; a
+/// value that fits raises nothing. Regression test: without ORDER BY the
+/// cursor read its rows as it was fetched, after its completion was
+/// taken, and the warning was lost.
+#[test]
+fn a_cursor_compared_with_a_parameter_cut_warns_with_or_without_order_by() {
+    let db = warned_db();
+    let s = db.session("A");
+    for batches in ["OFF", "ON"] {
+        exec(&s, &format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
+        for sql in ["SELECT K FROM W WHERE N = ?", "SELECT K FROM W WHERE N = ? ORDER BY K"] {
+            let p = s.prepare(sql).unwrap();
+            for (given, warned) in
+                [("ABCDEF", Some(SqlState::STRING_TRUNCATED)), ("ABCDEF", Some(SqlState::STRING_TRUNCATED)), ("AB", None)]
+            {
+                let mut cursor = s.open_prepared(&p, &[Value::Char(given.into())]).unwrap();
+                let mut keys = Vec::new();
+                while let Some(row) = cursor.fetch().unwrap() {
+                    keys.push(row[0].to_string());
+                }
+                assert_eq!((keys.len(), s.warning()), (usize::from(given == "AB"), warned), "{batches} {sql} {given}");
+            }
+        }
+    }
+}

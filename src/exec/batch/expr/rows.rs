@@ -31,6 +31,14 @@ impl Subqueries for Quiet<'_> {
         self.statement.rows(subquery, outer, limit)
     }
 
+    fn slot(&self, index: usize) -> Option<&Value> {
+        self.statement.slot(index)
+    }
+
+    fn outer(&self, index: usize) -> Option<&Value> {
+        self.statement.outer(index)
+    }
+
     fn warnings(&self) -> Option<&Warnings> {
         Some(&self.heard)
     }

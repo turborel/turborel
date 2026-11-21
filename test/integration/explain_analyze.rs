@@ -19,6 +19,9 @@ use turborel::value::{Decimal, Value};
 
 use crate::common::{exec, rows, sorted};
 
+mod changes;
+mod notes;
+
 /// A join whose few outer rows each probe T's index.
 const PROBED: &str = "SELECT T.V, U.W FROM T, U WHERE T.K = U.K AND U.W = 3";
 
@@ -110,7 +113,7 @@ fn a_scan_shows_its_rows_beside_its_estimate() {
         assert!(a.text.starts_with("-- physical:\n") && a.text.ends_with("-- ran: 1000 rows\n"), "{}", a.text);
         assert!(a.micros.is_none() && !a.text.contains("time="), "{}", a.text);
         let line = a.text.lines().find(|l| l.contains("SeqScan ANN.T  (rows=1000, cost=")).unwrap_or_else(|| panic!("{}", a.text));
-        assert!(line.ends_with(")  (actual rows=1000)"), "{line}");
+        assert!(line.contains(")  (actual rows=1000"), "{line}");
     }
 }
 
@@ -125,7 +128,7 @@ fn a_join_counts_each_operator_and_an_index_join_its_probes() {
     assert_eq!(a.rows, 14);
     let join = op(&a, "IndexNestedLoop ANN.T");
     assert_eq!((join.rows, join.tables, join.join), (14, 2, true), "{}", a.text);
-    assert!(a.text.contains("(actual rows=14, probes=14)"), "{}", a.text);
+    assert!(a.text.contains("(actual rows=14, probes=14, entries=14"), "{}", a.text);
     let hashed = analyzed(&s, "SELECT T.V, S.X FROM T, S WHERE T.K = S.K AND S.X = 1");
     let join = hashed.operators.iter().find(|o| o.join).unwrap();
     assert_eq!((hashed.rows, join.rows), (33, 33), "{}", hashed.text);
@@ -157,11 +160,11 @@ fn a_query_that_raises_raises_the_same_exception() {
     assert_eq!(direct_lines(&s, &format!("EXPLAIN ANALYZE {sql}")).unwrap_err(), run);
 }
 
-/// Verifies: [EXTENSION] RULES.md D376: ANALYZE is no key word. A table
-/// named ANALYZE is read, explained and analyzed; EXPLAIN ANALYZE
+/// Verifies: [EXTENSION] RULES.md D376, D622: ANALYZE is no key word. A
+/// table named ANALYZE is read, explained and analyzed; EXPLAIN ANALYZE
 /// followed by a parenthesis that begins no query is a table EXPLAIN
-/// whose correlation name is ANALYZE; and EXPLAIN ANALYZE of a data
-/// change statement is refused as EXPLAIN of one is, changing nothing.
+/// whose correlation name is ANALYZE; and EXPLAIN of a data change
+/// statement is refused, changing nothing.
 #[test]
 fn analyze_is_read_as_the_option_only_before_a_query() {
     let db = database();
@@ -172,9 +175,7 @@ fn analyze_is_read_as_the_option_only_before_a_query() {
     assert_eq!(lines.last().map(String::as_str), Some("-- ran: 2 rows"));
     let joined = "EXPLAIN ANALYZE (D) CROSS JOIN ANALYZE";
     assert_eq!(direct_lines(&s, joined), rows(&s, &format!("SELECT * FROM {joined}")));
-    let insert = "INSERT INTO T VALUES (1, 1)";
-    let explained = direct_lines(&s, &format!("EXPLAIN {insert}")).unwrap_err();
-    assert_eq!(direct_lines(&s, &format!("EXPLAIN ANALYZE {insert}")).unwrap_err(), explained);
+    assert!(direct_lines(&s, "EXPLAIN INSERT INTO T VALUES (1, 1)").is_err());
     s.rollback().unwrap();
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T").unwrap(), ["1000"]);
 }
@@ -243,6 +244,8 @@ fn injected_cardinalities_change_the_plan_not_the_rows() {
     let sql = "SELECT T.V, U.W, S.X FROM T, U, S WHERE T.K = U.K AND U.K = S.K AND S.X = 1";
     let plan = |s: &Session| s.physical_plan(sql, &Params::new()).unwrap();
     let (before, rows_before) = (plan(&s), sorted(&s, sql));
+    let shown = |s: &Session| analyzed(s, sql).operators.iter().map(|o| o.estimate).collect::<Vec<_>>();
+    let unchanged = shown(&s);
     s.with_cardinalities(Injected::new().with(&["NOWHERE"], 5.0_f64));
     assert_eq!(plan(&s), before);
     // A join's rows alone, which the join enumeration takes.
@@ -252,8 +255,9 @@ fn injected_cardinalities_change_the_plan_not_the_rows() {
     let injected = plan(&s);
     assert_ne!(injected, before);
     assert_eq!(sorted(&s, sql), rows_before);
-    let a = analyzed(&s, sql);
-    assert!(a.operators.iter().any(|o| o.estimate.is_some_and(|e| e >= 1.0e7_f64)), "{}", a.text);
+    // The estimates shown come of the given rows, joined by the keys of
+    // the relations (RULES.md D384), not of the statistics'.
+    assert_ne!(shown(&s), unchanged, "{}", analyzed(&s, sql).text);
     s.with_cardinalities(Injected::new());
     assert_eq!(plan(&s), before);
 }

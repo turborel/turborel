@@ -104,3 +104,14 @@ pub(super) fn applied<T: super::TableStorage + ?Sized>(table: &T, id: RowId, row
 /// first rows asked for, if FETCH FIRST asks only those
 /// (`TableStorage::scan_ordered`).
 pub type ScanOrder<'a> = (&'a [usize], bool, Option<usize>);
+
+/// \[DESIGN\] The bytes a table takes (`TableStorage::sizes`, RULES.md
+/// D522), counted, or, if `estimated`, of some rows their number times
+/// their mean width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableSizes {
+    /// The bytes.
+    pub bytes: u64,
+    /// Whether some of them are estimated.
+    pub estimated: bool,
+}

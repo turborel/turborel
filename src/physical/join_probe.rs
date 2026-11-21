@@ -36,6 +36,12 @@ pub enum Preserved {
     Outer,
     /// Those, then each table row no outer row matched: a FULL outer join.
     Both(Box<Unmatched>),
+    /// \[DESIGN\] Each outer row once, alone, at its first match: a semi
+    /// join (RULES.md D540).
+    Semi,
+    /// \[DESIGN\] Each outer row no table row matches, alone: an
+    /// antijoin.
+    Anti,
 }
 
 /// Of a FULL outer index join, which table rows the probes left are kept:

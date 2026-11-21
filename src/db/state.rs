@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 mod bare;
+mod uses;
 
 use super::api;
 use super::files::Reopening;
@@ -106,6 +107,10 @@ pub struct State {
     /// Each table's lock, shared by every snapshot that knows the table.
     pub(crate) locks: Xxh3Map<QualifiedName, Arc<TableLock>>,
     pub(crate) indexes: HashMap<String, Arc<dyn Index>>,
+    /// Each index's counts of searches, by its name, shared by every
+    /// snapshot that knows the index: kept in step with `indexes` as each
+    /// snapshot is published (`State::published`, RULES.md D522).
+    pub(crate) index_uses: Xxh3Map<String, Arc<crate::index::Uses>>,
     /// Indexes being built: kept up to date by every write, but not read
     /// until built (`Database::create_index`).
     pub(crate) building: HashSet<String>,
@@ -136,8 +141,6 @@ pub struct State {
     pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
     pub(crate) clock: Arc<dyn crate::clock::Clock>,
-    /// \[EXTENSION\] The last version 7 UUID made, shared by every snapshot (RULES.md D183).
-    pub(crate) uuids: Arc<crate::value::types::uuid::generate::Ordered>,
     pub(crate) optimizer: Optimizer,
     /// The transaction counter and the graph of waits, shared by every snapshot.
     pub(crate) tx: Arc<Transactions>,
@@ -162,9 +165,10 @@ pub struct State {
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
     /// RULES.md D55).
     pub(crate) jobs: Arc<crate::threads::Jobs>,
-    /// The latest runs of the graph algorithms, shared by every snapshot
-    /// (`system/graph_runs.rs`).
-    pub(crate) graph_runs: Arc<crate::system::GraphRuns>,
+    /// What ran since it was opened, its graph algorithms' latest runs,
+    /// its statements' tallies and the last version 7 UUID it made, shared
+    /// by every snapshot (`system.rs`).
+    pub(crate) ran: Arc<crate::system::Ran>,
     /// What reads ahead for its pools on its read-ahead job, shared by
     /// every snapshot (`disk/buffer/ahead.rs`, RULES.md D30).
     pub(crate) ahead: Arc<crate::disk::buffer::AheadReader>,
@@ -211,6 +215,8 @@ impl State {
             let _ = self.declare_plugin(engine.name(), engine.configurable());
         }
         let _ = self.switch_rules();
+        let ran = Arc::clone(&self.ran);
+        let _ = self.declare_plugin(crate::system::STATEMENTS_GROUP, Some(&ran.statements));
     }
 
     /// The built-in engines and index methods, given the budget `memory`
@@ -375,6 +381,10 @@ impl State {
             range_selectivity: s.number(settings::RANGE_SELECTIVITY),
             null_fraction: s.number(settings::NULL_FRACTION),
             reorder_gain: s.number(settings::REORDER_GAIN),
+            estimate_margin: s.number(settings::ESTIMATE_MARGIN),
+            grant_bytes: crate::physical::cost::spill::grant_bytes(self),
+            degrees: crate::physical::cost::parallel::Degrees::of(self),
+            runtime_filters: crate::exec::batched(self) && crate::physical::cost::runtime::wanted(self),
         }
     }
 }

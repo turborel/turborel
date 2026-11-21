@@ -16,18 +16,21 @@
 
 mod access;
 mod analyzed;
+mod blind;
+pub use crate::noted::NotesRead;
 pub use analyzed::{Analyzed, Counted, NodeCount, Operator};
 pub(crate) use analyzed::{counted, millis, operators};
 mod built;
 mod cardinality;
 mod carried;
 mod collated;
-mod cost;
+pub(crate) mod cost;
 mod decided;
 mod enumerate;
 pub use decided::Decided;
 pub(crate) mod estimate;
 mod expression_index;
+mod goals;
 mod grouping;
 mod indexed;
 mod join_probe;
@@ -52,18 +55,23 @@ mod range;
 pub use range::{Bound, Pruned, RangeJoin};
 mod raising;
 mod recognized;
+mod robust;
+mod semi;
+pub use semi::{SemiJoin, SemiMethod};
 mod shown;
 pub(crate) mod spatial;
+mod streamed;
 
 pub use cardinality::Injected;
-pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
+pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_ESTIMATE_MARGIN, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE};
+pub use cost::{DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE, MOST_ESTIMATE_MARGIN, parallel::Degrees};
 pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
+pub(crate) use kept::{Kept, filled_plan_as_is, keepable, placed, prepared_plan, same_shape};
 pub use kept::{Place, ProbeSlot};
-pub(crate) use kept::{filled_plan, keepable, same_shape};
-
 use std::sync::Arc;
 
-use built::Built;
+pub use built::Own;
+use built::{Built, of_left};
 use cardinality::Estimates;
 
 use crate::catalog::QualifiedName;
@@ -267,6 +275,8 @@ pub enum Plan {
     },
     /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
     MergeJoin(Box<MergeJoin>),
+    /// \[DESIGN\] A semi join or an antijoin (`physical/semi.rs`, RULES.md D540).
+    SemiJoin(Box<SemiJoin>),
     /// \[DESIGN\] A range join (`physical/range.rs`, RULES.md D580).
     RangeJoin(Box<RangeJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
@@ -286,6 +296,10 @@ pub enum Plan {
         input: Box<Plan>,
         /// Its estimated groups (`physical/cardinality.rs`).
         est: f64,
+        /// Whether its input comes in the order of its grouping columns,
+        /// so each group is made and given as its last row passes, none
+        /// held (`exec/group/streamed.rs`, RULES.md D550).
+        streamed: bool,
     },
     /// Each `<value expression>` applied to each row [X3.135-1986 §5.25 GR2].
     Project {
@@ -302,6 +316,9 @@ pub enum Plan {
         input: Box<Plan>,
         /// Its estimated rows (`physical/cardinality.rs`).
         est: f64,
+        /// Whether its input comes in the order of every column, so each
+        /// row is compared with the one before alone (RULES.md D550).
+        streamed: bool,
     },
     /// [ISO/IEC 9075:1992 §7.10 GR1b] The rows of `left` that are, or are
     /// not, in `right`: INTERSECT or EXCEPT \[ALL\] (`exec/set.rs`).
@@ -440,9 +457,11 @@ pub struct PhysicalPlanner<'a> {
     /// execution its paths are chosen by (`physical/kept.rs`).
     values: Option<&'a [Value]>,
     /// Of the input of a FETCH FIRST, the most of its first rows read, if
-    /// known as planned (`Limit::read_rows`): through a sort and a
-    /// projection to a scan, whose path in the order asked is priced by
-    /// them (`physical/access.rs`). Below any other node, none.
+    /// known as planned (`Limit::read_rows`): through the nodes that give
+    /// their rows as they read them, divided as they lose or make rows, to
+    /// a scan, whose path in the order asked is priced by them
+    /// (`physical/goals.rs`, `physical/access.rs`). Below any other node,
+    /// none.
     first: Option<usize>,
     /// \[EXTENSION\] The FETCH FIRST whose count `first` is: its search.
     fetch: Option<&'a crate::logical::Fetch>,
@@ -504,12 +523,12 @@ impl<'a> PhysicalPlanner<'a> {
 
     /// Build `logical` as it is: a chain of products below it is not
     /// reordered (`build_node` of its operands), others are. The first
-    /// rows a FETCH FIRST reads are known through a scan, a projection or
-    /// a sort alone: a filter, a join or a grouping reads more of its input
-    /// than it gives.
+    /// rows a FETCH FIRST reads pass to the inputs of a node that gives its
+    /// rows as it reads them, divided as it loses or makes rows, and stop
+    /// at any other (`physical/goals.rs`).
     fn build_node(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
-        if self.first.is_some() && !matches!(logical, LogicalPlan::Scan { .. } | LogicalPlan::Project { .. } | LogicalPlan::Sort { .. }) {
-            return PhysicalPlanner { first: None, ..*self }.build_node(logical, want);
+        if self.first.is_some() && !goals::passes(logical) {
+            return self.whole().build_node(logical, want);
         }
         match logical {
             LogicalPlan::Scan { table, names, needed, located } => {
@@ -519,6 +538,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Filter { cond, input } => self.filter(cond, input, want, None),
             LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
+            LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_join((*anti, cond), (left, right), want),
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
             LogicalPlan::Distinct { input } => self.distinct(input, want),
@@ -550,32 +570,27 @@ impl<'a> PhysicalPlanner<'a> {
     /// keeps the order of its input, its long IN lists judged by sets
     /// (`logical::judged_by_sets`).
     fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey], above: Option<&[usize]>) -> Built {
-        if let Some(read) = self.filtered_read(cond, input, (want, above)) {
+        // A row goal is of the rows the filter keeps: its input is read
+        // for as many more as it drops (`goals.rs`). A join divides its
+        // own.
+        let kept = |p: &PhysicalPlanner<'_>| p.per_row(p.estimating(|e| e.filter_card(cond, input)).rows, input);
+        let goal = self.divided(|| kept(self));
+        if let Some(read) = goal.filtered_read(cond, input, (want, above)) {
             return read;
         }
-        if let Some(join) = self.range_join(cond, input, want) {
+        if let Some(join) = self.range_join(cond, input) {
             return join;
         }
         if let Some(join) = self.hash_join(cond, input, want) {
             return join;
         }
-        let b = self.build_node(input, want);
         let est = self.estimating(|e| e.filter_card(cond, input)).rows;
+        let b = goal.build_node(input, want);
         let cond = judged_by_sets(cond.clone());
         let detail = self.described(input, |names| render_cond(&cond, names));
         Built { plan: Plan::Filter { cond, detail, est, of_read: false, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 }
-
-/// `want`, if each of its keys is of a product's left operand, `width`
-/// columns wide, whose order the product keeps; else none.
-fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
-    if want.iter().all(|k| k.column < width) { want } else { &[] }
-}
-
-/// An outer join's own conditions, of its left operand's columns and of
-/// its right's (`Plan::OuterJoin`), if either has one.
-pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;
 
 // Unit tests: the planner's response to a state that breaks its invariants
 // (RULES.md R-TEST-2 robustness), and the orders its plans give.

@@ -33,6 +33,7 @@ use super::{Held, Limit};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::batch::{Told, runtime_taken as taken, wanted};
 use crate::exec::{Runner, broken, eval, eval_cond};
 use crate::logical::{Cond, Expr, Truth, pushed_conjuncts};
@@ -86,7 +87,7 @@ impl Pipeline {
     /// # Errors
     ///
     /// As building an operand fails.
-    pub(super) fn of(plan: &Plan, (db, tx): (&Arc<State>, TxId), limit: &Limit) -> Result<Held<Pipeline>> {
+    pub(super) fn of(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Pipeline>> {
         let rows = db.settings.count(EXECUTOR_MORSEL_ROWS).max(1);
         let mut branches = Vec::new();
         if !branched(plan, (db, tx, rows), (limit, &[]), &mut branches)? {
@@ -143,15 +144,23 @@ fn scan_branch(
     true
 }
 
+/// Adds the branch of `plan`, an index scan, to `out`, split into morsels
+/// of about `rows` rows, its probe placed with its statement's slots
+/// (RULES.md D610), judged by the runtime filters `told`: whether it
+/// could be.
+fn index_branch(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), told: &[Told], out: &mut Vec<Branch>) -> Result<bool> {
+    let Plan::IndexScan { table, index, probe, slots, columns, covering, est, .. } = plan else { return Ok(false) };
+    let placed = db.probe(probe, slots)?;
+    let scanned = Scanned { table, index, probe: &placed, columns, covering: *covering };
+    let Some(split) = indexed::split(db, tx, &scanned, (crate::physical::parallel_rows(*est), rows))? else { return Ok(false) };
+    out.push(Branch { split, steps: judged(told.to_vec()), scanned: None });
+    Ok(true)
+}
+
 /// Adds the branches of `plan` to `out`, each split into morsels of about
 /// `rows` rows, `told` the runtime filters of its rows' columns taken
 /// down it: whether each could be, and each built operand held.
-fn branched(
-    plan: &Plan,
-    (db, tx, rows): (&Arc<State>, TxId, usize),
-    (limit, told): (&Limit, &[Told]),
-    out: &mut Vec<Branch>,
-) -> Result<bool> {
+fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Limit, &[Told]), out: &mut Vec<Branch>) -> Result<bool> {
     if let Plan::Append { left, right, .. } = plan {
         return Ok(branched(left, (db, tx, rows), (limit, told), out)? && branched(right, (db, tx, rows), (limit, told), out)?);
     }
@@ -161,11 +170,8 @@ fn branched(
     if let Plan::SeqScan { table, columns, .. } = plan {
         return Ok(scan_branch(db, (table, columns), (tx, rows), (None, &below), out) && stepped(out, first, judged(here)));
     }
-    if let Plan::IndexScan { table, index, probe, columns, covering, est, .. } = plan {
-        let scanned = Scanned { table, index, probe, columns, covering: *covering };
-        let Some(split) = indexed::split(db, tx, &scanned, (crate::physical::parallel_rows(*est), rows))? else { return Ok(false) };
-        out.push(Branch { split, steps: judged(told.to_vec()), scanned: None });
-        return Ok(true);
+    if let Plan::IndexScan { .. } = plan {
+        return index_branch(plan, (db, tx, rows), told, out);
     }
     if let Plan::Filter { cond, input, .. } = plan
         && let Plan::SeqScan { table, columns, .. } = input.bare()
@@ -188,7 +194,7 @@ fn branched(
 /// The step of `plan`, an operator of a pipeline, and its input; a hash
 /// join's built operand held, its runtime filters added to `told` if
 /// they are wanted; none if the operand gave way.
-fn step_of<'a>(plan: &'a Plan, (db, tx): (&Arc<State>, TxId), limit: &Limit, told: &mut Vec<Told>) -> Result<Option<(Step, &'a Plan)>> {
+fn step_of<'a>(plan: &'a Plan, (db, tx): (&Db, TxId), limit: &Limit, told: &mut Vec<Told>) -> Result<Option<(Step, &'a Plan)>> {
     let made: (Step, &Plan) = if let Plan::Filter { cond, input, .. } = plan {
         (Step::Filter(cond.clone()), input)
     } else if let Plan::Project { exprs, input, .. } = plan {
@@ -400,7 +406,7 @@ mod tests {
             est: 0.0_f64,
         };
         let steps_of = || {
-            let state = Arc::new(db.snapshot().unwrap());
+            let state = Db::from(db.snapshot().unwrap());
             let Held::Kept(pipeline) = Pipeline::of(&join, (&state, crate::txn::NO_TRANSACTION), &Limit::of(&state)).unwrap() else {
                 panic!("gave way")
             };

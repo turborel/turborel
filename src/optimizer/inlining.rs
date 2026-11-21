@@ -61,6 +61,7 @@ impl Rule for InlineFunctions {
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::OuterJoin { .. }
+            | LogicalPlan::SemiJoin { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Values { .. }

@@ -22,6 +22,8 @@
 //! column's vector cannot be judged over is left to the filter.
 
 mod coded;
+mod sketched;
+mod sorted;
 
 use std::cmp::Ordering;
 
@@ -143,8 +145,9 @@ fn judged_conjunct(conjunct: &Conjunct) -> bool {
     match conjunct {
         Conjunct::Any(each) => each.iter().all(judged_leaf),
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } => judged_leaf(conjunct),
-        // A sort's bound passes over groups and parts alone (RULES.md D379).
-        Conjunct::Dynamic { .. } => false,
+        // A sort's bound, and a join's spans, pass over groups and parts
+        // alone (RULES.md D379, D600).
+        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => false,
     }
 }
 
@@ -155,7 +158,7 @@ fn judged_leaf(conjunct: &Conjunct) -> bool {
         | Conjunct::Null { .. }
         | Conjunct::In { .. }
         | Conjunct::NotIn { .. } => true,
-        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } => false,
+        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => false,
     }
 }
 
@@ -216,7 +219,8 @@ impl Pred {
             | Conjunct::In { .. }
             | Conjunct::NotIn { .. }
             | Conjunct::Any(_)
-            | Conjunct::Dynamic { .. } => None,
+            | Conjunct::Dynamic { .. }
+            | Conjunct::Spans { .. } => None,
         }
     }
 
@@ -307,7 +311,7 @@ fn text_keeps(conjunct: &Conjunct, order: &dyn Fn(&str) -> Option<Ordering>) -> 
         // Each operand of one column, never itself an OR (`judged_conjunct`).
         Conjunct::Any(each) => each.iter().try_fold(false, |any, c| Some(any | leaf_text_keeps(c, order)?)),
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } => leaf_text_keeps(conjunct, order),
-        Conjunct::Dynamic { .. } => None,
+        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
     }
 }
 
@@ -324,7 +328,7 @@ fn leaf_text_keeps(conjunct: &Conjunct, order: &dyn Fn(&str) -> Option<Ordering>
         Conjunct::Condition(Condition { probe: Probe::Compare { op, value: Value::Char(c) }, .. }) => Some(holds(*op, order(c))),
         Conjunct::In { values, .. } => values.iter().try_fold(false, |any, v| Some(any | equal(v)?)),
         Conjunct::NotIn { values, .. } => values.iter().try_fold(true, |all, v| Some(all & apart(v)?)),
-        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } => None,
+        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
     }
 }
 

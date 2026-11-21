@@ -33,7 +33,7 @@
 //! one is raised is the same.
 
 use super::collated::{Lifted, lifted};
-use super::indexed::{Equijoin, index_join, right_index_join};
+use super::indexed::{EquiKind, Equijoin, index_join, right_index_join};
 use super::shown::Shown;
 use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::logical::{
@@ -66,7 +66,7 @@ impl PhysicalPlanner<'_> {
     pub(super) fn hash_join(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Option<Built> {
         let LogicalPlan::Product { left, right } = input else { return None };
         if cond.can_raise() {
-            return self.spatial_join(cond, (left, right), want);
+            return self.whole().spatial_join(cond, (left, right), want);
         }
         if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
             let product = LogicalPlan::Product { left: Box::new(left), right: Box::new(right) };
@@ -86,20 +86,23 @@ impl PhysicalPlanner<'_> {
             }
         }
         if keys.is_empty() {
-            return self.comparison_join(cond, (left, right), want);
+            return self.whole().comparison_join(cond, (left, right), want);
         }
         let names = self.names_of(input);
         let shown = Shown::of(names.as_deref());
         let est = self.estimating(|e| e.filter_card(cond, input)).rows;
-        // As in a product, the rows come in the order of the left operand.
+        // As in a product, the rows come in the order of the left operand,
+        // which a row goal passes to as each of its rows gives its matches
+        // (`goals.rs`).
         let want_left = of_left(want, width);
-        let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
+        let l = self.divided(|| self.per_row(est, left)).build_node(left, want_left);
+        let r = self.whole().build_node(right, &[]);
         let ordered = !want_left.is_empty() && l.ordered;
         // A few left rows each probing an index of the right's table.
         if let Some(pairs) = plain(&keys)
             && let Some((probing, rows)) = self.probed_instead((left, right), &pairs, &r.plan)
         {
-            let join = Equijoin { width, keys: &pairs, rest, outer: false };
+            let join = Equijoin { width, keys: &pairs, rest, outer: EquiKind::Inner };
             return Some(Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered });
         }
         // The left built instead, if it has fewer rows; its order is lost.
@@ -189,7 +192,7 @@ fn plain(keys: &[JoinKey]) -> Option<Vec<(usize, usize)>> {
 /// The keys `keys` of a join whose left operand is `width` columns wide,
 /// as text, of its pairs' column `names`: each an equality, or IS NOT
 /// DISTINCT FROM.
-fn keys_detail(keys: &[JoinKey], names: &[String], width: usize) -> String {
+pub(super) fn keys_detail(keys: &[JoinKey], names: &[String], width: usize) -> String {
     keys.iter()
         .map(|k| {
             let matched = if k.nulls { "IS NOT DISTINCT FROM" } else { "=" };
@@ -204,7 +207,7 @@ fn keys_detail(keys: &[JoinKey], names: &[String], width: usize) -> String {
 /// it: "left = right" or "right = left", or of IS NOT DISTINCT FROM,
 /// NOT (left IS DISTINCT FROM right) [ISO/IEC 9075-2:2023 §8.15 SR6],
 /// either way round.
-fn equated(c: &Cond, width: usize) -> Option<JoinKey> {
+pub(super) fn equated(c: &Cond, width: usize) -> Option<JoinKey> {
     let (a, b, nulls) = match c {
         Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) => (*a, *b, false),
         Cond::Not(inner) => {
@@ -319,7 +322,7 @@ impl PhysicalPlanner<'_> {
             return built;
         }
         // A comparison by order searches a sorted operand (`physical/range/outer.rs`).
-        if let Some(built) = self.range_outer_join((kind, cond), (left, right), want) {
+        if let Some(built) = self.range_outer_join((kind, cond), (left, right)) {
             return built;
         }
         let width = left.width();
@@ -347,7 +350,7 @@ impl PhysicalPlanner<'_> {
             return Built::unordered(right_index_join(probing, (&swapped, parted.rest), (r.plan, rows), ((width, right.width()), shown)));
         }
         if let Some(((probing, rows), false)) = probed {
-            let join = Equijoin { width, keys: &pairs, rest: parted.rest, outer: true };
+            let join = Equijoin { width, keys: &pairs, rest: parted.rest, outer: EquiKind::Left };
             return Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered };
         }
         // A RIGHT join as the LEFT one of its operands swapped, which
