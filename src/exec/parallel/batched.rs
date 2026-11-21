@@ -17,7 +17,7 @@ use std::sync::Arc;
 use super::pipeline::{Branch, Pipeline, Step};
 use crate::db::State;
 use crate::error::Result;
-use crate::exec::batch::{Batches, Deferred, Shaped, filter_step, probe_step, project_step, resolved, rows_of, through};
+use crate::exec::batch::{Batches, Deferred, Shaped, filter_step, probe_step, project_step, resolved, rows_of, runtime_step, through};
 use crate::exec::broken;
 use crate::storage::Row;
 use crate::txn::TxId;
@@ -73,6 +73,7 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
                 (made, layout, width) = probe_step(&table.shared, &left, (&layout, width))?;
                 shaped.push(made);
             }
+            Step::Runtime(told) => shaped.push(runtime_step(told, &layout)),
         }
     }
     Some((shaped, layout, width))
@@ -90,6 +91,7 @@ fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
             Step::Filter(cond) => deferred.filtered(cond),
             Step::Project(exprs) => deferred.projected(exprs),
             Step::Probe(_) => Deferred::default(),
+            Step::Runtime(..) => deferred,
         };
     }
     deferred.late_of(scanned)

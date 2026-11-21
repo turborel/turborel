@@ -13,9 +13,12 @@
 //! keys are not all numbers, datetimes or truth values hashes its texts
 //! by SipHash keyed by the database's seed from the first.
 
+use std::sync::Arc;
+
+use super::super::runtime::Told;
 use super::super::stream::Kept;
 use crate::error::{Result, SqlError};
-use crate::exec::table::{Hashing, JoinTable, KeyHashes, Seed, keys_equal, values_hash};
+use crate::exec::table::{Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal, values_hash};
 use crate::physical::JoinKey;
 use crate::storage::{BATCH_ROWS, Batch, Column, Row};
 use crate::value::{Value, key_equal};
@@ -98,6 +101,24 @@ impl SharedTable {
         Ok(shared)
     }
 
+    /// The runtime filters of its keys `keys` (RULES.md D369, D389), each
+    /// told of the left column of its key.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a value nests deeper than a type may.
+    pub(in crate::exec) fn filters(&self, keys: &[JoinKey]) -> Result<Vec<Told>> {
+        let mut told = Vec::new();
+        for ((key, &at), &nulls) in keys.iter().zip(&self.places).zip(&self.nulls) {
+            let mut hashes = KeyHashes::default();
+            hashes.of_batch((&self.right, None), (&[at], &[nulls]), self.hashing())?;
+            if let Some(filter) = RuntimeFilter::of_built(&self.right, (at, nulls), &hashes, self.hashing()) {
+                told.push(Told { filter: Arc::new(filter), column: key.left });
+            }
+        }
+        Ok(told)
+    }
+
     /// How it hashes its keys.
     fn hashing(&self) -> Hashing<'_> {
         Hashing { seed: &self.seed, keyed: self.keyed }
@@ -133,8 +154,32 @@ impl SharedTable {
         Ok(())
     }
 
+    /// The pairs of each row of `batch` and each built row its key, of
+    /// its vectors at `left`, matches, in order.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a value nests deeper than a type may.
+    pub(in crate::exec) fn matched(&self, batch: &Batch, left: &[usize]) -> Result<Vec<(usize, usize)>> {
+        let given: Vec<usize> = (0..batch.rows).collect();
+        let mut hashes = KeyHashes::default();
+        hashes.of_batch((batch, Some(&given)), (left, &self.nulls), self.hashing())?;
+        let mut pairs = Vec::new();
+        for ((&r, &h), &miss) in given.iter().zip(&hashes.hashes).zip(&hashes.misses) {
+            if miss {
+                continue;
+            }
+            for p in self.table.candidates(h) {
+                if keys_equal((batch, left, r), (&self.right, &self.places, p), &self.nulls)? {
+                    pairs.push((r, p));
+                }
+            }
+        }
+        Ok(pairs)
+    }
+
     /// The operand's row of built row `p`, its columns not held null.
-    fn row_of(&self, p: usize) -> Row {
+    pub(in crate::exec) fn row_of(&self, p: usize) -> Row {
         let mut row = vec![Value::Null; self.width];
         for (at, &c) in self.columns.iter().enumerate() {
             if let Some(slot) = row.get_mut(c) {

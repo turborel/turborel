@@ -368,6 +368,7 @@ verification approach DO-178C expects (§8).
 | D373 | A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot |
 | D374 | A filter goes into a set operation's operands and below a window's partitions, and FETCH FIRST into UNION ALL's operands, when the rows are the same |
 | D375 | A join is removed when it gives each row of the other operand once and nothing above reads it, by a unique key or a referential constraint not deferrable |
+| D389 | A pipeline run in parallel under an operator that is not one is read by batch, its scans told its hash joins' runtime filters, a scan's range judged once, and a spilled join's partitions picked by its table's hash and probed by batch |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -10363,6 +10364,57 @@ and those conjuncts are removed (`optimizer/elimination/referential.rs`).
 The constraint, the NOT NULL and the referenced key are not deferrable
 and of no period, and the columns of no collation. The rule is
 `eliminate_joins`.
+
+#### D389. A pipeline run in parallel under an operator that is not one is read by batch, its scans told its hash joins' runtime filters, a scan's range judged once, and a spilled join's partitions picked by its table's hash and probed by batch
+
+A part the planner runs in parallel (D291) under an operator that is
+not one, as an outer join's operand, gave its rows one at a time, so
+the operator read it row by row where it reads the plan alone by
+batch. On many threads such a join ran slower than on one. A pipeline
+so placed is now read by batch (`parallel/batches.rs`). Its morsels go
+through its steps by batch on the threads, and their batches come in
+morsel order, each morsel's in order, as its rows did. A pipeline whose
+morsels are not read by batch gives way to its plan alone.
+
+A pipeline's hash join builds its operand before its probing side is
+split (D292). Its runtime filters (D369) now go down that side as the
+serial stream takes them (`parallel/pipeline.rs`). A scan is told each
+range among the conjuncts its split judges, so a morsel skips what lies
+outside it at any degree. A step right after the operator a filter
+stops at judges the filters of a morsel's batches. A morsel read a row
+at a time passes that step by, which only spares the join rows it
+would drop. A morsel's scan judges no Bloom filter. Measured, judging
+one in each morsel cost more than the probes it spared, as the
+morsel's batches are decoded whole and its threads share the filter's
+counts.
+
+A Bloom filter costs a hash and a block read a row, and a range
+compare costs less. A scan's range is judged among its conjuncts, by
+which a store skips what lies outside it, and the filter does not judge
+it again. Its Bloom filter is judged of the rows the scan gives, before
+any column it gives late is decoded (D361), and stops after its first
+batches if it keeps most of their rows (D369), so where it saves no
+work it costs those batches alone. Measured, a filter of a few thousand
+built keys over a scan of no late column still drops rows for less
+than a probe of the join's table costs, so the size of a build does not
+decide it. Above an operator a filter stops at, its range and its Bloom
+filter are judged, under the same stop.
+
+A filter goes below a projection only if none of its expressions can
+raise (D15), as below a filter. A part hoisted under its guard (D373)
+is computed by such a projection over the product of its operand and
+the guard, so no filter enters the operand the guard asks has a row,
+and a raise the standard's evaluation makes is never lost to a row the
+filter would drop.
+
+A right operand partitioned past its work area (D38) where the left's
+order is kept (`exec/join/partitioned.rs`) picks each row's partition
+by bits of its key's hash as a join's table hashes it, above the 4 bits
+its tag takes, by a seed drawn for each partitioning, so a partitioning
+again splits by another hash. Each pair's right partition held in
+memory is put in a join's table (D368) and its left's rows probe it a
+batch at a time, each joined row written with its left row's number and
+merged back into the left's order as before.
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 

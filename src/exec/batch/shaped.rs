@@ -12,6 +12,7 @@ use std::sync::Arc;
 use super::joined::SharedTable;
 use super::judge::Judging;
 use super::project::{Place, computed, place_of};
+use super::runtime::{Told, applied};
 use super::stream::{Batches, filtered, pick, picked};
 use crate::db::State;
 use crate::exec::Runner;
@@ -30,6 +31,14 @@ pub(in crate::exec) enum Shaped {
     /// [X3.135-1986 §5.20 GR2b] each row joined with each built row whose
     /// keys, of its vectors at these places, equal its own.
     Probe(Arc<SharedTable>, Vec<usize>),
+    /// \[DESIGN\] (RULES.md D389) the rows a hash join's runtime filters
+    /// keep, of batches of this layout, above the operator they stop at.
+    Runtime(Vec<Told>, Vec<usize>),
+}
+
+/// The step of `told`, runtime filters, over batches of `layout`.
+pub(in crate::exec) fn runtime_step(told: &[Told], layout: &[usize]) -> Shaped {
+    Shaped::Runtime(told.to_vec(), layout.to_vec())
 }
 
 /// The step of a probe of `table` by keys of the columns `left` of
@@ -74,6 +83,7 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&A
         }
         Shaped::Compute(places) => computed(inner, places.clone(), Runner::new(db, tx)),
         Shaped::Probe(table, places) => probed(inner, Arc::clone(table), places.clone()),
+        Shaped::Runtime(told, layout) => applied(inner, told.clone(), layout, (db, false)),
     })
 }
 

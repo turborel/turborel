@@ -19,8 +19,18 @@
 //! left operand's order is not asked for takes the pairs in turn
 //! (`Pending`) and gives each pair's joined rows by batches as they are
 //! made, written to no run (`exec/batch/joined/parted.rs`).
+//!
+//! A row's partition is of bits of its key's hash as a join's table
+//! hashes it (`exec/table/join.rs`, RULES.md D389), above the 4 its tag
+//! takes and below those its slot takes, by a seed drawn for each
+//! partitioning, so a partitioning again splits by another hash. Each
+//! pair's right partition held in memory is put in a join's table, its
+//! left's rows probing it a batch at a time, each joined row written with
+//! its left row's number as before.
 
-use std::hash::{BuildHasher, RandomState};
+use crate::exec::batch::SharedTable;
+use crate::exec::table::{Hashing, Seed, values_hash};
+use crate::storage::{BATCH_ROWS, Batch};
 
 use super::super::partition::{Merge, merge_all, numbered, unnumbered};
 use super::super::work::Work;
@@ -28,9 +38,8 @@ use super::super::{RowIter, failed};
 use super::{Built, Full, Operand, Right, each_match, key};
 use crate::error::{Code, Result, SqlError};
 use crate::physical::JoinKey;
-use crate::spill::{Records, SpillRun, SpilledLobs, bucket_key, row_bytes};
+use crate::spill::{Records, SpillRun, SpilledLobs, row_bytes};
 use crate::storage::Row;
-use crate::value::Bucket;
 use crate::value::types::TypeRegistry;
 
 /// \[DESIGN\] The default of SPILL.PARTITIONS: the most partitions a join
@@ -43,7 +52,7 @@ pub const DEFAULT_PARTITION_DEPTH: usize = 8;
 /// A hash join's operands, as they are partitioned.
 pub(in crate::exec) struct Partitions {
     keys: Vec<JoinKey>,
-    hasher: RandomState,
+    seed: Seed,
     /// The right operand's partitions, each with the bytes its rows take
     /// in memory.
     right: Vec<(Box<dyn SpillRun>, usize)>,
@@ -59,7 +68,7 @@ impl Partitions {
         for _ in 0..work.width().min(work.partitions()) {
             right.push((work.run()?, 0));
         }
-        Ok(Partitions { keys, hasher: RandomState::new(), right, lobs: work.lobs().clone() })
+        Ok(Partitions { keys, seed: drawn(), right, lobs: work.lobs().clone() })
     }
 
     /// The right operand's partitions, of the rows `built` holds and the
@@ -67,36 +76,40 @@ impl Partitions {
     pub(super) fn of(built: Built, rows: impl Iterator<Item = Result<Row>>, work: &mut Work) -> Result<Partitions> {
         let mut parts = Partitions::new(built.keys.clone(), work)?;
         // A bucket goes whole to one partition, so its rows keep their order.
-        for (b, held) in built.into_buckets() {
+        for (_, held) in built.into_buckets() {
             for row in &held {
-                parts.add_right(&b, row)?;
+                parts.add_right(row)?;
             }
         }
         parts.add_rights(rows)?;
         Ok(parts)
     }
 
-    /// The partition of key values `b`.
-    fn of_key(&self, b: &[Bucket]) -> usize {
+    /// The partition of the key of `row`, of the operand `operand`: bits
+    /// of its hash above its tag's.
+    fn of_key(&self, row: &Row, operand: Operand) -> Result<usize> {
+        let columns = self.keys.iter().map(|k| if matches!(operand, Operand::Left) { k.left } else { k.right });
+        let values = columns.filter_map(|c| row.get(c));
+        let nulls: Vec<bool> = self.keys.iter().map(|k| k.nulls).collect();
+        let hash = values_hash(values, &nulls, Hashing { seed: &self.seed, keyed: true })?.unwrap_or_default();
         let n = u64::try_from(self.right.len()).unwrap_or(1);
-        let at = self.hasher.hash_one(bucket_key(b)).checked_rem(n).unwrap_or_default();
-        usize::try_from(at).unwrap_or_default()
+        Ok(usize::try_from((hash >> TAG_BITS).checked_rem(n).unwrap_or_default()).unwrap_or_default())
     }
 
     /// Writes the right rows `rows` with a key to their partitions.
     fn add_rights(&mut self, rows: impl Iterator<Item = Result<Row>>) -> Result<()> {
         for r in rows {
             let row = r?;
-            if let Some(b) = key(&row, &self.keys, Operand::Right)? {
-                self.add_right(&b, &row)?;
+            if key(&row, &self.keys, Operand::Right)?.is_some() {
+                self.add_right(&row)?;
             }
         }
         Ok(())
     }
 
     /// Writes right row `row`, of key values `b`, to its partition.
-    fn add_right(&mut self, b: &[Bucket], row: &Row) -> Result<()> {
-        let at = self.of_key(b);
+    fn add_right(&mut self, row: &Row) -> Result<()> {
+        let at = self.of_key(row, Operand::Right)?;
         let (run, bytes) = self.right.get_mut(at).ok_or_else(lost)?;
         *bytes = bytes.saturating_add(row_bytes(row));
         run.push(&self.lobs.record(row))
@@ -111,8 +124,8 @@ impl Partitions {
         }
         for r in rows {
             let (n, row) = r?;
-            if let Some(b) = key(&row, &self.keys, Operand::Left)? {
-                lefts.get_mut(self.of_key(&b)).ok_or_else(lost)?.push(&numbered(n, &row, &self.lobs))?;
+            if key(&row, &self.keys, Operand::Left)?.is_some() {
+                lefts.get_mut(self.of_key(&row, Operand::Left)?).ok_or_else(lost)?.push(&numbered(n, &row, &self.lobs))?;
             }
         }
         Ok(lefts)
@@ -136,15 +149,63 @@ fn merged(left: RowIter, parts: Partitions, work: &mut Work) -> Result<Merge> {
     let mut pending = Pending::of(left, parts, work)?;
     let (types, lobs) = (work.types().clone(), work.lobs().clone());
     let mut sources = Vec::new();
-    while let Some((built, probes)) = pending.next(work)? {
+    while let Some((mut built, mut probes)) = pending.next(work)? {
         let mut out = work.run()?;
-        for record in probes {
-            let (n, l) = unnumbered(&record?, &types, &lobs)?;
-            each_match(&built, &l, |row| out.push(&numbered(n, &row, &lobs)))?;
+        if let Some(rows) = built.taken_rows() {
+            // A partition its seed left empty matches no left row, and has
+            // no row to give its table its width.
+            if let Some(width) = rows.first().map(Vec::len) {
+                let table = SharedTable::of_rows(&rows, width, &pending.keys, (drawn(), (0..width).collect()))?;
+                while probed_batch(&table, (&mut probes, &pending.keys), (&types, &lobs), &mut *out)? {}
+            }
+        } else {
+            for record in probes {
+                let (n, l) = unnumbered(&record?, &types, &lobs)?;
+                each_match(&built, &l, |row| out.push(&numbered(n, &row, &lobs)))?;
+            }
         }
         sources.push(out.into_records()?);
     }
     merge_all(sources, work)
+}
+
+/// \[DESIGN\] The bits of a key's hash its table's tag takes, below
+/// those that pick its partition.
+const TAG_BITS: u32 = 4;
+
+/// A seed drawn for a partitioning or a table of one.
+fn drawn() -> Seed {
+    Seed::default()
+}
+
+/// Joins a batch of the next numbered left rows of `probes` with `table`,
+/// their keys of `keys`, writing each joined row to `out` with its left
+/// row's number, in order: whether any row was read.
+fn probed_batch(
+    table: &SharedTable,
+    (probes, keys): (&mut Records, &[JoinKey]),
+    (types, lobs): (&TypeRegistry, &SpilledLobs),
+    out: &mut dyn SpillRun,
+) -> Result<bool> {
+    let (mut numbers, mut lefts) = (Vec::new(), Vec::new());
+    for record in probes.by_ref().take(BATCH_ROWS) {
+        let (n, l) = unnumbered(&record?, types, lobs)?;
+        numbers.push(n);
+        lefts.push(l);
+    }
+    let width = lefts.first().map_or(0, Vec::len);
+    let columns: Vec<usize> = (0..width).collect();
+    let mut batch = Batch::empty(width);
+    for l in &lefts {
+        batch.push(l, &columns);
+    }
+    let places: Vec<usize> = keys.iter().map(|k| k.left).collect();
+    for (r, p) in table.matched(&batch, &places)? {
+        let (Some(&n), Some(l)) = (numbers.get(r), lefts.get(r)) else { continue };
+        let row: Row = l.iter().cloned().chain(table.row_of(p)).collect();
+        out.push(&numbered(n, &row, lobs))?;
+    }
+    Ok(!lefts.is_empty())
 }
 
 /// \[DESIGN\] The pairs of a partitioned hash join's partitions not yet

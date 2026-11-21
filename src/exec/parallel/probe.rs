@@ -110,7 +110,7 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Arc<State>, TxId
 /// Whether `plan` is a pipeline its morsels read (`pipeline::branched`):
 /// scans, filters, projections and hash joins' left operands, appended;
 /// any other part run in parallel, as a grouping, is read whole.
-fn pipelined(plan: &Plan) -> bool {
+pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
     match plan {
         Plan::SeqScan { .. } | Plan::IndexScan { .. } => true,
         Plan::Filter { input, .. } | Plan::Project { input, .. } => pipelined(input),

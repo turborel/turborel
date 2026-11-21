@@ -90,8 +90,9 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Transition { .. } => None,
+        // A pipeline run in parallel, by batch (`parallel/batches.rs`).
+        Plan::Parallel(p) => crate::exec::parallel::pipelined(&p.input).then(|| layout(&p.input, db)).flatten(),
     }
 }
 
@@ -161,8 +162,8 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
-        | Plan::Parallel(..) => false,
+        | Plan::Transition { .. } => false,
+        Plan::Parallel(p) => crate::exec::parallel::pipelined(&p.input) && reads_by_batch(&p.input, db),
     }
 }
 
@@ -235,9 +236,9 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
 /// As `open`.
 pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     if !deferred.told().is_empty() {
-        let (below, here) = runtime::taken(&plan, deferred.told(), db);
+        let (kept, here) = runtime::parted(&plan, deferred.told(), db);
         if !here.is_empty() {
-            return judged_above(plan, (db, tx), &deferred.clone().with_told(below), here);
+            return judged_above(plan, (db, tx), &deferred.clone().with_told(kept), here);
         }
     }
     let made: Batched = match &plan {
@@ -264,10 +265,27 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
-        | Plan::Parallel(..) => none,
+        | Plan::Transition { .. } => none,
+        Plan::Parallel(..) => parallel_batches,
     };
     made(plan, (db, tx), deferred)
+}
+
+/// The batches of `plan`, a pipeline run in parallel, in order
+/// (`parallel/batches.rs`); of one that gives way, those of its plan
+/// alone.
+///
+/// # Errors
+///
+/// As `open`.
+fn parallel_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+    let Plan::Parallel(p) = plan else { return Err(crate::exec::broken("a part run in parallel is not one")) };
+    // A part whose batches hold no layout of its own is read as its plan.
+    let Some(shape) = layout(&p.input, db) else { return batches_with(p.input, (db, tx), deferred) };
+    match crate::exec::parallel::streamed_batches(&p.input, (db, tx), p.degree, &shape)? {
+        crate::exec::parallel::Held::Kept(batches) => Ok(batches),
+        crate::exec::parallel::Held::GaveWay => batches_with(p.input, (db, tx), deferred),
+    }
 }
 
 /// Of a plan that gives no batches: none.
@@ -288,7 +306,7 @@ fn none(_plan: Plan, _at: (&Arc<State>, TxId), _deferred: &Deferred) -> Result<B
 /// As `open`.
 fn judged_above(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred, here: Vec<Told>) -> Result<Batches> {
     let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
-    Ok(runtime::applied(batches_with(plan, (db, tx), deferred)?, here, &columns, db))
+    Ok(runtime::applied(batches_with(plan, (db, tx), deferred)?, here, &columns, (db, false)))
 }
 
 /// The batches of `scan`, a table's scan: in an order if it is in one.
@@ -395,7 +413,7 @@ fn scan_of(
     }
     let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), late);
     let batches: Batches = Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None))));
-    Ok(runtime::applied(batches, told.to_vec(), scan.1, db))
+    Ok(runtime::applied(batches, told.to_vec(), scan.1, (db, true)))
 }
 
 /// `inner`'s batches, each with the rows of those kept that `judging`

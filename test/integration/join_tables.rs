@@ -111,9 +111,10 @@ fn joins_by_batch_answer_as_rows_do() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D369 (R-TEST-1): runtime filters on and
-/// off give the same rows, a build of a few keys of a range, its filters
-/// judged at the scan, and one of every key, which they stop judging.
+/// Verifies: [DESIGN] RULES.md D369, D389 (R-TEST-1): runtime filters on
+/// and off give the same rows, a build of a few keys of a range, its
+/// filters judged at the scan, and one of every key, which they stop
+/// judging; at degree 1 and in parallel, its morsels told them.
 #[test]
 fn filters_change_no_answer() {
     let (_db, a) = tables(99);
@@ -123,12 +124,21 @@ fn filters_change_no_answer() {
         "SELECT COUNT(*) FROM F JOIN (SELECT G FROM R WHERE R.K < 4000) AS X ON F.G = X.G",
         "SELECT F.K FROM F JOIN B ON F.G = B.G JOIN R ON F.K = R.K WHERE B.TAG < 9",
     ];
-    for sql in queries {
-        let on = sorted(&a, sql);
-        exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
-        let off = sorted(&a, sql);
-        exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'ON'").unwrap();
-        assert_eq!(on, off, "{sql}");
+    for degree in ["1", "4"] {
+        for set in [
+            format!("SET EXECUTOR.DEGREE = {degree}"),
+            "SET EXECUTOR.MORSEL_ROWS = 256".into(),
+            "SET EXECUTOR.PARALLEL_MIN_ROWS = 0".into(),
+        ] {
+            exec(&a, &set).unwrap();
+        }
+        for sql in queries {
+            let on = sorted(&a, sql);
+            exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
+            let off = sorted(&a, sql);
+            exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'ON'").unwrap();
+            assert_eq!(on, off, "{sql}, degree {degree}");
+        }
     }
 }
 
@@ -166,4 +176,83 @@ fn matches_come_in_build_order_in_parallel() {
         exec(&a, set).unwrap();
     }
     assert_eq!(crate::common::rows(&a, sql).unwrap(), alone);
+}
+
+/// Verifies: [DESIGN] RULES.md D389, D31: a join whose left rows are asked
+/// for in their order keeps it, its build of 5,000 rows spilled past a
+/// work area of 64 KiB, its partitions probed by batch; run in parallel,
+/// its operands read by batch in their morsels' order, the same rows; a
+/// build of three keys, most of its partitions empty, the same rows.
+#[test]
+fn a_join_keeps_its_left_order_spilled_and_in_parallel() {
+    let (_db, a) = tables(57);
+    let queries = [
+        "SELECT R.K, F.D FROM R JOIN F ON R.K = F.K ORDER BY R.K",
+        "SELECT R.K, F.D FROM R LEFT JOIN F ON R.K = F.K + 7 AND F.G < 30 ORDER BY R.K",
+        "SELECT R.K, F.K FROM R FULL JOIN F ON R.K = F.K AND R.G < 20 AND F.G > 10",
+        "SELECT R.K, B.TAG FROM B RIGHT JOIN R ON R.S = B.S",
+    ];
+    let alone: Vec<_> = queries.iter().map(|sql| crate::common::rows(&a, sql).unwrap()).collect();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
+    for (sql, rows) in queries.iter().zip(&alone) {
+        let mut spilled = crate::common::rows(&a, sql).unwrap();
+        let mut alike = rows.clone();
+        if !sql.contains("ORDER BY") {
+            spilled.sort();
+            alike.sort();
+        }
+        assert_eq!(spilled, alike, "{sql}, spilled");
+    }
+    exec(&a, "SET MEMORY.WORK_BYTES = 67108864").unwrap();
+    for set in ["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"] {
+        exec(&a, set).unwrap();
+    }
+    for (sql, rows) in queries.iter().zip(&alone) {
+        let mut alike = rows.clone();
+        alike.sort();
+        assert_eq!(sorted(&a, sql), alike, "{sql}, degree 4");
+    }
+    assert_eq!(crate::common::rows(&a, queries[0]).unwrap(), alone[0], "in order, degree 4");
+    exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
+    exec(&a, "UPDATE B SET S = 'zz' WHERE TAG > 1").unwrap();
+    let few_keys = "SELECT R.K, B.TAG FROM R JOIN B ON R.S = B.S";
+    let held = sorted(&a, few_keys);
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
+    let (batched, rows) = both_ways(&a, few_keys);
+    assert_eq!((batched, rows), (held.clone(), held), "a build of three keys, most partitions empty");
+}
+
+/// Verifies: [DESIGN] RULES.md D389, D373, D15 (R-TEST-7): a runtime
+/// filter never enters a part hoisted under its guard, nor goes below a
+/// projection that can raise: of a build whose range holds no key of the
+/// probe, the quotient by `G - 5` of a row of G = 5 raises with the
+/// filters on as off, at degree 1 and 4, the part hoisted onto either
+/// store's operand under a guard of the build, or computed by a derived
+/// table's projection.
+#[test]
+fn a_filter_enters_no_guarded_part() {
+    let (_db, a) = tables(5);
+    exec(&a, "DELETE FROM B").unwrap();
+    exec(&a, "INSERT INTO B VALUES (100, 1, 'a', 'ANN', 1), (110, 2, 'b', 'bob', 2)").unwrap();
+    let queries = [
+        "SELECT R.K FROM R, B WHERE R.G = B.G AND R.D / (R.G - 5) > B.TAG",
+        "SELECT F.K FROM F, B WHERE F.G = B.G AND F.D / (F.G - 5) > B.TAG",
+        "SELECT X.K, X.Q FROM (SELECT R.K, R.G, R.D / (R.G - 5) AS Q FROM R) AS X JOIN B ON X.G = B.G",
+        "SELECT X.K, X.Q FROM (SELECT F.K, F.G, F.D / (F.G - 5) AS Q FROM F) AS X JOIN B ON X.G = B.G",
+    ];
+    for degree in ["1", "4"] {
+        for set in [
+            format!("SET EXECUTOR.DEGREE = {degree}"),
+            "SET EXECUTOR.MORSEL_ROWS = 256".into(),
+            "SET EXECUTOR.PARALLEL_MIN_ROWS = 0".into(),
+        ] {
+            exec(&a, &set).unwrap();
+        }
+        for sql in queries {
+            assert_eq!(failed(&a, sql).code, Code::Data, "{sql}, degree {degree}");
+            exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
+            assert_eq!(failed(&a, sql).code, Code::Data, "{sql}, degree {degree}, no filter");
+            exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'ON'").unwrap();
+        }
+    }
 }

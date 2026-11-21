@@ -109,6 +109,12 @@ impl RuntimeFilter {
         vec![bound(CompOp::Ge, least), bound(CompOp::Le, most)]
     }
 
+    /// Whether it holds a Bloom filter, of no more than `BLOOM_MAX_ROWS`
+    /// built rows.
+    pub(in crate::exec) fn blooms(&self) -> bool {
+        self.bloom.is_some()
+    }
+
     /// Whether it still judges rows: not once its first `TRIED` batches
     /// kept more than `KEEP_MOST` tenths of theirs.
     pub(in crate::exec) fn judging(&self) -> bool {
@@ -121,21 +127,28 @@ impl RuntimeFilter {
 
     /// The rows of `batch` at `rows`, or of all, whose key, of its column
     /// at `at`, the filter may hold, in order: of an exact key, those in
-    /// its range; then those its Bloom filter holds.
+    /// its range, if `range` asks; then those its Bloom filter holds, if
+    /// `bloom` asks.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if a value nests deeper than a type may.
-    pub(in crate::exec) fn kept(&self, (batch, at): (&Batch, usize), rows: Option<&[u32]>, kernels: &dyn Kernels) -> Result<Vec<u32>> {
+    pub(in crate::exec) fn kept(
+        &self,
+        (batch, at): (&Batch, usize),
+        (rows, (range, bloom)): (Option<&[u32]>, (bool, bool)),
+        kernels: &dyn Kernels,
+    ) -> Result<Vec<u32>> {
         let given: Vec<usize> = crate::storage::sel::places_of(rows.map(|r| crate::storage::Sel::of(r.to_vec())), batch.rows);
-        let ranged: Vec<usize> = if let (Some((least, most, scale)), Some(Column::Ints(ints))) = (self.range, batch.columns.get(at))
+        let ranged: Vec<usize> = if let (Some((least, most, scale)), Some(Column::Ints(ints)), true) =
+            (self.range, batch.columns.get(at), range)
             && ints.scale == scale
         {
             given.into_iter().filter(|&r| ints.units.get(r).is_some_and(|u| (least..=most).contains(u)) && !ints.is_null(r)).collect()
         } else {
             given
         };
-        let kept = match &self.bloom {
+        let kept = match self.bloom.as_ref().filter(|_| bloom) {
             Some(words) => {
                 let mut hashes = KeyHashes::default();
                 hashes.of_batch((batch, Some(&ranged)), (&[at], &[self.nulls]), Hashing { seed: &self.seed, keyed: self.keyed })?;
@@ -205,7 +218,7 @@ mod tests {
     /// The rows of a batch of `probes` at a scale of 2 the filter keeps.
     fn kept(filter: &RuntimeFilter, probes: &[i64]) -> Vec<u32> {
         let batch = Batch { columns: vec![Column::Ints(Ints::new(probes.to_vec(), 2, None))], rows: probes.len() };
-        filter.kept((&batch, 0), None, &Portable).unwrap()
+        filter.kept((&batch, 0), (None, (true, true)), &Portable).unwrap()
     }
 
     /// Verifies: [DESIGN] RULES.md D369: a filter keeps every row whose key

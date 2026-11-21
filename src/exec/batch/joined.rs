@@ -302,7 +302,7 @@ pub(in crate::exec) fn rows_of(batches: Batches, columns: Vec<usize>, width: usi
 }
 
 /// `rows`, joined, gathered into batches of their values of `columns`.
-pub(super) fn gathered(rows: RowIter, columns: &[usize]) -> Batches {
+pub(in crate::exec) fn gathered(rows: RowIter, columns: &[usize]) -> Batches {
     // Rows with no id, which a batch does not keep.
     Box::new(batches_of(Box::new(rows.map(|r| r.map(|row| (0, row)))), columns).map(|b| b.map(|b| (b, None))))
 }
@@ -362,8 +362,10 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
-        | Plan::Parallel(..) => true,
+        | Plan::Transition { .. } => true,
+        // A pipeline run in parallel gives its batches in its morsels'
+        // order (`parallel/batches.rs`), as its plan alone would.
+        Plan::Parallel(p) => !crate::exec::parallel::pipelined(&p.input) || in_order(&p.input),
     }
 }
 
@@ -377,7 +379,8 @@ mod tests {
     /// Verifies: [DESIGN] RULES.md D31: whether a join's left operand is
     /// asked for its rows in an order: a scan in none is not; the rows of
     /// two streams, one after the other, are if either is; a plan that
-    /// gives no batches is taken to be, so its order is kept.
+    /// gives no batches is taken to be, so its order is kept; a pipeline
+    /// run in parallel is as its plan.
     #[test]
     fn rows_asked_for_in_an_order() {
         let scan = || {
@@ -398,5 +401,9 @@ mod tests {
         assert!(in_order(&Plan::Append { left: scan(), right: values(), est: 0.0_f64 }));
         assert!(in_order(&Plan::Append { left: values(), right: scan(), est: 0.0_f64 }));
         assert!(!in_order(&Plan::Append { left: scan(), right: scan(), est: 0.0_f64 }));
+        // A pipeline run in parallel keeps its morsels' order (RULES.md D389).
+        let parallel = |input: Box<Plan>| Plan::Parallel(Box::new(crate::physical::Parallel { degree: 4, input: *input }));
+        assert!(!in_order(&parallel(scan())));
+        assert!(in_order(&parallel(values())));
     }
 }
