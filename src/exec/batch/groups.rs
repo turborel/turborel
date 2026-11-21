@@ -26,11 +26,9 @@ mod streamed;
 pub(in crate::exec) use morsel::morsel_groups;
 pub(in crate::exec) use streamed::streamed;
 
-use std::sync::Arc;
-
 use super::{Batches, Fed, Read, lanes};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::group::Finished;
 use crate::exec::table::{GroupTable, Key, Seed, hash_rows};
 use crate::exec::work::Work;
@@ -82,7 +80,7 @@ impl Numbers<'_> {
 /// their first rows came, in a work area of `db`, for the statement of
 /// `tx`. Groups are made partly before they spill if every set function
 /// writes its state.
-pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), batches: Batches) -> Result<RowIter> {
+pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Db, TxId), batches: Batches) -> Result<RowIter> {
     let (mut work, runner) = (Work::of(db, tx), Runner::new(db, tx));
     let partial = aggs.iter().all(|a| a.func.0.accumulator(a.result.clone()).write_state(&mut Vec::new()));
     let how = Grouping { read, aggs, runner: &runner, seed: db.functions.seed(), partial };

@@ -1,18 +1,21 @@
 //! The mutations of range joins (RULES.md R-TEST-9, D580-D581): an open
 //! bound searched as closed, a left row's matches left in the sorted
 //! order, the pruning tree keeping the least where it needs the greatest,
-//! an unmatched LEFT row lost, a condition that can raise searched, and
-//! the overlap of two periods read as closed at its end.
+//! an unmatched LEFT row lost, of the operands in memory or parted, a
+//! condition that can raise searched, and the overlap of two periods read
+//! as closed at its end.
 
 use super::super::{Mutation, Package};
 
 /// The search of the sorted rows.
 const INDEX_FILE: &str = "src/exec/join/range/index.rs";
+/// The integration test of raising conditions and operands parted.
+const PARTED: &str = "range_joins::raising_conditions_keep_the_nested_loop_and_large_operands_are_parted";
 /// The bands' integration test.
 const BANDS: &str = "range_joins::bands_give_the_nested_loops_rows_in_its_order";
 
 /// Mechanisms of range joins whose removal must fail their tests.
-pub const RANGE_JOINS: [Mutation; 6] = [
+pub const RANGE_JOINS: [Mutation; 7] = [
     Mutation {
         name: "range-open-bound-closed",
         package: Package::Core,
@@ -60,7 +63,17 @@ pub const RANGE_JOINS: [Mutation; 6] = [
         file: "src/physical/range/planned.rs",
         original: "        if !self.db.settings.is_on(RANGE_JOINS) || self.cond_raises(cond, (left, right)) {",
         replacement: "        if !self.db.settings.is_on(RANGE_JOINS) {",
-        integration: &["range_joins::raising_conditions_and_large_operands_keep_the_nested_loop"],
+        integration: &[PARTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "range-parted-left-unmatched-lost",
+        package: Package::Core,
+        breaks: "a LEFT range join past the work area drops each left row no part matched",
+        file: "src/exec/join/range.rs",
+        original: "        if self.nulls.is_none() {\n            return Ok(false);\n        }",
+        replacement: "        if self.nulls.is_none() || !parts.finishing {\n            return Ok(false);\n        }",
+        integration: &[PARTED],
         unit: &[],
     },
     Mutation {

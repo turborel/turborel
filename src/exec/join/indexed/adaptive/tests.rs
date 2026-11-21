@@ -16,6 +16,7 @@ use crate::physical::{JoinProbe, Plan};
 use crate::storage::{Row, RowId};
 use crate::txn::NO_TRANSACTION;
 use crate::value::{CompOp, Decimal, Value};
+use std::sync::Arc;
 
 struct Counted {
     inner: Arc<dyn Index>,
@@ -221,14 +222,14 @@ fn adaptive_fallback_keeps_the_buffer_and_first_overflow_row() {
     let state = populated();
     let point = Geometry::point(7.0, 7.0, 0).unwrap().to_value();
     let regions: Vec<_> = (0..66_i128).map(|n| vec![number(n), point.clone()]).collect();
-    let first = Held::new(&state).unwrap();
+    let first = Held::new(&Db::of(&state)).unwrap();
     let initial = first.reservation.bytes();
     drop(first);
     let budget = initial.saturating_add(crate::spill::row_bytes(&regions[0]).saturating_mul(64));
     let (searches, rows) = run(&state, plan(regions, 0), (budget, true));
     assert_eq!((searches, rows.len()), (66, 66));
     let partial = vec![vec![number(1), point.clone()], vec![number(2), point.clone()], vec![number(3), point]];
-    let held = Held::new(&state).unwrap();
+    let held = Held::new(&Db::of(&state)).unwrap();
     let partial_budget = held.reservation.bytes().saturating_add(crate::spill::row_bytes(&partial[0]));
     drop(held);
     let (partial_searches, partial_rows) = run(&state, plan(partial, 0), (partial_budget, true));
@@ -262,7 +263,7 @@ fn adaptive_build_stops_when_its_reservation_cannot_grow() {
     let mut state = (*populated()).clone();
     state.memory = MemoryBudget::new(usize::MAX);
     let state = Arc::new(state);
-    let mut held = Held::new(&state).unwrap();
+    let mut held = Held::new(&Db::of(&state)).unwrap();
     let row = vec![number(1), Value::Char("a retained payload".into())];
     let allowed = held.reservation.bytes().saturating_add(crate::spill::row_bytes(&row));
     state.memory.set_limit(allowed);

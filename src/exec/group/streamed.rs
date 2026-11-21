@@ -11,12 +11,10 @@
 //! DISTINCT or of an inverse distribution, is made hashed (`grouping`):
 //! the planner never streams them.
 
-use std::sync::Arc;
 
 use super::{Argument, Spec, argument, fresh, grouping};
-use crate::db::State;
 use crate::error::Result;
-use crate::exec::{RowIter, Runner, column};
+use crate::exec::{Db, RowIter, Runner, column};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
 use crate::spill::put_norm;
@@ -28,7 +26,7 @@ use crate::value::Value;
 /// grouping columns, each given as soon as its last row has come; or, of
 /// a grouping that cannot be so made, hashed (`grouping`).
 #[inline(never)]
-pub(in crate::exec) fn streamed_grouping(spec: Spec, input: RowIter, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn streamed_grouping(spec: Spec, input: RowIter, db: &Db, tx: TxId) -> RowIter {
     let alone = spec.aggs.iter().any(|a| a.distinct || a.distribution.is_some());
     let collated = spec.collations.iter().any(Option::is_some);
     if spec.groups.is_empty() || !spec.seeds.is_empty() || alone || collated {

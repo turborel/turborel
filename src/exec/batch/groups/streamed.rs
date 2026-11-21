@@ -17,14 +17,12 @@
 //! first time.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
 
-use crate::db::State;
 use crate::error::Result;
 use crate::exec::batch::stream::Kept;
 use crate::exec::batch::{Batches, Fed, Read, fed_group, lanes};
 use crate::exec::table::{Key, Keys};
-use crate::exec::{RowIter, Runner};
+use crate::exec::{Db, RowIter, Runner};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
 use crate::storage::sel::nth;
@@ -35,7 +33,7 @@ use crate::txn::TxId;
 /// columns `read` reads, each its grouping values and the finished set
 /// functions `aggs`, given as they are made, for the statement of `tx` in
 /// `db`.
-pub(in crate::exec) fn streamed(read: Read, aggs: Vec<AggCall>, (db, tx): (&Arc<State>, TxId), batches: Batches) -> RowIter {
+pub(in crate::exec) fn streamed(read: Read, aggs: Vec<AggCall>, (db, tx): (&Db, TxId), batches: Batches) -> RowIter {
     let how = How { keys: Keys::new(read.groups.len()), read, aggs, runner: Runner::new(db, tx) };
     let made = Made { out: VecDeque::new(), bytes: Vec::new(), scratch: Vec::new(), given: Vec::new() };
     Box::new(Streamed { how, made, batches: Some(batches), pending: None })
@@ -215,7 +213,7 @@ mod tests {
     /// value 1, keyed by column 0, counted and summed: each batch given as
     /// the rows its selection keeps, if `selected` has one.
     fn grouped(keys: &[&[Option<i128>]], selected: &[Option<Vec<u32>>]) -> Vec<String> {
-        let db = Arc::new(state());
+        let db = Db::from(std::sync::Arc::new(state()));
         let aggs: Vec<AggCall> = ["COUNT", "SUM"]
             .into_iter()
             .map(|name| {
