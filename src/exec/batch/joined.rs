@@ -76,7 +76,8 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Parallel(..)
+        | Plan::Counted(_) => None,
     }
 }
 
@@ -138,7 +139,8 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => return columns,
+        | Plan::Parallel(..)
+        | Plan::Counted(_) => return columns,
     };
     columns.extend(keys.iter().flat_map(|k| [k.left, k.right.saturating_add(width)]));
     columns
@@ -159,7 +161,7 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         let width = stream::layout(&left, db).map_or(0, |(_, width)| width);
         let below = if deferred.any() { deferred.left_of(&keys, width) } else { Deferred::default() };
         // The filters told it reach it of its left's columns (`runtime::taken`).
-        let below = below.with_told(deferred.told().to_vec());
+        let below = below.with_told(deferred.filters().to_vec());
         return Ok(Box::new(checked(probe::probed((*left, *right, keys), (Kind::Inner, below), db, tx)?, stop)));
     }
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))
@@ -197,7 +199,8 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => no_join,
+        | Plan::Parallel(..)
+        | Plan::Counted(_) => no_join,
     };
     made(plan, db, tx)
 }
@@ -342,6 +345,7 @@ fn in_order(plan: &Plan) -> bool {
     match plan {
         Plan::SeqScan { order, .. } => !order.is_empty(),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => in_order(input),
+        Plan::Counted(c) => in_order(&c.input),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
         Plan::Nearest(_)

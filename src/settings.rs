@@ -149,11 +149,13 @@ pub struct Listed {
 /// or taken at the next start, and the formats of its files,
 /// STORAGE.ENCODINGS and STORAGE.CHECKSUM_KEY, which a database made takes
 /// for its first files, and one opened for what it writes from then on,
-/// over the values recorded in it (D48).
+/// over the values recorded in it (D48); and MEMORY.BUDGET_BYTES, which
+/// the buffer pool a database made or opened takes is reserved of.
 pub fn read_as_opened(definition: &Definition) -> bool {
     matches!(definition.effect, Effect::Creation | Effect::Start)
         || definition.name == "STORAGE.ENCODINGS"
         || definition.name == "STORAGE.CHECKSUM_KEY"
+        || definition.name == "MEMORY.BUDGET_BYTES"
 }
 
 /// The bytes a value of MEMORY.BUDGET_BYTES says.
@@ -280,8 +282,7 @@ pub struct Settings {
     /// Each setting's place, by its name: what reads a setting often, as
     /// a server for each request, reads it by name.
     places: Arc<HashMap<String, usize>>,
-    /// The database's value of each setting, at its key's place; none for
-    /// its default.
+    /// The database's value of each setting at its key's place, or none.
     values: Vec<Option<Value>>,
     /// Values set before their settings were declared: replayed from the
     /// log before the plug-in declaring them was registered.

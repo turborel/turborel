@@ -18,6 +18,7 @@
 
 mod answered;
 mod batch;
+mod counted;
 mod distinct;
 mod entries;
 mod eval;
@@ -154,6 +155,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Polymorphic(..) => ptf::polymorphic,
         // [DESIGN] by morsels on the workers (RULES.md D290).
         Plan::Parallel(..) => parallel::parallel,
+        // [EXTENSION] as its input, counted (RULES.md D376).
+        Plan::Counted(_) => counted::counted,
     };
     run(plan, db, tx)
 }
@@ -188,7 +191,8 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Polymorphic(..)
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => failed(broken("a join is not one")),
+        | Plan::Parallel(..)
+        | Plan::Counted(_) => failed(broken("a join is not one")),
     }
 }
 
@@ -210,10 +214,18 @@ fn system_plan(plan: Plan, db: &Arc<State>, _tx: TxId) -> RowIter {
 #[inline(never)]
 fn sorted_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::Sort { keys, input, most, .. } = plan else { return failed(broken("a sort is not one")) };
-    match most {
-        Some(most) => sort::first(&keys, execute(*input, db, tx), most, db, tx),
-        None => sorted(&keys, *input, db, tx),
+    let Some(most) = most else { return sorted(&keys, *input, db, tx) };
+    // A stream's batches taken as they are, if it can be, the columns the
+    // keys do not read late and the first key's bound told the scans
+    // (`sort/top/batched.rs`, RULES.md D379, D380).
+    if batched(db) && batch::whole_width(&input, db).is_some() {
+        let (late, threshold) = sort::topped_of(&keys, most, input.est());
+        let columns: Vec<usize> = keys.iter().map(|k| k.column).collect();
+        let bound = threshold.clone().zip(keys.first()).map(|(t, k)| (k.column, t));
+        let made = batch::topped(*input, (&columns, late, bound), db, tx);
+        return made.map_or_else(failed, |batches| sort::first_batches(&keys, batches, (most, threshold), db, tx));
     }
+    sort::first(&keys, execute(*input, db, tx), most, db, tx)
 }
 
 /// The rows of the system table `read` reads, made now.

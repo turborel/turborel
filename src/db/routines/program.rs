@@ -30,6 +30,8 @@ pub(in crate::db) use hosted::{Hosted, hosted_rows};
 
 use host::SessionHost;
 
+use super::kept::{KeptProgram, KeptRoutine};
+
 use std::sync::Arc;
 
 use super::super::area::commands::{self, Command};
@@ -99,23 +101,34 @@ impl Session {
         stmt: &SqlStatement,
         params: &mut Params,
     ) -> Result<Completion> {
+        self.control_kept(cx, stmt, params, None)
+    }
+
+    /// `control_statement`, of the body of the procedure `routine` keeps,
+    /// if given: its program as it keeps it (RULES.md D406).
+    fn control_kept(
+        &self,
+        cx: StatementContext<'_>,
+        stmt: &SqlStatement,
+        params: &mut Params,
+        routine: Option<&KeptRoutine>,
+    ) -> Result<Completion> {
         let base = params.dynamic_values().len();
-        let scope = params.routine_scope().map_or_else(|| RoutineScope::unnamed(WHOLE.clone()), RoutineScope::clone);
         let transitions = params.transitions_shared();
         let direct = params.routine_scope().is_none() && transitions.is_none();
-        let frame = Frame { base, scope: Arc::new(scope), transitions: transitions.clone(), returns: None, inline: false };
-        let shared = Arc::clone(&frame.scope);
-        let program = self.bound(cx.st, params, |b| bind_program(b, stmt, frame))?;
+        let kept = self.program_of(cx, stmt, params, routine)?;
+        let program = &kept.program;
         let mut values = params.dynamic_values().to_vec();
         values.resize(base.saturating_add(program.variables.len()), Value::Null);
-        let mut inner = Params::of_routine(values, shared);
+        let mut inner = Params::of_routine(values, Arc::clone(&program.scope));
         if let Some(t) = transitions {
             inner = inner.with_transitions(t);
         }
         let ended = if direct {
-            run_program(&program, &mut inner, &mut SessionHost::direct(self, cx))?
+            run_program(program, &mut inner, &mut SessionHost::direct(self, cx))?
         } else {
-            self.run_hosted(cx, &program, &mut inner)?
+            let kept = routine.is_some().then_some(&kept);
+            run_program(program, &mut inner, &mut SessionHost::within(self, cx, kept))?
         };
         for (k, v) in inner.dynamic_values().iter().take(base).enumerate() {
             params.set_slot(k, v.clone())?;
@@ -126,19 +139,60 @@ impl Session {
         }
     }
 
-    /// The body `body` of a procedure run in `cx` with `params`: a statement
-    /// that is atomic undone alone if it fails, as CALL is not atomic
-    /// [ISO/IEC 9075-2:2023 §4.41.5].
+    /// The program of `stmt`, bound over the frame of `params`: as
+    /// `routine` keeps it, if given (`kept.rs`).
+    ///
+    /// # Errors
+    ///
+    /// Its binding's.
+    fn program_of(
+        &self,
+        cx: StatementContext<'_>,
+        stmt: &SqlStatement,
+        params: &Params,
+        routine: Option<&KeptRoutine>,
+    ) -> Result<KeptProgram> {
+        let scope = params.routine_scope().map_or_else(|| RoutineScope::unnamed(WHOLE.clone()), RoutineScope::clone);
+        let transitions = params.transitions_shared();
+        let base = params.dynamic_values().len();
+        let frame = Frame { base, scope: Arc::new(scope), transitions, returns: None, inline: false };
+        let Some(routine) = routine else { return Ok(KeptProgram::of(self.bound(cx.st, params, |b| bind_program(b, stmt, frame))?)) };
+        routine.program((cx.st, self), || {
+            // Bound as a statement kept is, so a binding that reads the
+            // statement's instant is noted, and not kept.
+            let binding = params.keeping();
+            let program = self.bound(cx.st, &binding, |b| bind_program(b, stmt, frame))?;
+            Ok((program, binding.held()))
+        })
+    }
+
+    /// The body `body` of the procedure `routine` keeps, run in `cx` with
+    /// `params`: a statement that is atomic undone alone if it fails, as
+    /// CALL is not atomic [ISO/IEC 9075-2:2023 §4.41.5]. A control
+    /// statement runs as the program `routine` keeps.
     ///
     /// # Errors
     ///
     /// The body's.
-    pub(in crate::db) fn run_body(&self, cx: StatementContext<'_>, body: &SqlStatement, params: &mut Params) -> Result<Completion> {
+    pub(in crate::db) fn run_body(
+        &self,
+        cx: StatementContext<'_>,
+        body: &SqlStatement,
+        params: &mut Params,
+        routine: &KeptRoutine,
+    ) -> Result<Completion> {
+        let run = |frame: &mut Params| {
+            if matches!(body, SqlStatement::Control(_) | SqlStatement::Signal(_)) {
+                let _compiling = self.compiling(cx.st, cx.tx.id);
+                return self.control_kept(cx, body, frame, Some(routine));
+            }
+            self.run_statement(cx, body, frame, None)
+        };
         if !atomic(body) {
-            return self.run_statement(cx, body, params, None);
+            return run(params);
         }
         let mark = cx.tx.mark()?;
-        match self.run_statement(cx, body, params, None) {
+        match run(params) {
             Ok(done) => {
                 cx.tx.release_mark(mark);
                 Ok(done)
@@ -153,7 +207,7 @@ impl Session {
     ///
     /// An exception no handler of it handles.
     pub(in crate::db) fn run_hosted(&self, cx: StatementContext<'_>, program: &Program, frame: &mut Params) -> Result<Ended> {
-        run_program(program, frame, &mut SessionHost::within(self, cx))
+        run_program(program, frame, &mut SessionHost::within(self, cx, None))
     }
 }
 

@@ -244,7 +244,7 @@ impl Session {
         tx.begin_statement(|| !self.cursors_open())?;
         let cx = StatementContext { st, tx: &tx };
         let ran = self.run_statement(cx, stmt, params, keeping);
-        self.db.noted(settled(cx, stmt, ran))
+        self.db.noted(self.replied(&tx, settled(cx, stmt, ran)))
     }
 
     /// [X3.135-1986 §8.4, §8.11] The positioned DELETE or UPDATE of

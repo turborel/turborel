@@ -1,4 +1,6 @@
-//! \[DESIGN\] Predicate transitivity (RULES.md D35).
+//! \[DESIGN\] Predicate transitivity (RULES.md D35, D404).
+
+mod joined;
 
 use super::{Rule, RuleContext};
 use crate::logical::{Cond, Expr, LogicalPlan, and_all, split_and};
@@ -13,8 +15,11 @@ pub const PREDICATE_TRANSITIVITY: &str = "predicate_transitivity";
 /// value [X3.135-1986 §5.11 GR4, GR5]. The filter keeps the same rows, and
 /// the added conjunct, a comparison of a column with a constant, raises no
 /// error; but it can be pushed to `b`'s table, or answered by its index.
-/// Runs before the conjuncts are pushed into a product's operands, while
-/// they are still together.
+/// Where two columns of different tables of a product are each equal to
+/// one exact number or one `?`, it adds their equality, which a join may
+/// probe an index by (`transitivity/joined.rs`). Runs before the
+/// conjuncts are pushed into a product's operands, while they are still
+/// together.
 pub struct PredicateTransitivity;
 
 /// A comparison of a column with a constant, and the constant's form under
@@ -31,7 +36,7 @@ impl Rule for PredicateTransitivity {
         split_and(cond.clone(), &mut conjuncts);
         let equated: Vec<(usize, usize)> = conjuncts.iter().filter_map(equated).collect();
         let mut known: Vec<Compared> = conjuncts.iter().filter_map(compared).collect();
-        let mut added = Vec::new();
+        let mut added = joined::equated_by_values(&conjuncts, &equated, input);
         for (column, op, value, _) in known.clone() {
             for &(a, b) in &equated {
                 let other = if a == column { b } else { a };
@@ -54,7 +59,7 @@ impl Rule for PredicateTransitivity {
 }
 
 /// The columns "column = column" equates, if two.
-fn equated(c: &Cond) -> Option<(usize, usize)> {
+pub(super) fn equated(c: &Cond) -> Option<(usize, usize)> {
     let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c else { return None };
     (a != b).then_some((*a, *b))
 }

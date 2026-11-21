@@ -36,7 +36,7 @@ use crate::error::Result;
 use crate::exec::batch::{Told, runtime_taken as taken, wanted};
 use crate::exec::{Runner, broken, eval, eval_cond};
 use crate::logical::{Cond, Expr, Truth, pushed_conjuncts};
-use crate::physical::Plan;
+use crate::physical::{NodeCount, Plan};
 use crate::settings::EXECUTOR_MORSEL_ROWS;
 use crate::storage::{Conjunct, Conjunction, Row, Split};
 use crate::txn::TxId;
@@ -57,6 +57,9 @@ pub(super) enum Step {
     /// \[DESIGN\] (RULES.md D389) kept if hash joins' runtime filters
     /// stopped at an operator may match it; judged by batch alone.
     Runtime(Vec<Told>),
+    /// \[EXTENSION\] counted, as the rows of a counted operator, each
+    /// morsel's added once (RULES.md D378).
+    Count(Arc<NodeCount>),
 }
 
 /// The morsels of one table's split and the steps over its rows, the
@@ -109,11 +112,7 @@ impl Pipeline {
         for branch in &self.branches {
             let morsels = branch.split.morsels();
             if at < morsels {
-                let mut out = Vec::new();
-                for read in branch.split.morsel(at) {
-                    feed(&branch.steps, read?.1, runner, &mut out)?;
-                }
-                return Ok(out);
+                return branch.morsel(at, runner);
             }
             at = at.saturating_sub(morsels);
         }
@@ -169,32 +168,55 @@ fn branched(
         return Ok(true);
     }
     if let Plan::Filter { cond, input, .. } = plan
-        && let Plan::SeqScan { table, columns, .. } = &**input
+        && let Plan::SeqScan { table, columns, .. } = input.bare()
     {
         let (scanned, unscanned) = taken(input, &below, db);
         after.extend(judged(unscanned.into_iter().chain(here).collect()));
-        return Ok(scan_branch(db, (table, columns), (tx, rows), (Some(cond), &scanned), out) && stepped(out, first, after));
+        let split = scan_branch(db, (table, columns), (tx, rows), (Some(cond), &scanned), out);
+        return Ok(split && counted_scan(input, out) && stepped(out, first, after));
     }
     let mut filters = below;
-    let (step, input) = if let Plan::Filter { cond, input, .. } = plan {
-        (Step::Filter(cond.clone()), input)
-    } else if let Plan::Project { exprs, input, .. } = plan {
-        (Step::Project(exprs.clone()), input)
-    } else if let Plan::HashJoin { left, right, keys, .. } = plan {
-        let Held::Kept(table) = built(right, keys, (db, tx), limit)? else { return Ok(false) };
-        if wanted(db) {
-            filters.extend(table.shared.filters(keys)?);
-        }
-        (Step::Probe(table), left)
-    } else {
-        return Err(broken("a part run in parallel is not a pipeline"));
-    };
+    let Some((step, input)) = step_of(plan, (db, tx), limit, &mut filters)? else { return Ok(false) };
     if !branched(input, (db, tx, rows), (limit, &filters), out)? {
         return Ok(false);
     }
     after.push(step);
     after.extend(judged(here));
     Ok(stepped(out, first, after))
+}
+
+/// The step of `plan`, an operator of a pipeline, and its input; a hash
+/// join's built operand held, its runtime filters added to `told` if
+/// they are wanted; none if the operand gave way.
+fn step_of<'a>(plan: &'a Plan, (db, tx): (&Arc<State>, TxId), limit: &Limit, told: &mut Vec<Told>) -> Result<Option<(Step, &'a Plan)>> {
+    let made: (Step, &Plan) = if let Plan::Filter { cond, input, .. } = plan {
+        (Step::Filter(cond.clone()), input)
+    } else if let Plan::Project { exprs, input, .. } = plan {
+        (Step::Project(exprs.clone()), input)
+    } else if let Plan::Counted(c) = plan {
+        c.count.opened();
+        (Step::Count(Arc::clone(&c.count)), &c.input)
+    } else if let Plan::HashJoin { left, right, keys, .. } = plan {
+        let Held::Kept(table) = built(right, keys, (db, tx), limit)? else { return Ok(None) };
+        if wanted(db) {
+            told.extend(table.shared.filters(keys)?);
+        }
+        (Step::Probe(table), left)
+    } else {
+        return Err(broken("a part run in parallel is not a pipeline"));
+    };
+    Ok(Some(made))
+}
+
+/// Of a branch just added to `out` of the filtered scan `input`, a
+/// counted one's rows counted before the filter's step (RULES.md D378):
+/// true, as the step is no more than the scan's.
+fn counted_scan(input: &Plan, out: &mut [Branch]) -> bool {
+    if let (Plan::Counted(c), Some(branch)) = (input, out.last_mut()) {
+        c.count.opened();
+        branch.steps.insert(0, Step::Count(Arc::clone(&c.count)));
+    }
+    true
 }
 
 /// The step judging `told`, runtime filters stopped at an operator, if
@@ -225,6 +247,16 @@ fn copied(step: &Step) -> Step {
         Step::Project(e) => Step::Project(e.clone()),
         Step::Probe(t) => Step::Probe(Arc::clone(t)),
         Step::Runtime(told) => Step::Runtime(told.clone()),
+        Step::Count(c) => Step::Count(Arc::clone(c)),
+    }
+}
+
+/// Adds to each counted step of `steps` the rows `tally` counted of it.
+fn counted(steps: &[Step], tally: &[u64]) {
+    for (step, &rows) in steps.iter().zip(tally) {
+        if let Step::Count(count) = step {
+            count.stepped(rows);
+        }
     }
 }
 
@@ -237,8 +269,34 @@ fn split(
     Arc::clone(storage).split(tx, columns, conditions, rows)
 }
 
+impl Branch {
+    /// The rows of its morsel `at`, its steps' expressions evaluated by
+    /// `runner`. A pipeline of no counted step, as every one is but an
+    /// analyzed plan's, tallies nothing a row (RULES.md D378).
+    ///
+    /// # Errors
+    ///
+    /// As reading a row or a step fails.
+    fn morsel(&self, at: usize, runner: &Runner) -> Result<Vec<Row>> {
+        let mut out = Vec::new();
+        if !self.steps.iter().any(|s| matches!(s, Step::Count(_))) {
+            for read in self.split.morsel(at) {
+                feed(&self.steps, read?.1, runner, &mut out)?;
+            }
+            return Ok(out);
+        }
+        let mut tally = vec![0_u64; self.steps.len()];
+        for read in self.split.morsel(at) {
+            tallied(&self.steps, (&mut tally, read?.1), runner, &mut out)?;
+        }
+        counted(&self.steps, &tally);
+        Ok(out)
+    }
+}
+
 /// Takes `row` through `steps`, the first first, adding each row it gives
-/// to `out`.
+/// to `out`; a counted step passes it on, as no step of a plan not
+/// analyzed is one.
 fn feed(steps: &[Step], row: Row, runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
     let Some((step, rest)) = steps.split_first() else {
         out.push(row);
@@ -256,7 +314,42 @@ fn feed(steps: &[Step], row: Row, runner: &Runner, out: &mut Vec<Row>) -> Result
             feed(rest, projected, runner, out)
         }
         Step::Probe(table) => table.each_match(&row, |r| feed(rest, row.iter().chain(r.iter()).cloned().collect(), runner, out)),
-        Step::Runtime(..) => feed(rest, row, runner, out),
+        Step::Runtime(..) | Step::Count(_) => feed(rest, row, runner, out),
+    }
+}
+
+/// As `feed`, adding to `tally`, a count for each step, the rows that
+/// reach a counted one.
+fn tallied(steps: &[Step], (tally, row): (&mut [u64], Row), runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
+    let Some((step, rest)) = steps.split_first() else {
+        out.push(row);
+        return Ok(());
+    };
+    let (seen, later) = match tally.split_first_mut() {
+        Some((seen, later)) => (Some(seen), later),
+        None => (None, &mut [][..]),
+    };
+    match step {
+        Step::Filter(cond) => {
+            if eval_cond(cond, &row, runner)? == Truth::True {
+                tallied(rest, (later, row), runner, out)?;
+            }
+            Ok(())
+        }
+        Step::Project(exprs) => {
+            let projected = exprs.iter().map(|e| eval(e, &row, runner)).collect::<Result<Row>>()?;
+            tallied(rest, (later, projected), runner, out)
+        }
+        Step::Probe(table) => {
+            table.each_match(&row, |r| tallied(rest, (&mut *later, row.iter().chain(r.iter()).cloned().collect()), runner, out))
+        }
+        Step::Count(_) => {
+            if let Some(seen) = seen {
+                *seen = seen.saturating_add(1);
+            }
+            tallied(rest, (later, row), runner, out)
+        }
+        Step::Runtime(..) => tallied(rest, (later, row), runner, out),
     }
 }
 

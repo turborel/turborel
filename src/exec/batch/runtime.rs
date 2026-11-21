@@ -6,13 +6,15 @@
 //! subquery, a projection of columns, the column it passes on mapped to
 //! the one it is of, if none of its expressions can raise, and the left
 //! operand of an inner hash join, of its columns. A part hoisted under its
-//! guard (RULES.md D373) is such a projection over a product, so a filter
-//! never reaches the operand the guard asks has a row. Any other operator, as an aggregation, an outer join, a LIMIT
-//! or one that can raise, judges them of the batches it gives, right
-//! above it, as a row below it a filter dropped could have raised an
-//! error row by row (RULES.md D15). A scan in no order is told a filter's
-//! range as conjuncts (`stream::scan_of`), and judges its rows by it right
-//! as it gives each batch, before any column it gives late is decoded.
+//! guard (RULES.md D373) is such a projection over a product, so a
+//! filter never reaches the operand the guard asks has a row. Any other
+//! operator, as an aggregation, an outer join, a LIMIT, one that can
+//! raise, or one an analyzed plan counts (RULES.md D378), judges them of
+//! the batches it gives, right above it, as a row below it a filter
+//! dropped could have raised an error row by row (RULES.md D15). A scan
+//! in no order is told a filter's range as conjuncts (`stream::scan_of`),
+//! and judges its rows by it right as it gives each batch, before any
+//! column it gives late is decoded.
 
 use std::sync::Arc;
 
@@ -67,7 +69,8 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<usize> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Parallel(..)
+        | Plan::Counted(_) => None,
     }
 }
 

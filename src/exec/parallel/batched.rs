@@ -74,6 +74,7 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
                 shaped.push(made);
             }
             Step::Runtime(told) => shaped.push(runtime_step(told, &layout)),
+            Step::Count(count) => shaped.push(Shaped::Count(Arc::clone(count))),
         }
     }
     Some((shaped, layout, width))
@@ -91,7 +92,7 @@ fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
             Step::Filter(cond) => deferred.filtered(cond),
             Step::Project(exprs) => deferred.projected(exprs),
             Step::Probe(_) => Deferred::default(),
-            Step::Runtime(..) => deferred,
+            Step::Runtime(..) | Step::Count(_) => deferred,
         };
     }
     deferred.late_of(scanned)

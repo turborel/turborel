@@ -79,7 +79,7 @@ pub(super) fn probed(
         Read::Held(held) => {
             let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
             let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
-            let mut told = deferred.told().to_vec();
+            let mut told = deferred.filters().to_vec();
             told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told { filter: Arc::clone(f), column: key.left })));
             let left = left_late_batches(left, (db, tx), &deferred.with_told(told))?;
             return Ok(Box::new(Probe { left, joined, right: Holding::Vectors(*held), places, out, _work: work }));

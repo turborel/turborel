@@ -17,6 +17,8 @@ use super::stream::{Batches, filtered, pick, picked};
 use crate::db::State;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr};
+use crate::physical::NodeCount;
+use crate::storage::Sel;
 use crate::txn::TxId;
 
 /// A step of a pipeline over its batches.
@@ -34,6 +36,9 @@ pub(in crate::exec) enum Shaped {
     /// \[DESIGN\] (RULES.md D389) the rows a hash join's runtime filters
     /// keep, of batches of this layout, above the operator they stop at.
     Runtime(Vec<Told>, Vec<usize>),
+    /// \[EXTENSION\] the rows kept counted, a batch at a time, as a
+    /// counted operator's (RULES.md D378).
+    Count(Arc<NodeCount>),
 }
 
 /// The step of `told`, runtime filters, over batches of `layout`.
@@ -84,6 +89,14 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&A
         Shaped::Compute(places) => computed(inner, places.clone(), Runner::new(db, tx)),
         Shaped::Probe(table, places) => probed(inner, Arc::clone(table), places.clone()),
         Shaped::Runtime(told, layout) => applied(inner, told.clone(), layout, (db, false)),
+        Shaped::Count(count) => {
+            let count = Arc::clone(count);
+            Box::new(inner.inspect(move |kept| {
+                if let Ok((batch, rows)) = kept {
+                    count.stepped(u64::try_from(rows.as_ref().map_or(batch.rows, Sel::len)).unwrap_or(u64::MAX));
+                }
+            }))
+        }
     })
 }
 
