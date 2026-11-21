@@ -251,9 +251,14 @@ impl State {
     /// and none is while none awaits, nor is the gate taken. It notes no
     /// maintenance: a table's is noted as a writer collects it, and noted
     /// again after each round while still due (`db/maintenance.rs`).
+    ///
+    /// \[DESIGN\] One such end collects at a time (RULES.md D453): another
+    /// ending meanwhile passes by, as the one collecting collects the same
+    /// tables, and any later end collects what it leaves.
     pub(crate) fn gc_read(&self) {
-        if self.tx.awaiting.load(Ordering::Acquire) {
+        if self.tx.awaiting.load(Ordering::Acquire) && !self.tx.read_collecting.swap(true, Ordering::AcqRel) {
             self.gc(std::iter::empty());
+            self.tx.read_collecting.store(false, Ordering::Release);
         }
     }
 

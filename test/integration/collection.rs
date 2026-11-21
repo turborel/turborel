@@ -75,3 +75,41 @@ fn a_session_collects_once_its_reply_is_sent() {
     other.commit().unwrap();
     assert_eq!(db.index_entries("T_X").unwrap(), 2, "another end collected it");
 }
+
+/// Verifies: [DESIGN] RULES.md D453: sixteen sessions that only read,
+/// ending at once while a table's garbage awaits collection, collect it one
+/// at a time, the others passing by; once they end, the end of one more
+/// that reads leaves no version behind.
+#[test]
+fn reading_ends_collect_one_at_a_time_and_leave_nothing() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, X INTEGER)").unwrap();
+    db.create_index("T_X", "APP.T", &["X"], "btree").unwrap();
+    let s = db.session("APP");
+    let values: Vec<String> = (0..ROWS).map(|i| format!("({i}, 0)")).collect();
+    s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    s.commit().unwrap();
+    let reader = db.session("APP");
+    rows(&reader, "SELECT COUNT(*) FROM T").unwrap();
+    s.run("UPDATE T SET X = X + 1").unwrap();
+    s.commit().unwrap();
+    let threads: Vec<_> = (0..16)
+        .map(|_| {
+            let db = db.clone();
+            thread::spawn(move || {
+                let s = db.session("APP");
+                for _ in 0..50 {
+                    rows(&s, "SELECT COUNT(*) FROM T WHERE ID = 1").unwrap();
+                    s.commit().unwrap();
+                }
+            })
+        })
+        .collect();
+    reader.commit().unwrap();
+    for t in threads {
+        t.join().unwrap();
+    }
+    rows(&s, "SELECT ID FROM T WHERE ID = 0").unwrap();
+    s.commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), ROWS, "every superseded version's entry taken back");
+}

@@ -419,6 +419,7 @@ verification approach DO-178C expects (§8).
 | D448 | SERIALIZABLE certifies by column, and skips the check when no one read |
 | D449 | A row's turn passed wakes only the waiter whose turn it is |
 | D450 | A served session's transactions are collected once their reply is sent |
+| D453 | One transaction that wrote nothing collects at a time |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
@@ -13072,3 +13073,18 @@ one. Until then, the end of any other transaction collects the noted
 tables as it would any awaiting, and a checkpoint waits for them
 (`gc_waiting`). The horizon rule is unchanged, so no version a snapshot
 can read is removed; collection only comes a little later.
+
+#### D453. One transaction that wrote nothing collects at a time
+
+The end of a transaction that wrote nothing collects the tables awaiting
+collection, since its end may move the horizon (D29). Once a served
+session collects after its reply (D450), every session's request did
+so. Many sessions ending at once then took the collection's locks in
+turn, though only one could collect a table (D445) and the others
+found nothing left to do.
+
+Such an end now collects only while no other such end is collecting.
+One that finds another under way passes by. The one collecting collects
+the same tables, and what its horizon does not reach waits for any later
+end, as a table passed over does (D445). A transaction that wrote
+still collects its own tables as before.

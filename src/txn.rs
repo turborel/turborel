@@ -286,6 +286,9 @@ pub(crate) struct Transactions {
     /// Whether `uncollected` names any table, as it was last changed: so a
     /// transaction that wrote nothing looks at it without its lock.
     awaiting: AtomicBool,
+    /// Whether the end of a transaction that wrote nothing is collecting
+    /// `uncollected`: another such end passes it by (RULES.md D453).
+    read_collecting: AtomicBool,
     /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
     maintenance: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `maintenance` names any table.
@@ -354,6 +357,7 @@ impl Default for Transactions {
             replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
             awaiting: AtomicBool::new(false),
+            read_collecting: AtomicBool::new(false),
             maintenance: Mutex::new(BTreeSet::new()),
             noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),
