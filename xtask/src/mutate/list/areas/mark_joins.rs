@@ -2,7 +2,9 @@
 //! list a left row of no null value reads, the right rows a left row of a
 //! null value reads, ALL as NOT of the negated SOME, the unknown of a null
 //! mark value, the rows alike held once only of no condition beyond the
-//! keys, the marks of a batch, and the null list of the rows spilled.
+//! keys, the marks of a batch, and the null list of the rows spilled; of
+//! D603, the table of every row a left row of a null value reads, and a
+//! batch's hashes of keys and marks.
 
 use super::super::{Mutation, Package};
 
@@ -14,14 +16,14 @@ const NULLS: &str = "decorrelation::mark::marks_of_nulls_and_empty_sets";
 const SIDE: &str = "src/exec/join/mark/side.rs";
 
 /// Mechanisms whose removal must fail the mark join requirements.
-pub const MARK_JOINS: [Mutation; 7] = [
+pub const MARK_JOINS: [Mutation; 9] = [
     Mutation {
         name: "mark-null-list-unread",
         package: Package::Core,
         breaks: "a left row of no null value reads its bucket alone, so NOT IN of a set with a null is true",
         file: SIDE,
-        original: "Ok(or(found, self.any(nulls, l, marker)?))",
-        replacement: "Ok(found)",
+        original: "        Ok(or(found, self.any(nulls.into_iter().flatten(), l, marker)?))",
+        replacement: "        Ok(found)",
         integration: &[NULLS, MATCHED],
         unit: &[],
     },
@@ -30,8 +32,8 @@ pub const MARK_JOINS: [Mutation; 7] = [
         package: Package::Core,
         breaks: "a left row of a null value is marked false, so IN of a null value and a set not empty is false",
         file: SIDE,
-        original: "return self.any(self.by_keys.as_ref().and_then(|k| k.get(&b)), l, marker);",
-        replacement: "return Ok(Truth::False);",
+        original: "            return self.any(by_keys.into_iter().flatten(), l, marker);",
+        replacement: "            return Ok(Truth::False);",
         integration: &[NULLS, MATCHED],
         unit: &[],
     },
@@ -70,8 +72,8 @@ pub const MARK_JOINS: [Mutation; 7] = [
         package: Package::Core,
         breaks: "a mark join by batches gives each row an unknown mark",
         file: "src/exec/batch/joined/mark.rs",
-        original: "*mark = side.mark(&l, &self.marker)?.value();",
-        replacement: "*mark = Value::Null;",
+        original: "            *mark = truth.value();",
+        replacement: "            *mark = Value::Null;",
         integration: &[MATCHED],
         unit: &[],
     },
@@ -83,6 +85,26 @@ pub const MARK_JOINS: [Mutation; 7] = [
         original: "Ok(or(any(&self.whole, &b, (l, marker))?, of_nulls))",
         replacement: "any(&self.whole, &b, (l, marker))",
         integration: &[NULLS, MATCHED],
+        unit: &[],
+    },
+    Mutation {
+        name: "mark-by-keys-without-the-null-list",
+        package: Package::Core,
+        breaks: "a left row of a null value reads the rows off the null list alone, so NULL IN a set of a null is false (D603)",
+        file: SIDE,
+        original: "                self.by_keys = Some(JoinTable::of(&self.keys, &vec![false; self.null.len()]));",
+        replacement: "                self.by_keys = Some(JoinTable::of(&self.keys, &self.null));",
+        integration: &[NULLS, MATCHED],
+        unit: &[],
+    },
+    Mutation {
+        name: "mark-batch-probes-by-keys-alone",
+        package: Package::Core,
+        breaks: "a batch's rows probe the table of keys and marks by the hashes of their keys alone (D603)",
+        file: "src/exec/batch/joined/mark.rs",
+        original: "        (keys, if self.both.0.len() > self.keys.0.len() { at(&self.of_both) } else { keys })",
+        replacement: "        (keys, keys)",
+        integration: &[MATCHED],
         unit: &[],
     },
 ];

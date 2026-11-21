@@ -437,6 +437,7 @@ verification approach DO-178C expects (§8).
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
 | D601 | A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span |
 | D602 | A hash join probes a batch in two passes, the rows whose slot holds their tag found first, and asks for the directory words of the next rows ahead of their reads past 8 MiB |
+| D603 | A mark join holds its right rows in memory in vector join tables of the hashes of keys and marks, of the null list's keys and of keys alone, which a batch probes by its keys' hashes made a vector at a time |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 | D613 | A kept statement or body plans nothing again in a steady state: its instant is a slot, its probes take slot arithmetic, and a plan of index probes is learned again only once a probe outgrows it |
 | D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
@@ -12548,6 +12549,24 @@ Menon, Mowry and Pavlo (PVLDB 2017, §5.5) prefetch a group of probes
 ahead. It asks through `Kernels::prefetch`, whose portable body asks
 for nothing; the SIMD kernels ask by SSE's prefetch on x86-64. A
 prefetch reads nothing and changes no result.
+
+#### D603. A mark join holds its right rows in memory in vector join tables of the hashes of keys and marks, of the null list's keys and of keys alone, which a batch probes by its keys' hashes made a vector at a time
+
+A mark join's right rows held in memory (D642) are found by the tables
+a hash join's are (D368), not by maps of each row's buckets
+(exec/join/mark/side.rs). As the rows are read each gets the hash of its
+keys, and of its keys and marks unless a mark value is null, which puts
+it on the null list. Once they are read, one table holds the rows off
+the null list by the hash of keys and marks, and one the null list by
+the hash of keys. The first left row of a null mark value makes a third
+of every row by the hash of keys. Texts are hashed by SipHash keyed by
+the database's seed (D369). Of a stream the join hashes each left
+batch's keys, and its keys and marks, a vector at a time, and each kept
+row probes by its two hashes (exec/batch/joined/mark.rs). A table gives
+the rows of a hash, and each is judged on its values as before, so the
+marks are the same. Of no condition beyond the keys a row alike to the
+first held of its hash of keys and marks is not held. Past the work area
+the rows spill as before.
 
 #### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
 

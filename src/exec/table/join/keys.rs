@@ -271,8 +271,8 @@ impl Hashing<'_> {
 }
 
 /// The hash of a key of `values`, of each whether a null matches a null as
-/// `nulls` says, as `KeyHashes::of_batch` hashes it of a batch's vectors;
-/// none if a value has no bucket.
+/// `nulls` says, as `KeyHashes::of_batch` hashes it of a batch's vectors,
+/// a key of no value that of a null; none if a value has no bucket.
 ///
 /// # Errors
 ///
@@ -283,5 +283,5 @@ pub(in crate::exec) fn values_hash<'v>(values: impl Iterator<Item = &'v Value>, 
         let Some(h) = value_hash(v, matches_null, how)? else { return Ok(None) };
         hash = Some(hash.map_or(h, |so_far| joined(so_far, h)));
     }
-    Ok(hash)
+    Ok(Some(hash.unwrap_or_else(|| how.seed.null())))
 }
