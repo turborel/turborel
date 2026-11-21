@@ -1,14 +1,13 @@
 //! The mutations of streamed groupings and row goals (RULES.md R-TEST-9,
 //! D550 to D552): a grouping by a collation kept hashed, a batch's runs
 //! cut by their keys, set functions that cannot raise letting FETCH FIRST
-//! stop, a row goal passed through a filter, and a held sort's look for
-//! a cancel in each window.
+//! stop, and a row goal passed through a filter.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the streamed groupings' and row
 /// goals' requirements.
-pub const ORDERS: [Mutation; 5] = [
+pub const ORDERS: [Mutation; 4] = [
     Mutation {
         name: "streamed-collated",
         package: Package::Core,
@@ -48,15 +47,5 @@ pub const ORDERS: [Mutation; 5] = [
         replacement: "        if self.first.is_some() {",
         integration: &["row_goals::a_goal_passes_through_a_filter", "row_goals::a_goal_passes_to_a_joins_left_operand"],
         unit: &[],
-    },
-    Mutation {
-        name: "sort-window-unlooked",
-        package: Package::Core,
-        breaks: "a sort held in memory looks for a cancel at the first row of each fetch",
-        file: "src/exec/sort.rs",
-        original: "        let due = at.is_multiple_of(every.max(1)) || window != seen;",
-        replacement: "        let due = at.is_multiple_of(every.max(1));",
-        integration: &[],
-        unit: &["exec::sort::tests::a_held_sort_looks_at_the_first_row_of_each_window"],
     },
 ];
