@@ -22,7 +22,9 @@ mod semi;
 
 pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
+pub(in crate::exec) use indexed::{Reads, indexed_over};
 pub(super) use merge::merged;
+pub(in crate::exec) use merge::merged_over;
 pub(super) use outer::outer;
 pub(in crate::exec) use outer::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};

@@ -3,6 +3,7 @@
 //! logs what undoes it for the coordinator [X3.135-1986 §4.16, §7.3 GR3b i].
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::UndoEntry;
@@ -12,7 +13,7 @@ use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
-use crate::log::record::Change;
+use crate::log::record::{Change, insert_record};
 use crate::storage::{Row, RowId, TableStorage, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
 use crate::value::Value;
@@ -69,6 +70,20 @@ impl State {
         self.indexes.get(name).map(Arc::clone).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {name} does not exist")))
     }
 
+    /// Logs the insert of `row` as row `id` of `table`: unless its rows are
+    /// sealed, made from the row as it is held (RULES.md D531).
+    fn log_insert(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
+        let generation = self.generation_of(table);
+        if let Some(seal) = self.seal_of(table)? {
+            let change = Change::Insert { table: table.clone(), generation, row: id, after: row.clone() };
+            return tx.log_sealed(change, Some((&*seal, id)));
+        }
+        if tx.log.is_none() {
+            return Ok(());
+        }
+        tx.log_encoded(&insert_record(tx.id, (table, generation), id, row), 1)
+    }
+
     /// [X3.135-1986 §8.7] Inserts `row`, with its index entries, under its
     /// table's lock (`prepare_write`), logging what undoes it [X3.135-1986
     /// §4.16, §7.3 GR3b i].
@@ -92,14 +107,13 @@ impl State {
         let kept: &Row = &kept;
         // After any wait for a lock: a checkpoint never waits on a waiter.
         let _gate = self.tx.gate.enter();
-        let id = self.storage_of(table)?.insert(tx.id, kept.clone())?;
+        let id = self.storage_of(table)?.insert_from(tx.id, kept)?;
         let caps = self.capabilities(table)?;
         if caps.undo == Undo::Log {
             tx.log(UndoEntry::Inserted { table: table.clone(), storage: Arc::clone(self.storage_of(table)?), id })?;
         }
         if Self::logs_changes(caps.persistence) {
-            let change = Change::Insert { table: table.clone(), generation: self.generation_of(table), row: id, after: kept.clone() };
-            tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
+            self.log_insert(tx, table, id, kept)?;
         }
         for (ix, partition) in self.table_indexes(table) {
             self.index_add(tx, &ix, kept, Self::entry_id(partition, id)?)?;
@@ -427,11 +441,27 @@ impl Txn {
     ///
     /// SQLCODE -910 if the transaction's state is poisoned.
     pub(crate) fn note_alone(&self, index: &str, row: RowId, alone: bool) -> Result<()> {
+        self.note_alone_rows(index, &mut std::iter::once((row, alone)))
+    }
+
+    /// As `note_alone` of each row and whether it was alone, of `rows`, the
+    /// transaction's state taken once.
+    ///
+    /// # Errors
+    ///
+    /// As `note_alone`.
+    pub(crate) fn note_alone_rows(&self, index: &str, rows: &mut dyn Iterator<Item = (RowId, bool)>) -> Result<()> {
         let mut state = self.state()?;
-        if alone {
-            state.alone.insert((index.to_owned(), row));
-        } else {
-            state.alone.remove(&(index.to_owned(), row));
+        if !state.alone.contains_key(index) {
+            state.alone.insert(index.to_owned(), HashSet::new());
+        }
+        let Some(noted) = state.alone.get_mut(index) else { return Ok(()) };
+        for (row, alone) in rows {
+            if alone {
+                noted.insert(row);
+            } else {
+                noted.remove(&row);
+            }
         }
         Ok(())
     }
@@ -440,6 +470,6 @@ impl Txn {
     /// last inserted, was its key's only one: another row of its key,
     /// inserted after, was not, and is looked for itself.
     pub(crate) fn alone(&self, index: &str, row: RowId) -> bool {
-        self.state().is_ok_and(|s| s.alone.contains(&(index.to_owned(), row)))
+        self.state().is_ok_and(|s| s.alone.get(index).is_some_and(|rows| rows.contains(&row)))
     }
 }

@@ -51,6 +51,8 @@ impl State {
     /// As for `commit`; and the error of `publish`, the transaction having
     /// committed.
     pub(crate) fn commit_publishing(&self, tx: &Txn, publish: &mut dyn FnMut(Timestamp) -> Result<()>) -> Result<()> {
+        // A load under way is ended before it commits (RULES.md D532).
+        self.end_load(tx)?;
         let (joined, wrote) = {
             let mut st = tx.state()?;
             // One that wrote keeps its participants, for its rollback if the commit fails; one that read alone
