@@ -262,6 +262,10 @@ impl RecordFormat {
     ) -> Result<()> {
         self.check_len(row)?;
         let base = out.len();
+        // Room for the whole record at once: its values of varying width
+        // measured, if they were, so `out` does not grow as they are written.
+        let measured = encoded.iter().flatten().fold(0_usize, |sum, bytes| sum.saturating_add(bytes.len()));
+        out.reserve(self.variable_at().saturating_add(measured));
         out.resize(base.saturating_add(self.variable_at()), 0);
         if let Some(header) = out.get_mut(base) {
             *header = HEADER;
