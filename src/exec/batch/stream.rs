@@ -151,7 +151,7 @@ pub(super) fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
 /// an index scan reads it row by row, as its order or its stop asks.
 pub(super) fn untold(plan: &Plan) -> bool {
     match plan {
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => false,
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } | Plan::GroupJoin(_) => false,
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, .. } | Plan::Limit { input, .. } => untold(input),
         Plan::Counted(c) => untold(&c.input),
         Plan::Parallel(p) => untold(&p.input),

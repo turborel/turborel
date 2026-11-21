@@ -156,6 +156,7 @@ fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::Transition { .. }
         | Plan::Parallel(..)
         | Plan::SemiJoin(_)
+        | Plan::GroupJoin(_)
         | Plan::Counted(_) => None,
     }
 }
@@ -302,7 +303,8 @@ fn below(plan: &Plan) -> Option<&Plan> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Parallel(..)
+        | Plan::GroupJoin(_) => None,
     }
 }
 
