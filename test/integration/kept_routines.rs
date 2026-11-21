@@ -278,3 +278,42 @@ fn a_kept_join_learns_its_plan_and_reads_each_calls_row() {
 fn number(n: i64) -> Value {
     Value::Exact(Decimal::new(i128::from(n), 0))
 }
+
+/// Verifies: [DESIGN] RULES.md D422, a kept body's UPDATE and DELETE of a
+/// table of few rows, read whole and filtered, learn the plan of their
+/// object rows with slots over the first CALLs and keep it, and every
+/// CALL, before and after, changes the rows its own values name.
+#[test]
+fn a_kept_write_learns_its_plan_and_changes_each_calls_rows() {
+    let (_db, a) = defined();
+    a.run("CREATE TABLE DS (W INTEGER NOT NULL, ID SMALLINT NOT NULL, N INTEGER, PRIMARY KEY (W, ID))").unwrap();
+    let rows_in: Vec<String> = (1..=10_i64).map(|d| format!("(1, {d}, 0)")).collect();
+    a.run(&format!("INSERT INTO DS VALUES {}", rows_in.join(", "))).unwrap();
+    a.run(
+        "CREATE PROCEDURE BUMP (IN WH INTEGER, IN DI INTEGER) MODIFIES SQL DATA
+         BEGIN
+           UPDATE DS SET N = N + DI WHERE ID = DI AND W = WH;
+           DELETE FROM DS WHERE ID = DI + 100 AND W = WH;
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    let mut expected = [0_i64; 10];
+    for k in 0..24_i64 {
+        let d = 1 + (k * 7) % 10;
+        a.run(&format!("CALL BUMP(1, {d})")).unwrap();
+        if let Some(n) = expected.get_mut(usize::try_from(d - 1).unwrap()) {
+            *n += d;
+        }
+    }
+    a.run("INSERT INTO DS VALUES (1, 103, 0), (1, 104, 0)").unwrap();
+    a.run("CALL BUMP(1, 3)").unwrap();
+    if let Some(n) = expected.get_mut(2) {
+        *n += 3;
+    }
+    a.commit().unwrap();
+    let read = rows(&a, "SELECT ID, N FROM DS ORDER BY ID");
+    let mut want: Vec<String> = expected.iter().zip(1..).map(|(n, d)| format!("{d},{n}")).collect();
+    want.push("104,0".to_owned());
+    assert_eq!(read, want, "each CALL changed its own rows, and DELETE took row 103 alone");
+}

@@ -26,7 +26,9 @@ mod oltp;
 mod orders;
 mod parallel;
 mod rewrites;
+mod skipping;
 mod sorts;
+mod statistics;
 mod tpcc;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
@@ -96,7 +98,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 42] {
+fn second() -> [&'static [Mutation]; 43] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -139,6 +141,7 @@ fn second() -> [&'static [Mutation]; 42] {
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
+        &statistics::STATISTICS,
         &orders::ORDERS,
     ]
 }
@@ -186,7 +189,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     // server, the decode kernels', declared types', batches', late
     // materialization's and the table of groups' last, as `last` holds no
     // more.
-    let after: [&'static [Mutation]; 9] = [
+    let after: [&'static [Mutation]; 10] = [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
@@ -196,6 +199,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &late::LATE,
         &group_table::GROUP_TABLE,
         &xxhash::XXHASH,
+        &skipping::SKIPPING,
     ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }

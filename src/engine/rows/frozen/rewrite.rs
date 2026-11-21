@@ -78,6 +78,10 @@ impl RowTable {
             if !shadowed && !resorted {
                 continue;
             }
+            // A group no write touched has no entry to fold in.
+            if !resorted && entry.shadow.none() {
+                continue;
+            }
             let entries = self.entries_in(&entry.summary)?;
             if resorted || due(entries.len(), entry.summary.rows, &columns) {
                 self.rewrite(entry, (entries, cutoff), &columns)?;
