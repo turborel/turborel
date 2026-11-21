@@ -262,6 +262,7 @@ mod point_plans;
 mod portions;
 mod positions;
 mod predicate_indexes;
+mod predicate_transfer;
 mod predicates;
 mod prepared;
 mod privileges;

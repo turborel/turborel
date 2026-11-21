@@ -364,6 +364,7 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => None,
     }
 }

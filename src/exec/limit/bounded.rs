@@ -56,6 +56,7 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         | Plan::Unnest(_)
         | Plan::Window { .. }
         | Plan::Polymorphic(..)
-        | Plan::Recognize { .. }) => plan,
+        | Plan::Recognize { .. }
+        | Plan::Transfer(_)) => plan,
     }
 }

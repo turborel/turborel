@@ -261,6 +261,7 @@ fn annotate(plan: &mut Plan, note: &str) {
         | Plan::Window { .. }
         | Plan::Recognize { .. }
         | Plan::Polymorphic(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => {}
     }
 }

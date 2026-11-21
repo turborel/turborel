@@ -237,7 +237,8 @@ pub(crate) fn operators(plan: Plan, depth: usize, out: &mut Vec<Operator>) -> us
         | Plan::Window { .. }
         | Plan::Recognize { .. }
         | Plan::Polymorphic(_)
-        | Plan::Parallel(_)) => (other, None),
+        | Plan::Parallel(_)
+        | Plan::Transfer(_)) => (other, None),
     };
     let mut tables = node.own_tables();
     let next = depth.saturating_add(1);

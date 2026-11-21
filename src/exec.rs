@@ -63,6 +63,8 @@ use crate::system::SystemRead;
 use crate::txn::TxId;
 use crate::value::Value;
 
+pub use batch::HeldLeaf;
+pub(crate) use batch::{batch_layout, transferable};
 pub use entries::{Entries, row_entries, table_entries};
 pub(crate) use eval::{Escape, like_escape};
 pub use eval::{Heard, eval, eval_cond, quantified, warn};
@@ -158,6 +160,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Parallel(..) => parallel::parallel,
         // [EXTENSION] as its input, counted (RULES.md D376).
         Plan::Counted(_) => counted::counted,
+        // [DESIGN] its leaves read first, then its chain (RULES.md D665).
+        Plan::Transfer(_) => batch::transfer_rows,
     };
     run(plan, db, tx)
 }
@@ -194,6 +198,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => failed(broken("a join is not one")),
     }
 }

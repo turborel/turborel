@@ -82,6 +82,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.INLINE_FUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MAX_PASSES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
 | OPTIMIZER.MERGE_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.PREDICATE_TRANSFER | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PREDICATE_TRANSITIVITY | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_FILTER_INTO_OUTER_JOIN | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
@@ -196,6 +197,7 @@ Each in a sentence:
 - **OPTIMIZER.INLINE_FUNCTIONS**: Whether the optimizer's rule inline_functions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.MAX_PASSES**: The most passes the optimizer makes over a plan.
 - **OPTIMIZER.MERGE_FILTERS**: Whether the optimizer's rule merge_filters rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.PREDICATE_TRANSFER**: Whether a chain of inner hash joins may first read its tables in turn, each filtered by Bloom filters of the join keys of the tables read before it, from the smaller tables to the largest and back, so a selective condition on any table shrinks the others before they are joined. OFF joins them as planned, as to compare the two.
 - **OPTIMIZER.PREDICATE_TRANSITIVITY**: Whether the optimizer's rule predicate_transitivity rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_FILTER_INTO_OUTER_JOIN**: Whether the optimizer's rule push_filter_into_outer_join rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.

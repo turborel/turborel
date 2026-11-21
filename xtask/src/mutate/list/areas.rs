@@ -31,6 +31,7 @@ mod skipping;
 mod sorts;
 mod statistics;
 mod tpcc;
+mod transfer;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
@@ -99,7 +100,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 43] {
+fn second() -> [&'static [Mutation]; 44] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -144,6 +145,7 @@ fn second() -> [&'static [Mutation]; 43] {
         &analyze::ANALYZE,
         &statistics::STATISTICS,
         &range_joins::RANGE_JOINS,
+        &transfer::TRANSFER,
     ]
 }
 

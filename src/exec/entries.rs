@@ -157,6 +157,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_)) => Err(broken(&format!("not a table access: {other:?}"))),
     }
 }

@@ -71,6 +71,7 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<usize> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => None,
     }
 }

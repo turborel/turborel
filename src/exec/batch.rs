@@ -29,6 +29,7 @@ mod project;
 mod runtime;
 mod shaped;
 mod stream;
+mod transfer;
 
 use std::sync::Arc;
 
@@ -43,6 +44,9 @@ pub(super) use project::{projectable, projected};
 pub(super) use runtime::{Told, taken as runtime_taken, wanted};
 pub(super) use shaped::{Shaped, filter_step, probe_step, project_step, runtime_step, through};
 pub(super) use stream::{Batches, Kept};
+pub use transfer::HeldLeaf;
+pub(super) use transfer::rows as transfer_rows;
+pub(crate) use transfer::{batch_layout, transferable};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;

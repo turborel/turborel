@@ -158,6 +158,7 @@ impl Filling<'_> {
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }
+            | Plan::Transfer(_)
             | Plan::Counted(_) => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
         }
     }

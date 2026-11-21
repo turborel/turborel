@@ -78,6 +78,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => None,
     }
 }
@@ -142,6 +143,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => return columns,
     };
     columns.extend(keys.iter().flat_map(|k| [k.left, k.right.saturating_add(width)]));
@@ -203,6 +205,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => no_join,
     };
     made(plan, db, tx)
@@ -339,6 +342,11 @@ fn left_late_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Defer
     Ok(gathered(execute(plan, db, tx), &columns))
 }
 
+/// `in_order`, for a phase of predicate transfer to ask (RULES.md D665).
+pub(super) fn ordered(plan: &Plan) -> bool {
+    in_order(plan)
+}
+
 /// Whether the rows of `plan`, a subtree that gives batches, are asked for
 /// in an order, as the planner relies on (`physical.rs`) where a batch
 /// comes in none (RULES.md D31): a scan's in its table's
@@ -349,6 +357,7 @@ fn in_order(plan: &Plan) -> bool {
         Plan::SeqScan { order, .. } => !order.is_empty(),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => in_order(input),
         Plan::Counted(c) => in_order(&c.input),
+        Plan::Transfer(t) => t.input().is_some_and(in_order),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
         Plan::Nearest(_)

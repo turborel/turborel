@@ -55,6 +55,8 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         Plan::Filter { input, .. } => layout(input, db),
         // [EXTENSION] a counted operator's, its input's (RULES.md D378).
         Plan::Counted(c) => layout(&c.input, db),
+        // A chain's after a phase of predicate transfer, or a leaf's it held (RULES.md D665).
+        Plan::Transfer(t) => super::transfer::layout(t, db),
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::layout(plan, db),
         Plan::Project { exprs, input, .. } => {
             let (columns, _) = layout(input, db)?;
@@ -154,6 +156,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, most: None, .. } => reads_by_batch(input, db),
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }) && reads_by_batch(input, db),
         Plan::Counted(c) => reads_by_batch(&c.input, db),
+        Plan::Transfer(t) => t.input().is_none_or(|input| reads_by_batch(input, db)),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
         Plan::Product { left, right, .. } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
@@ -262,6 +265,7 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
         Plan::Counted(_) => super::counted::batches,
+        Plan::Transfer(_) => super::transfer::batches,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
