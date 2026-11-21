@@ -349,6 +349,9 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         let _compiling = self.compiling(cx.st, cx.tx.id);
+        if params.given().is_some() && !matches!(stmt, SqlStatement::Insert(_)) {
+            return Err(super::write::not_given());
+        }
         // [ISO/IEC 9075-2:2023 §7.6 GR5] the statements of the delta tables
         // an INSERT or a MERGE reads run first; a plan kept is not of
         // their rows (RULES.md D175).

@@ -15,6 +15,7 @@
 //!
 //! The same preparation serves PREPARE in SQL text (`db/dynamic.rs`).
 
+mod given;
 mod outputs;
 mod plans;
 

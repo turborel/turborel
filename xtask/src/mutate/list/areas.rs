@@ -4,6 +4,7 @@ mod altered_tables;
 mod analyze;
 mod batches;
 mod budget;
+mod bulk;
 // The count's, kept beside the other areas' files.
 mod client_sync;
 #[path = "count.rs"]
@@ -36,7 +37,7 @@ mod uuid;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 16] {
+pub fn core() -> [&'static [Mutation]; 17] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -54,6 +55,7 @@ pub fn core() -> [&'static [Mutation]; 16] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &bulk::BULK,
     ]
 }
 

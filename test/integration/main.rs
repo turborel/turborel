@@ -80,6 +80,7 @@ mod blocks;
 mod booleans;
 mod buffer;
 mod buffer_claims;
+mod bulk_insert;
 mod call_outputs;
 mod cancel;
 mod candidate_keys;

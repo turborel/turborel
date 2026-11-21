@@ -503,7 +503,7 @@ impl Txn {
     }
 
     /// Records `entry`, which undoes a change it made.
-    fn log(&self, entry: UndoEntry) -> Result<()> {
+    pub(crate) fn log(&self, entry: UndoEntry) -> Result<()> {
         self.state()?.undo.push(entry)
     }
 
