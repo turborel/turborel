@@ -29,6 +29,7 @@ impl Plan {
             | Plan::SetOp { left, right, .. } => left.can_raise() || right.can_raise(),
             Plan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
             Plan::MergeJoin(m) => m.left.can_raise() || m.right.can_raise() || m.cond.as_ref().is_some_and(Cond::can_raise),
+            Plan::RangeJoin(r) => r.left.can_raise() || r.right.can_raise() || r.full.can_raise(),
             Plan::OuterJoin { left, right, cond, own, .. } => {
                 let owned = own.as_deref().is_some_and(|(l, r)| [l, r].iter().any(|c| c.as_ref().is_some_and(Cond::can_raise)));
                 left.can_raise() || right.can_raise() || owned || cond.as_ref().is_some_and(Cond::can_raise)
