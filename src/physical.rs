@@ -17,6 +17,7 @@
 mod access;
 mod analyzed;
 mod blind;
+pub use crate::noted::NotesRead;
 pub use analyzed::{Analyzed, Counted, NodeCount, Operator};
 pub(crate) use analyzed::{counted, millis, operators};
 mod built;
@@ -65,8 +66,8 @@ pub use cardinality::Injected;
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_ESTIMATE_MARGIN, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE};
 pub use cost::{DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE, MOST_ESTIMATE_MARGIN, parallel::Degrees};
 pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
+pub(crate) use kept::{Kept, filled_plan_as_is, keepable, placed, prepared_plan, same_shape};
 pub use kept::{Place, ProbeSlot};
-pub(crate) use kept::{filled_plan, filled_plan_as_is, keepable, same_shape};
 use std::sync::Arc;
 
 pub use built::Own;

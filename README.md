@@ -77,8 +77,9 @@ behind it, and each can be replaced or added to.
 - [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
   bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
-  query and shows each operator's rows beside its estimate, and a program
-  may give the planner true row counts to test its plans.
+  query or a data change and shows each operator's rows beside its
+  estimate, its batches, spills and index reads, and a program may give
+  the planner true row counts to test its plans.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
