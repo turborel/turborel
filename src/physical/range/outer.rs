@@ -32,6 +32,9 @@ impl PhysicalPlanner<'_> {
         let flip = Flip { width: left.width(), right_width: right.width() };
         let swapped = kind == OuterJoin::Right;
         let on = if swapped { flip.cond(cond.clone()) } else { cond.clone() };
+        if !self.searchable(&on, probe.width()) {
+            return None;
+        }
         let est = self.estimating(|e| e.outer_card((kind, cond), (left, right))).rows;
         let want_probe = if swapped { &[] } else { of_left(want, left.width()) };
         let way = self.range_way(&on, (probe, build), (est, true))?;

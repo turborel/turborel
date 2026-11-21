@@ -41,6 +41,9 @@ impl PhysicalPlanner<'_> {
     /// of each operand by order, and it is estimated cheapest.
     pub(in crate::physical) fn range_join(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Option<Built> {
         let LogicalPlan::Product { left, right } = input else { return None };
+        if !self.searchable(cond, left.width()) {
+            return None;
+        }
         let est = self.estimating(|e| e.filter_card(cond, input)).rows;
         let want_left = of_left(want, left.width());
         let way = self.range_way(cond, (left, right), (est, !want_left.is_empty()))?;
@@ -62,6 +65,16 @@ impl PhysicalPlanner<'_> {
         let ordered = !want_left.is_empty() && l.ordered;
         let made = Made { outer: false, widths, full: cond.clone(), shown, est };
         Some(Built { plan: range_plan(way.ranged, (l.plan, r.plan), made), ordered })
+    }
+
+    /// Whether PLANNER.RANGE_JOINS is ON and a search answers part of
+    /// `cond`, over pairs whose first `width` columns are the left's. It
+    /// reads the condition's text alone, so a join no search answers is
+    /// planned with no estimate more.
+    pub(super) fn searchable(&self, cond: &Cond, width: usize) -> bool {
+        let mut parts = Vec::new();
+        split_and(cond.clone(), &mut parts);
+        self.db.settings.is_on(RANGE_JOINS) && ranged(expanded_periods(parts), width).is_some()
     }
 
     /// The cheaper way round of a range join of `left` and `right` on
