@@ -184,11 +184,15 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's, parallel queries', the client's step with its
-    // server, the decode kernels', declared types', batches', late
-    // materialization's, the table of groups', the join table's and
-    // XXH3's and skipping's last, as `last` holds no more.
-    let after: [&'static [Mutation]; 11] = [
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
+}
+
+/// The transport's, parallel queries', the client's step with its
+/// server, the decode kernels', declared types', batches', late
+/// materialization's, the table of groups', the join table's and
+/// XXH3's and skipping's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 11] {
+    [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
@@ -200,8 +204,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
         &skipping::SKIPPING,
-    ];
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
+    ]
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the
