@@ -11,10 +11,11 @@
 //! A hint is only a guess, written as the locked way finds or fills a page:
 //! one stale, or a frame latched exclusively, sends the read the locked way.
 
-use std::sync::TryLockError;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{PoisonError, TryLockError};
 
-use super::{BufferPool, Key, PageRef, count};
+use super::{BufferPool, FileId, Key, PageRef, Pin, count};
+use crate::error::Result;
 use crate::sync::thread_stripe;
 
 /// \[DESIGN\] Stripes of the hit counters: more than the threads that read
@@ -98,6 +99,27 @@ impl BufferPool {
         }
         self.hints.hit();
         Some(PageRef { content, _pin: None })
+    }
+
+    /// \[DESIGN\] Page `id` of pager file `file`, held for reading if a frame
+    /// holds it now; none if none does, and nothing read from the file: for
+    /// a page whose number is only a guess, which may be free (RULES.md
+    /// D500, `engine/tree/near.rs`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the pool's maps are missing a shard, which `new`
+    /// prevents.
+    pub fn read_resident(&self, file: FileId, id: u64) -> Result<Option<PageRef<'_>>> {
+        let key = Key { file, id };
+        if let Some(page) = self.read_hinted(key) {
+            return Ok(Some(page));
+        }
+        let Some(pinned) = self.pin_mapped(key)? else { return Ok(None) };
+        let Some(frame) = self.settled_holding(pinned, key)? else { return Ok(None) };
+        self.hints.note(key, pinned.0);
+        let pin = Pin(frame);
+        Ok(Some(PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), _pin: Some(pin) }))
     }
 }
 

@@ -97,6 +97,11 @@ pub(in crate::exec) fn fetch(
     let Reading { columns, near, projection, counts, .. } = reading;
     let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
     counts[1] = counts[1].saturating_add(1);
+    // \[DESIGN\] (RULES.md D501) A key of the row's own values is checked
+    // in place, with no key made of the row.
+    if projection.is_none() && !ix.is_collated() && !ix.has_expressions() {
+        return Ok(key.is_of(&row, &ix.columns).then_some((id, row)));
+    }
     let Some(mut seen) = ix.key_of(&row) else { return Ok(None) };
     if let Some(project) = projection {
         seen = project.project(&seen)?;

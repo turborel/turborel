@@ -634,7 +634,7 @@ SELECT MIN(PRICE) FROM OFFERS;
  -- physical:
  Update ANN.OFFERS  (actual rows changed=50)
    Filter OFFERS.PRICE <= 50  (est. rows=51)  (actual rows=50)
-     SeqScan ANN.OFFERS  (rows=5000, cost=1024.0)  (actual rows=1024, leaf pages=8)
+     SeqScan ANN.OFFERS  (rows=5000, cost=1024.0)  (actual rows=1024, leaf pages=7)
  -- ran: 50 rows changed
 (5 rows)
 

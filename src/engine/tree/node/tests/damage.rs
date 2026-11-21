@@ -43,8 +43,9 @@ fn damaged_nodes_are_refused_or_read() {
     let c5 = PageId(5).0.to_le_bytes();
     let c7 = PageId(7).0.to_le_bytes();
     let leaf =
-        build(&Shape { level: 0, high: Some(b"m"), right: Some(PageId(9)), first: PageId(0) }, &[(b"b", b"2"), (b"d", b"44")]).unwrap();
-    let inner = build(&Shape { level: 1, high: None, right: None, first: PageId(3) }, &[(b"f", &c5), (b"p", &c7)]).unwrap();
+        build(&Shape { level: 0, high: Some(b"m"), right: Some(PageId(9)), first: PageId(0), tree: TREE }, &[(b"b", b"2"), (b"d", b"44")])
+            .unwrap();
+    let inner = build(&Shape { level: 1, high: None, right: None, first: PageId(3), tree: TREE }, &[(b"f", &c5), (b"p", &c7)]).unwrap();
     for good in [leaf, inner] {
         exercise(&good, usize::MAX);
         for at in 0..good.len() {
@@ -61,7 +62,9 @@ fn damaged_nodes_are_refused_or_read() {
 /// byte is refused or read as some node, never a panic.
 #[test]
 fn shortened_nodes_are_refused_or_read() {
-    let good = build(&Shape { level: 0, high: None, right: None, first: PageId(0) }, &[(b"a", b"1"), (b"b", b"22"), (b"c", b"")]).unwrap();
+    let good =
+        build(&Shape { level: 0, high: None, right: None, first: PageId(0), tree: TREE }, &[(b"a", b"1"), (b"b", b"22"), (b"c", b"")])
+            .unwrap();
     for cut in 0..good.len() {
         exercise(&good[..cut], cut);
     }

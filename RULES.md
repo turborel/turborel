@@ -418,6 +418,8 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D490 | A grouping on a join's key is computed in the join's table, a groupjoin |
+| D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
+| D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 | D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
@@ -2393,9 +2395,10 @@ TABLES.ENGINE, and moves by ALTER TABLE ... USING.
 The row store suits SQL's point reads, updates and cursors, and is the base
 other layouts build on. Each table is a B-link tree (Lehman and Yao, 1981)
 keyed by a logical 64-bit row id. Row ids are stable, so indexes never need
-rewriting. The newest version of a row is in the tree and older ones are in
-an undo store, which is on disk for a database in a directory, so a long
-reader holds disk and not memory. A table's large objects are a space of
+rewriting. An index entry carries a hint to its row's table leaf, so a
+lookup by key descends one tree (D500). The newest version of a row is in
+the tree and older ones are in an undo store, which is on disk for a
+database in a directory, so a long reader holds disk and not memory. A table's large objects are a space of
 immutable objects beside it, each owned by one row (D79).
 
 The column store suits scans of a few columns of many rows. New rows stay
@@ -12837,6 +12840,86 @@ executor stops judging by one. Only inner joins count it, since the
 preserved side of an outer join keeps every row. With EXECUTOR.BATCHES
 or EXECUTOR.RUNTIME_FILTERS OFF, none is counted. So join orders put a
 selective build where its filter reaches the scan it drops rows of.
+
+#### D500. B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf
+
+A lookup by key took two descents from the root, one of the index's tree
+and one of the table's, each latching every level. Each node search
+parsed a slot, an offset and a length per probe and compared whole keys.
+
+A node now keeps once the bytes its keys share, and its slots hold beside
+each offset the key's head, the first two bytes of the rest of the key,
+compared as one integer. Sixteen heads sampled evenly from the slots sit
+in the header as hints and narrow a search before it starts. A node also
+names its tree, by the tree's meta page. This follows Müller, Benson and
+Leis, "B-Trees Are Back", 2025, sections 3 and 4 (`engine/tree/node.rs`).
+
+- A node built keeps what its first and last keys share, which every key
+  between them shares. The rightmost node of a level keeps one too.
+- A key inserted that does not begin with the prefix shortens it, and the
+  node is built again. Keys appended to the rightmost node do that as
+  they pass a byte's boundary, once in 256 keys at most.
+- A node filled by inserts keeps the prefix it was built with, none for
+  a new tree's first leaf. Before a full node splits, it is built again,
+  its prefix what its first and last keys now share, and the entry goes
+  in without a split if it then fits. A loaded tree counts each node's
+  keys past the prefix they share as it fills the node.
+- The paper's heads are four bytes. Two are kept, as they come after the
+  prefix, where they tell most keys of a node apart. A slot then costs two
+  bytes more than an offset alone, and an index entry four more for its
+  hint. A node whose keys share six bytes or more, as integer keys of a
+  few hundred in a node do, holds at least as many entries as before.
+- Heads order as keys do or are equal, so a search reads a key's tail
+  only where heads are equal.
+
+An index entry's value starts with a hint, the page of the table's leaf
+its row was in when the entry was written, as four bytes. The count of
+versions follows only when it is above one. A table's tree notes, per
+thread, the leaf each row is written into or scanned from, and an index
+entry written next for that row takes it (`engine/tree/hints.rs`). An
+index read notes each entry's hint the same way, and the table's read of
+the row tries that leaf before it descends (`engine/tree/near.rs`).
+
+A hint is a guess and is checked before it is trusted, so a stale one
+costs at most a few page reads and never a wrong answer.
+
+- The page is used only if a frame holds it now. A freed page has left
+  the pool, so no free page is read.
+- It must be a leaf of the table's tree, not deleted, whose first key is
+  at or below the key. A leaf of the tree holds no key below its range,
+  so it is the key's leaf if its range reaches the key.
+- Past its high key, the key moved right in a split, and the read follows
+  up to four right links (Lehman and Yao 1981, section 4). Otherwise it
+  descends.
+- A hint is never repaired by a write. Row ids come in blocks per thread,
+  so a table's leaves fill once and seldom split afterwards.
+
+The limits of an index key and of a tree's entry shrink by the header's
+growth and the head beside each slot (CONFORMANCE.md, Limits). Formats
+stay at version 1, changed in place.
+
+#### D501. An index fetch checks a row's key in place, and a search decodes a key once for its entries
+
+An index holds the entries of versions a reader may not see (D34). So a
+row found by an entry is kept only if the version the reader sees has the
+entry's key. That check made a key of the row, copying each key column,
+and compared it with the entry's decoded key. Each search also copied its
+probe and the key's types, and decoded every entry's key, even where many
+entries share one.
+
+The check is unchanged in what it keeps, and cheaper (`exec/entries.rs`,
+`index/blink.rs`).
+
+- Of a key of columns with no collation, expression or projection, each
+  value of the entry's key is compared with the row's column in place. A
+  key made of the row would hold exactly those values, so the answer is
+  the same.
+- A search keeps the last key it decoded and its bytes. An entry of the
+  same bytes takes that key, as decoding the same bytes gives the same
+  key. Entries of a key not unique, read in order, are decoded once.
+- The probe is copied only by a search whose range is not exact, the one
+  case that checks entries against it. The key's types are shared by
+  every search of the index.
 
 ## 2. Project layout
 
