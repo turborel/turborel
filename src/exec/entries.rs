@@ -11,7 +11,7 @@ use super::{Runner, broken, eval_cond};
 use crate::catalog::{KeyShape, QualifiedName};
 use crate::error::Result;
 use crate::index::{Key, KeyProjection, Probe};
-use crate::logical::{Truth, pushed_conjuncts};
+use crate::logical::{Cond, Truth, pushed_conjuncts};
 use crate::physical::{Decided, Plan};
 use crate::storage::{Near, Row, RowId, TableStorage};
 use crate::txn::{TxId, checked, counted};
@@ -114,6 +114,23 @@ pub fn table_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Resu
     entries_in(plan, &db.opening(), tx)
 }
 
+/// The entries of `input` that `cond` holds of, its conjuncts the table
+/// can judge pushed into its scan.
+fn filtered_entries(cond: Cond, input: Plan, db: &Db, tx: TxId) -> Result<Entries> {
+    let rows: Entries = match (input, pushed_conjuncts(&cond)) {
+        (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
+            Box::new(counted(Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition), db.tx.stop_of(tx), |_| 1))
+        }
+        (input, _) => table_entries(input, db, tx)?,
+    };
+    let runner = Runner::new(db, tx);
+    Ok(Box::new(rows.filter_map(move |read| match read.and_then(|(id, row)| Ok((eval_cond(&cond, &row, &runner)?, id, row))) {
+        Ok((Truth::True, id, row)) => Some(Ok((id, row))),
+        Ok((Truth::False | Truth::Unknown, ..)) => None,
+        Err(e) => Some(Err(e)),
+    })))
+}
+
 /// `table_entries`' work, in `db`.
 fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
     match plan {
@@ -125,20 +142,7 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
             let probe = super::scan::slotted(probe, &slots, db)?;
             index_entries((&table, &index, probe, reverse), decided, db, tx)
         }
-        Plan::Filter { cond, input, .. } => {
-            let rows: Entries = match (*input, pushed_conjuncts(&cond)) {
-                (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
-                    Box::new(counted(Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition), db.tx.stop_of(tx), |_| 1))
-                }
-                (input, _) => table_entries(input, db, tx)?,
-            };
-            let runner = Runner::new(db, tx);
-            Ok(Box::new(rows.filter_map(move |read| match read.and_then(|(id, row)| Ok((eval_cond(&cond, &row, &runner)?, id, row))) {
-                Ok((Truth::True, id, row)) => Some(Ok((id, row))),
-                Ok((Truth::False | Truth::Unknown, ..)) => None,
-                Err(e) => Some(Err(e)),
-            })))
-        }
+        Plan::Filter { cond, input, .. } => filtered_entries(cond, *input, db, tx),
         // The index scans of an OR's ranges, none overlapping
         // (`physical/access.rs`): each row once.
         Plan::Append { left, right, .. } => Ok(Box::new(table_entries(*left, db, tx)?.chain(table_entries(*right, db, tx)?))),
