@@ -37,7 +37,7 @@ impl Pager {
         let extents = self.allocate_overflow(content.len());
         let inline = self.inline_with(extents.len()).min(content.len());
         let directories = self
-            .allocate(u64::try_from(extents.len().saturating_sub(INLINE_EXTENTS).div_ceil(self.directory_capacity())).unwrap_or(u64::MAX));
+            .allocated(u64::try_from(extents.len().saturating_sub(INLINE_EXTENTS).div_ceil(self.directory_capacity())).unwrap_or(u64::MAX));
         let mut allocated = extents.clone();
         allocated.extend_from_slice(&directories);
         let written = self
@@ -66,7 +66,7 @@ impl Pager {
             if more == 0 {
                 return extents;
             }
-            extents.extend(self.allocate(u64::try_from(more).unwrap_or(u64::MAX)));
+            extents.extend(self.allocated(u64::try_from(more).unwrap_or(u64::MAX)));
             pages = pages.saturating_add(more);
         }
     }
