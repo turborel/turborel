@@ -98,7 +98,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, t
 /// `index` reads its outer rows in, if `alone` it is neither spatial nor
 /// FULL, EXECUTOR.BATCHED_INDEX_JOINS is on, and the index's keys are
 /// unique (`indexed/batched.rs`).
-fn batched_of((probe, index, alone): (&JoinProbe, &str, bool), db: &State) -> Option<Batched> {
+fn batched_of((probe, index, alone): (&JoinProbe, &str, bool), db: &Db) -> Option<Batched> {
     (alone && db.settings.is_on(crate::settings::EXECUTOR_BATCHED_INDEX_JOINS))
         .then(|| db.catalog.index(index).and_then(|desc| Batched::of(probe, desc)))
         .flatten()
