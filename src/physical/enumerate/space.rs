@@ -191,6 +191,23 @@ impl<'m> Space<'m> {
         Some((rows.min(upper), upper))
     }
 
+    /// The rows of the join `applied` gives, as `rows_of` says, its bound
+    /// found only where it could lower them: every bound of a join is at
+    /// least the lesser of its sides' and their product, as a column's
+    /// most rows of one value are at least one (`Model::joined_upper`).
+    pub(super) fn estimate_of(&self, applied: &Applied) -> Option<f64> {
+        let s = applied.left | applied.right;
+        if let Some(entry) = self.table.get(&s) {
+            return Some(entry.rows);
+        }
+        let (left, right) = (self.table.get(&applied.left)?, self.table.get(&applied.right)?);
+        let rows = self.model.joined_rows((applied.left, left.rows), (applied.right, right.rows), applied);
+        if rows <= left.upper.min(right.upper).min(left.upper * right.upper) {
+            return Some(rows);
+        }
+        self.rows_of(applied).map(|(bounded, _)| bounded)
+    }
+
     /// Joins `s1` and `s2` if they may be, offering each plan of the join
     /// to their union's entry (`enumerate/methods.rs`); whether they were.
     pub(super) fn join(&mut self, s1: Set, s2: Set) -> bool {
