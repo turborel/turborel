@@ -18,14 +18,13 @@ mod measures;
 pub(super) mod scene;
 
 use std::cmp::Ordering;
-use std::sync::Arc;
 
 use self::matches::Part;
 use self::scene::Reading;
 use super::work::Work;
 use super::{HeldRows, RowIter, Runner, broken, column, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::logical::{Recognize, SortKey};
 use crate::pattern::Program;
 use crate::physical::Plan;
@@ -35,7 +34,7 @@ use crate::txn::{TxId, checked};
 use crate::value::Value;
 
 /// The rows of the row pattern recognition `plan`.
-pub(super) fn recognized(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn recognized(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Recognize { recognize, .. } = plan else { return failed(broken("a row pattern recognition is not one")) };
     let (r, input) = recognize.split();
     let rows = execute(input, db, tx);

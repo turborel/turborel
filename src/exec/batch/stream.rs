@@ -27,6 +27,7 @@ use super::runtime::{self, Told};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr, pushed_conjuncts};
 use crate::physical::Plan;
@@ -189,7 +190,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
 /// # Errors
 ///
 /// As `batches`.
-fn ordered_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+fn ordered_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     if let Plan::SeqScan { table, columns, order, backward, most, .. } = &plan {
         let storage = Arc::clone(db.storage_of(table)?);
         if let Some(batches) = storage.scan_ordered_batches(tx, columns, (order, *backward, *most), None) {
@@ -206,7 +207,7 @@ fn ordered_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// # Errors
 ///
 /// A table's storage missing; a hash join's right operand's errors.
-pub(super) fn open(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Stream> {
+pub(super) fn open(plan: Plan, db: &Db, tx: TxId) -> Result<Stream> {
     let (columns, _) = layout(&plan, db).ok_or_else(|| crate::exec::broken("a plan that gives no batches"))?;
     let batches = whole_batches(plan, db, tx)?;
     Ok(Stream { batches, columns })
@@ -220,14 +221,14 @@ pub(super) fn open(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Stream> {
 /// # Errors
 ///
 /// As `open`.
-pub(super) fn whole_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn whole_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     let width = layout(&plan, db).map_or(0, |(_, width)| width);
     Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width))?))
 }
 
 /// A function giving the batches of a plan of one kind, its columns the
 /// operators above leave unread as the `Deferred` says.
-type Batched = fn(Plan, (&Arc<State>, TxId), &Deferred) -> Result<Batches>;
+type Batched = fn(Plan, (&Db, TxId), &Deferred) -> Result<Batches>;
 
 /// The batches of `plan`, a subtree that gives them (`layout`). Each kind
 /// of plan is made by a function of its own, chosen by reference and
@@ -238,7 +239,7 @@ type Batched = fn(Plan, (&Arc<State>, TxId), &Deferred) -> Result<Batches>;
 /// # Errors
 ///
 /// As `open`.
-pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     batches_with(plan, (db, tx), &Deferred::default())
 }
 
@@ -248,7 +249,7 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
 /// # Errors
 ///
 /// As `open`.
-pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+pub(super) fn batches_with(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     if !deferred.filters().is_empty() {
         let (kept, here) = runtime::parted(&plan, deferred.filters(), db);
         if !here.is_empty() {
@@ -294,7 +295,7 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
 /// # Errors
 ///
 /// As `open`.
-fn parallel_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+fn parallel_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Parallel(p) = plan else { return Err(crate::exec::broken("a part run in parallel is not one")) };
     // A part whose batches hold no layout of its own is read as its plan.
     let Some(shape) = layout(&p.input, db) else { return batches_with(p.input, (db, tx), deferred) };
@@ -312,7 +313,7 @@ fn parallel_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferr
 ///
 /// As `batches`; a spill's; a cancel; SQLCODE -910 of a sort of its first
 /// rows alone, which gives none.
-fn sorted_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferred) -> Result<Batches> {
+fn sorted_batches(plan: Plan, (db, tx): (&Db, TxId), _deferred: &Deferred) -> Result<Batches> {
     let Plan::Sort { keys, input, most: None, .. } = plan else { return Err(crate::exec::broken("a sort that gives no batches")) };
     let width = layout(&input, db).map_or(0, |(_, width)| width);
     crate::exec::sort::sorted_out(&keys, whole_batches(*input, db, tx)?, width, db, tx)
@@ -326,7 +327,7 @@ fn sorted_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferre
 ///
 /// As the top-N's rows; SQLCODE -910 of a plan not of a top-N whose
 /// batches hold every column of its rows.
-fn topped_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferred) -> Result<Batches> {
+fn topped_batches(plan: Plan, (db, tx): (&Db, TxId), _deferred: &Deferred) -> Result<Batches> {
     let (_, width) = layout(&plan, db).ok_or_else(|| crate::exec::broken("a top-N that gives no batches"))?;
     let rows = crate::exec::execute(plan, db, tx).map(|row| row.map(|r| (crate::storage::RowId::default(), r)));
     let batches = crate::storage::batches_of(Box::new(rows), &(0..width).collect::<Vec<_>>());
@@ -338,7 +339,7 @@ fn topped_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferre
 /// # Errors
 ///
 /// SQLCODE -910, always.
-fn none(_plan: Plan, _at: (&Arc<State>, TxId), _deferred: &Deferred) -> Result<Batches> {
+fn none(_plan: Plan, _at: (&Db, TxId), _deferred: &Deferred) -> Result<Batches> {
     Err(crate::exec::broken("a plan that gives no batches"))
 }
 
@@ -349,7 +350,7 @@ fn none(_plan: Plan, _at: (&Arc<State>, TxId), _deferred: &Deferred) -> Result<B
 /// # Errors
 ///
 /// As `open`.
-fn judged_above(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred, here: Vec<Told>) -> Result<Batches> {
+fn judged_above(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred, here: Vec<Told>) -> Result<Batches> {
     let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
     Ok(runtime::applied(batches_with(plan, (db, tx), deferred)?, here, &columns, (db, false)))
 }
@@ -359,7 +360,7 @@ fn judged_above(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred, 
 /// # Errors
 ///
 /// As `batches`.
-fn scan_batches(scan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+fn scan_batches(scan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::SeqScan { table, columns, order, .. } = &scan else { return Err(crate::exec::broken("a scan is not one")) };
     if order.is_empty() { scan_of((table, columns, None), deferred, db, tx) } else { ordered_batches(scan, db, tx) }
 }
@@ -370,7 +371,7 @@ fn scan_batches(scan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) 
 /// # Errors
 ///
 /// As `batches`.
-fn filter_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+fn filter_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Filter { cond, input, .. } = plan else { return Err(crate::exec::broken("a filter is not one")) };
     let below = deferred.filtered(&cond).with_told(deferred.filters().to_vec());
     let (inner, columns) = told(*input, &cond, (db, tx), &below)?;
@@ -385,7 +386,7 @@ fn filter_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred
 /// # Errors
 ///
 /// As `batches`.
-fn told(inner: Plan, cond: &Cond, (db, tx): (&Arc<State>, TxId), below: &Deferred) -> Result<(Batches, Vec<usize>)> {
+fn told(inner: Plan, cond: &Cond, (db, tx): (&Db, TxId), below: &Deferred) -> Result<(Batches, Vec<usize>)> {
     if let Plan::Counted(c) = inner {
         return super::counted::through(*c, db, |input| told(input, cond, (db, tx), below));
     }
@@ -403,7 +404,7 @@ fn told(inner: Plan, cond: &Cond, (db, tx): (&Arc<State>, TxId), below: &Deferre
 /// # Errors
 ///
 /// As `batches`.
-fn projected_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+fn projected_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Project { exprs, input, .. } = plan else { return Err(crate::exec::broken("a projection is not one")) };
     let input = *input;
     let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
@@ -424,11 +425,11 @@ fn projected_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Defer
 /// # Errors
 ///
 /// SQLCODE -910 if `chain` is no append.
-fn appended_batches(chain: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferred) -> Result<Batches> {
+fn appended_batches(chain: Plan, (db, tx): (&Db, TxId), _deferred: &Deferred) -> Result<Batches> {
     if !matches!(chain, Plan::Append { .. }) {
         return Err(crate::exec::broken("an append is not one"));
     }
-    let later = Arc::clone(db);
+    let later = db.clone();
     let operands = appended_owned(chain).into_iter();
     Ok(Box::new(operands.flat_map(move |operand| batches(operand, &later, tx).unwrap_or_else(|e| Box::new(std::iter::once(Err(e)))))))
 }
@@ -454,7 +455,7 @@ pub(super) fn pick(batch: Batch, picks: &[usize]) -> Batch {
 /// one (D379) and the ranges of the runtime filters it is told as
 /// conjuncts, then judged by each of those filters, no row of them
 /// filtered by the condition yet (RULES.md D369).
-fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred, db: &Db, tx: TxId) -> Result<Batches> {
     let storage = Arc::clone(db.storage_of(scan.0)?);
     let mut pushed = scan.2.and_then(pushed_conjuncts);
     let told = deferred.filters();

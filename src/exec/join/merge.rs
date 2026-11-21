@@ -15,13 +15,12 @@
 
 use std::cmp::Ordering;
 use std::iter::Peekable;
-use std::sync::Arc;
 
 use super::super::work::Work;
 use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed};
 use super::rescan::{Pass, Rescanned};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::logical::{Cond, SortKey, Truth};
 use crate::physical::{self, JoinKey, Plan};
 use crate::storage::Row;
@@ -31,7 +30,7 @@ use crate::value::{SortOrder, Value, key_equal};
 /// The rows of the merge join `plan`. Never inlined into `execute`, whose
 /// frame every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
-pub(in crate::exec) fn merged(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn merged(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::MergeJoin(plan) = plan else { return failed(broken("a merge join is not one")) };
     let physical::MergeJoin { outer, left, right, key, cond, widths, .. } = *plan;
     Box::new(MergeJoin {

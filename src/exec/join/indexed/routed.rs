@@ -10,10 +10,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName, is_global_index, template_of};
-use crate::db::State;
 use crate::db::partitions::dispatch::Dispatched;
 use crate::db::partitions::global::packed;
 use crate::error::{Code, Result, SqlError};
+use crate::exec::Db;
 use crate::index::{Entries, Index, KeyOrder, Probe};
 use crate::logical::{Cond, Expr};
 use crate::storage::TableStorage;
@@ -25,7 +25,7 @@ pub(super) type Opened = (Arc<dyn TableStorage>, Arc<dyn Index>, KeyShape, Optio
 
 /// The partitions of a partitioned table a template's index is probed in.
 pub(super) struct Routes {
-    db: Arc<State>,
+    db: Db,
     table: QualifiedName,
     /// The table's columns of the index's key, in its order.
     columns: Vec<usize>,
@@ -41,7 +41,7 @@ pub(super) struct Routes {
 /// # Errors
 ///
 /// SQLCODE -910 if a partition lacks the template's index.
-pub(super) fn opened(db: &Arc<State>, table: &QualifiedName, index: &str) -> Result<Option<Opened>> {
+pub(super) fn opened(db: &Db, table: &QualifiedName, index: &str) -> Result<Option<Opened>> {
     let p = db.catalog.partitioning();
     if !p.is_partitioned(table) {
         return Ok(None);
@@ -61,7 +61,7 @@ pub(super) fn opened(db: &Arc<State>, table: &QualifiedName, index: &str) -> Res
     }
     let shape = shape.ok_or_else(|| missing(index))?;
     let found = leaves.values().next().map(|(_, found)| Arc::clone(found)).ok_or_else(|| missing(index))?;
-    let routes = Routes { db: Arc::clone(db), table: table.clone(), columns: shape.columns.clone(), leaves };
+    let routes = Routes { db: db.clone(), table: table.clone(), columns: shape.columns.clone(), leaves };
     Ok(Some((storage, found, shape.key_shape(), Some(routes))))
 }
 
