@@ -59,15 +59,11 @@ pub(crate) mod spatial;
 mod streamed;
 
 pub use cardinality::Injected;
-pub use cost::parallel::Degrees;
-pub use cost::{
-    CostModel, DEFAULT_EQUAL, DEFAULT_ESTIMATE_MARGIN, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN,
-    DEFAULT_SORT_COMPARE, MOST_ESTIMATE_MARGIN,
-};
+pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_ESTIMATE_MARGIN, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE};
+pub use cost::{DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE, MOST_ESTIMATE_MARGIN, parallel::Degrees};
 pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
 pub use kept::{Place, ProbeSlot};
 pub(crate) use kept::{filled_plan, filled_plan_as_is, keepable, same_shape};
-
 use std::sync::Arc;
 
 use built::Built;
