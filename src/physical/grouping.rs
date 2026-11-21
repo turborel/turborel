@@ -29,6 +29,9 @@ impl PhysicalPlanner<'_> {
         let b = self.build_input(input, &inner, &reads(groups, aggs));
         let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
         let est = self.card(logical).rows;
+        if !groups.is_empty() && super::groupjoin::over_join(&b.plan) {
+            self.est.inspect(|e| e.grouped_a_join());
+        }
         let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(b.plan), est };
         Built { plan, ordered: !inner.is_empty() && b.ordered }
     }

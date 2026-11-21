@@ -110,6 +110,12 @@ pub trait Rule: Send + Sync {
     /// An equivalent plan for `plan`, whose inputs are already rewritten, or
     /// `None` if the rule does not apply.
     fn apply(&self, plan: &LogicalPlan, ctx: &RuleContext<'_>) -> Option<LogicalPlan>;
+    /// Whether the rule rewrites any plan: one that holds only a setting,
+    /// read as the physical plan is made, is left out of the passes, so a
+    /// plan made again for each outer row pays nothing for it.
+    fn rewrites(&self) -> bool {
+        true
+    }
 }
 
 /// \[DESIGN\] The group of the settings turning each rule on or off
@@ -233,7 +239,7 @@ impl Optimizer {
         let on: Vec<&dyn Rule> = self
             .rules
             .iter()
-            .filter(|r| r.switch.is_none_or(|k| settings.is_on(k)) && !except.contains(&r.rule.name()))
+            .filter(|r| r.rule.rewrites() && r.switch.is_none_or(|k| settings.is_on(k)) && !except.contains(&r.rule.name()))
             .map(|r| &*r.rule)
             .collect();
         // A safety net against rules that keep undoing each other.

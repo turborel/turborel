@@ -498,8 +498,9 @@ impl<'a> PhysicalPlanner<'a> {
         }
         let estimates = Estimates::over(self.db, logical);
         let plan = PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan;
-        // [DESIGN] groupings of joins computed as groupjoins (RULES.md D490).
-        groupjoined(self.db, plan)
+        // [DESIGN] groupings of joins computed as groupjoins (RULES.md D490),
+        // looked for only if a grouping was planned over a join.
+        if estimates.grouped_join() { groupjoined(self.db, plan) } else { plan }
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if

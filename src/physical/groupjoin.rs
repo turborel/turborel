@@ -28,6 +28,7 @@ use crate::db::State;
 use crate::logical::{AggCall, Cond, Expr};
 use crate::physical::{JoinKey, Plan};
 use columns::rows;
+pub(super) use recognized::over_join;
 use recognized::{Found, recognized};
 
 /// The name of the rule whose setting turns groupjoins on or off,

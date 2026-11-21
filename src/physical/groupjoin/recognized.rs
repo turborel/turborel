@@ -80,6 +80,16 @@ fn join_under<'a>(plan: &'a Plan, db: &State) -> Option<(Join<'a>, Vec<usize>)> 
     Some((join, map))
 }
 
+/// Whether `plan`, under projections, is a join a groupjoin can stand
+/// over (`joined`), as a grouping of it may be one.
+pub(super) fn over_join(plan: &Plan) -> bool {
+    let mut at = plan;
+    while let Plan::Project { input, .. } = at {
+        at = input;
+    }
+    joined(at).is_some()
+}
+
 /// The join `plan` is: an inner hash join, or a LEFT outer join on keys of
 /// no other condition.
 fn joined(plan: &Plan) -> Option<Join<'_>> {

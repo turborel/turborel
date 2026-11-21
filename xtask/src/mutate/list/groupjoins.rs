@@ -7,7 +7,7 @@ use super::{Mutation, Package};
 
 /// The mutations of groupjoins and index joins by batch, in the order
 /// they run.
-pub const GROUPJOINS: [Mutation; 6] = [
+pub const GROUPJOINS: [Mutation; 7] = [
     Mutation {
         name: "groupjoin-left-unmatched-dropped",
         package: Package::Core,
@@ -67,5 +67,15 @@ pub const GROUPJOINS: [Mutation; 6] = [
         replacement: "let collapsed = present;",
         integration: &[],
         unit: &["stats::tests::a_sample_of_runs_counts_keys_whose_rows_lie_together"],
+    },
+    Mutation {
+        name: "groupjoin-walk-never-asked",
+        package: Package::Core,
+        breaks: "a grouping planned over a join is not noted, so no groupjoin is made",
+        file: "src/physical/grouping.rs",
+        original: "self.est.inspect(|e| e.grouped_a_join());",
+        replacement: "self.est.inspect(|_| ());",
+        integration: &["groupjoins::groupjoins_give_the_groupings_rows"],
+        unit: &[],
     },
 ];

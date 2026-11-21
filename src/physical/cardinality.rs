@@ -124,6 +124,9 @@ pub(super) struct Estimates<'a> {
     kept: RefCell<HashMap<usize, Card>>,
     /// How many askings are under way, nested.
     asking: Cell<usize>,
+    /// Whether a grouping was planned over a join, so the plan may hold a
+    /// groupjoin (RULES.md D490): of a plan with none, its walk is skipped.
+    grouped_join: Cell<bool>,
 }
 
 impl<'a> Estimates<'a> {
@@ -132,7 +135,8 @@ impl<'a> Estimates<'a> {
         let (stats, rows, keys) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
         let (memo, asking) = (RefCell::new(HashMap::new()), Cell::new(0));
         let (planned, kept) = (HashSet::new(), RefCell::new(HashMap::new()));
-        Estimates { db, cost: db.cost(), stats, rows, keys, memo, asking, planned, kept }
+        let grouped_join = Cell::new(false);
+        Estimates { db, cost: db.cost(), stats, rows, keys, memo, asking, planned, kept, grouped_join }
     }
 
     /// An estimator over `db` for the planning of `plan`, whose nodes live
@@ -141,6 +145,16 @@ impl<'a> Estimates<'a> {
         let mut planned = HashSet::new();
         addresses(plan, &mut planned);
         Estimates { planned, ..Estimates::new(db) }
+    }
+
+    /// Notes that a grouping was planned over a join (`grouped_join`).
+    pub(super) fn grouped_a_join(&self) {
+        self.grouped_join.set(true);
+    }
+
+    /// Whether a grouping was planned over a join (`grouped_join`).
+    pub(super) fn grouped_join(&self) -> bool {
+        self.grouped_join.get()
     }
 
     /// The state estimated of.

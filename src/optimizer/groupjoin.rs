@@ -21,4 +21,8 @@ impl Rule for GroupJoins {
     fn apply(&self, _plan: &LogicalPlan, _ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
         None
     }
+
+    fn rewrites(&self) -> bool {
+        false
+    }
 }
