@@ -3,8 +3,8 @@
 
 use crate::engine::columns::cache::{self, HeaderCache};
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use super::options::encodings_of;

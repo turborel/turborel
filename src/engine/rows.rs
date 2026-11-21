@@ -76,10 +76,10 @@ use lobs::LobSpace;
 pub use meta::TABLE_FORMAT;
 use meta::{locator_of, meta_content};
 use mvcc::{Past, Read, Versions, columns_mask};
-pub use store::RowStore;
 pub use options::{DEFAULT_HELD_BYTES, DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
 use sealing::Sealing;
 use stats::Gathered;
+pub use store::RowStore;
 pub use undo::UndoStore;
 use zones::{Replaced, Zones};
 

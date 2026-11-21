@@ -23,8 +23,8 @@ pub use self::late::{Late, LateSource};
 pub use self::mask::Mask;
 pub use self::sel::Sel;
 use super::{Conjunction, Row, Rows, TableStorage};
-use crate::txn::TxId;
 use crate::error::Result;
+use crate::txn::TxId;
 use crate::value::{Datetime, Decimal, Value};
 
 /// \[DESIGN\] The most rows of a batch: a vector, 2048.
