@@ -2,7 +2,7 @@
 //! kept for as long as the process runs, behind the same `FileSystem`
 //! contract as the operating system's, so every component on files runs on
 //! it unchanged. It is what a database with no directory keeps its tables
-//! in (`Database::new`), as SQLite's `:memory:` does: nothing survives the
+//! in (`Database::new`): nothing survives the
 //! process, and syncing does nothing more.
 //!
 //! It behaves as `OsFileSystem` does where the contract says: a file is

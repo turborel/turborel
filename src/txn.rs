@@ -88,6 +88,7 @@ mod clock;
 mod durable;
 mod end;
 mod followed;
+mod group;
 mod lobs;
 mod locks;
 mod logging;
@@ -308,6 +309,8 @@ pub(crate) struct Transactions {
     /// or grants or revokes privileges on (`db/definitions.rs`): the
     /// table's own once it is published, so the two are one.
     names: Mutex<HashMap<QualifiedName, std::sync::Weak<TableLock>>>,
+    /// The commits waiting for a sync of the log (`txn/group.rs`).
+    group: group::Group,
 }
 
 impl Transactions {
@@ -358,6 +361,7 @@ impl Default for Transactions {
             stops: Stops::default(),
             ends: row_waits::Ends::default(),
             names: Mutex::new(HashMap::new()),
+            group: group::Group::default(),
         }
     }
 }
