@@ -79,7 +79,7 @@ fn kept_op(plan: &LogicalPlan) -> Op {
     match plan {
         LogicalPlan::Scan { .. } => Op::Scan,
         LogicalPlan::Filter { .. } => Op::Filter,
-        LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } => Op::Join,
+        LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } | LogicalPlan::SemiJoin { .. } => Op::Join,
         LogicalPlan::Aggregate { .. } => Op::Aggregate,
         LogicalPlan::Project { .. } => Op::Project,
         LogicalPlan::Distinct { .. } => Op::Distinct,
@@ -162,6 +162,10 @@ impl Making<'_> {
                     OuterJoin::Right => JoinKind::Right,
                     OuterJoin::Full => JoinKind::Full,
                 };
+                (Op::Join, Body::Join { kind, condition: Some(self.cond(cond, depth)?) })
+            }
+            LogicalPlan::SemiJoin { anti, cond, .. } => {
+                let kind = if *anti { JoinKind::Anti } else { JoinKind::Semi };
                 (Op::Join, Body::Join { kind, condition: Some(self.cond(cond, depth)?) })
             }
             LogicalPlan::Sort { keys, .. } => {

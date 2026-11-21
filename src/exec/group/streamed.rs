@@ -11,7 +11,6 @@
 //! DISTINCT or of an inverse distribution, is made hashed (`grouping`):
 //! the planner never streams them.
 
-
 use super::{Argument, Spec, argument, fresh, grouping};
 use crate::error::Result;
 use crate::exec::{Db, RowIter, Runner, column};

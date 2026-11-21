@@ -40,6 +40,7 @@ mod tpcc;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
+mod semi_joins;
 mod unnesting;
 mod uuid;
 mod xxhash;
@@ -203,9 +204,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 
 /// The transport's, parallel queries', the client's step with its
 /// server, the decode kernels', declared types', batches', late
-/// materialization's, the table of groups', the join table's and
-/// XXH3's and skipping's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 11] {
+/// materialization's, the table of groups', the join table's, XXH3's,
+/// semi joins' and skipping's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 12] {
     [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
@@ -217,6 +218,7 @@ fn closing() -> [&'static [Mutation]; 11] {
         &group_table::GROUP_TABLE,
         &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
+        &semi_joins::SEMI_JOINS,
         &skipping::SKIPPING,
     ]
 }
