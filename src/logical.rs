@@ -15,6 +15,7 @@ mod fixpoint;
 mod graph;
 mod invoked;
 mod limit;
+mod mark;
 mod pattern;
 mod program;
 mod ptf;
@@ -24,10 +25,11 @@ mod render;
 mod sets;
 mod subqueries;
 mod subquery;
+mod unnest;
 mod window;
 
 pub use counterparts::BaseColumn;
-pub use dynamic::{filled, filled_cond, filled_expr, warned};
+pub use dynamic::{Placing, filled, filled_cond, filled_cond_as, filled_expr, filled_expr_as, warned};
 pub use expr::{
     Cond, DomainChecks, Expr, Quantifier, Slot, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs,
     map_expr_columns, or_all, split_and,
@@ -40,6 +42,7 @@ pub use graph::{
 };
 pub use invoked::Invocation;
 pub use limit::{Fetch, Hints, Limit, Most, Search, SearchTarget, Strategy};
+pub use mark::{MARK_COLUMN, MarkJoin};
 pub use pattern::{Matching, Navigated, PatternAggregate, PatternValue, Recognize, RowsPerMatch, Skip, Slotted, Variable, WindowMatching};
 pub(crate) use program::{
     Assign, Block, Branches, Called, Contained, Cursor, CursorAction, CursorStep, Declared, ForEach, Handled, Handler, Initial, Into, Leaf,
@@ -50,7 +53,8 @@ pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed
 pub use raises::{MAX_JUDGED_DEPTH, Types, can_raise_typed, cond_can_raise_typed, plan_column_type};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
-pub use subquery::{Decorrelated, Subquery, bound_expr, map_plan_exprs, plan_has_outer};
+pub use subquery::{Decorrelated, Subquery, bound_expr, cond_has_outer, map_plan_exprs, plan_has_outer};
+pub use unnest::Unnest;
 pub use window::{Bound, Exclusion, Frame, Marker, Nested, Offset, Pick, Units, Valued, Window, WindowCall, WindowKind};
 
 use crate::catalog::QualifiedName;
@@ -220,6 +224,24 @@ pub enum LogicalPlan {
         /// The second operand.
         right: Box<LogicalPlan>,
     },
+    /// \[DESIGN\] A semi join, or of `anti` an antijoin (RULES.md D540):
+    /// the rows of `left` for which some row of `right` makes `cond`, over
+    /// the pair's columns, true, or of `anti` none does, each once, in the
+    /// order of `left`. Its columns are the left's alone. Only the
+    /// optimizer makes one, of EXISTS, NOT EXISTS and IN that are
+    /// conjuncts of a WHERE (`optimizer/unnesting/semi.rs`), and of joins
+    /// whose rows only a duplicate-blind grouping reads
+    /// (`optimizer/reduced.rs`).
+    SemiJoin {
+        /// An antijoin: a left row is kept if no right row matches it.
+        anti: bool,
+        /// The condition, over the left's columns then the right's.
+        cond: Cond,
+        /// The rows kept or not.
+        left: Box<LogicalPlan>,
+        /// The rows matched against.
+        right: Box<LogicalPlan>,
+    },
     /// [X3.135-1986 §8.3 GR2b; ISO/IEC 9075:1992 §7.10 GR1b] UNION,
     /// EXCEPT or INTERSECT \[ALL\], of operands of one degree and types.
     SetOp {
@@ -301,6 +323,12 @@ pub enum LogicalPlan {
     /// up to the greatest cardinality, an element past a collection's
     /// cardinality null.
     Unnest(Box<Unnest<LogicalPlan>>),
+    /// \[DESIGN\] A mark join (`logical/mark.rs`, RULES.md D640): each row
+    /// of `left`, with a column of whether a row of `right` matches it,
+    /// true, false or unknown. Only the optimizer makes one, of a subquery
+    /// of existence or a quantified comparison a semi join cannot take
+    /// (`optimizer/unnesting/marked.rs`).
+    MarkJoin(Box<MarkJoin>),
     /// [ISO/IEC 9075-2:2023 §7.15] The window functions of one window
     /// partitioning and ordering over the rows of `input`.
     Window(Box<Window<LogicalPlan>>),
@@ -311,77 +339,6 @@ pub enum LogicalPlan {
     /// the component procedures of a polymorphic table function pipe, of
     /// its table arguments' rows.
     Polymorphic(Box<Polymorphic<LogicalPlan>>),
-}
-
-/// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>` over the
-/// rows of `input`, of plans `P`: each row of it is a row of `input`, then
-/// one column for each element, or one for each field of an element of
-/// row type, then the ordinal if WITH ORDINALITY is written.
-#[derive(Debug, Clone)]
-pub struct Unnest<P> {
-    /// The `<collection value expression>`s, over the columns of `input`.
-    pub collections: Vec<Expr>,
-    /// Of each collection, the degree of its element type if it is a row
-    /// type, whose fields are columns of their own [SR8m ii, SR8n].
-    pub spread: Vec<Option<usize>>,
-    /// WITH ORDINALITY: the ordinal is a column after the elements.
-    pub ordinality: bool,
-    /// [ISO/IEC 9075-2:2023 §7.10 GR1d] Of the second operand of a LEFT
-    /// join, its `<join condition>`, over the columns of its rows: a row of
-    /// `input` that none of them makes true is kept, its own columns null.
-    pub outer: Option<Cond>,
-    /// Its own columns' display names, after `input`'s.
-    pub names: Vec<String>,
-    /// The rows each gives the rows of its collections.
-    pub input: P,
-    /// [ISO/IEC 9075-2:2023 §7.11] Of a `<JSON table>`, which is planned
-    /// as a collection derived table is, laterally: the table, its
-    /// operands being `collections` (`JsonTable::open`), its columns its
-    /// own, and `spread` and `ordinality` none.
-    pub json: Option<std::sync::Arc<crate::json::JsonTable>>,
-    /// \[EXTENSION\] Of a GRAPH_TABLE, which is planned as a lateral
-    /// derived table is: the bound table, its operands being
-    /// `collections`, its columns its COLUMNS (`logical/graph.rs`).
-    pub graph: Option<std::sync::Arc<GraphMatch>>,
-}
-
-impl<P> Unnest<P> {
-    /// It apart from its input, and its input.
-    pub fn split(self) -> (Unnest<()>, P) {
-        let Unnest { collections, spread, ordinality, outer, names, input, json, graph } = self;
-        (Unnest { collections, spread, ordinality, outer, names, input: (), json, graph }, input)
-    }
-
-    /// It over `f` of its input, the rest copied.
-    pub fn with_input<Q>(&self, f: impl FnOnce(&P) -> Q) -> Unnest<Q> {
-        Unnest {
-            collections: self.collections.clone(),
-            spread: self.spread.clone(),
-            ordinality: self.ordinality,
-            outer: self.outer.clone(),
-            names: self.names.clone(),
-            input: f(&self.input),
-            json: self.json.clone(),
-            graph: self.graph.clone(),
-        }
-    }
-
-    /// The number of its own columns: those of the elements, and the
-    /// ordinal's.
-    pub fn width(&self) -> usize {
-        let elements = self.spread.iter().map(|s| s.unwrap_or(1)).sum::<usize>();
-        let json = self.json.as_ref().map_or(0, |j| j.width);
-        let graph = self.graph.as_ref().map_or(0, |g| g.columns.len());
-        elements.saturating_add(usize::from(self.ordinality)).saturating_add(json).saturating_add(graph)
-    }
-}
-
-impl Unnest<()> {
-    /// The same collection derived table over `input`.
-    pub fn over<Q>(self, input: Q) -> Unnest<Q> {
-        let Unnest { collections, spread, ordinality, outer, names, input: (), json, graph } = self;
-        Unnest { collections, spread, ordinality, outer, names, input, json, graph }
-    }
 }
 
 /// [ISO/IEC 9075:1992 §7.10] A set operator.
@@ -429,9 +386,10 @@ impl LogicalPlan {
             | LogicalPlan::Values { .. }
             | LogicalPlan::WorkTable { .. }
             | LogicalPlan::Transition { .. } => (None, None, &[]),
-            LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
-                (Some(left), Some(right), &[])
-            }
+            LogicalPlan::Product { left, right }
+            | LogicalPlan::OuterJoin { left, right, .. }
+            | LogicalPlan::SemiJoin { left, right, .. }
+            | LogicalPlan::SetOp { left, right, .. } => (Some(left), Some(right), &[]),
             LogicalPlan::Filter { input, .. }
             | LogicalPlan::Aggregate { input, .. }
             | LogicalPlan::Project { input, .. }
@@ -439,6 +397,7 @@ impl LogicalPlan {
             | LogicalPlan::Sort { input, .. }
             | LogicalPlan::Limit { input, .. } => (Some(input), None, &[]),
             LogicalPlan::Unnest(u) => (Some(&u.input), None, &[]),
+            LogicalPlan::MarkJoin(m) => (Some(&m.left), Some(&m.right), &[]),
             LogicalPlan::Window(w) => (Some(&w.input), None, &[]),
             LogicalPlan::Recognize(r) => (Some(&r.input), None, &[]),
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.plans(),
@@ -471,10 +430,15 @@ impl LogicalPlan {
                 let inner = input.names();
                 exprs.iter().map(|e| render_expr(e, &inner)).collect()
             }
-            LogicalPlan::SetOp { left, .. } => left.names(),
+            LogicalPlan::SetOp { left, .. } | LogicalPlan::SemiJoin { left, .. } => left.names(),
             LogicalPlan::Unnest(u) => {
                 let mut n = u.input.names();
                 n.extend(u.names.iter().cloned());
+                n
+            }
+            LogicalPlan::MarkJoin(m) => {
+                let mut n = m.left.names();
+                n.push(MARK_COLUMN.to_owned());
                 n
             }
             LogicalPlan::Window(w) => {
@@ -533,8 +497,9 @@ impl LogicalPlan {
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => left.width().saturating_add(right.width()),
             LogicalPlan::Aggregate { groups, aggs, .. } => groups.len().saturating_add(aggs.len()),
             LogicalPlan::Project { exprs, .. } => exprs.len(),
-            LogicalPlan::SetOp { left, .. } => left.width(),
+            LogicalPlan::SetOp { left, .. } | LogicalPlan::SemiJoin { left, .. } => left.width(),
             LogicalPlan::Unnest(u) => u.input.width().saturating_add(u.names.len()),
+            LogicalPlan::MarkJoin(m) => m.left.width().saturating_add(1),
             LogicalPlan::Window(w) => w.input.width().saturating_add(w.calls.len()),
             LogicalPlan::Recognize(_) => self.names().len(),
             LogicalPlan::Values { types, .. } => types.len(),
@@ -574,7 +539,10 @@ impl LogicalPlan {
             | LogicalPlan::Transition { .. } => {}
             LogicalPlan::Recursive { fixpoint, .. } => fixpoint.for_each_mut(f),
             LogicalPlan::Polymorphic(p) => p.inputs.iter_mut().for_each(f),
-            LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
+            LogicalPlan::Product { left, right }
+            | LogicalPlan::OuterJoin { left, right, .. }
+            | LogicalPlan::SemiJoin { left, right, .. }
+            | LogicalPlan::SetOp { left, right, .. } => {
                 f(left);
                 f(right);
             }
@@ -585,6 +553,10 @@ impl LogicalPlan {
             | LogicalPlan::Sort { input, .. }
             | LogicalPlan::Limit { input, .. } => f(input),
             LogicalPlan::Unnest(u) => f(&mut u.input),
+            LogicalPlan::MarkJoin(m) => {
+                f(&mut m.left);
+                f(&mut m.right);
+            }
             LogicalPlan::Window(w) => f(&mut w.input),
             LogicalPlan::Recognize(r) => f(&mut r.input),
         }

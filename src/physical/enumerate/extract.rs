@@ -5,8 +5,10 @@
 //! inner joins, each with the conjuncts that read both its operands and
 //! are below no other join that has all their columns; and its outer
 //! joins, each with its `<join condition>`, a RIGHT one as the LEFT one of
-//! its operands swapped. Columns are the chain's, in the FROM clause's
-//! order.
+//! its operands swapped; and its semi joins and antijoins, each with its
+//! condition, the columns of its right operand, which no node above
+//! reads, numbered past the chain's (RULES.md D540). Columns are the
+//! chain's, in the FROM clause's order.
 //!
 //! A conjunct goes down into an outer join's preserved operand only
 //! (the optimizer's `push_filter_into_outer_join` has moved the rest
@@ -69,7 +71,7 @@ enum Raw {
 pub(super) fn is_chain(plan: &LogicalPlan) -> bool {
     match plan {
         LogicalPlan::Filter { input, .. } => !is_guarded(plan) && is_chain(input),
-        LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } => true,
+        LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } | LogicalPlan::SemiJoin { .. } => true,
         LogicalPlan::Scan { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
@@ -83,6 +85,7 @@ pub(super) fn is_chain(plan: &LogicalPlan) -> bool {
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. }
         | LogicalPlan::Unnest(..)
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
         | LogicalPlan::Polymorphic(..) => false,
@@ -99,7 +102,8 @@ fn fixed(c: &Cond, types: Types<'_>) -> bool {
 
 /// The chain `plan`, its columns beginning at `start`, its relations
 /// added to `leaves`, the chain's columns of the types `types` gives.
-fn raw(plan: &LogicalPlan, (start, types): (usize, Types<'_>), leaves: &mut Vec<Leaf>, depth: usize) -> Option<Raw> {
+fn raw(plan: &LogicalPlan, (start, cx): (usize, Cx<'_>), leaves: &mut Vec<Leaf>, depth: usize) -> Option<Raw> {
+    let types = cx.types;
     if depth > super::bits::MAX_RELATIONS.saturating_mul(2) {
         return None;
     }
@@ -107,32 +111,29 @@ fn raw(plan: &LogicalPlan, (start, types): (usize, Types<'_>), leaves: &mut Vec<
     let deeper = depth.saturating_add(1);
     match plan {
         LogicalPlan::Product { left, right } => {
-            let l = raw(left, (start, types), leaves, deeper)?;
-            Some(Raw::Product(Box::new(l), Box::new(raw(right, (start.saturating_add(left.width()), types), leaves, deeper)?)))
+            let l = raw(left, (start, cx), leaves, deeper)?;
+            Some(Raw::Product(Box::new(l), Box::new(raw(right, (start.saturating_add(left.width()), cx), leaves, deeper)?)))
         }
         LogicalPlan::Filter { cond, input } => {
             if !is_chain(plan) {
                 return Some(leaf(plan, start, leaves));
             }
-            let mut conds = Vec::new();
-            split_and(shifted(cond), &mut conds);
-            if conds.iter().any(|c| fixed(c, types)) {
-                return None;
-            }
-            Some(Raw::Filtered(conds, Box::new(raw(input, (start, types), leaves, deeper)?)))
+            let conds = unfixed(shifted(cond), types)?;
+            Some(Raw::Filtered(conds, Box::new(raw(input, (start, cx), leaves, deeper)?)))
         }
         LogicalPlan::OuterJoin { kind, cond, left, right } => {
             if fixed(&shifted(cond), types) {
                 return None;
             }
-            let l = raw(left, (start, types), leaves, deeper)?;
-            let r = raw(right, (start.saturating_add(left.width()), types), leaves, deeper)?;
+            let l = raw(left, (start, cx), leaves, deeper)?;
+            let r = raw(right, (start.saturating_add(left.width()), cx), leaves, deeper)?;
             Some(match kind {
                 OuterJoin::Left => Raw::Outer(Kind::Left, shifted(cond), Box::new(l), Box::new(r)),
                 OuterJoin::Right => Raw::Outer(Kind::Left, shifted(cond), Box::new(r), Box::new(l)),
                 OuterJoin::Full => Raw::Outer(Kind::Full, shifted(cond), Box::new(l), Box::new(r)),
             })
         }
+        LogicalPlan::SemiJoin { anti, cond, left, right } => semi((*anti, cond), (left, right), (start, cx), (leaves, deeper)),
         LogicalPlan::Scan { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
@@ -146,10 +147,57 @@ fn raw(plan: &LogicalPlan, (start, types): (usize, Types<'_>), leaves: &mut Vec<
         | LogicalPlan::WorkTable { .. }
         | LogicalPlan::Transition { .. }
         | LogicalPlan::Unnest(..)
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Window(..)
         | LogicalPlan::Recognize(..)
         | LogicalPlan::Polymorphic(..) => Some(leaf(plan, start, leaves)),
     }
+}
+
+/// The conjuncts of `cond`, if none is fixed by the types `types`.
+fn unfixed(cond: Cond, types: Types<'_>) -> Option<Vec<Cond>> {
+    let mut conds = Vec::new();
+    split_and(cond, &mut conds);
+    (!conds.iter().any(|c| fixed(c, types))).then_some(conds)
+}
+
+/// What taking a chain apart reads: the types of its columns, the catalog
+/// they are of, and how many it has.
+#[derive(Clone, Copy)]
+struct Cx<'a> {
+    types: Types<'a>,
+    catalog: &'a dyn Catalog,
+    width: usize,
+}
+
+/// The semi join or antijoin of `left` and `right` on `cond`, its left's
+/// columns beginning at `start`. The right's are none of the chain's: they
+/// are numbered past every column of a relation so far, and past the
+/// chain's (RULES.md D540).
+fn semi(
+    (anti, cond): (bool, &Cond),
+    (left, right): (&LogicalPlan, &LogicalPlan),
+    (start, cx): (usize, Cx<'_>),
+    (leaves, depth): (&mut Vec<Leaf>, usize),
+) -> Option<Raw> {
+    let width = left.width();
+    let pair = |c: usize| match c.checked_sub(width) {
+        Some(at) => plan_column_type(right, at, cx.catalog),
+        None => plan_column_type(left, c, cx.catalog),
+    };
+    if fixed(cond, &pair) {
+        return None;
+    }
+    let l = raw(left, (start, cx), leaves, depth)?;
+    let hidden = leaves.iter().map(|f| f.start.saturating_add(f.width)).fold(cx.width, usize::max);
+    let own = |c: usize| c.checked_sub(hidden).and_then(|at| plan_column_type(right, at, cx.catalog));
+    let r = raw(right, (hidden, Cx { types: &own, ..cx }), leaves, depth)?;
+    let shifted = map_cond_columns(cond.clone(), &|i| match i.checked_sub(width) {
+        Some(at) => at.saturating_add(hidden),
+        None => i.saturating_add(start),
+    });
+    let kind = if anti { Kind::Anti } else { Kind::Semi };
+    Some(Raw::Outer(kind, shifted, Box::new(l), Box::new(r)))
 }
 
 /// `plan` as a relation of the chain, its columns beginning at `start`.
@@ -163,7 +211,7 @@ fn leaf(plan: &LogicalPlan, start: usize, leaves: &mut Vec<Leaf>) -> Raw {
 pub(super) fn extract(plan: &LogicalPlan, catalog: &dyn Catalog) -> Option<Query> {
     let mut query = Query { width: plan.width(), ..Query::default() };
     let types = |c: usize| plan_column_type(plan, c, catalog);
-    let tree = raw(plan, (0, &types), &mut query.leaves, 0)?;
+    let tree = raw(plan, (0, Cx { types: &types, catalog, width: query.width }), &mut query.leaves, 0)?;
     let mut filters: Vec<Vec<Cond>> = vec![Vec::new(); query.leaves.len()];
     query.place(tree, Vec::new(), &mut filters)?;
     for (leaf, conds) in query.leaves.iter_mut().zip(filters) {
@@ -199,6 +247,12 @@ impl Query {
         let mut columns = Vec::new();
         cond_columns(c, &mut columns);
         columns.iter().filter_map(|&col| self.rel_of(col)).fold(0, |s, r| s | bit(r))
+    }
+
+    /// How many columns its relations have, those a semi join's right
+    /// operand's past the chain's among them.
+    pub(super) fn columns(&self) -> usize {
+        self.leaves.iter().map(|l| l.start.saturating_add(l.width)).fold(self.width, usize::max)
     }
 
     /// The relation whose column the chain's column `column` is.
@@ -253,7 +307,15 @@ impl Query {
     /// a LEFT join's preserved operand, or none placed.
     fn outer(&mut self, (kind, cond): (Kind, Cond), (l, r): (Raw, Raw), pending: Vec<Cond>, filters: &mut [Vec<Cond>]) -> Option<Node> {
         let (tl, tr) = (raw_tables(&l), raw_tables(&r));
-        let preserved = |c: &Cond| kind == Kind::Left && self.reads(c) != 0 && self.reads(c) & !tl == 0;
+        // Over a semi join or an antijoin a conjunct reads its left alone.
+        let preserved = |c: &Cond| {
+            let reads = self.reads(c);
+            match kind {
+                Kind::Left => reads != 0 && reads & !tl == 0,
+                Kind::Semi | Kind::Anti => reads & !tl == 0,
+                Kind::Inner | Kind::Full => false,
+            }
+        };
         if !pending.iter().all(preserved) {
             return None;
         }

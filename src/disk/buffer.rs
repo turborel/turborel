@@ -54,7 +54,7 @@ use super::encoding::Pipeline;
 use super::pager::{Formats, PageId, Pager};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::Xxh3Map;
 use crate::memory::{Reservation, Undoing};
 use crate::sync::{Signal, lock_builtin};
 
@@ -116,7 +116,7 @@ const SHARDS: usize = 256;
 #[repr(align(128))]
 #[derive(Default)]
 struct Shard {
-    frames: RwLock<MurmurMap<Key, usize>>,
+    frames: RwLock<Xxh3Map<Key, usize>>,
     waits: AtomicU64,
 }
 

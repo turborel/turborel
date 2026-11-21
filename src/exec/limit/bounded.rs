@@ -25,6 +25,11 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
             p.input = bounded(p.input, most);
             Plan::Parallel(p)
         }
+        // [EXTENSION] a counted operator, as its input (RULES.md D378).
+        Plan::Counted(mut c) => {
+            c.input = bounded(c.input, most);
+            Plan::Counted(c)
+        }
         Plan::Project { exprs, detail, input } => {
             let input = if exprs.iter().any(Expr::can_raise) { input } else { Box::new(bounded(*input, most)) };
             Plan::Project { exprs, detail, input }
@@ -36,6 +41,9 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }

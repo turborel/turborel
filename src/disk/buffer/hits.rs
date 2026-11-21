@@ -21,9 +21,6 @@ use crate::sync::thread_stripe;
 /// \[DESIGN\] Stripes of the hit counters: more than the threads that read
 /// at once, so they seldom share one.
 const STRIPES: usize = 64;
-/// The multiplier of the hints' Fibonacci hash (as the shards', `pool.rs`).
-const HINT_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
-const HINT_FILE_MIX: u64 = 0x0100_0000_01B3;
 
 /// A counter alone on its cache lines.
 #[repr(align(128))]
@@ -51,8 +48,9 @@ impl Hints {
 
     /// The slot of `key`.
     fn slot(&self, key: Key) -> Option<&AtomicU64> {
-        let mixed = key.id.wrapping_add(u64::from(key.file.0).wrapping_mul(HINT_FILE_MIX)).wrapping_mul(HINT_MIX);
-        self.slots.get(usize::try_from(mixed.checked_shr(self.shift).unwrap_or_default()).unwrap_or_default())
+        // The top bits of XXH3-64 of the page (RULES.md D460), as its shard's.
+        let hash = crate::hash::xxhash::Words::new(0).pair(u64::from(key.file.0), key.id);
+        self.slots.get(usize::try_from(hash.checked_shr(self.shift).unwrap_or_default()).unwrap_or_default())
     }
 
     /// Notes `key` found in frame `index`.

@@ -10,8 +10,8 @@
 //! Management System", 1979, §5), kept across the enumeration, so a plan
 //! dearer than another may still win once its order spares a sort.
 
+use crate::hash::xxhash::Xxh3BuildHasher;
 use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
 
 use super::bits::{Set, count, lowest, within};
 use super::conflicts::{Kind, obeyed};
@@ -29,6 +29,9 @@ pub(super) enum Method {
     Index,
     /// Every pair, judged.
     Nested,
+    /// The right sorted by a value compared by order, each left row
+    /// searching it (`enumerate/ranged.rs`).
+    Range,
 }
 
 /// A plan in the table: a relation read, in an order or not, or a join of
@@ -47,11 +50,12 @@ pub(super) struct Cand {
     pub(super) tree: usize,
 }
 
-/// A set's entry: its estimated rows, and its plans, the cheapest of each
-/// order.
+/// A set's entry: its estimated rows, at most its bound (RULES.md D385),
+/// and its plans, the cheapest of each order.
 #[derive(Debug, Clone)]
 pub(super) struct Entry {
     pub(super) rows: f64,
+    pub(super) upper: f64,
     pub(super) cands: Vec<Cand>,
 }
 
@@ -97,50 +101,27 @@ pub(super) struct Applied {
     pub(super) conjuncts: Vec<usize>,
 }
 
-/// \[DESIGN\] A hasher of sets for the table: a set is its own hash,
-/// folded and mixed by one multiplication, as a table probed for every
-/// pair the enumeration tries cannot afford a keyed hash, and no key of
-/// it comes from outside.
-#[derive(Default)]
-pub(super) struct SetHasher(u64);
-
-impl Hasher for SetHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 = (self.0.rotate_left(8) ^ u64::from(b)).wrapping_mul(MIX);
-        }
-    }
-
-    fn write_u128(&mut self, n: u128) {
-        let (low, high) = (u64::try_from(n & u128::from(u64::MAX)).unwrap_or(0), u64::try_from(n >> 64_u32).unwrap_or(0));
-        self.0 = (self.0 ^ low ^ high.rotate_left(32)).wrapping_mul(MIX);
-        self.0 ^= self.0 >> 29_u32;
-    }
-}
-
-/// An odd constant of mixed bits, Fibonacci hashing's.
-const MIX: u64 = 0x9E37_79B9_7F4A_7C15;
-
 /// The table and the plans in it.
 pub(super) struct Space<'m> {
     pub(super) graph: &'m Graph,
     pub(super) model: &'m Model,
-    pub(super) table: HashMap<Set, Entry, BuildHasherDefault<SetHasher>>,
+    pub(super) table: HashMap<Set, Entry, Xxh3BuildHasher>,
     pub(super) trees: Vec<Tree>,
     /// The joins tried that the operators allowed: the work done.
     pub(super) pairs: usize,
+    /// Whether it costs the FROM clause's tree, which is planned as
+    /// written, a product where no conjunct reads both operands, so no
+    /// join of it judges the keys its classes imply (RULES.md D387).
+    pub(super) written: bool,
 }
 
 impl<'m> Space<'m> {
     /// The table of `graph`'s relations alone, each with its reads.
     pub(super) fn new(graph: &'m Graph, model: &'m Model) -> Space<'m> {
-        let mut space = Space { graph, model, table: HashMap::default(), trees: Vec::new(), pairs: 0 };
+        let mut space = Space { graph, model, table: HashMap::default(), trees: Vec::new(), pairs: 0, written: false };
         for rel in 0..graph.n {
-            let mut entry = Entry { rows: model.rows(rel), cands: Vec::new() };
+            let upper = model.rels.get(rel).map_or(f64::INFINITY, |r| r.upper);
+            let mut entry = Entry { rows: model.rows(rel), upper, cands: Vec::new() };
             for (order, cost) in model.reads(rel) {
                 let tree = space.tree(Tree::Leaf { rel, order });
                 entry.offer(Cand { cost, order, tree });
@@ -193,30 +174,56 @@ impl<'m> Space<'m> {
         Some(Applied { op: Some(edge.op), left, right, conjuncts })
     }
 
-    /// The rows of the join of `s1` and `s2` applying `applied`, if both
-    /// have entries: the set's, if it has one already, so that every plan
-    /// of a set is costed by the same rows.
-    pub(super) fn rows_of(&self, applied: &Applied) -> Option<f64> {
+    /// The rows of the join of `s1` and `s2` applying `applied`, and its
+    /// bound by the equalities `keys` of the left's columns and the
+    /// right's, if both have entries: the set's, if it has one already, so
+    /// that every plan of a set is costed by the same rows; else of this
+    /// pair, the rows at most the bound.
+    pub(super) fn rows_of(&self, applied: &Applied, keys: &[(usize, usize)]) -> Option<(f64, f64)> {
+        let s = applied.left | applied.right;
+        if let Some(entry) = self.table.get(&s) {
+            return Some((entry.rows, entry.upper));
+        }
+        let (left, right) = (self.table.get(&applied.left)?, self.table.get(&applied.right)?);
+        let rows = self.model.joined_rows((applied.left, left.rows), (applied.right, right.rows), applied);
+        let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
+        let upper = self.model.joined_upper((applied.left, left.upper), (applied.right, right.upper), (kind, keys));
+        Some((rows.min(upper), upper))
+    }
+
+    /// The rows of the join `applied` gives, as `rows_of` says, its bound
+    /// found only where it could lower them: every bound of a join is at
+    /// least the lesser of its sides' and their product, as a column's
+    /// most rows of one value are at least one (`Model::joined_upper`).
+    pub(super) fn estimate_of(&self, applied: &Applied) -> Option<f64> {
         let s = applied.left | applied.right;
         if let Some(entry) = self.table.get(&s) {
             return Some(entry.rows);
         }
-        let (left, right) = (self.table.get(&applied.left)?.rows, self.table.get(&applied.right)?.rows);
-        Some(self.model.joined_rows((applied.left, left), (applied.right, right), applied))
+        let (left, right) = (self.table.get(&applied.left)?, self.table.get(&applied.right)?);
+        let rows = self.model.joined_rows((applied.left, left.rows), (applied.right, right.rows), applied);
+        if rows <= left.upper.min(right.upper).min(left.upper * right.upper) {
+            return Some(rows);
+        }
+        self.rows_of(applied, &self.keys(applied, (applied.left, applied.right))).map(|(bounded, _)| bounded)
     }
 
     /// Joins `s1` and `s2` if they may be, offering each plan of the join
     /// to their union's entry (`enumerate/methods.rs`); whether they were.
     pub(super) fn join(&mut self, s1: Set, s2: Set) -> bool {
         let Some(applied) = self.applies(s1, s2) else { return false };
-        let Some(rows) = self.rows_of(&applied) else { return false };
+        // The keys of one side's columns and the other's, found once for
+        // the bound and the plans of either side's order.
+        let keys = self.keys(&applied, (applied.left, applied.right));
+        let Some((rows, upper)) = self.rows_of(&applied, &keys) else { return false };
         self.pairs = self.pairs.saturating_add(1);
         let s = s1 | s2;
-        self.table.entry(s).or_insert_with(|| Entry { rows, cands: Vec::new() });
+        self.table.entry(s).or_insert_with(|| Entry { rows, upper, cands: Vec::new() });
         let kind = applied.op.and_then(|o| self.graph.ops.get(o)).map_or(Kind::Inner, |o| o.shape.kind);
         let sides = [(applied.left, applied.right), (applied.right, applied.left)];
         for &(l, r) in sides.iter().take(if kind.commutes() { 2 } else { 1 }) {
-            for (cand, tree) in self.offers(&applied, (l, r), rows) {
+            let keyed: Vec<(usize, usize)> = if l == applied.left { keys.clone() } else { keys.iter().map(|&(a, b)| (b, a)).collect() };
+            for (cand, tree) in self.offers(&applied, (l, r), (rows, &keyed)) {
                 if !self.table.get(&s).is_some_and(|entry| entry.takes(&cand)) {
                     continue;
                 }
@@ -234,7 +241,7 @@ impl<'m> Space<'m> {
     pub(super) fn chosen(&self, s: Set, want: Order) -> Option<Cand> {
         let entry = self.table.get(&s)?;
         let best = entry.best()?;
-        let sorted = best.cost + self.model.sort(entry.rows);
+        let sorted = best.cost + self.model.sorted(s, entry.rows);
         let answering =
             entry.cands.iter().filter(|c| want != Order::None && self.model.answers(c.order)).min_by(|a, b| a.cost.total_cmp(&b.cost));
         Some(answering.filter(|o| o.cost <= sorted).copied().unwrap_or(best))

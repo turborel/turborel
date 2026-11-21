@@ -81,7 +81,7 @@ mod structured;
 mod user_types;
 mod window;
 mod xml;
-pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
+pub(crate) use data_statements::{TRUNCATE, begins_change, begins_word_statement, explained};
 pub(crate) use {savepoints::SAVEPOINT, served::CANCEL};
 mod session;
 mod stored;
@@ -129,6 +129,9 @@ pub struct Parser {
     /// prepared, the `<dynamic parameter specification>`s read so far; none
     /// for any other, where one is refused.
     dynamic: Option<usize>,
+    /// The position last counted to and the `?`s before it, so each is
+    /// counted once as the parser goes on (`Parser::questions_before`).
+    questions: (usize, usize),
     /// The source, for keeping a `<cursor specification>` as text.
     src: Vec<char>,
     /// In a domain constraint, where VALUE may be written [ISO/IEC
@@ -235,6 +238,7 @@ impl Parser {
             extensions,
             params,
             dynamic: None,
+            questions: (0, 0),
             src: chars,
             in_domain: false,
             refused: None,

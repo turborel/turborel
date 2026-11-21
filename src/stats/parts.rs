@@ -21,7 +21,7 @@
 use std::cmp::Ordering;
 use std::hash::BuildHasher;
 
-use crate::hash::murmur::MurmurBuildHasher;
+use crate::hash::xxhash::Xxh3BuildHasher;
 use crate::value::{Value, compare};
 
 /// \[DESIGN\] Bits of a hash choosing a sketch's register: 4,096
@@ -59,7 +59,7 @@ impl Default for Sampling {
     }
 }
 /// The seed of a sample's random choices.
-const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+pub const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// A count of things as an `f64`; exact up to 2^32, and the most a `u32`
 /// holds past it.
@@ -90,7 +90,7 @@ impl HyperLogLog {
         if value.is_null() {
             return;
         }
-        self.add_hash(MurmurBuildHasher::default().hash_one(value.norm()));
+        self.add_hash(Xxh3BuildHasher::default().hash_one(value.norm()));
     }
 
     /// Adds a value given as `bytes`, the same bytes for the same value: a
@@ -133,9 +133,10 @@ pub fn placed(hash: u64) -> (usize, u8) {
     (register, u8::try_from(rank).unwrap_or(u8::MAX))
 }
 
-/// The hash a sketch takes of a value given as `bytes`.
+/// The hash a sketch takes of a value given as `bytes`: XXH3-64 of them,
+/// the same on every machine, as an index's sketch is kept.
 pub fn hash_of(bytes: &[u8]) -> u64 {
-    MurmurBuildHasher::default().hash_one(bytes)
+    crate::hash::xxhash::xxh3_64(bytes)
 }
 
 /// The estimated number of distinct values of a sketch of `registers`.
@@ -261,6 +262,50 @@ fn position(value: &Value) -> Option<f64> {
     value.kind()?.position(value)
 }
 
+/// \[DESIGN\] The characters past a bucket's common prefix by which a
+/// string is placed within it: four tell a place to within a part in
+/// billions of a bucket of letters.
+const PLACED_CHARACTERS: usize = 4;
+
+/// Where the string `value` lies between the strings `low` and `high`, a
+/// bucket's bounds, from 0 to 1, if all three are strings: their first
+/// `PLACED_CHARACTERS` characters past the bounds' common prefix read as
+/// the digits of a fraction, each character its place in the range the
+/// bounds' characters span (`span`), above the end of a string, which is
+/// least. The range is that of the bounds alone, so a string and the
+/// next prefix past it are placed alike. So a range of strings narrower
+/// than a bucket, as of a LIKE's prefix, keeps its part of the bucket.
+fn string_within(low: &Value, high: &Value, value: &Value) -> Option<f64> {
+    let (Value::Char(l), Value::Char(h), Value::Char(v)) = (low, high, value) else { return None };
+    let common = l.chars().zip(h.chars()).take_while(|(a, b)| a == b).count();
+    let past = |s: &str| s.chars().skip(common).take(PLACED_CHARACTERS).map(u32::from).collect::<Vec<u32>>();
+    let (l, h, v) = (past(l), past(h), past(v));
+    let (least, most) = span(l.iter().chain(&h).copied())?;
+    // Digits 1 up to the span's width, 0 the end of a string.
+    let width = most.saturating_sub(least).saturating_add(1);
+    let base = f64::from(width.saturating_add(1));
+    let digit = |c: u32| f64::from(c.clamp(least, most).saturating_sub(least).saturating_add(1));
+    let fraction = |d: &[u32]| d.iter().rev().fold(0.0_f64, |f, &c| (f + digit(c)) / base);
+    let (l, h, v) = (fraction(&l), fraction(&h), fraction(&v));
+    (h > l).then(|| ((v - l) / (h - l)).clamp(0.0, 1.0))
+}
+
+/// The least and greatest of `chars`, widened to the digits, the small
+/// letters or the capitals when they lie among one of those.
+fn span(chars: impl Iterator<Item = u32>) -> Option<(u32, u32)> {
+    let (mut least, mut most) = (u32::MAX, 0_u32);
+    for c in chars {
+        least = least.min(c);
+        most = most.max(c);
+    }
+    if least > most {
+        return None;
+    }
+    let class =
+        [('0', '9'), ('a', 'z'), ('A', 'Z')].into_iter().map(|(a, z)| (u32::from(a), u32::from(z))).find(|&(a, z)| a <= least && most <= z);
+    Some(class.unwrap_or((least, most)))
+}
+
 impl Histogram {
     /// The histogram of `sorted`, non-null values in ascending order, of
     /// at most `buckets` buckets.
@@ -287,7 +332,8 @@ impl Histogram {
     /// The fraction of the values below `value`, if the histogram has any:
     /// whole buckets below it, and within its bucket, a share interpolated
     /// between the bounds for a kind with a position (`SqlType::position`:
-    /// numbers, datetimes, intervals), half for others, as strings.
+    /// numbers, datetimes, intervals), of strings by their characters
+    /// past the bounds' common prefix (`string_within`), half for others.
     pub fn below(&self, value: &Value) -> Option<f64> {
         let (first, last) = (self.bounds.first()?, self.bounds.last()?);
         let buckets = self.bounds.len().saturating_sub(1);
@@ -304,7 +350,11 @@ impl Histogram {
             (Some(l), Some(h), Some(v)) => Some((l, h, v)),
             (None, _, _) | (_, None, _) | (_, _, None) => None,
         };
-        let within = span.filter(|(l, h, _)| h > l).map_or(0.5_f64, |(l, h, v)| ((v - l) / (h - l)).clamp(0.0, 1.0));
+        let within = span
+            .filter(|(l, h, _)| h > l)
+            .map(|(l, h, v)| ((v - l) / (h - l)).clamp(0.0, 1.0))
+            .or_else(|| self.bounds.get(lower).zip(self.bounds.get(upper)).and_then(|(l, h)| string_within(l, h, value)))
+            .unwrap_or(0.5_f64);
         let index = |n: usize| count(u64::try_from(n).unwrap_or(u64::MAX));
         Some(((index(lower) + within) / index(buckets)).clamp(0.0, 1.0))
     }

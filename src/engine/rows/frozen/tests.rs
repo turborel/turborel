@@ -55,6 +55,8 @@ fn rewriting(delay: u32, fraction: f64) -> TableOptions {
             order: Places::default(),
             bloom: Places::default(),
             pax: false,
+            imprints: true,
+            sketch: Places::default(),
         }),
         ..TableOptions::default()
     }
@@ -291,16 +293,7 @@ fn groups_are_written_again() {
 fn group_pages_of(types: &[DataType], make: impl Fn(i128) -> Row, compress: bool) -> (usize, Vec<String>) {
     let (_, files) = files();
     let options = TableOptions {
-        columns: Some(Columns {
-            group_rows: 2048,
-            freeze_rows: 0,
-            freeze_delay: 0,
-            rewrite_fraction: 0.0,
-            compress,
-            order: Places::default(),
-            bloom: Places::default(),
-            pax: false,
-        }),
+        columns: Some(Columns { group_rows: 2048, freeze_rows: 0, freeze_delay: 0, rewrite_fraction: 0.0, compress, ..Columns::default() }),
         ..TableOptions::default()
     };
     let table = Arc::new(RowTable::create(&files, types, options).unwrap());

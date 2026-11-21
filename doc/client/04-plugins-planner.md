@@ -134,7 +134,7 @@ node:   op u8 | id u32 | kept u8 | columns: count u32 | (name str | type str)...
 | 1 | SCAN | table str, then each column's statistics, distinct f64, nulls f64, u8 0 or u8 1 and its least and greatest values |
 | 2 | FILTER | condition |
 | 3 | PROJECT | count u32, expressions |
-| 4 | JOIN | kind u8 (0 cross, 1 left, 2 right, 3 full), u8 0, or u8 1 and its condition |
+| 4 | JOIN | kind u8 (0 cross, 1 left, 2 right, 3 full, 4 semi, 5 anti, of the left's columns alone), u8 0, or u8 1 and its condition |
 | 5 | AGGREGATE | kept alone |
 | 6 | SORT | count u32, each column u32, descending u8, nulls first u8 |
 | 7 | LIMIT | kept alone |
@@ -185,13 +185,17 @@ and an index method operation 9 of an index's.
 table:   u8 0 (none) | u8 1 | rows f64 | width f64 | refresh u64 | count u32 | column...
 column:  distinct f64 | nulls f64 | u8 0, or u8 1 | least value | greatest value
          | count u32 | histogram bound values... | u8 0, or u8 1 | most f64 | median f64 | p90 f64 | p99 f64
+         | count u32 | (common value | share f64)...
 index:   u8 0 (none) | u8 1 | entries f64 | distinct keys f64 | pages f64 | refresh u64
 ```
 
 A histogram's values are its bounds, ascending, each bucket between two
 of them holding as many values. The frequencies are how many times the
 most repeated value appears, and the median, 90th and 99th percentile
-of the repetitions. The first time the planner asks, the program is
+of the repetitions. The common values are the values many rows hold,
+each with the share of the table's rows it holds, and the histogram
+then describes the other values; a program that keeps none sends a
+count of 0. The first time the planner asks, the program is
 asked, and its answer is kept, so later questions cost no call. It is
 asked again at the planner's next question once the rows or entries
 written since reach `refresh`, and when the table is analyzed

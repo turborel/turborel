@@ -13,6 +13,7 @@ use super::{Read, Taken};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
 use crate::physical::Plan;
@@ -26,13 +27,14 @@ pub(super) fn counted_table<'p>(read: &Read, input: &'p Plan) -> Option<&'p Qual
     if !read.groups.is_empty() || !read.taken.iter().all(|t| matches!(t, Taken::Count)) {
         return None;
     }
-    let Plan::SeqScan { table, order, located: false, .. } = input else { return None };
+    // [EXTENSION] of a counted scan too (RULES.md D378).
+    let Plan::SeqScan { table, order, located: false, .. } = input.bare() else { return None };
     order.is_empty().then_some(table)
 }
 
 /// The finished set functions `aggs` of the rows of `table` that `tx`
 /// sees, fed the counts of its storage; none if it gives none.
-pub(super) fn counted(table: &QualifiedName, aggs: &[AggCall], db: &Arc<State>, tx: TxId) -> Option<Result<Row>> {
+pub(super) fn counted(table: &QualifiedName, aggs: &[AggCall], db: &Db, tx: TxId) -> Option<Result<Row>> {
     let counts = Arc::clone(db.storage_of(table).ok()?).count(tx)?;
     let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect();
     let fed = checked(counts, db.tx.stop_of(tx)).try_for_each(|count| {

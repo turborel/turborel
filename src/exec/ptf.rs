@@ -3,18 +3,16 @@
 //! whole, and its invocation run on them (`db/ptf/execute.rs`) as the
 //! cursor opens.
 
-use std::sync::Arc;
-
 use super::{RowIter, Runner, broken, eval, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::physical::Plan;
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::Value;
 
 /// The rows of the `<PTF derived table>` `plan`.
-pub(super) fn polymorphic(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn polymorphic(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Polymorphic(p) = plan else { return failed(broken("a <PTF derived table> is not one")) };
     let runner = Runner::new(db, tx);
     let found = || -> Result<Vec<Row>> {

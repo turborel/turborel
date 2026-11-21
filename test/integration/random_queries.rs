@@ -20,7 +20,7 @@ use turborel::threads::JobPolicy;
 use crate::common::{Rng, exec, rows, set_all_rules};
 
 /// The seed of a run when `SEED_VAR` gives none.
-const DEFAULT_SEED: u64 = 0x5EED_1992_0000_0001;
+pub(super) const DEFAULT_SEED: u64 = 0x5EED_1992_0000_0001;
 /// The environment variable that gives another seed.
 const SEED_VAR: &str = "TURBOREL_QUERY_SEED";
 /// The queries of a run when `COUNT_VAR` gives no number: enough to reach
@@ -42,7 +42,7 @@ const STRING_VALUES: [&str; 5] = ["'A'", "'AB'", "'BA'", "'B'", "'ABC'"];
 
 /// Database with schema Q: tables A, B and C of `TABLES`, K a key, G a
 /// few groups, N signed, S short strings, V decimals; nulls in all but K.
-fn schema() -> Database {
+pub(super) fn schema() -> Database {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema(
@@ -114,7 +114,11 @@ impl Scope {
 fn from_clause(rng: &mut Rng) -> (String, Scope) {
     let (x, y, z) = (rng.pick(&TABLES), rng.pick(&TABLES), rng.pick(&TABLES));
     let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect();
-    let on = |rng: &mut Rng| format!("X.{0} = Y.{0}", rng.pick(&NUMBERS));
+    // A join on V is a band, a range join's (RULES.md D580).
+    let on = |rng: &mut Rng| match rng.pick(&NUMBERS) {
+        "V" => "X.V BETWEEN Y.V - 2 AND Y.V + 3".to_owned(),
+        column => format!("X.{column} = Y.{column}"),
+    };
     let (from, scope) = match rng.below(8_usize) {
         0 | 1 => (format!("{x} X"), names(&["X"])),
         2 => (format!("{x} X, {y} Y"), names(&["X", "Y"])),
@@ -167,8 +171,10 @@ fn predicate(rng: &mut Rng, scope: &Scope) -> String {
     }
 }
 
-/// IN of a subquery, EXISTS of a correlated one, or a comparison with a
-/// scalar subquery of a set function; past one level deep, a comparison.
+/// IN of a subquery, uncorrelated or correlated, EXISTS of a correlated
+/// one, a quantified comparison with a correlated one, or a comparison
+/// with a scalar subquery of a set function; past one level deep, a
+/// comparison.
 fn subquery_predicate(rng: &mut Rng, scope: &Scope, not: &str) -> String {
     if scope.depth > 0 {
         return format!("{} {} {}", scope.number(rng), rng.pick(&COMPARISONS), rng.number());
@@ -178,9 +184,24 @@ fn subquery_predicate(rng: &mut Rng, scope: &Scope, not: &str) -> String {
     let table = rng.pick(&TABLES);
     let column = rng.pick(&NUMBERS);
     let filter = condition(rng, &inner, 1_usize);
-    match rng.below(3_usize) {
+    match rng.below(5_usize) {
         0 => format!("{} {not}IN (SELECT {name}.{column} FROM {table} {name} WHERE {filter})", scope.number(rng)),
         1 => format!("{not}EXISTS (SELECT * FROM {table} {name} WHERE {name}.{column} = {} AND {filter})", scope.number(rng)),
+        // Correlated, which under OR or NOT is a mark join (RULES.md D641).
+        2 => format!(
+            "{} {not}IN (SELECT {name}.{column} FROM {table} {name} WHERE {name}.{} = {} AND {filter})",
+            scope.number(rng),
+            rng.pick(&NUMBERS),
+            scope.number(rng)
+        ),
+        3 => format!(
+            "{not}{} {} {} (SELECT {name}.{column} FROM {table} {name} WHERE {name}.{} = {} AND {filter})",
+            scope.number(rng),
+            rng.pick(&COMPARISONS),
+            rng.pick(&["SOME", "ALL"]),
+            rng.pick(&NUMBERS),
+            scope.number(rng)
+        ),
         _ => {
             let function = rng.pick(&["MAX", "MIN", "COUNT", "SUM"]);
             format!(
@@ -260,7 +281,7 @@ fn one_column(rng: &mut Rng) -> String {
 /// A `<query expression>`: a query specification, or UNION, EXCEPT or
 /// INTERSECT of two of one number column; ORDER BY its first column, at
 /// times.
-fn query(rng: &mut Rng) -> String {
+pub(super) fn query(rng: &mut Rng) -> String {
     let body = if rng.chance(25_usize) {
         let operator = rng.pick(&["UNION", "UNION ALL", "EXCEPT", "INTERSECT"]);
         format!("{} {operator} {}", one_column(rng), one_column(rng))
@@ -271,7 +292,7 @@ fn query(rng: &mut Rng) -> String {
 }
 
 /// What a query gave: its rows in the order read, or its error.
-type Outcome = Result<Vec<String>, Code>;
+pub(super) type Outcome = Result<Vec<String>, Code>;
 
 /// The outcome of `sql` in `s`, read by batches or not.
 fn run(s: &Session, sql: &str, batches: bool) -> Outcome {
@@ -282,7 +303,7 @@ fn run(s: &Session, sql: &str, batches: bool) -> Outcome {
 /// Whether two outcomes agree: the same error, or the same rows; in the
 /// same order of first columns when the query is ordered (rows equal in
 /// it may come in any order).
-fn agree(sql: &str, a: &Outcome, b: &Outcome) -> bool {
+pub(super) fn agree(sql: &str, a: &Outcome, b: &Outcome) -> bool {
     let (Ok(a), Ok(b)) = (a, b) else { return a == b };
     let first = |rows: &[String]| rows.iter().map(|r| r.split(',').next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     if sql.contains("ORDER BY") && first(a) != first(b) {
@@ -302,11 +323,13 @@ fn plan() -> (u64, u64) {
 
 /// Verifies: [DESIGN] RULES.md D15, D31: random queries of joins (inner,
 /// outer, full, products), WHERE of AND, OR, NOT, comparisons, IN,
-/// BETWEEN, LIKE and IS NULL, subqueries (IN, EXISTS correlated, scalar),
+/// BETWEEN, LIKE and IS NULL, subqueries (IN, EXISTS and quantified
+/// comparisons correlated, scalar),
 /// set functions with and without DISTINCT, GROUP BY and HAVING, DISTINCT,
 /// UNION, EXCEPT and INTERSECT, and ORDER BY, over tables of both stores,
 /// give the same outcome with every optimizer rule on and off, read by
-/// batches and row by row. Each query is made from a seed of its own;
+/// batches and row by row, and with range joins (RULES.md D580) and
+/// without. Each query is made from a seed of its own;
 /// a failure prints it and the SQL.
 #[test]
 fn random_queries_answer_alike_with_and_without_rules() {
@@ -326,6 +349,7 @@ fn random_queries_answer_alike_with_and_without_rules() {
     drop(s);
     set_all_rules(&db, false);
     let s = db.session("Q");
+    exec(&s, "SET PLANNER.RANGE_JOINS = 'OFF'").unwrap();
     let mut refused = 0_usize;
     for ((own, sql), [batched, row_by_row]) in queries.iter().zip(&with_rules) {
         let unoptimized = [run(&s, sql, true), run(&s, sql, false)];

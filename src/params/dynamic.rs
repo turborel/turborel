@@ -14,6 +14,7 @@
 //! and is not kept.
 
 use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 
 use super::Params;
 use crate::ast::TableName;
@@ -45,7 +46,9 @@ impl ParameterType {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Dynamic {
     /// Their values, as the statement is executed; none as it is prepared.
-    values: Option<Vec<Value>>,
+    /// Shared with the plans an execution opens, which read them as
+    /// slots (RULES.md D610): one set while one is open copies them.
+    values: Option<Arc<[Value]>>,
     /// Each one's type, once its context gave it one.
     types: RefCell<Vec<Option<ParameterType>>>,
     /// Whether each typed `?` is bound as a slot, to be kept.
@@ -53,6 +56,9 @@ pub(crate) struct Dynamic {
     /// Whether the binding holds a value it read: a `?`'s other than as a
     /// slot, or the statement's instant (`Clocked`).
     held: Cell<bool>,
+    /// Whether the statement's instant binds as a slot past the `?`s, each
+    /// execution's (`clock_slot`, RULES.md D613), and whether one did.
+    clock: Option<Cell<bool>>,
     /// [§17.19 SR1, §17.20 SR1] Of a positioned DELETE or UPDATE that
     /// names no table, the table of its cursor.
     implicit: Option<TableName>,
@@ -81,7 +87,10 @@ impl Params {
     /// parameters, their types still to be deduced.
     pub(crate) fn preparing(count: usize) -> Params {
         let types = RefCell::new(vec![None; count]);
-        Params { dynamic: Some(Dynamic { values: None, types, slots: false, held: Cell::new(false), implicit: None }), ..Params::default() }
+        Params {
+            dynamic: Some(Dynamic { values: None, types, slots: false, held: Cell::new(false), clock: None, implicit: None }),
+            ..Params::default()
+        }
     }
 
     /// The parameters of a prepared statement being executed with `values`,
@@ -89,7 +98,14 @@ impl Params {
     pub(crate) fn executing(values: Vec<Value>) -> Params {
         let types = RefCell::new(vec![None; values.len()]);
         Params {
-            dynamic: Some(Dynamic { values: Some(values), types, slots: false, held: Cell::new(false), implicit: None }),
+            dynamic: Some(Dynamic {
+                values: Some(values.into()),
+                types,
+                slots: false,
+                held: Cell::new(false),
+                clock: None,
+                implicit: None,
+            }),
             ..Params::default()
         }
     }
@@ -101,7 +117,7 @@ impl Params {
         let types = RefCell::new(vec![None; values.len()]);
         let implicit = self.dynamic.as_ref().and_then(|d| d.implicit.clone());
         Params {
-            dynamic: Some(Dynamic { values: Some(values), types, slots: true, held: Cell::new(false), implicit }),
+            dynamic: Some(Dynamic { values: Some(values.into()), types, slots: true, held: Cell::new(false), clock: None, implicit }),
             transitions: self.transitions.clone(),
             routine: self.routine.clone(),
             execution: self.execution,
@@ -116,13 +132,19 @@ impl Params {
         self.dynamic.as_ref().and_then(|d| d.values.as_deref()).unwrap_or_default()
     }
 
+    /// The values of its dynamic parameters, shared, for a kept plan to
+    /// read as its slots (RULES.md D610); none as a statement is prepared.
+    pub(crate) fn dynamic_slots(&self) -> Option<Arc<[Value]>> {
+        self.dynamic.as_ref().and_then(|d| d.values.clone())
+    }
+
     /// Makes `value` the value of its `index`-th dynamic parameter.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if it has no such parameter.
     pub(crate) fn set_dynamic(&mut self, index: usize, value: Value) -> Result<()> {
-        let slot = self.dynamic.as_mut().and_then(|d| d.values.as_mut()).and_then(|v| v.get_mut(index));
+        let slot = self.dynamic.as_mut().and_then(|d| d.values.as_mut()).and_then(|v| Arc::make_mut(v).get_mut(index));
         let slot = slot.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] there is no dynamic value {index}")))?;
         *slot = value;
         Ok(())
@@ -141,6 +163,32 @@ impl Params {
     /// Whether the binding holds a value it read, so is not kept.
     pub(crate) fn held(&self) -> bool {
         self.dynamic.as_ref().is_some_and(|d| d.held.get())
+    }
+
+    /// `keeping`, of a statement whose each execution gives its kept plan
+    /// the statement's instant as a slot past its `?`s (`clock_slot`).
+    pub(crate) fn keeping_clocked(&self) -> Params {
+        let mut kept = self.keeping();
+        if let Some(dynamic) = kept.dynamic.as_mut() {
+            dynamic.clock = Some(Cell::new(false));
+        }
+        kept
+    }
+
+    /// [ISO/IEC 9075:1992 §6.8 GR3] The slot the statement's instant binds
+    /// as, if its binding is to be kept with one (`keeping_clocked`): the
+    /// one past its `?`s, filled at each execution (RULES.md D613); the
+    /// read noted (`clocked`).
+    pub(crate) fn clock_slot(&self) -> Option<usize> {
+        let dynamic = self.dynamic.as_ref()?;
+        let clock = dynamic.clock.as_ref()?;
+        clock.set(true);
+        Some(dynamic.values.as_deref().map_or(0, <[Value]>::len))
+    }
+
+    /// Whether its binding read the statement's instant as a slot.
+    pub(crate) fn clocked(&self) -> bool {
+        self.dynamic.as_ref().and_then(|d| d.clock.as_ref()).is_some_and(Cell::get)
     }
 
     /// These parameters, of a positioned DELETE or UPDATE prepared that

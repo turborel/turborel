@@ -15,7 +15,8 @@
 //! group (`clear`). What is held is one run's metadata and bytes, so it is
 //! charged to no work grant. The bytes of a chunk let go are kept to hold
 //! the next one's, so a scan allocates them about once a column, not once
-//! a chunk.
+//! a chunk. The codes of the group's sketches a scan reads are kept here
+//! too, with what each code says of each conjunct, until the next group.
 
 use std::collections::VecDeque;
 
@@ -57,6 +58,8 @@ pub struct Prepared {
     columns: Vec<VecDeque<Held>>,
     /// The bytes of chunks let go, to hold the next ones'.
     spare: Vec<Vec<u8>>,
+    /// What is read and made of the group's sketches (`sketch.rs`).
+    pub(super) sketches: super::sketch::Held,
     /// How many chunks were opened, as a test counts them.
     #[cfg(test)]
     pub(super) opened: usize,
@@ -65,7 +68,8 @@ pub struct Prepared {
 impl Prepared {
     /// Lets every chunk go, as the next group is taken up.
     pub fn clear(&mut self) {
-        let Prepared { columns, spare, .. } = self;
+        let Prepared { columns, spare, sketches, .. } = self;
+        sketches.clear();
         for kept in columns {
             spare.extend(kept.drain(..).map(|h| h.bytes));
         }
@@ -95,6 +99,7 @@ impl Prepared {
             spare,
             #[cfg(test)]
             opened,
+            ..
         } = &mut *self;
         let kept = columns.get_mut(column).ok_or_else(|| super::corrupt("a column held is gone"))?;
         let at = if let Some(at) = kept.iter().position(|h| h.first == first) {

@@ -13,10 +13,6 @@ use crate::spatial::Bounds;
 /// concurrently split paths can decline without lengthening planning.
 const SAMPLES: usize = 64;
 const PAGES: usize = 256;
-/// SplitMix64's finalizer disperses deterministic sample/page identities.
-const MIX_FIRST: u64 = 0xbf58_476d_1ce4_e5b9;
-const MIX_SECOND: u64 = 0x94d0_49bb_1331_11eb;
-const SHIFTS: [u32; 3] = [30, 27, 31];
 
 impl RTree {
     pub(crate) fn estimated_matches(&self, bounds: Bounds) -> Option<usize> {
@@ -77,19 +73,13 @@ impl Sampling<'_> {
                 return Some(0);
             }
             let count = u64::try_from(node.entries.len()).ok()?;
-            let at = usize::try_from(mixed(mixed(sample) ^ visit.id.0).checked_rem(count)?).ok()?;
+            // XXH3-64 of the sample's number and the page's (RULES.md D460).
+            let at = usize::try_from(crate::hash::xxhash::Words::new(0).pair(sample, visit.id.0).checked_rem(count)?).ok()?;
             entry = *node.entries.get(at)?;
             weight = weight.checked_mul(u128::from(count))?;
             level = node.level;
         }
     }
-}
-
-fn mixed(mut value: u64) -> u64 {
-    let [first, second, last] = SHIFTS;
-    value = (value ^ value.wrapping_shr(first)).wrapping_mul(MIX_FIRST);
-    value = (value ^ value.wrapping_shr(second)).wrapping_mul(MIX_SECOND);
-    value ^ value.wrapping_shr(last)
 }
 
 #[cfg(test)]

@@ -84,6 +84,47 @@ pub fn contract(kernels: &dyn Kernels) {
         aggregates(kernels, len);
     }
     unpacking(kernels);
+    blooms(kernels);
+    xxh3_stripes(kernels);
+    normalizing(kernels);
+}
+
+/// Bytes of a fixed pattern, each of the low byte of an odd multiple.
+fn pattern(len: usize, salt: u64) -> Vec<u8> {
+    (0..len as u64).map(|n| (n.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(salt) >> 56) as u8).collect()
+}
+
+/// Checks XXH3's long inputs' loops of `kernels` against the portable ones
+/// (RULES.md D460): of 0 to 40 stripes, of secrets of the least length, the
+/// default's and longer, from every accumulator state; and the hashes they
+/// make of every length to past two blocks.
+fn xxh3_stripes(kernels: &dyn Kernels) {
+    use turborel::hash::xxhash::{self, ACC_NB, SECRET_SIZE_MIN, STRIPE_LEN, Scalar, Stripes};
+    let input = pattern(40 * STRIPE_LEN, 1);
+    let (stripes, _) = input.as_chunks::<STRIPE_LEN>();
+    for secret_len in [SECRET_SIZE_MIN, 192, 400] {
+        let secret = pattern(secret_len, 2);
+        let usable = (secret_len - STRIPE_LEN) / 8 + 1;
+        for count in 0..=usable.min(stripes.len()) {
+            let start: [u64; ACC_NB] = std::array::from_fn(|n| u64::MAX.rotate_left(n as u32 * 9) ^ count as u64);
+            let (mut want, mut got) = (start, start);
+            Scalar.accumulate(&mut want, &stripes[..count], &secret);
+            kernels.xxh3_accumulate(&mut got, &stripes[..count], &secret);
+            assert_eq!(got, want, "xxh3_accumulate of {count} stripes, secret {secret_len}");
+            let key = secret.last_chunk::<STRIPE_LEN>().unwrap();
+            Scalar.scramble(&mut want, key);
+            kernels.xxh3_scramble(&mut got, key);
+            assert_eq!(got, want, "xxh3_scramble after {count} stripes, secret {secret_len}");
+        }
+    }
+    let long = pattern(2 * 1024 + 300, 3);
+    for len in (0..=long.len()).filter(|n| *n < 300 || n % 61 == 0 || n % 1024 < 2) {
+        for seed in [0, 0x9E37_79B1] {
+            let data = &long[..len];
+            assert_eq!(xxhash::xxh3_64_on(kernels, data, seed), xxhash::xxh3_64_with_seed(data, seed), "XXH3-64 of {len}");
+            assert_eq!(xxhash::xxh3_128_on(kernels, data, seed), xxhash::xxh3_128_with_seed(data, seed), "XXH3-128 of {len}");
+        }
+    }
 }
 
 /// Checks the selections of `kernels` of vectors of `len`.
@@ -181,4 +222,67 @@ fn unpacking(kernels: &dyn Kernels) {
         }
     }
     assert_eq!(kernels.unpack(&[0; 1024], (65, 0), (0, 64), &mut Vec::new()), None, "wider than 64 bits");
+}
+
+/// Checks the Bloom filter probe of `kernels` against each hash's bits
+/// read one at a time: of filters of 1, 3 and 8 blocks, every hash put in
+/// one found, and of hashes of no structure the same places as the
+/// portable probe gives, an empty filter none.
+fn blooms(kernels: &dyn Kernels) {
+    use turborel::kernels::portable::bloom::{BLOCK_WORDS, bits_of, block_of, bloom_probe};
+    for blocks in [1_usize, 3, 8] {
+        let mut words = vec![0_u64; blocks * BLOCK_WORDS];
+        let hash = |n: u64| turborel::hash::murmur::fmix64(n.wrapping_add(blocks as u64));
+        for n in 0..40 {
+            let h = hash(n);
+            for (w, bit) in bits_of(h) {
+                words[block_of(h, blocks) * BLOCK_WORDS + w] |= bit;
+            }
+        }
+        let hashes: Vec<u64> = (0..LONGEST as u64).map(hash).collect();
+        let (mut out, mut want) = (vec![9], vec![9]);
+        kernels.bloom_probe(&words, &hashes, &mut out);
+        bloom_probe(&words, &hashes, &mut want);
+        assert_eq!(out, want, "bloom_probe of {blocks} blocks");
+        assert!((0..40).all(|n| out.contains(&n)), "every hash put in is found, of {blocks} blocks");
+        let mut none = Vec::new();
+        kernels.bloom_probe(&vec![0; blocks * BLOCK_WORDS], &hashes, &mut none);
+        assert!(none.is_empty(), "an empty filter holds none");
+    }
+}
+
+/// Checks the normal keys `kernels` writes of integers against each
+/// value's distance above the base written byte by byte, of every width,
+/// inverted and not, beside other fields left as they were; none of a
+/// value below the base or past the width, or a field past a key.
+fn normalizing(kernels: &dyn Kernels) {
+    let values: Vec<i64> = vec![i64::MIN, -300, -1, 0, 1, 255, 256, 65_535, 1 << 40, i64::MAX];
+    let rows: Vec<u32> = vec![9, 0, 3, 3, 7, 1];
+    for bytes in 1..=8_usize {
+        for invert in [false, true] {
+            let (width, at) = (bytes + 3, 2);
+            let base = i64::MIN;
+            let mut keys = vec![0xAB_u8; rows.len() * width];
+            let fits = rows.iter().all(|&r| bytes == 8 || values[r as usize].wrapping_sub(base).cast_unsigned() >> (bytes * 8) == 0);
+            let made = kernels.normalize_i64((&values, &rows), (base, bytes, invert), (width, at), &mut keys);
+            if !fits {
+                assert_eq!(made, None, "{bytes} bytes");
+                continue;
+            }
+            assert_eq!(made, Some(()), "{bytes} bytes");
+            for (key, &r) in keys.chunks(width).zip(&rows) {
+                let be = values[r as usize].wrapping_sub(base).cast_unsigned().to_be_bytes();
+                let want: Vec<u8> = be[8 - bytes..].iter().map(|b| if invert { !b } else { *b }).collect();
+                assert_eq!(&key[at..at + bytes], &want[..], "{bytes} bytes, inverted {invert}");
+                assert!(key[..at].iter().chain(&key[at + bytes..]).all(|&b| b == 0xAB), "other fields kept");
+            }
+        }
+    }
+    let mut keys = vec![0_u8; 8];
+    assert_eq!(kernels.normalize_i64((&[5, -1], &[1]), (0, 2, false), (8, 0), &mut keys), None, "below the base");
+    assert_eq!(kernels.normalize_i64((&[70_000], &[0]), (0, 2, false), (8, 0), &mut keys), None, "past the width");
+    assert_eq!(kernels.normalize_i64((&[1], &[0]), (0, 4, false), (8, 5), &mut keys), None, "past the key");
+    assert_eq!(kernels.normalize_i64((&[1], &[4]), (0, 4, false), (8, 0), &mut keys), None, "past the end");
+    assert_eq!(kernels.normalize_i64((&[0, 300], &[0, 1]), (0, 2, false), (2, 0), &mut keys[..4]), Some(()));
+    assert_eq!(&keys[..4], &[0, 0, 1, 44], "two keys of two bytes");
 }

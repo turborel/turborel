@@ -51,6 +51,27 @@ pub(super) fn wanted(spec: &CursorSpecification, (insensitive, scroll): (bool, b
     }
 }
 
+/// `wanted`, of a cursor `nameless` or not: of one no statement can name,
+/// read only, unless its text says FOR UPDATE. No positioned statement is
+/// positioned on it, and of a cursor of no `<cursor name>`, which can
+/// write no `<cursor sensitivity>`, ASENSITIVE is implicit [ISO/IEC
+/// 9075-4:2006 draft §14.13 SR6c; ISO/IEC 9075-2:2023 §14.2 SR1]: whether
+/// changes made while it is open are visible through it is
+/// implementation-dependent [§4.40.2], so it may be read as any read-only
+/// cursor is (RULES.md D613).
+pub(super) fn nameless_read_only(wanted: Wanted, nameless: bool) -> Wanted {
+    match wanted {
+        Wanted::Implicit => {
+            if nameless {
+                Wanted::ReadOnly
+            } else {
+                Wanted::Implicit
+            }
+        }
+        Wanted::ReadOnly | Wanted::Written => wanted,
+    }
+}
+
 /// [ISO/IEC 9075:1992 §13.1 SR6] Whether the cursor of `spec`, declared as
 /// `flags` say, is updatable, as far as its text tells: FOR UPDATE, or an
 /// updatable table.

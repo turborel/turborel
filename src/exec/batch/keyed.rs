@@ -7,11 +7,11 @@
 //! from the vectors (`put_key`), as grouping makes them, and make a row of
 //! the values only of a row they keep or write.
 
-use std::sync::Arc;
-
+use super::late::{Bound, Deferred, resolved};
 use super::stream;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::physical::Plan;
 use crate::spill::{put_norm, put_norm_approx, put_norm_exact, put_norm_text};
 use crate::storage::{Batch, Cell, Row};
@@ -19,9 +19,10 @@ use crate::txn::TxId;
 use crate::value::Value;
 
 /// The width of the rows of `plan`, if it is a stream whose batches hold
-/// every column of its rows, in order (`stream::layout`).
+/// every column of its rows, in order (`stream::layout`), of its own
+/// (`stream::untold`).
 pub(in crate::exec) fn whole_width(plan: &Plan, db: &State) -> Option<usize> {
-    stream::layout(plan, db).filter(|(columns, width)| columns.iter().copied().eq(0..*width)).map(|l| l.1)
+    stream::layout(plan, db).filter(|_| stream::untold(plan)).filter(|(columns, width)| columns.iter().copied().eq(0..*width)).map(|l| l.1)
 }
 
 /// Appends the key of `cell` to `out`: the bytes `spill::put_norm` gives of
@@ -99,6 +100,21 @@ impl Keyed {
 /// # Errors
 ///
 /// As `stream::open`.
-pub(in crate::exec) fn kept(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<stream::Batches> {
+pub(in crate::exec) fn kept(plan: Plan, db: &Db, tx: TxId) -> Result<stream::Batches> {
     Ok(stream::open(plan, db, tx)?.batches)
+}
+
+/// \[DESIGN\] (RULES.md D379, D380) As `kept`, for a sort of which only the
+/// first rows are asked for, whose keys read the columns `keys`: of `late`,
+/// its scans' other columns given late, left so for the sort to decode of
+/// the rows it gives alone; and its first key's column and bound, `bound`,
+/// told its scans if given.
+///
+/// # Errors
+///
+/// As `stream::open`.
+pub(in crate::exec) fn topped(plan: Plan, (keys, late, bound): (&[usize], bool, Bound), db: &Db, tx: TxId) -> Result<stream::Batches> {
+    let width = if late { stream::layout(&plan, db).map_or(0, |l| l.1) } else { 0 };
+    let batches = stream::batches_with(plan, (db, tx), &Deferred::all(width).topped(keys, bound))?;
+    Ok(if late { batches } else { resolved(batches) })
 }

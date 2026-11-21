@@ -6,7 +6,7 @@
 //! The hash is of the document's characters, read as they are taken,
 //! trailing spaces dropped, so documents SQL's comparison finds equal,
 //! 'x' and 'x ' with PAD SPACE, project alike, as equal keys must. It is
-//! MurmurHash3 x64 128-bit (`hash/murmur.rs`), chained over blocks, so a
+//! XXH3-128 (`hash/xxhash.rs`), chained over blocks, so a
 //! large object is never held whole for it: stable across runs and
 //! platforms, as the tree keeps it.
 //!
@@ -21,7 +21,7 @@ use super::keys::{DocHash, HASH_BYTES};
 use super::terms::{Shape, Term, UNREAD, terms_of};
 use crate::error::{Code, Result, SqlError};
 use crate::functions::lobs::like::held_text;
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_128_halves;
 use crate::index::fulltext::chars_of;
 use crate::index::{Key, KeyProjection};
 use crate::json::{Item, Keys, parse};
@@ -29,7 +29,7 @@ use crate::value::lob::LobKind;
 use crate::value::{Binary, Value};
 
 /// \[DESIGN\] The seed of a document's hash; its bytes spell "JSD1".
-const HASH_SEED: u32 = 0x4A53_4431;
+const HASH_SEED: u64 = 0x4A53_4431;
 /// \[DESIGN\] The bytes hashed into one block of the chain.
 const HASH_BLOCK: usize = 4_096;
 /// Bytes of a hash's half.
@@ -54,9 +54,9 @@ pub(super) fn single(key: &Key) -> Result<&Value> {
     }
 }
 
-/// MurmurHash3 x64 128-bit of `bytes`, its halves little-endian.
+/// XXH3-128 of `bytes`, its halves little-endian, the low first.
 fn digest(bytes: &[u8]) -> DocHash {
-    let (low, high) = murmur3_x64_128(bytes, HASH_SEED);
+    let (low, high) = xxh3_128_halves(bytes, HASH_SEED);
     let mut out = [0_u8; HASH_BYTES];
     let (first, second) = out.split_at_mut(HALF);
     first.copy_from_slice(&low.to_le_bytes());

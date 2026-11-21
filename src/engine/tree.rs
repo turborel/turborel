@@ -53,6 +53,7 @@
 mod counts;
 mod cuts;
 mod edge;
+mod estimate;
 pub(crate) mod hints;
 mod inner;
 mod load;

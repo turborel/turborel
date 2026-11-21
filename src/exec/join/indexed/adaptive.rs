@@ -8,11 +8,10 @@ mod observed;
 mod scan;
 mod spilled;
 
-use std::sync::Arc;
-
 use super::{IndexJoin, RowIter, failed, refined::Binding};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::spatial::{
     masks::{AXES, ROWS},
     packed::Packed,
@@ -20,11 +19,11 @@ use crate::spatial::{
 use crate::storage::cost_of;
 use held::Held;
 
-pub(super) fn start(join: IndexJoin, columns: Vec<usize>, db: &Arc<State>) -> RowIter {
+pub(super) fn start(join: IndexJoin, columns: Vec<usize>, db: &Db) -> RowIter {
     Box::new(observed::Observed::new(join, columns, db))
 }
 
-fn chosen(mut join: IndexJoin, mut columns: Vec<usize>, db: &Arc<State>) -> Result<RowIter> {
+fn chosen(mut join: IndexJoin, mut columns: Vec<usize>, db: &Db) -> Result<RowIter> {
     let Some(mut held) = Held::new(db) else { return Ok(Box::new(join)) };
     let complete = held.read(&mut join.left)?;
     if !complete {

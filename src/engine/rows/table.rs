@@ -110,7 +110,10 @@ impl RowTable {
             directory: PageId(directory),
             segments: Vec::new(),
         });
-        let zones = Arc::new(Zones::new(types, options.columns.is_none(), place));
+        // A column store table's zones are of its tree's rows alone, so a scan
+        // skips the tree's blocks as it does frozen chunks; kept in memory
+        // only, as its rows are soon frozen (`rows/frozen/batches.rs`).
+        let zones = Arc::new(Zones::new(types, true, place));
         if zones.directory() != 0 {
             files.note_zones(&zones)?;
         }

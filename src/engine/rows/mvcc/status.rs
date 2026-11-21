@@ -25,7 +25,7 @@
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::Xxh3Map;
 use crate::txn::{Timestamp, TxId};
 
 /// Slots of the array: transactions writing at once before one waits on
@@ -62,7 +62,7 @@ struct Status {
 /// \[DESIGN\] The statuses of a store's writing transactions.
 pub(in crate::engine::rows) struct Statuses {
     slots: Box<[Slot]>,
-    overflow: RwLock<MurmurMap<TxId, Status>>,
+    overflow: RwLock<Xxh3Map<TxId, Status>>,
     /// How many the map holds, so an empty one is not locked.
     overflowing: AtomicUsize,
     /// The latest snapshot a transaction joined a table of the store at.
@@ -103,7 +103,7 @@ impl Statuses {
         self.slot(tx).filter(|slot| slot.owner.load(Ordering::SeqCst) == tx)
     }
 
-    fn overflow(&self) -> std::sync::RwLockWriteGuard<'_, MurmurMap<TxId, Status>> {
+    fn overflow(&self) -> std::sync::RwLockWriteGuard<'_, Xxh3Map<TxId, Status>> {
         self.overflow.write().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 

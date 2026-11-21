@@ -37,13 +37,22 @@ behind it, and each can be replaced or added to.
 - Row and columnar storage, chosen per table, the columnar store's filters
   judged in place and its other columns decoded of the rows kept alone.
 - DISTINCT set functions computed by two groupings, read by batches.
+- Groupings and DISTINCT streamed over rows in their keys' order, a group
+  at a time, and FETCH FIRST's row goal passed through filters, joins and
+  groupings to an ordered read.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
 - One table of groups with typed keys and columns of set functions'
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
+- Hash joins probed a batch at a time in one tagged table, shared by
+  parallel morsels, telling the left's scan a range and Bloom filter;
+  dense keys found by their place, their filter an exact bitmap.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
+- Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
+  losers, and FETCH FIRST that makes only the rows it gives, reading its
+  other columns late and skipping groups past its bound.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins
@@ -58,13 +67,30 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match, and a row-store COUNT(*) is summed from its settled zones.
+- Column store skipping that survives writes: shadow bits and zones over
+  the delta, optional column imprints, column sketches of compressed
+  texts, and sorted dictionaries judged by codes.
+- Bulk loads by INSERT or copy that build empty indexes whole and write
+  column store rows straight into frozen groups.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
-  queries of a hundred tables.
+  queries of a hundred tables, on statistics of most common values, a
+  sample of rows for correlated conditions and indexes' joint key counts,
+  joins estimated by keys and bounded, index joins chosen robustly.
+- [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
+  bands and overlapping periods, one table sorted and searched by the other.
+- [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
+  query or a data change and shows each operator's rows beside its
+  estimate, its batches, spills and index reads, and a program may give
+  the planner true row counts to test its plans.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
+- [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
+  for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
+  and joins under MIN and MAX reduced to semi joins; mark joins for
+  those under OR, in CASE and in select lists.
 - Joins removed on unique and foreign keys, filters and FETCH FIRST moved
   into set operations and below windows, and parts of conditions that can
   raise computed on the table they read, so joins over them are reordered.
@@ -119,6 +145,9 @@ behind it, and each can be replaced or added to.
 - [Backups](doc/operator/10-backups.md), full and incremental, taken
   online by BACKUP DATABASE, verified and restored offline, and recovery
   to a point in time through an archive of the log, to pluggable targets.
+- [Monitoring](doc/operator/11-monitoring.md): each connection's running
+  statement and what it waits on, statistics of every statement run, and
+  each table's size and last change and each index's searches.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.
@@ -221,6 +250,8 @@ behind it, and each can be replaced or added to.
   grouping granted their share of it and spilling to disk past it.
 - [Parallel queries](doc/operator/04-settings.md#parallel-queries) run by
   morsels on a shared pool of workers, the same rows on any number of threads.
+- [xxHash](doc/operator/07-encryption.md#hash-functions) for every checksum,
+  hash table and filter, XXH3 vectorized on SSE2, AVX2, AVX-512 and NEON.
 
 ## Quick start
 

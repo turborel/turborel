@@ -49,7 +49,8 @@ pub use builtin::{
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
 pub use executor::{
-    DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS,
+    DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_DENSE_JOINS, EXECUTOR_KERNELS, EXECUTOR_MORSEL_ROWS,
+    EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_RUNTIME_FILTERS, EXECUTOR_WORKERS, KEEP_SUBQUERY_PLANS,
 };
 pub use extension::Owner;
 pub use graph::{
@@ -57,7 +58,7 @@ pub use graph::{
     GRAPH_ON_LIMIT, GRAPH_PARALLEL_MIN_STATES, TRUNCATE,
 };
 pub use hosted::PLUGINS_HOST;
-pub use joins::{DP_BUDGET, JOIN_ENUMERATION, LINEARIZED_RELATIONS};
+pub use joins::{DP_BUDGET, ESTIMATE_MARGIN, JOIN_ENUMERATION, LINEARIZED_RELATIONS, RANGE_JOINS, STREAMED_GROUPING};
 pub use kind::{Kind, column_list, column_names};
 pub use plugins::{
     HOST_ONLY, PLUGINS_CALL_TIMEOUT_MS, PLUGINS_CANCEL_GRACE_MS, PLUGINS_DIRECTORIES, PLUGINS_MAX_CALL_BYTES, PLUGINS_MAX_MESSAGE_BYTES,
@@ -79,8 +80,7 @@ pub enum Effect {
     Transaction,
     /// For every connection a server takes after it, read as it is taken.
     Connection,
-    /// When what reads it starts next: a server, as it starts listening; a
-    /// database kept in a directory, as it is opened.
+    /// When what reads it starts next: a server, as it starts listening; a database kept in a directory, as it is opened.
     Start,
     /// When the database is created in its directory: given before, and
     /// fixed after, kept in its files' formats.
@@ -281,8 +281,7 @@ pub struct Settings {
     /// Each setting's place, by its name: what reads a setting often, as
     /// a server for each request, reads it by name.
     places: Arc<HashMap<String, usize>>,
-    /// The database's value of each setting, at its key's place; none for
-    /// its default.
+    /// The database's value of each setting at its key's place, or none.
     values: Vec<Option<Value>>,
     /// Values set before their settings were declared: replayed from the
     /// log before the plug-in declaring them was registered.

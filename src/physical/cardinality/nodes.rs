@@ -5,13 +5,15 @@
 //! * a filter, its input's rows times its conjuncts' selectivities, each
 //!   over the base table its columns come from (`cardinality/lineage.rs`),
 //!   an equality of two relations' columns by classes, a filter over a
-//!   product as the join it is (`cardinality/joins.rs`);
+//!   product as the join it is (`cardinality/joins.rs`), at most the
+//!   bound of its equalities to one value (`cardinality/bounds.rs`);
 //! * an operand moved over a guard (`optimizer::is_guarded`), the join of
 //!   it and the guard's one row, so its own rows times its own conjuncts':
 //!   the guard's EXISTS keeps that row or makes none of the statement's,
 //!   and no conjunct relates the two, so nothing takes a third of them;
 //! * a product, the product; an outer join, the inner join's rows, at
-//!   least each preserved operand's;
+//!   least each preserved operand's; a semi join and an antijoin, the
+//!   share of the left's rows `cardinality/semi.rs` gives;
 //! * a grouping and DISTINCT, their groups (`cardinality/groups.rs`);
 //! * UNION ALL, the sum; UNION, the groups of the sum; INTERSECT, at most
 //!   the smaller operand; EXCEPT, at most the left;
@@ -39,7 +41,8 @@ impl Estimates<'_> {
         if let Some(card) = self.kept_card(at) {
             return card;
         }
-        let card = self.found(plan, depth);
+        // [EXTENSION] the rows given in its place, if any are (RULES.md D377).
+        let card = self.injected(plan).unwrap_or_else(|| self.found(plan, depth));
         self.keep_card(at, card);
         card
     }
@@ -52,6 +55,8 @@ impl Estimates<'_> {
             LogicalPlan::Filter { cond, input } => self.filter_at((cond, input), next),
             LogicalPlan::Product { .. } => self.chain(None, plan, depth),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_at((*kind, cond), (left, right), next),
+            LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_at((*anti, cond), (left, right), next),
+            LogicalPlan::MarkJoin(m) => self.mark_at(m, next),
             LogicalPlan::Aggregate { groups, seeds, input, .. } => self.grouped(groups, seeds.len(), input, next),
             LogicalPlan::Distinct { input } => self.distinct_at(input, next),
             LogicalPlan::SetOp { op, all, left, right, .. } => self.combined((*op, *all), (left, right), next),
@@ -79,7 +84,7 @@ impl Estimates<'_> {
         if is_chain(input) {
             return self.chain(Some(cond), input, depth);
         }
-        self.card_at(input, depth).kept(self.selectivity(cond, Over::One(input)))
+        self.card_at(input, depth).kept(self.selectivity(cond, Over::One(input))).bounded(self.filter_upper(cond, input))
     }
 
     /// The card of DISTINCT of `input`: the groups of all its columns.
@@ -93,12 +98,12 @@ impl Estimates<'_> {
         self.grouped(&all, 0, input, depth)
     }
 
-    /// The fraction of the rows `cond` keeps, over `over`'s columns, its
-    /// conjuncts taken as independent.
+    /// The fraction of the rows `cond` keeps, over `over`'s columns, the
+    /// conjuncts of each table together (`cardinality/tables.rs`).
     pub(super) fn selectivity(&self, cond: &Cond, over: Over<'_>) -> f64 {
         let mut conjuncts = Vec::new();
-        split_and(cond.clone(), &mut conjuncts);
-        conjuncts.iter().map(|c| self.share(c, over)).product()
+        split_and(self.valued(cond).into_owned(), &mut conjuncts);
+        self.conjunction(&conjuncts, over)
     }
 
     /// The fraction of the rows the conjunct `c`, over `over`'s columns,

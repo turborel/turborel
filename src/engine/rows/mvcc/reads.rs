@@ -6,7 +6,7 @@
 
 use std::cmp::Ordering;
 
-use crate::hash::murmur::MurmurSet;
+use crate::hash::xxhash::Xxh3Set;
 use crate::spill::row_bytes;
 use crate::storage::{Conjunction, Region, Row, RowId, merged};
 use crate::value::{Value, compare};
@@ -27,7 +27,7 @@ pub(in crate::engine::rows) enum Read {
 /// whole table.
 #[derive(Default)]
 pub(super) struct Reads {
-    pub(super) rows: MurmurSet<RowId>,
+    pub(super) rows: Xxh3Set<RowId>,
     pub(super) conditions: Vec<Conjunction>,
     pub(super) regions: Vec<Region>,
     /// The envelopes of `regions`, counted as they are added.

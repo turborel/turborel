@@ -7,6 +7,7 @@ use std::fmt::Write;
 
 use super::{PhysicalPlanner, Plan};
 use crate::logical::{LogicalPlan, Unnest};
+use crate::noted::NotesRead;
 
 /// The names an operator's description is made of, if the plan is shown.
 #[derive(Clone, Copy)]
@@ -65,6 +66,8 @@ impl Plan {
             super::Preserved::Inner => "",
             super::Preserved::Outer => "LeftOuter",
             super::Preserved::Both(_) => "FullOuter",
+            super::Preserved::Semi => "Semi",
+            super::Preserved::Anti => "Anti",
         };
         match spatial.as_deref() {
             Some(super::Spatial::Adaptive) => writeln!(
@@ -107,11 +110,14 @@ impl Plan {
             Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
             Plan::MergeJoin(m) => writeln!(out, "{pad}{}MergeJoin {}", if m.outer { "Left" } else { "" }, m.detail),
+            Plan::RangeJoin(r) => writeln!(out, "{pad}{}RangeJoin {}", if r.outer { "Left" } else { "" }, r.detail),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
+            Plan::SemiJoin(s) => writeln!(out, "{pad}{} {}", s.operator(), s.detail),
+            Plan::MarkJoin(m) => writeln!(out, "{pad}{} {}", m.operator(), m.detail),
             Plan::IndexJoin { .. } => self.write_index_join(out, &pad),
-            Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
+            Plan::Aggregate { detail, streamed, .. } => writeln!(out, "{pad}Aggregate{} {detail}", streamed_word(*streamed)),
             Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
-            Plan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
+            Plan::Distinct { streamed, .. } => writeln!(out, "{pad}Distinct{}", streamed_word(*streamed)),
             Plan::Append { .. } => writeln!(out, "{pad}Append"),
             Plan::SetOp { op, all, .. } => writeln!(out, "{pad}{op:?}{}", if *all { " all" } else { "" }),
             Plan::Values { detail, .. } => writeln!(out, "{pad}Values {detail}"),
@@ -127,6 +133,7 @@ impl Plan {
             }
             Plan::Polymorphic(p) => writeln!(out, "{pad}Polymorphic table function {}", p.function()),
             Plan::Parallel(p) => writeln!(out, "{pad}Parallel  (degree={})", p.degree),
+            Plan::Counted(c) => return write_counted(c, out, depth),
         };
         self.write_inputs(out, depth.saturating_add(1));
     }
@@ -140,7 +147,8 @@ impl Plan {
             | Plan::Values { .. }
             | Plan::System { .. }
             | Plan::WorkTable { .. }
-            | Plan::Transition { .. } => {}
+            | Plan::Transition { .. }
+            | Plan::Counted(_) => {}
             Plan::Recursive { fixpoint, .. } => {
                 let (first, second, rest) = fixpoint.plans();
                 for p in first.into_iter().chain(second).chain(rest) {
@@ -168,12 +176,24 @@ impl Plan {
             Plan::Recognize { recognize, .. } => recognize.input.write(out, depth),
             Plan::Polymorphic(p) => p.inputs.iter().for_each(|input| input.write(out, depth)),
             Plan::MergeAppend { inputs, .. } => inputs.iter().for_each(|input| input.write(out, depth)),
-            Plan::MergeJoin(m) => {
-                m.left.write(out, depth);
-                m.right.write(out, depth);
-            }
+            Plan::MergeJoin(m) => written((&m.left, &m.right), out, depth),
+            Plan::RangeJoin(r) => written((&r.left, &r.right), out, depth),
+            Plan::SemiJoin(s) => written((&s.left, &s.right), out, depth),
+            Plan::MarkJoin(m) => written((&m.left, &m.right), out, depth),
         }
     }
+}
+
+/// Writes a join's operands, each at `depth`.
+fn written((left, right): (&Plan, &Plan), out: &mut String, depth: usize) {
+    left.write(out, depth);
+    right.write(out, depth);
+}
+
+/// The word EXPLAIN shows after Aggregate or Distinct if it is streamed,
+/// its input in its keys' order (RULES.md D550).
+fn streamed_word(streamed: bool) -> &'static str {
+    if streamed { " streamed" } else { "" }
 }
 
 /// How EXPLAIN shows a scan in the order of the columns `order`, read
@@ -208,7 +228,6 @@ fn write_unnest(u: &Unnest<Plan>, out: &mut String, pad: &str) -> std::fmt::Resu
     }
 }
 
-// Unit tests: a plan shown is described, one run is not (RULES.md R-TEST-1).
 /// The line of a nearest read: its index, measure and cost, and how it
 /// reads, certified or approximate (R13.5).
 fn nearest_line(read: &super::NearestRead) -> String {
@@ -219,6 +238,80 @@ fn nearest_line(read: &super::NearestRead) -> String {
     )
 }
 
+/// \[EXTENSION\] (RULES.md D376) Writes the counted operator `c`, `depth`
+/// levels below the top, its line followed by what it did: its rows, the
+/// times it was opened if not once, an index join's probes, which are its
+/// outer rows, and its time if its clock moved; and its estimate before
+/// them, if its line shows none.
+fn write_counted(c: &super::Counted, out: &mut String, depth: usize) {
+    let mut text = String::new();
+    c.input.write(&mut text, depth);
+    let (head, rest) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+    // Writing to a String cannot fail.
+    let _ = writeln!(out, "{head}{}", counted_note(c));
+    out.push_str(rest);
+}
+
+/// What EXPLAIN ANALYZE adds to the line of the counted operator `c`.
+fn counted_note(c: &super::Counted) -> String {
+    let est = match (c.input.shows_estimate(), c.input.est()) {
+        (false, Some(est)) => format!("  (est. rows={est:.0})"),
+        (true, _) | (false, None) => String::new(),
+    };
+    let count = &c.count;
+    if count.opens() == 0 {
+        return format!("{est}  (never run)");
+    }
+    let mut actual = format!("rows={}", count.rows());
+    if count.opens() > 1 {
+        let _ = write!(actual, ", loops={}", count.opens());
+    }
+    if let Plan::IndexJoin { left, .. } = &c.input
+        && let Plan::Counted(outer) = &**left
+    {
+        let _ = write!(actual, ", probes={}", outer.count.rows());
+    }
+    if let Some(micros) = count.micros() {
+        let _ = write!(actual, ", time={}", millis(micros));
+    }
+    noted_of(&count.noted(), count.rows(), &mut actual);
+    format!("{est}  (actual {actual})")
+}
+
+/// \[EXTENSION\] What `notes` hold of an operator that gave `rows` rows,
+/// added to `actual` (RULES.md D620, D621): its batches and their mean
+/// rows, what it spilled, and each count of what it read of indexes, each
+/// only if any.
+fn noted_of(notes: &NotesRead, rows: u64, actual: &mut String) {
+    // Writing to a String cannot fail.
+    if let Some(mean) = rows.checked_add(notes.batches.checked_div(2).unwrap_or_default()).and_then(|r| r.checked_div(notes.batches)) {
+        let _ = write!(actual, ", batches={}, mean rows={mean}", notes.batches);
+    }
+    if notes.partitions > 0 {
+        let _ = write!(actual, ", spilled={} bytes, partitions={}, passes={}", notes.spilled, notes.partitions, notes.passes);
+    }
+    let read = [("entries", notes.entries), ("leaf pages", notes.leaves), ("fetched", notes.fetched), ("rechecked", notes.rechecked)];
+    for (name, n) in read.into_iter().filter(|&(_, n)| n > 0) {
+        let _ = write!(actual, ", {name}={n}");
+    }
+}
+
+/// `micros` microseconds, as milliseconds to the microsecond.
+pub(crate) fn millis(micros: u64) -> String {
+    const PER_MILLI: u64 = 1_000;
+    format!("{}.{:03} ms", micros.checked_div(PER_MILLI).unwrap_or_default(), micros.checked_rem(PER_MILLI).unwrap_or_default())
+}
+
+impl Plan {
+    /// Whether its own line shows its estimate: a table's read's, an
+    /// index join's, a filter's of a table's read.
+    fn shows_estimate(&self) -> bool {
+        matches!(self, Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::Filter { of_read: true, .. })
+    }
+}
+
+// Unit tests: a plan shown is described, one run is not; what a counted
+// operator adds to its line (RULES.md R-TEST-1).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +325,32 @@ mod tests {
         assert_eq!(Shown::of(None).text(|n| n.join(", ")), "");
         assert_eq!(Shown::of(Some(&names)).names().map(<[String]>::len), Some(2));
         assert!(Shown::of(None).names().is_none());
+    }
+
+    /// The counted list of one row of one value, its line `Values 1`.
+    fn counted_values() -> super::super::Counted {
+        let input = Plan::Values { rows: vec![vec![crate::logical::Expr::Const(crate::value::Value::Null)]], detail: "1".into() };
+        super::super::Counted { count: std::sync::Arc::default(), input }
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D376, D378, R-TEST-8: a counted
+    /// operator's line is followed by its estimate, as its line shows none,
+    /// then never run, if it was not opened; else its rows, its openings
+    /// past one, and its time once its clock moved, in milliseconds to the
+    /// microsecond.
+    #[test]
+    fn a_counted_operator_shows_what_it_did() {
+        let c = counted_values();
+        let shown = || Plan::Counted(Box::new(c.clone())).explain();
+        assert_eq!(shown(), "Values 1  (est. rows=1)  (never run)\n");
+        c.count.opened();
+        c.count.add(1, 1_234);
+        assert_eq!(shown(), "Values 1  (est. rows=1)  (actual rows=1)\n");
+        c.count.opened();
+        c.count.show_time(true);
+        assert_eq!(shown(), "Values 1  (est. rows=1)  (actual rows=1, loops=2, time=1.234 ms)\n");
+        c.count.stepped(2);
+        assert_eq!(shown(), "Values 1  (est. rows=1)  (actual rows=3, loops=2)\n", "a step has no time of its own");
+        assert_eq!(millis(5), "0.005 ms");
     }
 }

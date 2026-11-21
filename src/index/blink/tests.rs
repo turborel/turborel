@@ -82,8 +82,8 @@ fn strings_longer_than_the_column_are_compared_padded() {
 
 /// Verifies: [DESIGN] RULES.md D31, the index as a tree: 20,000 entries,
 /// many under one key, split it into many nodes and come back in key order,
-/// a key's rows in row order; an estimate is exact up to 1,000 entries and
-/// not known past them; entries removed are gone.
+/// a key's rows in row order; an estimate of a range past 128 entries is
+/// its share of the tree, near its count; entries removed are gone.
 #[test]
 fn many_entries_stay_in_key_order() {
     let index = index(&[MONEY]);
@@ -96,8 +96,10 @@ fn many_entries_stay_in_key_order() {
     assert_eq!(all.len(), 20_000);
     assert!(all.windows(2).all(|w| w[0].0 < w[1].0 || (w[0].0 == w[1].0 && w[0].1 < w[1].1)));
     assert_eq!(index.rows(&Key(vec![exact(7, 0)])).unwrap(), (0..40).map(|i| 7 + 500 * i).collect::<Vec<_>>());
-    assert_eq!(index.estimate(&Probe::Compare { op: CompOp::Lt, value: exact(10, 0) }), Some(400));
-    assert_eq!(index.estimate(&Probe::Compare { op: CompOp::Gt, value: exact(10, 0) }), None);
+    let near = |got: Option<usize>, want: f64| got.is_some_and(|n| (f64::from(u32::try_from(n).unwrap()) / want - 1.0_f64).abs() < 0.5_f64);
+    assert!(near(index.estimate(&Probe::Compare { op: CompOp::Lt, value: exact(10, 0) }), 400.0_f64));
+    assert!(near(index.estimate(&Probe::Compare { op: CompOp::Gt, value: exact(10, 0) }), 19_560.0_f64));
+    assert_eq!(index.estimate(&Probe::Compare { op: CompOp::Lt, value: exact(3, 0) }), Some(120), "counted");
     assert_eq!(index.estimate(&Probe::All), None);
     for row in (0..20_000_u64).filter(|r| r % 500 == 7) {
         index.remove(&Key(vec![exact(7, 0)]), row).unwrap();
@@ -428,4 +430,78 @@ fn a_key_is_decoded_once_for_its_entries() {
         index.insert(key(100), row).unwrap();
     }
     assert_eq!(found(&index, CompOp::Eq, exact(100, 2)), [1, 2, 3, 4, 5]);
+}
+
+/// Verifies: [DESIGN] RULES.md D381, range estimates: of a tree of
+/// 100,000 entries inserted in key order and in an order shuffled from a
+/// fixed seed, a range of any size past 128 entries is estimated by its
+/// share of the tree within 1.5 times the entries it holds, counted; one
+/// of fewer is counted exactly; the estimate is never fewer than the
+/// entries counted before it stopped (D302). MC/DC of the choice: a range
+/// within `SMALL_COUNT` (counted) against one past it (its share).
+#[test]
+fn a_range_is_estimated_by_its_share_of_the_tree() {
+    for shuffled in [false, true] {
+        let index = index(&[MONEY]);
+        let mut keys: Vec<u64> = (0..100_000_u64).collect();
+        let mut random = 11_u64;
+        for i in (1..keys.len()).rev().filter(|_| shuffled) {
+            let j = usize::try_from(
+                crate::stats::parts::xorshift(&mut random).checked_rem(u64::try_from(i).unwrap().saturating_add(1)).unwrap(),
+            )
+            .unwrap();
+            keys.swap(i, j);
+        }
+        for (row, &k) in (0_u64..).zip(&keys) {
+            index.insert(Key(vec![exact(i128::from(k), 2)]), row).unwrap();
+        }
+        let between = |low: i128, high: i128| Probe::Range {
+            equal: Vec::new(),
+            low: Box::new((CompOp::Ge, exact(low, 2))),
+            high: Box::new((CompOp::Lt, exact(high, 2))),
+        };
+        for (low, high) in [(0_i128, 100_i128), (1_000, 1_129), (5_000, 6_000), (20_000, 70_000), (0, 100_000), (99_000, 100_000)] {
+            let truth = f64::from(u32::try_from(high - low).unwrap());
+            let got = index.estimate(&between(low, high)).unwrap();
+            let ratio = f64::from(u32::try_from(got).unwrap()) / truth;
+            assert!(ratio < 1.5_f64 && ratio > 1.0_f64 / 1.5_f64, "{low}..{high}: {got}, shuffled {shuffled}");
+            if high - low <= 128 {
+                assert_eq!(got, usize::try_from(high - low).unwrap(), "counted");
+            } else {
+                assert!(got > SMALL_COUNT, "no fewer than counted");
+            }
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D383: statistics read with a table's
+/// indexes give, of columns exactly an index's key, its distinct keys,
+/// correlated columns counted once, in any order the columns are asked;
+/// of a column alone in a key, its index's count; of columns holding a
+/// unique key's, the rows; of other columns, none.
+#[test]
+fn an_indexs_columns_are_as_distinct_as_its_keys() {
+    use crate::stats::StatsBuilder;
+    use crate::stats::keyed::{KeyIndex, Keyed};
+    let pair = index(&[MONEY, MONEY]);
+    let one = index(&[MONEY]);
+    let mut builder = StatsBuilder::new(3);
+    for row in 0..8_000_u64 {
+        let (x, y) = (i128::from(row % 200), i128::from(row % 200 % 20));
+        pair.insert(Key(vec![exact(x, 0), exact(y, 0)]), row).unwrap();
+        one.insert(Key(vec![exact(i128::from(row), 0)]), row).unwrap();
+        builder.add(&vec![exact(x, 0), exact(y, 0), exact(i128::from(row), 0)], 9);
+    }
+    let pair: Arc<dyn Index> = pair;
+    let one: Arc<dyn Index> = one;
+    let keys = vec![KeyIndex::new(&[0, 1], false, pair), KeyIndex::new(&[2], true, one)];
+    let stats = Keyed::of(Arc::new(builder.finish()), keys);
+    let near = |got: Option<f64>, want: f64| got.is_some_and(|g| (g / want - 1.0_f64).abs() < 0.05_f64);
+    assert!(near(stats.group_distinct(&[1, 0]), 200.0_f64), "{:?}", stats.group_distinct(&[1, 0]));
+    assert!(near(stats.distinct(2), 8_000.0_f64), "a column alone in a key");
+    assert_eq!(stats.group_distinct(&[0, 2]), Some(8_000.0_f64), "holding a unique key");
+    assert_eq!(stats.group_distinct(&[0, 1, 2]), Some(8_000.0_f64));
+    assert!(near(stats.group_distinct(&[1]), 20.0_f64), "one column");
+    let product = stats.distinct(0).unwrap() * stats.distinct(1).unwrap();
+    assert!(product > 3_000.0_f64, "the product counts every pair: {product}");
 }

@@ -237,7 +237,8 @@ pub(super) fn builtin() -> Vec<Definition> {
 /// The settings of the features after the others, each at its key's
 /// place: the vector settings, XQuery's static typing, the graph threads, GRAPH_TABLE's search
 /// limits, GQL's session, the graph's later ones, the host's and the
-/// parallel queries'.
+/// parallel queries', the range joins', the kept subquery plans', the
+/// streamed groupings' and the estimate's margin.
 fn last() -> impl Iterator<Item = Definition> {
     let graph = super::graph::definitions().into_iter().chain(super::graph::gql_session()).chain(super::graph::later());
     let (backup, plugins) = (super::backup::definitions(), super::plugins::definitions());
@@ -250,6 +251,9 @@ fn last() -> impl Iterator<Item = Definition> {
         .chain(super::hosted::definitions())
         .chain(super::joins::definitions())
         .chain(super::executor::definitions())
+        .chain([super::joins::range_joins(), super::executor::kept_subquery_plans()])
+        .chain(super::joins::streamed())
+        .chain([super::joins::margin(), super::executor::dense_joins()])
 }
 
 /// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the
@@ -297,7 +301,7 @@ fn storage() -> [Definition; 5] {
             "The bytes of a page of the data file, a power of two.",
         ),
         defined(
-            ("STORAGE.CHECKSUM", Kind::HashFunction, text(crate::hash::crc::CRC32_ISCSI.name)),
+            ("STORAGE.CHECKSUM", Kind::HashFunction, text(crate::hash::xxhash::XXH3_64_NAME)),
             created,
             "The hash function every file is checksummed with.",
         ),

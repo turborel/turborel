@@ -5,7 +5,7 @@
 //! passing selection vectors between them in place of the rows copied.
 //!
 //! `Kernels` is an extension point (`db.rs`): the database holds one, the
-//! built-in `Portable` unless a plug-in's is set (`Database::set_kernels`),
+//! built-in `Portable` unless a plug-in's is set (`Database::register_kernels`),
 //! which may run the same primitives on wider instructions. Every method
 //! has its portable body as its default, so a set of kernels that predates
 //! a method still runs it, and every one must give what the portable body
@@ -17,6 +17,7 @@
 
 pub mod portable;
 
+use crate::hash::xxhash::{self, Stripes as _};
 use crate::storage::Mask;
 use crate::value::CompOp;
 
@@ -81,6 +82,14 @@ pub trait Kernels: Send + Sync {
         portable::hash::hash_i64(values, seed, sel, out);
     }
 
+    /// Appends to `out` the place of each of `hashes` a blocked Bloom
+    /// filter of `words` may hold, in order (RULES.md D369): its block of
+    /// 8 words picked by a hash's high bits, four of its bits by its low
+    /// ones (`portable::bloom`).
+    fn bloom_probe(&self, words: &[u64], hashes: &[u64], out: &mut Vec<u32>) {
+        portable::bloom::bloom_probe(words, hashes, out);
+    }
+
     /// Appends to `out` the values from the `from`th to the `to`th of
     /// `bits` bits packed in `bytes`, as a chunk's frame of reference
     /// keeps them (RULES.md D352), each plus `least`, wrapping: none if
@@ -88,6 +97,45 @@ pub trait Kernels: Send + Sync {
     /// of 64 values are what wider instructions unpack at once.
     fn unpack(&self, bytes: &[u8], (bits, least): (u32, i64), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         portable::unpack::unpack(bytes, (bits, least), (from, to), out)
+    }
+    /// XXH3's accumulation of `stripes` into `acc`, the `n`th keyed by the
+    /// 64 bytes of `secret` at `8 n` (`hash::xxhash::Stripes::accumulate`,
+    /// RULES.md D460): the loop of a long input's hash that wider
+    /// instructions run.
+    fn xxh3_accumulate(&self, acc: &mut [u64; xxhash::ACC_NB], stripes: &[xxhash::Stripe], secret: &[u8]) {
+        xxhash::Scalar.accumulate(acc, stripes, secret);
+    }
+    /// XXH3's scramble of `acc` by `key`, the secret's last 64 bytes
+    /// (`hash::xxhash::Stripes::scramble`).
+    fn xxh3_scramble(&self, acc: &mut [u64; xxhash::ACC_NB], key: &xxhash::Stripe) {
+        xxhash::Scalar.scramble(acc, key);
+    }
+
+    /// Writes into `keys`, one key of `width` bytes after another, at byte
+    /// `at` of each, the value of `values` at each of `rows`: its distance
+    /// above `base` as `bytes` big-endian bytes, each inverted if `invert`,
+    /// as a sort's normal keys hold an integer (RULES.md D364, D380). None
+    /// if a value is below `base` or past `bytes`, a row past the end, or
+    /// the field past a key.
+    fn normalize_i64(
+        &self,
+        (values, rows): (&[i64], &[u32]),
+        (base, bytes, invert): (i64, usize, bool),
+        (width, at): (usize, usize),
+        keys: &mut [u8],
+    ) -> Option<()> {
+        portable::normal::normalize_i64((values, rows), (base, bytes, invert), (width, at), keys)
+    }
+}
+
+/// A database's kernels run XXH3's long inputs' loops: XXH3 of a vector's
+/// long values hashes by `hash::xxhash::xxh3_64_on(kernels, ...)`.
+impl xxhash::Stripes for dyn Kernels + '_ {
+    fn accumulate(&self, acc: &mut [u64; xxhash::ACC_NB], stripes: &[xxhash::Stripe], secret: &[u8]) {
+        self.xxh3_accumulate(acc, stripes, secret);
+    }
+    fn scramble(&self, acc: &mut [u64; xxhash::ACC_NB], key: &xxhash::Stripe) {
+        self.xxh3_scramble(acc, key);
     }
 }
 

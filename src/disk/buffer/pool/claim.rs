@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 use super::{Claim, Latch, try_latch};
 use crate::disk::buffer::{BufferPool, Key, UNDO_WAITS, all_held, count};
 use crate::error::Result;
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::Xxh3Map;
 use crate::sync::lock_builtin;
 
 /// \[DESIGN\] The first sleep of a thread waiting for frames latched by
@@ -230,7 +230,7 @@ impl BufferPool {
     /// Maps frame `index`, latched exclusively, to `key` in `map`, its
     /// shard's, pinned and loading; `old` is the page it held, written back
     /// only if dirty.
-    fn take(&self, map: &mut MurmurMap<Key, usize>, (index, latch): (usize, Latch<'_>), key: Key, old: Option<Key>) -> Result<Claim> {
+    fn take(&self, map: &mut Xxh3Map<Key, usize>, (index, latch): (usize, Latch<'_>), key: Key, old: Option<Key>) -> Result<Claim> {
         let frame = self.frame(index)?;
         map.insert(key, index);
         frame.pins.fetch_add(1, Ordering::AcqRel);

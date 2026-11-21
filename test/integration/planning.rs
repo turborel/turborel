@@ -559,7 +559,8 @@ fn insert_keyed(s: &Session, (from, to): (i64, i64), keys: i64) {
 /// Verifies: [DESIGN] RULES.md D35, an index's distinct keys kept with it
 /// (`Index::locator`): reopened after a clean close, an index estimates as
 /// it did; recovered after a crash from a checkpoint, it estimates of the
-/// keys the checkpoint kept and those recovery mended it with since.
+/// entries the checkpoint kept and those recovery mended it with since,
+/// near the rows a key holds (D381).
 #[test]
 fn index_statistics_are_kept_with_the_index() {
     let scratch = Scratch::new("planning-kept-statistics");
@@ -587,6 +588,8 @@ fn index_statistics_are_kept_with_the_index() {
     let db = Database::new();
     db.open_files(&after_crash(), &scratch.dir, &OpenOptions::default()).unwrap();
     let after = ab_estimate(&db.session("S"), sql);
-    assert!((after - 1000.0).abs() < 50.0, "20,000 rows of 20 keys: {after}");
+    // 1,500 rows hold the key; the index takes the share of its tree
+    // between the key's bounds of the entries it counts.
+    assert!((after - 1500.0).abs() < 150.0, "1,500 rows of 20,000: {after}");
     assert_eq!(rows(&db.session("S"), "SELECT COUNT(*) FROM T WHERE A = 3 AND B = 3"), Ok(vec!["1500".into()]));
 }

@@ -202,11 +202,26 @@ impl Txn {
     /// row, if given (`log/sealed.rs`): a row change of a table with
     /// encodings.
     pub(crate) fn log_sealed(&self, change: Change, seal: Option<(&Pipeline, RowId)>) -> Result<()> {
-        let Some(log) = &self.log else { return Ok(()) };
-        self.shared.taking_changes()?;
+        if self.log.is_none() {
+            return Ok(());
+        }
         let record = Record { tx: self.id, change };
         let bytes = if let Some((pipeline, row)) = seal { sealed::seal(&record, row, pipeline)? } else { record.encode() };
-        let lsn = log.append(&bytes)?;
+        self.log_encoded(&bytes, 1)
+    }
+
+    /// \[EXTENSION\] Writes `bytes`, the record of `changes` row changes as
+    /// `Record::encode` gives it, to its log, if it has one: one made from
+    /// rows as they are held (`record::insert_rows_record`, RULES.md D530).
+    /// Each change counts toward the next checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// As `log_change`.
+    pub(crate) fn log_encoded(&self, bytes: &[u8], changes: u64) -> Result<()> {
+        let Some(log) = &self.log else { return Ok(()) };
+        self.shared.taking_changes()?;
+        let lsn = log.append(bytes)?;
         let mut st = self.state()?;
         if !st.logged {
             self.shared.first_logged(self.id, lsn);
@@ -214,7 +229,7 @@ impl Txn {
         st.logged = true;
         st.statement_from.get_or_insert(lsn);
         st.logged_at(lsn);
-        self.shared.logged.fetch_add(1, Ordering::Relaxed);
+        self.shared.logged.fetch_add(changes, Ordering::Relaxed);
         Ok(())
     }
 
@@ -284,7 +299,11 @@ impl Txn {
     /// SQLCODE -922 if the sync failed: the transaction is then in doubt.
     pub(super) fn sync_commit(&self, lsn: Lsn) -> Result<()> {
         let Some(log) = self.log.as_ref() else { return Ok(()) };
-        self.shared.sync(&**log, lsn).map_err(|e| {
+        // [DESIGN] RULES.md D520: shown waiting for I/O while it syncs.
+        self.stop.activity().waits_for_io();
+        let synced = self.shared.sync(&**log, lsn);
+        self.stop.activity().woke();
+        synced.map_err(|e| {
             SqlError::new(
                 Code::InDoubt,
                 format!(

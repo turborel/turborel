@@ -15,7 +15,7 @@ use super::{Change, Dead, Maker, Version};
 use crate::bytes::{Put, Reader};
 use crate::engine::rows::{RowTable, key};
 use crate::error::Result;
-use crate::hash::murmur::MurmurSet;
+use crate::hash::xxhash::Xxh3Set;
 use crate::spill::{ListItem, SpillList};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
@@ -77,7 +77,8 @@ impl RowTable {
                 continue;
             };
             let mut dead = Vec::new();
-            for change in segment {
+            // A group's making is stamped with its groups (`frozen/stamped.rs`).
+            for change in segment.into_iter().filter(|c| !c.group) {
                 // A row's first change by it replaced a committed version or
                 // none; its later ones replaced its own.
                 if !change.made && change.before.is_none() {
@@ -102,7 +103,7 @@ impl RowTable {
     /// Adds to `dead` the garbage `change` leaves. An object made for no
     /// version it wrote, as for an attempt that failed, is no one's, and
     /// freed now.
-    fn committed(&self, change: Change, adopted: &MurmurSet<u64>, dead: &mut Vec<Dead>) {
+    fn committed(&self, change: Change, adopted: &Xxh3Set<u64>, dead: &mut Vec<Dead>) {
         if change.made {
             if !adopted.contains(&change.id) {
                 self.free_objects(&[change.id]);

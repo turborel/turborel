@@ -401,7 +401,13 @@ fn distributes(plan: &LogicalPlan, distinct: bool) -> bool {
         // as are a row pattern partition's matches.
         // A polymorphic table function's partition's rows are given its
         // component procedures together.
-        LogicalPlan::Limit { .. } | LogicalPlan::Window(_) | LogicalPlan::Recognize(_) | LogicalPlan::Polymorphic(_) => false,
+        // Whether a semi join keeps a row is of every row of its right.
+        LogicalPlan::Limit { .. }
+        | LogicalPlan::Window(_)
+        | LogicalPlan::Recognize(_)
+        | LogicalPlan::Polymorphic(_)
+        | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_) => false,
         // Its rows are found of each row of its input alone.
         LogicalPlan::Unnest(u) => distributes(&u.input, distinct),
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => one_side(left, right, distinct),
@@ -447,6 +453,8 @@ fn reads_work(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }

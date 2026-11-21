@@ -32,12 +32,12 @@ use crate::disk::block::{BlockFile, BlockId};
 use crate::disk::io::Durability;
 use crate::disk::pager::{Extent, PageId, Pager};
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::{Words, Xxh3Map};
 use crate::memory::MemoryBudget;
 use crate::sync::lock_builtin;
 
 /// A shard's map of pages to frames, locked exclusively.
-type Map<'a> = RwLockWriteGuard<'a, MurmurMap<Key, usize>>;
+type Map<'a> = RwLockWriteGuard<'a, Xxh3Map<Key, usize>>;
 
 /// A frame's content, latched exclusively.
 type Latch<'a> = RwLockWriteGuard<'a, Vec<u8>>;
@@ -55,7 +55,7 @@ fn try_latch(frame: &Frame) -> Option<Latch<'_>> {
 
 /// Locks a shard's map exclusively. The pool holds it over no plug-in
 /// call, so a poisoned one is used as it is.
-fn write_map(map: &RwLock<MurmurMap<Key, usize>>) -> Map<'_> {
+fn write_map(map: &RwLock<Xxh3Map<Key, usize>>) -> Map<'_> {
     map.write().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -68,13 +68,10 @@ pub(super) enum Fill {
     Empty,
 }
 
-/// \[DESIGN\] The shard hash: Fibonacci hashing (Knuth, *The Art of
-/// Computer Programming*, vol. 3, §6.4): the multiplier is 2^64 divided by
-/// the golden ratio, and the top eight bits pick one of 256 shards. The file
-/// is mixed in with the FNV-1a 64-bit prime, so equal page numbers of
-/// different files spread too.
-const SHARD_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
-const SHARD_FILE_MIX: u64 = 0x0100_0000_01B3;
+/// \[DESIGN\] (RULES.md D460) A page's shard is picked by the top eight
+/// bits of XXH3-64 of its file and page numbers (`Words::pair`), one of
+/// 256 shards, so neighbouring pages and equal page numbers of different
+/// files spread alike.
 const SHARD_SHIFT: u32 = 56;
 
 /// A frame claimed for a page: its index, and the page it held, if that
@@ -208,9 +205,8 @@ impl BufferPool {
 
     /// The shard of `key`'s page.
     fn shard_of(key: Key) -> usize {
-        // Fibonacci hashing spreads neighbouring pages over the shards.
-        let mixed = key.id.wrapping_add(u64::from(key.file.0).wrapping_mul(SHARD_FILE_MIX)).wrapping_mul(SHARD_MIX);
-        usize::try_from(mixed >> SHARD_SHIFT).unwrap_or_default() % SHARDS
+        let hash = Words::new(0).pair(u64::from(key.file.0), key.id);
+        usize::try_from(hash >> SHARD_SHIFT).unwrap_or_default() % SHARDS
     }
 
     fn shard(&self, index: usize) -> Result<&Shard> {
@@ -224,7 +220,7 @@ impl BufferPool {
 
     /// The map of `key`'s shard, locked shared: enough to pin a frame, as
     /// a frame is claimed for another page only under the exclusive lock.
-    fn shared_map(&self, key: Key) -> Result<RwLockReadGuard<'_, MurmurMap<Key, usize>>> {
+    fn shared_map(&self, key: Key) -> Result<RwLockReadGuard<'_, Xxh3Map<Key, usize>>> {
         Ok(self.shard(Self::shard_of(key))?.frames.read().unwrap_or_else(PoisonError::into_inner))
     }
 

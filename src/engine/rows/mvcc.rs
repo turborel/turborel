@@ -75,7 +75,7 @@ mod status;
 mod versions;
 mod write;
 
-use lists::decode_change;
+use lists::{decode_change, encode_change};
 pub(in crate::engine::rows) use reads::Read;
 use reads::{Changed, Reads};
 use stamps::Unstamped;
@@ -87,7 +87,7 @@ use super::{RowTable, key};
 use crate::catalog::TableDesc;
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::{MurmurMap, MurmurSet};
+use crate::hash::xxhash::{Xxh3Map, Xxh3Set};
 use crate::log::Lsn;
 use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, SpillList, WorkAreas};
 use crate::storage::{Newest, Row, RowId};
@@ -155,6 +155,9 @@ struct Change {
     /// Whether it is not a row's change but a large object's making: `id`
     /// is the object's.
     made: bool,
+    /// Whether it is not a row's change but a group's making, of a load:
+    /// `id` is its first row's (`frozen/stamped.rs`).
+    group: bool,
 }
 
 impl Change {
@@ -162,7 +165,7 @@ impl Change {
     /// committed one it appended at `appended`, or neither, dropping the
     /// objects `dropped`.
     fn of_row(id: RowId, before: Option<Vec<u8>>, appended: Option<Lsn>, dropped: Vec<u64>) -> Change {
-        Change { id, before, appended, dropped, made: false }
+        Change { id, before, appended, dropped, made: false, group: false }
     }
 }
 
@@ -183,8 +186,8 @@ struct Open {
     ended: bool,
     /// The large objects it made, and those a version it wrote names
     /// (`rows/lobs/owned.rs`).
-    made: MurmurSet<u64>,
-    adopted: MurmurSet<u64>,
+    made: Xxh3Set<u64>,
+    adopted: Xxh3Set<u64>,
 }
 
 /// A transaction validated in the table: kept while one could still be
@@ -194,7 +197,7 @@ struct Validated {
     snapshot: Timestamp,
     at: Timestamp,
     reads: Reads,
-    writes: MurmurSet<RowId>,
+    writes: Xxh3Set<RowId>,
     /// Whether it wrote more rows than are tracked, which then count as
     /// every row: its writes and their rows are not kept.
     wrote_many: bool,
@@ -240,7 +243,7 @@ enum Dead {
 
 /// \[DESIGN\] The versions bookkeeping of a table.
 pub(super) struct Versions {
-    open: RwLock<MurmurMap<TxId, Arc<Mutex<Open>>>>,
+    open: RwLock<Xxh3Map<TxId, Arc<Mutex<Open>>>>,
     validated: Mutex<Vec<Validated>>,
     /// By commit timestamp, each a list that spills.
     garbage: Mutex<BTreeMap<Timestamp, SpillList<Dead>>>,
@@ -340,8 +343,8 @@ impl RowTable {
             reads_since: None,
             preserving: false,
             ended: false,
-            made: MurmurSet::default(),
-            adopted: MurmurSet::default(),
+            made: Xxh3Set::default(),
+            adopted: Xxh3Set::default(),
         };
         open.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));
     }
@@ -415,6 +418,9 @@ impl RowTable {
     /// Undoes `change` of `tx`: the entry it replaced put back, or the row
     /// it added taken out.
     fn undo_change(&self, tx: TxId, change: Change) -> Result<()> {
+        if change.group {
+            return self.unpublish_group(tx, change.id);
+        }
         if change.made {
             self.free_objects(&[change.id]);
             return Ok(());
@@ -466,6 +472,14 @@ impl RowTable {
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
         self.versions.statuses.abort(tx);
         undone
+    }
+
+    /// Notes the group `tx` made, holding row `first`, to be undone with
+    /// its other changes (`frozen/stamped.rs`).
+    pub(super) fn note_group(&self, tx: TxId, first: RowId) -> Result<()> {
+        let open = self.open_of(tx)?;
+        let change = Change { id: first, before: None, appended: None, dropped: Vec::new(), made: false, group: true };
+        lock_builtin(&open).changes.push(change, &mut encode_change).map(drop)
     }
 
     /// How many changes `tx` has made, those from now on begun apart: its

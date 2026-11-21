@@ -17,43 +17,75 @@
 //! the column is decoded, later than the scan would have, which only an
 //! error of the stored data, never one of the data's values, can be.
 
+use std::sync::Arc;
+
+use super::runtime::Told;
 use super::stream::Batches;
 use crate::logical::{Cond, Expr, cond_columns, expr_columns};
 use crate::physical::JoinKey;
+use crate::storage::{Conjunct, Threshold};
+
+/// Of a top-N, its first key's column and the bound it raises, told the
+/// scan (RULES.md D379).
+pub(in crate::exec) type Bound = Option<(usize, Arc<Threshold>)>;
 
 /// \[DESIGN\] (RULES.md D361) What the operators above a subtree of a
 /// stream leave of its rows' columns unread before the stream is read
-/// whole, and whether one of them drops rows.
+/// whole, and whether one of them drops rows; and the runtime filters a
+/// hash join above tells it (RULES.md D369, `runtime.rs`).
 #[derive(Debug, Clone, Default)]
 pub(in crate::exec) struct Deferred {
     /// Whether an operator above drops rows.
     reduced: bool,
     /// The columns of the subtree's rows none above reads, ascending.
     unread: Vec<usize>,
+    /// The runtime filters told it, each of a column of its rows.
+    told: Vec<Told>,
+    /// Of a sort of which only the first rows are asked for, its first
+    /// key's column of the subtree's rows and the bound it raises, told
+    /// the scan (RULES.md D379).
+    bound: Bound,
 }
 
 impl Deferred {
     /// Of a stream read whole, its rows `width` columns wide: no column read
     /// yet, no row dropped.
     pub(in crate::exec) fn all(width: usize) -> Deferred {
-        Deferred { reduced: false, unread: (0..width).collect() }
+        Deferred { reduced: false, unread: (0..width).collect(), bound: None, told: Vec::new() }
     }
 
-    /// Whether it leaves any column unread.
+    /// \[DESIGN\] (RULES.md D379, D380) Of a sort's input of which only the
+    /// first rows are asked for, `keys` the columns its keys read: those
+    /// read, rows dropped, as the sort keeps those rows alone; and the
+    /// bound of its first key, `bound`, told the scan if given.
+    pub(in crate::exec) fn topped(&self, keys: &[usize], bound: Bound) -> Deferred {
+        Deferred { reduced: true, unread: without(&self.unread, keys), bound, told: Vec::new() }
+    }
+
+    /// Whether it leaves any column unread, or tells a bound.
     pub(in crate::exec) fn any(&self) -> bool {
-        !self.unread.is_empty()
+        !self.unread.is_empty() || self.bound.is_some()
+    }
+
+    /// The conjunct of the bound it tells the scan, if any.
+    pub(in crate::exec) fn told(&self) -> Option<Conjunct> {
+        self.bound.as_ref().map(|(column, threshold)| Conjunct::Dynamic { column: *column, threshold: Arc::clone(threshold) })
     }
 
     /// Of a filter's input, `cond` the filter's condition: the columns it
-    /// reads read, rows dropped. A condition with a subquery is judged of
-    /// rows made of every column, so it reads them all.
+    /// reads read, rows dropped, a bound kept unless it can raise. A
+    /// condition with a subquery is judged of rows made of every column,
+    /// so it reads them all.
     pub(in crate::exec) fn filtered(&self, cond: &Cond) -> Deferred {
         if cond.has_subquery() {
             return Deferred::default();
         }
         let mut read = Vec::new();
         cond_columns(cond, &mut read);
-        Deferred { reduced: true, unread: without(&self.unread, &read) }
+        // A condition that can raise sees every row, so no group is passed
+        // over under it.
+        let bound = self.bound.clone().filter(|_| !cond.can_raise());
+        Deferred { reduced: true, unread: without(&self.unread, &read), bound, told: Vec::new() }
     }
 
     /// Of a projection's input, `exprs` its expressions: a column one of
@@ -74,7 +106,9 @@ impl Deferred {
         }
         unread.sort_unstable();
         unread.dedup();
-        Deferred { reduced: self.reduced, unread: without(&unread, &read) }
+        // The bound's column moved to the column it is of.
+        let bound = self.bound.as_ref().and_then(|(at, t)| moved.get(*at).map(|&c| (c, Arc::clone(t))));
+        Deferred { reduced: self.reduced, unread: without(&unread, &read), bound, told: Vec::new() }
     }
 
     /// Of an inner hash join's left operand, `width` columns wide, `keys`
@@ -83,7 +117,17 @@ impl Deferred {
     pub(super) fn left_of(&self, keys: &[JoinKey], width: usize) -> Deferred {
         let read: Vec<usize> = keys.iter().map(|k| k.left).collect();
         let unread: Vec<usize> = self.unread.iter().copied().filter(|&c| c < width).collect();
-        Deferred { reduced: true, unread: without(&unread, &read) }
+        Deferred { reduced: true, unread: without(&unread, &read), bound: None, told: Vec::new() }
+    }
+
+    /// The runtime filters told it.
+    pub(in crate::exec) fn filters(&self) -> &[Told] {
+        &self.told
+    }
+
+    /// It, told `told` in place of the filters it was.
+    pub(in crate::exec) fn with_told(self, told: Vec<Told>) -> Deferred {
+        Deferred { told, ..self }
     }
 
     /// The columns of a scan of `columns` it gives late: those left unread,
@@ -114,3 +158,8 @@ pub(in crate::exec) fn resolved(batches: Batches) -> Batches {
         Ok((batch, rows))
     }))
 }
+
+// Unit tests: the bound a top-N tells its scan, moved by projections and
+// dropped where rows are not its own (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

@@ -1,7 +1,13 @@
 //! \[DESIGN\] Showing how a query is planned: its logical plan, the rewrite
 //! rules applied, and the physical plan. A program asks for it by
 //! `Session::explain`; \[EXTENSION\] direct SQL by `EXPLAIN <cursor
-//! specification>`, whose rows are the lines of the same text.
+//! specification>`, whose rows are the lines of the same text. EXPLAIN
+//! ANALYZE runs the query and shows what each operator did
+//! (`explain/analyzed.rs`).
+
+mod analyzed;
+mod changed;
+mod injected;
 
 use std::sync::Arc;
 
@@ -14,6 +20,7 @@ use crate::error::Result;
 use crate::params::Params;
 use crate::physical::Plan;
 use crate::value::{DataType, Value};
+pub(super) use changed::analyzing;
 
 /// The name of EXPLAIN's one column.
 const PLAN_COLUMN: &str = "PLAN";
@@ -76,16 +83,7 @@ impl Session {
     pub(super) fn explain_rows(&self, sql: &str) -> Result<Cursor> {
         self.open_with((commands::EXPLAIN, commands::UNRECOGNIZED), |call| {
             let text = self.planned(call.state(), sql, &Params::new())?;
-            let width = text.lines().map(|l| l.chars().count()).max().unwrap_or_default().max(1);
-            let column = OutColumn {
-                name: Some(PLAN_COLUMN.to_owned()),
-                collation: None,
-                data_type: DataType::varying(u32::try_from(width).unwrap_or(u32::MAX)),
-                not_null: true,
-                origin: None,
-            };
-            let rows = text.lines().map(|l| vec![Value::Char(l.to_owned())]).collect();
-            self.unnamed(call, None, |st, _| Ok((vec![column], Stream::made(st, rows)?)))
+            self.unnamed(call, None, |st, _| plan_rows(st, &text))
         })
     }
 
@@ -96,6 +94,24 @@ impl Session {
         let text = with_count(st, &compiled.physical, shown(&compiled));
         Ok(with_plugin_calls(st, text))
     }
+}
+
+/// The column PLAN and the rows of `text`, a line each.
+///
+/// # Errors
+///
+/// The rows cannot be held.
+fn plan_rows(st: &Arc<State>, text: &str) -> Result<(Vec<OutColumn>, Stream)> {
+    let width = text.lines().map(|l| l.chars().count()).max().unwrap_or_default().max(1);
+    let column = OutColumn {
+        name: Some(PLAN_COLUMN.to_owned()),
+        collation: None,
+        data_type: DataType::varying(u32::try_from(width).unwrap_or(u32::MAX)),
+        not_null: true,
+        origin: None,
+    };
+    let rows = text.lines().map(|l| vec![Value::Char(l.to_owned())]).collect();
+    Ok((vec![column], Stream::made(st, rows)?))
 }
 
 /// The stages of `c`, each headed by a comment line, the rules that fired

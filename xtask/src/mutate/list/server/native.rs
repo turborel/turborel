@@ -2,12 +2,13 @@
 //! D185 to D199): what is granted, what a completion carries, the
 //! transaction a cursor ends, the conditions and diagnostics a client is
 //! told, a copy's failing row, the session put back by Reset, a SET
-//! that never waits on a replica, and the server's time for a statement.
+//! that never waits on a replica, the server's time for a statement, the
+//! row of a connection ended, and a half-closed client's requests held.
 
 use super::super::{Mutation, Package};
 
 /// The native protocol's mutations, in the order they run.
-pub const NATIVE: [Mutation; 16] = [
+pub const NATIVE: [Mutation; 18] = [
     Mutation {
         name: "native-compression-at-zero",
         package: Package::Server,
@@ -73,8 +74,8 @@ pub const NATIVE: [Mutation; 16] = [
         package: Package::Server,
         breaks: "a copy's value its column refuses fails with no detail naming its row",
         file: "server/src/native/copy.rs",
-        original: "self.waiting.push(assigned(row, self.one.parameters(), n).map_err(|e| e.with_detail(format!(\"row {n} of the copy\")))?);",
-        replacement: "self.waiting.push(assigned(row, self.one.parameters(), n)?);",
+        original: "self.waiting.push(assigned(row, &self.types, n).map_err(|e| e.with_detail(format!(\"row {n} of the copy\")))?);",
+        replacement: "self.waiting.push(assigned(row, &self.types, n)?);",
         integration: &["copying::rows_are_copied_in_all_or_nothing"],
         unit: &[],
     },
@@ -166,6 +167,26 @@ pub const NATIVE: [Mutation; 16] = [
         original: "            held.abandon_copy();\n            held.session.end()",
         replacement: "            held.session.end()",
         integration: &["copying::rows_are_copied_in_all_or_nothing"],
+        unit: &[],
+    },
+    Mutation {
+        name: "native-ended-listed",
+        package: Package::Server,
+        breaks: "a connection ended stays listed after its client is told why, so it may be ended again in another's place",
+        file: "server/src/native.rs",
+        original: "    present.unlisted();\n",
+        replacement: "",
+        integration: &["ending::a_connection_ended_is_not_listed_once_its_client_is_told"],
+        unit: &[],
+    },
+    Mutation {
+        name: "native-watch-ignores-inbox",
+        package: Package::Server,
+        breaks: "a half-closed client taken for gone while its inbox holds requests sent ahead, so what runs is cancelled",
+        file: "server/src/transport/watch.rs",
+        original: "Ok(read) => read == 0 && !self.ahead.as_ref().is_some_and(|a| a.load(Ordering::Acquire)),",
+        replacement: "Ok(read) => read == 0 && self.ahead.as_ref().is_none_or(|a| !a.load(Ordering::Acquire) || true),",
+        integration: &["transport::a_half_closed_clients_long_request_runs_to_its_end"],
         unit: &[],
     },
 ];

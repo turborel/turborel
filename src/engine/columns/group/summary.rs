@@ -1,6 +1,7 @@
 //! \[DESIGN\] What a table holds in memory of each of its frozen row
 //! groups (RULES.md D31): its range of row ids, its rows, the columns its
-//! rows are sorted by and it keeps Bloom filters of, and of each column
+//! rows are sorted by, it keeps Bloom filters of and were named for
+//! sketches, and of each column
 //! its nulls and its least and greatest values, so a scan passes over a
 //! group no condition may match without its header, which is read only as
 //! it is needed (`columns/cache.rs`).
@@ -27,6 +28,9 @@ pub struct Summary {
     pub order: Vec<usize>,
     /// The places of the columns it keeps Bloom filters of.
     pub blooms: Vec<usize>,
+    /// The places of the columns COLUMNSTORE.SKETCH named as it was
+    /// written (`Group::sketched`).
+    pub sketched: Vec<usize>,
     /// Whether it is of the hybrid layout (`Group::pax`).
     pub pax: bool,
     /// Of each column, its nulls and its least and greatest values.
@@ -63,6 +67,7 @@ impl Summary {
             rows: group.rows,
             order: group.order.clone(),
             blooms: group.blooms(),
+            sketched: group.sketched.clone(),
             pax: group.pax,
             columns,
         }
@@ -82,7 +87,12 @@ impl Summary {
         match condition {
             Conjunct::Null { not: false, .. } => overall.nulls > 0,
             Conjunct::Null { not: true, .. } => overall.nulls < self.rows,
-            Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) => {
+            Conjunct::Condition(_)
+            | Conjunct::In { .. }
+            | Conjunct::NotIn { .. }
+            | Conjunct::Any(_)
+            | Conjunct::Dynamic { .. }
+            | Conjunct::Spans { .. } => {
                 let mut bounds: Vec<Option<(Value, Value)>> = vec![None; column.saturating_add(1)];
                 if let Some(b) = bounds.get_mut(*column) {
                     b.clone_from(&overall.bounds);
@@ -135,6 +145,7 @@ impl Group {
             .map(|p| size_of::<Part>().saturating_add(bounds_bytes(p.bounds.as_ref())))
             .sum();
         let runs = self.ids.len().saturating_add(self.by_id.len()).saturating_mul(size_of::<Run>());
-        size_of::<Group>().saturating_add(zones).saturating_add(parts).saturating_add(runs)
+        let sketches: usize = self.sketches.iter().map(super::super::sketch::Edges::bytes).sum();
+        size_of::<Group>().saturating_add(zones).saturating_add(parts).saturating_add(runs).saturating_add(sketches)
     }
 }

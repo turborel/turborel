@@ -802,6 +802,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "turborel-simd"
+version = "0.0.0"
+dependencies = [
+ "turborel",
+ "turborel-test-support",
+]
+
+[[package]]
 name = "turborel-test-support"
 version = "0.0.0"
 dependencies = [
@@ -825,6 +833,7 @@ dependencies = [
  "turborel-client",
  "turborel-lz4",
  "turborel-server",
+ "turborel-simd",
  "turborel-test-support",
 ]
 

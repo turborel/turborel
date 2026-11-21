@@ -151,7 +151,7 @@ harness = false
 
 # `cargo xtask <command>` runs the project's checks (RULES.md R-TOOL-1).
 [workspace]
-members = ["xtask", "protocol", "plugin", "client", "server", "turboreld", "support", "cli", "lz4", "aes", "replication"]
+members = ["xtask", "protocol", "plugin", "client", "server", "turboreld", "support", "cli", "lz4", "aes", "replication", "simd"]
 
 # Overflow is a defect in every build, not only in debug builds, so release
 # behaves like the tested build (RULES.md R-NUM-1).

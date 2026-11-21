@@ -13,24 +13,29 @@ use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::routines::{Hosted, hosted_rows};
 use super::{Session, State, StatementContext, plan, plan_rows, rule, set_columns};
-use crate::ast::{ColumnName, InsertSource, InsertStatement, Overriding, QueryExpression, SelectList, SelectSublist, TableName};
-use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
+use crate::ast::{InsertSource, InsertStatement, QueryExpression, SelectList, SelectSublist};
+use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, qualify};
 use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
-use crate::exec::{HeldRows, Runner, Subqueries, eval_cond, execute, row_entries};
-use crate::logical::{Expr, LogicalPlan, Truth, filled, filled_cond, filled_expr};
+use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
+use crate::logical::{Expr, LogicalPlan, Truth, filled};
 use crate::params::Params;
-use crate::physical::{Plan, filled_plan};
+use crate::physical::Plan;
 use crate::storage::{Row, RowId};
 use crate::txn::{Again, Txn};
 use crate::value::datetime::Now;
 use crate::value::{Value, assign};
 
+mod bulk;
 mod degree;
+mod given;
+mod into;
 mod portion;
 pub(crate) mod system_time;
 
 use degree::degree_at;
+pub(super) use given::not_given;
+pub(super) use into::{INSERT_RULES, InsertInto, InsertRules, object_columns};
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
@@ -38,7 +43,7 @@ use degree::degree_at;
 pub(super) struct Target {
     /// The base table: it, or an updatable view's [X3.135-1986 §6.5 GR2].
     name: QualifiedName,
-    desc: TableDesc,
+    desc: Arc<TableDesc>,
     /// The object columns, as columns of the base table.
     object: Vec<usize>,
     /// [X3.135-1986 §8.7 GR2; ISO/IEC 9075:1992 §11.19 GR11] the views
@@ -118,18 +123,16 @@ impl Target {
 }
 
 /// An UPDATE or DELETE as one execution runs it: as bound, shared with
-/// the plan a prepared statement keeps (RULES.md D45), its SET values and
-/// the plan of its object rows filled with the execution's values.
+/// the plan a prepared statement keeps (RULES.md D45), and, of a kept
+/// plan, the execution's values, which its SET values, its search
+/// condition and its object rows' plan kept read where they are as slots
+/// (RULES.md D610).
 pub(super) struct Written {
     /// As bound; of a kept plan, its slots unfilled.
     pub(super) bound: Arc<BoundWrite>,
-    /// Its SET values filled, of a kept plan; else none, and the bound
-    /// ones are.
-    set: Option<Vec<(usize, Option<Expr>)>>,
     rows: ObjectRows,
-    /// The values it was filled with, of a kept plan: its search condition
-    /// is filled with them only if a row is checked again (`condition`).
-    values: Option<Vec<Value>>,
+    /// The values of its slots, of a kept plan.
+    slots: Option<Slots>,
 }
 
 /// The plan of an UPDATE's or DELETE's object rows.
@@ -138,64 +141,56 @@ enum ObjectRows {
     Bound,
     /// A kept plan's, filled, planned as the statement runs.
     Filled(LogicalPlan),
-    /// Planned once with its slots and kept, filled; the tables its
-    /// object rows' plan reads.
+    /// Its kept plan, as this execution runs it (`physical::Kept`), or one
+    /// planned for it as a plan is learned; the tables it reads.
     Kept(Plan, Arc<[QualifiedName]>),
 }
 
 impl Written {
     /// `bound`, as a statement not prepared runs it.
     pub(super) fn of(bound: BoundWrite) -> Written {
-        Written { bound: Arc::new(bound), set: None, rows: ObjectRows::Bound, values: None }
+        Written { bound: Arc::new(bound), rows: ObjectRows::Bound, slots: None }
     }
 
-    /// `bound`, a kept plan, filled with `values`: its object rows by
-    /// `kept`, its plan made once with its slots and the tables it reads,
-    /// if given; else by its logical plan, filled.
+    /// `bound`, a kept plan, run with the values `slots`: its object rows
+    /// by `kept`, its plan and the tables it reads, if given; else by its
+    /// logical plan, filled to be planned with its values.
     ///
     /// # Errors
     ///
-    /// As `filled` and `physical::filled_plan`.
-    pub(super) fn filled(
-        bound: Arc<BoundWrite>,
-        kept: Option<(Plan, Arc<[QualifiedName]>)>,
-        values: &[Value],
-        budget: Option<&Arc<crate::memory::MemoryBudget>>,
-    ) -> Result<Written> {
-        let fill = |(c, e): &(usize, Option<Expr>)| {
-            let expression =
-                e.clone().map(|e| filled_expr(e, values).map(|e| crate::optimizer::prepared::expression(e, budget))).transpose()?;
-            Ok((*c, expression))
-        };
-        let set = bound.set.iter().map(fill).collect::<Result<_>>()?;
+    /// As `logical::filled`.
+    pub(super) fn slotted(bound: Arc<BoundWrite>, kept: Option<(Plan, Arc<[QualifiedName]>)>, slots: Slots) -> Result<Written> {
         let rows = match kept {
-            Some((plan, reads)) => ObjectRows::Kept(filled_plan(plan, values, budget)?, reads),
-            None => ObjectRows::Filled(filled(bound.rows.clone(), values)?),
+            Some((plan, reads)) => ObjectRows::Kept(plan, reads),
+            None => ObjectRows::Filled(filled(bound.rows.clone(), &slots)?),
         };
-        Ok(Written { bound, set: Some(set), rows, values: Some(values.to_vec()) })
+        Ok(Written { bound, rows, slots: Some(slots) })
     }
 
     /// Its SET values: column position and new value (`None` is NULL), in
     /// the order written.
     pub(super) fn set(&self) -> &[(usize, Option<Expr>)] {
-        self.set.as_deref().unwrap_or(&self.bound.set)
+        &self.bound.set
+    }
+
+    /// `st`, as its plans and expressions are executed in: with its slots'
+    /// values, of a kept plan.
+    pub(super) fn db(&self, st: &Arc<State>) -> Db {
+        self.slots.as_ref().map_or_else(|| Db::of(st), |slots| Db::slotted(st, Arc::clone(slots)))
     }
 
     /// Whether row `row` of the object table, a version another
     /// transaction committed after the statement's snapshot, is one it
     /// changes: its views' conditions and its search condition hold of it
-    /// [ISO/IEC 9075:1992 §4.28] (RULES.md D29).
+    /// [ISO/IEC 9075:1992 §4.28] (RULES.md D29), its slots read by
+    /// `runner`, which runs it (`db`).
     ///
     /// # Errors
     ///
     /// As `eval_cond`.
     pub(in crate::db) fn holds_of(&self, row: &Row, runner: &Runner) -> Result<bool> {
         let LogicalPlan::Filter { cond, .. } = &self.bound.rows else { return Ok(true) };
-        let truth = match &self.values {
-            Some(values) => eval_cond(&filled_cond(cond.clone(), values)?, row, runner)?,
-            None => eval_cond(cond, row, runner)?,
-        };
-        Ok(truth == Truth::True)
+        Ok(eval_cond(cond, row, runner)? == Truth::True)
     }
 }
 
@@ -211,9 +206,13 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
-        let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
-        let rows = if let Some(logical) = query {
-            query_rows((self, cx), &target, logical)?
+        let (target, query, clocked) = self.insert_bound(st, stmt, params, keeping)?;
+        let slots = keeping.and_then(|k| Some(k.slots_of(params.dynamic_slots()?, clocked)));
+        let rows = if let Some(given) = params.given() {
+            // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
+            given::given_rows(st, (stmt, &target), given, &Runner::new(st, tx.id))?
+        } else if let Some(logical) = query {
+            query_rows((self, cx), &target, (logical, slots))?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default, or its generated value.
@@ -225,13 +224,15 @@ impl Session {
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted, though its
         // statement-level triggers execute [ISO/IEC 9075-2:2023 §4.46.2].
         if rows.is_empty() && effects.triggered.is_none() {
+            // [EXTENSION] of none that ends a load, the load ended (RULES.md D532).
+            bulk::load::end(st, tx, params.load())?;
             return Ok(0);
         }
         self.settle_cursors(st, &target.name);
         // [ISO/IEC 9075-2:2023 §15.11 GR4] its BEFORE triggers first.
         let mut rows = effects.before_insert(cx, &target.name, rows)?;
-        // [X3.135-1986 §8.7 GR1c], [EXTENSION] in the partition that holds it (RULES.md D155).
-        rows.visit(&mut |row| st.insert_routed(tx, &target.name, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))?;
+        // [X3.135-1986 §8.7 GR1c], [EXTENSION] in its partition (RULES.md D155), a batch at a time where it may be (D530).
+        bulk::insert_held((st, tx), &target.name, &mut rows, &mut effects, params.load())?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
             rows.visit(&mut |row| check_option(&target.checks, [row], ("X3.135-1986 §8.7 GR2", &runner)))?;
@@ -244,30 +245,31 @@ impl Session {
 
     /// The table `stmt` inserts into and the plan of the rows its query
     /// gives, if it has one: of a prepared statement, as it keeps them,
-    /// its values filled in (RULES.md D45).
+    /// its slots unfilled, for `query_rows` to read (RULES.md D45, D610);
+    /// and whether the plan reads the statement's instant as a slot
+    /// (RULES.md D613).
     fn insert_bound(
         &self,
         st: &State,
         stmt: &InsertStatement,
         params: &Params,
         keeping: Option<&Keeping<'_>>,
-    ) -> Result<(Target, Option<LogicalPlan>)> {
-        let values = params.dynamic_values();
-        if let Some(KeptPlan::Insert(target, query)) = keeping.map(Keeping::plan).transpose()?.flatten() {
+    ) -> Result<(Target, Option<LogicalPlan>, bool)> {
+        if let Some((KeptPlan::Insert(target, query), clocked)) = keeping.map(Keeping::plan_clocked).transpose()?.flatten() {
             let authorization = self.authorization();
-            let target = target.refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
-            return Ok((target, query.map(|q| filled(q, values)).transpose()?));
+            let target = Arc::unwrap_or_clone(target).refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
+            return Ok((target, query, clocked));
         }
-        let kept = keeping.map(|_| params.keeping());
+        let kept = keeping.map(|_| params.keeping_clocked());
         let binding = kept.as_ref().unwrap_or(params);
         let target = self.insert_target(st, stmt, (binding.noted(), binding.horizon()))?;
         let query = match &stmt.source {
             InsertSource::Query(query) => Some(self.insert_query(st, &target, query, binding)?),
             InsertSource::DefaultValues => None,
         };
-        let Some(k) = keeping else { return Ok((target, query)) };
-        k.made((!binding.held()).then(|| KeptPlan::Insert(Box::new(target.clone()), query.clone())))?;
-        Ok((target, query.map(|q| filled(q, values)).transpose()?))
+        let Some(k) = keeping else { return Ok((target, query, false)) };
+        k.made_clocked((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())), binding.clocked())?;
+        Ok((target, query, binding.clocked()))
     }
 
     /// [X3.135-1986 §8.7 SR1-SR4] the table `stmt` inserts into, which is
@@ -345,53 +347,6 @@ impl Session {
     }
 }
 
-/// What an INSERT, or a MERGE's WHEN NOT MATCHED clause, inserts into: its
-/// table, its `<insert column list>`, if written, the values it gives and
-/// its `<override clause>`, and the rules it cites.
-pub(super) struct InsertInto<'a> {
-    pub(super) table: &'a TableName,
-    pub(super) columns: Option<&'a [ColumnName]>,
-    pub(super) given: (Inserted<'a>, Option<Overriding>),
-    pub(super) rules: &'a InsertRules,
-    /// The columns seen of the table without a column list: a triggered
-    /// action's, as they were when its trigger was defined [ISO/IEC
-    /// 9075-2:2023 §11.21 GR2, Note 561].
-    pub(super) horizon: &'a Horizon,
-}
-
-/// The rules an insert cites, each in full: of a read-only table, of a
-/// column of its column list its table lacks, of one listed twice, and of
-/// the privileges it needs.
-pub(super) struct InsertRules {
-    pub(super) read_only: &'static str,
-    pub(super) missing: &'static str,
-    pub(super) twice: &'static str,
-    pub(super) privilege: &'static str,
-}
-
-/// [X3.135-1986 §8.7 SR1 to SR3] The rules of an INSERT.
-pub(super) const INSERT_RULES: InsertRules = InsertRules {
-    read_only: "X3.135-1986 §8.7 SR2",
-    missing: "X3.135-1986 §8.7 SR3",
-    twice: "X3.135-1986 §8.7 SR3",
-    privilege: "X3.135-1986 §8.7 SR1",
-};
-
-/// The columns `columns` of the table or view `name` that `list` names,
-/// by their positions, in order: each a column of it, none named twice.
-pub(super) fn object_columns(name: &QualifiedName, columns: &[ColumnDesc], list: &[ColumnName], rules: &InsertRules) -> Result<Vec<usize>> {
-    let mut cols = Vec::new();
-    for ColumnName { name: c, at } in list {
-        let missing = || no_column(name, format!("[{}] {name} has no column {c}", rules.missing), c).or_at(*at);
-        let i = columns.iter().position(|d| d.name == *c).ok_or_else(missing)?;
-        if cols.contains(&i) {
-            return Err(rule(format!("[{}] column {c} is listed twice", rules.twice)).or_at(*at));
-        }
-        cols.push(i);
-    }
-    Ok(cols)
-}
-
 /// [X3.135-1986 §8.7 GR3, GR4; ISO/IEC 9075:1992 §13.8 GR3, GR4] the
 /// candidate rows of a `<query expression>`, bound as `logical`, one for
 /// each row of its result, which is evaluated in full before any row is
@@ -399,9 +354,14 @@ pub(super) fn object_columns(name: &QualifiedName, columns: &[ColumnDesc], list:
 ///
 /// Of VALUES that invoke a function that possibly modifies SQL-data, each
 /// row is evaluated in turn by the session (`routines::hosted_rows`).
-fn query_rows((session, cx): (&Session, StatementContext<'_>), target: &Target, logical: LogicalPlan) -> Result<HeldRows<Row>> {
+fn query_rows(
+    (session, cx): (&Session, StatementContext<'_>),
+    target: &Target,
+    (logical, slots): (LogicalPlan, Option<Slots>),
+) -> Result<HeldRows<Row>> {
     let StatementContext { st, tx } = cx;
-    let hosted = Hosted::new(Some(session), cx);
+    let db = slots.as_ref().map_or_else(|| Db::of(st), |slots| Db::slotted(st, Arc::clone(slots)));
+    let hosted = Hosted::in_db(Some(session), cx, &db);
     // Held up to MEMORY.WORK_BYTES, the rest spilled (RULES.md D38).
     let mut rows = HeldRows::new(st.list_space());
     if let Some(found) = hosted_rows(&logical, &hosted) {
@@ -410,11 +370,17 @@ fn query_rows((session, cx): (&Session, StatementContext<'_>), target: &Target, 
         }
         return Ok(rows);
     }
+    // A query other than a row of values is planned with its values, as
+    // its paths follow them.
+    let logical = match &slots {
+        Some(slots) => filled(logical, slots)?,
+        None => logical,
+    };
     let (optimized, _, physical) = plan(st, logical);
     for t in optimized.tables() {
         st.read_lock(tx, &t)?;
     }
-    for values in execute(physical, st, tx.id) {
+    for values in execute(super::explain::analyzing(tx, st, (physical, Some(&optimized))), st, tx.id) {
         rows.push(target.candidate(st, values?, &hosted)?)?;
     }
     Ok(rows)
@@ -424,7 +390,8 @@ fn query_rows((session, cx): (&Session, StatementContext<'_>), target: &Target, 
 /// changed [X3.135-1986 §8.5 GR1, §8.12 GR1], held up to MEMORY.WORK_BYTES, the
 /// rest spilled (RULES.md D38).
 pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Written, HeldRows<(RowId, Row)>)> {
-    let Written { bound, set, rows, values } = w;
+    let db = w.db(st);
+    let Written { bound, rows, slots } = w;
     // T, to be written, and the tables its subqueries read.
     st.update_lock(tx, &bound.table)?;
     let (logical, kept) = match rows {
@@ -444,12 +411,15 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
     for t in reads.into_iter().chain(bound.set_tables()) {
         st.read_lock(tx, &t)?;
     }
-    let physical = match (kept, logical) {
-        (Some((physical, _)), _) => physical,
-        (None, logical) => plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone())).2,
+    let (physical, optimized) = match (kept, logical) {
+        (Some((physical, _)), _) => (physical, None),
+        (None, logical) => {
+            let (optimized, _, physical) = plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone()));
+            (physical, Some(optimized))
+        }
     };
-    let entries = row_entries(physical, st, tx.id)?;
-    Ok((Written { bound, set, rows: ObjectRows::Bound, values }, entries))
+    let entries = row_entries(super::explain::analyzing(tx, st, (physical, optimized.as_ref())), &db, tx.id)?;
+    Ok((Written { bound, rows: ObjectRows::Bound, slots }, entries))
 }
 
 /// [X3.135-1986 §8.12] the searched UPDATE bound as `w`, the number of
@@ -464,7 +434,7 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         return Ok(None);
     }
     let columns = set_columns(&w);
-    let hosted = Hosted::new(effects.host, cx);
+    let hosted = Hosted::in_db(effects.host, cx, &w.db(st));
     let runner = hosted.runner();
     let mut leftovers = portion::Leftovers::of(st, &w)?;
     let changes = super::assignment::changes_of(st, &w, objects, (effects, &hosted))?;
@@ -535,7 +505,7 @@ pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     }
     // [ISO/IEC 9075-2:2023 §15.8 GR2] its BEFORE triggers first.
     effects.before_delete(cx, &w.bound.table, &mut objects)?;
-    let runner = Runner::new(st, tx.id);
+    let runner = Runner::new(&w.db(st), tx.id);
     let mut leftovers = portion::Leftovers::of(st, &w)?;
     let mut count = 0_usize;
     for object in objects {
@@ -586,5 +556,5 @@ pub(super) fn insert_target_in(
     let draws = check_override(&target.base, &object, into.given).or_at(into.table.at)?;
     let generating = Generating::of(st, &target.base, draws)?;
     let table = target.base.name.clone();
-    Ok(Target { name: table, desc: target.base, object, checks: target.checks, defaults, generating })
+    Ok(Target { name: table, desc: Arc::new(target.base), object, checks: target.checks, defaults, generating })
 }
