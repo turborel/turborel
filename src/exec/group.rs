@@ -289,11 +289,20 @@ fn feed(aggs: &[AggCall], group: &mut Group, row: &Row, fed: &mut Fed<'_>) -> Re
     let (runner, seen, sorting, scratch) = (fed.runner, &mut fed.seen, &mut fed.sorting, &mut fed.key);
     let Group { first, key, states, picks, .. } = group;
     for (n, (a, acc)) in aggs.iter().zip(states.iter_mut()).enumerate() {
-        match argument(a, row, runner)? {
-            Argument::Passed => {}
+        // [ISO/IEC 9075-2:2023 §10.9 GR4] a row its filter is not true of
+        // is not aggregated, its argument not computed.
+        if !admitted(a.filter.as_ref(), row, runner)? {
+            continue;
+        }
+        match &a.arg {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
-            Argument::Counted => acc.update(&Value::Null)?,
-            Argument::Value(v) => {
+            None => acc.update(&Value::Null)?,
+            Some(e) => {
+                let v = eval(e, row, runner)?;
+                // [ISO/IEC 9075:1992 §6.5 GR1b] a null eliminated warns.
+                if v.is_null() {
+                    warn(runner, SqlState::NULL_VALUE_ELIMINATED);
+                }
                 // [ISO/IEC 9075-2:2023 §10.9 GR10f] an inverse distribution
                 // function's values not null are sorted.
                 if let (Some(d), Some(pick), Some(sorting)) = (&a.distribution, picks.get_mut(n).and_then(Option::as_mut), sorting.as_mut())
@@ -327,7 +336,8 @@ pub(super) enum Argument {
     Value(Value),
 }
 
-/// What the set function `a` takes of `row`, its argument computed by
+/// What the set function `a` takes of `row`, as a streamed grouping
+/// feeds it (`group/streamed.rs`), its argument computed by
 /// `runner`: [ISO/IEC 9075-2:2023 §10.9 GR4] nothing of a row its filter is
 /// not true of, the argument not computed; [ISO/IEC 9075:1992 §6.5 GR1b] a
 /// null argument warns as it is eliminated.
