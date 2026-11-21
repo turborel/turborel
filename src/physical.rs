@@ -49,7 +49,9 @@ mod order;
 mod ordered;
 mod parallel;
 pub use parallel::Parallel;
+mod plannings;
 pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
+pub use plannings::plannings;
 mod probe;
 mod project;
 mod range;
@@ -514,8 +516,9 @@ impl<'a> PhysicalPlanner<'a> {
         if self.est.is_some() {
             return self.build(logical, &[]).plan;
         }
-        let estimates = Estimates::over(self.db, logical);
-        PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan
+        plannings::counted();
+        let estimates = Estimates::over(self.db, logical, self.values);
+        estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan)
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if

@@ -132,7 +132,7 @@ impl Session {
         // [§17.6 GR10] its specification and plan as the statement keeps
         // them while what they were made with holds (RULES.md D45).
         let keeping = self.keeping(cx.st, prepared.plans());
-        self.open_text(cx, key, (prepared.sql(), flags, Some(&keeping)), &Params::executing(values))
+        self.open_text(cx, key, (prepared.sql(), flags, Some(&keeping), false), &Params::executing(values))
     }
 
     /// [ISO/IEC 9075:1992 §17.15] A dynamic FETCH: the cursor moved as

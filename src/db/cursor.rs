@@ -37,7 +37,7 @@ const CARDINALITY_PROBE_ROWS: usize = 2;
 mod ordered;
 mod updatability;
 
-use updatability::{Wanted, check_object_columns, open_updatable, wanted};
+use updatability::{Wanted, check_object_columns, nameless_read_only, open_updatable, wanted};
 pub(super) use updatability::{declared_updatable, movement};
 
 impl Session {
@@ -228,18 +228,21 @@ impl Session {
         if dynamic {
             return self.open_dynamic(cx, name, None, params);
         }
-        self.open_text(cx, name, (&text, flags, None), params)
+        self.open_text(cx, name, (&text, flags, None, false), params)
     }
 
     /// OPEN of the cursor `name`, of the `<cursor specification>` `text`,
     /// INSENSITIVE and SCROLL as `flags` say, with the parameters `params`:
     /// of a prepared statement's, a dynamic cursor's, from the
-    /// specification and plan it keeps (`keeping`, RULES.md D45).
+    /// specification and plan it keeps (`keeping`, RULES.md D45). A cursor
+    /// no statement can name and through which no change can be seen,
+    /// `nameless`, is read only unless its text says FOR UPDATE
+    /// (`nameless_read_only`).
     pub(super) fn open_text(
         &self,
         cx: StatementContext<'_>,
         name: &Name,
-        (text, flags, keeping): (&str, (bool, bool), Option<&Keeping<'_>>),
+        (text, flags, keeping, nameless): (&str, (bool, bool), Option<&Keeping<'_>>, bool),
         params: &Params,
     ) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
@@ -248,7 +251,7 @@ impl Session {
         }
         // [X3.135-1986 §8.8 GR3a] a copy of S with each parameter replaced by its value.
         let spec = Self::cursor_specification(st, text, params, keeping)?;
-        let wanted = wanted(&spec, flags)?;
+        let wanted = nameless_read_only(wanted(&spec, flags)?, nameless);
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {
                 self.updatable_plan(st, &spec, params, keeping)?.map(|updating| (named, updating))
