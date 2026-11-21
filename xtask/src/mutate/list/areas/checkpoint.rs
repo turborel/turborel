@@ -15,7 +15,7 @@ pub const CHECKPOINT: [Mutation; 6] = [
         name: "ckpt-writer-copies-nothing",
         package: Package::Core,
         breaks: "a writer changes a page owed without copying it, so the walk captures the page as changed since",
-        file: "src/disk/buffer/pool.rs",
+        file: "src/disk/buffer/pool/capture.rs",
         original: "        if frame.owed.load(Ordering::Acquire) {\n            self.owed_copy(frame, &content);",
         replacement: "        if frame.owed.load(Ordering::Acquire) && false {\n            self.owed_copy(frame, &content);",
         integration: &[],

@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::thread;
 use std::time::Duration;
 
-use crate::disk::buffer::{BufferPool, FileId, Frame, Key, Pin};
+use crate::disk::buffer::{BufferPool, FileId, Frame, Key, PageMut, Pin};
 use crate::disk::pager::{Capturing, PageId, Pager};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::xxhash::Xxh3Map;
@@ -181,6 +181,18 @@ impl BufferPool {
     fn copied(&self, pager: &Pager, key: Key, capturing: &Capturing) -> Result<()> {
         let copy = lock_builtin(&self.owed.copies).remove(&key);
         copy.map_or(Ok(()), |content| pager.captured(PageId(key.id), &content, capturing))
+    }
+
+    /// `frame` latched for writing, dirty; copied first if a checkpoint's
+    /// capture owes it (`capture.rs`).
+    pub(super) fn held_for_writing<'a>(&self, frame: &'a Frame) -> PageMut<'a> {
+        let pin = Pin(frame);
+        let content = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+        if frame.owed.load(Ordering::Acquire) {
+            self.owed_copy(frame, &content);
+        }
+        frame.dirty.store(true, Ordering::Release);
+        PageMut { content, _pin: pin }
     }
 
     /// Copies the page `frame` holds, owed, as it is, before it is changed

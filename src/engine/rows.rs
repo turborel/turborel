@@ -531,7 +531,7 @@ impl TableStorage for RowTable {
     /// be summed up, as one of a commit too recent waits for the horizon
     /// (`rows/zones.rs`).
     fn maintain(&self, horizon: Timestamp, now: bool) -> Result<bool> {
-        if self.gather_wanted() && self.gather_if_due(now) {
+        if self.gather_if_due(now) {
             return Ok(true);
         }
         if self.zones.due() && self.sum_zones(horizon)? {

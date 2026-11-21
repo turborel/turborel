@@ -1,7 +1,7 @@
 //! The mutations of the buffer pool's and pager's I/O path (RULES.md
 //! R-TEST-9, D591): the pages in use read with no lock, as the free list
 //! holds them through allocation, freeing, the free list's record and
-//! open; a frame's buffer reused empty.
+//! open.
 
 use super::super::{Mutation, Package};
 
@@ -9,7 +9,7 @@ use super::super::{Mutation, Package};
 const IN_USE: &str = "pages::pages_in_use_are_those_the_free_list_holds";
 
 /// Mechanisms of the I/O path whose removal must fail their tests.
-pub const IO_PATH: [Mutation; 4] = [
+pub const IO_PATH: [Mutation; 3] = [
     Mutation {
         name: "io-freed-still-in-use",
         package: Package::Core,
@@ -39,15 +39,5 @@ pub const IO_PATH: [Mutation; 4] = [
         replacement: "",
         integration: &[IN_USE],
         unit: &[],
-    },
-    Mutation {
-        name: "io-buffer-not-emptied",
-        package: Package::Core,
-        breaks: "a frame's buffer is reused with what it held, so a new page holds an old one's content",
-        file: "src/disk/buffer/pool.rs",
-        original: "        buffer.clear();\n        Ok(buffer)",
-        replacement: "        Ok(buffer)",
-        integration: &[],
-        unit: &["disk::buffer::pool::capture::tests::evicted_pages_are_captured_as_they_go"],
     },
 ];

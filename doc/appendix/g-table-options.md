@@ -44,7 +44,7 @@ Each in a sentence:
 - **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY, ChaCha20-Poly1305:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own, until the table is sealed again (`turboreld ... reseal`). See [Encryption](../operator/07-encryption.md).
 - **OUT_OF_LINE**: Values of varying width longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.
 - **STATISTICS.BUCKETS**: The buckets of each column's histogram.
-- **STATISTICS.REFRESH_FRACTION**: The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again.
+- **STATISTICS.REFRESH_FRACTION**: The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again, once a plan has read them since.
 - **STATISTICS.REFRESH_ROWS**: The changes past STATISTICS.REFRESH_FRACTION of the rows after which the statistics are gathered again.
 - **STATISTICS.SAMPLE**: The most values of each column the statistics sample, a character string by its first 64 characters, a binary string its first 64 octets, a geometry by its envelope.
 - **TRANSACTIONS.HELD_BYTES**: The bytes of a transaction's changes to the table held in memory, to undo them and check others' reads by; past them, changes are written to a spill area, and a committed one's rows kept as each column's least and greatest value.

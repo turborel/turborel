@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 20] = [
+pub const OLTP: [Mutation; 24] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -102,8 +102,8 @@ pub const OLTP: [Mutation; 20] = [
         package: Package::Core,
         breaks: "Database::maintain leaves a pass due to its spacing instead of making it at once",
         file: "src/engine/rows/stats.rs",
-        original: "        let due = self.gathered.due() && (now || self.gathered.spaced());",
-        replacement: "        let due = self.gathered.due() && self.gathered.spaced();",
+        original: "        let due = gathered.due() && (now || (gathered.wanted() && gathered.spaced()));",
+        replacement: "        let due = gathered.due() && gathered.wanted() && gathered.spaced();",
         integration: &["statistics::statistics_follow_the_table"],
         unit: &[],
     },
@@ -209,5 +209,45 @@ pub const OLTP: [Mutation; 20] = [
         replacement: "        if false {",
         integration: &[],
         unit: &["disk::shadow::tests::runs::a_reader_waits_for_its_granule_in_flight"],
+    },
+    Mutation {
+        name: "oltp-statistics-gathered-unread",
+        package: Package::Core,
+        breaks: "the maintenance job gathers a table's statistics whenever they are due, though no plan read them since the last pass, so tables no plan plans by are sampled again and again",
+        file: "src/engine/rows/stats.rs",
+        original: "        let due = gathered.due() && (now || (gathered.wanted() && gathered.spaced()));",
+        replacement: "        let due = gathered.due() && (now || gathered.spaced());",
+        integration: &[],
+        unit: &["engine::rows::stats::tests::statistics_no_plan_reads_are_not_gathered"],
+    },
+    Mutation {
+        name: "oltp-frozen-sample-unfiltered",
+        package: Package::Core,
+        breaks: "a sampled statistics pass decodes and gives every frozen row, not its sample alone, so the pass over a large table of the column store reads it whole",
+        file: "src/engine/rows/frozen.rs",
+        original: "            for (from, to) in kept_runs(&ids, &keep) {",
+        replacement: "            for (from, to) in kept_runs(&ids, &|_| true) {",
+        integration: &[],
+        unit: &["engine::rows::frozen::shadowed::frozen_rows_are_decoded_only_when_kept"],
+    },
+    Mutation {
+        name: "oltp-page-buffer-not-reused",
+        package: Package::Core,
+        breaks: "a frame given a page frees the buffer of the page it held and allocates another, so every miss calls the allocator twice and the sessions wait on its locks",
+        file: "src/disk/buffer/pool.rs",
+        original: "        let mut content = self.emptied(key, claim)?;",
+        replacement: "        let mut content = self.emptied(key, claim).map(|_| Vec::new())?;",
+        integration: &[],
+        unit: &["disk::buffer::tests::a_page_read_takes_the_buffer_of_the_page_it_replaces"],
+    },
+    Mutation {
+        name: "oltp-update-logs-whole-before",
+        package: Package::Core,
+        breaks: "an update's log record holds every column of the row before, changed or not, so an update of one column of a wide row logs the row twice",
+        file: "src/log/record/images.rs",
+        original: "        if out.get(span).is_none_or(|now| *now != *was) {",
+        replacement: "        if true {",
+        integration: &[],
+        unit: &["log::record::images::tests::an_update_logs_the_columns_it_changed"],
     },
 ];

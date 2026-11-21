@@ -99,7 +99,8 @@ fn changes_that_cannot_be_logged_do_not_commit() {
 /// may succeed without what the failed one lost: a row change, the commit
 /// of a transaction that wrote, a definition, each SQLCODE -915 naming the
 /// failure; reads, rollbacks and commits of transactions that wrote
-/// nothing go on. Regression test (R-TEST-7): the transaction was stamped
+/// nothing go on; a transaction holding its records has its commit
+/// refused, none of them written. Regression test (R-TEST-7): the transaction was stamped
 /// committed, and other sessions saw what recovery could lose.
 #[test]
 fn a_failed_sync_stops_the_database_taking_changes() {
@@ -107,13 +108,16 @@ fn a_failed_sync_stops_the_database_taking_changes() {
     let s = db.session("APP");
     assert!(db.log_failure().is_none());
     s.run("INSERT INTO T (ID) VALUES (10)").unwrap();
+    // A transaction holding its records as the database stops (RULES.md D470).
+    let holding = db.session("APP");
+    holding.run("INSERT INTO T (ID) VALUES (12)").unwrap();
     log.fail_syncs.store(true, Ordering::SeqCst);
     let error = s.commit().unwrap_err();
     assert_eq!((error.code, error.sqlcode(), error.sqlstate().as_str()), (Code::InDoubt, -922, "08007"));
     assert!(error.msg.contains("opened again"), "{error}");
     assert_eq!(count(&db.session("APP"), "SELECT ID FROM T WHERE ID = 10"), 0, "another session");
     assert_eq!(count(&s, "SELECT ID FROM T WHERE ID = 10"), 0, "its own session, in a new transaction");
-    assert_eq!(db.active_transactions().unwrap(), 2, "held in doubt, beside the reading one");
+    assert_eq!(db.active_transactions().unwrap(), 3, "held in doubt, beside the reading one and the holding one");
     assert_eq!(kinds(&*log).last().map(String::as_str), Some("Commit"));
     log.fail_syncs.store(false, Ordering::SeqCst);
     let cause = db.log_failure().expect("the failure kept");
@@ -125,6 +129,7 @@ fn a_failed_sync_stops_the_database_taking_changes() {
     assert_eq!(count(&s, "SELECT ID FROM T"), 3, "reads go on");
     s.commit().unwrap();
     assert_eq!(db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE S (K INTEGER)").err().map(|e| e.code), Some(Code::Io));
+    assert!(holding.commit().is_err(), "its commit refused, its records not written first");
     assert_eq!(kinds(&*log).last().map(String::as_str), Some("Commit"), "nothing logged since, no abort among it");
 }
 

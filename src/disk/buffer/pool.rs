@@ -60,6 +60,13 @@ fn write_map(map: &RwLock<Xxh3Map<Key, usize>>) -> Map<'_> {
     map.write().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// \[DESIGN\] The largest buffer of a page emptied from a frame that is
+/// kept for the page read into it (RULES.md D474): a page read allocates
+/// and frees no buffer, where every miss freed one and allocated another,
+/// each taking the allocator's lock; one larger, of a page with an
+/// overflow, is let go.
+const REUSED_BYTES: usize = 64 * 1024;
+
 /// How a claimed frame is filled.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fill {
@@ -74,10 +81,6 @@ enum Fill {
 /// 256 shards, so neighbouring pages and equal page numbers of different
 /// files spread alike.
 const SHARD_SHIFT: u32 = 56;
-
-/// \[DESIGN\] (RULES.md D591) The most a frame's buffer may hold to be
-/// reused for the page read into it next: a page or two, not a large one.
-const REUSED: usize = 1 << 16;
 
 /// A frame claimed for a page: its index, and the page it held, if that
 /// page was dirty and must be written back, or owed to a checkpoint's
@@ -306,18 +309,6 @@ impl BufferPool {
         }
     }
 
-    /// `frame` latched for writing, dirty; copied first if a checkpoint's
-    /// capture owes it (`capture.rs`).
-    fn held_for_writing<'a>(&self, frame: &'a Frame) -> PageMut<'a> {
-        let pin = Pin(frame);
-        let content = frame.content.write().unwrap_or_else(PoisonError::into_inner);
-        if frame.owed.load(Ordering::Acquire) {
-            self.owed_copy(frame, &content);
-        }
-        frame.dirty.store(true, Ordering::Release);
-        PageMut { content, _pin: pin }
-    }
-
     /// Frees page `id` of pager file `file`: in the pool, and in its file.
     ///
     /// # Errors
@@ -458,6 +449,7 @@ impl BufferPool {
     /// and the error returned.
     fn fill(&self, key: Key, claim: Claim, fill: Fill) -> Result<&Frame> {
         let frame = self.frame(claim.frame)?;
+        // [DESIGN] RULES.md D474: the buffer of the page it held, reused.
         let mut content = self.emptied(key, claim)?;
         if fill == Fill::Read {
             count(&self.counters.misses);
@@ -474,9 +466,10 @@ impl BufferPool {
     }
 
     /// Empties `claim`'s frame, claimed for `key`, writing back what it
-    /// held if it must: its buffer, emptied, for the page read into it next
-    /// (RULES.md D591), unless it grew past `REUSED`. If that fails, the
-    /// frame is put back as it was and the error returned.
+    /// held if it must: the buffer that held it, cleared, for the page
+    /// read into the frame, unless it grew past `REUSED_BYTES` (RULES.md
+    /// D474). If writing back fails, the frame is put back as it was and
+    /// the error returned.
     fn emptied(&self, key: Key, claim: Claim) -> Result<Vec<u8>> {
         let frame = self.frame(claim.frame)?;
         let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
@@ -493,9 +486,9 @@ impl BufferPool {
                 map.remove(&old);
             }
         }
-        let mut buffer = if old_content.capacity() <= REUSED { old_content } else { Vec::new() };
-        buffer.clear();
-        Ok(buffer)
+        let mut reused = if old_content.capacity() > REUSED_BYTES { Vec::new() } else { old_content };
+        reused.clear();
+        Ok(reused)
     }
 
     /// Reads `key` from its file into `content`.
