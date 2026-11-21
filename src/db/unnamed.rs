@@ -87,7 +87,14 @@ impl Session {
         let _compiling = self.compiling(st, tx.id);
         let (columns, rows) = rows(st, &tx).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e))?;
         let rows = Arc::new(Mutex::new(Some(rows)));
-        self.inner.borrow_mut().anonymous.push(Arc::downgrade(&rows));
+        // The cursors closed since are forgotten first: a transaction that
+        // runs many statements, as one reading at a snapshot for each does
+        // under autocommit, holds the open ones alone, and every statement
+        // that looks at them looks at no more (`cursors_open`).
+        let mut inner = self.inner.borrow_mut();
+        inner.anonymous.retain(|open| open.strong_count() > 0);
+        inner.anonymous.push(Arc::downgrade(&rows));
+        drop(inner);
         if let Some(opened) = timed.as_mut() {
             opened.paused();
         }
@@ -95,3 +102,7 @@ impl Session {
         Ok(Cursor { columns, rows, db: self.db.clone(), stop: Arc::clone(&self.stop), timed, zone: self.now.get().zone })
     }
 }
+
+// Unit tests: the open cursors a session keeps track of (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;
