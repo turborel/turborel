@@ -112,6 +112,25 @@ impl RowTable {
         Ok(row)
     }
 
+    /// Each of `columns`, given with a place of the caller's, of the row
+    /// `record` holds, row `id`'s, decoded alone and handed to `each` with
+    /// its place: no row is made, as a zone's sum up reads a few columns of
+    /// every version of its rows (`rows/zones/loose.rs`). Not for a column
+    /// whose long objects `decode` resolves.
+    pub(in crate::engine::rows) fn each_column(
+        &self,
+        (id, record): (RowId, &[u8]),
+        columns: &[(usize, usize)],
+        each: &mut impl FnMut(usize, &Value),
+    ) -> Result<()> {
+        let mut fetch = |reference: Reference| self.get_value(id, reference);
+        let record = self.sealing.plain_record(id, record)?;
+        for &(place, column) in columns {
+            each(place, &self.format.column_with(&record, column, &mut fetch)?);
+        }
+        Ok(())
+    }
+
     /// Adds the row `record` holds, row `id`'s, to `into`, each column
     /// decoded straight into its vector (`gathered.rs`).
     pub(in crate::engine::rows) fn gather_record(&self, (id, record): (RowId, &[u8]), into: &mut Gathering) -> Result<()> {
