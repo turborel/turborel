@@ -349,17 +349,41 @@ fn eager_form_groups_the_probe_first() {
 }
 
 /// Verifies: [DESIGN] (RULES.md D490, D38) a groupjoin whose build holds
-/// more than MEMORY.WORK_BYTES gives way to the grouping over its join.
+/// more than MEMORY.WORK_BYTES gives way to the grouping over its join,
+/// and one past the work area gives the grouping's rows: as a join past it
+/// gives its rows in no set order, the groups are compared in none.
 #[test]
 fn a_groupjoin_past_its_work_area_gives_way() {
     let db = decision_on_four();
     let s = db.session("H");
     exec(&s, "SET MEMORY.WORK_BYTES = 65536").unwrap();
     for q in UNORDERED {
-        alike(&s, q);
+        alike_unordered(&s, q);
     }
     parallel(&s);
     for q in UNORDERED {
-        alike(&s, q);
+        alike_unordered(&s, q);
     }
+}
+
+/// The rows of `sql` sorted, groupjoins on and off, by batches and row by
+/// row: all four alike.
+fn alike_unordered(s: &Session, sql: &str) {
+    let sorted = |off: Option<&str>| {
+        if let Some(set) = off {
+            exec(s, set).unwrap();
+        }
+        let mut found = rows(s, sql).unwrap_or_default();
+        found.sort();
+        found
+    };
+    let on = sorted(None);
+    let rows_on = sorted(Some("SET EXECUTOR.BATCHES = 'OFF'"));
+    let rows_off = sorted(Some("SET OPTIMIZER.GROUPJOIN = 'OFF'"));
+    let off = sorted(Some("SET EXECUTOR.BATCHES = 'ON'"));
+    exec(s, "SET OPTIMIZER.GROUPJOIN = 'ON'").unwrap();
+    assert!(!on.is_empty(), "{sql}");
+    assert_eq!(on, off, "{sql}");
+    assert_eq!(rows_on, rows_off, "{sql}");
+    assert_eq!(on, rows_on, "{sql}");
 }

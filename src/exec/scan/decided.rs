@@ -70,13 +70,18 @@ impl Deciding {
             Some(Err(error)) => Err(error),
             Some(Ok(Some(true))) => {
                 if let Some(width) = self.width.filter(|_| self.unread && storage.visible_to_all(id)) {
+                    reading.entry();
                     return Ok(Some(vec![Value::Null; width]));
                 }
                 Ok(fetch(storage, ix, reading, (tx, id), key)?.map(|(_, row)| row))
             }
-            Some(Ok(Some(false) | None)) => Ok(None),
+            Some(Ok(Some(false) | None)) => {
+                reading.entry();
+                Ok(None)
+            }
             None => {
                 let Some((_, row)) = fetch(storage, ix, reading, (tx, id), key)? else { return Ok(None) };
+                reading.rechecked();
                 Ok((eval_cond(&self.cond, &row, &self.runner)? == Truth::True).then_some(row))
             }
         }

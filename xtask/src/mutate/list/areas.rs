@@ -2,6 +2,7 @@
 
 mod altered_tables;
 mod analyze;
+mod analyze_more;
 mod batches;
 mod budget;
 mod bulk;
@@ -109,7 +110,7 @@ fn first() -> [&'static [Mutation]; 26] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 47] {
+fn second() -> [&'static [Mutation]; 48] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -154,6 +155,7 @@ fn second() -> [&'static [Mutation]; 47] {
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
+        &analyze_more::ANALYZE_MORE,
         &statistics::STATISTICS,
         &range_joins::RANGE_JOINS,
         &cost_model::COST_MODEL,

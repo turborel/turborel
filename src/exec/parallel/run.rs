@@ -23,6 +23,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
+use crate::noted;
 use crate::threads::{Pool, Task};
 use crate::txn::{Stop, TxId};
 
@@ -168,6 +169,12 @@ impl<T: Send + 'static> Morsels<T> {
     /// statement of `tx`.
     pub(super) fn start(db: &State, tx: TxId, (count, degree): (usize, usize), work: Work<T>) -> Morsels<T> {
         let degree = degree.max(1);
+        // [EXTENSION] the notes of the operator that starts it, each
+        // worker's work noted of it (RULES.md D620).
+        let work: Work<T> = match noted::noting() {
+            Some(notes) => Box::new(move |m| noted::within(Some(Arc::clone(&notes)), || work(m))),
+            None => work,
+        };
         let run = Arc::new(Run {
             work,
             count,

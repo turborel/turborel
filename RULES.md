@@ -424,7 +424,11 @@ verification approach DO-178C expects (§8).
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
+| D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
+| D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
+| D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
+| D622 | EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
@@ -10586,8 +10590,7 @@ ANALYZE is no key word. It is read as this option only right after
 EXPLAIN and before a query's first token, and before a parenthesis only
 when the next token begins a query too, so a table named ANALYZE, or a
 table EXPLAIN whose correlation name ANALYZE lists its columns, is read
-as before. A data change statement is refused as EXPLAIN refuses one,
-so EXPLAIN ANALYZE changes nothing a query does not. A query that raises
+as before. A data change statement is run and counted as D622 says. A query that raises
 makes it raise the same exception (D15). It shows the physical plan
 alone, since the stages before it are EXPLAIN's and run nothing.
 `Session::explain_analyze` gives the same text and `Session::analyzed`
@@ -11681,9 +11684,10 @@ each group's first joined row, and feed each set function its values in
 the join's order, so a sum of approximate numbers is the same sum. Of a
 LEFT join a group no row joined is fed one row of nulls, as the join
 gives it. A build past MEMORY.WORK_BYTES gives way to the grouping over
-the join (D38), and so does a groupjoin whose join would hold its right
-operand past it, as that join then gives its rows partition by
-partition (`exec/groupjoin/right.rs`). OPTIMIZER.GROUPJOIN turns it off (D36).
+the join (D38). A join whose right operand outgrows the work area gives
+its rows partition by partition, in no set order, so the grouping over
+it gives the same groups in no set order either; the groupjoin gives
+them in its own. OPTIMIZER.GROUPJOIN turns it off (D36).
 
 #### D510. A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows
 
@@ -12160,6 +12164,53 @@ or hash joins on their equalities, as to compare the two. Period
 predicates are still read as comparisons (D581) when it is OFF, so their
 equalities can be a hash join's keys.
 
+#### D600. A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans
+
+A runtime filter (D369) went down a hash join's left operand alone, and
+through an inner hash join below it only to that join's left. Such a
+join's keys equate a column of its left with one of its right, so a
+filter of one is the same filter of the other, as Ives and Taylor
+(ICDE 2008) pass a join's filter sideways. An inner hash join now takes
+a filter to both its operands (`batch/runtime.rs`). Its left is told it
+of a left column, or of the left key a right key it judges equals; its
+right, as the join builds it, of a right column, or of the right key a
+left key equals (`built_side`). A hash join reads its right operand
+first, so every build inside a join's left is built after that join's
+filter is made, and can be told it. A row of the right the filter drops
+matches only left rows whose joined rows it drops. A filter so moved
+across an equality judges a vector of exact numbers alone, whose
+equality is their value's whatever their scales, never a text whose
+equality is its collation's. An analyzed plan's count of an operator's
+rows (D378) passes a filter on, so EXPLAIN ANALYZE counts the rows the
+filter left.
+
+The walk keeps D15 as before. It stops above a condition that can
+raise, a projection that can, and any operator but these, so a filter
+reaches a build only through operators that cannot raise, and never a
+guard's operand (D389).
+
+A range skips a group or a part only if it lies wholly outside the
+least and greatest built keys. An exact key of a build of no more than
+2^20 rows now gives its distinct values (`table/runtime.rs`), as Qiao,
+Boncz and Zhang's RPT+ (PVLDB 2026) cascade a range, a key set and a
+Bloom filter. Of no more than 4,096 of them, a row's key is found in
+the set by halving, exactly, at any scale, the Bloom filter left for a
+vector of other values, and the scan
+is told each as a span. Of more, the scan is told the spans between
+the 63 widest gaps among them, of more than one unit, and none of keys
+without such a gap. A scan is told spans as a conjunct true of every
+row (`Conjunct::Spans`), which a store judges only against a group's or
+a part's least and greatest, finding the first span not below them by
+halving, so a group that lies in a gap is skipped and no row is judged
+by a list.
+
+Several filters judged of one stream are judged in the order of the
+share of the rows each kept so far, the one that kept the least first,
+as Zhu et al. (PVLDB 2017) order a scan's filters by their observed
+misses between batches (`runtime/ordered.rs`). Each judges only the rows
+those before it kept, so the one that drops the most spares the others
+the most work, and the order changes the work, never the rows kept.
+
 #### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
 
 A kept plan (D45, D414, D422) was copied at each execution, its slots
@@ -12196,6 +12247,62 @@ again for (D422). The places are found by an XXH3 hash of what the
 statements were prepared alike in (D460), compared whole, and a place no
 statement holds is gone.
 
+#### D620. EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made
+
+Each counted operator has notes beside its rows (`noted.rs`). While a
+counted operator is opened and while each of its rows or batches is
+pulled, its notes are the thread's, put back as they were after, so
+work done below a pull is noted of the innermost operator pulled and an
+input's own pulls note theirs. What does the work takes the thread's
+notes once, as it is made, and adds to them as it works. A spill area
+made so is wrapped (`spill/noted.rs`): each table and run it makes is
+one partition, each record written to them adds its bytes, and each
+time it reads back after writing is a pass, so partitions written then
+read are one pass and each level of a merge another. A part run in
+parallel gives each worker the notes of the thread that started it
+(`exec/parallel/run.rs`), so the part's top operator notes what its
+workers spill. A statement not analyzed has no notes, so each thing made
+for it reads the thread's once and notes nothing, never a row at a time.
+The thread's notes are scoped to one pull and restored after it, as the
+thread's warnings are, so they are no global state (R-SAFE-2).
+EXPLAIN ANALYZE shows `spilled=N bytes, partitions=P, passes=Q` on the
+line of an operator that spilled, and nothing of one that did not.
+
+#### D621. EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks
+
+An operator run by batches notes each batch it gives, by its counted
+wrapper or by its step of a pipeline run in parallel, and EXPLAIN
+ANALYZE shows `batches=B, mean rows=M`, its rows over its batches
+rounded. One run a row at a time shows none. An index scan's reading
+(`exec/entries.rs`) counts each entry it takes, each row it fetches by
+an entry's row id, and each row whose condition it judges again of the
+row as the index could not decide it of the entry (D85), and notes them
+once, as it is dropped. A scan of a B-link tree notes each leaf it reads
+(`engine/tree/scan.rs`), an index's or the tree a table of the row
+store is kept in, so a scan of such a table shows its leaves too. Each
+shows as `entries=`, `leaf pages=`,
+`fetched=` and `rechecked=`, a count of none left out. An index nested
+loop's probes note alike, of the join.
+
+#### D622. EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read
+
+`EXPLAIN ANALYZE` takes a data change statement as well as a query,
+read so when INSERT, UPDATE or DELETE, or MERGE followed by INTO,
+follows ANALYZE. EXPLAIN alone still takes only a query, as it runs
+nothing. The statement runs for real, as it would run alone, in the
+session's transaction, so its changes stay until the transaction ends
+and a ROLLBACK undoes them. The session's `Stop`, which the statement
+reaches through its transaction, is told to want a counted plan
+(`txn/stop/changed.rs`). The first plan the statement makes of the
+rows it reads takes the want and is counted as a query's plan is
+(`db/explain/changed.rs`): an INSERT's query, an UPDATE's or DELETE's
+object rows (`exec/entries.rs` reads a counted access too), MERGE's
+joined rows. So a plan a trigger it fires makes after is not. The text
+heads the plan with a line naming the statement and its table with
+`actual rows changed=N`, and ends with the rows changed. A statement
+that makes no such plan, as an INSERT of VALUES, shows the head line
+alone. A statement that raises makes EXPLAIN ANALYZE raise the same,
+undone as any failed statement is.
 #### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
 
 The batch filter passes each conjunct only the rows the one before it

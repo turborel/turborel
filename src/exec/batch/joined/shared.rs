@@ -113,7 +113,7 @@ impl SharedTable {
             let mut hashes = KeyHashes::default();
             hashes.of_batch((&self.right, None), (&[at], &[nulls]), self.hashing())?;
             if let Some(filter) = RuntimeFilter::of_built(&self.right, (at, nulls), &hashes, self.hashing()) {
-                told.push(Told { filter: Arc::new(filter), column: key.left });
+                told.push(Told::of(Arc::new(filter), key.left));
             }
         }
         Ok(told)
