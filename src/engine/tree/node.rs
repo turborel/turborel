@@ -9,7 +9,8 @@
 //!   level u8 (0: a leaf), flags u8 (1: it has a high key; 2: it is
 //!   deleted, its right link leading to the node that took its range,
 //!   `reclaim.rs`), entries u16,
-//!   garbage u16 (bytes of removed entries not yet reclaimed),
+//!   garbage u16 (bytes of removed entries, and of values written over
+//!   shorter, not yet reclaimed),
 //!   high key length u16, right neighbour u64 (none: all ones),
 //!   first child u64 (inner nodes; 0 in a leaf),
 //!   last insert u16 (the slot of the entry inserted last; none: all ones),
@@ -72,7 +73,7 @@ mod build;
 mod key;
 mod split;
 
-pub(super) use build::{Shape, build, compact, deleted, grown, insert, overwrite, remove, set_child, set_right};
+pub(super) use build::{Shape, build, compact, deleted, grown, insert, lengthens, overwrite, remove, set_child, set_right, stored};
 pub(super) use key::KeyRef;
 use key::head_of;
 pub(super) use split::{shortest_between, split};
@@ -221,6 +222,11 @@ impl<'a> Node<'a> {
     /// Its entries.
     pub(super) fn len(&self) -> usize {
         self.count
+    }
+
+    /// The bytes of its entries removed, or replaced, not yet reclaimed.
+    pub(super) fn garbage(&self) -> usize {
+        self.garbage
     }
 
     /// Bytes it takes, less those of removed entries not yet reclaimed.
