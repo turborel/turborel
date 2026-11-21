@@ -9,6 +9,7 @@ mod budget;
 mod bulk;
 // The count's, kept beside the other areas' files.
 mod client_sync;
+mod commit_path;
 mod cost_model;
 #[path = "count.rs"]
 mod count;
@@ -55,7 +56,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 21] {
+pub fn core() -> [&'static [Mutation]; 22] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -78,6 +79,7 @@ pub fn core() -> [&'static [Mutation]; 21] {
         &bulk::BULK,
         &steady::STEADY_PLANS,
         &alloc::ALLOC,
+        &commit_path::COMMIT_PATH,
     ]
 }
 
