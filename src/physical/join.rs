@@ -78,7 +78,8 @@ impl PhysicalPlanner<'_> {
         let mut conjuncts = Vec::new();
         split_and(cond.clone(), &mut conjuncts);
         let (mut keys, mut rest) = (Vec::new(), Vec::new());
-        for c in conjuncts {
+        // A period predicate's equalities are keys too (RULES.md D581).
+        for c in super::range::expanded_periods(conjuncts) {
             match equated(&c, width) {
                 Some(key) => keys.push(key),
                 None => rest.push(c),
@@ -315,6 +316,10 @@ impl PhysicalPlanner<'_> {
         }
         // A spatial condition probes an R-tree instead (`indexed/spatial/outer.rs`).
         if let Some(built) = self.spatial_outer_join((kind, cond), (left, right), want) {
+            return built;
+        }
+        // A comparison by order searches a sorted operand (`physical/range/outer.rs`).
+        if let Some(built) = self.range_outer_join((kind, cond), (left, right), want) {
             return built;
         }
         let width = left.width();

@@ -64,6 +64,8 @@ behind it, and each can be replaced or added to.
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables.
+- [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
+  bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
   query and shows each operator's rows beside its estimate, and a program
   may give the planner true row counts to test its plans.

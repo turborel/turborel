@@ -52,6 +52,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "analytics/bands.rs"]
+mod bands;
 #[path = "analytics/counts.rs"]
 mod counts;
 #[path = "analytics/decode.rs"]
@@ -88,7 +90,8 @@ use turborel::db::{Database, Session};
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
 /// `grouping` for groupings on one thread, `late` for a column store's
-/// selective queries, `sorts` for ORDER BY and top-N.
+/// selective queries, `sorts` for ORDER BY and top-N, `bands` and
+/// `bands-large` for joins on comparisons by order.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -139,6 +142,7 @@ fn main() {
     decode::workloads(&bench);
     late::workloads(&bench);
     sorts::workloads(&bench);
+    bands::small(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -153,6 +157,8 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "parallel" => parallel::workloads,
         "late" => late::workloads,
         "sorts" => sorts::workloads,
+        "bands" => bands::small,
+        "bands-large" => bands::large,
         _ => return false,
     };
     run(bench);

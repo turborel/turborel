@@ -24,6 +24,8 @@ fn spatial_joins_equal_products_in_both_orders_and_through_projections() {
     let db = database();
     windows(&db);
     let session = db.session("S");
+    // A range join (RULES.md D580) costs less here; the index's join is tested.
+    session.run("SET PLANNER.RANGE_JOINS = 'OFF'").unwrap();
     let queries = [
         format!("SELECT P.ID, W.ID FROM P, W WHERE {MATCH} ORDER BY P.ID, W.ID"),
         format!("SELECT P.ID, W.ID FROM W, P WHERE {MATCH} ORDER BY P.ID, W.ID"),
@@ -52,6 +54,7 @@ fn spatial_joins_probe_four_coordinate_rectangles() {
     windows(&db);
     db.drop_index("P_XY").unwrap();
     let session = db.session("S");
+    session.run("SET PLANNER.RANGE_JOINS = 'OFF'").unwrap();
     session.run("INSERT INTO W SELECT ID + 100, LX, LY, HX, HY FROM W").unwrap();
     session.commit().unwrap();
     db.create_index("W_BOUNDS", "S.W", &["LX", "LY", "HX", "HY"], "rtree").unwrap();

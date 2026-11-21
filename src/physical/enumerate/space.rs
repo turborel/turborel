@@ -29,6 +29,9 @@ pub(super) enum Method {
     Index,
     /// Every pair, judged.
     Nested,
+    /// The right sorted by a value compared by order, each left row
+    /// searching it (`enumerate/ranged.rs`).
+    Range,
 }
 
 /// A plan in the table: a relation read, in an order or not, or a join of
