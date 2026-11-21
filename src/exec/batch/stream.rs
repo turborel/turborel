@@ -104,7 +104,7 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => None,
         // A pipeline run in parallel, by batch (`parallel/batches.rs`).
-        Plan::Parallel(p) => crate::exec::parallel::pipelined(&p.input).then(|| layout(&p.input, db)).flatten(),
+        Plan::Parallel(p) => parallel_layout(&p.input, db),
     }
 }
 
@@ -144,11 +144,22 @@ pub(super) fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
     exprs.iter().map(|e| if let Expr::Column(c) = e { columns.iter().position(|held| held == c) } else { None }).collect()
 }
 
+/// The layout of `input`, a part run in parallel: a window's over batches,
+/// its partitions computed on the part's threads, or a pipeline's.
+fn parallel_layout(input: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
+    if let Plan::Window { window, .. } = input {
+        return windowed_layout(window, db);
+    }
+    crate::exec::parallel::pipelined(input).then(|| layout(input, db)).flatten()
+}
+
 /// [ISO/IEC 9075-2:2023 §7.15] The layout of a window over batches: every
 /// column of its input's rows, those its input's batches do not hold
 /// nulls, and a column of each call (RULES.md D560).
 fn windowed_layout(window: &Window<Plan>, db: &State) -> Option<(Vec<usize>, usize)> {
-    let (_, width) = layout(&window.input, db)?;
+    // A sort under it is read as its input's batches, made rows' width.
+    let read = if let Plan::Sort { input, most: None, .. } = &window.input { input } else { &window.input };
+    let (_, width) = layout(read, db)?;
     let all = width.checked_add(window.calls.len())?;
     crate::exec::window::admits_batches(window).then(|| ((0..all).collect(), all))
 }
@@ -230,7 +241,9 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => false,
-        Plan::Parallel(p) => crate::exec::parallel::pipelined(&p.input) && reads(&p.input, db, joined),
+        Plan::Parallel(p) => {
+            (matches!(p.input, Plan::Window { .. }) || crate::exec::parallel::pipelined(&p.input)) && reads(&p.input, db, joined)
+        }
     }
 }
 
@@ -367,6 +380,10 @@ fn made_of(plan: &Plan) -> Batched {
 /// As `open`.
 fn parallel_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Parallel(p) = plan else { return Err(crate::exec::broken("a part run in parallel is not one")) };
+    // A window's whole partitions computed on the part's threads (D560).
+    if matches!(p.input, Plan::Window { .. }) {
+        return crate::exec::window::window_batches_on(p.input, (db, tx), p.degree);
+    }
     // A part whose batches hold no layout of its own is read as its plan.
     let Some(shape) = layout(&p.input, db) else { return batches_with(p.input, (db, tx), deferred) };
     match crate::exec::parallel::streamed_batches(&p.input, (db, tx), p.degree, &shape)? {

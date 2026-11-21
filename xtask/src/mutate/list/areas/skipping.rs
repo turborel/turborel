@@ -19,9 +19,10 @@ const ORDERED: &str = "engine::columns::imprints::tests::conjuncts_are_ordered_n
 const CODES: &str = "engine::columns::sketch::tests::codes_order_as_their_values";
 const VERDICTS: &str = "engine::columns::judged::sketched::tests::codes_say_what_their_values_say";
 const SCANS: &str = "engine::columns::judged::sketched::tests::scans_by_sketches_keep_what_values_keep";
+const SPARSE: &str = "engine::columns::judged::sketched::tests::few_rows_asked_for_are_compared_without_the_sketch";
 
 /// Mechanisms whose removal must fail the skipping's requirements.
-pub const SKIPPING: [Mutation; 19] = [
+pub const SKIPPING: [Mutation; 20] = [
     Mutation {
         name: "shadow-bits-writer",
         package: Package::Core,
@@ -211,5 +212,15 @@ pub const SKIPPING: [Mutation; 19] = [
         replacement: "                Verdict::Keep => continue,",
         integration: &[],
         unit: &[SCANS],
+    },
+    Mutation {
+        name: "sketch-sparse",
+        package: Package::Core,
+        breaks: "a run of few rows asked for reads the sketch's codes and judges each code of the group",
+        file: "src/engine/columns/judged/coded.rs",
+        original: "if symbols && dense {",
+        replacement: "if symbols {",
+        integration: &[],
+        unit: &[SPARSE],
     },
 ];
