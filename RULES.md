@@ -425,6 +425,8 @@ verification approach DO-178C expects (§8).
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
+| D680 | A grouping of no groups run in parallel feeds each morsel's own set functions and merges their states, with no table of groups |
+| D681 | A scan reading ahead pages all in the pool takes no lock |
 | D682 | The system's threads are asked once, by the thread starting the first database |
 | D683 | Work grants share half of what the buffer pools leave of the budget |
 
@@ -12230,6 +12232,45 @@ after EXECUTOR.DECORRELATE_AFTER_RUNS as before (D35, D38), and a run
 checks for a cancel as any plan does (D44). EXECUTOR.KEEP_SUBQUERY_PLANS,
 ON by default and of a session's scope, turns it off, as to compare the
 two.
+
+#### D680. A grouping of no groups run in parallel feeds each morsel's own set functions and merges their states, with no table of groups
+
+A grouping run in parallel grouped each morsel in a table of groups
+(D293, D356), even one of no grouping columns. Each row of such a
+morsel was hashed by its empty key, found again in a table of one
+group, and fed through that table's lists of rows by group, where the
+serial plain aggregation feeds its one set of states a vector at a
+time (`exec/batch.rs`). On many threads the work per row was so much
+more than alone that the part ran slower than its serial plan.
+
+A grouping of no grouping columns and no seeds now runs apart
+(`exec/parallel/grouped/keyless.rs`). Each morsel feeds set functions
+of its own as the plain aggregation does, by batch if its pipeline is
+read so, else a row at a time, and writes their states
+(`Accumulator::write_state`). The statement's thread merges each
+morsel's states as it comes, in morsel order, so each set function
+takes its values in the order it would alone (D293). It holds one
+set of states whatever the rows, so it takes nothing of the grant.
+It gives one row even of no rows [X3.135-1986 §5.23 GR1], and a null
+eliminated in a morsel warns as alone (01003).
+
+#### D681. A scan reading ahead pages all in the pool takes no lock
+
+A scan reading pages in order asks for the next window of them every
+half window (D30). Each asking took the lock of the pool's queue of
+requests and, under it, looked up every page of the window in its
+shard's map. A warm scan's pages are all in the pool, so it queued
+nothing, yet the threads of a scan run in parallel took turns at that
+one lock, every morsel starting its window anew.
+
+A scan now first looks for pages not in the pool, outside the lock,
+each by the hint of its frame (`disk/buffer/hits.rs`), a look of a few
+atomics, then by its shard's map if the hint misses. If none is
+missing it asks for nothing and the queue's lock is not taken; pages
+all in the pool are passed over though the window is full. The look
+is a guess, as a frame may be taken for another page at once, which
+only lets a page be read when wanted instead of ahead, as read-ahead
+never fails a read.
 
 #### D682. The system's threads are asked once, by the thread starting the first database
 

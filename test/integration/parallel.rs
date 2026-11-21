@@ -5,7 +5,7 @@
 //! statement sees its transaction's own writes.
 
 use turborel::db::{Database, Session};
-use turborel::error::Code;
+use turborel::error::{Code, SqlState};
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
@@ -385,5 +385,48 @@ fn groupings_of_few_then_many_groups_come_as_alone() {
             })
         };
         assert_eq!(ordered(alone), ordered(rows(&a, sql)), "{sql}, in parallel by batch");
+    }
+}
+
+/// The rows of `sql` and the warning it completed with, as read.
+type Warned = (Result<Vec<String>, Code>, Option<SqlState>);
+
+/// Verifies: [DESIGN] RULES.md D293, D680: a grouping of no grouping
+/// columns run in parallel, its set functions fed by morsel with no table
+/// of groups, gives the row run alone gives, of rows, of rows only null,
+/// and of none, and completes with the warning alone completes with, null
+/// value eliminated in set function, 01003, or none; and so does a
+/// grouping by a column, read a row at a time and by batch.
+#[test]
+fn set_functions_of_no_groups_come_and_warn_as_alone() {
+    let (_db, a) = tables();
+    a.run("CREATE TABLE E (K INTEGER, G INTEGER, N INTEGER, X DOUBLE PRECISION)").unwrap();
+    for first in (0..3000_i64).step_by(500) {
+        let values: Vec<String> = (first..first + 500).map(|k| format!("({k}, {}, NULL, NULL)", k % 5)).collect();
+        a.run(&format!("INSERT INTO E VALUES {}", values.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    let queries = [
+        "SELECT COUNT(*), COUNT(N), SUM(N), AVG(N), MIN(S), MAX(N) FROM {t}",
+        "SELECT SUM(K), COUNT(*), MIN(G) FROM {t}",
+        "SELECT SUM(N * 2), MAX(N + K), COUNT(S) FROM {t} WHERE G <> 4",
+        "SELECT COUNT(*), SUM(N), MAX(S) FROM {t} WHERE N > 5000",
+        "SELECT G, COUNT(*), SUM(N), MIN(S) FROM {t} GROUP BY G",
+        "SELECT G, COUNT(*), SUM(N) FROM {t} WHERE N > 5000 GROUP BY G",
+    ];
+    let of_e = ["SELECT COUNT(*), COUNT(N), SUM(N), AVG(X), MAX(N) FROM E", "SELECT G, SUM(N), COUNT(X) FROM E GROUP BY G"];
+    let all = ["R", "C"].iter().flat_map(|t| queries.iter().map(move |q| q.replace("{t}", t)));
+    for sql in all.chain(of_e.iter().map(|q| (*q).to_owned())) {
+        for batches in ["OFF", "ON"] {
+            exec(&a, &format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
+            exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
+            let alone: Warned = (rows(&a, &sql), a.warning());
+            parallel(&a);
+            let marked = a.physical_plan(&sql, &Params::new()).unwrap().contains("Parallel  (degree=4)");
+            let together: Warned = (rows(&a, &sql), a.warning());
+            assert!(marked, "{sql} is not run in parallel, batches {batches}");
+            assert!(alone.0.as_ref().is_ok_and(|r| !r.is_empty() || sql.contains("5000 GROUP")), "{sql}: {alone:?}");
+            assert_eq!(alone, together, "{sql}, batches {batches}");
+        }
     }
 }

@@ -3,7 +3,9 @@
 //! groups given out of their first rows' order or merged out of morsel
 //! order, a sort's ties taken from the later run, a probe's matches out of
 //! build order, a set operation's place left on its rows, a window's
-//! partitions not merged by their keys, a row lost at each morsel's
+//! partitions not merged by their keys, a grouping of no groups merging
+//! no morsel's states or feeding no batch, a read ahead of pages all in
+//! the pool queued under its lock, a row lost at each morsel's
 //! start, an index range's last part lost, a grant of the whole free
 //! budget, a part's operators reserving the budget again, and a column
 //! store's scan by batch run in parallel.
@@ -16,13 +18,15 @@ const SAME_ROWS: &str = "parallel::parallel_parts_give_the_rows_alone_gives";
 const PLANNER: &str = "parallel::the_planner_marks_only_large_parts";
 /// The test of index ranges split.
 const INDEX_RANGES: &str = "parallel::index_ranges_split_into_morsels";
+/// The test of set functions of no groups in parallel.
+const KEYLESS: &str = "parallel::set_functions_of_no_groups_come_and_warn_as_alone";
 /// The unit test of work grants.
 const GRANTS: &str = "spill::grant::tests::grants_halve_the_free_budget";
 /// The unit test of grants inside a statement's grant.
 const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 13] = [
+pub const PARALLEL: [Mutation; 16] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -152,5 +156,35 @@ pub const PARALLEL: [Mutation; 13] = [
         replacement: "if false {",
         integration: &[],
         unit: &[COVERED],
+    },
+    Mutation {
+        name: "parallel-keyless-unmerged",
+        package: Package::Core,
+        breaks: "a grouping of no groups run in parallel merges no morsel's states, as if it read no rows",
+        file: "src/exec/parallel/grouped/keyless.rs",
+        original: "acc.merge(state)?;",
+        replacement: "let _ = (acc, state);",
+        integration: &[KEYLESS],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-keyless-batch-unfed",
+        package: Package::Core,
+        breaks: "a grouping of no groups run in parallel by batch feeds its set functions none of a morsel's batches",
+        file: "src/exec/parallel/grouped/keyless.rs",
+        original: "fed(&batch, (&read.taken, runner), rows.as_ref().map(Sel::as_slice), states)?;",
+        replacement: "let _ = (batch, rows, read, &states);",
+        integration: &[KEYLESS],
+        unit: &[],
+    },
+    Mutation {
+        name: "read-ahead-pooled-locked",
+        package: Package::Core,
+        breaks: "a scan's read ahead of pages all in the pool takes the queue's lock and is refused once the window is full",
+        file: "src/disk/buffer/pool/ahead.rs",
+        original: "if missing.is_empty() {",
+        replacement: "if missing.is_empty() && false {",
+        integration: &[],
+        unit: &["disk::buffer::pool::ahead::tests::pages_asked_for_are_queued_for_the_reader"],
     },
 ];

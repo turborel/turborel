@@ -51,7 +51,8 @@ fn an_undo_reads_nothing_ahead() {
 /// asked for are queued, not read, at most its window (here 4 pages, of 32
 /// frames) queued at once, pages in the pool passed over; the reader's job
 /// reads them, each run of pages one after another in one read, and they
-/// are hits then; a scan that asked, ended, has what it asked passed over
+/// are hits then; pages all in the pool are passed over though no room is
+/// left (D681); a scan that asked, ended, has what it asked passed over
 /// and leaves room for others.
 #[test]
 fn pages_asked_for_are_queued_for_the_reader() {
@@ -65,6 +66,8 @@ fn pages_asked_for_are_queued_for_the_reader() {
     assert_eq!(pool.ahead_pages(&mut ahead, file, &[ids[0], ids[1], ids[2], ids[5], ids[6], ids[7]]), 5, "4 pages, 1 in the pool");
     assert_eq!(pool.counts().read_ahead, 0, "queued, not read");
     assert_eq!(pool.ahead_pages(&mut ahead, file, &[ids[7]]), 0, "no room left");
+    // D681: pages all in the pool are passed over at once, room or none.
+    assert_eq!(pool.ahead_pages(&mut ahead, file, &[ids[1]]), 1, "in the pool, passed over");
     assert_eq!(reader.read_queued(), 4);
     assert_eq!(pool.counts().read_ahead, 4);
     let misses = pool.counts().misses;

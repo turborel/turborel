@@ -99,6 +99,15 @@ impl BufferPool {
         self.hints.hit();
         Some(PageRef { content, _pin: None })
     }
+
+    /// \[DESIGN\] (RULES.md D681) Whether page `key` is in the frame its
+    /// hint names, as a look taking no lock tells: the frame holds it and
+    /// is not filling. A guess, as reading ahead may take it, since the
+    /// frame may be taken for another page at once.
+    pub(super) fn hinted_held(&self, key: Key) -> bool {
+        let Some(frame) = self.hints.frame_of(key).and_then(|index| self.frames.get(index)) else { return false };
+        !frame.loading.load(Ordering::Acquire) && frame.key() == Some(key)
+    }
 }
 
 #[cfg(test)]

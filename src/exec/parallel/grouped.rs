@@ -27,6 +27,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 
+mod keyless;
 mod waves;
 
 use super::batched::ByBatch;
@@ -121,6 +122,10 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resu
     let mut grouping = grouping;
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     let grouping = Arc::new(grouping);
+    if grouping.spec.groups.is_empty() && grouping.spec.seeds.is_empty() && !grouping.distinct {
+        let row = keyless::keyless(pipeline, &grouping, (db, tx, degree))?;
+        return Ok(Held::Kept(limit.keeping(Box::new(std::iter::once(Ok(row))))));
+    }
     let mut runs = if grouping.read.is_some() {
         let Held::Kept(runs) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
         runs

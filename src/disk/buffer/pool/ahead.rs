@@ -139,11 +139,17 @@ impl BufferPool {
         if window == 0 || Undoing::active() {
             return pages.len();
         }
+        // Of a scan of pages in the pool, as a warm one reads, nothing to
+        // ask: the queue's lock, which every scan's threads share, not taken.
+        let (taken, missing) = self.wanted(file, pages, window);
+        if missing.is_empty() {
+            return taken;
+        }
         let Some(reader) = self.queued.reader() else {
-            let (used, mut wanted) = self.wanted(file, pages, window);
-            wanted.sort_unstable();
-            self.read_listed(file, &wanted);
-            return used;
+            let mut missing = missing;
+            missing.sort_unstable();
+            self.read_listed(file, &missing);
+            return taken;
         };
         let (used, queued) = {
             let mut state = lock_builtin(&self.queued.state);
@@ -172,7 +178,8 @@ impl BufferPool {
                 break;
             }
             used = used.saturating_add(1);
-            if !self.mapped(Key { file, id }) {
+            let key = Key { file, id };
+            if !self.hinted_held(key) && !self.mapped(key) {
                 wanted.push(id);
             }
         }

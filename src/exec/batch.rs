@@ -306,7 +306,12 @@ fn read_all(read: &Read, aggs: &[AggCall], batches: Batches, runner: &Runner) ->
 /// Feeds `states`, as `taken` says, the rows of `batch` at `rows`, or all:
 /// each a vector at a time (`Accumulator::update_many`, `update_rows`);
 /// the warnings raised heard by `runner`.
-fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[u32]>, states: &mut [Box<dyn Accumulator>]) -> Result<()> {
+pub(in crate::exec) fn fed(
+    batch: &Batch,
+    (taken, runner): (&[Taken], &Runner),
+    rows: Option<&[u32]>,
+    states: &mut [Box<dyn Accumulator>],
+) -> Result<()> {
     for (state, take) in states.iter_mut().zip(taken) {
         match take {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
