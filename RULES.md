@@ -423,7 +423,7 @@ verification approach DO-178C expects (§8).
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
-| D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans |
+| D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
@@ -12181,7 +12181,7 @@ column store, a hash join, groupings of few and of many groups, a sort,
 each of those past a small work area, and a part on several threads.
 It then prints each weight in rows of the row store's scan, the unit of
 the planner's costs.
-#### D600. A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans
+#### D600. A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans
 
 A runtime filter (D369) went down a hash join's left operand alone, and
 through an inner hash join below it only to that join's left. Such a
@@ -12227,6 +12227,39 @@ as Zhu et al. (PVLDB 2017) order a scan's filters by their observed
 misses between batches (`runtime/ordered.rs`). Each judges only the rows
 those before it kept, so the one that drops the most spares the others
 the most work, and the order changes the work, never the rows kept.
+
+Operators run row by row take filters too, their rows gathered into
+batches (`batch/told.rs`). An index scan judges the filters of the rows
+it finds. Where its probe reads every entry of a B-tree whose key
+begins with the filter's column, an exact number, the probe reads only
+the entries between the least and greatest built keys, as a row out of
+them, or of a null key, the filter drops. An inner index join, not
+spatial, takes a filter of a column of its left operand to that
+operand, so a left row the filter drops probes nothing. An inner merge
+join takes a filter to the operand whose column it judges, and of its
+key to the other operand's key too. Each passes one only if the rest
+of its condition cannot raise. A whole sort keeps a row's columns, so a
+filter goes through it. Their rows come in an order the planner may rely
+on, which a hash join's left operand keeps only read row by row (D31),
+so a hash join tells them its filters where they build its right
+operand, or lie below a grouping by hash or a sort. A semi join tells the right operand it builds
+a filter of a left key, as the right key it equals, if its condition
+cannot raise, as a right row the filter drops matches only left rows it
+drops. An antijoin tells it none, as dropping a right row of a null key
+would change what NOT IN finds of every left row.
+
+A grouping takes a filter of a grouping column to its input, as a
+group the filter drops gives no row the join keeps (Yang et al.,
+"Predicate Transfer", CIDR 2024, §3). It does so only if every set
+function is COUNT, MIN or MAX, or it has none. These never raise. SUM
+and AVG can overflow, and a group the filter drops can overflow with
+the filters off. D15 forbids a filter that hides that exception, so a
+grouping of SUM or AVG keeps every row of its input. COUNT, MIN and MAX of
+a column warn of a null they eliminate [ISO/IEC 9075-2:2023 §10.9
+GR4b], so such a grouping judges the filter of its input's batches
+itself, and warns if a row it dropped held a null in a set function's
+column. A grouping of none, or of COUNT(*) alone, tells its input's
+scans the filter, so a scan below it skips what the filter drops.
 
 #### D675. A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run
 

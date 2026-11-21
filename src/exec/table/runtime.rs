@@ -150,6 +150,14 @@ impl RuntimeFilter {
         told
     }
 
+    /// The least and greatest built keys, exact numbers, as an index
+    /// scan bounds its probe by them (RULES.md D600).
+    pub(in crate::exec) fn bounds(&self) -> Option<(Value, Value)> {
+        let (least, most, scale) = self.range?;
+        let exact = |units: i64| Value::Exact(Decimal::new(i128::from(units), scale));
+        Some((exact(least), exact(most)))
+    }
+
     /// Whether it judges each row past its range: by its Bloom filter, of
     /// no more than `BLOOM_MAX_ROWS` built rows, or its key set.
     pub(in crate::exec) fn blooms(&self) -> bool {
