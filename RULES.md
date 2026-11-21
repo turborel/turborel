@@ -12312,6 +12312,12 @@ copy's execution. A copy takes its executions a group's rows at a time
 once its load writes groups, so each group is whole
 (`Session::load_rows`).
 
+A table writes its loads so only if it sets COLUMNSTORE.LOAD to GROUPS;
+by default, TREE, a load goes through its tree. Its rows are then
+frozen on the maintenance thread beside the load, off the load's time,
+where a group the load writes is on its own time. GROUPS suits a table
+read right after the load commits, its rows already in groups.
+
 Such a group is stamped with who made it. While its transaction is
 open, only that transaction sees its rows; once it commits, each
 snapshot at or after its commit does; once that commit is before every
@@ -12811,8 +12817,10 @@ plan that reads every table only through index probes is not: it is
 learned again only once a probe's estimated rows per probe, its table's
 rows over the distinct values of the columns it fixes, grows past ten
 times its figure as the plan was learned (`prepared/plans/grown.rs`).
-Until then each drift moves the rows it is measured from. A statement or
-leaf whose plans varied tries to learn again once a table it reads
+Until then each drift moves the rows it is measured from. A figure taken
+before its table had statistics is the whole table's rows, so a plan
+learned then is learned again once they are gathered, its figures taken
+anew. A statement or leaf whose plans varied tries to learn again once a table it reads
 drifts, so a plan that varied while its tables were small can be kept
 once they settle.
 
