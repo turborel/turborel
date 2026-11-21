@@ -12289,6 +12289,12 @@ entered before is under way (`reclaim.rs`). So the write starts from the
 leaf only while the stamp is the one the read saw, and descends again
 otherwise.
 
+A read by key that keeps its leaf for the next (`get_near`, `near.rs`)
+gives a write the same start: `replace_if_near` writes from the leaf the
+read left, on the same stamp terms. That leaf may have been left by a
+read of another key, so a write refused from it descends once before it
+answers.
+
 #### D511. A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first
 
 The least and greatest values of 1,024 rows skip a part only if no row

@@ -148,3 +148,35 @@ fn descents_read_inner_nodes_from_current_copies() {
         assert_eq!(tree.get(&key(k)).unwrap(), Some(VALUE.to_vec()), "key {k}");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D500, D446: a replace from the leaf a
+/// `get_near` left starts there, with no descent: from the leaf of the key
+/// read before, the write moves right to the key's own leaf; it compares
+/// the value under the leaf's lock; and with no leaf left, or a leaf
+/// right of the key's, it descends.
+#[test]
+fn a_replace_starts_at_the_leaf_a_read_left() {
+    let (tree, _scratch) = rows("near-replace", 300);
+    let (first, last) = (key(1), key(300));
+    assert_ne!(leaf_of(&tree, 1), leaf_of(&tree, 300));
+    let mut near = Near::default();
+    assert!(tree.get_near(&first, &mut near).unwrap());
+    let moves = tree.counts().right_moves;
+    let mut newer = VALUE;
+    newer[0] = 8;
+    assert!(tree.replace_if_near(&first, (&VALUE, &newer), &near).unwrap());
+    assert_eq!(tree.counts().right_moves, moves, "its own leaf, no move");
+    assert!(!tree.replace_if_near(&first, (&VALUE, &newer), &near).unwrap(), "the value compared");
+    // Left at the leaf of key 1, the write of the last key moves right.
+    assert!(tree.replace_if_near(&last, (&VALUE, &newer), &near).unwrap());
+    assert!(tree.counts().right_moves > moves, "moved right");
+    assert_eq!(tree.get(&last).unwrap(), Some(newer.to_vec()));
+    // Left right of the key's leaf, or by no read, it descends.
+    let mut right = Near::default();
+    assert!(tree.get_near(&last, &mut right).unwrap());
+    assert!(tree.replace_if_near(&key(2), (&VALUE, &newer), &right).unwrap());
+    assert!(tree.replace_if_near(&key(3), (&VALUE, &newer), &Near::default()).unwrap());
+    for k in [2, 3] {
+        assert_eq!(tree.get(&key(k)).unwrap(), Some(newer.to_vec()), "key {k}");
+    }
+}

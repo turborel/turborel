@@ -8,6 +8,7 @@ use super::{BLinkTree, Path, Slot, Split, Target};
 use crate::disk::buffer::Owned as NodeLock;
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
+use crate::storage::Near;
 
 /// What a write asks of the entry it finds.
 #[derive(Clone, Copy)]
@@ -88,6 +89,30 @@ impl BLinkTree {
         }
         self.fits(key, value)?;
         Ok(matches!(self.write_from(&found.path, found.leaf, (key, value), Mode::ReplaceIf(expected))?, Written::Done(..)))
+    }
+
+    /// As `replace_if`, from the leaf `near` holds after a `get_near` of
+    /// `key` (`near.rs`): it is still in the tree while no leaf was retired
+    /// since, split or not, which the write moves right across; else a
+    /// descent of its own. A leaf left by a read of another key may not
+    /// hold `key`, so a write refused from it descends too.
+    ///
+    /// # Errors
+    ///
+    /// As `insert`.
+    pub fn replace_if_near(&self, key: &[u8], (expected, value): (&[u8], &[u8]), near: &Near) -> Result<bool> {
+        let _guard = self.epochs.guard();
+        let Some((leaf, _)) = near.leaf.filter(|&(_, stamp)| stamp == self.epochs.stamp()) else {
+            return self.replace_if(key, expected, value);
+        };
+        self.fits(key, value)?;
+        let Written::Done(_, into) = self.write_from(&Path::default(), PageId(leaf), (key, value), Mode::ReplaceIf(expected))? else {
+            return self.replace_if(key, expected, value);
+        };
+        if let Some(row) = self.row_of(key) {
+            super::hints::note(row, into.0);
+        }
+        Ok(true)
     }
 
     /// Adds `key` with `value`; whether it did: not if `key` is already in

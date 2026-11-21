@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 19] = [
+pub const BTREE: [Mutation; 20] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -194,5 +194,15 @@ pub const BTREE: [Mutation; 19] = [
         replacement: "at.checked_sub(middle.saturating_add(1)).and(Some(0))",
         integration: &[],
         unit: &["engine::tree::node::tests::a_run_split_moved_left_keeps_the_new_entry_marked"],
+    },
+    Mutation {
+        name: "btree-near-replace-descends",
+        package: Package::Core,
+        breaks: "a replace after a read by key descends again, not starting at the leaf the read left",
+        file: "src/engine/tree/write.rs",
+        original: "near.leaf.filter(|&(_, stamp)| stamp == self.epochs.stamp())",
+        replacement: "near.leaf.filter(|_| false)",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_replace_starts_at_the_leaf_a_read_left"],
     },
 ];
