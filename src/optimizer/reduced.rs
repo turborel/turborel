@@ -113,6 +113,7 @@ impl Chain {
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Values { .. }

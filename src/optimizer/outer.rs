@@ -63,6 +63,7 @@ impl Rule for PushFilterIntoOuterJoin {
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Project { .. }
             | LogicalPlan::Distinct { .. }

@@ -18,6 +18,12 @@ use crate::logical::Limit;
 use crate::physical::{JoinProbe, Plan, Preserved};
 use std::sync::Arc;
 
+/// Whether `other` is a DISTINCT of an input of `input`'s shape.
+fn same_distinct(input: &Plan, other: &Plan) -> bool {
+    let Plan::Distinct { input: input2, .. } = other else { return false };
+    same_shape(input, input2)
+}
+
 /// Whether `one` and `other` have one shape, as the module says.
 pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
     match one {
@@ -36,10 +42,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             let Plan::Aggregate { groups: groups2, aggs: aggs2, seeds: seeds2, input: input2, .. } = other else { return false };
             groups == groups2 && aggs.len() == aggs2.len() && seeds.len() == seeds2.len() && same_shape(input, input2)
         }
-        Plan::Distinct { input, .. } => {
-            let Plan::Distinct { input: input2, .. } = other else { return false };
-            same_shape(input, input2)
-        }
+        Plan::Distinct { input, .. } => same_distinct(input, other),
         Plan::Sort { keys, input, .. } => {
             let Plan::Sort { keys: keys2, input: input2, .. } = other else { return false };
             keys == keys2 && same_shape(input, input2)
@@ -57,6 +60,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
         | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }

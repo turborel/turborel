@@ -148,6 +148,7 @@ impl Filling<'_> {
             Plan::MergeJoin(_)
             | Plan::RangeJoin(_)
             | Plan::SemiJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::OuterJoin { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }

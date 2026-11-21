@@ -49,6 +49,9 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<usize> {
         Plan::HashJoin { left, .. } => stream::layout(left, db).filter(|&(_, width)| column < width).map(|_| column),
         // A semi join's columns are its left's (RULES.md D540).
         Plan::SemiJoin(s) => stream::layout(&s.left, db).filter(|&(_, width)| column < width).map(|_| column),
+        // A mark join gives every left row on, its columns the left's then
+        // the mark (RULES.md D643).
+        Plan::MarkJoin(m) => stream::layout(&m.left, db).filter(|&(_, width)| column < width).map(|_| column),
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
@@ -125,6 +128,8 @@ pub(super) fn reaches(plan: &Plan, column: usize, db: &State) -> bool {
             left
         } else if let Plan::SemiJoin(s) = at {
             &s.left
+        } else if let Plan::MarkJoin(m) = at {
+            &m.left
         } else {
             return false;
         };

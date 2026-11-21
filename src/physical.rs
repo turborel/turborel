@@ -50,9 +50,11 @@ mod probe;
 mod project;
 mod range;
 pub use range::{Bound, Pruned, RangeJoin};
+mod mark;
 mod raising;
 mod recognized;
 mod semi;
+pub use mark::{MarkJoin, MarkMethod};
 pub use semi::{SemiJoin, SemiMethod};
 mod shown;
 pub(crate) mod spatial;
@@ -273,6 +275,8 @@ pub enum Plan {
     RangeJoin(Box<RangeJoin>),
     /// \[DESIGN\] A semi join or an antijoin (`physical/semi.rs`, RULES.md D540).
     SemiJoin(Box<SemiJoin>),
+    /// \[DESIGN\] A mark join (`physical/mark.rs`, RULES.md D642).
+    MarkJoin(Box<MarkJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
     Aggregate {
         /// The grouping columns of `input`.
@@ -524,6 +528,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
             LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_join((*anti, cond), (left, right), want),
+            LogicalPlan::MarkJoin(m) => self.mark_join(m, want),
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
             LogicalPlan::Distinct { input } => self.distinct(input, want),

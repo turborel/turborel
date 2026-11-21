@@ -77,7 +77,8 @@ behind it, and each can be replaced or added to.
   rather than once for each row.
 - [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
   for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
-  and joins under MIN and MAX reduced to semi joins.
+  and joins under MIN and MAX reduced to semi joins; mark joins for
+  those under OR, in CASE and in select lists.
 - Joins removed on unique and foreign keys, filters and FETCH FIRST moved
   into set operations and below windows, and parts of conditions that can
   raise computed on the table they read, so joins over them are reordered.

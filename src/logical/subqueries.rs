@@ -123,6 +123,7 @@ impl LogicalPlan {
             LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } | LogicalPlan::SemiJoin { cond, .. } => {
                 out = cond_subqueries(cond, bodies);
             }
+            LogicalPlan::MarkJoin(m) => m.conds().for_each(|c| out.extend(cond_subqueries(c, bodies))),
             LogicalPlan::Project { exprs, .. } => exprs.iter().for_each(|e| expr_subqueries(e, &mut out, bodies)),
             LogicalPlan::Aggregate { aggs, .. } => {
                 for a in aggs {

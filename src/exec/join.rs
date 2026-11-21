@@ -9,9 +9,11 @@
 //! each left row probing an index (`exec/join/indexed.rs`); a merge join
 //! holds the run of right rows of one key (`exec/join/merge.rs`); a range
 //! join holds its right operand sorted (`exec/join/range.rs`); a semi
-//! join or an antijoin gives each left row once, or none (`exec/join/semi.rs`).
+//! join or an antijoin gives each left row once, or none (`exec/join/semi.rs`);
+//! a mark join each with its mark (`exec/join/mark.rs`).
 
 mod indexed;
+mod mark;
 mod merge;
 mod outer;
 mod partitioned;
@@ -21,6 +23,8 @@ mod semi;
 
 pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
+pub(super) use mark::mark;
+pub(in crate::exec) use mark::{Marker, Side as MarkSide};
 pub(super) use merge::merged;
 pub(super) use outer::outer;
 pub(in crate::exec) use outer::{Holding, Joining, Prepared, Spec, prepared, spec_of};

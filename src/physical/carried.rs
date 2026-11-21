@@ -25,6 +25,7 @@ impl Plan {
             Plan::MergeJoin(m) => Some(m.est),
             Plan::RangeJoin(r) => Some(r.est),
             Plan::SemiJoin(s) => Some(s.est),
+            Plan::MarkJoin(m) => Some(m.est),
             Plan::Project { input, .. } | Plan::Sort { input, .. } => input.est(),
             Plan::Parallel(p) => p.input.est(),
             Plan::Counted(c) => c.input.est(),

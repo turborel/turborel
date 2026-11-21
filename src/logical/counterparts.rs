@@ -36,6 +36,11 @@ impl LogicalPlan {
             | LogicalPlan::Sort { input, .. }
             | LogicalPlan::Limit { input, .. }
             | LogicalPlan::SemiJoin { left: input, .. } => input.counterparts(),
+            LogicalPlan::MarkJoin(m) => {
+                let mut out = m.left.counterparts();
+                out.push(None);
+                out
+            }
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => {
                 let mut out = left.counterparts();
                 out.extend(right.counterparts());

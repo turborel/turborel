@@ -43,6 +43,10 @@ impl Plan {
                 each(&mut s.left);
                 each(&mut s.right);
             }
+            Plan::MarkJoin(m) => {
+                each(&mut m.left);
+                each(&mut m.right);
+            }
             Plan::Product { left, right, .. }
             | Plan::HashJoin { left, right, .. }
             | Plan::OuterJoin { left, right, .. }

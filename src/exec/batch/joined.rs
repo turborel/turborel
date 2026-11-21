@@ -24,6 +24,7 @@
 //! rows in it.
 
 mod held;
+mod mark;
 mod nested;
 mod outer;
 mod pairs;
@@ -62,6 +63,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
         | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -90,6 +92,9 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
 pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     if let Plan::SemiJoin(s) = plan {
         return semi_layout(s, db);
+    }
+    if let Plan::MarkJoin(m) = plan {
+        return mark::layout(m, db);
     }
     let (left, right) = operands(plan)?;
     let (mut columns, left_width) = stream::layout(left, db)?;
@@ -147,6 +152,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
         | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -192,6 +198,9 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
     if let Plan::SemiJoin(_) = plan {
         return Ok(Box::new(checked(semi::told_batches(plan, deferred, (db, tx))?, stop)));
     }
+    if let Plan::MarkJoin(_) = plan {
+        return Ok(Box::new(checked(mark::told_batches(plan, deferred, (db, tx))?, stop)));
+    }
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))
 }
 
@@ -205,6 +214,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         Plan::HashJoin { .. } => hash_batches,
         Plan::OuterJoin { .. } => outer_batches,
         Plan::SemiJoin(_) => semi::semi_batches,
+        Plan::MarkJoin(_) => mark::mark_batches,
         Plan::SeqScan { .. }
         | Plan::Nearest(_)
         | Plan::IndexScan { .. }
@@ -384,6 +394,7 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
         | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }

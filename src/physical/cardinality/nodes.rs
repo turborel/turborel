@@ -55,6 +55,7 @@ impl Estimates<'_> {
             LogicalPlan::Product { .. } => self.chain(None, plan, depth),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_at((*kind, cond), (left, right), next),
             LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_at((*anti, cond), (left, right), next),
+            LogicalPlan::MarkJoin(m) => self.mark_at(m, next),
             LogicalPlan::Aggregate { groups, seeds, input, .. } => self.grouped(groups, seeds.len(), input, next),
             LogicalPlan::Distinct { input } => self.distinct_at(input, next),
             LogicalPlan::SetOp { op, all, left, right, .. } => self.combined((*op, *all), (left, right), next),
