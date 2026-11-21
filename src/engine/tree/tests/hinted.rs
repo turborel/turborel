@@ -122,3 +122,29 @@ fn a_noted_leaf_gone_is_not_trusted() {
         assert!(!read_noted(&tree, k, gone).1, "key {k}: the page is another tree's or none");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D502: a descent keeps copies of the inner
+/// nodes it reads and reads them again from the copies, finding what it
+/// found through their latches; a split of a leaf changes its parent, so
+/// the copy taken before is not current, and a read gives the node as its
+/// latch does, the keys moved found.
+#[test]
+fn descents_read_inner_nodes_from_current_copies() {
+    let (tree, _scratch) = rows("inner-copies", 2_000);
+    assert!(tree.height().unwrap() > 1);
+    let root = tree.root.load(Ordering::Acquire);
+    let read_root = || inner::read(&tree.pool, (tree.file, root), None, true).unwrap();
+    inner::keep(&read_root(), (tree.file, root));
+    assert!(matches!(read_root(), inner::Read::Copied(_)), "kept, and current");
+    let before = tree.pool.read_stamped(tree.file, root, None).unwrap().1;
+    for k in (1..=2_000).step_by(97) {
+        assert_eq!(tree.get(&key(k)).unwrap(), Some(VALUE.to_vec()), "key {k}");
+    }
+    assert!(tree.pool.unchanged(tree.file, root, before), "reads change nothing");
+    fill_from(&tree, 2_001, 4_000);
+    assert!(!tree.pool.unchanged(tree.file, root, before), "the root changed as leaves split");
+    assert_eq!(&read_root()[..], &tree.pool.read(tree.file, root).unwrap()[..]);
+    for k in (1..=4_000).step_by(89) {
+        assert_eq!(tree.get(&key(k)).unwrap(), Some(VALUE.to_vec()), "key {k}");
+    }
+}

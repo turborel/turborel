@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 8] = [
+pub const BTREE: [Mutation; 10] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -84,5 +84,25 @@ pub const BTREE: [Mutation; 8] = [
         replacement: "        if let Some(key) = self.key.as_ref() {",
         integration: &[],
         unit: &["index::blink::tests::a_key_is_decoded_once_for_its_entries"],
+    },
+    Mutation {
+        name: "btree-version-not-moved",
+        package: Package::Core,
+        breaks: "a frame latched exclusively keeps its version, so a copy of a page written since is taken as current",
+        file: "src/disk/buffer.rs",
+        original: "        self.version.fetch_add(1, Ordering::SeqCst);",
+        replacement: "        self.version.load(Ordering::SeqCst);",
+        integration: &[],
+        unit: &["disk::buffer::versions::tests::a_stamp_holds_until_its_frame_is_latched_exclusively"],
+    },
+    Mutation {
+        name: "btree-copy-unchecked",
+        package: Package::Core,
+        breaks: "a descent reads an inner node from a copy whatever its frame's version",
+        file: "src/engine/tree/inner.rs",
+        original: "c.file == file && c.id == id && pool.unchanged(file, id, c.stamp)",
+        replacement: "c.file == file && c.id == id",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::descents_read_inner_nodes_from_current_copies"],
     },
 ];

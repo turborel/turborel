@@ -51,6 +51,7 @@
 mod counts;
 mod cuts;
 pub(crate) mod hints;
+mod inner;
 mod load;
 mod near;
 mod node;
@@ -356,8 +357,14 @@ impl BLinkTree {
         let tally = path.tallied.then_some(&self.tally);
         tally.inspect(|t| t.lookup());
         loop {
-            let page = self.pool.read_tallied(self.file, id.0, tally)?;
+            // An inner node above the level asked for may be read from the
+            // thread's copy; a root of no known level only for a leaf.
+            let copied = expected.map_or(level == 0, |l| l > level);
+            let page = inner::read(&self.pool, (self.file, id.0), tally, copied)?;
             let node = Node::parse(&page)?;
+            if node.level > 0 {
+                inner::keep(&page, (self.file, id.0));
+            }
             if expected.is_some_and(|l| l != node.level) || node.level < level {
                 return Err(corrupt(&format!("node {} is not at the level its parent says", id.0)));
             }

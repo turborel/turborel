@@ -283,7 +283,7 @@ impl BufferPool {
     /// lets it go.
     fn filled_ahead(&self, key: Key, claim: Claim, content: Vec<u8>) {
         let Ok(frame) = self.frame(claim.frame) else { return };
-        *frame.content.write().unwrap_or_else(PoisonError::into_inner) = content;
+        *frame.latched() = content;
         frame.dirty.store(false, Ordering::Release);
         frame.ready();
         self.eviction.accessed(claim.frame);

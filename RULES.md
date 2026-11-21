@@ -391,6 +391,7 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
 | D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
+| D502 | Each frame keeps a version word, and descents read inner nodes from per-thread copies it validates |
 
 ### The project
 
@@ -11017,6 +11018,43 @@ The check is unchanged in what it keeps, and cheaper (`exec/entries.rs`,
 - The probe is copied only by a search whose range is not exact, the one
   case that checks entries against it. The key's types are shared by
   every search of the index.
+
+#### D502. Each frame keeps a version word, and descents read inner nodes from per-thread copies it validates
+
+Every descent took each node's latch shared, the root's included, and a
+shared take writes the latch's word. So every thread reading a tree wrote
+one cache line, the root's latch, and the threads queued on it as they
+grew in number.
+
+Each frame of the buffer pool now keeps a version word. Whatever takes
+the frame's latch exclusively moves the version on, as soon as it holds
+the latch and before it changes a byte or gives the frame another page
+(`disk/buffer/versions.rs`). A page read under its latch can be stamped
+with its frame and the version then. Each thread keeps copies of up to
+sixteen inner nodes it read, each with its stamp, and a descent reads an
+inner node from its copy while the frame holds the page at that version
+(`engine/tree/inner.rs`). This follows Leis et al., "The ART of Practical
+Synchronization", 2016, section 3, and Leis et al., "LeanStore", 2018,
+section 4, which validate a version the same way over the node itself.
+Safe Rust reads no page while a writer may change it, so the copy stands
+in for the node.
+
+The semantics hold for these reasons.
+
+- A copy is the node's content when its frame's version still reads as
+  stamped. A write that took the latch before the stamp was taken
+  finished before it, as the stamp is taken under the latch shared. One
+  that took it after moved the version on first.
+- A write that takes the latch as a descent checks the copy is ordered
+  after the descent's read, as a write that waited for the descent's
+  latch would be. B-link descents allow a parent read before its child
+  split, and move right (Lehman and Yao 1981, section 4).
+- A page freed is retired by the epochs of D31 first, and its frame is
+  latched exclusively as it is emptied or reused, so no copy of it is
+  current after. A pool numbers itself, so a copy of another pool's page
+  is never taken for one of its own.
+- Leaves are not copied. A leaf's read latches it, so what a reader finds
+  in a leaf is as before.
 
 ## 2. Project layout
 

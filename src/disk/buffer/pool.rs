@@ -44,11 +44,13 @@ type Latch<'a> = RwLockWriteGuard<'a, Vec<u8>>;
 
 /// `frame` latched exclusively, if no one holds its latch now.
 fn try_latch(frame: &Frame) -> Option<Latch<'_>> {
-    match frame.content.try_write() {
-        Ok(latch) => Some(latch),
-        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-        Err(TryLockError::WouldBlock) => None,
-    }
+    let latch = match frame.content.try_write() {
+        Ok(latch) => latch,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return None,
+    };
+    frame.version.fetch_add(1, Ordering::SeqCst);
+    Some(latch)
 }
 
 /// Locks a shard's map exclusively. The pool holds it over no plug-in
@@ -95,7 +97,7 @@ impl BufferPool {
             return Err(SqlError::new(Code::Api, "[DESIGN] a buffer pool needs at least one frame"));
         }
         Ok(BufferPool {
-            frames: (0..frames).map(|_| Frame::empty()).collect(),
+            frames: (0..frames).map(Frame::empty).collect(),
             shards: (0..SHARDS).map(|_| Shard::default()).collect(),
             empty: Mutex::new((0..frames).rev().collect()),
             sources: RwLock::new(Vec::new()),
@@ -103,6 +105,7 @@ impl BufferPool {
             counters: Counters::default(),
             hints: super::hits::Hints::new(frames),
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
+            number: super::versions::next_pool(),
             queued: Queued::default(),
             _reservation: None,
         })
@@ -263,7 +266,7 @@ impl BufferPool {
         }
         let (frame, missed) = self.hold(key, Fill::Read)?;
         let pin = Pin(frame);
-        Ok((PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), _pin: Some(pin) }, missed))
+        Ok((PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), frame, _pin: Some(pin) }, missed))
     }
 
     /// Holds page `id` of pager file `file` for writing; it is dirty from
@@ -302,7 +305,7 @@ impl BufferPool {
 
     fn held_for_writing(frame: &Frame) -> PageMut<'_> {
         let pin = Pin(frame);
-        let content = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+        let content = frame.latched();
         frame.dirty.store(true, Ordering::Release);
         PageMut { content, _pin: pin }
     }
@@ -453,7 +456,7 @@ impl BufferPool {
                 return Err(e);
             }
         }
-        *frame.content.write().unwrap_or_else(PoisonError::into_inner) = content;
+        *frame.latched() = content;
         frame.dirty.store(fill == Fill::Empty, Ordering::Release);
         frame.ready();
         self.eviction.accessed(claim.frame);
@@ -465,7 +468,7 @@ impl BufferPool {
     /// the error returned.
     fn emptied(&self, key: Key, claim: Claim) -> Result<()> {
         let frame = self.frame(claim.frame)?;
-        let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
+        let old_content = mem::take(&mut *frame.latched());
         if let Some(old) = claim.write_back {
             if let Err(e) = self.write_back(old, &old_content) {
                 self.restore(claim.frame, key, old, old_content);
@@ -504,7 +507,7 @@ impl BufferPool {
         if let Ok((mut map, mut old_map)) = self.maps(key, old) {
             map.remove(&key);
             old_map.as_mut().unwrap_or(&mut map).insert(old, index);
-            let mut latch = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+            let mut latch = frame.latched();
             frame.set_key(Some(old));
             *latch = content;
         }
@@ -518,7 +521,7 @@ impl BufferPool {
         let Some(frame) = self.frames.get(index) else { return };
         if let Ok(mut map) = self.map(key) {
             map.remove(&key);
-            let _latch = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+            let _latch = frame.latched();
             frame.set_key(None);
             lock_builtin(&self.empty).push(index);
         }
