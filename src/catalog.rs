@@ -491,6 +491,9 @@ pub trait Catalog: Send + Sync {
     fn put_routine(&mut self, routine: SqlRoutineDesc);
     /// The SQL-invoked routine of this specific name, if any.
     fn routine(&self, specific: &QualifiedName) -> Option<&SqlRoutineDesc>;
+    /// As `routine`, shared, so a statement that invokes it holds it
+    /// without a copy.
+    fn routine_shared(&self, specific: &QualifiedName) -> Option<std::sync::Arc<SqlRoutineDesc>>;
     /// Whether it has an SQL-invoked routine: none, so a routine
     /// invocation costs the lookup of none.
     fn any_routines(&self) -> bool {

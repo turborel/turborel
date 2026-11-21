@@ -7,8 +7,12 @@ use super::area::commands;
 use super::{Completion, Direct, Session};
 use crate::ast::AccessMode;
 use crate::error::{Code, Result, fail};
-use crate::lexer::{Tok, lex};
+use crate::graph::algo::SCHEMA;
+use crate::lexer::{Tok, lex, lex_head};
 use crate::parser::{CANCEL, Parser, begins_word_statement, explained};
+
+/// The tokens that tell a statement apart, at most (`explained`).
+const HEAD: usize = 4;
 
 impl Session {
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1, §20.2] A `<direct SQL
@@ -25,7 +29,15 @@ impl Session {
     /// in a transaction; SQLCODE -104 for a schema of another authorization
     /// identifier; -917 for one in a READ ONLY transaction.
     pub fn direct(&self, sql: &str) -> Result<Direct> {
-        let tokens = lex(sql)?;
+        // Told apart by its first tokens, lexed whole only as it is parsed;
+        // but a property statement, whose parenthesis may be long, is read
+        // all here.
+        let mut tokens = lex_head(sql, HEAD)?;
+        if let Some(Tok::Identifier(w)) = tokens.first().map(|t| &t.tok)
+            && w == SCHEMA
+        {
+            tokens = lex(sql)?;
+        }
         let mut words = tokens.iter().map(|t| &t.tok);
         let (first, second) = (words.next(), words.next());
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
