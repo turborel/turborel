@@ -373,6 +373,9 @@ verification approach DO-178C expects (§8).
 | D378 | An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock |
 | D379 | A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read |
 | D380 | A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel |
+| D381 | A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree |
+| D382 | A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff |
+| D383 | An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count |
 | D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
@@ -10515,6 +10518,146 @@ holds each morsel's run as the serial one holds a stream's (D365), the
 rows past the greatest held not taken, so only those the run keeps are
 sorted and made. Of more, nearly every row of a morsel is taken, so the
 morsel is sorted whole by its keys and only its first rows made.
+
+#### D381. A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree
+
+A statistics pass keeps, of each column, up to 32 values that its sample
+holds at least twice and at least one and a half times as often as the
+average distinct value, each with the share of the table's rows it holds
+(`stats/common.rs`). The histogram is drawn from the sample without them,
+an end-biased histogram (Ioannidis and Poosala, SIGMOD 1995). An equality
+with a common value keeps its share, and with any other value the rest of
+the rows shared among the other distinct values. An order comparison
+keeps the common values on its side and the histogram's share of the
+rest. A histogram alone gives every value of a bucket its average share,
+so a value held by half a table was estimated as rare as any other, and
+an index was read for it. The sample is sorted, so a value's repeats are
+one run and the list costs no second pass. A string the sample cuts is
+never common, since no value equals the part kept.
+
+A sampled pass reads runs of 128 row ids, and rows near in a table often
+share a value. Each value's repeats within one run count once before its
+distinct values are scaled (Chaudhuri, Das and Srivastava, SIGMOD 2004),
+so a clustered column is not taken for one of few values.
+
+The row store answers with the rows written since the pass and the rows
+it holds now (`stats/since.rs`). Once rows were written, the least and
+greatest values are no longer bounds, so a range past the greatest keeps
+at least what an equality would. A column whose greatest value rose at
+each of the last two passes that found it changed grows with insertion,
+and a range past it keeps the share of rows written since. A pass that
+finds the same greatest value, as one soon after another may, keeps the
+count. A column whose distinct values
+were within 5% of its rows is a key, and its distinct values grow with
+the rows.
+
+A LIKE whose constant pattern begins with characters keeps the strings
+from that prefix up to the next one, by the common values and the
+histogram, never less than an equality with the prefix keeps, and a
+part of them if the rest of the pattern asks more than `%`
+(`physical/estimate/like.rs`): the share of the sampled strings with the
+prefix that the whole pattern keeps, if the sample holds at least 8 of
+them, as no synopsis tells how often characters follow others, else a
+quarter. Within a histogram's bucket a string is placed by its first
+four characters past the bucket's bounds' common prefix, read as a
+fraction whose digits are each character's place among those the
+bounds span, widened to the digits or the letters when the bounds' lie
+among them, so a prefix narrower than a bucket keeps its part of it
+(`stats/parts.rs`).
+
+A B-link index counts the entries of a range of keys it need not check
+up to 128 of them. Past that it descends to each bound, taking at each
+node the share of its children left of the child it follows, and gives
+the difference of the two shares times its live entries
+(`engine/tree/estimate.rs`), never fewer than it counted (D302). A range
+of any size is so estimated in a few pages, where counting up to 1,000
+entries read up to eight leaves and gave nothing past them. Within a
+B-tree's factor of two in how full its nodes are, the estimate is within
+one and a half times the entries on trees filled in key order or not.
+
+The plug-in STATISTICS payload carries each column's common values at
+format 1, none from a plug-in that sends none.
+
+#### D382. A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff
+
+A statistics pass keeps up to 1,024 whole rows by Vitter's Algorithm R
+over the rows it reads, from a fixed seed (`stats/sample.rs`). A string
+is kept as its first 256 characters and a large object as an empty one.
+The sample is in memory only and is neither sent to nor asked of
+plug-ins.
+
+The planner estimates a table's conjuncts together
+(`physical/estimate/conjunction.rs`). Those on one column are one range,
+so a BETWEEN keeps the rows between its bounds and not the product of
+each half. Equalities with constants whose columns an index's key
+answers are one factor (D383). A conjunction of two or more conjuncts
+over two or more columns, or with a conjunct no column's synopsis
+answers, is evaluated on the sample when each of its conjuncts can be,
+deterministic and of no subquery, routine, sequence value or `?` not yet
+given (`physical/estimate/sampled.rs`). Of n rows, k kept give k/n when
+k is at least 8 or the sample is the whole table, which it is of a table
+of up to 1,024 rows. Fewer give the synopses' estimate, at most
+(k + 3(1 - f))/n of a sample of the share f of the table: the rule of
+three, the bound an empty sample allows (Hertzschuch et al., SIGMOD
+2021), narrowed as the sample nears the whole table. The sample costs at
+most 1,024 evaluations however large the table, so small tables are
+sampled too, where the sample is most of the table and a conjunction
+that keeps no row is estimated to keep none. The sample remembers what
+was asked of it, up to 1,024 answers, each kept under a fingerprint of
+the conjuncts' columns, operators and constants in any order, hashed by
+XXH3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
+statement it plans again: it never changes, so an answer holds until the
+next pass replaces it. An index remembers its distinct keys' estimate
+until a register of its sketch is raised. Of fewer, equalities of two or more
+columns with constants not common take the columns' joint distinct
+values in the sample instead, scaled to the table as a column's are
+(`physical/estimate/joint.rs`): a combination the sample holds keeps the
+rows present over them, where the product of each column's share takes
+every pair as possible and falls ten times and more below the truth of
+correlated columns. A combination the sample does not hold keeps, by
+Good and Turing, the share of rows of combinations seen once among the
+combinations never seen, so values that never go together, of columns
+whose every combination the sample saw more than once, keep no row. A
+row whose evaluation fails counts as
+kept and nothing is raised, as planning raises nothing of a condition
+the statement evaluates (D15). The sample answers a city and its country,
+a column compared with another and a pattern with a leading wildcard,
+which synopses of single columns cannot.
+
+The factors left combine by exponential backoff, the most selective
+whole, the next by its square root, the third its fourth root and the
+fourth its eighth, the rest ignored (`physical/estimate/backoff.rs`).
+Multiplying them is right only of independent columns, and conjuncts
+written together seldom are, so an estimate by the product falls below
+the truth by every correlation, and a join ordered on it multiplies the
+error. Backoff errs between the product and the most selective conjunct
+alone.
+
+A filter's conjuncts are grouped by the scan their columns come from,
+and a filter over a table's access takes its conjuncts the same way, so
+the plan's estimate and the join enumeration's agree (D370). The sample
+costs at most 1,024 evaluations of each conjunct of a conjunction it
+estimates, and is never asked of a filter of one conjunct a synopsis
+answers, nor of a probe of a unique key, so point queries never pay it.
+
+Rejected. A per-column sketch kept as rows are written is the most
+accurate distinct count but costs a hash of each written column on every
+insert and update. Multi-dimensional histograms are costly to build and
+poor beyond two columns, where the sample answers any number.
+
+#### D383. An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count
+
+An index's sketch counts every key written to it (`index/stats.rs`), so
+its distinct keys are the distinct combinations of its key's columns,
+correlated columns counted once. The state answers
+`Statistics::group_distinct` from the table's indexes of plain columns
+(`stats/keyed.rs`): of columns that are exactly an index's key, its
+distinct keys, and of columns holding a unique key's, the rows. A
+column alone in an index's key takes the index's count for its distinct
+values, which saw every key where a sample scales from some. An
+equality of each of an index's columns with a constant then keeps one
+row in its distinct keys and not the product of each column's share.
+Each index's count is taken once for the statistics one planning asks.
 
 #### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
 

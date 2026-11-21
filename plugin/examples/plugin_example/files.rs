@@ -178,5 +178,5 @@ fn column<'a>(values: impl Iterator<Item = &'a Value>) -> ColumnAnswer {
     let bounds = present.iter().copied().min_by(least).cloned().zip(present.iter().copied().max_by(least).cloned());
     let share = |n: usize| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
     let nulls = if all.is_empty() { 0.0_f64 } else { (share(all.len()) - share(present.len())) / share(all.len()) };
-    ColumnAnswer { distinct: share(distinct.len()), nulls, bounds, histogram: Vec::new(), frequencies: None }
+    ColumnAnswer { distinct: share(distinct.len()), nulls, bounds, histogram: Vec::new(), frequencies: None, common: Vec::new() }
 }
