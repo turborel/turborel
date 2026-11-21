@@ -12,6 +12,7 @@ use std::sync::Arc;
 use super::Probed;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
+use crate::exec::Db;
 use crate::exec::{Runner, eval_cond};
 use crate::logical::Truth;
 use crate::memory::Reservation;
@@ -39,7 +40,7 @@ pub(super) struct Matched {
 
 impl Matched {
     /// Of a FULL join, the set its probes fill; none of another join.
-    pub(super) fn of(outer: Preserved, columns: &[usize], db: &Arc<State>) -> Result<Option<Matched>> {
+    pub(super) fn of(outer: Preserved, columns: &[usize], db: &Db) -> Result<Option<Matched>> {
         let Preserved::Both(unmatched) = outer else { return Ok(None) };
         Ok(Some(Matched { rows: Ids::new(db)?, unmatched: *unmatched, columns: columns.to_vec(), rest: None }))
     }

@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::catalog::MemoryCatalog;
+use crate::db::State;
 use crate::error::SqlError;
 use crate::functions::Registry;
 use crate::functions::{AggregateRef, InverseDistribution};
@@ -15,6 +16,7 @@ use crate::spill::testing::{Held, areas};
 use crate::txn::NO_TRANSACTION;
 use crate::value::types::TypeRegistry;
 use crate::value::{CompOp, DataType, Decimal, SortOrder, Spelled};
+use std::sync::Arc;
 
 /// The input's width: a partition number and a price.
 const WIDTH: usize = 2;

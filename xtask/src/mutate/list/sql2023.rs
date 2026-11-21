@@ -68,7 +68,7 @@ pub const SQL2023: [Mutation; 56] = [
         package: Package::Core,
         breaks: "a dynamic parameter read again as the parser backtracks is counted again, so (? + 1) = 2 asks for two",
         file: "src/parser/literal.rs",
-        original: "            let place = self.toks.iter().take(self.pos).filter(|t| matches!(t.tok, Tok::Delimiter(delim::QUESTION))).count();",
+        original: "            let place = self.questions_before();",
         replacement: "            let place = read;",
         integration: &["dynamic_statements::a_parenthesized_parameter_is_counted_once_17_6"],
         unit: &[],

@@ -266,9 +266,11 @@ second comparison of other values, as the overlap's other half, prunes
 the rows found. A `<period predicate>` of two periods named by their
 tables is read as the comparisons of their bounds, so OVERLAPS, CONTAINS,
 PRECEDES and SUCCEEDS join so, and EQUALS and the IMMEDIATELY ones as
-hash joins on the bounds' equalities. The rows, and their order, are the
-nested loop's. A table too large for MEMORY.WORK_BYTES, or a condition
-that could raise an error, keeps the nested loop. SET
+hash joins on the bounds' equalities. The rows are the nested loop's. A
+table too large for MEMORY.WORK_BYTES is sorted and searched a part at a
+time, the other read again for each part, so the rows come part by part,
+and only ORDER BY sets their order. A
+condition that could raise an error keeps the nested loop. SET
 PLANNER.RANGE_JOINS = 'OFF' turns range joins off.
 
 An equality repeated in each operand of an OR joins its tables as if
@@ -659,6 +661,15 @@ can raise an error. [EXPLAIN](statements/explain.md) shows which
 subqueries were unnested, and the settings OPTIMIZER.UNNEST_SUBQUERIES
 and OPTIMIZER.INLINE_FUNCTIONS turn the rewrites off
 ([Settings](../appendix/c-settings.md)).
+
+A subquery that stays nested runs once for each distinct set of its
+outer values. Its first runs plan it with the values as constants, so
+an index can answer a comparison with them, and also with the outer
+references as parameters. Once a few runs in a row make one plan both
+ways, the plan with parameters is kept, and each later run fills in its
+values and runs it without planning again. A subquery whose values keep
+choosing other plans is planned at each run.
+EXECUTOR.KEEP_SUBQUERY_PLANS OFF plans every run, as to compare the two.
 
 ```sql
 SELECT NAME, (SELECT COUNT(*) FROM STAFF T WHERE T.DEPT = S.DEPT) AS PEERS FROM STAFF S
