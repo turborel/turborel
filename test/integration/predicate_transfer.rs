@@ -139,8 +139,8 @@ fn a_phase_is_planned_where_it_pays() {
     assert!(!transferred(&p, selective), "the setting OFF");
     exec(&p, "SET OPTIMIZER.PREDICATE_TRANSFER = 'ON'").unwrap();
     assert!(!transferred(&p, &format!("{selective} FETCH FIRST 3 ROWS ONLY")), "under a limit");
-    let raising = "SELECT F.K FROM F JOIN DA ON F.A = DA.A JOIN DB ON F.B = DB.B WHERE F.V < 300 AND 10 / (DB.Y - 7) > 0";
-    assert!(!transferred(&p, raising), "a condition that can raise");
+    let raising = "SELECT F.K, DA.X, 10 / (DB.Y - 7) FROM F JOIN DA ON F.A = DA.A JOIN DB ON F.B = DB.B WHERE F.V < 300 AND DB.Y < 20";
+    assert!(!transferred(&p, raising), "an expression that can raise");
     assert!(!transferred(&p, "SELECT F.K FROM F JOIN DB ON F.B = DB.B"), "nothing selective");
 }
 
