@@ -26,10 +26,9 @@ impl PhysicalPlanner<'_> {
         if let LogicalPlan::Filter { cond, input: scan } = input
             && matches!(**scan, LogicalPlan::Scan { .. })
         {
-            // A filter reads more of its input than it gives: the first
-            // rows a FETCH FIRST reads are not known through it
-            // (`build_node`).
-            return PhysicalPlanner { first: None, ..*self }.filter(cond, scan, want, Some(reads));
+            // The filter divides a row goal by the share of rows it keeps
+            // (`goals.rs`).
+            return self.filter(cond, scan, want, Some(reads));
         }
         self.build(input, want)
     }

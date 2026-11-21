@@ -197,7 +197,7 @@ impl State {
                 Change::Defined { schema, sql, placed: Some(_), .. } => super::definitions::created(schema, sql).into_iter().collect(),
                 Change::Schema { sql, engines, .. } => super::staged_schema::schema_tables(sql, engines),
                 Change::Insert { .. }
-            | Change::InsertRows { .. }
+                | Change::InsertRows { .. }
                 | Change::Update { .. }
                 | Change::Delete { .. }
                 | Change::Commit { .. }

@@ -27,6 +27,7 @@ mod joins;
 mod late;
 mod monitoring;
 mod oltp;
+mod orders;
 mod parallel;
 mod range_joins;
 mod rewrites;
@@ -34,6 +35,7 @@ mod set_types;
 mod skipping;
 mod sorts;
 mod statistics;
+mod subquery_plans;
 mod tpcc;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
@@ -105,7 +107,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 45] {
+fn second() -> [&'static [Mutation]; 47] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -143,6 +145,7 @@ fn second() -> [&'static [Mutation]; 45] {
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &rewrites::REWRITES,
         &unnesting::UNNESTING,
+        &subquery_plans::SUBQUERY_PLANS,
         &insert_values::INSERT_VALUES,
         &set_types::SET_TYPES,
         &expr::EXPR,
@@ -152,6 +155,7 @@ fn second() -> [&'static [Mutation]; 45] {
         &statistics::STATISTICS,
         &range_joins::RANGE_JOINS,
         &cost_model::COST_MODEL,
+        &orders::ORDERS,
     ]
 }
 
