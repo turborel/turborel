@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use crate::error::Result;
 use crate::logical::Expr;
-use crate::storage::Row;
+use crate::storage::{Row, sized_row};
 use crate::value::Value;
 
 pub(super) struct Columns {
@@ -31,14 +31,12 @@ impl Columns {
         if self.identity && row.len() == self.columns.len() {
             return Ok(row);
         }
-        self.columns
-            .iter()
-            .map(|&(at, copy)| {
-                let width = row.len();
-                let value = row.get_mut(at).ok_or_else(|| super::broken(&format!("column {at} is not in a row of {width} columns")))?;
-                Ok(if copy { value.clone() } else { std::mem::replace(value, Value::Null) })
-            })
-            .collect()
+        let width = row.len();
+        let taken = self.columns.iter().map(|&(at, copy)| {
+            let value = row.get_mut(at).ok_or_else(|| super::broken(&format!("column {at} is not in a row of {width} columns")))?;
+            Ok(if copy { value.clone() } else { std::mem::replace(value, Value::Null) })
+        });
+        sized_row(self.columns.len(), taken)
     }
 
     /// Select directly from a retained pair. Geometry refinement can

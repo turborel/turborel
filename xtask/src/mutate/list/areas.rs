@@ -20,6 +20,7 @@ mod decode;
 mod distinct_aggregates;
 mod expr;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
+mod alloc;
 #[path = "estimates.rs"]
 mod estimates;
 mod group_table;
@@ -54,7 +55,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 20] {
+pub fn core() -> [&'static [Mutation]; 21] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -76,6 +77,7 @@ pub fn core() -> [&'static [Mutation]; 20] {
         &monitoring::MONITORING,
         &bulk::BULK,
         &steady::STEADY_PLANS,
+        &alloc::ALLOC,
     ]
 }
 
