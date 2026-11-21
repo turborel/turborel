@@ -59,10 +59,10 @@ pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Db, TxId
     } else {
         Vec::new()
     };
-    let (side, left) = match held::read(right, (&keys, &filtered), work.limit(), (db, tx))? {
+    let (side, left) = match held::read(right, (&keys, &filtered, Vec::new()), work.limit(), (db, tx))? {
         Read::Held(held) => {
             let mut told = deferred.filters().to_vec();
-            told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told { filter: Arc::clone(f), column: key.left })));
+            told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told::of(Arc::clone(f), key.left))));
             let left = left_late_batches(left, (db, tx), &Deferred::default().with_told(told))?;
             (Side::Vectors(held), left)
         }

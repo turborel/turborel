@@ -44,9 +44,10 @@
 //! filters, by what they skip, alone (`analytics/skipping.rs`), to
 //! `sorts`, ORDER BY and top-N alone (`analytics/sorts.rs`), to
 //! `goals`, FETCH FIRST over filters, joins and groupings read in order
-//! and groupings streamed alone (`analytics/goals.rs`), or to `costs`,
+//! and groupings streamed alone (`analytics/goals.rs`), to `costs`,
 //! the operators whose speeds the planner's weights stand for, and the
-//! weights they give, alone (`analytics/costs.rs`).
+//! weights they give, alone (`analytics/costs.rs`), or to `core`, the
+//! filters, groupings, joins and sorts of F and FC alone.
 
 #![allow(
     clippy::unwrap_used,
@@ -133,6 +134,12 @@ fn main() {
     let db = database();
     let s = db.session("B");
     let tables = [("F", "W", ""), ("FC", "WC", " (columnstore)")];
+    if only == "core" {
+        for (table, keyed, label) in tables {
+            measure(&bench, &s, (table, keyed, label));
+        }
+        return;
+    }
     if only == "distinct" || only == "expressions" {
         for (table, _, label) in tables {
             if only == "distinct" {

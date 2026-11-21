@@ -386,6 +386,9 @@ verification approach DO-178C expects (§8).
 | D381 | A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree |
 | D382 | A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff |
 | D383 | An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count |
+| D384 | Two relations joined on several columns, or on a key or a referential constraint, are estimated by the joint distinct values of the columns as a pair |
+| D385 | Each estimate has an upper bound from the most rows of one value and keys, and is never above it |
+| D386 | A hash join and an index nested-loop join are chosen by their regret over the estimate and its pessimistic rows |
 | D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
 | D389 | A pipeline run in parallel under an operator that is not one is read by batch, its scans told its hash joins' runtime filters, a scan's range judged once, and a spilled join's partitions picked by its table's hash and probed by batch |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
@@ -428,7 +431,15 @@ verification approach DO-178C expects (§8).
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
+| D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
+| D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
+| D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
+| D622 | EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read |
+| D650 | A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured |
+| D651 | Costs count what an operator spills past its grant, at its rows' width |
+| D652 | A join's method is chosen seeing the degree its part will run at |
+| D653 | A hash join's cost counts the probing rows its runtime filter leaves |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
@@ -2365,7 +2376,6 @@ Read-ahead is an optimization and never fails a read. The job
 `turborel-read-ahead` (D55) reads STORAGE.READ_AHEAD_PAGES at a time, at
 most an eighth of the pool's frames, and leaves whatever it can't read to
 the scan.
-
 
 #### D31. The built-in engines are a row store and a column store
 
@@ -10664,8 +10674,7 @@ ANALYZE is no key word. It is read as this option only right after
 EXPLAIN and before a query's first token, and before a parenthesis only
 when the next token begins a query too, so a table named ANALYZE, or a
 table EXPLAIN whose correlation name ANALYZE lists its columns, is read
-as before. A data change statement is refused as EXPLAIN refuses one,
-so EXPLAIN ANALYZE changes nothing a query does not. A query that raises
+as before. A data change statement is run and counted as D622 says. A query that raises
 makes it raise the same exception (D15). It shows the physical plan
 alone, since the stages before it are EXPLAIN's and run nothing.
 `Session::explain_analyze` gives the same text and `Session::analyzed`
@@ -10927,6 +10936,89 @@ values, which saw every key where a sample scales from some. An
 equality of each of an index's columns with a constant then keeps one
 row in its distinct keys and not the product of each column's share.
 Each index's count is taken once for the statistics one planning asks.
+
+#### D384. Two relations joined on several columns, or on a key or a referential constraint, are estimated by the joint distinct values of the columns as a pair
+
+The classes of equalities (D302) take each class as independent of the
+others, so two relations joined on two columns kept one pair in the
+product of each column's larger distinct values. Where the columns go
+together, as a part and its supplier do in an offer, that is the pairs
+the columns could make, not those they hold, and a join of every order
+line to its one offer was estimated a fraction of its rows. Each pair of
+relations the classes join is so corrected, whenever both are in a set
+(`physical/cardinality/composite.rs`): the product over the pair's
+classes of each class's larger distinct values, over the larger of the
+two relations' joint distinct values of their columns. The correction
+depends on the set alone, so every order of joining it still gives the
+same rows, and it never lowers an estimate.
+
+A relation's joint distinct values are those of a key its columns hold,
+the table's rows; else those its statistics count together, an index of
+those columns among them (D383); else the product of each column's, at
+most the table's rows. The keys come from the catalog
+(`physical/cardinality/keys.rs`): a UNIQUE or PRIMARY KEY constraint not
+deferrable and of no period, or a unique index of columns, as no two
+rows are equal in all of a key's columns and an equality is never true
+of a null [X3.135-1986 §5.11 GR2]. A deferred constraint may be broken
+until it is checked [ISO/IEC 9075-2:2023 §4.25.2], and a period's key is
+unique only of rows whose periods overlap, so neither is one. A guess of
+one side is at most the other side's key, as the values a join matches
+to a key are taken to be among the key's. A referential constraint not
+deferrable and of no period whose referencing columns are NOT NULL makes
+that exact: each referencing row has one referenced row [§4.25.3.3,
+§11.8 GR2], so the join keeps the referencing rows times the share of the
+referenced rows the other side's filter keeps.
+
+#### D385. Each estimate has an upper bound from the most rows of one value and keys, and is never above it
+
+Each estimate carries a bound (`Card::upper`), and the estimate is never
+above it (`physical/cardinality/bounds.rs`). A table's read is at most
+its rows. A filter holding an equality of a column to one value, a
+constant, a parameter or an outer reference, keeps at most the most rows
+of one value of that column, and one row if such columns hold a key. A
+join of a set of relations to one more on an equality gives each row of
+the set at most the most rows of one value of the new relation's column,
+one of a key, the degree bound of Cai, Balazinska and Suciu, SIGMOD 2019,
+and Hertzschuch et al., CIDR 2021. A chain's bound grows from its
+relation of least bound, each step taking the relation an equality
+reaches with the fewest rows of one value. The join enumeration keeps
+each set's bound beside its rows, from the pair that first makes the
+set, so a set has one bound as it has one estimate (D302); an outer join
+adds its preserved rows. The most rows of one value are the
+statistics' (`Frequencies::most`), raised by the rows written since the
+pass, each of which may hold that value, so a table that changed keeps
+a bound.
+
+The bound is a proof only as far as the statistics are true, and at
+depth it overstates many times, so it clamps the estimate and tells how
+far an estimate may be wrong (D386); it is never taken as the estimate.
+A set holding a relation of rows given in place of the estimates (D377)
+has no bound, since those rows overrule the statistics it is drawn from.
+
+#### D386. A hash join and an index nested-loop join are chosen by their regret over the estimate and its pessimistic rows
+
+An index nested-loop join probes once for each left row, so its cost
+grows with the left's rows far faster than a hash join's, which reads
+the right whole once; an estimate low by ten times could make the index
+join many times dearer than the hash join it replaced (Leis et al.,
+"How Good Are Query Optimizers, Really?", 2015, §4.1). Both costs are
+linear in the left's rows, which are taken to lie between the estimate
+and its pessimistic rows: the estimate times PLANNER.ESTIMATE_MARGIN, at
+most the bound (D385), at least the estimate. A method's regret at some
+rows is its cost there over the cheapest method's, and the method taken
+is the one whose larger regret at the two ends is least, which for costs
+linear in the rows is its largest regret over the whole interval:
+minimax regret, as Chu, Halpern and Seshadri, PODS 1999, and Babcock and
+Chaudhuri, SIGMOD 2005, weigh plans over a range of estimates
+(`physical/robust.rs`). The join enumeration and the greedy order both
+choose so (`physical/enumerate/methods.rs`, `physical/indexed.rs`). A
+probe of a key from a left whose bound is small stays an index join, and
+a probe whose left could be large under its bound goes to the hash join
+unless the index join is cheaper even there. PLANNER.ESTIMATE_MARGIN is
+a session setting (D36), eight by default, about the median error of
+the estimates of joins of three relations that paper measures; 1
+restores the cheaper method at the estimate. A merge join keeps its
+rule (D303).
 
 #### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
 
@@ -12201,6 +12293,53 @@ or hash joins on their equalities, as to compare the two. Period
 predicates are still read as comparisons (D581) when it is OFF, so their
 equalities can be a hash join's keys.
 
+#### D600. A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans
+
+A runtime filter (D369) went down a hash join's left operand alone, and
+through an inner hash join below it only to that join's left. Such a
+join's keys equate a column of its left with one of its right, so a
+filter of one is the same filter of the other, as Ives and Taylor
+(ICDE 2008) pass a join's filter sideways. An inner hash join now takes
+a filter to both its operands (`batch/runtime.rs`). Its left is told it
+of a left column, or of the left key a right key it judges equals; its
+right, as the join builds it, of a right column, or of the right key a
+left key equals (`built_side`). A hash join reads its right operand
+first, so every build inside a join's left is built after that join's
+filter is made, and can be told it. A row of the right the filter drops
+matches only left rows whose joined rows it drops. A filter so moved
+across an equality judges a vector of exact numbers alone, whose
+equality is their value's whatever their scales, never a text whose
+equality is its collation's. An analyzed plan's count of an operator's
+rows (D378) passes a filter on, so EXPLAIN ANALYZE counts the rows the
+filter left.
+
+The walk keeps D15 as before. It stops above a condition that can
+raise, a projection that can, and any operator but these, so a filter
+reaches a build only through operators that cannot raise, and never a
+guard's operand (D389).
+
+A range skips a group or a part only if it lies wholly outside the
+least and greatest built keys. An exact key of a build of no more than
+2^20 rows now gives its distinct values (`table/runtime.rs`), as Qiao,
+Boncz and Zhang's RPT+ (PVLDB 2026) cascade a range, a key set and a
+Bloom filter. Of no more than 4,096 of them, a row's key is found in
+the set by halving, exactly, at any scale, the Bloom filter left for a
+vector of other values, and the scan
+is told each as a span. Of more, the scan is told the spans between
+the 63 widest gaps among them, of more than one unit, and none of keys
+without such a gap. A scan is told spans as a conjunct true of every
+row (`Conjunct::Spans`), which a store judges only against a group's or
+a part's least and greatest, finding the first span not below them by
+halving, so a group that lies in a gap is skipped and no row is judged
+by a list.
+
+Several filters judged of one stream are judged in the order of the
+share of the rows each kept so far, the one that kept the least first,
+as Zhu et al. (PVLDB 2017) order a scan's filters by their observed
+misses between batches (`runtime/ordered.rs`). Each judges only the rows
+those before it kept, so the one that drops the most spares the others
+the most work, and the order changes the work, never the rows kept.
+
 #### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
 
 A kept plan (D45, D414, D422) was copied at each execution, its slots
@@ -12237,6 +12376,62 @@ again for (D422). The places are found by an XXH3 hash of what the
 statements were prepared alike in (D460), compared whole, and a place no
 statement holds is gone.
 
+#### D620. EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made
+
+Each counted operator has notes beside its rows (`noted.rs`). While a
+counted operator is opened and while each of its rows or batches is
+pulled, its notes are the thread's, put back as they were after, so
+work done below a pull is noted of the innermost operator pulled and an
+input's own pulls note theirs. What does the work takes the thread's
+notes once, as it is made, and adds to them as it works. A spill area
+made so is wrapped (`spill/noted.rs`): each table and run it makes is
+one partition, each record written to them adds its bytes, and each
+time it reads back after writing is a pass, so partitions written then
+read are one pass and each level of a merge another. A part run in
+parallel gives each worker the notes of the thread that started it
+(`exec/parallel/run.rs`), so the part's top operator notes what its
+workers spill. A statement not analyzed has no notes, so each thing made
+for it reads the thread's once and notes nothing, never a row at a time.
+The thread's notes are scoped to one pull and restored after it, as the
+thread's warnings are, so they are no global state (R-SAFE-2).
+EXPLAIN ANALYZE shows `spilled=N bytes, partitions=P, passes=Q` on the
+line of an operator that spilled, and nothing of one that did not.
+
+#### D621. EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks
+
+An operator run by batches notes each batch it gives, by its counted
+wrapper or by its step of a pipeline run in parallel, and EXPLAIN
+ANALYZE shows `batches=B, mean rows=M`, its rows over its batches
+rounded. One run a row at a time shows none. An index scan's reading
+(`exec/entries.rs`) counts each entry it takes, each row it fetches by
+an entry's row id, and each row whose condition it judges again of the
+row as the index could not decide it of the entry (D85), and notes them
+once, as it is dropped. A scan of a B-link tree notes each leaf it reads
+(`engine/tree/scan.rs`), an index's or the tree a table of the row
+store is kept in, so a scan of such a table shows its leaves too. Each
+shows as `entries=`, `leaf pages=`,
+`fetched=` and `rechecked=`, a count of none left out. An index nested
+loop's probes note alike, of the join.
+
+#### D622. EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read
+
+`EXPLAIN ANALYZE` takes a data change statement as well as a query,
+read so when INSERT, UPDATE or DELETE, or MERGE followed by INTO,
+follows ANALYZE. EXPLAIN alone still takes only a query, as it runs
+nothing. The statement runs for real, as it would run alone, in the
+session's transaction, so its changes stay until the transaction ends
+and a ROLLBACK undoes them. The session's `Stop`, which the statement
+reaches through its transaction, is told to want a counted plan
+(`txn/stop/changed.rs`). The first plan the statement makes of the
+rows it reads takes the want and is counted as a query's plan is
+(`db/explain/changed.rs`): an INSERT's query, an UPDATE's or DELETE's
+object rows (`exec/entries.rs` reads a counted access too), MERGE's
+joined rows. So a plan a trigger it fires makes after is not. The text
+heads the plan with a line naming the statement and its table with
+`actual rows changed=N`, and ends with the rows changed. A statement
+that makes no such plan, as an INSERT of VALUES, shows the head line
+alone. A statement that raises makes EXPLAIN ANALYZE raise the same,
+undone as any failed statement is.
 #### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
 
 The batch filter passes each conjunct only the rows the one before it
@@ -12307,6 +12502,64 @@ after EXECUTOR.DECORRELATE_AFTER_RUNS as before (D35, D38), and a run
 checks for a cancel as any plan does (D44). EXECUTOR.KEEP_SUBQUERY_PLANS,
 ON by default and of a session's scope, turns it off, as to compare the
 two.
+
+#### D651. Costs count what an operator spills past its grant, at its rows' width
+
+A hash join's build, a hashed grouping and a sort were priced as if they
+held every row in memory, though past their grant they write rows to the
+spill area and read them back. The planner now estimates the grant
+`spill/grant.rs` would give the operator as the statement is planned
+(D298). That is half of what the grants' half of the budget has free, at
+most MEMORY.WORK_BYTES and at least the floor every operator holds. Rows
+are held at their width, the bytes the table's statistics give a row
+for the columns read, else an integer's a column, and an entry's bytes
+more (`physical/cost/spill.rs`). An operator whose rows outgrow the
+grant pays for each row written and read once more, at a weight a row
+and a weight a byte. A hash join past its grant partitions both of its
+operands, as a Grace hash join does, so it pays for the rows of both.
+A sort pays for its own rows. So a merge join of inputs already in
+order, an index read in the order asked and a grouping streamed in its
+keys' order win where holding the rows would spill, and a wide build
+fills its grant sooner than a narrow one. The weights come from
+`bench/analytics/costs.rs` (D650).
+
+#### D652. A join's method is chosen seeing the degree its part will run at
+
+The parallel pass (D291) comes after the plan is chosen, so an index
+nested-loop join running on one thread could be taken over a hash join
+that eight threads would run. Costs now anticipate the pass by its own
+rule. A part's degree is as many threads as morsels its tables hold, up
+to EXECUTOR.DEGREE or the workers, and one below
+EXECUTOR.PARALLEL_MIN_ROWS (`physical/cost/parallel.rs`, which the pass
+calls too). A hash join's read of a built table and the hashing of
+either operand's rows are divided by the degree of their parts. An
+index join's probes are not, since they run on the statement's thread.
+A part of more than one thread costs its start, as the calibration
+bench measures it, so a part only just past the least rows gains less
+than its degree. The pass still marks the parts; the costs only foresee
+it.
+
+A part gains only what its tables let its threads gain. The calibration
+bench measures a part over the row store no faster on eight threads than
+one thread reading by batch, so a row-store part's threads past the first
+gain nothing in its cost, and a plan is never chosen for a gain its part
+does not give. A column-store part gains its whole degree. The row
+store's share rises as its parallel parts are measured faster.
+
+#### D653. A hash join's cost counts the probing rows its runtime filter leaves
+
+A hash join over batches makes a runtime filter of its built keys
+(D369), and the filter drops each probing row whose key no built row
+holds before the join hashes it. Of each class of the join's
+equalities, the share of probing rows it keeps is the built operand's
+distinct values, at most its rows, over the probing operand's
+(`physical/cost/runtime.rs`, after Zhu et al., PVLDB 2017). The join's
+classes give the least share. Each probing row still pays the filter's
+test. A filter keeping more than nine rows in ten costs nothing, as the
+executor stops judging by one. Only inner joins count it, since the
+preserved side of an outer join keeps every row. With EXECUTOR.BATCHES
+or EXECUTOR.RUNTIME_FILTERS OFF, none is counted. So join orders put a
+selective build where its filter reaches the scan it drops rows of.
 
 ## 2. Project layout
 

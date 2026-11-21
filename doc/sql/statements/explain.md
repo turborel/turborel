@@ -4,13 +4,20 @@
 
 ## NAME
 
-EXPLAIN: show how a query is planned, or run it and count what each step did *(extension)*
+EXPLAIN: show how a query is planned, or run it or a data change and count what each step did *(extension)*
 
 ## SYNOPSIS
 
 ```
 <explain statement> ::=
     EXPLAIN [ ANALYZE ] <cursor specification>
+  | EXPLAIN ANALYZE <data change statement>
+
+<data change statement> ::=
+    <insert statement>
+  | <update statement: searched>
+  | <delete statement: searched>
+  | <merge statement>
 ```
 
 ## DESCRIPTION
@@ -74,6 +81,22 @@ each row of its outer input. An operator that never ran shows
 `(never run)`, as does a scan whose storage counted its table. A last
 line gives the query's rows.
 
+An operator adds what it did beside its rows, each only when it did
+any. One run by batches adds `batches=B, mean rows=M`, the batches it
+gave and their rows on average. One that held more than its work area
+(MEMORY.WORK_BYTES) adds `spilled=N bytes, partitions=P, passes=Q`. The
+bytes are those it wrote to its spill area. The partitions are the runs
+and tables it wrote them to. The passes are the times it read back what
+it wrote, once for partitions written then read, once more for each
+level of a sort's merge. A read of an index adds `entries=E`, the
+entries it took, `fetched=F`, the rows it read from the table by the
+entries' row ids,
+and `rechecked=R`, the rows whose condition it judged again because the
+index could not decide it of the entry. An operator that read the
+leaves of a B-tree adds `leaf pages=L`, an index's leaves or those of
+the tree its table of the row store is kept in. An operator of a part run on
+several threads notes what its workers did.
+
 Each operator's time, its inputs' among it, is added as `time=X ms` when
 the database's clock moved while the query ran. A clock that stands
 still, as tests give, shows no time, and so do the examples below. An
@@ -88,8 +111,23 @@ estimate, rows, loops and time by `Session::analyzed`. A program may
 also give the planner its own row counts in place of the estimates, with
 `Session::with_cardinalities`, to test its plans ([The Embedded Library](../../client/03-embedding.md#reading-rows)).
 
+### EXPLAIN ANALYZE of a data change
+
+EXPLAIN ANALYZE also takes INSERT, UPDATE, DELETE and MERGE. The
+statement runs for real, in the session's transaction, as it would run
+alone. Its changes stay until the transaction ends, so a ROLLBACK
+undoes them. The first line after `-- physical:` names the statement
+and its table with `actual rows changed=N`. Below it is the plan of the
+rows the statement read, counted as a query's plan is: an INSERT's
+query, the rows an UPDATE or DELETE changes, or the rows MERGE joins. A
+statement that reads no rows by a plan, as an INSERT of VALUES, shows
+the first line alone. The last line gives the rows changed. A statement
+that raises an exception makes EXPLAIN ANALYZE raise it, and changes
+nothing. The library's `Session::analyzed` gives the statement as its
+first operator, its rows those it changed.
+
 ANALYZE is not a key word either. It is read as this option only right
-after EXPLAIN and before a query's first token. Before a parenthesis it
+after EXPLAIN and before a query's or a data change's first token. Before a parenthesis it
 is read so only when the next token begins a query too. A table named
 ANALYZE is read as before.
 
@@ -99,13 +137,14 @@ ANALYZE is read as before.
    for a query run directly.
 2. It is bound as a query run then would be, so it refers only to tables
    and columns that exist.
-3. EXPLAIN ANALYZE takes only a query. A data change statement after it
-   is refused as after EXPLAIN.
+3. EXPLAIN without ANALYZE takes only a query. EXPLAIN ANALYZE takes a
+   query, an INSERT, a searched UPDATE or DELETE, or a MERGE.
 
 ## PRIVILEGES
 
 Those the query needs. EXPLAIN reads no row, but binding the query
-checks them. EXPLAIN ANALYZE reads the rows, as the query would.
+checks them. EXPLAIN ANALYZE reads the rows, as the query would. Of a
+data change, those the statement needs.
 
 ## ERRORS
 
@@ -113,7 +152,7 @@ checks them. EXPLAIN ANALYZE reads the rows, as the query would.
 |---|---|---|
 | 2A000 | -103 | The query refers to a table or column that does not exist, or is otherwise invalid |
 | 42000 | -104 | Its user lacks a privilege the query needs |
-| any | any | EXPLAIN ANALYZE raises any exception the query raises as it runs |
+| any | any | EXPLAIN ANALYZE raises any exception the query or data change raises as it runs |
 
 ## EXAMPLES
 
@@ -215,8 +254,10 @@ EXPLAIN SELECT NAME, COUNT(*) FROM PARTS GROUP BY NAME ORDER BY NAME FETCH FIRST
 
 Three tables joined, their joins ordered by enumeration. The note on
 the top join gives the order chosen, the offers of the suppliers in Oslo
-first, then their parts by the index of its key, and the algorithm that
-chose it:
+joined first, and the algorithm that chose it. Their parts are then
+hashed rather than probed by the index of their key: the offers could
+be many times more than estimated, and so many probes would cost more
+than reading the parts once (PLANNER.ESTIMATE_MARGIN):
 
 ```sql
 CREATE TABLE SUPPLIERS (ID INTEGER PRIMARY KEY, CITY VARCHAR(20));
@@ -260,12 +301,13 @@ OK
          Scan ANN.SUPPLIERS
  -- physical:
  Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
-   IndexNestedLoop ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: OFFERS.PART = PARTS.ID  (join order by DPccp: ((OFFERS SUPPLIERS) PARTS))  (est. rows each=1, cost=20.6)
+   HashJoin PARTS.ID = OFFERS.PART  (join order by DPccp: (PARTS (OFFERS SUPPLIERS)))
+     SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
      HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
        SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
        Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
          SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
-(26 rows)
+(27 rows)
 ```
 
 A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
@@ -467,15 +509,16 @@ OK
 --------------------------------------------------------------
  -- physical:
  Project S.REGION, P.NAME  (est. rows=4)  (actual rows=4)
-   IndexNestedLoop ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: S.CUSTOMER = P.ID  (est. rows each=1, cost=82.4)  (actual rows=4, probes=4)
-     SeqScan ANN.SALES  (rows=4, cost=3.7)  (actual rows=4)
+   IndexNestedLoop ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: S.CUSTOMER = P.ID  (est. rows each=1, cost=82.4)  (actual rows=4, probes=4, entries=4, leaf pages=4, fetched=4)
+     SeqScan ANN.SALES  (rows=4, cost=3.7)  (actual rows=4, leaf pages=1)
  -- ran: 4 rows
 (5 rows)
 ```
 
 A query that stops after its first rows, its scan reading 16 of the
 1000 rows it holds. Read by batches, the scan counts the rows of each
-batch it gave, which may be more than the operator above it took:
+batch it gave, which may be more than the operator above it took, and
+shows its one batch:
 
 ```sql
 EXPLAIN ANALYZE SELECT ID FROM PARTS FETCH FIRST 3 ROWS ONLY;
@@ -487,9 +530,82 @@ EXPLAIN ANALYZE SELECT ID FROM PARTS FETCH FIRST 3 ROWS ONLY;
  -- physical:
  Limit fetch 3  (est. rows=3)  (actual rows=3)
    Project PARTS.ID  (est. rows=1000)  (actual rows=3)
-     SeqScan ANN.PARTS  (rows=1000, cost=900.0)  (actual rows=16)
+     SeqScan ANN.PARTS  (rows=1000, cost=900.0)  (actual rows=16, batches=1, mean rows=16)
  -- ran: 3 rows
 (5 rows)
+```
+
+The parts found by the index of their names, the index's reads shown:
+the entry it took, the leaf of its tree it read, and the row it fetched
+by the entry:
+
+```sql
+EXPLAIN ANALYZE SELECT ID FROM PARTS WHERE NAME = 'part 7';
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Project PARTS.ID  (est. rows=1)  (actual rows=1)
+   IndexScan ANN.PARTS using PARTS_NAME [btree]: PARTS.NAME = 'part 7'  (est. rows=1, cost=20.6)  (actual rows=1, entries=1, leaf pages=1, fetched=1)
+ -- ran: 1 row
+(4 rows)
+```
+
+The offers sorted by price in a work area too small to hold them. The
+sort shows what it spilled, the runs it wrote and the passes it read
+them back in:
+
+```sql
+SET MEMORY.WORK_BYTES = 65536;
+EXPLAIN ANALYZE SELECT PART, PRICE FROM OFFERS ORDER BY PRICE DESC;
+SET MEMORY.WORK_BYTES = 268435456;
+```
+
+```
+OK
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Sort OFFERS.PRICE DESC  (est. rows=5000)  (actual rows=5000, spilled=250783 bytes, partitions=5, passes=3)
+   Project OFFERS.PART, OFFERS.PRICE  (est. rows=5000)  (actual rows=5000, batches=9, mean rows=556)
+     SeqScan ANN.OFFERS  (rows=5000, cost=4666.7)  (actual rows=5000, batches=9, mean rows=556)
+ -- ran: 5000 rows
+(5 rows)
+OK
+```
+
+An UPDATE run by EXPLAIN ANALYZE, which raises the 50 lowest prices in
+the session's transaction. The first line counts the rows it changed,
+the plan below it the rows it read. The change is seen until the
+ROLLBACK undoes it:
+
+```sql
+EXPLAIN ANALYZE UPDATE OFFERS SET PRICE = PRICE + 1 WHERE PRICE <= 50;
+SELECT MIN(PRICE) FROM OFFERS;
+ROLLBACK;
+SELECT MIN(PRICE) FROM OFFERS;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Update ANN.OFFERS  (actual rows changed=50)
+   Filter OFFERS.PRICE <= 50  (est. rows=51)  (actual rows=50)
+     SeqScan ANN.OFFERS  (rows=5000, cost=1024.0)  (actual rows=1024, leaf pages=8)
+ -- ran: 50 rows changed
+(5 rows)
+
+--------------
+            2
+(1 row)
+OK
+
+--------------
+            1
+(1 row)
 ```
 
 A band join of PARTS and SALES, each part paired with the sales whose
@@ -534,4 +650,5 @@ a statement is planned. In GET DIAGNOSTICS it is COMMAND_FUNCTION
 ## SEE ALSO
 
 [SELECT](select.md), [DECLARE CURSOR](declare-cursor.md),
+[INSERT](insert.md), [UPDATE](update.md), [DELETE](delete.md), [MERGE](merge.md),
 [CREATE INDEX](create-index.md), [SET](set-setting.md)
