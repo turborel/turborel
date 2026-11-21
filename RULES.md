@@ -13477,6 +13477,7 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
 ## 2. Project layout
 
 ```
