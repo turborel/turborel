@@ -9,6 +9,8 @@ use crate::error::{Code, Result, SqlState, fail_with};
 
 mod quotient;
 
+pub use quotient::{MIN_QUOTIENT_SCALE, quotient_bound};
+
 /// An exact number: `units` × 10^-`scale`.
 #[derive(Debug, Clone, Copy)]
 pub struct Decimal {

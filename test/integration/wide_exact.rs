@@ -115,13 +115,38 @@ fn arithmetic_is_exact_to_38_digits_6_30() {
     assert_eq!(one("12345678901234567890 * 1000000000000000000"), "12345678901234567890000000000000000000");
     assert_eq!(one("999999999999999999 + 1"), "1000000000000000000");
     assert_eq!(one("123456789012345678.9012345678901234567 * 10"), "1234567890123456789.0123456789012345670");
-    assert_eq!(one("1 / 3"), format!("0.{}", "3".repeat(38)));
+    assert_eq!(one("1 / 3"), "0.333333");
+    assert_eq!(one("2 / 3"), "0.666666", "truncated");
+    assert_eq!(one("1.0000000000 / 3"), "0.333333333333", "past the dividend's scale and the divisor's digit");
     assert_eq!(one("100000000000000000000 / 8"), "12500000000000000000");
     assert_eq!(one("-12345678901234567890123.5 / 0.5"), "-24691357802469135780247.0");
     assert_eq!(refused(&a, &format!("SELECT {most} + 1 FROM ONE")), (-301, "22003".to_owned(), Some("X3.135-1986 §5.9 GR6".to_owned())));
     assert_eq!(refused(&a, "SELECT 10000000000000000000 * 10000000000000000000 FROM ONE").0, -301, "39 digits");
     assert_eq!(refused(&a, "SELECT 10 / 0.0000000000000000000000000000000000001 FROM ONE").0, -301, "a quotient of 39");
     assert_eq!(exec(&a, &format!("SELECT {} FROM ONE", nines(MAX_EXACT_PRECISION + 1))).err(), Some(Code::Unsupported));
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §6.30 SR1c iv, §10.9 SR7g ii] RULES.md
+/// D696, D697: a quotient of INTEGER values keeps room for its integer
+/// digits, so a sum of a thousand of them is exact, at their scale, as a
+/// row at a time and in batches, and a table made of one has the
+/// quotient's type.
+#[test]
+fn sums_of_quotients_keep_integer_room() {
+    let db = Database::new();
+    let a = session(&db);
+    a.run("CREATE TABLE N (K INTEGER)").unwrap();
+    let thousand = "WITH RECURSIVE R (I) AS (VALUES (CAST(1 AS INTEGER)) UNION ALL SELECT I + 1 FROM R WHERE I < 1000) SELECT I FROM R";
+    a.run(&format!("INSERT INTO N {thousand}")).unwrap();
+    for batches in ["ON", "OFF"] {
+        a.run(&format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
+        assert_eq!(rows(&a, "SELECT SUM(100 / K) FROM N").unwrap(), ["748.546612"], "{batches}");
+        assert_eq!(rows(&a, "SELECT SUM(100000000000 / K) FROM N").unwrap(), ["748547086055.034031"], "{batches}");
+    }
+    a.run("CREATE TABLE Q AS (SELECT K / 7 AS V FROM N) WITH DATA").unwrap();
+    let types = "SELECT NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Q'";
+    assert_eq!(rows(&a, types).unwrap(), ["16,6"]);
+    assert_eq!(rows(&a, "SELECT MAX(V) FROM Q").unwrap(), ["142.857142"]);
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §6.13 GR8a, §9.2 GR3k; §8.2 GR2]
@@ -150,14 +175,18 @@ fn wide_values_cast_and_compare_6_13() {
 /// store, its rows frozen into groups, with a primary key on its wide
 /// column D and an index on N.
 fn wide_table(a: &Session, columns: bool) {
-    let using = if columns { " USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 64)" } else { "" };
+    let using = if columns { " USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)" } else { "" };
     a.run(&format!("CREATE TABLE W (D DECIMAL(38,10) PRIMARY KEY, N NUMERIC(25,0), K INTEGER){using}")).unwrap();
     a.commit().unwrap();
     a.run("CREATE INDEX WN ON W (N)").unwrap();
     a.commit().unwrap();
-    for k in 0..300_i64 {
-        let n = if k % 7 == 0 { "NULL".to_owned() } else { format!("{}000000000000000000000000", k % 5 - 2) };
-        a.run(&format!("INSERT INTO W VALUES ({}{k:03}.0123456789 * {}, {n}, {k})", "9".repeat(25), 1 - 2 * (k % 2))).unwrap();
+    for block in (0..4500_i64).step_by(500) {
+        let row = |k: i64| {
+            let n = if k % 7 == 0 { "NULL".to_owned() } else { format!("{}000000000000000000000000", k % 5 - 2) };
+            format!("({}{k:04}.0123456789 * {}, {n}, {k})", "9".repeat(24), 1 - 2 * (k % 2))
+        };
+        let values: Vec<String> = (block..block + 500).map(row).collect();
+        a.run(&format!("INSERT INTO W VALUES {}", values.join(", "))).unwrap();
     }
     a.commit().unwrap();
 }
@@ -168,8 +197,8 @@ fn read_wide(a: &Session) -> Vec<Vec<String>> {
     vec![
         rows(a, "SELECT D FROM W ORDER BY D FETCH FIRST 2 ROWS ONLY").unwrap(),
         rows(a, "SELECT D FROM W ORDER BY D DESC FETCH FIRST 2 ROWS ONLY").unwrap(),
-        rows(a, "SELECT K FROM W WHERE D = 9999999999999999999999999001.0123456789 * -1").unwrap(),
-        rows(a, "SELECT COUNT(*) FROM W WHERE D > -9999999999999999999999999100 AND D < 9999999999999999999999999100").unwrap(),
+        rows(a, "SELECT K FROM W WHERE D = 9999999999999999999999991001.0123456789 * -1").unwrap(),
+        rows(a, "SELECT COUNT(*) FROM W WHERE D > -9999999999999999999999991100 AND D < 9999999999999999999999991100").unwrap(),
         // Each D is near 10^38 units: two of a sign would pass the 128
         // bits a sum is kept in, so the groups give their least.
         rows(a, "SELECT N, COUNT(*), MIN(D) FROM W GROUP BY N ORDER BY N").unwrap(),
@@ -194,12 +223,12 @@ fn wide_columns_round_trip_on_both_stores() {
         read.push(read_wide(&a));
     }
     let first = &read[0];
-    assert_eq!(first[0], ["-9999999999999999999999999299.0123456789", "-9999999999999999999999999297.0123456789"]);
-    assert_eq!(first[1], ["9999999999999999999999999298.0123456789", "9999999999999999999999999296.0123456789"]);
-    assert_eq!(first[2], ["1"]);
-    assert_eq!(first[3], ["100"]);
+    assert_eq!(first[0], ["-9999999999999999999999994499.0123456789", "-9999999999999999999999994497.0123456789"]);
+    assert_eq!(first[1], ["9999999999999999999999994498.0123456789", "9999999999999999999999994496.0123456789"]);
+    assert_eq!(first[2], ["1001"]);
+    assert_eq!(first[3], ["1100"]);
     assert_eq!(first[4].len(), 6);
-    assert_eq!(first[6], ["0,2000000000000000000000000,-9999999999999999999999999299.0123456789,5"]);
+    assert_eq!(first[6], ["0,2000000000000000000000000,-9999999999999999999999994499.0123456789,5"]);
     assert_eq!(read[1], read[0], "the column store reads as the row store");
 }
 

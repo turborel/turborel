@@ -10,7 +10,9 @@ use crate::db::State;
 use crate::error::Result;
 use crate::logical::{Expr, LogicalPlan};
 use crate::parser::Parser;
-use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value, bound_of};
+use crate::value::{
+    ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value, bound_of, quotient_bound,
+};
 
 /// A column's type, or none if not known.
 pub type Typed = Option<DataType>;
@@ -87,7 +89,7 @@ pub fn of_arithmetic(op: ArithOp, a: &Typed, b: &Typed) -> Typed {
     Some(match (a, b) {
         (DataType::Exact { precision: p1, scale: s1, .. }, DataType::Exact { precision: p2, scale: s2, .. }) => {
             // As the binder types it (`binder/arithmetic.rs`).
-            let (precision, scale) = bound_of(op, (*p1, *s1), (*p2, *s2)).unwrap_or((MAX_EXACT_PRECISION, *s1.max(s2)));
+            let (precision, scale) = bound_of(op, (*p1, *s1), (*p2, *s2)).unwrap_or_else(|| quotient_bound((*p1, *s1), (*p2, *s2)));
             if scale > MAX_EXACT_PRECISION {
                 return None;
             }

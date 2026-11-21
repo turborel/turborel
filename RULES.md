@@ -447,7 +447,7 @@ verification approach DO-178C expects (§8).
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 | D695 | Exact numbers hold 38 digits, and BIGINT, counts and a column of 18 or fewer keep 64 bits |
 | D696 | The precision of an exact sum, difference or product is the digits its operands' types give, up to 38 |
-| D697 | A quotient takes the most fractional digits 38 digits leave, by long division of 128-bit units |
+| D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
 
@@ -12776,28 +12776,43 @@ CREATE TABLE AS would be wide (D698) and kept in 128 bits. A sum or
 difference of `(p1, s1)` and `(p2, s2)` is now of max(p1 - s1, p2 - s2)
 + 1 digits before the point and max(s1, s2) after, a product of p1 + p2
 digits [§6.30 SR1c ii, iii], each up to 38 (`value::bound_of`, which
-the analysis of what can raise uses too, D373). A quotient's type is of
-38 digits, its scale max(s1, s2). SUM and AVG of exact numbers are of 38
-digits [§10.9 SR7g ii], so a sum of a column of 18 digits does not
-raise. Two values of 38 digits can pass the 128 bits a running sum is
-kept in, the limit -900 (D15, D18), and a quotient's sum, of the most
-fractional digits that fit, passes 38 digits soon, as it passed 18
-before. A type is a bound of its values, not their width, so the batch
+the analysis of what can raise uses too, D373). A quotient's type keeps
+room for its integer digits (D697). SUM and AVG of exact numbers are of
+38 digits at their operand's scale [§10.9 SR7g ii], so a sum of a column
+of 18 digits does not raise, nor does a sum of quotients of INTEGER
+values, whose scale is at most 11, before its integer part has 27 digits. Two values of 38 digits can pass
+the 128 bits a running sum is kept in, the limit -900 (D15, D18). A type is a bound of its values, not their width, so the batch
 and the row paths look at values (D699), and a value past a narrower
 type's precision raises only when it is assigned to it.
 
-#### D697. A quotient takes the most fractional digits 38 digits leave, by long division of 128-bit units
+#### D697. A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units
 
-A quotient keeps the largest scale at which it fits the precision
-(`Decimal::checked_div`), now 38: 1 / 3 has 38 threes. Its units at that
-scale, a × 10^(s + s2 - s1) / b, need more than 128 bits on the way when
-a has many digits, so they are computed by long division of the
-magnitudes (`value/decimal/quotient.rs`), each step appending as many
-digits as the remainder times a power of ten holds, and one at a time by
-ten additions when the divisor is past a tenth of the range. The scale
-is not searched: of n digits over m, the quotient fits at e = 38 - n + m
-or one less, so it is computed at the first, and at the second only if
-it has a digit too many there.
+The standard leaves a quotient's precision and scale to the
+implementation [X3.135-1986 §5.9 SR4d, ISO/IEC 9075-2:2023 §6.30 SR1c
+iv]. A quotient that took every fractional digit 38 digits leave made
+1 / 3 a value of 38 digits, and a sum of a few hundred such passed 38
+digits, or the 128 bits a running sum is kept in, at a total near 170.
+
+So a quotient of `(p1, s1)` by `(p2, s2)` is typed with I = p1 - s1 + s2
+integer digits, the most a divisor of at least 10^-s2 gives, and scale
+max(6, s1 + p2 + 1), at most the 38 - I digits I leaves
+(`value::quotient_bound`). Its values follow the rule by themselves
+(`Decimal::checked_div`): scale max(6, s1 + d2 + 1, s2), d2 the divisor's
+digits, or less by as many digits as the integer part has past 38,
+truncated toward zero, its trailing zeros dropped down to max(s1, s2).
+1 / 3 is 0.333333, 7 / 2 is 3.5. A value's scale is at most its type's
+but where the type's is cut for its integer digits and the value has
+fewer. The leading digit is never lost [GR6b]: the scale is past both the
+dividend's scale and the divisor's digits. SUM and AVG of a quotient
+keep its scale and have the rest of 38 digits for the integer part.
+
+Its units at that scale, a × 10^(s + s2 - s1) / b, need more than 128
+bits on the way when a has many digits, so they are computed by long
+division of the magnitudes (`value/decimal/quotient.rs`), each step
+appending as many digits as the remainder times a power of ten holds,
+and one at a time by ten additions when the divisor is past a tenth of
+the range. A quotient whose integer digits leave fewer fractional ones
+is computed again at the scale they leave.
 Trailing zeros are stripped by powers of ten from 10^16 down, not one
 at a time.
 

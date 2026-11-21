@@ -40,7 +40,7 @@ fn wide_types_keep_16_bytes() {
 #[test]
 fn wide_keys_order_as_values() {
     let t = decimal(38, 0);
-    let values = [-MOST, -(1_i128 << 70), -1, 0, 1, 1_i128 << 70, MOST];
+    let values = [-MOST, -(1_i128 << 70_u32), -1_i128, 0_i128, 1_i128, 1_i128 << 70_u32, MOST];
     let keys: Vec<Vec<u8>> = values
         .iter()
         .map(|&u| {

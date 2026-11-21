@@ -9,26 +9,26 @@ use crate::ast::ValueExpression;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::Expr;
 use crate::params::ParameterType;
-use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, bound_of};
+use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, bound_of, quotient_bound};
 
 /// [X3.135-1986 §5.9 SR4; ISO/IEC 9075-2:2023 §6.30 SR1c] The type of an
 /// operation on two exact numbers, of types `(p1, s1)` and `(p2, s2)`.
-/// Its scale is max(s1, s2) for + and - \[SR4b\], s1 + s2 for * \[SR4c\],
-/// and for / at least max(s1, s2): a quotient keeps as many more
-/// fractional digits as fit, so as to lose no leading digit \[GR6b\], the
-/// implementor-defined choice of \[SR4d\] (`Decimal::checked_div`). Its
-/// precision is implementation-defined (IV136): \[DESIGN\] (RULES.md
-/// D696) the digits every value of the operands' types gives
-/// (`value::bound_of`), up to `MAX_EXACT_PRECISION`, and of a quotient
-/// `MAX_EXACT_PRECISION`; so a sum of two columns of 18 digits is of 19,
-/// stored as such, and a value past the precision raises [GR6a].
+/// Its scale is max(s1, s2) for + and - \[SR4b\], s1 + s2 for * \[SR4c\].
+/// Its precision, and a quotient's scale, are implementation-defined
+/// (IV136, \[SR4d\]): \[DESIGN\] (RULES.md D696) the digits every value of
+/// the operands' types gives (`value::bound_of`), up to
+/// `MAX_EXACT_PRECISION`, so a sum of two columns of 18 digits is of 19,
+/// stored as such, and a value past the precision raises [GR6a]; of a
+/// quotient (D697) the integer digits a divisor of at least 10^-s2 gives
+/// and max(6, s1 + p2 + 1) fractional ones, as many fewer as they leave
+/// (`value::quotient_bound`, `Decimal::checked_div`).
 ///
 /// A scale above the precision is not a type [X3.135-1986 §5.5 SR4], so a
 /// product whose scale would exceed `MAX_EXACT_PRECISION` is valid SQL-86 that
 /// this implementation does not process: SQLCODE -900. Capping the scale
 /// instead made every row fail at run time.
 fn exact_result_type(op: ArithOp, (p1, s1): (u32, u32), (p2, s2): (u32, u32)) -> Result<DataType> {
-    let (precision, scale) = bound_of(op, (p1, s1), (p2, s2)).unwrap_or((MAX_EXACT_PRECISION, s1.max(s2)));
+    let (precision, scale) = bound_of(op, (p1, s1), (p2, s2)).unwrap_or_else(|| quotient_bound((p1, s1), (p2, s2)));
     if scale > MAX_EXACT_PRECISION {
         return Err(SqlError::new(
             Code::Unsupported,
@@ -139,7 +139,9 @@ mod tests {
     }
 
     /// Verifies: [X3.135-1986 §5.9 SR4b, SR4c, §5.5 SR4] product scale is s1 + s2 up to
-    /// `MAX_EXACT_PRECISION` and rejected beyond it; sums keep max(s1, s2).
+    /// `MAX_EXACT_PRECISION` and rejected beyond it; sums keep max(s1, s2);
+    /// a quotient of (9, 5) by (9, 2) has 6 integer digits and 15 after
+    /// the point (RULES.md D697).
     #[test]
     fn exact_result_scales() {
         let half = 19_u32; // any split of MAX_EXACT_PRECISION into two scales
@@ -148,7 +150,7 @@ mod tests {
         assert_eq!(shape(ArithOp::Mul, (half, half), (max, max - half + 1)), Err(Code::Unsupported));
         assert_eq!(shape(ArithOp::Add, (max, max), (max, max)), Ok((max, max)));
         assert_eq!(shape(ArithOp::Sub, (9, 2), (9, 5)), Ok((13, 5)));
-        assert_eq!(shape(ArithOp::Div, (9, 5), (9, 2)), Ok((max, 5)));
+        assert_eq!(shape(ArithOp::Div, (9, 5), (9, 2)), Ok((21, 15)));
     }
 
     /// Verifies: [ISO/IEC 9075-2:2023 §6.30 SR1c ii, iii] (IV136) the

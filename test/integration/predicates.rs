@@ -96,7 +96,7 @@ fn like_matches_patterns_5_14() {
 }
 
 /// Verifies: [X3.135-1986 §5.9 SR4d, GR6b] a quotient of exact numbers
-/// loses no leading significant digit: 1 / 3 is not 0 but has 38 digits,
+/// loses no leading significant digit: 1 / 3 is not 0 but 0.333333,
 /// 6 / 2 is 3, 1 / 4 is 0.25, -7 / 2 is -3.5, and AMT / 4 is 2.625; a
 /// divisor of 0 is a data exception [GR5].
 #[test]
@@ -104,10 +104,10 @@ fn exact_division_keeps_leading_digits_5_9() {
     let db = setup();
     let s = db.session("APP");
     let one = |sql: &str| rows(&s, &format!("SELECT {sql} FROM T WHERE ID = 1"));
-    assert_eq!(one("1 / 3"), Ok(vec![format!("0.{}", "3".repeat(38))]));
+    assert_eq!(one("1 / 3"), Ok(vec!["0.333333".into()]));
     assert_eq!(one("6 / 2, 1 / 4, -7 / 2"), Ok(vec!["3,0.25,-3.5".into()]));
     assert_eq!(one("AMT / 4"), Ok(vec!["2.625".into()]));
-    assert_eq!(one("(1 / 3) * 3"), Ok(vec![format!("0.{}", "9".repeat(38))]));
+    assert_eq!(one("(1 / 3) * 3"), Ok(vec!["0.999999".into()]));
     assert_eq!(code(&s, "SELECT 1 / 0 FROM T WHERE ID = 1"), Code::Data);
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE ID / 3 > 0.5 ORDER BY ID"), Ok(vec!["2".into(), "3".into()]));
 }

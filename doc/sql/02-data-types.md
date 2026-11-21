@@ -341,9 +341,11 @@ more digits before the point than the column holds is refused.
 
 Arithmetic on exact numbers is exact, to 38 digits. A sum has one digit
 before the point more than the wider of its operands, a product the
-digits of both, each up to 38; a quotient is exact at the largest scale
-that fits in 38 digits, so 7 / 2 is 3.5, and 1 / 3.0 is 0.3 and 37 more
-threes. A result past 38 digits is refused. A column of up to 18
+digits of both, each up to 38. A quotient keeps at least 6 digits after
+the point, more as its operands' scales and its divisor's digits need,
+and fewer only where its integer digits need the room. It is truncated,
+and its trailing zeros are dropped, so 7 / 2 is 3.5 and 1 / 3 is
+0.333333. A result past 38 digits is refused. A column of up to 18
 digits keeps each value in 8 bytes, a wider one in 16.
 
 **Approximate numbers** are binary floating point: REAL of 24 binary

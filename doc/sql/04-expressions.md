@@ -74,8 +74,9 @@ a value inserted, a SET, a DEFAULT, or `CAST(NULL AS INTEGER)`.
 tighter than `+` and `-`; parentheses group. An expression of exact
 numbers is exact, of 38 digits at most; one of an approximate number is
 approximate; one of a DECFLOAT is DECFLOAT(34), rounded to 34 digits.
-A quotient of exact numbers is at the largest scale that
-fits, so 10 / 4 is 2.5; a product's scale is its operands' scales
+A quotient of exact numbers keeps at least 6 digits after the point,
+truncated, its trailing zeros dropped, so 10 / 4 is 2.5 and 1 / 3 is
+0.333333; a product's scale is its operands' scales
 summed. Division by zero is refused, and so is a result past 38 digits.
 
 ```sql
@@ -85,9 +86,9 @@ SELECT ID, SALARY * 1.1 FROM STAFF ORDER BY ID;
 ```
 
 ```
-       |      |                                          |        |
--------+------+------------------------------------------+--------+--------------------------
-     7 |    2 |                                      2.5 |   5.00 |     3.333333333333333E-1
+       |      |            |        |
+-------+------+------------+--------+--------------------------
+     7 |    2 |        2.5 |   5.00 |     3.333333333333333E-1
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22012): a divisor shall not be 0 [X3.135-1986 §5.9 GR5]
            ID |

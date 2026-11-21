@@ -7,16 +7,14 @@ fn q(a: i128, sa: u32, b: i128, sb: u32) -> Result<String> {
 /// 10^38 - 1, the greatest units of 38 digits.
 const MOST: i128 = 99_999_999_999_999_999_999_999_999_999_999_999_999;
 
-/// Verifies: [X3.135-1986 §5.9 SR4d, GR6b] a quotient loses no leading
-/// significant digit: it has the most fractional digits that fit 38
-/// digits, truncated toward zero, trailing zeros dropped down to the
-/// operands' larger scale; an integer part past 38 digits, or a nonzero
-/// quotient below 10^-38, is refused with SQLCODE -301 rather than given
-/// wrong.
+/// Verifies: [X3.135-1986 §5.9 SR4d, GR6b] RULES.md D697: a quotient is
+/// at scale max(6, s1 + d2 + 1, s2), truncated toward zero, its trailing
+/// zeros dropped down to the operands' larger scale; its leading digit is
+/// never lost, however small.
 #[test]
 fn quotients_keep_their_leading_digits() {
-    assert_eq!(q(1, 0, 3, 0).unwrap(), format!("0.{}", "3".repeat(38)));
-    assert_eq!(q(2, 0, 3, 0).unwrap(), format!("0.{}", "6".repeat(38)), "truncated, not rounded");
+    assert_eq!(q(1, 0, 3, 0).unwrap(), "0.333333");
+    assert_eq!(q(2, 0, 3, 0).unwrap(), "0.666666", "truncated, not rounded");
     assert_eq!(q(6, 0, 2, 0).unwrap(), "3");
     assert_eq!(q(1, 0, 4, 0).unwrap(), "0.25");
     assert_eq!(q(-7, 0, 2, 0).unwrap(), "-3.5");
@@ -24,35 +22,39 @@ fn quotients_keep_their_leading_digits() {
     assert_eq!(q(1050, 2, 2, 0).unwrap(), "5.25");
     assert_eq!(q(600, 2, 2, 0).unwrap(), "3.00", "not below the operands' scale");
     assert_eq!(q(0, 0, 7, 3).unwrap(), "0.000", "zero at the operands' scale");
-    assert_eq!(q(10, 0, 3, 0).unwrap(), format!("3.{}", "3".repeat(37)), "38 digits in all");
+    assert_eq!(q(10, 0, 3, 0).unwrap(), "3.333333");
+    assert_eq!(q(1, 9, 3, 0).unwrap(), "0.00000000033", "scale s1 + d2 + 1");
+    assert_eq!(q(1, 0, 3_000_000_000, 0).unwrap(), "0.00000000033", "scale s1 + d2 + 1");
+    assert_eq!(q(1, 0, 1, 7).unwrap(), "10000000.0000000", "scale s2");
 }
 
-/// Verifies: [X3.135-1986 §5.9 GR6b] at the bounds of 38 digits: a
-/// quotient below 10^-38, or of an integer part past 38 digits, is
-/// refused with SQLCODE -301; one at them is exact.
+/// Verifies: [X3.135-1986 §5.9 GR6b] RULES.md D697 at the bounds of 38
+/// digits: a quotient of many integer digits has as many fewer fractional
+/// ones; one whose integer part is past 38 digits is refused with SQLCODE
+/// -301.
 #[test]
 fn quotients_at_38_digits() {
-    assert_eq!(q(1, 38, 1_000, 0).unwrap_err().code, Code::Data, "below 10^-38");
-    assert_eq!(q(1, 35, 1_000, 0).unwrap(), format!("0.{}1", "0".repeat(37)));
     assert_eq!(q(MOST, 0, 1, 2).unwrap_err().code, Code::Data, "an integer part of 40 digits");
     assert_eq!(q(MOST, 0, 1, 0).unwrap(), MOST.to_string());
     assert_eq!(q(MOST, 0, -1, 0).unwrap(), (-MOST).to_string());
     assert_eq!(q(MOST, 0, MOST, 0).unwrap(), "1");
     assert_eq!(q(1, 0, MOST, 0).unwrap(), format!("0.{}1", "0".repeat(37)), "a divisor past a tenth of the range");
     assert_eq!(q(MOST, 38, 3, 0).unwrap(), format!("0.{}", "3".repeat(38)));
+    let ten_to = |n: u32| 10_i128.pow(n);
+    assert_eq!(q(ten_to(30), 0, 3, 0).unwrap(), format!("{}.333333", "3".repeat(30)), "31 digits and 6");
+    assert_eq!(q(ten_to(36), 0, 3, 0).unwrap(), format!("{}.33", "3".repeat(36)), "36 digits and 2");
 }
 
-/// Verifies: [X3.135-1986 §5.9 GR6b] the quotient is taken at the scale its
-/// digits allow, or one less when its digits are one more than the
-/// least the operands' digits give: 99 over 10 at scale 38 would have 39
-/// digits, so it is taken at 37.
+/// Verifies: [DESIGN] RULES.md D697: `quotient_bound` gives I = p1 - s1 +
+/// s2 integer digits and scale max(6, s1 + p2 + 1), at most 38 - I.
 #[test]
-fn quotient_scale_steps_back_once() {
-    assert_eq!(q(99, 0, 1, 0).unwrap(), "99");
-    assert_eq!(q(99, 0, 9, 0).unwrap(), "11");
-    assert_eq!(q(98, 0, 99, 0).unwrap(), format!("0.{}", "98".repeat(19)));
-    assert_eq!(q(MOST, 0, 9, 0).unwrap(), "11111111111111111111111111111111111111");
-    assert_eq!(Decimal::new(99, 0).widest_over(Decimal::new(10, 0)).map(|d| d.scale), Some(37));
+fn quotient_bounds_keep_integer_room() {
+    assert_eq!(quotient_bound((10, 0), (10, 0)), (21, 11));
+    assert_eq!(quotient_bound((3, 0), (1, 0)), (9, 6));
+    assert_eq!(quotient_bound((15, 2), (4, 2)), (22, 7));
+    assert_eq!(quotient_bound((38, 0), (10, 0)), (38, 0));
+    assert_eq!(quotient_bound((30, 0), (10, 0)), (38, 8));
+    assert_eq!(quotient_bound((38, 2), (1, 8)), (38, 0), "44 integer digits");
 }
 
 /// Verifies: [DESIGN] long division appends a remainder's digits in steps

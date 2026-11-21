@@ -6,16 +6,36 @@
 use super::{Mutation, Package};
 
 /// The mutations of wide exact numbers, in the order they run.
-pub const WIDE_EXACT: [Mutation; 9] = [
+pub const WIDE_EXACT: [Mutation; 11] = [
     Mutation {
         name: "wide-quotient-no-step-back",
         package: Package::Core,
-        breaks: "a quotient one digit past 38 at its estimated scale is not taken at one less, so it overflows",
+        breaks: "a quotient whose integer digits leave fewer fractional ones than its scale is retried at the same scale, so it overflows",
         file: "src/value/decimal/quotient.rs",
-        original: "            None => (fitting(at.checked_sub(1)?)?, at.checked_sub(1)?),",
-        replacement: "            None => (fitting(at)?, at),",
+        original: "            self.over_at(o, wanted.checked_sub(over)?)",
+        replacement: "            self.over_at(o, wanted.checked_sub(over.saturating_sub(1))?)",
         integration: &[],
-        unit: &["value::decimal::quotient::tests::quotient_scale_steps_back_once"],
+        unit: &["value::decimal::quotient::tests::quotients_at_38_digits"],
+    },
+    Mutation {
+        name: "wide-quotient-bound-no-room",
+        package: Package::Core,
+        breaks: "a quotient's type takes its fractional digits whatever integer digits are left, so its precision is cut and a sum of it overflows",
+        file: "src/value/decimal/quotient.rs",
+        original: ".min(MAX_EXACT_PRECISION.saturating_sub(whole));",
+        replacement: ";",
+        integration: &[],
+        unit: &["value::decimal::quotient::tests::quotient_bounds_keep_integer_room"],
+    },
+    Mutation {
+        name: "wide-quotient-scale-floor-zero",
+        package: Package::Core,
+        breaks: "a quotient of small operands has no fractional digit, so 1 / 3 is 0",
+        file: "src/value/decimal/quotient.rs",
+        original: "pub const MIN_QUOTIENT_SCALE: u32 = 6;",
+        replacement: "pub const MIN_QUOTIENT_SCALE: u32 = 0;",
+        integration: &[],
+        unit: &["value::decimal::quotient::tests::quotients_keep_their_leading_digits"],
     },
     Mutation {
         name: "wide-quotient-ten-over-no-digit",

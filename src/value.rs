@@ -35,7 +35,7 @@ pub use cast::{cast, cast_warned};
 pub use comparison::{Bucket, LobEquality, any_lob, bucket, compare, compare_checked, compare_strings, lob_proxies, proxies, row_proxies};
 pub use datetime::Datetime;
 pub use decfloat::DecFloat;
-pub use decimal::{Decimal, bound_of, pow10};
+pub use decimal::{Decimal, MIN_QUOTIENT_SCALE, bound_of, pow10, quotient_bound};
 pub use distinct::{distinct, key_bucket, key_equal};
 pub use like::{
     LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern, constant_prefix, constant_rest_is_any, like,

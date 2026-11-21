@@ -1,7 +1,9 @@
 //! Quotients of exact numbers [X3.135-1986 §5.9 SR4d, GR5, GR6b;
-//! ISO/IEC 9075-2:2023 §6.30 SR1c iv, GR5b] (RULES.md D697): each
-//! computed once, at the scale its digits allow, by long division of the
-//! units' magnitudes, so no product on the way overflows 128 bits.
+//! ISO/IEC 9075-2:2023 §6.30 SR1c iv, GR5b] (RULES.md D697): each at a
+//! scale its operands give, `MIN_QUOTIENT_SCALE` at least, so a sum of
+//! quotients keeps room for its integer digits; computed once by long
+//! division of the units' magnitudes, so no product on the way overflows
+//! 128 bits.
 
 use super::{Decimal, too_big};
 use crate::error::{Code, Result, SqlState, fail_with};
@@ -10,6 +12,11 @@ use crate::value::MAX_EXACT_PRECISION;
 /// `RADIX` as the type of a magnitude.
 const RADIX_U128: u128 = 10;
 
+/// \[DESIGN\] (RULES.md D697) The fewest fractional digits a quotient is
+/// computed to, as 1 / 3 is 0.333333, unless its integer digits leave
+/// fewer of `MAX_EXACT_PRECISION`.
+pub const MIN_QUOTIENT_SCALE: u32 = 6;
+
 /// The fewest trailing zeros a quotient's units are stripped of at once,
 /// doubled down to one: so 38 of them take a few divisions, not 38.
 const STRIP_STEPS: [u32; 5] = [16, 8, 4, 2, 1];
@@ -17,6 +24,12 @@ const STRIP_STEPS: [u32; 5] = [16, 8, 4, 2, 1];
 /// 10^`n`, if it fits a `u128`.
 fn pow10(n: u32) -> Option<u128> {
     RADIX_U128.checked_pow(n)
+}
+
+/// The power of ten the dividend's units are scaled by for a quotient
+/// of `a` by `b` at `scale`: scale + s2 - s1.
+fn scale_shift(a: Decimal, b: Decimal, scale: u32) -> Option<i64> {
+    i64::from(scale).checked_add(i64::from(b.scale))?.checked_sub(i64::from(a.scale))
 }
 
 /// The decimal digits of `n`, 0 of 0.
@@ -69,67 +82,58 @@ fn ten_over(r: u128, b: u128) -> Option<(u128, u128)> {
     Some((digit, left))
 }
 
+/// \[DESIGN\] (RULES.md D697) The precision and scale of a quotient of
+/// exact values within `(p1, s1)` by ones within `(p2, s2)`: its integer
+/// digits I = p1 - s1 + s2, the most a divisor of at least 10^-s2 gives;
+/// its scale max(`MIN_QUOTIENT_SCALE`, s1 + p2 + 1), at most the
+/// `MAX_EXACT_PRECISION` - I left; its precision I and the scale, at most
+/// `MAX_EXACT_PRECISION`.
+pub fn quotient_bound((p1, s1): (u32, u32), (p2, s2): (u32, u32)) -> (u32, u32) {
+    let whole = p1.saturating_sub(s1).saturating_add(s2);
+    let scale = MIN_QUOTIENT_SCALE.max(s1.saturating_add(p2).saturating_add(1)).min(MAX_EXACT_PRECISION.saturating_sub(whole));
+    (whole.saturating_add(scale).clamp(1, MAX_EXACT_PRECISION), scale)
+}
+
 impl Decimal {
     /// [X3.135-1986 §5.9 SR4d] precision and scale of a quotient are
     /// implementor-defined; [X3.135-1986 §5.9 GR6b] it "shall not lose any
-    /// leading significant digits". \[DESIGN\] We give it the largest scale,
-    /// up to `MAX_EXACT_PRECISION`, at which it fits in `MAX_EXACT_PRECISION`
-    /// digits, truncate toward zero, and drop trailing fractional zeros down
-    /// to max(s1, s2): 1 / 4 is 0.25, 6 / 2 is 3, and 1 / 3 is 0.3 and 37
-    /// more threes. The scale so depends on the value; the static type's
-    /// scale, max(s1, s2), is the least (`binder::exact_result_type`).
+    /// leading significant digits". \[DESIGN\] (RULES.md D697) As
+    /// `quotient_bound` of the values: at scale max(`MIN_QUOTIENT_SCALE`,
+    /// s1 + d2 + 1, s2), d2 the divisor's digits, or less as its integer
+    /// digits need, truncated toward zero, then its trailing fractional
+    /// zeros dropped down to max(s1, s2): 1 / 4 is 0.25, 6 / 2 is 3, and
+    /// 1 / 3 is 0.333333. Its leading digit is never lost: the scale is
+    /// past the divisor's digits and the dividend's scale.
     ///
     /// # Errors
     ///
-    /// SQLCODE -301 for a zero divisor, a quotient whose integer part needs
-    /// more than `MAX_EXACT_PRECISION` digits, or a nonzero quotient smaller
-    /// than 10^-`MAX_EXACT_PRECISION`, either of which would lose leading
-    /// digits.
+    /// SQLCODE -301 for a zero divisor, or a quotient whose integer part
+    /// needs more than `MAX_EXACT_PRECISION` digits.
     pub fn checked_div(self, o: Decimal) -> Result<Decimal> {
         if o.units == 0 {
             return fail_with(Code::Data, SqlState::DIVISION_BY_ZERO, "[X3.135-1986 §5.9 GR5] a divisor shall not be 0");
         }
         let floor = self.scale.max(o.scale);
-        if self.units == 0 {
-            return Ok(Decimal::new(0, floor));
-        }
-        let Some(q) = self.widest_over(o) else { return too_big() };
-        if q.units == 0 {
-            return fail_with(
-                Code::Data,
-                SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
-                format!("[X3.135-1986 §5.9 GR6b] the quotient is below 10^-{MAX_EXACT_PRECISION}, so it would lose its leading digits"),
-            );
-        }
+        let (dividend, divisor) = (self.units.unsigned_abs(), o.units.unsigned_abs());
+        let wanted =
+            MIN_QUOTIENT_SCALE.max(self.scale.saturating_add(digits_of(divisor)).saturating_add(1)).max(o.scale).min(MAX_EXACT_PRECISION);
+        let Some(q) = self.over_at(o, wanted).or_else(|| {
+            // Too many integer digits at that scale: as many fewer
+            // fractional ones as it has past the limit.
+            let at = shifted_over(dividend, scale_shift(self, o, 0)?, divisor)?;
+            let over = digits_of(at).saturating_add(wanted).checked_sub(MAX_EXACT_PRECISION)?;
+            self.over_at(o, wanted.checked_sub(over)?)
+        }) else {
+            return too_big();
+        };
         Ok(q.stripped(floor))
     }
 
-    /// This value, not 0, divided by `o` at the largest scale at most
-    /// `MAX_EXACT_PRECISION` at which it fits that many digits: none if it
-    /// fits at none. Of `n` digits over `m`, at scale `s` the quotient's
-    /// magnitude is below 10^(n - m + 1 + e), e = s + s2 - s1, and at least
-    /// 10^(n - m - 1 + e), so it fits at e = MAX - n + m or one less.
-    fn widest_over(self, o: Decimal) -> Option<Decimal> {
+    /// This value divided by `o`, not 0, at scale `scale`, truncated, if it
+    /// fits `MAX_EXACT_PRECISION` digits there.
+    fn over_at(self, o: Decimal, scale: u32) -> Option<Decimal> {
         let (dividend, divisor) = (self.units.unsigned_abs(), o.units.unsigned_abs());
-        let max = i64::from(MAX_EXACT_PRECISION);
-        let top = max
-            .checked_sub(i64::from(digits_of(dividend)))?
-            .checked_add(i64::from(digits_of(divisor)))?
-            .checked_add(i64::from(self.scale))?
-            .checked_sub(i64::from(o.scale))?;
-        let limit = pow10(MAX_EXACT_PRECISION)?;
-        let fitting = |at: i64| {
-            let shift = at.checked_add(i64::from(o.scale))?.checked_sub(i64::from(self.scale))?;
-            shifted_over(dividend, shift, divisor).filter(|units| *units < limit)
-        };
-        let at = top.min(max);
-        // At the estimated scale it may need a digit more than fit, or than
-        // 128 bits hold: then one scale less.
-        let (units, at) = match fitting(at) {
-            Some(units) => (units, at),
-            None => (fitting(at.checked_sub(1)?)?, at.checked_sub(1)?),
-        };
-        let scale = u32::try_from(at).ok()?;
+        let units = shifted_over(dividend, scale_shift(self, o, scale)?, divisor).filter(|u| digits_of(*u) <= MAX_EXACT_PRECISION)?;
         let units = i128::try_from(units).ok()?;
         let negative = (self.units < 0) != (o.units < 0);
         Some(Decimal::new(if negative { units.checked_neg()? } else { units }, scale))

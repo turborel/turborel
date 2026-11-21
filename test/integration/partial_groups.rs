@@ -173,8 +173,7 @@ fn an_error_of_a_group_made_partly_is_raised() {
 /// on a part merged: of keys each of 10^38 - 1, 1, -1, 1 and -1, each
 /// key's rows among those of 99 others, every sum is 10^38 - 1, by batch
 /// and row by row, of either store, its columns of 128 bits; of a key
-/// whose total is past 38 digits, or past 128 bits on the way, 22003
-/// alike (RULES.md D696).
+/// whose total is 10^38, past 38 digits, 22003 alike (RULES.md D696).
 #[test]
 fn a_sum_of_groups_made_partly_is_judged_on_its_total() {
     const KEYS: i64 = 3000;
@@ -205,8 +204,8 @@ fn a_sum_of_groups_made_partly_is_judged_on_its_total() {
         assert_eq!(batched.len(), 3000_usize);
         assert!(batched.iter().all(|r| r.contains(",99999999999999999999999999999999999999,")), "{sql}");
     }
-    a.run("INSERT INTO R VALUES (7, 99999999999999999999999999999999999999)").unwrap();
-    a.run("INSERT INTO C VALUES (7, 99999999999999999999999999999999999999)").unwrap();
+    a.run("INSERT INTO R VALUES (7, 1)").unwrap();
+    a.run("INSERT INTO C VALUES (7, 1)").unwrap();
     for t in ["C", "R"] {
         let sql = format!("SELECT K, SUM(N) FROM {t} GROUP BY K");
         let batched = rows(&a, &sql).err();

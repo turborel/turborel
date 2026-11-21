@@ -4806,7 +4806,7 @@ topic. The Where column names the file that implements each.
 | 86 §5.6 SR2 type of indicator parameters | Exact, precision 9, scale 0 | `value.rs`, `params.rs` |
 | 86 §5.8 SR7, SR9b, c precision of COUNT and SUM; scale of AVG | 18. AVG of scale S has scale min(S + 2, 18). | `functions.rs` |
 | 86 §5.9 SR4b, c precision of sums and products | 18 | `binder/expression.rs` |
-| 86 §5.9 SR4d precision and scale of quotients | 38 digits, at the largest scale (at most 38) that fits, truncated toward zero, trailing zeros dropped down to max(s1, s2) (RULES.md D697) | `value/decimal/quotient.rs`, `binder/arithmetic.rs` |
+| 86 §5.9 SR4d precision and scale of quotients | Of `(p1, s1)` by `(p2, s2)`, I = p1 - s1 + s2 integer digits and scale max(6, s1 + p2 + 1), at most 38 - I; each value at scale max(6, s1 + d2 + 1, s2), d2 its divisor's digits, fewer as its integer part needs, truncated toward zero, trailing zeros dropped down to max(s1, s2) (RULES.md D697) | `value/decimal/quotient.rs`, `binder/arithmetic.rs` |
 | 2023 §6.30 SR1c (IV136) precision of sums, differences and products | Of a sum or difference, max(p1 - s1, p2 - s2) + 1 + max(s1, s2) digits; of a product, p1 + p2; each at most 38 (RULES.md D696) | `value/decimal.rs`, `binder/arithmetic.rs` |
 | 2023 §10.9 SR7g ii, iii (IV167, IV168) the exact types of SUM and AVG | 38 digits, of the argument's scale; AVG's scale more by `AVG_EXTRA_SCALE`, at most 38 | `functions/totals.rs` |
 | 86 §8.3 GR3b vii; 2023 §10.10 SR3, ID133, where nulls sort, the `<null ordering>` implied | Greater than every value, so last ascending and first descending, as NULLS LAST of ASC and NULLS FIRST of DESC | `value.rs`, `value/order.rs` |

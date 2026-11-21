@@ -21,7 +21,7 @@ choices:
 | An arithmetic result with a DECFLOAT operand | DECFLOAT(34) |
 | A DECFLOAT value as text | plain, unless it has more than 34 digits before the point or 6 zeros after it, then in E notation |
 | The precision of COUNT and SUM; the scale of AVG | 18; the argument's and 2 more; of DECFLOAT, DECFLOAT(34) |
-| A quotient of exact numbers | 38 digits, at the largest scale that fits, truncated |
+| A quotient of exact numbers | Of (p1, s1) by (p2, s2), p1 - s1 + s2 integer digits and scale max(6, s1 + p2 + 1), fewer as the integer digits need, truncated |
 | A sum, difference or product of exact numbers | the digits its operands' types give, at most 38 |
 | SUM and AVG of exact numbers | 38 digits |
 | A number stored in an exact type of a smaller scale | an exact one or a DECFLOAT truncated; an approximate one rounded |
