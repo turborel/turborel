@@ -174,3 +174,27 @@ fn scans_by_sketches_keep_what_values_keep() {
         assert_eq!(kept(&plain, &pages, &conjunct), expected, "{conjunct:?}, not sketched");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D525, few rows asked for: of a run of
+/// which one row of each sixteen is asked for, a scan compares their
+/// texts, reading no code of the sketch and judging no code, and keeps
+/// the rows whose value the conjunct matches; of one of which every
+/// third is asked for, it reads the codes.
+#[test]
+fn few_rows_asked_for_are_compared_without_the_sketch() {
+    let (pool, file) = file();
+    let pages = Pages { pool: &pool, file, capacity: 8192, sealing: &Plain, compress: true, pax: false, imprints: false };
+    let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
+    let rows: Vec<Row> = (0..ROWS).map(|n| vec![Value::Exact(Decimal::new(i128::from(n), 0)), url(n)]).collect();
+    let group = Group::write(&pages, &TYPES, (&ids, &rows), (&[], &[], &[1])).unwrap();
+    let conjunct = compare(CompOp::Ge, "http://site150");
+    let judgment = Judgment::of(Some(&Conjunction(vec![conjunct.clone()])), &TYPES);
+    for (step, read) in [(16, false), (3, true)] {
+        let mut prepared = Prepared::default();
+        let given: Vec<u32> = (0..2048).step_by(step).collect();
+        let kept = judgment.judge(&group, (&pages, &mut prepared), (&TYPES, (0, 2048)), Some(given.clone())).unwrap().kept;
+        let expected: Vec<u32> = given.into_iter().filter(|&r| conjunct.matches_key(&[&rows[usize::try_from(r).unwrap()][1]])).collect();
+        assert_eq!(kept, expected, "every {step}th row");
+        assert_eq!(!prepared.sketches.is_empty(), read, "every {step}th row, the sketch read");
+    }
+}

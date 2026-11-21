@@ -12451,6 +12451,12 @@ keeps is what the conjunct keeps, as a code is said to keep or leave
 its rows only where every value it holds orders alike against every
 constant.
 
+A run of which fewer than one row of each eight is asked for, as a
+narrower conjunct judged before leaves it, is compared row by row
+without the sketch (`SPARSE` in `judged/coded.rs`). Of so few rows,
+reading the codes and judging each code of the group cost more than
+comparing the texts asked for.
+
 Columns of numbers and datetimes get none, as decoding their frames of
 reference costs about what reading a byte a row costs, and so do texts
 coded by a dictionary, which a dictionary in order judges by codes
