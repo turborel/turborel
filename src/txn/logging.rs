@@ -212,6 +212,23 @@ impl Txn {
         self.hold(log, bytes)
     }
 
+    /// \[EXTENSION\] Holds `bytes`, the record of `changes` row changes as
+    /// `Record::encode` gives it, for its log, if it has one: one made from
+    /// rows as they are held (`record::insert_rows_record`, RULES.md D530).
+    /// Each change counts toward the next checkpoint, the record's first
+    /// once it is written and the rest now.
+    ///
+    /// # Errors
+    ///
+    /// As `log_change`.
+    pub(crate) fn log_encoded(&self, bytes: &[u8], changes: u64) -> Result<()> {
+        let Some(log) = &self.log else { return Ok(()) };
+        self.shared.taking_changes()?;
+        self.hold(log, bytes.to_vec())?;
+        self.shared.logged.fetch_add(changes.saturating_sub(1), Ordering::Relaxed);
+        Ok(())
+    }
+
     /// Leaves the transaction able only to roll back, `why`: its definitions
     /// changed in a way a statement's undoing does not take back.
     pub(crate) fn doom(&self, why: &'static str) {
@@ -291,7 +308,11 @@ impl Txn {
     /// SQLCODE -922 if the sync failed: the transaction is then in doubt.
     pub(super) fn sync_commit(&self, lsn: Lsn) -> Result<()> {
         let Some(log) = self.log.as_ref() else { return Ok(()) };
-        self.shared.sync(&**log, lsn).map_err(|e| {
+        // [DESIGN] RULES.md D520: shown waiting for I/O while it syncs.
+        self.stop.activity().waits_for_io();
+        let synced = self.shared.sync(&**log, lsn);
+        self.stop.activity().woke();
+        synced.map_err(|e| {
             SqlError::new(
                 Code::InDoubt,
                 format!(

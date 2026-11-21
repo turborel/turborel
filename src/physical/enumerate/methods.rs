@@ -8,10 +8,10 @@
 //!   each row hashed (`HASH_ROW`); the build side, chosen as the plan is
 //!   made, is the operand of fewer rows (`enumerate/realize.rs`). It keeps
 //!   the order of the side probing it.
-//! * An index nested-loop join, of an inner or LEFT join whose right
-//!   operand is one relation an index of whose table answers an equality:
-//!   each left row probes it (`physical/indexed.rs`). It keeps the left's
-//!   order.
+//! * An index nested-loop join, of an inner, LEFT or semi join or an
+//!   antijoin whose right operand is one relation an index of whose table
+//!   answers an equality: each left row probes it (`physical/indexed.rs`),
+//!   a semi join's stopping at the first match. It keeps the left's order.
 //! * A merge join, of an inner or LEFT join on an equality of columns
 //!   whose types order as they compare, if one operand has a plan in the
 //!   key's order, as Selinger et al., "Access Path Selection in a
@@ -20,10 +20,14 @@
 //!   (`CostModel::sort_compare`). Its rows are in the key's order. Where
 //!   both would be sorted the hash join is taken, which reads each once.
 //! * A nested loop, which pairs every row, when no equality joins them.
+//! * A range join, of an inner or LEFT join judging a comparison by order
+//!   of a value of each operand: the right sorted, each left row searching
+//!   it (`enumerate/ranged.rs`, RULES.md D580).
 
 use super::bits::Set;
 use super::conflicts::Kind;
 use super::model::Order;
+use super::ranged::range_join_cost;
 use super::space::{Applied, Cand, Entry, Method, Space, Tree};
 use crate::physical::cost::HASH_ROW;
 
@@ -42,12 +46,17 @@ impl Space<'_> {
         let sides = Sides { left, right };
         let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
         let keys = self.keys(applied, (l, r));
+        let ranges = matches!(kind, Kind::Inner | Kind::Left) && self.model.ranged.of(applied);
         let mut out = Vec::new();
         let Some(build) = right.best() else { return out };
         let tree = |how: Method, (a, b): (usize, usize)| Tree::Join { how, op: applied.op, left: a, right: b, sets: (l, r) };
         for cand in &left.cands {
             let order = if kind == Kind::Full { Order::None } else { cand.order };
             let base = cand.cost + rows;
+            if ranges {
+                let cost = base + build.cost + range_join_cost(&self.model.cost, (left.rows, right.rows), rows);
+                out.push((Cand { cost, order, tree: 0 }, tree(Method::Range, (cand.tree, build.tree))));
+            }
             if keys.is_empty() {
                 let cost = base + build.cost + left.rows * right.rows;
                 out.push((Cand { cost, order, tree: 0 }, tree(Method::Nested, (cand.tree, build.tree))));
@@ -94,7 +103,7 @@ impl Space<'_> {
     /// The cost of a probe of an index of `r`'s table by one of `keys`, if
     /// the join is inner or LEFT and `r` is one relation one answers.
     fn probe_cost(&self, kind: Kind, keys: &[(usize, usize)], r: Set) -> Option<f64> {
-        if !matches!(kind, Kind::Inner | Kind::Left) {
+        if !matches!(kind, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) {
             return None;
         }
         let rel = Space::single(r)?;

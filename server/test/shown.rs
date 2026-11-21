@@ -9,11 +9,12 @@ use turborel_server::settings::{MAX_CONNECTIONS, SOCKET};
 
 use crate::common::{pki, rows, secured, start, state};
 
-/// Verifies: [DESIGN] RULES.md D42, D55, D43: a server shows the
+/// Verifies: [DESIGN] RULES.md D42, D55, D43, D520: a server shows the
 /// database's owner each connection it serves, its user, whether it is
 /// secure, and whether it runs a statement; and its counts: workers
 /// running a statement, statements waiting, connections, and those
-/// refused past SERVER.MAX_CONNECTIONS. Another user sees none of them.
+/// refused past SERVER.MAX_CONNECTIONS. Another user sees their own
+/// connection alone, and none of the counts.
 #[test]
 fn a_server_shows_its_connections_to_the_owner() {
     let db = Database::new();
@@ -28,7 +29,7 @@ fn a_server_shows_its_connections_to_the_owner() {
     assert_eq!(state(&refused).0, "08004");
     let counts = "SELECT WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD FROM INFORMATION_SCHEMA.SERVER";
     assert_eq!(rows(&owner.query(counts).unwrap()), ["1,0,2,1,0"], "the owner's statement runs");
-    assert_eq!(rows(&other.query(connections).unwrap()), Vec::<String>::new(), "not the owner");
+    assert_eq!(rows(&other.query(connections).unwrap()), ["2,X,NO,RUNNING"], "its own alone");
     assert_eq!(rows(&other.query(counts).unwrap()), Vec::<String>::new());
 }
 

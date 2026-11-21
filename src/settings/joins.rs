@@ -1,9 +1,12 @@
-//! \[DESIGN\] The settings of join enumeration (RULES.md D305): which
-//! search plans a chain of joins, and the limits of the adaptive one's
-//! stages (`physical/enumerate.rs`).
+//! \[DESIGN\] The settings of join enumeration (RULES.md D305), which
+//! search plans a chain of joins and the limits of the adaptive one's
+//! stages (`physical/enumerate.rs`); whether a join comparing a value of
+//! each operand by order may be a range join (`physical/range.rs`,
+//! RULES.md D582); and whether a grouping may be streamed (D550,
+//! `physical/streamed.rs`).
 
 use super::builtin::{SESSION, count, defined, text};
-use super::{Definition, Key, Kind};
+use super::{Definition, Key, Kind, ON, SWITCHES};
 use crate::physical::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS};
 
 /// PLANNER.JOIN_ENUMERATION.
@@ -12,6 +15,10 @@ pub const JOIN_ENUMERATION: Key = Key(79);
 pub const DP_BUDGET: Key = Key(80);
 /// PLANNER.LINEARIZED_RELATIONS.
 pub const LINEARIZED_RELATIONS: Key = Key(81);
+/// PLANNER.RANGE_JOINS.
+pub const RANGE_JOINS: Key = Key(88);
+/// PLANNER.STREAMED_GROUPING.
+pub const STREAMED_GROUPING: Key = Key(90);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
@@ -39,4 +46,23 @@ pub(super) fn definitions() -> [Definition; 3] {
             "The most tables ADAPTIVE join ordering plans whole by linearized dynamic programming when exact search is past its budget, and the size of the parts of a greedy plan it plans again so for larger queries.",
         ),
     ]
+}
+
+/// PLANNER.RANGE_JOINS, at its key's place after the executor's settings.
+pub(super) fn range_joins() -> Definition {
+    defined(
+        ("PLANNER.RANGE_JOINS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a join whose condition compares a value of each table by <, <=, > or >=, a band or an overlap of periods among them, may sort one table and have each row of the other search it, rather than judge every pair. OFF plans such joins as nested loops, as to compare the two.",
+    )
+}
+
+/// The setting of streamed groupings, at its key's place after the
+/// range joins'.
+pub(super) fn streamed() -> [Definition; 1] {
+    [defined(
+        ("PLANNER.STREAMED_GROUPING", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a grouping or DISTINCT whose rows come in the order of its keys, or cost less sorted, is made a group at a time as its rows come, with nothing held, ON, or always by a table of its groups, OFF, as to compare the two.",
+    )]
 }

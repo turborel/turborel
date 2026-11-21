@@ -1,7 +1,8 @@
-//! How much of a column store table its filters skip (RULES.md D510-D514):
-//! of HITS, a table shaped as the ClickBench one, its rows frozen, counts
-//! and sums by selective ranges of a scattered integer, ranges of dates in
-//! the rows' order, prefixes of LIKE and ranges of texts, IN lists and the
+//! How much of a column store table its filters skip (RULES.md D510-D514,
+//! D525): of HITS, a table shaped as the ClickBench one, its rows frozen,
+//! its URL sketched, counts and sums by selective ranges of a scattered
+//! integer, ranges of dates in the rows' order, prefixes of LIKE, equals,
+//! ranges and IN lists of texts, IN lists of numbers and the
 //! combinations of these; then the same after a few rows of every group
 //! are updated, so the tree shadows them; and rows fetched through an
 //! index (RULES.md R-BENCH-1). `ROWS_VAR` sets its rows.
@@ -20,26 +21,36 @@ const PER_INSERT: u64 = 2_000;
 const REPEATS: u64 = 3;
 /// Days of HITS' dates.
 const DAYS: u64 = 365;
+/// HITS' options: a sketch of its URL.
+const SKETCHED: &str = "WITH (COLUMNSTORE.SKETCH = 'URL')";
 
 /// The rows of HITS.
 fn rows() -> u64 {
     std::env::var(ROWS_VAR).ok().and_then(|v| v.parse().ok()).unwrap_or(ROWS)
 }
 
-/// Schema B with HITS, in the column store: K its key, in order; EDATE a
-/// date, in the rows' order; COUNTER a counter of 100, mostly in order;
-/// USERID scattered, each row's own; REGION one of 10,000, scattered;
-/// WIDTH one of 20; URL a text of 500 sites and 100,000 pages; PHRASE
-/// empty in nine rows of ten, else one of 1,000. Background work runs
-/// only when asked.
+/// Schema B with HITS, in the column store, its rows frozen, its URL
+/// sketched.
 fn database(rows: u64) -> Database {
+    let db = filled(rows, SKETCHED);
+    db.maintain().unwrap();
+    db
+}
+
+/// Schema B with HITS, in the column store, of `options`, its rows
+/// written and none frozen: K its key, in order; EDATE a date, in the
+/// rows' order; COUNTER a counter of 100, mostly in order; USERID
+/// scattered, each row's own; REGION one of 10,000, scattered; WIDTH one
+/// of 20; URL a text of 500 sites and 100,000 pages; PHRASE empty in nine
+/// rows of ten, else one of 1,000. Background work runs only when asked.
+fn filled(rows: u64, options: &str) -> Database {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
-    db.schema(
+    db.schema(&format!(
         "CREATE SCHEMA AUTHORIZATION B
            CREATE TABLE HITS (K BIGINT, EDATE DATE, COUNTER INTEGER, USERID BIGINT, REGION INTEGER, WIDTH INTEGER,
-             URL VARCHAR(100), PHRASE VARCHAR(40)) USING columnstore",
-    )
+             URL VARCHAR(100), PHRASE VARCHAR(40)) USING columnstore {options}"
+    ))
     .unwrap();
     let s = db.session("B");
     for first in (0..rows).step_by(PER_INSERT as usize) {
@@ -47,7 +58,6 @@ fn database(rows: u64) -> Database {
         s.run(&format!("INSERT INTO HITS VALUES {}", values.join(", "))).unwrap();
         s.commit().unwrap();
     }
-    db.maintain().unwrap();
     db
 }
 
@@ -79,7 +89,7 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 }
 
 /// The queries measured, each named; `{r}` stands for HITS' rows.
-const QUERIES: [(&str, &str); 14] = [
+const QUERIES: [(&str, &str); 17] = [
     ("COUNT of 0.1% by a scattered range", "SELECT COUNT(*) FROM HITS WHERE USERID < {r} / 1000"),
     ("COUNT of 1% by a scattered range", "SELECT COUNT(*) FROM HITS WHERE USERID < {r} / 100"),
     ("SUM of 10% by a scattered range", "SELECT SUM(WIDTH) FROM HITS WHERE USERID < {r} / 10"),
@@ -100,13 +110,25 @@ const QUERIES: [(&str, &str); 14] = [
     ),
     ("COUNT by a scattered range and a LIKE prefix", "SELECT COUNT(*) FROM HITS WHERE USERID < {r} / 100 AND URL LIKE 'http://site4%'"),
     ("MIN and MAX of texts", "SELECT MIN(PHRASE), MAX(URL) FROM HITS"),
+    ("COUNT by an equal text of many", "SELECT COUNT(*) FROM HITS WHERE URL = 'http://site7.example/page7'"),
+    ("COUNT by a range of texts of many", "SELECT COUNT(*) FROM HITS WHERE URL >= 'http://site2' AND URL < 'http://site3'"),
+    (
+        "COUNT by IN of 3 texts of many",
+        "SELECT COUNT(*) FROM HITS WHERE URL IN ('http://site1.example/page1', 'http://site2.example/page2', 'http://site3.example/page3')",
+    ),
 ];
+
+/// The choices of what a frozen group keeps whose freezing is measured,
+/// each named, as HITS' options.
+const FREEZES: [(&str, &str); 3] =
+    [("imprints", "WITH (COLUMNSTORE.IMPRINTS = 'ON')"), ("no imprints", "WITH (COLUMNSTORE.IMPRINTS = 'OFF')"), ("a sketch", SKETCHED)];
 
 /// The queries measured again once rows of every group are updated.
 const AFTER: [usize; 4] = [1, 3, 8, 11];
 
 /// Measures each query of HITS, then again after updates, and fetches
-/// through an index.
+/// through an index; and last, the freezing of a quarter of its rows,
+/// with each choice of what a group keeps.
 pub fn workloads(bench: &Bench) {
     let rows = rows();
     let db = database(rows);
@@ -134,4 +156,15 @@ pub fn workloads(bench: &Bench) {
     s.commit().unwrap();
     measure("skipping, index", ("fetch 4 columns of 0.01% through an index", "SELECT K, EDATE, URL, WIDTH FROM HITS WHERE REGION = 4321"));
     measure("skipping, index", ("fetch 2 columns of 0.03% through an index", "SELECT K, WIDTH FROM HITS WHERE REGION IN (11, 12, 13)"));
+    for (name, options) in FREEZES {
+        let case = Case::new(format!("freeze, {name} (skipping, write)"), "rows");
+        bench.measure_fresh(
+            case,
+            || filled(rows / 4, options),
+            |fresh| {
+                fresh.maintain().unwrap();
+                rows / 4
+            },
+        );
+    }
 }

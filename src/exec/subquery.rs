@@ -5,10 +5,13 @@
 //! predicate is applied to [X3.135-1986 §5.21 GR3, §5.23 GR4]. \[DESIGN\]
 //! Its result depends only on the values of its outer references, so the
 //! `Runner` keeps the rows it gave for each, and runs it once for each
-//! distinct set of values: once in all, for a subquery with none. Each run
+//! distinct set of values: once in all, for a subquery with none. A run
 //! binds the values into the subquery's plan (`Subquery::bound`), so they
 //! are constants, and optimizes and plans it as any query: a correlated
-//! comparison becomes one an index can answer.
+//! comparison becomes one an index can answer. Its plan made with its outer
+//! references as slots is kept once its runs show the values choose no
+//! other, and each later run fills it instead (`subquery/planned.rs`,
+//! RULES.md D675).
 //!
 //! A subquery run EXECUTOR.DECORRELATE_AFTER_RUNS times, for as many sets of values,
 //! is run once more instead without its equalities with outer references,
@@ -26,6 +29,7 @@
 //! subquery's with no outer references always, as it is its only run.
 
 mod drawn;
+mod planned;
 mod quantified;
 
 pub use drawn::Drawn;
@@ -37,7 +41,7 @@ use std::sync::{Arc, Mutex};
 
 use super::join::{Built, Full, Rescanned, Right};
 use super::work::{Bag, ENTRY_BYTES, Work};
-use super::{RowIter, broken, execute};
+use super::{Db, Opening, RowIter, broken, execute};
 use crate::catalog::SequenceDesc;
 use crate::db::State;
 use crate::error::{Result, Warnings};
@@ -275,13 +279,16 @@ enum Decorrelation {
 struct Seen {
     runs: usize,
     decorrelation: Decorrelation,
+    /// Its plan kept across its runs, or how far it is from one (RULES.md
+    /// D675).
+    planned: planned::Planned,
 }
 
 /// \[DESIGN\] Runs subqueries for transaction `tx`, keeping their rows (see
 /// the module's documentation): those of each run while what it keeps
 /// fits the work area (`Runner::keep`).
 pub struct Runner {
-    db: Arc<State>,
+    db: Db,
     /// The kernels its batches run on, as EXECUTOR.KERNELS chose them as
     /// it began (RULES.md D460).
     kernels: Arc<dyn crate::kernels::Kernels>,
@@ -308,11 +315,12 @@ impl Runner {
     }
 
     /// A runner for transaction `tx` in `db`.
-    pub fn new(db: &Arc<State>, tx: TxId) -> Runner {
+    pub fn new(db: &(impl Opening + ?Sized), tx: TxId) -> Runner {
         let (done, seen) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
+        let db = db.opening().into_owned();
         Runner {
-            db: Arc::clone(db),
-            kernels: crate::db::kernels::chosen(db),
+            kernels: crate::db::kernels::chosen(&db),
+            db,
             tx,
             done,
             kept: Cell::new(0),
@@ -429,7 +437,7 @@ impl Subqueries for Runner {
         }
         let found = match self.keyed(subquery, at)? {
             Some(keyed) => SubqueryRows::of(rows_for(&keyed, outer, (limit, &mut Work::of(&self.db, self.tx)))?, &self.db),
-            None => self.gathered(self.run(subquery.bound(outer)), limit)?,
+            None => self.gathered(self.per_run(subquery, outer), limit)?,
         };
         // Kept while what is kept fits the work area; past that, run again
         // for each set of outer values.

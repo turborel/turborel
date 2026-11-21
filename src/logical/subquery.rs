@@ -65,6 +65,7 @@ pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> Log
             LogicalPlan::Aggregate { groups, collations, aggs, seeds, input }
         }
         LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: cond.map_exprs(f), left, right },
+        LogicalPlan::SemiJoin { anti, cond, left, right } => LogicalPlan::SemiJoin { anti, cond: cond.map_exprs(f), left, right },
         LogicalPlan::Values { rows, types } => {
             LogicalPlan::Values { rows: rows.into_iter().map(|r| r.into_iter().map(&mut *f).collect()).collect(), types }
         }
@@ -103,7 +104,7 @@ pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> Log
 /// or expression that can, or a set function, which can overflow.
 fn plan_can_raise(plan: &LogicalPlan) -> bool {
     let own = match plan {
-        LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } => cond.can_raise(),
+        LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } | LogicalPlan::SemiJoin { cond, .. } => cond.can_raise(),
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(Expr::can_raise),
         LogicalPlan::Aggregate { aggs, .. } => !aggs.is_empty(),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
@@ -181,7 +182,7 @@ fn expr_has_outer(e: &Expr) -> bool {
 
 /// Whether `c` has an outer reference slot, also among the outer
 /// expressions of the subqueries nested in it.
-fn cond_has_outer(c: &Cond) -> bool {
+pub fn cond_has_outer(c: &Cond) -> bool {
     let mut found = false;
     c.for_each_expr(&mut |e| found = found || expr_has_outer(e));
     found
@@ -190,7 +191,7 @@ fn cond_has_outer(c: &Cond) -> bool {
 /// Whether `plan` has an outer reference slot anywhere.
 pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
     let own = match plan {
-        LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } => cond_has_outer(cond),
+        LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } | LogicalPlan::SemiJoin { cond, .. } => cond_has_outer(cond),
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(expr_has_outer),
         LogicalPlan::Aggregate { aggs, .. } => aggs.iter().any(|a| a.exprs().into_iter().any(expr_has_outer)),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(expr_has_outer),

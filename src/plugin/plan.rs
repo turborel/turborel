@@ -226,9 +226,10 @@ pub enum Body {
     Project(Vec<Expression>),
     /// A join's kind, and an outer join's condition.
     Join {
-        /// Cross, left, right or full.
+        /// Cross, left, right, full, semi or anti.
         kind: JoinKind,
-        /// The `<join condition>` of an outer join.
+        /// The `<join condition>` of an outer join, or the condition of a
+        /// semi join or an antijoin, over the pair's columns.
         condition: Option<Expression>,
     },
     /// The sort keys, most significant first.
@@ -257,6 +258,11 @@ pub enum JoinKind {
     Right,
     /// FULL OUTER.
     Full,
+    /// \[DESIGN\] A semi join: the left's rows some right row matches,
+    /// its columns the left's (RULES.md D540).
+    Semi,
+    /// \[DESIGN\] An antijoin: the left's rows no right row matches.
+    Anti,
 }
 
 /// A set operator.

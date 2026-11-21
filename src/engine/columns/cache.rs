@@ -204,6 +204,9 @@ mod tests {
             columns: Vec::new(),
             order: Vec::new(),
             pax: false,
+            edges: Vec::new(),
+            sketched: Vec::new(),
+            sketches: Vec::new(),
             header: vec![PageId(first)],
         })
     }

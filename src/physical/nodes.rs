@@ -6,6 +6,7 @@
 //! `MAX_NESTING_DEPTH` is planned within half the default stack (RULES.md
 //! R-CF-6).
 
+use super::streamed::Grouping;
 use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::functions::XmlFilter;
 use crate::logical::{Cond, Expr, Fixpoint, Limit, LogicalPlan, SetOp, SortKey, Unnest, render_expr};
@@ -16,18 +17,20 @@ impl PhysicalPlanner<'_> {
     /// order of its left input.
     pub(super) fn product(&self, left: &LogicalPlan, right: &LogicalPlan, want: &[SortKey]) -> Built {
         let want_left = of_left(want, left.width());
-        let l = self.build_node(left, want_left);
-        let r = self.build_node(right, &[]);
         let est = self.estimating(|e| e.rows(left) * e.rows(right));
+        let l = self.divided(|| self.per_row(est, left)).build_node(left, want_left);
+        let r = self.whole().build_node(right, &[]);
         Built { plan: Plan::Product { left: Box::new(l.plan), right: Box::new(r.plan), est }, ordered: !want_left.is_empty() && l.ordered }
     }
 
     /// Duplicate elimination of `input`, which keeps the first occurrence,
-    /// so order is kept.
+    /// so order is kept; or, of rows in the order of every column, each
+    /// compared with the one before (`physical/streamed.rs`).
     pub(super) fn distinct(&self, input: &LogicalPlan, want: &[SortKey]) -> Built {
-        let b = self.build(input, want);
         let est = self.estimating(|e| e.distinct_card(input)).rows;
-        Built { plan: Plan::Distinct { input: Box::new(b.plan), est }, ordered: b.ordered }
+        let keys: Vec<usize> = (0..input.width()).collect();
+        let g = Grouping { input, keys: &keys, reads: None, groups: est, width: keys.len(), streamable: true };
+        self.grouped(g, want, |rows, streamed| Plan::Distinct { input: Box::new(rows), est, streamed })
     }
 
     /// A system table's rows.
@@ -84,7 +87,7 @@ impl PhysicalPlanner<'_> {
         }
         let sum = Plan::summed(&l, &r);
         let append = Plan::Append { left: l, right: r, est: sum };
-        Built::unordered(if all { append } else { Plan::Distinct { input: Box::new(append), est } })
+        Built::unordered(if all { append } else { Plan::Distinct { input: Box::new(append), est, streamed: false } })
     }
 }
 

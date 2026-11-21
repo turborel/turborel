@@ -5,7 +5,9 @@
 //! projections and hash joins' probes over them, read as one stream; or
 //! one of the operators that end a pipeline, over one: a grouping whose
 //! set functions keep states that merge, DISTINCT, a sort, window
-//! functions of a partitioning, and UNION, EXCEPT and INTERSECT.
+//! functions of a partitioning, and UNION, EXCEPT and INTERSECT. A
+//! grouping or DISTINCT streamed over rows in its keys' order is no such
+//! part, as its order would be lost among the threads (RULES.md D550).
 //!
 //! The degree is of the rows the part's tables held as it was planned: as
 //! many threads as morsels of EXECUTOR.MORSEL_ROWS they hold, up to
@@ -105,6 +107,15 @@ impl<'a> Asked<'a> {
     }
 }
 
+/// \[DESIGN\] Whether `plan`, a grouping or DISTINCT, would be a part
+/// run in parallel as it is: so a streamed one is not chosen in its place
+/// (RULES.md D550).
+pub(super) fn runs_parallel(db: &State, plan: &Plan) -> bool {
+    let asked = Asked::of(db);
+    let Some(rows) = rooted(plan).filter(|_| asked.most > 1) else { return false };
+    !asked.kept_whole(plan, rows) && asked.degree(plan, rows) > 1
+}
+
 /// `plan` with each part worth running in parallel marked so.
 pub(crate) fn parallel(db: &State, mut plan: Plan) -> Plan {
     let asked = Asked::of(db);
@@ -170,10 +181,12 @@ fn filtered(plan: &Plan) -> bool {
 
 /// The rows a part rooted at `plan` reads, if it is one.
 fn rooted(plan: &Plan) -> Option<usize> {
-    if let Plan::Aggregate { aggs, input, .. } = plan {
+    // A streamed grouping or DISTINCT reads its input in order, a group
+    // at a time, which no morsel's table of groups does (RULES.md D550).
+    if let Plan::Aggregate { aggs, input, streamed: false, .. } = plan {
         return mergeable(aggs).then(|| stream(input)).flatten();
     }
-    if let Plan::Distinct { input, .. } = plan {
+    if let Plan::Distinct { input, streamed: false, .. } = plan {
         return stream(input);
     }
     if let Plan::Sort { input, most, .. } = plan {

@@ -19,6 +19,7 @@
 mod answered;
 mod batch;
 mod counted;
+mod db;
 mod distinct;
 mod entries;
 mod eval;
@@ -50,8 +51,6 @@ mod unnest;
 mod window;
 mod work;
 
-use std::sync::Arc;
-
 pub(crate) use batch::storage_counted;
 
 use crate::db::State;
@@ -63,6 +62,7 @@ use crate::system::SystemRead;
 use crate::txn::TxId;
 use crate::value::Value;
 
+pub use db::{Db, Opening, Slots};
 pub use entries::{Entries, row_entries, table_entries};
 pub(crate) use eval::{Escape, like_escape};
 pub use eval::{Heard, eval, eval_cond, quantified, warn};
@@ -100,11 +100,16 @@ fn failed(e: SqlError) -> RowIter {
 
 /// A function giving the rows of a plan of one kind, read as a
 /// transaction sees them.
-type Opened = fn(Plan, &Arc<State>, TxId) -> RowIter;
+type Opened = fn(Plan, &Db, TxId) -> RowIter;
 
 /// Rows are read as transaction `tx` sees them. A failure is the iterator's
 /// next item, so it reaches the caller as an error, not a panic.
-pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub fn execute(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> RowIter {
+    opened(plan, &db.opening(), tx)
+}
+
+/// `execute`'s work, in `db`.
+fn opened(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     // Matched by reference, the function chosen then handed the plan
     // whole at one call, so no arm adds a plan of its own, nor a copy of
     // one for its call, to the frame every level of a plan adds to the
@@ -118,6 +123,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::OuterJoin { .. } => join::outer,
         Plan::IndexJoin { .. } => join::indexed,
         Plan::MergeJoin(_) => join::merged,
+        Plan::SemiJoin(_) => join::semi,
+        Plan::RangeJoin(_) => join::ranged,
         // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
         Plan::Aggregate { .. } => grouped,
         // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
@@ -163,7 +170,7 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// The rows of the product or hash join `plan`.
 #[inline(never)]
-fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn joined_plan(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     match plan {
         Plan::Product { left, right, .. } => join::joined(*left, *right, None, db, tx),
         Plan::HashJoin { left, right, keys, .. } => join::joined(*left, *right, Some(keys), db, tx),
@@ -174,6 +181,8 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -198,21 +207,21 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// [X3.135-1986 §8.3 GR2b ii] the rows of both operands of `plan`.
 #[inline(never)]
-fn appended(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn appended(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Append { left, right, .. } = plan else { return failed(broken("an append is not one")) };
     Box::new(execute(*left, db, tx).chain(execute(*right, db, tx)))
 }
 
 /// [ISO/IEC 9075:1992 §21.1] a system table's rows, made as it is read.
 #[inline(never)]
-fn system_plan(plan: Plan, db: &Arc<State>, _tx: TxId) -> RowIter {
+fn system_plan(plan: Plan, db: &Db, _tx: TxId) -> RowIter {
     let Plan::System { read } = plan else { return failed(broken("a system table's read is not one")) };
     system_rows(&read, db)
 }
 
 /// The rows of the sort `plan`: of its first alone asked for, those.
 #[inline(never)]
-fn sorted_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn sorted_plan(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Sort { keys, input, most, .. } = plan else { return failed(broken("a sort is not one")) };
     let Some(most) = most else { return sorted(&keys, *input, db, tx) };
     // A stream's batches taken as they are, if it can be, the columns the
@@ -230,7 +239,7 @@ fn sorted_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// The rows of the system table `read` reads, made now.
 #[inline(never)]
-fn system_rows(read: &SystemRead, db: &Arc<State>) -> RowIter {
+fn system_rows(read: &SystemRead, db: &Db) -> RowIter {
     match read.rows(db) {
         Ok(rows) => Box::new(rows.into_iter().map(Ok)),
         Err(e) => failed(e),
@@ -239,7 +248,7 @@ fn system_rows(read: &SystemRead, db: &Arc<State>) -> RowIter {
 
 /// [X3.135-1986 §5.21 GR2] The rows of the filter `plan`.
 #[inline(never)]
-fn filtered(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn filtered(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Filter { cond, input, .. } = plan else { return failed(broken("a filter is not one")) };
     let rows = scan::filtered_input(*input, &cond, db, tx);
     filter(cond, rows, Runner::new(db, tx))
@@ -247,19 +256,24 @@ fn filtered(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// [X3.135-1986 §5.22, §5.8] The groups of the aggregation `plan`.
 #[inline(never)]
-fn grouped(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn grouped(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     // Read by batches, if it can be (`exec/batch.rs`).
     if batched(db) && batch::aggregable(&plan, db) {
         return batch::aggregated(plan, db, tx);
     }
-    let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
+    let Plan::Aggregate { groups, collations, aggs, seeds, input, streamed, .. } = plan else {
+        return failed(broken("an aggregation is not one"));
+    };
     let rows = execute(*input, db, tx);
-    group::grouping(group::Spec { groups, collations, aggs, seeds }, rows, db, tx)
+    let spec = group::Spec { groups, collations, aggs, seeds };
+    // Its rows in the order of its grouping columns, a group at a time
+    // (`group/streamed.rs`, RULES.md D551).
+    if streamed { group::streamed_grouping(spec, rows, db, tx) } else { group::grouping(spec, rows, db, tx) }
 }
 
 /// [X3.135-1986 §8.3 GR3b] The rows of `input`, sorted by `keys`.
 #[inline(never)]
-fn sorted(keys: &[SortKey], input: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn sorted(keys: &[SortKey], input: Plan, db: &Db, tx: TxId) -> RowIter {
     // A stream's batches sorted as they are, if it can be (`sort/vectors.rs`).
     if batched(db) && batch::whole_width(&input, db).is_some() {
         return batch::kept(input, db, tx).map_or_else(failed, |batches| sort::sort_batches(keys, batches, db, tx));
@@ -271,13 +285,14 @@ fn sorted(keys: &[SortKey], input: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// [X3.135-1986 §5.25 GR2, GR5, §5.11 GR7] The rows of `plan`, DISTINCT:
 /// duplicates per the comparison rules, nulls identical.
 #[inline(never)]
-fn distinct_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn distinct_rows(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     // Grouped by batches, if it can be (`batch::distinct_grouping`).
     if let Some(width) = batched(db).then(|| batch::distinct_groupable(&plan, db)).flatten() {
         return grouped(batch::distinct_grouping(plan, width), db, tx);
     }
-    let Plan::Distinct { input, .. } = plan else { return failed(broken("a duplicate elimination is not one")) };
-    distinct::distinct_of(execute(*input, db, tx), db, tx)
+    let Plan::Distinct { input, streamed, .. } = plan else { return failed(broken("a duplicate elimination is not one")) };
+    let rows = execute(*input, db, tx);
+    if streamed { group::streamed_distinct(rows) } else { distinct::distinct_of(rows, db, tx) }
 }
 
 /// [X3.135-1986 §5.21 GR2] keep the rows for which the condition is true,
@@ -294,7 +309,7 @@ fn filter(cond: Cond, input: RowIter, runner: Runner) -> RowIter {
 /// applied to each row of its input. Never inlined into `execute`, whose
 /// frame every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
-fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn projected(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     // Read by batches, if it can be (`exec/batch/project.rs`).
     if batched(db) && batch::projectable(&plan, db) {
         return batch::projected(plan, db, tx);
@@ -468,7 +483,7 @@ mod tests {
     #[test]
     fn row_entries_needs_a_table_access() {
         let st = Arc::new(state());
-        let plan = Plan::Distinct { input: Box::new(one_row(vec![])), est: 0.0_f64 };
+        let plan = Plan::Distinct { input: Box::new(one_row(vec![])), est: 0.0_f64, streamed: false };
         assert_eq!(row_entries(plan, &st, NO_TRANSACTION).err().map(|e| e.code), Some(Code::Api));
     }
 
@@ -488,6 +503,7 @@ mod tests {
             detail: String::new(),
             input: Box::new(one_row(row.clone())),
             est: 0.0_f64,
+            streamed: false,
         };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey::ascending(1)];
@@ -501,7 +517,7 @@ mod tests {
     /// R-ERR-1); and the batch reader takes it for none of its own.
     #[test]
     fn executors_refuse_a_plan_of_another_kind() {
-        let st = Arc::new(state());
+        let st = Db::from(Arc::new(state()));
         let other = || one_row(vec![Value::Null]);
         let executors: [Opened; 10] = [
             scan::scanned_plan,
@@ -518,7 +534,7 @@ mod tests {
         for run in executors {
             assert_eq!(code(run(other(), &st, NO_TRANSACTION)), Some(Code::Api));
         }
-        let distinct = Plan::Distinct { input: Box::new(other()), est: 0.0_f64 };
+        let distinct = Plan::Distinct { input: Box::new(other()), est: 0.0_f64, streamed: false };
         assert_eq!(code(set::values(distinct, &st, NO_TRANSACTION)), Some(Code::Api));
         assert!(!batch::aggregable(&other(), &st) && batch::distinct_groupable(&other(), &st).is_none());
         assert!(matches!(batch::distinct_grouping(other(), 1_usize), Plan::Values { .. }), "not a DISTINCT: left as it is");

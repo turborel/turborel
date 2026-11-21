@@ -322,6 +322,9 @@ verification approach DO-178C expects (§8).
 | D317 | EXPLAIN shows the unnested plan, and both rules have their own settings |
 | D318 | Side effects, non-deterministic functions, UNIQUE, MATCH and a few operators keep a subquery nested |
 | D319 | A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct |
+| D540 | A semi join and an antijoin are join kinds of their own, enumerated with the others under CD-C's conflict rules |
+| D541 | A subquery of existence that is a conjunct of WHERE or HAVING is made a semi join or an antijoin before it is unnested otherwise |
+| D542 | Under MIN and MAX alone, a join whose right operand nothing above reads is a semi join |
 | D320 | A language stems by Snowball's own program, run by an interpreter of the Snowball language |
 | D321 | A language is a built-in profile of normalization, stems, stop words and cutting, named in English |
 | D322 | French, Italian, Catalan and Irish take elisions off their words, and Catalan joins a middle dot |
@@ -362,6 +365,8 @@ verification approach DO-178C expects (§8).
 | D365 | A sort of which only the first rows are asked for takes a batch's rows by their keys' bytes, making only the rows it gives |
 | D366 | A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does |
 | D367 | A row made of a batch makes each of its cells a value alone, not its columns' every value |
+| D368 | A hash join's right operand is put in one table of slots holding their rows side by side, tag bits in each slot's word, and probed a batch at a time |
+| D369 | A hash join tells its left operand a range and a Bloom filter of its built keys, judged at the scan, and a table of many equal hashes hashes its texts again by a keyed hash |
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
 | D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
 | D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
@@ -377,6 +382,7 @@ verification approach DO-178C expects (§8).
 | D382 | A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff |
 | D383 | An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count |
 | D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
+| D389 | A pipeline run in parallel under an operator that is not one is read by batch, its scans told its hash joins' runtime filters, a scan's range judged once, and a spilled join's partitions picked by its table's hash and probed by batch |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -410,8 +416,22 @@ verification approach DO-178C expects (§8).
 | D474 | A page read into a frame takes the buffer of the page it replaces |
 | D475 | An update's log record holds the row after whole and of the row before only the columns changed |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
+| D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
+| D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
+| D520 | CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session |
+| D521 | Statements are tallied by normalized text and user, each session in its own tallies |
+| D522 | Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes |
+| D525 | A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code |
+| D530 | The rows of an INSERT and of a bulk copy go in together, a batch at a time, one log record each |
+| D550 | A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less |
+| D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
+| D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
+| D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
+| D581 | A period predicate of two period references is the comparisons of its bounds |
+| D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D590 | A checkpoint captures its pages copy on write, writers held only while it notes them |
 | D591 | A page read or written shares no lock or counter with every other I/O of its file |
+| D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
 
@@ -7936,8 +7956,9 @@ With `copy`, CopyIn names a table and its columns, CopyData sends rows
 with no reply, and CopyEnd ends the copy, or abandons it. Each value is
 assigned to its column as INSERT assigns it [ISO/IEC 9075:1992 §13.8 GR4b
 iii], so a string too long is refused rather than cut. Rows are inserted
-in batches of 64 by one prepared INSERT, a batch that fails retried row
-by row to find the row, its failure's detail "row N of the copy". A copy
+in batches of 4096, each by one execution of a prepared INSERT of one
+row given them all (D530). A batch that fails is retried row by row to
+find the row, its failure's detail "row N of the copy". A copy
 is all or nothing, under a savepoint within the transaction, or its own
 transaction if CopyIn says it ends it. A savepoint that cannot be taken
 fails the copy before it inserts anything, and a client that terminates
@@ -9188,6 +9209,87 @@ be of a predefined type other than a large object, made of columns by
 arithmetic, casts and sort keys (`optimizer/unnesting/typed.rs`). Any
 other binding keeps its subquery nested.
 
+#### D540. A semi join and an antijoin are join kinds of their own, enumerated with the others under CD-C's conflict rules
+
+`LogicalPlan::SemiJoin` gives the rows of its left operand that a row of
+its right matches, or of an antijoin that none does, each once and in
+the left's order. Its columns are its left's alone, and its condition is
+over the pair's. Join enumeration takes it into a chain as it takes an
+outer join: its right operand's relations are numbered past the chain's
+columns, since no node above reads them, and the conflict rules of
+Moerkotte, Fender and Eich, "On the Correct and Complete Enumeration of
+the Core Search Space" (2013), Tables 2 and 3, say where it may move. An
+inner join reassociates over a semi join or an antijoin below it, they
+commute on the left with inner and LEFT joins and with each other, and
+nothing else moves past them. Its rows are estimated as a share of its
+left's, the share of the left's distinct keys the right holds, so every
+order of a set gives the same rows (D302).
+
+It is run hashed on its equalities, the right built, or the left when it
+has fewer estimated rows, with a mark for each row; by an index of the
+right's table, each probe stopping at the first match; or nested, the
+right held, of a condition with no equality. Every way stops at a left
+row's first match, so the rest of its condition is evaluated on fewer
+pairs than a join would; the optimizer makes semi joins only of
+conditions that cannot raise (D15). EXPLAIN names it HashSemiJoin,
+HashAntiJoin, HashRightSemiJoin, HashRightAntiJoin, NestedLoopSemiJoin,
+NestedLoopAntiJoin, or SemiIndexNestedLoop and AntiIndexNestedLoop.
+
+#### D541. A subquery of existence that is a conjunct of WHERE or HAVING is made a semi join or an antijoin before it is unnested otherwise
+
+The rule `semi_joins`, set by OPTIMIZER.SEMI_JOINS, runs before
+`unnest_subqueries`. A conjunct that is EXISTS of a correlated subquery,
+NOT EXISTS, a quantified comparison made EXISTS (D315), an uncorrelated
+IN, or NOT of a quantified comparison becomes the semi join or antijoin
+of the node's input with the subquery's rows. Where the subquery reads
+its outer references only in its filters, under projections and a
+DISTINCT, those conjuncts are the join's condition, after Neumann and
+Kemper's §2, so no domain of bindings is computed; otherwise the
+bindings' rows are those unnesting makes (D312, D314) and the join is on
+their keys. The other conjuncts filter the input below the join, so they
+are still evaluated on every row.
+
+`NOT (x = SOME s)`, a NOT IN, keeps a row if no row's comparison is true
+or unknown, the antijoin on `(x = y) IS NOT FALSE`, which a null on
+either side satisfies [ISO/IEC 9075:1992 §8.7 GR2]; `NOT (x op ALL s)` is
+the semi join on `(x op y) IS FALSE`. An uncorrelated NOT IN stays a
+subquery, which the executor hashes once. The rule leaves a subquery
+that can raise, one under OR, and one of an impure plan; and it is off,
+with the other unnesting rules, for a plan that finds the rows a
+searched change updates (D318).
+
+#### D542. Under MIN and MAX alone, a join whose right operand nothing above reads is a semi join
+
+MIN and MAX give one value of a multiset and of its set (Yan and
+Larson, VLDB 1995), so the rows a join repeats need not be made. Of a
+grouping of no grouping columns whose every set function is MIN or MAX,
+the physical planner walks the plan of its input, its joins already
+ordered as they cost least, from the top, with the columns the operators
+above each one read (`physical/blind.rs`, OPTIMIZER.SEMI_REDUCTION). An
+inner hash join of whose right operand nothing above reads a column is
+made a hashed semi join, and an inner index join of whose table nothing
+above reads is made one that stops at each left row's first match (D540).
+Each left row is given once rather than once for each match, so the
+joins above it see fewer rows. The columns of the operators above are
+renumbered, and a projection gives a null for a column nothing above
+reads that its input no longer has.
+
+The reduction is of the plan the join enumeration chose and not of the
+logical plan before it. A chain rewritten as semi joins along its join
+tree, the bottom-up pass of Yannakakis' algorithm (Lanzinger, Pichler
+and Selzer, PVLDB 2025), drives every semi join from the relations the
+set functions read, so it must scan them whole, where the plan without
+it reaches them by an index from a few selective rows. Each join made a
+semi join here keeps the order and the method chosen, so none does more
+work than it did. The setting stays an optimizer rule's, whose rule
+rewrites no logical plan, so it is turned off as the others are.
+
+An index join whose condition can raise is left, as the first match
+stops it judging the other pairs (D15); a hash join's keys cannot raise,
+and the conditions above it judge rows it gives either way. A grouping
+with grouping columns is left, as are set functions of DISTINCT: those
+drop duplicates by their own grouping by the argument (D340).
+
 ### Full-text languages
 
 #### D320. A language stems by Snowball's own program, run by an interpreter of the Snowball language
@@ -10209,6 +10311,86 @@ column's values instead made every row's value of the vector the first
 time any was read, which a projection of few kept rows paid for every
 row of the batch. The values are the same either way.
 
+#### D368. A hash join's right operand is put in one table of slots holding their rows side by side, tag bits in each slot's word, and probed a batch at a time
+
+A hash join of streams holds its right operand as one batch (D31) and
+puts it in a join's table (`exec/table/join.rs`). The table hashes a
+key a vector at a time (`join/keys.rs`), as the key's bucket says it
+matches (`value::key_bucket`). An exact number hashes by the bits of
+its nearest approximate number, so 2, 2.0 and 2.000 hash alike in a
+vector of integers of any scale, of approximate numbers or of values.
+A CHAR hashes less its trailing spaces. A null is a miss, and no row
+matches it, but of a key on which a null matches a null, where it
+hashes as one value.
+
+The table has a power of two slots, at least two a row, a slot the high
+bits of a hash. Each slot's word in a directory holds where its rows end
+and, above that, 16 tag bits, one set by four low bits of each of its
+rows' hashes. A probe whose bit is not set is turned away by that word
+alone. A slot's rows and their hashes lie side by side in two vectors,
+not chained one to the next, so a probe reads them in order. The rows
+of a slot are in the order they were built. A slot of more than eight
+rows is sorted by hash, stably, and searched, so a key of many rows
+costs a probe of another key in that slot no walk of them, and the rows
+of one key still come in build order. A probe compares a candidate's
+keys in place of the vectors that hold them (`join/equal.rs`), integers
+of two scales rescaled, and of any other pair of vectors as values
+(`value::key_equal`).
+
+Each batch of the left operand is hashed once and probes the table, its
+pairs gathered into batches of each side's vectors as they are, in the
+order of the left's rows and then of the build. An outer join's held
+right is probed by the hashes of each left batch too.
+
+A pipeline run in parallel (D292) builds one such table of its built
+operand, of the batches its morsels give in morsel order, put together
+by the statement's thread, which no thread writes again
+(`batch/joined/shared.rs`). Its morsels read by batch probe it a batch
+at a time, a step of their batches like a filter or a projection
+(`batch/shaped.rs`), so a pipeline with a hash join is read by batch
+as one without. A pipeline read by rows probes it a row at a time.
+
+A right operand past its work area is partitioned as before (D38). Each
+pair of partitions held in memory puts its right in a table and its
+left's rows probe it a batch at a time (`batch/joined/parted.rs`). A
+partition too large even partitioned again is built in a table of the
+spill area and probed a row at a time.
+
+#### D369. A hash join tells its left operand a range and a Bloom filter of its built keys, judged at the scan, and a table of many equal hashes hashes its texts again by a keyed hash
+
+An inner hash join of a held right operand makes runtime filters of its
+built keys (`exec/table/runtime.rs`). A key of integers of one scale,
+none null, gives the least and greatest. Any key of up to 4M built rows
+gives a blocked Bloom filter of 8 bits a row, each key setting 4 bits of
+one 512-bit block (`kernels/portable/bloom.rs`), so a probe of it reads
+one block. Its hash is the table's.
+
+The join tells the filters to its left operand's stream, each of the
+left column of its key (`batch/runtime.rs`). A filter whose condition
+cannot raise and reads no subquery, a projection that moves the column
+as it is, and the left operand of an inner hash join take them down
+toward the scan. A scan in no order adds the range to the conjuncts it
+judges, so a column store's zone maps and its kernels skip what lies
+outside it (D360), and judges the Bloom filter of each batch it gives
+before any column given late is decoded (D361). Any other operator
+judges the filters of the batches it gives. A filter dropping a row
+below an operator that could raise of it would hide the error the row
+path raises (D15), so no filter goes below one.
+
+A filter that keeps nearly every row costs more than it saves. Each
+counts the rows it judges and keeps of its first 16 batches, and stops
+judging if they kept more than nine in ten. The setting
+EXECUTOR.RUNTIME_FILTERS (ON by default) turns the filters off, for a
+session.
+
+A join's table counts the candidates of a probe's hash whose keys are
+not equal. Past 1024, as rows chosen to share a hash would make, it
+hashes its texts and other bytes again by SipHash keyed by the
+database's seed, as a table of groups does (D357), and is built again.
+A number, datetime or truth value hashes by a bijection of its bits,
+so two such keys of one hash are equal. A table a parallel pipeline
+shares, which no probe may build again, hashes texts so from the first.
+
 #### D370. One estimator gives every plan node its rows, from the base tables under its columns
 
 The join enumeration, the greedy order, a hash join's build side, the
@@ -10513,7 +10695,11 @@ hold it to the portable loop. Any other column is written a value at a
 time as before (D364).
 
 A sort held in memory looks for a cancel (D44) before it sorts, and
-every 1,024 rows (`SORT_RUN_ROWS`) or each batch as it gives them. A
+every `SORT_RUN_ROWS` rows or each batch as it gives them. It looks too
+at the first row each window of its statement asks for, so a cursor
+fetching a row at a time is looked at in every fetch. A cancel counts
+within the fetch it lands in alone, and one landing in a fetch that did
+not look would be dropped. A
 run written to the spill area looks after each chunk. At a cancel it
 gives its error, and the same error at every ask after.
 
@@ -10696,6 +10882,58 @@ enumerated plan (`physical/enumerate.rs`). A plan-space test runs the
 join workload under rows given that are up to a thousand times too few
 or too many, and each plan gives its rows well within a minute
 (`test/integration/plan_space.rs`).
+
+#### D389. A pipeline run in parallel under an operator that is not one is read by batch, its scans told its hash joins' runtime filters, a scan's range judged once, and a spilled join's partitions picked by its table's hash and probed by batch
+
+A part the planner runs in parallel (D291) under an operator that is
+not one, as an outer join's operand, gave its rows one at a time, so
+the operator read it row by row where it reads the plan alone by
+batch. On many threads such a join ran slower than on one. A pipeline
+so placed is now read by batch (`parallel/batches.rs`). Its morsels go
+through its steps by batch on the threads, and their batches come in
+morsel order, each morsel's in order, as its rows did. A pipeline whose
+morsels are not read by batch gives way to its plan alone.
+
+A pipeline's hash join builds its operand before its probing side is
+split (D292). Its runtime filters (D369) now go down that side as the
+serial stream takes them (`parallel/pipeline.rs`). A scan is told each
+range among the conjuncts its split judges, so a morsel skips what lies
+outside it at any degree. A step right after the operator a filter
+stops at judges the filters of a morsel's batches. A morsel read a row
+at a time passes that step by, which only spares the join rows it
+would drop. A morsel's scan judges no Bloom filter. Measured, judging
+one in each morsel cost more than the probes it spared, as the
+morsel's batches are decoded whole and its threads share the filter's
+counts.
+
+A Bloom filter costs a hash and a block read a row, and a range
+compare costs less. A scan's range is judged among its conjuncts, by
+which a store skips what lies outside it, and the filter does not judge
+it again. Its Bloom filter is judged of the rows the scan gives, before
+any column it gives late is decoded (D361), and stops after its first
+batches if it keeps most of their rows (D369), so where it saves no
+work it costs those batches alone. Measured, a filter of a few thousand
+built keys over a scan of no late column still drops rows for less
+than a probe of the join's table costs, so the size of a build does not
+decide it. Above an operator a filter stops at, its range and its Bloom
+filter are judged, under the same stop.
+
+A filter goes below a projection only if none of its expressions can
+raise (D15), as below a filter. A part hoisted under its guard (D373)
+is computed by such a projection over the product of its operand and
+the guard, so no filter enters the operand the guard asks has a row,
+and a raise the standard's evaluation makes is never lost to a row the
+filter would drop.
+
+A right operand partitioned past its work area (D38) where the left's
+order is kept (`exec/join/partitioned.rs`) picks each row's partition
+by bits of its key's hash as a join's table hashes it, above the 4 bits
+its tag takes, by a seed drawn for each partitioning, so a partitioning
+again splits by another hash. Each pair's right partition held in
+memory is put in a join's table (D368) and its left's rows probe it a
+batch at a time, each joined row written with its left row's number and
+merged back into the left's order as before.
+
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 
 A `?` in a row of an INSERT's VALUES, or of VALUES in a query expression
@@ -10722,8 +10960,11 @@ right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13), and a
 comparison compares the value cut. The
 binder keeps the warning with the constant (`Expr::Warned`), and so does
 a kept plan's slot as it is filled (`logical/dynamic.rs`), so the
-statement completes with 01004 and the cut is never silent. A value
-that fits raises nothing. The cast stays a cast and not a store
+statement completes with 01004 and the cut is never silent. Such a
+constant counts as raising, as an expression that can raise an error
+does (D15), so a cursor whose plan holds one reads its rows at OPEN and
+completes with 01004 however far it is fetched, with ORDER BY or
+without. A value that fits raises nothing. The cast stays a cast and not a store
 assignment, as the standard says, so 22001 is raised only by the
 assignment of a value longer than its column, as a literal's is.
 
@@ -11634,6 +11875,514 @@ Rejected were positional delta trees (Héman, Zukowski, Nes, Sidirourgos
 and Boncz, SIGMOD 2010) and base and tail pages with lineage (Sadoghi
 et al., L-Store, 2018): both replace the tree, which already holds the
 row versions and their undo.
+
+#### D511. A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first
+
+The least and greatest values of 1,024 rows skip a part only if no row
+of it may match. On a column in no order they almost never do, and on
+one in near order they skip at a grain sixteen times the decoders' block.
+A group now keeps column imprints (Sidirourgos and Kersten, SIGMOD
+2013) of each column of exact numbers, datetimes and character strings,
+if COLUMNSTORE.IMPRINTS is ON (`engine/columns/imprints.rs`). The
+group's values are cut into at most 64 bins by edges drawn from a sorted
+sample of them, an equi-depth histogram, each value of few its own bin.
+Each 64 rows get a word, a bit for each bin a value of them falls in. A
+conjunct of the column makes a mask of the bins it may match, by the
+test the zone maps take (`Condition::may_match`) of each bin's bounds,
+so the mask is never narrower than the conjunct. A block whose word
+shares no bit with it is skipped. A null sets no bit, so a conjunct true
+of a null is not judged by imprints. The words of a part are kept
+together on pages of their own, read only by a scan whose condition can
+use them, and the edges in the group's header.
+
+Approximate numbers are left out, as a value no comparison orders would
+fall in a bin the mask may not hold. Imprints are not compressed: the
+words of a part take 128 bytes, a byte for 8 rows.
+
+Of each group, the scan orders the conjuncts it judges by the rows each
+keeps alone, by its zone maps and imprints, fewest first, so the
+narrowest is judged over the whole run and the others only over the rows
+it keeps. A conjunct of several columns, which the zone maps passed
+whole, now keeps the parts of each of its columns it may match with the
+others' values anywhere in the group.
+
+Imprints pay on columns in near order and on values rare among skewed
+ones. Of a column whose values are scattered evenly, 64 rows set most
+of the bits, so a narrow condition keeps most blocks, and the few it
+skips cut the scan's runs short, which costs more than judging them. A
+column whose blocks fall in more than a quarter of the bins on average
+therefore gets no imprints, as its group is written, and costs neither
+the words nor their reading. A scan skips only gaps of at least four
+blocks between the runs imprints keep. Even so, a scan whose runs
+imprints cut short pays more to start each than it saves, on the
+analytics bench's columns, so the option is OFF by default, for a table
+whose columns come in long stretches to turn on. Rejected was the positional SMA
+of Data Blocks (Lang et al., SIGMOD 2016), which narrows sorted columns
+alike but cannot skip a block of a rare value among skewed ones.
+
+A run the imprints leave short is gathered with the scan's other runs
+into full batches, not given alone (`frozen/batches/run.rs`).
+#### D512. A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes
+
+A dictionary's entries were kept as first seen, so a scan judged a
+condition of the column of each entry of each chunk a run read, entries
+copied out as text, before keeping a row by its code. A chunk of few
+rows to an entry paid nearly a comparison a row.
+
+A chunk of a character string type now writes its dictionary's entries
+in order as strings compare, padded with spaces, their bytes breaking
+ties, and sets the high bit of its bits byte to say so
+(`engine/columns/encoded/dictionary.rs`). A dictionary of another type,
+or of texts not UTF-8, keeps first-seen order and the bit clear. Reading
+a value is as before, as its code still names its entry.
+
+A scan judges a conjunct of such a chunk by codes
+(`engine/columns/judged/sorted.rs`). For each string constant of the
+conjunct, a binary search finds where the entries equal to it begin and
+end. Between two such places every entry orders alike against every
+constant, so the conjunct is true of all of them or of none, and it is
+judged of one. A row is kept if its code lies in a span kept. A
+comparison, a range, a LIKE prefix (whose bounds the planner pushes as
+two comparisons), IN, NOT IN and an OR of these judge a few entries per
+chunk, not each.
+
+The order is the one comparisons of the default collation take
+(`compare_strings`). A condition of a column of another collation
+reaches the scan as sort keys, never string constants, so it is judged
+as before, and the order of the entries is never read for it.
+
+#### D520. CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session
+
+An IDE watching a server needs to see what each connection runs, since
+when, and what holds it up. INFORMATION_SCHEMA.CONNECTIONS shows it in six
+columns more: STATEMENT_TEXT and STATEMENT_BEGAN while a statement runs,
+TRANSACTION_BEGAN while a transaction is open, and WAITING_ON, LOCK_NAME
+and LOCK_HOLDER.
+
+What a session does is kept in its activity, held in its `Stop`
+(`txn/stop/activity.rs`), as the server reaches a session and the lock
+manager reaches a transaction's session through it. A statement notes its
+text and its start, the instant its call began, as it is timed
+(`db/slow.rs`). The text is shared, made once for a prepared statement and
+once for each text a session runs directly while it keeps it, so a
+statement copies nothing. A transaction notes its start as it begins, the
+start of the statement that began it, and clears it as it ends. A wait
+for a table's lock or a row sets what it waits for and the first holder
+as it begins, and clears it as it ends. A commit's sync of the log, and a
+reply waiting for a commit it read to be durable, show IO. A request
+waiting for a worker shows WORKER, which the server sets without a lock
+and clears as the request runs. LOCK_HOLDER is the connection whose
+session's open transaction holds the lock.
+
+Statement texts carry values, so who sees them is narrowed. The
+database's owner sees every connection. So does a user for whom the role
+MONITOR is applicable, if the owner created that role. So the right is
+given and taken back by the standard's own statements, CREATE ROLE
+MONITOR, GRANT MONITOR TO a user and REVOKE, and a role of that name
+another user created gives nothing. Any other user sees their own
+connections alone, where before they saw none.
+
+#### D521. Statements are tallied by normalized text and user, each session in its own tallies
+
+INFORMATION_SCHEMA.STATEMENT_STATISTICS shows each statement run since the
+database was opened, by normalized text and user. Each row has its calls,
+their time, its mean and longest, the rows given or changed, the rows its
+scans read, the bytes its work areas spilled, and its last run. A
+normalized text is the statement's tokens one space apart, each literal a
+`?`, its key the XXH3-64 of it (D460, `system/statements/text.rs`).
+
+The tally sits on every statement's path, so it costs a statement a few
+counts and no shared lock. A text is normalized once, for a prepared
+statement in what it keeps between executions and for a direct one in
+its session's activity. Each session tallies its own runs in a map only
+it writes, under a lock only a reader of the table takes besides. A
+session's tallies are listed with the database's the first time it
+tallies, and kept once it ends, merged, until the table is next read.
+Rows read are counted by each scan as it reads, and given to its
+session's count once it is read through or dropped, so a row costs no
+atomic count. Bytes spilled are counted as a work area's run or table
+takes them. A statement's tally takes what those two counts grew by while
+it ran. They are one count each, which EXPLAIN ANALYZE can read the same
+way.
+
+STATEMENTS.KEPT, declared by the tallies themselves, bounds each
+session's tallies and the merged ones. A new statement past it takes the
+place of the one called least. At 0 nothing is tallied, and setting it to
+0 forgets every tally, which is how they are reset, with no statement of
+its own. The database's owner and a user granted MONITOR (D520) see every
+text. Another user sees every row, the texts of other users' statements
+as the null value, as VIEWS hides the definitions of others' views.
+
+#### D522. Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes
+
+INFORMATION_SCHEMA.TABLE_STATISTICS has a row for each base table: its
+engine, its rows, the bytes it takes, whether some are estimated, when a
+transaction that wrote it last committed, and when its engine's
+maintenance last did some work on it. INDEX_STATISTICS has a row for each
+index: its method, the searches made of it and the entries they gave
+since the database was opened or the index made, and its entries, height
+and bytes as far as its method knows them cheaply.
+
+An engine tells its bytes through `TableStorage::sizes`, with no pass over
+its rows, none by default. The built-in engine counts the pages of a
+table's frozen groups, and estimates the rows of its tree as their number
+times the mean width its statistics last measured: the tree shares its
+pages with the store's other tables, so no count of its own is kept on
+the write path. An index method tells what it knows through
+`Index::sizes`. The B-link tree gives its entries, once counted (D35), and
+its height; its bytes would need a walk of every page, so they are left
+unknown.
+
+The two stamps sit with the table's lock, which every snapshot shares.
+A commit stores the instant it already reads for its commit record in
+each table it wrote, one relaxed store each, so a rolled-back write
+changes nothing. Maintenance stores its own instant when a table's engine
+reports work done.
+
+A search counts its entries in its own fields and adds them, with one
+search, to the index's counts once, as it is read through or dropped. An
+index join counts each probe a search. The counts are kept in
+stripes, a thread's own, each on a cache line of its own, so searches on
+many threads at once do not take turns at one line. A snapshot maps each
+index's name to its counts. The map is brought in step with the indexes
+as each snapshot is published, so a search takes no lock to find them,
+and an index dropped takes its counts with it.
+
+The database's owner and a user granted MONITOR (D520) see every row.
+Another user sees the rows of the tables on which they hold a privilege,
+as the views of the Information Schema show what is accessible to them.
+#### D530. The rows of an INSERT and of a bulk copy go in together, a batch at a time, one log record each
+
+The standard says what an INSERT does to its table, not how its rows
+reach the storage, and has no bulk load. Inserting row by row cost each
+row its own lock check, log record and append, and an index write at a
+random place. So the candidate rows of an INSERT, of a query or of many
+rows of values, and so of a bulk copy (D195), are inserted a batch of up
+to 4096 at a time (`db/write/bulk.rs`). The table's lock is taken once.
+Each batch's rows go to the storage, then to the log as one record of
+kind 26, insert rows, of up to about a mebibyte of rows, each with its
+row id (`log/record/batch.rs`), then to each index in the rows' order,
+so each index's pages, and the estimates read from them, are as row by
+row inserts leave them. Each
+row keeps its own undo entries, and recovery redoes the record as one
+insert record a row, so a statement's effect, its failure undoing all of
+it, and what a crash keeps are as if the rows went in one at a time. A
+statement of one row, a partition or a partitioned table, a table whose
+rows are sealed, and a row holding a large object go one row at a time.
+The record format stays version 1, the kind added in place.
+
+Each row's NOT NULL constraints and CHECKs without a subquery are
+checked as it goes in, and a UNIQUE key found alone in its unique index
+needs no check after (`db/integrity/inserted.rs`). Such a row is noted
+for the statement's end only if its key was not alone. A row of an
+INSERT holds still once in when no trigger, delta table, referential
+action, deferred constraint, assertion or CHECK with a subquery can see
+or change it, so it is checked once that way. Any other statement has
+every row noted and checked at its end, as before.
+
+A program gives a batch of rows to a prepared INSERT of one row of
+dynamic parameters by `Session::execute_prepared_rows`. One execution
+then inserts them all, each row's values those of the parameters, so
+the statement is bound once a batch, not once a row. A bulk copy uses
+it. It is refused for any other statement and for a view with an
+INSTEAD OF trigger.
+#### D550. A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less
+
+A grouping whose rows come in the order of its grouping columns makes
+its groups one at a time, and a group is finished as the first row of
+the next comes [X3.135-1986 §5.22 GR2]. Nothing is hashed or held, and
+no grouping of more groups than its work area spills. The planner
+chooses it in `physical/streamed.rs`. Rows alike in every key come
+together in any order of the keys and either direction, so an ORDER BY
+of the keys in its own order serves.
+
+Under an ORDER BY of the keys, an input that already gives the order is
+streamed. An input that does not is sorted below the grouping, the
+ORDER BY's keys first and then the rest ascending, when sorting every
+row and comparing each costs less than hashing the rows and sorting the
+groups. Of no order asked, a read of one table, filtered or projected to
+columns, is streamed in an order the column store keeps
+(COLUMNSTORE.ORDER) or an ordered index without a collation gives, when
+that read and a comparison of each row cost less than the cheapest read
+hashed. A hashed grouping that would run in parallel (D290) is kept
+hashed, as the parallel grouping divides its rows among workers.
+
+A grouping by a collation compares its values' sort keys, not their
+order, and is hashed. So is one of grouping sets that makes groups
+before any row, one of no grouping column, and one with a DISTINCT set
+function or an inverse distribution function, whose states keep their
+values apart. PLANNER.STREAMED_GROUPING = 'OFF' hashes every grouping.
+EXPLAIN shows `Aggregate streamed` and `Distinct streamed`.
+
+COUNT, MIN and MAX of arguments and filters that cannot raise an error
+cannot raise one, so a grouping of them alone lets FETCH FIRST stop its
+input once its rows are given (`physical/raising.rs`). A count past
+BIGINT would take more rows than any statement reads.
+
+#### D551. A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows
+
+A set function's state may not go to another thread, as a stream of rows
+may. So no state lives between two asks. Row by row
+(`exec/group/streamed.rs`), the grouping keeps the first row of the next
+group, read past the last, and makes that group whole at the next ask.
+By batches (`exec/batch/groups/streamed.rs`), it makes the groups of a
+batch whole and the rest of its last group from the batches after, and
+keeps the batch where the next group begins and the place in it. A batch
+is read at most twice.
+
+A row's key is compared by the bytes a hashed grouping hashes, its
+normalized values (`put_norm`) row by row and a table's lanes of one
+group (`exec/table/keys.rs`) by batches. So a row joins a group exactly
+when the hashed grouping would put it there, nulls in one group and
+strings alike but for trailing spaces in one. Each run of one key in a
+batch is fed to the group's set functions a vector at a time
+(`fed_group`).
+
+#### D552. A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read
+
+How many rows a FETCH FIRST reads of its input is its row goal
+(`PhysicalPlanner::first`). An ordered read below is priced by the share
+of it read (D379, `physical/access.rs`). The goal passes down through
+the nodes that give their rows as they read them (`physical/goals.rs`),
+after Carey and Kossmann, "On Saying 'Enough Already!' in SQL", SIGMOD
+1997.
+
+A projection, a sort and a scan pass it unchanged. A filter divides it
+by the share of rows it keeps, a table read's own condition too. A read
+that probes by that condition reads only the rows it keeps, so it is
+priced at no less than its share, never at less. A hash join, an index join or a product gives
+its rows in its left operand's order, so the goal is divided by the rows
+each left row is estimated to give and passed to the left operand, and
+the right is read whole. A streamed grouping or DISTINCT multiplies it
+by the rows of a group. UNION ALL passes it to each operand. Every other
+node, a hashed grouping, an outer join, a window among them, reads its
+input whole before it gives a row, and the goal stops there.
+
+The goal changes only the choice of an ordered read. A wrong estimate
+costs time, never rows, as the FETCH FIRST still counts the rows it
+gives.
+
+#### D525. A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code
+
+A condition of a VARCHAR coded by a table of symbols (`fsst.rs`) was
+judged of every row's codes, each compared with the constants in place
+(D360). Of texts of many values, such as web addresses, that was the
+slowest filter a column store table ran. Neither a dictionary in order
+(D512) nor imprints (D511) serve them, as their chunks hold few rows to
+a value, and their values are scattered.
+
+A group now keeps a column sketch (Hentschel, Kester and Idreos, SIGMOD
+2018) of each column COLUMNSTORE.SKETCH names, if it is VARCHAR and one
+of its chunks is coded by symbols (`engine/columns/sketch.rs`). Edges
+are drawn from a sorted sample of the group's values, an equi-depth
+histogram of at most 255 codes. A value found in a share of the sample
+larger than a bin's, up to 64 of them, is an edge with a code of its
+own, a point, and the code below it holds the values between it and the
+edge before; each other code holds the values above the edge before up
+to its own. Of a column of no more than 127 values in the sample, each
+is a point. Each row gets a byte, its value's code, and a null the code
+255. Codes order as the values do, by the order comparisons of the
+default collation take (`compare_strings`), which bytes give of UTF-8
+padded with spaces (`padded_order`). The codes of a part are kept
+together on pages of their own, as many parts' as a page holds, read
+only by a scan that judges a conjunct of the column; the edges in the
+group's header.
+
+A scan judges a conjunct of such a column once a code, of each group
+(`engine/columns/judged/sketched.rs`). A binary search places each
+string constant among the edges. Against a constant, every value of a
+code orders alike, told by places alone, unless the code's bin holds
+the constant between its bounds. So the conjunct is true of every value
+of a code, false of every one, or, of a code a constant falls within, a
+boundary. A row of a chunk coded by symbols is then kept or left by its
+code alone, and only a row of a boundary code is compared as before. A
+comparison, a range, a LIKE prefix (as the two comparisons the planner
+pushes), IN, NOT IN and an OR of these leave at most a code a constant
+to compare, and an equality of a point none. A null's code is judged as
+the conjunct is of a null. A conjunct of a column of another collation
+reaches the scan as sort keys, never string constants (D512), so it is
+judged as before, and the sketch is never read for it. What the scan
+keeps is what the conjunct keeps, as a code is said to keep or leave
+its rows only where every value it holds orders alike against every
+constant.
+
+Columns of numbers and datetimes get none, as decoding their frames of
+reference costs about what reading a byte a row costs, and so do texts
+coded by a dictionary, which a dictionary in order judges by codes
+already. The option names columns as COLUMNSTORE.BLOOM does, and groups
+frozen before it is changed are written again in the background. A group
+keeps the places the option named as it was written, in its header and
+its summary, so a column named that takes no sketch is not written again
+and again. The codes take a byte a row.
+
+Rejected was BitWeaving (D352 stands), which packs codes vertically for
+predicates over words: a byte a row compared by a table of verdicts is
+read as fast as the scan's other work, and keeps the group's layout.
+Rejected too were codes drawn from the imprints' edges: their 64 bins
+leave a boundary code four times as wide, and a column without imprints
+would have none.
+
+#### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
+
+A join whose condition compares a value of each operand by `<`, `<=`,
+`>` or `>=` had no plan but a filter over the product, which judges
+every pair. A band such as `A.X BETWEEN B.Y - 5 AND B.Y + 5`, an
+inequality, or the overlap of two periods is now planned as a range join
+(`physical/range.rs`, `exec/join/range.rs`) where its cost is the least.
+The right operand is read whole and its rows sorted by the compared
+value, grouped first by any equalities of a column of each operand. Each
+left row computes its bounds and finds the run of rows between them by
+binary search. One more comparison of other values, as the second half
+of an overlap, is answered by a tree of the greatest or least of those
+values over the sorted rows, which skips the parts no row of which can
+match. The rest of the condition is judged of each pair found.
+
+A sorted array with a pruning tree is used in place of a plane sweep over
+both operands sorted. It keeps the left operand streaming in its own
+order, holds only the right in memory, and gives each left row's matches
+in one search, so a LEFT join knows at once which left rows match none.
+
+The semantics hold for these reasons.
+
+- A pair is kept only when the whole condition is True. The search finds
+  every pair whose searched comparisons are True: a null value, of either
+  side, makes a comparison Unknown, so a row of one finds nothing and is
+  not sorted. The rest is judged of the pairs found, as the filter judges
+  it.
+- The matches of a left row are put back in the right's order before they
+  are judged, so while the right fits the work area the rows come in the
+  order of the filter over the product. The plan claims no order of its
+  rows all the same, since past the work area they come part by part, and
+  no order is defined without ORDER BY.
+- The search computes each compared value once for each row, not for each
+  pair, so the whole condition must be unable to raise by its columns'
+  declared types (D15). A part that can is made a column of its operand
+  first (D373), or the join stays a nested loop. A value compared must be
+  of one operand's columns, deterministic, and of no subquery, CASE,
+  outer reference or routine.
+- Values of a kind not wholly ordered, or two that do not compare, give no
+  search: the join judges the whole condition of every pair instead.
+- Past MEMORY.WORK_BYTES (D38) the right operand is written to a run of
+  the spill area and read back once, a part at a time, each part as many
+  rows as the work area holds, sorted and searched as before. The left is
+  gathered in memory or a run and read again for each part, so every pair
+  is judged by exactly one part. A LEFT join keeps a flag for each left
+  row, whether it matched in some part, and reads the left a last time
+  for those that matched in none.
+- A LEFT join keeps each left row with nulls when no pair of it is kept.
+  A RIGHT join is the LEFT join of its operands swapped, put back in order
+  by a projection. A FULL join stays as it was.
+
+The cost counts each operand's rows read, the sort of the right, two
+searches for each left row, and the pairs found, as a hash join's
+matches are counted. It is weighed against the nested loop, the hash
+join on any equalities and an index probed by the comparisons, both ways
+round, and in join enumeration (D303) as one more method of each pair of
+relations.
+
+#### D581. A period predicate of two period references is the comparisons of its bounds
+
+A `<period predicate>` [ISO/IEC 9075-2:2023 §8.20] was one call judged
+of each pair, so a join on OVERLAPS judged every pair. A predicate of two
+`<period reference>`s, or of one and a point in time after CONTAINS, is
+now read by a join as the comparisons GR4 defines it by: OVERLAPS as
+`S1 < E2 AND E1 > S2`, CONTAINS as `S1 <= S2 AND E1 >= E2` or of a point
+`S1 <= P AND E1 > P`, PRECEDES as `E1 <= S2`, SUCCEEDS as `S1 >= E2`,
+EQUALS and the IMMEDIATELY ones as equalities. These are range joins
+(D580) or hash joins on the bounds.
+
+The semantics hold for these reasons.
+
+- The predicate is True exactly when each of its comparisons is. A null
+  bound, of a row an outer join made, makes the predicate False and a
+  comparison Unknown, and a join keeps a pair only when its condition is
+  True, so the two keep the same pairs. Only a top level conjunct is
+  read so; one under NOT or OR is judged whole.
+- The bounds are the casts to TIMESTAMP WITH TIME ZONE the binder made
+  [GR4a ii, GR4b iii], compared as the call compares them.
+- A period written `PERIOD (start, end)` can raise 22020 [GR2b] and is
+  Unknown of a null bound [GR2a], so a predicate of one is never read so
+  and stays a call. A predicate of `<period reference>`s alone raises
+  nothing, which `ScalarFunction::raise_free` says.
+
+#### D582. PLANNER.RANGE_JOINS turns range joins on and off
+
+PLANNER.RANGE_JOINS, ON by default and of a session's scope, lets the
+planner choose range joins (D580). OFF plans such joins as nested loops,
+or hash joins on their equalities, as to compare the two. Period
+predicates are still read as comparisons (D581) when it is OFF, so their
+equalities can be a hash join's keys.
+
+#### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
+
+The batch filter passes each conjunct only the rows the one before it
+kept (D354), so the order of a filter's conjuncts decides how many rows
+each one judges. The planner orders the conjuncts of a filter over a
+table read in ascending order of rank, a conjunct's cost a row over
+the share of rows it drops, as Hellerstein and Stonebraker order a
+selection's predicates (SIGMOD 1993). Conjuncts of equal rank keep the
+written order (`physical/cost/conjuncts.rs`). A column compared with a
+constant or tested for null costs least. A set of constants searched
+costs more, then a comparison of expressions, then a pattern, and a
+conjunct with a subquery comes last. A filter one of whose conjuncts
+can raise an error keeps the written order, because each of its
+conjuncts is judged of every row anyway (D15).
+
+The weights the planner prices operators by are measured by
+`bench/analytics/costs.rs` (`TURBOREL_BENCH_ANALYTICS_ONLY=costs`). It
+times a scan by batch and a row at a time, of the row store and the
+column store, a hash join, groupings of few and of many groups, a sort,
+each of those past a small work area, and a part on several threads.
+It then prints each weight in rows of the row store's scan, the unit of
+the planner's costs.
+#### D675. A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run
+
+A correlated subquery left nested ran once for each distinct set of its
+outer values, and each run bound the values as constants, then
+optimized and planned the subquery as any query. Every rule's and the
+planner's fixed cost was paid once for each outer row, and that cost
+was most of a nested scalar COUNT, MIN or AVG, as queries 2 and 17 of
+TPC-H have.
+
+The runner now also makes the subquery's plan with each outer reference
+a slot (`Expr::Dynamic`), optimized once (`exec/subquery/planned.rs`).
+A slot takes the type of its first value's kind, as wide as the kind
+is; it says only whether an index places the value as it is, and stands
+for it as the planner estimates. A subquery learns its plan as a
+prepared query does (D45, D414): each of its first runs plans it with
+its values, which it runs, and with its slots, its paths chosen by its
+values. A plan with slots that is one probe of a whole unique key is
+kept at once; any other once `LEARNED_RUNS` runs in a row make the two
+plans one shape. Each later run fills the kept plan with its values as
+they are, never cast, so the plan is the one binding them makes
+(`Placing::AsIs`), and runs it. A subquery whose plans keep changing is
+planned at each run after `MOST_LEARNING_RUNS`.
+
+Some values choose another plan than others. A value of many rows may
+choose a scan, and one of few an index. Planning once per shape, or again whenever
+the estimate's bucket changes, would need the estimate of each run's
+values before its plan, which is most of planning's cost. The rule
+measured instead keeps a plan only once consecutive runs agree, as a
+prepared query does, and plans every run of a subquery whose values
+disagree, as before. A plan kept is the plan the next values would
+choose until values that would choose another arrive, the trade D45
+already makes.
+
+A run is planned alone, the plan still kept, when a value is of
+another kind than its slot's, or null. Bound, a comparison with a null
+is unknown and reads nothing, where a probe by it would find the rows
+whose key is null. A null says nothing of its kind either, so a
+subquery learns from its first run with none. Within a kind a value is
+placed as it is whatever its scale, length or precision, as an index
+places it (`physical/probe.rs`). A subquery whose outer
+value is of a kind no index places as it is (a large object, a
+collection, a row, a structured, JSON, XML or extension value), or
+whose plan holds a slot of its own, is planned at each run. The rows
+of each run are gathered, spilled, kept by outer values and decorrelated
+after EXECUTOR.DECORRELATE_AFTER_RUNS as before (D35, D38), and a run
+checks for a cancel as any plan does (D44). EXECUTOR.KEEP_SUBQUERY_PLANS,
+ON by default and of a session's scope, turns it off, as to compare the
+two.
 
 ## 2. Project layout
 

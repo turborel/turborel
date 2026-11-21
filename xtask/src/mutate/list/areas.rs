@@ -4,10 +4,12 @@ mod altered_tables;
 mod analyze;
 mod batches;
 mod budget;
+mod bulk;
 mod checkpoint;
 mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
+mod cost_model;
 #[path = "count.rs"]
 mod count;
 mod declared_types;
@@ -22,18 +24,25 @@ mod expr;
 mod estimates;
 mod group_table;
 mod insert_values;
+mod join_table;
 mod joins;
 mod late;
+mod monitoring;
 mod oltp;
+mod orders;
 mod parallel;
+mod range_joins;
 mod rewrites;
+mod set_types;
 mod skipping;
 mod sorts;
 mod statistics;
+mod subquery_plans;
 mod tpcc;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
+mod semi_joins;
 mod unnesting;
 mod uuid;
 mod xxhash;
@@ -41,7 +50,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 18] {
+pub fn core() -> [&'static [Mutation]; 20] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -61,6 +70,8 @@ pub fn core() -> [&'static [Mutation]; 18] {
         &txn_layer::TXN_LAYER,
         &checkpoint::CHECKPOINT,
         &io_path::IO_PATH,
+        &monitoring::MONITORING,
+        &bulk::BULK,
     ]
 }
 
@@ -101,7 +112,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 42] {
+fn second() -> [&'static [Mutation]; 47] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -139,12 +150,17 @@ fn second() -> [&'static [Mutation]; 42] {
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &rewrites::REWRITES,
         &unnesting::UNNESTING,
+        &subquery_plans::SUBQUERY_PLANS,
         &insert_values::INSERT_VALUES,
+        &set_types::SET_TYPES,
         &expr::EXPR,
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
         &statistics::STATISTICS,
+        &range_joins::RANGE_JOINS,
+        &cost_model::COST_MODEL,
+        &orders::ORDERS,
     ]
 }
 
@@ -187,11 +203,15 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's, parallel queries', the client's step with its
-    // server, the decode kernels', declared types', batches', late
-    // materialization's and the table of groups' last, as `last` holds no
-    // more.
-    let after: [&'static [Mutation]; 10] = [
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
+}
+
+/// The transport's, parallel queries', the client's step with its
+/// server, the decode kernels', declared types', batches', late
+/// materialization's, the table of groups', the join table's, XXH3's,
+/// semi joins' and skipping's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 12] {
+    [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
@@ -200,10 +220,11 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &batches::BATCHES,
         &late::LATE,
         &group_table::GROUP_TABLE,
+        &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
+        &semi_joins::SEMI_JOINS,
         &skipping::SKIPPING,
-    ];
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
+    ]
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the

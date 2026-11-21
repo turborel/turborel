@@ -22,8 +22,12 @@
 //!   (`MEMORY_RESERVATIONS`, D38, `system/memory.rs`), and the jobs of
 //!   background work (`JOBS`, D55, `system/jobs.rs`), the files it
 //!   holds (`FILES`, D56, `system/files.rs`), the formats they are in
-//!   (`FILE_FORMATS`, D48, `system/formats.rs`), and the totals its
-//!   assertions keep (`ASSERTION_TOTALS`, D51, `system/totals.rs`).
+//!   (`FILE_FORMATS`, D48, `system/formats.rs`), the totals its
+//!   assertions keep (`ASSERTION_TOTALS`, D51, `system/totals.rs`), the
+//!   statements run since it was opened (`STATEMENT_STATISTICS`, D521,
+//!   `system/statements.rs`), and what its tables hold and take and how
+//!   its indexes are used (`TABLE_STATISTICS`, `INDEX_STATISTICS`, D522,
+//!   `system/sizes.rs`).
 //!
 //! A system table is an extension point (`SystemTable`): a plug-in may add
 //! one (`Database::register_system_table`), an engine's statistics, say.
@@ -47,12 +51,30 @@ mod information;
 mod jobs;
 mod memory;
 mod settings;
+mod sizes;
 mod spatial;
+mod statements;
 mod totals;
 mod users;
 mod vectors;
 
 pub use graph_runs::{GraphRun, GraphRuns, Held, Status};
+
+/// What a database keeps in memory of what ran since it was opened, shared
+/// by every snapshot: the latest runs of the graph algorithms
+/// (`system/graph_runs.rs`), the tallies of its statements
+/// (`system/statements.rs`, RULES.md D521), and the last version 7 UUID
+/// it made (RULES.md D183).
+#[derive(Debug, Default)]
+pub struct Ran {
+    /// The latest runs of the graph algorithms.
+    pub graph_runs: Arc<GraphRuns>,
+    /// The tallies of the statements.
+    pub statements: Statements,
+    /// \[EXTENSION\] The last version 7 UUID made (RULES.md D183).
+    pub uuids: Arc<crate::value::types::uuid::generate::Ordered>,
+}
+pub use statements::{DEFAULT_KEPT as STATEMENTS_KEPT_DEFAULT, GROUP as STATEMENTS_GROUP, KEPT as STATEMENTS_KEPT, Statements, Text};
 
 use std::collections::HashMap;
 use std::fmt;
@@ -89,6 +111,10 @@ pub const DEFINITION_SCHEMA: &str = "DEFINITION_SCHEMA";
 /// "_SYSTEM"."
 pub const SYSTEM_GRANTOR: &str = "_SYSTEM";
 
+/// \[DESIGN\] The role whose holders see what every session runs, as the
+/// database's owner does (RULES.md D520), if the owner created it.
+pub const MONITOR: &str = "MONITOR";
+
 /// What a system table's rows are made from: the snapshot of the
 /// definitions the statement runs against, its user, and its session's own
 /// settings.
@@ -107,6 +133,19 @@ impl Seen<'_> {
     /// MEMORY_RESERVATIONS, shows its rows, and to no other.
     pub fn is_owner(&self) -> bool {
         self.state.users.owner() == Some(self.auth)
+    }
+
+    /// \[DESIGN\] Whether the statement's user sees what every session
+    /// runs (RULES.md D520): the database's owner, or a user for whom the
+    /// role MONITOR is applicable [ISO/IEC 9075-2:2023 §4.42.4], the role
+    /// the owner created, as GRANT MONITOR TO a user grants it. A role of
+    /// the name another user created gives nothing.
+    pub fn may_monitor(&self) -> bool {
+        let Some(owner) = self.state.users.owner() else { return false };
+        let roles = self.state.catalog.roles();
+        let created =
+            roles.authorizations.iter().any(|a| a.role == MONITOR && a.grantor == SYSTEM_GRANTOR && a.grantee.as_deref() == Some(owner));
+        owner == self.auth || (created && roles.applicable(&[self.auth]).contains(MONITOR))
     }
 }
 
@@ -164,6 +203,7 @@ pub(crate) fn builtin() -> SystemTables {
         Arc::new(files::Files),
         Arc::new(formats::FileFormats),
         Arc::new(totals::AssertionTotals),
+        Arc::new(statements::StatementStatistics),
         Arc::new(information::CatalogName),
     ];
     tables.extend(definition::tables());
@@ -172,6 +212,7 @@ pub(crate) fn builtin() -> SystemTables {
     tables.extend(embedding::tables());
     tables.extend(extensions::tables());
     tables.extend(vectors::tables());
+    tables.extend(sizes::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
 }
 

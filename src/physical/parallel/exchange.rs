@@ -64,7 +64,7 @@ fn groups_of(db: &State, plan: &Plan) -> Option<f64> {
     if let Plan::Aggregate { groups, est, input, .. } = plan {
         return (!groups.is_empty() && groups.iter().all(|&c| counted(db, input, c))).then_some(*est);
     }
-    let Plan::Distinct { input, est } = plan else { return None };
+    let Plan::Distinct { input, est, .. } = plan else { return None };
     let Plan::Project { exprs, .. } = &**input else { return None };
     (0..exprs.len()).all(|c| counted(db, input, c)).then_some(*est)
 }

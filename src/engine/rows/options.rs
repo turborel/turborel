@@ -44,10 +44,14 @@ const COMPRESSION: &str = "COLUMNSTORE.COMPRESSION";
 const ORDER: &str = "COLUMNSTORE.ORDER";
 const BLOOM: &str = "COLUMNSTORE.BLOOM";
 const LAYOUT: &str = "COLUMNSTORE.LAYOUT";
+const IMPRINTS: &str = "COLUMNSTORE.IMPRINTS";
+const SKETCH: &str = "COLUMNSTORE.SKETCH";
 /// What COLUMNSTORE.COMPRESSION takes.
 const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
 /// What COLUMNSTORE.LAYOUT takes.
 const LAYOUTS: &[&str] = &["COLUMNS", "PAX"];
+/// What COLUMNSTORE.IMPRINTS takes.
+const SWITCH: &[&str] = &["ON", "OFF"];
 /// \[DESIGN\] The default of COLUMNSTORE.REWRITE_FRACTION: a fifth of a group's
 /// rows changed, deleted or added to before it is written again, as
 /// Vertica's mergeout purges and SQL Server's guidance has it.
@@ -60,7 +64,8 @@ pub const DEFAULT_GROUP_ROWS: u32 = 1 << 16;
 pub const MIN_GROUP_ROWS: u32 = 2048;
 /// \[DESIGN\] The most columns COLUMNSTORE.ORDER names: the first one or
 /// two order a group's rows into runs a condition skips, the rest only
-/// break their ties. COLUMNSTORE.BLOOM names as many at most.
+/// break their ties. COLUMNSTORE.BLOOM and COLUMNSTORE.SKETCH name as
+/// many at most.
 pub const MOST_ORDER: usize = 8;
 /// \[DESIGN\] The longest COLUMNSTORE.FREEZE_DELAY, in seconds: a year.
 const MAX_FREEZE_DELAY: u32 = 366 * 24 * 60 * 60;
@@ -112,22 +117,32 @@ pub struct Columns {
     /// Whether groups are written in the hybrid layout, a page a range of
     /// rows holding a chunk of each column (`engine/columns/group/pax.rs`).
     pub pax: bool,
+    /// Whether groups are written with imprints of the columns that take
+    /// them (`engine/columns/imprints.rs`).
+    pub imprints: bool,
+    /// The columns each group keeps sketches of, if they take them
+    /// (`engine/columns/sketch.rs`), in the order of their places.
+    pub sketch: Places,
 }
 
 /// \[DESIGN\] Columns of a table by their places in the row, at most
 /// `MOST_ORDER`: those a group's rows are sorted by, ascending, none in
-/// row id order; or those it keeps Bloom filters of.
+/// row id order; or those it keeps Bloom filters or sketches of.
+///
+/// Each is held in 16 bits, so a table's options stay small enough to be
+/// copied; a place past them is left out, as no table has so many columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Places {
-    places: [usize; MOST_ORDER],
-    len: usize,
+    places: [u16; MOST_ORDER],
+    len: u8,
 }
 
 impl Places {
     /// Of the columns at `places`, the first `MOST_ORDER` of them.
     pub fn of(places: &[usize]) -> Places {
         let mut order = Places::default();
-        for (slot, &place) in order.places.iter_mut().zip(places) {
+        let held = places.iter().filter_map(|&p| u16::try_from(p).ok());
+        for (slot, place) in order.places.iter_mut().zip(held) {
             *slot = place;
             order.len = order.len.saturating_add(1);
         }
@@ -135,8 +150,8 @@ impl Places {
     }
 
     /// The places of its columns, in order.
-    pub fn places(&self) -> &[usize] {
-        self.places.get(..self.len).unwrap_or_default()
+    pub fn places(&self) -> Vec<usize> {
+        self.places.get(..usize::from(self.len)).unwrap_or_default().iter().copied().map(usize::from).collect()
     }
 }
 
@@ -151,6 +166,8 @@ impl Default for Columns {
             order: Places::default(),
             bloom: Places::default(),
             pax: false,
+            imprints: false,
+            sketch: Places::default(),
         }
     }
 }
@@ -294,6 +311,26 @@ fn columns_declared(cols: Columns) -> Vec<TableOption> {
             "How a table of the column store lays out the groups it freezes: COLUMNS, each column's values on pages of their own, so a scan of a few columns reads only theirs; PAX, each page a range of rows, a chunk of each column on it, so a row read whole reads one page. Groups frozen before are written again so in the background.",
         ),
     ]
+    .into_iter()
+    .chain(skipping_declared(cols))
+    .collect()
+}
+
+/// The column store's options of what its groups keep to skip rows by,
+/// each defaulting to `cols`'.
+fn skipping_declared(cols: Columns) -> Vec<TableOption> {
+    vec![
+        TableOption::new(
+            (IMPRINTS, Kind::Choice(SWITCH), Value::Char(if cols.imprints { "ON" } else { "OFF" }.into())),
+            Rebuild::No,
+            "Whether a table of the column store keeps, of the groups it freezes from then on, imprints of each column of exact numbers, datetimes or character strings: of each 64 rows, the bins of the group's values they fall in, so a comparison, IN or LIKE prefix skips stretches of rows that cannot match within 1024; ON or OFF.",
+        ),
+        TableOption::new(
+            (SKETCH, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new())),
+            Rebuild::No,
+            "The columns, by commas, of which a table of the column store keeps a sketch of each group it freezes, a byte of each row ordered as its value, if the column is VARCHAR and its values are compressed by a table of symbols, so a comparison, IN or LIKE prefix compares the texts of few rows, groups frozen before written again so in the background; none if empty.",
+        ),
+    ]
 }
 
 /// An option of the column store, a whole number from `min` to `max`,
@@ -331,9 +368,9 @@ fn order_of(desc: &TableDesc, value: &Value) -> Places {
     Places::of(&places)
 }
 
-/// The columns COLUMNSTORE.BLOOM, `value`, names, of `desc`'s columns, in
-/// the order of their places, each once.
-fn bloom_of(desc: &TableDesc, value: &Value) -> Places {
+/// The columns COLUMNSTORE.BLOOM or COLUMNSTORE.SKETCH, `value`, names,
+/// of `desc`'s columns, in the order of their places, each once.
+fn places_of(desc: &TableDesc, value: &Value) -> Places {
     let Value::Char(names) = value else { return Places::default() };
     let mut places: Vec<usize> = column_names(names).unwrap_or_default().iter().filter_map(|n| desc.column(n)).collect();
     places.sort_unstable();
@@ -363,8 +400,10 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         rewrite_fraction: set(REWRITE_FRACTION).and_then(Value::as_f64).unwrap_or(c.rewrite_fraction),
         compress: set(COMPRESSION).map_or(c.compress, |v| v.to_string().trim_end() != "NONE"),
         order: set(ORDER).map_or(c.order, |v| order_of(desc, v)),
-        bloom: set(BLOOM).map_or(c.bloom, |v| bloom_of(desc, v)),
+        bloom: set(BLOOM).map_or(c.bloom, |v| places_of(desc, v)),
         pax: set(LAYOUT).map_or(c.pax, |v| v.to_string().trim_end() == "PAX"),
+        imprints: set(IMPRINTS).map_or(c.imprints, |v| v.to_string().trim_end() != "OFF"),
+        sketch: set(SKETCH).map_or(c.sketch, |v| places_of(desc, v)),
     });
     out
 }
