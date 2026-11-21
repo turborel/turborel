@@ -13,6 +13,7 @@
     clippy::integer_division,
     clippy::indexing_slicing,
     clippy::print_stdout,
+    clippy::cast_possible_truncation,
     missing_docs,
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]

@@ -162,7 +162,7 @@ Each in a sentence:
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **EXECUTOR.DEGREE**: The most threads a statement's query runs on at once, its own among them; 0, the default, for as many as the workers, and 1 for its own thread alone. Its rows are the same either way.
 - **EXECUTOR.GRAPH_THREADS**: The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.
-- **EXECUTOR.KERNELS**: The kernels a statement's batches run on: PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD.
+- **EXECUTOR.KERNELS**: The kernels a statement's batches run on in the executor (filters, groupings, sorts): PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD. A column store table decodes and judges its scans on the set registered, which it takes as it opens; the setting does not change it.
 - **EXECUTOR.MAX_ITERATIONS**: The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.
 - **EXECUTOR.MORSEL_ROWS**: The rows of a table, about, that a worker of a parallel query reads at a time, a morsel.
 - **EXECUTOR.PARALLEL_MIN_ROWS**: The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.

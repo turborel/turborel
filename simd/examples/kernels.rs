@@ -16,6 +16,8 @@
     clippy::indexing_slicing,
     clippy::print_stdout,
     clippy::default_numeric_fallback,
+    clippy::too_many_lines,
+    clippy::shadow_unrelated,
     missing_docs,
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
@@ -92,8 +94,8 @@ fn main() {
     for size in SIZES {
         let ints: Vec<i64> = (0..size).map(|_| (rng.next() % 1000) as i64).collect();
         let floats: Vec<f64> = ints.iter().map(|&v| v as f64 + 0.5).collect();
-        let nulls = Mask::from_bools(&(0..size).map(|_| rng.next() % 10 == 0).collect::<Vec<_>>());
-        let sel: Vec<u32> = (0..size as u32).filter(|_| rng.next() % 2 == 0).collect();
+        let nulls = Mask::from_bools(&(0..size).map(|_| rng.next().is_multiple_of(10)).collect::<Vec<_>>());
+        let sel: Vec<u32> = (0..size as u32).filter(|_| rng.next().is_multiple_of(2)).collect();
         let mut out = Vec::with_capacity(size + 16);
         for (case, c) in [("1%", 10_i64), ("50%", 500)] {
             if wanted("select_i64") {

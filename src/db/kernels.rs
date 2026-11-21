@@ -4,7 +4,10 @@
 //! registration is refused. EXECUTOR.KERNELS names the set a statement
 //! runs on, read as it begins: `PORTABLE` forces the built-in bodies, to
 //! diagnose a registered set; any other value, the default empty among
-//! them, runs the registered set, or the portable one if none is.
+//! them, runs the registered set, or the portable one if none is. The
+//! setting is the executor's: a table of the column store decodes and
+//! judges on the set registered, which it takes as it opens (RULES.md
+//! D570), and SET leaves it as it is.
 
 use std::sync::Arc;
 

@@ -403,6 +403,7 @@ verification approach DO-178C expects (§8).
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
+| D570 | Each kernel has a body for every vector set, chosen once by the set detected; the column store decodes and judges on the registered set |
 
 ### The project
 
@@ -11402,6 +11403,32 @@ registered set, which each statement chooses as it begins. Kernels are
 a built-in registration only: a call a batch across a process boundary
 would cost more than the kernel saves, so no out-of-process plug-in is
 one.
+
+#### D570. Each kernel has a body for every vector set, chosen once by the set detected; the column store decodes and judges on the registered set
+
+`turborel-simd` holds an instruction set (`arch::Isa`) that only a
+detection makes: SSE2, AVX2 with the rest of x86-64-v3 (BMI1, BMI2,
+POPCNT, LZCNT, FMA, F16C, SSE4.2), AVX-512 F, BW, DQ, VL and CD, NEON. A
+kernel matches the set once a call and runs its body: selections compare
+a vector at a time into words of truth bits, then write the places of the
+bits set eight a byte from a table of each byte's places (AVX2, NEON) or
+sixteen at once compressed (AVX-512); sums add each value's two 32-bit
+halves unsigned and count the negatives, exactly the portable sum;
+gathers load masked, a row past the end giving 0; decimals are made by
+the portable body's operations in its order, with no fused multiply. A
+kernel no instruction of a set speeds, or the selection-given form of a
+selection or sum, whose loads are each a row's, runs its portable body.
+Every body gives the portable body's result bit for bit, which the
+differential tests (`support/src/differential.rs`) hold it to, on random
+inputs of every length and alignment at every set the processor has.
+
+The column store runs its kernels too: a store is told the database's
+kernels as they are registered (`StorageEngine::use_kernels`), and a
+table takes them as it opens, decoding its chunks (unpacking, decimals)
+and judging its scans' conjuncts on them. EXECUTOR.KERNELS chooses the
+kernels of a statement's executor, its filters over batches, groupings
+and sorts; a table's storage keeps the set registered, whatever the
+setting, since a table is opened once for many statements.
 
 ## 2. Project layout
 

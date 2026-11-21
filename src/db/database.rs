@@ -348,9 +348,8 @@ impl Database {
         Ok(Host::new(Arc::clone(&st.memory), Arc::clone(&st.work), Arc::clone(&st.encodings), Arc::clone(&st.plugins)))
     }
 
-    /// \[DESIGN\] Adds or replaces a storage engine, under its name, once
-    /// it has taken what the database provides (`StorageEngine::attach`),
-    /// its settings declared and their values told it (`Configurable`).
+    /// \[DESIGN\] Adds or replaces a storage engine, under its name, once it has taken what the
+    /// database provides (`StorageEngine::attach`) and its kernels, its settings declared and their values told it.
     ///
     /// # Errors
     ///
