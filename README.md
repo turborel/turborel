@@ -62,6 +62,9 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match, and a row-store COUNT(*) is summed from its settled zones.
+- Column store skipping that survives writes: shadow bits and zones over
+  the delta, optional column imprints, and sorted dictionaries judged
+  by codes.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
@@ -129,6 +132,9 @@ behind it, and each can be replaced or added to.
 - [Backups](doc/operator/10-backups.md), full and incremental, taken
   online by BACKUP DATABASE, verified and restored offline, and recovery
   to a point in time through an archive of the log, to pluggable targets.
+- [Monitoring](doc/operator/11-monitoring.md): each connection's running
+  statement and what it waits on, statistics of every statement run, and
+  each table's size and last change and each index's searches.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.

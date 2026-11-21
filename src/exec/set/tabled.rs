@@ -10,14 +10,12 @@
 //! counts and the keys after them go to the bag or the partitions by their
 //! bytes, as before (`set.rs`).
 
-use std::sync::Arc;
-
 use super::super::RowIter;
 use super::super::table::{GroupTable, Key, hash_rows, hash_values};
 use super::super::work::{Bag, Work};
 use super::{Each, Kept, Operand};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::storage::sel::nth;
 use crate::storage::{Batch, Row, Sel};
 
@@ -31,7 +29,7 @@ pub(super) enum Tabled {
 /// Rows counted by their keys in a table of groups: each group's count and
 /// whether a row of it was given.
 pub(super) struct Counts {
-    db: Arc<State>,
+    db: Db,
     /// None before the first row, whose width it is made of.
     table: Option<GroupTable<()>>,
     tallies: Vec<u64>,
@@ -45,8 +43,8 @@ pub(super) struct Counts {
 
 impl Counts {
     /// None counted yet, in `limit` bytes, hashed by `db`'s seed.
-    fn new(db: &Arc<State>, limit: usize) -> Counts {
-        Counts { db: Arc::clone(db), table: None, tallies: Vec::new(), given: Vec::new(), hashes: Vec::new(), columns: Vec::new(), limit }
+    fn new(db: &Db, limit: usize) -> Counts {
+        Counts { db: db.clone(), table: None, tallies: Vec::new(), given: Vec::new(), hashes: Vec::new(), columns: Vec::new(), limit }
     }
 
     /// Its table, made of keys `width` wide if it has none.
@@ -125,7 +123,7 @@ impl Counts {
 /// # Errors
 ///
 /// As reading the operand fails.
-pub(super) fn tabled(second: Operand, db: &Arc<State>, limit: usize) -> Result<Tabled> {
+pub(super) fn tabled(second: Operand, db: &Db, limit: usize) -> Result<Tabled> {
     let mut counts = Counts::new(db, limit);
     match second {
         Operand::Rows(mut rows, compared) => {
