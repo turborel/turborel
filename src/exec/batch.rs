@@ -182,14 +182,16 @@ pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
 /// Feeds `states` the rows of one group of `batch`, as `taken` says: the
 /// `given`th of those given, the rows `read_rows` of the batch; each set
 /// function a vector of them at a time, of values or of integers, but of
-/// an expression not evaluated by vectors, a row at a time.
-pub(in crate::exec) fn fed_group(
-    states: &mut [Box<dyn Accumulator>],
+/// an expression not evaluated by vectors, a row at a time. Generic in
+/// how `states` come, so each caller has its own copy made inline in it: a
+/// hashed grouping's one accumulator at a time, a streamed one's group.
+pub(in crate::exec) fn fed_group<'s>(
+    states: impl IntoIterator<Item = &'s mut Box<dyn Accumulator>>,
     (taken, scratch, runner): (&[Taken], &mut Row, &Runner),
     (batch, lanes): (&Batch, &[Option<Fed<'_>>]),
     (given, read_rows): (&[u32], &[u32]),
 ) -> Result<()> {
-    for ((state, take), lane) in states.iter_mut().zip(taken).zip(lanes) {
+    for ((state, take), lane) in states.into_iter().zip(taken).zip(lanes) {
         eliminated(group_nulled((take, lane), batch, (given, read_rows)), runner);
         match (take, lane) {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
