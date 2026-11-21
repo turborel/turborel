@@ -263,9 +263,11 @@ second comparison of other values, as the overlap's other half, prunes
 the rows found. A `<period predicate>` of two periods named by their
 tables is read as the comparisons of their bounds, so OVERLAPS, CONTAINS,
 PRECEDES and SUCCEEDS join so, and EQUALS and the IMMEDIATELY ones as
-hash joins on the bounds' equalities. The rows, and their order, are the
-nested loop's. A table too large for MEMORY.WORK_BYTES, or a condition
-that could raise an error, keeps the nested loop. SET
+hash joins on the bounds' equalities. The rows are the nested loop's. A
+table too large for MEMORY.WORK_BYTES is sorted and searched a part at a
+time, the other read again for each part, so the rows come part by part,
+and only ORDER BY sets their order. A
+condition that could raise an error keeps the nested loop. SET
 PLANNER.RANGE_JOINS = 'OFF' turns range joins off.
 
 An equality repeated in each operand of an OR joins its tables as if

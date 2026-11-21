@@ -11660,8 +11660,10 @@ The semantics hold for these reasons.
   not sorted. The rest is judged of the pairs found, as the filter judges
   it.
 - The matches of a left row are put back in the right's order before they
-  are judged, so the rows come in the order of the filter over the
-  product, each left row's in the right's order.
+  are judged, so while the right fits the work area the rows come in the
+  order of the filter over the product. The plan claims no order of its
+  rows all the same, since past the work area they come part by part, and
+  no order is defined without ORDER BY.
 - The search computes each compared value once for each row, not for each
   pair, so the whole condition must be unable to raise by its columns'
   declared types (D15). A part that can is made a column of its operand
@@ -11670,9 +11672,13 @@ The semantics hold for these reasons.
   outer reference or routine.
 - Values of a kind not wholly ordered, or two that do not compare, give no
   search: the join judges the whole condition of every pair instead.
-- Past MEMORY.WORK_BYTES (D38) the right operand is read again for each
-  left row, from memory or a run of the spill area, as the nested loop
-  reads it, and the whole condition is judged of every pair.
+- Past MEMORY.WORK_BYTES (D38) the right operand is written to a run of
+  the spill area and read back once, a part at a time, each part as many
+  rows as the work area holds, sorted and searched as before. The left is
+  gathered in memory or a run and read again for each part, so every pair
+  is judged by exactly one part. A LEFT join keeps a flag for each left
+  row, whether it matched in some part, and reads the left a last time
+  for those that matched in none.
 - A LEFT join keeps each left row with nulls when no pair of it is kept.
   A RIGHT join is the LEFT join of its operands swapped, put back in order
   by a projection. A FULL join stays as it was.
