@@ -43,7 +43,7 @@ use crate::db::State;
 use crate::logical::{Cond, Expr, LogicalPlan, Truth, and_all, cond_columns, map_cond_columns, split_and};
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
-pub use unnesting::{SEMI_JOINS, SemiJoins, UNNEST_SUBQUERIES, UnnestSubqueries};
+pub use unnesting::{MARK_JOINS, MarkJoins, SEMI_JOINS, SemiJoins, UNNEST_SUBQUERIES, UnnestSubqueries};
 
 /// The names of the built-in rules, as EXPLAIN shows them and their
 /// settings name them (`switch_name`).
@@ -165,6 +165,8 @@ impl Optimizer {
         o.add(Box::new(InlineFunctions));
         // Before unnesting, which would make the same subquery a join.
         o.add(Box::new(SemiJoins));
+        // After semi joins, which take the conjuncts, before unnesting.
+        o.add(Box::new(MarkJoins));
         o.add(Box::new(UnnestSubqueries));
         o.add(Box::new(ConstantFolding));
         o.add(Box::new(SimplifyConditions));
@@ -500,6 +502,7 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }

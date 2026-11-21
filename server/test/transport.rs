@@ -168,10 +168,12 @@ fn over_tls_the_worker_reads_and_writes_the_session_itself() {
     assert!(rest.is_empty(), "closed by close_notify, nothing after");
 }
 
-/// Verifies: [DESIGN] RULES.md D42, D234: a client that closes its side
-/// after its requests hears every reply, then the connection closes; it
-/// did not terminate its session, which is rolled back [ISO/IEC 9075:1992
-/// §20.1 GR2a].
+/// Verifies: [DESIGN] RULES.md D42, D234, D335: a client that closes its
+/// side after its requests hears every reply, however long a loaded
+/// machine runs them, as each has a request sent ahead of it; the last,
+/// with none, may be cancelled as its client gone, so its reply is not
+/// asked. Then the connection closes; it did not terminate its session,
+/// which is rolled back [ISO/IEC 9075:1992 §20.1 GR2a].
 #[test]
 fn a_half_closed_client_hears_every_reply() {
     let db = numbered(10);
@@ -185,17 +187,41 @@ fn a_half_closed_client_hears_every_reply() {
         attributes: Vec::new(),
         multi: false,
     }));
+    requests.push(Request::Query { sql: "VALUES 1".into(), ends: false, attributes: Vec::new(), multi: false });
     hand.send(&requests);
     tcp.shutdown(Shutdown::Write).unwrap();
     assert!(matches!(hand.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     for _ in 0..5 {
         assert!(hand.rows().is_empty(), "deleted in its transaction");
     }
-    let told = hand.receive();
-    assert!(matches!(&told, None | Some(Reply::Error(_))), "{told:?}");
-    assert!(hand.receive().is_none(), "closed");
+    // The last request's replies, or its cancel, then the end: the
+    // connection closes.
+    while hand.receive().is_some() {}
     let mut c = server.connect("X");
     assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["10"], "rolled back");
+}
+
+/// Verifies: [DESIGN] RULES.md D234, D335: a request that runs longer
+/// than the watch on its client waits to look, with a request sent ahead
+/// of it in the connection's inbox, is answered though its client shut its
+/// side after both: the end of the stream with requests held tells the
+/// client is not gone. Regression test (R-TEST-7): the watch took the end
+/// of the stream for the client gone once the inbox, not the socket, held
+/// what was sent ahead, and cancelled what ran.
+#[test]
+fn a_half_closed_clients_long_request_runs_to_its_end() {
+    let db = numbered(1);
+    let server = start(&db, &[]);
+    let tcp = TcpStream::connect(server.address).unwrap();
+    let mut hand = Hand::hello(tcp.try_clone().unwrap());
+    let long = "WITH RECURSIVE N (I) AS (VALUES (CAST(1 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 50000) SELECT COUNT(*) FROM N";
+    let query = |sql: &str| Request::Query { sql: sql.into(), ends: false, attributes: Vec::new(), multi: false };
+    hand.send(&[query(long), query("VALUES 1")]);
+    tcp.shutdown(Shutdown::Write).unwrap();
+    let described = hand.receive();
+    assert!(matches!(described, Some(Reply::Description(_))), "run to its end, not cancelled: {described:?}");
+    assert!(matches!(hand.receive(), Some(Reply::Rows(_))), "its count");
+    while hand.receive().is_some() {}
 }
 
 /// Verifies: [DESIGN] RULES.md D230, D234: a TLS client whose socket

@@ -79,7 +79,7 @@ fn kept_op(plan: &LogicalPlan) -> Op {
     match plan {
         LogicalPlan::Scan { .. } => Op::Scan,
         LogicalPlan::Filter { .. } => Op::Filter,
-        LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } | LogicalPlan::SemiJoin { .. } => Op::Join,
+        LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } | LogicalPlan::SemiJoin { .. } | LogicalPlan::MarkJoin(_) => Op::Join,
         LogicalPlan::Aggregate { .. } => Op::Aggregate,
         LogicalPlan::Project { .. } => Op::Project,
         LogicalPlan::Distinct { .. } => Op::Distinct,
@@ -177,7 +177,10 @@ impl Making<'_> {
             LogicalPlan::Values { rows, .. } => {
                 (Op::Values, Body::Values(rows.iter().map(|row| self.exprs(row, depth)).collect::<Result<_>>()?))
             }
+            // A mark's three values are no join kind of the form: the node is
+            // kept (RULES.md D641).
             LogicalPlan::Scan { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::System { .. }

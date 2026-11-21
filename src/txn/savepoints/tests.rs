@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use crate::log::Lsn;
+
 use super::*;
 use crate::catalog::{ColumnDesc, MemoryCatalog, TableDesc};
 use crate::engine::rows::{RowStore, TableOptions};
@@ -190,12 +192,14 @@ fn each_savepoint_notes_its_first_change() {
         s.open.push(Savepoint { id, undo: 0, engines: Vec::new(), from: None, statement: 0, kept: 0 });
     };
     taken(&mut savepoints, 0);
-    savepoints.logged_at(Lsn(10));
+    assert!(savepoints.logged_at(LogPos::At(Lsn(10))), "the first after it");
     taken(&mut savepoints, 1);
     taken(&mut savepoints, 2);
-    savepoints.logged_at(Lsn(20));
-    savepoints.logged_at(Lsn(30));
-    assert_eq!(savepoints.open.iter().map(|s| s.from).collect::<Vec<_>>(), [Some(Lsn(10)), Some(Lsn(20)), Some(Lsn(20))]);
+    assert!(savepoints.logged_at(LogPos::Held(20)));
+    assert!(!savepoints.logged_at(LogPos::Held(30)), "each has its first");
+    let held = |n| Some(LogPos::Held(n));
+    assert_eq!(savepoints.open.iter().map(|s| s.from).collect::<Vec<_>>(), [Some(LogPos::At(Lsn(10))), held(20), held(20)]);
+    assert_eq!(savepoints.places().count(), 3);
     savepoints.cancel_from(1);
     assert_eq!(savepoints.open.len(), 1);
     savepoints.statement_began();

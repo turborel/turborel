@@ -36,14 +36,14 @@ use std::sync::Arc;
 pub(crate) use count::storage_counted;
 use expr::Program;
 pub(super) use groups::morsel_groups;
-pub(super) use joined::{SharedTable, TABLE_ROW_BYTES, gathered, rows_of};
+pub(super) use joined::{SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
 pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
 pub(super) use late::{Deferred, resolved};
 use project::Place;
-pub(super) use project::{projectable, projected};
+pub(super) use project::{projectable, projected, vector_of};
 pub(super) use runtime::{Told, taken as runtime_taken, wanted};
 pub(super) use shaped::{Shaped, filter_step, probe_step, project_step, runtime_step, through};
-pub(super) use stream::{Batches, Kept};
+pub(super) use stream::{Batches, Kept, layout, reads_by_batch, whole_batches};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
@@ -111,7 +111,7 @@ pub(super) fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     if !collations.is_empty() || !seeds.is_empty() {
         return None;
     }
-    let (columns, _) = stream::layout(input, db)?;
+    let (columns, _) = layout(input, db)?;
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
     Some(Read { taken: taken(aggs, &columns)?, groups: at })
 }
@@ -196,14 +196,16 @@ pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
 /// Feeds `states` the rows of one group of `batch`, as `taken` says: the
 /// `given`th of those given, the rows `read_rows` of the batch; each set
 /// function a vector of them at a time, of values or of integers, but of
-/// an expression not evaluated by vectors, a row at a time.
-pub(in crate::exec) fn fed_group(
-    states: &mut [Box<dyn Accumulator>],
+/// an expression not evaluated by vectors, a row at a time. Generic in
+/// how `states` come, so each caller has its own copy made inline in it: a
+/// hashed grouping's one accumulator at a time, a streamed one's group.
+pub(in crate::exec) fn fed_group<'s>(
+    states: impl IntoIterator<Item = &'s mut Box<dyn Accumulator>>,
     (taken, scratch, runner): (&[Taken], &mut Row, &Runner),
     (batch, lanes): (&Batch, &[Option<Fed<'_>>]),
     (given, read_rows): (&[u32], &[u32]),
 ) -> Result<()> {
-    for ((state, take), lane) in states.iter_mut().zip(taken).zip(lanes) {
+    for ((state, take), lane) in states.into_iter().zip(taken).zip(lanes) {
         eliminated(group_nulled((take, lane), batch, (given, read_rows)), runner);
         match (take, lane) {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.

@@ -206,8 +206,8 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
-        let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
-        let slots = keeping.and(params.dynamic_slots());
+        let (target, query, clocked) = self.insert_bound(st, stmt, params, keeping)?;
+        let slots = keeping.and_then(|k| Some(k.slots_of(params.dynamic_slots()?, clocked)));
         let rows = if let Some(given) = params.given() {
             // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
             given::given_rows(st, (stmt, &target), given, &Runner::new(st, tx.id))?
@@ -245,29 +245,31 @@ impl Session {
 
     /// The table `stmt` inserts into and the plan of the rows its query
     /// gives, if it has one: of a prepared statement, as it keeps them,
-    /// its slots unfilled, for `query_rows` to read (RULES.md D45, D610).
+    /// its slots unfilled, for `query_rows` to read (RULES.md D45, D610);
+    /// and whether the plan reads the statement's instant as a slot
+    /// (RULES.md D613).
     fn insert_bound(
         &self,
         st: &State,
         stmt: &InsertStatement,
         params: &Params,
         keeping: Option<&Keeping<'_>>,
-    ) -> Result<(Target, Option<LogicalPlan>)> {
-        if let Some(KeptPlan::Insert(target, query)) = keeping.map(Keeping::plan).transpose()?.flatten() {
+    ) -> Result<(Target, Option<LogicalPlan>, bool)> {
+        if let Some((KeptPlan::Insert(target, query), clocked)) = keeping.map(Keeping::plan_clocked).transpose()?.flatten() {
             let authorization = self.authorization();
             let target = Arc::unwrap_or_clone(target).refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
-            return Ok((target, query));
+            return Ok((target, query, clocked));
         }
-        let kept = keeping.map(|_| params.keeping());
+        let kept = keeping.map(|_| params.keeping_clocked());
         let binding = kept.as_ref().unwrap_or(params);
         let target = self.insert_target(st, stmt, (binding.noted(), binding.horizon()))?;
         let query = match &stmt.source {
             InsertSource::Query(query) => Some(self.insert_query(st, &target, query, binding)?),
             InsertSource::DefaultValues => None,
         };
-        let Some(k) = keeping else { return Ok((target, query)) };
-        k.made((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())))?;
-        Ok((target, query))
+        let Some(k) = keeping else { return Ok((target, query, false)) };
+        k.made_clocked((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())), binding.clocked())?;
+        Ok((target, query, binding.clocked()))
     }
 
     /// [X3.135-1986 §8.7 SR1-SR4] the table `stmt` inserts into, which is

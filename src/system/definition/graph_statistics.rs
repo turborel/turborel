@@ -18,7 +18,7 @@ use crate::stats::graph::{Degree, ElementStatistics, GraphStatistics};
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable, catalog_name, text};
 use crate::value::cast::approximate_to_exact;
-use crate::value::{DataType, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Spelled, Value};
 
 /// \[DESIGN\] The decimal places of an average or a share shown.
 const PLACES: u32 = 2;
@@ -34,7 +34,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
 fn estimate(name: &str) -> ColumnDesc {
     ColumnDesc {
         name: name.to_owned(),
-        data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: PLACES, spelled: Spelled::Decimal },
+        data_type: DataType::Exact { precision: BIGINT_PRECISION, scale: PLACES, spelled: Spelled::Decimal },
         not_null: false,
         default: None,
         domain: None,
@@ -62,7 +62,7 @@ fn columns() -> Vec<ColumnDesc> {
 
 /// `x` as an estimate column holds it, rounded; NULL if not known.
 fn shown(x: Option<f64>) -> Value {
-    x.and_then(|x| approximate_to_exact(x, (MAX_EXACT_PRECISION, PLACES), "GRAPH_STATISTICS").ok()).unwrap_or(Value::Null)
+    x.and_then(|x| approximate_to_exact(x, (BIGINT_PRECISION, PLACES), "GRAPH_STATISTICS").ok()).unwrap_or(Value::Null)
 }
 
 /// The degree columns of `degree`, NULL if not known.

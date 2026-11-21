@@ -515,3 +515,39 @@ fn appenders_on_many_threads_write_over_refilled_zeros() {
     }
     assert_eq!(walk(&file, BlockId(HEADER_LEN), true).len(), written.len());
 }
+
+/// Verifies: [DESIGN] RULES.md D30, D470, blocks appended together: each
+/// framed as an append frames one, at consecutive ids, in one write,
+/// read back as single appends are; an empty run appends nothing; a run
+/// with a payload past the limit appends none of it; a run cut short by a
+/// crash, its last block torn, opens with the blocks before the tear and
+/// the earlier appends, the torn bytes cut.
+#[test]
+fn blocks_appended_together_read_as_appended_alone() {
+    let scratch = Scratch::new("blocks-run");
+    let path = scratch.path("f");
+    let file =
+        BlockFile::create(&OsFileSystem, &path, crc32c(), Pipeline::none(), BlockOptions { max_block: 64, ..BlockOptions::default() })
+            .unwrap();
+    let alone = file.append(b"alone").unwrap();
+    assert_eq!(file.append_all(&[]).unwrap(), []);
+    let run = [b"one".to_vec(), Vec::new(), vec![7; 64]];
+    let ids = file.append_all(&run).unwrap();
+    assert_eq!(
+        ids,
+        [BlockId(alone.0 + frame(5)), BlockId(alone.0 + frame(5) + frame(3)), BlockId(alone.0 + frame(5) + frame(3) + frame(0))]
+    );
+    let end = file.end();
+    assert_eq!(file.append_all(&[b"ok".to_vec(), vec![0; 65]]).err().map(|e| e.code), Some(Code::Api), "past the limit");
+    assert_eq!(file.end(), end, "none of it appended");
+    let read: Vec<Vec<u8>> = walk(&file, alone, true).into_iter().map(|(_, payload)| payload).collect();
+    assert_eq!(read, [b"alone".to_vec(), b"one".to_vec(), Vec::new(), vec![7; 64]]);
+    drop(file);
+    // The last block of the run torn: its trailing length gone.
+    let torn = std::fs::metadata(&path).unwrap().len() - 2;
+    OpenOptions::new().write(true).open(&path).unwrap().set_len(torn).unwrap();
+    let (file, recovery) = open(&path, TailPolicy::Truncate).unwrap();
+    assert!(recovery.damage().is_none(), "{recovery:?}");
+    let read: Vec<BlockId> = walk(&file, alone, true).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(read, [alone, ids[0], ids[1]]);
+}

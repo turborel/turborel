@@ -3,16 +3,18 @@
 //! integers (`storage::Ints`) and exact constants, at the scale decimals
 //! give each [X3.135-1986 §5.9 SR4b, SR4c] (`Decimal::checked_add`,
 //! `checked_mul`), in `i64` with `overflowing_*` and a flag of the batch:
-//! set by an overflow, or by a result of `MAX_EXACT_PRECISION` digits or
-//! more, which `Decimal::checked` refuses [GR6a]. A flag set of a row not
-//! null gives none, and the batch is evaluated a row at a time, which
-//! raises the first row's error. A null is null of a null [GR1], its
+//! set by an overflow, or by a result of more than
+//! `NARROW_EXACT_PRECISION` digits, which integers of 64 bits do not
+//! always hold (RULES.md D699). A flag set of a row not null gives none,
+//! and the batch is evaluated a row at a time, in 128 bits, which gives
+//! a result of up to `MAX_EXACT_PRECISION` digits or raises the first
+//! row's error [GR6a]. A null is null of a null [GR1], its
 //! slot 0. A quotient's scale is each value's own (`Decimal::checked_div`),
 //! which integers of one scale cannot hold, so it is not computed here.
 
 use super::vector::{Vector, either};
 use crate::storage::{Column, Ints, Mask};
-use crate::value::{ArithOp, MAX_EXACT_PRECISION, Value, pow10};
+use crate::value::{ArithOp, MAX_EXACT_PRECISION, NARROW_EXACT_PRECISION, Value, pow10};
 
 /// Exact numbers of a vector as integers: a column's, or a constant.
 pub(super) enum Exact<'v> {
@@ -65,14 +67,14 @@ pub(super) fn exact<'v>(v: &'v Vector<'_>) -> Option<Exact<'v>> {
     }
 }
 
-/// The units every exact result is below in magnitude, 10^18.
+/// The units every exact result of a batch is below in magnitude, 10^18.
 fn bound() -> u64 {
-    pow10(MAX_EXACT_PRECISION).and_then(|b| u64::try_from(b).ok()).unwrap_or(u64::MAX)
+    pow10(NARROW_EXACT_PRECISION).and_then(|b| u64::try_from(b).ok()).unwrap_or(u64::MAX)
 }
 
 /// `op` of `x` and `y`, `count` rows of each, a sum, difference or
 /// product, at the scale decimals give it: none if a row not null of it
-/// overflows or reaches the digits no decimal holds.
+/// overflows or reaches the digits no batch holds.
 pub(super) fn arith(op: ArithOp, (x, y): (&Exact<'_>, &Exact<'_>), count: usize) -> Option<Ints> {
     let limit = bound();
     match op {

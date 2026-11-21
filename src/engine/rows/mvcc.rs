@@ -59,7 +59,6 @@
 //! commit whose changes can't be read back counts as committed and is never
 //! stamped.
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -76,13 +75,14 @@ mod versions;
 mod write;
 
 use commit::Certified;
-use lists::decode_change;
+use lists::{decode_change, encode_change};
 pub(in crate::engine::rows) use reads::{EVERY_COLUMN, Read, columns_mask};
 use reads::{Images, Reads};
 use stamps::Unstamped;
 pub(in crate::engine::rows) use status::Statuses;
 
 use super::options::Bounds;
+use super::undo::{Held, Seen};
 use super::version::{Maker, Version};
 use super::{RowTable, key};
 use crate::catalog::TableDesc;
@@ -161,6 +161,9 @@ struct Change {
     /// The columns the version it replaced holds as its new one does, whose
     /// index entries the two share (`TableStorage::keep_entries`).
     unchanged: u64,
+    /// Whether it is not a row's change but a group's making, of a load:
+    /// `id` is its first row's (`frozen/stamped.rs`).
+    group: bool,
 }
 
 impl Change {
@@ -168,7 +171,7 @@ impl Change {
     /// committed one it appended at `appended`, or neither, dropping the
     /// objects `dropped`.
     fn of_row(id: RowId, before: Option<Vec<u8>>, appended: Option<Lsn>, dropped: Vec<u64>) -> Change {
-        Change { id, before, appended, dropped, made: false, unchanged: 0 }
+        Change { id, before, appended, dropped, made: false, unchanged: 0, group: false }
     }
 }
 
@@ -369,24 +372,26 @@ impl RowTable {
 
     /// As `visible_from`, of a newest version read into `newest`: its own
     /// record is borrowed, not copied, as it is what most reads see.
-    pub(super) fn visible_in<'b>(&self, newest: &'b [u8], reader: Reader) -> Result<Option<Cow<'b, [u8]>>> {
+    pub(super) fn visible_in<'b>(&self, newest: &'b [u8], reader: Reader) -> Result<Option<Seen<'b>>> {
         let version = Version::parse(newest)?;
         if reader.sees(self.maker(&version)) {
-            return Ok((!version.deleted).then_some(Cow::Borrowed(version.record)));
+            return Ok((!version.deleted).then_some(Seen::Borrowed(version.record)));
         }
         let Some(at) = version.older else { return Ok(None) };
-        Ok(self.visible_from(self.undo.read(at)?, reader)?.map(Cow::Owned))
+        Ok(self.visible_from(self.undo.read(at)?, reader)?.map(Seen::Held))
     }
 
     /// The record of the version of the row whose newest version is
-    /// `newest` that `reader` sees, if it sees the row.
-    pub(super) fn visible_from(&self, newest: Vec<u8>, reader: Reader) -> Result<Option<Vec<u8>>> {
-        let mut bytes = newest;
+    /// `newest` that `reader` sees, if it sees the row: the bytes of the
+    /// version it ends, narrowed, not copied out (`undo/held.rs`).
+    pub(super) fn visible_from(&self, newest: impl Into<Held>, reader: Reader) -> Result<Option<Held>> {
+        let mut bytes = newest.into();
         loop {
             let older = {
                 let version = Version::parse(&bytes)?;
                 if reader.sees(self.maker(&version)) {
-                    return Ok((!version.deleted).then(|| version.record.to_vec()));
+                    let record = version.record.len();
+                    return Ok((!version.deleted).then(|| bytes.last(record)));
                 }
                 version.older
             };
@@ -415,6 +420,9 @@ impl RowTable {
     /// Undoes `change` of `tx`: the entry it replaced put back, or the row
     /// it added taken out.
     fn undo_change(&self, tx: TxId, change: Change) -> Result<()> {
+        if change.group {
+            return self.unpublish_group(tx, change.id);
+        }
         if change.made {
             self.free_objects(&[change.id]);
             return Ok(());
@@ -423,7 +431,7 @@ impl RowTable {
             let k = key(change.id);
             let inserted = change.before.is_none() && change.appended.is_none();
             let before = match (change.before, change.appended) {
-                (Some(own), _) => Some(own),
+                (Some(own), _) => Some(Held::from(own)),
                 (None, Some(at)) => Some(self.undo.read(at)?),
                 (None, None) => None,
             };
@@ -468,6 +476,14 @@ impl RowTable {
         undone
     }
 
+    /// Notes the group `tx` made, holding row `first`, to be undone with
+    /// its other changes (`frozen/stamped.rs`).
+    pub(super) fn note_group(&self, tx: TxId, first: RowId) -> Result<()> {
+        let open = self.open_of(tx)?;
+        let change = Change { group: true, ..Change::of_row(first, None, None, Vec::new()) };
+        lock_builtin(&open).changes.push(change, &mut encode_change).map(drop)
+    }
+
     /// How many changes `tx` has made, those from now on begun apart: its
     /// savepoint.
     pub(super) fn changes(&self, tx: TxId) -> usize {
@@ -508,7 +524,7 @@ impl RowTable {
         columns: &[usize],
     ) -> Result<Vec<(RowId, Row)>> {
         let mut found = Vec::new();
-        let mut bytes = newest;
+        let mut bytes = Held::from(newest);
         loop {
             let (older, readable_before) = {
                 let version = Version::parse(&bytes)?;

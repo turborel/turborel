@@ -23,13 +23,13 @@ fn batched_versions_read_back_as_appended() {
     let at: Vec<Lsn> = (0_u32..100_u32).map(|n| store.append(&version(n)).unwrap()).collect();
     assert_eq!(log.records(), 10, "ten versions of forty bytes to a batch of 400");
     for (n, pos) in (0_u32..100_u32).zip(&at) {
-        assert_eq!(store.read(*pos).unwrap(), version(n), "{n}");
+        assert_eq!(store.read(*pos).unwrap().to_vec(), version(n), "{n}");
     }
     let gathering = store.append(&version(100)).unwrap();
-    assert_eq!((log.records(), store.read(gathering).unwrap()), (10, version(100)), "read while gathered");
+    assert_eq!((log.records(), store.read(gathering).unwrap().to_vec()), (10, version(100)), "read while gathered");
     let alone = UndoStore::new(shared(&log));
     let one = alone.append(&version(7)).unwrap();
-    assert_eq!((log.records(), alone.read(one).unwrap()), (11, version(7)));
+    assert_eq!((log.records(), alone.read(one).unwrap().to_vec()), (11, version(7)));
 }
 
 /// Verifies: [DESIGN] RULES.md D31: the log is truncated before the oldest
@@ -46,7 +46,7 @@ fn batches_go_once_nothing_in_them_is_pinned() {
     }
     store.truncate().unwrap();
     assert_eq!(store.read(at[5]).err().map(|e| e.code), Some(Code::Corrupt), "its batch forgotten");
-    assert_eq!(store.read(at[25]).unwrap(), version(25), "the oldest pinned");
+    assert_eq!(store.read(at[25]).unwrap().to_vec(), version(25), "the oldest pinned");
     assert_eq!(store.pinned(), 25);
     at.iter().skip(25).for_each(|done| store.release(*done));
     store.truncate().unwrap();
@@ -67,10 +67,10 @@ fn a_batch_that_cannot_be_written_stays_readable() {
     assert_eq!(store.pinned(), 9, "the failed one's not kept");
     log.failing.store(false, Ordering::Relaxed);
     for (n, pos) in (0_u32..9_u32).zip(&earlier) {
-        assert_eq!(store.read(*pos).unwrap(), version(n), "{n}");
+        assert_eq!(store.read(*pos).unwrap().to_vec(), version(n), "{n}");
     }
     let next = store.append(&version(10)).unwrap();
-    assert_eq!(store.read(next).unwrap(), version(10));
+    assert_eq!(store.read(next).unwrap().to_vec(), version(10));
 }
 
 /// Verifies: [DESIGN] RULES.md D31: a version appended to a store of no
@@ -100,7 +100,7 @@ fn a_version_appended_while_the_store_is_truncated_is_kept() {
     store.truncate().unwrap();
     let taken = lock_builtin(&appended).take();
     let at = taken.unwrap_or_else(|| store.append(&version(1)).unwrap());
-    assert_eq!(store.read(at).unwrap(), version(1), "pinned, so kept");
+    assert_eq!(store.read(at).unwrap().to_vec(), version(1), "pinned, so kept");
     assert_eq!(store.read(first).err().map(|e| e.code), Some(Code::Corrupt), "released, so gone");
 }
 
@@ -122,7 +122,7 @@ fn a_batch_being_written_while_the_store_is_truncated_is_kept() {
     }));
     let second = store.append(&version(1)).unwrap();
     assert_eq!(log.records(), 1, "the first batch removed, the second kept");
-    assert_eq!(store.read(second).unwrap(), version(1));
+    assert_eq!(store.read(second).unwrap().to_vec(), version(1));
     assert_eq!(store.read(first).err().map(|e| e.code), Some(Code::Corrupt));
 }
 
@@ -140,7 +140,7 @@ fn fitted_batches_stay_within_their_bytes() {
     assert_eq!(log.records(), 2, "ten to a record, the 21st gathered");
     assert_eq!(log.sizes(), [444_usize, 444_usize]);
     for (n, pos) in (0_u32..21_u32).zip(&at) {
-        assert_eq!(store.read(*pos).unwrap(), version(n), "{n}");
+        assert_eq!(store.read(*pos).unwrap().to_vec(), version(n), "{n}");
     }
     let tighter = Arc::new(Hooked::default());
     let nine = UndoStore::fitted(shared(&tighter), 443);
@@ -151,5 +151,32 @@ fn fitted_batches_stay_within_their_bytes() {
     let lengthy = nine.append(&[7_u8; 1000]).unwrap();
     let after = nine.append(&version(11)).unwrap();
     assert_eq!(tighter.records(), 3, "the tenth's batch, then the long one alone");
-    assert_eq!((nine.read(lengthy).unwrap(), nine.read(after).unwrap()), (vec![7_u8; 1000], version(11)));
+    assert_eq!((nine.read(lengthy).unwrap().to_vec(), nine.read(after).unwrap().to_vec()), (vec![7_u8; 1000], version(11)));
+}
+
+/// Verifies: [DESIGN] RULES.md D31: the last `CACHED` batches read from
+/// the log are kept, so versions of each are read again from memory, each
+/// as it was appended, its bytes where its batch's record holds them; a
+/// batch read past them forgets the one read from the log longest ago, read from the
+/// log again.
+#[test]
+fn batches_read_are_kept_the_last_few() {
+    let log = Arc::new(Hooked::default());
+    let store = UndoStore::batched(shared(&log), 400);
+    let at: Vec<Lsn> = (0_u32..120_u32).map(|n| store.append(&version(n)).unwrap()).collect();
+    let batches = u32::try_from(CACHED).unwrap() + 1;
+    let first_of = |batch: u32| batch * 10;
+    for batch in 0..batches - 1 {
+        assert_eq!(&*store.read(at[usize::try_from(first_of(batch)).unwrap()]).unwrap(), version(first_of(batch)));
+    }
+    assert_eq!(log.reads.load(Ordering::Relaxed), CACHED, "one read of each batch");
+    for (n, pos) in (0_u32..).zip(&at).take(usize::try_from((batches - 1) * 10).unwrap()) {
+        assert_eq!(&*store.read(*pos).unwrap(), version(n), "{n}, from memory");
+    }
+    assert_eq!(log.reads.load(Ordering::Relaxed), CACHED, "no read again");
+    let past = usize::try_from(first_of(batches - 1)).unwrap();
+    assert_eq!(&*store.read(at[past]).unwrap(), version(first_of(batches - 1)));
+    assert_eq!(&*store.read(at[1]).unwrap(), version(1), "the first batch read again");
+    assert_eq!(&*store.read(at[21]).unwrap(), version(21), "the third, still kept");
+    assert_eq!(log.reads.load(Ordering::Relaxed), CACHED + 2);
 }

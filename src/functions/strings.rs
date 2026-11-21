@@ -30,7 +30,7 @@ use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::storage::Column;
 use crate::value::lob::{Lob, LobKind, TempLobs};
-use crate::value::{Binary, DataType, Decimal, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Value};
+use crate::value::{BIGINT_PRECISION, Binary, DataType, Decimal, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, Value};
 use crate::value::{CharUnits, Spelled};
 use counts::{Length, Position, Unit};
 pub use overlay::{OVERLAY, PLACING};
@@ -94,8 +94,8 @@ fn no_units(name: &str, units: Option<CharUnits>) -> Result<()> {
 }
 
 /// The type of a length or position [§6.6 SR2, SR5]: exact numeric with
-/// implementation-defined precision, `MAX_EXACT_PRECISION`, and scale 0.
-const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+/// implementation-defined precision, `BIGINT_PRECISION`, and scale 0.
+const COUNTED: DataType = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
 
 /// The length of `t`, a character string type, its maximum length if it
 /// is varying, or a Syntax Rule error.
@@ -453,7 +453,7 @@ impl ScalarFunction for Substring {
     /// [§17.6 GR5c] the start and the length NUMERIC(P, 0), P the greatest
     /// precision; the string none \[GR4p\].
     fn parameter_type(&self, position: usize, _args: &[Option<DataType>]) -> Option<ParameterType> {
-        (position > 0).then_some(ParameterType::Of(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric }))
+        (position > 0).then_some(ParameterType::Of(DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric }))
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let source = args.first().unwrap_or(&Value::Null);

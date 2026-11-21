@@ -75,8 +75,12 @@ impl Pager {
         if id >= self.on_file.load(Ordering::Acquire) {
             return Ok(None);
         }
-        let page = self.read_run(id, 1)?;
-        Ok(self.unseal(id, &page)?.map(<[u8]>::to_vec))
+        let mut page = self.read_run(id, 1)?;
+        // [DESIGN] RULES.md D474: the body is the page's front, so the
+        // page read is cut to it, not copied.
+        let Some(body) = self.unseal(id, &page)?.map(<[u8]>::len) else { return Ok(None) };
+        page.truncate(body);
+        Ok(Some(page))
     }
 
     /// The bytes of `count` pages from `start`, in one read.

@@ -175,13 +175,14 @@ fn a_query_whose_values_choose_its_paths_stops_learning() {
     assert_eq!(range.plans_made(), 1);
 }
 
-/// Verifies: [DESIGN] RULES.md D45: a plan learned is learned again once
-/// a table it reads gains more rows than its statistics are gathered again
-/// for, the execution that finds it so planned with its values.
+/// Verifies: [DESIGN] RULES.md D45, D613: a plan learned that reads a
+/// table whole is learned again once the table gains more rows than its
+/// statistics are gathered again for, the execution that finds it so
+/// planned with its values.
 #[test]
 fn a_learned_plan_is_learned_again_once_its_table_grows() {
     let (_db, s) = table();
-    let range = s.prepare("SELECT C FROM P WHERE A BETWEEN ? AND ?").unwrap();
+    let range = s.prepare("SELECT C FROM P WHERE C BETWEEN ? AND ?").unwrap();
     for n in 0..=i128::from(LEARNED_RUNS) {
         drop(s.open_prepared(&range, &[int(n + 3), int(n + 4)]).unwrap());
     }

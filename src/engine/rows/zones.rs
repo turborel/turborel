@@ -16,8 +16,9 @@
 //! narrower than its rows, at most wider. A write leaves it stale only if
 //! the version it replaced may have been all that reached a bound, or the
 //! one null: a value it changed or deleted that lay strictly inside the
-//! bounds, or one it kept, leaves every bound reached by a row's newest
-//! version still (`Zones::narrows`). The older versions it reads no
+//! bounds, one it kept, or one on a bound changed to a value past it, as
+//! a running total grows past the greatest, leaves every bound reached by
+//! a row's newest version still (`Zones::narrows`, RULES.md D476). The older versions it reads no
 //! transaction pins for it: a row one of which is released and truncated
 //! as it reads is read again (`RowTable::unpinned`).
 //!
@@ -346,10 +347,9 @@ impl Zones {
 
     /// Whether `zone`, not stale, may be left wider than its rows as `row`,
     /// or a deletion, replaces what was `replaced`: unless, of each column
-    /// kept, the replaced value is the new one, or lies strictly inside
-    /// the zone's bounds, so some other row still reaches each bound and
-    /// the one null, if any, is still there. A zone keeping no column has
-    /// no bound to narrow.
+    /// kept, the replaced value is the new one, or each bound is still
+    /// reached (`reached`), so the one null, if any, is still there too. A
+    /// zone keeping no column has no bound to narrow.
     fn narrows(&self, zone: &Zone, row: Option<&Row>, replaced: Replaced<'_>) -> bool {
         let old = match replaced {
             Replaced::Nothing => return false,
@@ -359,13 +359,9 @@ impl Zones {
         };
         self.kept.iter().zip(&zone.bounds).any(|(&c, bounds)| {
             let was = old.get(c).unwrap_or(&Value::Null);
-            let same = row
-                .and_then(|r| r.get(c))
-                .is_some_and(|now| (was.is_null() && now.is_null()) || compare(was, now) == Some(Ordering::Equal));
-            let inside = bounds.as_ref().is_some_and(|(least, greatest)| {
-                compare(least, was) == Some(Ordering::Less) && compare(was, greatest) == Some(Ordering::Less)
-            });
-            !same && !inside
+            let now = row.and_then(|r| r.get(c));
+            let same = now.is_some_and(|now| (was.is_null() && now.is_null()) || compare(was, now) == Some(Ordering::Equal));
+            !same && !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now))
         })
     }
 
@@ -433,6 +429,19 @@ impl Zones {
     pub(super) fn due(&self) -> bool {
         self.stale.load(AtomicOrdering::Acquire) > 0 || self.unsettled.load(AtomicOrdering::Acquire) > 0
     }
+}
+
+/// \[DESIGN\] Whether each of a zone's `bounds` is still reached once a
+/// row's value `was` is replaced by `now`, none of a deletion: a bound
+/// `was` lies strictly inside of, or one `now` passes, as the zone is
+/// widened to hold it. A value growing past the greatest, as a
+/// count or a running total does, then leaves its zone as narrow as its
+/// rows, not stale (RULES.md D476).
+fn reached((least, greatest): &(Value, Value), was: &Value, now: Option<&Value>) -> bool {
+    let moved = now.and_then(|now| compare(now, was));
+    let low = compare(least, was) == Some(Ordering::Less) || moved == Some(Ordering::Less);
+    let high = compare(was, greatest) == Some(Ordering::Less) || moved == Some(Ordering::Greater);
+    low && high
 }
 
 /// Adds the row ids of zone `at` to `ranges`, joined to the last if it goes

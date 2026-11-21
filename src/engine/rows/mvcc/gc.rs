@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 
 use super::lists::{decode_dead, encode_dead};
 use super::{Dead, Maker, Version};
+use crate::engine::rows::undo::Held;
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Result, SqlError};
 use crate::log::Lsn;
@@ -89,12 +90,13 @@ impl RowTable {
         &self,
         (k, newest): (&[u8], Vec<u8>),
         horizon: Timestamp,
-        read: &mut dyn FnMut(Vec<u8>, Timestamp) -> Result<T>,
+        read: &mut dyn FnMut(&[u8], Timestamp) -> Result<T>,
     ) -> Result<Option<T>> {
         let latest = || horizon.max(self.versions.collected.load(Ordering::SeqCst));
         let (mut entry, mut at) = (newest, latest());
         loop {
-            let error = match read(entry.clone(), at) {
+            // Lent, not copied: a pass reads every entry of a range.
+            let error = match read(&entry, at) {
                 Ok(found) => return Ok(Some(found)),
                 Err(e) => e,
             };
@@ -253,7 +255,7 @@ impl RowTable {
     /// or no version.
     pub(super) fn garbage_row(&self, (at, item): (Timestamp, Dead), columns: Option<&[usize]>) -> Result<Option<(RowId, Row, Kept)>> {
         let (id, bytes, unchanged) = match item {
-            Dead::Own(id, bytes, unchanged) => (id, bytes, unchanged),
+            Dead::Own(id, bytes, unchanged) => (id, Held::from(bytes), unchanged),
             Dead::Older(id, appended, unchanged) => (id, self.undo.read(appended)?, unchanged),
             Dead::Deletion(_) | Dead::Undone(_) | Dead::Objects(_) => return Ok(None),
         };

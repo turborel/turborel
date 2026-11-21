@@ -3,9 +3,10 @@
 //! `disk/shadow.rs`).
 
 use std::mem;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
 
 use super::GRANULE;
+use super::flight::Flight;
 use super::side::{At, Op, Side, encode, granule_of, offset, recover, side_path};
 use crate::disk::block::BlockFile;
 use crate::disk::io::{DiskFile, Durability, OpenMode};
@@ -21,9 +22,9 @@ pub(super) struct Sealed {
 }
 
 /// Where a granule's content is (`Shadow::source`).
-enum Source {
-    /// Written since the last commit, copied.
-    Written(Vec<u8>),
+enum Source<'a> {
+    /// Written since the last commit, in this side file.
+    Written(&'a Side),
     /// The file's, to read.
     Base(Arc<dyn DiskFile>),
     /// Zeros.
@@ -33,14 +34,6 @@ enum Source {
 /// A run of a read's buffer that is the file's: the file, where in it the
 /// run starts, and the run.
 type BaseRun = (Arc<dyn DiskFile>, u64, std::ops::Range<usize>);
-
-/// Copies `content` from `within` into `buf`'s range `to`.
-fn copy_into(buf: &mut [u8], to: std::ops::Range<usize>, content: &[u8], within: usize) {
-    let n = to.len();
-    if let (Some(to), Some(from)) = (buf.get_mut(to), content.get(within..within.saturating_add(n))) {
-        to.copy_from_slice(from);
-    }
-}
 
 /// What a shadowed file has written since its last commit.
 pub(super) struct Pending {
@@ -58,18 +51,17 @@ pub(super) struct Pending {
 }
 
 impl Pending {
-    /// Makes `content` granule `number`'s newest: in memory if held, else
-    /// in the side file, over its block there if it has one (`Side::place`).
-    fn put(&mut self, at: &At, number: u64, content: Vec<u8>) -> Result<()> {
+    /// Makes `content`, whole granules from `first`, their newest: in
+    /// memory if held, else in the side file as one block (`Side::place`).
+    fn put(&mut self, at: &At, first: u64, content: Vec<u8>) -> Result<()> {
         if self.holding {
-            self.active.held.insert(number, content);
+            for (number, granule) in (first..).zip(content.chunks(GRANULE)) {
+                self.active.held.insert(number, granule.to_vec());
+            }
+            Ok(())
         } else {
-            let block = self.active.place(at, number, &Op::Granule(number, content))?;
-            self.active.held.remove(&number);
-            self.active.stale.remove(&number);
-            self.active.granules.insert(number, block);
+            self.active.place(at, first, content)
         }
-        Ok(())
     }
 
     /// Whether the next commit would change nothing: the file removed and
@@ -88,6 +80,8 @@ pub(super) struct Shadow {
     base: RwLock<Option<Arc<dyn DiskFile>>>,
     at: At,
     pub(super) pending: RwLock<Pending>,
+    /// Granules written over outside `pending` (RULES.md D472).
+    flight: Flight,
 }
 
 /// The error for a file found missing, or there, against what `what` needs.
@@ -116,7 +110,7 @@ impl Shadow {
         };
         let committed = base.as_ref().map(|_| size);
         let pending = Pending { active: Side::new(0, size), sealed: None, size, holding, removed: false, committed };
-        Ok(Shadow { base: RwLock::new(base), at, pending: RwLock::new(pending) })
+        Ok(Shadow { base: RwLock::new(base), at, pending: RwLock::new(pending), flight: Flight::new() })
     }
 
     /// Opened again, as `mode` says: one removed is made again by
@@ -128,7 +122,7 @@ impl Shadow {
     /// SQLCODE -915 if the mode needs the file there and it is not, or not
     /// there and it is.
     pub(super) fn reopen(&self, mode: OpenMode) -> Result<()> {
-        let mut pending = write(&self.pending)?;
+        let mut pending = self.settled()?;
         match (mode, pending.removed) {
             (OpenMode::CreateNew, true) => {
                 pending.removed = false;
@@ -148,7 +142,7 @@ impl Shadow {
     ///
     /// SQLCODE -915 if it is removed already.
     pub(super) fn remove(&self) -> Result<bool> {
-        let mut pending = write(&self.pending)?;
+        let mut pending = self.settled()?;
         if pending.removed {
             return Err(refused(&self.at, "remove, as it does not exist,"));
         }
@@ -160,7 +154,7 @@ impl Shadow {
 
     /// Stops holding writes in memory: what was held goes to the side file.
     pub(super) fn release(&self) -> Result<()> {
-        let mut pending = write(&self.pending)?;
+        let mut pending = self.settled()?;
         pending.holding = false;
         let held: Vec<(u64, Vec<u8>)> = pending.active.held.drain().collect();
         held.into_iter().try_for_each(|(number, content)| pending.put(&self.at, number, content))
@@ -181,13 +175,48 @@ impl Shadow {
         read(&self.pending).map_or(0, |p| p.active.bytes())
     }
 
+    /// Its pending writes, the lock written, once no granule is in flight.
+    fn settled(&self) -> Result<RwLockWriteGuard<'_, Pending>> {
+        let pending = write(&self.pending)?;
+        self.flight.wait_all();
+        Ok(pending)
+    }
+
+    /// Writes `data` at `at` over the block of its run with no lock held,
+    /// if it is whole granules within the file's size, each still in that
+    /// run's block in the side file written to, none held or in flight:
+    /// a page written back again (RULES.md D472). Whether it did.
+    fn write_over(&self, data: &[u8], at: u64) -> Result<bool> {
+        let (first, within) = granule_of(at);
+        let whole = within == 0 && !data.is_empty() && data.len().checked_rem(GRANULE) == Some(0);
+        let count = u64::try_from(data.len().checked_div(GRANULE).unwrap_or_default()).unwrap_or_default();
+        let end = at.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
+        let numbers = first..first.saturating_add(count);
+        let (spot, blocks) = {
+            let pending = write(&self.pending)?;
+            let found = pending.active.same_run(first, count).zip(pending.active.blocks.clone());
+            let Some(found) = found.filter(|_| whole && !pending.holding && end <= pending.size) else { return Ok(false) };
+            if !self.flight.take_off(numbers.clone()) {
+                return Ok(false);
+            }
+            found
+        };
+        let payload = encode(&Op::Granule(first, data.to_vec()));
+        let written = blocks.overwrite(spot.block, &payload, spot.payload_len());
+        self.flight.land(numbers);
+        written.map(|()| true)
+    }
+
     /// The content of granule `number`, as written: from the side file
     /// written to, or the sealed one, or the file, zeros past the end or a
     /// limit.
     fn granule(&self, pending: &Pending, number: u64) -> Result<Vec<u8>> {
         let mut content = vec![0; GRANULE];
         match self.source(pending, number)? {
-            Source::Written(written) => return Ok(written),
+            Source::Written(side) => {
+                self.flight.wait_for(number);
+                side.copy_held(number, 0, &mut content)?;
+            }
             Source::Base(base) => {
                 let _ = base.read_at(&mut content, offset(number))?;
             }
@@ -199,15 +228,15 @@ impl Shadow {
     /// Where the content of granule `number` is, as written: the side file
     /// written to, or the sealed one, read here; the file, read by the
     /// caller; or nowhere, zeros past the end or a limit.
-    fn source(&self, pending: &Pending, number: u64) -> Result<Source> {
+    fn source<'a>(&self, pending: &'a Pending, number: u64) -> Result<Source<'a>> {
         let start = offset(number);
-        if let Some(content) = pending.active.held(number)? {
-            return Ok(Source::Written(content));
+        if pending.active.holds(number) {
+            return Ok(Source::Written(&pending.active));
         }
         let mut limit = pending.active.limit;
         if let Some(sealed) = pending.sealed.as_ref().filter(|_| start < limit) {
-            if let Some(content) = sealed.side.held(number)? {
-                return Ok(Source::Written(content));
+            if sealed.side.holds(number) {
+                return Ok(Source::Written(&sealed.side));
             }
             limit = limit.min(sealed.side.limit);
         }
@@ -232,7 +261,10 @@ impl Shadow {
             let n = (GRANULE.saturating_sub(within)).min(available.saturating_sub(done));
             let to = done..done.saturating_add(n);
             match self.source(pending, number)? {
-                Source::Written(content) => copy_into(buf, to, &content, within),
+                Source::Written(side) => {
+                    self.flight.wait_for(number);
+                    side.copy_held(number, within, buf.get_mut(to).unwrap_or_default())?;
+                }
                 Source::Zeros => buf.get_mut(to).unwrap_or_default().fill(0),
                 Source::Base(base) => {
                     if let Some(last) = runs.last_mut().filter(|last| last.2.end == done && Arc::ptr_eq(&last.0, &base)) {
@@ -254,7 +286,7 @@ impl Shadow {
         if read(&self.pending)?.sealed.is_some() {
             self.commit_sealed()?;
         }
-        let mut pending = write(&self.pending)?;
+        let mut pending = self.settled()?;
         pending.holding = false;
         if pending.unchanged() {
             return Ok(());
@@ -280,7 +312,7 @@ impl Shadow {
         };
         let which = sealed.side.which;
         {
-            let mut pending = write(&self.pending)?;
+            let mut pending = self.settled()?;
             pending.sealed = None;
             pending.committed = committed;
         }
@@ -300,7 +332,7 @@ impl Shadow {
         let side = &sealed.side;
         let made: BlockFile;
         let blocks = if let Some(blocks) = &side.blocks {
-            blocks
+            &**blocks
         } else {
             made = self.at.fresh_side(side.which)?;
             &made
@@ -383,17 +415,23 @@ impl DiskFile for ShadowFile {
         Ok(available)
     }
 
+    /// Whole granules written go as one run, one block for a page;
+    /// a granule written in part is read, changed and put alone.
     fn write_all_at(&self, data: &[u8], at: u64) -> Result<()> {
-        let mut pending = write(&self.0.pending)?;
+        if self.0.write_over(data, at)? {
+            return Ok(());
+        }
+        let mut pending = self.0.settled()?;
         let mut done = 0_usize;
         while done < data.len() {
             let position = at.saturating_add(u64::try_from(done).unwrap_or(u64::MAX));
             let (number, within) = granule_of(position);
-            let n = GRANULE.saturating_sub(within).min(data.len().saturating_sub(done));
-            let mut content = if within == 0 && n == GRANULE { vec![0; GRANULE] } else { self.0.granule(&pending, number)? };
-            if let (Some(to), Some(from)) = (content.get_mut(within..within.saturating_add(n)), data.get(done..done.saturating_add(n))) {
-                to.copy_from_slice(from);
-            }
+            let left = data.len().saturating_sub(done);
+            let whole = if within == 0 { left.checked_div(GRANULE).unwrap_or_default().saturating_mul(GRANULE) } else { 0 };
+            let n = if whole > 0 { whole } else { GRANULE.saturating_sub(within).min(left) };
+            let from = data.get(done..done.saturating_add(n)).unwrap_or_default();
+            let content = if whole > 0 { from.to_vec() } else { self.0.granule(&pending, number)? };
+            let content = if whole > 0 { content } else { patched(content, within, from) };
             pending.put(&self.0.at, number, content)?;
             done = done.saturating_add(n);
         }
@@ -410,7 +448,7 @@ impl DiskFile for ShadowFile {
     /// lowered to it; the one it falls in has its bytes past it zeroed, so
     /// growing again reads zeros.
     fn set_size(&self, size: u64) -> Result<()> {
-        let mut pending = write(&self.0.pending)?;
+        let mut pending = self.0.settled()?;
         if size < pending.size {
             let (number, within) = granule_of(size);
             if within > 0 {
@@ -431,6 +469,14 @@ impl DiskFile for ShadowFile {
     fn sync(&self, _durability: Durability) -> Result<()> {
         Ok(())
     }
+}
+
+/// `content` with `from` copied over it from `within`.
+fn patched(mut content: Vec<u8>, within: usize, from: &[u8]) -> Vec<u8> {
+    if let Some(to) = content.get_mut(within..within.saturating_add(from.len())) {
+        to.copy_from_slice(from);
+    }
+    content
 }
 
 /// What ends a batch's side file before its commit block: the granules a

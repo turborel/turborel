@@ -83,8 +83,10 @@ impl RowTable {
             if !shadowed && !resorted {
                 continue;
             }
-            // A group no write touched has no entry to fold in.
-            if !resorted && entry.shadow.none() {
+            // A group no write touched has no entry to fold in; one a load
+            // made, not yet committed before every snapshot, waits until it
+            // is (`stamped.rs`).
+            if (!resorted && entry.shadow.none()) || entry.stamp() != 0 {
                 continue;
             }
             let entries = self.entries_in(&entry.summary)?;

@@ -30,7 +30,8 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::{NO_TRANSACTION, Persistence, Policy, Timestamp, Transactions, Txn};
+use super::pending::Undone;
+use super::{LogPos, NO_TRANSACTION, Persistence, Policy, Timestamp, Transactions, Txn};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::disk::encoding::Pipeline;
@@ -188,12 +189,14 @@ fn same_log(a: &Arc<dyn Log>, b: &dyn Log) -> bool {
 }
 
 impl Txn {
-    /// Writes `change`, made by this transaction, to its log, if it has one.
+    /// Holds `change`, made by this transaction, for its log, if it has
+    /// one: written with its commit record, or before, as `txn/pending.rs`
+    /// says.
     ///
     /// # Errors
     ///
     /// SQLCODE -915 once a sync of the log failed; the log's, if it cannot
-    /// append the record; the statement then fails, and is undone.
+    /// append the records held; the statement then fails, and is undone.
     pub(crate) fn log_change(&self, change: Change) -> Result<()> {
         self.log_sealed(change, None)
     }
@@ -202,18 +205,18 @@ impl Txn {
     /// row, if given (`log/sealed.rs`): a row change of a table with
     /// encodings.
     pub(crate) fn log_sealed(&self, change: Change, seal: Option<(&Pipeline, RowId)>) -> Result<()> {
-        if self.log.is_none() {
-            return Ok(());
-        }
+        let Some(log) = &self.log else { return Ok(()) };
+        self.shared.taking_changes()?;
         let record = Record { tx: self.id, change };
         let bytes = if let Some((pipeline, row)) = seal { sealed::seal(&record, row, pipeline)? } else { record.encode() };
-        self.log_encoded(&bytes, 1)
+        self.hold(log, bytes)
     }
 
-    /// \[EXTENSION\] Writes `bytes`, the record of `changes` row changes as
-    /// `Record::encode` gives it, to its log, if it has one: one made from
+    /// \[EXTENSION\] Holds `bytes`, the record of `changes` row changes as
+    /// `Record::encode` gives it, for its log, if it has one: one made from
     /// rows as they are held (`record::insert_rows_record`, RULES.md D530).
-    /// Each change counts toward the next checkpoint.
+    /// Each change counts toward the next checkpoint, the record's first
+    /// once it is written and the rest now.
     ///
     /// # Errors
     ///
@@ -221,15 +224,8 @@ impl Txn {
     pub(crate) fn log_encoded(&self, bytes: &[u8], changes: u64) -> Result<()> {
         let Some(log) = &self.log else { return Ok(()) };
         self.shared.taking_changes()?;
-        let lsn = log.append(bytes)?;
-        let mut st = self.state()?;
-        if !st.logged {
-            self.shared.first_logged(self.id, lsn);
-        }
-        st.logged = true;
-        st.statement_from.get_or_insert(lsn);
-        st.logged_at(lsn);
-        self.shared.logged.fetch_add(changes, Ordering::Relaxed);
+        self.hold(log, bytes.to_vec())?;
+        self.shared.logged.fetch_add(changes.saturating_sub(1), Ordering::Relaxed);
         Ok(())
     }
 
@@ -244,12 +240,23 @@ impl Txn {
     /// cancelled as made, so the transaction can then only roll back.
     pub(super) fn statement_undone(&self) {
         let from = lock_builtin(&self.state).statement_from.take();
+        self.undone_from(from, "a statement's changes were undone but could not be logged as undone");
+    }
+
+    /// Drops the records held from `from`, a place undone to, and holds
+    /// the record that cancels those from it already written, if any: so a
+    /// place whose records were all held leaves none (`txn/pending.rs`). If
+    /// that cannot be, the log would show changes that were cancelled as
+    /// made, so the transaction can then only roll back, `why`.
+    pub(super) fn undone_from(&self, from: Option<LogPos>, why: &'static str) {
         let (Some(log), Some(from)) = (&self.log, from) else { return };
-        let record = Record { tx: self.id, change: Change::StatementUndone { from } }.encode();
-        // Appended with the state unlocked: the log is a plug-in (RULES.md
-        // R-ERR-4).
-        if log.append(&record).is_err() {
-            lock_builtin(&self.state).doomed.get_or_insert("a statement's changes were undone but could not be logged as undone");
+        let held = match self.drop_held_from(from) {
+            Undone::Nothing => Ok(()),
+            Undone::From(from) => self.hold_unmarked(log, Record { tx: self.id, change: Change::StatementUndone { from } }.encode()),
+            Undone::Unknown => Err(SqlError::new(Code::Api, "[DESIGN] the place undone to is not known")),
+        };
+        if held.is_err() {
+            lock_builtin(&self.state).doomed.get_or_insert(why);
         }
     }
 
@@ -281,7 +288,9 @@ impl Txn {
             |why: String| SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §8.2] {why}, so the transaction was rolled back"));
         self.shared.taking_changes().map_err(|e| refused(e.described()))?;
         let record = Record { tx: self.id, change: Change::Commit { at, wall } }.encode();
-        let lsn = log.append(&record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
+        // [DESIGN] RULES.md D470: its held records and the commit record, one write.
+        let lsn =
+            self.write_with(log, record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
         // [DESIGN] RULES.md D194: its position, for the client's read-after.
         self.stop.served().committed_at(lsn.0);
         if !self.sync_commit.load(Ordering::Relaxed) {
@@ -315,17 +324,18 @@ impl Txn {
         })
     }
 
-    /// Writes the abort record, if the transaction logged a change. Not
-    /// synced: a transaction without a commit record is undone by recovery
-    /// either way, and a failure to write it cannot matter for the same
-    /// reason. Not written while the database is held (`Held`): a deposed
+    /// Writes the abort record, if a record of the transaction may have
+    /// reached the log; the records it holds go unwritten (`txn/pending.rs`).
+    /// Not synced: a transaction without a commit record is undone by
+    /// recovery either way, and a failure to write it cannot matter for the
+    /// same reason. Not written while the database is held (`Held`): a deposed
     /// database's log is its replica's, which may serve again, in a later
     /// view, for the database opened again (RULES.md D57).
     pub(super) fn log_abort(&self) {
         if self.shared.held().is_some() {
             return;
         }
-        if let Some(log) = self.log.as_ref().filter(|_| lock_builtin(&self.state).logged) {
+        if let Some(log) = self.log.as_ref().filter(|_| self.reached_log()) {
             let _ = log.append(&Record { tx: self.id, change: Change::Abort }.encode());
         }
     }
@@ -345,6 +355,10 @@ impl State {
     pub(crate) fn log_definition(&mut self, tx: Option<&Txn>, change: Change) -> Result<()> {
         let Some(log) = &self.log else { return Ok(()) };
         self.tx.taking_changes()?;
+        // A transaction's records held go first, so they keep their order.
+        if let Some(tx) = tx {
+            tx.write_held_now()?;
+        }
         let record = Record { tx: tx.map_or(NO_TRANSACTION, |t| t.id), change }.encode();
         let lsn = log.append(&record)?;
         self.tx.sync(&**log, lsn)
@@ -394,6 +408,7 @@ impl State {
         }
         // Recorded only once the write is allowed.
         st.first_write_external.get_or_insert(external);
+        st.forced |= persistence == Persistence::Forced;
         Ok(())
     }
 
