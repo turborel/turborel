@@ -19,17 +19,20 @@
 //! the first; and a run whose value is null, or of another kind than its
 //! slot's, is planned alone. Null values say nothing of their kind, so a
 //! subquery learns from its first run with none.
+//! A subquery decorrelated after fewer runs than `MOST_LEARNING_RUNS`
+//! (EXECUTOR.DECORRELATE_AFTER_RUNS) is planned at each run until then, as
+//! its learning would cost more runs than it saves.
 
 use std::mem::discriminant;
 
 use super::super::{RowIter, execute};
 use super::Runner;
-use crate::db::prepared::{Learned, Learning};
+use crate::db::prepared::{Learned, Learning, MOST_LEARNING_RUNS};
 use crate::logical::{Expr, LogicalPlan, Slot, Subquery, filled, map_plan_exprs};
 use crate::optimizer::RuleContext;
 use crate::optimizer::prepared::budget;
 use crate::physical::{PhysicalPlanner, Plan, filled_plan_as_is, keepable};
-use crate::settings::KEEP_SUBQUERY_PLANS;
+use crate::settings::{DECORRELATE_AFTER_RUNS, KEEP_SUBQUERY_PLANS};
 use crate::value::datetime::Moment;
 use crate::value::{
     CharUnits, DOUBLE_PRECISION, DataType, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled,
@@ -166,8 +169,11 @@ impl Runner {
     /// `outer` holds no null and its slots are typed; else what it keeps,
     /// planned alone this run: untried while a value is null, at each run
     /// once a value is of a kind no slot takes or its plan holds slots of
-    /// its own.
+    /// its own, or once it is decorrelated before learning could pay.
     fn untried(&self, subquery: &Subquery, outer: &[Value]) -> Result<(Plan, Planned), Planned> {
+        if self.decorrelated_soon(subquery) {
+            return Err(Planned::Varies);
+        }
         if outer.iter().any(Value::is_null) {
             return Err(Planned::Untried);
         }
@@ -184,6 +190,12 @@ impl Runner {
         }
         let learning = Learning::default().after(&custom, with_slots);
         Ok((custom, learned(slotted, learning)))
+    }
+
+    /// Whether `subquery` is decorrelated after fewer runs than a plan
+    /// learns over, so learning its plan would cost more runs than it saves.
+    fn decorrelated_soon(&self, subquery: &Subquery) -> bool {
+        self.db.settings.count(DECORRELATE_AFTER_RUNS) < usize::from(MOST_LEARNING_RUNS) && subquery.decorrelated().is_some()
     }
 
     /// A learning run of the plan with slots `slotted`, `custom` the plan

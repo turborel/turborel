@@ -236,7 +236,7 @@ impl PhysicalPlanner<'_> {
         let seq_cost = seq_cost + scanned * evaluation.per_row;
         // RULES.md D106: what checking the XML queries of a row costs.
         let check = xml::check_cost(conds, known.stats, cost.index_descent);
-        let scan_total = seq_cost + scanned * check + self.sort_penalty(want, scanned, false);
+        let scan_total = seq_cost + scanned * check + self.sort_penalty((want, read), scanned, false);
         let mut best = self.scan_path(&**storage, want, Path { total: scan_total, cost: seq_cost, est: scanned, ..unread });
         let mut spatial: Option<geometric::Priced> = None;
         let asked = Asked { conds, answerable: probed, implied, compared: &compared, ors: &ors, all, known };
@@ -265,10 +265,14 @@ impl PhysicalPlanner<'_> {
         best
     }
 
-    /// What sorting a path's `est` rows costs, if `want` asks an order the
-    /// path does not give.
-    fn sort_penalty(&self, want: &[SortKey], est: f64, ordered: bool) -> f64 {
-        if !want.is_empty() && !ordered { self.weights().sort(est) } else { 0.0_f64 }
+    /// What sorting a path's `est` rows of the columns `read` needs costs, if
+    /// `want` asks an order the path does not give: past the grant, its
+    /// runs written and merged too (RULES.md D651).
+    fn sort_penalty(&self, (want, read): (&[SortKey], TableRead<'_>), est: f64, ordered: bool) -> f64 {
+        if want.is_empty() || ordered {
+            return 0.0_f64;
+        }
+        self.weights().sort_held(est, self.row_bytes_of(read.table, read.needed.len()))
     }
 
     /// The path of the candidate `c` on the index `on`, if it can read the
@@ -314,8 +318,9 @@ impl PhysicalPlanner<'_> {
         let clustered = geometric::clustered_saving(est, clustering, (storage.fetch_cost(), row));
         let path_cost = probed_cost - visible.map_or(clustered, saved) + est * on.evaluation.per_row;
         let checked = if xml::answered(&c.probes) { 0.0_f64 } else { est * on.check };
-        let total =
-            path_cost * order.map_or(1.0_f64, |_| self.read_share(want, est)) + checked + self.sort_penalty(want, est, order.is_some());
+        let total = path_cost * order.map_or(1.0_f64, |_| self.read_share(want, est))
+            + checked
+            + self.sort_penalty((want, read), est, order.is_some());
         let stated = geometric::Stated::rows(c.stated.as_ref()).is_some();
         let priced = c.stated.is_some().then_some(geometric::Priced { est, stated, clustering, probe: total });
         Some((Probed::of(ix, c, (visible.is_some() && whole, decided)).path((est, path_cost, total), order), priced))

@@ -314,6 +314,22 @@ impl<T: ListItem> SpillList<T> {
         Ok(())
     }
 
+    /// Calls `each` with the items of every segment, in order, the list
+    /// kept: a held segment's as they are held, a run's read back.
+    ///
+    /// # Errors
+    ///
+    /// The run's, `decode`'s, or `each`'s.
+    pub fn visit_slices(&mut self, decode: Decode<'_, T>, each: &mut dyn FnMut(&[T]) -> Result<()>) -> Result<()> {
+        for segment in &mut self.segments {
+            match segment {
+                Segment::Held(items, _) => each(items)?,
+                Segment::Spilled(run, _) => each(&read_back(run, decode)?)?,
+            }
+        }
+        Ok(())
+    }
+
     /// How many segments it has.
     pub fn segments(&self) -> usize {
         self.segments.len()

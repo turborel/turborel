@@ -1,6 +1,7 @@
 //! Argument evaluation has the same order, NULLs and first error for
 //! stack-backed unary/binary lists and longer heap-backed lists.
 
+use crate::functions::ScalarRef;
 use std::sync::{Arc, Mutex};
 
 use super::*;

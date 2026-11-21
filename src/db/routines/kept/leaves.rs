@@ -27,10 +27,10 @@ use super::super::super::compiled::{plan, plan_slotted};
 use super::super::super::prepared::{Learned, Learning, moved, rows_of};
 use crate::catalog::{QualifiedName, SequenceDesc};
 use crate::error::{Result, Warnings};
-use crate::exec::{Subqueries, SubqueryRows, execute};
+use crate::exec::{Db, Slots, Subqueries, SubqueryRows, execute};
 use crate::fulltext::rank::Statistics;
 use crate::logical::{Expr, Invocation, Leaf, LogicalPlan, Slot, Subquery, filled, map_plan_exprs};
-use crate::physical::{Plan, filled_plan, keepable};
+use crate::physical::{Kept, Plan, keepable, prepared_plan};
 use crate::storage::Row;
 use crate::sync::lock;
 use crate::txn::TxId;
@@ -52,7 +52,7 @@ pub(in crate::db) struct LeafPlan {
 enum Physical {
     /// Its plan with slots, the tables it reads and, of a plan learned,
     /// their rows as it was learned.
-    Fixed(Arc<Plan>, Arc<[QualifiedName]>, Option<Arc<[usize]>>),
+    Fixed(Arc<Kept>, Arc<[QualifiedName]>, Option<Arc<[usize]>>),
     /// Its plan learning.
     Learning(Learning),
     /// Planned at each run.
@@ -60,24 +60,24 @@ enum Physical {
 }
 
 impl LeafPlan {
-    /// Its physical plan of the outer values `outer`: its plan kept,
-    /// filled; else, while it learns, planned with them; none once it
-    /// varies.
+    /// Its physical plan of the outer values `outer`, and the values it
+    /// reads as its slots, if it does: its plan kept, as `Kept::opened`
+    /// opens it (RULES.md D610); else, while it learns, planned with them;
+    /// none once it varies.
     ///
     /// # Errors
     ///
-    /// As `physical::filled_plan` and `logical::filled`; SQLCODE -910 if a
-    /// lock is poisoned.
-    fn physical(&self, st: &State, outer: &[Value]) -> Result<Option<Plan>> {
+    /// As `logical::filled`; SQLCODE -910 if a lock is poisoned.
+    fn physical(&self, st: &State, outer: &[Value]) -> Result<Option<(Plan, Option<Slots>)>> {
         let now = std::mem::replace(&mut *lock(&self.kept)?, Physical::Varies);
         let learning = match now {
             Physical::Varies => return Ok(None),
             Physical::Learning(learning) => learning,
             Physical::Fixed(plan, reads, rows) => {
                 if !rows.as_deref().is_some_and(|rows| moved(st, &reads, rows)) {
-                    let filled = filled_plan((*plan).clone(), outer, crate::optimizer::prepared::budget(st));
+                    let opened = plan.opened(Some(outer.into()), crate::optimizer::prepared::budget(st));
                     *lock(&self.kept)? = Physical::Fixed(plan, reads, rows);
-                    return filled.map(Some);
+                    return opened.map(Some);
                 }
                 Learning::default()
             }
@@ -85,12 +85,15 @@ impl LeafPlan {
         let (optimized, _, custom) = plan(st, filled(self.slotted.clone(), outer)?);
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
         let physical = match learning.after(&custom, plan_slotted(st, self.slotted.clone(), outer)).outcome() {
-            Learned::Kept(slotted) => Physical::Fixed(Arc::from(slotted), Arc::clone(&reads), Some(rows_of(st, &reads))),
+            Learned::Kept(slotted) => match prepared_plan(*slotted, crate::optimizer::prepared::budget(st)) {
+                Ok(slotted) => Physical::Fixed(Arc::new(slotted), Arc::clone(&reads), Some(rows_of(st, &reads))),
+                Err(_) => Physical::Varies,
+            },
             Learned::Learning(learning) => Physical::Learning(learning),
             Learned::Stopped => Physical::Varies,
         };
         *lock(&self.kept)? = physical;
-        Ok(Some(custom))
+        Ok(Some((custom, None)))
     }
 }
 
@@ -134,13 +137,22 @@ impl Subqueries for KeptRuns<'_> {
     fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
         let (st, tx) = self.at;
         let planned = self.plans.get(&subquery.id()).map(|kept| kept.physical(st, outer)).transpose()?.flatten();
-        let Some(physical) = planned else { return self.runner.rows(subquery, outer, limit) };
-        let rows = execute(physical, st, tx);
+        let Some((physical, slots)) = planned else { return self.runner.rows(subquery, outer, limit) };
+        let db = slots.map_or_else(|| Db::of(st), |slots| Db::slotted(st, slots));
+        let rows = execute(physical, &db, tx);
         let found = match limit {
             Some(n) => rows.take(n).collect::<Result<Vec<Row>>>()?,
             None => rows.collect::<Result<Vec<Row>>>()?,
         };
         Ok(SubqueryRows::held(found, st))
+    }
+
+    fn slot(&self, index: usize) -> Option<&Value> {
+        self.runner.slot(index)
+    }
+
+    fn outer(&self, index: usize) -> Option<&Value> {
+        self.runner.outer(index)
     }
 
     fn warnings(&self) -> Option<&Warnings> {
@@ -210,6 +222,7 @@ fn kept(st: &State, query: &Subquery, slots: &[(usize, DataType)]) -> Option<Lea
     let slotted = map_plan_exprs(query.plan.clone(), &mut |e| slotted(e, &places));
     let (optimized, _, physical) = plan(st, slotted.clone());
     let kept = if keepable(&physical, st) {
+        let Ok(physical) = prepared_plan(physical, crate::optimizer::prepared::budget(st)) else { return None };
         Physical::Fixed(Arc::new(physical), optimized.tables().into(), None)
     } else {
         Physical::Learning(Learning::default())

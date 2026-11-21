@@ -28,7 +28,7 @@ impl Session {
         let st = call.state();
         let tx = self.ensure_transaction(st);
         call.runs(&tx);
-        tx.begin_statement(|| !self.cursors_open())?;
+        self.begin_in(st, &tx, false)?;
         let staged = self.stage_schema(st, &tx, sql, name);
         self.db.noted(staged.map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e)))
     }

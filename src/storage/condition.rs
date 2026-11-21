@@ -112,6 +112,17 @@ pub enum Conjunct {
         /// The bound, raised as the sort holds rows.
         threshold: Arc<Threshold>,
     },
+    /// \[DESIGN\] (RULES.md D600) The spans of a column's values a hash
+    /// join's runtime filter holds its keys in, a span of one value for
+    /// each of a few keys. True of every row, as the join's filter judges
+    /// them, it passes over groups and parts none of whose values lies in
+    /// a span.
+    Spans {
+        /// The column.
+        column: usize,
+        /// The spans, least and greatest, ascending and apart.
+        spans: Arc<[(Value, Value)]>,
+    },
 }
 
 impl Conjunct {
@@ -122,7 +133,8 @@ impl Conjunct {
             Conjunct::Null { column, .. }
             | Conjunct::In { column, .. }
             | Conjunct::NotIn { column, .. }
-            | Conjunct::Dynamic { column, .. } => vec![*column],
+            | Conjunct::Dynamic { column, .. }
+            | Conjunct::Spans { column, .. } => vec![*column],
             Conjunct::Any(each) => {
                 let mut columns: Vec<usize> = each.iter().flat_map(Conjunct::columns).collect();
                 columns.sort_unstable();
@@ -150,7 +162,7 @@ impl Conjunct {
             }
             // Each of one column, the same.
             Conjunct::Any(each) => each.iter().any(|c| c.matches_key(key)),
-            Conjunct::Dynamic { .. } => true,
+            Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => true,
         }
     }
 
@@ -169,6 +181,7 @@ impl Conjunct {
             Conjunct::NotIn { column, values } => bounds.get(*column).and_then(Option::as_ref).is_some_and(|r| !one_of(r, values)),
             Conjunct::Any(each) => each.iter().any(|c| c.may_match(bounds)),
             Conjunct::Dynamic { column, threshold } => threshold.may_match(bounds.get(*column).and_then(Option::as_ref)),
+            Conjunct::Spans { column, spans } => meets(spans, bounds.get(*column).and_then(Option::as_ref)),
         }
     }
 }
@@ -184,6 +197,7 @@ impl Conjunct {
             Conjunct::NotIn { values, .. } => range.is_some_and(|r| !one_of(r, values)),
             Conjunct::Any(each) => each.iter().any(|c| c.may_match_range(range)),
             Conjunct::Dynamic { threshold, .. } => threshold.may_match(range),
+            Conjunct::Spans { spans, .. } => meets(spans, range),
             Conjunct::Condition(c) => {
                 let Some(&column) = c.columns.first() else { return true };
                 let mut bounds = vec![None; column.saturating_add(1)];
@@ -237,6 +251,15 @@ impl Conjunction {
 /// if they are one value, which is.
 fn one_of((least, greatest): &(Value, Value), values: &[Value]) -> bool {
     compare(least, greatest) == Some(Ordering::Equal) && values.iter().any(|v| compare(least, v) == Some(Ordering::Equal))
+}
+
+/// Whether a value within `range`, if any, may lie in one of `spans`,
+/// ascending and apart: the first span not wholly below the range starts
+/// within it, found by halving. Of values that do not compare, it may.
+fn meets(spans: &[(Value, Value)], range: Option<&(Value, Value)>) -> bool {
+    let Some((least, greatest)) = range else { return false };
+    let first = spans.partition_point(|(_, end)| compare(end, least) == Some(Ordering::Less));
+    spans.get(first).is_some_and(|(start, _)| compare(start, greatest) != Some(Ordering::Greater))
 }
 
 /// Whether a value from `least` to `greatest` may compare with `v` by `op`:
@@ -342,5 +365,21 @@ mod tests {
         let missing =
             Condition { columns: vec![0], probe: Probe::Columns(vec![ColumnComparison { column: 1, op: CompOp::Eq, value: n(1) }]) };
         assert!(!missing.may_match(&ranges(1, 1)));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D600 (MC/DC): spans pass over bounds
+    /// that lie in their gaps, below them or above them, and not over
+    /// bounds that meet a span or cover a gap; no row of no bounds; every
+    /// row as it judges rows.
+    #[test]
+    fn spans_pass_over_their_gaps() {
+        let spans: Arc<[(Value, Value)]> = vec![(n(10), n(20)), (n(30), n(30)), (n(50), n(60))].into();
+        let told = Conjunct::Spans { column: 0, spans };
+        let may = |a: i128, b: i128| told.may_match(&[Some((n(a), n(b)))]);
+        assert!(!may(21, 29) && !may(31, 49) && !may(0, 9) && !may(61, 99), "in a gap, below, above");
+        assert!(may(15, 16) && may(25, 30) && may(29, 31) && may(0, 99) && may(60, 70), "meeting a span");
+        assert!(!told.may_match(&[None]) && !told.may_match_range(None), "no value not null");
+        assert!(told.may_match_range(Some(&(n(55), n(56)))) && !told.may_match_range(Some(&(n(40), n(41)))));
+        assert!(told.matches(&vec![n(25)]), "a row is judged by the join's filter");
     }
 }

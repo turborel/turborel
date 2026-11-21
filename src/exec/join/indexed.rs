@@ -50,6 +50,23 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
 /// Fuse a column projection into a join, preserving its full predicate.
 #[inline(never)]
 pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, tx: TxId) -> RowIter {
+    let db_for = db.clone();
+    projected_over(plan, (output, Box::new(move |left| execute(left, &db_for, tx))), db, tx)
+}
+
+/// What gives the rows of a join's operand, of its plan.
+pub(in crate::exec) type Reads = Box<dyn FnOnce(Plan) -> RowIter + Send>;
+
+/// \[DESIGN\] (RULES.md D600) The rows of the index join `plan`, its left
+/// operand's rows those `read` gives of it, as a stream told a runtime
+/// filter gives them.
+#[inline(never)]
+pub(in crate::exec) fn indexed_over(plan: Plan, read: Reads, db: &Db, tx: TxId) -> RowIter {
+    projected_over(plan, (None, read), db, tx)
+}
+
+/// `projected`, the rows of its left operand those `read` gives.
+fn projected_over(plan: Plan, (output, read): (Option<Columns>, Reads), db: &Db, tx: TxId) -> RowIter {
     let Plan::IndexJoin { outer, spatial, left, table, index, probe, cond, width, columns: needed, located, .. } = plan else {
         return failed(broken("an index join is not one"));
     };
@@ -91,7 +108,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, t
                 output,
                 refinement: None,
             };
-            driven(joined, (spatial, *left), (inner, needed.into_vec()), db)
+            driven(joined, (spatial, *left, read), (inner, needed.into_vec()), db)
         }
         Err(e) => failed(e),
     }
@@ -109,18 +126,23 @@ fn opened(db: &Db, table: &QualifiedName, index: &str) -> Result<Opened> {
     Ok((storage, Arc::clone(db.index_of(index)?), ix, None))
 }
 
-/// `joined` driven by the rows of `left`, or, of a spatial join, perhaps
+/// `joined` driven by the rows of `left`, as `read` gives them, or, of a spatial join, perhaps
 /// by a scan of its table (`indexed/adaptive.rs`) or a traversal of both
 /// tables' trees (`indexed/paired.rs`).
-fn driven(mut joined: IndexJoin, (spatial, left): (Option<Box<Spatial>>, Plan), (inner, needed): (bool, Vec<usize>), db: &Db) -> RowIter {
+fn driven(
+    mut joined: IndexJoin,
+    (spatial, left, read): (Option<Box<Spatial>>, Plan, Reads),
+    (inner, needed): (bool, Vec<usize>),
+    db: &Db,
+) -> RowIter {
     match spatial.map(|spatial| *spatial) {
         Some(Spatial::Paired(paired)) => paired::start(joined, (*paired, left), db),
         Some(Spatial::Adaptive) => {
-            joined.left = execute(left, db, joined.table.tx);
+            joined.left = read(left);
             if inner { adaptive::start(joined, needed, db) } else { Box::new(joined) }
         }
         None => {
-            joined.left = execute(left, db, joined.table.tx);
+            joined.left = read(left);
             Box::new(joined)
         }
     }
