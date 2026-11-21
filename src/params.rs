@@ -13,6 +13,7 @@
 use std::collections::HashSet;
 
 mod dynamic;
+mod given;
 mod routine;
 mod transition;
 
@@ -22,6 +23,7 @@ pub(crate) use transition::Transitions;
 use dynamic::Dynamic;
 pub use dynamic::ParameterType;
 pub(crate) use dynamic::conformed;
+pub(crate) use given::conformed_row;
 
 use crate::ast::{LexicallyScopedOptions, ParameterSpecification, TargetKind};
 use crate::error::{Code, Result, SqlError};
@@ -71,6 +73,9 @@ pub struct Params {
     /// generation expression, CHECK or assertion as it is bound: their
     /// scope is all of it.
     xml: Option<LexicallyScopedOptions>,
+    /// \[EXTENSION\] Of an INSERT of one row of dynamic parameters, the
+    /// rows given it, each the values of its parameters (`params/given.rs`).
+    given: Option<std::sync::Arc<Vec<crate::storage::Row>>>,
 }
 
 fn api(msg: impl Into<String>) -> SqlError {

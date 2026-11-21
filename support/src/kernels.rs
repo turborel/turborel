@@ -84,6 +84,7 @@ pub fn contract(kernels: &dyn Kernels) {
         aggregates(kernels, len);
     }
     unpacking(kernels);
+    blooms(kernels);
     xxh3_stripes(kernels);
     normalizing(kernels);
 }
@@ -221,6 +222,33 @@ fn unpacking(kernels: &dyn Kernels) {
         }
     }
     assert_eq!(kernels.unpack(&[0; 1024], (65, 0), (0, 64), &mut Vec::new()), None, "wider than 64 bits");
+}
+
+/// Checks the Bloom filter probe of `kernels` against each hash's bits
+/// read one at a time: of filters of 1, 3 and 8 blocks, every hash put in
+/// one found, and of hashes of no structure the same places as the
+/// portable probe gives, an empty filter none.
+fn blooms(kernels: &dyn Kernels) {
+    use turborel::kernels::portable::bloom::{BLOCK_WORDS, bits_of, block_of, bloom_probe};
+    for blocks in [1_usize, 3, 8] {
+        let mut words = vec![0_u64; blocks * BLOCK_WORDS];
+        let hash = |n: u64| turborel::hash::murmur::fmix64(n.wrapping_add(blocks as u64));
+        for n in 0..40 {
+            let h = hash(n);
+            for (w, bit) in bits_of(h) {
+                words[block_of(h, blocks) * BLOCK_WORDS + w] |= bit;
+            }
+        }
+        let hashes: Vec<u64> = (0..LONGEST as u64).map(hash).collect();
+        let (mut out, mut want) = (vec![9], vec![9]);
+        kernels.bloom_probe(&words, &hashes, &mut out);
+        bloom_probe(&words, &hashes, &mut want);
+        assert_eq!(out, want, "bloom_probe of {blocks} blocks");
+        assert!((0..40).all(|n| out.contains(&n)), "every hash put in is found, of {blocks} blocks");
+        let mut none = Vec::new();
+        kernels.bloom_probe(&vec![0; blocks * BLOCK_WORDS], &hashes, &mut none);
+        assert!(none.is_empty(), "an empty filter holds none");
+    }
 }
 
 /// Checks the normal keys `kernels` writes of integers against each

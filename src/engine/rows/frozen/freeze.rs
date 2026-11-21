@@ -23,6 +23,7 @@ use super::{Directory, Entry, Retiring};
 use crate::engine::columns::group::Group;
 use crate::engine::rows::options::{Columns, Places};
 use crate::engine::rows::version::{Maker, Version};
+use crate::engine::rows::zones::ZONE_ROWS;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
 use crate::error::Result;
@@ -65,10 +66,11 @@ fn delayed(commits: &mut VecDeque<(Timestamp, Instant)>, delay: u32) -> Timestam
 /// `rows`, each with its id, sorted by the columns of `order`, ascending,
 /// as ORDER BY sorts them, their ids breaking ties: their ids and rows.
 pub(super) fn ordered(order: &Places, mut rows: Vec<(RowId, Row)>) -> (Vec<RowId>, Vec<Row>) {
-    if !order.places().is_empty() {
+    let order = order.places();
+    if !order.is_empty() {
         rows.sort_by(|(a_id, a), (b_id, b)| {
             let by = |&c: &usize| a.get(c).zip(b.get(c)).map_or(cmp::Ordering::Equal, |(x, y)| sort_cmp(x, y));
-            order.places().iter().map(by).find(|o| o.is_ne()).unwrap_or_else(|| a_id.cmp(b_id))
+            order.iter().map(by).find(|o| o.is_ne()).unwrap_or_else(|| a_id.cmp(b_id))
         });
     }
     rows.into_iter().unzip()
@@ -95,8 +97,9 @@ impl RowTable {
     /// Whether a freeze, a rewrite or entries to take out may be due: rows
     /// enough past the last group, and none found too few a moment ago;
     /// frozen rows enough given entries; a group sorted by other columns
-    /// than COLUMNSTORE.ORDER names now, or keeping Bloom filters of others
-    /// than COLUMNSTORE.BLOOM names; or rows frozen whose entries remain.
+    /// than COLUMNSTORE.ORDER names now, keeping Bloom filters of others
+    /// than COLUMNSTORE.BLOOM names, or written for sketches of others than
+    /// COLUMNSTORE.SKETCH names; or rows frozen whose entries remain.
     pub(in crate::engine::rows) fn freeze_wanted(&self) -> bool {
         let Ok(Some(columns)) = read(&self.frozen.columns).map(|c| *c) else { return false };
         let frozen = self.frozen.directory().map_or(0, |d| d.rows());
@@ -186,8 +189,8 @@ impl RowTable {
             rows.push((*id, self.decode(*id, Version::parse(bytes)?.record, None)?));
         }
         let (ids, rows) = ordered(&columns.order, rows);
-        let places = (columns.order.places(), columns.bloom.places());
-        let group = Group::write(&self.group_pages()?, self.format.types(), (&ids, &rows), places)?;
+        let (order, bloom, sketch) = (columns.order.places(), columns.bloom.places(), columns.sketch.places());
+        let group = Group::write(&self.group_pages()?, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))?;
         self.publish((None, Some(group)), entries)
     }
 
@@ -214,8 +217,16 @@ impl RowTable {
             if let (Some(o), Some(pages)) = (old, old_pages) {
                 o.retire(pages);
             }
-            mem::replace(&mut *held, next)
+            let end = next.groups.last().map_or(0, |e| e.summary.last.saturating_add(1));
+            let before = mem::replace(&mut *held, next);
+            self.frozen.groups_end.store(end, Ordering::SeqCst);
+            before
         };
+        // After it is in the directory: a writer that did not find it wrote
+        // its entry before this reads the tree (`shadow_bits.rs`).
+        if let Some(m) = &made {
+            self.mark_published(m, &entries)?;
+        }
         lock_builtin(&self.frozen.retiring).push(Retiring { before: Arc::downgrade(&before), entries });
         drop(before);
         self.retire_unread()
@@ -231,9 +242,17 @@ impl RowTable {
             retiring.drain(..unread).collect::<Vec<_>>()
         };
         for retired in ready {
+            let mut zone = None;
             for (id, bytes) in retired.entries {
                 if self.tree.delete_if(&key(id), &bytes)? {
                     self.free_values(id, Version::parse(&bytes)?.record);
+                }
+                // Its zone may be wider than the tree's rows now, to be
+                // summed up again (`rows/zones.rs`).
+                let at = id.checked_div(ZONE_ROWS);
+                if zone != at {
+                    self.zones.undone(id);
+                    zone = at;
                 }
             }
         }

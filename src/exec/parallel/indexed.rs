@@ -14,7 +14,7 @@ use crate::error::Result;
 use crate::exec::broken;
 use crate::exec::entries::{Reading, entry_row};
 use crate::exec::read::Asked;
-use crate::index::{Entries, KeyProjection, Probe};
+use crate::index::{Entries, KeyProjection, Probe, Uses, Using, part_of};
 use crate::storage::{Rows, Split, TableStorage};
 use crate::txn::TxId;
 
@@ -29,6 +29,10 @@ struct IndexSplit {
     tx: TxId,
     /// Each part's entries, taken by the morsel that reads it.
     parts: Vec<Mutex<Option<Entries>>>,
+    /// The index's counts (RULES.md D522): the scan's search, counted as
+    /// the scan is dropped, and each part's entries, as the part is.
+    uses: Option<Arc<Uses>>,
+    _search: Using,
 }
 
 /// What an index scan reads: its table, index, probe, the columns it
@@ -56,13 +60,16 @@ pub(super) fn split(db: &State, tx: TxId, scanned: &Scanned<'_>, (est, rows): (u
         Arc::clone(db.storage_of(table)?)
     };
     let ix = db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| broken("an index scan run in parallel has no index"))?;
-    let found = db.index_of(index)?;
+    let (found, uses) = (db.index_of(index)?, db.uses_of(index));
     let Some(parts) = Arc::clone(found).ranges(probe, est.div_ceil(rows.max(1)).max(1)) else { return Ok(None) };
     Asked::of(&**found, &ix, probe).record(&*storage, tx)?;
     let width = covering.then(|| db.catalog.table(table).map(|t| t.columns.len())).flatten();
     let projection = found.key_projection();
     let parts = parts.into_iter().map(|p| Mutex::new(Some(p))).collect();
-    Ok(Some(Arc::new(IndexSplit { storage, ix: Arc::new(ix), width, columns: columns.to_vec(), projection, tx, parts })))
+    let mut search = Using::of(uses.clone());
+    search.searched();
+    let (ix, columns) = (Arc::new(ix), columns.to_vec());
+    Ok(Some(Arc::new(IndexSplit { storage, ix, width, columns, projection, tx, parts, uses, _search: search })))
 }
 
 impl Split for IndexSplit {
@@ -75,7 +82,7 @@ impl Split for IndexSplit {
         let Some(entries) = taken else { return Box::new(std::iter::once(Err(broken("a part of an index scan read twice")))) };
         let (storage, ix, width, tx) = (Arc::clone(&self.storage), Arc::clone(&self.ix), self.width, self.tx);
         let mut reading = Reading::of(&ix, Some(&self.columns), self.projection.clone());
-        Box::new(entries.filter_map(move |entry| {
+        Box::new(part_of(entries, self.uses.clone()).filter_map(move |entry| {
             let read = |(key, id)| Ok(entry_row(&*storage, (&ix, width), &mut reading, (tx, id), key)?.map(|row| (id, row)));
             entry.and_then(read).transpose()
         }))

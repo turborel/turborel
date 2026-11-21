@@ -7,13 +7,18 @@
 //! outgrows the work area (`exec/join/rescan.rs`); and an outer join's is
 //! either (`exec/join/outer.rs`); an index nested-loop join holds nothing,
 //! each left row probing an index (`exec/join/indexed.rs`); a merge join
-//! holds the run of right rows of one key (`exec/join/merge.rs`).
+//! holds the run of right rows of one key (`exec/join/merge.rs`); a semi
+//! join or an antijoin gives each left row once, or none
+//! (`exec/join/semi.rs`); a range join holds its right operand sorted
+//! (`exec/join/range.rs`).
 
 mod indexed;
 mod merge;
 mod outer;
 mod partitioned;
+mod range;
 mod rescan;
+mod semi;
 
 pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
@@ -22,16 +27,17 @@ pub(super) use outer::outer;
 pub(in crate::exec) use outer::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub(in crate::exec) use partitioned::{Partitions, Pending, joined as partitioned_joined};
+pub(super) use range::ranged;
 pub(in crate::exec) use rescan::{Pass, Rescanned, product};
+pub(super) use semi::semi;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use super::work::Work;
 use super::{RowIter, broken, column, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::physical::{JoinKey, Plan};
 use crate::spill::{Records, SpillTable, SpilledLobs, bucket_key, row_bytes};
 use crate::storage::Row;
@@ -45,7 +51,7 @@ use crate::value::{Bucket, key_bucket, key_equal};
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
-pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<JoinKey>>, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<JoinKey>>, db: &Db, tx: TxId) -> RowIter {
     let mut work = Work::of(db, tx);
     let Some(keys) = keys else {
         return match Rescanned::of(execute(right, db, tx), &mut work) {
@@ -145,6 +151,17 @@ impl Built {
         }
         self.held.get_mut(at).ok_or_else(|| broken("a hash join's bucket is missing"))?.push(row);
         Ok(())
+    }
+
+    /// Its rows held in memory, those of each bucket after those of the
+    /// bucket before, each bucket's in order, taken from it; none if its
+    /// rows are in a table of the spill area.
+    pub(in crate::exec) fn taken_rows(&mut self) -> Option<Vec<Row>> {
+        if self.spilled.is_some() {
+            return None;
+        }
+        self.buckets.clear();
+        Some(std::mem::take(&mut self.held).into_iter().flatten().collect())
     }
 
     /// Its buckets held in memory, each with its rows, in order.

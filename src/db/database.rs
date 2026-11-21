@@ -127,6 +127,7 @@ impl Database {
     }
 
     fn over(mut state: State) -> Self {
+        state.published();
         // Its backups' views read what its background work keeps (RULES.md D166).
         let backups = Arc::default();
         crate::system::backup_tables(&mut state.system, &backups);
@@ -221,8 +222,7 @@ impl Database {
         let mut next = State::clone(&*self.snapshot()?);
         next.generation = next.generation.saturating_add(1);
         let out = change(&mut next)?;
-        // What spills is encrypted while anything is (RULES.md D48).
-        next.work.set_encodings(next.spill_encodings());
+        next.published();
         *write(&self.0.current)? = Arc::new(next);
         Ok(out)
     }

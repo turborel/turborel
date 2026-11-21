@@ -19,13 +19,13 @@ use super::probe::{Compared, placed_as_is};
 use crate::db::State;
 use crate::error::{Code, Result, fail};
 use crate::index::Probe;
-use crate::logical::{Cond, Expr, Slot, filled_expr};
+use crate::logical::{Cond, Expr, Placing, Slot, filled_expr_as};
 use crate::value::{CompOp, DataType, Value};
 
 mod filled;
 mod shape;
 
-pub(crate) use filled::filled_plan;
+pub(crate) use filled::{filled_plan, filled_plan_as_is};
 
 pub(crate) use shape::same_shape;
 
@@ -154,6 +154,8 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
@@ -175,25 +177,26 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
     }
 }
 
-/// `plan`, an index scan, each `?` of its probe filled with its value.
-fn filled_scan(mut plan: Plan, values: &[Value]) -> Result<Plan> {
+/// `plan`, an index scan, each `?` of its probe filled with its value, as
+/// `placing` says.
+fn filled_scan(mut plan: Plan, values: &[Value], placing: Placing) -> Result<Plan> {
     if let Plan::IndexScan { probe, slots, .. } = &mut plan {
         for s in slots.iter() {
-            place(probe, s, values)?;
+            place(probe, s, values, placing)?;
         }
     }
     Ok(plan)
 }
 
 /// The value of `s`'s slot, cast to its type as a logical plan's slots
-/// are.
+/// are, or as it is, as `placing` says.
 ///
 /// # Errors
 ///
 /// As `logical::filled`; SQLCODE -910 if the slot is not filled by a
 /// constant.
-fn slot_value(s: &ProbeSlot, values: &[Value]) -> Result<Value> {
-    Ok(match filled_expr(Expr::Dynamic(s.slot.clone()), values)? {
+fn slot_value(s: &ProbeSlot, values: &[Value], placing: Placing) -> Result<Value> {
+    Ok(match filled_expr_as(Expr::Dynamic(s.slot.clone()), values, placing)? {
         Expr::Const(value) => value,
         Expr::Column(_)
         | Expr::Dynamic(_)
@@ -214,13 +217,13 @@ fn slot_value(s: &ProbeSlot, values: &[Value]) -> Result<Value> {
 }
 
 /// Puts the value of `s`'s slot, cast to its type as a logical plan's
-/// slots are, in its place in `probe`.
+/// slots are or as it is (`slot_value`), in its place in `probe`.
 ///
 /// # Errors
 ///
 /// As `logical::filled`; SQLCODE -910 if the probe has no such place.
-fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
-    let value = slot_value(s, values)?;
+fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value], placing: Placing) -> Result<()> {
+    let value = slot_value(s, values, placing)?;
     if let (Probe::Predicate { value: Value::Row(fields), .. }, Place::PredicateField(n)) = (&mut *probe, s.place) {
         let mut each = fields.to_vec();
         let Some(field) = each.get_mut(n) else {
@@ -381,16 +384,16 @@ mod tests {
         let probe = Probe::Predicate { predicate, value: Value::Null };
         let s = ProbeSlot { place: Place::PredicateValue, slot: slot(0) };
         let mut filled = probe.clone();
-        place(&mut filled, &s, &[Value::Char("12".into())]).unwrap();
+        place(&mut filled, &s, &[Value::Char("12".into())], Placing::Cast).unwrap();
         let Probe::Predicate { value, .. } = &filled else { panic!("not a predicate") };
         assert!(same(value, &int(12)));
-        place(&mut filled, &s, &[Value::Null]).unwrap();
+        place(&mut filled, &s, &[Value::Null], Placing::Cast).unwrap();
         let Probe::Predicate { value: null, .. } = &filled else { panic!("not a predicate") };
         assert!(null.is_null());
-        assert_eq!(place(&mut filled, &s, &[]).unwrap_err().sqlcode(), -910_i32);
+        assert_eq!(place(&mut filled, &s, &[], Placing::Cast).unwrap_err().sqlcode(), -910_i32);
         for position in [Place::Key(0), Place::Low, Place::High] {
             let wrong = ProbeSlot { place: position, slot: slot(0) };
-            assert_eq!(place(&mut filled, &wrong, &[int(1)]).unwrap_err().sqlcode(), -910_i32);
+            assert_eq!(place(&mut filled, &wrong, &[int(1)], Placing::Cast).unwrap_err().sqlcode(), -910_i32);
         }
         let comparisons = [
             Probe::All,
@@ -399,7 +402,7 @@ mod tests {
             Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, int(1))), high: Box::new((CompOp::Le, int(2))) },
         ];
         for mut comparison in comparisons {
-            assert_eq!(place(&mut comparison, &s, &[int(1)]).unwrap_err().sqlcode(), -910_i32);
+            assert_eq!(place(&mut comparison, &s, &[int(1)], Placing::Cast).unwrap_err().sqlcode(), -910_i32);
         }
         assert!(!keepable(&scan("I", probe, Vec::new()), &state(true)));
     }
@@ -522,7 +525,7 @@ mod tests {
             scan("I", Probe::Prefix { equal: vec![int(1)], then: None }, vec![ProbeSlot { place: Place::Low, slot: slot(0) }]);
         assert_eq!(filled_plan(low_of_prefix, &[int(1)]).unwrap_err().code, Code::Api, "a bound of no range");
         let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", Probe::All, Vec::new())), most: None };
-        assert!(filled_plan(Plan::Distinct { input: Box::new(sorted), est: 0.0_f64 }, &[]).is_ok());
+        assert!(filled_plan(Plan::Distinct { input: Box::new(sorted), est: 0.0_f64, streamed: false }, &[]).is_ok());
         let probed =
             || scan("I", Probe::Prefix { equal: vec![Value::Null], then: None }, vec![ProbeSlot { place: Place::Key(0), slot: slot(0) }]);
         let product = Plan::Product { left: Box::new(probed()), right: Box::new(probed()), est: 0.0_f64 };

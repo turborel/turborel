@@ -5,6 +5,7 @@ use crate::logical::{Fetch, Search};
 use crate::spill::testing::{Held, areas};
 use crate::value::types::TypeRegistry;
 use crate::value::{DecFloat, Decimal};
+use std::sync::Arc;
 
 /// A whole number, as a constant.
 fn int(n: i128) -> Expr {

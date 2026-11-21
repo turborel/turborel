@@ -115,8 +115,8 @@ use pending::{First, LogPos, Pending};
 pub use reading::{ReadMode, Reading};
 use stop::Stops;
 pub(crate) use stop::Window;
-pub(crate) use stop::checked;
-pub use stop::{MAX_NOTES, Served, Stop};
+pub use stop::{Activity, MAX_NOTES, Now, Served, Stop, Tallied, Tallies, Tally, Waiting};
+pub(crate) use stop::{checked, counted};
 use undo::UndoLog;
 
 /// How a transaction begins: whether it waits for locks, how it reads, and
@@ -485,7 +485,7 @@ impl Txn {
     }
 
     /// Records `entry`, which undoes a change it made.
-    fn log(&self, entry: UndoEntry) -> Result<()> {
+    pub(crate) fn log(&self, entry: UndoEntry) -> Result<()> {
         self.state()?.undo.push(entry)
     }
 

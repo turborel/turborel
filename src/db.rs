@@ -111,7 +111,7 @@ mod nested;
 mod observed;
 pub(crate) mod partitions;
 mod position;
-mod prepared;
+pub(crate) mod prepared;
 pub(crate) mod ptf;
 mod rankings;
 mod recovery;

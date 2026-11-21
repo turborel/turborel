@@ -12,10 +12,10 @@ use crate::error::Result;
 use crate::functions::{ScalarRef, formatted_cast};
 use crate::logical::{Cond, DomainChecks, Expr};
 use crate::params::ParameterType;
-use crate::value::Spelled;
 use crate::value::interval::Qualifier;
 use crate::value::lob::LobKind;
 use crate::value::{CharUnits, CompOp, DOUBLE_PRECISION, DataType, MAX_EXACT_PRECISION, Value};
+use crate::value::{Spelled, spelling};
 
 /// [ISO/IEC 9075-2:2023 §9.5 SR3f] Of `types`, one of them BOOLEAN,
 /// BOOLEAN if all are.
@@ -75,6 +75,9 @@ pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
 /// of exact numbers, exact, of the greatest digits on each side of the
 /// point; else approximate.
 fn numeric_set_type(types: &[DataType]) -> DataType {
+    if let Some(first) = types.first().filter(|first| types.iter().all(|t| written_alike(t, first))) {
+        return first.clone();
+    }
     let (mut whole, mut scale, mut exact) = (0_u32, 0_u32, true);
     for t in types {
         match t {
@@ -111,6 +114,16 @@ fn numeric_set_type(types: &[DataType]) -> DataType {
     } else {
         DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float }
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §9.5 SR3c ii 2, 3] Whether `t` is the number type
+/// `first` is, written with the same name. The precision of the result is
+/// implementation-defined (IV159, IV160): numbers of one type written
+/// alike keep it, so a VALUES of one row's INTEGER is INTEGER, as a
+/// client told declared types shows it, and not NUMERIC(10,0).
+fn written_alike(t: &DataType, first: &DataType) -> bool {
+    let numeric = matches!(first, DataType::Exact { .. } | DataType::Approximate { .. });
+    numeric && t == first && std::mem::discriminant(&spelling(t)) == std::mem::discriminant(&spelling(first))
 }
 
 /// [ISO/IEC 9075:1992 §9.3 SR3a; ISO/IEC 9075-2:2023 §9.5 SR3a iii, SR3b]

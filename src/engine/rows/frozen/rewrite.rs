@@ -8,8 +8,9 @@
 //! takes out its rows' (`freeze.rs`). An entry not yet committed so stays,
 //! before the group's values, which hold its row as it was. A group whose
 //! rows are sorted by other columns than COLUMNSTORE.ORDER names now, or that
-//! keeps Bloom filters of other columns than COLUMNSTORE.BLOOM names, or is
-//! of another layout than COLUMNSTORE.LAYOUT says, as they were changed, is
+//! keeps Bloom filters of other columns than COLUMNSTORE.BLOOM names, was
+//! written for sketches of other columns than COLUMNSTORE.SKETCH names, or
+//! is of another layout than COLUMNSTORE.LAYOUT says, as they were changed, is
 //! written again so, MOST_REWRITES of them a call, as the maintenance thread
 //! calls again while any is left (`stale`).
 
@@ -35,10 +36,14 @@ const MOST_REWRITES: usize = 2;
 
 /// Whether `group` is sorted by other columns than `columns`'s
 /// COLUMNSTORE.ORDER names, keeps Bloom filters of others than its
-/// COLUMNSTORE.BLOOM names, or is of another layout than its
+/// COLUMNSTORE.BLOOM names, was written for sketches of others than its
+/// COLUMNSTORE.SKETCH names, or is of another layout than its
 /// COLUMNSTORE.LAYOUT says.
 fn stale_group(group: &Summary, columns: &Columns) -> bool {
-    group.order.as_slice() != columns.order.places() || group.blooms.as_slice() != columns.bloom.places() || group.pax != columns.pax
+    group.order != columns.order.places()
+        || group.blooms != columns.bloom.places()
+        || group.sketched != columns.sketch.places()
+        || group.pax != columns.pax
 }
 
 /// Whether one of `groups` is stale (`stale_group`).
@@ -76,6 +81,10 @@ impl RowTable {
             }
             let resorted = stale_group(&entry.summary, &columns);
             if !shadowed && !resorted {
+                continue;
+            }
+            // A group no write touched has no entry to fold in.
+            if !resorted && entry.shadow.none() {
                 continue;
             }
             let entries = self.entries_in(&entry.summary)?;
@@ -123,7 +132,8 @@ impl RowTable {
             folded.push((id, bytes));
         }
         let (new_ids, new_rows) = ordered(&columns.order, kept.into_iter().filter_map(|(id, row)| row.map(|r| (id, r))).collect());
-        let places = (columns.order.places(), columns.bloom.places());
+        let (order, bloom, sketch) = (columns.order.places(), columns.bloom.places(), columns.sketch.places());
+        let places = (order.as_slice(), bloom.as_slice(), sketch.as_slice());
         let group = if new_ids.is_empty() { None } else { Some(Group::write(&pages, types, (&new_ids, &new_rows), places)?) };
         self.publish((Some(entry), group), folded)
     }

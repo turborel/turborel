@@ -57,7 +57,7 @@ impl Session {
         }
         let native = g.name.ident == SYS_GRAPH;
         // The algorithm runs once, its rows read by each table's MERGE.
-        let _held = cx.st.graph_runs.hold(cx.tx.id);
+        let _held = cx.st.ran.graph_runs.hold(cx.tx.id);
         let mut st = std::sync::Arc::clone(cx.st);
         let mut completion = Completion::NoData;
         for v in vertices {

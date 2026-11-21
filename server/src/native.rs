@@ -188,6 +188,10 @@ async fn serve(connection: Connection) {
         Ok(None) => (wire, Ok(())),
         Err(e) => (wire, Err(e)),
     };
+    // Its row goes before the client can read why it closes, which it
+    // takes for the close itself; the shutdown would take it out only
+    // after that reply.
+    present.unlisted();
     // Told within SERVER.IDLE_TIMEOUT_MS, as any reply: a client that takes
     // nothing would hold the connection open.
     let closing = async {
@@ -404,6 +408,7 @@ async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer)
         // and the fast client's requests after it (`Loan::run`). Until
         // then, an operator ending the connection, or its client gone,
         // cancels what runs.
+        present.queued();
         drop(services.spawn_with(move |permit| loan.run(work, &running, permit, limits)).await);
         lent = stopped(slot.take(), present, watch).await;
         // A read or a write that failed lost the connection.
