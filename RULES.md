@@ -13501,6 +13501,7 @@ hand-over moved it.
 
 This does not stop a transaction that never waited from writing the
 row first, between its writer's end and its first waiter's write.
+
 #### D745. The undo store's batches in memory are found through shards locked for reading, with no lock all readers share
 
 One lock guarded the undo store's batches (D31), the batch being gathered,
