@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 
 use super::{Accumulator, AggregateFunction};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
-use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value, arith, cast, compare, pow10};
+use crate::value::{ArithOp, DataType, Decimal, NARROW_EXACT_PRECISION, Spelled, Value, arith, cast, compare, pow10};
 
 #[cfg(test)]
 mod tests;
@@ -23,13 +23,13 @@ pub const PERCENTILE_DISC: &str = "PERCENTILE_DISC";
 
 /// \[DESIGN\] The decimal places a DECFLOAT fraction is taken to, as rows
 /// are counted by it: those of an exact number of one digit before them.
-const DECFLOAT_FRACTION_SCALE: u32 = MAX_EXACT_PRECISION - 1;
+const DECFLOAT_FRACTION_SCALE: u32 = NARROW_EXACT_PRECISION - 1;
 
 /// The exact type a DECFLOAT fraction is cast to, of
 /// `DECFLOAT_FRACTION_SCALE` places, and \[EXTENSION\] that of a `?`
 /// fraction.
 pub const FRACTION: DataType =
-    DataType::Exact { precision: MAX_EXACT_PRECISION, scale: DECFLOAT_FRACTION_SCALE, spelled: Spelled::Numeric };
+    DataType::Exact { precision: NARROW_EXACT_PRECISION, scale: DECFLOAT_FRACTION_SCALE, spelled: Spelled::Numeric };
 
 /// [ISO/IEC 9075-2:2023 §10.9 SR12, GR10] A call of an inverse
 /// distribution function: which, and of what result type \[SR12e\].

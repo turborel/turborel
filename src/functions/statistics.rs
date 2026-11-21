@@ -23,7 +23,7 @@ use std::sync::Arc;
 use super::{Accumulator, AggregateFunction, ScalarFunction};
 use crate::error::{Code, Result, fail};
 use crate::value::types::Field;
-use crate::value::{DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, Spelled, Value};
 
 mod decimal;
 mod moments;
@@ -75,7 +75,7 @@ const DOUBLE: DataType = DataType::Approximate { precision: DOUBLE_PRECISION, sp
 /// than any operand's.
 const DECFLOAT: DataType = DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION };
 /// [§10.9 SR9c i] REGR_COUNT's result (IV174), COUNT's.
-const COUNTED: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+const COUNTED: DataType = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
 
 /// Which of the set functions it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -63,7 +63,7 @@ pub const REWRITES: [Mutation; 13] = [
         original: "    (precision <= MAX_EXACT_PRECISION).then_some((precision, scale))",
         replacement: "    (precision <= MAX_EXACT_PRECISION + 1).then_some((precision, scale))",
         integration: &[],
-        unit: &["logical::raises::tests::sums_raise_past_eighteen_digits"],
+        unit: &["logical::raises::tests::sums_raise_past_thirty_eight_digits"],
     },
     Mutation {
         name: "rewrites-set-operation-raising",

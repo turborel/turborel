@@ -13,6 +13,7 @@ use super::super::{Chunk, padding};
 use super::{Reading, Words, datetime_shape, float_of, nulls_of};
 use crate::error::Result;
 use crate::storage::{Coded, Column, Datetimes, Floats, Ints, Mask, Texts};
+use crate::value::types::narrow_scale;
 use crate::value::{DataType, Value};
 
 /// \[DESIGN\] Column `c`, of type `t`, of the rows at `positions` of
@@ -93,8 +94,8 @@ pub fn ints_at<S: Seal>(
     (column, t): (usize, &DataType),
     positions: &[u32],
 ) -> Result<Option<Ints>> {
-    let DataType::Exact { scale, .. } = t else { return Ok(None) };
-    Ok(words_at(group, (pages, prepared), (column, t), positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(nulls))))
+    let Some(scale) = narrow_scale(t) else { return Ok(None) };
+    Ok(words_at(group, (pages, prepared), (column, t), positions)?.map(|(units, nulls)| Ints::new(units, scale, nulls_of(nulls))))
 }
 
 /// The 8-byte fields of column `column` of the rows at `positions`, in
