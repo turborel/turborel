@@ -1,7 +1,8 @@
 //! The mutations of the undo store's batches kept in memory (RULES.md
 //! R-TEST-9, D745, D746): a batch written kept, the bound of the budget's
-//! share, the budget's refusal, a batch gone past the bound let go, and a
-//! truncation forgetting what memory holds.
+//! share, the budget's refusal, a batch gone past the bound let go, a
+//! truncation forgetting what memory holds, and a refused writer told the
+//! row's writer with no older version read (D747).
 
 use super::super::{Mutation, Package};
 
@@ -11,7 +12,7 @@ const UNDO: &str = "src/engine/rows/undo.rs";
 const KEPT: &str = "src/engine/rows/undo/kept.rs";
 
 /// Mechanisms whose removal must fail the requirements of batches kept.
-pub const UNDO_MEMORY: [Mutation; 5] = [
+pub const UNDO_MEMORY: [Mutation; 6] = [
     Mutation {
         name: "undo-kept-none",
         package: Package::Core,
@@ -64,5 +65,15 @@ pub const UNDO_MEMORY: [Mutation; 5] = [
             "engine::rows::undo::tests::batches_written_are_kept_until_truncated",
             "engine::rows::undo::tests::batches_go_once_nothing_in_them_is_pinned",
         ],
+    },
+    Mutation {
+        name: "undo-waiter-told-no-writer",
+        package: Package::Core,
+        breaks: "a writer refused is not told the open transaction that changed the row, so it never waits for it",
+        file: "src/engine/rows/mvcc.rs",
+        original: "Maker::Open(by) => (Some(by).filter(|by| *by != tx), 0),",
+        replacement: "Maker::Open(_) => (None, 0),",
+        integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
+        unit: &[],
     },
 ];
