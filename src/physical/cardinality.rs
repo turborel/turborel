@@ -33,6 +33,7 @@ mod groups;
 mod injected;
 mod joins;
 mod keys;
+mod lasting;
 mod lineage;
 mod nodes;
 mod semi;
@@ -132,6 +133,8 @@ pub(super) struct Estimates<'a> {
     keys: RefCell<HashMap<String, Option<f64>>>,
     /// Each table's unique keys and referential constraints, by its name.
     table_keys: RefCell<HashMap<QualifiedName, Rc<keys::TableKeys>, Xxh3BuildHasher>>,
+    /// Pairs' corrections and columns' most rows, kept the whole planning.
+    lasting: RefCell<lasting::Lasting>,
     /// Each node's estimate, by its address, for the asking under way.
     memo: RefCell<HashMap<usize, Card>>,
     /// The addresses of the nodes of the plan being planned, and the
@@ -151,7 +154,8 @@ impl<'a> Estimates<'a> {
         let (stats, rows, keys) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
         let (memo, asking) = (RefCell::new(HashMap::new()), Cell::new(0));
         let (planned, kept, table_keys) = (HashSet::new(), RefCell::new(HashMap::new()), RefCell::new(HashMap::default()));
-        Estimates { db, cost: db.cost(), stats, rows, keys, table_keys, memo, asking, planned, kept, values: None }
+        let lasting = RefCell::default();
+        Estimates { db, cost: db.cost(), stats, rows, keys, table_keys, lasting, memo, asking, planned, kept, values: None }
     }
 
     /// An estimator over `db` for the planning of `plan`, whose nodes live

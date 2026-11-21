@@ -47,6 +47,11 @@ impl Estimates<'_> {
     /// if it is a key, else as its table's statistics count, at most
     /// `plan`'s bound.
     pub(in crate::physical) fn most_of(&self, plan: &LogicalPlan, column: usize) -> f64 {
+        self.kept_most(plan, column, || self.most_found(plan, column))
+    }
+
+    /// The most rows of `most_of`, found.
+    fn most_found(&self, plan: &LogicalPlan, column: usize) -> f64 {
         if self.key_of(plan, &[column]).is_some() {
             return 1.0_f64;
         }

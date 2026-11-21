@@ -138,6 +138,11 @@ impl Estimates<'_> {
     /// distinct values multiplied, over the larger joint distinct values,
     /// at least 1.
     fn pair_factor(&self, r: &Side<'_>, s: &Side<'_>) -> f64 {
+        self.kept_factor((r.plan, &r.columns), (s.plan, &s.columns), || self.factor_found(r, s))
+    }
+
+    /// The correction of `pair_factor`, found.
+    fn factor_found(&self, r: &Side<'_>, s: &Side<'_>) -> f64 {
         let classes: f64 = r.distinct.iter().zip(&s.distinct).map(|(a, b)| a.max(*b).max(1.0_f64)).product();
         let (jr, js) = (self.joint(r), self.joint(s));
         let (jr, js) = if self.referencing(r, s) {
