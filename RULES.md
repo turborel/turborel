@@ -13102,6 +13102,24 @@ The limits of an index key and of a tree's entry shrink by the header's
 growth and the head beside each slot (CONFORMANCE.md, Limits). Formats
 stay at version 1, changed in place.
 
+An entry removed, or replaced by a longer one, leaves its bytes in the
+heap as garbage, which only building the node again reclaims. A node
+full of live entries whose entries are replaced, or removed and added
+again, as a row's versions and its index entries are, was built again at
+nearly every write, each change leaving a little more garbage than the
+next one needed. A node is now built again for the room only once its
+garbage is an eighth of the page, or it has too few entries to split;
+short of that a write with no room splits it, as one full of live
+entries does (`engine/tree/room.rs`). A value replaced by one no longer
+is written over in place, the bytes it leaves counted as garbage.
+
+An entry's size in the room check is what the page stores of it, its key
+less the node's prefix, so the rightmost leaf of keys added in order
+fills its page. Its split gives the left half a high key, so the entry
+before the new one moves right with it. The new entry stays marked
+inserted last in the right half; else the next insert would start a run
+and split the leaf again, leaving leaves half full.
+
 #### D501. An index fetch checks a row's key in place, and a search decodes a key once for its entries
 
 An index holds the entries of versions a reader may not see (D34). So a

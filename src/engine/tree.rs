@@ -61,6 +61,7 @@ mod load;
 mod near;
 mod node;
 mod reclaim;
+mod room;
 mod scan;
 mod write;
 
@@ -429,35 +430,19 @@ impl BLinkTree {
     fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Vec<Split>> {
         let copy = {
             let mut page = self.pool.write(self.file, held.id)?;
-            let (live, old, new_run) = {
-                let node = Node::parse(&page)?;
-                let old = match slot {
-                    // What the node's keys grow by, if the key does not
-                    // begin with its prefix.
-                    Slot::Insert(_) => Some(node::grown(&node, key)),
-                    Slot::Replace(at) => {
-                        let (k, v) = node.entry(at)?;
-                        // None of the same length, as a version stamped
-                        // committed: written over in place, nothing moved.
-                        (v.len() != value.len()).then(|| node::entry_size(&[], v).saturating_add(k.len()))
-                    }
-                };
-                (node.live(), old, starts_run(&node, slot)? || self.crowded(held, &node, slot))
-            };
-            let Some(old) = old else {
+            let room = self.room(held, &Node::parse(&page)?, (key, value), slot)?;
+            let Some(room) = room else {
                 if let Slot::Replace(at) = slot {
                     node::overwrite(&mut page, at, value)?;
                 }
                 return Ok(Vec::new());
             };
-            let added = node::entry_size(key, value);
-            let after = match slot {
-                Slot::Insert(_) => live.saturating_add(old).saturating_add(added),
-                Slot::Replace(_) => live.saturating_sub(old).saturating_add(added),
-            };
-            let fits =
-                after <= self.capacity || (!new_run && matches!(slot, Slot::Insert(_)) && self.fits_compacted(&mut page, key, added)?);
-            if new_run || !fits {
+            // Garbage is reclaimed only once it is worth a node built
+            // again (`room.rs`); short of that a node with no room splits.
+            let in_place = room.after <= self.capacity && (room.reclaim || page.len().saturating_add(room.stored) <= self.capacity);
+            let compactable = room.rebuild && !room.run && matches!(slot, Slot::Insert(_));
+            let fits = in_place || (compactable && self.fits_compacted(&mut page, key, node::entry_size(key, value))?);
+            if room.run || !fits {
                 page.clone()
             } else {
                 let at = match slot {
@@ -467,7 +452,7 @@ impl BLinkTree {
                         at
                     }
                 };
-                if page.len().saturating_add(added) > self.capacity {
+                if page.len().saturating_add(room.stored) > self.capacity {
                     *page = node::compact(&page)?;
                 }
                 node::insert(&mut page, at, key, value)?;
@@ -475,20 +460,6 @@ impl BLinkTree {
             }
         };
         self.split(held.id, &copy, (key, value), slot)
-    }
-
-    /// Whether an entry of `key`, `added` bytes whole, fits the node `page`
-    /// holds once it is built again, its garbage gone and its prefix what
-    /// its first and last keys now share (RULES.md D500); if it does, the
-    /// node is left built again.
-    fn fits_compacted(&self, page: &mut Vec<u8>, key: &[u8], added: usize) -> Result<bool> {
-        let compacted = node::compact(page)?;
-        let grown = node::grown(&Node::parse(&compacted)?, key);
-        let fits = compacted.len().saturating_add(grown).saturating_add(added) <= self.capacity;
-        if fits {
-            *page = compacted;
-        }
-        Ok(fits)
     }
 
     /// Splits node `id`, whose content was `copy`, making `slot`'s change

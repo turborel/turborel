@@ -553,3 +553,6 @@ mod hot;
 
 // Splits of leaves whose keys share a long prefix (RULES.md D500).
 mod shared;
+
+// Room in a node for a change in place (RULES.md D500).
+mod room;

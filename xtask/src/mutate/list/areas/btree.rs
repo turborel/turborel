@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 16] = [
+pub const BTREE: [Mutation; 19] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -164,5 +164,35 @@ pub const BTREE: [Mutation; 16] = [
         replacement: "        if content.len() <= usize::MAX {",
         integration: &[],
         unit: &["engine::tree::tests::shared::a_node_past_its_page_is_split_until_each_part_fits"],
+    },
+    Mutation {
+        name: "btree-garbage-always-reclaimed",
+        package: Package::Core,
+        breaks: "a full node is built again for any garbage, so a node full of live entries is built again at nearly every write",
+        file: "src/engine/tree/room.rs",
+        original: "node.garbage().saturating_mul(RECLAIMED_SHARE) >= self.capacity",
+        replacement: "node.garbage() > 0",
+        integration: &[],
+        unit: &["engine::tree::tests::room::garbage_is_reclaimed_only_once_it_is_an_eighth_of_the_page"],
+    },
+    Mutation {
+        name: "btree-shorter-value-moved",
+        package: Package::Core,
+        breaks: "a value replaced by a shorter one is removed and added again, not written over in place",
+        file: "src/engine/tree/room.rs",
+        original: "                if old.len() >= value.len() {",
+        replacement: "                if old.len() == value.len() {",
+        integration: &[],
+        unit: &["engine::tree::tests::room::a_shorter_value_is_written_over_in_place"],
+    },
+    Mutation {
+        name: "btree-run-mark-lost",
+        package: Package::Core,
+        breaks: "a run's split moved left to fit marks the entry before the new one, so the next insert splits the leaf again",
+        file: "src/engine/tree/node/split.rs",
+        original: "at.checked_sub(middle.saturating_add(1))",
+        replacement: "at.checked_sub(middle.saturating_add(1)).and(Some(0))",
+        integration: &[],
+        unit: &["engine::tree::node::tests::a_run_split_moved_left_keeps_the_new_entry_marked"],
     },
 ];
