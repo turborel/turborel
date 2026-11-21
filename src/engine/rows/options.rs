@@ -257,7 +257,7 @@ pub(super) fn declared(defaults: TableOptions) -> Vec<TableOption> {
         TableOption::new(
             (REFRESH_FRACTION, Kind::Number { min: 0.0_f64, max: 1_000.0_f64 }, Value::Approx(stats.fraction)),
             Rebuild::No,
-            "The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again.",
+            "The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again, once a plan has read them since.",
         ),
         TableOption::new(
             (REFRESH_ROWS, Kind::Integer { min: 0, max: i128::from(i64::MAX) }, whole(stats.rows)),

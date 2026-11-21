@@ -23,7 +23,7 @@ use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::value::collation::CollationRef;
 use crate::value::lob::{CHUNK_OCTETS, Lob, LobKind, TempLobs};
-use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, CharUnits, DataType, MAX_CHARACTER_LENGTH, Spelled, Value};
 
 /// [ISO/IEC 9075-2:2023 §6.33] LTRIM's name, no key word of SQL-92.
 pub const LTRIM: &str = "LTRIM";
@@ -42,7 +42,7 @@ pub const TRIMS_AND_PADS: [&str; 5] = [LTRIM, RTRIM, BTRIM, LPAD, RPAD];
 
 /// The type of a total pad length a `?` takes: NUMERIC(P, 0), P the
 /// greatest precision.
-const PAD_LENGTH: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+const PAD_LENGTH: DataType = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
 
 /// Every trim and pad, to register: the trims of the default collation.
 pub fn functions() -> Vec<Arc<dyn ScalarFunction>> {

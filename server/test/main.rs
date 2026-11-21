@@ -51,6 +51,7 @@ mod json;
 mod lobs;
 mod logins;
 mod negotiated;
+mod numbers;
 mod passwords;
 mod prepared;
 mod replication;

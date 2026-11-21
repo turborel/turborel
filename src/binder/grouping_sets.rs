@@ -31,11 +31,11 @@ use crate::ast::{GroupBy, ValueExpression};
 use crate::error::{At, Code, Result, SqlError};
 use crate::logical::{AggCall, Cond, Distribution, Expr, LogicalPlan, Unnest, map_cond_columns, map_expr_columns};
 use crate::storage::Row;
-use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{ArithOp, BIGINT_PRECISION, DataType, Decimal, Spelled, Value};
 
 /// \[DESIGN\] The most column references a GROUPING may have: its value is
 /// at most 2 to their number, less 1 [§6.9 SR10c], in the
-/// `MAX_EXACT_PRECISION` digits of its type (`grouping_type`).
+/// `BIGINT_PRECISION` digits of its type (`grouping_type`).
 pub const MAX_GROUPING_ARGUMENTS: usize = 59;
 
 /// [ISO/IEC 9075-2:2023 §6.9 SR10c] What GROUPING of all but the last of
@@ -45,7 +45,7 @@ const GROUPING_WEIGHT: i128 = 2;
 /// [ISO/IEC 9075-2:2023 §6.9 SR10b] The type of GROUPING: exact numeric of
 /// scale 0, of the implementation-defined precision (IV081) BIGINT has.
 fn grouping_type() -> DataType {
-    DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Bigint }
+    DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Bigint }
 }
 
 /// The integer `n` as an exact numeric value of scale 0.
@@ -304,7 +304,7 @@ impl Binder<'_> {
             return Err(SqlError::new(
                 Code::Unsupported,
                 format!(
-                    "[ISO/IEC 9075-2:2023 §6.9 SR10b, SR10c] GROUPING of more than {MAX_GROUPING_ARGUMENTS} column references exceeds the {MAX_EXACT_PRECISION} digits of its implementation-defined precision"
+                    "[ISO/IEC 9075-2:2023 §6.9 SR10b, SR10c] GROUPING of more than {MAX_GROUPING_ARGUMENTS} column references exceeds the {BIGINT_PRECISION} digits of its implementation-defined precision"
                 ),
             ));
         }

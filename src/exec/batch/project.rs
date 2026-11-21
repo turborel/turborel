@@ -251,6 +251,20 @@ fn by_vectors(batch: &Batch, rows: Option<&[u32]>, (places, runner): (&[Place], 
     Ok(Batch { columns, rows: count })
 }
 
+/// \[DESIGN\] (RULES.md D560) The vector of `e`, over the columns of the
+/// rows of `batch`, of all of them, as a window over batches reads its
+/// calls' arguments: none if `e` is not evaluated so, or a row's
+/// evaluation would raise an error or a warning, so the window computes
+/// those rows a row at a time.
+pub(in crate::exec) fn vector_of(e: &Expr, batch: &Batch, runner: &Runner) -> Option<Column> {
+    let columns: Vec<usize> = (0..batch.columns.len()).collect();
+    match place_of(e, &columns)? {
+        Place::Column(at) => batch.columns.get(at).cloned(),
+        Place::Const(v) => Some(super::expr::constant_column(&v, batch.rows)),
+        Place::Expr(program) => expr_vector(&program, (batch, None), runner)?.ok(),
+    }
+}
+
 /// The vector of `program` of the rows `rows` of `batch`, or all: of a
 /// call given many rows at once, by one call, else a vector at a time;
 /// none if that gives none.

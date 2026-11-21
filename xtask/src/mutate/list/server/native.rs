@@ -3,12 +3,13 @@
 //! transaction a cursor ends, the conditions and diagnostics a client is
 //! told, a copy's failing row, the session put back by Reset, a SET
 //! that never waits on a replica, the server's time for a statement, the
-//! row of a connection ended, and a half-closed client's requests held.
+//! row of a connection ended, a half-closed client's requests held, and
+//! a failed statement's result unsent.
 
 use super::super::{Mutation, Package};
 
 /// The native protocol's mutations, in the order they run.
-pub const NATIVE: [Mutation; 18] = [
+pub const NATIVE: [Mutation; 19] = [
     Mutation {
         name: "native-compression-at-zero",
         package: Package::Server,
@@ -188,5 +189,15 @@ pub const NATIVE: [Mutation; 18] = [
         replacement: "Ok(read) => read == 0 && self.ahead.as_ref().is_none_or(|a| !a.load(Ordering::Acquire) || true),",
         integration: &["transport::a_half_closed_clients_long_request_runs_to_its_end"],
         unit: &[],
+    },
+    Mutation {
+        name: "native-failed-result-sent",
+        package: Package::Server,
+        breaks: "a statement failed at its first fetch sends its Description before its Error, so a client shows columns of no result",
+        file: "server/src/native/requests/replied.rs",
+        original: "at <= from || !matches!(r, Reply::Description(_) | Reply::Rows(_))",
+        replacement: "at <= from || matches!(r, Reply::Description(_) | Reply::Rows(_)) || true",
+        integration: &[],
+        unit: &["native::requests::tests::a_statement_failed_before_its_rows_sends_no_description"],
     },
 ];

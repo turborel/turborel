@@ -64,34 +64,30 @@ fn a_failed_statement_is_logged_undone() {
     logs::a_failed_statement_is_logged_undone(Arc::new(MemoryLog::new()));
 }
 
-/// Verifies: [DESIGN] RULES.md D25, a failing log: a change that cannot be
-/// logged fails its statement (SQLCODE -915), which is undone; a statement
-/// none of whose changes reached the log leaves nothing to mark undone, and
-/// the transaction commits; one whose first changes were logged, and whose
-/// undoing then cannot be, leaves the transaction able only to roll back:
-/// COMMIT rolls it back (SQLCODE -913); a commit record that cannot be
-/// written rolls the transaction back too.
+/// Verifies: [DESIGN] RULES.md D25, D470, a failing log: a change is held,
+/// not written, so it is made though the log fails; a commit whose
+/// records and commit record cannot be written rolls the transaction back
+/// (SQLCODE -913); a transaction whose held records a checkpoint could not
+/// write can only roll back, its COMMIT rolling it back, though the log
+/// takes records again.
 #[test]
 fn changes_that_cannot_be_logged_do_not_commit() {
     let (db, log) = logged();
     let s = db.session("APP");
     log.fail_appends.store(true, Ordering::SeqCst);
-    assert_eq!(s.run("INSERT INTO T (ID) VALUES (9)").err().map(|e| e.code), Some(Code::Io));
-    log.fail_appends.store(false, Ordering::SeqCst);
-    s.commit().unwrap();
-    assert_eq!(count(&s, "SELECT ID FROM T"), 3, "the insert was undone");
-    s.run("INSERT INTO T (ID) VALUES (10)").unwrap();
-    // The UPDATE's first row is logged, its second is not, nor its undoing.
-    *log.appends_left.lock().unwrap() = Some(1);
-    assert_eq!(s.run("UPDATE T SET NAME = 'Z'").err().map(|e| e.code), Some(Code::Io));
-    *log.appends_left.lock().unwrap() = None;
-    assert_eq!(s.commit().err().map(|e| e.code), Some(Code::CommitFailed), "the failed statement's undoing was not logged");
-    assert_eq!(count(&db.session("APP"), "SELECT ID FROM T"), 3, "rolled back: no row 10");
-    s.run("INSERT INTO T (ID) VALUES (12)").unwrap();
-    log.fail_appends.store(true, Ordering::SeqCst);
+    s.run("INSERT INTO T (ID) VALUES (9)").unwrap();
     assert_eq!(s.commit().err().map(|e| e.code), Some(Code::CommitFailed), "no commit record");
     log.fail_appends.store(false, Ordering::SeqCst);
-    assert_eq!(count(&db.session("APP"), "SELECT ID FROM T WHERE ID = 12"), 0);
+    assert_eq!(count(&s, "SELECT ID FROM T"), 3, "the insert was rolled back");
+    s.run("INSERT INTO T (ID) VALUES (10)").unwrap();
+    log.fail_appends.store(true, Ordering::SeqCst);
+    assert_eq!(db.write_held().err().map(|e| e.code), Some(Code::Io));
+    log.fail_appends.store(false, Ordering::SeqCst);
+    assert_eq!(s.commit().err().map(|e| e.code), Some(Code::CommitFailed), "its records part logged");
+    assert_eq!(count(&db.session("APP"), "SELECT ID FROM T"), 3, "rolled back: no row 10");
+    s.run("INSERT INTO T (ID) VALUES (12)").unwrap();
+    s.commit().unwrap();
+    assert_eq!(count(&db.session("APP"), "SELECT ID FROM T WHERE ID = 12"), 1, "the log takes records again");
 }
 
 /// Verifies: [DESIGN] RULES.md D25, a failing log: when the commit record is
@@ -103,7 +99,8 @@ fn changes_that_cannot_be_logged_do_not_commit() {
 /// may succeed without what the failed one lost: a row change, the commit
 /// of a transaction that wrote, a definition, each SQLCODE -915 naming the
 /// failure; reads, rollbacks and commits of transactions that wrote
-/// nothing go on. Regression test (R-TEST-7): the transaction was stamped
+/// nothing go on; a transaction holding its records has its commit
+/// refused, none of them written. Regression test (R-TEST-7): the transaction was stamped
 /// committed, and other sessions saw what recovery could lose.
 #[test]
 fn a_failed_sync_stops_the_database_taking_changes() {
@@ -111,13 +108,16 @@ fn a_failed_sync_stops_the_database_taking_changes() {
     let s = db.session("APP");
     assert!(db.log_failure().is_none());
     s.run("INSERT INTO T (ID) VALUES (10)").unwrap();
+    // A transaction holding its records as the database stops (RULES.md D470).
+    let holding = db.session("APP");
+    holding.run("INSERT INTO T (ID) VALUES (12)").unwrap();
     log.fail_syncs.store(true, Ordering::SeqCst);
     let error = s.commit().unwrap_err();
     assert_eq!((error.code, error.sqlcode(), error.sqlstate().as_str()), (Code::InDoubt, -922, "08007"));
     assert!(error.msg.contains("opened again"), "{error}");
     assert_eq!(count(&db.session("APP"), "SELECT ID FROM T WHERE ID = 10"), 0, "another session");
     assert_eq!(count(&s, "SELECT ID FROM T WHERE ID = 10"), 0, "its own session, in a new transaction");
-    assert_eq!(db.active_transactions().unwrap(), 2, "held in doubt, beside the reading one");
+    assert_eq!(db.active_transactions().unwrap(), 3, "held in doubt, beside the reading one and the holding one");
     assert_eq!(kinds(&*log).last().map(String::as_str), Some("Commit"));
     log.fail_syncs.store(false, Ordering::SeqCst);
     let cause = db.log_failure().expect("the failure kept");
@@ -129,6 +129,7 @@ fn a_failed_sync_stops_the_database_taking_changes() {
     assert_eq!(count(&s, "SELECT ID FROM T"), 3, "reads go on");
     s.commit().unwrap();
     assert_eq!(db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE S (K INTEGER)").err().map(|e| e.code), Some(Code::Io));
+    assert!(holding.commit().is_err(), "its commit refused, its records not written first");
     assert_eq!(kinds(&*log).last().map(String::as_str), Some("Commit"), "nothing logged since, no abort among it");
 }
 

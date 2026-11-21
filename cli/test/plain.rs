@@ -158,3 +158,17 @@ fn a_lost_connection_ends_the_run() {
     let (outcome, _, err) = over(&server, &mut importing, &format!("\\import T {} csv\nVALUES 2;\n", file.display()), false);
     assert_eq!(outcome, Outcome::Lost, "{err}");
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §6.1 SR27a] RULES.md D695: an exact
+/// number of 38 digits, either sign and of a scale, is shown whole.
+#[test]
+fn wide_exact_numbers_are_shown_whole() {
+    let (_db, server) = served();
+    let text = "SELECT CAST(-99999999999999999999999999999999999999 AS DECIMAL(38,0)), 1234567890123456789012345678.0123456789 \
+                FROM T WHERE K = 1;\n";
+    let mut connection = server.connect("X");
+    let (outcome, out, err) = over(&server, &mut connection, text, false);
+    assert_eq!(outcome, Outcome::Succeeded, "{err}");
+    assert!(out.contains("-99999999999999999999999999999999999999"), "{out}");
+    assert!(out.contains("1234567890123456789012345678.0123456789"), "{out}");
+}

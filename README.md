@@ -29,7 +29,8 @@ behind it, and each can be replaced or added to.
   [CONFORMANCE.md](CONFORMANCE.md), whose claimed features SQL_FEATURES shows.
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
-  control, a write-ahead log, checkpoints and recovery.
+  control, a write-ahead log written once per transaction at its commit,
+  checkpoints and recovery.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
 - [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
@@ -50,6 +51,8 @@ behind it, and each can be replaced or added to.
   dense keys found by their place, their filter an exact bitmap.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
+- Window functions over batches, partitions found of the sort's keys by a
+  kernel, moving frames by prefix sums and segment trees.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
   losers, and FETCH FIRST that makes only the rows it gives, reading its
   other columns late and skipping groups past its bound.
@@ -60,7 +63,8 @@ behind it, and each can be replaced or added to.
   and every index method made on each partition.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.
-- Indexes as plug-ins. B-link trees, linear hash tables and R-trees over
+- Indexes as plug-ins. B-link trees, with prefix-truncated nodes, key heads
+  and leaf hints to their rows, linear hash tables and R-trees over
   points and rectangles are built in, R-trees packed when built and their
   emptied nodes reclaimed up to the root. Any other method registers with its
   own options, and a cost-based planner chooses among them for filters
@@ -150,6 +154,8 @@ behind it, and each can be replaced or added to.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.
+- Exact numbers of up to 38 digits, in arithmetic and in columns of
+  either store.
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
 - [UUIDs](doc/sql/02-data-types.md#uuids), with UUID_V4() and time-ordered

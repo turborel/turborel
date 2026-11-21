@@ -87,6 +87,9 @@ pub fn contract(kernels: &dyn Kernels) {
     blooms(kernels);
     xxh3_stripes(kernels);
     normalizing(kernels);
+    for width in [0, 1, 3, 8, 16, 33] {
+        bounding(kernels, width);
+    }
 }
 
 /// Bytes of a fixed pattern, each of the low byte of an odd multiple.
@@ -285,4 +288,32 @@ fn normalizing(kernels: &dyn Kernels) {
     assert_eq!(kernels.normalize_i64((&[1], &[4]), (0, 4, false), (8, 0), &mut keys), None, "past the end");
     assert_eq!(kernels.normalize_i64((&[0, 300], &[0, 1]), (0, 2, false), (2, 0), &mut keys[..4]), Some(()));
     assert_eq!(&keys[..4], &[0, 0, 1, 44], "two keys of two bytes");
+}
+
+/// Checks the boundaries `kernels` finds of keys of `width` bytes against
+/// a plain comparison of each key with the one before it, over every span
+/// of their bytes, at every count of keys up to past two words, after
+/// words already in the output, which stay as they were.
+fn bounding(kernels: &dyn Kernels, width: usize) {
+    for count in 0..=LONGEST {
+        // Runs of equal keys of varied lengths, differing in one byte each.
+        let keys: Vec<u8> = (0..count)
+            .flat_map(|r| {
+                (0..width).map(move |b| if b == (r / 3) % width.max(1) { ((r / 3) % 5) as u8 } else { u8::from(r % 7 == 0) * b as u8 })
+            })
+            .collect();
+        for (from, to) in [(0, width), (0, width / 2), (width / 2, width), (1, width), (0, 0), (width, width + 1)] {
+            let mut out = vec![0xFFFF_u64];
+            kernels.boundaries(&keys, width, (from, to), &mut out);
+            let n = if width == 0 { 0 } else { count };
+            assert_eq!(out.len(), 1 + n.div_ceil(64), "{count} keys of {width}");
+            assert_eq!(out[0], 0xFFFF, "words before kept");
+            for r in 0..n.div_ceil(64) * 64 {
+                let set = out[1 + r / 64] >> (r % 64) & 1 == 1;
+                let span = |k: usize| &keys[k * width + from..k * width + to];
+                let want = r >= 1 && r < n && from < to && to <= width && span(r) != span(r - 1);
+                assert_eq!(set, want, "{count} keys of {width}, bytes {from}..{to}, row {r}");
+            }
+        }
+    }
 }
