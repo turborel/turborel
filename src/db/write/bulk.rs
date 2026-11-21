@@ -29,6 +29,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::exec::HeldRows;
 use crate::index::{Index, Key};
 use crate::log::record::insert_rows_record;
+use crate::params::Load;
 use crate::spill::row_bytes;
 use crate::storage::{Row, RowId, TableStorage};
 use crate::txn::{Txn, Undo, UndoEntry};
@@ -42,11 +43,16 @@ const BATCH_ROWS: usize = 4096;
 /// record stays well within a log segment and a replay holds little.
 const RECORD_BYTES: usize = 1 << 20;
 
+pub(super) mod load;
+
 /// An index the rows of a table go to, and where its entries are.
 struct Indexed {
     desc: IndexDesc,
     partition: Option<u64>,
     index: Arc<dyn Index>,
+    /// Whether a load holds its entries back, to build it whole as it ends
+    /// (RULES.md D532).
+    held: bool,
 }
 
 /// What each batch of one statement's rows of a table needs, found once.
@@ -94,7 +100,7 @@ impl State {
         for (desc, partition) in self.table_indexes(table) {
             let index = self.indexes.get(&desc.name).map(Arc::clone);
             let index = index.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {} does not exist", desc.name)))?;
-            indexes.push(Indexed { desc, partition, index });
+            indexes.push(Indexed { desc, partition, index, held: false });
         }
         let storage = Arc::clone(self.storage_of(table)?);
         Ok(Together { table, storage, undone: caps.undo == Undo::Log, logs: Self::logs_changes(caps.persistence), indexes })
@@ -172,8 +178,9 @@ fn index_rows(tx: &Txn, ix: &Indexed, (rows, ids): (&[Row], &[RowId]), (notes, a
         }
         let id = State::entry_id(ix.partition, id)?;
         // Of a unique index, whether the key's only entry, so its
-        // constraint need not look for another row.
-        let only = ix.index.insert_from(&key, id, ix.desc.unique)?;
+        // constraint need not look for another row; none of an index a
+        // load holds back, which is no unique one.
+        let only = if ix.held { false } else { ix.index.insert_from(&key, id, ix.desc.unique)? };
         if ix.desc.unique {
             *lone = *lone && only;
             each.push((id, only));
@@ -203,24 +210,39 @@ fn record_rows(rows: &[Row]) -> usize {
 /// [X3.135-1986 §8.7 GR1c] Inserts the rows `rows` holds into `table`, of
 /// transaction `tx`, noting each in `effects`: a batch at a time, read
 /// where they are held, if the table takes its rows together; else one at
-/// a time, each where its partition holds it (RULES.md D155).
+/// a time, each where its partition holds it (RULES.md D155). The insert
+/// is part `load` of a load, if given; else, of a batch of rows or more, a
+/// load of its own (RULES.md D532); a load's part that ends it ends it.
 ///
 /// # Errors
 ///
-/// As `State::insert_rows`, `State::insert_routed` and `Effects::inserted`.
-pub(super) fn insert_held(st: &State, tx: &Txn, table: &QualifiedName, rows: &mut HeldRows<Row>, effects: &mut Effects<'_>) -> Result<()> {
+/// As `State::insert_rows`, `State::insert_routed`, `Effects::inserted`
+/// and `load::end`.
+pub(super) fn insert_held(
+    (st, tx): (&State, &Txn),
+    table: &QualifiedName,
+    rows: &mut HeldRows<Row>,
+    effects: &mut Effects<'_>,
+    load: Option<Load>,
+) -> Result<()> {
+    let load = load.or_else(|| (rows.len() >= BATCH_ROWS).then_some(Load::Alone));
     if rows.len() < 2 || !st.inserts_together(table)? {
-        return rows.visit(&mut |row| st.insert_routed(tx, table, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)));
+        rows.visit(&mut |row| st.insert_routed(tx, table, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))?;
+        return load::end(st, tx, load);
     }
     // Checked as each goes in where it may be, so most need no note.
     let mut checked = st.rows_checked(table, effects);
-    let together = st.together(table)?;
+    let mut together = st.together(table)?;
+    if load.is_some() && checked.is_some() {
+        load::hold_back(st, tx, &mut together)?;
+    }
     rows.visit_slices(&mut |held| {
         for batch in held.chunks(BATCH_ROWS) {
             inserted(st, (tx, &together), batch, (&mut checked, &mut *effects))?;
         }
         Ok(())
-    })
+    })?;
+    load::end(st, tx, load)
 }
 
 /// Inserts `batch` into the table of `together` and notes each row that

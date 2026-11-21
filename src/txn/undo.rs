@@ -22,6 +22,8 @@ use crate::storage::{Row, RowId, TableStorage};
 use crate::value::codec::{put_row, row as read_row};
 use crate::value::types::TypeRegistry;
 
+mod loading;
+
 /// A table's storage that has begun a transaction: a participant in its
 /// commit and rollback.
 #[derive(Clone)]
@@ -42,6 +44,7 @@ impl Joined {
 
 /// One change, recorded so that it can be reversed, with the table it was
 /// made to and the storage or index it was made in.
+#[derive(Clone)]
 pub(crate) enum UndoEntry {
     Inserted {
         table: QualifiedName,
@@ -94,7 +97,7 @@ pub(super) fn apply_undo(tx: TxId, entries: Vec<UndoEntry>) -> Vec<UndoFailure> 
             UndoEntry::Updated { table, storage, id, old } => (table, storage.update(tx, id, old), true),
             UndoEntry::IndexInserted { table, index, key, id } => (table, index.remove(&key, id), false),
             UndoEntry::IndexRemoved { table, index, key, id } => (table, index.insert(key, id), false),
-            UndoEntry::IndexInsertedRows { table, index, entries } => (table, removed(&*index, &entries), false),
+            UndoEntry::IndexInsertedRows { table, index, entries: made } => (table, removed(&*index, &made), false),
         };
         if let Err(error) = result {
             failures.push(UndoFailure { table: Some(table), error, rows });
@@ -167,13 +170,15 @@ pub(crate) struct UndoLog {
     targets: Vec<Target>,
     /// The types beyond the standard its entries may hold values of.
     types: TypeRegistry,
+    /// The load under way, whose entries it holds from its mark on.
+    loading: Option<loading::Loading>,
 }
 
 impl UndoLog {
     /// An empty log, spilling in `space`.
     pub(crate) fn new(space: UndoSpace) -> UndoLog {
         let types = space.types.clone();
-        UndoLog { list: SpillList::new(space), targets: Vec::new(), types }
+        UndoLog { list: SpillList::new(space), targets: Vec::new(), types, loading: None }
     }
 
     /// Begins a segment, as a statement begins: its entries' place.
@@ -201,7 +206,11 @@ impl UndoLog {
     pub(crate) fn take_from(&mut self, start: usize) -> Result<UndoLog> {
         let (targets, types) = (&self.targets, &self.types);
         let list = self.list.take_from(start, &|record| entry_of((targets, types), record))?;
-        Ok(UndoLog { list, targets: self.targets.clone(), types: self.types.clone() })
+        // A load begun among the entries taken is undone with them.
+        if self.loading.as_ref().is_some_and(|l| l.mark >= start) {
+            self.loading = None;
+        }
+        Ok(UndoLog { list, targets: self.targets.clone(), types: self.types.clone(), loading: None })
     }
 
     /// [X3.135-1986 §8.9 GR1, §7.3 GR3b i] Reverses its entries, newest

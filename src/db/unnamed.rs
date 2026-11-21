@@ -83,7 +83,7 @@ impl Session {
         let st = call.state();
         let tx = self.ensure_transaction(st);
         call.runs(&tx);
-        tx.begin_statement(|| !self.cursors_open())?;
+        self.begin_in(st, &tx, false)?;
         let _compiling = self.compiling(st, tx.id);
         let (columns, rows) = rows(st, &tx).map_err(|e| st.fail_statement(&tx, &e).err().unwrap_or(e))?;
         let rows = Arc::new(Mutex::new(Some(rows)));

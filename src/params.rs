@@ -23,6 +23,7 @@ pub(crate) use transition::Transitions;
 use dynamic::Dynamic;
 pub use dynamic::ParameterType;
 pub(crate) use dynamic::conformed;
+pub use given::Load;
 pub(crate) use given::{Given, conformed_row, taken};
 
 use crate::ast::{LexicallyScopedOptions, ParameterSpecification, TargetKind};
@@ -75,7 +76,7 @@ pub struct Params {
     xml: Option<LexicallyScopedOptions>,
     /// \[EXTENSION\] Of an INSERT of one row of dynamic parameters, the
     /// rows given it, each the values of its parameters (`params/given.rs`).
-    given: Option<Given>,
+    given: Option<(Given, Load)>,
 }
 
 fn api(msg: impl Into<String>) -> SqlError {

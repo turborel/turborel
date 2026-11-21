@@ -519,24 +519,28 @@ impl Txn {
     /// for each statement, it takes a new one if `fresh` says so: when its
     /// session has no cursor open, which reads at the one it has.
     ///
+    /// Whether a load is under way in it (RULES.md D532), which a statement
+    /// that is no part of it ends first.
+    ///
     /// # Errors
     ///
     /// SQLCODE -910 if its lock is poisoned; a participant's, told of the
     /// new snapshot.
-    pub(crate) fn begin_statement(&self, fresh: impl FnOnce() -> bool) -> Result<()> {
+    pub(crate) fn begin_statement(&self, fresh: impl FnOnce() -> bool) -> Result<bool> {
         self.check_definitions()?;
-        {
+        let loads = {
             let mut st = self.state()?;
             st.statement_start = st.undo.mark();
             st.statement_savepoints.clear();
             st.statement_from = None;
             st.clear_marks();
-        }
+            st.undo.loads()
+        };
         if self.reading == Reading::Statement && self.open.load(Ordering::Acquire) && fresh() {
             self.snapshot.store(self.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);
             self.tell_participants()?;
         }
-        Ok(())
+        Ok(loads)
     }
 
     /// Records the thread its running call is on, or that none runs.

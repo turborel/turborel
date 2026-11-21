@@ -15,16 +15,35 @@ use crate::value::DataType;
 /// none is copied for it (RULES.md D531).
 pub(crate) type Given = Arc<Mutex<Option<Vec<Row>>>>;
 
+/// \[EXTENSION\] Of an execution given many rows, what part of a load it
+/// is (RULES.md D532): a load of its own, or one of a load's executions,
+/// more to come or the last, as a bulk copy's are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Load {
+    /// A load of its own, of its rows alone.
+    Alone,
+    /// One of a load's executions, more to come.
+    Going,
+    /// A load's last execution, which ends it.
+    Ending,
+}
+
 impl Params {
-    /// These parameters, giving `rows`.
-    pub(crate) fn giving(mut self, rows: Vec<Row>) -> Params {
-        self.given = Some(Arc::new(Mutex::new(Some(rows))));
+    /// These parameters, giving `rows`, as part `load` of a load.
+    pub(crate) fn giving(mut self, rows: Vec<Row>, load: Load) -> Params {
+        self.given = Some((Arc::new(Mutex::new(Some(rows))), load));
         self
     }
 
     /// The rows given, if any.
     pub(crate) fn given(&self) -> Option<&Given> {
-        self.given.as_ref()
+        self.given.as_ref().map(|(given, _)| given)
+    }
+
+    /// What part of a load the execution given rows is, if it is given
+    /// them.
+    pub(crate) fn load(&self) -> Option<Load> {
+        self.given.as_ref().map(|&(_, load)| load)
     }
 }
 

@@ -426,6 +426,11 @@ pub trait Index: Send + Sync {
         self.insert(key.clone(), row)?;
         Ok(self.rows(&key)?.iter().all(|&r| r == row))
     }
+    /// \[DESIGN\] Whether it holds no entry at all, as a load into its table begins (RULES.md D532): known cheaply, or not said.
+    /// Default: not said.
+    fn holds_none(&self) -> bool {
+        false
+    }
     /// \[DESIGN\] As `insert_alone` of a copy of `key` if `alone` is asked, else as `insert` of one, saying not alone: a method that
     /// encodes its keys need make no copy, as rows inserted together keep theirs (RULES.md D531). Default: those, of a clone.
     ///

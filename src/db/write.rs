@@ -231,6 +231,8 @@ impl Session {
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted, though its
         // statement-level triggers execute [ISO/IEC 9075-2:2023 §4.46.2].
         if rows.is_empty() && effects.triggered.is_none() {
+            // [EXTENSION] of none that ends a load, the load ended (RULES.md D532).
+            bulk::load::end(st, tx, params.load())?;
             return Ok(0);
         }
         self.settle_cursors(st, &target.name);
@@ -238,7 +240,7 @@ impl Session {
         let mut rows = effects.before_insert(cx, &target.name, rows)?;
         // [X3.135-1986 §8.7 GR1c], [EXTENSION] in the partition that holds it (RULES.md D155).
         // [EXTENSION] a batch at a time where it may be (RULES.md D530).
-        bulk::insert_held(st, tx, &target.name, &mut rows, &mut effects)?;
+        bulk::insert_held((st, tx), &target.name, &mut rows, &mut effects, params.load())?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
             rows.visit(&mut |row| check_option(&target.checks, [row], ("X3.135-1986 §8.7 GR2", &runner)))?;
