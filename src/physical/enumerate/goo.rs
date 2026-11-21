@@ -8,6 +8,8 @@
 //! relation once done, and the joins above it again, so a relation may
 //! move as far as `k` places from where the greedy step put it.
 
+use std::collections::HashMap;
+
 use super::bits::{Set, bit, count, members, within};
 use super::space::Space;
 
@@ -61,8 +63,11 @@ impl Space<'_> {
     fn goo(&mut self, u: Set) -> Option<Vec<Node>> {
         let mut nodes: Vec<Node> = members(u).map(|r| Node { set: bit(r), operands: None }).collect();
         let mut forest: Vec<usize> = (0..nodes.len()).collect();
+        // Each pair's rows, kept across the steps: a step changes only the
+        // pairs of the tree it makes.
+        let mut known: HashMap<(Set, Set), Option<f64>> = HashMap::new();
         while forest.len() > 1 {
-            let (first, second) = self.smallest_join(&nodes, &forest)?;
+            let (first, second) = self.smallest_join(&nodes, &forest, &mut known)?;
             let (left, right) = (*forest.get(first)?, *forest.get(second)?);
             let (left_set, right_set) = (nodes.get(left)?.set, nodes.get(right)?.set);
             if !self.join(left_set, right_set) {
@@ -76,14 +81,16 @@ impl Space<'_> {
     }
 
     /// Of the trees `forest` of `nodes`, the places of the two that may
-    /// be joined giving fewest rows.
-    fn smallest_join(&self, nodes: &[Node], forest: &[usize]) -> Option<(usize, usize)> {
+    /// be joined giving fewest rows, each pair's rows found once and kept
+    /// in `known`.
+    fn smallest_join(&self, nodes: &[Node], forest: &[usize], known: &mut HashMap<(Set, Set), Option<f64>>) -> Option<(usize, usize)> {
         let set = |i: usize| forest.get(i).and_then(|&f| nodes.get(f)).map_or(0, |n| n.set);
         let pairs = (0..forest.len()).flat_map(|i| (i.saturating_add(1)..forest.len()).map(move |j| (i, j)));
         pairs
             .filter_map(|(i, j)| {
-                let applied = self.applies(set(i), set(j))?;
-                Some(((i, j), self.estimate_of(&applied)?))
+                let (a, b) = (set(i), set(j));
+                let rows = *known.entry((a, b)).or_insert_with(|| self.estimate_of(&self.applies(a, b)?));
+                Some(((i, j), rows?))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(pair, _)| pair)
