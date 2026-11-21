@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use turborel::db::Opened;
-use turborel::diagnostics::{Event, Level, Overdue, ReplicaChange};
+use turborel::diagnostics::{CheckpointTook, Event, Level, Overdue, ReplicaChange};
 use turborel::error::SqlError;
 use turborel::threads::ThreadChange;
 
@@ -45,15 +45,24 @@ fn level(level: Level) -> &'static str {
     }
 }
 
+/// A checkpoint's fields: the checkpoints taken, and what this one took
+/// (RULES.md D810).
+fn checkpoint_taken(json: &mut Json, taken: u64, took: &CheckpointTook) {
+    json.text("event", "checkpoint_taken");
+    json.number("taken", taken);
+    json.number("micros", took.micros);
+    json.number("shut_micros", took.shut_micros);
+    json.number("sync_micros", took.sync_micros);
+    json.number("finish_micros", took.finish_micros);
+    json.number("pages", took.pages);
+}
+
 /// `event`'s kind and fields, written to `json`.
 fn fields(json: &mut Json, event: &Event) {
     match event {
         Event::Opened(how) => opened(json, how),
         Event::Closed => json.text("event", "closed"),
-        Event::CheckpointTaken(taken) => {
-            json.text("event", "checkpoint_taken");
-            json.number("taken", *taken);
-        }
+        Event::CheckpointTaken { taken, took } => checkpoint_taken(json, *taken, took),
         Event::SettingChanged { name, value } => {
             json.text("event", "setting_changed");
             json.text("name", name);
@@ -415,7 +424,14 @@ mod tests {
                 r#""level":"warning","event":"opened","how":"recovered","records":1,"definitions":2,"committed":3,"not_committed":4,"redone":5,"undone":6,"cut":7}"#.to_owned(),
             ),
             (Event::Closed, r#""level":"info","event":"closed"}"#.to_owned()),
-            (Event::CheckpointTaken(7), r#""level":"info","event":"checkpoint_taken","taken":7}"#.to_owned()),
+            (
+                Event::CheckpointTaken {
+                    taken: 7,
+                    took: CheckpointTook { micros: 6, shut_micros: 5, sync_micros: 4, finish_micros: 3, pages: 2 },
+                },
+                r#""level":"info","event":"checkpoint_taken","taken":7,"micros":6,"shut_micros":5,"sync_micros":4,"finish_micros":3,"pages":2}"#
+                    .to_owned(),
+            ),
             (
                 Event::SettingChanged { name: "MEMORY.WORK_BYTES".into(), value: Some(Value::Char("x".into())) },
                 r#""level":"info","event":"setting_changed","name":"MEMORY.WORK_BYTES","value":"'x'"}"#.to_owned(),

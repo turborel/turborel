@@ -158,7 +158,8 @@ recovery reads the log only from there. One is due once
 CHECKPOINT.AFTER_CHANGES row changes have been logged, 4,000,000 by
 default, or CHECKPOINT.AFTER_BYTES bytes held by the data file's side file,
 1 GiB; the database's checkpoint thread takes it, so no transaction
-waits for it. Each is told to the diagnostics, `checkpoint_taken`. One
+waits for it. Each is told to the diagnostics, `checkpoint_taken`, with
+how long it took, how long writers waited for it, and the pages it wrote. One
 that fails leaves the changes since the last counted, so the next is due
 as soon as a transaction ends.
 

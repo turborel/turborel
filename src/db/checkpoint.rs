@@ -75,6 +75,7 @@
 
 mod following;
 mod overdue;
+mod taking;
 
 pub use overdue::OVERDUE;
 
@@ -108,52 +109,13 @@ impl Database {
     /// stands.
     pub fn checkpoint(&self) -> Result<()> {
         let taken = self.noted(self.take_checkpoint());
-        if taken.is_ok() {
-            self.emit(&Event::CheckpointTaken(self.checkpoints_taken()));
+        if let Ok(took) = taken {
+            self.emit(&Event::CheckpointTaken { taken: self.checkpoints_taken(), took });
             // Taken, it may still give up no log: a transaction holds it.
             self.tell_if_overdue();
             self.tell_if_settled();
         }
-        taken
-    }
-
-    /// `checkpoint`'s work.
-    fn take_checkpoint(&self) -> Result<()> {
-        let files = self.files()?.ok_or_else(|| api("[DESIGN] only a database opened from its files takes checkpoints"))?;
-        let _whole = files.checkpointer.whole.take("a checkpoint")?;
-        let turn = files.checkpointer.taking.take("a checkpoint")?;
-        let current = self.snapshot()?;
-        if matches!(current.tx.held(), Some(crate::txn::Held::Following)) {
-            return self.take_following_checkpoint(&files);
-        }
-        // Not while an index is built: a checkpoint records only indexes
-        // ready to be read (`Database::create_index`).
-        let shut = loop {
-            current.tx.wait_for_builds();
-            let shut = current.tx.gate.shut();
-            if !current.tx.building() {
-                break shut;
-            }
-        };
-        // Taken shut: no definition is half published.
-        let st = self.snapshot()?;
-        let (image, counted) = st.capture_checkpoint(false)?;
-        let stale = st.hold_stale();
-        drop(shut);
-        // Writers going on: the entries of what awaited collection as the
-        // pages were captured, logged before the record that syncs them.
-        let logged = st.log_stale(&stale, image.through);
-        drop(stale);
-        // The turn let go while the record is synced (step 4), then taken
-        // again to record the image.
-        let synced = logged.and_then(|()| st.sync_checkpoint_record(turn, &image));
-        let recorded = synced.and_then(|()| {
-            let _turn = files.checkpointer.taking.take("a checkpoint")?;
-            st.record_and_truncate(&files, image)
-        });
-        st.counted_if(recorded, counted)?;
-        files.checkpointer.taken.fetch_add(1, Ordering::Relaxed);
-        Ok(())
+        taken.map(|_| ())
     }
 
     /// \[DESIGN\] The checkpoints taken since the database was opened.

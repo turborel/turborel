@@ -494,6 +494,7 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
 
 ### The project
 
@@ -13823,6 +13824,18 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
+#### D810. A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote
+
+The `checkpoint_taken` event carries what the checkpoint took, in
+microseconds. `micros` is the whole. `shut_micros` runs from the gate
+asked shut to opened again, the engines' capture inside it, which is how
+long writers waited. `sync_micros` is the checkpoint record's sync, and
+`finish_micros` the captures made durable, the image recorded and the log
+truncated. `pages` counts the pages written to the tables file
+meanwhile, written back or captured, so a writer's own evictions count
+too. An operator sees what a checkpoint costs the work going on without a
+profiler, and a change that spreads that cost is measured by it.
 
 ## 2. Project layout
 

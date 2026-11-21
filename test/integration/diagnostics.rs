@@ -38,7 +38,7 @@ fn a_database_tells_its_sink_of_its_life() {
     let info = |e: &str| (Level::Info, e.to_owned());
     let registered = |kind, name: &str| info(&format!("{:?}", Event::Registered { kind, name: name.into() }));
     assert_eq!(
-        kept.taken(),
+        kept.taken().into_iter().map(untimed).collect::<Vec<_>>(),
         vec![
             // Opening registers the engines and methods that keep their data in the directory.
             registered(Extension::Engine, "columnstore"),
@@ -62,7 +62,7 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::IndexMethod, "fulltext"),
             info("Opened(Created)"),
             info("Thread { label: \"turborel-maintenance\", change: Started }"),
-            info("CheckpointTaken(1)"),
+            info("CheckpointTaken { taken: 1 }"),
             info("SettingChanged { name: \"LOCKS.WAIT\", value: Some(Char(\"ON\")) }"),
             registered(Extension::IndexMethod, "btree"),
             info("Thread { label: \"turborel-maintenance\", change: Stopped }"),
@@ -74,6 +74,15 @@ fn a_database_tells_its_sink_of_its_life() {
     again.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
     let reopened = kept.taken();
     assert_eq!(reopened.last(), Some(&info("Opened(Reopened)")), "{reopened:?}");
+}
+
+/// `event` with what a checkpoint took left out, which varies run to run
+/// (RULES.md D810).
+fn untimed((level, event): (Level, String)) -> (Level, String) {
+    match event.split_once(", took: ") {
+        Some((taken, _)) if event.starts_with("CheckpointTaken {") => (level, format!("{taken} }}")),
+        _ => (level, event),
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D40, `Event::of`: a failure of the
