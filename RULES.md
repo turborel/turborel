@@ -440,6 +440,7 @@ verification approach DO-178C expects (§8).
 | D550 | A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less |
 | D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
 | D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
+| D560 | Window functions run over batches, partitions and peers found by a kernel over the sort's keys, giving way to the rows' form for errors and the work area |
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
@@ -460,6 +461,8 @@ verification approach DO-178C expects (§8).
 | D663 | PLANNER.EAGER_GAIN sets how much less work a plan grouped first must do, OPTIMIZER.EAGER_AGGREGATION turns it off |
 | D664 | A grouping's and a hash join's row weigh more as the table they hash into grows, as measured |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
+| D682 | The system's threads are asked once, by the thread starting the first database |
+| D683 | Work grants share half of what the buffer pools leave of the budget |
 | D695 | Exact numbers hold 38 digits, and BIGINT, counts and a column of 18 or fewer keep 64 bits |
 | D696 | The precision of an exact sum, difference or product is the digits its operands' types give, up to 38 |
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
@@ -2838,7 +2841,10 @@ SERVER.WORKERS blocking workers, and authentication on at most
 SERVER.MAX_LOGINS other threads. A worker writes the replies of the request
 it runs, a batch of SERVER.BATCH_BYTES at a time, each within
 SERVER.IDLE_TIMEOUT_MS, so a slow client holds its worker and a batch of
-memory, no more. A fast client's next request the worker reads itself. The
+memory, no more. A statement that fails, or is cancelled, before a batch
+of its result is sent sends only its failure, its notices and status
+with it, so a client never shows the columns of a result it never had
+(`Outgoing::unanswered`). A fast client's next request the worker reads itself. The
 socket is handed to it, the runtime's interest in it given up, and it waits
 a millisecond or so apart from the runtime (`transport::Direct`), its
 permit to run statements given up meanwhile. So a request answered wakes
@@ -12450,6 +12456,12 @@ keeps is what the conjunct keeps, as a code is said to keep or leave
 its rows only where every value it holds orders alike against every
 constant.
 
+A run of which fewer than one row of each eight is asked for, as a
+narrower conjunct judged before leaves it, is compared row by row
+without the sketch (`SPARSE` in `judged/coded.rs`). Of so few rows,
+reading the codes and judging each code of the group cost more than
+comparing the texts asked for.
+
 Columns of numbers and datetimes get none, as decoding their frames of
 reference costs about what reading a byte a row costs, and so do texts
 coded by a dictionary, which a dictionary in order judges by codes
@@ -12465,6 +12477,57 @@ read as fast as the scan's other work, and keeps the group's layout.
 Rejected too were codes drawn from the imprints' edges: their 64 bins
 leave a boundary code four times as wide, and a column without imprints
 would have none.
+
+#### D560. Window functions run over batches, partitions and peers found by a kernel over the sort's keys, giving way to the rows' form for errors and the work area
+
+A window whose input reads by batch reads its batches
+(`exec/window/batched.rs`); over any other input it runs a row at a
+time, as making its rows batches and its batches rows again costs more
+than the batches save. Of a sort
+the planner placed under it by its partitioning's and ordering's keys,
+each batch comes beside the normal keys the sort made of its rows
+(D364), so no key is written twice; of any other input, each batch's
+keys are written of it alone. A scan's batches that hold only the
+columns read are made rows' width, each column not read a vector of
+nulls that holds none, so the sort, the window and the operator above
+read by batch. Where a row begins a partition or a peer
+group is found by `Kernels::boundaries`, each row's key bytes compared
+with the row's before it, of the partitioning's bytes and of all. Rows
+of equal bytes whose key cuts a string short are compared by their
+values. The first row of a batch is compared with the last of the batch
+before: by bytes when both are of the sort's one layout, else by values.
+The kernel's contract tests hold every implementation to the portable
+loop (D354).
+
+A batch is held until a partition begins in it, then cut there. Every
+partition of the rows held before the cut is whole, and each call's
+values of them are computed as vectors: ranks by arithmetic of places
+and peer groups; LEAD, LAG and the value functions by picking places,
+under IGNORE NULLS through a prefix count of the values not null; every
+frame's bounds at once, as the rows' form finds them one after another.
+COUNT, and SUM and AVG of exact numbers of one scale, take differences
+of prefix sums in 128 bits; MIN and MAX of such numbers read a segment
+tree; SUM and AVG of approximate numbers add in the rows' order, as
+their accumulator does, so no answer rounds otherwise; any other set
+function is computed as the rows' form computes it, by an accumulator
+that grows, a tree of states, or each frame. Each is finished by the
+set function's own finishing, so results and errors are its own.
+
+The window gives way to the rows' form (D38, D15) for the rows held and
+all after them: where an argument is not evaluated by vectors without a
+warning or an error, where a call raises an error, and where the rows
+held pass half the work area, so the rows' form spills them. Calls only
+the rows' form computes (nested window functions, row pattern measures,
+filtered, DISTINCT or inverse distribution set functions) leave the
+whole window to it. EXECUTOR.BATCHES OFF runs every window a row at a
+time. A window run in parallel over batches gathers whole partitions, several
+batches for each thread, cuts them at partition starts into a group for
+each thread, near equal in rows, and computes each group's calls on a
+thread of the statement's run (`batched/spread.rs`). The groups' values
+come back in order, and a group that raises an error leaves every row
+held, so the window gives way as on one thread. A window run in
+parallel a row at a time splits its rows into partitions by the seeded
+XXH3 of their partitioning's normal bytes (D357, D460).
 
 #### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
 
@@ -12989,6 +13052,34 @@ nothing. EXECUTOR.KEEP_SUBQUERY_PLANS,
 ON by default and of a session's scope, turns it off, as to compare the
 two.
 
+#### D682. The system's threads are asked once, by the thread starting the first database
+
+EXECUTOR.WORKERS of 0 sizes the workers and every parallel part's
+degree by the threads the system runs at once (D290, D291), asked once
+(D405). It was asked as the first statement was planned, by that
+statement's thread. A thread held to fewer processors than its process,
+as a session's thread may be, saw only those, and every part after was
+planned for them. It is now asked as the first database starts
+(`Database::over`), by the thread starting it, and kept for every
+statement after (`physical::system_threads`).
+
+#### D683. Work grants share half of what the buffer pools leave of the budget
+
+Grants kept half the whole budget for what reserves beside them (D298).
+A buffer pool is reserved of the same budget, and one of more than half
+of it left the grants nothing. Every operator then held the floor, and a
+hash join whose right operand was a few megabytes was partitioned and
+spilled, while the same join run in parallel was granted its ceiling.
+A database's buffer pools now reserve their bytes as standing, held
+while it is open (`Reservation::stand`). Grants share half of what the
+standing reservations leave, and the other half stays for spill areas,
+which a statement reserves and which never shrink the grants' share. A
+database's areas count the bytes their grants hold, and a grant takes
+half of the share they left. Every grant is reserved of the budget, so
+however many run at once they never take more than is free
+(`spill/grant.rs`). The planner's estimate of an operator's grant, by
+which it costs what the operator spills (D651), is the same function's
+(`WorkAreas::would_grant`).
 #### D651. Costs count what an operator spills past its grant, at its rows' width
 
 A hash join's build, a hashed grouping and a sort were priced as if they

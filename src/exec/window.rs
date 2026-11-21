@@ -21,6 +21,7 @@
 //! D44).
 
 mod aggregate;
+mod batched;
 mod distribution;
 mod frame;
 mod matched;
@@ -38,6 +39,7 @@ use self::nested::{Nest, Shape};
 use self::reader::{Placed, Reader};
 use self::value::{Count, NotNull, Picked, RANGE_ENDS, Sequence, counted, tile};
 use super::group::admitted;
+use super::sort::rows_of_batches;
 use super::work::Work;
 use super::{HeldRows, RowIter, Runner, broken, column, eval, execute, failed, warn};
 use crate::error::{Result, SqlState};
@@ -73,13 +75,32 @@ const LIST_SEGMENTS: usize = 2;
 /// The values LEAD or LAG takes of each row: its extent and its default.
 const OFFSET_VALUES: usize = 2;
 
-/// The rows of `plan`, window functions over its input.
+/// The rows of `plan`, window functions over its input: over batches
+/// where its calls admit it and its input reads by batch (`batched.rs`,
+/// RULES.md D560), else a row at a time, as rows made batches and back
+/// cost more than the batches save.
 #[inline(never)]
 pub(super) fn windowed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
+    let Plan::Window { window: shape, .. } = &plan else { return failed(broken("a window is not one")) };
+    if super::batched(db) && batched::admits(shape) && super::batch::reads_by_batch(&shape.input, db) {
+        return match window_batches(plan, db, tx) {
+            Ok(batches) => Box::new(batches.flat_map(|kept| match kept {
+                Ok((batch, _)) => rows_of_batches(&[batch]).into_iter().map(Ok).collect::<Vec<_>>(),
+                Err(e) => vec![Err(e)],
+            })),
+            Err(e) => failed(e),
+        };
+    }
     let Plan::Window { window, .. } = plan else { return failed(broken("a window is not one")) };
     let (w, input) = window.split();
+    windowed_rows(w, execute(input, db, tx), (db, tx))
+}
+
+pub(super) use batched::{admits as admits_batches, window_batches, window_batches_on};
+
+/// The rows of the window `w` over `rows`, a row at a time.
+pub(super) fn windowed_rows(w: Window<()>, rows: RowIter, (db, tx): (&Db, TxId)) -> RowIter {
     let partition = w.partition.iter().map(|&c| SortKey::ascending(c)).collect();
-    let rows = execute(input, db, tx);
     let (db_held, runner) = (db.clone(), Runner::new(db, tx));
     let (slots, shapes) = (Vec::new(), Vec::new());
     let given = Windowed { w, partition, slots, shapes, rows, runner, db: db_held, tx, bounds: None, next: None, given: None, done: false };

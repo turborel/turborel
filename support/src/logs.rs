@@ -81,9 +81,10 @@ pub fn all(log: &dyn Log, from: Lsn) -> Vec<(Lsn, Vec<u8>)> {
 /// The contract every log keeps: positions increase with appends that do
 /// not overlap; `read_from` yields exactly what was appended, in order,
 /// from any position given, or one record at a position; `sync` accepts
-/// the positions given and refuses others; `truncate_before` never removes a record at or after its
-/// position; records appended by threads at once are each read once, each
-/// thread's in the order it appended them.
+/// the positions given and refuses others; `truncate_before` never removes
+/// a record at or after its position, and a position it removed reads as
+/// no record, never a later one; records appended by threads at once are
+/// each read once, each thread's in the order it appended them.
 pub fn contract(log: &dyn Log) {
     let start = log.end();
     assert!(all(log, Lsn(0)).is_empty() && all(log, start).is_empty(), "a new log is empty");
@@ -104,6 +105,8 @@ pub fn contract(log: &dyn Log) {
     let kept = all(log, Lsn(0));
     assert!(kept.ends_with(&read[30..]), "nothing at or after the position removed");
     assert_eq!(log.read_at(positions[30]).unwrap(), Some(record(30)), "still read at the position");
+    let removed = log.read_at(positions[0]).unwrap();
+    assert!(removed.is_none() || removed == Some(record(0)), "a position removed reads as none, never as a later record");
     let threads: Vec<Vec<Lsn>> = thread::scope(|s| {
         let appending: Vec<_> = (0..4)
             .map(|t| s.spawn(move || (0..25).map(|n| log.append(format!("thread {t} record {n}").as_bytes()).unwrap()).collect()))

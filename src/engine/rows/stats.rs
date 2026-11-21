@@ -256,7 +256,7 @@ impl RowTable {
             for entry in self.tree.scan(low.as_ref().map(Vec::as_slice), high.as_ref().map(Vec::as_slice), Direction::Forward) {
                 let (key, newest) = entry?;
                 // Read again if an older version is released as it is read.
-                let visible = self.unpinned((&key, newest), 0, &mut |bytes, _| self.visible_from(bytes, Reader::Latest))?;
+                let visible = self.unpinned((&key, newest), 0, &mut |bytes, _| self.visible_from(bytes.to_vec(), Reader::Latest))?;
                 let Some(record) = visible.flatten() else { continue };
                 let id = row_id(&key)?;
                 let row = self.decode(id, &record, None)?;
