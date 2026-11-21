@@ -111,7 +111,7 @@ mod nested;
 mod observed;
 pub(crate) mod partitions;
 mod position;
-mod prepared;
+pub(crate) mod prepared;
 pub(crate) mod ptf;
 mod rankings;
 mod recovery;
@@ -179,7 +179,6 @@ pub use stores::{CatalogStorage, CatalogStore, FileLogs, LOG_DIR, LogStorage, Op
 pub(crate) use {
     assignment::{assign_targets, assignment_type, check_targets},
     database::WeakDatabase,
-    prepared::{Learned, Learning},
     routines::run_unhosted,
     triggers::trigger_texts,
 };

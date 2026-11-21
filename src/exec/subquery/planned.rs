@@ -24,7 +24,7 @@ use std::mem::discriminant;
 
 use super::super::{RowIter, execute};
 use super::Runner;
-use crate::db::{Learned, Learning};
+use crate::db::prepared::{Learned, Learning};
 use crate::logical::{Expr, LogicalPlan, Slot, Subquery, filled, map_plan_exprs};
 use crate::optimizer::RuleContext;
 use crate::optimizer::prepared::budget;
