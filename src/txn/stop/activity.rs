@@ -107,8 +107,17 @@ impl Activity {
     }
 
     /// The statement `text` began at `utc`.
-    pub fn began(&self, text: Arc<Text>, utc: i64) {
-        *lock_builtin(&self.statement) = Some((text, utc));
+    pub fn began(&self, text: &Arc<Text>, utc: i64) {
+        let mut statement = lock_builtin(&self.statement);
+        // The same text again takes no count of it, which other sessions
+        // may share.
+        if let Some((had, at)) = statement.as_mut()
+            && Arc::ptr_eq(had, text)
+        {
+            *at = utc;
+            return;
+        }
+        *statement = Some((Arc::clone(text), utc));
     }
 
     /// The transaction `tx` began, in the statement running.

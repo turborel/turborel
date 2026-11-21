@@ -54,7 +54,7 @@ impl Session {
     /// the text and the trace context are taken only for the first, so a
     /// statement not timed copies neither. The session's activity notes it
     /// begun either way.
-    pub(super) fn timed<T: AsRef<str>>(&self, st: &State, text: impl FnOnce() -> T, statement: Arc<Text>) -> Option<Timed<T>> {
+    pub(super) fn timed<T: AsRef<str>>(&self, st: &State, text: impl FnOnce() -> T, statement: &Arc<Text>) -> Option<Timed<T>> {
         let began = self.now.get().utc;
         let activity = self.stop.activity();
         let kept = st.ran.statements.kept();
@@ -64,7 +64,7 @@ impl Session {
             if first {
                 st.ran.statements.list(tallies);
             }
-            Tallied::of(activity, Arc::clone(&statement), (&user, kept), began)
+            Tallied::of(activity, statement, (&user, kept), began)
         });
         activity.began(statement, began);
         let slow = slow(st, text, (&user, &self.stop));

@@ -85,7 +85,11 @@ fn another_users_statement_text_is_null() {
     z.run("CREATE ROLE MONITOR").unwrap();
     z.run("GRANT MONITOR TO Y").unwrap();
     z.commit().unwrap();
-    assert_eq!(rows(&y, texts).unwrap(), ["OWNER,NULL", "OWNER,NULL", "X,NULL", "Y,VALUES ?", "Z,NULL", "Z,NULL"], "another user's role gives nothing");
+    assert_eq!(
+        rows(&y, texts).unwrap(),
+        ["OWNER,NULL", "OWNER,NULL", "X,NULL", "Y,VALUES ?", "Z,NULL", "Z,NULL"],
+        "another user's role gives nothing"
+    );
     z.run("DROP ROLE MONITOR CASCADE").unwrap();
     z.commit().unwrap();
     owner.run("CREATE ROLE MONITOR").unwrap();

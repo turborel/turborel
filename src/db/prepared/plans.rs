@@ -81,8 +81,8 @@ impl Plans {
 
     /// Its text, `sql`, normalized the first time, never at each run
     /// (RULES.md D521).
-    pub(in crate::db) fn text(&self, sql: &str) -> Arc<crate::system::Text> {
-        Arc::clone(self.text.get_or_init(|| Arc::new(crate::system::Text::of(sql))))
+    pub(in crate::db) fn text(&self, sql: &str) -> &Arc<crate::system::Text> {
+        self.text.get_or_init(|| Arc::new(crate::system::Text::of(sql)))
     }
 }
 
