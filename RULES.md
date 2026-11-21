@@ -409,8 +409,13 @@ verification approach DO-178C expects (§8).
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 | D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
-| D513 | An index scan reads its rows in batches, and a column store reads a batch's frozen rows group by group |
+| D520 | CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session |
+| D521 | Statements are tallied by normalized text and user, each session in its own tallies |
+| D522 | Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes |
 | D525 | A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code |
+| D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
+| D581 | A period predicate of two period references is the comparisons of its bounds |
+| D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 
 ### The project
 
@@ -10590,7 +10595,11 @@ hold it to the portable loop. Any other column is written a value at a
 time as before (D364).
 
 A sort held in memory looks for a cancel (D44) before it sorts, and
-every 1,024 rows (`SORT_RUN_ROWS`) or each batch as it gives them. A
+every `SORT_RUN_ROWS` rows or each batch as it gives them. It looks too
+at the first row each window of its statement asks for, so a cursor
+fetching a row at a time is looked at in every fetch. A cancel counts
+within the fetch it lands in alone, and one landing in a fetch that did
+not look would be dropped. A
 run written to the spill area looks after each chunk. At a cancel it
 gives its error, and the same error at every ask after.
 
@@ -10851,8 +10860,11 @@ right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13), and a
 comparison compares the value cut. The
 binder keeps the warning with the constant (`Expr::Warned`), and so does
 a kept plan's slot as it is filled (`logical/dynamic.rs`), so the
-statement completes with 01004 and the cut is never silent. A value
-that fits raises nothing. The cast stays a cast and not a store
+statement completes with 01004 and the cut is never silent. Such a
+constant counts as raising, as an expression that can raise an error
+does (D15), so a cursor whose plan holds one reads its rows at OPEN and
+completes with 01004 however far it is fetched, with ORDER BY or
+without. A value that fits raises nothing. The cast stays a cast and not a store
 assignment, as the standard says, so 22001 is raised only by the
 assignment of a value longer than its column, as a literal's is.
 
@@ -11628,7 +11640,6 @@ alike but cannot skip a block of a rare value among skewed ones.
 
 A run the imprints leave short is gathered with the scan's other runs
 into full batches, not given alone (`frozen/batches/run.rs`).
-
 #### D512. A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes
 
 A dictionary's entries were kept as first seen, so a scan judged a
@@ -11658,31 +11669,106 @@ The order is the one comparisons of the default collation take
 reaches the scan as sort keys, never string constants, so it is judged
 as before, and the order of the entries is never read for it.
 
-#### D513. An index scan reads its rows in batches, and a column store reads a batch's frozen rows group by group
+#### D520. CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session
 
-An index scan read each entry's row alone, and of a frozen row each
-value alone, opening its chunk for the one value. A scan of rows
-scattered over a group opened the same chunks again and again.
+An IDE watching a server needs to see what each connection runs, since
+when, and what holds it up. INFORMATION_SCHEMA.CONNECTIONS shows it in six
+columns more: STATEMENT_TEXT and STATEMENT_BEGAN while a statement runs,
+TRANSACTION_BEGAN while a transaction is open, and WAITING_ON, LOCK_NAME
+and LOCK_HOLDER.
 
-`TableStorage::get_many` reads the rows of several ids, in their order;
-by default each by `get_near`. An index scan of no conjunct it decides
-reads its entries' rows in batches (`exec/scan/fetched.rs`), the first
-of one entry, each next twice as many up to a most, so a scan of which
-one row is asked reads one, and a long one reads many at once. A
-covering scan still makes a row of its entry where every reader sees
-the row, and each row read is kept only if that version has the
-entry's key (`exec/entries.rs`), as before.
+What a session does is kept in its activity, held in its `Stop`
+(`txn/stop/activity.rs`), as the server reaches a session and the lock
+manager reaches a transaction's session through it. A statement notes its
+text and its start, the instant its call began, as it is timed
+(`db/slow.rs`). The text is shared, made once for a prepared statement and
+once for each text a session runs directly while it keeps it, so a
+statement copies nothing. A transaction notes its start as it begins, the
+start of the statement that began it, and clears it as it ends. A wait
+for a table's lock or a row sets what it waits for and the first holder
+as it begins, and clears it as it ends. A commit's sync of the log, and a
+reply waiting for a commit it read to be durable, show IO. A request
+waiting for a worker shows WORKER, which the server sets without a lock
+and clears as the request runs. LOCK_HOLDER is the connection whose
+session's open transaction holds the lock.
 
-The column store reads a batch's rows the tree holds from the tree, as
-`get` does, and the frozen ones by group (`engine/rows/frozen/fetch.rs`).
-Their ids, sorted, are cut by the directory into the groups holding
-them, and of each group the places of its rows found and each column
-read at those places in order, so a chunk is opened once for all the
-rows of the batch in it.
+Statement texts carry values, so who sees them is narrowed. The
+database's owner sees every connection. So does a user for whom the role
+MONITOR is applicable, if the owner created that role. So the right is
+given and taken back by the standard's own statements, CREATE ROLE
+MONITOR, GRANT MONITOR TO a user and REVOKE, and a role of that name
+another user created gives nothing. Any other user sees their own
+connections alone, where before they saw none.
 
-A row whose entry the scan has not yet reached may be read before it is
-asked for, as many as a batch holds. Reading it changes nothing a
-reader sees, and the probe's reads were noted before the first entry.
+#### D521. Statements are tallied by normalized text and user, each session in its own tallies
+
+INFORMATION_SCHEMA.STATEMENT_STATISTICS shows each statement run since the
+database was opened, by normalized text and user. Each row has its calls,
+their time, its mean and longest, the rows given or changed, the rows its
+scans read, the bytes its work areas spilled, and its last run. A
+normalized text is the statement's tokens one space apart, each literal a
+`?`, its key the XXH3-64 of it (D460, `system/statements/text.rs`).
+
+The tally sits on every statement's path, so it costs a statement a few
+counts and no shared lock. A text is normalized once, for a prepared
+statement in what it keeps between executions and for a direct one in
+its session's activity. Each session tallies its own runs in a map only
+it writes, under a lock only a reader of the table takes besides. A
+session's tallies are listed with the database's the first time it
+tallies, and kept once it ends, merged, until the table is next read.
+Rows read are counted by each scan as it reads, and given to its
+session's count once it is read through or dropped, so a row costs no
+atomic count. Bytes spilled are counted as a work area's run or table
+takes them. A statement's tally takes what those two counts grew by while
+it ran. They are one count each, which EXPLAIN ANALYZE can read the same
+way.
+
+STATEMENTS.KEPT, declared by the tallies themselves, bounds each
+session's tallies and the merged ones. A new statement past it takes the
+place of the one called least. At 0 nothing is tallied, and setting it to
+0 forgets every tally, which is how they are reset, with no statement of
+its own. The database's owner and a user granted MONITOR (D520) see every
+text. Another user sees every row, the texts of other users' statements
+as the null value, as VIEWS hides the definitions of others' views.
+
+#### D522. Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes
+
+INFORMATION_SCHEMA.TABLE_STATISTICS has a row for each base table: its
+engine, its rows, the bytes it takes, whether some are estimated, when a
+transaction that wrote it last committed, and when its engine's
+maintenance last did some work on it. INDEX_STATISTICS has a row for each
+index: its method, the searches made of it and the entries they gave
+since the database was opened or the index made, and its entries, height
+and bytes as far as its method knows them cheaply.
+
+An engine tells its bytes through `TableStorage::sizes`, with no pass over
+its rows, none by default. The built-in engine counts the pages of a
+table's frozen groups, and estimates the rows of its tree as their number
+times the mean width its statistics last measured: the tree shares its
+pages with the store's other tables, so no count of its own is kept on
+the write path. An index method tells what it knows through
+`Index::sizes`. The B-link tree gives its entries, once counted (D35), and
+its height; its bytes would need a walk of every page, so they are left
+unknown.
+
+The two stamps sit with the table's lock, which every snapshot shares.
+A commit stores the instant it already reads for its commit record in
+each table it wrote, one relaxed store each, so a rolled-back write
+changes nothing. Maintenance stores its own instant when a table's engine
+reports work done.
+
+A search counts its entries in its own fields and adds them, with one
+search, to the index's counts once, as it is read through or dropped. An
+index join counts each probe a search. The counts are kept in
+stripes, a thread's own, each on a cache line of its own, so searches on
+many threads at once do not take turns at one line. A snapshot maps each
+index's name to its counts. The map is brought in step with the indexes
+as each snapshot is published, so a search takes no lock to find them,
+and an index dropped takes its counts with it.
+
+The database's owner and a user granted MONITOR (D520) see every row.
+Another user sees the rows of the tables on which they hold a privilege,
+as the views of the Information Schema show what is accessible to them.
 
 #### D525. A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code
 
@@ -11743,6 +11829,97 @@ read as fast as the scan's other work, and keeps the group's layout.
 Rejected too were codes drawn from the imprints' edges: their 64 bins
 leave a boundary code four times as wide, and a column without imprints
 would have none.
+
+#### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
+
+A join whose condition compares a value of each operand by `<`, `<=`,
+`>` or `>=` had no plan but a filter over the product, which judges
+every pair. A band such as `A.X BETWEEN B.Y - 5 AND B.Y + 5`, an
+inequality, or the overlap of two periods is now planned as a range join
+(`physical/range.rs`, `exec/join/range.rs`) where its cost is the least.
+The right operand is read whole and its rows sorted by the compared
+value, grouped first by any equalities of a column of each operand. Each
+left row computes its bounds and finds the run of rows between them by
+binary search. One more comparison of other values, as the second half
+of an overlap, is answered by a tree of the greatest or least of those
+values over the sorted rows, which skips the parts no row of which can
+match. The rest of the condition is judged of each pair found.
+
+A sorted array with a pruning tree is used in place of a plane sweep over
+both operands sorted. It keeps the left operand streaming in its own
+order, holds only the right in memory, and gives each left row's matches
+in one search, so a LEFT join knows at once which left rows match none.
+
+The semantics hold for these reasons.
+
+- A pair is kept only when the whole condition is True. The search finds
+  every pair whose searched comparisons are True: a null value, of either
+  side, makes a comparison Unknown, so a row of one finds nothing and is
+  not sorted. The rest is judged of the pairs found, as the filter judges
+  it.
+- The matches of a left row are put back in the right's order before they
+  are judged, so while the right fits the work area the rows come in the
+  order of the filter over the product. The plan claims no order of its
+  rows all the same, since past the work area they come part by part, and
+  no order is defined without ORDER BY.
+- The search computes each compared value once for each row, not for each
+  pair, so the whole condition must be unable to raise by its columns'
+  declared types (D15). A part that can is made a column of its operand
+  first (D373), or the join stays a nested loop. A value compared must be
+  of one operand's columns, deterministic, and of no subquery, CASE,
+  outer reference or routine.
+- Values of a kind not wholly ordered, or two that do not compare, give no
+  search: the join judges the whole condition of every pair instead.
+- Past MEMORY.WORK_BYTES (D38) the right operand is written to a run of
+  the spill area and read back once, a part at a time, each part as many
+  rows as the work area holds, sorted and searched as before. The left is
+  gathered in memory or a run and read again for each part, so every pair
+  is judged by exactly one part. A LEFT join keeps a flag for each left
+  row, whether it matched in some part, and reads the left a last time
+  for those that matched in none.
+- A LEFT join keeps each left row with nulls when no pair of it is kept.
+  A RIGHT join is the LEFT join of its operands swapped, put back in order
+  by a projection. A FULL join stays as it was.
+
+The cost counts each operand's rows read, the sort of the right, two
+searches for each left row, and the pairs found, as a hash join's
+matches are counted. It is weighed against the nested loop, the hash
+join on any equalities and an index probed by the comparisons, both ways
+round, and in join enumeration (D303) as one more method of each pair of
+relations.
+
+#### D581. A period predicate of two period references is the comparisons of its bounds
+
+A `<period predicate>` [ISO/IEC 9075-2:2023 §8.20] was one call judged
+of each pair, so a join on OVERLAPS judged every pair. A predicate of two
+`<period reference>`s, or of one and a point in time after CONTAINS, is
+now read by a join as the comparisons GR4 defines it by: OVERLAPS as
+`S1 < E2 AND E1 > S2`, CONTAINS as `S1 <= S2 AND E1 >= E2` or of a point
+`S1 <= P AND E1 > P`, PRECEDES as `E1 <= S2`, SUCCEEDS as `S1 >= E2`,
+EQUALS and the IMMEDIATELY ones as equalities. These are range joins
+(D580) or hash joins on the bounds.
+
+The semantics hold for these reasons.
+
+- The predicate is True exactly when each of its comparisons is. A null
+  bound, of a row an outer join made, makes the predicate False and a
+  comparison Unknown, and a join keeps a pair only when its condition is
+  True, so the two keep the same pairs. Only a top level conjunct is
+  read so; one under NOT or OR is judged whole.
+- The bounds are the casts to TIMESTAMP WITH TIME ZONE the binder made
+  [GR4a ii, GR4b iii], compared as the call compares them.
+- A period written `PERIOD (start, end)` can raise 22020 [GR2b] and is
+  Unknown of a null bound [GR2a], so a predicate of one is never read so
+  and stays a call. A predicate of `<period reference>`s alone raises
+  nothing, which `ScalarFunction::raise_free` says.
+
+#### D582. PLANNER.RANGE_JOINS turns range joins on and off
+
+PLANNER.RANGE_JOINS, ON by default and of a session's scope, lets the
+planner choose range joins (D580). OFF plans such joins as nested loops,
+or hash joins on their equalities, as to compare the two. Period
+predicates are still read as comparisons (D581) when it is OFF, so their
+equalities can be a hash join's keys.
 
 ## 2. Project layout
 

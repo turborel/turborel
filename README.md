@@ -64,13 +64,14 @@ behind it, and each can be replaced or added to.
   match, and a row-store COUNT(*) is summed from its settled zones.
 - Column store skipping that survives writes: shadow bits and zones over
   the delta, optional column imprints, column sketches of compressed
-  texts, sorted dictionaries judged by codes, and index fetches read
-  group by group in batches.
+  texts, and sorted dictionaries judged by codes.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables, on statistics of most common values, a
   sample of rows for correlated conditions and indexes' joint key counts.
+- [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
+  bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
   query and shows each operator's rows beside its estimate, and a program
   may give the planner true row counts to test its plans.
@@ -131,6 +132,9 @@ behind it, and each can be replaced or added to.
 - [Backups](doc/operator/10-backups.md), full and incremental, taken
   online by BACKUP DATABASE, verified and restored offline, and recovery
   to a point in time through an archive of the log, to pluggable targets.
+- [Monitoring](doc/operator/11-monitoring.md): each connection's running
+  statement and what it waits on, statistics of every statement run, and
+  each table's size and last change and each index's searches.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.

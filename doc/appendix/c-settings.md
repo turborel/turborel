@@ -101,6 +101,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | PLANNER.JOIN_ENUMERATION | ADAPTIVE | ONE OF ADAPTIVE, GREEDY | at once | *session* |
 | PLANNER.LINEARIZED_RELATIONS | 100 | INTEGER FROM 2 TO 128 | at once | *session* |
 | PLANNER.NULL_FRACTION | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
+| PLANNER.RANGE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.RANGE_SELECTIVITY | 3.333333333333333E-1 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.REORDER_GAIN | 9E-1 | NUMBER FROM 0E0 TO 9.99E-1 | at once |  |
 | PLANNER.SORT_COMPARE_COST | 1E-1 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
@@ -123,6 +124,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | SPILL.PARTITION_DEPTH | 8 | INTEGER FROM 0 TO 64 | at once | *session* |
 | SQL.FUNCTION_CALLS | ON | ONE OF ON, OFF | at once | *session* |
 | STATEMENT.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| STATEMENTS.KEPT | 1000 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | STORAGE.CHECKSUM | XXH3_64 | A HASH FUNCTION | when the database is made |  |
 | STORAGE.CHECKSUM_KEY | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once |  |
 | STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
@@ -214,6 +216,7 @@ Each in a sentence:
 - **PLANNER.JOIN_ENUMERATION**: How the joins of a query are ordered. ADAPTIVE orders them by dynamic programming over bushy plans, outer joins among them, linearized or guided greedily as the query grows, and GREEDY orders them left-deep, each next join the cheapest, as to compare the two.
 - **PLANNER.LINEARIZED_RELATIONS**: The most tables ADAPTIVE join ordering plans whole by linearized dynamic programming when exact search is past its budget, and the size of the parts of a greedy plan it plans again so for larger queries.
 - **PLANNER.NULL_FRACTION**: The fraction of a column's values taken to be null when the statistics do not tell.
+- **PLANNER.RANGE_JOINS**: Whether a join whose condition compares a value of each table by <, <=, > or >=, a band or an overlap of periods among them, may sort one table and have each row of the other search it, rather than judge every pair. OFF plans such joins as nested loops, as to compare the two.
 - **PLANNER.RANGE_SELECTIVITY**: The fraction of rows an order comparison, a pattern or a subquery keeps when the statistics do not tell.
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.
 - **PLANNER.SORT_COMPARE_COST**: The cost of one comparison of a sort, a row read in sequence costing 1.
@@ -236,6 +239,7 @@ Each in a sentence:
 - **SPILL.PARTITION_DEPTH**: The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.
 - **SQL.FUNCTION_CALLS**: Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF. A definition, as a CHECK, is checked as it is written, and keeps its calls whatever the setting is later.
 - **STATEMENT.TIMEOUT_MS**: The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.
+- **STATEMENTS.KEPT**: The most statements, by normalized text and user, INFORMATION_SCHEMA.STATEMENT_STATISTICS keeps, each session's and those of sessions ended alike, past which a new one takes the place of the one called least; 0 keeps none, and setting it to 0 forgets them all.
 - **STORAGE.CHECKSUM**: The hash function every file is checksummed with.
 - **STORAGE.CHECKSUM_KEY**: The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.
 - **STORAGE.ENCODINGS**: The encodings, as compression or encryption, every file passes through from now on, by commas, in order; none if empty. What was written through others before is read through them while they are registered, and written again through these by the job turborel-rekey.

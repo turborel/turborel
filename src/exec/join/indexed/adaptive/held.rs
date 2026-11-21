@@ -1,11 +1,9 @@
 //! Reserve the small spatial input before retaining it. Fallback keeps
 //! both its reservation and every row already pulled until consumed.
 
-use std::sync::Arc;
-
 use super::super::IndexJoin;
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::{RowIter, broken, work::Work};
 use crate::functions::ScalarRef;
 use crate::geometry::Geometry;
@@ -29,7 +27,7 @@ pub(super) struct Held {
 }
 
 impl Held {
-    pub(super) fn new(db: &Arc<State>) -> Option<Self> {
+    pub(super) fn new(db: &Db) -> Option<Self> {
         let bytes = metadata(ROWS);
         let limit = Work::ceiling_of(db);
         if bytes > limit {

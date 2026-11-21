@@ -13,13 +13,14 @@ use super::{RowIter, broken, execute, failed};
 use crate::clock::Clock;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::physical::{Counted, NodeCount, Plan};
 use crate::storage::Row;
 use crate::txn::TxId;
 
 /// The rows of `plan`, a counted operator, counted.
 #[inline(never)]
-pub(super) fn counted(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn counted(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Counted(c) = plan else { return failed(broken("a counted operator is not one")) };
     through(*c, db, |input| execute(input, db, tx))
 }

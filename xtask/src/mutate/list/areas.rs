@@ -23,9 +23,12 @@ mod insert_values;
 mod join_table;
 mod joins;
 mod late;
+mod monitoring;
 mod oltp;
 mod parallel;
+mod range_joins;
 mod rewrites;
+mod set_types;
 mod skipping;
 mod sorts;
 mod statistics;
@@ -40,7 +43,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 16] {
+pub fn core() -> [&'static [Mutation]; 17] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -58,6 +61,7 @@ pub fn core() -> [&'static [Mutation]; 16] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &monitoring::MONITORING,
     ]
 }
 
@@ -98,7 +102,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 42] {
+fn second() -> [&'static [Mutation]; 44] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -137,11 +141,13 @@ fn second() -> [&'static [Mutation]; 42] {
         &rewrites::REWRITES,
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
+        &set_types::SET_TYPES,
         &expr::EXPR,
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
         &statistics::STATISTICS,
+        &range_joins::RANGE_JOINS,
     ]
 }
 

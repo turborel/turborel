@@ -54,6 +54,7 @@ mod options;
 mod recovery;
 mod scan;
 mod sealing;
+mod sizes;
 mod split;
 mod stats;
 mod store;
@@ -271,11 +272,6 @@ impl TableStorage for RowTable {
         self.get_of(tx, id, columns, near)
     }
 
-    /// Of rows frozen, those of one group read together (`frozen/fetch.rs`).
-    fn get_many(&self, tx: TxId, ids: &[RowId], columns: Option<&[usize]>, near: &mut Near) -> Result<Vec<Option<Row>>> {
-        self.get_many_of(tx, ids, columns, near)
-    }
-
     /// Only `columns` are decoded, and only their values out of line read.
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows {
         self.scan_rows(tx, columns, None)
@@ -355,6 +351,10 @@ impl TableStorage for RowTable {
 
     fn row_count(&self) -> usize {
         self.counted.live.load(Ordering::Acquire)
+    }
+
+    fn sizes(&self) -> Option<crate::storage::TableSizes> {
+        self.measured()
     }
 
     /// A row of the tree costs 0.8, up to 1 as all its columns are read; a

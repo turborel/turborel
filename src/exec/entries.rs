@@ -2,19 +2,19 @@
 //! searched UPDATE or DELETE [X3.135-1986 §8.12 GR1, §8.5 GR1], and the
 //! rows an updatable cursor may cover.
 
+use crate::exec::{Db, Opening};
 use std::sync::Arc;
 
 use super::held::HeldRows;
 use super::scan::{Found, probe_index};
 use super::{Runner, broken, eval_cond};
 use crate::catalog::{KeyShape, QualifiedName};
-use crate::db::State;
 use crate::error::Result;
 use crate::index::{Key, KeyProjection, Probe};
 use crate::logical::{Truth, pushed_conjuncts};
 use crate::physical::{Decided, Plan};
 use crate::storage::{Near, Row, RowId, TableStorage};
-use crate::txn::{TxId, checked};
+use crate::txn::{TxId, checked, counted};
 use crate::value::Value;
 
 /// What the fetches of one scan of an index share: the columns they read,
@@ -96,50 +96,6 @@ pub(super) fn entry_row(
     Ok(fetch(storage, ix, reading, (tx, id), &key)?.map(|(_, row)| row))
 }
 
-/// \[DESIGN\] (RULES.md D513) The rows of the entries `wanted`, each a
-/// key and a row id, as `entry_row` reads each, in their order: those it
-/// does not make of their key read of `storage` together
-/// (`TableStorage::get_many`), each kept if that version has its key.
-pub(in crate::exec) fn entry_rows(
-    storage: &dyn TableStorage,
-    (ix, width): (&KeyShape, Option<usize>),
-    reading: &mut Reading,
-    tx: TxId,
-    wanted: &[(Key, RowId)],
-) -> Result<Vec<Option<Row>>> {
-    let mut rows: Vec<Option<Row>> = Vec::with_capacity(wanted.len());
-    let mut read = Vec::new();
-    for (n, (key, id)) in wanted.iter().enumerate() {
-        if let Some(width) = width.filter(|_| reading.projection.is_none())
-            && storage.visible_to_all(*id)
-        {
-            let mut row = vec![Value::Null; width];
-            for (&column, value) in ix.columns.iter().zip(&key.0) {
-                if let Some(slot) = row.get_mut(column) {
-                    *slot = value.clone();
-                }
-            }
-            rows.push(Some(row));
-        } else {
-            rows.push(None);
-            read.push(n);
-        }
-    }
-    let Reading { columns, near, projection } = reading;
-    let ids: Vec<RowId> = read.iter().filter_map(|&n| wanted.get(n).map(|(_, id)| *id)).collect();
-    for (&n, row) in read.iter().zip(storage.get_many(tx, &ids, columns.as_deref(), near)?) {
-        let (Some(row), Some((key, _))) = (row, wanted.get(n)) else { continue };
-        let Some(mut seen) = ix.key_of(&row) else { continue };
-        if let Some(project) = projection {
-            seen = project.project(&seen)?;
-        }
-        if let Some(slot) = rows.get_mut(n).filter(|_| seen == *key) {
-            *slot = Some(row);
-        }
-    }
-    Ok(rows)
-}
-
 /// Rows with their ids, each read when it is pulled.
 pub type Entries = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 
@@ -154,17 +110,22 @@ pub type Entries = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 /// `plan` is not a table access or names a table or index that does not
 /// exist (SQLCODE -910); reading the rows, as they are pulled, as
 /// `row_entries` says.
-pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
+pub fn table_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Result<Entries> {
+    entries_in(plan, &db.opening(), tx)
+}
+
+/// `table_entries`' work, in `db`.
+fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
     match plan {
-        Plan::Project { input, .. } => table_entries(*input, db, tx),
+        Plan::Project { input, .. } => entries_in(*input, db, tx),
         Plan::SeqScan { table, columns, .. } => {
-            Ok(Box::new(checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx))))
+            Ok(Box::new(counted(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx), |_| 1)))
         }
         Plan::IndexScan { table, index, probe, reverse, decided, .. } => index_entries((&table, &index, probe, reverse), decided, db, tx),
         Plan::Filter { cond, input, .. } => {
             let rows: Entries = match (*input, pushed_conjuncts(&cond)) {
                 (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
-                    Box::new(checked(Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition), db.tx.stop_of(tx)))
+                    Box::new(counted(Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition), db.tx.stop_of(tx), |_| 1))
                 }
                 (input, _) => table_entries(input, db, tx)?,
             };
@@ -184,6 +145,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
@@ -216,7 +178,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
 fn index_entries(
     (table, index, probe, reverse): (&QualifiedName, &str, Probe, bool),
     decided: Option<Box<Decided>>,
-    db: &Arc<State>,
+    db: &Db,
     tx: TxId,
 ) -> Result<Entries> {
     if let Probe::Xml(asked) = &probe
@@ -232,7 +194,7 @@ fn index_entries(
         let Some(decided) = &decided else { return Ok(Some((id, row))) };
         Ok((eval_cond(&decided.cond, &row, &runner)? == Truth::True).then_some((id, row)))
     };
-    let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+    let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
         let fetched = entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key));
         fetched.and_then(|found| found.map_or(Ok(None), &judge)).transpose()
     });
@@ -250,9 +212,10 @@ fn index_entries(
 /// STATEMENT.TIMEOUT_MS (SQLCODE -920), `plan` is not a table access or names
 /// a table or index that does not exist (SQLCODE -910), or the rows cannot
 /// be spilled (SQLCODE -918 if the area cannot be reserved).
-pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<HeldRows<(RowId, Row)>> {
+pub fn row_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Result<HeldRows<(RowId, Row)>> {
+    let db = db.opening();
     let mut held = HeldRows::new(db.list_space());
-    for entry in table_entries(plan, db, tx)? {
+    for entry in entries_in(plan, &db, tx)? {
         held.push(entry?)?;
     }
     Ok(held)
