@@ -57,7 +57,9 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         Plan::Filter { input, .. } => layout(input, db),
         // [EXTENSION] a counted operator's, its input's (RULES.md D378).
         Plan::Counted(c) => layout(&c.input, db),
-        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) => joined::layout(plan, db),
+        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) | Plan::MarkJoin(_) => {
+            joined::layout(plan, db)
+        }
         Plan::Project { exprs, input, .. } => {
             let (columns, _) = layout(input, db)?;
             exprs.iter().all(|e| place_of(e, &columns).is_some()).then(|| ((0..exprs.len()).collect(), exprs.len()))
@@ -153,6 +155,8 @@ pub(super) fn untold(plan: &Plan) -> bool {
         Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => false,
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, .. } | Plan::Limit { input, .. } => untold(input),
         Plan::Counted(c) => untold(&c.input),
+        // A mark join gives its left's batches on, marked (RULES.md D643).
+        Plan::MarkJoin(m) => untold(&m.left),
         Plan::Parallel(p) => untold(&p.input),
         Plan::Append { .. } => appended(plan).into_iter().all(untold),
         Plan::Product { left, right, .. } | Plan::OuterJoin { left, right, .. } => untold(left) && untold(right),
@@ -200,6 +204,8 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         Plan::HashJoin { left, right, .. } => reads(left, db, true) && reads(right, db, true),
         Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => joined && told::reads(plan, db),
         Plan::SemiJoin(s) => reads(&s.left, db, true) && reads(&s.right, db, true),
+        // Its right's rows are held as the row path holds them.
+        Plan::MarkJoin(m) => reads(&m.left, db, joined),
         Plan::Nearest(_)
         | Plan::RangeJoin(_)
         | Plan::Sort { .. }
@@ -313,7 +319,9 @@ fn made_of(plan: &Plan) -> Batched {
     match plan {
         Plan::SeqScan { .. } => scan_batches,
         Plan::Filter { .. } => filter_batches,
-        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) => joined::batches_with,
+        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) | Plan::MarkJoin(_) => {
+            joined::batches_with
+        }
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
         Plan::Counted(_) => super::counted::batches,

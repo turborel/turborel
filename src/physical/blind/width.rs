@@ -60,6 +60,7 @@ impl PhysicalPlanner<'_> {
             | Plan::OuterJoin { .. }
             | Plan::MergeJoin(_)
             | Plan::RangeJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::Aggregate { .. }
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }

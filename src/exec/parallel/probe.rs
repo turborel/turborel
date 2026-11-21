@@ -121,8 +121,9 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
         Plan::Nearest(_)
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
