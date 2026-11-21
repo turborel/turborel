@@ -23,6 +23,7 @@ pub(crate) use transition::Transitions;
 use dynamic::Dynamic;
 pub use dynamic::ParameterType;
 pub(crate) use dynamic::conformed;
+pub(crate) use given::conformed_row;
 
 use crate::ast::{LexicallyScopedOptions, ParameterSpecification, TargetKind};
 use crate::error::{Code, Result, SqlError};

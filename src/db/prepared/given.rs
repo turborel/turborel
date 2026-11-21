@@ -6,7 +6,7 @@ use super::super::area::commands;
 use super::super::{Completion, Session};
 use super::{Kind, Prepared};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::params::Params;
+use crate::params::{Params, conformed_row};
 use crate::storage::Row;
 
 impl Session {
@@ -20,7 +20,7 @@ impl Session {
     /// SQLSTATE 07001 if a row is not one value for each parameter [ISO/IEC
     /// 9075:1992 §17.9 GR5a]; SQLCODE -910 if `p` is not such an INSERT;
     /// as `execute_prepared`.
-    pub fn execute_prepared_rows(&self, p: &Prepared, rows: Vec<Row>) -> Result<Completion> {
+    pub fn execute_prepared_rows(&self, p: &Prepared, rows: &[Row]) -> Result<Completion> {
         if p.kind != Kind::Statement {
             return Err(super::super::write::not_given());
         }
@@ -28,9 +28,9 @@ impl Session {
         for row in rows {
             // [ISO/IEC 9075-2:2023 §4.37.5] a large object sent by its
             // locator is the value it names.
-            let row = self.unlocated(&row)?;
+            let row = self.unlocated(row)?;
             Self::values_for(p, &row)?;
-            given.push(row);
+            given.push(conformed_row(row, &p.parameters)?);
         }
         let Some(first) = given.first().cloned() else {
             let msg = "[DESIGN] an execution for many rows is given at least one";

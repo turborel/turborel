@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use super::Params;
+use super::{ParameterType, Params};
+use crate::error::{Code, Result, SqlError};
 use crate::storage::Row;
 
 impl Params {
@@ -19,4 +20,21 @@ impl Params {
     pub(crate) fn given(&self) -> Option<&Arc<Vec<Row>>> {
         self.given.as_ref()
     }
+}
+
+/// `row`, the values of parameters of types `types`, each cast to its type
+/// as an execution takes it [ISO/IEC 9075:1992 §17.9 GR5f].
+///
+/// # Errors
+///
+/// CAST's; SQLCODE -910 for a cast that warns, which an execution of its
+/// own would tell, so the row is executed alone.
+pub(crate) fn conformed_row(row: Row, types: &[ParameterType]) -> Result<Row> {
+    row.into_iter()
+        .zip(types)
+        .map(|(value, t)| match super::conformed(value, &t.clone().data_type())? {
+            (value, None) => Ok(value),
+            (_, Some(_)) => Err(SqlError::new(Code::Api, "[DESIGN] a value given with others warns as it is cast")),
+        })
+        .collect()
 }

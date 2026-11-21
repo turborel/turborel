@@ -197,7 +197,7 @@ impl Insert {
     fn insert_waiting(&mut self, session: &Session) -> Result<()> {
         let rows = std::mem::replace(&mut self.waiting, Vec::with_capacity(BATCH));
         let first = self.rows.saturating_sub(u64::try_from(rows.len()).unwrap_or(0));
-        if session.execute_prepared_rows(&self.one, rows.clone()).is_ok() {
+        if session.execute_prepared_rows(&self.one, &rows).is_ok() {
             return Ok(());
         }
         for (at, row) in (1_u64..).zip(&rows) {
