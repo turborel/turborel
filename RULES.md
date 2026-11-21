@@ -11787,7 +11787,10 @@ unique key kept from the start, so no plan reads them, yet the tables
 that churn were sampled again and again, and the pass took the cores
 the sessions run on. A table now notes when a planning reads its
 statistics, and the maintenance job gathers it only if one did since
-its last pass began, and the table is due and spaced as before. A table
+its last pass began, and the table is due and spaced as before. The
+read that makes statistics due wanted notes the table for the
+maintenance job, as a commit to it would, so a table changed enough and
+then read with no write after is gathered too. A table
 opened and asked for its first statistics is gathered as before, and
 ANALYZE and the maintenance asked to run now gather at once
 (`engine/rows/stats.rs`). A sampled pass of a table of the column store

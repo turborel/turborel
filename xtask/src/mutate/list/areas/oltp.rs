@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 25] = [
+pub const OLTP: [Mutation; 26] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -229,6 +229,16 @@ pub const OLTP: [Mutation; 25] = [
         replacement: "        let due = gathered.due() && (now || gathered.spaced());",
         integration: &[],
         unit: &["engine::rows::stats::tests::statistics_no_plan_reads_are_not_gathered"],
+    },
+    Mutation {
+        name: "oltp-statistics-read-unnoted",
+        package: Package::Core,
+        breaks: "a plan's read that makes a table's statistics wanted notes nothing, so a table changed enough and then only read is never gathered again",
+        file: "src/db/state.rs",
+        original: "        if (stats.is_none() && storage.maintenance_due()) || (!wanted && storage.statistics_wanted()) {",
+        replacement: "        if stats.is_none() && storage.maintenance_due() {",
+        integration: &["statistics_background::statistics_are_gathered_in_the_background"],
+        unit: &[],
     },
     Mutation {
         name: "oltp-frozen-sample-unfiltered",

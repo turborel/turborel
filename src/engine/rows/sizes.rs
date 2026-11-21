@@ -6,6 +6,7 @@
 //! its statistics last measured, none if they never did.
 
 use super::RowTable;
+use crate::stats::Statistics;
 use crate::storage::{TableSizes, TableStorage};
 
 impl RowTable {
@@ -26,7 +27,9 @@ impl RowTable {
         if in_tree == 0 {
             return Some(TableSizes { bytes: frozen, estimated: false });
         }
-        let width = self.statistics()?.width(&[])?;
+        // The last pass's, read as no plan reads them, so showing sizes
+        // makes no pass wanted (RULES.md D473).
+        let width = self.gathered.get()?.width(&[])?;
         Some(TableSizes { bytes: frozen.saturating_add(estimate(in_tree, width)), estimated: true })
     }
 }
