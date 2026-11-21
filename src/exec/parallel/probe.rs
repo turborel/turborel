@@ -103,7 +103,8 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit
     }
     let width = width_of(&rows, keys);
     let parts = vec![batch_of(&rows, width)];
-    let shared = SharedTable::of(parts, ((0..width).collect(), width), keys, db.functions.seed().clone())?;
+    let shared =
+        SharedTable::of(parts, ((0..width).collect(), width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
     Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
 }
 
@@ -121,8 +122,9 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
         Plan::Nearest(_)
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
@@ -191,7 +193,7 @@ fn parallel_built(
     });
     // A morsel of no rows may hold no vectors.
     parts.retain(|b| b.rows > 0);
-    let shared = SharedTable::of(parts, (columns, width), keys, db.functions.seed().clone())?;
+    let shared = SharedTable::of(parts, (columns, width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
     Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
 }
 

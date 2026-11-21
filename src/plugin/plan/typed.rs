@@ -142,6 +142,7 @@ pub fn of_node(plan: &LogicalPlan, inner: &[Vec<Typed>], st: &State) -> Vec<Type
         | LogicalPlan::Limit { .. }
         | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::SetOp { .. } => first,
+        LogicalPlan::MarkJoin(_) => first.into_iter().chain([Some(DataType::Boolean)]).collect(),
         LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } => inner.concat(),
         LogicalPlan::Aggregate { groups, aggs, .. } => {
             let mut types: Vec<Typed> = groups.iter().map(|g| first.get(*g).cloned().flatten()).collect();

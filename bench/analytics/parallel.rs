@@ -80,10 +80,12 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 pub fn workloads(bench: &Bench) {
     let (_db, s) = database();
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    // Degree 1 alone when the system has one thread, so no case is measured twice under one name.
+    let degrees: &[usize] = if threads > 1 { &[1, threads] } else { &[1] };
     for (table, label) in [("P", ""), ("PC", " (columnstore)")] {
         for (name, sql) in QUERIES {
             let sql = sql.replace("{t}", table);
-            for degree in [1, threads] {
+            for &degree in degrees {
                 s.run(&format!("SET EXECUTOR.DEGREE = {degree}")).unwrap();
                 bench.measure(Case::new(format!("{name}{label}"), "rows").threads(degree), || {
                     fetched(&s, &sql);

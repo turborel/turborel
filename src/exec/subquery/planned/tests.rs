@@ -15,9 +15,15 @@ use crate::value::{CompOp, Decimal};
 
 /// A state whose table `A.U` (K INTEGER, W INTEGER) holds 200 rows: K
 /// unique if `unique`, else of 10 values, 20 rows each, indexed by the
-/// index `UK`.
+/// index `UK`; its subqueries decorrelated after more runs than any test's.
 fn state(unique: bool) -> Arc<State> {
+    state_of(unique, 1_000_000)
+}
+
+/// `state(unique)`, its subqueries decorrelated after `after` runs.
+fn state_of(unique: bool, after: i128) -> Arc<State> {
     let db = crate::db::Database::new();
+    db.set_setting("EXECUTOR.DECORRELATE_AFTER_RUNS", &int(after)).unwrap();
     let key = if unique { ", UNIQUE (K)" } else { "" };
     db.schema(&format!("CREATE SCHEMA AUTHORIZATION A CREATE TABLE U (K INTEGER NOT NULL, W INTEGER{key})")).unwrap();
     let s = db.session("A");
@@ -143,6 +149,27 @@ fn a_null_waits_and_a_kind_no_slot_takes_plans_each_run() {
     let own = Subquery::new(LogicalPlan::Project { exprs: vec![slot], input: Box::new(sq.plan.clone()) }, vec![Expr::Column(0)]);
     assert_eq!(named(&runner.planned(&own, &[int(1)], Planned::Untried).1), "varies");
     assert_eq!(named(&runner.planned(&sq, &[int(1)], Planned::Varies).1), "varies");
+}
+
+/// Verifies: [DESIGN] RULES.md D675: a subquery decorrelated after fewer
+/// runs than a plan learns over is planned at each run until then, as its
+/// learning would cost more than it saves. MC/DC pairs of waiting for
+/// decorrelation: decorrelated soon, planned at each run; one that cannot
+/// be decorrelated, its outer reference in a comparison no key takes,
+/// learns; decorrelated after many runs, learns (as the tests above).
+#[test]
+fn a_subquery_decorrelated_soon_is_planned_at_each_run() {
+    let st = state_of(false, 8);
+    let runner = Runner::new(&st, NO_TRANSACTION);
+    assert_eq!(named(&runner.planned(&subquery(), &[int(1)], Planned::Untried).1), "varies");
+    let LogicalPlan::Project { exprs, input } = subquery().plan else { panic!("a projection") };
+    let LogicalPlan::Filter { input: scan, .. } = *input else { panic!("a filter") };
+    let cond = Cond::Compare(Expr::Column(0), CompOp::Ge, Expr::Outer(0, "T.K".into()));
+    let ranged = LogicalPlan::Project { exprs, input: Box::new(LogicalPlan::Filter { cond, input: scan }) };
+    let ranged = Subquery::new(ranged, vec![Expr::Column(0)]);
+    assert_eq!(named(&runner.planned(&ranged, &[int(1)], Planned::Untried).1), "learning");
+    let later = Runner::new(&state(false), NO_TRANSACTION);
+    assert_eq!(named(&later.planned(&subquery(), &[int(1)], Planned::Untried).1), "learning");
 }
 
 /// Verifies: [DESIGN] RULES.md D675: the slot of each kind an index places

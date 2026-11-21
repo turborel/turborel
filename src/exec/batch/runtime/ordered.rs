@@ -79,7 +79,7 @@ mod tests {
     /// and its Bloom filter.
     fn placed(keys: &[i64]) -> Placed {
         let seed = Seed::fixed(7);
-        let how = Hashing { seed: &seed, keyed: false };
+        let how = Hashing { seed: &seed, keyed: false, direct: false };
         let built = Batch { columns: vec![Column::Ints(Ints::new(keys.to_vec(), 0, None))], rows: keys.len() };
         let mut hashes = KeyHashes::default();
         hashes.of_batch((&built, None), (&[0], &[false]), how).unwrap();

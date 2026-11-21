@@ -222,6 +222,10 @@ fn column_type(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: 
     match plan {
         LogicalPlan::Scan { table, .. } => catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),
         LogicalPlan::Filter { input, .. } | LogicalPlan::SemiJoin { left: input, .. } => column_type(input, column, catalog, deeper),
+        LogicalPlan::MarkJoin(m) => match column.checked_sub(m.left.width()) {
+            Some(_) => Some(DataType::Boolean),
+            None => column_type(&m.left, column, catalog, deeper),
+        },
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
             Some(at) => column_type(right, at, catalog, deeper),
             None => column_type(left, column, catalog, deeper),

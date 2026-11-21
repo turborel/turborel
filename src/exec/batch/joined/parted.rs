@@ -109,7 +109,7 @@ impl Parted {
         let Some((mut built, probes)) = self.pending.next(&mut self.work)? else { return Ok(None) };
         let Some(rows) = built.taken_rows() else { return Ok(Some((Pairing::Spilled(built), probes))) };
         let width = self.columns.1.len();
-        let table = SharedTable::of_rows(&rows, width, &self.keys.0, (self.keys.1.clone(), self.columns.1.clone()))?;
+        let table = SharedTable::of_rows(&rows, width, &self.keys.0, (self.keys.1.clone(), self.columns.1.clone(), self.work.dense()))?;
         Ok(Some((Pairing::Table(table), probes)))
     }
 
