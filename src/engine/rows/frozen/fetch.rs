@@ -3,7 +3,8 @@
 //! it. The frozen ones are taken by group, their places in it found, and
 //! each column read at those places in order (`values_at`), so a chunk
 //! is opened once for every row of it fetched, not once a value, and the
-//! directory and each group once a batch.
+//! directory and each group once a batch. Of fewer than eight rows to a
+//! chunk, each value is read alone, as `get` reads it.
 
 use crate::engine::columns::prepared::Prepared;
 use crate::engine::columns::scan::values_at;
@@ -12,6 +13,10 @@ use crate::error::Result;
 use crate::storage::{Near, Row, RowId};
 use crate::txn::TxId;
 use crate::value::Value;
+
+/// The rows to a chunk, on average, from which a batch reads a column's
+/// values chunk by chunk, each chunk prepared once.
+const DENSE: usize = 8;
 
 impl RowTable {
     /// Rows `ids` as `tx` sees them, in their order, `columns` decoded,
@@ -88,7 +93,14 @@ impl RowTable {
         let mut prepared = Prepared::default();
         for &c in columns.unwrap_or(&all) {
             let Some(t) = types.get(c) else { continue };
-            let values = values_at(group, (&pages, &mut prepared), (c, t), &positions)?;
+            // Of few rows to a chunk, each value read alone, as `get` reads
+            // it: preparing a chunk for one value costs more than it saves.
+            let chunks = group.columns.get(c).map_or(0, Vec::len);
+            let values = if positions.len() >= chunks.saturating_mul(DENSE) {
+                values_at(group, (&pages, &mut prepared), (c, t), &positions)?
+            } else {
+                positions.iter().map(|&p| group.value(&pages, (c, t), p)).collect::<Result<Vec<_>>>()?
+            };
             for (&(_, n), value) in at.iter().zip(values) {
                 if let Some(slot) = rows.get_mut(n).and_then(Option::as_mut).and_then(|row| row.get_mut(c)) {
                     *slot = value;
