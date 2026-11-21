@@ -51,6 +51,7 @@
 mod counts;
 mod cuts;
 mod estimate;
+mod fit;
 pub(crate) mod hints;
 mod load;
 mod near;
@@ -412,8 +413,8 @@ impl BLinkTree {
     }
 
     /// Makes `slot`'s change to locked node `held`: in place if the node
-    /// then fits its page, else by splitting it. The split, if any.
-    fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Option<Split>> {
+    /// then fits its page, else by splitting it. The splits, if any.
+    fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Vec<Split>> {
         let copy = {
             let mut page = self.pool.write(self.file, held.id)?;
             let (live, old, new_run) = {
@@ -435,7 +436,7 @@ impl BLinkTree {
                 if let Slot::Replace(at) = slot {
                     node::overwrite(&mut page, at, value)?;
                 }
-                return Ok(None);
+                return Ok(Vec::new());
             };
             let added = node::entry_size(key, value);
             let after = match slot {
@@ -458,10 +459,10 @@ impl BLinkTree {
                     *page = node::compact(&page)?;
                 }
                 node::insert(&mut page, at, key, value)?;
-                return Ok(None);
+                return Ok(Vec::new());
             }
         };
-        self.split(held.id, &copy, (key, value), slot).map(Some)
+        self.split(held.id, &copy, (key, value), slot)
     }
 
     /// Whether an entry of `key`, `added` bytes whole, fits the node `page`
@@ -480,8 +481,8 @@ impl BLinkTree {
 
     /// Splits node `id`, whose content was `copy`, making `slot`'s change
     /// (§4): the right half written to a new page, then the left half over
-    /// the old, linked to it.
-    fn split(&self, id: PageId, copy: &[u8], entry: (&[u8], &[u8]), slot: Slot) -> Result<Split> {
+    /// the old, linked to it; a half past the page split again (`fit.rs`).
+    fn split(&self, id: PageId, copy: &[u8], entry: (&[u8], &[u8]), slot: Slot) -> Result<Vec<Split>> {
         let node = Node::parse(copy)?;
         let mut entries = node.entries()?;
         let entry = (KeyRef::whole(entry.0), entry.1);
@@ -503,7 +504,7 @@ impl BLinkTree {
             }
         };
         let (new, mut page) = self.pool.new_page(self.file)?;
-        let halves = match node::split(&node.shape(), &entries, run, new) {
+        let halves = match node::split(&node.shape(), &entries, run, (new, self.capacity)) {
             Ok(halves) => halves,
             Err(e) => {
                 drop(page);
@@ -512,11 +513,12 @@ impl BLinkTree {
                 return Err(e);
             }
         };
-        *page = halves.right;
+        let mut splits = vec![Split { separator: halves.separator, right: new, level: node.level }];
+        *page = self.fitted(halves.right, &mut splits)?;
         drop(page);
-        *self.pool.write(self.file, id)? = halves.left;
+        *self.pool.write(self.file, id)? = self.fitted(halves.left, &mut splits)?;
         count(&self.counters.splits);
-        Ok(Split { separator: halves.separator, right: new, level: node.level })
+        Ok(splits)
     }
 
     /// Locks the node one level above `split` that takes its separator, and

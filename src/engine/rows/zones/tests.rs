@@ -20,18 +20,18 @@ use crate::txn::NO_TRANSACTION;
 use crate::value::{CompOp, DataType, Decimal, Spelled, Value};
 
 /// A number kept, a long text not.
-const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(100)];
+pub(super) const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(100)];
 
 fn int(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))
 }
 
-fn row(n: i128) -> Row {
+pub(super) fn row(n: i128) -> Row {
     vec![int(n), Value::Char(format!("text {n}"))]
 }
 
 /// The tables' files, in memory.
-fn files() -> TableFiles {
+pub(super) fn files() -> TableFiles {
     paged().1
 }
 
@@ -576,24 +576,4 @@ fn a_zone_unsettled_alone_is_settled_with_its_bounds_kept() {
     assert_eq!(zone_rows(&table, ids[0]), 99, "the deletion counted");
     assert!(!table.zones.visible(ids[0]), "a deletion is seen by no reader alone");
     assert!(reads(&table, &equal(0, 40), ids[40]), "the bounds kept");
-}
-
-/// Verifies: [DESIGN] RULES.md D31, zone maps: once a pass of the
-/// maintenance thread has looked at every zone due, the zones rest, so a
-/// write meanwhile leaves work due but asks for no maintenance until the
-/// rest is over. MC/DC of the pass's end: a pass looking at fewer zones
-/// than one call sums up rests them; one of as many, more due, does not.
-#[test]
-fn zones_rest_after_a_pass_over_every_zone_due() {
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
-    let rows = u64::try_from(super::MOST_SUMMED + 1).unwrap() * ZONE_ROWS;
-    let ids: Vec<RowId> = (0..rows).map(|n| table.insert(NO_TRANSACTION, row(i128::from(n))).unwrap()).collect();
-    assert!(table.sum_zones(u64::MAX).unwrap());
-    assert!(table.zones.wanted(), "more zones due than one call sums up: no rest");
-    assert!(table.sum_zones(u64::MAX).unwrap());
-    assert!(!table.zones.due() && !table.zones.wanted(), "every zone looked at");
-    table.update(NO_TRANSACTION, ids[0], row(-1)).unwrap();
-    assert!(table.zones.due() && !table.zones.wanted(), "due, but resting");
-    table.zones.rest_until.store(0, std::sync::atomic::Ordering::Release);
-    assert!(table.zones.wanted(), "the rest over");
 }
