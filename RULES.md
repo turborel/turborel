@@ -12562,10 +12562,16 @@ calibration bench measures (D650), in rows of the row store's scan by
 batch: a grouping's row into few groups and into a group each, a hash
 join's row of a table as large, a value kept in a column of states as a
 conjunct judged by batch, one an accumulator takes as a conjunct judged
-a row at a time, and a row an operator gives as a sort's comparison.
+a row at a time, and a row an operator gives as a sort's comparison. A
+filter's conjunct weighs as one judged by batch, of each row it reads,
+and a product's row as EXPLAIN ANALYZE measures one, so a plan that
+pairs every row of two relations never looks as cheap as their join.
 Between the small table and the large one measured, a row's weight is
-taken by the logarithm of its table's rows. A hash join's small weight
-is the grouping's at the ratio the two measure of the large table. The
+taken by the logarithm of its table's rows. A hash join's row of the small
+table is as EXPLAIN ANALYZE measures one, as the calibration bench
+joins only large tables; and an inner join's runtime filter is weighed as
+the planner weighs it (D653), each probing row judged and those it
+keeps hashed, the share it keeps that of the rows the join gives. COUNT(*) adds nothing to the row its grouping hashes. The
 planner's own hash join weight is to grow with its build the same way
 (D650), and that function then takes the place of this one. Both plans
 are weighed by the same functions, so the ratio the gain judges (D663)

@@ -34,6 +34,7 @@ use classify::Cx;
 use rewrite::{Grouping, rewritten};
 
 use super::cardinality::Estimates;
+use super::cost::runtime;
 use super::{Built, PhysicalPlanner, Plan};
 use crate::functions::{AggregateRef, ColumnarKind};
 use crate::lexer::kw;
@@ -46,9 +47,11 @@ pub const EAGER_AGGREGATION: &str = "eager_aggregation";
 
 /// \[DESIGN\] The default of PLANNER.EAGER_GAIN: a plan grouped first is
 /// taken if estimated to do at most this much of the work of the plan as
-/// written, a margin for the estimates of groups, which are less sure
-/// than those of rows.
-pub const DEFAULT_EAGER_GAIN: f64 = 0.7;
+/// written. It lies between the estimated ratios of the bench's queries
+/// that ran faster grouped first and those that did not
+/// (`bench/analytics/eager.rs`), short of 1 as a margin for the
+/// estimates of groups, which are less sure than those of rows.
+pub const DEFAULT_EAGER_GAIN: f64 = 0.8;
 
 /// \[DESIGN\] The fewest rows of a relation each of its early groups must
 /// be estimated to take for it to be grouped first: fewer, a grouping by
@@ -69,7 +72,8 @@ impl PhysicalPlanner<'_> {
         let catalog = &*self.db.catalog;
         let types = |c: usize| plan_column_type(input, c, catalog);
         let grouping = Grouping { groups, collations, aggs };
-        let (gain, written) = (self.db.settings.number(EAGER_GAIN), cost::work(&plain.plan));
+        let filters = runtime::wanted(self.db);
+        let (gain, written) = (self.db.settings.number(EAGER_GAIN), cost::work(&plain.plan, filters));
         let mut best: Option<(f64, Built)> = None;
         for x in 0..chain.leaves.len() {
             let cx = Cx { chain: &chain, x, groups, aggs, types: &types, catalog };
@@ -78,7 +82,7 @@ impl PhysicalPlanner<'_> {
                 continue;
             }
             let built = self.eager_planned(&alt, want);
-            let work = cost::work(&built.plan);
+            let work = cost::work(&built.plan, filters);
             if work < gain * written && best.as_ref().is_none_or(|(least, _)| work < *least) {
                 best = Some((work, built));
             }

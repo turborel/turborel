@@ -77,3 +77,15 @@ fn the_plan_grouped_first_is_laid_out() {
     let LogicalPlan::Aggregate { groups: keys, aggs: parts, .. } = &early.leaves[0].plan else { panic!("not grouped first") };
     assert_eq!((keys.clone(), parts.len(), early.leaves[1].start), (vec![0], 2, 3));
 }
+
+/// Verifies: [DESIGN] RULES.md D660: a chain made again puts each
+/// conjunct over the lowest product that gives its columns, so a chain
+/// planned as written joins each relation by its own conjuncts, never by
+/// a product filtered above the last relation.
+#[test]
+fn chains_made_again_place_each_conjunct_lowest() {
+    let plan = joined(1, 4, product(joined(0, 2, product(operand(2), operand(2))), operand(3)));
+    let chain = Chain::of(&plan).unwrap();
+    let leaves = chain.leaves.iter().map(|l| l.plan.clone()).collect();
+    assert_eq!(format!("{:?}", Chain::made(leaves, chain.conds).unwrap()), format!("{plan:?}"));
+}

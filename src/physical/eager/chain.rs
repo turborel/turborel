@@ -2,10 +2,11 @@
 //! apart: its relations, each a plan that is no product and no filter
 //! over one, at its first column of the chain's; and the conjuncts of the
 //! filters over its products, over the chain's columns. Made again of
-//! them, a relation replaced, it is the conjuncts' filter over the
-//! relations' products, which the planner orders as it orders any chain.
+//! them, a relation replaced, it is the relations' products, each
+//! conjunct over the lowest that reads it, which the planner orders as it
+//! orders any chain.
 
-use crate::logical::{Cond, LogicalPlan, and_all, map_cond_columns, split_and};
+use crate::logical::{Cond, LogicalPlan, and_all, cond_columns, map_cond_columns, split_and};
 use crate::optimizer::is_guarded;
 
 /// \[DESIGN\] The deepest chain taken apart (RULES.md R-CF-6): more
@@ -68,16 +69,43 @@ impl Chain {
         Some(())
     }
 
-    /// The conjuncts' filter over the products of `leaves`, in their
-    /// order, the conjuncts `conds`.
+    /// The products of `leaves`, in their order, each conjunct of `conds`
+    /// in a filter over the lowest product, or the first relation, that
+    /// gives every column it reads, as predicate pushdown leaves a chain:
+    /// a chain planned as written then joins each relation by its own
+    /// conjuncts rather than pairing it with each row of the last.
     pub(super) fn made(leaves: Vec<LogicalPlan>, conds: Vec<Cond>) -> Option<LogicalPlan> {
         let mut leaves = leaves.into_iter();
-        let first = leaves.next()?;
-        let product = leaves.fold(first, |left, right| LogicalPlan::Product { left: Box::new(left), right: Box::new(right) });
-        Some(match and_all(conds) {
-            Some(cond) => LogicalPlan::Filter { cond, input: Box::new(product) },
-            None => product,
+        let mut plan = leaves.next()?;
+        let mut pending: Vec<(usize, Cond)> = conds.into_iter().map(|c| (last_column(&c), c)).collect();
+        plan = placed(plan, &mut pending);
+        for right in leaves {
+            plan = placed(LogicalPlan::Product { left: Box::new(plan), right: Box::new(right) }, &mut pending);
+        }
+        let rest = and_all(pending.into_iter().map(|(_, c)| c).collect());
+        Some(match rest {
+            Some(cond) => LogicalPlan::Filter { cond, input: Box::new(plan) },
+            None => plan,
         })
+    }
+}
+
+/// The last column `c` reads, or 0 if it reads none.
+fn last_column(c: &Cond) -> usize {
+    let mut reads = Vec::new();
+    cond_columns(c, &mut reads);
+    reads.into_iter().max().unwrap_or(0)
+}
+
+/// `plan` under the conjuncts of `pending` that read only its columns,
+/// taken out of `pending`.
+fn placed(plan: LogicalPlan, pending: &mut Vec<(usize, Cond)>) -> LogicalPlan {
+    let width = plan.width();
+    let (here, later): (Vec<_>, Vec<_>) = std::mem::take(pending).into_iter().partition(|(last, _)| *last < width);
+    *pending = later;
+    match and_all(here.into_iter().map(|(_, c)| c).collect()) {
+        Some(cond) => LogicalPlan::Filter { cond, input: Box::new(plan) },
+        None => plan,
     }
 }
 

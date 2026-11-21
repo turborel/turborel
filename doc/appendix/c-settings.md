@@ -100,7 +100,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.SIMPLIFY_CONDITIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.UNNEST_SUBQUERIES | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.DP_BUDGET | 10000 | INTEGER FROM 1 TO 1000000 | at once | *session* |
-| PLANNER.EAGER_GAIN | 7E-1 | NUMBER FROM 0E0 TO 1E6 | at once | *session* |
+| PLANNER.EAGER_GAIN | 8E-1 | NUMBER FROM 0E0 TO 1E6 | at once | *session* |
 | PLANNER.EQUAL_SELECTIVITY | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.ESTIMATE_MARGIN | 8E0 | NUMBER FROM 1E0 TO 1E6 | at once | *session* |
 | PLANNER.INDEX_DESCENT_COST | 6E0 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |

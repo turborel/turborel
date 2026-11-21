@@ -1,7 +1,8 @@
 //! The mutations of eager aggregation (RULES.md R-TEST-9, D660 to D662):
 //! a scaled sum not multiplied, sums of approximate numbers computed
 //! above the join, an argument that may be null pushed, a part finished as
-//! a result, and grouping columns whose equal values may differ.
+//! a result, grouping columns whose equal values may differ, and a chain
+//! made again with its conjuncts above its last relation.
 
 use super::super::{Mutation, Package};
 
@@ -9,7 +10,7 @@ use super::super::{Mutation, Package};
 const GROUPED: &str = "eager_aggregation::groupings_grouped_first_are_the_groupings_10_9";
 
 /// Mechanisms whose removal must fail eager aggregation's requirements.
-pub const EAGER: [Mutation; 5] = [
+pub const EAGER: [Mutation; 6] = [
     Mutation {
         name: "eager-scaled-unmultiplied",
         package: Package::Core,
@@ -59,5 +60,15 @@ pub const EAGER: [Mutation; 5] = [
         replacement: "        let alike = true;",
         integration: &["eager_aggregation::groupings_eager_aggregation_leaves_alone"],
         unit: &["physical::eager::classify::tests::shapes_refused"],
+    },
+    Mutation {
+        name: "eager-conjuncts-on-top",
+        package: Package::Core,
+        breaks: "a chain made again joins each relation by its own conjuncts",
+        file: "src/physical/eager/chain.rs",
+        original: "    let (here, later): (Vec<_>, Vec<_>) = std::mem::take(pending).into_iter().partition(|(last, _)| *last < width);",
+        replacement: "    let (here, later): (Vec<_>, Vec<_>) = std::mem::take(pending).into_iter().partition(|(last, _)| *last < width && width == usize::MAX);",
+        integration: &[],
+        unit: &["physical::eager::tests::chains_made_again_place_each_conjunct_lowest"],
     },
 ];
