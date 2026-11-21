@@ -92,21 +92,21 @@ fn inner_nodes_route_keys_to_children() {
 fn splits_halve_and_link() {
     let entries: Vec<(&[u8], &[u8])> = vec![(b"a", b"1"), (b"b", b"2"), (b"c", b"3"), (b"d", b"4")];
     let shape = Shape { level: 0, high: Some(b"k"), right: Some(PageId(8)), first: PageId(0), tree: TREE };
-    let halves = split(&shape, &refs(&entries), None, PageId(4)).unwrap();
+    let halves = split(&shape, &refs(&entries), None, (PageId(4), usize::MAX)).unwrap();
     let (left, right) = (Node::parse(&halves.left).unwrap(), Node::parse(&halves.right).unwrap());
     assert_eq!((keys(&halves.left), left.high, left.right), (vec![b"a".to_vec(), b"b".to_vec()], Some(&b"b"[..]), Some(PageId(4))));
     assert_eq!((keys(&halves.right), right.high, right.right), (vec![b"c".to_vec(), b"d".to_vec()], Some(&b"k"[..]), Some(PageId(8))));
     assert_eq!(halves.separator, b"b");
     let rightmost = Shape { high: None, right: None, ..shape };
-    let appended = split(&rightmost, &refs(&entries), Some(3), PageId(4)).unwrap();
+    let appended = split(&rightmost, &refs(&entries), Some(3), (PageId(4), usize::MAX)).unwrap();
     assert_eq!((keys(&appended.right), appended.separator), (vec![b"d".to_vec()], b"c".to_vec()));
     let children: Vec<[u8; 8]> = (10..14_u64).map(u64::to_le_bytes).collect();
     let inner: Vec<(&[u8], &[u8])> = entries.iter().zip(&children).map(|((k, _), c)| (*k, &c[..])).collect();
-    let split_inner = split(&Shape { level: 1, first: PageId(9), ..rightmost }, &refs(&inner), None, PageId(4)).unwrap();
+    let split_inner = split(&Shape { level: 1, first: PageId(9), ..rightmost }, &refs(&inner), None, (PageId(4), usize::MAX)).unwrap();
     let (inner_left, inner_right) = (Node::parse(&split_inner.left).unwrap(), Node::parse(&split_inner.right).unwrap());
     assert_eq!((split_inner.separator.as_slice(), inner_left.first_child(), inner_left.len()), (&b"b"[..], PageId(9), 1));
     assert_eq!((inner_right.first_child(), keys(&split_inner.right)), (PageId(11), vec![b"c".to_vec(), b"d".to_vec()]));
-    assert!(split(&shape, &refs(&entries[..1]), None, PageId(4)).is_err(), "one entry cannot split");
+    assert!(split(&shape, &refs(&entries[..1]), None, (PageId(4), usize::MAX)).is_err(), "one entry cannot split");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, where nodes split: an insert marks
@@ -127,18 +127,18 @@ fn runs_split_where_the_entry_goes() {
     assert_eq!(Node::parse(&compacted).unwrap().last_insert().unwrap(), Some(0), "compaction keeps the mark");
     let entries: Vec<(&[u8], &[u8])> = vec![(b"a", b"1"), (b"b", b"2"), (b"c", b"3"), (b"x", b"4"), (b"y", b"5")];
     let shape = Shape { level: 0, high: None, right: None, first: PageId(0), tree: TREE };
-    let halves = split(&shape, &refs(&entries), Some(2), PageId(4)).unwrap();
+    let halves = split(&shape, &refs(&entries), Some(2), (PageId(4), usize::MAX)).unwrap();
     let right = Node::parse(&halves.right).unwrap();
     assert_eq!(
         (keys(&halves.left), keys(&halves.right)),
         (vec![b"a".to_vec(), b"b".to_vec()], vec![b"c".to_vec(), b"x".to_vec(), b"y".to_vec()])
     );
     assert_eq!((halves.separator, right.last_insert().unwrap()), (b"b".to_vec(), Some(0)));
-    let middle = split(&shape, &refs(&entries), None, PageId(4)).unwrap();
+    let middle = split(&shape, &refs(&entries), None, (PageId(4), usize::MAX)).unwrap();
     assert_eq!(Node::parse(&middle.right).unwrap().last_insert().unwrap(), None);
     let children: Vec<[u8; 8]> = (10..15_u64).map(u64::to_le_bytes).collect();
     let inner: Vec<(&[u8], &[u8])> = entries.iter().zip(&children).map(|((k, _), c)| (*k, &c[..])).collect();
-    let inner_halves = split(&Shape { level: 1, first: PageId(9), ..shape }, &refs(&inner), Some(3), PageId(4)).unwrap();
+    let inner_halves = split(&Shape { level: 1, first: PageId(9), ..shape }, &refs(&inner), Some(3), (PageId(4), usize::MAX)).unwrap();
     let (inner_left, inner_right) = (Node::parse(&inner_halves.left).unwrap(), Node::parse(&inner_halves.right).unwrap());
     assert_eq!((inner_halves.separator.as_slice(), inner_left.len()), (&b"c"[..], 2), "the entry before the new one goes up");
     assert_eq!((inner_right.first_child(), keys(&inner_halves.right)), (PageId(12), vec![b"x".to_vec(), b"y".to_vec()]));
@@ -179,14 +179,14 @@ fn leaf_separators_are_truncated() {
     assert_eq!(shortest_between(b"abc", b"abd"), b"abc", "nothing shorter between");
     let entries: Vec<(&[u8], &[u8])> = vec![(b"alpha one", b"1"), (b"alpha two", b"2"), (b"bravo one", b"3"), (b"bravo two", b"4")];
     let shape = Shape { level: 0, high: None, right: None, first: PageId(0), tree: TREE };
-    let halves = split(&shape, &refs(&entries), None, PageId(4)).unwrap();
+    let halves = split(&shape, &refs(&entries), None, (PageId(4), usize::MAX)).unwrap();
     assert_eq!(halves.separator, b"b");
     let left = Node::parse(&halves.left).unwrap();
     assert_eq!(left.high, Some(&b"b"[..]));
     assert!(left.covers(b"alpha two") && !left.covers(b"bravo one"));
     let children: Vec<[u8; 8]> = (10..14_u64).map(u64::to_le_bytes).collect();
     let inner: Vec<(&[u8], &[u8])> = entries.iter().zip(&children).map(|((k, _), c)| (*k, &c[..])).collect();
-    let up = split(&Shape { level: 1, first: PageId(9), ..shape }, &refs(&inner), None, PageId(4)).unwrap();
+    let up = split(&Shape { level: 1, first: PageId(9), ..shape }, &refs(&inner), None, (PageId(4), usize::MAX)).unwrap();
     assert_eq!(up.separator, b"alpha two", "an inner separator is kept whole");
 }
 
