@@ -108,7 +108,7 @@ impl BufferPool {
             hints: super::hits::Hints::new(frames),
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
             queued: Queued::default(),
-            _reservation: None,
+            reservation: None,
         })
     }
 
@@ -139,7 +139,17 @@ impl BufferPool {
         let frames = bytes.checked_div(page_size).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a page has at least one byte"))?.max(1);
         let reservation = budget.reserve(frames.saturating_mul(page_size), what)?;
         let pool = BufferPool::new(frames, eviction(frames))?;
-        Ok(BufferPool { _reservation: Some(reservation), ..pool })
+        Ok(BufferPool { reservation: Some(reservation), ..pool })
+    }
+
+    /// It, its reservation standing while the database is open (RULES.md
+    /// D683): a database's pool, not a statement's spill area's.
+    #[must_use]
+    pub fn standing(mut self) -> BufferPool {
+        if let Some(held) = &mut self.reservation {
+            held.stand();
+        }
+        self
     }
 
     /// Registers a pager file, read and written through the pool.
