@@ -1073,7 +1073,7 @@ OK
      Scan ANN.PARCELS
  -- physical:
  Project PARCELS.ID
-   Filter XMLEXISTS(PARCELS.LABEL)  (est. rows=0)
+   Filter XMLEXISTS(PARCELS.LABEL)  (est. rows=1)
      IndexScan ANN.PARCELS using PARCEL_PATHS [xml_path]: PARCELS.LABEL has /parcel/to = '7'  (est. rows=1, cost=60.5)
 (13 rows)
  PLAN

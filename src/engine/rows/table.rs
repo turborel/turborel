@@ -57,7 +57,8 @@ impl RowTable {
     /// zone maps read as its last checkpoint saved them
     /// (`rows/counted.rs`, `rows/zones/saved.rs`), its rows counted by
     /// their newest versions instead if its file is not shadowed, and its
-    /// statistics are gathered when first asked for (`rows/recovery.rs`).
+    /// statistics due as it opens if it holds rows, else when first asked
+    /// for (`rows/stats.rs`, RULES.md D658).
     ///
     /// # Errors
     ///
@@ -91,7 +92,7 @@ impl RowTable {
             table.count_newest()?
         };
         table.counted.live.store(live, Ordering::Release);
-        table.gathered.gather_when_asked();
+        table.gathered.gather_at_open(live);
         Ok(table)
     }
 

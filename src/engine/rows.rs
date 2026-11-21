@@ -395,7 +395,8 @@ impl TableStorage for RowTable {
     }
 
     /// A table opened has none until the database's maintenance gathers
-    /// them, due once first asked for (`rows/stats.rs`).
+    /// them, due as it opens if it holds rows, else once first asked for
+    /// (`rows/stats.rs`).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
     }

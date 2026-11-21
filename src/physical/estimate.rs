@@ -86,12 +86,18 @@ pub fn compare((column, op, value): (usize, CompOp, &Value), known: Known<'_>) -
     known.stats.and_then(|s| s.selectivity(column, op, value)).unwrap_or_else(|| default_compare(op, known.cost)).clamp(0.0, 1.0)
 }
 
-/// The fraction a comparison keeps when nothing is known of its values.
+/// The fraction a comparison keeps when nothing is known of its values,
+/// the guesses kept consistent as the statistics' shares are (RULES.md
+/// D657): an order comparison that holds on equality keeps what the
+/// strict one does and what the equality does, so `<=` never keeps less
+/// than `<`, and `=` and `<>` together keep every row.
 fn default_compare(op: CompOp, guess: &CostModel) -> f64 {
+    let (equal, range) = (guess.equal_selectivity, guess.range_selectivity);
     match op {
-        CompOp::Eq => guess.equal_selectivity,
-        CompOp::Ne => 1.0_f64 - guess.equal_selectivity,
-        CompOp::Lt | CompOp::Le | CompOp::Gt | CompOp::Ge => guess.range_selectivity,
+        CompOp::Eq => equal,
+        CompOp::Ne => 1.0_f64 - equal,
+        CompOp::Lt | CompOp::Gt => range,
+        CompOp::Le | CompOp::Ge => (range + equal).min(1.0_f64),
     }
 }
 

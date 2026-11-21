@@ -415,6 +415,7 @@ mod thread_manager;
 mod threads;
 mod timestamps;
 mod topped_sorts;
+mod tpch_plans;
 mod transaction_memory;
 mod transactions;
 mod trees;

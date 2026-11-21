@@ -107,15 +107,16 @@ pub(crate) fn above(db: &Database, id: u32) -> Option<f64> {
 /// Verifies: [DESIGN] RULES.md D31, the row store's statistics are
 /// gathered again, as the database's maintenance, once a transaction that
 /// changed the table ends and it has changed by more than a tenth of its
-/// rows plus 50, not before;
+/// rows plus 50, not before (a filter the statistics say keeps none of
+/// rows the scan reads is estimated at the one row's floor, D655);
 /// `Database::analyze` gathers them at once, and refuses a table that is
 /// not "AUTH.TABLE" or does not exist.
 #[test]
 fn statistics_follow_the_table() {
     let db = graded(1000);
-    assert!(near(above(&db, 1000), 0.0, 0.0), "no row above the greatest");
+    assert!(near(above(&db, 1000), 0.0, 0.0), "no row above the greatest, the scan reading none");
     add(&db, 1001..=1100, |_| 1);
-    assert!(near(above(&db, 1000), 0.0, 0.0), "100 changes of 1,000 rows: not yet due");
+    assert!(near(above(&db, 1000), 1.0, 0.0), "100 changes of 1,000 rows: not yet due, the floor's one row");
     db.analyze("APP.T").unwrap();
     assert!(above(&db, 1000).is_some_and(|e| e > 50.0), "{:?}", above(&db, 1000));
     assert!(near(above(&db, 1100), 0.0, 0.0));
@@ -132,18 +133,18 @@ fn statistics_follow_the_table() {
 
 /// Verifies: [DESIGN] RULES.md D31, estimates without statistics: for an
 /// engine that gives none, a filter keeps a default fraction (one in a
-/// hundred for equality and IS NULL, a third for an order); a filter over
-/// an index's rows is estimated from the index's; a filter over a join
-/// shows no estimate.
+/// hundred for equality and IS NULL, a third for an order), and at least
+/// one row of a table holding any (D655); a filter over an index's rows is
+/// estimated from the index's; a filter over a join shows no estimate.
 #[test]
 fn filters_are_estimated_without_statistics() {
     let db = locking_big();
     let s = db.session("APP");
     let est = |cond: &str| kept(&s, &format!("SELECT ID FROM T WHERE {cond}"));
-    assert!(near(est("F = 0"), 0.6, 0.5));
+    assert!(near(est("F = 0"), 1.0, 0.0), "a hundredth of 60 rows, floored at one");
     assert!(near(est("F > 0"), 20.0, 0.5));
-    assert!(near(est("NAME IS NULL"), 0.6, 0.5));
-    assert!(near(est("ID = 7 AND F > 0"), 0.3, 0.5), "a third of the index's one row");
+    assert!(near(est("NAME IS NULL"), 1.0, 0.0));
+    assert!(near(est("ID = 7 AND F > 0"), 1.0, 0.0), "a third of the index's one row, floored at one");
     assert_eq!(kept(&s, "SELECT T.ID FROM T, U WHERE T.ID = U.ID"), None);
 }
 
@@ -184,11 +185,15 @@ fn rules_read_statistics() {
     assert_eq!(seen.lock().unwrap().first().copied(), Some((None, None)));
 }
 
-/// Verifies: [DESIGN] RULES.md D31, D35, the row store: a new table has no
-/// statistics until gathered; `analyze` gathers them; a table opened again
-/// has none until first asked for, which makes them due, and maintenance
-/// then gathers them from its newest committed rows. Regression test
-/// (R-TEST-7): the first ask made the pass itself, in whatever plan asked.
+/// Verifies: [DESIGN] RULES.md D31, D35, D658, the row store: a new table
+/// has no statistics until gathered; `analyze` gathers them; a table
+/// opened again holding rows has them due as it opens, unasked, and
+/// maintenance then gathers them from its newest committed rows; an empty
+/// table opened again has them due only once first asked for, and asking
+/// makes no pass. Regression tests (R-TEST-7): the first ask made the pass
+/// itself, in whatever plan asked; a table opened holding rows waited for
+/// a plan to ask, which planned blind. MC/DC of the rows opened: some
+/// (due now) against none (due when asked).
 #[test]
 fn tables_opened_have_statistics() {
     let scratch = Scratch::new("statistics-open");
@@ -206,12 +211,17 @@ fn tables_opened_have_statistics() {
     assert!(t.statistics().is_none(), "30 changes: not due, and nothing ended");
     t.analyze().unwrap();
     assert_eq!(t.statistics().and_then(|s| s.rows()), Some(30.0));
-    let meta = t.meta();
-    drop(t);
+    let (meta, empty) = (t.meta(), RowTable::create(&files, &types, TableOptions::default()).unwrap());
+    let empty_meta = empty.meta();
+    drop((t, empty));
     let again = RowTable::open(&files, meta, &types, TableOptions::default()).unwrap();
-    while again.maintain(u64::MAX, true).unwrap() {}
-    assert!(again.statistics().is_none(), "not gathered until asked for, and asking makes no pass");
-    assert!(again.maintenance_due(), "but makes them due");
+    assert_eq!(again.row_count(), 30, "counted as it opens");
+    assert!(again.maintenance_due(), "due as it opens, unasked");
+    let empty = RowTable::open(&files, empty_meta, &types, TableOptions::default()).unwrap();
+    while empty.maintain(u64::MAX, true).unwrap() {}
+    assert!(!empty.maintenance_due(), "an empty table's not due as it opens");
+    assert!(empty.statistics().is_none(), "an empty table's not gathered until asked for, and asking makes no pass");
+    assert!(empty.maintenance_due(), "but makes them due");
     while again.maintain(u64::MAX, true).unwrap() {}
     assert!(!again.maintenance_due());
     let stats = again.statistics().unwrap();
@@ -220,11 +230,12 @@ fn tables_opened_have_statistics() {
     assert!(stats.width(&[0]).is_some_and(|w| w > 0.0));
 }
 
-/// Verifies: [DESIGN] RULES.md D35, D55: a table of a database opened again
-/// has no statistics until first asked for, and planning then makes no pass
-/// over it: queries planned at once on two threads plan without them, and
-/// the table is noted for maintenance, asked for as their transactions
-/// end; the maintenance job gathers them, once, and plans after have them.
+/// Verifies: [DESIGN] RULES.md D35, D55, D658: a table of a database
+/// opened again has no statistics until maintenance gathers them, and
+/// planning makes no pass over it: queries planned at once on two threads,
+/// before the maintenance due as the database opened has run (JOBS.POLICY
+/// MANUAL), plan without them; the maintenance job gathers them, once,
+/// and plans after have them.
 /// Regression test (R-TEST-7): the first plan of each planner made a pass
 /// over the whole table itself, which no cancel could stop.
 #[test]

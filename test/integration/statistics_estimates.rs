@@ -181,7 +181,8 @@ fn narrow_prefixes_and_single_character_wildcards_are_estimated() {
 
 /// Verifies: [DESIGN] RULES.md D382, a small table: of a table its sample
 /// holds whole, a conjunction of columns that never go together is
-/// estimated to keep no row, and one that keeps a few rows near them.
+/// estimated to keep no row but the floor's one (D655), and one that
+/// keeps a few rows near them.
 #[test]
 fn a_small_tables_conjunction_is_counted_on_its_sample() {
     let rows = (0..800).map(|i| format!("({i}, {}, {})", i % 8, i % 40)).collect();
@@ -190,7 +191,7 @@ fn a_small_tables_conjunction_is_counted_on_its_sample() {
     let s = db.session("APP");
     // S mod 8 is B, so B = 1 and S < 1 never hold together.
     let (none, plan) = estimated(&s, "SELECT * FROM P WHERE B = 1 AND S < 1");
-    assert!(none < 1.0, "{none}\n{plan}");
+    assert!(none <= 1.0_f64, "{none}\n{plan}");
     let (few, plan) = estimated(&s, "SELECT * FROM P WHERE B = 1 AND S < 10");
     // S of 1 and 9: 2 of its 40 values.
     assert!(within(few, 40.0, 1.2), "{few}\n{plan}");

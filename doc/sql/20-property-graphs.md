@@ -563,7 +563,7 @@ EXPLAIN SELECT * FROM GRAPH_TABLE (BANK
      Project ID, OWNER, ID, SRC, DST, AMOUNT
        HashJoin DST = ID
          SeqScan ANN.TRANSFER  (rows=5, cost=5.0)
-         Filter OWNER = 'Mike'  (est. rows=0)
+         Filter OWNER = 'Mike'  (est. rows=1)
            SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
 (30 rows)
 ```

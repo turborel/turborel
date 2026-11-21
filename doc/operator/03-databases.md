@@ -211,9 +211,9 @@ SELECT KIND, CLASS, COUNT(*) FROM INFORMATION_SCHEMA.FILES GROUP BY KIND, CLASS;
 ## Background work
 
 The database does some of its work in the background: its checkpoints;
-its maintenance, which gathers tables' statistics (a table's, after
-the database opens, once a query first plans with it, which plans
-without them meanwhile), counts the distinct keys of an index that has
+its maintenance, which gathers tables' statistics (a table's that
+holds rows, as the database opens; an empty one's, once a query first
+plans with it; queries plan without them meanwhile), counts the distinct keys of an index that has
 not kept them (the same way: once a query first plans with it), and
 freezes the rows of the column store; the syncs of its log that
 commits of LOG.COMMIT_SYNC OFF leave for LOG.SYNC_AFTER_MS

@@ -443,6 +443,9 @@ verification approach DO-178C expects (§8).
 | D651 | Costs count what an operator spills past its grant, at its rows' width |
 | D652 | A join's method is chosen seeing the degree its part will run at |
 | D653 | A hash join's cost counts the probing rows its runtime filter leaves |
+| D655 | A table read's filter is estimated to keep at least a row of a read of one or more |
+| D657 | The guesses of comparisons with no statistics are consistent with each other |
+| D658 | A table opened holding rows has its statistics gathered as the database opens |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
@@ -12703,6 +12706,39 @@ executor stops judging by one. Only inner joins count it, since the
 preserved side of an outer join keeps every row. With EXECUTOR.BATCHES
 or EXECUTOR.RUNTIME_FILTERS OFF, none is counted. So join orders put a
 selective build where its filter reaches the scan it drops rows of.
+
+#### D655. A table read's filter is estimated to keep at least a row of a read of one or more
+
+The estimator's cards keep at least a row of an input that has one
+(`cardinality::at_least_one`), but the filter of a table's access path
+took its estimate as the rows read times the share kept, and a share of a
+small table is often a fraction of a row. An equality on TPC-H's nations
+with no statistics yet kept a quarter of one. EXPLAIN showed it as no
+rows, and what costs a join of it took it as none, so TPC-H's query 21
+joined its one nation last, after millions of rows. The filter now keeps
+at least a row of a read of one or more, at most what the access may
+keep (`physical/access/filter.rs`), so its plan and the estimator agree.
+
+#### D657. The guesses of comparisons with no statistics are consistent with each other
+
+With no statistics, an equality keeps PLANNER.EQUAL_SELECTIVITY and an
+order comparison PLANNER.RANGE_SELECTIVITY. `<=` and `>=` kept the same
+as `<` and `>`, though they hold on equality too. They now keep the
+range's share and the equality's, so a guess never keeps less of a
+looser comparison, as the statistics' shares never do
+(`physical/estimate.rs`). With the filter's floor (D655), an equality on
+a table of n rows keeps n times the guess, at least a row.
+
+#### D658. A table opened holding rows has its statistics gathered as the database opens
+
+A row store table's statistics live in memory. A table opened had none
+until a query first planned with it (D35), so the first statements of a
+server started on a loaded database planned blind, and a plan made so of
+TPC-H's query 21 ran many times longer than one with statistics. A table opened that holds rows is now due as it opens, and the
+maintenance the database asks for as it opens (`due_at_open`) gathers
+its statistics in the background, a sampled pass of a large table, so
+they are there soon after the server starts. Planning still never waits for them. An
+empty table opened is due when first asked for, as before.
 
 ## 2. Project layout
 

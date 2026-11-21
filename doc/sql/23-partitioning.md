@@ -139,9 +139,9 @@ EXPLAIN SELECT ID FROM SALES WHERE SOLD >= DATE '2026-01-01' AND SOLD < DATE '20
  -- physical:
  Project SALES.ID
    Append
-     Filter SALES.SOLD >= DATE '2026-01-01' AND SALES.SOLD < DATE '2026-07-01'  (est. rows=0)
+     Filter SALES.SOLD < DATE '2026-07-01' AND SALES.SOLD >= DATE '2026-01-01'  (est. rows=1)
        SeqScan ANN.S2026  (rows=1, cost=0.9)
-     Filter SALES.SOLD >= DATE '2026-01-01' AND SALES.SOLD < DATE '2026-07-01'  (est. rows=0)
+     Filter SALES.SOLD < DATE '2026-07-01' AND SALES.SOLD >= DATE '2026-01-01'  (est. rows=0)
        SeqScan ANN.SOTHER  (rows=0, cost=0.0)
 (16 rows)
 ```

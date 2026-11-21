@@ -4,8 +4,8 @@
 //! the undo store, which did not survive the process. So a table opened
 //! counts its rows by their newest versions alone, as its last checkpoint
 //! saved the count or by a pass (`rows/counted.rs`), and has its
-//! statistics gathered only once first asked for, after recovery is done
-//! (`rows/stats.rs`); and recovery writes each row's newest version
+//! statistics gathered by the maintenance asked for once recovery is
+//! done (`rows/stats.rs`); and recovery writes each row's newest version
 //! outright, committed, never following the version it replaces to older
 //! ones (`apply`), and moves the count by whether that version was a row.
 

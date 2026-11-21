@@ -305,7 +305,7 @@ OK
      SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
      HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
        SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
-       Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
+       Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=1)
          SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
 (27 rows)
 ```

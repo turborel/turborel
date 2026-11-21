@@ -355,7 +355,7 @@ OK
      Scan ANN.CATALOGS
  -- physical:
  Project CATALOGS.ID
-   Filter XMLEXISTS(CATALOGS.DOC)  (est. rows=0)
+   Filter XMLEXISTS(CATALOGS.DOC)  (est. rows=1)
      IndexScan ANN.CATALOGS using CATALOG_PATHS [xml_path]: CATALOGS.DOC has /catalog/@supplier = 'Atlas Office'  (est. rows=1, cost=60.5)
 (13 rows)
 ```

@@ -92,7 +92,8 @@ fn known<'a>(stats: &'a TableStats, cost: &'a CostModel) -> Known<'a> {
 /// Verifies: [DESIGN] RULES.md D382, one column's conjuncts: a lower and
 /// an upper bound of one column keep the rows between them, not the
 /// product of each half's share; a further bound on it keeps no more than
-/// it allows; of unknown statistics the halves are taken as independent.
+/// it allows; of unknown statistics the halves are taken as independent,
+/// `>=` guessed to keep the range and its bound's equal (D657).
 #[test]
 fn bounds_of_one_column_are_one_range() {
     let stats = correlated(5_000);
@@ -102,7 +103,8 @@ fn bounds_of_one_column_are_one_range() {
     assert!(tighter < between && (tighter - 0.05_f64).abs() < 0.02_f64, "{tighter}");
     let cost = CostModel::default();
     let unknown = conjunction(&[op(0, CompOp::Ge, 100), op(0, CompOp::Lt, 200)], Known { stats: None, cost: &cost });
-    assert!((unknown - cost.range_selectivity * cost.range_selectivity).abs() < 1e-9_f64);
+    let at_least = cost.range_selectivity + cost.equal_selectivity;
+    assert!((unknown - at_least * cost.range_selectivity).abs() < 1e-9_f64, "{unknown}");
 }
 
 /// Verifies: [DESIGN] RULES.md D382, backoff: of conjuncts on two
@@ -190,4 +192,20 @@ fn a_chain_of_ors_of_one_column_is_answered_by_its_synopsis() {
     equalities.insert(40, eq(1, 3));
     let two = crate::logical::or_all(equalities).unwrap();
     assert!(!sampled::answered(&two));
+}
+
+/// Verifies: [DESIGN] RULES.md D657: with no statistics, the guesses are
+/// consistent: `<=` and `>=` keep what `<` and `>` keep and what `=`
+/// does, `=` and `<>` together keep every row, and none keeps nothing.
+/// MC/DC of the match: each operator once.
+#[test]
+fn guesses_without_statistics_are_consistent() {
+    let cost = CostModel::default();
+    let guess = |o: CompOp| selectivity(&op(0, o, 5), Known { stats: None, cost: &cost });
+    let (eq, ne, lt, le, gt, ge) =
+        (guess(CompOp::Eq), guess(CompOp::Ne), guess(CompOp::Lt), guess(CompOp::Le), guess(CompOp::Gt), guess(CompOp::Ge));
+    assert!((eq - cost.equal_selectivity).abs() < 1e-12_f64 && (lt - cost.range_selectivity).abs() < 1e-12_f64);
+    assert!((le - (lt + eq)).abs() < 1e-12_f64 && (ge - (gt + eq)).abs() < 1e-12_f64, "{le} {ge}");
+    assert!((eq + ne - 1.0_f64).abs() < 1e-12_f64);
+    assert!([eq, ne, lt, le, gt, ge].iter().all(|&s| s > 0.0_f64 && s <= 1.0_f64));
 }

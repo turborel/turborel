@@ -9,11 +9,16 @@
 //! table keeps (`rows/counted.rs`), and the rest is scaled from the sample
 //! (`StatsBuilder::finish_sampled`). Its frozen rows are each looked at,
 //! those of runs not sampled left out. A table opened knows its count of rows
-//! as it opens (`rows/counted.rs`), and has no statistics until first asked for, once recovery is
-//! done (`rows/recovery.rs`): then they are due, and the database's
-//! maintenance thread gathers them (`TableStorage::maintain`), the planner
-//! meanwhile estimating without them, so no statement waits for a pass
-//! over the table, and the pass is made once, however many plan at once.
+//! as it opens (`rows/counted.rs`), and has no statistics until a pass
+//! gathers them: of a table holding rows, they are due as it opens, and
+//! the maintenance the database asks for as it opens gathers them
+//! (RULES.md D658), so a server started on a loaded database does not
+//! plan its first statements blind; of an empty one, they are due when
+//! first asked for, once recovery is done (`rows/recovery.rs`). The
+//! database's maintenance thread gathers them (`TableStorage::maintain`),
+//! the planner meanwhile estimating without them, so no statement waits
+//! for a pass over the table, and the pass is made once, however many
+//! plan at once.
 //! After that, they are gathered again,
 //! by the database's maintenance thread, once a
 //! transaction that wrote the table ends and the table has had more
@@ -95,7 +100,8 @@ pub(super) struct Gathered {
     gathering: AtomicBool,
     /// Set for a table opened: due when first asked for.
     when_asked: AtomicBool,
-    /// Set as a table opened is first asked for them, until gathered.
+    /// Set as a table opened holding rows opens, or as an empty one is
+    /// first asked for them, until gathered.
     asked: AtomicBool,
     /// When it was made, which `earliest` counts from.
     made: Instant,
@@ -167,9 +173,15 @@ impl Gathered {
         self.earliest.store(self.since_made().saturating_add(wait), Ordering::Relaxed);
     }
 
-    /// Makes them due when first asked for.
-    pub(super) fn gather_when_asked(&self) {
+    /// Of a table opened holding `rows` rows: due now, if it holds any,
+    /// so the maintenance the database asks for as it opens gathers them
+    /// before the first statements plan blind (RULES.md D658); else due
+    /// when first asked for.
+    pub(super) fn gather_at_open(&self, rows: usize) {
         self.when_asked.store(true, Ordering::Relaxed);
+        if rows > 0 {
+            self.asked.store(true, Ordering::Release);
+        }
     }
 
     /// The statistics of the last pass, if there was one; if none, and the
