@@ -504,6 +504,10 @@ impl TableStorage for RowTable {
         self.newest_of(tx, id)
     }
 
+    fn newest_writer(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        self.writer_of(tx, id)
+    }
+
     /// Statistics due are gathered too.
     fn uncollected(&self) -> bool {
         self.awaits_collection()

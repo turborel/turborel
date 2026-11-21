@@ -16,13 +16,14 @@ mod late;
 pub mod mask;
 pub mod sel;
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 pub use self::kinds::{Bools, Datetimes};
 pub use self::late::{Late, LateSource};
 pub use self::mask::Mask;
 pub use self::sel::Sel;
-use super::{Row, Rows};
+use super::{Conjunction, Row, Rows, TableStorage};
+use crate::txn::TxId;
 use crate::error::Result;
 use crate::value::{Datetime, Decimal, Value};
 
@@ -143,7 +144,7 @@ pub struct Coded {
     /// Each row's entry, a null's 0.
     pub codes: Vec<u32>,
     /// The entries, shared by every batch gathered of them.
-    pub entries: std::sync::Arc<Texts>,
+    pub entries: Arc<Texts>,
 }
 
 impl Texts {
@@ -541,6 +542,17 @@ fn cell_of(column: &Column, r: usize) -> Cell<'_> {
 
 /// \[DESIGN\] Batches of a scan's rows.
 pub type Batches = Box<dyn Iterator<Item = Result<Batch>> + Send>;
+
+/// `TableStorage::scan_batches`'s default: of `table`, read by `tx`, the
+/// rows `scan_where` gives, or `scan` with no `conditions`, by batch, of
+/// their values of `columns`.
+pub(super) fn scanned<T: TableStorage + ?Sized>(table: Arc<T>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>) -> Batches {
+    let rows = match conditions {
+        Some(c) => table.scan_where(tx, columns, c),
+        None => table.scan(tx, columns),
+    };
+    batches_of(rows, columns)
+}
 
 /// `rows`, by batch, of their values of `columns`.
 pub fn batches_of(rows: Rows, columns: &[usize]) -> Batches {
