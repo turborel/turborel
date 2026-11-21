@@ -98,6 +98,7 @@ verification approach DO-178C expects (§8).
 | D44 | A running statement is cancelled from another thread |
 | D45 | Protocol version 1, and prepared statements |
 | D46 | The command-line client |
+| D765 | The server program allocates through the system's allocator, and an operator may build it on mimalloc, snmalloc or rpmalloc |
 | D59 | Import is rows from a pluggable source, over a connection |
 | D60 | Collations are sort keys, and a collation never changes |
 | D61 | Regular expressions are XQuery's, by a matcher of our own |
@@ -497,6 +498,7 @@ reviewable and no supply chain needs qualifying. The exceptions are:
 - tokio and socket2 in the server crate (D42)
 - tokio's signals in the command-line client
 - rpassword in the command-line client and `turboreld` (D46)
+- an allocator in `turboreld` only, by a feature an operator picks, never by default (D765)
 
 Generated data counts too. `src/value/collation/unicode13.bin` is no
 dependency, but it can't be read line by line. So `cargo xtask unicode` makes
@@ -3065,6 +3067,36 @@ R-SAFE-4 records two dependencies. tokio 1.54.1 (MIT) is already the
 server's, with features rt and signal only. rpassword 7.5.4 (Apache-2.0)
 reads unechoed terminal input on Unix and Windows, is small enough to
 review, and has been maintained since 2015.
+
+#### D765. The server program allocates through the system's allocator, and an operator may build it on mimalloc, snmalloc or rpmalloc
+
+`turboreld` sets no global allocator by default, so the program that ships,
+and every comparison with other systems, runs on the platform's allocator as
+theirs do. An operator may build it on another with one of its features
+`mimalloc`, `snmalloc` or `rpmalloc`. They exclude each other, and
+`main.rs` refuses to compile with two. Only the program's binary sets one.
+The library crates, `turborel` and `turborel-server` among them, leave the
+choice to whoever links them, and the program's own tests run on the
+system's allocator.
+
+Each candidate was measured against the system's allocator on TPC-C and
+sysbench, with the server's resident memory read at the end of each run.
+jemalloc was measured too but is not offered, since its build refuses
+Windows' MSVC target. `cargo xtask verify` builds the program once per
+feature, so CI shows each one building on Linux, macOS and Windows and none
+is found broken only when an operator picks it.
+
+An allocator only makes allocation cheaper. The core cuts its own
+allocations independently, in the paths that make them, and that work is
+what the shipped build gains from.
+
+R-SAFE-4 records three dependencies, each optional and none in a library
+crate. mimalloc 0.1.52 (MIT) with libmimalloc-sys 0.1.49 builds mimalloc's
+C sources with cc. snmalloc-rs 0.7.6 (MIT) with snmalloc-sys 0.7.6 builds
+snmalloc's C++ with cc, without CMake (its feature `build_cc`). rpmalloc
+0.2.2 (MIT or Apache-2.0) with rpmalloc-sys 0.2.3 builds rpmalloc's C with
+cc. Each declares its `GlobalAlloc` once in its own crate, so the program's
+`#[global_allocator]` static is safe code and R-SAFE-1 holds.
 
 #### D59. Import is rows from a pluggable source, over a connection
 
