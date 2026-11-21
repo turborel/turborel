@@ -237,8 +237,11 @@ impl BufferPool {
         frame.pins.fetch_add(1, Ordering::AcqRel);
         frame.set_key(Some(key));
         frame.loading.store(true, Ordering::Release);
+        // Owed, it is captured as a dirty page is written back, counted in
+        // flight before the latch is let go (`capture.rs`).
+        let owed = old.is_some_and(|_| self.owed_taken(frame));
         drop(latch);
         let dirty = frame.dirty.swap(false, Ordering::AcqRel);
-        Ok(Claim { frame: index, write_back: old.filter(|_| dirty) })
+        Ok(Claim { frame: index, write_back: old.filter(|_| dirty || owed), owed })
     }
 }
