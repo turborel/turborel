@@ -7,12 +7,14 @@
 //! outgrows the work area (`exec/join/rescan.rs`); and an outer join's is
 //! either (`exec/join/outer.rs`); an index nested-loop join holds nothing,
 //! each left row probing an index (`exec/join/indexed.rs`); a merge join
-//! holds the run of right rows of one key (`exec/join/merge.rs`).
+//! holds the run of right rows of one key (`exec/join/merge.rs`); a range
+//! join holds its right operand sorted (`exec/join/range.rs`).
 
 mod indexed;
 mod merge;
 mod outer;
 mod partitioned;
+mod range;
 mod rescan;
 
 pub(super) use indexed::indexed;
@@ -22,6 +24,7 @@ pub(super) use outer::outer;
 pub(in crate::exec) use outer::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub(in crate::exec) use partitioned::{Partitions, Pending, joined as partitioned_joined};
+pub(super) use range::ranged;
 pub(in crate::exec) use rescan::{Pass, Rescanned, product};
 
 use std::borrow::Cow;
@@ -145,6 +148,17 @@ impl Built {
         }
         self.held.get_mut(at).ok_or_else(|| broken("a hash join's bucket is missing"))?.push(row);
         Ok(())
+    }
+
+    /// Its rows held in memory, those of each bucket after those of the
+    /// bucket before, each bucket's in order, taken from it; none if its
+    /// rows are in a table of the spill area.
+    pub(in crate::exec) fn taken_rows(&mut self) -> Option<Vec<Row>> {
+        if self.spilled.is_some() {
+            return None;
+        }
+        self.buckets.clear();
+        Some(std::mem::take(&mut self.held).into_iter().flatten().collect())
     }
 
     /// Its buckets held in memory, each with its rows, in order.

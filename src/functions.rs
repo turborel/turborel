@@ -393,6 +393,15 @@ pub trait ScalarFunction: Send + Sync {
     fn spatial_operation(&self) -> Option<crate::geometry::SpatialOperation> {
         None
     }
+    /// [ISO/IEC 9075-2:2023 §8.20] The operator of a `<period predicate>`
+    /// of two periods each named by a `<period reference>`, or of one and a
+    /// point in time, whose call is false of a null bound and raises
+    /// nothing [GR4], so a join may judge it as the comparisons it is
+    /// made of (`physical/range/periods.rs`, RULES.md D581). None, by
+    /// default.
+    fn period_operator(&self) -> Option<crate::ast::PeriodOperator> {
+        None
+    }
     /// \[EXTENSION\] Whether "`f(args) op value`" holds, of a call of two
     /// arguments, decided without the call's value where the function
     /// decides it faster, as a prepared geometry operand decides a point's

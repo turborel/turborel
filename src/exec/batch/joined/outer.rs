@@ -31,6 +31,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::eval_cond;
 use crate::exec::join::{Holding, Joining, Prepared, Spec, prepared, spec_of};
+use crate::exec::table::KeyHashes;
 use crate::exec::work::Work;
 use crate::logical::{Truth, cond_columns};
 use crate::physical::{JoinKey, Plan};
@@ -54,11 +55,11 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<Sta
     let rows = if spec.keys.is_empty() {
         operand_rows(right, db, tx)
     } else {
-        match held::read(right, &spec.keys, work.limit(), (db, tx))? {
+        match held::read(right, (&spec.keys, &[]), work.limit(), (db, tx))? {
             HeldRead::Held(held) => {
                 let out = Out::over(left_columns.len(), Arc::clone(&held.batch), crate::db::kernels::chosen(db));
                 let read = places(&spec, &left_columns)?;
-                let vectors = Right::Vectors(Vectors { held, columns: right_columns, spec, _work: work });
+                let vectors = Right::Vectors(Box::new(Vectors { held: *held, columns: right_columns, spec, _work: work }));
                 return Ok(Box::new(Probe::new((left_batches(left, db, tx)?, vectors), read, out)));
             }
             HeldRead::Rest(rest) => rest.rows(),
@@ -68,7 +69,7 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<Sta
         Prepared::Held(held) => {
             let read = places(&held.spec, &left_columns)?;
             let out = Out::new(left_columns.len(), right_columns, crate::db::kernels::chosen(db));
-            Ok(Box::new(Probe::new((left_batches(left, db, tx)?, Right::Rows(held)), read, out)))
+            Ok(Box::new(Probe::new((left_batches(left, db, tx)?, Right::Rows(Box::new(held))), read, out)))
         }
         Prepared::Rowwise(rowwise) => {
             let mut columns = left_columns;
@@ -123,8 +124,8 @@ struct Vectors {
 /// An outer join's right operand, held: its rows, as the row path holds
 /// them, or of a join on keys, as vectors.
 enum Right {
-    Rows(Holding),
-    Vectors(Vectors),
+    Rows(Box<Holding>),
+    Vectors(Box<Vectors>),
 }
 
 impl Right {
@@ -160,28 +161,30 @@ impl Right {
         }
     }
 
-    /// Whether row `n`'s keys match the left's `values` (`key_equal`).
+    /// Whether row `n`'s keys match those of row `r` of `batch`, its key
+    /// columns at `left`, of values `values` (`key_equal`).
     ///
     /// # Errors
     ///
     /// A column the row lacks, or a value nested deeper than a type may
     /// (SQLCODE -910).
-    fn equal(&self, n: usize, keys: &[JoinKey], values: &[Value]) -> Result<bool> {
+    fn equal(&self, n: usize, (batch, left, r): (&Batch, &[usize], usize), (keys, values): (&[JoinKey], &[Value])) -> Result<bool> {
         match self {
             Right::Rows(held) => match held.rows.get(n) {
                 Some(right) => keys_match(keys, values, right),
                 None => Ok(false),
             },
-            Right::Vectors(v) => v.held.keys_equal(n, values),
+            Right::Vectors(v) => v.held.matches((batch, left, r), n),
         }
     }
 
-    /// The places of the rows the left row of key `key` may match: of its
-    /// bucket, or on no keys, every row's.
-    fn candidates(&self, key: &[Bucket]) -> Option<Arc<[usize]>> {
+    /// The places of the rows the left row of key buckets `key`, or of
+    /// hash `hash`, may match: of its bucket or hash, none of a miss, or on
+    /// no keys, every row's.
+    fn candidates(&self, key: &[Bucket], (hash, miss): (u64, bool)) -> Option<Arc<[usize]>> {
         match self {
             Right::Rows(held) => held.buckets.as_ref().map(|b| b.get(key).cloned().unwrap_or_else(|| Arc::from([]))),
-            Right::Vectors(v) => Some(v.held.shared_rows_of(key)),
+            Right::Vectors(v) => Some(if miss { Arc::from([]) } else { v.held.candidates(hash).collect() }),
         }
     }
 }
@@ -224,24 +227,50 @@ impl Probe {
         Probe { left, right, read, scratch, matched: vec![false; rows], barred: None, state: Phase::Probing, out }
     }
 
-    /// Probes the right operand with the rows of `batch` at `rows`.
+    /// Probes the right operand with the rows of `batch` at `rows`: of a
+    /// right held as vectors, their keys hashed a vector at a time first.
     fn probe(&mut self, batch: &Batch, rows: &[usize]) -> Result<()> {
+        let left: Vec<usize> = self.read.keys.iter().map(|k| k.left).collect();
+        let probing = match &mut self.right {
+            Right::Vectors(v) => {
+                v.held.hash_probing((batch, &left), rows)?;
+                Some(std::mem::take(&mut v.held.probing))
+            }
+            Right::Rows(_) => None,
+        };
+        let probed = self.probe_rows((batch, &left), rows, probing.as_ref());
+        if let (Right::Vectors(v), Some(hashes)) = (&mut self.right, probing) {
+            v.held.probing = hashes;
+            probed?;
+            return v.held.settle();
+        }
+        probed
+    }
+
+    /// Probes the right operand with the rows of `batch` at `rows`, its key
+    /// columns at `left`, their keys' hashes `probing` if hashed.
+    fn probe_rows(&mut self, (batch, left): (&Batch, &[usize]), rows: &[usize], probing: Option<&KeyHashes>) -> Result<()> {
         let mut key: Vec<Bucket> = Vec::with_capacity(self.read.keys.len());
         let mut values: Vec<Value> = Vec::with_capacity(self.read.keys.len());
-        for &r in rows {
+        for (n, &r) in rows.iter().enumerate() {
             self.bar()?;
             for &(at, c) in &self.read.columns {
                 if let Some(slot) = self.scratch.get_mut(c) {
                     *slot = batch.cell(at, r).to_value();
                 }
             }
-            values.clear();
-            values.extend(self.read.keys.iter().map(|k| batch.cell(k.left, r).to_value()));
-            let keyed = keyed(&self.read.keys, &values, &mut key)?;
+            let hashed = probing.map(|p| (p.hashes.get(n).copied().unwrap_or(0), p.misses.get(n).copied().unwrap_or(true)));
+            let keyed = if let Some((_, miss)) = hashed {
+                !miss
+            } else {
+                values.clear();
+                values.extend(self.read.keys.iter().map(|k| batch.cell(k.left, r).to_value()));
+                keyed(&self.read.keys, &values, &mut key)?
+            };
             // Its own condition judged of it as the right has a row, its key
             // null or not [§7.5 GR1c].
             let may = self.right.len() > 0 && self.right.spec().left_may_match(&self.scratch)?;
-            let found = may && keyed && self.matches((batch, r), (&key, &values))?;
+            let found = may && keyed && self.matches((batch, left, r), (&key, &values), hashed.unwrap_or((0, false)))?;
             // [ISO/IEC 9075:1992 §7.5 GR4, GR5b] A preserved left row no
             // right row matches, with nulls.
             if !found && self.right.spec().kind.keeps_left() {
@@ -251,16 +280,22 @@ impl Probe {
         Ok(())
     }
 
-    /// Joins row `r` of `batch`, of key buckets `key` and values `values`,
-    /// with each right row it matches, flagged; whether one did.
-    fn matches(&mut self, (batch, r): (&Batch, usize), (key, values): (&[Bucket], &[Value])) -> Result<bool> {
-        let places = self.right.candidates(key);
+    /// Joins row `r` of `batch`, its key columns at `left`, of key buckets
+    /// `key` and values `values`, or of the hash `hashed`, with each right
+    /// row it matches, flagged; whether one did.
+    fn matches(
+        &mut self,
+        (batch, left, r): (&Batch, &[usize], usize),
+        (key, values): (&[Bucket], &[Value]),
+        hashed: (u64, bool),
+    ) -> Result<bool> {
+        let places = self.right.candidates(key, hashed);
         let count = places.as_ref().map_or(self.right.len(), |p| p.len());
         let mut found = false;
         for i in 0..count {
             let n = places.as_ref().map_or(Some(i), |p| p.get(i).copied()).unwrap_or(i);
             let barred = self.barred.as_ref().and_then(|b| b.get(n)).copied().unwrap_or(false);
-            if barred || n >= self.right.len() || !self.right.equal(n, &self.read.keys, values)? || !self.holds(n)? {
+            if barred || n >= self.right.len() || !self.right.equal(n, (batch, left, r), (&self.read.keys, values))? || !self.holds(n)? {
                 continue;
             }
             found = true;

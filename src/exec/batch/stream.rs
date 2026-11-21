@@ -23,13 +23,14 @@ use super::joined;
 use super::judge::Judging;
 use super::late::{Deferred, resolved};
 use super::project::{computed, place_of};
+use super::runtime::{self, Told};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Batch, Column, Conjunction, Sel};
+use crate::storage::{Batch, Column, Conjunct, Conjunction, Sel};
 use crate::txn::{TxId, checked};
 
 /// A batch, and the rows of it a filter kept, if one did.
@@ -85,6 +86,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
@@ -98,8 +100,9 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Transition { .. } => None,
+        // A pipeline run in parallel, by batch (`parallel/batches.rs`).
+        Plan::Parallel(p) => crate::exec::parallel::pipelined(&p.input).then(|| layout(&p.input, db)).flatten(),
     }
 }
 
@@ -159,6 +162,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
@@ -172,8 +176,8 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
-        | Plan::Parallel(..) => false,
+        | Plan::Transition { .. } => false,
+        Plan::Parallel(p) => crate::exec::parallel::pipelined(&p.input) && reads_by_batch(&p.input, db),
     }
 }
 
@@ -245,6 +249,12 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
 ///
 /// As `open`.
 pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+    if !deferred.filters().is_empty() {
+        let (kept, here) = runtime::parted(&plan, deferred.filters(), db);
+        if !here.is_empty() {
+            return judged_above(plan, (db, tx), &deferred.clone().with_told(kept), here);
+        }
+    }
     let made: Batched = match &plan {
         Plan::SeqScan { .. } => scan_batches,
         Plan::Filter { .. } => filter_batches,
@@ -256,6 +266,7 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::MergeAppend { .. }
         | Plan::Distinct { .. }
@@ -268,12 +279,29 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
-        | Plan::Parallel(..) => none,
+        | Plan::Transition { .. } => none,
+        Plan::Parallel(..) => parallel_batches,
         Plan::Sort { .. } => sorted_batches,
         Plan::Limit { .. } => topped_batches,
     };
     made(plan, (db, tx), deferred)
+}
+
+/// The batches of `plan`, a pipeline run in parallel, in order
+/// (`parallel/batches.rs`); of one that gives way, those of its plan
+/// alone.
+///
+/// # Errors
+///
+/// As `open`.
+fn parallel_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+    let Plan::Parallel(p) = plan else { return Err(crate::exec::broken("a part run in parallel is not one")) };
+    // A part whose batches hold no layout of its own is read as its plan.
+    let Some(shape) = layout(&p.input, db) else { return batches_with(p.input, (db, tx), deferred) };
+    match crate::exec::parallel::streamed_batches(&p.input, (db, tx), p.degree, &shape)? {
+        crate::exec::parallel::Held::Kept(batches) => Ok(batches),
+        crate::exec::parallel::Held::GaveWay => batches_with(p.input, (db, tx), deferred),
+    }
 }
 
 /// \[DESIGN\] (RULES.md D380) The batches of `plan`, a whole sort whose
@@ -314,6 +342,18 @@ fn none(_plan: Plan, _at: (&Arc<State>, TxId), _deferred: &Deferred) -> Result<B
     Err(crate::exec::broken("a plan that gives no batches"))
 }
 
+/// The batches of `plan`, a subtree that gives them, its scans told the
+/// filters `deferred` holds, each of `here` judged of the batches it
+/// gives (RULES.md D369).
+///
+/// # Errors
+///
+/// As `open`.
+fn judged_above(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred, here: Vec<Told>) -> Result<Batches> {
+    let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
+    Ok(runtime::applied(batches_with(plan, (db, tx), deferred)?, here, &columns, (db, false)))
+}
+
 /// The batches of `scan`, a table's scan: in an order if it is in one.
 ///
 /// # Errors
@@ -332,7 +372,7 @@ fn scan_batches(scan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) 
 /// As `batches`.
 fn filter_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Filter { cond, input, .. } = plan else { return Err(crate::exec::broken("a filter is not one")) };
-    let below = deferred.filtered(&cond);
+    let below = deferred.filtered(&cond).with_told(deferred.filters().to_vec());
     let (inner, columns) = told(*input, &cond, (db, tx), &below)?;
     Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
 }
@@ -368,6 +408,7 @@ fn projected_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Defer
     let input = *input;
     let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
     let below = if deferred.any() { deferred.projected(&exprs) } else { Deferred::default() };
+    let below = below.with_told(runtime::projected(&exprs, deferred.filters()));
     let inner = batches_with(input, (db, tx), &below)?;
     if let Some(picks) = picked(&exprs, &columns) {
         return Ok(Box::new(inner.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows)))));
@@ -408,18 +449,24 @@ pub(super) fn pick(batch: Batch, picks: &[usize]) -> Batch {
     Batch { columns, rows: batch.rows }
 }
 
-/// A scan's batches (`scanned`), no row of them filtered yet, its columns
-/// `deferred` leaves unread given late (RULES.md D361), told the bound of a
-/// sort above if it has one (D379).
+/// A scan's batches (`scanned`), its columns `deferred` leaves unread
+/// given late (RULES.md D361), told the bound of a sort above if it has
+/// one (D379) and the ranges of the runtime filters it is told as
+/// conjuncts, then judged by each of those filters, no row of them
+/// filtered by the condition yet (RULES.md D369).
 fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let storage = Arc::clone(db.storage_of(scan.0)?);
     let mut pushed = scan.2.and_then(pushed_conjuncts);
+    let told = deferred.filters();
+    let mut more: Vec<Conjunct> = told.iter().flat_map(|t| t.filter.range_conjuncts(t.column)).collect();
     // A sort's bound told the scan beside the filter's (RULES.md D379).
-    if let Some(told) = deferred.told() {
-        pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.push(told);
+    more.extend(deferred.told());
+    if !more.is_empty() {
+        pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.extend(more);
     }
     let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), &deferred.late_of(scan.1));
-    Ok(Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None)))))
+    let batches: Batches = Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None))));
+    Ok(runtime::applied(batches, told.to_vec(), scan.1, (db, true)))
 }
 
 /// `inner`'s batches, each with the rows of those kept that `judging`

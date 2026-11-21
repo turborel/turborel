@@ -45,6 +45,7 @@ fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
         want_class: None,
         injected: Vec::new(),
         implied: Vec::new(),
+        ranged: super::ranged::Ranges::default(),
     };
     let model = Model { implied: model.implied_classes(), ..model };
     (shapes, model)

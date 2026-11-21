@@ -84,8 +84,16 @@ fn written(pages: &Pages<'_, Plain>, (first, step): (u64, u64), count: i128) -> 
 #[test]
 fn groups_read_back() {
     let (pool, file) = file();
-    let pages =
-        Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false, kernels: &crate::kernels::Portable };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 1024,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     for (first, step) in [(100_u64, 1_u64), (7, 3)] {
         let group = written(&pages, (first, step), 4000);
         assert_eq!(group.ids.is_empty(), step == 1, "ids kept only if not every one");
@@ -101,6 +109,20 @@ fn groups_read_back() {
     }
 }
 
+/// Of a condition of two columns, the parts the first may match, the
+/// second's values anywhere in the group (RULES.md D511): every row it
+/// matches among them, and fewer than all.
+fn two_columns_keep_the_parts_the_first_may_match(group: &Group, pages: &Pages<'_, Plain>) {
+    let two = Condition { columns: vec![0, 2], probe: Probe::Prefix { equal: vec![int(1)], then: None } };
+    let of_two = candidates(group, Some(&Conjunction::of(two.clone())));
+    let all = rows(group, pages, &TYPES, &[0, 1, 2], (0, 4000)).unwrap();
+    for (n, _) in all.iter().enumerate().filter(|(_, r)| two.matches(r)) {
+        let at = u32::try_from(n).unwrap();
+        assert!(of_two.iter().any(|&(from, to)| from <= at && at < to), "row {n}");
+    }
+    assert!(of_two.iter().map(|(from, to)| to.saturating_sub(*from)).sum::<u32>() < 4000, "{of_two:?}");
+}
+
 /// Verifies: [DESIGN] RULES.md D31, zone maps: a condition on one column
 /// reads only the runs of the parts of chunks it may match; of two
 /// conditions, only those both may; IS NULL, IS NOT NULL and IN judged
@@ -109,7 +131,16 @@ fn groups_read_back() {
 #[test]
 fn scans_skip_chunks_a_condition_cannot_match() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain, compress: true, pax: false, kernels: &crate::kernels::Portable };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 512,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     let group = written(&pages, (1, 1), 4000);
     let between = Condition {
         columns: vec![2],
@@ -125,8 +156,7 @@ fn scans_skip_chunks_a_condition_cannot_match() {
     assert_eq!(found.len(), 200);
     assert!(found.iter().all(|r| r[1].is_null()), "a column not asked for is null");
     assert_eq!(candidates(&group, None), vec![(0, 4000)]);
-    let two = Condition { columns: vec![0, 2], probe: Probe::Prefix { equal: vec![int(1)], then: None } };
-    assert_eq!(candidates(&group, Some(&Conjunction::of(two))), vec![(0, 4000)]);
+    two_columns_keep_the_parts_the_first_may_match(&group, &pages);
     let none = Condition { columns: vec![2], probe: Probe::Compare { op: CompOp::Gt, value: int(100) } };
     assert!(candidates(&group, Some(&Conjunction::of(none))).is_empty(), "no chunk may match");
     // Of two conditions, the chunks both may match: K below 1,050 keeps
@@ -160,7 +190,16 @@ fn scans_skip_chunks_a_condition_cannot_match() {
 #[test]
 fn a_top_bound_skips_chunks_past_it() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain, compress: true, pax: false, kernels: &crate::kernels::Portable };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 512,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: false,
+        kernels: &crate::kernels::Portable,
+    };
     let group = written(&pages, (1, 1), 4000);
     let read = |t: &Arc<Threshold>| {
         let told = Conjunction(vec![Conjunct::Dynamic { column: 0, threshold: Arc::clone(t) }]);
@@ -188,8 +227,16 @@ fn a_top_bound_skips_chunks_past_it() {
 #[test]
 fn what_groups_refuse() {
     let (pool, file) = file();
-    let pages =
-        Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false, kernels: &crate::kernels::Portable };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 1024,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     assert_eq!(Group::write(&pages, &TYPES, (&[], &[]), (&[], &[])).err().map(|e| e.code), Some(Code::Api));
     let wrong = vec![vec![Value::Char("x".into()), Value::Null, int(1)]];
     assert!(Group::write(&pages, &TYPES, (&[1], &wrong), (&[], &[])).is_err(), "not of its types");
@@ -212,8 +259,16 @@ fn what_groups_refuse() {
 #[test]
 fn groups_of_rows_out_of_order_read_back() {
     let (pool, file) = file();
-    let pages =
-        Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false, kernels: &crate::kernels::Portable };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 1024,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     let count = 4000_u64;
     let ids: Vec<RowId> = (0..count).map(|n| n.checked_mul(7).unwrap().checked_rem(count).unwrap().checked_add(100).unwrap()).collect();
     let all: Vec<Row> = (0..4000).map(row).collect();
@@ -245,8 +300,16 @@ fn count_of(runs: &[(u32, u32)]) -> u32 {
 #[test]
 fn groups_skip_parts_by_their_filters() {
     let (pool, file) = file();
-    let pages =
-        Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false, kernels: &crate::kernels::Portable };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 1024,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: false,
+        kernels: &crate::kernels::Portable,
+    };
     let ids: Vec<RowId> = (1..=4000_u64).collect();
     let all: Vec<Row> = (0..4000).map(row).collect();
     let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[0, 1])).unwrap();
@@ -283,8 +346,16 @@ fn groups_skip_parts_by_their_filters() {
 #[test]
 fn summaries_read_back() {
     let (pool, file) = file();
-    let pages =
-        Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false, kernels: &crate::kernels::Portable };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 1024,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     let group =
         Group::write(&pages, &TYPES, (&(1..=4000_u64).collect::<Vec<_>>(), &(0..4000).map(row).collect::<Vec<_>>()), (&[1], &[0])).unwrap();
     let summary = Summary::of(&group, group.header[0]);
@@ -324,8 +395,16 @@ fn summaries_read_back() {
 #[test]
 fn pax_groups_read_back_as_columns_do() {
     let (pool, file) = file();
-    let columns =
-        Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false, kernels: &crate::kernels::Portable };
+    let columns = Pages {
+        pool: &pool,
+        file,
+        capacity: 1024,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: false,
+        kernels: &crate::kernels::Portable,
+    };
     let pax = Pages { pax: true, ..columns };
     let (by_columns, hybrid) = (written(&columns, (100, 1), 4000), written(&pax, (100, 1), 4000));
     assert!(hybrid.pax && !by_columns.pax && read(&pax, hybrid.header[0], &TYPES).unwrap().pax);

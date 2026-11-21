@@ -93,6 +93,9 @@ pub(super) struct Model {
     /// The classes of columns the inner joins' keys make equal, each with
     /// the relations its columns are of (`implied_classes`, RULES.md D387).
     pub(super) implied: Vec<(Vec<usize>, Set)>,
+    /// Which conjuncts and predicates a range join searches by
+    /// (`enumerate/ranged.rs`, RULES.md D580).
+    pub(super) ranged: super::ranged::Ranges,
 }
 
 impl Model {

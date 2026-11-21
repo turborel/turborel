@@ -20,11 +20,14 @@ mod expr;
 mod estimates;
 mod group_table;
 mod insert_values;
+mod join_table;
 mod joins;
 mod late;
 mod oltp;
 mod parallel;
+mod range_joins;
 mod rewrites;
+mod skipping;
 mod sorts;
 mod statistics;
 mod tpcc;
@@ -97,7 +100,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 42] {
+fn second() -> [&'static [Mutation]; 43] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -141,6 +144,7 @@ fn second() -> [&'static [Mutation]; 42] {
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
         &statistics::STATISTICS,
+        &range_joins::RANGE_JOINS,
     ]
 }
 
@@ -183,11 +187,15 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's, parallel queries', the client's step with its
-    // server, the decode kernels', declared types', batches', late
-    // materialization's and the table of groups' last, as `last` holds no
-    // more.
-    let after: [&'static [Mutation]; 10] = [
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
+}
+
+/// The transport's, parallel queries', the client's step with its
+/// server, the decode kernels', declared types', batches', late
+/// materialization's, the table of groups', the join table's and
+/// XXH3's, skipping's and the kernels' last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 12] {
+    [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
@@ -196,10 +204,11 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &batches::BATCHES,
         &late::LATE,
         &group_table::GROUP_TABLE,
+        &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
+        &skipping::SKIPPING,
         &kernels::KERNELS,
-    ];
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
+    ]
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the

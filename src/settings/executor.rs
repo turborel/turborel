@@ -1,9 +1,10 @@
 //! \[DESIGN\] The settings of parallel queries (RULES.md D290, D291): the
 //! executor's workers, shared by every statement of a database, and what a
 //! statement asks of them, its degree, the rows of its morsels and the
-//! least rows it reads in parallel.
+//! least rows it reads in parallel; and whether a hash join filters its
+//! probing rows by its built ones' keys (RULES.md D369).
 
-use super::builtin::{at_least, count, defined, text};
+use super::builtin::{ON, SWITCHES, at_least, count, defined, text};
 use super::{Definition, Effect, Key, Kind};
 
 /// EXECUTOR.WORKERS.
@@ -16,6 +17,8 @@ pub const EXECUTOR_MORSEL_ROWS: Key = Key(84);
 pub const EXECUTOR_PARALLEL_MIN_ROWS: Key = Key(85);
 /// EXECUTOR.KERNELS (RULES.md D460).
 pub const EXECUTOR_KERNELS: Key = Key(86);
+/// EXECUTOR.RUNTIME_FILTERS.
+pub const EXECUTOR_RUNTIME_FILTERS: Key = Key(87);
 
 /// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
 const KERNELS_NAME_MAX: usize = 64;
@@ -38,7 +41,7 @@ const DATABASE: (bool, Effect) = (false, Effect::Statement);
 const SESSION: (bool, Effect) = (true, Effect::Statement);
 
 /// The settings of parallel queries, in the order of their keys.
-pub(super) fn definitions() -> [Definition; 5] {
+pub(super) fn definitions() -> [Definition; 6] {
     [
         defined(
             ("EXECUTOR.WORKERS", at_least(0), count(0)),
@@ -64,6 +67,11 @@ pub(super) fn definitions() -> [Definition; 5] {
             ("EXECUTOR.KERNELS", Kind::Text { max: KERNELS_NAME_MAX }, text("")),
             SESSION,
             "The kernels a statement's batches run on in the executor (filters, groupings, sorts): PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD. A column store table decodes and judges its scans on the set registered, which it takes as it opens; the setting does not change it.",
+        ),
+        defined(
+            ("EXECUTOR.RUNTIME_FILTERS", Kind::Choice(SWITCHES), text(ON)),
+            SESSION,
+            "Whether a hash join, once it has built its right operand, tells the scan of its left operand the least and greatest of its keys and filters the rows read by a Bloom filter of them: ON; or not, OFF, as to compare the two. Its rows are the same either way.",
         ),
     ]
 }

@@ -43,6 +43,16 @@ impl PhysicalPlanner<'_> {
         Some(Built { plan, ordered })
     }
 
+    /// The cost of the cheaper join of `left` and `right` on `cond` by an
+    /// index probed by its comparisons, either way round, if there is one
+    /// (`physical/range/planned.rs`).
+    pub(in crate::physical) fn comparison_cost(&self, cond: &Cond, (left, right): (&LogicalPlan, &LogicalPlan)) -> Option<f64> {
+        let reversed = Flip { width: left.width(), right_width: right.width() }.cond(cond.clone());
+        let normal = self.coordinate_probe((left, right), cond).map(|c| c.total);
+        let swapped = self.coordinate_probe((right, left), &reversed).map(|c| c.total);
+        [normal, swapped].into_iter().flatten().reduce(f64::min)
+    }
+
     fn coordinate_probe(&self, (outer, inner): (&LogicalPlan, &LogicalPlan), cond: &Cond) -> Option<Choice> {
         let read = read_table(inner)?;
         let comparisons = crossed(cond, outer.width());
