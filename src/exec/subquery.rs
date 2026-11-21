@@ -33,6 +33,7 @@ mod planned;
 mod quantified;
 
 pub use drawn::Drawn;
+pub(crate) use planned::slot_type;
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::cmp::Ordering;

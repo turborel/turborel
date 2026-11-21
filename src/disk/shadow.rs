@@ -21,7 +21,13 @@
 //! * **Seal** (`ShadowFileSystem::seal`): the side file written to, with
 //!   what is held in memory, becomes the batch to commit, and writes go to
 //!   the other side file from then on. Quick: it writes nothing. A file
-//!   with nothing to commit seals nothing.
+//!   with nothing to commit seals nothing, but for a checkpoint's capture
+//!   (`seal_capturing`).
+//! * **Capture** (`DiskFile::write_captured_at`): pages a checkpoint owes
+//!   as they were when it was taken, written into the sealed batch after
+//!   the seal as writers go on (RULES.md D590): granules held in memory,
+//!   newer than the batch's blocks and older than anything written since,
+//!   so a read finds them only where nothing newer was written.
 //! * **Commit** (`commit_sealed`): the granules the sealed batch held in
 //!   memory, its limit and its size appended to its side file, which is
 //!   synced; a commit block appended, and synced; then the file, made if
@@ -180,7 +186,19 @@ impl ShadowFileSystem {
     /// SQLCODE -915 if a batch sealed before cannot be committed.
     pub fn seal(&self) -> Result<()> {
         self.holding.store(false, Ordering::Release);
-        self.known().iter().try_for_each(|s| s.seal())
+        self.known().iter().try_for_each(|s| s.seal(false))
+    }
+
+    /// Seals as `seal` does, a file there with nothing written since its
+    /// last commit sealed too: a checkpoint's capture writes into the
+    /// sealed batch after (`DiskFile::write_captured_at`, RULES.md D590).
+    ///
+    /// # Errors
+    ///
+    /// As `seal`.
+    pub fn seal_capturing(&self) -> Result<()> {
+        self.holding.store(false, Ordering::Release);
+        self.known().iter().try_for_each(|s| s.seal(true))
     }
 
     /// Commits the batch every file known sealed, each at once; then

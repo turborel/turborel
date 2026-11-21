@@ -49,6 +49,7 @@ impl Pager {
             // they cannot be zeroed they stay in use: lost space, not damage.
             if self.zero_all(&old_trunk).is_ok() {
                 lock_builtin(&self.free).free_recorded(&old_trunk);
+                self.in_use.mark(&old_trunk, false);
             }
         }
         add(&self.counters.syncs, 1);
@@ -76,6 +77,7 @@ impl Pager {
             let trailing = free.take_trailing();
             let needed = u64::try_from(free.runs().len().saturating_add(old_trunk.len()).div_ceil(per_trunk)).unwrap_or(u64::MAX);
             let trunk: Vec<Extent> = free.allocate(needed);
+            self.in_use.mark(&trunk, true);
             let mut planned = free.clone();
             // Taken from no list, so they cannot overlap a free page.
             let _ = planned.free(old_trunk);

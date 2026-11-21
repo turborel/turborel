@@ -181,6 +181,9 @@ impl DiskFile for MeasuredFile {
     fn reserve(&self, size: u64) -> Result<()> {
         self.inner.reserve(size)
     }
+    fn write_captured_at(&self, data: &[u8], offset: u64) -> Result<()> {
+        self.inner.write_captured_at(data, offset)
+    }
     fn sync(&self, durability: Durability) -> Result<()> {
         let started = Instant::now();
         self.stats.record(self.inner.sync(durability), |s, ()| match durability {

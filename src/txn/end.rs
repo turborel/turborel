@@ -146,8 +146,8 @@ impl State {
     /// SQLCODE -922 if its sync, or one before, failed: it is in doubt.
     fn durable(&self, tx: &Txn, lsn: Option<crate::log::Lsn>, at: Timestamp) -> Result<()> {
         if let Some(lsn) = lsn {
-            tx.sync_commit(lsn)?;
-            self.tx.synced_commit(at);
+            // Marked durable by its group's sync (`txn/group.rs`).
+            tx.sync_commit(lsn, at)?;
         }
         self.tx.wait_durable(at)
     }

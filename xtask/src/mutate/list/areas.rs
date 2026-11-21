@@ -7,8 +7,11 @@ mod batches;
 mod btree;
 mod budget;
 mod bulk;
+mod checkpoint;
+mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
+mod commit_path;
 mod cost_model;
 #[path = "count.rs"]
 mod count;
@@ -17,6 +20,7 @@ mod declared_types;
 // more modules.
 #[path = "decode.rs"]
 mod decode;
+mod dirty_frames;
 mod distinct_aggregates;
 mod expr;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
@@ -43,6 +47,7 @@ mod statistics;
 mod subquery_plans;
 mod tpcc;
 mod txn_layer;
+mod undo_memory;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
 mod mark_joins;
@@ -56,7 +61,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 22] {
+pub fn core() -> [&'static [Mutation]; 26] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -74,12 +79,16 @@ pub fn core() -> [&'static [Mutation]; 22] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &checkpoint::CHECKPOINT,
+        &io_path::IO_PATH,
         &btree::BTREE,
         &row_path::ROW_PATH,
         &monitoring::MONITORING,
         &bulk::BULK,
         &steady::STEADY_PLANS,
         &alloc::ALLOC,
+        &commit_path::COMMIT_PATH,
+        &dirty_frames::DIRTY_FRAMES,
     ]
 }
 
@@ -90,7 +99,7 @@ pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// The first half of the areas, in order.
-fn first() -> [&'static [Mutation]; 26] {
+fn first() -> [&'static [Mutation]; 27] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -107,6 +116,7 @@ fn first() -> [&'static [Mutation]; 26] {
         &super::distinct::DISTINCT,
         &super::bigint::BIGINT,
         &super::wide_exact::WIDE_EXACT,
+        &super::call_floor::CALL_FLOOR,
         &super::distinct_predicate::DISTINCT_PREDICATE,
         &super::partitioned_joins::PARTITIONED_JOINS,
         &super::grouping_sets::GROUPING_SETS,
@@ -221,13 +231,15 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
 }
 
-/// The transport's, parallel queries', the client's step with its
-/// server, the decode kernels', declared types', batches', late
+/// The transport's, connections' homes', parallel queries', the client's
+/// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
-/// semi joins', mark joins' and skipping's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 13] {
+/// semi joins', mark joins', skipping's and the undo store's memory's last,
+/// as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 15] {
     [
         &super::transport::TRANSPORT,
+        &super::homes::HOMES,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
         &decode::DECODE,
@@ -240,6 +252,7 @@ fn closing() -> [&'static [Mutation]; 13] {
         &semi_joins::SEMI_JOINS,
         &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
+        &undo_memory::UNDO_MEMORY,
     ]
 }
 

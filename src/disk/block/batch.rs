@@ -26,7 +26,11 @@ impl BlockFile {
         if payloads.is_empty() {
             return Ok(Vec::new());
         }
-        let mut frames = Vec::new();
+        // Room for every frame at once, as the log's group commits write
+        // many: payloads stored as given take their own bytes and a frame's.
+        let digest = self.hash.digest_len();
+        let room = payloads.iter().fold(0_usize, |sum, p| sum.saturating_add(format::frame_len(p.len(), digest)));
+        let mut frames = Vec::with_capacity(room);
         let mut starts = Vec::with_capacity(payloads.len());
         let mut stored_bytes = 0_usize;
         for payload in payloads {

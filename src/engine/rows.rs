@@ -64,7 +64,6 @@ mod values;
 mod version;
 mod zones;
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -80,19 +79,18 @@ use mvcc::{Past, Read, Versions, columns_mask};
 pub use options::{DEFAULT_HELD_BYTES, DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
 use sealing::Sealing;
 use stats::Gathered;
+pub use store::RowStore;
 pub use undo::UndoStore;
 use zones::{Replaced, Zones};
 
 use super::columns::cache;
 use super::record::{RecordFormat, Spill};
 use super::tree::BLinkTree;
-use crate::catalog::{QualifiedName, TableDesc};
+use crate::catalog::TableDesc;
 use crate::disk::buffer::{BufferPool, FileId};
-use crate::disk::encoding::Encodings;
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
-use crate::spill::WorkAreas;
 use crate::stats::Statistics;
 use crate::storage::{Condition, Conjunction, Garbage, Near, Newest, Region, Removed, Row, RowId, Rows, ScanOrder, Split, TableStorage};
 use crate::txn::{Concurrency, NO_TRANSACTION, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
@@ -113,38 +111,6 @@ const VERSION: usize = 17;
 
 fn corrupt(why: &str) -> SqlError {
     SqlError::new(Code::Corrupt, format!("[DESIGN] a row-store table is malformed: {why}"))
-}
-
-/// \[DESIGN\] The row store: tables as B-link trees of row versions, in
-/// one pager file of a buffer pool, older versions in an undo store.
-pub struct RowStore {
-    /// Where its tables are; for a store in memory, made when the first
-    /// table is.
-    files: Mutex<Option<TableFiles>>,
-    /// Its pages in memory, for files made in memory: of a budget of its
-    /// own until it is attached to a database's (`attach`).
-    memory: Arc<crate::engine::MemoryPages>,
-    defaults: TableOptions,
-    /// Options for tables not yet created, by name.
-    tables: Mutex<HashMap<QualifiedName, TableOptions>>,
-    /// The database's work areas, once attached, shared with its tables.
-    work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
-    /// The database's encodings, once attached: those its tables' option
-    /// ENCODINGS names.
-    encodings: Mutex<Arc<Encodings>>,
-    /// Its name: `ROW_STORE`, or `COLUMN_STORE`, whose tables freeze their
-    /// rows.
-    name: &'static str,
-    /// Whether it checkpoints its files: not the column store sharing the
-    /// row store's, which checkpoints them for both.
-    checkpoints: bool,
-    /// The headers of its tables' frozen row groups held in memory, of
-    /// the database's budget once attached (`columns/cache.rs`).
-    headers: Arc<cache::HeaderCache>,
-    /// STORAGE.SYSTEM_CACHE_BYTES, as its tables over files on a disk
-    /// price their fetches by it; none for a store in memory, whose files
-    /// are all held.
-    system_cache: Option<Arc<AtomicU64>>,
 }
 
 /// \[DESIGN\] A table of the row store.
@@ -538,6 +504,10 @@ impl TableStorage for RowTable {
         self.newest_of(tx, id)
     }
 
+    fn newest_writer(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        self.writer_of(tx, id)
+    }
+
     /// Statistics due are gathered too.
     fn uncollected(&self) -> bool {
         self.awaits_collection()
@@ -561,12 +531,15 @@ impl TableStorage for RowTable {
     /// pass or `now` (`rows/stats.rs`), zones summed up as the next's,
     /// freezing as the next's: freezing as this one's too if no zone could
     /// be summed up, as one of a commit too recent waits for the horizon
-    /// (`rows/zones.rs`).
+    /// (`rows/zones.rs`). Zones resting, or waiting, are not summed up as
+    /// another table's work or an index's calls this, unless `now`
+    /// (RULES.md D772).
     fn maintain(&self, horizon: Timestamp, now: bool) -> Result<bool> {
         if self.gather_if_due(now) {
             return Ok(true);
         }
-        if self.zones.due() && self.sum_zones(horizon)? {
+        let summing = if now { self.zones.due() } else { self.zones.wanted() };
+        if summing && self.sum_zones(horizon, now)? {
             return Ok(true);
         }
         self.settle_groups(horizon)?;

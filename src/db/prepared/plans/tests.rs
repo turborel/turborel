@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::db::Database;
+use crate::logical::{Expr, Slot};
 use crate::value::Decimal;
 
 use super::learning::{LEARNED_RUNS, MOST_LEARNING_RUNS};
@@ -272,4 +273,87 @@ fn scans_decide_spatial_conjuncts_of_their_entries() {
     assert_eq!(count(&s, sql), "5", "the session's own deletion");
     s.rollback().unwrap();
     assert_eq!(count(&s, sql), "6");
+}
+
+/// ORDER_LINE and STOCK of one warehouse, as TPC-C makes them: 100,000
+/// items in stock and a district of 5,000 orders of ten lines each, their
+/// statistics gathered.
+fn order_lines() -> (Database, Session) {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION T \
+         CREATE TABLE ORDER_LINE (OL_W_ID INTEGER NOT NULL, OL_D_ID SMALLINT NOT NULL, OL_O_ID INTEGER NOT NULL, OL_NUMBER SMALLINT NOT NULL, OL_I_ID INTEGER, CONSTRAINT ORDER_LINE_I1 PRIMARY KEY (OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER)) \
+         CREATE TABLE STOCK (S_W_ID INTEGER NOT NULL, S_I_ID INTEGER NOT NULL, S_QUANTITY SMALLINT, CONSTRAINT STOCK_I1 PRIMARY KEY (S_W_ID, S_I_ID)) \
+         CREATE TABLE DIGIT (D INTEGER NOT NULL) CREATE TABLE N (N INTEGER NOT NULL)",
+    )
+    .unwrap();
+    let s = db.session("T");
+    for sql in [
+        "INSERT INTO DIGIT VALUES (0), (1), (2), (3), (4), (5), (6), (7), (8), (9)",
+        "INSERT INTO N SELECT A.D * 10000 + B.D * 1000 + C.D * 100 + E.D * 10 + F.D + 1 FROM DIGIT A, DIGIT B, DIGIT C, DIGIT E, DIGIT F",
+        "INSERT INTO STOCK SELECT 1, N, MOD(N, 90) + 10 FROM N",
+        "INSERT INTO ORDER_LINE SELECT 1, 1, N, L.D + 1, MOD(N * 7919 + L.D * 104729, 100000) + 1 FROM N, DIGIT AS L WHERE N <= 5000",
+    ] {
+        s.run(sql).unwrap();
+    }
+    s.commit().unwrap();
+    db.maintain().unwrap();
+    (db, s)
+}
+
+/// Verifies: [DESIGN] RULES.md D760: TPC-C's STOCK-LEVEL query as its
+/// procedure runs it, its warehouse one slot, its order a slot bounding
+/// the order's lines by it and by it less 20, is planned with its slots,
+/// to be kept, as an index nested-loop join probing STOCK's key for the
+/// twenty orders' lines, not a hash join reading STOCK whole, the join
+/// costed as in the plan made with its values: the slot less 20 is read
+/// as its value less 20, not as an unknown bound.
+#[test]
+fn the_stock_level_query_with_slots_probes_stock() {
+    let (db, s) = order_lines();
+    let p = s
+        .prepare(
+            "SELECT COUNT(DISTINCT S_I_ID) FROM ORDER_LINE, STOCK WHERE OL_W_ID = ? AND OL_D_ID = ? \
+             AND OL_O_ID < ? AND OL_O_ID >= ? - CAST(20 AS INTEGER) AND S_W_ID = ? AND S_I_ID = OL_I_ID AND S_QUANTITY < ?",
+        )
+        .unwrap();
+    drop(s.open_prepared(&p, &[int(1), int(1), int(5001), int(5001), int(1), int(15)]).unwrap());
+    let Some(KeptPlan::Query(_, bound)) = read(&p.plans.kept.kept).unwrap().as_ref().and_then(|k| k.plan.clone()) else {
+        panic!("a query's plan")
+    };
+    // The procedure's warehouse is one variable, of OL_W_ID and S_W_ID both.
+    let slotted = crate::logical::map_plan_exprs(bound, &mut |e| {
+        let Expr::Dynamic(slot) = e else { return e };
+        Expr::Dynamic(Slot { index: if slot.index == 4 { 0 } else { slot.index }, ..slot })
+    });
+    let values = [int(1), int(1), int(5001), int(5001), int(1), int(15)];
+    let st = db.snapshot().unwrap();
+    let made = super::super::super::compiled::plan(&st, filled(slotted.clone(), &values).unwrap()).2.explain();
+    let plan = super::super::super::compiled::plan_slotted(&st, slotted, &values).explain();
+    assert!(plan.contains("IndexNestedLoop T.STOCK") && !plan.contains("HashJoin"), "{plan}");
+    let join = |text: &str| text.lines().find(|l| l.contains("IndexNestedLoop")).map(str::to_owned);
+    assert_eq!(join(&plan), join(&made), "its join costed as with its values");
+}
+
+/// Verifies: [DESIGN] RULES.md D761: the STOCK-LEVEL query prepared with a
+/// `?` of its own for each warehouse, so no equality of the two tables'
+/// warehouses is known, keeps the plan that probes STOCK's key, its
+/// warehouse fixed by STOCK's own filter and its item by each line; not a
+/// hash join reading STOCK whole.
+#[test]
+fn a_prepared_stock_level_query_keeps_its_probes_by_its_own_warehouse() {
+    let (_db, s) = order_lines();
+    let p = s
+        .prepare(
+            "SELECT COUNT(DISTINCT S_I_ID) FROM ORDER_LINE, STOCK WHERE OL_W_ID = ? AND OL_D_ID = ? \
+             AND OL_O_ID < ? AND OL_O_ID >= ? AND S_W_ID = ? AND S_I_ID = OL_I_ID AND S_QUANTITY < ?",
+        )
+        .unwrap();
+    for n in 0..=i128::from(LEARNED_RUNS) + 1 {
+        let order = 4990 - n;
+        drop(s.open_prepared(&p, &[int(1), int(1), int(order), int(order - 20), int(1), int(15)]).unwrap());
+    }
+    let kept = physical(&p);
+    assert!(kept.starts_with("Some(Fixed") && kept.contains("IndexJoin") && !kept.contains("HashJoin"), "{kept}");
+    assert!(kept.contains("table: QualifiedName { auth: \"T\", ident: \"STOCK\" }"), "{kept}");
 }

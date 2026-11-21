@@ -513,6 +513,17 @@ impl RowTable {
         Ok(Newest { row, pending: Some(pending), writer: Some(by), stamp: 0 })
     }
 
+    /// Of `newest_of`, the writer and the stamp alone: the newest version's
+    /// maker, with no older version read nor any row decoded, as a writer
+    /// refused needs no more to decide whether to wait (RULES.md D747).
+    pub(super) fn writer_of(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        let Some(newest) = self.tree.get(&key(id))? else { return Ok((None, 0)) };
+        Ok(match self.maker(&Version::parse(&newest)?) {
+            Maker::Open(by) => (Some(by).filter(|by| *by != tx), 0),
+            Maker::Committed(at) => (None, at),
+        })
+    }
+
     /// Every version of row `id`, whose newest version is `newest`,
     /// committed at or before `as_of`, that a reader at or after `horizon`
     /// may read.
