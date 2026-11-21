@@ -94,7 +94,7 @@ impl Partitions {
         let columns = self.keys.iter().map(|k| if matches!(operand, Operand::Left) { k.left } else { k.right });
         let values = columns.filter_map(|c| row.get(c));
         let nulls: Vec<bool> = self.keys.iter().map(|k| k.nulls).collect();
-        let hash = values_hash(values, &nulls, Hashing { seed: &self.seed.0, keyed: true })?.unwrap_or_default();
+        let hash = values_hash(values, &nulls, Hashing { seed: &self.seed.0, keyed: true, direct: false })?.unwrap_or_default();
         let hash = fmix64(hash ^ self.seed.1);
         let n = u64::try_from(self.right.len()).unwrap_or(1);
         Ok(usize::try_from((hash >> TAG_BITS).checked_rem(n).unwrap_or_default()).unwrap_or_default())
@@ -159,7 +159,7 @@ fn merged(left: RowIter, parts: Partitions, work: &mut Work) -> Result<Merge> {
             // A partition its seed left empty matches no left row, and has
             // no row to give its table its width.
             if let Some(width) = rows.first().map(Vec::len) {
-                let table = SharedTable::of_rows(&rows, width, &pending.keys, (drawn(), (0..width).collect()))?;
+                let table = SharedTable::of_rows(&rows, width, &pending.keys, (drawn(), (0..width).collect(), work.dense()))?;
                 while probed_batch(&table, (&mut probes, &pending.keys), (&types, &lobs), &mut *out)? {}
             }
         } else {

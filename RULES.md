@@ -435,6 +435,7 @@ verification approach DO-178C expects (§8).
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
+| D601 | A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 | D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
 | D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
@@ -12472,6 +12473,43 @@ GR4b], so such a grouping judges the filter of its input's batches
 itself, and warns if a row it dropped held a null in a set function's
 column. A grouping of none, or of COUNT(*) alone, tells its input's
 scans the filter, so a scan below it skips what the filter drops.
+
+#### D601. A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span
+
+A hash join whose one key is a vector of exact numbers, every built
+value whole and below 2^51 in magnitude, and whose span, the greatest
+less the least and one, is at most `DENSE_SPAN`, 4, times the rows it
+builds, builds a direct table (exec/table/join/direct.rs). Pedreira et
+al. (VLDB 2022, §4.5.2) index an array by a key of a small range, and
+Boncz, Zukowski and Nes (CIDR 2005, §4.1.2) join a key to a dense row
+number by its place. A probe gives its key's number as the bits of its
+nearest double, as a hashed table's probe would hash it (D369), and
+finds the rows at that number's place in the span. A number that is a
+fraction or lies outside the span finds none. Each row found is
+compared by its keys, as a hashed table's candidates are, so the rows
+a probe finds are the same either way.
+
+The rows are put by a counting sort of their keys, which keeps each
+key's rows in the order built, so the join's rows come in the order a
+hashed table gives (D368). Its places and rows take 20 bytes a row at
+most, below the 32 a hashed table's row is charged. On a key whose
+nulls match, as a join a subquery is unnested into matches its outer
+references by IS NOT DISTINCT FROM, a null is given as a not-a-number
+of no place in the span, and its rows are kept apart in the order
+built. A spilled join builds each partition's table of its own rows,
+direct if their keys are dense in their own span, so the test costs a
+pass of the partition's keys.
+
+A runtime filter of keys dense in their range, at most `DENSE_SPAN`
+times the rows built, is a bitmap of the range, a bit a value, in
+place of the key set and the Bloom filter. It finds a row's key
+exactly, with no false hit, in fewer bits a key than the Bloom
+filter's 8. The filter's hashes are always the hashed table's, never a
+direct table's numbers.
+
+EXECUTOR.DENSE_JOINS, ON by default, turns direct tables on and off for
+a session's statements, as to compare the two. Its rows are the same
+either way.
 
 #### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
 
