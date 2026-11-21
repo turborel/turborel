@@ -9,7 +9,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of rows inserted together whose removal must fail their tests.
-pub const BULK: [Mutation; 9] = [
+pub const BULK: [Mutation; 10] = [
     Mutation {
         name: "bulk-record-rows-not-redone",
         package: Package::Core,
@@ -98,6 +98,16 @@ pub const BULK: [Mutation; 9] = [
         original: "            if redone(entry.stamp() & !OPEN) {",
         replacement: "            if redone(entry.stamp() & !OPEN) && entry.stamp() == 0 {",
         integration: &["bulk_groups::a_checkpoint_during_an_open_load_recovers_without_it"],
+        unit: &[],
+    },
+    Mutation {
+        name: "bulk-load-rows-untold",
+        package: Package::Core,
+        breaks: "a copy is never told a load's group rows, so it writes groups of a batch",
+        file: "src/txn/undo/loading.rs",
+        original: "        Ok(self.state()?.undo.loading.as_ref().and_then(|l| l.grouped))",
+        replacement: "        Ok(self.state()?.undo.loading.as_ref().and_then(|_| None))",
+        integration: &["bulk_groups::the_groups_of_a_load_are_undone_with_it"],
         unit: &[],
     },
 ];
