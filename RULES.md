@@ -325,6 +325,11 @@ verification approach DO-178C expects (§8).
 | D540 | A semi join and an antijoin are join kinds of their own, enumerated with the others under CD-C's conflict rules |
 | D541 | A subquery of existence that is a conjunct of WHERE or HAVING is made a semi join or an antijoin before it is unnested otherwise |
 | D542 | Under MIN and MAX alone, a join whose right operand nothing above reads is a semi join |
+| D640 | A mark join gives each left row once with its mark, the OR of the truth values of the right rows that count for it |
+| D641 | EXISTS and quantified comparisons of correlated subqueries that no semi join takes are made mark joins, ALL as NOT of the negated SOME |
+| D642 | A mark join is hashed on its keys and on the equalities it marks by, a right row of a null value kept on its keys' null list |
+| D643 | By batches a mark join gives each left batch on whole with a vector of marks, and runtime filters of its left pass it |
+| D644 | A mark join is not reordered with the joins around it, and its rows are estimated as its left's |
 | D320 | A language stems by Snowball's own program, run by an interpreter of the Snowball language |
 | D321 | A language is a built-in profile of normalization, stems, stop words and cutting, named in English |
 | D322 | French, Italian, Catalan and Irish take elisions off their words, and Catalan joins a middle dot |
@@ -422,6 +427,7 @@ verification approach DO-178C expects (§8).
 | D530 | The rows of an INSERT and of a bulk copy go in together, a batch at a time, one log record each |
 | D531 | Rows inserted together are read where their statement holds them, and each batch takes one undo entry an index |
 | D532 | A load into a table builds each empty index but a unique one whole from its sorted entries as it ends, under the table's lock held alone |
+| D533 | A load into a column store table holding no row past its groups writes its batches straight as frozen groups, stamped with who made them |
 | D550 | A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less |
 | D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
 | D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
@@ -429,6 +435,7 @@ verification approach DO-178C expects (§8).
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
+| D601 | A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 | D613 | A kept statement or body plans nothing again in a steady state: its instant is a slot, its probes take slot arithmetic, and a plan of index probes is learned again only once a probe outgrows it |
 | D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
@@ -7005,7 +7012,11 @@ cast to or from any type but character and binary, a type modifier,
 fields a query reaches into, or a collation. Its values are those its
 program made, so a program that changes its text form for the same
 value changes no stored value. A snapshot writes its extensions first,
-so the types they bring are known as its tables are read.
+so the types they bring are known as its tables are read. A type is
+kept per database, keyed by the number its plug-in host is given, so
+two databases in one process with the same extension each make their
+values through their own processes, under their own settings, and each
+counts its own calls.
 
 #### D224. A plug-in storage engine keeps the rows, and the coordinator keeps the transactions
 
@@ -8283,7 +8294,9 @@ A client that shuts its side after its requests, without Terminate, has
 each request that came whole answered, in order, then its connection
 closed and its session rolled back, a connection lost [ISO/IEC 9075:1992
 §20.1 GR2a]: requests are taken from the inbox before it is read again,
-so the end of the stream is met only once they are done. Over TLS the
+so the end of the stream is met only once they are done. The last of
+them runs with nothing sent ahead, so a watch that finds the stream
+ended while it runs takes the client for gone and cancels it (D335). Over TLS the
 end is close_notify; a socket closed without it is a failure, never an
 end, whether the runtime or the worker reads it (D230).
 
@@ -9301,6 +9314,80 @@ and the conditions above it judge rows it gives either way. A grouping
 with grouping columns is left, as are set functions of DISTINCT: those
 drop duplicates by their own grouping by the argument (D340).
 
+#### D640. A mark join gives each left row once with its mark, the OR of the truth values of the right rows that count for it
+
+`LogicalPlan::MarkJoin` (`logical/mark.rs`) gives each row of its left
+operand once, in its order, with one more BOOLEAN column, the mark,
+after Neumann, Leis and Kemper, "The Complete Story of Joins (in HyPer)"
+(BTW 2017), §3.3 and §5.6. A right row counts for a left row if the
+pair makes the join's condition true. The mark is the OR of the truth
+values the counted rows give its comparison [ISO/IEC 9075:1992 §8.12
+GR2], true of each counted row where it has none, and false where no
+row counts. Of EXISTS that is whether the subquery has a row for the
+left row [X3.135-1986 §5.17 GR2], and of `x op SOME s` the quantified
+comparison's value [X3.135-1986 §5.16 GR2], true, false or unknown, the
+unknown the null value of the mark.
+
+#### D641. EXISTS and quantified comparisons of correlated subqueries that no semi join takes are made mark joins, ALL as NOT of the negated SOME
+
+The rule `mark_joins`, set by OPTIMIZER.MARK_JOINS, runs after
+`semi_joins` (D541), which takes the conjuncts of WHERE and HAVING, and
+before `unnest_subqueries`. A filter or a select list's one use of a
+correlated subquery in EXISTS or in a quantified comparison anywhere
+else, under OR or NOT, in a CASE or as a value, becomes a mark join of
+the node's rows with the subquery's, and the place reads the mark. Its
+condition is the subquery's correlating conjuncts, as `semi_joins` makes
+them, or the keys of each binding's rows (D312, D314). Of `x op SOME s`
+the join marks by `x op y` of the subquery's row `y`, and `x op ALL s`
+is NOT of the mark by the comparison of the negated operator, since ALL
+is true where no row makes the comparison false [§5.16 GR2] and NOT
+`(x op y)` is `x op' y` of the operator negated [ISO/IEC 9075:1992 §8.2
+GR7]. So NOT IN marks by `x = y` and is hashed. The join judges its
+conditions only on the pairs its keys keep, and stops at a true one, so
+the rule leaves a subquery or a comparison that can raise (D15), one of
+an impure plan or values not of a plain type (D319), and an uncorrelated
+subquery, which the executor reads once (`exec/subquery/quantified.rs`).
+A scalar subquery keeps the counted outer join of D313. EXPLAIN names it
+HashMarkJoin or NestedLoopMarkJoin.
+
+#### D642. A mark join is hashed on its keys and on the equalities it marks by, a right row of a null value kept on its keys' null list
+
+The planner takes the equalities of a column of each operand among the
+condition's conjuncts as the join's keys, and when the comparison is an
+AND of such equalities, as of IN, those as its marks. The right's rows
+are held once the first left row is read, by the buckets of their keys
+and marks, or of their keys alone, on the null list of the paper's §5.6,
+when a mark value is null. A comparison of equalities is true where each
+pair is equal, false where one pair of values neither null differs, and
+else unknown [ISO/IEC 9075:1992 §8.2 GR7a, b, g, m]. So a left row of no null
+value reads its own bucket, where a counted row gives true, and its
+keys' null list, whose rows give unknown or false, and a left row of a
+null value reads every right row of its keys. A null key matches no row
+and gives false. Of a comparison of no such equalities each counted row
+of the left row's keys is judged, and of no keys at all every right row,
+the nested-loop mark join. Of no condition beyond the keys only the
+first of rows alike in keys and marks is held. Past the work area the
+rows go to tables of the spill area by keys and marks, of the null
+list, and by keys alone (D38).
+
+#### D643. By batches a mark join gives each left batch on whole with a vector of marks, and runtime filters of its left pass it
+
+A mark join whose left gives batches gives each of them on whole, its
+selection kept, with one vector more of its rows' marks, and the batch
+holds the left's columns and then the mark. Of each kept row it takes
+only the values its keys and conditions read, and it holds and probes
+the right as the row path does, so both paths give the same marks. It
+gives every left row, so a runtime filter of a left column (D369) that
+reaches it is told its left.
+
+#### D644. A mark join is not reordered with the joins around it, and its rows are estimated as its left's
+
+Join enumeration takes a mark join as one relation of the chain it is
+in, its left and right planned apart, and does not move joins across
+it. Its mark is read above it, so no join below may be moved past the
+place that reads it. It gives each left row once, so its rows are its
+left's.
+
 ### Full-text languages
 
 #### D320. A language stems by Snowball's own program, run by an interpreter of the Snowball language
@@ -9586,9 +9673,13 @@ byte every LOOK_AGAIN, on a thread of the blocking pool, as the copy
 shares the socket's mode and may wait a moment. No byte to read, or an
 error, is the client gone, and what runs is cancelled as an operator's
 ending cancels it (D44). The connection then ends and its session rolls
-back. A byte waiting is a request sent ahead and tells nothing. So a
-client that sent one and closed, or closed TLS with its closing alert,
-is found only once the statement ends. A request answered within
+back. A byte waiting is a request sent ahead and tells nothing, and so
+is the end of the stream while the connection's inbox holds bytes the
+client sent ahead, already read from the socket (`Wire::note_ahead`), so
+a client that shut its side after its requests hears each of them
+answered but the last (D234), however long they run. So a client that
+sent one and closed, or closed TLS with its closing alert, is found only
+once the statement ends. A request answered within
 LOOK_AGAIN is never looked at, so the fast path costs nothing.
 
 #### D336. A prepared CALL's output dynamic parameters are its columns, sent as a row
@@ -12054,6 +12145,41 @@ index held back. Index entries are not logged; recovery mends the
 indexes as before (D25). An index built whole has the distinct keys one
 built row by row has, and its range estimates come within a tenth of
 the other's, its pages being fuller.
+#### D533. A load into a column store table holding no row past its groups writes its batches straight as frozen groups, stamped with who made them
+
+A column store table's rows go to its tree and are frozen into groups
+once committed before every snapshot (D31). A load so wrote each row
+twice, and read it back between. So a load (D532) into a column store
+table that holds no row past its last group as it begins, under the
+table's lock held alone, writes each batch straight as a group, sorted,
+with its filters and sketches, as a freeze writes one
+(`engine/rows/frozen/stamped.rs`). Its rows are logged as any others
+(D530). A batch is of COLUMNSTORE.GROUP_ROWS rows, of an INSERT, or a
+copy's execution. A copy takes its executions a group's rows at a time
+once its load writes groups, so each group is whole
+(`Session::load_rows`).
+
+Such a group is stamped with who made it. While its transaction is
+open, only that transaction sees its rows; once it commits, each
+snapshot at or after its commit does; once that commit is before every
+snapshot, the stamp goes, and the group is as any other. A directory
+notes whether any group is stamped, so a reader of one holding none
+takes it whole by one comparison; else it takes a view of the groups
+it sees. A row of a stamped group changed is changed over a version
+made by its transaction, so an older snapshot still finds no row. A
+group's making is undone as its transaction's other changes are, by a
+statement's failure, a savepoint rolled back or a rollback, taking it
+out of the directory. A row the transaction inserts through the tree
+ends the load's groups, so no row of it lies between two groups where
+no freeze reaches. A rewrite waits for a group's stamp to go.
+
+A directory stored names the transaction of each group made by one open
+then. Opened after a crash, the table holds such groups apart, and
+recovery, once it has read which transactions committed, keeps each
+group whose transaction's rows it neither redoes nor undoes, as
+committed before it, and drops the others, the directory stored again
+before their pages are freed, so their rows come back only by redo, of
+a transaction that committed.
 #### D550. A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less
 
 A grouping whose rows come in the order of its grouping columns makes
@@ -12360,6 +12486,43 @@ GR4b], so such a grouping judges the filter of its input's batches
 itself, and warns if a row it dropped held a null in a set function's
 column. A grouping of none, or of COUNT(*) alone, tells its input's
 scans the filter, so a scan below it skips what the filter drops.
+
+#### D601. A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span
+
+A hash join whose one key is a vector of exact numbers, every built
+value whole and below 2^51 in magnitude, and whose span, the greatest
+less the least and one, is at most `DENSE_SPAN`, 4, times the rows it
+builds, builds a direct table (exec/table/join/direct.rs). Pedreira et
+al. (VLDB 2022, §4.5.2) index an array by a key of a small range, and
+Boncz, Zukowski and Nes (CIDR 2005, §4.1.2) join a key to a dense row
+number by its place. A probe gives its key's number as the bits of its
+nearest double, as a hashed table's probe would hash it (D369), and
+finds the rows at that number's place in the span. A number that is a
+fraction or lies outside the span finds none. Each row found is
+compared by its keys, as a hashed table's candidates are, so the rows
+a probe finds are the same either way.
+
+The rows are put by a counting sort of their keys, which keeps each
+key's rows in the order built, so the join's rows come in the order a
+hashed table gives (D368). Its places and rows take 20 bytes a row at
+most, below the 32 a hashed table's row is charged. On a key whose
+nulls match, as a join a subquery is unnested into matches its outer
+references by IS NOT DISTINCT FROM, a null is given as a not-a-number
+of no place in the span, and its rows are kept apart in the order
+built. A spilled join builds each partition's table of its own rows,
+direct if their keys are dense in their own span, so the test costs a
+pass of the partition's keys.
+
+A runtime filter of keys dense in their range, at most `DENSE_SPAN`
+times the rows built, is a bitmap of the range, a bit a value, in
+place of the key set and the Bloom filter. It finds a row's key
+exactly, with no false hit, in fewer bits a key than the Bloom
+filter's 8. The filter's hashes are always the hashed table's, never a
+direct table's numbers.
+
+EXECUTOR.DENSE_JOINS, ON by default, turns direct tables on and off for
+a session's statements, as to compare the two. Its rows are the same
+either way.
 
 #### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
 

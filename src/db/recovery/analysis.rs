@@ -25,6 +25,14 @@ pub(super) struct Analysis {
 }
 
 impl Analysis {
+    /// Whether recovery redoes or undoes every change of transaction `tx`
+    /// to a table whose pages hold every change logged before `durable`:
+    /// it read its changes, and it did not commit, or committed at or
+    /// after `durable` (RULES.md D533).
+    pub(super) fn redoes(&self, tx: TxId, durable: Lsn) -> bool {
+        self.transactions.contains(&tx) && self.committed.get(&tx).is_none_or(|&at| at >= durable)
+    }
+
     /// Notes the record `record`, logged at `lsn`.
     pub(super) fn note(&mut self, lsn: Lsn, record: &Record) {
         self.highest = self.highest.max(record.tx);

@@ -11,6 +11,13 @@ use crate::storage::Row;
 use crate::value::{DataType, Value};
 
 impl Session {
+    /// \[EXTENSION\] How many rows a load under way in its transaction
+    /// writes as one group (RULES.md D533), none if it writes none so: so
+    /// a copy gives an execution that many rows, each a whole group.
+    pub fn load_rows(&self) -> Option<usize> {
+        self.inner.borrow().tx.as_ref().and_then(|tx| tx.load_rows().ok().flatten())
+    }
+
     /// \[EXTENSION\] Executes `p`, an INSERT of one row of dynamic
     /// parameters, once for all of `rows`, each the values of its
     /// parameters: as many executions of it would, one a row, as one

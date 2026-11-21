@@ -81,8 +81,11 @@ fn a_column_stores_groups_are_counted_and_its_compaction_stamped() {
     let (db, _clock) = owned();
     db.schema("CREATE SCHEMA AUTHORIZATION C CREATE TABLE G (K INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)").unwrap();
     let c = db.session("C");
-    let values: Vec<String> = (0..4096).map(|k| format!("({k})")).collect();
-    c.run(&format!("INSERT INTO G VALUES {}", values.join(", "))).unwrap();
+    // Two INSERTs, neither a load, whose rows a load would freeze itself.
+    for first in [0, 2048] {
+        let values: Vec<String> = (first..first + 2048).map(|k| format!("({k})")).collect();
+        c.run(&format!("INSERT INTO G VALUES {}", values.join(", "))).unwrap();
+    }
     c.commit().unwrap();
     let sql = "SELECT ROW_COUNT, BYTES > 0, LAST_COMPACTED IS NULL FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_NAME = 'G'";
     let owner = db.session("OWNER");

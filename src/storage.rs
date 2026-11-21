@@ -15,6 +15,7 @@ mod batch;
 mod condition;
 mod cost;
 mod engine;
+mod loading;
 mod newest;
 mod options;
 mod region;
@@ -28,6 +29,7 @@ pub use batch::{
 pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
+pub use loading::Loading;
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
@@ -74,6 +76,11 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine cannot store the row; the statement fails.
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId>;
+
+    /// \[EXTENSION\] Its side of a load, if it writes a load's rows straight as frozen groups (RULES.md D533).
+    fn loading(&self) -> Option<&dyn Loading> {
+        None
+    }
     /// \[DESIGN\] As `insert` of a copy of `row`, which an engine storing rows encoded need not make: rows inserted together are
     /// still held by their statement (RULES.md D531). Default: `insert` of a clone.
     ///
@@ -144,10 +151,8 @@ pub trait TableStorage: Send + Sync {
     /// engine cannot read is an error item, after which the scan may end. The scan holds what it reads (`self`), so it can outlive the call
     /// that started it: a cursor reads its rows as it is fetched from.
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows;
-    /// As `scan`, for a statement that keeps only rows `conditions` all
-    /// match, and checks every row itself: an engine may leave out rows that
-    /// do not match, and, checking serializability, count only those that
-    /// do as read. Default: `scan`.
+    /// As `scan`, for a statement that keeps only rows `conditions` all match, and checks every row itself: an engine may leave
+    /// out rows that do not match, and, checking serializability, count only those that do as read. Default: `scan`.
     fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], _conditions: &Conjunction) -> Rows {
         self.scan(tx, columns)
     }
@@ -196,16 +201,13 @@ pub trait TableStorage: Send + Sync {
     ) -> Option<Batches> {
         self.scan_ordered(tx, columns, order, conditions).map(|rows| batches_of(rows, columns))
     }
-    /// \[DESIGN\] Whether `scan_batches` gives its rows without making each,
-    /// so a statement given rows a few at a time, a cursor's, reads them by
-    /// batch too, a batch read ahead of what it is given. Default: false,
-    /// its batches being its rows gathered, read ahead for nothing.
+    /// \[DESIGN\] Whether `scan_batches` gives its rows without making each, so a statement given rows a few at a time, a cursor's,
+    /// reads them by batch too, a batch read ahead of what it is given. Default: false, its batches being its rows gathered.
     fn reads_by_batch(&self) -> bool {
         false
     }
-    /// \[DESIGN\] (RULES.md D351) Counts that sum to the rows `scan_batches`
-    /// gives `tx` with no conditions, read once asked for, the read noted as
-    /// the scan's. None if it cannot count faster. Default none.
+    /// \[DESIGN\] (RULES.md D351) Counts that sum to the rows `scan_batches` gives `tx` with no conditions, read once asked for,
+    /// the read noted as the scan's. None if it cannot count faster. Default none.
     fn count(self: Arc<Self>, _tx: TxId) -> Option<Counts> {
         None
     }

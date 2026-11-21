@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::{Directory, Entry, Retiring};
+use crate::disk::pager::PageId;
 use crate::engine::columns::group::Group;
 use crate::engine::rows::options::{Columns, Places};
 use crate::engine::rows::version::{Maker, Version};
@@ -75,6 +76,9 @@ pub(super) fn ordered(order: &Places, mut rows: Vec<(RowId, Row)>) -> (Vec<RowId
     }
     rows.into_iter().unzip()
 }
+
+/// A group just written, as an entry of the directory, with its pages.
+pub(super) type Made = Option<(Arc<Entry>, Vec<PageId>)>;
 
 /// A freeze under way, noted from a row id on until it is dropped.
 pub(super) struct Freezing<'f>(&'f AtomicU64);
@@ -198,15 +202,21 @@ impl RowTable {
     /// any, the directory stored, and the tree's `entries` of its rows to
     /// be taken out; `old`'s pages freed once no reader holds it.
     pub(super) fn publish(&self, (old, group): (Option<&Arc<Entry>>, Option<Group>), entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
+        let made = group.map(|g| (g.pages(), g)).map(|(pages, g)| self.entry_of(g).map(|e| (e, pages))).transpose()?;
+        self.publish_entry((old, made), entries)
+    }
+
+    /// As `publish`, of the entry `made` of a group just written, if any,
+    /// with its pages.
+    pub(super) fn publish_entry(&self, (old, made): (Option<&Arc<Entry>>, Made), entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
         let old_pages = old.map(|o| self.group_of(o).map(|g| g.pages())).transpose()?;
-        let made_pages = group.as_ref().map(Group::pages);
-        let made = group.map(|g| self.entry_of(g)).transpose()?;
+        let (made, made_pages) = made.unzip();
         let before = {
             let mut held = write(&self.frozen.directory)?;
             let mut groups: Vec<Arc<Entry>> = held.groups.iter().filter(|e| old.is_none_or(|o| !Arc::ptr_eq(e, o))).cloned().collect();
             groups.extend(made.iter().cloned());
             groups.sort_by_key(|e| e.summary.first);
-            let next = Arc::new(Directory { groups });
+            let next = Arc::new(Directory::of(groups));
             if let Err(e) = self.store_directory(&next) {
                 // Freed as it goes: it was never published.
                 if let (Some(m), Some(pages)) = (&made, made_pages) {
