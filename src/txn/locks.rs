@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
-use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
@@ -159,6 +159,15 @@ struct Holder {
     running: Arc<Mutex<Option<ThreadId>>>,
 }
 
+/// A table's collection under way (`TableLock::try_collect`), until dropped.
+pub(crate) struct Collecting<'l>(&'l TableLock);
+
+impl Drop for Collecting<'_> {
+    fn drop(&mut self) {
+        self.0.collecting.store(false, Ordering::Release);
+    }
+}
+
 /// \[DESIGN\] What the transactions share about one table: who holds its
 /// lock, the signal that a holder released it, whether a failed undo damaged
 /// it (RULES.md D19), and the snapshot that last changed its definitions
@@ -194,6 +203,8 @@ pub(crate) struct TableLock {
     /// Of each index of it filled from its versions, by name, the latest
     /// commit the fill may have counted (`txn/kept.rs`).
     filled: Mutex<Vec<(String, Timestamp)>>,
+    /// Whether a transaction's end is collecting its garbage now.
+    collecting: AtomicBool,
 }
 
 impl TableLock {
@@ -280,6 +291,21 @@ impl TableLock {
     /// for an index not filled from versions while the table had any.
     pub(crate) fn filled_through(&self, name: &str) -> Timestamp {
         lock_builtin(&self.filled).iter().find(|(n, _)| n == name).map_or(0, |&(_, at)| at)
+    }
+
+    /// The table's collection, for one transaction's end at a time
+    /// (RULES.md D445): none while another's is under way, or, if `wait`,
+    /// once it is done.
+    pub(crate) fn try_collect(&self, wait: bool) -> Option<Collecting<'_>> {
+        loop {
+            if !self.collecting.swap(true, Ordering::AcqRel) {
+                return Some(Collecting(self));
+            }
+            if !wait {
+                return None;
+            }
+            thread::yield_now();
+        }
     }
 
     /// Holds collection of its garbage back, until `release_collection`.

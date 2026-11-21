@@ -242,7 +242,7 @@ impl Database {
                 return Err(api("[DESIGN] a database is closed with no transaction open"));
             }
             let tables = st.catalog.tables();
-            st.gc(tables.iter().map(|t| &t.name));
+            st.gc_waiting(tables.iter().map(|t| &t.name));
             for method in st.methods.values() {
                 method.checkpoint()?;
             }

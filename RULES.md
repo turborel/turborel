@@ -399,6 +399,7 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D443 | An update shares the index entries of the version it replaced where it keeps every column the key reads |
 | D444 | A validated transaction's images are decoded only when a reader's conditions are checked against them |
+| D445 | One transaction's end collects a table at a time; the others pass it over |
 
 ### The project
 
@@ -11238,6 +11239,29 @@ The semantics hold for these reasons.
   phantom is never missed for want of an image.
 - Reads by id and reads of the whole table are answered from the ids, as
   before, with no image.
+
+#### D445. One transaction's end collects a table at a time; the others pass it over
+
+Every transaction's end collected each of its tables and each table still
+awaiting collection. Under many sessions, all of them collected the same
+hot table at once, each taking its garbage, validated and undone locks
+in turn, and all but one found the work done.
+
+A transaction's end now collects a table only if no other is collecting
+it (`TableLock::try_collect`). One that finds a collection under way
+passes the table over and leaves it noted as awaiting collection, so a
+later end collects what is left. Whether a table still awaits is decided
+under the lock on that note, so a commit that added garbage while another
+collected keeps its table noted. A checkpoint, which needs every table
+collected as far as the horizon lets, waits for a collection under way
+instead (`gc_waiting`).
+
+The semantics hold for these reasons.
+
+- The horizon rule is unchanged: no version a snapshot can read is
+  removed. A collection passed over is only later, never wrong.
+- A table passed over stays noted, so the next end of any transaction
+  collects it (D29).
 
 ## 2. Project layout
 

@@ -177,16 +177,37 @@ impl State {
     /// collected by their session instead (`db/temporary.rs`). `tables`
     /// names each once; one still awaited is collected once too.
     pub(crate) fn gc<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
+        self.gc_with(tables, false);
+    }
+
+    /// As `gc`, but waiting for a collection of a table under way rather
+    /// than passing it over (RULES.md D445): for a checkpoint that needs
+    /// every table collected as far as the horizon lets.
+    pub(crate) fn gc_waiting<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
+        self.gc_with(tables, true);
+    }
+
+    fn gc_with<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone, wait: bool) {
         let _gate = self.tx.gate.enter();
         let horizon = self.tx.horizon();
         let waiting: Vec<QualifiedName> = lock_builtin(&self.tx.uncollected).iter().cloned().collect();
         let collect = |table: &QualifiedName| {
-            let left = self.collect_table(table, horizon);
+            let left = self.collect_table(table, horizon, wait);
             let mut uncollected = lock_builtin(&self.tx.uncollected);
-            match left {
-                Some(true) => uncollected.insert(table.clone()),
-                Some(false) | None => uncollected.remove(table),
+            // Asked again under the lock: a commit that added garbage while
+            // this one collected, and was passed over (RULES.md D445), has
+            // noted the table, and its note must not be taken out.
+            let still = || self.storage_of(table).is_ok_and(|s| s.uncollected());
+            let keep = match left {
+                Some(true) => true,
+                Some(false) => still(),
+                None => false,
             };
+            if keep {
+                uncollected.insert(table.clone());
+            } else {
+                uncollected.remove(table);
+            }
             self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);
         };
         for table in waiting.iter().filter(|w| !tables.clone().any(|t| t == *w)) {
@@ -216,7 +237,7 @@ impl State {
     /// temporary table: an instance of one is collected by its session as
     /// its transactions end (`db/temporary.rs`), the definition's storage
     /// holding nothing.
-    fn collect_table(&self, table: &QualifiedName, horizon: Timestamp) -> Option<bool> {
+    fn collect_table(&self, table: &QualifiedName, horizon: Timestamp, wait: bool) -> Option<bool> {
         if self.catalog.table(table).is_none_or(|t| t.temporary.is_some()) {
             return None;
         }
@@ -229,6 +250,9 @@ impl State {
         if lock.collection_held() || lock.changed_after(self.generation) {
             return Some(true);
         }
+        // One collector at a time (RULES.md D445): another ending now finds
+        // the work under way and passes the table over, noted as awaiting.
+        let Some(_collecting) = lock.try_collect(wait) else { return Some(true) };
         {
             // The table's indexes, found as the first version is removed:
             // most calls remove none, so most never look them up.
