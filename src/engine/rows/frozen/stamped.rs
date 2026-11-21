@@ -227,21 +227,14 @@ impl RowTable {
     }
 
     /// The group of `rows`, given `ids`, sorted as `columns` says, written.
-    fn group_from(
-        &self,
-        (ids, rows): (Vec<RowId>, &[Row]),
-        columns: &crate::engine::rows::options::Columns,
-        threads: usize,
-    ) -> Result<Group> {
+    fn group_from(&self, ids: Vec<RowId>, rows: &[Row], columns: &crate::engine::rows::options::Columns) -> Result<Group> {
         let (order, bloom, sketch) = (columns.order.places(), columns.bloom.places(), columns.sketch.places());
         let pages = self.group_pages()?;
-        // Its columns written side by side, as the tree's rows would be
-        // frozen on the maintenance thread beside the load's.
         if order.is_empty() {
-            return Group::write_on(threads, &pages, self.format.types(), (&ids, rows), (&order, &bloom, &sketch));
+            return Group::write(&pages, self.format.types(), (&ids, rows), (&order, &bloom, &sketch));
         }
         let (ids, rows) = ordered(&columns.order, ids.into_iter().zip(rows.iter().cloned()).collect());
-        Group::write_on(threads, &pages, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))
+        Group::write(&pages, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))
     }
 }
 
@@ -261,12 +254,12 @@ impl Loading for RowTable {
         Ok(Some(usize::try_from(columns.group_rows).unwrap_or(usize::MAX)))
     }
 
-    fn insert_group(&self, tx: TxId, rows: &[Row], threads: usize) -> Result<Option<Vec<RowId>>> {
+    fn insert_group(&self, tx: TxId, rows: &[Row]) -> Result<Option<Vec<RowId>>> {
         let direct = self.frozen.loads.direct.load(Ordering::Acquire) == tx;
         let Some(columns) = (*read(&self.frozen.columns)?).filter(|_| direct && !rows.is_empty()) else { return Ok(None) };
         let ids = rows.iter().map(|_| self.next_id()).collect::<Result<Vec<_>>>()?;
         let first = ids.first().copied().unwrap_or_default();
-        let group = self.group_from((ids.clone(), rows), &columns, threads)?;
+        let group = self.group_from(ids.clone(), rows, &columns)?;
         let pages = group.pages();
         let entry = self.entry_of(group)?;
         entry.made.store(OPEN | tx, Ordering::Release);

@@ -12157,13 +12157,7 @@ with its filters and sketches, as a freeze writes one
 (D530). A batch is of COLUMNSTORE.GROUP_ROWS rows, of an INSERT, or a
 copy's execution. A copy takes its executions a group's rows at a time
 once its load writes groups, so each group is whole
-(`Session::load_rows`). A freeze runs on the maintenance thread beside
-the load, but a group a load writes is on the load's own time, so its
-columns are written side by side, each thread a share of them
-(`Group::write_on`): at most a thread a column, the workers the database
-runs at once (EXECUTOR.WORKERS, or the system's threads), and as many as
-one work grant of the load's holds a column's values and chunks each
-(D298), one thread at the least.
+(`Session::load_rows`).
 
 Such a group is stamped with who made it. While its transaction is
 open, only that transaction sees its rows; once it commits, each

@@ -53,7 +53,7 @@ use std::borrow::Cow;
 pub use header::{put_summary, read, read_summaries};
 use ids::{write_by_id, write_ids};
 pub use summary::{Overall, Summary};
-use zones::{bounds_of, put_filters, write_columns, zone_of};
+use zones::{bounds_of, put_filters, write_column, zone_of};
 
 use super::{Chunk, imprints, sketch};
 use crate::disk::buffer::{BufferPool, FileId};
@@ -294,43 +294,26 @@ impl Group {
     /// many; an error of the pages; nothing written is kept. Its rows are
     /// in the order of the columns at `order`, those at `bloom` have
     /// Bloom filters, and those at `named` sketches, if they take them.
-    pub fn write<S: Seal + Sync>(
-        pages: &Pages<'_, S>,
-        types: &[DataType],
-        (ids, rows): (&[RowId], &[Row]),
-        (order, bloom, named): (&[usize], &[usize], &[usize]),
-    ) -> Result<Group> {
-        Self::write_on(1, pages, types, (ids, rows), (order, bloom, named))
-    }
-
-    /// As `write`, its columns written on up to `threads` threads at once,
-    /// each a share of them: what a load does, its caller holding their
-    /// buffers' grant (RULES.md D533).
-    ///
-    /// # Errors
-    ///
-    /// As `write`.
-    pub fn write_on<S: Seal + Sync>(
-        threads: usize,
+    pub fn write<S: Seal>(
         pages: &Pages<'_, S>,
         types: &[DataType],
         (ids, rows): (&[RowId], &[Row]),
         (order, bloom, named): (&[usize], &[usize], &[usize]),
     ) -> Result<Group> {
         let mut written = Vec::new();
-        let made = Self::write_all(pages, types, (ids, rows), (order, bloom, named), (threads, &mut written));
+        let made = Self::write_all(pages, types, (ids, rows), (order, bloom, named), &mut written);
         if made.is_err() {
             pages.free(&written);
         }
         made
     }
 
-    fn write_all<S: Seal + Sync>(
+    fn write_all<S: Seal>(
         pages: &Pages<'_, S>,
         types: &[DataType],
         (ids, rows): (&[RowId], &[Row]),
         (order, bloom, named): (&[usize], &[usize], &[usize]),
-        (threads, written): (usize, &mut Vec<PageId>),
+        written: &mut Vec<PageId>,
     ) -> Result<Group> {
         let (Some(&first), Some(&last)) = (ids.iter().min(), ids.iter().max()) else {
             return Err(SqlError::new(Code::Api, "[DESIGN] a frozen row group of no rows"));
@@ -340,7 +323,11 @@ impl Group {
         let mut columns = if pages.pax {
             pax::write_pax(pages, types, (rows, bloom), written)?
         } else {
-            write_columns(pages, types, (rows, bloom), (threads, written))?
+            types
+                .iter()
+                .enumerate()
+                .map(|(c, t)| write_column(pages, t, (rows, c, bloom.contains(&c)), written))
+                .collect::<Result<Vec<_>>>()?
         };
         let edges = imprints::put_all(pages, (types, rows), &mut columns, written)?;
         let sketches = sketch::put_all(pages, (types, rows, named), &mut columns, written)?;

@@ -30,9 +30,7 @@ use crate::exec::HeldRows;
 use crate::index::{Index, Key};
 use crate::log::record::insert_rows_record;
 use crate::params::Load;
-use crate::physical::workers_of;
-use crate::settings::{MEMORY_WORK_BYTES, work_bytes};
-use crate::spill::{Grant, row_bytes};
+use crate::spill::row_bytes;
 use crate::storage::{Row, RowId, TableStorage};
 use crate::txn::{Txn, Undo, UndoEntry};
 use crate::value::Value;
@@ -148,13 +146,7 @@ impl State {
     fn stored_together(&self, tx: &Txn, together: &Together<'_>, rows: &[Row]) -> Result<Vec<RowId>> {
         let table = together.table;
         let loading = together.grouped.and_then(|_| together.storage.loading());
-        let grouped = match loading {
-            Some(loading) => {
-                let (threads, _grant) = self.group_threads(rows);
-                loading.insert_group(tx.id, rows, threads)?
-            }
-            None => None,
-        };
+        let grouped = loading.map(|l| l.insert_group(tx.id, rows)).transpose()?.flatten();
         let given = grouped.is_some();
         let mut ids = grouped.unwrap_or_else(|| Vec::with_capacity(rows.len()));
         let mut from = 0;
@@ -176,22 +168,6 @@ impl State {
             from = from.saturating_add(taken);
         }
         Ok(ids)
-    }
-}
-
-impl State {
-    /// The threads a load's group of `rows` is written on (RULES.md D533),
-    /// with the work grant their buffers are held of: one column's values
-    /// and chunks each, about twice its share of the rows' bytes, at most
-    /// one thread a column and the workers the database runs at once. One
-    /// thread is the floor every load had before.
-    fn group_threads(&self, rows: &[Row]) -> (usize, Arc<Grant>) {
-        let grant = self.work.grant(work_bytes(self.settings.get(MEMORY_WORK_BYTES)));
-        let columns = rows.first().map_or(1, Vec::len).max(1);
-        let bytes = rows.iter().map(row_bytes).fold(0_usize, usize::saturating_add);
-        let each = bytes.checked_div(columns).unwrap_or(bytes).saturating_mul(2).max(1);
-        let threads = grant.bytes().checked_div(each).unwrap_or(1).min(columns).min(workers_of(self)).max(1);
-        (threads, grant)
     }
 }
 
