@@ -62,8 +62,10 @@ fn tables() -> (Database, Session) {
     a.run(&format!("INSERT INTO DM VALUES {}", dims.join(", "))).unwrap();
     let thirds: Vec<String> = (0..12).map(|n| format!("({}, {})", n % 9, n % 4)).collect();
     a.run(&format!("INSERT INTO T3 VALUES {}", thirds.join(", "))).unwrap();
-    // L's nulls are all of rows no row of R joins.
-    a.run("INSERT INTO L VALUES (1, 5), (1, 6), (1, 5), (1, 7), (2, NULL), (2, NULL), (2, 3), (2, NULL)").unwrap();
+    // L's nulls are all of rows no row of R joins, and each of L's
+    // values comes sixty times, so its early groups take many rows each.
+    let ls = ["(1, 5)", "(1, 6)", "(2, NULL)", "(2, 3)"].repeat(60);
+    a.run(&format!("INSERT INTO L VALUES {}", ls.join(", "))).unwrap();
     a.run("INSERT INTO R VALUES (1), (1), (3)").unwrap();
     a.commit().unwrap();
     db.maintain().unwrap();

@@ -55,6 +55,9 @@ fn work_at(plan: &Plan, depth: usize) -> f64 {
             w(left) + w(right) + (rows(left) + rows(right)) * HASH_ROW + own * ROW_STEP
         }
         Plan::Product { left, right, .. } => w(left) + w(right) + own * ROW_STEP,
+        // A semi join hashes, marks or reads each row of both as a hash
+        // join builds and probes them.
+        Plan::SemiJoin(j) => w(&j.left) + w(&j.right) + (rows(&j.left) + rows(&j.right)) * HASH_ROW + own * ROW_STEP,
         Plan::IndexJoin { left, cost, .. } => w(left) + cost + own * ROW_STEP,
         Plan::MergeJoin(m) => w(&m.left) + w(&m.right) + (rows(&m.left) + rows(&m.right) + own) * ROW_STEP,
         Plan::RangeJoin(r) => w(&r.left) + w(&r.right) + (rows(&r.left) + rows(&r.right) + own) * ROW_STEP,
