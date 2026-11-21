@@ -25,6 +25,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
+use turborel::hash::xxhash::Seeded;
 use turborel::kernels::{AlpScale, Kernels, Portable};
 use turborel::storage::Mask;
 use turborel::value::CompOp;
@@ -85,12 +86,55 @@ fn line(name: &str, case: &str, size: usize, sets: &[(String, Box<dyn Kernels>)]
     println!("{name:<12} {case:<14} {size:>8}  {}", cells.join("  "));
 }
 
+/// The hashes' lines: of integers all and a half selected, joins of a
+/// key's columns, and texts short (8 bytes) and long (300).
+fn hashes(wanted: &dyn Fn(&str) -> bool, (size, ints, sel): (usize, &[i64], &[u32]), sets: &[(String, Box<dyn Kernels>)], rng: &mut Rng) {
+    let mut out = Vec::with_capacity(size + 16);
+    if wanted("hash_i64") {
+        line("hash_i64", "all", size, sets, |k| {
+            out.clear();
+            k.hash_i64(black_box(ints), 0x5EED, None, &mut out);
+            black_box(&out);
+        });
+        line("hash_i64", "half", size, sets, |k| {
+            out.clear();
+            k.hash_i64(black_box(ints), 0x5EED, Some(sel), &mut out);
+            black_box(&out);
+        });
+    }
+    if wanted("combine_i64") {
+        let next: Vec<u64> = (0..size).map(|_| rng.next()).collect();
+        let mut hashes: Vec<u64> = (0..size).map(|_| rng.next()).collect();
+        line("combine_i64", "all", size, sets, |k| {
+            k.combine_i64(black_box(&mut hashes), &next, 0x5EED);
+            black_box(&hashes);
+        });
+    }
+    if wanted("hash_texts") && size <= 1 << 14 {
+        let seeded = Seeded::new(0x5EED);
+        for (case, len) in [("short", 8), ("long", 300)] {
+            let text: Vec<u8> = (0..size * len).map(|_| b'a' + (rng.next() % 26) as u8).collect();
+            let ends: Vec<usize> = (1..=size).map(|n| n * len).collect();
+            line("hash_texts", case, size, sets, |k| {
+                out.clear();
+                k.hash_texts((black_box(&text), &ends), &seeded, None, &mut out);
+                black_box(&out);
+            });
+        }
+    }
+}
+
 fn main() {
     let only = std::env::var("ONLY").ok();
     let wanted = |name: &str| only.as_deref().is_none_or(|o| o == name);
     let sets = sets();
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     println!("kernel       case             rows  ns a row at each set (speed against portable)");
+    for size in SIZES {
+        let ints: Vec<i64> = (0..size).map(|_| (rng.next() % 1000) as i64).collect();
+        let sel: Vec<u32> = (0..size as u32).filter(|_| rng.next().is_multiple_of(2)).collect();
+        hashes(&wanted, (size, &ints, &sel), &sets, &mut rng);
+    }
     for size in SIZES {
         let ints: Vec<i64> = (0..size).map(|_| (rng.next() % 1000) as i64).collect();
         let floats: Vec<f64> = ints.iter().map(|&v| v as f64 + 0.5).collect();

@@ -13,6 +13,7 @@ use turborel::value::CompOp;
 use crate::Level;
 
 mod alp;
+mod hash;
 mod select;
 mod sum;
 pub(crate) mod xxh3;
@@ -135,6 +136,25 @@ pub(crate) fn gather_i64(isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i6
         Isa::Portable | Isa::Sse2 => portable::gather::gather_i64(values, sel, out),
         Isa::Avx2 => sum::gather_avx2(values, sel, out),
         Isa::Avx512 => sum::gather_avx512(values, sel, out),
+    }
+}
+
+/// `Kernels::hash_i64`: four or eight words a step on AVX2 or AVX-512,
+/// a selection's gathered first.
+pub(crate) fn hash_i64(isa: Isa, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::hash::hash_i64(values, seed, sel, out),
+        Isa::Avx2 => hash::hash_i64_avx2(values, seed, sel, out),
+        Isa::Avx512 => hash::hash_i64_avx512(values, seed, sel, out),
+    }
+}
+
+/// `Kernels::combine_i64`: four or eight joins a step on AVX2 or AVX-512.
+pub(crate) fn combine_i64(isa: Isa, hashes: &mut [u64], next: &[u64], seed: u64) {
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::hash::combine_i64(hashes, next, seed),
+        Isa::Avx2 => hash::combine_i64_avx2(hashes, next, seed),
+        Isa::Avx512 => hash::combine_i64_avx512(hashes, next, seed),
     }
 }
 

@@ -17,7 +17,7 @@
 
 pub mod portable;
 
-use crate::hash::xxhash::{self, Stripes as _};
+use crate::hash::xxhash::{self, Seeded, Stripes as _};
 use crate::storage::Mask;
 use crate::value::CompOp;
 
@@ -76,10 +76,29 @@ pub trait Kernels: Send + Sync {
     }
 
     /// Appends to `out` the hash of each of `values` at `sel`, or of all,
-    /// by `seed`, as a grouping's table hashes a word (RULES.md D356):
-    /// MurmurHash3's finalizer of the value's bits after the seed is added.
+    /// by `seed`, as a grouping's table hashes a word (RULES.md D356,
+    /// D573): XXH3-64 of its 8 bytes, little-endian
+    /// (`hash::xxhash::Words::hash`); that of 0 for a row past the end.
     fn hash_i64(&self, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
         portable::hash::hash_i64(values, seed, sel, out);
+    }
+
+    /// Joins to each of `hashes`, a key's hash so far, the next column's of
+    /// its row in `next`, by `seed`, as a grouping's table joins a key's
+    /// columns (RULES.md D573): XXH3-64 of the 16 bytes of the two,
+    /// little-endian, the hash so far first (`hash::xxhash::Words::pair`).
+    /// Of `hashes` past `next`, none changes.
+    fn combine_i64(&self, hashes: &mut [u64], next: &[u64], seed: u64) {
+        portable::hash::combine_i64(hashes, next, seed);
+    }
+
+    /// Appends to `out` the hash of each text at `sel`, or of all, of the
+    /// texts of `text` ending at `ends`, by `seeded`, as a grouping's
+    /// table hashes a character string (RULES.md D573): XXH3-64 of its
+    /// bytes less its trailing spaces (`hash::xxhash::Seeded::bytes`); of
+    /// a text past the end, that of no byte.
+    fn hash_texts(&self, (text, ends): (&[u8], &[usize]), seeded: &Seeded, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        portable::hash::hash_texts((text, ends), seeded, sel, out);
     }
 
     /// Appends to `out` the values from the `from`th to the `to`th of

@@ -19,8 +19,8 @@ fn portable_kernels_keep_the_contract() {
     contract(&Portable);
 }
 
-/// Kernels that count their selections, each the portable one's, and
-/// their decimals decoded and sort keys made.
+/// Kernels that count their selections, each the portable one's, their
+/// decimals decoded, sort keys made, and keys hashed.
 struct Counting(Arc<std::sync::atomic::AtomicUsize>);
 
 impl Kernels for Counting {
@@ -41,6 +41,21 @@ impl Kernels for Counting {
     fn normalize_i64(&self, given: (&[i64], &[u32]), shape: (i64, usize, bool), place: (usize, usize), keys: &mut [u8]) -> Option<()> {
         self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Portable.normalize_i64(given, shape, place, keys)
+    }
+
+    fn hash_i64(&self, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Portable.hash_i64(values, seed, sel, out);
+    }
+
+    fn combine_i64(&self, hashes: &mut [u64], next: &[u64], seed: u64) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Portable.combine_i64(hashes, next, seed);
+    }
+
+    fn hash_texts(&self, given: (&[u8], &[usize]), seeded: &turborel::hash::xxhash::Seeded, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Portable.hash_texts(given, seeded, sel, out);
     }
 }
 
@@ -95,6 +110,7 @@ fn the_kernels_registered_reach_storage_and_sorts() {
     exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
     let (filtered, by_rows) = both_ways(&a, "SELECT COUNT(*), SUM(F) FROM C WHERE K < 1000");
     assert_eq!(filtered, by_rows);
+    assert_eq!(filtered, vec!["1000,1.3975E5"], "the rows the portable kernels keep");
     assert!(count.load(Relaxed) > 0, "no kernel registered ran in the column store");
     let sorted = |a: &turborel::db::Session| {
         let before = count.load(Relaxed);
@@ -197,4 +213,37 @@ fn set_functions_and_gathers_run_on_the_kernels_registered() {
     for name in ["sum_i64", "min_max_i64", "gather_i64"] {
         assert!(tally.get(name).is_some_and(|&n| n > 0), "{name} never ran: {tally:?}");
     }
+
+/// Verifies: [DESIGN] RULES.md D573 the kernels registered hash a
+/// grouping's keys, of integers and of texts, and join a key's columns,
+/// with the groups the portable ones find, by one thread and by several,
+/// a set operation's rows too; EXECUTOR.KERNELS = 'PORTABLE' runs none.
+#[test]
+fn the_kernels_registered_hash_groupings() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let db = Database::new();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    db.register_kernels(Box::new(Counting(Arc::clone(&count)))).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE G (K INTEGER, S VARCHAR(20))").unwrap();
+    let a = db.session("A");
+    let values: Vec<String> = (0..6000).map(|k| format!("({}, 'name {}  ')", k % 37, k % 11)).collect();
+    a.run(&format!("INSERT INTO G VALUES {}", values.join(", "))).unwrap();
+    a.commit().unwrap();
+    let query = "SELECT K, S, COUNT(*) FROM G GROUP BY K, S";
+    let distinct = "SELECT S, K FROM G INTERSECT SELECT S, K FROM G WHERE K < 20";
+    let run = |a: &turborel::db::Session| {
+        let before = count.load(Relaxed);
+        let rows = (crate::common::sorted(a, query), crate::common::sorted(a, distinct));
+        (rows, count.load(Relaxed) - before)
+    };
+    exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
+    let (one, hashed) = run(&a);
+    assert_eq!(one.0.len(), 37 * 11);
+    assert!(hashed > 0, "no key hashed by the kernels registered");
+    exec(&a, "SET EXECUTOR.DEGREE = 4").unwrap();
+    assert_eq!(run(&a).0, one);
+    exec(&a, "SET EXECUTOR.KERNELS = 'PORTABLE'").unwrap();
+    let (portable, none) = run(&a);
+    assert_eq!(portable, one);
+    assert_eq!(none, 0, "PORTABLE ran the registered kernels in a grouping");
 }

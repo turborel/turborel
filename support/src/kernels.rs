@@ -84,8 +84,37 @@ pub fn contract(kernels: &dyn Kernels) {
         aggregates(kernels, len);
     }
     unpacking(kernels);
+    texts(kernels);
     xxh3_stripes(kernels);
     normalizing(kernels);
+}
+
+/// Checks the hashes of texts `kernels` makes against XXH3-64 of each
+/// text's bytes less its trailing spaces, of every length to past the
+/// long inputs' 240 bytes, of seeds 0 and not, of a selection, rows past
+/// the end among them, and of none.
+fn texts(kernels: &dyn Kernels) {
+    use turborel::hash::xxhash::{Seeded, xxh3_64_with_seed};
+    let words: Vec<String> = (0..300_usize).map(|n| format!("{}{}", "x".repeat(n % 7).repeat(n / 7 + 1), " ".repeat(n % 3))).collect();
+    let (mut text, mut ends) = (String::new(), Vec::new());
+    for w in &words {
+        text.push_str(w);
+        ends.push(text.len());
+    }
+    let sel: Vec<u32> = (0..320).step_by(3).collect();
+    for seed in [0, 0x5EED_u64, u64::MAX] {
+        let seeded = Seeded::new(seed);
+        let want = |n: usize| words.get(n).map_or(xxh3_64_with_seed(b"", seed), |w| xxh3_64_with_seed(w.trim_end_matches(' ').as_bytes(), seed));
+        let mut out = vec![3];
+        kernels.hash_texts((text.as_bytes(), &ends), &seeded, None, &mut out);
+        assert_eq!(out[1..], (0..words.len()).map(want).collect::<Vec<_>>()[..], "hash_texts of all, seed {seed}");
+        let mut out = Vec::new();
+        kernels.hash_texts((text.as_bytes(), &ends), &seeded, Some(&sel), &mut out);
+        assert_eq!(out, sel.iter().map(|&r| want(r as usize)).collect::<Vec<_>>(), "hash_texts of a selection, seed {seed}");
+        let mut out = Vec::new();
+        kernels.hash_texts((b"", &[]), &seeded, None, &mut out);
+        assert_eq!(out, Vec::<u64>::new());
+    }
 }
 
 /// Bytes of a fixed pattern, each of the low byte of an odd multiple.
@@ -177,10 +206,17 @@ fn aggregates(kernels: &dyn Kernels, len: usize) {
         assert_eq!(out[1..], held[..], "gather_i64 of {len}");
         let seed = 0x5EED_u64.wrapping_mul(len as u64 + 1);
         let given: Vec<i64> = sel.as_deref().map_or_else(|| i.clone(), |s| s.iter().map(|&r| i[r as usize]).collect());
-        let hashes: Vec<u64> = given.iter().map(|&v| turborel::hash::murmur::fmix64(seed ^ v.cast_unsigned())).collect();
+        let hashes: Vec<u64> = given.iter().map(|&v| turborel::hash::xxhash::xxh3_64_with_seed(&v.to_le_bytes(), seed)).collect();
         let mut out = vec![7];
         kernels.hash_i64(&i, seed, sel.as_deref(), &mut out);
         assert_eq!(out[1..], hashes[..], "hash_i64 of {len}");
+        let next: Vec<u64> = hashes.iter().map(|h| h.rotate_left(17) ^ len as u64).collect();
+        let mut joined = hashes.clone();
+        kernels.combine_i64(&mut joined, &next, seed);
+        for ((j, h), n) in joined.iter().zip(&hashes).zip(&next) {
+            let bytes: Vec<u8> = h.to_le_bytes().into_iter().chain(n.to_le_bytes()).collect();
+            assert_eq!(*j, turborel::hash::xxhash::xxh3_64_with_seed(&bytes, seed), "combine_i64 of {len}");
+        }
     }
 }
 

@@ -19,8 +19,9 @@
 //! load or store of a vector on the bytes of a reference it reads or
 //! writes, a SAFETY comment on each block.
 
-use turborel::hash::xxhash::{ACC_NB, Stripe, Stripes};
-use turborel::kernels::{AlpScale, Given, Kernels};
+use turborel::hash::xxhash::{ACC_NB, Seeded, Stripe, Stripes};
+use turborel::kernels::{AlpScale, Given, Kernels, portable};
+use turborel::storage::mask::index;
 use turborel::value::CompOp;
 
 #[cfg(target_arch = "aarch64")]
@@ -96,6 +97,10 @@ impl Simd {
     }
 }
 
+/// The bytes past which XXH3 hashes an input by its stripes, at most of
+/// which its short and mid paths hash it with no stripe.
+const LONG_PAST: usize = 240;
+
 impl Kernels for Simd {
     fn name(&self) -> &'static str {
         SIMD
@@ -120,6 +125,24 @@ impl Kernels for Simd {
     }
     fn gather_i64(&self, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
         arch::gather_i64(self.isa, values, sel, out);
+    }
+    fn hash_i64(&self, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        arch::hash_i64(self.isa, values, seed, sel, out);
+    }
+    fn combine_i64(&self, hashes: &mut [u64], next: &[u64], seed: u64) {
+        arch::combine_i64(self.isa, hashes, next, seed);
+    }
+    fn hash_texts(&self, given: (&[u8], &[usize]), seeded: &Seeded, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        // Each text one at a time, as the portable body hashes it; a long
+        // one's stripes by these kernels.
+        let hashed = |n: usize| {
+            let text = portable::hash::text_at(given, n);
+            if text.len() > LONG_PAST { seeded.bytes_on(self, text) } else { seeded.bytes(text) }
+        };
+        match sel {
+            Some(sel) => out.extend(sel.iter().map(|&r| hashed(index(r)))),
+            None => out.extend((0..given.1.len()).map(hashed)),
+        }
     }
     fn alp_decode(&self, words: &mut [i64], scale: AlpScale) {
         arch::alp_decode(self.isa, words, scale);

@@ -134,6 +134,7 @@ pub fn differential(kernels: &dyn Kernels, seeds: Range<u64>) {
         let len = length(rng);
         selections(kernels, rng, (seed, len));
         aggregates(kernels, rng, (seed, len));
+        hashes(kernels, rng, (seed, len));
         decoding(kernels, rng, seed);
     }
 }
@@ -188,6 +189,31 @@ fn aggregates(kernels: &dyn Kernels, rng: &mut Rng, (seed, len): (u64, usize)) {
     let hash_seed = rng.next();
     let want = appended(7, |out| Portable.hash_i64(ints, hash_seed, sel.as_deref(), out));
     assert_eq!(appended(7, |out| kernels.hash_i64(ints, hash_seed, sel.as_deref(), out)), want, "hash_i64, seed {seed}");
+}
+
+/// Checks the hashes of `kernels`: of integers, the joins of a key's
+/// columns, and of texts short, mid and long, trailing spaces among them,
+/// of a zero seed and not.
+fn hashes(kernels: &dyn Kernels, rng: &mut Rng, (seed, len): (u64, usize)) {
+    let hash_seed = if rng.below(8) == 0 { 0 } else { rng.next() };
+    let next: Vec<u64> = (0..len + rng.below(3) as usize).map(|_| rng.next()).collect();
+    let mut want: Vec<u64> = (0..len).map(|_| rng.next()).collect();
+    let mut got = want.clone();
+    Portable.combine_i64(&mut want, &next, hash_seed);
+    kernels.combine_i64(&mut got, &next, hash_seed);
+    assert_eq!(got, want, "combine_i64, seed {seed}");
+    let (mut text, mut ends) = (Vec::new(), Vec::new());
+    for _ in 0..rng.below(200) {
+        let long = [4, 16, 128, 240, 1100][rng.below(5) as usize];
+        text.extend((0..rng.below(long + 1)).map(|_| if rng.below(4) == 0 { b' ' } else { b'a' + rng.below(26) as u8 }));
+        ends.push(text.len());
+    }
+    let seeded = turborel::hash::xxhash::Seeded::new(hash_seed);
+    let picks: Vec<u32> = (0..rng.below(100)).map(|_| rng.below(ends.len() as u64 + 5) as u32).collect();
+    for sel in [None, Some(&picks[..])] {
+        let want = appended(4, |out| Portable.hash_texts((&text, &ends), &seeded, sel, out));
+        assert_eq!(appended(4, |out| kernels.hash_texts((&text, &ends), &seeded, sel, out)), want, "hash_texts, seed {seed}");
+    }
 }
 
 /// Checks the decoding of `kernels`: unpacking, decimals and normal keys.

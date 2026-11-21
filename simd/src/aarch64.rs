@@ -99,6 +99,19 @@ pub(crate) fn gather_i64(_isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i
     portable::gather::gather_i64(values, sel, out);
 }
 
+/// `Kernels::hash_i64`: the portable body, whose 64-bit multiplies are
+/// each one instruction a word, where a vector's are three of 32 bits a
+/// lane, two lanes a step.
+pub(crate) fn hash_i64(_isa: Isa, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+    portable::hash::hash_i64(values, seed, sel, out);
+}
+
+/// `Kernels::combine_i64`: the portable body, as `hash_i64`, its 128-bit
+/// products each two instructions a join.
+pub(crate) fn combine_i64(_isa: Isa, hashes: &mut [u64], next: &[u64], seed: u64) {
+    portable::hash::combine_i64(hashes, next, seed);
+}
+
 /// `Kernels::alp_decode`: two values a step on NEON.
 pub(crate) fn alp_decode(isa: Isa, words: &mut [i64], scale: AlpScale) {
     match isa {

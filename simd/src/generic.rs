@@ -60,6 +60,16 @@ pub(crate) fn gather_i64(_isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i
     portable::gather::gather_i64(values, sel, out);
 }
 
+/// `Kernels::hash_i64`: the portable body.
+pub(crate) fn hash_i64(_isa: Isa, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+    portable::hash::hash_i64(values, seed, sel, out);
+}
+
+/// `Kernels::combine_i64`: the portable body.
+pub(crate) fn combine_i64(_isa: Isa, hashes: &mut [u64], next: &[u64], seed: u64) {
+    portable::hash::combine_i64(hashes, next, seed);
+}
+
 /// `Kernels::alp_decode`.
 pub(crate) fn alp_decode(_isa: Isa, words: &mut [i64], scale: AlpScale) {
     portable::alp::alp_decode(words, scale);

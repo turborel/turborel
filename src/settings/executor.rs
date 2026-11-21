@@ -63,7 +63,7 @@ pub(super) fn definitions() -> [Definition; 5] {
         defined(
             ("EXECUTOR.KERNELS", Kind::Text { max: KERNELS_NAME_MAX }, text("")),
             SESSION,
-            "The kernels a statement's batches run on: PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD.",
+            "The kernels a statement's batches run on in the executor (filters, groupings, sorts): PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD. A column store table decodes and judges its scans on the set registered, which it takes as it opens; the setting does not change it.",
         ),
     ]
 }
