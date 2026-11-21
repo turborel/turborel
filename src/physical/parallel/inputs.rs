@@ -35,6 +35,7 @@ impl Plan {
                 each(&mut g.probe);
                 each(&mut g.instead);
             }
+            Plan::Counted(c) => each(&mut c.input),
             Plan::MergeJoin(m) => {
                 each(&mut m.left);
                 each(&mut m.right);

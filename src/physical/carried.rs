@@ -26,6 +26,7 @@ impl Plan {
             Plan::Project { input, .. } | Plan::Sort { input, .. } => input.est(),
             Plan::Parallel(p) => p.input.est(),
             Plan::GroupJoin(g) => Some(g.est),
+            Plan::Counted(c) => c.input.est(),
             Plan::IndexJoin { left, est, outer, .. } => {
                 let left = left.est()?;
                 let found = left * est;

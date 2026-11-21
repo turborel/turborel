@@ -123,6 +123,10 @@ type Runs = fn(&Plan, (&Arc<State>, TxId), usize) -> Result<Held<RowIter>>;
 pub(super) fn parallel(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::Parallel(p) = plan else { return failed(broken("a part run in parallel is not one")) };
     let Parallel { degree, input } = *p;
+    // [EXTENSION] the operator at its top counted as the part's rows (RULES.md D378).
+    if let Plan::Counted(c) = input {
+        return super::counted::through(*c, db, |top| parallel(Plan::Parallel(Box::new(Parallel { degree, input: top })), db, tx));
+    }
     let run: Runs = if matches!(input, Plan::Aggregate { .. } | Plan::Distinct { .. }) {
         grouped::grouped
     } else if matches!(input, Plan::Sort { .. }) {

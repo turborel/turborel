@@ -91,3 +91,22 @@ fn a_wrong_file_is_refused_with_its_line() {
         turboreld::run(&config(&line(&["--memory", "--config", &missing])), ready, (async {}, std::future::pending())).unwrap_err();
     assert!(failed.starts_with(&format!("cannot read {missing}")), "{failed}");
 }
+
+/// Verifies: [DESIGN] RULES.md D36, D38: a file that gives a buffer pool
+/// above the default memory budget, and a budget that holds it, makes the
+/// database, the budget set before the pool is reserved of it.
+#[test]
+fn a_pool_above_the_default_budget_is_made_in_the_budget_given() {
+    let scratch = Scratch::new("config-file-budget");
+    let file = scratch.path("big.toml");
+    std::fs::write(&file, "[MEMORY]\nBUDGET_BYTES = 2_147_483_648\n\n[STORAGE]\nPOOL_BYTES = 1_610_612_736\n").unwrap();
+    let (dir, file) = (scratch.path("db").display().to_string(), file.display().to_string());
+    let (port, trust) = (format!("{PORT}=0"), format!("{TRUST_LOCAL}=ON"));
+    let (at, stop, thread) = running(config(&line(&["--dir", &dir, "--config", &file, "--set", &port, "--set", &trust])));
+    let mut c = connection::connect(at[0].parse::<SocketAddr>().unwrap(), "X", &mut Trust).unwrap();
+    let query = "SELECT TRIM(SETTING_VALUE) FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME = 'STORAGE.POOL_BYTES'";
+    assert_eq!(rows(&c.query(query).unwrap()).join(""), "1610612736");
+    c.terminate().unwrap();
+    drop(stop);
+    thread.join().unwrap().unwrap();
+}

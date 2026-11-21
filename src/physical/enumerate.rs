@@ -195,25 +195,35 @@ impl PhysicalPlanner<'_> {
 }
 
 /// The cost of the FROM clause's tree, each of its joins by its cheapest
-/// method, if it can be planned.
+/// method, if it can be planned: none past any plan, if it has a product
+/// of two sets a class of the inner joins' keys joins, which the model
+/// counts as joined but the tree, planned as written, makes a product of
+/// (RULES.md D387).
 fn written_cost(graph: &Graph, model: &Model, query: &Query, wanted: Order) -> Option<f64> {
     let mut space = Space::new(graph, model);
+    space.written = true;
     let root = query.operands.len().checked_sub(1)?;
-    let all = written(&mut space, query, Node::Op(root), 0)?;
-    space.chosen(all, wanted).map(|c: Cand| c.cost)
+    let (all, product) = written(&mut space, query, Node::Op(root), 0)?;
+    let cost = space.chosen(all, wanted).map(|c: Cand| c.cost)?;
+    Some(if product { f64::INFINITY } else { cost })
 }
 
-/// The set of `node` of the FROM clause's tree, its joins made in `space`.
-fn written(space: &mut Space<'_>, query: &Query, node: Node, depth: usize) -> Option<Set> {
+/// The set of `node` of the FROM clause's tree, its joins made in `space`,
+/// and whether one is a product of sets a class joins.
+fn written(space: &mut Space<'_>, query: &Query, node: Node, depth: usize) -> Option<(Set, bool)> {
     if depth > MAX_RELATIONS {
         return None;
     }
     match node {
-        Node::Leaf(r) => Some(bit(r)),
+        Node::Leaf(r) => Some((bit(r), false)),
         Node::Op(o) => {
             let &(l, r) = query.operands.get(o)?;
-            let (sl, sr) = (written(space, query, l, depth.saturating_add(1))?, written(space, query, r, depth.saturating_add(1))?);
-            space.join(sl, sr).then_some(sl | sr)
+            let (sl, pl) = written(space, query, l, depth.saturating_add(1))?;
+            let (sr, pr) = written(space, query, r, depth.saturating_add(1))?;
+            let s = sl | sr;
+            let read = space.model.conjuncts.iter().any(|c| c.reads & !s == 0 && c.reads & !sl != 0 && c.reads & !sr != 0);
+            let product = !read && !space.model.implied_keys((sl, sr)).is_empty();
+            space.join(sl, sr).then_some((s, pl || pr || product))
         }
     }
 }
@@ -249,7 +259,8 @@ fn annotate(plan: &mut Plan, note: &str) {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::Polymorphic(..) => {}
+        | Plan::Polymorphic(..)
+        | Plan::Counted(_) => {}
     }
 }
 

@@ -497,6 +497,13 @@ impl Log for FileLog {
     }
 
     fn sync(&self, through: Lsn) -> Result<()> {
+        self.sync_reached(through).map(|_| ())
+    }
+
+    /// The group's sync reaches the end of the segment's blocks durable
+    /// when it began, past `through`; a log syncing nothing claims just
+    /// past `through`, as it claims nothing durable.
+    fn sync_reached(&self, through: Lsn) -> Result<Lsn> {
         self.healthy()?;
         let (number, id) = split(through);
         let segment = self.segment(number).filter(|s| id < s.blocks.end()).ok_or_else(|| {
@@ -510,10 +517,10 @@ impl Log for FileLog {
         let durability = self.durability();
         // A log syncing nothing claims nothing durable.
         if durability == Durability::None {
-            return Ok(());
+            return Ok(Lsn(through.0.saturating_add(1)));
         }
         self.sync_entries(number)?;
-        self.sync_through(&segment, id, durability)
+        self.sync_through(&segment, id, durability).map(|end| lsn(number, end))
     }
 
     fn read_from(&self, from: Lsn) -> Records<'_> {

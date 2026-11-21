@@ -271,7 +271,8 @@ fn sort_of(plan: Plan) -> std::result::Result<(Vec<SortKey>, Plan), Box<Plan>> {
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }
             | Plan::Parallel(..)
-            | Plan::GroupJoin(..)) => return Err(Box::new(other)),
+            | Plan::GroupJoin(..)
+            | Plan::Counted(_)) => return Err(Box::new(other)),
         }
     }
 }
@@ -313,7 +314,8 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }
             | Plan::Parallel(..)
-            | Plan::GroupJoin(..)) => {
+            | Plan::GroupJoin(..)
+            | Plan::Counted(_)) => {
                 layers.reverse();
                 return (layers, other);
             }

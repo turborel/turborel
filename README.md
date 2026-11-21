@@ -46,6 +46,9 @@ behind it, and each can be replaced or added to.
   keyed past long probes; EXCEPT and INTERSECT counted in it.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
+- Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
+  losers, and FETCH FIRST that makes only the rows it gives, reading its
+  other columns late and skipping groups past its bound.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins
@@ -63,6 +66,9 @@ behind it, and each can be replaced or added to.
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables.
+- [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
+  query and shows each operator's rows beside its estimate, and a program
+  may give the planner true row counts to test its plans.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.

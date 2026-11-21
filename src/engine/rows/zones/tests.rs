@@ -72,7 +72,7 @@ fn reads(table: &RowTable, conditions: &Conjunction, id: RowId) -> bool {
 /// Has `table` sum up its zones, of rows a reader at or after `horizon`
 /// may read, until none is due.
 fn summed(table: &RowTable, horizon: u64) {
-    while table.maintain(horizon).unwrap() {}
+    while table.maintain(horizon, true).unwrap() {}
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D29, zone maps: a scan reads only the

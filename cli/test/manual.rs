@@ -331,11 +331,14 @@ fn the_savepoint_examples_run_as_printed() {
     assert!(ann.section("user/06-transactions.md", "## Savepoints", &scratch) > 0, "the section shows its examples");
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of EXPLAIN run as
-/// printed, as ANN, the client showing its plan's lines as rows.
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D376: the examples of EXPLAIN and
+/// EXPLAIN ANALYZE run as printed, as ANN, the client showing its plan's
+/// lines as rows, the database's clock standing still, so no time is
+/// shown (R-TEST-5).
 #[test]
 fn the_explain_examples_run_as_printed() {
     let db = Database::new();
+    db.set_clock(std::sync::Arc::new(turborel::clock::FixedClock::default())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     let mut ann = Client::of(&db, "ANN");
     assert!(ann.page("sql/statements/explain.md") > 0, "it shows its examples' output");

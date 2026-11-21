@@ -1,6 +1,8 @@
 //! A kept physical plan filled and prepared for one execution. Access
 //! paths stay fixed; scalar preparation sees the new constant operands and
-//! preserves lazy runtime evaluation (D15, D38, D45, D85).
+//! preserves lazy runtime evaluation (D15, D38, D45, D85). An inner join,
+//! a product, a hash join or an index join by the outer row's columns, is
+//! filled too (D418).
 
 use std::sync::Arc;
 
@@ -9,7 +11,7 @@ use crate::error::{Code, Result, SqlError, fail};
 use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Truth, filled_cond, filled_expr};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
-use crate::physical::Plan;
+use crate::physical::{JoinProbe, Plan, Preserved};
 use crate::value::Value;
 
 /// Fill slots and optionally prepare scalar calls against `budget`.
@@ -52,6 +54,44 @@ impl Filling<'_> {
         Ok(Plan::Nearest(read))
     }
 
+    /// A product or an inner join, its inputs filled (RULES.md D418).
+    fn join(&self, plan: Plan) -> Result<Plan> {
+        if let Plan::Product { left, right, est } = plan {
+            return Ok(Plan::Product { left: self.boxed(*left)?, right: self.boxed(*right)?, est });
+        }
+        if let Plan::HashJoin { left, right, keys, detail, est } = plan {
+            return Ok(Plan::HashJoin { left: self.boxed(*left)?, right: self.boxed(*right)?, keys, detail, est });
+        }
+        self.index_join(plan)
+    }
+
+    /// An inner index join probing by its outer row's columns, its outer
+    /// input and condition filled (RULES.md D418); no other is kept.
+    fn index_join(&self, plan: Plan) -> Result<Plan> {
+        let Plan::IndexJoin {
+            outer: Preserved::Inner,
+            spatial: None,
+            left,
+            table,
+            index,
+            method,
+            probe: probe @ JoinProbe::Prefix(_),
+            cond,
+            width,
+            columns,
+            detail,
+            est,
+            cost,
+            located,
+        } = plan
+        else {
+            return fail(Code::Api, "[DESIGN] a kept plan holds an index join no kept plan holds");
+        };
+        let (left, cond) = (self.boxed(*left)?, cond.map(|c| self.cond(c)).transpose()?);
+        let outer = Preserved::Inner;
+        Ok(Plan::IndexJoin { outer, spatial: None, left, table, index, method, probe, cond, width, columns, detail, est, cost, located })
+    }
+
     fn plans(&self, plans: Vec<Plan>) -> Result<Vec<Plan>> {
         plans.into_iter().map(|p| self.plan(p)).collect()
     }
@@ -73,6 +113,14 @@ impl Filling<'_> {
         let distribution =
             a.distribution.map(|d| Ok::<_, SqlError>(Box::new(Distribution { fraction: self.expr(d.fraction.clone())?, ..*d })));
         Ok(AggCall { arg, filter: a.filter.map(|c| self.cond(c)).transpose()?, distribution: distribution.transpose()?, ..a })
+    /// The set function `a`, its argument, filter and fraction filled.
+    fn agg(&self, a: AggCall) -> Result<AggCall> {
+        let arg = a.arg.map(|e| self.expr(e)).transpose()?;
+        let distribution = match a.distribution {
+            Some(d) => Some(Box::new(Distribution { fraction: self.expr(d.fraction.clone())?, ..*d })),
+            None => None,
+        };
+        Ok(AggCall { arg, filter: a.filter.map(|c| self.cond(c)).transpose()?, distribution, ..a })
     }
 
     fn plan(&self, plan: Plan) -> Result<Plan> {
@@ -107,6 +155,8 @@ impl Filling<'_> {
             | Plan::GroupJoin(..)
             | Plan::IndexJoin { .. }
             | Plan::MergeJoin(_)
+            Plan::Product { .. } | Plan::HashJoin { .. } | Plan::IndexJoin { .. } => self.join(plan),
+            Plan::MergeJoin(_)
             | Plan::OuterJoin { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }
@@ -117,7 +167,8 @@ impl Filling<'_> {
             | Plan::Polymorphic(..)
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
-            | Plan::Transition { .. } => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
+            | Plan::Transition { .. }
+            | Plan::Counted(_) => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
         }
     }
 }

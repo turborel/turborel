@@ -74,7 +74,8 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
-        | Plan::GroupJoin(..) => None,
+        | Plan::GroupJoin(..)
+        | Plan::Counted(_) => None,
     }
 }
 
@@ -137,7 +138,8 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
-        | Plan::GroupJoin(..) => return columns,
+        | Plan::GroupJoin(..)
+        | Plan::Counted(_) => return columns,
     };
     columns.extend(keys.iter().flat_map(|k| [k.left, k.right.saturating_add(width)]));
     columns
@@ -195,7 +197,8 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
-        | Plan::GroupJoin(..) => no_join,
+        | Plan::GroupJoin(..)
+        | Plan::Counted(_) => no_join,
     };
     made(plan, db, tx)
 }
@@ -340,6 +343,7 @@ fn in_order(plan: &Plan) -> bool {
     match plan {
         Plan::SeqScan { order, .. } => !order.is_empty(),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => in_order(input),
+        Plan::Counted(c) => in_order(&c.input),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
         Plan::Nearest(_)

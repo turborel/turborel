@@ -32,7 +32,7 @@ use crate::ast::{
     CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
 };
 use crate::binder::named::{all_or_none, arranged};
-use crate::binder::{Context, OutColumn, bind_argument, definition_of, qualify, resolve_procedure, sql_statement};
+use crate::binder::{Context, OutColumn, bind_argument, qualify, resolve_procedure};
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of, routine_path};
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::execute;
@@ -288,15 +288,16 @@ impl Session {
         let desc = &bound.desc;
         let scope = RoutineScope::of(desc, routine_path(&*cx.st.catalog, desc));
         let mut inner = Params::of_routine(values, Arc::new(scope));
-        let definition = definition_of(desc)?;
-        let body = sql_statement(&definition)?;
+        // Its text read once while it stays the same (RULES.md D406).
+        let routine = self.kept_routine(desc)?;
+        let body = routine.body()?;
         let owner = owner_of(&*cx.st.catalog, &desc.name.auth).to_owned();
         {
             // [§9.18 GR7, §11.60 GR3k] at a savepoint level of its own if
             // NEW SAVEPOINT LEVEL, else at the caller's.
-            let level = definition.new_savepoint_level.then_some(Level::Procedure);
+            let level = routine.new_savepoint_level().then_some(Level::Procedure);
             let _pushed = self.push(&desc.name, (owner, desc.schema.clone()), level)?;
-            self.run_body(cx, body, &mut inner)?;
+            self.run_body(cx, body, &mut inner, &routine)?;
         }
         let out = inner.dynamic_values();
         // [ISO/IEC 9075-2:2023 §20.7 GR7a] a `?`'s value its output's.

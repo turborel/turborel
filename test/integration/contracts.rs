@@ -102,7 +102,7 @@ fn storage_contract(engine: &dyn StorageEngine) {
     for _ in 0..2 {
         let counted = Arc::clone(&table).count(tx).map(|counts| counts.sum::<error::Result<u64>>().unwrap());
         assert!(counted.is_none_or(|n| n == 3), "a count of {counted:?}");
-        while table.maintain(u64::MAX).unwrap() {}
+        while table.maintain(u64::MAX, true).unwrap() {}
     }
     for cost in [table.scan_cost(&[0]), table.fetch_cost()] {
         assert!(cost.is_finite() && cost >= 0.0, "cost {cost}");

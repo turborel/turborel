@@ -115,8 +115,10 @@ impl State {
             nulls: false,
             expressions: super::indexes::unbound_keys(expressions),
         };
-        // Not unique, so of nulls only if it takes the place of one that is.
-        let ix = IndexDesc { nulls: *nulls, ..self.with_derived(ix, &desc)? };
+        // Not unique, so of nulls if it takes the place of one that is, or
+        // its method's are held (`State::with_derived`).
+        let mut ix = self.with_derived(ix, &desc)?;
+        ix.nulls |= *nulls;
         let (index, built) = self.index_structure(&*m, (&ix, &desc), &ix.key_types(&desc).unwrap_or_default())?;
         self.indexes.insert(name.clone(), Arc::clone(&index));
         let mut catalog = self.catalog.duplicate();

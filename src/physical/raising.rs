@@ -21,6 +21,7 @@ impl Plan {
             Plan::Filter { cond, input, .. } => cond.can_raise() || input.can_raise(),
             Plan::Parallel(p) => p.input.can_raise(),
             Plan::GroupJoin(g) => !g.aggs.is_empty() || g.build.can_raise() || g.probe.can_raise(),
+            Plan::Counted(c) => c.input.can_raise(),
             Plan::Project { exprs, input, .. } => exprs.iter().any(Expr::can_raise) || input.can_raise(),
             Plan::Aggregate { aggs, input, .. } => !aggs.is_empty() || input.can_raise(),
             Plan::Product { left, right, .. }
