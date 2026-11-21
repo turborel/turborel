@@ -470,6 +470,7 @@ verification approach DO-178C expects (§8).
 | D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
 | D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
 | D760 | A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values |
+| D761 | A join probes the inner table's index by the columns its own filter fixes, made columns of the left, with the join's keys |
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
@@ -13417,6 +13418,23 @@ key for each line. Each compared sum or difference of constants alone
 is now folded to its value as the estimate fills its slots
 (`physical/estimate/valued.rs`), and one that raises an error is left
 as it is, for the execution to raise.
+
+#### D761. A join probes the inner table's index by the columns its own filter fixes, made columns of the left, with the join's keys
+
+An index nested-loop join probes an index of the inner table by the
+values each left row gives its first columns (D35). STOCK-LEVEL's join
+of ORDER_LINE and STOCK on the item probes STOCK's key (S_W_ID, S_I_ID)
+only if the warehouse comes with each line. Two equalities with one
+constant give it by transitivity, but a slot of each, as a prepared
+statement has, or a constant the left is not filtered by, do not, and
+the join then read STOCK whole. Where the inner table's filter fixes a
+column to a constant or a slot, and the column makes a prefix of an
+index with the join's keys, the value is made a column of the left
+operand, equated with the inner column, and a projection takes it away
+after (`physical/indexed/fixed.rs`). The plan made with an execution's
+values is rewritten the same way, so a prepared statement's plan with
+slots keeps one shape with it and is kept (D45). A column the left
+already gives as such a value is not fixed again.
 
 #### D767. A connection's requests run on one thread of its own, its home
 
