@@ -84,6 +84,7 @@ mod call_outputs;
 mod cancel;
 mod candidate_keys;
 mod check_rebind;
+mod checkpoint_phases;
 mod checkpoints;
 mod checks;
 mod column_store;

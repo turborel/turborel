@@ -401,6 +401,7 @@ verification approach DO-178C expects (§8).
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
 | D472 | A page written back again is written over its side-file block with no lock held |
+| D590 | A checkpoint captures its pages copy on write, writers held only while it notes them |
 
 ### The project
 
@@ -1984,7 +1985,9 @@ since.
 
 A checkpoint writes every engine's state as of a log position, so the log
 can be truncated behind it. The row store's file is shadowed, so a crash
-leaves it as the last checkpoint did. Recovery reopens the tables, then
+leaves it as the last checkpoint did. Writers wait only while a
+checkpoint notes the pages changed, which it captures copy on write as
+they go on (D590). Recovery reopens the tables, then
 redoes and undoes from the log by the database's one replay (D57).
 Checkpoints fall due after CHECKPOINT.AFTER_CHANGES row changes. The log
 is kept from the last checkpoint or the oldest open transaction's first
@@ -11239,6 +11242,52 @@ other, never a mix; any other change of the file, as a seal, a cut or a
 first write of a page, waits until none is in flight
 (`disk/shadow/flight.rs`). A writer in flight takes no lock of the
 file to land, so a waiter may hold it.
+
+#### D590. A checkpoint captures its pages copy on write, writers held only while it notes them
+
+A checkpoint shut the gate, so no writer ran, while the row store copied,
+encoded and checksummed every dirty page into memory, then sealed it as
+the batch to commit: a pause of every writer as long as that work, which
+grew with the pool and came more often as throughput rose. The shut
+keeps its meaning, a point with no change half done, but now does only
+work in proportion to the frames. It marks each dirty page owed to the
+checkpoint and clean, writes the few that cannot be captured later and
+the pager's free list into the batch held, and seals it
+(`BufferPool::capture`, `ShadowFileSystem::seal_capturing`).
+
+Writers then go on, and each page owed is taken once, as it was at the
+shut, by whoever reaches it first. A writer latching it for writing
+copies it first, under the latch it takes anyway; a free copies it too;
+an eviction captures it, the page kept mapped meanwhile as a dirty one
+is while written back; and the checkpoint walks the pages owed and
+captures each still owed under its read latch, then each copy
+(`disk/buffer/pool/capture.rs`). A capture is written into the sealed
+batch, held in memory, newer than its blocks and older than anything
+written since, so a read finds it only where nothing newer was written
+(`DiskFile::write_captured_at`). The walk waits for evictions capturing
+before the batch is committed. This is the two versions of Ren et al.
+2016's CALC at the grain of a page, where the frame's latch gives the
+exclusion; memory is bounded by the pages written during one walk.
+
+A page is owed only if capturing it needs no other page: its content
+fits in it, and it is known to have no overflow pages, as every page
+allocated is (`disk/pager/captured.rs`). A capture then allocates and
+frees nothing, so the free list recorded at the shut stays true of the
+image whatever writers allocate and free meanwhile, and the pager's
+knowledge of a page's overflow, which is of the page as written since,
+is left alone. It encodes through the pipeline of the shut, so a page
+that fit then fits. A page past the file's end, allocated and not yet
+written, is covered by growing the file before the seal.
+
+A capture that fails leaves the batch lacking a page. It is never
+committed, and no checkpoint is taken until the database is opened
+again and recovered from its last checkpoint and its log. Meanwhile the
+pool loses nothing, as a page whose capture failed is dirty again and
+the batch is still read. A capture given up before its seal leaves
+every page owed dirty again. A
+checkpoint that fails after its seal and before its walk, as when its
+log cannot be synced, has its walk ended and its batch committed by the
+next, before that one holds anything, so at most one batch is sealed.
 
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 

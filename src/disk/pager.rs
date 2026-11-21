@@ -20,6 +20,7 @@
 //! wrong place. The format is in `format.rs`.
 
 mod ahead;
+mod captured;
 mod format;
 mod formats;
 mod free;
@@ -34,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
+pub use captured::Capturing;
 pub use format::FORMAT_VERSION;
 use format::{KIND_DATA, KIND_NEW, KIND_TRUNK, META_AT, Meta, NONE};
 pub use formats::{Behind, Formats};
@@ -395,8 +397,19 @@ impl Pager {
 impl Pager {
     /// Allocates `count` pages for the layer above: free pages where there
     /// are, consecutive where it can, new ones at the end otherwise. They
-    /// read as new, with no content, until written.
+    /// read as new, with no content, until written; so they are known to
+    /// have no overflow pages, a free page's freed and the page zeroed.
     pub fn allocate(&self, count: u64) -> Vec<Extent> {
+        let extents = self.allocated(count);
+        for e in &extents {
+            (e.start.0..e.start.0.saturating_add(e.count)).for_each(|id| self.known.set(id, &[]));
+        }
+        extents
+    }
+
+    /// Takes `count` pages from the free list, for the pager's own use or
+    /// the layer above's.
+    fn allocated(&self, count: u64) -> Vec<Extent> {
         lock_builtin(&self.free).allocate(count)
     }
 

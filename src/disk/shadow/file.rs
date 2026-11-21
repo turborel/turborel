@@ -279,16 +279,40 @@ impl Shadow {
         Ok(runs)
     }
 
+    /// Writes `data` at `at` with the pending writes locked: whole granules
+    /// as one run, one block for a page; a granule written in part read,
+    /// changed and put alone.
+    fn write_locked(&self, pending: &mut Pending, data: &[u8], at: u64) -> Result<()> {
+        let mut done = 0_usize;
+        while done < data.len() {
+            let position = at.saturating_add(u64::try_from(done).unwrap_or(u64::MAX));
+            let (number, within) = granule_of(position);
+            let left = data.len().saturating_sub(done);
+            let whole = if within == 0 { left.checked_div(GRANULE).unwrap_or_default().saturating_mul(GRANULE) } else { 0 };
+            let n = if whole > 0 { whole } else { GRANULE.saturating_sub(within).min(left) };
+            let from = data.get(done..done.saturating_add(n)).unwrap_or_default();
+            let content = if whole > 0 { from.to_vec() } else { self.granule(pending, number)? };
+            let content = if whole > 0 { content } else { patched(content, within, from) };
+            pending.put(&self.at, number, content)?;
+            done = done.saturating_add(n);
+        }
+        let end = at.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
+        pending.size = pending.size.max(end);
+        Ok(())
+    }
+
     /// Seals what was written for its commit, writes going to the other
     /// side file from now on; a batch sealed before and not committed is
-    /// committed first. Nothing is sealed if nothing would change.
-    pub(super) fn seal(&self) -> Result<()> {
+    /// committed first. Nothing is sealed if nothing would change, unless
+    /// `always`, for a capture to write into (RULES.md D590), and the
+    /// file is there.
+    pub(super) fn seal(&self, always: bool) -> Result<()> {
         if read(&self.pending)?.sealed.is_some() {
             self.commit_sealed()?;
         }
         let mut pending = self.settled()?;
         pending.holding = false;
-        if pending.unchanged() {
+        if pending.unchanged() && (!always || pending.removed) {
             return Ok(());
         }
         let which = 1_usize.saturating_sub(pending.active.which);
@@ -422,21 +446,27 @@ impl DiskFile for ShadowFile {
             return Ok(());
         }
         let mut pending = self.0.settled()?;
-        let mut done = 0_usize;
-        while done < data.len() {
-            let position = at.saturating_add(u64::try_from(done).unwrap_or(u64::MAX));
-            let (number, within) = granule_of(position);
-            let left = data.len().saturating_sub(done);
-            let whole = if within == 0 { left.checked_div(GRANULE).unwrap_or_default().saturating_mul(GRANULE) } else { 0 };
-            let n = if whole > 0 { whole } else { GRANULE.saturating_sub(within).min(left) };
-            let from = data.get(done..done.saturating_add(n)).unwrap_or_default();
-            let content = if whole > 0 { from.to_vec() } else { self.0.granule(&pending, number)? };
-            let content = if whole > 0 { content } else { patched(content, within, from) };
-            pending.put(&self.0.at, number, content)?;
-            done = done.saturating_add(n);
+        self.0.write_locked(&mut pending, data, at)
+    }
+
+    /// \[DESIGN\] RULES.md D590: while held, into the batch held, as any
+    /// write; once sealed, into the sealed batch, whose granules are
+    /// newer than its blocks and older than what was written since.
+    fn write_captured_at(&self, data: &[u8], at: u64) -> Result<()> {
+        let mut pending = self.0.settled()?;
+        if pending.holding {
+            return self.0.write_locked(&mut pending, data, at);
         }
+        let (first, within) = granule_of(at);
         let end = at.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
-        pending.size = pending.size.max(end);
+        let refused = || SqlError::new(Code::Api, "[DESIGN] RULES.md D590: a capture is whole granules within the sealed batch");
+        let sealed = pending.sealed.as_mut().and_then(Arc::get_mut).filter(|s| within == 0 && end <= s.size).ok_or_else(refused)?;
+        if data.is_empty() || data.len().checked_rem(GRANULE) != Some(0) {
+            return Err(refused());
+        }
+        for (number, granule) in (first..).zip(data.chunks(GRANULE)) {
+            sealed.side.held.insert(number, granule.to_vec());
+        }
         Ok(())
     }
 

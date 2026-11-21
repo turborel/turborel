@@ -10,8 +10,9 @@ use super::UndoStore;
 use super::counted::Counted;
 use super::mvcc::Statuses;
 use super::zones::Zones;
-use crate::disk::buffer::{BufferPool, FileId};
+use crate::disk::buffer::{BufferPool, Capture, FileId};
 use crate::disk::shadow::ShadowFileSystem;
+use crate::error::SqlError;
 use crate::log::Log;
 use crate::spill::WorkAreas;
 
@@ -53,6 +54,12 @@ pub struct TableFiles {
     /// the pool, as its store is told (STORAGE.SYSTEM_CACHE_BYTES); until
     /// then, all of it.
     pub(super) system_cache: Arc<AtomicU64>,
+    /// The capture of the checkpoint whose batch is sealed, while pages
+    /// it owes are not all in it (RULES.md D590).
+    pub(super) capture: Arc<Mutex<Option<Capture>>>,
+    /// Why a capture failed, if one did: its batch lacks a page, so no
+    /// checkpoint is taken until the database is opened again.
+    pub(super) spoiled: Arc<Mutex<Option<SqlError>>>,
 }
 
 impl TableFiles {
@@ -80,6 +87,8 @@ impl TableFiles {
             counts: Arc::default(),
             passes: Arc::default(),
             system_cache: Arc::new(AtomicU64::new(u64::MAX)),
+            capture: Arc::default(),
+            spoiled: Arc::default(),
         }
     }
 

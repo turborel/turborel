@@ -21,11 +21,14 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
 mod ahead;
+mod capture;
 mod claim;
 mod passing;
 
 pub(super) use ahead::Queued;
 pub use ahead::READ_AHEAD_PAGES;
+pub use capture::Capture;
+pub(super) use capture::Owed;
 
 use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
 use crate::disk::block::{BlockFile, BlockId};
@@ -73,11 +76,13 @@ enum Fill {
 const SHARD_SHIFT: u32 = 56;
 
 /// A frame claimed for a page: its index, and the page it held, if that
-/// page was dirty and must be written back.
+/// page was dirty and must be written back, or owed to a checkpoint's
+/// capture (`capture.rs`), and which.
 #[derive(Clone, Copy)]
 struct Claim {
     frame: usize,
     write_back: Option<Key>,
+    owed: bool,
 }
 
 impl BufferPool {
@@ -101,6 +106,7 @@ impl BufferPool {
             hints: super::hits::Hints::new(frames),
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
             queued: Queued::default(),
+            owed: Owed::default(),
             _reservation: None,
         })
     }
@@ -271,7 +277,7 @@ impl BufferPool {
     pub fn write(&self, file: FileId, id: PageId) -> Result<PageMut<'_>> {
         self.pager(file)?;
         let (frame, _) = self.hold(Key { file, id: id.0 }, Fill::Read)?;
-        Ok(Self::held_for_writing(frame))
+        Ok(self.held_for_writing(frame))
     }
 
     /// Allocates a page of pager file `file` and holds it for writing, with
@@ -287,7 +293,7 @@ impl BufferPool {
         let pager = self.pager(file)?;
         let id = pager.allocate(1).first().map_or(PageId(0), |e| e.start);
         match pager.reserve(id).and_then(|()| self.hold(Key { file, id: id.0 }, Fill::Empty)) {
-            Ok((frame, _)) => Ok((id, Self::held_for_writing(frame))),
+            Ok((frame, _)) => Ok((id, self.held_for_writing(frame))),
             Err(e) => {
                 // Never written, so nothing refers to it.
                 let _ = pager.free(&[Extent { start: id, count: 1 }]);
@@ -296,9 +302,14 @@ impl BufferPool {
         }
     }
 
-    fn held_for_writing(frame: &Frame) -> PageMut<'_> {
+    /// `frame` latched for writing, dirty; copied first if a checkpoint's
+    /// capture owes it (`capture.rs`).
+    fn held_for_writing<'a>(&self, frame: &'a Frame) -> PageMut<'a> {
         let pin = Pin(frame);
         let content = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+        if frame.owed.load(Ordering::Acquire) {
+            self.owed_copy(frame, &content);
+        }
         frame.dirty.store(true, Ordering::Release);
         PageMut { content, _pin: pin }
     }
@@ -363,6 +374,9 @@ impl BufferPool {
                 }
                 return Err(held());
             };
+            if frame.owed.load(Ordering::Acquire) {
+                self.owed_copy(frame, &content);
+            }
             map.remove(&key);
             frame.set_key(None);
             frame.dirty.store(false, Ordering::Release);
@@ -463,7 +477,8 @@ impl BufferPool {
         let frame = self.frame(claim.frame)?;
         let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
         if let Some(old) = claim.write_back {
-            if let Err(e) = self.write_back(old, &old_content) {
+            let written = if claim.owed { self.owed_now(old, &old_content) } else { self.write_back(old, &old_content) };
+            if let Err(e) = written {
                 self.restore(claim.frame, key, old, old_content);
                 return Err(e);
             }

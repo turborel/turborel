@@ -168,6 +168,14 @@ before any was written writes nothing. A checkpoint first writes the
 records every open transaction holds, and a transaction holding more
 than 1 MiB writes them as it goes.
 
+Writers wait for a checkpoint only while it notes which pages changed
+since the last; it copies and writes none of them then. Once writers go
+on, it writes each page as it was when they waited, and a writer about to
+change such a page first copies it, so a checkpoint is never a pause of
+the length of its writes. If a page cannot be written so, the
+checkpoint fails, and none is taken until the database is opened again,
+recovered from the last one and its log.
+
 The log is kept from the last checkpoint, or from the first change of
 the oldest transaction still open, whichever is earlier. While
 checkpoints are refused (a table damaged, a failed sync of the log),
