@@ -19,6 +19,7 @@ use std::sync::Arc;
 use super::{AXES, Binding, Held, IndexJoin, RowIter, cost_of};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::{broken, work::Work};
 use crate::geometry::Geometry;
 use crate::memory::MemoryBudget;
@@ -50,7 +51,7 @@ impl Outer {
 
 /// `join` with its outer input, of which `held` holds what fit, joined by
 /// probes or by partitions, as costs less; by probes if no run can be made.
-pub(super) fn chosen(mut join: IndexJoin, held: Held, mut columns: Vec<usize>, db: &Arc<State>) -> Result<RowIter> {
+pub(super) fn chosen(mut join: IndexJoin, held: Held, mut columns: Vec<usize>, db: &Db) -> Result<RowIter> {
     let Some(binding) = held.rows.first().and_then(|row| Binding::of(&join, row.len())) else { return Ok(held.resume(join)) };
     let mut work = Work::of(db, join.table.tx);
     let Ok(run) = work.run() else { return Ok(held.resume(join)) };

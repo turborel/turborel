@@ -20,6 +20,7 @@ use super::{measured, scanned};
 use crate::catalog::{IndexDesc, KeyShape};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
+use crate::exec::Db;
 use crate::index::{Index, Key, NearestQuery, Probe, RowFilter};
 use crate::logical::{Cond, Expr, Strategy, Truth, render_expr};
 use crate::memory::Reservation;
@@ -45,7 +46,7 @@ const RESERVATION: &str = "approximate nearest rows";
 pub(super) fn approximate(
     read: NearestRead,
     storage: Arc<dyn TableStorage>,
-    db: &Arc<State>,
+    db: &Db,
     (tx, query): (TxId, NearestQuery),
 ) -> Result<RowIter> {
     let Some(plan) = read.approximate.clone() else { return Err(broken("an approximate read asks nothing approximate")) };
@@ -109,7 +110,7 @@ struct Searching<'r> {
     read: &'r NearestRead,
     storage: &'r dyn TableStorage,
     key: KeyShape,
-    db: &'r Arc<State>,
+    db: &'r Db,
     tx: TxId,
     runner: Runner,
 }
