@@ -11,7 +11,7 @@ use super::{Seen, SystemTable, identifier, text_column};
 use crate::catalog::ColumnDesc;
 use crate::error::Result;
 use crate::storage::Row;
-use crate::value::{DataType, MAX_EXACT_PRECISION, Spelled};
+use crate::value::{BIGINT_PRECISION, DataType, Spelled};
 
 /// \[DESIGN\] The longest sum shown: of 128 bits, its sign and point.
 pub(crate) const TOTAL_LENGTH: u32 = 41;
@@ -27,7 +27,7 @@ impl SystemTable for AssertionTotals {
     fn columns(&self) -> Vec<ColumnDesc> {
         let number = |name: &str, not_null: bool| ColumnDesc {
             name: name.to_owned(),
-            data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
+            data_type: DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric },
             not_null,
             default: None,
             domain: None,

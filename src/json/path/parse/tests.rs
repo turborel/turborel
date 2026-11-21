@@ -227,7 +227,7 @@ fn item_method_arguments_are_parsed() {
 /// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C XII, XVI
 /// to XIX] [§6.1 SR23, SR25] a precision of 0, or a scale above the
 /// precision, is SQLCODE -103; \[DESIGN\] RULES.md D18: a precision past
-/// turborel's maximum, 18 digits of DECIMAL or 6 of a second's fraction,
+/// turborel's maximum, 38 digits of DECIMAL or 6 of a second's fraction,
 /// of however many digits, is SQLCODE -900.
 #[test]
 fn item_method_arguments_are_held_to_the_types_rules() {
@@ -239,7 +239,7 @@ fn item_method_arguments_are_held_to_the_types_rules() {
     assert_eq!(scale.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §6.1 SR25"));
     assert_eq!(tree("lax $.decimal(2, 2)"), "Lax $.Decimal { precision: Some(2), scale: Some(2) }()");
     for text in [
-        "lax $.decimal(19)",
+        "lax $.decimal(39)",
         "lax $.decimal(4294967296)",
         "lax $.decimal(123456789012345678901234567890)",
         "lax $.time(7)",

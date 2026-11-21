@@ -573,9 +573,9 @@ SELECT DEPT, NAME FROM STAFF GROUP BY DEPT;
 ```
 
 ```
- DEPT |                    N |                TOTAL
-------+----------------------+----------------------
- ENG  |                    2 |             15300.00
+ DEPT |                    N |                                    TOTAL
+------+----------------------+------------------------------------------
+ ENG  |                    2 |                                 15300.00
 (1 row)
 turborel: SQLCODE -103 (SQLSTATE 2A000): outside a set function, a grouped query may only reference grouping columns and columns functionally dependent on them (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 13)
 ```
@@ -656,12 +656,12 @@ SELECT DEPT, COUNT(*) AS N, SUM(SALARY) AS TOTAL, GROUPING(DEPT) AS G
 ```
 
 ```
- DEPT |                    N |                TOTAL |                    G
-------+----------------------+----------------------+----------------------
- ENG  |                    2 |             15300.00 |                    0
- OPS  |                    1 |              5400.00 |                    0
- NULL |                    1 |                 NULL |                    0
- NULL |                    4 |             20700.00 |                    1
+ DEPT |                    N |                                    TOTAL |                    G
+------+----------------------+------------------------------------------+----------------------
+ ENG  |                    2 |                                 15300.00 |                    0
+ OPS  |                    1 |                                  5400.00 |                    0
+ NULL |                    1 |                                     NULL |                    0
+ NULL |                    4 |                                 20700.00 |                    1
 (4 rows, with a warning: SQLSTATE 01003)
 ```
 
@@ -752,9 +752,9 @@ SELECT NAME AS WHO, SALARY / 12 AS MONTHLY FROM STAFF WHERE ID = 1;
 --------------+--------------------------------+------+-------------+----------------------
             1 | Ada                            | ENG  |     7200.00 | Engineering
 (1 row)
- WHO                            |              MONTHLY
---------------------------------+----------------------
- Ada                            |               600.00
+ WHO                            |         MONTHLY
+--------------------------------+-----------------
+ Ada                            |          600.00
 (1 row)
 ```
 
@@ -838,12 +838,12 @@ SELECT NAME, DEPT, SALARY, RANK() OVER (ORDER BY SALARY DESC NULLS LAST) AS R,
 ```
 
 ```
- NAME                           | DEPT |      SALARY |                    R |           DEPT_TOTAL
---------------------------------+------+-------------+----------------------+----------------------
- Grace                          | ENG  |     8100.00 |                    1 |             15300.00
- Ada                            | ENG  |     7200.00 |                    2 |             15300.00
- Edsger                         | OPS  |     5400.00 |                    3 |              5400.00
- Barbara                        | NULL |        NULL |                    4 |                 NULL
+ NAME                           | DEPT |      SALARY |                    R |                               DEPT_TOTAL
+--------------------------------+------+-------------+----------------------+------------------------------------------
+ Grace                          | ENG  |     8100.00 |                    1 |                                 15300.00
+ Ada                            | ENG  |     7200.00 |                    2 |                                 15300.00
+ Edsger                         | OPS  |     5400.00 |                    3 |                                  5400.00
+ Barbara                        | NULL |        NULL |                    4 |                                     NULL
 (4 rows, with a warning: SQLSTATE 01003)
 ```
 
@@ -888,12 +888,12 @@ SELECT NAME, SALARY, COUNT(*) OVER (ORDER BY SALARY
 ```
 
 ```
- NAME                           |      SALARY |                    N |              RUNNING |                 NEAR
---------------------------------+-------------+----------------------+----------------------+----------------------
- Ada                            |     7200.00 |                    1 |              7200.00 |            7650.0000
- Grace                          |     8100.00 |                    2 |             15300.00 |            6900.0000
- Edsger                         |     5400.00 |                    3 |             20700.00 |            6750.0000
- Barbara                        |        NULL |                    4 |             20700.00 |            5400.0000
+ NAME                           |      SALARY |                    N |                                  RUNNING |                                     NEAR
+--------------------------------+-------------+----------------------+------------------------------------------+------------------------------------------
+ Ada                            |     7200.00 |                    1 |                                  7200.00 |                                7650.0000
+ Grace                          |     8100.00 |                    2 |                                 15300.00 |                                6900.0000
+ Edsger                         |     5400.00 |                    3 |                                 20700.00 |                                6750.0000
+ Barbara                        |        NULL |                    4 |                                 20700.00 |                                5400.0000
 (4 rows, with a warning: SQLSTATE 01003)
  NAME                           |      SALARY |               NEARBY
 --------------------------------+-------------+----------------------
@@ -1021,12 +1021,12 @@ SELECT ROW_NUMBER(CURRENT_ROW) FROM STAFF;
 ```
 
 ```
-           ID | NAME                           |      SALARY |             WEIGHTED |       AFTER | LAST_ID
---------------+--------------------------------+-------------+----------------------+-------------+--------------------------------
-            1 | Ada                            |     7200.00 |             14400.00 |     8100.00 | Barbara
-            2 | Grace                          |     8100.00 |             23400.00 |     5400.00 | Barbara
-            3 | Edsger                         |     5400.00 |             18900.00 |        NULL | Barbara
-            4 | Barbara                        |        NULL |              5400.00 |        0.00 | Barbara
+           ID | NAME                           |      SALARY |                                 WEIGHTED |       AFTER | LAST_ID
+--------------+--------------------------------+-------------+------------------------------------------+-------------+--------------------------------
+            1 | Ada                            |     7200.00 |                                 14400.00 |     8100.00 | Barbara
+            2 | Grace                          |     8100.00 |                                 23400.00 |     5400.00 | Barbara
+            3 | Edsger                         |     5400.00 |                                 18900.00 |        NULL | Barbara
+            4 | Barbara                        |        NULL |                                  5400.00 |        0.00 | Barbara
 (4 rows, with a warning: SQLSTATE 01003)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a nested window function is only in the argument of a set function a window function contains [ISO/IEC 9075-2:2023 §6.11 SR1] (at character 7)
 ```
@@ -1063,11 +1063,11 @@ SELECT SUM(DISTINCT SALARY) OVER (ORDER BY ID) FROM STAFF;
 ```
 
 ```
- DEPT |                TOTAL |                    R
-------+----------------------+----------------------
- NULL |                 NULL |                    1
- ENG  |             15300.00 |                    2
- OPS  |              5400.00 |                    3
+ DEPT |                                    TOTAL |                    R
+------+------------------------------------------+----------------------
+ NULL |                                     NULL |                    1
+ ENG  |                                 15300.00 |                    2
+ OPS  |                                  5400.00 |                    3
 (3 rows, with a warning: SQLSTATE 01003)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a window function is only in the select list of a query specification [ISO/IEC 9075-2:2023 §6.10 SR2b] (at character 29)
            ID |                DEPTS
@@ -1149,12 +1149,12 @@ SELECT ID, SALARY - 1000 * ID AS SCORE FROM STAFF ORDER BY SALARY - 1000 * ID NU
  Grace
  Ada
 (4 rows)
-           ID |                SCORE
---------------+----------------------
-            4 |                 NULL
-            3 |              2400.00
-            2 |              6100.00
-            1 |              6200.00
+           ID |               SCORE
+--------------+---------------------
+            4 |                NULL
+            3 |             2400.00
+            2 |             6100.00
+            1 |             6200.00
 (4 rows)
 ```
 

@@ -452,6 +452,7 @@ mod vector_search;
 mod vectors;
 mod views;
 mod warnings;
+mod wide_exact;
 mod width_bucket;
 mod window_distinct;
 mod window_nested;

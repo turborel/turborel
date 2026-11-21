@@ -212,7 +212,7 @@ fn a_greatest_or_least_is_held_to_its_bound_6_5() {
 fn a_change_raises_what_the_whole_check_raises_6_5() {
     let asserted = [
         ("POWER", "(SELECT MAX(N * N * N * N * N) FROM T WHERE N > 0) < 1000000000000", ""),
-        ("TOTAL", "(SELECT SUM(M * 500000000) FROM T) > 0", ""),
+        ("TOTAL", "(SELECT SUM(M * 30000000000000000000000000000) FROM T) > 0", ""),
     ];
     let ((_x, a), (_y, b)) = twins(&asserted);
     for (s, whole) in [(&a, ""), (&b, " AND 1 = 1")] {
