@@ -12161,6 +12161,11 @@ counts and no shared lock. A text is normalized once, for a prepared
 statement in what it keeps between executions and for a direct one in
 its session's activity. Each session tallies its own runs in a map only
 it writes, under a lock only a reader of the table takes besides. A
+statement takes that lock once, as it ends. The user its session runs as
+is kept with the map, so a statement by the same user as the last finds
+its user's key without it. A statement's timing is held in its call or
+its cursor, and what is told of a slow one apart, as that is seldom
+asked for. A
 session's tallies are listed with the database's the first time it
 tallies, and kept once it ends, merged, until the table is next read.
 Rows read are counted by each scan as it reads, and given to its

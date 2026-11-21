@@ -36,9 +36,10 @@ struct Slow<T> {
     after: Duration,
 }
 
-/// A statement's work, timed.
+/// A statement's work, timed: held in its call or its cursor as it is,
+/// what is told of it once slow apart, as that is seldom asked for.
 pub(super) struct Timed<T> {
-    slow: Option<Slow<T>>,
+    slow: Option<Box<Slow<T>>>,
     tallied: Option<Tallied>,
     /// Since when it works, if it does now.
     since: Option<Instant>,
@@ -67,7 +68,7 @@ impl Session {
             Tallied::of(activity, statement, (&user, kept), began)
         });
         activity.began(statement, began);
-        let slow = slow(st, text, (&user, &self.stop));
+        let slow = slow(st, text, (&user, &self.stop)).map(Box::new);
         (slow.is_some() || tallied.is_some()).then(|| Timed { slow, tallied, since: Some(Instant::now()), busy: Duration::ZERO, rows: 0 })
     }
 }

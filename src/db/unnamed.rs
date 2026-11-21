@@ -92,13 +92,6 @@ impl Session {
             opened.paused();
         }
         self.replied(&tx, Ok(()))?;
-        Ok(Cursor {
-            columns,
-            rows,
-            db: self.db.clone(),
-            stop: Arc::clone(&self.stop),
-            timed: timed.map(Box::new),
-            zone: self.now.get().zone,
-        })
+        Ok(Cursor { columns, rows, db: self.db.clone(), stop: Arc::clone(&self.stop), timed, zone: self.now.get().zone })
     }
 }
