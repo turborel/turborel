@@ -7,7 +7,10 @@
 //! again only once a probe's estimated rows per probe, its table's rows
 //! over the distinct keys of the index columns it fixes, grows past
 //! `OUTGROWN` times its figure as the plan was learned; until then each
-//! drift of its tables moves the rows it is measured from.
+//! drift of its tables moves the rows it is measured from. A figure taken
+//! before its table had statistics is its whole table's rows, not its rows
+//! per probe, so a plan learned so is learned again once they are known,
+//! and its figures taken anew.
 
 use std::sync::Arc;
 
@@ -34,13 +37,15 @@ pub(crate) struct Learnt {
     probes: Option<Arc<[Probed]>>,
 }
 
-/// A probe of a plan learned: its table, the columns it fixes, and its
-/// estimated rows per probe as the plan was learned.
+/// A probe of a plan learned: its table, the columns it fixes, its
+/// estimated rows per probe as the plan was learned, and whether its
+/// table's statistics were known then (`figure`).
 #[derive(Debug, Clone)]
 struct Probed {
     table: QualifiedName,
     columns: Vec<usize>,
     figure: f64,
+    known: bool,
 }
 
 /// How a plan learned fits its tables now (`Learnt::now`).
@@ -58,8 +63,11 @@ impl Learnt {
     /// What `plan`, learned in `st`, reading `reads`, is measured from.
     pub(crate) fn of(st: &State, reads: &Arc<[QualifiedName]>, plan: &Plan) -> Learnt {
         let mut found = Vec::new();
-        let probes = probed(plan, st, &mut found)
-            .then(|| found.into_iter().map(|(table, columns)| Probed { figure: figure(st, &table, &columns), table, columns }).collect());
+        let probe = |(table, columns): (QualifiedName, Vec<usize>)| {
+            let (figure, known) = figure(st, &table, &columns);
+            Probed { table, columns, figure, known }
+        };
+        let probes = probed(plan, st, &mut found).then(|| found.into_iter().map(probe).collect());
         Learnt { reads: Arc::clone(reads), rows: rows_of(st, reads), probes }
     }
 
@@ -69,18 +77,24 @@ impl Learnt {
         Learnt { reads: Arc::clone(reads), rows: rows_of(st, reads), probes: None }
     }
 
-    /// How the plan fits its tables in `st` now: still, if none drifted
-    /// (`drifted`); grown, if its probes did not outgrow it; else moved.
+    /// How the plan fits its tables in `st` now: moved, if a probe's
+    /// table's statistics became known since it was learned; still, if no
+    /// table drifted (`drifted`); grown, if its probes did not outgrow it;
+    /// else moved.
     pub(crate) fn now(&self, st: &State) -> Fit {
         let reads = &self.reads;
+        let probes = self.probes.as_deref().unwrap_or_default();
+        if probes.iter().any(|p| !p.known && st.statistics(&p.table).is_some()) {
+            return Fit::Moved;
+        }
         if !reads.iter().zip(self.rows.iter()).any(|(t, &was)| drifted(was, st.row_count(t).unwrap_or(0))) {
             return Fit::Still;
         }
-        let Some(probes) = &self.probes else { return Fit::Moved };
-        if probes.iter().any(|p| outgrown(p.figure, figure(st, &p.table, &p.columns))) {
+        let Some(kept) = &self.probes else { return Fit::Moved };
+        if kept.iter().any(|p| outgrown(p.figure, figure(st, &p.table, &p.columns).0)) {
             return Fit::Moved;
         }
-        Fit::Grown(Learnt { reads: Arc::clone(reads), rows: rows_of(st, reads), probes: Some(Arc::clone(probes)) })
+        Fit::Grown(Learnt { reads: Arc::clone(reads), rows: rows_of(st, reads), probes: Some(Arc::clone(kept)) })
     }
 }
 
@@ -107,15 +121,16 @@ fn drifted(was: usize, now: usize) -> bool {
 /// The estimated rows per probe of `table` fixing `columns`: its rows over
 /// the distinct values its statistics count of them together, or of each
 /// apart, multiplied; its rows if it fixes none, or nothing is known.
-fn figure(st: &State, table: &QualifiedName, columns: &[usize]) -> f64 {
+/// And whether its statistics are known.
+fn figure(st: &State, table: &QualifiedName, columns: &[usize]) -> (f64, bool) {
     let rows = cost_of(st.row_count(table).unwrap_or(0));
+    let Some(stats) = st.statistics(table) else { return (rows, false) };
     if columns.is_empty() {
-        return rows;
+        return (rows, true);
     }
-    let Some(stats) = st.statistics(table) else { return rows };
     let apart = || columns.iter().map(|&c| stats.distinct(c)).product::<Option<f64>>();
     let distinct = stats.group_distinct(columns).or_else(apart).unwrap_or(1.0_f64);
-    rows / distinct.max(1.0_f64)
+    (rows / distinct.max(1.0_f64), true)
 }
 
 /// Whether `plan` reads every table through index probes alone, each

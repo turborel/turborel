@@ -12809,8 +12809,10 @@ plan that reads every table only through index probes is not: it is
 learned again only once a probe's estimated rows per probe, its table's
 rows over the distinct values of the columns it fixes, grows past ten
 times its figure as the plan was learned (`prepared/plans/grown.rs`).
-Until then each drift moves the rows it is measured from. A statement or
-leaf whose plans varied tries to learn again once a table it reads
+Until then each drift moves the rows it is measured from. A figure taken
+before its table had statistics is the whole table's rows, so a plan
+learned then is learned again once they are gathered, its figures taken
+anew. A statement or leaf whose plans varied tries to learn again once a table it reads
 drifts, so a plan that varied while its tables were small can be kept
 once they settle.
 

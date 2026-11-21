@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use turborel::db::{Database, Prepared, Session};
 use turborel::physical::plannings;
+use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
 
 /// The procedures, one after another.
@@ -95,7 +96,8 @@ fn generated(s: &Session) {
     s.run("DROP TABLE DIGIT RESTRICT").unwrap();
 }
 
-/// One warehouse loaded, its procedures defined, in schema TPCC.
+/// One warehouse loaded, its statistics gathered, its procedures defined,
+/// in schema TPCC.
 fn loaded() -> (Database, Session) {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION TPCC").unwrap();
@@ -124,6 +126,7 @@ fn loaded() -> (Database, Session) {
         s.run(&format!("CREATE PROCEDURE{p}")).unwrap();
     }
     s.commit().unwrap();
+    db.maintain().unwrap();
     (db, s)
 }
 
@@ -246,6 +249,17 @@ fn grouped(s: &Session, (first, groups): (i64, i64), (per, from): (i64, i64)) {
     s.commit().unwrap();
 }
 
+/// A database of the table G, its statistics gathered only when a test
+/// asks (JOBS.POLICY MANUAL), and a session of its schema.
+fn groups() -> (Database, Session) {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE G (G INTEGER NOT NULL, K INTEGER NOT NULL, V INTEGER, PRIMARY KEY (G, K))")
+        .unwrap();
+    let s = db.session("X");
+    (db, s)
+}
+
 /// Verifies: [DESIGN] RULES.md D613, a plan kept that reads only through an
 /// index's probes is kept as its table grows fivefold with its rows per
 /// probe as they were, and is learned again once its rows per probe grow
@@ -255,20 +269,35 @@ fn grouped(s: &Session, (first, groups): (i64, i64), (per, from): (i64, i64)) {
 /// (RULES.md D473).
 #[test]
 fn a_probes_plan_is_learned_again_only_once_its_rows_per_probe_outgrow_it() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE G (G INTEGER NOT NULL, K INTEGER NOT NULL, V INTEGER, PRIMARY KEY (G, K))")
-        .unwrap();
-    let s = db.session("X");
-    let loaded = |groups, rows| {
-        grouped(&s, groups, rows);
-        db.maintain().unwrap();
-    };
-    loaded((1, 100), (2, 1));
+    let (db, s) = groups();
+    grouped(&s, (1, 100), (2, 1));
+    db.analyze("X.G").unwrap();
     let p = s.prepare("SELECT K, V FROM G WHERE G = ?").unwrap();
     assert!(group_plannings(&s, &p, 40) > 0, "learned");
     assert_eq!(group_plannings(&s, &p, 40), 0, "kept");
-    loaded((101, 400), (2, 1));
+    grouped(&s, (101, 400), (2, 1));
+    db.analyze("X.G").unwrap();
     assert_eq!(group_plannings(&s, &p, 40), 0, "five times the rows, as many of each group");
-    loaded((1, 500), (30, 3));
+    grouped(&s, (1, 500), (30, 3));
+    db.analyze("X.G").unwrap();
+    assert!(group_plannings(&s, &p, 40) > 0, "sixteen times the rows of each group");
+}
+
+/// Verifies: [DESIGN] RULES.md D613, a probes plan learned before its
+/// table had statistics, its figure the whole table's rows, is learned
+/// again once they are gathered, and so once its rows per probe then grow
+/// past ten times what they were, as of one learned with them.
+#[test]
+fn a_probes_plan_learned_before_statistics_is_learned_again_once_they_are() {
+    let (db, s) = groups();
+    grouped(&s, (1, 100), (2, 1));
+    let p = s.prepare("SELECT K, V FROM G WHERE G = ?").unwrap();
+    assert!(group_plannings(&s, &p, 40) > 0, "learned without statistics");
+    assert_eq!(group_plannings(&s, &p, 40), 0, "kept");
+    db.analyze("X.G").unwrap();
+    assert!(group_plannings(&s, &p, 40) > 0, "learned again with them");
+    assert_eq!(group_plannings(&s, &p, 40), 0, "kept again");
+    grouped(&s, (1, 500), (30, 3));
+    db.analyze("X.G").unwrap();
     assert!(group_plannings(&s, &p, 40) > 0, "sixteen times the rows of each group");
 }
