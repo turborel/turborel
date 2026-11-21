@@ -18,6 +18,7 @@ pub mod sel;
 
 use std::sync::OnceLock;
 
+pub use self::gathered::{NO_ROW, Picks};
 pub use self::kinds::{Bools, Datetimes};
 pub use self::late::{Late, LateSource};
 pub use self::mask::Mask;

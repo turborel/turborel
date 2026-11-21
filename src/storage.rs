@@ -22,8 +22,8 @@ mod rows;
 mod split;
 
 pub use batch::{
-    BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Late, LateSource, Mask, Nulls, Ramp,
-    Sel, Texts, batches_of, bound, mask, sel,
+    BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Late, LateSource, Mask, NO_ROW,
+    Nulls, Picks, Ramp, Sel, Texts, batches_of, bound, mask, sel,
 };
 pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};

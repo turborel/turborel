@@ -134,12 +134,12 @@ fn without(columns: &[usize], read: &[usize]) -> Vec<usize> {
 /// \[DESIGN\] (RULES.md D361) `batches`, each of its late columns decoded
 /// of the rows kept of it alone (`Batch::resolve`), as the stream is read
 /// whole: by a grouping, a sort, a projection, a set operation or the rows
-/// made of it.
-pub(in crate::exec) fn resolved(batches: Batches) -> Batches {
-    Box::new(batches.map(|kept| {
+/// made of it; gathered on `kernels` (RULES.md D570).
+pub(in crate::exec) fn resolved(batches: Batches, kernels: Arc<dyn crate::kernels::Kernels>) -> Batches {
+    Box::new(batches.map(move |kept| {
         let (mut batch, rows) = kept?;
         if batch.has_late() {
-            batch.resolve(rows.as_deref())?;
+            batch.resolve(rows.as_deref(), &*kernels)?;
         }
         Ok((batch, rows))
     }))

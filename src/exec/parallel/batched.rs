@@ -109,7 +109,7 @@ impl Pipeline {
             if at < morsels {
                 let read = branch.split.morsel_batches(at, late).ok_or_else(|| broken("a morsel not read by batch"))?;
                 let kept: Batches = Box::new(read.map(|b| b.map(|b| (b, None))));
-                return Ok(resolved(through(kept, steps, (db, tx))));
+                return Ok(resolved(through(kept, steps, (db, tx)), crate::db::kernels::chosen(db)));
             }
             at = at.saturating_sub(morsels);
         }

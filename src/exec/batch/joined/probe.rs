@@ -68,7 +68,7 @@ pub(super) fn probed(
     // The right operand first, held as vectors if it fits the work area.
     let rest = match held::read(right, &keys, work.limit(), (db, tx))? {
         Read::Held(held) => {
-            let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
+            let out = Out::over(left_columns.len(), Arc::clone(&held.batch), crate::db::kernels::chosen(db));
             let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
             let left = left_late_batches(left, (db, tx), &deferred)?;
             return Ok(Box::new(Probe { left, joined, right: Holding::Vectors(held), places, out, _work: work }));
@@ -82,7 +82,7 @@ pub(super) fn probed(
             Right::Held(built) => built,
             Right::Partitioned(_) => return Err(crate::exec::broken("a LEFT join's right operand was partitioned")),
         };
-        let out = Out::new(left_columns.len(), right_columns.clone());
+        let out = Out::new(left_columns.len(), right_columns.clone(), crate::db::kernels::chosen(db));
         let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
         let left = left_batches(left, db, tx)?;
         return Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, _work: work }));
@@ -117,7 +117,7 @@ fn narrowed(
     let (lefts, rights): (Vec<usize>, Vec<usize>) = ((0..left_width).collect(), (0..right_width).collect());
     match Built::of(rest.narrow(), narrow, (&mut work, Full::Partition))? {
         Right::Held(built) => {
-            let (out, left) = (Out::new(left_width, rights), left_batches(left, db, tx)?);
+            let (out, left) = (Out::new(left_width, rights, crate::db::kernels::chosen(db)), left_batches(left, db, tx)?);
             Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, _work: work }))
         }
         Right::Partitioned(parts) => {

@@ -2,10 +2,39 @@
 //! join pairs of a batch, in the order paired, a row taken again as often
 //! as it is paired and a null where it is paired with none. A vector of
 //! integers, numbers or texts is gathered as one of the same kind, so what
-//! reads it after a join reads it as from the scan, no value made.
+//! reads it after a join reads it as from the scan, no value made. Picks
+//! given as row numbers (`Picks`) gather integers on the vector kernels
+//! (RULES.md D570).
+
+use std::cell::OnceCell;
 
 use super::{Coded, Column, Floats, Ints, Mask, Texts};
+use crate::kernels::Kernels;
+use crate::storage::mask::index;
 use crate::value::Value;
+
+/// A pick of no row, whose values are nulls (`Picks`).
+pub const NO_ROW: u32 = u32::MAX;
+
+/// \[DESIGN\] The rows a gathering picks, each a row's number or `NO_ROW`,
+/// made as options once, the first time a vector not of integers is
+/// gathered of them.
+pub struct Picks<'a> {
+    rows: &'a [u32],
+    options: OnceCell<Vec<Option<usize>>>,
+}
+
+impl<'a> Picks<'a> {
+    /// The picks `rows`.
+    pub fn new(rows: &'a [u32]) -> Picks<'a> {
+        Picks { rows, options: OnceCell::new() }
+    }
+
+    /// Each pick a row or none.
+    fn options(&self) -> &[Option<usize>] {
+        self.options.get_or_init(|| self.rows.iter().map(|&r| (r != NO_ROW).then(|| index(r))).collect())
+    }
+}
 
 impl Column {
     /// The values of the rows at `picks`, in order, a null for none: a
@@ -30,6 +59,27 @@ impl Column {
             Column::Nulls(_) => Column::nulls(picks.len()),
             Column::Late(late) => Column::Late(late.gathered(picks)),
         }
+    }
+
+    /// The values of the rows `picks` picks, in order, as `gathered`:
+    /// integers gathered by `kernels`, a pick of no row or past the end
+    /// read as 0, its null marked as `gathered` marks it.
+    #[must_use]
+    pub fn gathered_by(&self, picks: &Picks<'_>, kernels: &dyn Kernels) -> Column {
+        if let Column::Ints(ints) = self
+            && u32::try_from(ints.units.len()).is_ok_and(|n| n < NO_ROW)
+        {
+            let mut units = Vec::with_capacity(picks.rows.len());
+            kernels.gather_i64(&ints.units, picks.rows, &mut units);
+            let mut made = Mask::none(picks.rows.len());
+            for (n, &r) in picks.rows.iter().enumerate() {
+                if r == NO_ROW || ints.is_null(index(r)) {
+                    made.set(n);
+                }
+            }
+            return Column::Ints(Ints::new(units, ints.scale, made.any().then_some(made)));
+        }
+        self.gathered(picks.options())
     }
 
     /// A vector of `rows` nulls.

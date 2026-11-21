@@ -42,7 +42,7 @@ impl Accumulator for CountAcc {
         };
         self.update_rows(counted)
     }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>, _: &dyn crate::kernels::Kernels) -> Result<()> {
         self.update_rows(ints::count(ints, rows))
     }
     fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {

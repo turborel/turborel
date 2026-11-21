@@ -238,7 +238,7 @@ fn by_vectors(batch: &Batch, rows: Option<&[u32]>, (places, runner): (&[Place], 
                 let column = batch.columns.get(*at).cloned().unwrap_or_else(|| Column::nulls(batch.rows));
                 match rows {
                     None => column,
-                    Some(rows) => gather(&column, rows),
+                    Some(rows) => gather(&column, rows, runner.kernels()),
                 }
             }
             Place::Const(v) => super::expr::constant_column(v, count),

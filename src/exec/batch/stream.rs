@@ -218,7 +218,7 @@ pub(super) fn open(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Stream> {
 /// As `open`.
 pub(super) fn whole_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let width = layout(&plan, db).map_or(0, |(_, width)| width);
-    Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width))?))
+    Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width))?, crate::db::kernels::chosen(db)))
 }
 
 /// A function giving the batches of a plan of one kind, its columns the

@@ -188,10 +188,10 @@ pub(in crate::exec) fn fed_group(
             // [X3.135-1986 §5.8 GR1] nulls taken out.
             (Taken::Column(c), _) => {
                 if let Some(column) = batch.columns.get(*c) {
-                    fed_column(state, column, Some(read_rows))?;
+                    fed_column(state, (column, runner), Some(read_rows))?;
                 }
             }
-            (Taken::Expr(_), Some(Fed::Made(column))) => fed_column(state, column, Some(given))?,
+            (Taken::Expr(_), Some(Fed::Made(column))) => fed_column(state, (column, runner), Some(given))?,
             (Taken::Expr(_), Some(Fed::Const(v))) => {
                 if !v.is_null() {
                     (0..given.len()).try_for_each(|_| state.update(v))?;
@@ -306,7 +306,7 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[u32]>
             Taken::Column(at) => match batch.columns.get(*at) {
                 Some(column) => {
                     eliminated(column_nulled(column, rows), runner);
-                    fed_column(state, column, rows)?;
+                    fed_column(state, (column, runner), rows)?;
                 }
                 None => state.update_many(&[], rows)?,
             },
@@ -315,7 +315,7 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[u32]>
             Taken::Expr(program) => match lane(program, batch, rows, runner) {
                 Some(Fed::Made(column)) => {
                     eliminated(column_nulled(&column, None), runner);
-                    fed_column(state, &column, None)?;
+                    fed_column(state, (&column, runner), None)?;
                 }
                 Some(Fed::Const(v)) => {
                     let count = rows.map_or(batch.rows, <[u32]>::len);
@@ -331,9 +331,9 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[u32]>
 
 /// Feeds `state` the values of `column` at `rows`, or all, a vector at a
 /// time, by its kind; a vector of nulls none.
-fn fed_column(state: &mut Box<dyn Accumulator>, column: &Column, rows: Option<&[u32]>) -> Result<()> {
+fn fed_column(state: &mut Box<dyn Accumulator>, (column, runner): (&Column, &Runner), rows: Option<&[u32]>) -> Result<()> {
     match column {
-        Column::Ints(ints) => state.update_ints(ints, rows),
+        Column::Ints(ints) => state.update_ints(ints, rows, runner.kernels()),
         Column::Floats(floats) => state.update_floats(floats, rows),
         Column::Values(values) => state.update_many(values, rows),
         Column::Texts(texts) => state.update_texts(texts, rows),

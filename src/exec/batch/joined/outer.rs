@@ -56,7 +56,7 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<Sta
     } else {
         match held::read(right, &spec.keys, work.limit(), (db, tx))? {
             HeldRead::Held(held) => {
-                let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
+                let out = Out::over(left_columns.len(), Arc::clone(&held.batch), crate::db::kernels::chosen(db));
                 let read = places(&spec, &left_columns)?;
                 let vectors = Right::Vectors(Vectors { held, columns: right_columns, spec, _work: work });
                 return Ok(Box::new(Probe::new((left_batches(left, db, tx)?, vectors), read, out)));
@@ -67,7 +67,7 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<Sta
     match prepared(spec, rows, work)? {
         Prepared::Held(held) => {
             let read = places(&held.spec, &left_columns)?;
-            let out = Out::new(left_columns.len(), right_columns);
+            let out = Out::new(left_columns.len(), right_columns, crate::db::kernels::chosen(db));
             Ok(Box::new(Probe::new((left_batches(left, db, tx)?, Right::Rows(held)), read, out)))
         }
         Prepared::Rowwise(rowwise) => {

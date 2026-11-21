@@ -108,3 +108,93 @@ fn the_kernels_registered_reach_storage_and_sorts() {
     assert!(made > 0, "no sort key made by the kernels registered");
     assert_eq!(made_portable, 0, "PORTABLE ran the registered kernels in a sort");
 }
+
+/// Kernels that tally each sum, extreme and gather they make, by name,
+/// each the portable one's.
+struct Tally(Arc<std::sync::Mutex<std::collections::BTreeMap<&'static str, usize>>>);
+
+impl Tally {
+    fn count(&self, name: &'static str) {
+        if let Ok(mut tally) = self.0.lock() {
+            *tally.entry(name).or_default() += 1;
+        }
+    }
+}
+
+impl Kernels for Tally {
+    fn name(&self) -> &'static str {
+        "TALLY"
+    }
+
+    fn sum_i64(&self, values: &[i64], sel: Option<&[u32]>) -> i128 {
+        self.count("sum_i64");
+        Portable.sum_i64(values, sel)
+    }
+
+    fn min_max_i64(&self, values: &[i64], given: turborel::kernels::Given<'_>) -> Option<(i64, i64)> {
+        self.count("min_max_i64");
+        Portable.min_max_i64(values, given)
+    }
+
+    fn gather_i64(&self, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
+        self.count("gather_i64");
+        Portable.gather_i64(values, sel, out);
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D570 [X3.135-1986 §5.8 GR1]: set functions
+/// over a batch's integers sum and compare them on the kernels
+/// registered, and a join's, a projection's and a top-N's rows gather
+/// them so, of the row store and the column store alike; each query
+/// gives what it gives on the portable kernels (EXECUTOR.KERNELS =
+/// 'PORTABLE') and read row by row, nulls left out alike.
+#[test]
+fn set_functions_and_gathers_run_on_the_kernels_registered() {
+    let db = Database::new();
+    let tally = Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    db.register_kernels(Box::new(Tally(Arc::clone(&tally)))).unwrap();
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE R (K INTEGER, G INTEGER, V BIGINT, N INTEGER)
+           CREATE TABLE C (K INTEGER, G INTEGER, V BIGINT, N INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)
+           CREATE TABLE H (K INTEGER, W INTEGER)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    let rows: Vec<String> = (0..6000_i64)
+        .map(|k| {
+            let n = if k % 7 == 0 { "NULL".to_owned() } else { (k * 31 % 1000 - 500).to_string() };
+            format!("({k}, {}, {}, {n})", k % 13, (k * 7_919) % 100_003 - 50_000)
+        })
+        .collect();
+    for table in ["R", "C"] {
+        a.run(&format!("INSERT INTO {table} VALUES {}", rows.join(", "))).unwrap();
+    }
+    let held: Vec<String> = (0..500_i64).map(|k| format!("({}, {k})", k * 11)).collect();
+    a.run(&format!("INSERT INTO H VALUES {}", held.join(", "))).unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
+    for table in ["R", "C"] {
+        for sql in [
+            format!("SELECT SUM(V), MIN(V), MAX(V), SUM(N), MIN(N), MAX(N), AVG(N), COUNT(N) FROM {table}"),
+            format!("SELECT G, SUM(V), MIN(N), MAX(N) FROM {table} GROUP BY G"),
+            format!("SELECT SUM(V), MAX(N) FROM {table} WHERE K < 3000"),
+            format!("SELECT {table}.K, {table}.V, H.W FROM {table} JOIN H ON {table}.K = H.K"),
+            format!("SELECT K, N FROM {table} WHERE G = 3"),
+            format!("SELECT K, V FROM {table} ORDER BY V DESC FETCH FIRST 20 ROWS ONLY"),
+        ] {
+            exec(&a, "SET EXECUTOR.KERNELS = ''").unwrap();
+            let (registered, by_rows) = both_ways(&a, &sql);
+            exec(&a, "SET EXECUTOR.KERNELS = 'PORTABLE'").unwrap();
+            let (portable, _) = both_ways(&a, &sql);
+            assert_eq!(registered, by_rows, "{sql}");
+            assert_eq!(registered, portable, "{sql}");
+        }
+    }
+    let tally = tally.lock().unwrap().clone();
+    for name in ["sum_i64", "min_max_i64", "gather_i64"] {
+        assert!(tally.get(name).is_some_and(|&n| n > 0), "{name} never ran: {tally:?}");
+    }
+}

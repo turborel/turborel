@@ -121,5 +121,5 @@ pub(in crate::exec) fn topped(
 ) -> Result<stream::Batches> {
     let width = if late { stream::layout(&plan, db).map_or(0, |l| l.1) } else { 0 };
     let batches = stream::batches_with(plan, (db, tx), &Deferred::all(width).topped(keys, bound))?;
-    Ok(if late { batches } else { resolved(batches) })
+    Ok(if late { batches } else { resolved(batches, crate::db::kernels::chosen(db)) })
 }

@@ -1,6 +1,6 @@
 //! The analytic queries the kernels run in, A/B (RULES.md D570): two
-//! databases of the same column store rows, one on `Simd::detect()`, one
-//! on the portable kernels, each query run on one then the other in turn,
+//! databases of the same rows, in a column store table and a row store
+//! one, one on `Simd::detect()`, one on the portable kernels, each query run on one then the other in turn,
 //! on one thread; nanoseconds a row read, the median of the rounds, and
 //! the speed of the detected level against the portable one. Run with
 //! `cargo run --release -p turborel-simd --example queries`; `ROUNDS` sets
@@ -38,7 +38,9 @@ fn scatter(k: u64, n: u64) -> u64 {
     k.wrapping_mul(0x9E37_79B9_7F4A_7C15) % n
 }
 
-/// A database of the table DC, on the SIMD kernels if `simd`.
+/// A database of the tables DC, a column store one, and DR, a row store
+/// one, of the same rows, and J, of a row for every hundredth key, on the
+/// SIMD kernels if `simd`.
 fn database(simd: bool) -> Database {
     let db = Database::new();
     if simd {
@@ -48,7 +50,9 @@ fn database(simd: bool) -> Database {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION B
            CREATE TABLE DC (K INTEGER, P DOUBLE PRECISION, F INTEGER, D BIGINT, N INTEGER, T VARCHAR(20), Q DECIMAL(12,2))
-             USING columnstore",
+             USING columnstore
+           CREATE TABLE DR (K INTEGER, P DOUBLE PRECISION, F INTEGER, D BIGINT, N INTEGER, T VARCHAR(20), Q DECIMAL(12,2))
+           CREATE TABLE J (K INTEGER, W BIGINT)",
     )
     .unwrap();
     let s = db.session("B");
@@ -69,7 +73,11 @@ fn database(simd: bool) -> Database {
                 )
             })
             .collect();
-        s.run(&format!("INSERT INTO DC VALUES {}", rows.join(", "))).unwrap();
+        for table in ["DC", "DR"] {
+            s.run(&format!("INSERT INTO {table} VALUES {}", rows.join(", "))).unwrap();
+        }
+        let keyed: Vec<String> = (first..first + PER_INSERT).step_by(100).map(|k| format!("({k}, {})", scatter(k, 1_000))).collect();
+        s.run(&format!("INSERT INTO J VALUES {}", keyed.join(", "))).unwrap();
     }
     s.commit().unwrap();
     db.maintain().unwrap();
@@ -111,29 +119,35 @@ fn main() {
     let (a, b) = (simd.session("B"), portable.session("B"));
     a.run("SET EXECUTOR.DEGREE = 1").unwrap();
     b.run("SET EXECUTOR.DEGREE = 1").unwrap();
-    println!("{:<52} {:>10} {:>10} {:>7}", "query", "portable", "simd", "speed");
-    for (name, sql) in [
-        ("COUNT by an integer, 1%", "SELECT COUNT(*) FROM DC WHERE F < 20000"),
-        ("COUNT by an integer, 50%", "SELECT COUNT(*) FROM DC WHERE F < 1000000"),
-        ("COUNT by an integer with nulls, 50%", "SELECT COUNT(*) FROM DC WHERE N < 500"),
-        ("COUNT by a double, 10%", "SELECT COUNT(*) FROM DC WHERE P < 500"),
-        ("COUNT by a dictionary of texts", "SELECT COUNT(*) FROM DC WHERE T = 'name 7'"),
-        ("SUM of a frame of 21 bits", "SELECT SUM(F) FROM DC"),
-        ("SUM of an integer with nulls", "SELECT SUM(N) FROM DC"),
-        ("SUM of prices as decimals (ALP)", "SELECT SUM(P) FROM DC"),
-        ("SUM of a dictionary of 1,024 integers", "SELECT SUM(D) FROM DC"),
-        ("SUM of an exact decimal", "SELECT SUM(Q) FROM DC"),
-        ("MIN and MAX of an integer", "SELECT MIN(F), MAX(F) FROM DC"),
-        ("MIN and MAX with nulls", "SELECT MIN(N), MAX(N) FROM DC"),
-        ("SUM by an integer, 50%", "SELECT SUM(D) FROM DC WHERE F < 1000000"),
-        ("ORDER BY an integer, top 10", "SELECT K FROM DC ORDER BY F DESC FETCH FIRST 10 ROWS ONLY"),
-        ("ORDER BY an integer, 10% fetched", "SELECT F FROM DC WHERE F < 200000 ORDER BY F"),
-        ("GROUP BY 300 texts", "SELECT T, COUNT(*) FROM DC GROUP BY T"),
-        ("GROUP BY 1,024 integers, SUM", "SELECT D, SUM(F) FROM DC GROUP BY D"),
-    ] {
+    println!("{:<60} {:>10} {:>10} {:>7}", "query", "portable", "simd", "speed");
+    let queries = [
+        ("COUNT by an integer, 1%", "SELECT COUNT(*) FROM {T} WHERE F < 20000"),
+        ("COUNT by an integer, 50%", "SELECT COUNT(*) FROM {T} WHERE F < 1000000"),
+        ("COUNT by an integer with nulls, 50%", "SELECT COUNT(*) FROM {T} WHERE N < 500"),
+        ("COUNT by a double, 10%", "SELECT COUNT(*) FROM {T} WHERE P < 500"),
+        ("COUNT by a dictionary of texts", "SELECT COUNT(*) FROM {T} WHERE T = 'name 7'"),
+        ("SUM of a frame of 21 bits", "SELECT SUM(F) FROM {T}"),
+        ("SUM of an integer with nulls", "SELECT SUM(N) FROM {T}"),
+        ("SUM of prices as decimals (ALP)", "SELECT SUM(P) FROM {T}"),
+        ("SUM of a dictionary of 1,024 integers", "SELECT SUM(D) FROM {T}"),
+        ("SUM of an exact decimal", "SELECT SUM(Q) FROM {T}"),
+        ("MIN and MAX of an integer", "SELECT MIN(F), MAX(F) FROM {T}"),
+        ("MIN and MAX with nulls", "SELECT MIN(N), MAX(N) FROM {T}"),
+        ("SUM by an integer, 50%", "SELECT SUM(D) FROM {T} WHERE F < 1000000"),
+        ("ORDER BY an integer, top 10", "SELECT K FROM {T} ORDER BY F DESC FETCH FIRST 10 ROWS ONLY"),
+        ("ORDER BY an integer, 10% fetched", "SELECT F FROM {T} WHERE F < 200000 ORDER BY F"),
+        ("GROUP BY 300 texts", "SELECT T, COUNT(*) FROM {T} GROUP BY T"),
+        ("GROUP BY 1,024 integers, SUM", "SELECT D, SUM(F) FROM {T} GROUP BY D"),
+        ("GROUP BY 300 texts, SUM, MIN, MAX", "SELECT T, SUM(F), MIN(N), MAX(N) FROM {T} GROUP BY T"),
+        ("JOIN a table of 1%, integers carried", "SELECT {T}.F, {T}.D, J.W FROM {T} JOIN J ON {T}.K = J.K"),
+        ("integers of 1% of rows, late", "SELECT K, F, D, N FROM {T} WHERE F < 20000"),
+    ];
+    for ((name, template), (table, store)) in queries.iter().flat_map(|q| [(q, ("DC", "column")), (q, ("DR", "row"))]) {
+        let (name, sql) = (format!("{name} ({store})"), template.replace("{T}", table));
         if !name.contains(only.as_str()) {
             continue;
         }
+        let sql = sql.as_str();
         assert_eq!(fetched(&a, sql), fetched(&b, sql), "{name}");
         let (mut slow, mut fast) = (Vec::new(), Vec::new());
         for round in 0..rounds {
@@ -146,6 +160,6 @@ fn main() {
             }
         }
         let (p, s) = (median(slow), median(fast));
-        println!("{name:<52} {p:>10.3} {s:>10.3} {:>6.2}x", p / s);
+        println!("{name:<60} {p:>10.3} {s:>10.3} {:>6.2}x", p / s);
     }
 }

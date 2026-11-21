@@ -60,7 +60,7 @@ fn fed_alone(agg: &AggCall, (c, g): (Option<usize>, u32)) -> Box<dyn crate::func
     let mut acc = agg.func.0.accumulator(agg.result.clone());
     let rows: Vec<u32> = (0_u32..).zip(GROUPS).filter(|&(_, of)| of == g).map(|(r, _)| r).collect();
     match c.and_then(|c| batch().columns.into_iter().nth(c)) {
-        Some(Column::Ints(ints)) => acc.update_ints(&ints, Some(&rows)).unwrap(),
+        Some(Column::Ints(ints)) => acc.update_ints(&ints, Some(&rows), &crate::kernels::Portable).unwrap(),
         Some(Column::Floats(floats)) => acc.update_floats(&floats, Some(&rows)).unwrap(),
         Some(_) => panic!("not a column of the batch"),
         None => acc.update_rows(rows.len()).unwrap(),
@@ -138,6 +138,6 @@ fn columns_raise_and_widen_as_accumulators() {
     widened.feed((&pending(), &sum), (&other, &Taken::Column(0), &None), (&mut Vec::new(), &runner)).unwrap();
     assert!(matches!(widened, States::Boxed(_)));
     let mut alone = fed_alone(&sum, (Some(0), 1));
-    alone.update_ints(&Ints::new(vec![1; 2], 0, None), None).unwrap();
+    alone.update_ints(&Ints::new(vec![1; 2], 0, None), None, &crate::kernels::Portable).unwrap();
     assert_eq!(format!("{:?}", widened.finish(1)), format!("{:?}", alone.finish()));
 }
