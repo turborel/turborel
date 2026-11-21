@@ -8,10 +8,10 @@
 //! (`Plan::OuterJoin`): each is judged only of the pairs it is of.
 
 use super::planned::{Made, range_plan};
-use crate::logical::{Cond, LogicalPlan, OuterJoin, SortKey};
+use crate::logical::{Cond, LogicalPlan, OuterJoin};
 use crate::physical::join::Flip;
 use crate::physical::shown::Shown;
-use crate::physical::{Built, PhysicalPlanner, of_left};
+use crate::physical::{Built, PhysicalPlanner};
 
 impl PhysicalPlanner<'_> {
     /// The outer join `kind` of `left` and `right` on `cond` as a range
@@ -20,7 +20,6 @@ impl PhysicalPlanner<'_> {
         &self,
         (kind, cond): (OuterJoin, &Cond),
         (left, right): (&LogicalPlan, &LogicalPlan),
-        want: &[SortKey],
     ) -> Option<Built> {
         // The preserved operand searches: the left of a LEFT join, the
         // right of a RIGHT one, as the left of the join swapped.
@@ -36,7 +35,6 @@ impl PhysicalPlanner<'_> {
             return None;
         }
         let est = self.estimating(|e| e.outer_card((kind, cond), (left, right))).rows;
-        let want_probe = if swapped { &[] } else { of_left(want, left.width()) };
         let way = self.range_way(&on, (probe, build), (est, true))?;
         if way.cost >= self.joined_otherwise(&on, (probe, build), &way.ranged) {
             return None;
@@ -45,12 +43,10 @@ impl PhysicalPlanner<'_> {
         let shown = Shown::of(names.as_deref());
         let flipped = flip.names(shown);
         let of_pair = if swapped { Shown::of(flipped.as_deref()) } else { shown };
-        let (p, b) = (self.build_node(probe, want_probe), self.build_node(build, &[]));
+        let (p, b) = (self.build_node(probe, &[]), self.build_node(build, &[]));
         let made = Made { outer: true, widths: (probe.width(), build.width()), full: on, shown: of_pair, est };
         let plan = range_plan(way.ranged, (p.plan, b.plan), made);
-        if swapped {
-            return Some(Built::unordered(flip.restored(plan, of_pair)));
-        }
-        Some(Built { plan, ordered: !want_probe.is_empty() && p.ordered })
+        // Its rows keep no order, as `physical/range/planned.rs` says.
+        Some(Built::unordered(if swapped { flip.restored(plan, of_pair) } else { plan }))
     }
 }

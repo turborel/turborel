@@ -21,8 +21,8 @@ use std::sync::Arc;
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::batch::{SharedTable, TABLE_ROW_BYTES};
 use crate::exec::{Runner, execute};
 use crate::physical::{JoinKey, Plan};
@@ -86,7 +86,7 @@ fn held_bytes(batch: &Batch) -> usize {
 /// # Errors
 ///
 /// As reading the operand fails.
-pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Arc<State>, TxId), limit: &Limit) -> Result<Held<Arc<Table>>> {
+pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Arc<Table>>> {
     if let Plan::Parallel(p) = right
         && pipelined(&p.input)
         && let Held::Kept(pipeline) = Pipeline::of(&p.input, (db, tx), limit)?
@@ -157,12 +157,12 @@ fn width_of(rows: &[Row], keys: &[JoinKey]) -> usize {
 fn parallel_built(
     pipeline: Pipeline,
     keys: &[JoinKey],
-    (db, tx): (&Arc<State>, TxId),
+    (db, tx): (&Db, TxId),
     (degree, limit): (usize, &Limit),
 ) -> Result<Held<Arc<Table>>> {
     let pipeline = Arc::new(pipeline);
     let shape = pipeline.batched.as_ref().map(|b| (b.layout.clone(), b.width));
-    let (count, db_for, read) = (pipeline.count(), Arc::clone(db), Arc::clone(&pipeline));
+    let (count, db_for, read) = (pipeline.count(), db.clone(), Arc::clone(&pipeline));
     let batched_width = shape.as_ref().map(|s| s.1);
     let work = Box::new(move |m: usize| -> Result<Batch> {
         let Some(width) = batched_width else {

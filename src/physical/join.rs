@@ -319,7 +319,7 @@ impl PhysicalPlanner<'_> {
             return built;
         }
         // A comparison by order searches a sorted operand (`physical/range/outer.rs`).
-        if let Some(built) = self.range_outer_join((kind, cond), (left, right), want) {
+        if let Some(built) = self.range_outer_join((kind, cond), (left, right)) {
             return built;
         }
         let width = left.width();

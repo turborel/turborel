@@ -5,10 +5,8 @@
 //! algorithm a PATH_ALGO hint names [GS §16 R16.8]; and what cancels its
 //! statement.
 
-use std::sync::Arc;
-
 use crate::ast::PathAlgorithm;
-use crate::db::State;
+use crate::exec::Db;
 use crate::graph::limits::{Limits, OnLimit};
 use crate::graph::search::SearchOptions;
 use crate::logical::GraphOptions;
@@ -26,7 +24,7 @@ fn limit(written: Option<u64>, set: usize) -> Option<usize> {
 
 /// The search options of a GRAPH_TABLE of `options` and PATH_ALGO hint
 /// `algorithm`, of transaction `tx`.
-pub(super) fn options(db: &Arc<State>, tx: TxId, (options, algorithm): (&GraphOptions, Option<PathAlgorithm>)) -> SearchOptions {
+pub(super) fn options(db: &Db, tx: TxId, (options, algorithm): (&GraphOptions, Option<PathAlgorithm>)) -> SearchOptions {
     let s = &db.settings;
     let on_limit = options.on_limit.unwrap_or(if s.word(GRAPH_ON_LIMIT) == TRUNCATE { OnLimit::Truncate } else { OnLimit::Error });
     let limits = Limits {

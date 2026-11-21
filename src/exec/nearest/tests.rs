@@ -3,6 +3,7 @@
 use super::*;
 use crate::catalog::QualifiedName;
 use crate::db::Database;
+use crate::db::State;
 use crate::functions::ScalarRef;
 use crate::geometry::{Geometry, GeometryFunction};
 use crate::logical::Expr;
@@ -49,12 +50,12 @@ fn nearest_geometry_fallbacks_preserve_empty_input_and_memory() {
         Geometry::from_wkt("POINT EMPTY", 4326).unwrap().to_value(),
         Geometry::point(f64::MAX, 0.0, 0).unwrap().to_value(),
     ] {
-        let found = open(read(value, 1), &state, NO_TRANSACTION).unwrap().collect::<Result<Vec<_>>>().unwrap();
+        let found = open(read(value, 1), &Db::of(&state), NO_TRANSACTION).unwrap().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(found.len(), 0);
         assert_eq!(state.memory.reserved(), before);
     }
     let point = Geometry::point(0.0, 0.0, 0).unwrap().to_value();
-    let found = open(read(point, usize::MAX), &state, NO_TRANSACTION).unwrap().collect::<Result<Vec<_>>>().unwrap();
+    let found = open(read(point, usize::MAX), &Db::of(&state), NO_TRANSACTION).unwrap().collect::<Result<Vec<_>>>().unwrap();
     assert_eq!(found.len(), 0);
     assert_eq!(state.memory.reserved(), before);
 }
@@ -68,13 +69,13 @@ fn nearest_geometry_broken_plans_report_api_errors() {
     let query = read(Geometry::point(0.0, 0.0, 0).unwrap().to_value(), 1);
     let mut missing = query.clone();
     missing.table.ident = "MISSING".into();
-    assert_eq!(open(missing, &state, NO_TRANSACTION).err().unwrap().code, crate::error::Code::Api);
+    assert_eq!(open(missing, &Db::of(&state), NO_TRANSACTION).err().unwrap().code, crate::error::Code::Api);
     let mut missing_index = query.clone();
     missing_index.index = "MISSING".into();
-    assert_eq!(open(missing_index, &state, NO_TRANSACTION).err().unwrap().code, crate::error::Code::Api);
+    assert_eq!(open(missing_index, &Db::of(&state), NO_TRANSACTION).err().unwrap().code, crate::error::Code::Api);
     let mut unfilled = query;
     unfilled.measure = Expr::Column(0);
-    assert_eq!(open(unfilled, &state, NO_TRANSACTION).err().unwrap().code, crate::error::Code::Api);
+    assert_eq!(open(unfilled, &Db::of(&state), NO_TRANSACTION).err().unwrap().code, crate::error::Code::Api);
     let wrong = Plan::Values { rows: Vec::new(), detail: String::new() };
-    assert_eq!(nearest(wrong, &state, NO_TRANSACTION).next().unwrap().unwrap_err().code, crate::error::Code::Api);
+    assert_eq!(nearest(wrong, &Db::of(&state), NO_TRANSACTION).next().unwrap().unwrap_err().code, crate::error::Code::Api);
 }

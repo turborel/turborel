@@ -163,7 +163,7 @@ pub(in crate::exec) fn applied(batches: Batches, told: Vec<Told>, columns: &[usi
     if placed.is_empty() {
         return batches;
     }
-    let db = Arc::clone(db);
+    let db = db.clone();
     Box::new(batches.map(move |kept| {
         let (batch, mut rows) = kept?;
         for (filter, at, asked) in &placed {
