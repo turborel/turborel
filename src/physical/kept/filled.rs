@@ -197,8 +197,9 @@ impl Filling<'_> {
             Plan::MergeAppend { inputs, keys, detail } => Ok(Plan::MergeAppend { inputs: self.plans(inputs)?, keys, detail }),
             Plan::Product { .. } | Plan::HashJoin { .. } | Plan::IndexJoin { .. } => self.join(plan),
             Plan::MergeJoin(_)
-            | Plan::SemiJoin(_)
             | Plan::RangeJoin(_)
+            | Plan::SemiJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::OuterJoin { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }

@@ -107,6 +107,29 @@ fn rankings_collations_and_quantizers() {
     assert!(found.contains(&"120".to_owned()), "searched by its codes, reranked: {found:?}");
 }
 
+/// Verifies: [EXTENSION] RULES.md D223: two databases in one process,
+/// each with its own installation of an extension, make the values of
+/// its type through their own processes: each one's CALLS rises by its
+/// own casts alone, and one dropping the extension leaves the other's
+/// casts made by its own.
+#[test]
+fn each_database_makes_its_types_values_itself() {
+    let (_first_dir, first) = kinds("plugin-kinds-own-first", "");
+    let (_second_dir, second) = kinds("plugin-kinds-own-second", "");
+    let (a, b) = (first.session("U"), second.session("U"));
+    let (a0, b0) = (calls(&a), calls(&b));
+    assert_eq!(rows(&a, "VALUES (CAST(CAST('(1,2)' AS PAIR) AS VARCHAR(20)))").unwrap(), ["(1,2)"]);
+    assert_eq!((calls(&a) - a0, calls(&b) - b0), (1, 0), "the first database's cast is its own call");
+    assert_eq!(rows(&b, "VALUES (CAST(CAST('(3,4)' AS PAIR) AS VARCHAR(20)))").unwrap(), ["(3,4)"]);
+    assert_eq!(rows(&b, "VALUES (CAST(CAST('(5,6)' AS PAIR) AS VARCHAR(20)))").unwrap(), ["(5,6)"]);
+    assert_eq!((calls(&a) - a0, calls(&b) - b0), (1, 2), "the second database's casts are its own calls");
+    b.commit().unwrap();
+    b.run("DROP EXTENSION kinds").unwrap();
+    b.commit().unwrap();
+    assert_eq!(rows(&a, "VALUES (CAST(CAST('(7,8)' AS PAIR) AS VARCHAR(20)))").unwrap(), ["(7,8)"]);
+    assert_eq!(calls(&a) - a0, 2, "the first database's cast, the second's extension gone");
+}
+
 /// Verifies: [EXTENSION] RULES.md D222: an extension's system table is
 /// read as its user sees it, a page of rows a call; its XQuery function
 /// is called by its expanded name; both go with DROP EXTENSION.

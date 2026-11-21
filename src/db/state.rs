@@ -202,6 +202,9 @@ impl State {
     pub(crate) fn with_builtins(catalog: Box<dyn Catalog>) -> State {
         let (memory, work) = budgets();
         let mut st = State::bare(catalog, (&memory, work));
+        // Its types are its plug-in host's, so an extension's type is this
+        // database's alone (RULES.md D223).
+        st.types = std::mem::take(&mut st.types).owned_by(st.extension_host.owner());
         st.attach_builtins(&memory);
         st
     }
@@ -381,6 +384,10 @@ impl State {
             range_selectivity: s.number(settings::RANGE_SELECTIVITY),
             null_fraction: s.number(settings::NULL_FRACTION),
             reorder_gain: s.number(settings::REORDER_GAIN),
+            estimate_margin: s.number(settings::ESTIMATE_MARGIN),
+            grant_bytes: crate::physical::cost::spill::grant_bytes(self),
+            degrees: crate::physical::cost::parallel::Degrees::of(self),
+            runtime_filters: crate::exec::batched(self) && crate::physical::cost::runtime::wanted(self),
         }
     }
 }

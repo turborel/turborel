@@ -24,6 +24,11 @@ pub const DEFAULT_PROCESSES: u64 = 4;
 /// \[DESIGN\] The default of PLUGINS.CALL_TIMEOUT_MS: half a minute, long
 /// for a function and enough for a model's batch.
 pub const DEFAULT_CALL_TIMEOUT_MS: u64 = 30_000;
+/// \[DESIGN\] The least time a program has to start and answer HELLO,
+/// whatever PLUGINS.CALL_TIMEOUT_MS: two minutes, as a start on a loaded
+/// machine waits on the system to load and schedule a new program, which
+/// a call's time does not count.
+pub const LEAST_START_MS: u64 = 120_000;
 /// \[DESIGN\] The default of PLUGINS.MAX_MESSAGE_BYTES: 16 MiB.
 pub const DEFAULT_MAX_MESSAGE_BYTES: u64 = 16 * 1024 * 1024;
 /// \[DESIGN\] The default of PLUGINS.MAX_CALL_BYTES: 64 MiB.
@@ -126,6 +131,12 @@ impl Limits {
         (ms > 0).then(|| Duration::from_millis(ms))
     }
 
+    /// The time a program has to start and answer HELLO, if bounded:
+    /// the call's, but never less than `LEAST_START_MS`.
+    pub fn start_timeout(&self) -> Option<Duration> {
+        self.timeout().map(|t| t.max(Duration::from_millis(LEAST_START_MS)))
+    }
+
     /// The milliseconds of `timeout`, 0 for none.
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms.load(Ordering::Relaxed)
@@ -223,13 +234,18 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D172: the limits take the defaults
     /// until told; PLUGINS.PROCESSES of 0 is 1, and a timeout of 0 is
-    /// none.
+    /// none. A start is given the call's time, but never less than
+    /// `LEAST_START_MS`, and no bound when a call has none.
     #[test]
     fn the_limits_are_the_settings_told() {
         let limits = Limits::default();
         assert_eq!((limits.processes(), limits.timeout()), (4, Some(Duration::from_millis(DEFAULT_CALL_TIMEOUT_MS))));
+        assert_eq!(limits.start_timeout(), Some(Duration::from_millis(LEAST_START_MS)));
+        let long = LEAST_START_MS.saturating_mul(2);
+        limits.tell(&Told { timeout_ms: long, ..Told::default() });
+        assert_eq!(limits.start_timeout(), Some(Duration::from_millis(long)));
         limits.tell(&Told { processes: 0, timeout_ms: 0, ..Told::default() });
-        assert_eq!((limits.processes(), limits.timeout()), (1, None));
+        assert_eq!((limits.processes(), limits.timeout(), limits.start_timeout()), (1, None, None));
         assert_eq!(limits.max_message(), DEFAULT_MAX_MESSAGE_BYTES);
     }
 }

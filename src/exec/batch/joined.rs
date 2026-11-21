@@ -24,6 +24,7 @@
 //! rows in it.
 
 mod held;
+mod mark;
 mod nested;
 mod outer;
 mod pairs;
@@ -45,7 +46,7 @@ use crate::physical::Plan;
 use crate::storage::{Row, batches_of};
 use crate::txn::{TxId, checked};
 use crate::value::Value;
-pub(in crate::exec) use held::TABLE_ROW_BYTES;
+pub(in crate::exec) use held::{TABLE_ROW_BYTES, dense_wanted};
 use probe::Kind;
 pub(in crate::exec) use shared::SharedTable;
 
@@ -60,8 +61,9 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -90,6 +92,9 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
 pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     if let Plan::SemiJoin(s) = plan {
         return semi_layout(s, db);
+    }
+    if let Plan::MarkJoin(m) = plan {
+        return mark::layout(m, db);
     }
     let (left, right) = operands(plan)?;
     let (mut columns, left_width) = stream::layout(left, db)?;
@@ -145,8 +150,9 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -195,6 +201,9 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferre
     if let Plan::SemiJoin(_) = plan {
         return Ok(Box::new(checked(semi::told_batches(plan, deferred, (db, tx))?, stop)));
     }
+    if let Plan::MarkJoin(_) = plan {
+        return Ok(Box::new(checked(mark::told_batches(plan, deferred, (db, tx))?, stop)));
+    }
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))
 }
 
@@ -208,6 +217,7 @@ fn joined(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
         Plan::HashJoin { .. } => hash_batches,
         Plan::OuterJoin { .. } => outer_batches,
         Plan::SemiJoin(_) => semi::semi_batches,
+        Plan::MarkJoin(_) => mark::mark_batches,
         Plan::SeqScan { .. }
         | Plan::Nearest(_)
         | Plan::IndexScan { .. }
@@ -373,7 +383,9 @@ fn left_late_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> 
 /// in an order, as the planner relies on (`physical.rs`) where a batch
 /// comes in none (RULES.md D31): a scan's in its table's
 /// (`TableStorage::scan_ordered`), a join's in its left operand's. A plan
-/// that gives no batches is taken to be, so its order is kept.
+/// that gives no batches is taken to be, so its order is kept, as are an
+/// index scan's and an index or merge join's, which a stream gathers
+/// (`told.rs`). A grouping by hash gives its groups in none.
 fn in_order(plan: &Plan) -> bool {
     match plan {
         Plan::SeqScan { order, .. } => !order.is_empty(),
@@ -381,13 +393,14 @@ fn in_order(plan: &Plan) -> bool {
         Plan::Counted(c) => in_order(&c.input),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
+        Plan::Aggregate { streamed, .. } => *streamed,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::RangeJoin(_)
-        | Plan::Aggregate { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }

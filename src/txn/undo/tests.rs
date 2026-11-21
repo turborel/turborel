@@ -170,3 +170,22 @@ fn records_not_of_entries_are_corrupt() {
     );
     assert_eq!(entry_of((&targets, &TypeRegistry::default()), &record(0, 1)).err().map(|e| e.code), Some(Code::Corrupt), "no such target");
 }
+
+/// Verifies: [X3.135-1986 §8.9 GR1]; [DESIGN] RULES.md D38, D531: the
+/// index entries of rows inserted together, one undo entry, are written to
+/// a run and read back like any other, and undone newest first.
+#[test]
+fn entries_of_rows_inserted_together_spill_and_are_undone_newest_first() {
+    let calls = Calls::default();
+    let ix: Arc<dyn Index> = Arc::new(Recorder(Arc::clone(&calls)));
+    let name = QualifiedName { auth: "A".into(), ident: "T".into() };
+    let entries = vec![(Key(vec![Value::Char("a".into())]), 1), (Key(vec![Value::Char("b".into()), Value::Null]), 2)];
+    let together = UndoEntry::IndexInsertedRows { table: name.clone(), index: Arc::clone(&ix), entries };
+    let one = UndoEntry::IndexInserted { table: name, index: ix, key: Key(vec![Value::Null]), id: 3 };
+    let bytes = together.bytes().saturating_add(one.bytes());
+    let mut log = pushed(Arc::new(Held { broken: false }), vec![together, one]);
+    assert!(log.list.held() < bytes, "some written");
+    assert!(log.take_from(0).unwrap().apply(9).is_empty());
+    let expected = ["index remove 3 [Null]", "index remove 2 [Char(\"b\"), Null]", "index remove 1 [Char(\"a\")]"];
+    assert_eq!(*lock_builtin(&calls), expected.map(str::to_owned));
+}

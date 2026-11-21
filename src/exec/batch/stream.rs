@@ -24,6 +24,7 @@ use super::judge::Judging;
 use super::late::{Deferred, resolved};
 use super::project::{computed, place_of};
 use super::runtime::{self, Told};
+use super::told;
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
@@ -56,7 +57,9 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         Plan::Filter { input, .. } => layout(input, db),
         // [EXTENSION] a counted operator's, its input's (RULES.md D378).
         Plan::Counted(c) => layout(&c.input, db),
-        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) => joined::layout(plan, db),
+        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) | Plan::MarkJoin(_) => {
+            joined::layout(plan, db)
+        }
         Plan::Project { exprs, input, .. } => {
             let (columns, _) = layout(input, db)?;
             exprs.iter().all(|e| place_of(e, &columns).is_some()).then(|| ((0..exprs.len()).collect(), exprs.len()))
@@ -70,6 +73,8 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         Plan::Window { window, .. } => windowed_layout(window, db),
         // A top-N's first rows, few, made batches (D380).
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }).then(|| layout(input, db)).flatten(),
+        // Rows made row by row, gathered (RULES.md D600).
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => told::layout(plan, db),
         Plan::Append { .. } => {
             let mut held = None;
             for operand in appended(plan) {
@@ -85,11 +90,7 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         // A located scan's rows end in their ids, which no batch holds.
         Plan::SeqScan { located: true, .. }
         | Plan::Nearest(_)
-        | Plan::IndexScan { .. }
-        | Plan::IndexJoin { .. }
-        | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
-        | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
         | Plan::Distinct { .. }
@@ -152,30 +153,71 @@ fn windowed_layout(window: &Window<Plan>, db: &State) -> Option<(Vec<usize>, usi
     crate::exec::window::admits_batches(window).then(|| ((0..all).collect(), all))
 }
 
+/// \[DESIGN\] (RULES.md D600) Whether `plan` gives batches of its own,
+/// no operator run row by row whose rows a stream gathers (`told.rs`)
+/// among them but below a hash or semi join, which reads such an operand
+/// by batch only to tell it its filters. An operator above that decides
+/// to read by batch asks this, so a grouping, a sort or a DISTINCT over
+/// an index scan reads it row by row, as its order or its stop asks.
+pub(super) fn untold(plan: &Plan) -> bool {
+    match plan {
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => false,
+        Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, .. } | Plan::Limit { input, .. } => untold(input),
+        Plan::Counted(c) => untold(&c.input),
+        // A mark join gives its left's batches on, marked (RULES.md D643).
+        Plan::MarkJoin(m) => untold(&m.left),
+        Plan::Parallel(p) => untold(&p.input),
+        Plan::Append { .. } => appended(plan).into_iter().all(untold),
+        Plan::Product { left, right, .. } | Plan::OuterJoin { left, right, .. } => untold(left) && untold(right),
+        Plan::SeqScan { .. }
+        | Plan::HashJoin { .. }
+        | Plan::SemiJoin(_)
+        | Plan::Nearest(_)
+        | Plan::RangeJoin(_)
+        | Plan::MergeAppend { .. }
+        | Plan::Distinct { .. }
+        | Plan::SetOp { .. }
+        | Plan::Values { .. }
+        | Plan::System { .. }
+        | Plan::Recursive { .. }
+        | Plan::Unnest(..)
+        | Plan::Window { .. }
+        | Plan::Polymorphic(..)
+        | Plan::Recognize { .. }
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. } => true,
+    }
+}
+
 /// Whether every table `plan` scans reads by batch
 /// (`TableStorage::reads_by_batch`).
 pub(in crate::exec) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
+    reads(plan, db, false)
+}
+
+/// `reads_by_batch`, of `plan` an operand of an inner hash join if
+/// `joined`, whose operators run row by row that take its runtime filters
+/// read by batch too, their rows gathered (RULES.md D600, `told.rs`).
+pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
     match plan {
         // A scan in an order too, merged by batch
         // (`TableStorage::scan_ordered_batches`).
         Plan::SeqScan { table, located, .. } => !located && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
         // A whole sort's rows are held, so given by batch whatever its
         // input's tables (RULES.md D380).
-        Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, most: None, .. } => reads_by_batch(input, db),
-        Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }) && reads_by_batch(input, db),
-        Plan::Counted(c) => reads_by_batch(&c.input, db),
-        Plan::Window { window, .. } => reads_by_batch(&window.input, db),
-        Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
-        Plan::Product { left, right, .. } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
-            reads_by_batch(left, db) && reads_by_batch(right, db)
-        }
-        Plan::SemiJoin(s) => reads_by_batch(&s.left, db) && reads_by_batch(&s.right, db),
+        Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, most: None, .. } => reads(input, db, joined),
+        Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }) && reads(input, db, joined),
+        Plan::Counted(c) => reads(&c.input, db, joined),
+        Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads(operand, db, joined)),
+        Plan::Product { left, right, .. } | Plan::OuterJoin { left, right, .. } => reads(left, db, joined) && reads(right, db, joined),
+        Plan::HashJoin { left, right, .. } => reads(left, db, true) && reads(right, db, true),
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => joined && told::reads(plan, db),
+        Plan::SemiJoin(s) => reads(&s.left, db, true) && reads(&s.right, db, true),
+        // Its right's rows are held as the row path holds them.
+        Plan::MarkJoin(m) => reads(&m.left, db, joined),
+        Plan::Window { window, .. } => reads(&window.input, db, joined),
         Plan::Nearest(_)
-        | Plan::IndexScan { .. }
-        | Plan::IndexJoin { .. }
-        | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
-        | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
         | Plan::Distinct { .. }
@@ -188,7 +230,7 @@ pub(in crate::exec) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => false,
-        Plan::Parallel(p) => crate::exec::parallel::pipelined(&p.input) && reads_by_batch(&p.input, db),
+        Plan::Parallel(p) => crate::exec::parallel::pipelined(&p.input) && reads(&p.input, db, joined),
     }
 }
 
@@ -234,8 +276,18 @@ pub(super) fn open(plan: Plan, db: &Db, tx: TxId) -> Result<Stream> {
 ///
 /// As `open`.
 pub(in crate::exec) fn whole_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
+    whole_told(plan, (db, tx), Vec::new())
+}
+
+/// As `whole_batches`, its scans told the runtime filters `told`
+/// (RULES.md D600).
+///
+/// # Errors
+///
+/// As `open`.
+pub(super) fn whole_told(plan: Plan, (db, tx): (&Db, TxId), told: Vec<Told>) -> Result<Batches> {
     let width = layout(&plan, db).map_or(0, |(_, width)| width);
-    Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width))?))
+    Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width).with_told(told))?))
 }
 
 /// A function giving the batches of a plan of one kind, its columns the
@@ -276,17 +328,19 @@ fn made_of(plan: &Plan) -> Batched {
     match plan {
         Plan::SeqScan { .. } => scan_batches,
         Plan::Filter { .. } => filter_batches,
-        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) => joined::batches_with,
+        Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) | Plan::MarkJoin(_) => {
+            joined::batches_with
+        }
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
         Plan::Counted(_) => super::counted::batches,
         Plan::Window { .. } => window_batches,
+        Plan::IndexScan { .. } => told::index_batches,
+        Plan::IndexJoin { .. } => told::index_join_batches,
+        Plan::MergeJoin(_) => told::merge_batches,
+        Plan::Aggregate { .. } => told::grouped_batches,
         Plan::Nearest(_)
-        | Plan::IndexScan { .. }
-        | Plan::IndexJoin { .. }
-        | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
-        | Plan::Aggregate { .. }
         | Plan::MergeAppend { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
@@ -323,16 +377,17 @@ fn parallel_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> R
 
 /// \[DESIGN\] (RULES.md D380) The batches of `plan`, a whole sort whose
 /// input's batches hold every column of its rows: its rows sorted, given
-/// as batches.
+/// as batches, its input told the runtime filters it is (RULES.md D600).
 ///
 /// # Errors
 ///
 /// As `batches`; a spill's; a cancel; SQLCODE -910 of a sort of its first
 /// rows alone, which gives none.
-fn sorted_batches(plan: Plan, (db, tx): (&Db, TxId), _deferred: &Deferred) -> Result<Batches> {
+fn sorted_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
+    let below = runtime::taken(&plan, deferred.filters(), db).0;
     let Plan::Sort { keys, input, most: None, .. } = plan else { return Err(crate::exec::broken("a sort that gives no batches")) };
     let width = layout(&input, db).map_or(0, |(_, width)| width);
-    crate::exec::sort::sorted_out(&keys, whole_batches(*input, db, tx)?, width, db, tx)
+    crate::exec::sort::sorted_out(&keys, whole_told(*input, (db, tx), below)?, width, db, tx)
 }
 
 /// \[DESIGN\] (RULES.md D380) The batches of `plan`, the first rows of a

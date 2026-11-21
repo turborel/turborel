@@ -9,7 +9,7 @@ use std::path::Path;
 
 use turborel::db::{Database, Opened, Session};
 use turborel::error::Code;
-use turborel::params::Params;
+use turborel::params::{Load, Params};
 use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
 
@@ -150,26 +150,26 @@ fn a_prepared_insert_given_many_rows_inserts_each() {
         schema(&db, using);
         let s = db.session("A");
         let insert = s.prepare("INSERT INTO T (K, V, W) VALUES (?, ?, ?)").unwrap();
-        s.execute_prepared_rows(&insert, &given(0..10_000)).unwrap();
+        s.execute_prepared_rows(&insert, &given(0..10_000), Load::Alone).unwrap();
         assert_eq!(found(&s), (MANY, MANY), "{using}");
         assert_eq!(rows(&s, "SELECT V, W FROM T WHERE K = 4321").unwrap(), ["g1,53"], "{using}");
         // Cast to each parameter's type, as an execution casts its values.
         let spelled = [vec![Value::Char("77777".into()), Value::Char("c".into()), Value::Char("3".into())]];
-        s.execute_prepared_rows(&insert, &spelled).unwrap();
+        s.execute_prepared_rows(&insert, &spelled, Load::Alone).unwrap();
         assert_eq!(rows(&s, "SELECT V, W FROM T WHERE K = 77777").unwrap(), ["c,3"], "{using}");
         let mut broken = given(20_000..20_010);
         broken.push(vec![int(5), Value::Char("dup".into()), int(1)]);
-        let failed = s.execute_prepared_rows(&insert, &broken).map_err(|e| e.code);
+        let failed = s.execute_prepared_rows(&insert, &broken, Load::Alone).map_err(|e| e.code);
         assert_eq!(failed, Err(Code::Constraint), "{using}: key 5 taken");
         let negative = vec![vec![int(30_000), Value::Char("n".into()), int(-1)]];
-        assert_eq!(s.execute_prepared_rows(&insert, &negative).map_err(|e| e.code), Err(Code::Constraint), "{using}");
-        assert_eq!(s.execute_prepared_rows(&insert, &[vec![int(1)]]).map_err(|e| e.code), Err(Code::Dynamic), "{using}");
-        assert_eq!(s.execute_prepared_rows(&insert, &[]).map_err(|e| e.code), Err(Code::Dynamic), "{using}");
+        assert_eq!(s.execute_prepared_rows(&insert, &negative, Load::Alone).map_err(|e| e.code), Err(Code::Constraint), "{using}");
+        assert_eq!(s.execute_prepared_rows(&insert, &[vec![int(1)]], Load::Alone).map_err(|e| e.code), Err(Code::Dynamic), "{using}");
+        assert_eq!(s.execute_prepared_rows(&insert, &[], Load::Alone).map_err(|e| e.code), Err(Code::Dynamic), "{using}");
         let two = s.prepare("INSERT INTO T (K, V, W) VALUES (?, ?, ?), (?, ?, ?)").unwrap();
         let six = given(40_000..40_002).concat();
-        assert_eq!(s.execute_prepared_rows(&two, &[six]).map_err(|e| e.code), Err(Code::Api), "{using}");
+        assert_eq!(s.execute_prepared_rows(&two, &[six], Load::Alone).map_err(|e| e.code), Err(Code::Api), "{using}");
         let update = s.prepare("UPDATE T SET W = ? WHERE K = ?").unwrap();
-        assert_eq!(s.execute_prepared_rows(&update, &[vec![int(1), int(1)]]).map_err(|e| e.code), Err(Code::Api), "{using}");
+        assert_eq!(s.execute_prepared_rows(&update, &[vec![int(1), int(1)]], Load::Alone).map_err(|e| e.code), Err(Code::Api), "{using}");
         assert_eq!(found(&s), (MANY + 1, MANY + 1), "{using}: each failed execution undone whole");
         s.commit().unwrap();
     }

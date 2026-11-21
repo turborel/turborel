@@ -7,8 +7,8 @@
 //!              id u64 | after-image row)
 //! ```
 
-use super::kinds::INSERT_ROWS;
-use super::{Change, RECORD_VERSION, put_table, table};
+use super::kinds::{INSERT, INSERT_ROWS};
+use super::{Change, RECORD_VERSION, put_row_change, put_table, table};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
@@ -59,5 +59,18 @@ pub fn insert_rows_record(tx: TxId, (table, generation): (&QualifiedName, u32), 
     out.put_u8(INSERT_ROWS);
     out.put_u64(tx);
     put_rows(&mut out, (table, generation), ids.iter().copied().zip(rows));
+    out
+}
+
+/// \[DESIGN\] The bytes of the record of transaction `tx` inserting `row`
+/// as row `id` into `table`'s storage of `generation`, as `Record::encode`
+/// writes a `Change::Insert`, made from the row as it is held, so it is not
+/// copied for it (RULES.md D531).
+pub fn insert_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, row: &Row) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.put_u8(RECORD_VERSION);
+    out.put_u8(INSERT);
+    out.put_u64(tx);
+    put_row_change(&mut out, (table, generation, id), &[row]);
     out
 }

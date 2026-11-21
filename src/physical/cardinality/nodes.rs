@@ -5,7 +5,8 @@
 //! * a filter, its input's rows times its conjuncts' selectivities, each
 //!   over the base table its columns come from (`cardinality/lineage.rs`),
 //!   an equality of two relations' columns by classes, a filter over a
-//!   product as the join it is (`cardinality/joins.rs`);
+//!   product as the join it is (`cardinality/joins.rs`), at most the
+//!   bound of its equalities to one value (`cardinality/bounds.rs`);
 //! * an operand moved over a guard (`optimizer::is_guarded`), the join of
 //!   it and the guard's one row, so its own rows times its own conjuncts':
 //!   the guard's EXISTS keeps that row or makes none of the statement's,
@@ -55,6 +56,7 @@ impl Estimates<'_> {
             LogicalPlan::Product { .. } => self.chain(None, plan, depth),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_at((*kind, cond), (left, right), next),
             LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_at((*anti, cond), (left, right), next),
+            LogicalPlan::MarkJoin(m) => self.mark_at(m, next),
             LogicalPlan::Aggregate { groups, seeds, input, .. } => self.grouped(groups, seeds.len(), input, next),
             LogicalPlan::Distinct { input } => self.distinct_at(input, next),
             LogicalPlan::SetOp { op, all, left, right, .. } => self.combined((*op, *all), (left, right), next),
@@ -82,7 +84,7 @@ impl Estimates<'_> {
         if is_chain(input) {
             return self.chain(Some(cond), input, depth);
         }
-        self.card_at(input, depth).kept(self.selectivity(cond, Over::One(input)))
+        self.card_at(input, depth).kept(self.selectivity(cond, Over::One(input))).bounded(self.filter_upper(cond, input))
     }
 
     /// The card of DISTINCT of `input`: the groups of all its columns.
@@ -100,7 +102,7 @@ impl Estimates<'_> {
     /// conjuncts of each table together (`cardinality/tables.rs`).
     pub(super) fn selectivity(&self, cond: &Cond, over: Over<'_>) -> f64 {
         let mut conjuncts = Vec::new();
-        split_and(cond.clone(), &mut conjuncts);
+        split_and(self.valued(cond).into_owned(), &mut conjuncts);
         self.conjunction(&conjuncts, over)
     }
 

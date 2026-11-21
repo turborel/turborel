@@ -77,7 +77,8 @@ impl RowTable {
                 continue;
             };
             let mut dead = Vec::new();
-            for change in segment {
+            // A group's making is stamped with its groups (`frozen/stamped.rs`).
+            for change in segment.into_iter().filter(|c| !c.group) {
                 // A row's first change by it replaced a committed version or
                 // none; its later ones replaced its own.
                 if !change.made && change.before.is_none() {

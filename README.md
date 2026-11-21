@@ -46,7 +46,8 @@ behind it, and each can be replaced or added to.
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
 - Hash joins probed a batch at a time in one tagged table, shared by
-  parallel morsels, telling the left's scan a range and Bloom filter.
+  parallel morsels, telling the left's scan a range and Bloom filter;
+  dense keys found by their place, their filter an exact bitmap.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Window functions over batches, partitions found of the sort's keys by a
@@ -70,22 +71,27 @@ behind it, and each can be replaced or added to.
 - Column store skipping that survives writes: shadow bits and zones over
   the delta, optional column imprints, column sketches of compressed
   texts, and sorted dictionaries judged by codes.
+- Bulk loads by INSERT or copy that build empty indexes whole and write
+  column store rows straight into frozen groups.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables, on statistics of most common values, a
-  sample of rows for correlated conditions and indexes' joint key counts.
+  sample of rows for correlated conditions and indexes' joint key counts,
+  joins estimated by keys and bounded, index joins chosen robustly.
 - [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
   bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
-  query and shows each operator's rows beside its estimate, and a program
-  may give the planner true row counts to test its plans.
+  query or a data change and shows each operator's rows beside its
+  estimate, its batches, spills and index reads, and a program may give
+  the planner true row counts to test its plans.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
 - [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
   for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
-  and joins under MIN and MAX reduced to semi joins.
+  and joins under MIN and MAX reduced to semi joins; mark joins for
+  those under OR, in CASE and in select lists.
 - Joins removed on unique and foreign keys, filters and FETCH FIRST moved
   into set operations and below windows, and parts of conditions that can
   raise computed on the table they read, so joins over them are reordered.

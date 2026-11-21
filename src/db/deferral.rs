@@ -55,7 +55,7 @@ impl Session {
         let tx = self.inner.borrow().tx.clone();
         if let (false, Some(tx)) = (deferred, tx) {
             call.runs(&tx);
-            tx.begin_statement(|| !self.cursors_open())?;
+            self.begin_in(st, &tx, false)?;
             self.check_deferred(st, &tx, (chosen.as_deref(), &|_| false))?;
         }
         let mut deferral = self.deferral.borrow_mut();

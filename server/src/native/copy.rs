@@ -1,8 +1,9 @@
 //! \[DESIGN\] Bulk copy in (RULES.md D195): CopyIn names a table and its
 //! columns; CopyData sends rows, as many as the client likes at a time,
 //! with no reply; CopyEnd ends it, its reply a Complete of the rows
-//! inserted or the copy's Error. The rows go in `BATCH` at a time, each
-//! batch by one execution of a prepared INSERT of one row, given them all
+//! inserted or the copy's Error. The rows go in `BATCH` at a time, or a
+//! group's rows at a time once its load writes them straight to groups
+//! (RULES.md D533), each batch by one execution of a prepared INSERT of one row, given them all
 //! (`Session::execute_prepared_rows`), so the server inserts them together
 //! (RULES.md D530); each value is assigned to its column as INSERT assigns,
 //! so a string too long is refused, not cut [ISO/IEC 9075:1992 §13.8 GR4b
@@ -19,9 +20,9 @@
 use turborel::db::{Prepared, Session};
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::lexer::{Tok, Token, delim, lex};
-use turborel::params::ParameterType;
+use turborel::params::Load;
 use turborel::storage::Row;
-use turborel::value::{Value, assign};
+use turborel::value::{DataType, Value, assign};
 use turborel_protocol::{Completed, broken};
 
 /// \[DESIGN\] The rows an execution of a copy's INSERT takes at once: many
@@ -50,9 +51,15 @@ pub(super) struct Copy {
 /// The INSERT of a copy, and the rows waiting for a batch.
 struct Insert {
     one: Prepared,
+    /// The types of its parameters, each its column's.
+    types: Vec<DataType>,
     waiting: Vec<Row>,
     /// The rows inserted, or waiting, so far.
     rows: u64,
+    /// The rows an execution takes: `BATCH`, or a group's once the load
+    /// writes its rows straight to groups, so each is whole (RULES.md
+    /// D533).
+    batch: usize,
 }
 
 /// `name` as a `<delimited identifier>` [ISO/IEC 9075:1992 §5.2], a quote
@@ -108,22 +115,20 @@ fn prepared(session: &Session, table: &str, columns: &[String]) -> Result<Insert
         columns.iter().map(|c| column_name(c)).collect()
     };
     let one = session.prepare(&insert_text(&table, &columns))?;
-    Ok(Insert { one, waiting: Vec::with_capacity(BATCH), rows: 0 })
+    let types = one.parameters().iter().map(|t| t.clone().data_type()).collect();
+    Ok(Insert { one, types, waiting: Vec::with_capacity(BATCH), rows: 0, batch: BATCH })
 }
 
 /// `row`, the copy's `n`th from 1, its values assigned to `types`: refused
 /// if it has too many or too few.
-fn assigned(row: Row, types: &[ParameterType], n: u64) -> Result<Row> {
+fn assigned(row: Row, types: &[DataType], n: u64) -> Result<Row> {
     if row.len() != types.len() {
         let msg = format!("[DESIGN] row {n} of the copy has {} values, for {} columns", row.len(), types.len());
         return Err(SqlError::new(Code::Dynamic, msg).with_state(SqlState::USING_CLAUSE_MISMATCH));
     }
     row.into_iter()
         .zip(types)
-        .map(|(v, t)| {
-            let to = t.clone().data_type();
-            if matches!(v, Value::Char(_)) && to.is_character() { assign(v, &to, INSERT_ASSIGNS) } else { Ok(v) }
-        })
+        .map(|(v, to)| if matches!(v, Value::Char(_)) && to.is_character() { assign(v, to, INSERT_ASSIGNS) } else { Ok(v) })
         .collect()
 }
 
@@ -184,32 +189,35 @@ impl Insert {
         for row in rows {
             self.rows = self.rows.saturating_add(1);
             let n = self.rows;
-            self.waiting.push(assigned(row, self.one.parameters(), n).map_err(|e| e.with_detail(format!("row {n} of the copy")))?);
-            if self.waiting.len() == BATCH {
-                self.insert_waiting(session)?;
+            self.waiting.push(assigned(row, &self.types, n).map_err(|e| e.with_detail(format!("row {n} of the copy")))?);
+            if self.waiting.len() >= self.batch {
+                self.insert_waiting(session, Load::Going)?;
             }
         }
         Ok(())
     }
 
-    /// Inserts the rows waiting: together by one execution, tried again a
-    /// row at a time if it fails, to name the row that fails.
-    fn insert_waiting(&mut self, session: &Session) -> Result<()> {
-        let rows = std::mem::replace(&mut self.waiting, Vec::with_capacity(BATCH));
+    /// Inserts the rows waiting, part `load` of the copy's load: together
+    /// by one execution, tried again a row at a time if it fails, to name
+    /// the row that fails, and the load then ended alone if that ends it.
+    fn insert_waiting(&mut self, session: &Session, load: Load) -> Result<()> {
+        let rows = std::mem::replace(&mut self.waiting, Vec::with_capacity(self.batch));
         let first = self.rows.saturating_sub(u64::try_from(rows.len()).unwrap_or(0));
-        if session.execute_prepared_rows(&self.one, &rows).is_ok() {
+        if session.execute_prepared_rows(&self.one, &rows, load).is_ok() {
+            self.batch = session.load_rows().map_or(BATCH, |grouped| grouped.max(BATCH));
             return Ok(());
         }
         for (at, row) in (1_u64..).zip(&rows) {
             let n = first.saturating_add(at);
             session.execute_prepared(&self.one, row).map_err(|e| e.with_detail(format!("row {n} of the copy")))?;
         }
-        Ok(())
+        if load == Load::Ending { session.execute_prepared_rows(&self.one, &[], load).map(drop) } else { Ok(()) }
     }
 
-    /// Inserts the rows still waiting.
+    /// Inserts the rows still waiting, ending the copy's load (RULES.md
+    /// D532): by an execution of none, if none is.
     fn flush(&mut self, session: &Session) -> Result<()> {
-        if self.waiting.is_empty() { Ok(()) } else { self.insert_waiting(session) }
+        self.insert_waiting(session, Load::Ending)
     }
 }
 

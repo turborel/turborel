@@ -7,11 +7,12 @@
 //! assumes. Of several equalities the least share is taken, as each must
 //! hold. A condition of no equality keeps the share of left rows the pairs
 //! it keeps would reach, at most all. An antijoin keeps the rest, at least
-//! one row of a left operand that has one.
+//! one row of a left operand that has one. A mark join gives each of its
+//! left's rows once.
 
 use super::lineage::Over;
 use super::{Card, Estimates, at_least_one};
-use crate::logical::{Cond, Expr, LogicalPlan, split_and};
+use crate::logical::{Cond, Expr, LogicalPlan, MarkJoin, split_and};
 use crate::value::CompOp;
 
 impl Estimates<'_> {
@@ -47,6 +48,12 @@ impl Estimates<'_> {
             })
             .reduce(f64::min);
         keyed.unwrap_or_else(|| (rows.1 * self.selectivity(cond, Over::Pair(left, right))).min(1.0_f64)).max(0.0_f64)
+    }
+
+    /// A mark join's rows, its left's, each once with its mark (RULES.md
+    /// D640).
+    pub(super) fn mark_at(&self, m: &MarkJoin, depth: usize) -> Card {
+        self.card_at(&m.left, depth)
     }
 }
 
