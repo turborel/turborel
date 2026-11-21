@@ -10,8 +10,11 @@
 //! block is published (readable, and counted in `end`) once every block
 //! before it is written, so readers never meet a gap; an appender waits
 //! only for earlier appenders to finish, and holds no lock while it hashes
-//! or writes (RULES.md R-ERR-4). Batching blocks is for the components
-//! above, which know what belongs together.
+//! or writes (RULES.md R-ERR-4). One that must wait parks under the offset
+//! its block starts at, and the appender that publishes up to it wakes it
+//! alone, so a run of waiting appenders is woken one at a time, each as
+//! its turn comes, not all at every publish (RULES.md D741). Batching
+//! blocks is for the components above, which know what belongs together.
 //!
 //! A file given `BlockOptions::ahead` keeps zeros written past its blocks,
 //! so a sync after an append carries no growth of the file (`fill.rs`).
@@ -35,14 +38,19 @@ mod counts;
 mod cursor;
 mod fill;
 mod format;
+#[cfg(test)]
+mod publish;
 mod stream;
 mod tail;
 mod trusted;
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, Thread};
+use std::time::Duration;
 
 pub use counts::BlockCounts;
 use counts::{Counters, add};
@@ -129,6 +137,10 @@ const FIRST_READ: usize = 4096 + 128;
 /// published before it parks: most appends finish within a few checks, and
 /// parking costs a lock and a wake-up.
 const SPINS_BEFORE_PARKING: u32 = 64;
+/// \[DESIGN\] How long a parked appender sleeps before it looks again,
+/// should a wake-up be missed: none is, as it is counted before it looks,
+/// so this only bounds a defect's cost.
+const PARKED_POLL: Duration = Duration::from_millis(10);
 
 /// \[DESIGN\] An open block file. It may be shared between threads:
 /// appends write at once, and reads run alongside them.
@@ -145,12 +157,11 @@ pub struct BlockFile {
     end: AtomicU64,
     /// Whether a write failed, leaving a gap at `end`.
     failed: AtomicBool,
-    /// Appenders parked until `end` reaches their block; only they, and
-    /// the appenders that wake them, take `parking`.
+    /// How many appenders are parked until `end` reaches their block, and
+    /// each one's thread, by the offset its block starts at; only they,
+    /// and the appenders that wake them, take `parking`.
     parked: AtomicUsize,
-    parking: Mutex<()>,
-    /// Signalled when a block is published or a write fails.
-    advanced: Condvar,
+    parking: Mutex<BTreeMap<u64, Thread>>,
     /// The end of the bytes written, by blocks or by zeros filled ahead
     /// of them; only the thread holding `filling` raises it.
     filled: AtomicU64,
@@ -267,8 +278,7 @@ impl BlockFile {
             end: AtomicU64::new(end),
             failed: AtomicBool::new(false),
             parked: AtomicUsize::new(0),
-            parking: Mutex::new(()),
-            advanced: Condvar::new(),
+            parking: Mutex::new(BTreeMap::new()),
             filled: AtomicU64::new(end),
             filling: Mutex::new(()),
             counters: Counters::default(),
@@ -365,7 +375,7 @@ impl BlockFile {
     fn publish(&self, start: u64, end: u64, written: Result<()>) -> Result<()> {
         if let Err(e) = written {
             self.failed.store(true, Ordering::SeqCst);
-            self.wake();
+            self.wake_all();
             return Err(e);
         }
         let mut spins = 0;
@@ -374,7 +384,7 @@ impl BlockFile {
                 return Err(self.broken());
             }
             if self.end.compare_exchange(start, end, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-                self.wake();
+                self.wake_at(end);
                 return Ok(());
             }
             if spins < SPINS_BEFORE_PARKING {
@@ -386,23 +396,53 @@ impl BlockFile {
         }
     }
 
-    /// Waits until the published end reaches `start` or a write fails. The
-    /// count of parked appenders is raised before the check, so an appender
-    /// that publishes after the check sees it and wakes this one.
+    /// Waits until the published end reaches `start` or a write fails,
+    /// parked under `start` (RULES.md D741). The count of parked appenders
+    /// is raised before the check, so an appender that publishes after the
+    /// check sees it and wakes this one.
     fn park(&self, start: u64) {
-        let mut gate = lock_builtin(&self.parking);
-        self.parked.fetch_add(1, Ordering::SeqCst);
-        while self.end.load(Ordering::SeqCst) != start && !self.failed.load(Ordering::SeqCst) {
-            gate = self.advanced.wait(gate).unwrap_or_else(PoisonError::into_inner);
+        {
+            let mut parking = lock_builtin(&self.parking);
+            self.parked.fetch_add(1, Ordering::SeqCst);
+            if self.reached(start) {
+                self.parked.fetch_sub(1, Ordering::SeqCst);
+                return;
+            }
+            parking.insert(start, thread::current());
         }
-        self.parked.fetch_sub(1, Ordering::SeqCst);
+        while !self.reached(start) {
+            thread::park_timeout(PARKED_POLL);
+        }
+        // Woken, its entry was taken; else, as a write failed, take it.
+        if lock_builtin(&self.parking).remove(&start).is_some() {
+            self.parked.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 
-    /// Wakes the parked appenders, if there are any, so they check again.
-    fn wake(&self) {
-        if self.parked.load(Ordering::SeqCst) > 0 {
-            drop(lock_builtin(&self.parking));
-            self.advanced.notify_all();
+    /// Whether the published end has reached `start`, or a write failed.
+    fn reached(&self, start: u64) -> bool {
+        self.end.load(Ordering::SeqCst) == start || self.failed.load(Ordering::SeqCst)
+    }
+
+    /// Wakes the appender parked until the published end reaches `end`,
+    /// if one is: the one whose block follows, alone.
+    fn wake_at(&self, end: u64) {
+        if self.parked.load(Ordering::SeqCst) == 0 {
+            return;
+        }
+        let woken = lock_builtin(&self.parking).remove(&end);
+        if let Some(thread) = woken {
+            self.parked.fetch_sub(1, Ordering::SeqCst);
+            thread.unpark();
+        }
+    }
+
+    /// Wakes every parked appender, as a write failed.
+    fn wake_all(&self) {
+        let woken = std::mem::take(&mut *lock_builtin(&self.parking));
+        self.parked.fetch_sub(woken.len(), Ordering::SeqCst);
+        for thread in woken.into_values() {
+            thread.unpark();
         }
     }
 }

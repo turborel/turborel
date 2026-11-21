@@ -282,6 +282,20 @@ pub trait DiskFile: Send + Sync {
         let _ = size;
         Ok(())
     }
+    /// \[DESIGN\] Writes `data`, whole granules, at `offset` into what a
+    /// checkpoint captures: a shadowed file's batch while it is held, or,
+    /// once sealed, its sealed batch, beneath what was written since, so
+    /// the file reads it only where nothing newer was written (RULES.md
+    /// D590). Default: refused, as a file not shadowed has no batch.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 for a file not shadowed, or with no batch held or
+    /// sealed.
+    fn write_captured_at(&self, data: &[u8], offset: u64) -> Result<()> {
+        let _ = (data, offset);
+        Err(SqlError::new(Code::Api, "[DESIGN] RULES.md D590: only a shadowed file takes a checkpoint's capture"))
+    }
     /// Fills `buf` from `offset`.
     ///
     /// # Errors
