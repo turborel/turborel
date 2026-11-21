@@ -385,6 +385,7 @@ mod structured_semantics;
 mod structured_type_privileges;
 mod structured_values;
 mod subqueries;
+mod subquery_plans;
 mod sums;
 mod system_tables;
 mod system_time_queries;

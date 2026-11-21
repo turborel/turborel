@@ -32,6 +32,7 @@ mod set_types;
 mod skipping;
 mod sorts;
 mod statistics;
+mod subquery_plans;
 mod tpcc;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
@@ -140,6 +141,7 @@ fn second() -> [&'static [Mutation]; 44] {
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &rewrites::REWRITES,
         &unnesting::UNNESTING,
+        &subquery_plans::SUBQUERY_PLANS,
         &insert_values::INSERT_VALUES,
         &set_types::SET_TYPES,
         &expr::EXPR,

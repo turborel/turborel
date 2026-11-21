@@ -50,6 +50,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | EXECUTOR.DECORRELATE_AFTER_RUNS | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
 | EXECUTOR.DEGREE | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.GRAPH_THREADS | 1 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
+| EXECUTOR.KEEP_SUBQUERY_PLANS | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.KERNELS | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once | *session* |
 | EXECUTOR.MAX_ITERATIONS | 1000000 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.MORSEL_ROWS | 16384 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
@@ -165,6 +166,7 @@ Each in a sentence:
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **EXECUTOR.DEGREE**: The most threads a statement's query runs on at once, its own among them; 0, the default, for as many as the workers, and 1 for its own thread alone. Its rows are the same either way.
 - **EXECUTOR.GRAPH_THREADS**: The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.
+- **EXECUTOR.KEEP_SUBQUERY_PLANS**: Whether a correlated subquery, once its first runs show the values of its outer references choose no other plan, keeps its plan made with them as parameters and fills it at each later run: ON; or plans it at each run with its values, OFF, as to compare the two. Its rows are the same either way.
 - **EXECUTOR.KERNELS**: The kernels a statement's batches run on: PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD.
 - **EXECUTOR.MAX_ITERATIONS**: The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.
 - **EXECUTOR.MORSEL_ROWS**: The rows of a table, about, that a worker of a parallel query reads at a time, a morsel.
