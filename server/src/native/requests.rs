@@ -239,6 +239,9 @@ impl<'a> Outgoing<'a> {
 impl Held {
     /// What `session` holds, as it begins, its client granted `granted`.
     pub(super) fn new(session: Session, serves: Serves, granted: Capabilities) -> Held {
+        // [DESIGN] RULES.md D450: its transactions' garbage collected once
+        // their reply is sent (`Lent::answer`).
+        session.collect_after_reply(true);
         let (statements, cursors, status) = (HashMap::new(), HashMap::new(), Status::default());
         Held { session, statements, cursors, copy: None, granted, status, serves, arrived: None, clock: None, carried: Timing::default() }
     }
@@ -259,6 +262,7 @@ impl Held {
         self.cursors.clear();
         self.statements.clear();
         (self.copy, self.status, self.carried) = (None, Status::default(), Timing::default());
+        session.collect_after_reply(true);
         mem::replace(&mut self.session, session)
     }
 

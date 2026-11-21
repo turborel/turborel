@@ -118,11 +118,11 @@ impl RowTable {
         match (change.before, change.appended) {
             (Some(own), _) => {
                 self.zones.superseded(change.id, true);
-                dead.push(Dead::Own(change.id, own));
+                dead.push(Dead::Own(change.id, own, change.unchanged));
             }
             (None, Some(appended)) => {
                 self.zones.superseded(change.id, true);
-                dead.push(Dead::Older(change.id, appended));
+                dead.push(Dead::Older(change.id, appended, change.unchanged));
             }
             (None, None) => {}
         }

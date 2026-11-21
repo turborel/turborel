@@ -14,7 +14,7 @@ use crate::db::ddl::Dropped;
 use crate::db::schema::constraint_index_name;
 use crate::error::{Code, Result, SqlError};
 use crate::index::Index;
-use crate::txn::{Timestamp, Txn};
+use crate::txn::{Concurrency, Timestamp, Txn};
 
 /// A Syntax Rule violation.
 fn rule(message: String) -> SqlError {
@@ -125,21 +125,41 @@ impl State {
             return Ok(structure);
         }
         match tx {
-            Some(tx) => {
-                // Joined first: its engine reads only for a transaction
-                // begun in it, though none of the statement's has read it.
-                self.read_lock(tx, qn)?;
-                let all: Vec<usize> = (0..desc.columns.len()).collect();
-                for read in Arc::clone(self.storage_of(qn)?).scan(tx.id, &all) {
-                    let (id, row) = read?;
-                    let Some(key) = ix.entry_of(&row) else { continue };
-                    structure.insert(key, id)?;
-                }
-            }
+            Some(tx) => self.fill_for(tx, qn, (&*structure, &ix))?,
             None if !built => self.fill_index(&*structure, &ix, Timestamp::MAX)?,
             None => {}
         }
         Ok(structure)
+    }
+
+    /// Fills `index`, of a unique constraint `tx` adds to `qn`. Of an
+    /// engine keeping versions, with every committed version a reader may
+    /// still see, as collection takes back an entry of each (RULES.md
+    /// D447), and with each row `tx` itself changed as it left it; else
+    /// with the rows `tx` sees.
+    fn fill_for(&self, tx: &Txn, qn: &QualifiedName, (index, ix): (&dyn Index, &IndexDesc)) -> Result<()> {
+        // Joined first: its engine reads only for a transaction begun in
+        // it, though none of the statement's has read it.
+        self.read_lock(tx, qn)?;
+        let storage = Arc::clone(self.storage_of(qn)?);
+        let versions = matches!(storage.capabilities().concurrency, Concurrency::Engine { .. });
+        if versions {
+            self.fill_index(index, ix, Timestamp::MAX)?;
+            if !tx.written_tables().contains(qn) {
+                return Ok(());
+            }
+        }
+        let all: Vec<usize> = (0..self.base_table(qn)?.columns.len()).collect();
+        for read in Arc::clone(&storage).scan(tx.id, &all) {
+            let (id, row) = read?;
+            // A committed version, counted above, unless `tx` changed it.
+            if versions && storage.newest(tx.id, id)?.stamp != 0 {
+                continue;
+            }
+            let Some(key) = ix.entry_of(&row) else { continue };
+            index.insert(key, id)?;
+        }
+        Ok(())
     }
 
     /// The unique index of `qn` of key `key`, a unique constraint's,

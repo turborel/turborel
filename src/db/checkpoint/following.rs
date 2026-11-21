@@ -42,7 +42,7 @@ impl Database {
             return Err(SqlError::new(Code::Damaged, format!("[DESIGN] {table} is damaged: no checkpoint is taken until it is repaired")));
         }
         let tables = st.catalog.tables();
-        st.gc(tables.iter().map(|t| &t.name));
+        st.gc_waiting(tables.iter().map(|t| &t.name));
         if let Some(table) = st.owing() {
             return Err(SqlError::new(
                 Code::Io,

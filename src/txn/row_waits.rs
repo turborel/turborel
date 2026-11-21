@@ -6,7 +6,9 @@
 //! a time in ticket order, each once the one before it has tried its write
 //! again (`Turn`). So the first to wait writes first, and the others queue
 //! behind it as its writer, rather than every waiter of a table waking at
-//! every release of the table's lock.
+//! every release of the table's lock. Each waiter sleeps on a signal of its
+//! own, so a turn passed wakes the one waiter whose turn it is, not the
+//! whole line (RULES.md D449).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
@@ -30,6 +32,8 @@ struct Queue {
     serving: u64,
     /// Tickets whose waiters stopped waiting before their turn.
     left: Vec<u64>,
+    /// The waiters asleep, each by its ticket, with its own signal.
+    asleep: Vec<(u64, Arc<Condvar>)>,
 }
 
 impl Queue {
@@ -39,12 +43,24 @@ impl Queue {
         self.settle();
     }
 
-    /// The turn passes over the tickets given up.
+    /// The turn passes over the tickets given up, then wakes the waiter
+    /// whose turn it is, if the transaction has ended and it is asleep.
     fn settle(&mut self) {
         while let Some(at) = self.left.iter().position(|&t| t == self.serving) {
             self.left.swap_remove(at);
             self.serving = self.serving.saturating_add(1);
         }
+        if !self.ended {
+            return;
+        }
+        if let Some((_, signal)) = self.asleep.iter().find(|&&(t, _)| t == self.serving) {
+            signal.notify_one();
+        }
+    }
+
+    /// `ticket`'s waiter, awake, no longer signalled.
+    fn awake(&mut self, ticket: u64) {
+        self.asleep.retain(|&(t, _)| t != ticket);
     }
 }
 
@@ -53,7 +69,6 @@ impl Queue {
 #[derive(Default)]
 pub(crate) struct Ending {
     queue: Mutex<Queue>,
-    turned: Condvar,
 }
 
 impl Ending {
@@ -62,8 +77,6 @@ impl Ending {
         let mut queue = lock_builtin(&self.queue);
         queue.ended = true;
         queue.settle();
-        drop(queue);
-        self.turned.notify_all();
     }
 
     /// A ticket, the next in line.
@@ -79,8 +92,6 @@ impl Ending {
         let mut queue = lock_builtin(&self.queue);
         queue.left.push(ticket);
         queue.settle();
-        drop(queue);
-        self.turned.notify_all();
     }
 }
 
@@ -91,7 +102,6 @@ pub(crate) struct Turn(Arc<Ending>);
 impl Drop for Turn {
     fn drop(&mut self) {
         lock_builtin(&self.0.queue).pass();
-        self.0.turned.notify_all();
     }
 }
 
@@ -179,9 +189,12 @@ impl Txn {
     /// Waits on `ending` for the turn of `ticket`, looking now and then
     /// for a cancel or a timeout, which give the ticket up.
     fn queue_on(&self, (ending, ticket): (&Ending, u64), began: Instant) -> Result<()> {
+        let signal = Arc::new(Condvar::new());
         let mut queue = lock_builtin(&ending.queue);
+        queue.asleep.push((ticket, Arc::clone(&signal)));
         loop {
             if queue.ended && queue.serving == ticket {
+                queue.awake(ticket);
                 return Ok(());
             }
             let stopped = self.stop.check_now().err().or_else(|| {
@@ -193,13 +206,12 @@ impl Txn {
                 })
             });
             if let Some(e) = stopped {
+                queue.awake(ticket);
                 queue.left.push(ticket);
                 queue.settle();
-                drop(queue);
-                ending.turned.notify_all();
                 return Err(e);
             }
-            queue = ending.turned.wait_timeout(queue, super::locks::STOP_POLL).unwrap_or_else(std::sync::PoisonError::into_inner).0;
+            queue = signal.wait_timeout(queue, super::locks::STOP_POLL).unwrap_or_else(std::sync::PoisonError::into_inner).0;
         }
     }
 }

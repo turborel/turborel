@@ -46,7 +46,7 @@ impl RowTable {
     /// As the reader, the read's note or the directory fail.
     pub(super) fn split_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>, rows: usize) -> Result<RowSplit> {
         let reader = self.reader(tx)?;
-        self.note_read(tx, || condition.clone().map_or(Read::All, Read::Condition))?;
+        self.note_read(tx, || Read::scan(condition.as_ref(), columns))?;
         let asked = columns.len();
         let mut columns = columns.to_vec();
         columns.extend(condition.iter().flat_map(Conjunction::columns));

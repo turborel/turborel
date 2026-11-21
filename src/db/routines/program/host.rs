@@ -80,6 +80,19 @@ impl<'s, 'c> SessionHost<'s, 'c> {
         }
     }
 
+    /// \[DESIGN\] RULES.md D454: reading at a snapshot for each statement,
+    /// a statement of a procedure's body, or of a control statement run
+    /// directly, reads at one taken as it begins, as a statement the
+    /// session runs does, unless a cursor is open. A function's or a
+    /// triggered action's reads at the snapshot of the statement that runs
+    /// it, which is still reading.
+    fn fresh(&self, tx: &Txn) -> Result<()> {
+        if self.session.nesting.savepoints.borrow().in_statement() {
+            return Ok(());
+        }
+        tx.renew_snapshot(|| !self.session.cursors_open())
+    }
+
     /// Its state taken anew, of an SQL control statement run directly.
     fn refreshed(&mut self) -> Result<()> {
         if let Context::Own { st, .. } = &mut self.context {
@@ -134,6 +147,7 @@ impl Host for SessionHost<'_, '_> {
 
     fn rows(&self, leaf: &Leaf, frame: &Params, limit: Option<usize>) -> Result<Vec<Row>> {
         self.with(|cx| {
+            self.fresh(cx.tx)?;
             for t in leaf.query.plan.tables() {
                 cx.st.read_lock(cx.tx, &t)?;
             }
@@ -173,6 +187,7 @@ impl Host for SessionHost<'_, '_> {
         // program kept keeps its plan (RULES.md D406).
         let kept = self.kept.and_then(|k| k.plans_of(c)).filter(|_| keeps_plan(c.statement()));
         let ran = self.with(|cx| {
+            self.fresh(cx.tx)?;
             session.may_run(cx.st, c.statement())?;
             let keeping = kept.map(|plans| session.keeping(cx.st, plans));
             session.run_statement(cx, c.statement(), frame, keeping.as_ref())
@@ -198,6 +213,7 @@ impl Host for SessionHost<'_, '_> {
         let kept = self.kept.and_then(|k| k.cursor_plans(cursor));
         let session = self.session;
         self.with(|cx| {
+            self.fresh(cx.tx)?;
             let keeping = kept.map(|plans| session.keeping(cx.st, plans));
             session.open_local(cx, (key, cursor), frame, keeping.as_ref())
         })

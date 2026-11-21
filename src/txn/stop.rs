@@ -29,7 +29,7 @@ mod changed;
 mod served;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -68,6 +68,9 @@ pub struct Stop {
     warnings: Warnings,
     /// What a server takes of its statements for its client.
     served: Served,
+    /// \[DESIGN\] Whether its transactions leave their garbage to be
+    /// collected once their reply is sent (RULES.md D450).
+    collect_later: AtomicBool,
     /// The plan of a data change EXPLAIN ANALYZE runs.
     changed: Changed,
     /// What the session does now, and what its statements did.
@@ -93,6 +96,7 @@ impl Default for Stop {
             epoch: Instant::now(),
             warnings: Warnings::default(),
             served: Served::default(),
+            collect_later: AtomicBool::new(false),
             changed: Changed::default(),
             activity: Activity::default(),
         }
@@ -131,6 +135,19 @@ impl Stop {
     /// for a lock (LOCKS.TIMEOUT_MS).
     pub(crate) fn set_lock_timeout(&self, millis: u64) {
         self.lock_timeout.store(millis, Ordering::SeqCst);
+    }
+
+    /// \[DESIGN\] Sets whether its transactions leave their garbage to be
+    /// collected once their reply is sent (RULES.md D450).
+    pub(crate) fn set_collect_later(&self, later: bool) {
+        self.collect_later.store(later, Ordering::Relaxed);
+    }
+
+    /// \[DESIGN\] Whether its transactions' ends leave their tables noted
+    /// for collection, which their session runs once its reply is sent
+    /// (RULES.md D450).
+    pub(crate) fn collects_later(&self) -> bool {
+        self.collect_later.load(Ordering::Relaxed)
     }
 
     /// The longest a statement waits for a lock, if there is a limit.

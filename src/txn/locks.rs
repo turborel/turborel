@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
-use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
@@ -166,6 +166,15 @@ struct Holder {
     running: Arc<Mutex<Option<ThreadId>>>,
 }
 
+/// A table's collection under way (`TableLock::try_collect`), until dropped.
+pub(crate) struct Collecting<'l>(&'l TableLock);
+
+impl Drop for Collecting<'_> {
+    fn drop(&mut self) {
+        self.0.collecting.store(false, Ordering::Release);
+    }
+}
+
 /// \[DESIGN\] What the transactions share about one table: who holds its
 /// lock, the signal that a holder released it, whether a failed undo damaged
 /// it (RULES.md D19), the snapshot that last changed its definitions
@@ -199,6 +208,11 @@ pub(crate) struct TableLock {
     /// The index entries collection could not take back, tried again by
     /// its next (`txn/owed.rs`).
     pub(crate) owed: OwedRemovals,
+    /// Of each index of it filled from its versions, by name, the latest
+    /// commit the fill may have counted (`txn/kept.rs`).
+    filled: Mutex<Vec<(String, Timestamp)>>,
+    /// Whether a transaction's end is collecting its garbage now.
+    collecting: AtomicBool,
     /// When a transaction that wrote it last committed, and when its
     /// engine's maintenance last did some work, as a timestamp's instant;
     /// 0 for never (TABLE_STATISTICS, RULES.md D522).
@@ -289,6 +303,36 @@ impl TableLock {
     /// Whether collection of its garbage is held back.
     pub(crate) fn collection_held(&self) -> bool {
         self.holds.load(Ordering::SeqCst) > 0
+    }
+
+    /// Notes that the index `name` is filled from the table's versions
+    /// committed through `through` (RULES.md D443): it counts each of
+    /// those, so none superseded by then shares an entry with its successor.
+    pub(crate) fn filled(&self, name: &str, through: Timestamp) {
+        let mut filled = lock_builtin(&self.filled);
+        filled.retain(|(n, _)| n != name);
+        filled.push((name.to_owned(), through));
+    }
+
+    /// The latest commit a fill of the index `name` may have counted, or 0
+    /// for an index not filled from versions while the table had any.
+    pub(crate) fn filled_through(&self, name: &str) -> Timestamp {
+        lock_builtin(&self.filled).iter().find(|(n, _)| n == name).map_or(0, |&(_, at)| at)
+    }
+
+    /// The table's collection, for one transaction's end at a time
+    /// (RULES.md D445): none while another's is under way, or, if `wait`,
+    /// once it is done.
+    pub(crate) fn try_collect(&self, wait: bool) -> Option<Collecting<'_>> {
+        loop {
+            if !self.collecting.swap(true, Ordering::AcqRel) {
+                return Some(Collecting(self));
+            }
+            if !wait {
+                return None;
+            }
+            thread::yield_now();
+        }
     }
 
     /// Holds collection of its garbage back, until `release_collection`.

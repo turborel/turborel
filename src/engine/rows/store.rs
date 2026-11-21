@@ -4,10 +4,11 @@
 use crate::engine::columns::cache::{self, HeaderCache};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use super::options::encodings_of;
-use super::{COLUMN_STORE, ROW_STORE, RowStore, Sealing, TableFiles, TableOptions};
+use super::{COLUMN_STORE, ROW_STORE, Sealing, TableFiles, TableOptions};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::disk::encoding::Encodings;
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
@@ -22,6 +23,38 @@ use crate::sync::lock_builtin;
 /// column store's defaults do.
 fn freezing(defaults: TableOptions) -> TableOptions {
     TableOptions { columns: Some(defaults.columns.unwrap_or_default()), ..defaults }
+}
+
+/// \[DESIGN\] The row store: tables as B-link trees of row versions, in
+/// one pager file of a buffer pool, older versions in an undo store.
+pub struct RowStore {
+    /// Where its tables are; for a store in memory, made when the first
+    /// table is.
+    pub(super) files: Mutex<Option<TableFiles>>,
+    /// Its pages in memory, for files made in memory: of a budget of its
+    /// own until it is attached to a database's (`attach`).
+    pub(super) memory: Arc<MemoryPages>,
+    pub(super) defaults: TableOptions,
+    /// Options for tables not yet created, by name.
+    pub(super) tables: Mutex<HashMap<QualifiedName, TableOptions>>,
+    /// The database's work areas, once attached, shared with its tables.
+    pub(super) work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
+    /// The database's encodings, once attached: those its tables' option
+    /// ENCODINGS names.
+    pub(super) encodings: Mutex<Arc<Encodings>>,
+    /// Its name: `ROW_STORE`, or `COLUMN_STORE`, whose tables freeze their
+    /// rows.
+    pub(super) name: &'static str,
+    /// Whether it checkpoints its files: not the column store sharing the
+    /// row store's, which checkpoints them for both.
+    pub(super) checkpoints: bool,
+    /// The headers of its tables' frozen row groups held in memory, of
+    /// the database's budget once attached (`columns/cache.rs`).
+    pub(super) headers: Arc<HeaderCache>,
+    /// STORAGE.SYSTEM_CACHE_BYTES, as its tables over files on a disk
+    /// price their fetches by it; none for a store in memory, whose files
+    /// are all held.
+    pub(super) system_cache: Option<Arc<AtomicU64>>,
 }
 
 impl RowStore {

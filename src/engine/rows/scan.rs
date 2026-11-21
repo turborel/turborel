@@ -7,7 +7,7 @@ use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
 use super::frozen::{Batched, Merged, Merging, Ordered};
-use super::mvcc::Read;
+use super::mvcc::{EVERY_COLUMN, Read, columns_mask};
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, Visit, Visited, scan_of};
 use crate::error::Result;
@@ -67,7 +67,7 @@ impl Ranged {
 impl RowTable {
     /// Row `id` as `tx` sees it, `columns` decoded, or all.
     pub(super) fn get_of(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
-        let reader = self.read_row(tx, id, near)?;
+        let reader = self.read_row(tx, (id, columns.map_or(EVERY_COLUMN, |c| columns_mask(c.iter().copied()))), near)?;
         if !self.tree.get_near(&key(id), near)? {
             // Frozen, so committed before every snapshot (`rows/frozen.rs`),
             // unless a load made it (`frozen/stamped.rs`).
@@ -101,7 +101,7 @@ impl RowTable {
     /// The rows `tx` sees, `columns` decoded, and only those `condition`
     /// matches, if given, which is then what counts as read.
     pub(super) fn scan_rows(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>) -> Rows {
-        let read = || condition.clone().map_or(Read::All, Read::Condition);
+        let read = || Read::scan(condition.as_ref(), columns);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),
@@ -166,7 +166,9 @@ impl RowTable {
 
     /// The merge `scan_ordered_of` reads, the read noted.
     fn ordered(self: Arc<Self>, tx: TxId, (columns, order): (&[usize], ScanOrder<'_>), condition: Option<Conjunction>) -> Result<Ordered> {
-        let read = || condition.clone().map_or(Read::All, Read::Condition);
+        // The order's columns are consumed too: they chose which rows come
+        // first (RULES.md D448).
+        let read = || Read::scan(condition.as_ref(), &[columns, order.0].concat());
         let reader = self.reader(tx)?;
         self.note_read(tx, read)?;
         let directory = self.directory_for(reader)?;
@@ -189,7 +191,7 @@ impl RowTable {
             let rows = Arc::clone(&self).scan_rows(tx, columns, condition);
             return batches_of(rows, columns);
         }
-        let read = || condition.clone().map_or(Read::All, Read::Condition);
+        let read = || Read::scan(condition.as_ref(), columns);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),
@@ -206,7 +208,7 @@ impl RowTable {
     /// in place where it can be, its columns decoded straight into their
     /// vectors (`rows/in_place.rs`).
     fn gathered(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> Batches {
-        let read = || condition.cloned().map_or(Read::All, Read::Condition);
+        let read = || Read::scan(condition, columns);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),

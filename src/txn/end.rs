@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::owed::{Entry, Owed};
-use super::{Committing, Joined, Timestamp, Transactions, Txn, UndoFailure};
+use super::{Committing, Joined, Sharing, Timestamp, Transactions, Txn, UndoFailure};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::index::{Index, Key};
 use crate::memory::Undoing;
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Kept, Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 
 impl State {
@@ -61,17 +61,7 @@ impl State {
             (joined, st.wrote)
         };
         if !wrote {
-            // \[DESIGN\] It changed nothing, so it read one committed state,
-            // its snapshot, and is serializable there: no engine need check
-            // its reads, and it takes no commit timestamp (RULES.md D29).
-            for participant in &joined {
-                participant.storage.commit(tx.id, tx.snapshot());
-            }
-            tx.release();
-            self.gc_read();
-            // [DESIGN] RULES.md D441: what it read past its snapshot is
-            // durable before it says it committed.
-            return tx.replied(Ok(()));
+            return self.commit_read(tx, &joined);
         }
         // The commit record and the versions stamped are one change to a
         // checkpoint.
@@ -115,7 +105,7 @@ impl State {
                 }
                 drop(gate);
                 let durable = self.durable(tx, lsn, at);
-                self.gc(joined.iter().map(|j| &*j.table));
+                self.collect_ended(tx, joined.iter().map(|j| &*j.table));
                 durable.and(published)
             }
             Err(e) => {
@@ -126,6 +116,23 @@ impl State {
                 tx.replied(Err(if e.code == Code::Conflict { e.with_state(SqlState::SERIALIZATION_FAILURE) } else { e }))
             }
         }
+    }
+
+    /// \[DESIGN\] The commit of `tx`, which changed nothing, so it read one
+    /// committed state, its snapshot, and is serializable there: no engine
+    /// need check its reads, and it takes no commit timestamp (RULES.md
+    /// D29).
+    fn commit_read(&self, tx: &Txn, joined: &[Joined]) -> Result<()> {
+        for participant in joined {
+            participant.storage.commit(tx.id, tx.snapshot());
+        }
+        tx.release();
+        if !tx.stop.collects_later() {
+            self.gc_read();
+        }
+        // [DESIGN] RULES.md D441: what it read past its snapshot is durable
+        // before it says it committed.
+        tx.replied(Ok(()))
     }
 
     /// \[DESIGN\] Syncs the commit record of `tx`, committed at `at`, at
@@ -182,16 +189,50 @@ impl State {
     /// collected by their session instead (`db/temporary.rs`). `tables`
     /// names each once; one still awaited is collected once too.
     pub(crate) fn gc<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
+        self.gc_with(tables, false);
+    }
+
+    /// \[DESIGN\] As `gc`, after `tx` ended; unless its session collects
+    /// once its reply is sent (RULES.md D450): then `tables` are noted, for
+    /// that collection or the end of any other transaction to collect.
+    fn collect_ended<'t>(&self, tx: &Txn, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
+        if tx.stop.collects_later() {
+            let mut uncollected = lock_builtin(&self.tx.uncollected);
+            uncollected.extend(tables.cloned());
+            self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);
+        } else {
+            self.gc(tables);
+        }
+    }
+
+    /// As `gc`, but waiting for a collection of a table under way rather
+    /// than passing it over (RULES.md D445): for a checkpoint that needs
+    /// every table collected as far as the horizon lets.
+    pub(crate) fn gc_waiting<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
+        self.gc_with(tables, true);
+    }
+
+    fn gc_with<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone, wait: bool) {
         let _gate = self.tx.gate.enter();
         let horizon = self.tx.horizon();
         let waiting: Vec<QualifiedName> = lock_builtin(&self.tx.uncollected).iter().cloned().collect();
         let collect = |table: &QualifiedName| {
-            let left = self.collect_table(table, horizon);
+            let left = self.collect_table(table, horizon, wait);
             let mut uncollected = lock_builtin(&self.tx.uncollected);
-            match left {
-                Some(true) => uncollected.insert(table.clone()),
-                Some(false) | None => uncollected.remove(table),
+            // Asked again under the lock: a commit that added garbage while
+            // this one collected, and was passed over (RULES.md D445), has
+            // noted the table, and its note must not be taken out.
+            let still = || self.storage_of(table).is_ok_and(|s| s.uncollected());
+            let keep = match left {
+                Some(true) => true,
+                Some(false) => still(),
+                None => false,
             };
+            if keep {
+                uncollected.insert(table.clone());
+            } else {
+                uncollected.remove(table);
+            }
             self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);
         };
         for table in waiting.iter().filter(|w| !tables.clone().any(|t| t == *w)) {
@@ -210,9 +251,14 @@ impl State {
     /// and none is while none awaits, nor is the gate taken. It notes no
     /// maintenance: a table's is noted as a writer collects it, and noted
     /// again after each round while still due (`db/maintenance.rs`).
+    ///
+    /// \[DESIGN\] One such end collects at a time (RULES.md D453): another
+    /// ending meanwhile passes by, as the one collecting collects the same
+    /// tables, and any later end collects what it leaves.
     pub(crate) fn gc_read(&self) {
-        if self.tx.awaiting.load(Ordering::Acquire) {
+        if self.tx.awaiting.load(Ordering::Acquire) && !self.tx.read_collecting.swap(true, Ordering::AcqRel) {
             self.gc(std::iter::empty());
+            self.tx.read_collecting.store(false, Ordering::Release);
         }
     }
 
@@ -221,7 +267,7 @@ impl State {
     /// temporary table: an instance of one is collected by its session as
     /// its transactions end (`db/temporary.rs`), the definition's storage
     /// holding nothing.
-    fn collect_table(&self, table: &QualifiedName, horizon: Timestamp) -> Option<bool> {
+    fn collect_table(&self, table: &QualifiedName, horizon: Timestamp, wait: bool) -> Option<bool> {
         if self.catalog.table(table).is_none_or(|t| t.temporary.is_some()) {
             return None;
         }
@@ -234,11 +280,19 @@ impl State {
         if lock.collection_held() || lock.changed_after(self.generation) {
             return Some(true);
         }
+        // One collector at a time (RULES.md D445): another ending now finds
+        // the work under way and passes the table over, noted as awaiting.
+        // Nor, at a transaction's end, before it is worth its cost (RULES.md
+        // D451); a checkpoint's collection, which waits, takes everything.
+        if !wait && !storage.collection_due(horizon) {
+            return Some(true);
+        }
+        let Some(_collecting) = lock.try_collect(wait) else { return Some(true) };
         {
             // The table's indexes, found as the first version is removed:
             // most calls remove none, so most never look them up.
             let found: OnceCell<Vec<Found<'_>>> = OnceCell::new();
-            let indexes: OnceCell<Vec<(&dyn Index, &IndexDesc)>> = OnceCell::new();
+            let indexes: OnceCell<Vec<(&dyn Index, &IndexDesc, Sharing)>> = OnceCell::new();
             let of_table = || {
                 self.catalog
                     .indexes(table)
@@ -258,11 +312,11 @@ impl State {
                 let all = self.globals_over(table).into_iter();
                 all.filter_map(|(ix, partition)| Some((Arc::clone(self.index_of(&ix.name).ok()?), ix, partition))).collect()
             };
-            let _ = storage.gc(horizon, &mut |id, row| {
+            let _ = storage.gc(horizon, &mut |id, row, kept| {
                 remove_global(globals.get_or_init(over), id, &row);
                 let found = found.get_or_init(of_table);
-                let indexes = indexes.get_or_init(|| found.iter().map(|&(_, index, ix)| (&**index, ix)).collect());
-                let failed = remove_entries(indexes, id, &row);
+                let indexes = indexes.get_or_init(|| found.iter().map(|&(_, index, ix)| (&**index, ix, Sharing::of(ix, lock))).collect());
+                let failed = remove_entries(indexes, id, &row, kept);
                 let entries: Vec<Entry> = failed
                     .into_iter()
                     .filter_map(|(at, key)| {
@@ -313,18 +367,22 @@ impl State {
         tx.log_abort();
         drop(gate);
         tx.release();
-        self.gc(joined.iter().map(|j| &*j.table));
+        self.collect_ended(tx, joined.iter().map(|j| &*j.table));
         damage
     }
 }
 
 /// Removes the entries of row `id`, a version collected, of `row`, from
 /// `indexes`, each with its columns, of those it holds
-/// (`IndexDesc::entry_of`). Those that cannot be are left: their places among
-/// `indexes`, and their keys.
-pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, row: &Row) -> Vec<(usize, Key)> {
+/// (`IndexDesc::entry_of`), but those it shares with its successor, which
+/// `kept` (RULES.md D443). Those that cannot be are left: their places
+/// among `indexes`, and their keys.
+pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc, Sharing)], id: RowId, row: &Row, kept: Kept) -> Vec<(usize, Key)> {
     let mut failed = Vec::new();
-    for (at, (index, ix)) in indexes.iter().enumerate() {
+    for (at, (index, ix, sharing)) in indexes.iter().enumerate() {
+        if sharing.shares(kept) {
+            continue;
+        }
         if let Some(key) = ix.entry_of(row)
             && index.remove(&key, id).is_err()
         {
