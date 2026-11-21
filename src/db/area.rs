@@ -31,7 +31,7 @@ use crate::binder::assignable;
 use crate::error::{Code, Result, RoutineSubject, Signalled, SqlState, Subject, fail_with};
 use crate::lexer::kw;
 use crate::params::Params;
-use crate::value::{DataType, Decimal, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Decimal, MAX_CHARACTER_LENGTH, Spelled, Value};
 
 /// \[DESIGN\] The naming authority of the conditions this implementation
 /// defines, its SQLSTATE class TB [§18.1 GR3b, GR3c].
@@ -424,7 +424,7 @@ fn code(command: Command) -> Value {
 /// may be (IL205).
 fn declared(numeric: bool) -> DataType {
     if numeric {
-        DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric }
+        DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric }
     } else {
         DataType::varying(MAX_CHARACTER_LENGTH)
     }

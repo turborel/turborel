@@ -1558,10 +1558,10 @@ OK
 OK
 OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): cannot assign a XML(DOCUMENT(UNTYPED)) value to column BOOK (XML(DOCUMENT(XMLSCHEMA ID ANN.BOOKS NAMESPACE 'urn:books' ELEMENT "book"))) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075-14:2006 draft §10.2 SR1b] (at character 29)
-           ID | TYPED |                 MORE
---------------+-------+----------------------
-            1 | TRUE  |                  413
-            2 | TRUE  |                  475
+           ID | TYPED |          MORE
+--------------+-------+---------------
+            1 | TRUE  |           413
+            2 | TRUE  |           475
 (2 rows)
 turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.SHELF is of an XML type of registered XML Schema ANN.BOOKS, so it is not dropped, even with CASCADE (at character 16)
 ```

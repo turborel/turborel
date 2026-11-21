@@ -401,6 +401,10 @@ impl TableStorage for RowTable {
         self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
     }
 
+    fn statistics_wanted(&self) -> bool {
+        self.gather_wanted()
+    }
+
     fn garbage(self: Arc<Self>, as_of: Timestamp) -> Rows {
         self.pending(Box::new(move |at, _| at <= as_of), None)
     }
@@ -550,7 +554,7 @@ impl TableStorage for RowTable {
     /// be summed up, as one of a commit too recent waits for the horizon
     /// (`rows/zones.rs`).
     fn maintain(&self, horizon: Timestamp, now: bool) -> Result<bool> {
-        if self.gather_wanted() && self.gather_if_due(now) {
+        if self.gather_if_due(now) {
             return Ok(true);
         }
         if self.zones.due() && self.sum_zones(horizon)? {

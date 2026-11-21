@@ -112,7 +112,7 @@ key is the empty set, within the table's:
 |---|---|---|---|---|---|---|
 | 1 | 4 (INTEGER) | PRECISION 10, SCALE 0 | 0 | ID | 0 | 0 |
 | 2 | 12 (CHARACTER VARYING) | LENGTH 30, OCTET_LENGTH 120, SQL_TEXT | 1 | NAME | 0 | 0 |
-| 3 | 2 (NUMERIC) | PRECISION 18, SCALE 2 | 1 | | 1 | 0 |
+| 3 | 2 (NUMERIC) | PRECISION 10, SCALE 2 | 1 | | 1 | 0 |
 
 Of `SELECT NAME, ID FROM STAFF`, KEY_TYPE is 1, and ID's KEY_MEMBER 1.
 

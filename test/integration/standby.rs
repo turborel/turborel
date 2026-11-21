@@ -180,6 +180,8 @@ fn a_promoted_standby_ends_the_transactions_left_open() {
     let primary = primary(&log);
     let open = primary.session("APP");
     exec(&open, "INSERT INTO T VALUES (9, 'nine')").unwrap();
+    // Written, as a checkpoint writes an open transaction's records (RULES.md D470).
+    primary.write_held().unwrap();
     let left = open.transaction().unwrap();
     let standby = following();
     Standby::replay(&standby, &mut log.read_from(Lsn(0))).unwrap();
@@ -259,6 +261,8 @@ fn a_standby_spills_the_records_it_holds() {
                 committed(&primary, &["UPDATE T SET V = 'mid' WHERE K = 2"]);
             }
         }
+        // Written, as a checkpoint writes an open transaction's records (RULES.md D470).
+        primary.write_held().unwrap();
         Standby::replay(&standby, &mut log.read_from(mark)).unwrap();
         assert!(counted.taken() > 0, "the records held spilled");
         assert_eq!(answers(&standby, &[]).0, ["1,uno       ", "2,mid       "], "the open transaction not shown");

@@ -129,20 +129,20 @@ fn totals_kept_answer_as_checked_whole() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.5 GR2b iv, §11.34 GR2];
 /// [DESIGN] RULES.md D15, D51: a SUM kept past the range of its result
 /// raises 22003 as the whole check does, judged of the total after the
-/// statement, not of a sum on the way; a SUM of no value is null, so the
-/// assertion holds.
+/// statement, not of a sum on the way, of values of 38 digits whose sums
+/// 128 bits hold; a SUM of no value is null, so the assertion holds.
 #[test]
 fn a_sum_kept_out_of_range_raises_as_whole_6_5() {
     for whole in ["", " AND 1 = 1"] {
         let db = Database::new();
-        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE B (K INTEGER NOT NULL, V DECIMAL(18,0))").unwrap();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE B (K INTEGER NOT NULL, V DECIMAL(38,0))").unwrap();
         let s = db.session("A");
         s.run(&format!("CREATE ASSERTION BIG CHECK ((SELECT SUM(V) FROM B) < 0{whole})")).unwrap();
         s.commit().unwrap();
-        s.run("INSERT INTO B VALUES (1, -999999999999999999)").unwrap();
-        let past = s.execute("INSERT INTO B VALUES (2, -999999999999999999)", &mut Params::new()).unwrap_err();
+        s.run("INSERT INTO B VALUES (1, -60000000000000000000000000000000000000)").unwrap();
+        let past = s.execute("INSERT INTO B VALUES (2, -60000000000000000000000000000000000000)", &mut Params::new()).unwrap_err();
         assert_eq!((past.code, past.state.as_ref().map(SqlState::as_str)), (Code::Data, Some("22003")), "{whole}: out of range");
-        s.run("INSERT INTO B VALUES (2, -999999999999999999), (3, 999999999999999999)").unwrap();
+        s.run("INSERT INTO B VALUES (2, -60000000000000000000000000000000000000), (3, 60000000000000000000000000000000000000)").unwrap();
         s.run("DELETE FROM B").unwrap();
         s.commit().unwrap();
         assert!(exec(&s, "INSERT INTO B VALUES (4, NULL)").is_ok(), "{whole}: a sum of no value");

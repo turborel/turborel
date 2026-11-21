@@ -8,9 +8,8 @@
 //! after [X3.135-1986 §5.9 SR4b], a product `p1 + p2` digits in all
 //! [SR4c], and an exact result raises only past those digits [GR6a]. A
 //! quotient by a constant not zero, at least 1 in magnitude, keeps the
-//! dividend's digits before the point and needs no digit past
-//! `MAX_EXACT_PRECISION` after it while the constant's digits before the
-//! point and the dividend's scale sum to no more [GR6b]. A CAST that widens
+//! dividend's digits before the point, and its scale leaves room for
+//! them (RULES.md D697) [GR6b]. A CAST that widens
 //! cannot raise either: to an exact type of no fewer digits before the
 //! point [ISO/IEC 9075:1992 §6.10 GR3a ii], or to a character string type
 //! at least as long as the longest literal of its operand's values [GR5a
@@ -19,7 +18,7 @@
 
 use super::{Cond, Expr, LogicalPlan, Slot};
 use crate::catalog::Catalog;
-use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, constant_prefix};
+use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, bound_of, constant_prefix};
 
 /// The declared type of a column of the rows an expression is over, if
 /// known.
@@ -119,29 +118,24 @@ fn arith_safe((a, op, b): (&Expr, ArithOp, &Expr), types: Types<'_>, depth: usiz
     match op {
         ArithOp::Add | ArithOp::Sub | ArithOp::Mul => arith_shape((a, op, b), types, depth).is_some(),
         ArithOp::Div => {
-            let (Some((_, scale)), Expr::Const(Value::Exact(divisor))) = (exact_shape(a, types, depth), b) else { return false };
-            quotient_fits(scale, *divisor)
+            let (Some(_), Expr::Const(Value::Exact(divisor))) = (exact_shape(a, types, depth), b) else { return false };
+            quotient_fits(*divisor)
         }
     }
 }
 
-/// Whether a quotient of an exact dividend of scale `scale` by the constant
-/// `divisor` always fits, as the module says.
-fn quotient_fits(scale: u32, divisor: Decimal) -> bool {
-    let whole = whole_digits(divisor);
-    let at_least_one = divisor.units.unsigned_abs() >= magnitude(divisor.scale);
-    at_least_one && whole.saturating_add(scale) <= MAX_EXACT_PRECISION
+/// Whether a quotient of an exact dividend by the constant `divisor`
+/// always fits, as the module says: of a divisor at least 1 in magnitude
+/// its integer digits are at most the dividend's, and its scale is as
+/// many fewer as they need (`Decimal::checked_div`).
+fn quotient_fits(divisor: Decimal) -> bool {
+    divisor.units.unsigned_abs() >= magnitude(divisor.scale)
 }
 
 /// 10 to the power `n`, as the magnitude of `Decimal::units`, or the
 /// largest it holds.
 fn magnitude(n: u32) -> u128 {
     10_u128.checked_pow(n).unwrap_or(u128::MAX)
-}
-
-/// The digits of `d` before its point.
-fn whole_digits(d: Decimal) -> u32 {
-    d.digits().saturating_sub(d.scale)
 }
 
 /// Whether a CAST of `x` to `to` widens, as the module says.
@@ -205,15 +199,7 @@ fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
 /// `MAX_EXACT_PRECISION` digits: of a sum or difference, or a product.
 fn arith_shape((a, op, b): (&Expr, ArithOp, &Expr), types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
     let ((pa, sa), (pb, sb)) = (exact_shape(a, types, depth)?, exact_shape(b, types, depth)?);
-    let (precision, scale) = match op {
-        ArithOp::Add | ArithOp::Sub => {
-            let scale = sa.max(sb);
-            let whole = pa.saturating_sub(sa).max(pb.saturating_sub(sb)).saturating_add(1);
-            (whole.saturating_add(scale), scale)
-        }
-        ArithOp::Mul => (pa.saturating_add(pb), sa.saturating_add(sb)),
-        ArithOp::Div => return None,
-    };
+    let (precision, scale) = bound_of(op, (pa, sa), (pb, sb))?;
     (precision <= MAX_EXACT_PRECISION).then_some((precision, scale))
 }
 

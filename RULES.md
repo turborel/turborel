@@ -417,6 +417,13 @@ verification approach DO-178C expects (§8).
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
+| D470 | A transaction's log records are held until its commit and written with its commit record in one write |
+| D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
+| D472 | A page written back again is written over its side-file block with no lock held |
+| D473 | The maintenance job gathers a table's statistics only once a plan has read them since its last pass |
+| D474 | A page read into a frame takes the buffer of the page it replaces |
+| D475 | An update's log record holds the row after whole and of the row before only the columns changed |
+| D476 | A value on a zone's bound changed to one past it leaves the zone not stale |
 | D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
 | D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
@@ -451,6 +458,11 @@ verification approach DO-178C expects (§8).
 | D657 | The guesses of comparisons with no statistics are consistent with each other |
 | D658 | A table opened holding rows has its statistics gathered as the database opens |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
+| D695 | Exact numbers hold 38 digits, and BIGINT, counts and a column of 18 or fewer keep 64 bits |
+| D696 | The precision of an exact sum, difference or product is the digits its operands' types give, up to 38 |
+| D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
+| D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
+| D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
 
 ### The project
 
@@ -638,7 +650,8 @@ of which no conjunct is true or raises, and stay over the product of the
 index's rows and the guard, so each is evaluated on the rows the index
 gives while the guard has a row, and on none while it has none. SUM and AVG judge only their final result, never a
 running sum, so row order can't decide an overflow [ISO/IEC 9075:1992 §6.5
-GR2b iv] (`functions/sum.rs`).
+GR2b iv] (`functions/sum.rs`). The running sum is kept in 128 bits, and
+one past them is the limit -900 (D18).
 
 There are two exceptions. EXISTS stops at the first row its subquery's
 condition keeps, which §8.8 GR1 allows because that row decides the
@@ -2254,7 +2267,11 @@ every departure.
 A database following a group refuses what it would log (SQLCODE -917) and
 keeps serving reads. It recovers from its last checkpoint alone
 (`Database::open_following`), because its log's later records may not be
-committed.
+committed. A log that no longer holds every record before that
+checkpoint's position, lost or cut back to where a state transfer left
+it, makes its files of no use, since the transactions open at the
+checkpoint cannot be undone without those records. The database is then
+made again from nothing and takes the group's state.
 
 These were approved with this decision.
 
@@ -3865,7 +3882,7 @@ any row (`index/expression.rs`). D15 then holds for a lookup by it: a
 probe that skips rows skips no error a scan would raise. The analysis
 admits a column, a constant, a negation of a number, and a sum,
 difference or product of exact numerics whose result precision, by
-X3.135-1986 §5.9 SR4, fits 18 digits. It also admits a CASE whose
+X3.135-1986 §5.9 SR4, fits 38 digits (D695). It also admits a CASE whose
 conditions cannot raise and whose results are admitted. A call is
 admitted if it is deterministic, reads no session context and its
 function says so (`ScalarFunction::index_safe`, false by default). UPPER
@@ -10277,8 +10294,9 @@ next value or a call that needs the statement is evaluated a row at a
 time, inside the tree, and so is a subtree deeper than `MAX_DEPTH`.
 
 Integer arithmetic runs in `i64` with overflowing operations and a flag
-of the batch. An overflow, or a result of 18 digits or more, which no
-decimal holds (§5.9 GR6a), sets it, and a set flag gives no vector.
+of the batch. An overflow, or a result of more than 18 digits, which
+64 bits do not always hold (D699), sets it, and a set flag gives no
+vector; the rows then compute it in 128 bits or raise (§5.9 GR6a).
 Approximate arithmetic sets it of a divisor of 0 or a result not finite.
 A row that is null never sets it, its slot written 0. A row that would
 raise a warning gives no vector either, as the first warning raised is
@@ -10633,11 +10651,12 @@ hoisted onto the operand it reads.
 Whether an expression can raise is judged by the declared types of its
 columns (`logical/raises.rs`). A sum or difference of exact numbers whose
 digits before the point, one more than the larger's, and after it, the
-larger scale, are 18 or fewer cannot raise, nor a product of 18 or fewer
+larger scale, are 38 or fewer cannot raise, nor a product of 38 or fewer
 digits in all [X3.135-1986 §5.9 SR4b, GR6a], nor a quotient by a
 constant of magnitude at least 1 whose digits and the dividend's scale
-are 18 or fewer, nor a CAST that widens. Anything else, an approximate
-number among it, a column of no known type, or more than 18 digits, can.
+are 38 or fewer, nor a CAST that widens. Anything else, an approximate
+number among it, a column of no known type, or more than 38 digits, can
+(D695).
 The enumeration's leaves (`physical/enumerate/extract.rs`) use the same
 judgement, so a conjunct of such arithmetic no longer holds a chain.
 
@@ -11524,6 +11543,69 @@ file log gives the end of its segment's blocks the group's sync made
 durable (`log/file/segments.rs`). A log syncing nothing, and the
 default, claim just past the record asked for.
 
+#### D470. A transaction's log records are held until its commit and written with its commit record in one write
+
+Each row change was its own append to the log (D25): a frame, a
+checksum, a reservation, a positional write and an in-order publish per
+change, so an order entry wrote the log thirty times, and its appenders
+waited on each other's publishes. A transaction now encodes each record
+as it changes a row and holds it in a buffer of its own; at its commit
+the records held and its commit record go to the log together
+(`Log::append_all`), which the file log writes as one run of blocks,
+each framed and checksummed as before, with one reservation, one write
+and one publish (`disk/block/batch.rs`). Readers, recovery, backups and
+replicas meet the same records at their own positions, and only those
+written: a transaction whose records are all still held is in no log,
+so a primary's failure loses it as recovery would, and a backup
+promoted has none of it to abort.
+
+The data file moves only at a checkpoint, and a checkpoint, with its
+gate shut, first writes every open transaction's held records, so the
+image never holds a change whose record follows it in the log; that
+write also notes the transaction's first record, from which recovery
+reads. A transaction holding more than 1 MiB writes it as a run of its
+own and holds on from there. A rollback whose records were all held
+writes nothing, and a statement, mark or savepoint undone while its
+records are held drops them; one whose first record was written logs
+the records from it undone, as before, by the position a write noted
+for it. Conflicting changes are ordered by their commits (D29), and so
+are their records. A definition a transaction logs apart from its
+records writes them first (`txn/pending.rs`).
+
+#### D471. A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it
+
+A shadow file's side file (D30) held each 4 KiB granule as its own
+block, so a page written back took two or more blocks, and every read
+of it from the side file read and checksummed each block apart, then
+the pager checksummed the page again. A write of whole granules now
+goes as one block, its run, written over in place while it stays one
+run; a granule written in part takes a block of its own.
+
+The writer knows where each granule's content lies in its side file,
+so a read takes it with one positional read and no checksum
+(`disk/block/trusted.rs`), as a read of the file's own bytes does: what
+it holds is checked where it is used, as a page by its own checksum
+over its body and number. Every block is still framed and checksummed
+as it is written, so as a file is opened a block torn or changed before
+a commit block is refused, and a side file cut short has no commit
+block and is thrown away. An overwrite takes the length it writes over
+from the writer, not from the file.
+
+#### D472. A page written back again is written over its side-file block with no lock held
+
+A shadow file's writes and reads of its side file took its lock, a
+write exclusively, so while one page was written back every read of
+the file's other pages from the side file or the file waited for it;
+under a buffer pool smaller than its tables that wait was the most
+common one of a statement. A write of a run whose granules are all
+still in its block now marks those granules in flight under the lock,
+then writes the block over with no lock held, and lands them. A read
+of a granule in flight waits for it, so it sees one write or the
+other, never a mix; any other change of the file, as a seal, a cut or a
+first write of a page, waits until none is in flight
+(`disk/shadow/flight.rs`). A writer in flight takes no lock of the
+file to land, so a waiter may hold it.
+
 ### Order entry execution
 
 #### D413. MIN or MAX of a column known not null is read from the first row in order
@@ -11801,6 +11883,66 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+#### D473. The maintenance job gathers a table's statistics only once a plan has read them since its last pass
+
+A table's statistics were gathered again whenever its changes passed
+their share of its rows (D31), spaced by D407, whether or not anything
+read them. Under an order entry workload every plan is a probe of a
+unique key kept from the start, so no plan reads them, yet the tables
+that churn were sampled again and again, and the pass took the cores
+the sessions run on. A table now notes when a planning reads its
+statistics, and the maintenance job gathers it only if one did since
+its last pass began, and the table is due and spaced as before. The
+read that makes statistics due wanted notes the table for the
+maintenance job, as a commit to it would, so a table changed enough and
+then read with no write after is gathered too. A table
+opened and asked for its first statistics is gathered as before, and
+ANALYZE and the maintenance asked to run now gather at once
+(`engine/rows/stats.rs`). A sampled pass of a table of the column store
+decodes the frozen rows of its sample alone, where it decoded every
+frozen row and kept the sampled (`engine/rows/frozen.rs`).
+
+#### D474. A page read into a frame takes the buffer of the page it replaces
+
+Each page a frame was given freed the buffer of the page it held and
+allocated another for the page read: two calls of the allocator per
+miss, each taking a lock of an arena the session threads share, and
+with many sessions missing at once they waited on each other there. A
+frame emptied now hands its buffer, cleared, to the page read into it,
+so a miss allocates nothing in the pool, and a page's body read from
+its file is the page read cut to its front, not a copy of it
+(`disk/pager/sealed.rs`). A buffer grown past `REUSED_BYTES`, as a page
+with an overflow grows it, is let go, so a frame keeps no more than a
+page's worth once that page leaves (`disk/buffer/pool.rs`).
+
+#### D475. An update's log record holds the row after whole and of the row before only the columns changed
+
+An update logged both of its row's images whole (D25), so an update of
+one column of a wide row wrote the row twice, and the log grew by as
+much as the row's two images for every such change. Its record now
+holds the row after whole and, of the row before, each column whose
+value's bytes differ, with its position. Read back, the row before is
+the row after with those columns put back, so redo, undo, recovery,
+backups and replicas meet both images whole as before. A column is
+changed if its bytes differ, so a value equal to another but written
+apart, as a decimal of another scale, is kept as it was. A row before
+of another width than the row after is written whole
+(`log/record/images.rs`).
+
+#### D476. A value on a zone's bound changed to one past it leaves the zone not stale
+
+A write staled its zone unless each value it replaced lay strictly
+inside the zone's bounds or was kept, so the maintenance thread summed
+the zone up again from every version of its rows (D31). A count, a
+running total or a next number grows at each write, and the row holding
+the greatest of a zone is the one most often written, so under an order
+entry workload nearly every zone of the tables written was summed up
+again each second, and the pass took a core of its own. A value on a
+bound changed to one past it now leaves the bound reached, by the row
+written, as the zone is widened to hold it, so the zone stays as narrow
+as its rows. A value on a bound changed back inside it, or deleted, or a
+null changed, stales the zone as before (`engine/rows/zones.rs`).
+
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
 The engine hashed with MurmurHash3, FNV-1a, SplitMix64's finalizer, the
@@ -12884,6 +13026,99 @@ The check is unchanged in what it keeps, and cheaper (`exec/entries.rs`,
 - The probe is copied only by a search whose range is not exact, the one
   case that checks entries against it. The key's types are shared by
   every search of the index.
+
+#### D695. Exact numbers hold 38 digits, and BIGINT, counts and a column of 18 or fewer keep 64 bits
+
+The precision of an exact numeric type is implementation-defined, its
+maximum too [ISO/IEC 9075-2:2023 §6.1 SR27a, IL043], and so is the
+precision of an arithmetic result [§6.30 SR1c, IV136]. It was 18 digits,
+which a 64-bit integer holds, while a value's units were already 128
+bits. TPC-H query 11 multiplies a sum of DECIMAL(15,2) by a constant of
+scale 10, a value of 19 digits, and it raised 22003. So
+`MAX_EXACT_PRECISION` is 38, the most digits 128 bits always hold, for a
+declared type, a literal and every result, and a result past it raises
+22003 as before. `NARROW_EXACT_PRECISION`, 18, is the storage's limit
+and the batch's (D698, D699). BIGINT stays NUMERIC(18,0), and the types
+of counts, lengths, positions, GROUPING and a sequence generator's
+default are BIGINT's, so their columns and vectors keep 64 bits.
+NUMERIC and DECIMAL of no precision stay 18 digits, and so does a JSON
+number held exact (`JSON_EXACT_DIGITS`, D84), past which it is DECFLOAT,
+as JSON's integers of 19 and 20 digits are identifiers more often than
+amounts.
+
+#### D696. The precision of an exact sum, difference or product is the digits its operands' types give, up to 38
+
+With every result of 38 digits, a column made of any expression by
+CREATE TABLE AS would be wide (D698) and kept in 128 bits. A sum or
+difference of `(p1, s1)` and `(p2, s2)` is now of max(p1 - s1, p2 - s2)
++ 1 digits before the point and max(s1, s2) after, a product of p1 + p2
+digits [§6.30 SR1c ii, iii], each up to 38 (`value::bound_of`, which
+the analysis of what can raise uses too, D373). A quotient's type keeps
+room for its integer digits (D697). SUM and AVG of exact numbers are of
+38 digits at their operand's scale [§10.9 SR7g ii], so a sum of a column
+of 18 digits does not raise, nor does a sum of quotients of INTEGER
+values, whose scale is at most 11, before its integer part has 27 digits. Two values of 38 digits can pass
+the 128 bits a running sum is kept in, the limit -900 (D15, D18). A type is a bound of its values, not their width, so the batch
+and the row paths look at values (D699), and a value past a narrower
+type's precision raises only when it is assigned to it.
+
+#### D697. A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units
+
+The standard leaves a quotient's precision and scale to the
+implementation [X3.135-1986 §5.9 SR4d, ISO/IEC 9075-2:2023 §6.30 SR1c
+iv]. A quotient that took every fractional digit 38 digits leave made
+1 / 3 a value of 38 digits, and a sum of a few hundred such passed 38
+digits, or the 128 bits a running sum is kept in, at a total near 170.
+
+So a quotient of `(p1, s1)` by `(p2, s2)` is typed with I = p1 - s1 + s2
+integer digits, the most a divisor of at least 10^-s2 gives, and scale
+max(6, s1 + p2 + 1), at most the 38 - I digits I leaves
+(`value::quotient_bound`). Its values follow the rule by themselves
+(`Decimal::checked_div`): scale max(6, s1 + d2 + 1, s2), d2 the divisor's
+digits, or less by as many digits as the integer part has past 38,
+truncated toward zero, its trailing zeros dropped down to max(s1, s2).
+1 / 3 is 0.333333, 7 / 2 is 3.5. A value's scale is at most its type's
+but where the type's is cut for its integer digits and the value has
+fewer. The leading digit is never lost [GR6b]: the scale is past both the
+dividend's scale and the divisor's digits. SUM and AVG of a quotient
+keep its scale and have the rest of 38 digits for the integer part.
+
+Its units at that scale, a × 10^(s + s2 - s1) / b, need more than 128
+bits on the way when a has many digits, so they are computed by long
+division of the magnitudes (`value/decimal/quotient.rs`), each step
+appending as many digits as the remainder times a power of ten holds,
+and one at a time by ten additions when the divisor is past a tenth of
+the range. A quotient whose integer digits leave fewer fractional ones
+is computed again at the scale they leave.
+Trailing zeros are stripped by powers of ten from 10^16 down, not one
+at a time.
+
+#### D698. A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values
+
+A record keeps an exact column's units at its scale in 8 bytes, the
+column store's encodings take them as integers, and a scan gathers them
+into a batch's integers (`storage::Ints`). A column of 19 to 38 digits
+is kept in 16 bytes, little-endian, and its key in 16 bytes, big-endian,
+its sign bit flipped, so keys order as values do
+(`value/types/exact.rs`). The file formats change in place. A column
+store chunk of such a column is of fixed fields, a dictionary or a
+constant, as any other of 16 bytes, and its values are read as values,
+not integers (`types::narrow_scale`), by a scan, a scan's judging and
+the row store's gathering. A column of 18 digits or fewer is kept and
+read as before.
+
+#### D699. A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128
+
+A batch's exact arithmetic (D362) stays in `i64`, its flag set by a
+result of more than 18 digits as well as by an overflow, and a batch
+whose flag is set is evaluated a row at a time, in 128 bits, which gives
+the wide result or raises. Most values fit 64 bits whatever their
+type's precision, as TPC-H's prices and quantities do, so the vector
+path is taken as before. A wide column's values reach the batch as
+values, and so do results past 18 digits, which the set functions add
+in 128 bits (D32). A path in 128 bits for whole vectors would double the
+width of every vector of integers, or add a second kind of them to
+every kernel, for values that are rare.
 
 #### D655. A table read's filter is estimated to keep at least a row of a read of one or more
 

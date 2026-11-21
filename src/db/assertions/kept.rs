@@ -44,7 +44,7 @@ use crate::storage::{Condition, Conjunct, Conjunction, Row};
 use crate::system::DEFINITION_SCHEMA;
 use crate::txn::{ReadMode, Txn};
 use crate::value::codec::put_value;
-use crate::value::{CharUnits, CompOp, DataType, Decimal, INTEGER_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, CharUnits, CompOp, DataType, Decimal, INTEGER_PRECISION, Spelled, Value};
 
 /// The columns of a table of kept totals, by place: the form, the change
 /// of the values counted, of the nulls, the sum's units and scale, and
@@ -68,7 +68,7 @@ pub(in crate::db) fn kept_name(assertion: &QualifiedName) -> QualifiedName {
 /// The description of a table of kept totals, `name`, of `generation`.
 pub(super) fn kept_desc(name: QualifiedName, generation: u32) -> TableDesc {
     let integer = DataType::Exact { precision: INTEGER_PRECISION, scale: 0, spelled: Spelled::Integer };
-    let count = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Decimal };
+    let count = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Decimal };
     let column = |named: &str, data_type| ColumnDesc {
         name: named.to_owned(),
         data_type,

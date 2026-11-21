@@ -817,11 +817,11 @@ SELECT A, B, KM FROM GRAPH_TABLE (ROADS
 ```
 
 ```
- A                    | B                    |                   KM
-----------------------+----------------------+----------------------
- Ankh                 | Sto Lat              |                   30
- Ankh                 | Sto Lat              |                   33
- Morpork              | Sto Lat              |                   28
+ A                    | B                    |                                       KM
+----------------------+----------------------+------------------------------------------
+ Ankh                 | Sto Lat              |                                       30
+ Ankh                 | Sto Lat              |                                       33
+ Morpork              | Sto Lat              |                                       28
 (3 rows)
 ```
 
