@@ -16,6 +16,7 @@
 
 mod access;
 mod analyzed;
+pub use crate::noted::NotesRead;
 pub use analyzed::{Analyzed, Counted, NodeCount, Operator};
 pub(crate) use analyzed::{counted, millis, operators};
 mod built;

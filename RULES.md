@@ -404,6 +404,9 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
+| D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
+| D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
+| D622 | EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read |
 
 ### The project
 
@@ -10402,8 +10405,7 @@ ANALYZE is no key word. It is read as this option only right after
 EXPLAIN and before a query's first token, and before a parenthesis only
 when the next token begins a query too, so a table named ANALYZE, or a
 table EXPLAIN whose correlation name ANALYZE lists its columns, is read
-as before. A data change statement is refused as EXPLAIN refuses one,
-so EXPLAIN ANALYZE changes nothing a query does not. A query that raises
+as before. A data change statement is run and counted as D622 says. A query that raises
 makes it raise the same exception (D15). It shows the physical plan
 alone, since the stages before it are EXPLAIN's and run nothing.
 `Session::explain_analyze` gives the same text and `Session::analyzed`
@@ -11442,6 +11444,63 @@ Rejected were positional delta trees (Héman, Zukowski, Nes, Sidirourgos
 and Boncz, SIGMOD 2010) and base and tail pages with lineage (Sadoghi
 et al., L-Store, 2018): both replace the tree, which already holds the
 row versions and their undo.
+
+#### D620. EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made
+
+Each counted operator has notes beside its rows (`noted.rs`). While a
+counted operator is opened and while each of its rows or batches is
+pulled, its notes are the thread's, put back as they were after, so
+work done below a pull is noted of the innermost operator pulled and an
+input's own pulls note theirs. What does the work takes the thread's
+notes once, as it is made, and adds to them as it works. A spill area
+made so is wrapped (`spill/noted.rs`): each table and run it makes is
+one partition, each record written to them adds its bytes, and each
+time it reads back after writing is a pass, so partitions written then
+read are one pass and each level of a merge another. A part run in
+parallel gives each worker the notes of the thread that started it
+(`exec/parallel/run.rs`), so the part's top operator notes what its
+workers spill. A statement not analyzed has no notes, so each thing made
+for it reads the thread's once and notes nothing, never a row at a time.
+The thread's notes are scoped to one pull and restored after it, as the
+thread's warnings are, so they are no global state (R-SAFE-2).
+EXPLAIN ANALYZE shows `spilled=N bytes, partitions=P, passes=Q` on the
+line of an operator that spilled, and nothing of one that did not.
+
+#### D621. EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks
+
+An operator run by batches notes each batch it gives, by its counted
+wrapper or by its step of a pipeline run in parallel, and EXPLAIN
+ANALYZE shows `batches=B, mean rows=M`, its rows over its batches
+rounded. One run a row at a time shows none. An index scan's reading
+(`exec/entries.rs`) counts each entry it takes, each row it fetches by
+an entry's row id, and each row whose condition it judges again of the
+row as the index could not decide it of the entry (D85), and notes them
+once, as it is dropped. A scan of a B-link tree notes each leaf it reads
+(`engine/tree/scan.rs`), an index's or the tree a table of the row
+store is kept in, so a scan of such a table shows its leaves too. Each
+shows as `entries=`, `leaf pages=`,
+`fetched=` and `rechecked=`, a count of none left out. An index nested
+loop's probes note alike, of the join.
+
+#### D622. EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read
+
+`EXPLAIN ANALYZE` takes a data change statement as well as a query,
+read so when INSERT, UPDATE or DELETE, or MERGE followed by INTO,
+follows ANALYZE. EXPLAIN alone still takes only a query, as it runs
+nothing. The statement runs for real, as it would run alone, in the
+session's transaction, so its changes stay until the transaction ends
+and a ROLLBACK undoes them. The session's `Stop`, which the statement
+reaches through its transaction, is told to want a counted plan
+(`txn/stop/changed.rs`). The first plan the statement makes of the
+rows it reads takes the want and is counted as a query's plan is
+(`db/explain/changed.rs`): an INSERT's query, an UPDATE's or DELETE's
+object rows (`exec/entries.rs` reads a counted access too), MERGE's
+joined rows. So a plan a trigger it fires makes after is not. The text
+heads the plan with a line naming the statement and its table with
+`actual rows changed=N`, and ends with the rows changed. A statement
+that makes no such plan, as an INSERT of VALUES, shows the head line
+alone. A statement that raises makes EXPLAIN ANALYZE raise the same,
+undone as any failed statement is.
 
 ## 2. Project layout
 

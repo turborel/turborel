@@ -81,7 +81,7 @@ mod structured;
 mod user_types;
 mod window;
 mod xml;
-pub(crate) use data_statements::{TRUNCATE, begins_word_statement, explained};
+pub(crate) use data_statements::{TRUNCATE, begins_change, begins_word_statement, explained};
 pub(crate) use {savepoints::SAVEPOINT, served::CANCEL};
 mod session;
 mod stored;

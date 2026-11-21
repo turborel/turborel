@@ -2,6 +2,7 @@
 
 mod altered_tables;
 mod analyze;
+mod analyze_more;
 mod batches;
 mod budget;
 // The count's, kept beside the other areas' files.
@@ -97,7 +98,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 42] {
+fn second() -> [&'static [Mutation]; 43] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -140,6 +141,7 @@ fn second() -> [&'static [Mutation]; 42] {
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
+        &analyze_more::ANALYZE_MORE,
         &statistics::STATISTICS,
     ]
 }

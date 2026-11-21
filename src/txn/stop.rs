@@ -21,8 +21,10 @@
 //! It holds the warnings the session's statements raise as they evaluate
 //! expressions, too (`error::Warnings`): what a statement reaches through
 //! its transaction, as it reaches the flag, wherever its rows are pulled;
-//! and what a server takes of them for its client (`stop/served.rs`).
+//! and what a server takes of them for its client (`stop/served.rs`); and
+//! the plan of a data change EXPLAIN ANALYZE runs (`stop/changed.rs`).
 
+mod changed;
 mod served;
 
 use std::collections::HashMap;
@@ -34,6 +36,7 @@ use super::TxId;
 use crate::error::{Code, Result, SqlError, Warnings};
 use crate::sync::lock_builtin;
 
+pub(crate) use changed::Changed;
 pub use served::{MAX_NOTES, Served};
 
 /// The flag a session's statements look at.
@@ -63,6 +66,8 @@ pub struct Stop {
     warnings: Warnings,
     /// What a server takes of its statements for its client.
     served: Served,
+    /// The plan of a data change EXPLAIN ANALYZE runs.
+    changed: Changed,
 }
 
 /// \[DESIGN\] Looks at a `Stop` as rows are read between two readings of
@@ -84,6 +89,7 @@ impl Default for Stop {
             epoch: Instant::now(),
             warnings: Warnings::default(),
             served: Served::default(),
+            changed: Changed::default(),
         }
     }
 }
@@ -139,6 +145,12 @@ impl Stop {
     /// completes.
     pub(crate) fn warnings(&self) -> &Warnings {
         &self.warnings
+    }
+
+    /// \[EXTENSION\] The plan of a data change EXPLAIN ANALYZE runs
+    /// (RULES.md D622).
+    pub(crate) fn changed(&self) -> &Changed {
+        &self.changed
     }
 
     /// Nanoseconds since `epoch`, never 0.

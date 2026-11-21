@@ -53,6 +53,7 @@ pub mod lexer;
 pub mod log;
 pub mod logical;
 pub mod memory;
+mod noted;
 pub mod optimizer;
 pub mod params;
 pub mod parser;

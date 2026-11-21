@@ -14,6 +14,7 @@ use super::stream::{Batches, filtered, pick, picked};
 use crate::db::State;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr};
+use crate::noted::Noted;
 use crate::physical::NodeCount;
 use crate::storage::Sel;
 use crate::txn::TxId;
@@ -65,6 +66,7 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&A
             Box::new(inner.inspect(move |kept| {
                 if let Ok((batch, rows)) = kept {
                     count.stepped(u64::try_from(rows.as_ref().map_or(batch.rows, Sel::len)).unwrap_or(u64::MAX));
+                    count.notes().add(Noted::Batches, 1);
                 }
             }))
         }

@@ -66,8 +66,9 @@ behind it, and each can be replaced or added to.
   queries of a hundred tables, on statistics of most common values, a
   sample of rows for correlated conditions and indexes' joint key counts.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
-  query and shows each operator's rows beside its estimate, and a program
-  may give the planner true row counts to test its plans.
+  query or a data change and shows each operator's rows beside its
+  estimate, its batches, spills and index reads, and a program may give
+  the planner true row counts to test its plans.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.

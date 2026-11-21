@@ -40,8 +40,9 @@
 //! to `late`, a column store's selective queries, the columns they keep
 //! few rows of read late, alone (`analytics/late.rs`), to `skipping`,
 //! a large column store table's filters, by what they skip, alone
-//! (`analytics/skipping.rs`), or to `sorts`, ORDER BY and top-N alone
-//! (`analytics/sorts.rs`).
+//! (`analytics/skipping.rs`), to `sorts`, ORDER BY and top-N alone
+//! (`analytics/sorts.rs`), or to `core`, the filters, groupings, joins and
+//! sorts of F and FC alone.
 
 #![allow(
     clippy::unwrap_used,
@@ -118,6 +119,12 @@ fn main() {
     let db = database();
     let s = db.session("B");
     let tables = [("F", "W", ""), ("FC", "WC", " (columnstore)")];
+    if only == "core" {
+        for (table, keyed, label) in tables {
+            measure(&bench, &s, (table, keyed, label));
+        }
+        return;
+    }
     if only == "distinct" || only == "expressions" {
         for (table, _, label) in tables {
             if only == "distinct" {

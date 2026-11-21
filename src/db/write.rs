@@ -414,7 +414,7 @@ fn query_rows((session, cx): (&Session, StatementContext<'_>), target: &Target, 
     for t in optimized.tables() {
         st.read_lock(tx, &t)?;
     }
-    for values in execute(physical, st, tx.id) {
+    for values in execute(super::explain::analyzing(tx, st, (physical, Some(&optimized))), st, tx.id) {
         rows.push(target.candidate(st, values?, &hosted)?)?;
     }
     Ok(rows)
@@ -444,11 +444,14 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
     for t in reads.into_iter().chain(bound.set_tables()) {
         st.read_lock(tx, &t)?;
     }
-    let physical = match (kept, logical) {
-        (Some((physical, _)), _) => physical,
-        (None, logical) => plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone())).2,
+    let (physical, optimized) = match (kept, logical) {
+        (Some((physical, _)), _) => (physical, None),
+        (None, logical) => {
+            let (optimized, _, physical) = plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone()));
+            (physical, Some(optimized))
+        }
     };
-    let entries = row_entries(physical, st, tx.id)?;
+    let entries = row_entries(super::explain::analyzing(tx, st, (physical, optimized.as_ref())), st, tx.id)?;
     Ok((Written { bound, set, rows: ObjectRows::Bound, values }, entries))
 }
 
