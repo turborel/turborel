@@ -250,7 +250,9 @@ fn fed_from(function: &dyn AggregateFunction, start: Option<&Value>, ints: &Ints
 #[test]
 fn set_functions_fed_by_kernels_total_as_each() {
     let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
-    let units: Vec<i64> = vec![7, i64::MIN, 3, i64::MAX, -12, 40, i64::MAX, 5];
+    // Within 18 digits summed, so a total wrong by a null's unit is not out of range alike.
+    let big = 92_233_720_368_547_758_i64;
+    let units: Vec<i64> = vec![7, -big, 3, big, -12, 40, big, 5];
     let some_null: Mask = vec![false, true, false, true, false, false, false, true].into();
     let starts = [None, Some(Value::Exact(Decimal::new(1_i128 << 126, 2))), Some(Value::Exact(Decimal::new(i128::MAX - 3, 2)))];
     for (start, nulls) in starts.iter().flat_map(|s| [(s, None), (s, Some(some_null.clone()))]) {
@@ -260,4 +262,15 @@ fn set_functions_fed_by_kernels_total_as_each() {
             assert_eq!(by_kernels, each, "{} from {start:?}", function.name());
         }
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D570 [ISO/IEC 9075:1992 §6.5 GR2b iv]: a
+/// SUM begun near the 128-bit bound adds integers whose total is small
+/// one by one, as the values are, so a partial sum past the bound raises
+/// as theirs does, not passed over by the kernels' total.
+#[test]
+fn a_sum_near_the_bound_overflows_as_each() {
+    let near = Value::Exact(Decimal::new(i128::MAX - 3, 2));
+    let ints = Ints::new(vec![10, -10], 2, None);
+    assert_eq!(fed_from(&Sum, Some(&near), &ints, true), fed_from(&Sum, Some(&near), &ints, false));
 }

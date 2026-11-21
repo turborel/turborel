@@ -118,3 +118,23 @@ fn texts_gathered(texts: &Texts, picks: &[Option<usize>]) -> Texts {
     }
     Texts::new(text, ends, null)
 }
+
+// Unit tests: integers gathered by the kernels as by options (RULES.md
+// R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::{Column, Ints, NO_ROW, Picks};
+    use crate::kernels::Portable;
+
+    /// Verifies: [DESIGN] RULES.md D570 integers gathered by row numbers on
+    /// the kernels are those gathered by options: a row's null kept, a
+    /// pick of no row null, a row past the end 0 and not null.
+    #[test]
+    fn integers_gathered_by_the_kernels_keep_their_nulls() {
+        let ints = Column::Ints(Ints::new(vec![4, 9, -2], 0, Some(vec![false, true, false].into())));
+        let rows = [2_u32, NO_ROW, 1, 0, 7];
+        let options = [Some(2), None, Some(1), Some(0), Some(7)];
+        let by_kernels = ints.gathered_by(&Picks::new(&rows), &Portable);
+        assert_eq!(format!("{:?}", by_kernels.values()), format!("{:?}", ints.gathered(&options).values()));
+    }
+}
