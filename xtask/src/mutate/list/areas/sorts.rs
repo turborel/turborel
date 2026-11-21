@@ -2,7 +2,8 @@
 //! a string's padding, a null's byte under DESC, the bytes after a string
 //! longer than its key, the place that keeps a sort stable, a digit a radix
 //! sort skips, the tree of losers' tie, the number of a run's own layout,
-//! and the peers a top-N passes over.
+//! the peers a top-N passes over, and a held sort's look for a cancel in
+//! each fetch.
 
 use super::super::{Mutation, Package};
 
@@ -11,7 +12,7 @@ const AS_COMPARATOR: &str = "exec::sort::normal::tests::normal_keys_sort_as_the_
 
 /// Mechanisms whose removal must fail the requirements of sorts by normal
 /// keys.
-pub const SORTS: [Mutation; 19] = [
+pub const SORTS: [Mutation; 20] = [
     Mutation {
         name: "sort-padding-zero",
         package: Package::Core,
@@ -201,5 +202,15 @@ pub const SORTS: [Mutation; 19] = [
         replacement: "let skip = shared(keys, width).saturating_add(1).min(width);",
         integration: &["normal_sorts::normal_sorts_give_what_rows_give"],
         unit: &["exec::sort::normal::tests::radix_sorts_as_a_stable_sort"],
+    },
+    Mutation {
+        name: "sort-window-unlooked",
+        package: Package::Core,
+        breaks: "a sort held in memory looks for a cancel at the first row of each fetch",
+        file: "src/exec/sort.rs",
+        original: "        let due = at.is_multiple_of(every.max(1)) || window != seen;",
+        replacement: "        let due = at.is_multiple_of(every.max(1));",
+        integration: &[],
+        unit: &["exec::sort::tests::a_held_sort_looks_at_the_first_row_of_each_window"],
     },
 ];
