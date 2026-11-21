@@ -3,12 +3,11 @@
 //! counted at once, so counting costs a batch what it costs a row on the
 //! row path (`exec/counted.rs`), and the batches noted (RULES.md D621).
 
-use std::sync::Arc;
-
 use super::late::Deferred;
 use super::stream::{self, Batches, Kept};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::broken;
 use crate::exec::counted::Tally;
 use crate::physical::{Counted, Plan};
@@ -21,7 +20,7 @@ use crate::txn::TxId;
 /// # Errors
 ///
 /// As its input's batches; SQLCODE -910 if it is not counted.
-pub(super) fn batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+pub(super) fn batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Counted(c) = plan else { return Err(broken("a counted operator is not one")) };
     Ok(through(*c, db, |input| Ok((stream::batches_with(input, (db, tx), deferred)?, ())))?.0)
 }

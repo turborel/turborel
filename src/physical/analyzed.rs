@@ -155,7 +155,15 @@ impl Plan {
 
     /// Whether it is an operator of a join.
     fn is_join(&self) -> bool {
-        matches!(self, Plan::Product { .. } | Plan::HashJoin { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::OuterJoin { .. })
+        matches!(
+            self,
+            Plan::Product { .. }
+                | Plan::HashJoin { .. }
+                | Plan::IndexJoin { .. }
+                | Plan::MergeJoin(_)
+                | Plan::RangeJoin(_)
+                | Plan::OuterJoin { .. }
+        )
     }
 
     /// The tables it reads itself, not through an input.
@@ -226,6 +234,7 @@ pub(crate) fn operators(plan: Plan, depth: usize, out: &mut Vec<Operator>) -> us
         | Plan::IndexJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Distinct { .. }

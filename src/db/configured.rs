@@ -42,6 +42,7 @@ impl State {
         tell(self.work.spill().configurable(), settings);
         tell(self.log.as_ref().and_then(|l| l.configurable()), settings);
         tell(self.clock.configurable(), settings);
+        tell(Some(&self.ran.statements), settings);
         // The settings of plug-ins' manifests, which their pools tell their
         // programs before their calls (RULES.md D282).
         let hosted = self.extension_host.hosted();

@@ -12,8 +12,6 @@ use super::super::{Mutation, Package};
 
 /// The test of every operator run in parallel against it alone.
 const SAME_ROWS: &str = "parallel::parallel_parts_give_the_rows_alone_gives";
-/// The test of hash joins built and probed by morsels.
-const JOINS: &str = "parallel::joins_build_and_probe_by_morsels";
 /// The test of the planner's choice.
 const PLANNER: &str = "parallel::the_planner_marks_only_large_parts";
 /// The test of index ranges split.
@@ -79,10 +77,10 @@ pub const PARALLEL: [Mutation; 13] = [
         name: "parallel-probe-reversed",
         package: Package::Core,
         breaks: "a probe of a table built by morsels gives a row's matches last built first",
-        file: "src/exec/parallel/probe.rs",
-        original: "        for r in rows {",
-        replacement: "        for r in rows.iter().rev() {",
-        integration: &[SAME_ROWS, JOINS],
+        file: "src/exec/batch/joined/shared.rs",
+        original: "            for p in self.table.candidates(h).filter(|_| !miss) {",
+        replacement: "            for p in self.table.candidates(h).filter(|_| !miss).collect::<Vec<usize>>().into_iter().rev() {",
+        integration: &["join_tables::matches_come_in_build_order_in_parallel"],
         unit: &[],
     },
     Mutation {

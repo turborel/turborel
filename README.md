@@ -42,6 +42,8 @@ behind it, and each can be replaced or added to.
 - One table of groups with typed keys and columns of set functions'
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
+- Hash joins probed a batch at a time in one tagged table, shared by
+  parallel morsels, telling the left's scan a range and Bloom filter.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
@@ -65,6 +67,8 @@ behind it, and each can be replaced or added to.
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables, on statistics of most common values, a
   sample of rows for correlated conditions and indexes' joint key counts.
+- [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
+  bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
   query or a data change and shows each operator's rows beside its
   estimate, its batches, spills and index reads, and a program may give
@@ -126,6 +130,9 @@ behind it, and each can be replaced or added to.
 - [Backups](doc/operator/10-backups.md), full and incremental, taken
   online by BACKUP DATABASE, verified and restored offline, and recovery
   to a point in time through an archive of the log, to pluggable targets.
+- [Monitoring](doc/operator/11-monitoring.md): each connection's running
+  statement and what it waits on, statistics of every statement run, and
+  each table's size and last change and each index's searches.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.

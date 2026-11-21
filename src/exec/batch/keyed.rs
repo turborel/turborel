@@ -7,12 +7,11 @@
 //! from the vectors (`put_key`), as grouping makes them, and make a row of
 //! the values only of a row they keep or write.
 
-use std::sync::Arc;
-
 use super::late::{Bound, Deferred, resolved};
 use super::stream;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::physical::Plan;
 use crate::spill::{put_norm, put_norm_approx, put_norm_exact, put_norm_text};
 use crate::storage::{Batch, Cell, Row};
@@ -100,7 +99,7 @@ impl Keyed {
 /// # Errors
 ///
 /// As `stream::open`.
-pub(in crate::exec) fn kept(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<stream::Batches> {
+pub(in crate::exec) fn kept(plan: Plan, db: &Db, tx: TxId) -> Result<stream::Batches> {
     Ok(stream::open(plan, db, tx)?.batches)
 }
 
@@ -113,12 +112,7 @@ pub(in crate::exec) fn kept(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<str
 /// # Errors
 ///
 /// As `stream::open`.
-pub(in crate::exec) fn topped(
-    plan: Plan,
-    (keys, late, bound): (&[usize], bool, Bound),
-    db: &Arc<State>,
-    tx: TxId,
-) -> Result<stream::Batches> {
+pub(in crate::exec) fn topped(plan: Plan, (keys, late, bound): (&[usize], bool, Bound), db: &Db, tx: TxId) -> Result<stream::Batches> {
     let width = if late { stream::layout(&plan, db).map_or(0, |l| l.1) } else { 0 };
     let batches = stream::batches_with(plan, (db, tx), &Deferred::all(width).topped(keys, bound))?;
     Ok(if late { batches } else { resolved(batches) })

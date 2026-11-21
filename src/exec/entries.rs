@@ -2,20 +2,20 @@
 //! searched UPDATE or DELETE [X3.135-1986 §8.12 GR1, §8.5 GR1], and the
 //! rows an updatable cursor may cover.
 
+use crate::exec::{Db, Opening};
 use std::sync::Arc;
 
 use super::held::HeldRows;
 use super::scan::{Found, probe_index};
 use super::{Runner, broken, eval_cond};
 use crate::catalog::{KeyShape, QualifiedName};
-use crate::db::State;
 use crate::error::Result;
 use crate::index::{Key, KeyProjection, Probe};
 use crate::logical::{Truth, pushed_conjuncts};
 use crate::noted::{self, Noted, Notes};
 use crate::physical::{Decided, Plan};
 use crate::storage::{Conjunction, Near, Row, RowId, TableStorage};
-use crate::txn::{TxId, checked};
+use crate::txn::{TxId, checked, counted};
 use crate::value::Value;
 
 /// What the fetches of one scan of an index share: the columns they read,
@@ -146,11 +146,16 @@ pub type Entries = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 /// `plan` is not a table access or names a table or index that does not
 /// exist (SQLCODE -910); reading the rows, as they are pulled, as
 /// `row_entries` says.
-pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
+pub fn table_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Result<Entries> {
+    entries_in(plan, &db.opening(), tx)
+}
+
+/// `table_entries`' work, in `db`.
+fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
     match plan {
-        Plan::Project { input, .. } => table_entries(*input, db, tx),
+        Plan::Project { input, .. } => entries_in(*input, db, tx),
         Plan::SeqScan { table, columns, .. } => {
-            Ok(Box::new(checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx))))
+            Ok(Box::new(counted(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx), |_| 1)))
         }
         Plan::IndexScan { table, index, probe, reverse, decided, .. } => index_entries((&table, &index, probe, reverse), decided, db, tx),
         Plan::Filter { cond, input, .. } => {
@@ -176,6 +181,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
@@ -202,12 +208,12 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
 /// # Errors
 ///
 /// As `table_entries`.
-fn told_entries(input: Plan, condition: &Conjunction, db: &Arc<State>, tx: TxId) -> Result<Entries> {
+fn told_entries(input: Plan, condition: &Conjunction, db: &Db, tx: TxId) -> Result<Entries> {
     if let Plan::Counted(c) = input {
         return super::counted::entries_through(*c, db, |scan| told_entries(scan, condition, db, tx));
     }
     let Plan::SeqScan { table, columns, .. } = &input else { return table_entries(input, db, tx) };
-    Ok(Box::new(checked(Arc::clone(db.storage_of(table)?).scan_where(tx, columns, condition), db.tx.stop_of(tx))))
+    Ok(Box::new(counted(Arc::clone(db.storage_of(table)?).scan_where(tx, columns, condition), db.tx.stop_of(tx), |_| 1)))
 }
 
 /// The rows, with their ids, the probe `probe` of index `index` of `table`
@@ -222,7 +228,7 @@ fn told_entries(input: Plan, condition: &Conjunction, db: &Arc<State>, tx: TxId)
 fn index_entries(
     (table, index, probe, reverse): (&QualifiedName, &str, Probe, bool),
     decided: Option<Box<Decided>>,
-    db: &Arc<State>,
+    db: &Db,
     tx: TxId,
 ) -> Result<Entries> {
     if let Probe::Xml(asked) = &probe
@@ -239,7 +245,7 @@ fn index_entries(
         judged.rechecked();
         Ok((eval_cond(&decided.cond, &row, &runner)? == Truth::True).then_some((id, row)))
     };
-    let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+    let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
         let fetched = entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key));
         fetched.and_then(|found| found.map_or(Ok(None), |row| judge(row, &mut reading))).transpose()
     });
@@ -257,9 +263,10 @@ fn index_entries(
 /// STATEMENT.TIMEOUT_MS (SQLCODE -920), `plan` is not a table access or names
 /// a table or index that does not exist (SQLCODE -910), or the rows cannot
 /// be spilled (SQLCODE -918 if the area cannot be reserved).
-pub fn row_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<HeldRows<(RowId, Row)>> {
+pub fn row_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Result<HeldRows<(RowId, Row)>> {
+    let db = db.opening();
     let mut held = HeldRows::new(db.list_space());
-    for entry in table_entries(plan, db, tx)? {
+    for entry in entries_in(plan, &db, tx)? {
         held.push(entry?)?;
     }
     Ok(held)

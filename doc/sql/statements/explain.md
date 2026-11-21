@@ -39,7 +39,11 @@ the FROM clause's order, as one estimated no cheaper by
 PLANNER.REORDER_GAIN does, has no note. Two tables equalities join only
 through a third, as `A.K = C.K AND B.K = C.K` do, may be joined first,
 by the key those imply, `A.K = B.K`, never by a product. A merge join shows as
-`MergeJoin`, or `LeftMergeJoin` of a LEFT join, with its key.
+`MergeJoin`, or `LeftMergeJoin` of a LEFT join, with its key. A range
+join shows as `RangeJoin`, or `LeftRangeJoin`, with its condition and
+what it searches by: the value its right operand is sorted on, the
+equalities that group those rows if any, and the one more comparison
+pruned by if any ([Query Expressions](../06-queries.md#how-joins-are-planned-extension)).
 
 A part of the physical plan run on several threads at once is headed
 `Parallel` with its degree, the most threads it takes, the statement's
@@ -564,6 +568,39 @@ OK
 --------------
             1
 (1 row)
+```
+
+A band join of PARTS and SALES, each part paired with the sales whose
+customer is within two of its key. The right operand, SALES, is sorted
+on its customer once, and each part searches it between its bounds:
+
+```sql
+EXPLAIN SELECT S.REGION, P.NAME FROM PARTS P, SALES S
+  WHERE S.CUSTOMER BETWEEN P.ID - 2 AND P.ID + 2;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project S.REGION, P.NAME
+   Filter S.CUSTOMER >= (P.ID - 2) AND S.CUSTOMER <= (P.ID + 2)
+     Product
+       Scan ANN.PARTS
+       Scan ANN.SALES
+ -- rules: none
+ -- optimized:
+ Project S.REGION, P.NAME
+   Filter S.CUSTOMER >= (P.ID - 2) AND S.CUSTOMER <= (P.ID + 2)
+     Product
+       Scan ANN.PARTS
+       Scan ANN.SALES
+ -- physical:
+ Project S.REGION, P.NAME
+   RangeJoin S.CUSTOMER >= (P.ID - 2) AND S.CUSTOMER <= (P.ID + 2)  (sorted on S.CUSTOMER)
+     SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
+     SeqScan ANN.SALES  (rows=4, cost=3.7)
+(18 rows)
 ```
 
 ## STANDARD
