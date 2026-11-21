@@ -18,7 +18,7 @@ use crate::engine::rows::{COLUMN_STORE, ROW_STORE, RowStore, TableOptions};
 use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::Xxh3Map;
 use crate::index::vector::hybrid::HybridMethod;
 use crate::index::{
     AdjacencyMethod, BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod,
@@ -101,9 +101,9 @@ pub struct State {
     pub(crate) system: SystemTables,
     /// Each table's storage, by its name, which is shared: a transaction
     /// the table joins holds it, so it copies no name (`State::join`).
-    pub(crate) storage: MurmurMap<Arc<QualifiedName>, Arc<dyn TableStorage>>,
+    pub(crate) storage: Xxh3Map<Arc<QualifiedName>, Arc<dyn TableStorage>>,
     /// Each table's lock, shared by every snapshot that knows the table.
-    pub(crate) locks: MurmurMap<QualifiedName, Arc<TableLock>>,
+    pub(crate) locks: Xxh3Map<QualifiedName, Arc<TableLock>>,
     pub(crate) indexes: HashMap<String, Arc<dyn Index>>,
     /// Indexes being built: kept up to date by every write, but not read
     /// until built (`Database::create_index`).

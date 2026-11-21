@@ -24,7 +24,7 @@ use std::thread::{self, ThreadId};
 use super::meta::Meta;
 use super::{KEY, RESERVE, RowTable, corrupt, meta_content};
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::{MurmurBuildHasher, MurmurMap};
+use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Map};
 use crate::storage::RowId;
 use crate::sync::{lock, lock_builtin};
 
@@ -45,16 +45,16 @@ struct Block {
 
 /// \[DESIGN\] The blocks of row ids the threads inserting into a table hold.
 pub(super) struct IdBlocks {
-    shards: Vec<Mutex<MurmurMap<ThreadId, Block>>>,
+    shards: Vec<Mutex<Xxh3Map<ThreadId, Block>>>,
 }
 
 impl IdBlocks {
     pub(super) fn new() -> IdBlocks {
-        IdBlocks { shards: (0..SHARDS).map(|_| Mutex::new(MurmurMap::default())).collect() }
+        IdBlocks { shards: (0..SHARDS).map(|_| Mutex::new(Xxh3Map::default())).collect() }
     }
 
-    fn shard(&self, thread: ThreadId) -> Option<&Mutex<MurmurMap<ThreadId, Block>>> {
-        usize::try_from(MurmurBuildHasher::default().hash_one(thread) % SHARDS).ok().and_then(|i| self.shards.get(i))
+    fn shard(&self, thread: ThreadId) -> Option<&Mutex<Xxh3Map<ThreadId, Block>>> {
+        usize::try_from(Xxh3BuildHasher::default().hash_one(thread) % SHARDS).ok().and_then(|i| self.shards.get(i))
     }
 
     /// The calling thread's next id; when its block is used up, `take`

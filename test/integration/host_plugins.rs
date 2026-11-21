@@ -26,7 +26,7 @@ use crate::plugins::fixture::{install, manifest};
 /// The host objects a call or two serves, as a manifest declares them.
 pub const SMALL: &str = "\
 HOST ENCODING XOR (ID = 9001, OVERHEAD = 1);
-HOST HASH FUNCTION FNV (ID = 9001, LENGTH = 8);
+HOST HASH FUNCTION XXH64 (ID = 9001, LENGTH = 8);
 HOST CLOCK SYSTEM (EVERY = 5);
 HOST KEYRING DERIVED;
 HOST SERVED CONNECTIONS NOTED;
@@ -83,7 +83,7 @@ fn a_host_plugins_objects_are_the_hosts_own() {
     let (_scratch, dir, spec) = hosted("host_small", SMALL);
     let db = started(&spec);
     db.set_setting("STORAGE.ENCODINGS", &Value::Char("XOR".into())).unwrap();
-    db.set_setting("STORAGE.CHECKSUM", &Value::Char("FNV".into())).unwrap();
+    db.set_setting("STORAGE.CHECKSUM", &Value::Char("XXH64".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
     let s = db.session("U");
     let year: i64 = rows(&s, "SELECT EXTRACT(YEAR FROM CURRENT_TIMESTAMP) FROM INFORMATION_SCHEMA.SCHEMATA FETCH FIRST 1 ROW ONLY")

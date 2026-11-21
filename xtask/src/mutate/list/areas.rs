@@ -28,10 +28,11 @@ mod rewrites;
 mod sorts;
 mod tpcc;
 mod txn_layer;
-// Unnesting's and UUID's mutations, here as `list.rs` holds no more
+// Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
 mod unnesting;
 mod uuid;
+mod xxhash;
 
 use super::Mutation;
 
@@ -183,7 +184,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     // server, the decode kernels', declared types', batches', late
     // materialization's and the table of groups' last, as `last` holds no
     // more.
-    let after: [&'static [Mutation]; 8] = [
+    let after: [&'static [Mutation]; 9] = [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
@@ -192,6 +193,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &batches::BATCHES,
         &late::LATE,
         &group_table::GROUP_TABLE,
+        &xxhash::XXHASH,
     ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }

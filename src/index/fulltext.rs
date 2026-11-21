@@ -62,7 +62,7 @@ use crate::fulltext::pattern::{CONTAINS, RANK};
 use crate::fulltext::rank::{Bm25, Ranking, Rankings, Statistics, built_in, named};
 use crate::fulltext::text::StopWords;
 use crate::fulltext::value::FULLTEXT;
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_64_with_seed;
 use crate::memory::{Host, MemoryBudget};
 use crate::spill::{Area, DEFAULT_SPILL_BATCH, WORK_FLOOR, WorkAreas};
 use crate::storage::{RowId, TableOption};
@@ -88,7 +88,7 @@ const ROW_LOCKS: u64 = 64;
 /// under its stripe's.
 const TERM_LOCKS: u64 = 64;
 /// The seed of a term's stripe's hash.
-const TERM_SEED: u32 = 0x5445_524D;
+const TERM_SEED: u64 = 0x5445_524D;
 
 /// The work areas of the database a method is attached to, shared with its
 /// indexes: where a document's places spill (RULES.md D38).
@@ -410,7 +410,7 @@ impl FullTextIndex {
     ///
     /// SQLCODE -916 if the stripe is missing, which it never is.
     fn term_lock(&self, term: &[u8]) -> Result<std::sync::MutexGuard<'_, ()>> {
-        let (hash, _) = murmur3_x64_128(term, TERM_SEED);
+        let hash = xxh3_64_with_seed(term, TERM_SEED);
         let stripe = usize::try_from(hash.checked_rem(TERM_LOCKS).unwrap_or_default()).unwrap_or_default();
         let lock = self.terms.get(stripe).ok_or_else(keys::corrupt)?;
         Ok(lock_builtin(lock))

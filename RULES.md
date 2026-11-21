@@ -397,6 +397,7 @@ verification approach DO-178C expects (§8).
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
+| D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 
 ### The project
 
@@ -2315,7 +2316,8 @@ no other.
 
 Below every engine, log and index sit portable file I/O, a block manager,
 a pager, a buffer pool with pluggable eviction, an encoding pipeline and
-pluggable hash functions (CRCs for checksums, MurmurHash3 for hash tables).
+pluggable hash functions (XXH3 for checksums and hash tables, the CRCs for
+checksums, D460).
 None knows what's above it, so each layer can be tested, fault-injected and
 benchmarked alone. We never use mmap, because it leaves write order to the
 operating system and breaks write-ahead logging. File formats are the same
@@ -3737,7 +3739,7 @@ A document is parsed as the query operators parse it, WITHOUT UNIQUE
 KEYS. A value of the JSON type gives its item already parsed.
 
 A document posts terms (`index/json/terms.rs`). Each is 16 bytes, the
-hash of a path and the hash of a value, both MurmurHash3. A path is the
+hash of a path and the hash of a value, both XXH3-64. A path is the
 chain of member names from the root, array steps dropped, so `$.a[3].b`
 and `$.a.b` are one path. Every node posts its path with no value, and
 every scalar posts its path with its canonical value. Numbers are
@@ -5246,7 +5248,7 @@ An index is given a row's value whole, but may not be able to read it as
 it takes its entries back: garbage collection frees a version's large
 objects before its entries, and recovery and a spilled undo name an
 object by its id (D79). So each (value, row) pair held is marked by the
-value's identity: of a value its row holds, its octets' MurmurHash3, the
+value's identity: of a value its row holds, its octets' XXH3-128, the
 octets there to derive its entries again; of one held as a large object,
 the object's id, never given twice, under which the index keeps the
 entries it made, by row, and takes them back, or adds them again, with no
@@ -7441,7 +7443,7 @@ a key's types and a bound, tells whether two siblings' bounds overlap
 and whether a bound holds a key, routes a key among siblings, and judges
 whether a bound may hold a row meeting a read's restrictions. The
 framework keeps the DEFAULT partition, which no strategy sees. HASH
-hashes a key's parts by their normalized bytes with MurmurHash3 x64 128
+hashes a key's parts by their normalized bytes with XXH3-64
 and a fixed seed, the same on any machine, so a row's partition never
 depends on where it was written. A HASH bound's modulus divides or is
 divided by each sibling's, so the remainders of a tree cover each hash
@@ -7601,7 +7603,7 @@ client of the server, all through one path (`db/backup/take.rs`). It
 checkpoints, then exports the checkpoint's files while holding the
 checkpoint turn shared, so no later checkpoint frees a page it copies,
 while readers and writers go on. Each file is read in chunks of 64 KiB,
-each with its MurmurHash3 digest in the manifest. The checkpoint's image
+each with its XXH3-128 digest in the manifest. The checkpoint's image
 follows, and then the log's records from the image's recovery start to
 the log's end as the copy finishes, made durable first. The backup holds
 every transaction those records commit, and recovery from it is
@@ -9718,7 +9720,7 @@ rows a comparison with a constant is true of, of bits set, of a
 dictionary's codes kept, an exact sum, the extremes, a gather, the
 unpacking of a frame of reference's bit-packed values (D352). Each has a
 portable body, branch-free where a branch would be mispredicted, which is
-what a database runs unless it is given others (`Database::set_kernels`).
+what a database runs unless it is given others (`Database::register_kernels`).
 A crate of kernels for one processor's instructions implements the same
 trait and passes the same contract (`support/src/kernels.rs`), so the
 core keeps no unsafe code and no code of one system.
@@ -11174,6 +11176,63 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+#### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
+
+The engine hashed with MurmurHash3, FNV-1a, SplitMix64's finalizer, the
+standard library's SipHash and a few mixes of its own, each chosen where
+it was written. It now hashes with xxHash (`hash/xxhash.rs`), Yann
+Collet's XXH64, XXH3-64 and XXH3-128 ported from the reference C, with
+their seeds, custom secrets and streaming states. Each gives the
+reference's value for every input, seed and secret: the published
+sanity vectors are the module's test, and a differential test against
+the C library, kept outside the repository, checked every length to 4
+KiB and inputs to 16 MiB, at every alignment and every split of a
+stream. A digest is xxHash's canonical form, big-endian (D30), as the
+ids 14, XXH3-64, and 15, XXH3-128, name it in file formats.
+
+The port keeps xxHash's BSD 2-Clause notice in its files, and a binary
+distribution reproduces it in its documentation; the license sits within
+the project's own.
+
+Hash tables, Bloom filters, partitions, sketches, samplers, the buffer
+pool's shards and every digest of a table or a package hash by XXH3. A
+key of one or two words hashes by XXH3's own short-input path of 8 or 16
+bytes (`Words`), a few multiplications, never a mix of the engine's own. The engine's hash maps hash by `Xxh3Hasher`, XXH3-64 of the
+bytes a key writes. A table of groups still falls back to SipHash keyed
+by the database's seed when a probe runs long (D357): xxHash's
+specification says it does not resist keys chosen to collide, and a
+seed does not change that. R-SAFE-6 holds every new hash to this
+choice.
+
+XXH3-64 checksums every block, page, log segment and spill page by
+default (STORAGE.CHECKSUM), in place of CRC-32/ISCSI: XXH3 hashes a page
+several times as fast as the CRCs' slicing-by-16, which the core,
+without unsafe code, cannot run on the processor's CRC instructions. Its
+digest is 8 bytes, so a page's body is 4 bytes shorter and an index
+key's limit 1 byte. The CRCs remain built in for files that name them.
+The side files' framing is as it was.
+
+The loops of an input past 240 bytes, accumulate and scramble, are
+`Kernels` methods (`xxh3_accumulate`, `xxh3_scramble`) whose portable
+bodies are the core's. The crate `turborel-simd` (`simd/`), outside the
+core as D3 asks and depending on nothing but it, gives them on SSE2,
+AVX2, AVX-512 and NEON, a module for each level (`x86/`, `aarch64/`),
+each held to the portable bodies bit for bit by the kernels' contract.
+A `Simd` is made only of a level the processor has (`detect`,
+`with_level`), which every unsafe call of a `#[target_feature]` function
+rests on, a SAFETY comment on each block. It is the only crate that
+writes unsafe code, its own lints allowing it and denying an unsafe
+operation outside a block and a block without its comment.
+
+A database takes one registered set of kernels
+(`Database::register_kernels`, `db/kernels.rs`), before it opens its
+tables, as it takes an encoding; a second is refused (SQLCODE -910).
+`turboreld` registers `Simd::detect()`. EXECUTOR.KERNELS = 'PORTABLE'
+runs a session's statements on the portable bodies, to diagnose the
+registered set, which each statement chooses as it begins. Kernels are
+a built-in registration only: a call a batch across a process boundary
+would cost more than the kernel saves, so no out-of-process plug-in is
+one.
 
 ## 2. Project layout
 
@@ -11308,11 +11367,12 @@ under a target's directory is a module of that target.
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-SAFE-1 | No `unsafe` code. | `unsafe_code = "forbid"` |
+| R-SAFE-1 | No `unsafe` code, but in the crate `turborel-simd` (D460), where each block **shall** follow a check of the processor's features and carry a SAFETY comment. | `unsafe_code = "forbid"`; `undocumented_unsafe_blocks` in `simd/` |
 | R-SAFE-2 | No `mem::forget`, `process::exit` or global mutable state. | `mem_forget`, `exit`; review |
 | R-SAFE-3 | `dyn Trait` **shall** appear only at the extension points listed atop `src/db.rs`, the traits they hand out, the storage foundation's traits (D30), and row streams, and at a boundary that keeps a proof of `Send` or `Sync` within the compiler's default recursion limit, marked `[DESIGN]`. Each extension trait **shall** document its contract; every built-in implementation **shall** pass the same contract tests. | review; tests |
 | R-SAFE-4 | Each dependency **shall** have a §1 decision covering rationale, version, license and review; only cryptography and compression plug-ins, the server crate and the command-line client may have any (D3, D26, D42, D46, D48). | review |
 | R-SAFE-5 | No thread **shall** be started except through the thread manager (`src/threads.rs`, D55), and none unnamed. | xtask; review |
+| R-SAFE-6 | Every hash table, filter, partitioner, sketch, sampler and digest **shall** hash by XXH3 or XXH64 (`src/hash/xxhash.rs`), a checksum by them or the CRC family, and an attacker's keys by SipHash where D357 falls back to it; none by an identity, a bare multiply, FNV or a mix of its own (D460). | review only: clippy cannot tell a hash from arithmetic |
 
 ---
 

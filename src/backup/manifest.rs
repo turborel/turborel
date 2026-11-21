@@ -21,28 +21,23 @@
 use super::BackupKind;
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_128_with_seed;
 use crate::log::Lsn;
 
 /// \[EXTENSION\] The format of a manifest this code writes and reads.
 pub const MANIFEST_FORMAT: u8 = 1;
 
-/// \[EXTENSION\] The bytes of a chunk's digest: MurmurHash3 x64 128, so two
+/// \[EXTENSION\] The bytes of a chunk's digest: XXH3-128 (`hash/xxhash.rs`), so two
 /// different chunks share one by accident with odds of 2^-128 (RULES.md
 /// D162).
 pub const CHUNK_DIGEST: usize = 16;
 
 /// \[EXTENSION\] The seed of the chunks' digests: none.
-const SEED: u32 = 0;
+const SEED: u64 = 0;
 
 /// The digest of chunk `bytes`.
 pub fn chunk_digest(bytes: &[u8]) -> [u8; CHUNK_DIGEST] {
-    let (high, low) = murmur3_x64_128(bytes, SEED);
-    let mut out = [0; CHUNK_DIGEST];
-    for (into, byte) in out.iter_mut().zip(high.to_le_bytes().into_iter().chain(low.to_le_bytes())) {
-        *into = byte;
-    }
-    out
+    xxh3_128_with_seed(bytes, SEED).to_be_bytes()
 }
 
 /// \[EXTENSION\] A chunk of a file, as a manifest lists it.

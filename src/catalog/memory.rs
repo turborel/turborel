@@ -8,7 +8,7 @@ use super::{
     OrderingDesc, Partitioning, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc,
     TableDesc, TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
 };
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::Xxh3Map;
 use crate::value::DataType;
 
 /// \[DESIGN\] The built-in catalog, held in memory; `Database::new` uses it.
@@ -16,7 +16,7 @@ use crate::value::DataType;
 pub struct MemoryCatalog {
     /// Each schema's name, and its owner, in the order created.
     schemas: Vec<(String, String)>,
-    tables: MurmurMap<QualifiedName, TableDesc>,
+    tables: Xxh3Map<QualifiedName, TableDesc>,
     /// Its tables' names in the order `tables` lists them: sorted once, as
     /// first asked, and again after a table is added or removed
     /// (RULES.md D405).
