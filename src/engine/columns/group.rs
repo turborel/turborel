@@ -7,7 +7,9 @@
 //! it holds, its least and greatest values and its nulls, so a scan reads
 //! only the chunks a condition may match (zone maps), and of the columns
 //! COLUMNSTORE.BLOOM names a Bloom filter of each part of it (`bloom.rs`),
-//! on pages of their own too. A group is written
+//! and of each column of exact numbers, datetimes or character strings
+//! the imprints of each part, unless COLUMNSTORE.IMPRINTS is OFF
+//! (`imprints.rs`), on pages of their own too. A group is written
 //! once and never changed: a change of one of its rows is the delta's.
 //!
 //! Its row ids are its least and greatest if every id between is its, in
@@ -25,7 +27,9 @@
 //!          run | nulls u32 | bounds u8 (1 if any) | least | greatest |
 //!          parts u32 | each, of PART_ROWS rows: nulls u32 | bounds u8 |
 //!          least | greatest | filter u8 (1 if any) | page u64 | at u32 |
-//!          bytes u32
+//!          bytes u32 | imprints u8 (1 if any) | page u64 | at u32 |
+//!          bytes u32;
+//!          then of each column: edges u32 | each: bound
 //! run:     first row u32 | rows u32 | page u64 | at u32 | len u32 (0
 //!          for the whole page)
 //! bound:   length u32 | the value as its type writes it in a record
@@ -46,7 +50,7 @@ pub use header::{put_summary, read, read_summaries};
 use ids::{write_by_id, write_ids};
 pub use summary::{Overall, Summary};
 
-use super::{Chunk, Fields, bloom};
+use super::{Chunk, Fields, bloom, imprints};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
@@ -103,6 +107,9 @@ pub struct Pages<'a, S> {
     pub compress: bool,
     /// Whether groups are written in the hybrid layout (`Group::pax`).
     pub pax: bool,
+    /// Whether groups are written with imprints of the columns that take
+    /// them (`columns/imprints.rs`).
+    pub imprints: bool,
 }
 
 impl<S: Seal> Pages<'_, S> {
@@ -207,6 +214,9 @@ pub struct Part {
     pub bounds: Option<(Value, Value)>,
     /// Where their Bloom filter is, if their column has them.
     pub filter: Option<Filter>,
+    /// Where their imprints are, if their column has them
+    /// (`columns/imprints.rs`).
+    pub imprint: Option<Filter>,
 }
 
 /// Where a part's Bloom filter is: `len` bytes from `at` of page `page`.
@@ -244,6 +254,9 @@ pub struct Group {
     /// said as it was written: a page a range of its rows, a chunk of each
     /// column on it (`write_pax`).
     pub pax: bool,
+    /// Of each column, the edges of its imprints' bins, none if it has no
+    /// imprints (`columns/imprints.rs`).
+    pub edges: Vec<Vec<Value>>,
     /// The pages of its header.
     pub header: Vec<PageId>,
 }
@@ -307,7 +320,7 @@ pub(super) fn zone_of(values: &[Value], run: Run) -> Zone {
         .chunks(usize::try_from(PART_ROWS).unwrap_or(usize::MAX))
         .map(|part| {
             let (part_bounds, part_nulls) = bounds_of(part);
-            Part { nulls: part_nulls, bounds: part_bounds, filter: None }
+            Part { nulls: part_nulls, bounds: part_bounds, filter: None, imprint: None }
         })
         .collect();
     Zone { run, nulls, bounds, parts }
@@ -370,7 +383,7 @@ impl Group {
         };
         let id_runs = write_ids(pages, ids, written)?;
         let by_id = write_by_id(pages, ids, written)?;
-        let columns = if pages.pax {
+        let mut columns = if pages.pax {
             pax::write_pax(pages, types, (rows, bloom), written)?
         } else {
             types
@@ -379,6 +392,7 @@ impl Group {
                 .map(|(c, t)| write_column(pages, t, (rows, c, bloom.contains(&c)), written))
                 .collect::<Result<Vec<_>>>()?
         };
+        let edges = imprints::put_all(pages, (types, rows), &mut columns, written)?;
         let mut group = Group {
             first,
             last,
@@ -388,6 +402,7 @@ impl Group {
             columns,
             order: order.to_vec(),
             pax: pages.pax,
+            edges,
             header: Vec::new(),
         };
         group.header = put_chain(pages, &header::encode(&group, types)?, written)?;
@@ -399,7 +414,8 @@ impl Group {
     pub fn pages(&self) -> Vec<PageId> {
         let chunks = self.columns.iter().flatten().map(|z| z.run.page);
         let ids = self.ids.iter().chain(&self.by_id).map(|r| r.page);
-        let filters = self.columns.iter().flatten().flat_map(|z| &z.parts).filter_map(|p| p.filter.map(|f| f.page));
+        let parts = self.columns.iter().flatten().flat_map(|z| &z.parts);
+        let filters = parts.flat_map(|p| p.filter.into_iter().chain(p.imprint)).map(|f| f.page);
         let mut all: Vec<PageId> = ids.chain(chunks).chain(filters).chain(self.header.iter().copied()).collect();
         all.sort_unstable_by_key(|p| p.0);
         all.dedup();
