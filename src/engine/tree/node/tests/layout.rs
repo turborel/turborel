@@ -114,7 +114,7 @@ fn a_node_names_its_tree() {
     let content = leaf(None, None, &[(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]);
     assert_eq!(Node::parse(&content).unwrap().tree, TREE);
     let node = Node::parse(&content).unwrap();
-    let halves = split(&node.shape(), &node.entries().unwrap(), None, PageId(4)).unwrap();
+    let halves = split(&node.shape(), &node.entries().unwrap(), None, (PageId(4), usize::MAX)).unwrap();
     assert_eq!((Node::parse(&halves.left).unwrap().tree, Node::parse(&halves.right).unwrap().tree), (TREE, TREE));
     assert_eq!(Node::parse(&compact(&content).unwrap()).unwrap().tree, TREE);
     let gone = deleted(PageId(4), TREE).unwrap();

@@ -42,7 +42,7 @@ pub use ahead::{Ahead, AheadReader};
 pub use eviction::{Clock, Eviction};
 pub use policy::{DEFAULT_SAMPLE, EVICTED_KEPT, NEUTRAL, Policy, RANGES, Range, Report, Sampled, Table, Weighted};
 pub use policy::{EvictionSlot, MakeEviction};
-pub use pool::READ_AHEAD_PAGES;
+pub use pool::{Capture, READ_AHEAD_PAGES};
 pub use tally::Tally;
 
 use super::block::BlockFile;
@@ -172,6 +172,9 @@ struct Frame {
     /// Whether it is on the pool's list of frames made dirty
     /// (`pool/dirty.rs`), so it is put there once until a flush takes it.
     listed: AtomicBool,
+    /// Whether a checkpoint's capture owes its page as it is: changed
+    /// only under its latch (`pool/capture.rs`).
+    owed: AtomicBool,
     /// Set while the frame is filled or emptied: wait, then check it holds
     /// the page wanted. Read without a lock on every hit.
     loading: AtomicBool,
@@ -190,6 +193,7 @@ impl Frame {
             pins: AtomicUsize::new(0),
             dirty: AtomicBool::new(false),
             listed: AtomicBool::new(false),
+            owed: AtomicBool::new(false),
             loading: AtomicBool::new(false),
             waiting: Mutex::new(()),
             changed: Signal::default(),
@@ -251,6 +255,8 @@ pub struct BufferPool {
     /// The frames made dirty since a flush took them, so a flush visits
     /// those, never every frame (`pool/dirty.rs`).
     dirtied: pool::Dirtied,
+    /// The checkpoint's capture under way, if one is (`pool/capture.rs`).
+    owed: pool::Owed,
     /// Its share of the database's memory budget, if it was made in one,
     /// held while it lives and given back as it is dropped.
     reservation: Option<Reservation>,

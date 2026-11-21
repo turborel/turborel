@@ -56,6 +56,15 @@ fn prefix_of(entries: &[(KeyRef<'_>, &[u8])]) -> usize {
     first.common_with(last)
 }
 
+/// The bytes a node of `entries` and a high key `high` bytes long takes,
+/// built with its own prefix (`prefix_of`).
+pub(super) fn built_size(high: usize, entries: &[(KeyRef<'_>, &[u8])]) -> usize {
+    let prefix = prefix_of(entries);
+    entries.iter().fold(HEADER.saturating_add(high).saturating_add(prefix), |n, (k, v)| {
+        n.saturating_add(super::entry_size(&[], v)).saturating_add(k.len().saturating_sub(prefix))
+    })
+}
+
 /// As `build`, of keys as they lie in other nodes, entry `last` marked as
 /// the one inserted last, keeping the first `prefix` bytes its keys share
 /// if given, else its own (`prefix_of`).

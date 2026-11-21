@@ -2,31 +2,31 @@
 //! files, holding pages, filling frames on a miss, evicting, writing back
 //! and syncing.
 //!
-//! The page table is sharded by page. A frame is pinned under the shard of
-//! the page it holds, locked shared, so threads reading one page (a tree's
-//! root) pin it at once; and claimed for another page under the shards of
-//! both, locked exclusively in shard order, after checking it is still
-//! unpinned, and latching it exclusively without waiting, as a read that
-//! hit by its hint holds its latch but no pin (`hits.rs`; how a claim
-//! treats frames held, `claim.rs`); then it is marked loading, and the old
-//! page's content is written back and the new one read with no lock held.
-//! A dirty old page stays mapped to the frame until it is written back, so
-//! a thread wanting it waits for the frame rather than reading the file's
-//! older copy. A thread that waited for a frame checks that it holds the
-//! page it wanted, and tries again if not, so a load or a write-back that
-//! fails need only put the frame back as it was.
+//! The page table is sharded by page. A frame is pinned under the shard of the page it holds,
+//! locked shared, so threads reading one page (a tree's root) pin it at once; and claimed for
+//! another page under the shards of both, locked exclusively in shard order, after checking it
+//! is still unpinned, and latching it exclusively without waiting, as a read that hit by its
+//! hint holds its latch but no pin (`hits.rs`; how a claim treats frames held, `claim.rs`);
+//! then it is marked loading, and the old page's content is written back and the new one read
+//! with no lock held. A dirty old page stays mapped to the frame until it is written back, so a
+//! thread wanting it waits for the frame rather than reading the file's older copy. A thread
+//! that waited for a frame checks that it holds the page it wanted, and tries again if not, so
+//! a load or a write-back that fails need only put the frame back as it was.
 
 use std::mem;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
 mod ahead;
+mod capture;
 mod claim;
 mod dirty;
 mod passing;
 
 pub(super) use ahead::Queued;
 pub use ahead::READ_AHEAD_PAGES;
+pub use capture::Capture;
+pub(super) use capture::Owed;
 pub(super) use dirty::Dirtied;
 
 use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
@@ -81,11 +81,13 @@ enum Fill {
 const SHARD_SHIFT: u32 = 56;
 
 /// A frame claimed for a page: its index, and the page it held, if that
-/// page was dirty and must be written back.
+/// page was dirty and must be written back, or owed to a checkpoint's
+/// capture (`capture.rs`), and which.
 #[derive(Clone, Copy)]
 struct Claim {
     frame: usize,
     write_back: Option<Key>,
+    owed: bool,
 }
 
 impl BufferPool {
@@ -110,6 +112,7 @@ impl BufferPool {
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
             queued: Queued::default(),
             dirtied: Dirtied::default(),
+            owed: Owed::default(),
             reservation: None,
         })
     }
@@ -315,13 +318,6 @@ impl BufferPool {
         }
     }
 
-    fn held_for_writing<'a>(&self, frame: &'a Frame) -> PageMut<'a> {
-        let pin = Pin(frame);
-        let content = frame.content.write().unwrap_or_else(PoisonError::into_inner);
-        self.dirty_latched(frame);
-        PageMut { content, _pin: pin }
-    }
-
     /// Frees page `id` of pager file `file`: in the pool, and in its file.
     ///
     /// # Errors
@@ -382,6 +378,9 @@ impl BufferPool {
                 }
                 return Err(held());
             };
+            if frame.owed.load(Ordering::Acquire) {
+                self.owed_copy(frame, &content);
+            }
             map.remove(&key);
             frame.set_key(None);
             frame.dirty.store(false, Ordering::Release);
@@ -487,7 +486,8 @@ impl BufferPool {
         let frame = self.frame(claim.frame)?;
         let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
         if let Some(old) = claim.write_back {
-            if let Err(e) = self.write_back(old, &old_content) {
+            let written = if claim.owed { self.owed_now(old, &old_content) } else { self.write_back(old, &old_content) };
+            if let Err(e) = written {
                 self.restore(claim.frame, key, old, old_content);
                 return Err(e);
             }

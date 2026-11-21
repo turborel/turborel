@@ -444,6 +444,8 @@ verification approach DO-178C expects (§8).
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
+| D590 | A checkpoint captures its pages copy on write, writers held only while it notes them |
+| D591 | A page read or written shares no lock or counter with every other I/O of its file |
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
 | D601 | A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
@@ -2047,7 +2049,9 @@ since.
 
 A checkpoint writes every engine's state as of a log position, so the log
 can be truncated behind it. The row store's file is shadowed, so a crash
-leaves it as the last checkpoint did. Recovery reopens the tables, then
+leaves it as the last checkpoint did. Writers wait only while a
+checkpoint notes the pages changed, which it captures copy on write as
+they go on (D590). Recovery reopens the tables, then
 redoes and undoes from the log by the database's one replay (D57).
 Checkpoints fall due after CHECKPOINT.AFTER_CHANGES row changes. The log
 is kept from the last checkpoint or the oldest open transaction's first
@@ -11886,6 +11890,83 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+#### D590. A checkpoint captures its pages copy on write, writers held only while it notes them
+
+A checkpoint shut the gate, so no writer ran, while the row store copied,
+encoded and checksummed every dirty page into memory, then sealed it as
+the batch to commit: a pause of every writer as long as that work, which
+grew with the pool and came more often as throughput rose. The shut
+keeps its meaning, a point with no change half done, but now does only
+work in proportion to the frames. It marks each dirty page owed to the
+checkpoint and clean, writes the few that cannot be captured later and
+the pager's free list into the batch held, and seals it
+(`BufferPool::capture`, `ShadowFileSystem::seal_capturing`).
+
+Writers then go on, and each page owed is taken once, as it was at the
+shut, by whoever reaches it first. A writer latching it for writing
+copies it first, under the latch it takes anyway; a free copies it too;
+an eviction captures it, the page kept mapped meanwhile as a dirty one
+is while written back, which a reader's miss may do during the shut,
+so the capture is set up before the first page is owed; and the
+checkpoint walks the pages owed and
+captures each still owed under its read latch, then each copy
+(`disk/buffer/pool/capture.rs`). A capture is written into the sealed
+batch, held in memory, newer than its blocks and older than anything
+written since, so a read finds it only where nothing newer was written
+(`DiskFile::write_captured_at`). A capture changes nothing a write in
+flight writes over or a read waits for (D472), so it waits for none, and
+holds the file's lock only to put granules copied before it took it.
+The walk waits for evictions capturing
+before the batch is committed. This is the two versions of Ren et al.
+2016's CALC at the grain of a page, where the frame's latch gives the
+exclusion; memory is bounded by the pages written during one walk.
+
+A page is owed only if capturing it needs no other page: its content
+fits in it, and it is known to have no overflow pages, as every page
+allocated is (`disk/pager/captured.rs`). A capture then allocates and
+frees nothing, so the free list recorded at the shut stays true of the
+image whatever writers allocate and free meanwhile, and the pager's
+knowledge of a page's overflow, which is of the page as written since,
+is left alone. It encodes through the pipeline of the shut, so a page
+that fit then fits. A page past the file's end, allocated and not yet
+written, is covered by growing the file before the seal.
+
+A capture that fails leaves the batch lacking a page. It is never
+committed, and no checkpoint is taken until the database is opened
+again and recovered from its last checkpoint and its log. Meanwhile the
+pool loses nothing, as a page whose capture failed is dirty again and
+the batch is still read. A capture given up before its seal leaves
+every page owed dirty again. A
+checkpoint that fails after its seal and before its walk, as when its
+log cannot be synced, has its walk ended and its batch committed by the
+next, before that one holds anything, so at most one batch is sealed.
+
+#### D591. A page read or written shares no lock or counter with every other I/O of its file
+
+Two things every page read did wrote a cache line every other thread's
+reads wrote too. The pager checked that the page was allocated under the
+free list's lock, and the file manager stamped the file's last use from
+one counter shared by every file. Under many threads these lines moved
+from core to core on each read.
+
+The pager now keeps a bit for each page in use, set as pages are
+allocated and cleared as they are freed, under the free list's lock so
+it says what the list says, and a read or write checks the bit with no
+lock (`disk/pager/in_use.rs`). The bits are in chunks that double in
+size, made as their first page is allocated, so a file of any size has a
+few. A page the list takes for its own record is in use; a free run set
+aside while the file is cut stays free, as it is. The file manager
+stamps a use by the monotonic clock, each thread's stamps rising, with
+no write any other file shares; the least recently used file is still
+the one closed first, a tie going to the file opened first. The count was
+not split into stripes by thread, summed when read, as the hits of the
+pool are (`disk/buffer/hits.rs`): a sum orders nothing, and a stripe's
+count says only how often its threads used files, not which file one
+used last, so eviction would lose its order. The pager also cuts the
+page it read to its body in place instead of copying it, so a miss,
+reading into the buffer of the page it evicts (D474), copies the page
+once.
+
 #### D473. The maintenance job gathers a table's statistics only once a plan has read them since its last pass
 
 A table's statistics were gathered again whenever its changes passed
@@ -12309,6 +12390,12 @@ with its filters and sketches, as a freeze writes one
 copy's execution. A copy takes its executions a group's rows at a time
 once its load writes groups, so each group is whole
 (`Session::load_rows`).
+
+A table writes its loads so only if it sets COLUMNSTORE.LOAD to GROUPS;
+by default, TREE, a load goes through its tree. Its rows are then
+frozen on the maintenance thread beside the load, off the load's time,
+where a group the load writes is on its own time. GROUPS suits a table
+read right after the load commits, its rows already in groups.
 
 Such a group is stamped with who made it. While its transaction is
 open, only that transaction sees its rows; once it commits, each

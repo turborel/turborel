@@ -4,7 +4,7 @@
 //! the tree (`tree.rs`, §5).
 
 use super::node::{self, CHILD, Node};
-use super::{BLinkTree, Path, Slot, Target};
+use super::{BLinkTree, Path, Slot, Split, Target};
 use crate::disk::pager::PageId;
 use crate::engine::locks::NodeLock;
 use crate::error::{Code, Result, SqlError};
@@ -189,7 +189,7 @@ impl BLinkTree {
             (Update::Put(value), Err(at)) => (Slot::Insert(at), value),
         };
         self.fits(key, &value)?;
-        self.place(path, held, (key, &value), slot).map(|_| alone)
+        self.place(&path, held, (key, &value), slot).map(|_| alone)
     }
 
     /// Refuses an entry longer than `max_entry`.
@@ -213,7 +213,7 @@ impl BLinkTree {
         self.fits(key, value)?;
         let mut path = Path::default();
         let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
-        let written = self.write_from(path, leaf, (key, value), mode)?;
+        let written = self.write_from(&path, leaf, (key, value), mode)?;
         // A table's row: its leaf noted for its index entries (`hints.rs`).
         if let (Written::Done(_, into), Some(row)) = (&written, self.row_of(key)) {
             super::hints::note(row, into.0);
@@ -223,7 +223,7 @@ impl BLinkTree {
 
     /// The rest of `write`, from `leaf`, reached by `path`: either may be
     /// out of date, the leaf split or the tree grown since they were read.
-    pub(super) fn write_from(&self, path: Path, leaf: PageId, (key, value): (&[u8], &[u8]), mode: Mode<'_>) -> Result<Written> {
+    pub(super) fn write_from(&self, path: &Path, leaf: PageId, (key, value): (&[u8], &[u8]), mode: Mode<'_>) -> Result<Written> {
         let mut held = self.locks.lock(leaf)?;
         let replace = !matches!(mode, Mode::Insert);
         let found = self.move_right(&mut held, key, |node| match node.search(key)? {
@@ -247,17 +247,34 @@ impl BLinkTree {
 
     /// Makes `slot`'s change in the leaf `held`, reached by `path`, and
     /// posts the splits it causes up the tree. The leaf the entry is in:
-    /// the right half of a split if it is past the separator.
-    pub(super) fn place<'a>(&'a self, mut path: Path, mut held: NodeLock<'a>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<PageId> {
-        let mut split = self.change(&held, key, value, slot)?;
-        let leaf = split.as_ref().filter(|s| key > s.separator.as_slice()).map_or(held.id, |s| s.right);
-        while let Some(done) = split {
-            let Some((parent, at)) = self.lock_parent(&mut path, &done)? else { break };
-            // The child's lock is released only now, with the parent's
-            // held and moved right (§5).
-            held = parent;
-            split = self.change(&held, &done.separator, &done.right.0.to_le_bytes(), Slot::Insert(at))?;
-        }
+    /// the right page of the highest separator it is past, if any.
+    pub(super) fn place<'a>(&'a self, path: &Path, held: NodeLock<'a>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<PageId> {
+        let splits = self.change(&held, key, value, slot)?;
+        let leaf = splits
+            .iter()
+            .filter(|s| key > s.separator.as_slice())
+            .max_by(|a, b| a.separator.cmp(&b.separator))
+            .map_or(held.id, |s| s.right);
+        self.post(path, held, splits)?;
         Ok(leaf)
+    }
+
+    /// Posts `splits` of node `held`, reached by `path`, to the level
+    /// above, and the splits that causes, up the tree. The child's lock is
+    /// released only once the first parent's is held and moved right
+    /// (§5); a further split of one change, its page reached meanwhile
+    /// through the right links, is posted after, as a split past the top
+    /// of a path is (`fit.rs`).
+    fn post<'a>(&'a self, path: &Path, held: NodeLock<'a>, splits: Vec<Split>) -> Result<()> {
+        let mut held = Some(held);
+        for done in splits {
+            let mut up = Path { stack: path.stack.clone(), ..Path::default() };
+            let Some((parent, at)) = self.lock_parent(&mut up, &done)? else { continue };
+            drop(held.take());
+            let more = self.change(&parent, &done.separator, &done.right.0.to_le_bytes(), Slot::Insert(at))?;
+            self.post(&up, parent, more)?;
+        }
+        drop(held);
+        Ok(())
     }
 }

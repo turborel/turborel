@@ -85,6 +85,18 @@ impl BufferPool {
         }
     }
 
+    /// The frames listed as made dirty, the list left empty, each still
+    /// marked listed: the caller clears each mark as it looks at it
+    /// (`capture.rs`).
+    pub(super) fn dirtied_taken(&self) -> Vec<usize> {
+        self.dirtied.take()
+    }
+
+    /// Lists frames `rest` again, taken and not looked at, still marked.
+    pub(super) fn dirtied_put_back<'a>(&self, rest: impl Iterator<Item = &'a usize>) {
+        rest.for_each(|&index| self.dirtied.push(index));
+    }
+
     /// Writes back every dirty page. A page is copied under its shared latch
     /// and written with no lock held; one written to again meanwhile stays
     /// dirty. A frame being filled is waited for first: the dirty page it
@@ -108,7 +120,7 @@ impl BufferPool {
                 if frame.dirty.load(Ordering::SeqCst) {
                     self.made_dirty(frame);
                 }
-                listed.iter().skip(at.saturating_add(1)).for_each(|&rest| self.dirtied.push(rest));
+                self.dirtied_put_back(listed.iter().skip(at.saturating_add(1)));
                 return Err(e);
             }
         }
@@ -135,7 +147,7 @@ impl BufferPool {
     }
 
     /// The page `frame` holds, pinned under its shard, if it is dirty.
-    fn pin_dirty(&self, frame: &Frame) -> Result<Option<Key>> {
+    pub(super) fn pin_dirty(&self, frame: &Frame) -> Result<Option<Key>> {
         let Some(key) = frame.key() else { return Ok(None) };
         let _map = self.shared_map(key)?;
         let dirty = frame.key() == Some(key) && frame.dirty.load(Ordering::SeqCst);
