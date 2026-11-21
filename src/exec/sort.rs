@@ -186,32 +186,40 @@ impl Sorter {
 }
 
 /// \[DESIGN\] The rows a sort held in memory gives between looks for a
-/// cancel (RULES.md D380): few, as a cancel counts within the fetch of a
-/// cursor it lands in alone (D44), and a look costs a few atomic reads.
+/// cancel within one window of its statement (RULES.md D380): few, and a
+/// look costs a few atomic reads.
 const SORT_RUN_ROWS: usize = 1_024;
 
 /// `rows`, a sort's held in memory, given while the statement `stop`
-/// cancels, if known, goes on: looked at once every `SORT_RUN_ROWS` rows.
+/// cancels, if known, goes on: looked at once every `SORT_RUN_ROWS` rows,
+/// and at the first row of each window (`looked_every`).
 fn looked(rows: RowIter, stop: Option<Arc<crate::txn::Stop>>) -> RowIter {
     Box::new(looked_every(rows, (stop, SORT_RUN_ROWS)))
 }
 
 /// `items` given while the statement `stop` cancels, if known, goes on,
-/// looked at once every `every` items: at a cancel, its error, then that
-/// error again at every ask, as a scan's rows cut short give it
-/// (`txn::checked`).
+/// looked at once every `every` items and at the first item asked for in
+/// each window of the statement: at a cancel, its error, then that error
+/// again at every ask, as a scan's rows cut short give it
+/// (`txn::checked`). A cancel counts within the window it lands in alone,
+/// a cursor's fetch (D44), so a cursor that fetches a row at a time is
+/// looked at in each fetch, not one fetch in `every`, whose cancels the
+/// others would drop.
 fn looked_every<T: Send + 'static>(
     items: impl Iterator<Item = Result<T>> + Send + 'static,
     (stop, every): (Option<Arc<crate::txn::Stop>>, usize),
 ) -> impl Iterator<Item = Result<T>> + Send + 'static {
-    let (mut items, mut cut, mut n) = (items, None::<crate::error::SqlError>, 0_usize);
+    let (mut items, mut cut, mut n, mut seen) = (items, None::<crate::error::SqlError>, 0_usize, 0_u64);
     std::iter::from_fn(move || {
         if let Some(e) = &cut {
             return Some(Err(e.clone()));
         }
         let at = n;
         n = n.wrapping_add(1);
-        let looked = stop.as_deref().filter(|_| at.is_multiple_of(every.max(1))).map_or(Ok(()), crate::txn::Stop::check);
+        let window = stop.as_deref().map_or(0, crate::txn::Stop::generation);
+        let due = at.is_multiple_of(every.max(1)) || window != seen;
+        seen = window;
+        let looked = stop.as_deref().filter(|_| due).map_or(Ok(()), crate::txn::Stop::check);
         if let Err(e) = looked {
             cut = Some(e.clone());
             return Some(Err(e));
@@ -249,4 +257,51 @@ pub fn compare_rows(keys: &[SortKey], a: &Row, b: &Row) -> Ordering {
         .map(|k| a.get(k.column).zip(b.get(k.column)).map_or(Ordering::Equal, |(x, y)| k.order().cmp(x, y)))
         .find(|o| o.is_ne())
         .unwrap_or(Ordering::Equal)
+}
+
+// Unit tests: where a sort held in memory looks for a cancel (RULES.md
+// R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::txn::Stop;
+
+    /// The numbers from 0, each looked at as `looked_every` looks of `stop`.
+    fn numbers(stop: &Arc<Stop>) -> impl Iterator<Item = Result<usize>> {
+        looked_every((0..10_000).map(Ok), (Some(Arc::clone(stop)), SORT_RUN_ROWS))
+    }
+
+    /// Verifies: [DESIGN] RULES.md D380, D44: a sort held in memory looks
+    /// for a cancel at the first row each window asks for, so a cancel in
+    /// a cursor's fetch of one row fails that fetch, and every ask after;
+    /// within one window, rows past the first between two looks are given.
+    ///
+    /// MC/DC of `at.is_multiple_of(every) || window != seen`: the first row
+    /// (a look, both true), a row of a new window past it (a look by the
+    /// window alone), and a row of the same window past it (no look).
+    #[test]
+    fn a_held_sort_looks_at_the_first_row_of_each_window() {
+        let stop = Arc::new(Stop::default());
+        let mut fetched = numbers(&stop);
+        for _ in 0..3_usize {
+            let _window = stop.window();
+            assert!(fetched.next().is_some_and(|r| r.is_ok()));
+        }
+        {
+            let _window = stop.window();
+            stop.cancel();
+            assert!(fetched.next().is_some_and(|r| r.is_err()), "a cancel in the fetch of one row");
+        }
+        {
+            let _window = stop.window();
+            assert!(fetched.next().is_some_and(|r| r.is_err()), "every ask after");
+            let mut read = numbers(&stop);
+            assert!(read.next().is_some_and(|r| r.is_ok()), "a cancel of a window past is not this one's");
+        }
+        let _window = stop.window();
+        let mut within = numbers(&stop);
+        assert!(within.next().is_some_and(|r| r.is_ok()));
+        stop.cancel();
+        assert!(within.next().is_some_and(|r| r.is_ok()), "a row of the same window between looks");
+    }
 }

@@ -37,7 +37,7 @@ use std::sync::{Arc, Mutex};
 
 use super::join::{Built, Full, Rescanned, Right};
 use super::work::{Bag, ENTRY_BYTES, Work};
-use super::{RowIter, broken, execute};
+use super::{Db, Opening, RowIter, broken, execute};
 use crate::catalog::SequenceDesc;
 use crate::db::State;
 use crate::error::{Result, Warnings};
@@ -288,7 +288,7 @@ struct Seen {
 /// the module's documentation): those of each run while what it keeps
 /// fits the work area (`Runner::keep`).
 pub struct Runner {
-    db: Arc<State>,
+    db: Db,
     /// The kernels its batches run on, as EXECUTOR.KERNELS chose them as
     /// it began (RULES.md D460).
     kernels: Arc<dyn crate::kernels::Kernels>,
@@ -315,11 +315,12 @@ impl Runner {
     }
 
     /// A runner for transaction `tx` in `db`.
-    pub fn new(db: &Arc<State>, tx: TxId) -> Runner {
+    pub fn new(db: &(impl Opening + ?Sized), tx: TxId) -> Runner {
         let (done, seen) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
+        let db = db.opening().into_owned();
         Runner {
-            db: Arc::clone(db),
-            kernels: crate::db::kernels::chosen(db),
+            kernels: crate::db::kernels::chosen(&db),
+            db,
             tx,
             done,
             kept: Cell::new(0),

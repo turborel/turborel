@@ -14,7 +14,6 @@
 //! (`set/tabled.rs`); keys made into bytes are counted only past it.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 mod tabled;
 
@@ -22,8 +21,8 @@ use super::batch::{Batches, Keyed, kept as kept_batches, whole_width};
 use super::partition::{Partitioner, merge_all, numbered, unnumbered};
 use super::work::{Bag, ENTRY_BYTES, Work};
 use super::{Drawn, RowIter, Runner, batched, broken, eval, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::logical::{Expr, SetOp};
 use crate::physical::Plan;
 use crate::spill::{Records, SpillRun, norm_row};
@@ -35,7 +34,7 @@ use crate::txn::TxId;
 /// Never inlined into `execute`, whose frame every level of a plan adds to
 /// the stack (RULES.md R-CF-6).
 #[inline(never)]
-pub(super) fn values(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn values(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Values { rows, .. } = plan else { return failed(broken("a table value constructor is not one")) };
     let (empty, runner) = (Vec::new(), Runner::new(db, tx));
     // [ISO/IEC 9075-2:2023 §4.29.1] a row's draws of one generator are one.
@@ -63,7 +62,7 @@ fn key(row: &Row, compared: Option<usize>) -> Vec<u8> {
 /// first only if it succeeded. Never inlined into `execute`, whose frame
 /// every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
-pub(super) fn operation(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn operation(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::SetOp { op, all, compared, left, right, .. } = plan else { return failed(broken("a set operation is not one")) };
     let how = Kept { intersect: op == SetOp::Intersect, all, compared };
     match Operand::of(*right, compared, (db, tx)).and_then(|second| counted_rows(second, (db, tx), how)) {
@@ -96,7 +95,7 @@ type Each<T> = Box<dyn Iterator<Item = Result<T>> + Send>;
 impl Operand {
     /// The rows of `plan`, by batch where EXECUTOR.BATCHES allows and it
     /// is such a stream, as `tx` sees them.
-    fn of(plan: Plan, compared: Option<usize>, (db, tx): (&Arc<State>, TxId)) -> Result<Operand> {
+    fn of(plan: Plan, compared: Option<usize>, (db, tx): (&Db, TxId)) -> Result<Operand> {
         if compared.is_none() && batched(db) && whole_width(&plan, db).is_some() {
             return Ok(Operand::Batches(kept_batches(plan, db, tx)?));
         }
@@ -154,7 +153,7 @@ enum Second {
 /// Kept apart from `operation`, whose frame is on the stack while its
 /// operands are made (RULES.md R-CF-6).
 #[inline(never)]
-fn counted_rows(rows: Operand, (db, tx): (&Arc<State>, TxId), how: Kept) -> Result<(Second, Work, Work)> {
+fn counted_rows(rows: Operand, (db, tx): (&Db, TxId), how: Kept) -> Result<(Second, Work, Work)> {
     let mut work = Work::of(db, tx);
     // ALL keeps no bag of rows given, so takes the whole work area.
     let given = if how.all { work.another() } else { work.split() };

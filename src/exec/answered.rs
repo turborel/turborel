@@ -9,8 +9,8 @@ use std::sync::Arc;
 use super::entries::{Entries, Reading, fetch};
 use super::{RowIter, broken, failed};
 use crate::catalog::{IndexDesc, QualifiedName};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::index::xml::{XmlAnswer, XmlProbe};
 use crate::index::{Key, Probe};
 use crate::storage::{Condition, Row, RowId};
@@ -22,7 +22,7 @@ use crate::value::Value;
 /// its id if `located`.
 #[inline(never)]
 pub(super) fn answered(
-    db: &Arc<State>,
+    db: &Db,
     tx: TxId,
     (table, index, asked): (&QualifiedName, &str, &XmlProbe),
     (needed, located): (&[usize], bool),
@@ -40,7 +40,7 @@ pub(super) fn answered(
 /// SQLCODE -910 if the table or index does not exist, or the index
 /// answers no query.
 pub(super) fn answered_entries(
-    db: &Arc<State>,
+    db: &Db,
     tx: TxId,
     (table, index, asked): (&QualifiedName, &str, &XmlProbe),
     needed: Option<&[usize]>,

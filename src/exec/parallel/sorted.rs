@@ -33,8 +33,8 @@ use std::sync::{Arc, Mutex};
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit, Streamed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::sort::{Sorter, first_of_morsel, rows_of_batches, sorted_morsel, sorted_morsel_batches, sorted_rows};
 use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner, broken, compare_rows};
@@ -63,7 +63,7 @@ const SAMPLES_PER_RUN: usize = 64;
 /// # Errors
 ///
 /// As reading the stream fails.
-pub(super) fn sorted(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
+pub(super) fn sorted(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
     let Plan::Sort { keys, input, most, .. } = plan else { return Err(broken("not a sort run in parallel")) };
     if most.is_some_and(|m| m.ties) {
         return Ok(Held::GaveWay);
@@ -71,7 +71,7 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) 
     let most = most.map(|m| m.rows);
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
-    let (pipeline, keys, db_for) = (Arc::new(pipeline), Arc::new(keys.clone()), Arc::clone(db));
+    let (pipeline, keys, db_for) = (Arc::new(pipeline), Arc::new(keys.clone()), db.clone());
     let (count, keys_for) = (pipeline.count(), Arc::clone(&keys));
     let each = Box::new(move |m: usize| morsel_run(&pipeline, m, (&keys_for, most), (&db_for, tx)));
     let (mut runs, from) = (Vec::new(), limit.held());
@@ -113,7 +113,7 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) 
 /// # Errors
 ///
 /// As reading the morsel fails.
-fn morsel_run(pipeline: &Pipeline, m: usize, (keys, most): (&[SortKey], Option<usize>), (db, tx): (&Arc<State>, TxId)) -> Result<Run> {
+fn morsel_run(pipeline: &Pipeline, m: usize, (keys, most): (&[SortKey], Option<usize>), (db, tx): (&Db, TxId)) -> Result<Run> {
     let whole = pipeline.batched.as_ref().is_some_and(|b| b.layout.iter().copied().eq(0..b.width));
     if whole {
         let kept = pipeline.morsel_kept(m, (db, tx))?;
@@ -171,7 +171,7 @@ impl Run {
 /// # Errors
 ///
 /// As a thread fails.
-fn made(runs: Vec<Run>, (db, tx, degree): (&Arc<State>, TxId, usize)) -> Result<Vec<Vec<Row>>> {
+fn made(runs: Vec<Run>, (db, tx, degree): (&Db, TxId, usize)) -> Result<Vec<Vec<Row>>> {
     let count = runs.len();
     let runs: Arc<Vec<Mutex<Option<Run>>>> = Arc::new(runs.into_iter().map(|r| Mutex::new(Some(r))).collect());
     let each = Box::new(move |at: usize| {
@@ -192,7 +192,7 @@ fn made(runs: Vec<Run>, (db, tx, degree): (&Arc<State>, TxId, usize)) -> Result<
 /// # Errors
 ///
 /// As writing a run fails.
-fn spilled_of(keys: &[SortKey], runs: impl Iterator<Item = Run>, (db, tx): (&Arc<State>, TxId)) -> Result<(Sorter, Work)> {
+fn spilled_of(keys: &[SortKey], runs: impl Iterator<Item = Run>, (db, tx): (&Db, TxId)) -> Result<(Sorter, Work)> {
     let (mut sorter, mut work) = (Sorter::new(keys.to_vec()), Work::of(db, tx));
     for run in runs {
         run.push_to(&mut sorter, &mut work)?;
@@ -202,7 +202,7 @@ fn spilled_of(keys: &[SortKey], runs: impl Iterator<Item = Run>, (db, tx): (&Arc
 
 /// `runs`, each sorted by `keys`, merged by ranges on up to `degree`
 /// threads: the rows of each range in order.
-fn merged(runs: Vec<Vec<Row>>, keys: Arc<Vec<SortKey>>, (db, tx, degree): (&Arc<State>, TxId, usize)) -> Morsels<Vec<Row>> {
+fn merged(runs: Vec<Vec<Row>>, keys: Arc<Vec<SortKey>>, (db, tx, degree): (&Db, TxId, usize)) -> Morsels<Vec<Row>> {
     let ranges = degree.saturating_mul(RANGES_PER_THREAD).max(1);
     let splitters = splitters(&runs, &keys, ranges);
     let mut parts: Vec<Vec<Row>> = (0..=splitters.len()).map(|_| Vec::new()).collect();

@@ -23,6 +23,7 @@ use super::expr::{Program, gather};
 use super::stream::{self, Batches};
 use crate::db::State;
 use crate::error::{Result, SqlError};
+use crate::exec::Db;
 use crate::exec::{RowIter, Runner, eval};
 use crate::logical::{Expr, expr_columns, map_expr_columns};
 use crate::physical::Plan;
@@ -131,7 +132,7 @@ pub(in crate::exec) fn projectable(plan: &Plan, db: &State) -> bool {
 }
 
 /// The rows of the projection `plan`, one read by batches (`projectable`).
-pub(in crate::exec) fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn projected(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Project { exprs, input, .. } = plan else { return crate::exec::failed(crate::exec::broken("a projection is not one")) };
     let stream = match stream::open(*input, db, tx) {
         Ok(stream) => stream,
