@@ -11437,10 +11437,11 @@ allocated another for the page read: two calls of the allocator per
 miss, each taking a lock of an arena the session threads share, and
 with many sessions missing at once they waited on each other there. A
 frame emptied now hands its buffer, cleared, to the page read into it,
-so a miss allocates nothing in the pool. A buffer grown past
-`REUSED_BYTES`, as a page with an overflow grows it, is let go, so a
-frame keeps no more than a page's worth once that page leaves
-(`disk/buffer/pool.rs`).
+so a miss allocates nothing in the pool, and a page's body read from
+its file is the page read cut to its front, not a copy of it
+(`disk/pager/sealed.rs`). A buffer grown past `REUSED_BYTES`, as a page
+with an overflow grows it, is let go, so a frame keeps no more than a
+page's worth once that page leaves (`disk/buffer/pool.rs`).
 
 #### D475. An update's log record holds the row after whole and of the row before only the columns changed
 
