@@ -383,7 +383,9 @@ fn left_late_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> 
 /// in an order, as the planner relies on (`physical.rs`) where a batch
 /// comes in none (RULES.md D31): a scan's in its table's
 /// (`TableStorage::scan_ordered`), a join's in its left operand's. A plan
-/// that gives no batches is taken to be, so its order is kept.
+/// that gives no batches is taken to be, so its order is kept, as are an
+/// index scan's and an index or merge join's, which a stream gathers
+/// (`told.rs`). A grouping by hash gives its groups in none.
 fn in_order(plan: &Plan) -> bool {
     match plan {
         Plan::SeqScan { order, .. } => !order.is_empty(),
@@ -391,14 +393,14 @@ fn in_order(plan: &Plan) -> bool {
         Plan::Counted(c) => in_order(&c.input),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
+        Plan::Aggregate { streamed, .. } => *streamed,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::RangeJoin(_)
         | Plan::SemiJoin(_)
         | Plan::MarkJoin(_)
-        | Plan::Aggregate { .. }
+        | Plan::RangeJoin(_)
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
