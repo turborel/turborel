@@ -6698,7 +6698,14 @@ and a built-in or registered object, share a name of a kind.
 
 An extension's pool starts processes as calls need them, at most
 PLUGINS.PROCESSES at once, each greeted by HELLO before its first call
-(`plugin/pool.rs`, `plugin/process.rs`). A process that ends, breaks
+(`plugin/pool.rs`, `plugin/process.rs`). A start waits for the WELCOME
+while the program runs and its output is open, for PLUGINS.CALL_TIMEOUT_MS
+but never less than the least a start is given (`LEAST_START_MS`), as a
+loaded machine may take long to load and schedule a new program; a
+program silent past it is stopped with SQLSTATE 38T02. A start refused
+because the executable is busy, as it is while a process started by
+another thread at that moment still holds the file open for writing, is
+tried again within the same bound. A process that ends, breaks
 the protocol, runs past PLUGINS.CALL_TIMEOUT_MS or sends more than
 PLUGINS.MAX_MESSAGE_BYTES in a message or PLUGINS.MAX_CALL_BYTES in a
 call is stopped and its call fails, and the next call starts another. A
@@ -12548,7 +12555,15 @@ collection, a row, a structured, JSON, XML or extension value), or
 whose plan holds a slot of its own, is planned at each run. The rows
 of each run are gathered, spilled, kept by outer values and decorrelated
 after EXECUTOR.DECORRELATE_AFTER_RUNS as before (D35, D38), and a run
-checks for a cancel as any plan does (D44). EXECUTOR.KEEP_SUBQUERY_PLANS,
+checks for a cancel as any plan does (D44).
+
+A subquery that will be decorrelated after fewer runs than
+`MOST_LEARNING_RUNS` is planned at each run until then, as before. Its
+learning runs plan it twice, and the few runs left between its plan
+kept and its decorrelation do not win that back. Measured on nested
+EXISTS, NOT EXISTS and NOT IN over unindexed tables, learning there
+cost a little on every statement, and waiting for decorrelation costs
+nothing. EXECUTOR.KEEP_SUBQUERY_PLANS,
 ON by default and of a session's scope, turns it off, as to compare the
 two.
 
