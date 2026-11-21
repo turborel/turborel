@@ -78,6 +78,7 @@ pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIt
     sort::sort(keys, rows, db, tx)
 }
 pub(crate) use program::{Ended, Host, rows, run_program};
+pub(crate) use subquery::slot_type;
 pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, NoSubqueries, Runner, Subqueries, SubqueryRows};
 
 /// The rows a plan produces, each read or computed when it is pulled. The

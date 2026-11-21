@@ -33,7 +33,7 @@
 //! one is raised is the same.
 
 use super::collated::{Lifted, lifted};
-use super::indexed::{EquiKind, Equijoin, index_join, right_index_join};
+use super::indexed::{EquiKind, Equijoin, Fixed, index_join, right_index_join};
 use super::shown::Shown;
 use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::logical::{
@@ -69,10 +69,15 @@ impl PhysicalPlanner<'_> {
             return self.whole().spatial_join(cond, (left, right), want);
         }
         if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
-            let product = LogicalPlan::Product { left: Box::new(left), right: Box::new(right) };
-            let joined = LogicalPlan::Filter { cond, input: Box::new(product) };
-            let plan = LogicalPlan::Project { exprs: kept, input: Box::new(joined) };
-            return Some(self.build_node(&plan, want));
+            return Some(self.build_node(&kept_join(cond, (left, right), kept), want));
+        }
+        // An index's prefix the right's own filter fixes, if it is then
+        // probed (`indexed/fixed.rs`, RULES.md D761).
+        if let Some(Fixed { cond, left, kept }) = self.fixed_prefix(cond, left, right) {
+            let built = self.build_node(&kept_join(cond, (left, (**right).clone()), kept), want);
+            if probes(&built.plan) {
+                return Some(built);
+            }
         }
         let width = left.width();
         let mut conjuncts = Vec::new();
@@ -402,4 +407,18 @@ pub(super) fn hashed_outer(
         detail,
         est,
     }
+}
+
+/// The join of `left` and `right` on `cond`, its own columns of the pairs
+/// those `kept` gives.
+fn kept_join(cond: Cond, (left, right): (LogicalPlan, LogicalPlan), kept: Vec<Expr>) -> LogicalPlan {
+    let product = LogicalPlan::Product { left: Box::new(left), right: Box::new(right) };
+    let joined = LogicalPlan::Filter { cond, input: Box::new(product) };
+    LogicalPlan::Project { exprs: kept, input: Box::new(joined) }
+}
+
+/// Whether `plan`, a projection of a join, is of an index nested-loop join.
+fn probes(plan: &Plan) -> bool {
+    let Plan::Project { input, .. } = plan else { return false };
+    matches!(**input, Plan::IndexJoin { .. })
 }

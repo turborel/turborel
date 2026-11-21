@@ -80,7 +80,7 @@ impl Slotted {
 /// (`Placing::AsIs`), so the type tells only whether an index places it
 /// so (`placed_as_is`), and stands for it as the planner estimates; none
 /// of a null, whose kind is unknown, nor of a kind no index places so.
-pub(super) fn slot_type(v: &Value) -> Option<DataType> {
+pub(crate) fn slot_type(v: &Value) -> Option<DataType> {
     Some(match v {
         Value::Char(_) => DataType::Varying { length: MAX_CHARACTER_LENGTH, units: CharUnits::Characters },
         Value::Exact(d) => DataType::Exact { precision: MAX_EXACT_PRECISION, scale: d.scale, spelled: Spelled::Numeric },
