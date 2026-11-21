@@ -61,7 +61,7 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 mod commit;
@@ -247,6 +247,11 @@ pub(super) struct Versions {
     /// collect, which every transaction's end finds without a lock.
     garbage_due: AtomicU64,
     validated_due: AtomicU64,
+    /// The versions filed as garbage and not yet collected, which make a
+    /// collection due however near its horizon (`due_at`).
+    garbage_items: AtomicU64,
+    /// Whether `undone` holds versions, which make a collection due.
+    undone_waiting: AtomicBool,
     /// The latest horizon the table was collected at: no reader is before
     /// it, and what commits at or before it superseded may be gone from
     /// the undo store (`RowTable::unpinned`).
@@ -278,6 +283,8 @@ impl Versions {
             undone: Mutex::default(),
             garbage_due: AtomicU64::default(),
             validated_due: AtomicU64::default(),
+            garbage_items: AtomicU64::default(),
+            undone_waiting: AtomicBool::default(),
             collected: AtomicU64::default(),
             statuses,
             unstamped: Mutex::default(),

@@ -419,6 +419,7 @@ verification approach DO-178C expects (§8).
 | D448 | SERIALIZABLE certifies by column, and skips the check when no one read |
 | D449 | A row's turn passed wakes only the waiter whose turn it is |
 | D450 | A served session's transactions are collected once their reply is sent |
+| D451 | A busy table is collected a batch of commits at a time |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
@@ -13072,3 +13073,30 @@ one. Until then, the end of any other transaction collects the noted
 tables as it would any awaiting, and a checkpoint waits for them
 (`gc_waiting`). The horizon rule is unchanged, so no version a snapshot
 can read is removed; collection only comes a little later.
+
+#### D451. A busy table is collected a batch of commits at a time
+
+Every transaction's end that found a table's garbage past the horizon
+collected it (D29, D445), so a table written by many sessions was
+collected after nearly every commit, each time for one commit's garbage,
+and paid the collection's fixed costs each time.
+
+An end now collects a table only when the collection is due
+(`TableStorage::collection_due`). It is due at once when no transaction
+is open in the table, as after every end in a quiet database. In a busy
+table it is due once the horizon is 64 commits past its earliest garbage,
+or once 4096 versions filed as garbage await collection, or while versions undone by rollbacks wait. Those are released
+as soon as the readers that may go back to them end (D29), and rollbacks
+are rare. Until then the table stays awaiting collection, and a later
+end looks again. A checkpoint's collection (`gc_waiting`) takes
+everything, due or not. Versions left unstamped wait with the garbage,
+a reader resolving an unstamped version by its transaction's status.
+The horizon rule is unchanged, so no version a snapshot can
+read is removed. A busy table keeps at most a batch of commits' garbage
+more than it did.
+
+Eager pruning at write, releasing a superseded version's undo slot as a
+writer passes it, was rejected. The slot belongs to its commit's garbage,
+whose collection reads the version to take its index entries back.
+Releasing it at write would move that index work onto the writer, before
+its reply, the work D450 moved after it.

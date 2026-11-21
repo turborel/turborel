@@ -1,6 +1,7 @@
 //! \[DESIGN\] Garbage collection under many sessions (RULES.md D29, D445):
 //! one transaction's end collects a table at a time, the others pass it
-//! over, and what they pass over is collected by a later end.
+//! over, and what they pass over is collected by a later end; a busy
+//! table a batch of commits at a time (D451).
 
 use std::thread;
 
@@ -74,4 +75,65 @@ fn a_session_collects_once_its_reply_is_sent() {
     assert_eq!(rows(&other, "SELECT X FROM T WHERE ID = 2").unwrap(), vec!["0".to_owned()]);
     other.commit().unwrap();
     assert_eq!(db.index_entries("T_X").unwrap(), 2, "another end collected it");
+}
+
+/// A database with APP's table T, of `rows` rows (ID, 0) and the index T_X
+/// on X, and APP's empty table U.
+fn busy(rows: usize) -> Database {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, X INTEGER) CREATE TABLE U (N INTEGER)").unwrap();
+    db.create_index("T_X", "APP.T", &["X"], "btree").unwrap();
+    let s = db.session("APP");
+    let values: Vec<String> = (0..rows).map(|i| format!("({i}, 0)")).collect();
+    s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    s.commit().unwrap();
+    db
+}
+
+/// Verifies: [DESIGN] RULES.md D451: while a transaction is open in a
+/// table, the ends of others pass its garbage over until the horizon is
+/// a batch of commits past it, then one collects it.
+#[test]
+fn a_busy_table_is_collected_a_batch_of_commits_at_a_time() {
+    let db = busy(1);
+    let (w, u) = (db.session("APP"), db.session("APP"));
+    let readers = [db.session("APP"), db.session("APP")];
+    rows(&readers[0], "SELECT X FROM T").unwrap();
+    w.run("UPDATE T SET X = 1 WHERE ID = 0").unwrap();
+    w.commit().unwrap();
+    // Each round a reader begins in T, the other ends, and a commit in U
+    // moves the clock: T is never without a transaction open.
+    for n in 1..=100 {
+        rows(&readers[n % 2], "SELECT X FROM T").unwrap();
+        readers[(n + 1) % 2].commit().unwrap();
+        u.run("INSERT INTO U VALUES (1)").unwrap();
+        u.commit().unwrap();
+        if n == 2 {
+            assert_eq!(db.index_entries("T_X").unwrap(), 2, "the old version's entry kept while T is busy");
+        }
+    }
+    assert_eq!(db.index_entries("T_X").unwrap(), 1, "collected once the horizon passed the batch");
+}
+
+/// Verifies: [DESIGN] RULES.md D451: a busy table whose garbage passes the
+/// bound of versions is collected at the next end, however near the
+/// horizon; what it collected counts no more.
+#[test]
+fn a_busy_table_with_much_garbage_is_collected_at_once() {
+    let db = busy(5_000);
+    let w = db.session("APP");
+    let readers = [db.session("APP"), db.session("APP")];
+    rows(&readers[0], "SELECT X FROM T WHERE ID = 0").unwrap();
+    w.run("UPDATE T SET X = 1").unwrap();
+    w.commit().unwrap();
+    rows(&readers[1], "SELECT X FROM T WHERE ID = 0").unwrap();
+    readers[0].commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 5_000, "every old version's entry taken back");
+    // What was collected no longer counts: one more version waits.
+    w.run("UPDATE T SET X = 2 WHERE ID = 0").unwrap();
+    w.commit().unwrap();
+    rows(&readers[0], "SELECT X FROM T WHERE ID = 0").unwrap();
+    readers[1].commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 5_001, "the one old version's entry kept while T is busy");
+    readers[0].commit().unwrap();
 }

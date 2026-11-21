@@ -507,6 +507,10 @@ pub trait TableStorage: Send + Sync {
     fn gc(&self, _horizon: Timestamp, _removed: Removed<'_>) -> Result<()> {
         Ok(())
     }
+    /// \[DESIGN\] Whether a transaction's end collects it at `horizon` now, or leaves it for later (RULES.md D451).
+    fn collection_due(&self, _horizon: Timestamp) -> bool {
+        true
+    }
     /// Whether versions of it await collection (`gc`), so it is collected as any transaction ends. Default: none.
     fn uncollected(&self) -> bool {
         false
