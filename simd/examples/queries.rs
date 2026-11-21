@@ -4,7 +4,10 @@
 //! on one thread; nanoseconds a row read, the median of the rounds, and
 //! the speed of the detected level against the portable one. Run with
 //! `cargo run --release -p turborel-simd --example queries`; `ROUNDS` sets
-//! the rounds (default 7), `ONLY` a substring of the queries' names.
+//! the rounds (default 7), `ONLY` a substring of the queries' names,
+//! `DEGREE` the threads a query runs on (default 1), `KERNELS` set to
+//! `PORTABLE` puts both databases on the portable kernels, an A/A or a
+//! build compared with another.
 #![allow(
     clippy::unwrap_used,
     clippy::as_conversions,
@@ -14,6 +17,7 @@
     clippy::indexing_slicing,
     clippy::print_stdout,
     clippy::cast_possible_truncation,
+    clippy::too_many_lines,
     missing_docs,
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
@@ -81,7 +85,6 @@ fn database(simd: bool) -> Database {
     }
     s.commit().unwrap();
     db.maintain().unwrap();
-    s.run("SET EXECUTOR.DEGREE = 1").unwrap();
     db
 }
 
@@ -115,10 +118,13 @@ fn main() {
     let rounds: usize = std::env::var("ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(7);
     let only = std::env::var("ONLY").unwrap_or_default();
     println!("detected level: {:?}", Simd::detect().level());
-    let (simd, portable) = (database(true), database(false));
+    let degree: usize = std::env::var("DEGREE").ok().and_then(|r| r.parse().ok()).unwrap_or(1);
+    let simd_on = std::env::var("KERNELS").ok().is_none_or(|k| k != "PORTABLE");
+    let (simd, portable) = (database(simd_on), database(false));
     let (a, b) = (simd.session("B"), portable.session("B"));
-    a.run("SET EXECUTOR.DEGREE = 1").unwrap();
-    b.run("SET EXECUTOR.DEGREE = 1").unwrap();
+    for s in [&a, &b] {
+        s.run(&format!("SET EXECUTOR.DEGREE = {degree}")).unwrap();
+    }
     println!("{:<60} {:>10} {:>10} {:>7}", "query", "portable", "simd", "speed");
     let queries = [
         ("COUNT by an integer, 1%", "SELECT COUNT(*) FROM {T} WHERE F < 20000"),

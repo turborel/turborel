@@ -404,6 +404,7 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D570 | Each kernel has a body for every vector set, chosen once by the set detected; the column store decodes and judges on the registered set |
+| D573 | A grouping's keys hash by XXH3-64 of the database's seed, a word as 8 bytes, a text trimmed, columns joined as 16 bytes, on the kernels |
 
 ### The project
 
@@ -11430,6 +11431,25 @@ kernels of a statement's executor, its filters over batches, groupings
 and sorts; a table's storage keeps the set registered, whatever the
 setting, since a table is opened once for many statements.
 
+
+#### D573. A grouping's keys hash by XXH3-64 of the database's seed, a word as 8 bytes, a text trimmed, columns joined as 16 bytes, on the kernels
+
+A grouping, a set operation, a parallel grouping's morsels and a spilled
+partition find a key's group by one hash, the database's `Seed`
+(`exec/table/hash.rs`): a word, an integer of scale 0 or a value's
+normalized form, is XXH3-64 of its 8 bytes little-endian; a text,
+trailing spaces trimmed, XXH3-64 of its bytes; and a key of several
+columns joins each column's hash to the hash so far as XXH3-64 of the 16
+bytes of the two. Each is XXH3 by the seed, as `hash/xxhash.rs` ports it,
+so the row path and the batch path hash a key alike. A batch's
+integers, texts and joins are hashed by the kernels `hash_i64`,
+`hash_texts` and `combine_i64`, whose bodies in `turborel-simd` multiply
+eight words at once (AVX-512) or four of them by 32-bit halves (AVX2),
+a block of rows at a time; a dictionary's texts are hashed once an
+entry when there are no more entries than rows. NEON runs the portable
+integer bodies, its 64-bit multiplies each one instruction. The keyed
+fallback to SipHash (D357) is unchanged, and no hash is written to a
+file that outlives the process.
 ## 2. Project layout
 
 ```

@@ -10,11 +10,11 @@
 //! processor has it (`x86::isa`).
 
 use std::arch::x86_64::{
-    __m256i, __m512i, _mm256_add_epi64, _mm256_and_si256, _mm256_loadu_si256, _mm256_mul_epu32, _mm256_or_si256, _mm256_set1_epi64x,
-    _mm256_setr_epi8, _mm256_shuffle_epi8, _mm256_shuffle_epi32, _mm256_slli_epi64, _mm256_srli_epi64, _mm256_storeu_si256,
-    _mm256_xor_si256, _mm512_add_epi64, _mm512_and_si512, _mm512_broadcast_i32x4, _mm512_loadu_si512, _mm512_mul_epu32,
-    _mm512_mullo_epi64, _mm512_or_si512, _mm512_rol_epi64, _mm512_set1_epi64, _mm512_shuffle_epi8, _mm512_slli_epi64,
-    _mm512_srli_epi64, _mm512_storeu_si512, _mm512_xor_si512, _mm_setr_epi8,
+    __m256i, __m512i, _mm_setr_epi8, _mm256_add_epi64, _mm256_and_si256, _mm256_loadu_si256, _mm256_mul_epu32, _mm256_or_si256,
+    _mm256_set1_epi64x, _mm256_setr_epi8, _mm256_shuffle_epi8, _mm256_shuffle_epi32, _mm256_slli_epi64, _mm256_srli_epi64,
+    _mm256_storeu_si256, _mm256_xor_si256, _mm512_add_epi64, _mm512_and_si512, _mm512_broadcast_i32x4, _mm512_loadu_si512,
+    _mm512_mul_epu32, _mm512_mullo_epi64, _mm512_or_si512, _mm512_rol_epi64, _mm512_set1_epi64, _mm512_shuffle_epi8, _mm512_slli_epi64,
+    _mm512_srli_epi64, _mm512_storeu_si512, _mm512_xor_si512,
 };
 
 use turborel::hash::xxhash::{PRIME_MX1, PRIME_MX2, Words};
@@ -180,7 +180,10 @@ fn fold_avx2(a: __m256i, b: __m256i) -> __m256i {
 /// Each of `hashes` joined in place with `next` at its place, on AVX2.
 #[target_feature(enable = "avx2")]
 fn pairs_avx2(hashes: &mut [u64], next: &[u64], pairs: &Words) {
-    let (flips, swap) = (pairs.pair_flips(), _mm256_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8));
+    let (flips, swap) = (
+        pairs.pair_flips(),
+        _mm256_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8),
+    );
     let (first_flip, second_flip, len) = (splat256(flips.0), splat256(flips.1), splat256(PAIR_LEN));
     let (m, m_high) = (splat256(PRIME_MX1), splat256(PRIME_MX1 >> 32_u32));
     let (quads, rest) = hashes.as_chunks_mut::<4>();

@@ -59,14 +59,14 @@ fn keys_hash_alike_in_any_vector() {
 #[test]
 fn keys_hash_by_xxh3_in_any_vector() {
     use crate::hash::xxhash::xxh3_64_with_seed;
-    let seed = Seed::fixed(0xC0FFEE);
-    let word = xxh3_64_with_seed(&(-5_i64).to_le_bytes(), 0xC0FFEE);
+    let seed = Seed::fixed(0x00C0_FFEE);
+    let word = xxh3_64_with_seed(&(-5_i64).to_le_bytes(), 0x00C0_FFEE);
     assert_eq!(hash_values(&seed, &[exact(-5, 0)]), word);
     let long = "z".repeat(300);
-    let text = xxh3_64_with_seed(long.as_bytes(), 0xC0FFEE);
+    let text = xxh3_64_with_seed(long.as_bytes(), 0x00C0_FFEE);
     assert_eq!(hash_values(&seed, &[Value::Char(format!("{long}   "))]), text);
     let both: Vec<u8> = word.to_le_bytes().into_iter().chain(text.to_le_bytes()).collect();
-    assert_eq!(hash_values(&seed, &[exact(-5, 0), Value::Char(long.clone())]), xxh3_64_with_seed(&both, 0xC0FFEE));
+    assert_eq!(hash_values(&seed, &[exact(-5, 0), Value::Char(long.clone())]), xxh3_64_with_seed(&both, 0x00C0_FFEE));
     let entries = std::sync::Arc::new(Texts::new(format!("ab{long}c  "), vec![2, 302, 305], None));
     let nulls = Mask::from_bools(&[false, true, false, false, false]);
     let coded = Texts::coded(Coded { codes: vec![1, 0, 2, 0, 1], entries }, Some(nulls));

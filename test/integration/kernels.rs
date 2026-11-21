@@ -213,6 +213,7 @@ fn set_functions_and_gathers_run_on_the_kernels_registered() {
     for name in ["sum_i64", "min_max_i64", "gather_i64"] {
         assert!(tally.get(name).is_some_and(|&n| n > 0), "{name} never ran: {tally:?}");
     }
+}
 
 /// Verifies: [DESIGN] RULES.md D573 the kernels registered hash a
 /// grouping's keys, of integers and of texts, and join a key's columns,

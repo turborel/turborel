@@ -104,7 +104,8 @@ fn texts(kernels: &dyn Kernels) {
     let sel: Vec<u32> = (0..320).step_by(3).collect();
     for seed in [0, 0x5EED_u64, u64::MAX] {
         let seeded = Seeded::new(seed);
-        let want = |n: usize| words.get(n).map_or(xxh3_64_with_seed(b"", seed), |w| xxh3_64_with_seed(w.trim_end_matches(' ').as_bytes(), seed));
+        let want =
+            |n: usize| words.get(n).map_or(xxh3_64_with_seed(b"", seed), |w| xxh3_64_with_seed(w.trim_end_matches(' ').as_bytes(), seed));
         let mut out = vec![3];
         kernels.hash_texts((text.as_bytes(), &ends), &seeded, None, &mut out);
         assert_eq!(out[1..], (0..words.len()).map(want).collect::<Vec<_>>()[..], "hash_texts of all, seed {seed}");
