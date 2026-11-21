@@ -195,11 +195,12 @@ pub(crate) fn placed<'p>(probe: &'p Probe, slots: &[ProbeSlot], values: &[Value]
     Ok(std::borrow::Cow::Owned(copy))
 }
 
-/// `plan`, an index scan, each `?` of its probe filled with its value.
+/// `plan`, an index scan, each `?` of its probe filled with its value,
+/// so it has no slot left to place as it opens (RULES.md D610).
 fn filled_scan(mut plan: Plan, values: &[Value]) -> Result<Plan> {
     if let Plan::IndexScan { probe, slots, .. } = &mut plan {
-        for s in slots.iter() {
-            place(probe, s, values)?;
+        for s in std::mem::take(slots) {
+            place(probe, &s, values)?;
         }
     }
     Ok(plan)
