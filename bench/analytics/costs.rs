@@ -5,8 +5,10 @@
 //! hash join of 1,000,000 rows by 1,000,000; a row grouped into 1,000
 //! groups and into 1,000,000; a row sorted, against the same rows read
 //! unsorted; each of those past a work area of 1 MiB, its rows spilled;
-//! a row of a conjunct judged; and a part run on eight threads, of two
-//! sizes, for what starting its workers costs. Each weight is then
+//! a row of a conjunct judged; a part run on eight threads, of two
+//! sizes, for what starting its workers costs; a pair of a product of
+//! CP by itself; and a row of CR joined to CS by CS's index of K and by a
+//! hash join building CS. Each weight is then
 //! printed as the planner prices it, in rows of a scan of the row store,
 //! so a weight's source is this run (`physical/cost.rs`,
 //! `physical/cost/spill.rs`, `physical/cost/parallel.rs`). Run with
@@ -22,6 +24,8 @@ const ROWS: u64 = 1_000_000;
 /// Rows of CS and of CSC, the small tables a part of eight threads reads:
 /// past EXECUTOR.PARALLEL_MIN_ROWS, so they run in parallel.
 const SMALL: u64 = 131_072;
+/// Rows of CP, the table a product pairs with itself.
+const PAIRED: u64 = 1_000;
 /// Rows each INSERT of the setup writes.
 const PER_INSERT: u64 = 1_000;
 /// The work area past which the spilled cases run, 1 MiB.
@@ -40,11 +44,12 @@ fn database() -> (Database, Session) {
     db.set_job_policy(JobPolicy::Manual).unwrap();
     let create = |name: &str, kept: &str| format!("CREATE TABLE {name} (K INTEGER, G INTEGER, H INTEGER, A INTEGER, P VARCHAR(24)){kept}");
     db.schema(&format!(
-        "CREATE SCHEMA AUTHORIZATION B {} {} {} {}",
+        "CREATE SCHEMA AUTHORIZATION B {} {} {} {} {}",
         create("CR", ""),
         create("CC", " USING columnstore"),
         create("CS", ""),
-        create("CSC", " USING columnstore")
+        create("CSC", " USING columnstore"),
+        create("CP", "")
     ))
     .unwrap();
     let s = db.session("B");
@@ -54,11 +59,15 @@ fn database() -> (Database, Session) {
         if first < SMALL {
             tables.extend(["CS", "CSC"]);
         }
+        if first < PAIRED {
+            tables.push("CP");
+        }
         for table in tables {
             s.run(&format!("INSERT INTO {table} VALUES {}", rows.join(", "))).unwrap();
         }
         s.commit().unwrap();
     }
+    s.run("CREATE INDEX CS_K ON CS (K)").unwrap();
     db.maintain().unwrap();
     (db, s)
 }
@@ -142,6 +151,26 @@ pub fn workloads(bench: &Bench) {
         );
         weights(&secs, (unit, scan), (big, little), label);
     }
+    paired(bench, &s, unit.unwrap_or(1.0_f64));
+}
+
+/// Measures a pair of a product and a row of CR joined to CS by CS's index
+/// and by a hash join, and prints their weights in rows of the row
+/// store's scan `unit`: a pair, a probe of the index, and a row hashed
+/// into a table of `SMALL` rows.
+fn paired(bench: &Bench, s: &Session, unit: f64) {
+    let of = |secs: f64| secs / unit;
+    let pair = timed(bench, s, ("pair of a product", "SELECT COUNT(*) FROM CP X, CP Y", ""), (PAIRED * PAIRED, 1));
+    let join = "SELECT COUNT(*), SUM(Y.A) FROM CR X JOIN CS Y ON X.H = Y.K";
+    let probed = timed(bench, s, ("join by an index", join, "PLANNER.INDEX_DESCENT_COST = 0.000001"), (ROWS, 1));
+    let hashed = timed(bench, s, ("join by a hash of the small table", join, "PLANNER.INDEX_DESCENT_COST = 1000000000"), (ROWS, 1));
+    // Each time is a row of CR's: its scan, then a probe, or its row and
+    // CS's share of rows each read and hashed.
+    let share = SMALL_F / ROWS_F;
+    note("weights of joins, in rows of the row store's scan:");
+    note(&format!("  pair of a product {:.3}", of(pair)));
+    note(&format!("  index probe {:.3}", of(probed) - 1.0_f64));
+    note(&format!("  HASH_ROW of {SMALL} rows built {:.3}", (of(hashed) - 1.0_f64 - share) / (1.0_f64 + share)));
 }
 
 /// Prints the weights the times `secs` of `CASES` give, in rows of the

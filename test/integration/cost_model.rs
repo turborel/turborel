@@ -189,3 +189,36 @@ fn a_grouping_past_its_grant_streams_over_a_sort() {
     assert_eq!(crate::common::rows(&s, sql).unwrap(), rows);
     assert_eq!(rows.len(), 500);
 }
+
+/// Verifies: [DESIGN] (RULES.md D303) a pair of a product is priced as the
+/// rows a nested loop pairs, so the order through the equalities is kept
+/// over one that pairs the two small tables first: A and C, 50 rows each,
+/// each join B's 2,000 rows by a key, and the product of A and C, 2,500
+/// pairs, filtered by both keys, would cost more than the 50 rows each
+/// join gives; under both enumerations the plan pairs no rows unjoined,
+/// and its rows are those of the written order.
+#[test]
+fn an_equality_join_beats_a_product_filtered() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION P CREATE TABLE A (K INTEGER) CREATE TABLE B (K INTEGER, W INTEGER) CREATE TABLE C (K INTEGER)")
+        .unwrap();
+    let s = db.session("P");
+    let small: Vec<String> = (0..50).map(|k| format!("({})", k * 40)).collect();
+    let big: Vec<String> = (0..2_000).map(|k| format!("({k}, {})", (k * 7) % 2_000)).collect();
+    for (table, rows) in [("A", &small), ("C", &small), ("B", &big)] {
+        s.run(&format!("INSERT INTO {table} VALUES {}", rows.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    db.maintain().unwrap();
+    let sql = "SELECT A.K, C.K FROM A, B, C WHERE A.K = B.K AND B.W = C.K";
+    let mut rows = Vec::new();
+    for enumeration in ["ADAPTIVE", "GREEDY"] {
+        exec(&s, &format!("SET PLANNER.JOIN_ENUMERATION = '{enumeration}'")).unwrap();
+        let plan = s.explain(sql, &Params::new()).unwrap();
+        let physical = plan.split("-- physical:").nth(1).unwrap_or_default();
+        assert!(!physical.contains("NestedLoop") && !physical.contains("Product"), "{enumeration}: {plan}");
+        rows.push(sorted(&s, sql));
+    }
+    assert_eq!(rows.first(), rows.last());
+    assert!(rows.first().is_some_and(|r| !r.is_empty()));
+}
