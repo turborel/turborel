@@ -5,7 +5,8 @@
 //! probing rows by its built ones' keys (RULES.md D369); and whether a
 //! correlated subquery keeps its plan across its runs (RULES.md D675);
 //! and whether a hash join of dense keys finds its rows by their places
-//! (RULES.md D601).
+//! (RULES.md D601); and whether a kept point statement runs straight on
+//! its table (RULES.md D752).
 
 use super::builtin::{ON, SWITCHES, at_least, count, defined, text};
 use super::{Definition, Effect, Key, Kind};
@@ -27,6 +28,9 @@ pub const KEEP_SUBQUERY_PLANS: Key = Key(89);
 /// EXECUTOR.DENSE_JOINS (RULES.md D601), at its key's place after the
 /// planner's estimate margin.
 pub const EXECUTOR_DENSE_JOINS: Key = Key(92);
+/// EXECUTOR.POINT_OPERATIONS (RULES.md D752), at its key's place after
+/// the dense joins.
+pub const EXECUTOR_POINT_OPERATIONS: Key = Key(93);
 
 /// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
 const KERNELS_NAME_MAX: usize = 64;
@@ -100,5 +104,14 @@ pub(super) fn dense_joins() -> Definition {
         ("EXECUTOR.DENSE_JOINS", Kind::Choice(SWITCHES), text(ON)),
         SESSION,
         "Whether a hash join whose one key is of whole numbers dense in their span, at most four times as wide as its built rows, finds a probe's rows at its key's place in the span, no hash made: ON; or hashes every key, OFF, as to compare the two. Its rows are the same either way.",
+    )
+}
+
+/// EXECUTOR.POINT_OPERATIONS (RULES.md D752).
+pub(super) fn point_operations() -> Definition {
+    defined(
+        ("EXECUTOR.POINT_OPERATIONS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a kept query, UPDATE or DELETE whose plan is one probe of a whole unique key reads its row straight from the table: ON; or through the executor's operators, OFF, as to compare the two. Its rows, errors and diagnostics are the same either way.",
     )
 }

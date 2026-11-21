@@ -237,7 +237,11 @@ each execution reads its values where the kept plan names them, the
 plan itself never copied, and a plan whose paths follow them is chosen
 by them. A query, a searched UPDATE or a searched DELETE that finds one
 row by a unique key, `WHERE K = ?` of a PRIMARY KEY or UNIQUE column K,
-keeps its access path too, so its executions choose nothing. Another query keeps its access paths once
+keeps its access path too, so its executions choose nothing. Such a
+statement reads its row straight from the table, with none of the
+executor's operators made. Its rows, errors and diagnostics are the
+same with EXECUTOR.POINT_OPERATIONS OFF, which runs it through them, as
+to compare the two. Another query keeps its access paths once
 five executions in a row choose the same ones, as `WHERE K BETWEEN ? AND
 ?` does whose ranges are short, and is then planned no more, until a
 table it reads gains or loses a tenth of its rows and 50 more, when it
