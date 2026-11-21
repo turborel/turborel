@@ -242,6 +242,16 @@ impl Check {
     }
 }
 
+/// A constraint's failure `e`, about constraint `c` of `desc` if about
+/// nothing [ISO/IEC 9075:1992 §18.1 GR3f].
+fn broken(e: SqlError, (desc, c): (&TableDesc, &ConstraintDesc)) -> SqlError {
+    if e.code == Code::Constraint && e.about_nothing() { e.about(Subject::constraint(c.name.parts(), desc.name.parts())) } else { e }
+}
+
+/// What a statement's end checks at once with: its transaction, and what
+/// its checks keep.
+type Now<'t, 'c> = (&'t Txn, &'t mut Checking<'c>);
+
 /// The row a row check read last, of its table and id, if it is there.
 type ReadRow = Option<(QualifiedName, RowId, Option<Row>)>;
 
@@ -349,12 +359,12 @@ impl State {
         self.referential_actions(tx, &mut effects)?;
         let triggered = effects.triggered.take();
         let whole = effects.whole_assertions(self)?;
-        let checks = self.checks(&mut effects)?;
+        let mut checking = Checking::default();
+        let checks = self.checks(&mut effects, (tx, &mut checking))?;
         let (mut deferred, mut wholes) = (HeldRows::new(effects.space.clone()), Vec::new());
         let modes = effects.deferral;
         {
             let deferral = modes.borrow();
-            let mut checking = Checking::default();
             for check in checks {
                 let check = check?;
                 let Some(c) = self.constraint_of(&check) else { continue };
@@ -416,14 +426,19 @@ impl State {
         }
         let Some(table) = check.table() else { return self.check_assertion_whole(tx, check.constraint()) };
         let (Some(c), Some(desc)) = (self.constraint_of(check), self.catalog.table(table)) else { return Ok(()) };
-        let broken = |e: SqlError| {
-            if e.code == Code::Constraint && e.about_nothing() {
-                e.about(Subject::constraint(c.name.parts(), desc.name.parts()))
-            } else {
-                e
-            }
-        };
-        self.check_one(tx, check, (desc, c), checking).map_err(broken)
+        self.check_one(tx, check, (desc, c), checking).map_err(|e| broken(e, (desc, c)))
+    }
+
+    /// Row `id` of `desc` satisfies its constraint `c`, checked as the
+    /// statement's end gathers its checks (RULES.md D421), as `check` makes
+    /// a `Check::Row`.
+    ///
+    /// # Errors
+    ///
+    /// As `check`.
+    fn row_now(&self, tx: &Txn, (desc, c): (&TableDesc, &ConstraintDesc), id: RowId, checking: &mut Checking<'_>) -> Result<()> {
+        let at = (&mut checking.bound, &mut checking.read);
+        self.check_row(tx, (desc, c), id, at).map_err(|e| broken(e, (desc, c)))
     }
 
     /// `check`'s, of constraint `c` of `desc`.

@@ -4,7 +4,7 @@
 //! `PROBES` of its bits, so a scan skips the parts an equality's values
 //! cannot be in. A value's bits are those of its bucket (`value::bucket`),
 //! the form every two values that compare equal share, hashed by
-//! MurmurHash3 x64-128 (`hash/murmur.rs`): the i-th bit is h1 + i × h2 of
+//! XXH3-128 (`hash/xxhash.rs`): the i-th bit is h1 + i × h2 of
 //! its two halves (Kirsch and Mitzenmacher, "Less Hashing, Same
 //! Performance: Building a Better Bloom Filter", 2006). Of a full part,
 //! about 10 bits a value, a value not in it is taken as in it about once in
@@ -14,7 +14,7 @@
 use super::group::{Filter, Group, PART_ROWS, Pages, Seal};
 use crate::disk::pager::PageId;
 use crate::error::Result;
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_128_halves;
 use crate::index::Probe;
 use crate::storage::{Condition, Conjunct};
 use crate::value::{Bucket, CompOp, Value, bucket};
@@ -84,7 +84,7 @@ pub fn hashed(v: &Value) -> Option<(u64, u64)> {
         // bucket of a key on which nulls match (`key_bucket`) alone.
         Bucket::Null => key.push(NULL_TAG),
     }
-    Some(murmur3_x64_128(&key, 0))
+    Some(xxh3_128_halves(&key, 0))
 }
 
 /// The byte and the bit in it of the `i`th probe of `hash`, of a filter of

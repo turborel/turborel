@@ -197,7 +197,7 @@ impl RowTable {
         if candidates.is_empty() {
             return Ok(());
         }
-        let mut named = crate::hash::murmur::MurmurSet::default();
+        let mut named = crate::hash::xxhash::Xxh3Set::default();
         for id in touched {
             self.named_by(id, &mut named)?;
         }
@@ -208,7 +208,7 @@ impl RowTable {
 
     /// Adds to `named` the objects row `id`'s newest version names, its
     /// directories and their segments; none if it is deleted or gone.
-    fn named_by(&self, id: RowId, named: &mut crate::hash::murmur::MurmurSet<u64>) -> Result<()> {
+    fn named_by(&self, id: RowId, named: &mut crate::hash::xxhash::Xxh3Set<u64>) -> Result<()> {
         let Some(newest) = self.tree.get(&key(id))? else { return Ok(()) };
         let version = Version::parse(&newest)?;
         if version.deleted {
