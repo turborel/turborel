@@ -122,6 +122,7 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }

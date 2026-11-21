@@ -113,6 +113,8 @@ fn join_code(k: JoinKind) -> u8 {
         JoinKind::Left => 1,
         JoinKind::Right => 2,
         JoinKind::Full => 3,
+        JoinKind::Semi => 4,
+        JoinKind::Anti => 5,
     }
 }
 
@@ -198,6 +200,8 @@ fn body(r: &mut Reader<'_>, op: Op, depth: usize) -> Result<Body> {
                 1 => JoinKind::Left,
                 2 => JoinKind::Right,
                 3 => JoinKind::Full,
+                4 => JoinKind::Semi,
+                5 => JoinKind::Anti,
                 other => return Err(violation(&format!("no join is of kind {other}"))),
             };
             Body::Join { kind, condition: if r.u8()? == 0 { None } else { Some(expr(r, depth)?) } }

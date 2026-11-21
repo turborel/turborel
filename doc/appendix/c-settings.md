@@ -93,6 +93,8 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.PUSH_LIMIT_THROUGH_UNION | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.REMOVE_REDUNDANT_DISTINCT | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.SEMI_JOINS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.SEMI_REDUCTION | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.SIMPLIFY_CONDITIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.UNNEST_SUBQUERIES | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.DP_BUDGET | 10000 | INTEGER FROM 1 TO 1000000 | at once | *session* |
@@ -207,6 +209,8 @@ Each in a sentence:
 - **OPTIMIZER.PUSH_LIMIT_THROUGH_UNION**: Whether the optimizer's rule push_limit_through_union rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_raising_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.REMOVE_REDUNDANT_DISTINCT**: Whether the optimizer's rule remove_redundant_distinct rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.SEMI_JOINS**: Whether the optimizer's rule semi_joins rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.SEMI_REDUCTION**: Whether the optimizer's rule semi_reduction rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.SIMPLIFY_CONDITIONS**: Whether the optimizer's rule simplify_conditions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.UNNEST_SUBQUERIES**: Whether the optimizer's rule unnest_subqueries rewrites plans: ON; or OFF, as to compare plans made without it.
 - **PLANNER.DP_BUDGET**: The connected subsets of a query's joined tables up to which ADAPTIVE join ordering finds the cheapest plan exactly. Past it the search is linearized, and parts of a greedy plan are planned again by dynamic programming until this many table entries are made.

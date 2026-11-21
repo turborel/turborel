@@ -222,10 +222,16 @@ impl Model {
         };
         let joined = product * fraction;
         let kind = applied.op.map_or(Kind::Inner, |o| self.kind_of(o));
+        // A semi join keeps the share of the left's rows the pairs reach,
+        // at most each, an antijoin the rest: shares of the left, so every
+        // order of the set's joins gives it the same rows (RULES.md D540).
+        let reached = r1 * (r2 * fraction).min(1.0_f64);
         let rows = match kind {
             Kind::Inner => joined,
             Kind::Left => joined.max(r1),
             Kind::Full => joined.max(r1).max(r2),
+            Kind::Semi => reached,
+            Kind::Anti => (r1 - reached).max(r1.min(1.0_f64)),
         };
         rows.max(product.min(1.0_f64))
     }

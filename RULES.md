@@ -322,6 +322,9 @@ verification approach DO-178C expects (§8).
 | D317 | EXPLAIN shows the unnested plan, and both rules have their own settings |
 | D318 | Side effects, non-deterministic functions, UNIQUE, MATCH and a few operators keep a subquery nested |
 | D319 | A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct |
+| D540 | A semi join and an antijoin are join kinds of their own, enumerated with the others under CD-C's conflict rules |
+| D541 | A subquery of existence that is a conjunct of WHERE or HAVING is made a semi join or an antijoin before it is unnested otherwise |
+| D542 | Under MIN and MAX alone, the relations no output reads join as semi joins along the chain's join tree |
 | D320 | A language stems by Snowball's own program, run by an interpreter of the Snowball language |
 | D321 | A language is a built-in profile of normalization, stems, stop words and cutting, named in English |
 | D322 | French, Italian, Catalan and Irish take elisions off their words, and Catalan joins a middle dot |
@@ -9184,6 +9187,81 @@ one. So each binding must be known, from the tables the plan reads, to
 be of a predefined type other than a large object, made of columns by
 arithmetic, casts and sort keys (`optimizer/unnesting/typed.rs`). Any
 other binding keeps its subquery nested.
+
+#### D540. A semi join and an antijoin are join kinds of their own, enumerated with the others under CD-C's conflict rules
+
+`LogicalPlan::SemiJoin` gives the rows of its left operand that a row of
+its right matches, or of an antijoin that none does, each once and in
+the left's order. Its columns are its left's alone, and its condition is
+over the pair's. Join enumeration takes it into a chain as it takes an
+outer join: its right operand's relations are numbered past the chain's
+columns, since no node above reads them, and the conflict rules of
+Moerkotte, Fender and Eich, "On the Correct and Complete Enumeration of
+the Core Search Space" (2013), Tables 2 and 3, say where it may move. An
+inner join reassociates over a semi join or an antijoin below it, they
+commute on the left with inner and LEFT joins and with each other, and
+nothing else moves past them. Its rows are estimated as a share of its
+left's, the share of the left's distinct keys the right holds, so every
+order of a set gives the same rows (D302).
+
+It is run hashed on its equalities, the right built, or the left when it
+has fewer estimated rows, with a mark for each row; by an index of the
+right's table, each probe stopping at the first match; or nested, the
+right held, of a condition with no equality. Every way stops at a left
+row's first match, so the rest of its condition is evaluated on fewer
+pairs than a join would; the optimizer makes semi joins only of
+conditions that cannot raise (D15). EXPLAIN names it HashSemiJoin,
+HashAntiJoin, HashRightSemiJoin, HashRightAntiJoin, NestedLoopSemiJoin,
+NestedLoopAntiJoin, or SemiIndexNestedLoop and AntiIndexNestedLoop.
+
+#### D541. A subquery of existence that is a conjunct of WHERE or HAVING is made a semi join or an antijoin before it is unnested otherwise
+
+The rule `semi_joins`, set by OPTIMIZER.SEMI_JOINS, runs before
+`unnest_subqueries`. A conjunct that is EXISTS of a correlated subquery,
+NOT EXISTS, a quantified comparison made EXISTS (D315), an uncorrelated
+IN, or NOT of a quantified comparison becomes the semi join or antijoin
+of the node's input with the subquery's rows. Where the subquery reads
+its outer references only in its filters, under projections and a
+DISTINCT, those conjuncts are the join's condition, after Neumann and
+Kemper's §2, so no domain of bindings is computed; otherwise the
+bindings' rows are those unnesting makes (D312, D314) and the join is on
+their keys. The other conjuncts filter the input below the join, so they
+are still evaluated on every row.
+
+`NOT (x = SOME s)`, a NOT IN, keeps a row if no row's comparison is true
+or unknown, the antijoin on `(x = y) IS NOT FALSE`, which a null on
+either side satisfies [ISO/IEC 9075:1992 §8.7 GR2]; `NOT (x op ALL s)` is
+the semi join on `(x op y) IS FALSE`. An uncorrelated NOT IN stays a
+subquery, which the executor hashes once. The rule leaves a subquery
+that can raise, one under OR, and one of an impure plan; and it is off,
+with the other unnesting rules, for a plan that finds the rows a
+searched change updates (D318).
+
+#### D542. Under MIN and MAX alone, the relations no output reads join as semi joins along the chain's join tree
+
+MIN and MAX give one value of a multiset and of its set (Yan and
+Larson, VLDB 1995). Of a grouping of no grouping columns whose every set
+function is MIN or MAX, over a chain of inner
+joins, the rule `semi_reduction` (OPTIMIZER.SEMI_REDUCTION) keeps the
+relations whose columns the set functions read and makes each other
+relation that is an ear of the chain's join tree a semi join into its
+parent, its own ears first, as the bottom-up pass of Yannakakis'
+algorithm does (Lanzinger, Pichler and Selzer, PVLDB 2025). The tree is
+found by GYO ear removal. A relation is an ear of a parent when each of
+its conjuncts with relations left reads the two alone, or is an equality
+with a third relation that the parent's equalities with both imply, of
+columns of one numeric type. The kept relations' rows that the chain
+joins are those the reduced chain joins, so the values are the same,
+while the rows a relation repeated are never made. The join enumeration
+then orders the semi joins with the rest (D540).
+
+It leaves a chain any conjunct of which can raise or holds a subquery,
+since a semi join evaluates its condition on fewer pairs (D15), and a
+grouping with grouping columns, whose groups come in the order of their
+first rows. A set function of DISTINCT is blind to duplicates too, but
+it is left: its grouping by its argument drops them already (D340), and
+a relation the rule would reduce may be the one whose few rows probe the
+kept one's index, as a stock level's order lines probe its stock.
 
 ### Full-text languages
 

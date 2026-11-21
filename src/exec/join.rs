@@ -8,7 +8,8 @@
 //! either (`exec/join/outer.rs`); an index nested-loop join holds nothing,
 //! each left row probing an index (`exec/join/indexed.rs`); a merge join
 //! holds the run of right rows of one key (`exec/join/merge.rs`); a range
-//! join holds its right operand sorted (`exec/join/range.rs`).
+//! join holds its right operand sorted (`exec/join/range.rs`); a semi
+//! join or an antijoin gives each left row once, or none (`exec/join/semi.rs`).
 
 mod indexed;
 mod merge;
@@ -16,6 +17,7 @@ mod outer;
 mod partitioned;
 mod range;
 mod rescan;
+mod semi;
 
 pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
@@ -26,6 +28,7 @@ pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub(in crate::exec) use partitioned::{Partitions, Pending, joined as partitioned_joined};
 pub(super) use range::ranged;
 pub(in crate::exec) use rescan::{Pass, Rescanned, product};
+pub(super) use semi::semi;
 
 use std::borrow::Cow;
 use std::collections::HashMap;

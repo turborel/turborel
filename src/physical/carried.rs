@@ -24,13 +24,21 @@ impl Plan {
             | Plan::Window { est, .. } => Some(*est),
             Plan::MergeJoin(m) => Some(m.est),
             Plan::RangeJoin(r) => Some(r.est),
+            Plan::SemiJoin(s) => Some(s.est),
             Plan::Project { input, .. } | Plan::Sort { input, .. } => input.est(),
             Plan::Parallel(p) => p.input.est(),
             Plan::Counted(c) => c.input.est(),
             Plan::IndexJoin { left, est, outer, .. } => {
                 let left = left.est()?;
                 let found = left * est;
-                Some(if matches!(outer, Preserved::Inner) { found } else { found.max(left) })
+                // A semi join gives at most each left row, an antijoin the
+                // rest.
+                Some(match outer {
+                    Preserved::Inner => found,
+                    Preserved::Outer | Preserved::Both(_) => found.max(left),
+                    Preserved::Semi => found.min(left),
+                    Preserved::Anti => (left - found.min(left)).max(left.min(1.0_f64)),
+                })
             }
             Plan::MergeAppend { inputs, .. } => inputs.iter().map(Plan::est).sum(),
             Plan::Values { rows, .. } => Some(cost_of(rows.len())),

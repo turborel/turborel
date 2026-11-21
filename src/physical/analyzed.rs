@@ -150,6 +150,7 @@ impl Plan {
                 | Plan::MergeJoin(_)
                 | Plan::RangeJoin(_)
                 | Plan::OuterJoin { .. }
+                | Plan::SemiJoin(_)
         )
     }
 
@@ -220,6 +221,7 @@ pub(crate) fn operators(plan: Plan, depth: usize, out: &mut Vec<Operator>) -> us
         | Plan::OuterJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Distinct { .. }

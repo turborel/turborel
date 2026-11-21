@@ -75,6 +75,9 @@ behind it, and each can be replaced or added to.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
+- [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
+  for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
+  and joins under MIN and MAX reduced to semi joins.
 - Joins removed on unique and foreign keys, filters and FETCH FIRST moved
   into set operations and below windows, and parts of conditions that can
   raise computed on the table they read, so joins over them are reordered.

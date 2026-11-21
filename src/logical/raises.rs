@@ -229,7 +229,7 @@ fn column_type(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: 
     let deeper = depth.saturating_add(1);
     match plan {
         LogicalPlan::Scan { table, .. } => catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),
-        LogicalPlan::Filter { input, .. } => column_type(input, column, catalog, deeper),
+        LogicalPlan::Filter { input, .. } | LogicalPlan::SemiJoin { left: input, .. } => column_type(input, column, catalog, deeper),
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
             Some(at) => column_type(right, at, catalog, deeper),
             None => column_type(left, column, catalog, deeper),
