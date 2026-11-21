@@ -31,12 +31,11 @@ mod parted;
 mod probe;
 mod shared;
 
-use std::sync::Arc;
-
 use super::late::Deferred;
 use super::stream::{self, Batches};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::join::Joining;
 use crate::exec::{RowIter, execute, failed};
 use crate::logical::{OuterJoin, cond_columns};
@@ -59,6 +58,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -122,6 +122,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -155,7 +156,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
 /// # Errors
 ///
 /// A table's storage missing; the right operand's errors.
-pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+pub(super) fn batches_with(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let stop = db.tx.stop_of(tx);
     if let Plan::HashJoin { left, right, keys, .. } = plan {
         let width = stream::layout(&left, db).map_or(0, |(_, width)| width);
@@ -171,8 +172,8 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
 /// join, chosen by reference and handed the plan at one call, so this
 /// frame, which each level of a chain of joins adds to the stack, holds no
 /// copy of a plan for each (RULES.md R-CF-6).
-fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
-    let made: fn(Plan, &Arc<State>, TxId) -> Result<Batches> = match &plan {
+fn joined(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
+    let made: fn(Plan, &Db, TxId) -> Result<Batches> = match &plan {
         Plan::Product { .. } => product_batches,
         Plan::HashJoin { .. } => hash_batches,
         Plan::OuterJoin { .. } => outer_batches,
@@ -182,6 +183,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -210,7 +212,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// # Errors
 ///
 /// SQLCODE -910, always.
-fn no_join(_plan: Plan, _db: &Arc<State>, _tx: TxId) -> Result<Batches> {
+fn no_join(_plan: Plan, _db: &Db, _tx: TxId) -> Result<Batches> {
     Err(crate::exec::broken("a join of streams is not one"))
 }
 
@@ -219,7 +221,7 @@ fn no_join(_plan: Plan, _db: &Arc<State>, _tx: TxId) -> Result<Batches> {
 /// # Errors
 ///
 /// As `batches_with`.
-fn product_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+fn product_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     let Plan::Product { left, right, .. } = plan else { return no_join(plan, db, tx) };
     nested::multiplied((*left, *right), db, tx)
 }
@@ -229,7 +231,7 @@ fn product_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// # Errors
 ///
 /// As `batches_with`.
-fn hash_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+fn hash_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     let Plan::HashJoin { left, right, keys, .. } = plan else { return no_join(plan, db, tx) };
     probe::probed((*left, *right, keys), (Kind::Inner, Deferred::default()), db, tx)
 }
@@ -240,7 +242,7 @@ fn hash_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// # Errors
 ///
 /// As `batches_with`.
-fn outer_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+fn outer_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     let Plan::OuterJoin { kind, left, right, keys, cond, own, widths, .. } = plan else {
         return Err(crate::exec::broken("an outer join is not one"));
     };
@@ -254,7 +256,7 @@ fn outer_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// its width, its columns the batches do not hold null, if every table it
 /// reads reads by batch; else read row by row, as a table that makes each
 /// row of a batch gives them as fast so.
-fn operand_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn operand_rows(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if !stream::reads_by_batch(&plan, db) {
         return execute(plan, db, tx);
     }
@@ -268,7 +270,7 @@ fn operand_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 /// The rows of `plan`, a subtree that gives batches, of the columns its
 /// batches hold alone, in their order (`stream::layout`): made of its
 /// batches if every table it reads reads by batch, else of its rows.
-fn narrow_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+fn narrow_rows(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let (columns, _) = stream::layout(&plan, db).unwrap_or_default();
     if !stream::reads_by_batch(&plan, db) {
         let rows = execute(plan, db, tx);
@@ -317,7 +319,7 @@ pub(in crate::exec) fn gathered(rows: RowIter, columns: &[usize]) -> Batches {
 /// # Errors
 ///
 /// As `stream::batches`.
-fn left_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+fn left_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     left_late_batches(plan, (db, tx), &Deferred::default())
 }
 
@@ -328,7 +330,7 @@ fn left_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// # Errors
 ///
 /// As `stream::batches`.
-fn left_late_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+fn left_late_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     if !in_order(&plan) {
         return stream::batches_with(plan, (db, tx), deferred);
     }
@@ -352,6 +354,7 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }

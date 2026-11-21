@@ -24,6 +24,9 @@ fn spatial_joins_equal_products_in_both_orders_and_through_projections() {
     let db = database();
     windows(&db);
     let session = db.session("S");
+    // A range join (RULES.md D580) costs less here; the index's join is
+    // what these tests read.
+    session.run("SET PLANNER.RANGE_JOINS = 'OFF'").unwrap();
     let queries = [
         format!("SELECT P.ID, W.ID FROM P, W WHERE {MATCH} ORDER BY P.ID, W.ID"),
         format!("SELECT P.ID, W.ID FROM W, P WHERE {MATCH} ORDER BY P.ID, W.ID"),
@@ -52,6 +55,7 @@ fn spatial_joins_probe_four_coordinate_rectangles() {
     windows(&db);
     db.drop_index("P_XY").unwrap();
     let session = db.session("S");
+    session.run("SET PLANNER.RANGE_JOINS = 'OFF'").unwrap();
     session.run("INSERT INTO W SELECT ID + 100, LX, LY, HX, HY FROM W").unwrap();
     session.commit().unwrap();
     db.create_index("W_BOUNDS", "S.W", &["LX", "LY", "HX", "HY"], "rtree").unwrap();
@@ -93,6 +97,7 @@ fn paused_spatial_joins_keep_their_snapshot_during_point_updates() {
     let db = database();
     windows(&db);
     let (reader, writer) = (db.session("S"), db.session("S"));
+    reader.run("SET PLANNER.RANGE_JOINS = 'OFF'").unwrap();
     reader.run("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").unwrap();
     let query = format!("SELECT P.ID, W.ID FROM W, P WHERE {MATCH}");
     let mut expected = rows(&reader, &query).unwrap();
@@ -122,6 +127,9 @@ fn spatial_joins_track_empty_probe_phantoms() {
     setup.commit().unwrap();
     serializable(&db);
     let (a, b) = (db.session("S"), db.session("S"));
+    for s in [&a, &b] {
+        s.run("SET PLANNER.RANGE_JOINS = 'OFF'").unwrap();
+    }
     let query = format!("SELECT P.ID FROM W, P WHERE {MATCH}");
     let plan = a.physical_plan(&query, &Params::new()).unwrap();
     assert!(plan.contains("IndexNestedLoop"), "{plan}");

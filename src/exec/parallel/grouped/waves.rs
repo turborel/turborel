@@ -24,8 +24,8 @@ use super::super::probe::PARTS;
 use super::super::run::Morsels;
 use super::super::{Held, Limit};
 use super::{Grouping, Runs, first_of};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::batch::morsel_groups;
 use crate::exec::table::{GroupTable, Made};
 use crate::exec::{Runner, broken};
@@ -54,7 +54,7 @@ enum Handed {
 /// the bytes each holds of the grant.
 struct Waves<'a> {
     grouping: &'a Arc<Grouping>,
-    run: (&'a Arc<State>, TxId, usize),
+    run: (&'a Db, TxId, usize),
     limit: &'a Limit,
     frozen: Frozen,
     wave: Vec<Arc<Made>>,
@@ -73,13 +73,8 @@ struct Waves<'a> {
 /// # Errors
 ///
 /// As reading the pipeline, or a set function, fails.
-pub(super) fn waved(
-    pipeline: Pipeline,
-    grouping: &Arc<Grouping>,
-    (db, tx, degree): (&Arc<State>, TxId, usize),
-    limit: &Limit,
-) -> Result<Runs> {
-    let (pipeline, db_for, making) = (Arc::new(pipeline), Arc::clone(db), Arc::clone(grouping));
+pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Runs> {
+    let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
     let count = pipeline.count();
     let work = Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
@@ -220,11 +215,7 @@ fn thawed_and_merged(grouping: &Grouping, (frozen, p): (&Frozen, usize), wave: &
 /// # Errors
 ///
 /// As merging a partition fails.
-fn frozen_wave(
-    (grouping, frozen): (&Arc<Grouping>, &Frozen),
-    wave: Vec<Arc<Made>>,
-    (db, tx, degree): (&Arc<State>, TxId, usize),
-) -> Result<usize> {
+fn frozen_wave((grouping, frozen): (&Arc<Grouping>, &Frozen), wave: Vec<Arc<Made>>, (db, tx, degree): (&Db, TxId, usize)) -> Result<usize> {
     let (grouping, kept, wave) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave));
     let freeze = Box::new(move |p: usize| {
         let made = thawed_and_merged(&grouping, (&kept, p), &wave)?.frozen()?;
@@ -247,7 +238,7 @@ fn frozen_wave(
 fn finished_wave(
     (grouping, frozen): (&Arc<Grouping>, &Frozen),
     wave: Vec<Arc<Made>>,
-    (db, tx, degree): (&Arc<State>, TxId, usize),
+    (db, tx, degree): (&Db, TxId, usize),
 ) -> Result<Vec<Vec<(u64, Row)>>> {
     let (grouping, kept, wave) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave));
     let finish = Box::new(move |p: usize| {

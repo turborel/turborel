@@ -39,7 +39,7 @@ use crate::engine::columns::ahead::GroupAhead;
 use crate::engine::columns::group::Group;
 use crate::engine::columns::judged::Judgment;
 use crate::engine::columns::prepared::Prepared;
-use crate::engine::columns::scan::read_candidates;
+use crate::engine::columns::scan::read_ordered;
 use crate::engine::rows::gathered::Gathering;
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::Ranged;
@@ -163,7 +163,8 @@ impl Batched {
         // Its row ids read only to tell the rows the tree shadows.
         let ids = if shadowed.is_empty() { Vec::new() } else { group.row_ids(&pages)? };
         let vector = u32::try_from(VECTOR_ROWS).unwrap_or(u32::MAX);
-        let candidates = read_candidates(&group, &pages, self.condition.as_ref())?;
+        let (candidates, order) = read_ordered(&group, &pages, self.condition.as_ref())?;
+        self.judgment.order_by(&order);
         // A late column's pages are read only as it is decoded.
         let eager: Vec<usize> = self.columns.iter().copied().filter(|c| !self.late.contains(c)).collect();
         self.ahead.take_up(&group, &eager, &candidates);
