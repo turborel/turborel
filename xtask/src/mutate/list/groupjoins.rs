@@ -7,7 +7,7 @@ use super::{Mutation, Package};
 
 /// The mutations of groupjoins and index joins by batch, in the order
 /// they run.
-pub const GROUPJOINS: [Mutation; 4] = [
+pub const GROUPJOINS: [Mutation; 5] = [
     Mutation {
         name: "groupjoin-left-unmatched-dropped",
         package: Package::Core,
@@ -43,8 +43,18 @@ pub const GROUPJOINS: [Mutation; 4] = [
         package: Package::Core,
         breaks: "an index join by batch gives its outer rows last first",
         file: "src/exec/join/indexed/batched.rs",
-        original: "        match self.queue.pop_front() {",
-        replacement: "        match self.queue.pop_back() {",
+        original: "let Some((row, at)) = self.queue.pop_front() else",
+        replacement: "let Some((row, at)) = self.queue.pop_back() else",
+        integration: &["index_join_batches::batches_of_outer_rows_join_as_rows_alone"],
+        unit: &[],
+    },
+    Mutation {
+        name: "batched-index-join-repeat-taken",
+        package: Package::Core,
+        breaks: "an index join by batch gives a key's rows to the first of the outer rows that repeat it alone",
+        file: "src/exec/join/indexed/batched.rs",
+        original: "let taken = if *uses == 0 {",
+        replacement: "let taken = if *uses <= 1 {",
         integration: &["index_join_batches::batches_of_outer_rows_join_as_rows_alone"],
         unit: &[],
     },

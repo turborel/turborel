@@ -193,7 +193,12 @@ impl Probed {
         if let Some(row) = self.ready.pop_front() {
             return Ok(row);
         }
-        let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
+        self.fetched(&key, id)
+    }
+
+    /// The row of the entry `key`, `id`, as `row` gives it.
+    fn fetched(&mut self, key: &Key, id: RowId) -> Result<Option<Row>> {
+        let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), key)?;
         Ok(found.map(|(_, mut row)| {
             if self.located {
                 row.push(storage::located(id));

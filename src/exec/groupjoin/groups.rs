@@ -8,15 +8,14 @@
 //! invariant, SQLCODE -910.
 
 use crate::error::Result;
-use crate::exec::batch::Kept;
-use crate::exec::table::{Columns, GroupTable, Key, Seed, hash_rows, hash_values};
-use crate::exec::{RowIter, broken};
+use crate::exec::batch::{Batches, Kept};
+use crate::exec::broken;
+use crate::exec::table::{Columns, GroupTable, Key, Seed, hash_rows};
 use crate::kernels::Kernels;
 use crate::physical::JoinKey;
 use crate::spill::row_bytes;
 use crate::storage::sel::nth;
 use crate::storage::{Batch, Column, Ints, Row, Sel};
-use crate::value::Value;
 
 /// \[DESIGN\] The bytes a build row kept takes beside its values: its
 /// vector's slot and its group's number.
@@ -41,44 +40,53 @@ pub(in crate::exec) struct Building<'a> {
     pub(in crate::exec) outer: bool,
 }
 
-/// The value of column `c` of `row`.
-fn column_of(row: &Row, c: usize) -> Result<Value> {
-    row.get(c).cloned().ok_or_else(|| broken("a groupjoin's column past its row"))
+/// Where each of `columns` is among the vectors of a batch of `layout`.
+///
+/// # Errors
+///
+/// SQLCODE -910 if one is not there.
+fn placed(columns: impl Iterator<Item = usize>, layout: &[usize]) -> Result<Vec<usize>> {
+    columns.map(|c| layout.iter().position(|&at| at == c).ok_or_else(|| broken("a groupjoin's column past its batch"))).collect()
 }
 
 impl<S: Columns> Groups<S> {
-    /// The groups of the rows of `build` in `table`, as `how` says, keyed
-    /// by hashes of `seed`; none if they hold more than `limit` bytes, as
-    /// the groupjoin then gives way (RULES.md D38).
+    /// The groups of the rows of the batches `build`, of `layout`, in
+    /// `table`, as `how` says, keyed by hashes of `seed` and `kernels`;
+    /// none if they hold more than `limit` bytes, as the groupjoin then
+    /// gives way (RULES.md D38).
     ///
     /// # Errors
     ///
     /// As reading the build fails; SQLCODE -910 if a key repeats.
     pub(in crate::exec) fn built(
         mut table: GroupTable<S>,
-        build: RowIter,
+        (build, layout): (Batches, &[usize]),
         how: Building<'_>,
-        (seed, limit): (&Seed, usize),
+        (seed, kernels, limit): (&Seed, &dyn Kernels, usize),
     ) -> Result<Option<Groups<S>>> {
-        let (mut rows, mut bytes) = (Vec::new(), 0_usize);
-        for (n, row) in (0_u64..).zip(build) {
-            let row = row?;
-            let values = how.keys.iter().map(|k| column_of(&row, k.left)).collect::<Result<Row>>()?;
-            let kept = how.columns.iter().map(|&c| column_of(&row, c)).collect::<Result<Row>>()?;
-            let joins = how.keys.iter().zip(&values).all(|(k, v)| k.nulls || !v.is_null());
-            let group = if joins {
-                let hash = hash_values(seed, &values);
-                if table.find(hash, Key::Values(&values)).is_some() {
-                    return Err(broken("a groupjoin's group operand repeats a key"));
-                }
-                Some(table.make(hash, Key::Values(&values), n))
-            } else if how.outer {
-                None
-            } else {
-                continue;
-            };
-            bytes = bytes.saturating_add(row_bytes(&kept)).saturating_add(KEPT_BYTES);
-            rows.push((group, kept));
+        let keys = placed(how.keys.iter().map(|k| k.left), layout)?;
+        let kept_at = placed(how.columns.iter().copied(), layout)?;
+        let nulls: Vec<bool> = how.keys.iter().map(|k| k.nulls).collect();
+        let (mut rows, mut bytes, mut number, mut hashes) = (Vec::new(), 0_usize, 0_u64, Vec::new());
+        for batch in build {
+            let (batch, given) = batch?;
+            let given = given.as_ref().map(Sel::as_slice);
+            hash_rows(&batch, (&keys, given), (seed, kernels), &mut hashes);
+            for (n, &hash) in hashes.iter().enumerate() {
+                let r = nth(given, n);
+                let at = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+                let kept: Row = kept_at.iter().map(|&c| batch.cell(c, r).to_value()).collect();
+                let group = if !null_key(&batch, (&keys, &nulls), r) {
+                    Some(made(&mut table, (&batch, &keys, r), (hash, at))?)
+                } else if how.outer {
+                    None
+                } else {
+                    continue;
+                };
+                bytes = bytes.saturating_add(row_bytes(&kept)).saturating_add(KEPT_BYTES);
+                rows.push((group, kept));
+            }
+            number = number.saturating_add(u64::try_from(hashes.len()).unwrap_or(u64::MAX));
             if table.bytes().saturating_add(bytes) > limit {
                 return Ok(None);
             }
@@ -86,6 +94,21 @@ impl<S: Columns> Groups<S> {
         let firsts = vec![u64::MAX; table.len()];
         Ok(Some(Groups { table, rows, firsts }))
     }
+}
+
+/// The group made in `table` of row `r` of `batch`, its keys at `keys`
+/// hashed `hash`, its number `at`.
+///
+/// # Errors
+///
+/// SQLCODE -910 if its key is a group's already.
+fn made<S: Columns>(table: &mut GroupTable<S>, (batch, keys, r): (&Batch, &[usize], usize), (hash, at): (u64, u64)) -> Result<u32> {
+    let before = table.len();
+    let g = table.found_or_made(hash, Key::Row(batch, keys, r), at);
+    if table.len() == before {
+        return Err(broken("a groupjoin's group operand repeats a key"));
+    }
+    Ok(g)
 }
 
 /// Whether row `r` of `batch` has a null in a key, its column at

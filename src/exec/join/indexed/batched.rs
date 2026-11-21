@@ -38,11 +38,14 @@ const MOST_ROWS: usize = 1024;
 /// and the failure that ended the search, if one did.
 type Found = (Vec<((Key, RowId), Option<Row>)>, Option<crate::error::SqlError>);
 
-/// An index join's outer rows read by batch, each with what its key found
-/// or the failure binding its probe; the failure that ended the outer
-/// rows, after them; and the rows of the next batch.
+/// An index join's outer rows read by batch, each with the number of what
+/// its key found, none of a row whose probe has no key; what each key
+/// found, or the failure binding a row's probe, with the outer rows yet to
+/// take it; the failure that ended the outer rows, after them; and the
+/// rows of the next batch.
 pub(super) struct Batched {
-    queue: VecDeque<(Row, Result<Found>)>,
+    queue: VecDeque<(Row, Option<usize>)>,
+    found: Vec<(Result<Found>, usize)>,
     failed: Option<crate::error::SqlError>,
     ended: bool,
     rows: usize,
@@ -58,7 +61,7 @@ impl Batched {
         let JoinProbe::Prefix(columns) = probe else { return None };
         let plain = index.expressions.is_empty() && index.collations.iter().all(Option::is_none);
         let whole = index.unique && plain && columns.len() == index.columns.len();
-        whole.then(|| Batched { queue: VecDeque::new(), failed: None, ended: false, rows: FIRST_ROWS })
+        whole.then(|| Batched { queue: VecDeque::new(), found: Vec::new(), failed: None, ended: false, rows: FIRST_ROWS })
     }
 
     /// The next outer row of `left` and what its key found in `table`,
@@ -72,15 +75,17 @@ impl Batched {
         if self.queue.is_empty() && !self.ended {
             self.fill(left, (table, probe));
         }
-        match self.queue.pop_front() {
-            Some((row, found)) => Ok(Some((row, found?))),
-            None => self.failed.take().map_or(Ok(None), Err),
-        }
+        let Some((row, at)) = self.queue.pop_front() else { return self.failed.take().map_or(Ok(None), Err) };
+        let Some((found, uses)) = at.and_then(|at| self.found.get_mut(at)) else { return Ok(Some((row, (Vec::new(), None)))) };
+        // The last row to take what a key found takes it; each before, a copy.
+        *uses = uses.saturating_sub(1);
+        let taken = if *uses == 0 { std::mem::replace(found, Ok((Vec::new(), None))) } else { found.clone() };
+        Ok(Some((row, taken?)))
     }
 
-    /// Reads the next batch of `left` and finds its keys in key order.
-    fn fill(&mut self, left: &mut RowIter, (table, probe): (&mut Probed, &JoinProbe)) {
-        table.ready.clear();
+    /// Reads the next batch of `left`, up to its size, the size doubled
+    /// for the next.
+    fn read(&mut self, left: &mut RowIter) -> Vec<Row> {
         let mut rows = Vec::with_capacity(self.rows);
         while rows.len() < self.rows {
             match left.next() {
@@ -97,35 +102,62 @@ impl Batched {
             }
         }
         self.rows = self.rows.saturating_mul(2).min(MOST_ROWS);
+        rows
+    }
+
+    /// Reads the next batch of `left` and finds its keys in key order.
+    fn fill(&mut self, left: &mut RowIter, (table, probe): (&mut Probed, &JoinProbe)) {
+        table.ready.clear();
+        self.found.clear();
+        let rows = self.read(left);
         let width = table.ix.columns.len();
         let bound: Vec<Result<Option<Probe>>> = rows.iter().map(|row| probe.bind(row, width)).collect();
-        let mut found: Vec<Option<Result<Found>>> = bound.iter().map(|b| b.as_ref().err().map(|e| Err(e.clone()))).collect();
-        // A probe of no values to sort by is searched for alone.
+        let mut slots: Vec<Option<usize>> = Vec::with_capacity(bound.len());
+        let mut order: Vec<(usize, &Probe, &[crate::value::Value])> = Vec::with_capacity(bound.len());
         for (i, b) in bound.iter().enumerate() {
-            if let (Ok(Some(alone)), Some(slot)) = (b, found.get_mut(i))
-                && values(alone).is_none()
-            {
-                *slot = Some(searched(table, Some(b)));
-            }
+            let slot = match b {
+                Ok(Some(p)) => match values(p) {
+                    Some(key) => {
+                        order.push((i, p, key));
+                        None
+                    }
+                    // A probe of no values to sort by is searched for alone.
+                    None => Some(self.kept(searched(table, p))),
+                },
+                Ok(None) => None,
+                Err(e) => Some(self.kept(Err(e.clone()))),
+            };
+            slots.push(slot);
         }
-        let mut order: Vec<(usize, &[crate::value::Value])> = bound
-            .iter()
-            .enumerate()
-            .filter_map(|(i, b)| b.as_ref().ok().and_then(Option::as_ref).and_then(values).map(|v| (i, v)))
-            .collect();
-        order.sort_by(|(_, a), (_, b)| compared(a, b));
-        let mut last: Option<(&[crate::value::Value], Result<Found>)> = None;
-        for (i, key) in order {
-            let same = last.as_ref().filter(|(before, _)| compared(before, key) == Ordering::Equal).map(|(_, f)| f.clone());
-            let result = same.unwrap_or_else(|| searched(table, bound.get(i)));
-            if let Some(slot) = found.get_mut(i) {
-                *slot = Some(result.clone());
+        order.sort_by(|(_, _, a), (_, _, b)| compared(a, b));
+        let mut last: Option<(&[crate::value::Value], usize)> = None;
+        for (i, p, key) in order {
+            let same = last.filter(|(before, _)| compared(before, key) == Ordering::Equal);
+            let at = match same {
+                Some((_, at)) => self.shared(at),
+                None => self.kept(searched(table, p)),
+            };
+            if let Some(slot) = slots.get_mut(i) {
+                *slot = Some(at);
             }
-            last = Some((key, result));
+            last = Some((key, at));
         }
         // A row of no probe, a null among its keys, finds nothing.
-        let none = || Ok((Vec::new(), None));
-        self.queue.extend(rows.into_iter().zip(found).map(|(row, f)| (row, f.unwrap_or_else(none))));
+        self.queue.extend(rows.into_iter().zip(slots));
+    }
+
+    /// The number of `found`, kept for one outer row.
+    fn kept(&mut self, found: Result<Found>) -> usize {
+        self.found.push((found, 1));
+        self.found.len().saturating_sub(1)
+    }
+
+    /// `at`, what a key found, taken by one more outer row.
+    fn shared(&mut self, at: usize) -> usize {
+        if let Some((_, uses)) = self.found.get_mut(at) {
+            *uses = uses.saturating_add(1);
+        }
+        at
     }
 }
 
@@ -144,14 +176,13 @@ fn compared(a: &[crate::value::Value], b: &[crate::value::Value]) -> Ordering {
     a.iter().zip(b).map(|(x, y)| compare(x, y).unwrap_or(Ordering::Equal)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
 }
 
-/// What the probe `bound` finds in `table`: its entries, each with its row,
-/// up to the failure that ends them.
-fn searched(table: &mut Probed, bound: Option<&Result<Option<Probe>>>) -> Result<Found> {
-    let Some(Ok(Some(probe))) = bound else { return Ok((Vec::new(), None)) };
+/// What `probe` finds in `table`: its entries, each with its row, up to
+/// the failure that ends them.
+fn searched(table: &mut Probed, probe: &Probe) -> Result<Found> {
     let mut kept = Vec::new();
     for entry in table.searched(probe)? {
         let Ok((key, id)) = entry else { return Ok((kept, entry.err())) };
-        match table.row(Ok((key.clone(), id))) {
+        match table.fetched(&key, id) {
             Ok(row) => kept.push(((key, id), row)),
             Err(e) => return Ok((kept, Some(e))),
         }

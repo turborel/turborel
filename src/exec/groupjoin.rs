@@ -51,8 +51,9 @@ fn run(g: GroupJoin, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
     let (seed, runner) = (db.functions.seed().clone(), Runner::new(db, tx));
     let table = GroupTable::new(g.keys.len(), &g.aggs, &seed, usize::MAX);
     let how = Building { keys: &g.keys, columns: &g.columns, outer: g.outer };
-    let build = execute(g.build.clone(), db, tx);
-    let Some(mut groups) = Groups::built(table, build, how, (&seed, Work::ceiling_of(db)))? else {
+    let (build, build_columns) = probed(g.build.clone(), g.widths.0, (db, tx))?;
+    let ceiling = (&seed, runner.kernels(), Work::ceiling_of(db));
+    let Some(mut groups) = Groups::built(table, (build, &build_columns), how, ceiling)? else {
         return Ok(execute(g.instead, db, tx));
     };
     let (batches, _) = probed(g.probe.clone(), g.widths.1, (db, tx))?;
