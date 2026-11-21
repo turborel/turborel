@@ -253,7 +253,12 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
             return judged_above(plan, (db, tx), &deferred.clone().with_told(kept), here);
         }
     }
-    let made: Batched = match &plan {
+    made_of(&plan)(plan, (db, tx), deferred)
+}
+
+/// The function that gives the batches of a plan of `plan`'s kind.
+fn made_of(plan: &Plan) -> Batched {
+    match plan {
         Plan::SeqScan { .. } => scan_batches,
         Plan::Filter { .. } => filter_batches,
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::batches_with,
@@ -280,8 +285,7 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         Plan::Parallel(..) => parallel_batches,
         Plan::Sort { .. } => sorted_batches,
         Plan::Limit { .. } => topped_batches,
-    };
-    made(plan, (db, tx), deferred)
+    }
 }
 
 /// The batches of `plan`, a pipeline run in parallel, in order
@@ -348,7 +352,10 @@ fn none(_plan: Plan, _at: (&Arc<State>, TxId), _deferred: &Deferred) -> Result<B
 /// As `open`.
 fn judged_above(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred, here: Vec<Told>) -> Result<Batches> {
     let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
-    Ok(runtime::applied(batches_with(plan, (db, tx), deferred)?, here, &columns, (db, false)))
+    // Its operator's own batches: an inner hash join's filter its right
+    // alone takes is among those it is told and judged above it too.
+    let made = made_of(&plan)(plan, (db, tx), deferred)?;
+    Ok(runtime::applied(made, here, &columns, (db, false)))
 }
 
 /// The batches of `scan`, a table's scan: in an order if it is in one.

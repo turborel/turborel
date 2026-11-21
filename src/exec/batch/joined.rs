@@ -34,6 +34,7 @@ mod shared;
 use std::sync::Arc;
 
 use super::late::Deferred;
+use super::runtime;
 use super::stream::{self, Batches};
 use crate::db::State;
 use crate::error::Result;
@@ -157,12 +158,15 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
 /// A table's storage missing; the right operand's errors.
 pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let stop = db.tx.stop_of(tx);
-    if let Plan::HashJoin { left, right, keys, .. } = plan {
+    if let Plan::HashJoin { .. } = &plan {
+        // The filters told it reach its left of the left's columns, and its
+        // right of the right's (`runtime::taken`, `runtime::built_side`).
+        let (told, built) = (runtime::taken(&plan, deferred.filters(), db).0, runtime::built_side(&plan, deferred.filters(), db));
+        let Plan::HashJoin { left, right, keys, .. } = plan else { return Err(crate::exec::broken("a hash join is not one")) };
         let width = stream::layout(&left, db).map_or(0, |(_, width)| width);
         let below = if deferred.any() { deferred.left_of(&keys, width) } else { Deferred::default() };
-        // The filters told it reach it of its left's columns (`runtime::taken`).
-        let below = below.with_told(deferred.filters().to_vec());
-        return Ok(Box::new(checked(probe::probed((*left, *right, keys), (Kind::Inner, below), db, tx)?, stop)));
+        let joined = probe::probed((*left, *right, keys), (Kind::Inner, below.with_told(told), built), db, tx)?;
+        return Ok(Box::new(checked(joined, stop)));
     }
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))
 }
@@ -231,7 +235,7 @@ fn product_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 /// As `batches_with`.
 fn hash_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let Plan::HashJoin { left, right, keys, .. } = plan else { return no_join(plan, db, tx) };
-    probe::probed((*left, *right, keys), (Kind::Inner, Deferred::default()), db, tx)
+    probe::probed((*left, *right, keys), (Kind::Inner, Deferred::default(), Vec::new()), db, tx)
 }
 
 /// The batches of `plan`, an outer join of streams: a LEFT one probing, if
@@ -245,7 +249,7 @@ fn outer_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         return Err(crate::exec::broken("an outer join is not one"));
     };
     if kind == OuterJoin::Left && own.is_none() && cond.as_ref().is_none_or(|c| !c.can_raise()) {
-        return probe::probed((*left, *right, keys), (Kind::Left(cond, widths), Deferred::default()), db, tx);
+        return probe::probed((*left, *right, keys), (Kind::Left(cond, widths), Deferred::default(), Vec::new()), db, tx);
     }
     outer::joined(Joining { kind, keys, cond, own, widths }, (*left, *right), db, tx)
 }

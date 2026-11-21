@@ -42,14 +42,15 @@ pub(super) enum Kind {
 
 /// The batches of a hash join of `left` and `right` on `keys`, as `kind`
 /// says, the left's columns `deferred` leaves unread given late while the
-/// right is held (RULES.md D361), gathered through the join as places.
+/// right is held (RULES.md D361), gathered through the join as places;
+/// the right read of the rows the filters `building` keep (RULES.md D600).
 ///
 /// # Errors
 ///
 /// The right operand's; the spill area's; a key the left's batches lack.
 pub(super) fn probed(
     (left, right, keys): (Plan, Plan, Vec<JoinKey>),
-    (kind, deferred): (Kind, Deferred),
+    (kind, deferred, building): (Kind, Deferred, Vec<Told>),
     db: &Arc<State>,
     tx: TxId,
 ) -> Result<Batches> {
@@ -75,12 +76,12 @@ pub(super) fn probed(
         Vec::new()
     };
     // The right operand first, held as vectors if it fits the work area.
-    let rest = match held::read(right, (&keys, &filtered), work.limit(), (db, tx))? {
+    let rest = match held::read(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
         Read::Held(held) => {
             let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
             let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
             let mut told = deferred.filters().to_vec();
-            told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told { filter: Arc::clone(f), column: key.left })));
+            told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told::of(Arc::clone(f), key.left))));
             let left = left_late_batches(left, (db, tx), &deferred.with_told(told))?;
             return Ok(Box::new(Probe { left, joined, right: Holding::Vectors(*held), places, out, _work: work }));
         }

@@ -16,6 +16,8 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
+use super::super::late::Deferred;
+use super::super::runtime::{self, Told};
 use super::super::stream::{self, Batches, Kept};
 use super::{gathered, rows_of};
 use crate::db::State;
@@ -148,19 +150,28 @@ impl HeldRight {
 
 /// The right operand `right`, keyed by the right columns of `keys`, read
 /// and held while its vectors and its table hold no more than `limit`
-/// bytes, a runtime filter made of each of its keys at `filtered`.
+/// bytes, a runtime filter made of each of its keys at `filtered`; its
+/// rows those the runtime filters `told` it keep (RULES.md D600).
 ///
 /// # Errors
 ///
 /// The operand's; a key column its batches lack (SQLCODE -910).
-pub(super) fn read(right: Plan, (keys, filtered): (&[JoinKey], &[usize]), limit: usize, (db, tx): (&Arc<State>, TxId)) -> Result<Read> {
+pub(super) fn read(
+    right: Plan,
+    (keys, filtered, told): (&[JoinKey], &[usize], Vec<Told>),
+    limit: usize,
+    (db, tx): (&Arc<State>, TxId),
+) -> Result<Read> {
     let (columns, width) = stream::layout(&right, db).unwrap_or_default();
     let places: Vec<usize> = keys
         .iter()
         .map(|k| columns.iter().position(|&c| c == k.right).ok_or_else(|| broken("a join key the right operand's batch lacks")))
         .collect::<Result<_>>()?;
-    let mut batches: Batches =
-        if stream::reads_by_batch(&right, db) { stream::batches(right, db, tx)? } else { gathered(execute(right, db, tx), &columns) };
+    let mut batches: Batches = if stream::reads_by_batch(&right, db) {
+        stream::batches_with(right, (db, tx), &Deferred::default().with_told(told))?
+    } else {
+        runtime::applied(gathered(execute(right, db, tx), &columns), told, &columns, (db, false))
+    };
     let (mut parts, mut bytes) = (Vec::new(), 0_usize);
     for kept in batches.by_ref() {
         let (batch, rows) = kept?;

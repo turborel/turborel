@@ -401,6 +401,7 @@ verification approach DO-178C expects (§8).
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
+| D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans |
 
 ### The project
 
@@ -11368,6 +11369,53 @@ registered set, which each statement chooses as it begins. Kernels are
 a built-in registration only: a call a batch across a process boundary
 would cost more than the kernel saves, so no out-of-process plug-in is
 one.
+
+#### D600. A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans
+
+A runtime filter (D369) went down a hash join's left operand alone, and
+through an inner hash join below it only to that join's left. Such a
+join's keys equate a column of its left with one of its right, so a
+filter of one is the same filter of the other, as Ives and Taylor
+(ICDE 2008) pass a join's filter sideways. An inner hash join now takes
+a filter to both its operands (`batch/runtime.rs`). Its left is told it
+of a left column, or of the left key a right key it judges equals; its
+right, as the join builds it, of a right column, or of the right key a
+left key equals (`built_side`). A hash join reads its right operand
+first, so every build inside a join's left is built after that join's
+filter is made, and can be told it. A row of the right the filter drops
+matches only left rows whose joined rows it drops. A filter so moved
+across an equality judges a vector of exact numbers alone, whose
+equality is their value's whatever their scales, never a text whose
+equality is its collation's. An analyzed plan's count of an operator's
+rows (D378) passes a filter on, so EXPLAIN ANALYZE counts the rows the
+filter left.
+
+The walk keeps D15 as before. It stops above a condition that can
+raise, a projection that can, and any operator but these, so a filter
+reaches a build only through operators that cannot raise, and never a
+guard's operand (D389).
+
+A range skips a group or a part only if it lies wholly outside the
+least and greatest built keys. An exact key of a build of no more than
+2^20 rows now gives its distinct values (`table/runtime.rs`), as Qiao,
+Boncz and Zhang's RPT+ (PVLDB 2026) cascade a range, a key set and a
+Bloom filter. Of no more than 4,096 of them, a row's key is found in
+the set by halving, exactly, at any scale, the Bloom filter left for a
+vector of other values, and the scan
+is told each as a span. Of more, the scan is told the spans between
+the 63 widest gaps among them, of more than one unit, and none of keys
+without such a gap. A scan is told spans as a conjunct true of every
+row (`Conjunct::Spans`), which a store judges only against a group's or
+a part's least and greatest, finding the first span not below them by
+halving, so a group that lies in a gap is skipped and no row is judged
+by a list.
+
+Several filters judged of one stream are judged in the order of the
+share of the rows each kept so far, the one that kept the least first,
+as Zhu et al. (PVLDB 2017) order a scan's filters by their observed
+misses between batches (`runtime/ordered.rs`). Each judges only the rows
+those before it kept, so the one that drops the most spares the others
+the most work, and the order changes the work, never the rows kept.
 
 ## 2. Project layout
 
