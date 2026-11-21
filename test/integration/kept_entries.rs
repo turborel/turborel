@@ -130,7 +130,10 @@ fn kept_keys_survive_rollbacks() {
     s.commit().unwrap();
     settle(&db);
     assert_eq!(db.index_entries("T_X").unwrap(), ROWS);
-    assert_eq!((by_x(&s, 7), by_x(&s, 9000).len()), (vec!["4".to_owned()], 0));
+    assert_eq!(by_x(&s, 7), vec!["4".to_owned()]);
+    // Past the column's statistics, a plan may scan instead: the count of
+    // entries above has checked the index.
+    assert_eq!(rows(&s, "SELECT Y FROM T WHERE X = 9000").unwrap().len(), 0);
 }
 
 /// Verifies: [DESIGN] RULES.md D443, D27: an index built after updates

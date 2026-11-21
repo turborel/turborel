@@ -403,6 +403,7 @@ verification approach DO-178C expects (§8).
 | D446 | A row's write starts from the leaf its read of the newest version found |
 | D447 | A unique constraint added in a transaction fills its index with every version |
 | D448 | SERIALIZABLE certifies by column, and skips the check when no one read |
+| D450 | A served session's transactions are collected once their reply is sent |
 
 ### The project
 
@@ -11628,3 +11629,20 @@ the images at all.
 The check also skips the scan of the transactions kept for it when the
 transaction validated read nothing and no kept transaction read
 anything. A count of those that read, under the same lock, says so.
+
+#### D450. A served session's transactions are collected once their reply is sent
+
+A transaction's end collected the garbage of its tables (D29, D445)
+before its commit or rollback returned, so a client waited for the
+collection as well as the commit.
+
+A session may now leave that collection until its reply is sent
+(`Session::collect_after_reply`). Its transactions' ends then only note
+their tables as awaiting collection, and the session collects them with
+`Session::collect`. The server turns this on for every session it
+serves, and collects once it has flushed the replies of a request. A
+request whose reply is held for the next, pipelined, leaves it to that
+one. Until then, the end of any other transaction collects the noted
+tables as it would any awaiting, and a checkpoint waits for them
+(`gc_waiting`). The horizon rule is unchanged, so no version a snapshot
+can read is removed; collection only comes a little later.

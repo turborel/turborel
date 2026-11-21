@@ -66,7 +66,9 @@ impl State {
                 participant.storage.commit(tx.id, tx.snapshot());
             }
             tx.release();
-            self.gc_read();
+            if !tx.stop.collects_later() {
+                self.gc_read();
+            }
             // [DESIGN] RULES.md D441: what it read past its snapshot is
             // durable before it says it committed.
             return tx.replied(Ok(()));
@@ -110,7 +112,7 @@ impl State {
                 }
                 drop(gate);
                 let durable = self.durable(tx, lsn, at);
-                self.gc(joined.iter().map(|j| &*j.table));
+                self.collect_ended(tx, joined.iter().map(|j| &*j.table));
                 durable.and(published)
             }
             Err(e) => {
@@ -178,6 +180,19 @@ impl State {
     /// names each once; one still awaited is collected once too.
     pub(crate) fn gc<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
         self.gc_with(tables, false);
+    }
+
+    /// \[DESIGN\] As `gc`, after `tx` ended; unless its session collects
+    /// once its reply is sent (RULES.md D450): then `tables` are noted, for
+    /// that collection or the end of any other transaction to collect.
+    fn collect_ended<'t>(&self, tx: &Txn, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
+        if tx.stop.collects_later() {
+            let mut uncollected = lock_builtin(&self.tx.uncollected);
+            uncollected.extend(tables.cloned());
+            self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);
+        } else {
+            self.gc(tables);
+        }
     }
 
     /// As `gc`, but waiting for a collection of a table under way rather
@@ -332,7 +347,7 @@ impl State {
         tx.log_abort();
         drop(gate);
         tx.release();
-        self.gc(joined.iter().map(|j| &*j.table));
+        self.collect_ended(tx, joined.iter().map(|j| &*j.table));
         damage
     }
 }

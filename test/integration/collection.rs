@@ -46,3 +46,32 @@ fn collections_passed_over_are_done_later() {
     assert_eq!(db.index_entries("T_X").unwrap(), ROWS, "every superseded version's entry taken back");
     assert_eq!(rows(&s, "SELECT SUM(X) FROM T"), Ok(vec!["640".to_owned()]));
 }
+
+/// Verifies: [DESIGN] RULES.md D450: a session collecting after its reply
+/// leaves its commit's garbage, and the versions' index entries, until it
+/// collects; a rollback's too; and another transaction's end collects
+/// what it left all the same.
+#[test]
+fn a_session_collects_once_its_reply_is_sent() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, X INTEGER)").unwrap();
+    db.create_index("T_X", "APP.T", &["X"], "btree").unwrap();
+    let s = db.session("APP");
+    s.run("INSERT INTO T VALUES (1, 0), (2, 0)").unwrap();
+    s.commit().unwrap();
+    s.collect_after_reply(true);
+    s.run("UPDATE T SET X = 1 WHERE ID = 1").unwrap();
+    s.commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 3, "the old version's entry kept");
+    s.collect();
+    assert_eq!(db.index_entries("T_X").unwrap(), 2);
+    s.run("UPDATE T SET X = 2 WHERE ID = 2").unwrap();
+    s.rollback().unwrap();
+    s.run("UPDATE T SET X = 3 WHERE ID = 1").unwrap();
+    s.commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 3);
+    let other = db.session("APP");
+    assert_eq!(rows(&other, "SELECT X FROM T WHERE ID = 2").unwrap(), vec!["0".to_owned()]);
+    other.commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 2, "another end collected it");
+}

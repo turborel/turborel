@@ -106,7 +106,11 @@ impl Lent {
         if pipelined.held() {
             return Ok(());
         }
-        running.flush(wire)
+        let sent = running.flush(wire);
+        // [DESIGN] RULES.md D450: the garbage of a transaction it ended,
+        // collected once its reply is on its way.
+        held.session.collect();
+        sent
     }
 
     /// The client's next request, if it has come whole, or else, waited
