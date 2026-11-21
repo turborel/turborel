@@ -11590,7 +11590,9 @@ rows of values, and so of a bulk copy (D195), are inserted a batch of up
 to 4096 at a time (`db/write/bulk.rs`). The table's lock is taken once.
 Each batch's rows go to the storage, then to the log as one record of
 kind 26, insert rows, of up to about a mebibyte of rows, each with its
-row id (`log/record/batch.rs`), then to each index sorted by key. Each
+row id (`log/record/batch.rs`), then to each index in the rows' order,
+so each index's pages, and the estimates read from them, are as row by
+row inserts leave them. Each
 row keeps its own undo entries, and recovery redoes the record as one
 insert record a row, so a statement's effect, its failure undoing all of
 it, and what a crash keeps are as if the rows went in one at a time. A

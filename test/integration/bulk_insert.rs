@@ -9,6 +9,8 @@ use std::path::Path;
 
 use turborel::db::{Database, Opened, Session};
 use turborel::error::Code;
+use turborel::params::Params;
+use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
 
 use crate::common::{Scratch, contents, count, exec, reopened_after_crash, rows};
@@ -170,5 +172,65 @@ fn a_prepared_insert_given_many_rows_inserts_each() {
         assert_eq!(s.execute_prepared_rows(&update, &[vec![int(1), int(1)]]).map_err(|e| e.code), Err(Code::Api), "{using}");
         assert_eq!(found(&s), (MANY + 1, MANY + 1), "{using}: each failed execution undone whole");
         s.commit().unwrap();
+    }
+}
+
+/// The plans, with their estimates, of queries of S.T's columns, each
+/// through its index and not, once the statistics they ask for are
+/// gathered.
+fn estimated(db: &Database) -> Vec<String> {
+    let s = db.session("S");
+    let queries = [
+        "SELECT K, A, B FROM T WHERE A = 3 AND B = 3 ORDER BY A, B",
+        "SELECT K FROM T WHERE A < 4",
+        "SELECT K FROM T WHERE C = 7",
+        "SELECT C, COUNT(*) FROM T GROUP BY C",
+    ];
+    // Asked for once, the statistics due are gathered, then read.
+    for q in queries {
+        s.explain(q, &Params::new()).unwrap();
+    }
+    db.run_due().unwrap();
+    queries.iter().map(|q| s.explain(q, &Params::new()).unwrap()).collect()
+}
+
+/// S.T, its index of (A, B) on the store `using`, its rows inserted by
+/// statements of `each` rows.
+fn keyed(using: &str, each: i64) -> Database {
+    let db = Database::new();
+    // Statistics gathered when the test asks, not as a thread finds them due.
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.schema(&format!(
+        "CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL, A INTEGER NOT NULL, B INTEGER NOT NULL, C INTEGER) {using}"
+    ))
+    .unwrap();
+    db.create_index("T_AB", "S.T", &["A", "B"], "btree").unwrap();
+    let s = db.session("S");
+    for start in (0..10_000_i64).step_by(usize::try_from(each).unwrap()) {
+        let values: Vec<String> = (start..start + each).map(|k| format!("({k}, {}, {}, {})", k % 10, k % 10, k % 37)).collect();
+        s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    db
+}
+
+/// Verifies: [DESIGN] RULES.md D34, D35, D530: rows inserted together leave
+/// the planner's statistics as inserting them one at a time does: each
+/// plan's estimates, of an index's keys and ranges and of the columns,
+/// equal. Of each store.
+/// Regression test (R-TEST-7): the entries of a batch went into each index
+/// sorted by key, which left its pages shaped otherwise, and an estimate
+/// read from them low.
+#[test]
+fn rows_inserted_together_are_estimated_as_one_at_a_time() {
+    for using in ["", "USING columnstore"] {
+        let (together, alone) = (keyed(using, 500), keyed(using, 1));
+        for (one, other) in estimated(&together).iter().zip(estimated(&alone)) {
+            assert_eq!(
+                one.lines().filter(|l| l.contains("est.")).collect::<Vec<_>>(),
+                other.lines().filter(|l| l.contains("est.")).collect::<Vec<_>>(),
+                "{using}"
+            );
+        }
     }
 }

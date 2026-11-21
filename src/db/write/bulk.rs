@@ -2,8 +2,9 @@
 //! INSERT, of a query or of many rows of values, and of a bulk copy, put in
 //! their table a batch at a time. The table's lock is taken once; each
 //! batch's rows go to its storage, then to the log as one record
-//! (`log/record/batch.rs`), then to each index in the order of their keys,
-//! so an index is written where it was written last, not at random.
+//! (`log/record/batch.rs`), then to each index, in the rows' order, so each
+//! index is as inserting them one at a time leaves it: its entries, its
+//! pages and the estimates read from them alike.
 //!
 //! Each row is undone as `insert_row`'s is, by its own undo entry and those
 //! of its index entries, and redone from the record as an insert of its
@@ -12,7 +13,6 @@
 //! be so for, a partition or a partitioned table, one whose rows are
 //! sealed, or a row holding a large object, takes them one at a time.
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::super::integrity::Effects;
@@ -20,12 +20,12 @@ use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::exec::HeldRows;
-use crate::index::{Index, Key};
+use crate::index::Index;
 use crate::log::record::insert_rows_record;
 use crate::spill::row_bytes;
 use crate::storage::{Row, RowId};
 use crate::txn::{Txn, Undo, UndoEntry};
-use crate::value::{Value, sort_cmp};
+use crate::value::Value;
 
 /// \[DESIGN\] The rows a batch holds at most: enough that the costs of a
 /// batch are shared by many rows, few enough that its rows are held in
@@ -34,11 +34,6 @@ const BATCH_ROWS: usize = 4096;
 /// \[DESIGN\] The bytes of rows one record holds, about, at most: so a
 /// record stays well within a log segment and a replay holds little.
 const RECORD_BYTES: usize = 1 << 20;
-
-/// The order of two keys, value by value.
-fn key_order(a: &Key, b: &Key) -> Ordering {
-    a.0.iter().zip(&b.0).map(|(x, y)| sort_cmp(x, y)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
-}
 
 impl State {
     /// Whether rows of `table` are inserted together: it is no partition
@@ -102,23 +97,19 @@ impl State {
     }
 
     /// Adds the entries of `rows`, of row ids `ids`, to the index `ix`, in
-    /// the order of their keys, as `index_add` adds each.
+    /// their order, as `index_add` adds each.
     fn index_rows(&self, tx: &Txn, ix: &IndexDesc, (rows, ids): (&[Row], &[RowId]), partition: Option<u64>) -> Result<()> {
         let index: Arc<dyn Index> = self
             .indexes
             .get(&ix.name)
             .map(Arc::clone)
             .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {} does not exist", ix.name)))?;
-        let mut entries = Vec::with_capacity(rows.len());
         for (row, &id) in rows.iter().zip(ids) {
             let key = ix.computed_key(row)?;
-            if ix.holds(&key) {
-                entries.push((key, Self::entry_id(partition, id)?));
+            if !ix.holds(&key) {
+                continue;
             }
-        }
-        // Stable, so the entries of one key go in as their rows came.
-        entries.sort_by(|(a, _), (b, _)| key_order(a, b));
-        for (key, id) in entries {
+            let id = Self::entry_id(partition, id)?;
             // Of a unique index, whether the key's only entry, so its
             // constraint need not look for another row (`Txn::alone`).
             if ix.unique {
