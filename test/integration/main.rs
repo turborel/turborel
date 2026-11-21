@@ -436,6 +436,7 @@ mod type_contract;
 mod typed_families;
 mod typed_tables;
 mod typed_vectors;
+mod undo_memory;
 mod unique_checks;
 mod unique_nulls;
 mod unnest;
