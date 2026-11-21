@@ -248,11 +248,25 @@ greedy one, so a query of a hundred tables is still planned at once.
 Each join is a hash join, building the smaller side, an index
 nested-loop join probing the other table's index, or a merge join where
 a side is read in its key's order already and that order pays, as when
-the query asks for it. The rows of each set of tables are estimated
+the query asks for it, or a range join. The rows of each set of tables are estimated
 from the distinct values of the joined columns, an equality that others
 imply counted once. A query with a condition that can raise an error, as
 a division can, is planned in the greedy order described next, which
 keeps the errors raised the same whatever the order.
+
+A range join answers a condition that compares a value of each table
+by order, as a band `A.X BETWEEN B.Y - 5 AND B.Y + 5` or the overlap of
+two periods does, without judging every pair. It sorts one table once by
+the compared value, grouped by any equalities of the two, and each row
+of the other finds its matches between its bounds by binary search. A
+second comparison of other values, as the overlap's other half, prunes
+the rows found. A `<period predicate>` of two periods named by their
+tables is read as the comparisons of their bounds, so OVERLAPS, CONTAINS,
+PRECEDES and SUCCEEDS join so, and EQUALS and the IMMEDIATELY ones as
+hash joins on the bounds' equalities. The rows, and their order, are the
+nested loop's. A table too large for MEMORY.WORK_BYTES, or a condition
+that could raise an error, keeps the nested loop. SET
+PLANNER.RANGE_JOINS = 'OFF' turns range joins off.
 
 An equality repeated in each operand of an OR joins its tables as if
 written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =

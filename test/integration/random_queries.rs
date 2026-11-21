@@ -114,7 +114,11 @@ impl Scope {
 fn from_clause(rng: &mut Rng) -> (String, Scope) {
     let (x, y, z) = (rng.pick(&TABLES), rng.pick(&TABLES), rng.pick(&TABLES));
     let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect();
-    let on = |rng: &mut Rng| format!("X.{0} = Y.{0}", rng.pick(&NUMBERS));
+    // A join on V is a band, a range join's (RULES.md D580).
+    let on = |rng: &mut Rng| match rng.pick(&NUMBERS) {
+        "V" => "X.V BETWEEN Y.V - 2 AND Y.V + 3".to_owned(),
+        column => format!("X.{column} = Y.{column}"),
+    };
     let (from, scope) = match rng.below(8_usize) {
         0 | 1 => (format!("{x} X"), names(&["X"])),
         2 => (format!("{x} X, {y} Y"), names(&["X", "Y"])),
@@ -306,7 +310,8 @@ fn plan() -> (u64, u64) {
 /// set functions with and without DISTINCT, GROUP BY and HAVING, DISTINCT,
 /// UNION, EXCEPT and INTERSECT, and ORDER BY, over tables of both stores,
 /// give the same outcome with every optimizer rule on and off, read by
-/// batches and row by row. Each query is made from a seed of its own;
+/// batches and row by row, and with range joins (RULES.md D580) and
+/// without. Each query is made from a seed of its own;
 /// a failure prints it and the SQL.
 #[test]
 fn random_queries_answer_alike_with_and_without_rules() {
@@ -326,6 +331,7 @@ fn random_queries_answer_alike_with_and_without_rules() {
     drop(s);
     set_all_rules(&db, false);
     let s = db.session("Q");
+    exec(&s, "SET PLANNER.RANGE_JOINS = 'OFF'").unwrap();
     let mut refused = 0_usize;
     for ((own, sql), [batched, row_by_row]) in queries.iter().zip(&with_rules) {
         let unoptimized = [run(&s, sql, true), run(&s, sql, false)];
