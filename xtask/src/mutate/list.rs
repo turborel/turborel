@@ -39,6 +39,7 @@ mod graph_table;
 mod grouping_sets;
 mod guarded;
 mod hash;
+mod homes;
 mod hypothetical;
 mod information;
 mod json;
