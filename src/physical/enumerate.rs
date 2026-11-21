@@ -41,6 +41,7 @@ mod modeled;
 mod ranged;
 mod realize;
 mod space;
+mod weighed;
 
 use bits::{MAX_RELATIONS, Set, bit};
 use extract::{Node, Query};
