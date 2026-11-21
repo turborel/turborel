@@ -9,6 +9,8 @@
 //! A name not qualified is of the schema the statement's names are of,
 //! the SQL-path [SR9c] (ID047).
 
+use std::sync::Arc;
+
 use super::super::{Context, Invoked, qualify, rule};
 use super::candidates::Candidate;
 use crate::ast::TableName;
@@ -35,7 +37,7 @@ pub(in crate::binder) fn note(invoked: Option<&Invoked>, specific: &QualifiedNam
 /// SQLCODE -103 if no procedure is of the name \[SR9e\] or none takes
 /// `arity` arguments \[SR9b\]; -104 if the authorization identifier holds no
 /// EXECUTE on the one that does \[SR6\].
-pub fn resolve_procedure(cx: Context<'_>, name: &TableName, arity: usize) -> Result<SqlRoutineDesc> {
+pub fn resolve_procedure(cx: Context<'_>, name: &TableName, arity: usize) -> Result<Arc<SqlRoutineDesc>> {
     let path = cx.params.routine_path();
     let schemas = if name.auth.is_none() && !path.is_empty() { path.to_vec() } else { vec![qualify(name, cx.schema).auth] };
     let qn = QualifiedName { auth: schemas.first().cloned().unwrap_or_default(), ident: name.ident.clone() };
@@ -63,5 +65,7 @@ pub fn resolve_procedure(cx: Context<'_>, name: &TableName, arity: usize) -> Res
         return Err(SqlError::new(Code::Privilege, msg));
     }
     note(cx.invoked, &r.specific);
-    Ok(r.clone())
+    // Shared with the catalog, not copied: a procedure's text and body
+    // may be long, and a CALL binds it each time it runs.
+    Ok(cx.db.catalog.routine_shared(&r.specific).unwrap_or_else(|| Arc::new(r.clone())))
 }

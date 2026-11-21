@@ -74,6 +74,12 @@ impl RowTable {
         failure.map_or(Ok(()), Err)
     }
 
+    /// `horizon`, or the table's latest collection if later: no reader is
+    /// before either.
+    pub(in crate::engine::rows) fn collected_horizon(&self, horizon: Timestamp) -> Timestamp {
+        horizon.max(self.versions.collected.load(Ordering::SeqCst))
+    }
+
     /// What `read` makes of the entry `newest` of the row of key `k`, read by
     /// a pass with no transaction open, the maintenance thread's, at
     /// `horizon`, or the table's latest collection if later: none if the
@@ -274,7 +280,14 @@ impl RowTable {
         if version.deleted {
             return Ok(true);
         }
-        let gone = removed(id, self.decode(id, version.record, None)?, kept);
+        // One whose every entry its successor shares is not read (RULES.md
+        // D750); of one that is, only the columns its entries read (D751).
+        let gone = if removed.needs(kept) {
+            let row = self.decode(id, version.record, removed.columns())?;
+            removed.removed(id, row, kept)
+        } else {
+            true
+        };
         self.free_values(id, version.record);
         Ok(gone)
     }

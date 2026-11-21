@@ -3,8 +3,10 @@
 //! index's probe, arithmetic of slots taken as raising, a slotted plan's
 //! estimates reading its slots by default, a hash join's extra key told
 //! apart, a probe's plan learned again at any growth or kept past any, or
-//! kept after its table's statistics are gathered, a FOR statement's
-//! cursor opened updatable, and the instant bound as a constant.
+//! kept after its table's statistics are gathered, a slot less a
+//! constant estimated as an unknown bound, an index prefix the inner
+//! table's filter fixes left unprobed, a FOR statement's cursor
+//! opened updatable, and the instant bound as a constant.
 
 use super::super::{Mutation, Package};
 
@@ -21,7 +23,7 @@ const OUTGROWN: &str = "tpcc_plans::a_probes_plan_is_learned_again_only_once_its
 const UNKNOWN: &str = "tpcc_plans::a_probes_plan_learned_before_statistics_is_learned_again_once_they_are";
 
 /// Mechanisms of plans kept in a steady state whose removal must fail their tests.
-pub const STEADY_PLANS: [Mutation; 9] = [
+pub const STEADY_PLANS: [Mutation; 11] = [
     Mutation {
         name: "steady-probe-shifted-slot",
         package: Package::Core,
@@ -91,6 +93,29 @@ pub const STEADY_PLANS: [Mutation; 9] = [
         replacement: "        if probes.iter().any(|p| !p.known && st.statistics(&p.table).is_none()) {",
         integration: &[UNKNOWN],
         unit: &[],
+    },
+    Mutation {
+        name: "steady-slot-shift-unfolded",
+        package: Package::Core,
+        breaks: "a slot less a constant is estimated as an unknown bound, so a kept join weighs its probes at too many rows",
+        file: "src/physical/estimate/valued.rs",
+        original: "    Some(filled.map_exprs(&mut folded))",
+        replacement: "    Some(filled.map_exprs(&mut |e| e))",
+        integration: &[],
+        unit: &[
+            "physical::estimate::valued::tests::a_slot_less_a_constant_is_estimated_as_its_value",
+            "db::prepared::plans::tests::the_stock_level_query_with_slots_probes_stock",
+        ],
+    },
+    Mutation {
+        name: "steady-fixed-prefix-off",
+        package: Package::Core,
+        breaks: "a join probes no index whose first column only the inner table's own filter fixes",
+        file: "src/physical/join.rs",
+        original: "        if let Some(Fixed { cond, left, kept }) = self.fixed_prefix(cond, left, right) {",
+        replacement: "        if let Some(Fixed { cond, left, kept }) = self.fixed_prefix(cond, left, right).filter(|_| false) {",
+        integration: &[],
+        unit: &["db::prepared::plans::tests::a_prepared_stock_level_query_keeps_its_probes_by_its_own_warehouse"],
     },
     Mutation {
         name: "steady-for-cursor-updatable",
