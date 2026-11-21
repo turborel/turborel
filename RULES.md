@@ -470,6 +470,7 @@ verification approach DO-178C expects (§8).
 | D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
 | D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
 | D747 | A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it |
+| D760 | A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values |
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
@@ -13415,6 +13416,21 @@ stamp alone, which the row store reads from the newest version's maker
 (`RowTable::writer_of`). The row is read only when the statement rechecks
 its search condition over a version committed after its snapshot, and if
 the row changed again in between, the write is tried again.
+
+#### D760. A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values
+
+A plan made with slots, to be kept, is estimated with the values of the
+execution that makes it (D613). Filling a slot of a bound such as
+`OL_O_ID >= ST_O_ID - 20` leaves a difference of two constants, which no
+estimate reads as one, so the bound took the default share of a range
+while the plan made with the values had it folded. The rows of a few
+orders' lines were then estimated many times over, and the join over
+them weighed its index probes at those rows (D386). As ORDER_LINE grew,
+STOCK-LEVEL kept a hash join reading STOCK whole instead of probing its
+key for each line. Each compared sum or difference of constants alone
+is now folded to its value as the estimate fills its slots
+(`physical/estimate/valued.rs`), and one that raises an error is left
+as it is, for the execution to raise.
 
 #### D767. A connection's requests run on one thread of its own, its home
 

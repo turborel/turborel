@@ -18,7 +18,7 @@ mod sampled;
 mod valued;
 
 pub use conjunction::conjunction;
-pub(super) use valued::valued;
+pub(super) use valued::{estimated, valued};
 
 use crate::logical::{Cond, Expr, Truth, compared_with_constant, split_and};
 use crate::stats::Statistics;
