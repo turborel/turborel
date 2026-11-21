@@ -88,6 +88,8 @@ mod clock;
 mod durable;
 mod end;
 mod followed;
+mod group;
+mod kept;
 mod lobs;
 mod locks;
 mod logging;
@@ -106,6 +108,7 @@ use clock::Clock;
 pub(crate) use durable::Committing;
 pub(crate) use end::remove_entries;
 pub(crate) use followed::{Followed, FollowedRecords, Following};
+pub(crate) use kept::Sharing;
 pub use locks::Damage;
 pub(crate) use locks::TableLock;
 use locks::WaitsFor;
@@ -291,6 +294,9 @@ pub(crate) struct Transactions {
     /// Whether `uncollected` names any table, as it was last changed: so a
     /// transaction that wrote nothing looks at it without its lock.
     awaiting: AtomicBool,
+    /// Whether the end of a transaction that wrote nothing is collecting
+    /// `uncollected`: another such end passes it by (RULES.md D453).
+    read_collecting: AtomicBool,
     /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
     maintenance: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `maintenance` names any table.
@@ -308,6 +314,8 @@ pub(crate) struct Transactions {
     /// or grants or revokes privileges on (`db/definitions.rs`): the
     /// table's own once it is published, so the two are one.
     names: Mutex<HashMap<QualifiedName, std::sync::Weak<TableLock>>>,
+    /// The commits waiting for a sync of the log (`txn/group.rs`).
+    group: group::Group,
 }
 
 impl Transactions {
@@ -352,12 +360,14 @@ impl Default for Transactions {
             replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
             awaiting: AtomicBool::new(false),
+            read_collecting: AtomicBool::new(false),
             maintenance: Mutex::new(BTreeSet::new()),
             noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),
             stops: Stops::default(),
             ends: row_waits::Ends::default(),
             names: Mutex::new(HashMap::new()),
+            group: group::Group::default(),
         }
     }
 }
@@ -519,11 +529,23 @@ impl Txn {
             self.settle_places(&mut st);
             st.undo.loads()
         };
+        self.renew_snapshot(fresh)?;
+        Ok(loads)
+    }
+
+    /// Reading at a snapshot for each statement, takes a new one if
+    /// `fresh` says so: as a statement begins, and as each statement of a
+    /// procedure's body does (RULES.md D454).
+    ///
+    /// # Errors
+    ///
+    /// A participant's, told of the new snapshot.
+    pub(crate) fn renew_snapshot(&self, fresh: impl FnOnce() -> bool) -> Result<()> {
         if self.reading == Reading::Statement && self.open.load(Ordering::Acquire) && fresh() {
             self.snapshot.store(self.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);
             self.tell_participants()?;
         }
-        Ok(loads)
+        Ok(())
     }
 
     /// Records the thread its running call is on, or that none runs.

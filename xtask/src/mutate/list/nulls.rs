@@ -192,13 +192,13 @@ pub const NULLS: [Mutation; 27] = [
         unit: &[],
     },
     Mutation {
-        name: "added-unjoined",
+        name: "added-versions-unfilled",
         package: Package::Core,
-        breaks: "ALTER TABLE adds a unique constraint without joining its table's engine first",
+        breaks: "ALTER TABLE in a transaction fills a unique constraint's index with the rows it sees, not every version (D447)",
         file: "src/db/alter/constraints.rs",
-        original: "                self.read_lock(tx, qn)?;",
-        replacement: "                let _ = qn;",
-        integration: &["constraints::a_unique_constraint_added_first_in_a_transaction_11_16"],
+        original: "            self.fill_index(index, ix, Timestamp::MAX)?;\n            if !tx.written_tables().contains(qn) {\n                return Ok(());\n            }",
+        replacement: "            let _ = Timestamp::MAX;",
+        integration: &["kept_entries::a_constraint_added_in_a_transaction_keeps_its_entries_after_collection"],
         unit: &[],
     },
     Mutation {

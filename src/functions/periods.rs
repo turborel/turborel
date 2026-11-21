@@ -91,7 +91,7 @@ impl ScalarFunction for PeriodTest {
     fn name(&self) -> &str {
         name(self.op)
     }
-    /// [GR2b] Only a written period's bounds can raise: one a
+    /// \[GR2b\] Only a written period's bounds can raise: one a
     /// `<period reference>` names is judged by comparisons alone.
     fn raise_free(&self) -> bool {
         self.written == [false, false]

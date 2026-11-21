@@ -45,7 +45,7 @@ pub use eviction::{Clock, Eviction};
 pub use owned::Owned;
 pub use policy::{DEFAULT_SAMPLE, EVICTED_KEPT, NEUTRAL, Policy, RANGES, Range, Report, Sampled, Table, Weighted};
 pub use policy::{EvictionSlot, MakeEviction};
-pub use pool::READ_AHEAD_PAGES;
+pub use pool::{Capture, READ_AHEAD_PAGES};
 pub use tally::Tally;
 pub use versions::Stamp;
 
@@ -165,12 +165,20 @@ fn all_held(frames: usize, waited: &mut Option<Instant>, bound: Duration) -> Res
 /// not slow its neighbour's.
 #[repr(align(128))]
 struct Frame {
+    /// Its index in the pool's frames.
+    index: usize,
     /// The page's file, plus one; 0 for none.
     key_file: AtomicU64,
     /// The page's number or block id.
     key_id: AtomicU64,
     pins: AtomicUsize,
     dirty: AtomicBool,
+    /// Whether it is on the pool's list of frames made dirty
+    /// (`pool/dirty.rs`), so it is put there once until a flush takes it.
+    listed: AtomicBool,
+    /// Whether a checkpoint's capture owes its page as it is: changed
+    /// only under its latch (`pool/capture.rs`).
+    owed: AtomicBool,
     /// Set while the frame is filled or emptied: wait, then check it holds
     /// the page wanted. Read without a lock on every hit.
     loading: AtomicBool,
@@ -195,10 +203,13 @@ struct Frame {
 impl Frame {
     fn empty(index: usize) -> Frame {
         Frame {
+            index,
             key_file: AtomicU64::new(0),
             key_id: AtomicU64::new(0),
             pins: AtomicUsize::new(0),
             dirty: AtomicBool::new(false),
+            listed: AtomicBool::new(false),
+            owed: AtomicBool::new(false),
             loading: AtomicBool::new(false),
             waiting: Mutex::new(()),
             changed: Signal::default(),
@@ -271,6 +282,11 @@ pub struct BufferPool {
     /// The pages its scans asked to be read ahead, not yet read, and what
     /// reads them (`ahead.rs`).
     queued: pool::Queued,
+    /// The frames made dirty since a flush took them, so a flush visits
+    /// those, never every frame (`pool/dirty.rs`).
+    dirtied: pool::Dirtied,
+    /// The checkpoint's capture under way, if one is (`pool/capture.rs`).
+    owed: pool::Owed,
     /// Its share of the database's memory budget, if it was made in one,
     /// held while it lives and given back as it is dropped.
     reservation: Option<Reservation>,
@@ -451,6 +467,71 @@ mod tests {
         let mut waited = None;
         assert!(all_held(1, &mut waited, Duration::from_secs(1)).is_ok(), "to try again");
         assert_eq!(all_held(1, &mut waited, Duration::ZERO).err().map(|e| e.code), Some(Code::Resources), "past its bound");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D30: a flush visits the frames made
+    /// dirty since the last, as many in a pool of 65536 frames as in one of
+    /// 16, never every frame: a page written twice is visited once, a
+    /// flush with nothing written visits none, and every page made dirty
+    /// is written back. Regression test (R-TEST-7): a flush, at every
+    /// checkpoint, looked at each frame of the pool, a cost that grew with
+    /// STORAGE.POOL_BYTES, not with the pages written.
+    #[test]
+    fn a_flush_visits_only_the_frames_made_dirty() {
+        let visits = |frames: usize| {
+            let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+            let pager = Pager::create(&MemoryFileSystem::new(), Path::new("/p"), hash, Pipeline::none(), 4096).unwrap();
+            let pool = BufferPool::new(frames, Box::new(Clock::new(frames))).unwrap();
+            let file = pool.add_pager(Arc::new(pager));
+            let page = |n: u8| {
+                let (id, mut held) = pool.new_page(file).unwrap();
+                held.push(n);
+                id
+            };
+            let ids: Vec<_> = (0..3_u8).map(page).collect();
+            let first = pool.flush_visiting().unwrap();
+            let idle = pool.flush_visiting().unwrap();
+            pool.write(file, ids[1]).unwrap().push(7);
+            pool.write(file, ids[1]).unwrap().push(8);
+            let again = pool.flush_visiting().unwrap();
+            (first, idle, again, pool.counts().write_backs)
+        };
+        assert_eq!(visits(16), (3, 0, 1, 4), "three made, none, one written twice");
+        assert_eq!(visits(1_usize << 16_u32), visits(16), "the same however many frames");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D30: a page made dirty while a flush
+    /// runs on another thread is written back by that flush or listed for
+    /// the next, never lost: after both flushes every page written holds
+    /// its last content in the file.
+    #[test]
+    fn pages_written_during_a_flush_are_never_lost() {
+        let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+        let pager = Arc::new(Pager::create(&MemoryFileSystem::new(), Path::new("/p"), hash, Pipeline::none(), 4096).unwrap());
+        let pool = BufferPool::new(64, Box::new(Clock::new(64))).unwrap();
+        let file = pool.add_pager(Arc::clone(&pager));
+        let ids: Vec<_> = (0..32_u8).map(|_| pool.new_page(file).unwrap().0).collect();
+        std::thread::scope(|threads| {
+            threads.spawn(|| {
+                (0..50_u8).for_each(|round| write_all(&pool, file, &ids, round));
+            });
+            for _ in 0..50_u8 {
+                pool.flush().unwrap();
+            }
+        });
+        pool.flush().unwrap();
+        for id in &ids {
+            let mut read = Vec::new();
+            pager.read(*id, &mut read).unwrap();
+            assert_eq!(read, vec![49_u8; 8], "page {} as last written", id.0);
+        }
+    }
+
+    /// Writes `round` as the content of each of pages `ids` of `file`.
+    fn write_all(pool: &BufferPool, file: FileId, ids: &[PageId], round: u8) {
+        for id in ids {
+            *pool.write(file, *id).unwrap() = vec![round; 8];
+        }
     }
 
     /// Verifies: [DESIGN] RULES.md D474, a page read into a frame takes

@@ -57,6 +57,26 @@ impl Default for TransactionMode {
 }
 
 impl Session {
+    /// \[DESIGN\] Whether this session's transactions leave the
+    /// collection of their garbage to `collect`, which a server calls once
+    /// it has sent the reply of the statement that ended one (RULES.md
+    /// D450); off at first. Another transaction's end collects their
+    /// tables too, if `collect` is not called.
+    pub fn collect_after_reply(&self, later: bool) {
+        self.stop.set_collect_later(later);
+    }
+
+    /// \[DESIGN\] Collects the garbage of the tables awaiting collection,
+    /// as the end of a transaction does (RULES.md D29, D450). Never fails:
+    /// what it cannot collect waits for the next.
+    pub fn collect(&self) {
+        if let Ok(call) = self.enter() {
+            call.state().gc_read();
+        }
+    }
+}
+
+impl Session {
     /// [ISO/IEC 9075:1992 §14.1] SET TRANSACTION: the modes of the next
     /// transaction. The isolation level is TRANSACTION.ISOLATION's if none
     /// is written, which conforms to \[SR2\] only as SERIALIZABLE; the access

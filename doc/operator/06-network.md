@@ -120,6 +120,13 @@ whether TLS is offered at all, takes effect as the server starts.
 | SERVER.IDLE_TIMEOUT_MS | the milliseconds the server waits on a client before closing it, its transaction rolled back; 0, no limit |
 | SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS | the milliseconds the server waits for the next request of a client whose transaction is active, before closing it, its transaction rolled back; 0, no limit |
 
+Each connection's statements run on one thread of the server's, the
+connection's own while its requests keep coming, so what a statement
+allocates is freed on the thread that took it. A connection idle for ten
+seconds gives its thread back and takes another at its next request.
+SERVER.WORKERS still bounds how many statements run at once, and an idle
+connection's thread runs none.
+
 A connection past SERVER.MAX_CONNECTIONS is refused, told why once its
 TLS, if any, is begun:
 

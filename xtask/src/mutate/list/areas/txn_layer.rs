@@ -2,12 +2,13 @@
 //! a commit's one store in the status table, a version committed but not
 //! stamped appended stamped, snapshots at the durable timestamp, a reply
 //! held for what it read past its snapshot, and an exclusive request
-//! waiting for the shared holds in stripes.
+//! waiting for the shared holds in stripes; and index entries a version
+//! shares with its successor, kept by collection, a checkpoint and a fill.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 5] = [
+pub const TXN_LAYER: [Mutation; 9] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -59,6 +60,46 @@ pub const TXN_LAYER: [Mutation; 5] = [
         original: "        let fast = if striped { lk.fast.others(tx.id) } else { Vec::new() };",
         replacement: "        let fast: Vec<Holder> = Vec::new();",
         integration: &["row_waits::a_definition_waits_for_holds_in_stripes_and_its_deadlock_is_refused"],
+        unit: &[],
+    },
+    Mutation {
+        name: "shared-entry-taken-back",
+        package: Package::Core,
+        breaks: "collection takes back the entry a version shares with its successor",
+        file: "src/txn/kept.rs",
+        original: "        self.columns != 0 && self.columns & !kept.unchanged == 0 && kept.at > self.filled",
+        replacement: "        self.columns != 0 && self.columns & !kept.unchanged == 0 && kept.at > self.filled && false",
+        integration: &["kept_entries::a_kept_key_is_found_from_every_snapshot", "kept_entries::a_crash_keeps_shared_entries"],
+        unit: &[],
+    },
+    Mutation {
+        name: "fill-not-noted",
+        package: Package::Core,
+        breaks: "an index filled over versions that kept its columns shares entries it counted twice",
+        file: "src/db/recovery.rs",
+        original: "                lock.filled(&ix.name, through);",
+        replacement: "                lock.filled(&ix.name, 0);",
+        integration: &["kept_entries::an_index_built_over_kept_versions_counts_each"],
+        unit: &[],
+    },
+    Mutation {
+        name: "kept-columns-not-noted",
+        package: Package::Core,
+        breaks: "an update skips an index entry its change does not note as kept",
+        file: "src/engine/rows/mvcc/write.rs",
+        original: "        change.unchanged = unchanged;\n",
+        replacement: "",
+        integration: &["kept_entries::a_kept_key_is_found_from_every_snapshot"],
+        unit: &[],
+    },
+    Mutation {
+        name: "shared-entry-logged-stale",
+        package: Package::Core,
+        breaks: "a checkpoint logs a shared entry as stale, and recovery takes back a live version's",
+        file: "src/db/checkpoint.rs",
+        original: "        if sharing.shares(kept) {",
+        replacement: "        if sharing.shares(kept) && false {",
+        integration: &["kept_entries::a_crash_keeps_shared_entries"],
         unit: &[],
     },
 ];

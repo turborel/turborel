@@ -49,10 +49,9 @@ use crate::logins::Logins;
 use crate::password::Pbkdf2;
 use crate::settings::{
     IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_REFUSALS, MAX_WORKERS, SHUTDOWN_TIMEOUT_MS,
-    WORKERS,
 };
 use crate::settings::{count, declare, millis};
-use crate::shown::{self, Counted, Operator, Present, Shown};
+use crate::shown::{self, Operator, Present, Shown};
 use crate::tls::{Handshaken, Secured, Tls};
 use crate::told::{Throttle, Told};
 use crate::transport::{Listener, Transport};
@@ -206,18 +205,22 @@ impl Services {
     /// As `spawn`, `work` given its permit, to give up while it waits on
     /// its client and take again (`Permit`).
     pub async fn spawn_with<T: Send + 'static>(&self, work: impl FnOnce(Permit) -> T + Send + 'static) -> tokio::task::JoinHandle<T> {
-        let waiting = Counted::of(&self.0.shown, |s| &s.waiting);
-        let held = self.0.workers.take(|| count(&self.0.db, WORKERS)).await;
-        drop(waiting);
-        let permit = Permit::new(&self.0.workers, &self.0.shown, &self.0.db, held);
+        let permit = self.permit().await;
         tokio::task::spawn_blocking(move || work(permit))
     }
 
-    /// A connection's place among those keeping a worker waiting for their
-    /// next request, if fewer than MAX_WORKERS do, so the blocking pool
+    /// A worker's permit, for work a connection's own thread runs
+    /// (`native/home.rs`): taken as `spawn` takes it.
+    pub(crate) async fn permit(&self) -> Permit {
+        Permit::taken(&self.0.workers, &self.0.shown, &self.0.db).await
+    }
+
+    /// A connection's place among those keeping a thread of the blocking
+    /// pool, a worker waiting for their next request or a home of their
+    /// own (`native/home.rs`), if fewer than MAX_WORKERS do, so the pool
     /// has a thread for each beside the statements running; held while it
-    /// is. A waiting worker holds no permit, so a statement waiting for one
-    /// is not kept waiting by it.
+    /// is. Neither holds a permit while it waits, so a statement waiting
+    /// for one is not kept waiting by it.
     pub(crate) fn hot(&self) -> Option<Held> {
         self.0.hot.try_take(MAX_WORKERS)
     }

@@ -416,6 +416,17 @@ verification approach DO-178C expects (§8).
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
+| D443 | An update shares the index entries of the version it replaced where it keeps every column the key reads |
+| D444 | A validated transaction's images are decoded only when a reader's conditions are checked against them |
+| D445 | One transaction's end collects a table at a time; the others pass it over |
+| D446 | A row's write starts from the leaf its read of the newest version found |
+| D447 | A unique constraint added in a transaction fills its index with every version |
+| D448 | SERIALIZABLE certifies by column, and skips the check when no one read |
+| D449 | A row's turn passed wakes only the waiter whose turn it is |
+| D450 | A served session's transactions are collected once their reply is sent |
+| D451 | A busy table is collected a batch of commits at a time |
+| D453 | One transaction that wrote nothing collects at a time |
+| D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
@@ -424,6 +435,9 @@ verification approach DO-178C expects (§8).
 | D474 | A page read into a frame takes the buffer of the page it replaces |
 | D475 | An update's log record holds the row after whole and of the row before only the columns changed |
 | D476 | A value on a zone's bound changed to one past it leaves the zone not stale |
+| D770 | A zone is stale per column, and summed up from its rows' newest versions alone, once the horizon has passed them |
+| D771 | A zone due again soon after it was looked at waits twice as long each time, to a limit |
+| D772 | A table's maintenance sums up no zone while its zones rest, unless asked to now |
 | D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
 | D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
 | D502 | Each frame keeps a version word, and descents read inner nodes from per-thread copies it validates |
@@ -446,6 +460,8 @@ verification approach DO-178C expects (§8).
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
+| D590 | A checkpoint captures its pages copy on write, writers held only while it notes them |
+| D591 | A page read or written shares no lock or counter with every other I/O of its file |
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
 | D601 | A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
@@ -465,6 +481,16 @@ verification approach DO-178C expects (§8).
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
+| D740 | Commits waiting for a sync form a group whose leader syncs once for all, marks them durable in one pass and wakes each alone |
+| D741 | A log appender waiting for the blocks before its own to be published is woken alone, by the one that publishes up to it |
+| D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
+| D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
+| D747 | A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it |
+| D760 | A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values |
+| D761 | A join probes the inner table's index by the columns its own filter fixes, made columns of the left, with the join's keys |
+| D767 | A connection's requests run on one thread of its own, its home |
+| D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
+| D769 | A request is handed to a home under one lock, which decides its retirement too |
 
 ### The project
 
@@ -2049,7 +2075,9 @@ since.
 
 A checkpoint writes every engine's state as of a log position, so the log
 can be truncated behind it. The row store's file is shadowed, so a crash
-leaves it as the last checkpoint did. Recovery reopens the tables, then
+leaves it as the last checkpoint did. Writers wait only while a
+checkpoint notes the pages changed, which it captures copy on write as
+they go on (D590). Recovery reopens the tables, then
 redoes and undoes from the log by the database's one replay (D57).
 Checkpoints fall due after CHECKPOINT.AFTER_CHANGES row changes. The log
 is kept from the last checkpoint or the oldest open transaction's first
@@ -2589,7 +2617,7 @@ a storage lock held (D27, D42, R-ERR-4).
 
 A comparison scan is index-only when every column it reads is in the key,
 of a type the key codec gives back exactly (`engine::key::restores`). A versioned
-engine keeps an entry per version, so a row is made from its entry only
+engine keeps an entry per run of versions with one key (D443), so a row is made from its entry only
 where every reader sees that row's one version
 (`TableStorage::visible_to_all`). An entry that collection fails to take
 back is owed (`txn/owed.rs`), and a close owing any is not clean.
@@ -2850,7 +2878,8 @@ waits wakes no other. A waiting worker holds no permit, so as many keep
 waiting as the blocking pool has threads for, while statements wait for
 permits too. A request that comes
 later the connection's task reads through the runtime, which takes the
-socket back. A stream TLS secures is read so too, through its session
+socket back, and hands to the connection's home, the one thread that runs
+its requests while they keep coming (D767). A stream TLS secures is read so too, through its session
 (D230); a named pipe is not handed so, and takes the task's path. Each
 connection runs one request at a time.
 
@@ -11888,6 +11917,83 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+#### D590. A checkpoint captures its pages copy on write, writers held only while it notes them
+
+A checkpoint shut the gate, so no writer ran, while the row store copied,
+encoded and checksummed every dirty page into memory, then sealed it as
+the batch to commit: a pause of every writer as long as that work, which
+grew with the pool and came more often as throughput rose. The shut
+keeps its meaning, a point with no change half done, but now does only
+work in proportion to the frames. It marks each dirty page owed to the
+checkpoint and clean, writes the few that cannot be captured later and
+the pager's free list into the batch held, and seals it
+(`BufferPool::capture`, `ShadowFileSystem::seal_capturing`).
+
+Writers then go on, and each page owed is taken once, as it was at the
+shut, by whoever reaches it first. A writer latching it for writing
+copies it first, under the latch it takes anyway; a free copies it too;
+an eviction captures it, the page kept mapped meanwhile as a dirty one
+is while written back, which a reader's miss may do during the shut,
+so the capture is set up before the first page is owed; and the
+checkpoint walks the pages owed and
+captures each still owed under its read latch, then each copy
+(`disk/buffer/pool/capture.rs`). A capture is written into the sealed
+batch, held in memory, newer than its blocks and older than anything
+written since, so a read finds it only where nothing newer was written
+(`DiskFile::write_captured_at`). A capture changes nothing a write in
+flight writes over or a read waits for (D472), so it waits for none, and
+holds the file's lock only to put granules copied before it took it.
+The walk waits for evictions capturing
+before the batch is committed. This is the two versions of Ren et al.
+2016's CALC at the grain of a page, where the frame's latch gives the
+exclusion; memory is bounded by the pages written during one walk.
+
+A page is owed only if capturing it needs no other page: its content
+fits in it, and it is known to have no overflow pages, as every page
+allocated is (`disk/pager/captured.rs`). A capture then allocates and
+frees nothing, so the free list recorded at the shut stays true of the
+image whatever writers allocate and free meanwhile, and the pager's
+knowledge of a page's overflow, which is of the page as written since,
+is left alone. It encodes through the pipeline of the shut, so a page
+that fit then fits. A page past the file's end, allocated and not yet
+written, is covered by growing the file before the seal.
+
+A capture that fails leaves the batch lacking a page. It is never
+committed, and no checkpoint is taken until the database is opened
+again and recovered from its last checkpoint and its log. Meanwhile the
+pool loses nothing, as a page whose capture failed is dirty again and
+the batch is still read. A capture given up before its seal leaves
+every page owed dirty again. A
+checkpoint that fails after its seal and before its walk, as when its
+log cannot be synced, has its walk ended and its batch committed by the
+next, before that one holds anything, so at most one batch is sealed.
+
+#### D591. A page read or written shares no lock or counter with every other I/O of its file
+
+Two things every page read did wrote a cache line every other thread's
+reads wrote too. The pager checked that the page was allocated under the
+free list's lock, and the file manager stamped the file's last use from
+one counter shared by every file. Under many threads these lines moved
+from core to core on each read.
+
+The pager now keeps a bit for each page in use, set as pages are
+allocated and cleared as they are freed, under the free list's lock so
+it says what the list says, and a read or write checks the bit with no
+lock (`disk/pager/in_use.rs`). The bits are in chunks that double in
+size, made as their first page is allocated, so a file of any size has a
+few. A page the list takes for its own record is in use; a free run set
+aside while the file is cut stays free, as it is. The file manager
+stamps a use by the monotonic clock, each thread's stamps rising, with
+no write any other file shares; the least recently used file is still
+the one closed first, a tie going to the file opened first. The count was
+not split into stripes by thread, summed when read, as the hits of the
+pool are (`disk/buffer/hits.rs`): a sum orders nothing, and a stripe's
+count says only how often its threads used files, not which file one
+used last, so eviction would lose its order. The pager also cuts the
+page it read to its body in place instead of copying it, so a miss,
+reading into the buffer of the page it evicts (D474), copies the page
+once.
+
 #### D473. The maintenance job gathers a table's statistics only once a plan has read them since its last pass
 
 A table's statistics were gathered again whenever its changes passed
@@ -11947,6 +12053,46 @@ bound changed to one past it now leaves the bound reached, by the row
 written, as the zone is widened to hold it, so the zone stays as narrow
 as its rows. A value on a bound changed back inside it, or deleted, or a
 null changed, stales the zone as before (`engine/rows/zones.rs`).
+
+#### D770. A zone is stale per column, and summed up from its rows' newest versions alone, once the horizon has passed them
+
+A zone a write left wider than its rows was summed up in every column
+kept, from every version of its rows a reader might still read, so the
+maintenance thread decoded each version whole and read each older one
+back from the undo store. Under an order entry workload every table is
+written without pause, so that pass took most of a core, made a share of
+all undo reads that no transaction asked for, and allocated in the same
+arenas as the serving threads. A zone now notes which columns it may be
+wider in, a bit each, and a write sets only the bits of the columns whose
+bound it may leave unreached (D476). A sum up decodes those columns
+alone, one value at a time with no row made, and keeps the others'
+bounds. It reads only the rows' newest versions. While one is not yet
+committed at or before the horizon (or the table's latest collection),
+a reader may still read an older version, which the zone holds since the
+write widened it, so the zone is left as it is and summed up once the
+horizon has passed (`engine/rows/zones/loose.rs`,
+`engine/rows/zones/summed.rs`).
+
+#### D771. A zone due again soon after it was looked at waits twice as long each time, to a limit
+
+The zones rest a second after each pass (D31), but a zone written
+without pause was due at every pass and summed up once a second. Each
+zone now keeps when the maintenance thread last looked at it and how long
+it waits after that. A zone looked at again within four of its waits, a
+second at least, is hot, and its wait doubles from one second to 32. One
+looked at after a longer quiet waits none, so a zone written now and then
+is narrowed and settled a second later as before. A hot zone narrows and
+settles up to its wait later. `Database::maintain` passes over no wait
+(`engine/rows/zones/summed.rs`).
+
+#### D772. A table's maintenance sums up no zone while its zones rest, unless asked to now
+
+The maintenance job calls a table's maintenance while any of its work is
+due, its statistics or an index's key counts among them, and goes round
+again at once while any call did some. The row store summed up zones due
+at each call, resting or not, so other work kept the zones summed up
+without rest. A call now sums up zones only once their rest is over,
+unless it is asked to do its work now (`engine/rows.rs`).
 
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
@@ -12042,6 +12188,106 @@ Rejected were positional delta trees (Héman, Zukowski, Nes, Sidirourgos
 and Boncz, SIGMOD 2010) and base and tail pages with lineage (Sadoghi
 et al., L-Store, 2018): both replace the tree, which already holds the
 row versions and their undo.
+
+#### D443. An update shares the index entries of the version it replaced where it keeps every column the key reads
+
+An engine keeping versions gave every update an entry in every index of
+its table, and collection took the old version's back. An update that
+changed no key column still paid two descents per index, one to add a
+second count of the same entry and one to take it back.
+
+An update now compares the old and new rows in the columns its table's
+own indexes read, a value kept only if written out alike in every part
+(`storage/kept.rs`). It notes those columns on its change
+(`TableStorage::keep_entries`) and adds no entry to an index whose key
+reads only them. The garbage of the version replaced carries the columns
+kept, and collection takes back no entry of that version in such an
+index (`txn/kept.rs`), nor does a checkpoint log one as stale. An index
+then holds one entry per run of consecutive versions of a row with its
+key, taken back with the run's last version. An index reading a column
+past the 64th, a global index over partitions (D157) and a temporary
+table's index keep an entry per version, as before.
+
+A fill of an index from a table's versions, for `CREATE INDEX` beside
+writers (D27) or a rebuild under the table's lock, counts each version it
+finds. So it notes on the table's lock the latest commit it may have
+counted, and a version superseded by that commit or an earlier one
+shares nothing in that index. A write after the fill keeps the index as
+any other.
+
+The semantics hold for these reasons.
+
+- Every version a snapshot may read still has an entry of its key, since
+  a version that kept its key shares its predecessor's entry, and that
+  entry goes only with the last version of the run (D34).
+- A change noted on a spilled change list cannot be found again, so it
+  is not noted, and the update adds its entries as before.
+- A rollback finds nothing to undo for an entry not added, and the
+  version put back still holds the shared entry.
+- Recovery reads no garbage. A checkpoint logs as stale only the entries
+  collection would take back, so recovery from it takes back none a live
+  version shares.
+
+#### D444. A validated transaction's images are decoded only when a reader's conditions are checked against them
+
+Every commit of a table that kept validation decoded the versions before
+and after each row it wrote, before any reader asked, at every isolation
+level. Only a reader that recorded a condition or a region (D29) ever
+compares them, and most commits meet none.
+
+A transaction validated now keeps the ids it wrote, and its images are
+decoded the first time a reader's conditions or regions are checked
+against it, then kept with it (`mvcc/commit.rs`). They are found by
+going back from the row's newest version to the one its transaction
+made, open or committed at its timestamp, and the one before it.
+
+The semantics hold for these reasons.
+
+- A reader checked against a transaction is open with a snapshot before
+  that transaction's commit, so the horizon is before it, and collection
+  removes neither version the images come from.
+- A version not found refuses the transaction being validated, so a
+  phantom is never missed for want of an image.
+- Reads by id and reads of the whole table are answered from the ids, as
+  before, with no image.
+
+#### D445. One transaction's end collects a table at a time; the others pass it over
+
+Every transaction's end collected each of its tables and each table still
+awaiting collection. Under many sessions, all of them collected the same
+hot table at once, each taking its garbage, validated and undone locks
+in turn, and all but one found the work done.
+
+A transaction's end now collects a table only if no other is collecting
+it (`TableLock::try_collect`). One that finds a collection under way
+passes the table over and leaves it noted as awaiting collection, so a
+later end collects what is left. Whether a table still awaits is decided
+under the lock on that note, so a commit that added garbage while another
+collected keeps its table noted. A checkpoint, which needs every table
+collected as far as the horizon lets, waits for a collection under way
+instead (`gc_waiting`).
+
+The semantics hold for these reasons.
+
+- The horizon rule is unchanged: no version a snapshot can read is
+  removed. A collection passed over is only later, never wrong.
+- A table passed over stays noted, so the next end of any transaction
+  collects it (D29).
+
+#### D446. A row's write starts from the leaf its read of the newest version found
+
+A row store's write read the row's newest version from the tree, then
+wrote its new one over it with a second descent from the root, each
+latching the inner nodes every thread shares.
+
+The read now keeps where its descent ended (`BLinkTree::get_for_write`),
+and the write starts from that leaf (`replace_found`), comparing the
+entry under the leaf's lock as before. A leaf split since is crossed by
+moving right (Lehman and Yao, 1981, §5). A leaf is freed only after it
+is retired, which moves the tree's stamp, and only once no operation
+entered before is under way (`reclaim.rs`). So the write starts from the
+leaf only while the stamp is the one the read saw, and descends again
+otherwise.
 
 #### D511. A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first
 
@@ -12163,6 +12409,11 @@ counts and no shared lock. A text is normalized once, for a prepared
 statement in what it keeps between executions and for a direct one in
 its session's activity. Each session tallies its own runs in a map only
 it writes, under a lock only a reader of the table takes besides. A
+statement takes that lock once, as it ends. The user its session runs as
+is kept with the map, so a statement by the same user as the last finds
+its user's key without it. A statement's timing is held in its call or
+its cursor, and what is told of a slow one apart, as that is seldom
+asked for. A
 session's tallies are listed with the database's the first time it
 tallies, and kept once it ends, merged, until the table is next read.
 Rows read are counted by each scan as it reads, and given to its
@@ -13306,6 +13557,203 @@ in 128 bits (D32). A path in 128 bits for whole vectors would double the
 width of every vector of integers, or add a second kind of them to
 every kernel, for values that are rare.
 
+#### D740. Commits waiting for a sync form a group whose leader syncs once for all, marks them durable in one pass and wakes each alone
+
+Each committer synced its commit record itself (D441). The file log
+grouped the syncs under one lock and woke every waiter through one
+condition variable when a sync ended. Each committer then marked its own
+commit durable on the clock, and waited for the durable timestamp on a
+second shared condition variable, which every move of it woke whole.
+So each sync woke every committer twice, they crowded onto two locks,
+and a commit covered by a sync waited for its own thread to be run
+again before the durable timestamp could pass it.
+
+Group commit now sits in the transaction layer (`txn/group.rs`). A
+committer queues its commit record's position and commit timestamp with
+a ticket of its own. The first to come while no sync runs leads. It
+syncs the log through the last record queued, and the sync's reach
+covers every record appended before it began. Under the queue's lock it
+takes every commit whose record that reach covers, then marks them all
+durable on the clock in one pass (`Clock::end_syncs`) and wakes each
+alone. The commits that came during the sync and were not covered are
+the next group. The first of them is woken to lead, and syncs once for
+all of them. The queue's lock is held only to add a commit or take a
+group, never during the sync, so appends, commits and their waits go on
+while the log syncs. A thread waiting for the durable timestamp parks
+under the timestamp it waits for (`Clock::wait_durable`), and whoever
+moves the durable timestamp wakes only those it reached.
+
+The semantics hold for these reasons.
+
+- A commit is marked durable only by a sync whose reach covers its
+  record, as `Log::sync_reached` promises (D410). The durable timestamp
+  still passes a commit only once every commit before it is marked, so
+  what a snapshot holds is still a prefix recovery keeps (D441).
+- A commit returns as before, once the durable timestamp reaches it.
+- A failed sync fails every commit of its group and every one queued
+  behind it, none marked durable. It halts the durable timestamp and
+  stops the database's changes as before, and every wait for the durable
+  timestamp ends.
+- A ticket's state is set before its thread is woken, so a wake-up is
+  never lost. A park that returns early looks again, and a bounded poll
+  only bounds a defect's cost.
+
+#### D741. A log appender waiting for the blocks before its own to be published is woken alone, by the one that publishes up to it
+
+A block file publishes its blocks in order (D30), so an appender whose
+write finished waits until every block before its own is published.
+Those that had to wait slept on one condition variable, and every
+publish woke all of them, though only the one whose block came next
+could go on. The commit records of many committers are appended to the
+log this way, so under load each commit woke every appender queued
+behind it.
+
+An appender that must wait now parks under the offset its block starts
+at (`disk/block.rs`). The appender that publishes up to that offset
+wakes it, and no other. A write that fails wakes them all, as they then
+fail too. The order of publication, and what a reader or a sync sees, are
+D30's as before. An appender is counted before it looks at the published
+end, under the lock a waker takes, so a publish after its look wakes it.
+
+#### D745. The undo store's batches in memory are found through shards locked for reading, with no lock all readers share
+
+One lock guarded the undo store's batches (D31), the batch being gathered,
+those being written, and those read back from the log. Every append took it,
+and so did every read of an older version, by a scan's visibility check, a
+UNIQUE check, a commit's validation and garbage collection. With many
+sessions on a few hot rows, readers queued behind each other and behind
+appends on that lock. Batches in memory are now held in shards by their
+number, each shard under a read-write lock (`undo/resident.rs`). A reader
+takes one shard's lock for reading only as long as it takes to count a share
+of the version, which is a range of the batch's record or a version gathered
+alone, so it decodes nothing and copies nothing. Readers never wait on one
+another, and wait on an append only for a version of the batch being
+gathered. Consecutive batches fall in different shards. The lock of the
+appends is taken by a reader only for a version memory no longer holds,
+to learn where the log has it.
+
+#### D746. Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them
+
+A batch was let go once written to the log, and a reader of one of its
+versions read the batch back with a system call, kept among the last few
+read. With many sessions, readers of open snapshots went back to more
+batches than the few kept, and read the log at nearly every older version.
+A batch written now stays in memory as the record it was written as, until
+the store is truncated past it, which happens once no pinned version is in
+it (`undo/kept.rs`). The batches kept are bounded by a sixteenth of the
+memory budget, reserved of it as they are kept and given back as they go,
+standing as a buffer pool's pages do (D683). Past the bound, or when the
+budget refuses, the oldest go first, as the newest are what open snapshots
+go back to most. A version of a batch gone is read from the log as before.
+A store of pages (temporary tables) keeps none, as its pages are in the
+buffer pool already. The log is never synced (D31), so a crash loses
+nothing it needs. Recovery starts with no open snapshot.
+
+#### D747. A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it
+
+A write refused because another transaction changed the row asked the
+engine for the row's newest state (`TableStorage::newest`), which decodes
+the pending row and reads the committed version below it from the undo
+store. A writer only needs to know whom to wait for and the stamp of the
+newest commit, and with many sessions on a few hot rows it asked again at
+every refusal. `TableStorage::newest_writer` gives the writer and the
+stamp alone, which the row store reads from the newest version's maker
+(`RowTable::writer_of`). The row is read only when the statement rechecks
+its search condition over a version committed after its snapshot, and if
+the row changed again in between, the write is tried again.
+
+#### D760. A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values
+
+A plan made with slots, to be kept, is estimated with the values of the
+execution that makes it (D613). Filling a slot of a bound such as
+`OL_O_ID >= ST_O_ID - 20` leaves a difference of two constants, which no
+estimate reads as one, so the bound took the default share of a range
+while the plan made with the values had it folded. The rows of a few
+orders' lines were then estimated many times over, and the join over
+them weighed its index probes at those rows (D386). As ORDER_LINE grew,
+STOCK-LEVEL kept a hash join reading STOCK whole instead of probing its
+key for each line. Each compared sum or difference of constants alone
+is now folded to its value as the estimate fills its slots
+(`physical/estimate/valued.rs`), and one that raises an error is left
+as it is, for the execution to raise.
+
+#### D761. A join probes the inner table's index by the columns its own filter fixes, made columns of the left, with the join's keys
+
+An index nested-loop join probes an index of the inner table by the
+values each left row gives its first columns (D35). STOCK-LEVEL's join
+of ORDER_LINE and STOCK on the item probes STOCK's key (S_W_ID, S_I_ID)
+only if the warehouse comes with each line. Two equalities with one
+constant give it by transitivity, but a slot of each, as a prepared
+statement has, or a constant the left is not filtered by, do not, and
+the join then read STOCK whole. Where the inner table's filter fixes a
+column to a constant or a slot, and the column makes a prefix of an
+index with the join's keys, the value is made a column of the left
+operand, equated with the inner column, and a projection takes it away
+after (`physical/indexed/fixed.rs`). The plan made with an execution's
+values is rewritten the same way, so a prepared statement's plan with
+slots keeps one shape with it and is kept (D45). A column the left
+already gives as such a value is not fixed again.
+
+#### D767. A connection's requests run on one thread of its own, its home
+
+A request a fast client sent within `lent::WAITED` ran on the worker that
+answered the last (D42), but any later one was handed to whichever thread
+of the blocking pool was free, and the pool wakes its idle threads in
+turn. A session moved between threads at nearly every transaction of a
+client that thinks between them. What a statement allocated on one thread
+was then freed on another, so every serving thread took the locks of
+every arena of the allocator, freed chunks were merged across threads,
+and the session's state went cold in each processor's cache.
+
+So a connection's first request opens its home (`native/home.rs`), one
+long task of the blocking pool that runs each of the connection's
+requests until the connection ends or goes idle. The connection's task
+still reads a slow client's request, takes a permit of SERVER.WORKERS for
+it, and waits for the loan back (`native/lent.rs`). It then hands the
+request to the home instead of the pool, and the home parks between
+requests holding no permit. Statements are bounded, queued, cancelled and
+timed out as before, and a fast client's next request is still read by
+the worker itself.
+
+A home per connection, not a fixed set of threads each serving many
+connections, because a statement may wait for a row lock another
+connection holds. On a shared thread the holder's commit could queue
+behind its waiter, and stealing work to undo that moves the session
+again. With a thread each, no session waits behind another's statement,
+and an idle home costs a parked thread. A session's end, a Reset and a
+ChangeUser still run on any free thread, once a connection or rarely.
+This helps any allocator, since each one's per-thread caches serve a
+thread that both takes and frees.
+
+#### D768. Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread
+
+A home holds one of the MAX_WORKERS places of the connections that keep a
+thread of the pool (`Services::hot`), which a worker waiting on its client
+for the next request takes too. So the pool's bound, twice MAX_WORKERS
+beside the logins' threads (`runtime.rs`), still leaves a thread for every
+statement SERVER.WORKERS allows. A connection that finds no place runs
+each request on any free thread, as every request ran before. A worker at
+home waits on its client without taking a second place.
+
+A home with no request for `home::KEPT`, ten seconds, retires, giving its
+thread and place back, and the connection opens another at its next
+request. Ten seconds is how long the runtime keeps an idle thread of its
+pool, so an idle connection gives back its thread when the pool would
+have. A connection idle that long pays one move of thread, and idle
+connections never keep active ones out of the places.
+
+#### D769. A request is handed to a home under one lock, which decides its retirement too
+
+The connection's task and its home share one slot and a condition
+variable. The task puts a request in the slot unless the home has retired.
+The home takes it, or retires under the same lock once its wait times out
+with the slot empty, so no request is ever left with a thread that has
+gone. A home whose thread ends otherwise, by a panic or because the runtime
+stops before it ran, retires as its thread's guard is dropped, dropping any
+request left in the slot. That gives the loan back failed, so the
+connection ends rather than waits. A request a retired home refuses is
+handed back, and runs on a new home or on any free thread.
+
 ## 2. Project layout
 
 ```
@@ -13608,3 +14056,162 @@ was fixed that week, and lint baselines and over-long files were paid down.
   M. E. Kounavis and F. L. Berry, *A Systematic Approach to Building High
   Performance Software-based CRC Generators* (2005); D. V. Sarwate,
   *Computation of Cyclic Redundancy Checks via Table Look-Up* (1988).
+
+#### D447. A unique constraint added in a transaction fills its index with every version
+
+ALTER TABLE ADD UNIQUE inside a transaction filled the constraint's
+index with only the rows the transaction saw. Collection takes back an
+entry for each older version it removes, so once those versions went, a
+row whose older version had the same key lost its entry, and the
+constraint stopped finding it.
+
+Of an engine keeping versions, the index is now filled as CREATE INDEX
+fills one, with every committed version a reader may still see, and the
+fill noted for D443. The transaction holds the table's exclusive lock,
+so nothing commits meanwhile. Each row the transaction changed itself
+adds an entry of the row as it left it. Rolling back removes the index
+with the rest of the statement.
+
+#### D448. SERIALIZABLE certifies by column, and skips the check when no one read
+
+A row store's SERIALIZABLE check (D29) counted a read of a row as a
+read of all of it. A transaction that read one column of a row then
+failed beside one that changed another column of it. An order entry
+that reads a warehouse's tax fails beside every payment that adds to the
+warehouse's year-to-date total.
+
+Each read now carries the columns it consumed, as a 64-bit mask (bit 63
+stands for every column past 62).
+- A read by row id carries the columns it decoded.
+- A scan carries its columns, its condition's and its order's.
+- An index probe carries the index's columns. A covering scan consumes
+  no others, and any other scan reads each chosen row by id, with its
+  own columns.
+- A read that cannot say which columns it consumed, or that decoded
+  none, carries every column.
+
+A write conflicts with a read only if the columns its change changed meet
+those the read consumed. A read that consumed no changed column read the
+same values from both versions, so there is no dependency to order (Adya,
+1999, §3). The changed columns are found by comparing the row's versions
+before and after the change, decoded only when a read's mask does not
+already decide (D444). An insertion or a deletion changes every column.
+A condition whose columns meet no changed column is not matched against
+the images at all.
+
+A write of the value a column already holds changes nothing a read could
+see, so it meets no read. The standard defines a serializable execution
+as one with "the same effect as some serial execution" of the same
+transactions [ISO/IEC 9075-2:2023 §4.43.4]. A read that consumed only
+columns another transaction left as they were returns the same rows and
+values before that transaction and after it, so either order is a serial
+execution with the same effect. Two transactions where each reads only
+columns the other leaves alone both commit, though each wrote a row the
+other read.
+
+The check also skips the scan of the transactions kept for it when the
+transaction validated read nothing and no kept transaction read
+anything. A count of those that read, under the same lock, says so.
+
+#### D449. A row's turn passed wakes only the waiter whose turn it is
+
+D442 queued a row's waiters on the writer's end in ticket order, all
+asleep on one signal. Each turn passed, and the writer's end, woke every
+waiter, though only one could go on. With many sessions on a hot row,
+each write woke the whole line, and every waiter took the queue's lock
+only to sleep again.
+
+Each waiter now sleeps on a signal of its own, kept with its ticket in
+the queue. The writer's end, a turn passed and a ticket given up each
+wake the one waiter whose ticket is served next, if it is asleep. One
+not yet asleep finds its turn when it looks, under the queue's lock. The
+order stays D442's. A waiter still wakes now and then by itself, to look
+for a cancel or its timeout.
+
+#### D450. A served session's transactions are collected once their reply is sent
+
+A transaction's end collected the garbage of its tables (D29, D445)
+before its commit or rollback returned, so a client waited for the
+collection as well as the commit.
+
+A session may now leave that collection until its reply is sent
+(`Session::collect_after_reply`). Its transactions' ends then only note
+their tables as awaiting collection, and the session collects them with
+`Session::collect`. The server turns this on for every session it
+serves, and collects once it has flushed the replies of a request. A
+request whose reply is held for the next, pipelined, leaves it to that
+one. Until then, the end of any other transaction collects the noted
+tables as it would any awaiting, and a checkpoint waits for them
+(`gc_waiting`). The horizon rule is unchanged, so no version a snapshot
+can read is removed; collection only comes a little later.
+
+#### D451. A busy table is collected a batch of commits at a time
+
+Every transaction's end that found a table's garbage past the horizon
+collected it (D29, D445), so a table written by many sessions was
+collected after nearly every commit, each time for one commit's garbage,
+and paid the collection's fixed costs each time.
+
+An end now collects a table only when the collection is due
+(`TableStorage::collection_due`). It is due at once when no transaction
+is open in the table, as after every end in a quiet database. In a busy
+table it is due once the horizon is 64 commits past its earliest garbage,
+or once 4096 versions filed as garbage await collection, or while versions undone by rollbacks wait. Those are released
+as soon as the readers that may go back to them end (D29), and rollbacks
+are rare. Until then the table stays awaiting collection, and a later
+end looks again. A checkpoint's collection (`gc_waiting`) takes
+everything, due or not. Versions left unstamped wait with the garbage,
+a reader resolving an unstamped version by its transaction's status.
+The horizon rule is unchanged, so no version a snapshot can
+read is removed. A busy table keeps at most a batch of commits' garbage
+more than it did.
+
+Eager pruning at write, releasing a superseded version's undo slot as a
+writer passes it, was rejected. The slot belongs to its commit's garbage,
+whose collection reads the version to take its index entries back.
+Releasing it at write would move that index work onto the writer, before
+its reply, the work D450 moved after it.
+
+#### D453. One transaction that wrote nothing collects at a time
+
+The end of a transaction that wrote nothing collects the tables awaiting
+collection, since its end may move the horizon (D29). Once a served
+session collects after its reply (D450), every session's request did
+so. Many sessions ending at once then took the collection's locks in
+turn, though only one could collect a table (D445) and the others
+found nothing left to do.
+
+Such an end now collects only while no other such end is collecting.
+One that finds another under way passes by. The one collecting collects
+the same tables, and what its horizon does not reach waits for any later
+end, as a table passed over does (D445). A transaction that wrote
+still collects its own tables as before.
+
+#### D454. A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own
+
+At READ COMMITTED a statement that would change a row another
+transaction is changing waits for that transaction to end. It then
+writes the version committed, if its search condition still holds of
+it [ISO/IEC 9075:1992 §4.28]. The write is refused only on the lock
+timeout, a deadlock or a cancel. A row many transactions change at once
+used to refuse a waiter after 64 refused tries in all, each holder
+passing it counting two or three. The waiter was then told SQLCODE -911.
+
+Now a try counts only when nothing was committed since the last one.
+A recheck of a version committed after the last one rechecked resets
+the count, and a wait for a writer leads to such a recheck unless the
+writer rolled back. The bound still stops
+an engine whose answers disagree from looping forever. After each wait
+the row is read again at once, so the waiter goes straight to the
+version committed meanwhile without first failing at its old snapshot.
+REPEATABLE READ and SERIALIZABLE keep their one snapshot and are
+refused once a later commit is found, as before.
+
+Reading at a snapshot for each statement, each statement of a
+procedure's body reads at one taken as it begins. The same holds for a
+control statement run directly. A statement after one that waited for a
+row therefore reads what was committed meanwhile, and does not walk the
+older versions back to the CALL's snapshot. A function's or a triggered
+action's statements keep the snapshot of the statement that runs them,
+which is still reading. No statement takes a new snapshot while a
+cursor of the session is open, as with any other statement.

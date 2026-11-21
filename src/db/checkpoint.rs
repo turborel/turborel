@@ -10,9 +10,11 @@
 //! 1. takes the log's end, L: the checkpoint holds every change logged
 //!    before it;
 //! 2. has every engine capture what it holds through L
-//!    (`StorageEngine::checkpoint`): the row store writes its pages and its
-//!    pager's free list into its shadowed file (`disk/shadow.rs`), no sync,
-//!    and seals that batch; what plug-ins write meanwhile to their
+//!    (`StorageEngine::checkpoint`): the row store marks the pages changed
+//!    since the last checkpoint owed to this one, copying none (RULES.md
+//!    D590), writes those it cannot capture later and its pager's free
+//!    list into its shadowed file (`disk/shadow.rs`), no sync, and seals
+//!    that batch; what plug-ins write meanwhile to their
 //!    shadowed directories (RULES.md D56) is held in memory, then sealed;
 //!    and holds back collection of every table with indexes or large
 //!    object columns, noting the last commit captured;
@@ -34,8 +36,9 @@
 //!    the files are as the last image left them until step 5;
 //! 5. commits the plug-ins' sealed batch, then has every engine make its
 //!    capture durable (`StorageEngine::checkpoint_finish`): the row store
-//!    commits the sealed batch, so after a crash its tables are as they
-//!    were at L;
+//!    writes each page owed into the sealed batch as it was at L, a writer
+//!    having copied any it changed since, then commits the batch, so after
+//!    a crash its tables are as they were at L;
 //! 6. records the image in the catalog file: the definitions, each table's
 //!    and index's locator, L, and the position of the first record of the oldest
 //!    transaction open at L, from which recovery reads the log;
@@ -89,10 +92,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::record::{Change, Record};
 use crate::log::{Log, Lsn};
 use crate::settings::{CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES};
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Kept, Row, RowId, TableStorage};
 use crate::sync::{lock, lock_builtin};
 use crate::threads::{Turn, Turned};
-use crate::txn::{NO_TRANSACTION, Persistence, TableLock, Timestamp};
+use crate::txn::{NO_TRANSACTION, Persistence, Sharing, TableLock, Timestamp};
 
 impl Database {
     /// \[DESIGN\] Takes a checkpoint now: see the module's documentation.
@@ -242,7 +245,7 @@ impl Database {
                 return Err(api("[DESIGN] a database is closed with no transaction open"));
             }
             let tables = st.catalog.tables();
-            st.gc(tables.iter().map(|t| &t.name));
+            st.gc_waiting(tables.iter().map(|t| &t.name));
             for method in st.methods.values() {
                 method.checkpoint()?;
             }
@@ -475,9 +478,10 @@ impl State {
         let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
         for (storage, indexes, lock, name) in &stale.tables {
             if !indexes.is_empty() {
+                let sharing: Vec<Sharing> = indexes.iter().map(|ix| Sharing::of(ix, lock)).collect();
                 for read in Arc::clone(storage).garbage(stale.as_of) {
-                    let (row, values) = read?;
-                    log_entries(&*log, (through, indexes), row, &values)?;
+                    let (row, values, kept) = read?;
+                    log_entries(&*log, (through, indexes, &sharing), row, (&values, kept))?;
                 }
             }
             // [DESIGN] RULES.md D79: the large objects it would leave kept.
@@ -548,10 +552,20 @@ impl State {
 }
 
 /// Logs the entry of row `row`, of `values`, in each of `indexes` that
-/// holds its key (`IndexDesc::entry_of`), stale as of the checkpoint
-/// through `through`.
-fn log_entries(log: &dyn Log, (through, indexes): (Lsn, &[IndexDesc]), row: RowId, values: &Row) -> Result<()> {
-    for ix in indexes {
+/// holds its key (`IndexDesc::entry_of`) and does not share with the
+/// version after it, which `kept`, stale as of the checkpoint through
+/// `through`.
+fn log_entries(
+    log: &dyn Log,
+    (through, indexes, shared): (Lsn, &[IndexDesc], &[Sharing]),
+    row: RowId,
+    (values, kept): (&Row, Kept),
+) -> Result<()> {
+    for (ix, sharing) in indexes.iter().zip(shared) {
+        // One its successor shares stays (RULES.md D443).
+        if sharing.shares(kept) {
+            continue;
+        }
         let Some(key) = ix.entry_of(values) else { continue };
         let change = Change::Stale { through, index: ix.name.clone(), row, key: key.0 };
         log.append(&Record { tx: NO_TRANSACTION, change }.encode())?;

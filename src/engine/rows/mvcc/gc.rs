@@ -14,9 +14,15 @@ use crate::engine::rows::{RowTable, key};
 use crate::error::{Result, SqlError};
 use crate::log::Lsn;
 use crate::spill::SpillList;
-use crate::storage::{Row, RowId};
+use crate::storage::{Kept, Removed, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
+
+/// The commits a busy table's earliest garbage waits past the horizon for
+/// before a transaction's end collects it (`RowTable::due_at`).
+const COLLECT_AFTER: u64 = 64;
+/// The versions filed as garbage that make a collection due at once.
+const COLLECT_ITEMS: u64 = 4_096;
 
 impl RowTable {
     /// Removes the garbage of commits at or before `horizon`, each removed
@@ -39,7 +45,7 @@ impl RowTable {
             self.versions.garbage_due.store(garbage.first_key_value().map_or(u64::MAX, |(&at, _)| at), Ordering::SeqCst);
             ready
         };
-        let mut failure = None;
+        let (mut failure, mut taken) = (None, 0_u64);
         for (at, dead) in ready {
             // A segment at a time; one that cannot be read back is lost to
             // collection, its versions left where they are.
@@ -51,16 +57,27 @@ impl RowTable {
                         continue;
                     }
                 };
+                taken = taken.saturating_add(u64::try_from(items.len()).unwrap_or(u64::MAX));
                 self.remove_all(items, at, (&mut *removed, &mut failure));
             }
         }
+        // Counted down by what was taken, each item counted as it was filed
+        // (`add_garbage`), an item filed again counted again; the garbage of
+        // later commits still counted.
+        self.versions.garbage_items.fetch_sub(taken, Ordering::Relaxed);
         {
             let mut validated = lock_builtin(&self.versions.validated);
             validated.retain(|v| v.at > horizon);
-            self.versions.validated_due.store(validated.iter().map(|v| v.at).min().unwrap_or(u64::MAX), Ordering::SeqCst);
+            self.versions.validated_due.store(validated.earliest().unwrap_or(u64::MAX), Ordering::SeqCst);
         }
         self.undo.truncate()?;
         failure.map_or(Ok(()), Err)
+    }
+
+    /// `horizon`, or the table's latest collection if later: no reader is
+    /// before either.
+    pub(in crate::engine::rows) fn collected_horizon(&self, horizon: Timestamp) -> Timestamp {
+        horizon.max(self.versions.collected.load(Ordering::SeqCst))
     }
 
     /// What `read` makes of the entry `newest` of the row of key `k`, read by
@@ -109,6 +126,23 @@ impl RowTable {
         }
     }
 
+    /// \[DESIGN\] Whether a collection at `horizon` is due (RULES.md D451):
+    /// with no transaction open in the table, as after every end in a quiet
+    /// database, at once; else once the horizon is `COLLECT_AFTER` commits
+    /// past the earliest garbage, or `COLLECT_ITEMS` versions are filed, so
+    /// a busy table is collected a batch of commits at a time and not by
+    /// every end; or while versions undone by rollbacks wait, released as
+    /// soon as the readers that may go back to them end (RULES.md D29).
+    /// Stamps left wait with the garbage, a reader resolving an unstamped
+    /// version by its transaction's status.
+    pub(in crate::engine::rows) fn due_at(&self, horizon: Timestamp) -> bool {
+        let due = self.versions.garbage_due.load(Ordering::SeqCst).min(self.versions.validated_due.load(Ordering::SeqCst));
+        horizon.checked_sub(due).is_some_and(|past| past >= COLLECT_AFTER)
+            || self.versions.garbage_items.load(Ordering::Relaxed) >= COLLECT_ITEMS
+            || self.versions.undone_waiting.load(Ordering::Relaxed)
+            || self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()
+    }
+
     /// Whether anything awaits collection: garbage, versions undone changes
     /// appended, transactions validated that others may be ordered
     /// against, or stamps left to make.
@@ -124,6 +158,7 @@ impl RowTable {
         let space = self.versions.space();
         let mut garbage = lock_builtin(&self.versions.garbage);
         let list = garbage.entry(at).or_insert_with(|| SpillList::new(space));
+        self.versions.garbage_items.fetch_add(u64::try_from(dead.len()).unwrap_or(u64::MAX), Ordering::Relaxed);
         for item in dead {
             // An item that cannot be written is held all the same.
             list.push(item, &mut encode_dead).unwrap_or_default();
@@ -150,6 +185,7 @@ impl RowTable {
         let list = undone.entry(newest.unwrap_or(NO_TRANSACTION)).or_insert_with(|| SpillList::new(space));
         // An item that cannot be written is held all the same.
         list.push(Dead::Undone(appended), &mut encode_dead).unwrap_or_default();
+        self.versions.undone_waiting.store(true, Ordering::Relaxed);
     }
 
     /// Releases the versions undone changes appended for which no
@@ -163,6 +199,7 @@ impl RowTable {
             }
             let oldest = self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).keys().min().copied();
             let later = oldest.map(|tx| undone.split_off(&tx)).unwrap_or_default();
+            self.versions.undone_waiting.store(!later.is_empty(), Ordering::Relaxed);
             mem::replace(&mut *undone, later)
         };
         // A segment that cannot be read back is lost, its versions kept in
@@ -171,7 +208,7 @@ impl RowTable {
         for item in segments.flatten().flatten() {
             // Each a `Dead::Undone`, which only releases its position, of no
             // timestamp.
-            let _ = self.remove_dead(&item, 0, &mut |_, _| true);
+            let _ = self.remove_dead(&item, 0, &mut |_, _, _| true);
         }
     }
 
@@ -180,14 +217,15 @@ impl RowTable {
             // Its index entries gone with it (`removed`), its zone's count
             // of versions superseded is one less; else once they are
             // (`TableStorage::taken_back`).
-            Dead::Own(id, bytes) => {
-                if self.remove_version(*id, bytes, removed)? {
+            Dead::Own(id, bytes, unchanged) => {
+                if self.remove_version((*id, bytes), Kept { at, unchanged: *unchanged }, removed)? {
                     self.zones.superseded(*id, false);
                 }
                 Ok(())
             }
-            Dead::Older(id, appended) => {
-                let gone = self.remove_version(*id, &self.undo.read(*appended)?, removed)?;
+            Dead::Older(id, appended, unchanged) => {
+                let kept = Kept { at, unchanged: *unchanged };
+                let gone = self.remove_version((*id, &self.undo.read(*appended)?), kept, removed)?;
                 self.undo.release(*appended);
                 if gone {
                     self.zones.superseded(*id, false);
@@ -218,30 +256,31 @@ impl RowTable {
         }
     }
 
-    /// The row of the version garbage `item` superseded, `columns` decoded,
-    /// or all; none for a deletion, or no version.
-    pub(super) fn garbage_row(&self, item: Dead, columns: Option<&[usize]>) -> Result<Option<(RowId, Row)>> {
-        let (id, bytes) = match item {
-            Dead::Own(id, bytes) => (id, Held::from(bytes)),
-            Dead::Older(id, at) => (id, self.undo.read(at)?),
+    /// The row of the version garbage `item` of `at` superseded, `columns`
+    /// decoded, or all, and what its successor kept; none for a deletion,
+    /// or no version.
+    pub(super) fn garbage_row(&self, (at, item): (Timestamp, Dead), columns: Option<&[usize]>) -> Result<Option<(RowId, Row, Kept)>> {
+        let (id, bytes, unchanged) = match item {
+            Dead::Own(id, bytes, unchanged) => (id, Held::from(bytes), unchanged),
+            Dead::Older(id, appended, unchanged) => (id, self.undo.read(appended)?, unchanged),
             Dead::Deletion(_) | Dead::Undone(_) | Dead::Objects(_) => return Ok(None),
         };
         let version = Version::parse(&bytes)?;
         if version.deleted {
             return Ok(None);
         }
-        Ok(Some((id, self.decode(id, version.record, columns)?)))
+        Ok(Some((id, self.decode(id, version.record, columns)?, Kept { at, unchanged })))
     }
 
     /// Frees what version `bytes` of row `id` holds out of line, and
-    /// records its row: whether its index entries are gone (`removed`'s
-    /// answer; a deletion has none).
-    fn remove_version(&self, id: RowId, bytes: &[u8], removed: Removed<'_>) -> Result<bool> {
+    /// records its row, with what its successor `kept`: whether its index
+    /// entries are gone (`removed`'s answer; a deletion has none).
+    fn remove_version(&self, (id, bytes): (RowId, &[u8]), kept: Kept, removed: Removed<'_>) -> Result<bool> {
         let version = Version::parse(bytes)?;
         if version.deleted {
             return Ok(true);
         }
-        let gone = removed(id, self.decode(id, version.record, None)?);
+        let gone = removed(id, self.decode(id, version.record, None)?, kept);
         self.free_values(id, version.record);
         Ok(gone)
     }
@@ -255,6 +294,3 @@ impl RowTable {
         }
     }
 }
-
-/// Where a collection gives each version it removes: its row id and row.
-pub(in crate::engine::rows) type Removed<'a> = &'a mut dyn FnMut(RowId, Row) -> bool;

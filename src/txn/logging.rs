@@ -116,6 +116,16 @@ impl Transactions {
     ///
     /// As `taking_changes`; the log's.
     pub(crate) fn sync(&self, log: &dyn Log, lsn: Lsn) -> Result<()> {
+        self.sync_reaching(log, lsn).map(|_| ())
+    }
+
+    /// As `sync`: the position before which every record of `log` is now
+    /// durable, past `lsn` (`Log::sync_reached`).
+    ///
+    /// # Errors
+    ///
+    /// As `sync`.
+    pub(super) fn sync_reaching(&self, log: &dyn Log, lsn: Lsn) -> Result<Lsn> {
         self.taking_changes()?;
         let reached = log.sync_reached(lsn).inspect_err(|e| {
             lock_builtin(&self.stopped).get_or_insert_with(|| e.clone());
@@ -126,7 +136,8 @@ impl Transactions {
         // Every record before `reached` is durable, the unsynced commits
         // among them too (RULES.md D410).
         self.synced(log, reached.max(lsn));
-        Ok(())
+        // The record at `lsn` is, whatever a log claims.
+        Ok(reached.max(Lsn(lsn.0.saturating_add(1))))
     }
 
     /// Notes the commit record at `lsn` of `log` written, not synced: the
@@ -300,17 +311,22 @@ impl Txn {
         Ok(Some(lsn))
     }
 
-    /// Syncs the commit record `append_commit` wrote at `lsn`: the moment
-    /// the transaction commits (RULES.md D25).
+    /// Syncs the commit record `append_commit` wrote at `lsn`, of the
+    /// commit at `at`, with the commits waiting for a sync beside it
+    /// (`group.rs`): the moment the transaction commits, when it is marked
+    /// durable (RULES.md D25, D441).
     ///
     /// # Errors
     ///
     /// SQLCODE -922 if the sync failed: the transaction is then in doubt.
-    pub(super) fn sync_commit(&self, lsn: Lsn) -> Result<()> {
-        let Some(log) = self.log.as_ref() else { return Ok(()) };
+    pub(super) fn sync_commit(&self, lsn: Lsn, at: Timestamp) -> Result<()> {
+        let Some(log) = self.log.as_ref() else {
+            self.shared.clock.end_syncs(std::iter::once(at));
+            return Ok(());
+        };
         // [DESIGN] RULES.md D520: shown waiting for I/O while it syncs.
         self.stop.activity().waits_for_io();
-        let synced = self.shared.sync(&**log, lsn);
+        let synced = self.shared.sync_in_group(log, lsn, at);
         self.stop.activity().woke();
         synced.map_err(|e| {
             SqlError::new(

@@ -1,9 +1,11 @@
 //! \[EXTENSION\] CREATE INDEX on a table that transactions go on writing
 //! (RULES.md D27).
 //!
-//! An index holds an entry for every version of a row that has its key,
-//! which garbage collection takes back when it removes the version
-//! (`Index`). Building one while transactions write the table, without
+//! An index holds an entry for every run of versions of a row that has its
+//! key, which garbage collection takes back when it removes the run's last
+//! (`Index`, RULES.md D443). The build counts each version it finds, and
+//! notes so (`TableLock::filled`). Building one while transactions write
+//! the table, without
 //! stopping them:
 //!
 //! 1. **Published** with the gate shut, so no write or commit is half done:
@@ -247,8 +249,8 @@ fn temporary_method(qn: &QualifiedName, method: &str) -> Result<()> {
 
 impl Database {
     /// \[DESIGN\] The entries index `name` holds, each (key, row) pair once:
-    /// a diagnostic. An engine keeping versions has one per version a
-    /// reader may still see.
+    /// a diagnostic. An engine keeping versions has one per run of versions
+    /// with one key a reader may still see (RULES.md D443).
     ///
     /// # Errors
     ///

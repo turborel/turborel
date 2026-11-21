@@ -1,19 +1,20 @@
 //! The mutations of a row's second writer waiting (RULES.md R-TEST-9, D28,
 //! D29): the wait, the deadlock refusal, the re-check of the version the
-//! first committed, and the served default; and of signals (D27), a waiter
+//! first committed, and the served default; a procedure's statement
+//! reading at a snapshot of its own (D454); and of signals (D27), a waiter
 //! counted and a notify made while one waits.
 
 use super::{Mutation, Package};
 
 /// The mutations of row waits and signals, in the order they run.
-pub const WAITS: [Mutation; 9] = [
+pub const WAITS: [Mutation; 11] = [
     Mutation {
         name: "row-wait-skipped",
         package: Package::Core,
         breaks: "a row's second writer is refused at once instead of waiting for the first",
         file: "src/txn/write.rs",
-        original: "                turn = tx.wait_for_row(&format_args!(\"a row of {table}\"), writer)?;",
-        replacement: "                return Err(e);",
+        original: "                    *turn = tx.wait_for_row(&format_args!(\"a row of {table}\"), writer)?;",
+        replacement: "                    return Ok(Next::Again);",
         integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
         unit: &[],
     },
@@ -28,12 +29,32 @@ pub const WAITS: [Mutation; 9] = [
         unit: &[],
     },
     Mutation {
+        name: "row-not-read-after-wait",
+        package: Package::Core,
+        breaks: "a READ COMMITTED waiter writes at its old snapshot after each wait, and is refused once enough writers pass it",
+        file: "src/txn/write.rs",
+        original: "writer)?;\n                }\n                next @",
+        replacement: "writer)?;\n                    return Ok(Next::Again);\n                }\n                next @",
+        integration: &["read_committed_waits::many_writers_of_one_row_lose_nothing_and_are_never_refused_4_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "procedure-snapshot-kept",
+        package: Package::Core,
+        breaks: "a procedure's statement after a row wait reads at the CALL's snapshot, missing what was committed meanwhile",
+        file: "src/db/routines/program/host.rs",
+        original: "        tx.renew_snapshot(|| !self.session.cursors_open())",
+        replacement: "        tx.renew_snapshot(|| false)",
+        integration: &["read_committed_waits::a_procedure_statement_after_a_wait_reads_what_was_committed_4_28"],
+        unit: &[],
+    },
+    Mutation {
         name: "row-recheck-at-one-snapshot",
         package: Package::Core,
         breaks: "REPEATABLE READ writes a version committed after its snapshot",
         file: "src/txn/write.rs",
-        original: "            let Some(check) = recheck.as_mut().filter(|_| !tx.one_snapshot()) else { return Err(e) };",
-        replacement: "            let Some(check) = recheck.as_mut() else { return Err(e) };",
+        original: "            let check = recheck.as_mut().filter(|_| !tx.one_snapshot());",
+        replacement: "            let check = recheck.as_mut();",
         integration: &["row_waits::one_snapshot_waits_then_is_refused_if_the_first_commits_4_28"],
         unit: &[],
     },

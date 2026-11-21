@@ -95,7 +95,7 @@ fn batched_where(table: &Arc<RowTable>, condition: Option<&Conjunction>) -> Vec<
 #[test]
 fn shadowed_rows_are_read_past_at_their_positions() {
     let (table, ids) = table(5000);
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     while table.maintain(1, true).unwrap() {}
     assert_eq!(table.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).count(), 5000 - 4096, "two groups frozen");
     let changed: Vec<RowId> = ids.iter().copied().step_by(3).chain(ids[1000..1800].iter().copied()).collect();
@@ -153,7 +153,7 @@ fn shadow_bits_mark_writes_and_keep_scans_the_same() {
     for n in 1000..5000 {
         table.insert(NO_TRANSACTION, row(n)).unwrap();
     }
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     while table.maintain(1, true).unwrap() {}
     let directory = table.frozen.directory().unwrap();
     assert_eq!(directory.groups.len(), 2, "two groups frozen");
@@ -179,7 +179,7 @@ fn shadow_bits_mark_writes_and_keep_scans_the_same() {
 #[test]
 fn delta_zones_skip_the_tree_rows_no_condition_matches() {
     let (table, ids) = table(5000);
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     while table.maintain(1, true).unwrap() {}
     let condition = below(10);
     let before = batched_where(&table, Some(&condition));
@@ -204,7 +204,7 @@ fn delta_zones_skip_the_tree_rows_no_condition_matches() {
 #[test]
 fn frozen_rows_are_decoded_only_when_kept() {
     let (table, ids) = table(5000);
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     while table.maintain(1, true).unwrap() {}
     table.begin(10, 9).unwrap();
     table.update(10, ids[256], row(-1)).unwrap();

@@ -261,9 +261,9 @@ pub trait IndexMethod: Send + Sync {
 /// \[DESIGN\] An index holds entries, (key, id) pairs, counted: the same
 /// pair may be inserted more than once, and each insert is taken back by
 /// one remove. A table whose engine keeps versions of its rows (RULES.md
-/// D29) has an entry for each version, so two versions of a row with the
-/// same key give one pair twice; when a version is removed, its entry is
-/// removed, and the pair stays while another version has it. A search may
+/// D29) has an entry for each run of consecutive versions of a row with one key (RULES.md D443), so two
+/// versions apart with the same key give one pair twice; when the last version of a run is removed, its
+/// entry is removed, and the pair stays while another run has it. A search may
 /// then find an entry of a version a reader does not see: the reader keeps
 /// a row only if the version it sees has the entry's key.
 ///

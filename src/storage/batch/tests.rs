@@ -101,7 +101,7 @@ fn columns_gathered_by_row_keep_their_kind() {
     let texts = Texts::new("abcde".to_owned(), vec![1_usize, 3_usize, 5_usize], Some(vec![false, false, true].into()));
     let Column::Texts(plain) = Column::Texts(texts).gathered(&[Some(1_usize), None, Some(2_usize), Some(0_usize)]) else { panic!("texts") };
     assert_eq!((plain.get(0_usize), plain.get(1_usize), plain.get(2_usize), plain.get(3_usize)), (Some("bc"), None, None, Some("a")));
-    let entries = std::sync::Arc::new(Texts::new("xy".to_owned(), vec![1_usize, 2_usize], None));
+    let entries = Arc::new(Texts::new("xy".to_owned(), vec![1_usize, 2_usize], None));
     let coded = Column::Texts(Texts::coded(Coded { codes: vec![1_u32, 0_u32, 1_u32], entries }, None));
     let Column::Texts(recoded) = coded.gathered(&picks) else { panic!("texts") };
     assert!(recoded.coded.is_some(), "entries kept");
@@ -168,7 +168,7 @@ fn batches_count_the_bytes_their_vectors_hold() {
     assert_eq!(Column::bytes(&values), size_of::<Value>() + 3_usize);
     let texts = Texts::new("abcd".to_owned(), vec![2_usize, 4_usize], None);
     assert_eq!(Column::bytes(&Column::Texts(texts.clone())), 4_usize + 2_usize * size_of::<usize>());
-    let coded = Texts::coded(Coded { codes: vec![0_u32, 1_u32, 1_u32], entries: std::sync::Arc::new(texts) }, None);
+    let coded = Texts::coded(Coded { codes: vec![0_u32, 1_u32, 1_u32], entries: Arc::new(texts) }, None);
     assert_eq!(Column::bytes(&Column::Texts(coded)), 3_usize * 4_usize + 4_usize + 2_usize * size_of::<usize>());
     let batch = Batch { columns: vec![ints, values], rows: 2 };
     assert_eq!(batch.bytes(), 24_usize + size_of::<Value>() + 3_usize);
@@ -179,7 +179,7 @@ fn batches_count_the_bytes_their_vectors_hold() {
 /// second lacks.
 fn two_batches() -> Vec<(Batch, Vec<usize>)> {
     let ints = |units: Vec<i64>, scale: u32| Column::Ints(Ints::new(units, scale, None));
-    let entries = std::sync::Arc::new(Texts::new("xy".to_owned(), vec![1_usize, 2_usize], None));
+    let entries = Arc::new(Texts::new("xy".to_owned(), vec![1_usize, 2_usize], None));
     let coded = Column::Texts(Texts::coded(Coded { codes: vec![1_u32, 0_u32], entries }, None));
     let first = Batch {
         columns: vec![
