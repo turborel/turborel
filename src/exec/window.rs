@@ -29,7 +29,6 @@ mod reader;
 mod value;
 
 use std::cmp::Ordering;
-use std::sync::Arc;
 
 use self::aggregate::Framed;
 use self::distribution::{DISTRIBUTION_READERS, Distributed};
@@ -41,8 +40,8 @@ use self::value::{Count, NotNull, Picked, RANGE_ENDS, Sequence, counted, tile};
 use super::group::admitted;
 use super::work::Work;
 use super::{HeldRows, RowIter, Runner, broken, column, eval, execute, failed, warn};
-use crate::db::State;
 use crate::error::{Result, SqlState};
+use crate::exec::Db;
 use crate::logical::{AggCall, SortKey, Window, WindowCall, WindowKind};
 use crate::physical::Plan;
 use crate::spill::ListSpace;
@@ -76,12 +75,12 @@ const OFFSET_VALUES: usize = 2;
 
 /// The rows of `plan`, window functions over its input.
 #[inline(never)]
-pub(super) fn windowed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn windowed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Window { window, .. } = plan else { return failed(broken("a window is not one")) };
     let (w, input) = window.split();
     let partition = w.partition.iter().map(|&c| SortKey::ascending(c)).collect();
     let rows = execute(input, db, tx);
-    let (db_held, runner) = (Arc::clone(db), Runner::new(db, tx));
+    let (db_held, runner) = (db.clone(), Runner::new(db, tx));
     let (slots, shapes) = (Vec::new(), Vec::new());
     let given = Windowed { w, partition, slots, shapes, rows, runner, db: db_held, tx, bounds: None, next: None, given: None, done: false };
     Box::new(checked(given, db.tx.stop_of(tx)))
@@ -103,7 +102,7 @@ struct Windowed {
     shapes: Vec<Option<Shape>>,
     rows: RowIter,
     runner: Runner,
-    db: Arc<State>,
+    db: Db,
     tx: TxId,
     /// Each call's frame bounds and count, their offsets and counts
     /// evaluated as the first row is read [§7.15 GR5b, §6.10 GR1a i, GR1d

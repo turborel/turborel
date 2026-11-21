@@ -33,12 +33,11 @@ pub(super) use semi::semi;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use super::work::Work;
 use super::{RowIter, broken, column, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::physical::{JoinKey, Plan};
 use crate::spill::{Records, SpillTable, SpilledLobs, bucket_key, row_bytes};
 use crate::storage::Row;
@@ -52,7 +51,7 @@ use crate::value::{Bucket, key_bucket, key_equal};
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
-pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<JoinKey>>, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn joined(left: Plan, right: Plan, keys: Option<Vec<JoinKey>>, db: &Db, tx: TxId) -> RowIter {
     let mut work = Work::of(db, tx);
     let Some(keys) = keys else {
         return match Rescanned::of(execute(right, db, tx), &mut work) {
