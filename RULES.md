@@ -422,6 +422,10 @@ verification approach DO-178C expects (§8).
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
+| D650 | A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured |
+| D651 | Costs count what an operator spills past its grant, at its rows' width |
+| D652 | A join's method is chosen seeing the degree its part will run at |
+| D653 | A hash join's cost counts the probing rows its runtime filter leaves |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
