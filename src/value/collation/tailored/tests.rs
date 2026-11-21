@@ -142,7 +142,7 @@ fn a_later_relation_goes_nearer_its_reset() {
 /// test and so `Tailored::version` with it.
 #[test]
 fn the_rules_and_keys_are_fixed() {
-    assert_eq!(super::super::table::fnv(RULES.as_bytes()), RULES_DIGEST);
+    assert_eq!(crate::hash::xxhash::xxh3_64(RULES.as_bytes()), RULES_DIGEST);
     let sv = tailoring("UNICODE_SV");
     // å is put just before ǀ, 0x22FE, at the first level: 0x22FD, then
     // 0x8000_0001 in the lower 32 bits; common weights; not variable.

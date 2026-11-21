@@ -41,7 +41,7 @@ pub(super) use given::not_given;
 pub(super) struct Target {
     /// The base table: it, or an updatable view's [X3.135-1986 §6.5 GR2].
     name: QualifiedName,
-    desc: TableDesc,
+    desc: Arc<TableDesc>,
     /// The object columns, as columns of the base table.
     object: Vec<usize>,
     /// [X3.135-1986 §8.7 GR2; ISO/IEC 9075:1992 §11.19 GR11] the views
@@ -262,7 +262,7 @@ impl Session {
         let values = params.dynamic_values();
         if let Some(KeptPlan::Insert(target, query)) = keeping.map(Keeping::plan).transpose()?.flatten() {
             let authorization = self.authorization();
-            let target = target.refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
+            let target = Arc::unwrap_or_clone(target).refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
             return Ok((target, query.map(|q| filled(q, values)).transpose()?));
         }
         let kept = keeping.map(|_| params.keeping());
@@ -273,7 +273,7 @@ impl Session {
             InsertSource::DefaultValues => None,
         };
         let Some(k) = keeping else { return Ok((target, query)) };
-        k.made((!binding.held()).then(|| KeptPlan::Insert(Box::new(target.clone()), query.clone())))?;
+        k.made((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())))?;
         Ok((target, query.map(|q| filled(q, values)).transpose()?))
     }
 
@@ -593,5 +593,5 @@ pub(super) fn insert_target_in(
     let draws = check_override(&target.base, &object, into.given).or_at(into.table.at)?;
     let generating = Generating::of(st, &target.base, draws)?;
     let table = target.base.name.clone();
-    Ok(Target { name: table, desc: target.base, object, checks: target.checks, defaults, generating })
+    Ok(Target { name: table, desc: Arc::new(target.base), object, checks: target.checks, defaults, generating })
 }
