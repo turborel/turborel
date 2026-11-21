@@ -134,7 +134,7 @@ node:   op u8 | id u32 | kept u8 | columns: count u32 | (name str | type str)...
 | 1 | SCAN | table str, then each column's statistics, distinct f64, nulls f64, u8 0 or u8 1 and its least and greatest values |
 | 2 | FILTER | condition |
 | 3 | PROJECT | count u32, expressions |
-| 4 | JOIN | kind u8 (0 cross, 1 left, 2 right, 3 full), u8 0, or u8 1 and its condition |
+| 4 | JOIN | kind u8 (0 cross, 1 left, 2 right, 3 full, 4 semi, 5 anti, of the left's columns alone), u8 0, or u8 1 and its condition |
 | 5 | AGGREGATE | kept alone |
 | 6 | SORT | count u32, each column u32, descending u8, nulls first u8 |
 | 7 | LIMIT | kept alone |
