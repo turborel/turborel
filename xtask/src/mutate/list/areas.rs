@@ -48,6 +48,7 @@ mod semi_joins;
 mod steady;
 mod unnesting;
 mod uuid;
+mod windows_batched;
 mod xxhash;
 
 use super::Mutation;
@@ -116,7 +117,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 45] {
+fn second() -> [&'static [Mutation]; 46] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -162,6 +163,7 @@ fn second() -> [&'static [Mutation]; 45] {
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
         &analyze_more::ANALYZE_MORE,
+        &windows_batched::WINDOWS_BATCHED,
         &statistics::STATISTICS,
     ]
 }
