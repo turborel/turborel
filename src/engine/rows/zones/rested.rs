@@ -27,9 +27,9 @@ fn table_of(zones: usize) -> (Arc<RowTable>, Vec<RowId>) {
 #[test]
 fn zones_rest_after_a_pass_over_every_zone_due() {
     let (table, ids) = table_of(MOST_SUMMED.checked_add(1).unwrap());
-    assert!(table.sum_zones(u64::MAX).unwrap());
+    assert!(table.sum_zones(u64::MAX, false).unwrap());
     assert!(table.zones.wanted(), "more zones due than one call sums up: no rest");
-    assert!(table.sum_zones(u64::MAX).unwrap());
+    assert!(table.sum_zones(u64::MAX, false).unwrap());
     assert!(!table.zones.due() && !table.zones.wanted(), "every zone looked at");
     table.update(NO_TRANSACTION, ids[0], row(-1)).unwrap();
     assert!(table.zones.due() && !table.zones.wanted(), "due, but resting");
@@ -47,14 +47,14 @@ fn zones_rest_after_a_pass_over_every_zone_due() {
 fn zones_kept_due_rest_after_a_pass_over_every_zone() {
     let zones = MOST_SUMMED.checked_add(1).unwrap();
     let (table, ids) = table_of(zones);
-    assert!(table.sum_zones(u64::MAX).unwrap());
+    assert!(table.sum_zones(u64::MAX, false).unwrap());
     assert!(table.zones.wanted(), "one zone not looked at yet: no rest");
     // Each zone the first call summed up made due again by a write.
     let zone_ids = usize::try_from(ZONE_ROWS).unwrap();
     for zone in 0..MOST_SUMMED {
         table.update(NO_TRANSACTION, ids[zone.checked_mul(zone_ids).unwrap()], row(-1)).unwrap();
     }
-    assert!(table.sum_zones(u64::MAX).is_ok());
+    assert!(table.sum_zones(u64::MAX, false).is_ok());
     assert!(table.zones.due(), "the zones summed last are due still");
     assert!(!table.zones.wanted(), "every one of the {zones} zones looked at: resting");
 }

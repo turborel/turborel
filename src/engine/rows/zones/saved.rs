@@ -27,7 +27,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, Weak};
 
-use super::{Map, ZONE_ROWS, Zone, Zones};
+use super::{ALL, Map, ZONE_ROWS, Zone, Zones};
 use crate::bytes::{Put, Reader};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
@@ -159,7 +159,7 @@ impl Zones {
     /// Appends `zone` to `out`.
     fn put_zone(&self, zone: &Zone, out: &mut Vec<u8>) -> Result<()> {
         out.put_u32(zone.rows);
-        out.put_u8(if zone.known { KNOWN } else { 0 } | if zone.stale { STALE } else { 0 });
+        out.put_u8(if zone.known { KNOWN } else { 0 } | if zone.stale() { STALE } else { 0 });
         // A zone that held no row has no bounds nor nulls made.
         (0..self.kept.len()).for_each(|c| out.put_u8(u8::from(zone.nulls.get(c).copied().unwrap_or(false))));
         for end in [true, false] {
@@ -189,7 +189,8 @@ impl Zones {
             let greatest = self.format.decode(reader.bytes()?)?;
             let bounds = least.into_iter().zip(greatest).map(|(l, g)| (!l.is_null()).then_some((l, g))).collect();
             let known = flags & KNOWN != 0;
-            zones.push(Zone { bounds, nulls, rows, changes: 0, stale: flags & STALE != 0 || !known, known, ..Zone::default() });
+            let loose = if flags & STALE != 0 || !known { ALL } else { 0 };
+            zones.push(Zone { bounds, nulls, rows, changes: 0, loose, known, ..Zone::default() });
         }
         reader.finish()?;
         Ok(zones)
@@ -219,7 +220,7 @@ impl Zones {
         for zone in &mut loaded {
             zone.unsettled = true;
         }
-        let stale = loaded.iter().filter(|z| z.stale).count();
+        let stale = loaded.iter().filter(|z| z.stale()).count();
         let mut map = write(&self.map)?;
         let segments = count.div_ceil(SEGMENT_ZONES);
         *map = Map {
