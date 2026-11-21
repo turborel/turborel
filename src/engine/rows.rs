@@ -271,6 +271,11 @@ impl TableStorage for RowTable {
         self.get_of(tx, id, columns, near)
     }
 
+    /// Of rows frozen, those of one group read together (`frozen/fetch.rs`).
+    fn get_many(&self, tx: TxId, ids: &[RowId], columns: Option<&[usize]>, near: &mut Near) -> Result<Vec<Option<Row>>> {
+        self.get_many_of(tx, ids, columns, near)
+    }
+
     /// Only `columns` are decoded, and only their values out of line read.
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows {
         self.scan_rows(tx, columns, None)

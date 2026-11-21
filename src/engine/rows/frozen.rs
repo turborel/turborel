@@ -28,6 +28,7 @@
 //! ```
 
 mod batches;
+mod fetch;
 mod freeze;
 mod late;
 mod merge;

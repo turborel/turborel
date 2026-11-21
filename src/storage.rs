@@ -118,8 +118,7 @@ pub trait TableStorage: Send + Sync {
     /// # Errors
     ///
     /// As `get`.
-    fn get_columns(&self, tx: TxId, id: RowId, columns: &[usize]) -> Result<Option<Row>> {
-        let _ = columns;
+    fn get_columns(&self, tx: TxId, id: RowId, _columns: &[usize]) -> Result<Option<Row>> {
         self.get(tx, id)
     }
     /// \[DESIGN\] As `get`, or `get_columns` of `columns` if named, `near`
@@ -128,9 +127,16 @@ pub trait TableStorage: Send + Sync {
     /// # Errors
     ///
     /// As `get`.
-    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
-        let _ = near;
+    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, _near: &mut Near) -> Result<Option<Row>> {
         columns.map_or_else(|| self.get(tx, id), |columns| self.get_columns(tx, id, columns))
+    }
+    /// \[DESIGN\] `get_near` of each of `ids`, in their order (RULES.md D513).
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    fn get_many(&self, tx: TxId, ids: &[RowId], columns: Option<&[usize]>, near: &mut Near) -> Result<Vec<Option<Row>>> {
+        ids.iter().map(|&id| self.get_near(tx, id, columns, near)).collect()
     }
     /// Every live row, once each, with its id. The rows have every column
     /// at its position, but only those in `columns` need hold their value:
@@ -163,8 +169,7 @@ pub trait TableStorage: Send + Sync {
     /// `conditions`, split into morsels of about `rows` rows each, for
     /// workers to read at once (RULES.md D290); none if it cannot split
     /// them, or failed to, its scan then raising what failed. Default: none.
-    fn split(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, rows: usize) -> Option<Arc<dyn Split>> {
-        let _ = (tx, columns, conditions, rows);
+    fn split(self: Arc<Self>, _tx: TxId, _columns: &[usize], _conditions: Option<&Conjunction>, _rows: usize) -> Option<Arc<dyn Split>> {
         None
     }
     /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered`
@@ -181,12 +186,11 @@ pub trait TableStorage: Send + Sync {
     /// after them, as FETCH FIRST asks (`exec/limit.rs`). Default: none.
     fn scan_ordered(
         self: Arc<Self>,
-        tx: TxId,
-        columns: &[usize],
-        (keys, backward, most): ScanOrder<'_>,
-        conditions: Option<&Conjunction>,
+        _tx: TxId,
+        _columns: &[usize],
+        (_keys, _backward, _most): ScanOrder<'_>,
+        _conditions: Option<&Conjunction>,
     ) -> Option<Rows> {
-        let _ = (tx, columns, keys, backward, most, conditions);
         None
     }
     /// \[DESIGN\] The rows `scan_ordered` gives, by batch, of `columns`;
@@ -269,12 +273,8 @@ pub trait TableStorage: Send + Sync {
     ///
     /// SQLCODE -911 if another open transaction changed the row, or its
     /// newest committed version's stamp is not `seen`; as `update`.
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
-        let _ = seen;
-        match row {
-            Some(row) => self.update(tx, id, row),
-            None => self.delete(tx, id),
-        }
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, _seen: Timestamp) -> Result<()> {
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row))
     }
 
     // ----- Cost model. Units: 1.0 = reading one whole row in sequence. -----
