@@ -459,7 +459,7 @@ mod tests {
             (first, idle, again, pool.counts().write_backs)
         };
         assert_eq!(visits(16), (3, 0, 1, 4), "three made, none, one written twice");
-        assert_eq!(visits(1 << 16), visits(16), "the same however many frames");
+        assert_eq!(visits(1_usize << 16_u32), visits(16), "the same however many frames");
     }
 
     /// Verifies: [DESIGN] RULES.md D30: a page made dirty while a flush
@@ -472,14 +472,12 @@ mod tests {
         let pager = Arc::new(Pager::create(&MemoryFileSystem::new(), Path::new("/p"), hash, Pipeline::none(), 4096).unwrap());
         let pool = BufferPool::new(64, Box::new(Clock::new(64))).unwrap();
         let file = pool.add_pager(Arc::clone(&pager));
-        let ids: Vec<_> = (0..32).map(|_| pool.new_page(file).unwrap().0).collect();
+        let ids: Vec<_> = (0..32_u8).map(|_| pool.new_page(file).unwrap().0).collect();
         std::thread::scope(|threads| {
             threads.spawn(|| {
-                for round in 0..50_u8 {
-                    ids.iter().for_each(|id| *pool.write(file, *id).unwrap() = vec![round; 8]);
-                }
+                (0..50_u8).for_each(|round| write_all(&pool, file, &ids, round));
             });
-            for _ in 0..50 {
+            for _ in 0..50_u8 {
                 pool.flush().unwrap();
             }
         });
@@ -488,6 +486,13 @@ mod tests {
             let mut read = Vec::new();
             pager.read(*id, &mut read).unwrap();
             assert_eq!(read, vec![49_u8; 8], "page {} as last written", id.0);
+        }
+    }
+
+    /// Writes `round` as the content of each of pages `ids` of `file`.
+    fn write_all(pool: &BufferPool, file: FileId, ids: &[PageId], round: u8) {
+        for id in ids {
+            *pool.write(file, *id).unwrap() = vec![round; 8];
         }
     }
 
