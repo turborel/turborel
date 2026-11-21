@@ -399,6 +399,7 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
+| D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
 
 ### The project
 
@@ -11260,6 +11261,35 @@ alike but cannot skip a block of a rare value among skewed ones.
 
 A run the imprints leave short is gathered with the scan's other runs
 into full batches, not given alone (`frozen/batches/run.rs`).
+
+#### D512. A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes
+
+A dictionary's entries were kept as first seen, so a scan judged a
+condition of the column of each entry of each chunk a run read, entries
+copied out as text, before keeping a row by its code. A chunk of few
+rows to an entry paid nearly a comparison a row.
+
+A chunk of a character string type now writes its dictionary's entries
+in order as strings compare, padded with spaces, their bytes breaking
+ties, and sets the high bit of its bits byte to say so
+(`engine/columns/encoded/dictionary.rs`). A dictionary of another type,
+or of texts not UTF-8, keeps first-seen order and the bit clear. Reading
+a value is as before, as its code still names its entry.
+
+A scan judges a conjunct of such a chunk by codes
+(`engine/columns/judged/sorted.rs`). For each string constant of the
+conjunct, a binary search finds where the entries equal to it begin and
+end. Between two such places every entry orders alike against every
+constant, so the conjunct is true of all of them or of none, and it is
+judged of one. A row is kept if its code lies in a span kept. A
+comparison, a range, a LIKE prefix (whose bounds the planner pushes as
+two comparisons), IN, NOT IN and an OR of these judge a few entries per
+chunk, not each.
+
+The order is the one comparisons of the default collation take
+(`compare_strings`). A condition of a column of another collation
+reaches the scan as sort keys, never string constants, so it is judged
+as before, and the order of the entries is never read for it.
 
 ## 2. Project layout
 
