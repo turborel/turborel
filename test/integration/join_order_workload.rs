@@ -8,8 +8,10 @@ use turborel::db::Session;
 
 use crate::common::{exec, sorted};
 
+// The benchmark's database and queries, the plan-space test's too
+// (`plan_space.rs`).
 #[path = "../../bench/joins/imdb.rs"]
-mod imdb;
+pub(super) mod imdb;
 
 /// Titles of the small database.
 const TITLES: u64 = 300;

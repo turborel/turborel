@@ -189,6 +189,30 @@ fn the_pool_is_given_as_the_database_opens() {
     assert_eq!(pooled(None).memory().unwrap().1, 24 * 8192);
 }
 
+/// Verifies: [DESIGN] RULES.md D36, D38: a database opened again takes
+/// the MEMORY.BUDGET_BYTES given before it opens over the one it recorded,
+/// so a pool above the budget it was made with is made in the one given;
+/// a budget given below the pool refuses it.
+#[test]
+fn the_budget_given_as_the_database_opens_holds_its_pool() {
+    let scratch = Scratch::new("creation-budget");
+    let dir = scratch.path("db");
+    let opened = |budget: i128, pool: i128| {
+        let db = Database::new();
+        db.set_setting("MEMORY.BUDGET_BYTES", &number(budget)).unwrap();
+        db.set_setting("STORAGE.POOL_BYTES", &number(pool)).unwrap();
+        db.open_files(&os(), &dir, &OpenOptions::default()).map(|_| db)
+    };
+    let made = opened(8 << 20, 4 << 20).unwrap();
+    made.close().unwrap();
+    drop(made);
+    let db = opened(32 << 20, 16 << 20).unwrap();
+    assert_eq!(db.memory().unwrap().1, 16 << 20, "in the budget given");
+    db.close().unwrap();
+    drop(db);
+    assert!(opened(8 << 20, 16 << 20).is_err(), "a budget below the pool");
+}
+
 /// STORAGE.POOL_BYTES as INFORMATION_SCHEMA.SETTINGS shows it: its value,
 /// the one it started with, and whether the value waits for a restart.
 const STARTED: &str = "SELECT TRIM(SETTING_VALUE), COALESCE(TRIM(STARTED_VALUE), 'NULL'), IS_PENDING \

@@ -316,3 +316,22 @@ fn number_types_are_described_as_written_21_3_5() {
     drop(db);
     assert_eq!(seen(&open().session("N"), types), written, "kept with the catalog");
 }
+
+/// Verifies: [DESIGN] RULES.md D405, the catalog lists its tables in the
+/// order it sorted them once: a table made after a listing is listed at
+/// once, in the transaction that made it and after its commit, and one
+/// dropped is not.
+#[test]
+fn tables_made_and_dropped_are_listed_at_once() {
+    let db = catalog();
+    let r = db.session("R");
+    let tables = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'R' ORDER BY TABLE_NAME";
+    assert_eq!(seen(&r, tables), ["MINE"]);
+    r.run("CREATE TABLE NEWER (N INTEGER)").unwrap();
+    assert_eq!(seen(&r, tables), ["MINE", "NEWER"], "its own");
+    r.commit().unwrap();
+    assert_eq!(seen(&r, tables), ["MINE", "NEWER"], "committed");
+    r.run("DROP TABLE MINE CASCADE").unwrap();
+    r.commit().unwrap();
+    assert_eq!(seen(&r, tables), ["NEWER"]);
+}

@@ -29,7 +29,7 @@ use crate::error::Result;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Batch, Column, Sel};
+use crate::storage::{Batch, Column, Conjunction, Sel};
 use crate::txn::{TxId, checked};
 
 /// A batch, and the rows of it a filter kept, if one did.
@@ -52,11 +52,21 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     match plan {
         Plan::SeqScan { table, columns, located: false, .. } => Some((columns.clone(), db.catalog.table(table)?.columns.len())),
         Plan::Filter { input, .. } => layout(input, db),
+        // [EXTENSION] a counted operator's, its input's (RULES.md D378).
+        Plan::Counted(c) => layout(&c.input, db),
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::layout(plan, db),
         Plan::Project { exprs, input, .. } => {
             let (columns, _) = layout(input, db)?;
             exprs.iter().all(|e| place_of(e, &columns).is_some()).then(|| ((0..exprs.len()).collect(), exprs.len()))
         }
+        // A whole sort's batches hold every column of its rows, if its
+        // input's do (RULES.md D380).
+        Plan::Sort { input, most: None, .. } => {
+            let (columns, width) = layout(input, db)?;
+            columns.iter().copied().eq(0..width).then(|| ((0..width).collect(), width))
+        }
+        // A top-N's first rows, few, made batches (D380).
+        Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }).then(|| layout(input, db)).flatten(),
         Plan::Append { .. } => {
             let mut held = None;
             for operand in appended(plan) {
@@ -78,7 +88,6 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
-        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
@@ -137,7 +146,11 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         // A scan in an order too, merged by batch
         // (`TableStorage::scan_ordered_batches`).
         Plan::SeqScan { table, located, .. } => !located && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
-        Plan::Filter { input, .. } | Plan::Project { input, .. } => reads_by_batch(input, db),
+        // A whole sort's rows are held, so given by batch whatever its
+        // input's tables (RULES.md D380).
+        Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, most: None, .. } => reads_by_batch(input, db),
+        Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }) && reads_by_batch(input, db),
+        Plan::Counted(c) => reads_by_batch(&c.input, db),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads_by_batch(operand, db)),
         Plan::Product { left, right, .. } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => {
             reads_by_batch(left, db) && reads_by_batch(right, db)
@@ -149,7 +162,6 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
-        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
@@ -239,14 +251,13 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } => joined::batches_with,
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
+        Plan::Counted(_) => super::counted::batches,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::Aggregate { .. }
-        | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
-        | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
@@ -259,8 +270,39 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..) => none,
+        Plan::Sort { .. } => sorted_batches,
+        Plan::Limit { .. } => topped_batches,
     };
     made(plan, (db, tx), deferred)
+}
+
+/// \[DESIGN\] (RULES.md D380) The batches of `plan`, a whole sort whose
+/// input's batches hold every column of its rows: its rows sorted, given
+/// as batches.
+///
+/// # Errors
+///
+/// As `batches`; a spill's; a cancel; SQLCODE -910 of a sort of its first
+/// rows alone, which gives none.
+fn sorted_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferred) -> Result<Batches> {
+    let Plan::Sort { keys, input, most: None, .. } = plan else { return Err(crate::exec::broken("a sort that gives no batches")) };
+    let width = layout(&input, db).map_or(0, |(_, width)| width);
+    crate::exec::sort::sorted_out(&keys, whole_batches(*input, db, tx)?, width, db, tx)
+}
+
+/// \[DESIGN\] (RULES.md D380) The batches of `plan`, the first rows of a
+/// whole sort whose input's batches hold every column of its rows: those
+/// rows, as the top-N makes them (`sort::first_batches`), made batches.
+///
+/// # Errors
+///
+/// As the top-N's rows; SQLCODE -910 of a plan not of a top-N whose
+/// batches hold every column of its rows.
+fn topped_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), _deferred: &Deferred) -> Result<Batches> {
+    let (_, width) = layout(&plan, db).ok_or_else(|| crate::exec::broken("a top-N that gives no batches"))?;
+    let rows = crate::exec::execute(plan, db, tx).map(|row| row.map(|r| (crate::storage::RowId::default(), r)));
+    let batches = crate::storage::batches_of(Box::new(rows), &(0..width).collect::<Vec<_>>());
+    Ok(Box::new(batches.map(|b| b.map(|b| (b, None)))))
 }
 
 /// Of a plan that gives no batches: none.
@@ -279,7 +321,7 @@ fn none(_plan: Plan, _at: (&Arc<State>, TxId), _deferred: &Deferred) -> Result<B
 /// As `batches`.
 fn scan_batches(scan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::SeqScan { table, columns, order, .. } = &scan else { return Err(crate::exec::broken("a scan is not one")) };
-    if order.is_empty() { scan_of((table, columns, None), &deferred.late_of(columns), db, tx) } else { ordered_batches(scan, db, tx) }
+    if order.is_empty() { scan_of((table, columns, None), deferred, db, tx) } else { ordered_batches(scan, db, tx) }
 }
 
 /// The batches of `input` that `cond` keeps: of a scan's, its simple
@@ -290,17 +332,30 @@ fn scan_batches(scan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) 
 /// As `batches`.
 fn filter_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Filter { cond, input, .. } = plan else { return Err(crate::exec::broken("a filter is not one")) };
-    let inner = *input;
     let below = deferred.filtered(&cond);
-    let (inner, columns) = if let Plan::SeqScan { table, columns, order, .. } = &inner
+    let (inner, columns) = told(*input, &cond, (db, tx), &below)?;
+    Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
+}
+
+/// The batches of `inner`, the input of a filter of `cond`, its scans'
+/// columns `below` leaves unread given late, and the columns they hold:
+/// of a scan's, its simple conjuncts told the scan, unless it is in an
+/// order; \[EXTENSION\] of a counted scan's too, counted (RULES.md D378).
+///
+/// # Errors
+///
+/// As `batches`.
+fn told(inner: Plan, cond: &Cond, (db, tx): (&Arc<State>, TxId), below: &Deferred) -> Result<(Batches, Vec<usize>)> {
+    if let Plan::Counted(c) = inner {
+        return super::counted::through(*c, db, |input| told(input, cond, (db, tx), below));
+    }
+    if let Plan::SeqScan { table, columns, order, .. } = &inner
         && order.is_empty()
     {
-        (scan_of((table, columns, Some(&cond)), &below.late_of(columns), db, tx)?, columns.clone())
-    } else {
-        let columns = layout(&inner, db).map(|l| l.0).unwrap_or_default();
-        (batches_with(inner, (db, tx), &below)?, columns)
-    };
-    Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
+        return Ok((scan_of((table, columns, Some(cond)), below, db, tx)?, columns.clone()));
+    }
+    let columns = layout(&inner, db).map(|l| l.0).unwrap_or_default();
+    Ok((batches_with(inner, (db, tx), below)?, columns))
 }
 
 /// The batches of the projection of `input` by `exprs`.
@@ -354,11 +409,16 @@ pub(super) fn pick(batch: Batch, picks: &[usize]) -> Batch {
 }
 
 /// A scan's batches (`scanned`), no row of them filtered yet, its columns
-/// of `late` given late (RULES.md D361).
-fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), late: &[usize], db: &Arc<State>, tx: TxId) -> Result<Batches> {
+/// `deferred` leaves unread given late (RULES.md D361), told the bound of a
+/// sort above if it has one (D379).
+fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let storage = Arc::clone(db.storage_of(scan.0)?);
-    let pushed = scan.2.and_then(pushed_conjuncts);
-    let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), late);
+    let mut pushed = scan.2.and_then(pushed_conjuncts);
+    // A sort's bound told the scan beside the filter's (RULES.md D379).
+    if let Some(told) = deferred.told() {
+        pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.push(told);
+    }
+    let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), &deferred.late_of(scan.1));
     Ok(Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None)))))
 }
 

@@ -1,37 +1,44 @@
-//! \[DESIGN\] RULES.md D31, D38: a sort of a stream's batches, each holding
-//! every column of its rows (`batch::whole_width`), its rows made only as
-//! they are given or written. The batches are held as they come, counted
-//! by the bytes their vectors hold, and beside them each row given, its
-//! batch and place there, and the prefix of its first key made of its
-//! vector (`prefix::prefix_of_cell`). The rows are sorted as `prefix.rs`
-//! sorts them: by prefix, ties compared by the keys' values, read of the
-//! vectors; by the keys alone if the first key's values have no prefixes
-//! or are of kinds not alike; stably, so rows of equal keys keep the
-//! order they came in. While the batches fit the work area, each row is
-//! made of the vectors as it is given; past it, each work area's worth is
-//! written as a run of chunks of vectors (`chunk.rs`), each about a spill
+//! \[DESIGN\] RULES.md D31, D38, D364: a sort of a stream's batches, each
+//! holding every column of its rows (`batch::whole_width`), its rows made
+//! only as they are given or written. The batches are held as they come,
+//! counted by the bytes their vectors hold, each beside the places of its
+//! rows given. The rows are sorted by their normal keys, written of the
+//! vectors (`keyed.rs`), stably, so rows of equal keys keep the order they
+//! came in; or, if their keys have no normal form, as `prefix.rs` sorts
+//! them. While the batches fit the work area, each row is made of the
+//! vectors as it is given; past it, each work area's worth is written as a
+//! run of chunks of vectors and keys (`chunk.rs`), each about a spill
 //! batch's bytes, and the runs merged as `sort.rs` merges them. A sort of
 //! rows past its work area writes them so too, each work area's worth a
 //! batch of vectors of their values (`written_rows`).
 
 use std::cmp::Ordering;
 
-use super::chunk::{Pick, put_chunk};
-use super::merge::head;
-use super::prefix::{Kind, joined, prefix_of_cell};
-use super::{Work, merged};
+use std::sync::Arc;
+
+use crate::kernels::{Kernels, Portable};
+
+use super::chunk::{Keys, Pick, put_chunk};
+use super::keyed::{Layouts, Made, made_of, sorted_places};
+use super::out::{Dictionaries, Placed, picked};
+use super::{Work, looked, looked_every, merged};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::batch::Batches;
 use crate::exec::{RowIter, broken, failed};
 use crate::logical::SortKey;
 use crate::spill::SpillRun;
-use crate::storage::{Batch, Cell, Column, Row};
-use crate::txn::TxId;
+use crate::storage::{BATCH_ROWS, Batch, Cell, Column, Row};
+use crate::txn::{Stop, TxId};
 use crate::value::{Value, sort_cmp};
 
 /// \[DESIGN\] The fewest and the most rows of a chunk of a run.
 const CHUNK_ROWS: (usize, usize) = (16, 1 << 16);
+
+/// \[DESIGN\] The bytes a row held takes beside its batch's: its place, and
+/// its normal key while it is sorted, about; a key's bytes are made only
+/// then, and short keys are the common case.
+const HELD_ROW_BYTES: usize = 24;
 
 /// [X3.135-1986 §8.3 GR3b] The rows of `input`, a stream's batches each
 /// holding every column of its rows, sorted by `keys`, in a work area of
@@ -39,114 +46,191 @@ const CHUNK_ROWS: (usize, usize) = (16, 1 << 16);
 /// frame is on the stack while its input is made (RULES.md R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn sort_batches(keys: &[SortKey], input: Batches, db: &State, tx: TxId) -> RowIter {
-    match sorted(keys, input, &mut Work::of(db, tx)) {
+    match sorted(keys, input, Held::on(db.functions.kernels_shared()), &mut Work::of(db, tx)) {
         Ok(rows) => rows,
         Err(e) => failed(e),
     }
 }
 
-/// `sort_batches`'s work.
-fn sorted(keys: &[SortKey], input: Batches, work: &mut Work) -> Result<RowIter> {
-    let (mut held, mut runs) = (Held::default(), Vec::new());
+/// `sort_batches`'s work, of `held` held already.
+pub(super) fn sorted(keys: &[SortKey], input: Batches, held: Held, work: &mut Work) -> Result<RowIter> {
+    match held_or_runs(keys, input, held, work)? {
+        Sorted::Held(held) => {
+            work.look()?;
+            Ok(looked(held.into_rows(keys), work.stop()))
+        }
+        Sorted::Runs(runs) => merged(keys, runs, work),
+    }
+}
+
+/// \[DESIGN\] (RULES.md D380) The rows of `input`, a stream's batches each
+/// holding every column of its rows, `width` wide, sorted by `keys`, in a
+/// work area of `db`, for the statement of `tx`, given as batches: held in
+/// memory, gathered of the batches held (`out.rs`); past it, merged from
+/// its runs and made batches of their values.
+///
+/// # Errors
+///
+/// The input's, a row of no key column's, a spill's, or a cancel.
+pub(in crate::exec) fn sorted_out(keys: &[SortKey], input: Batches, width: usize, db: &State, tx: TxId) -> Result<Batches> {
+    let mut work = Work::of(db, tx);
+    match held_or_runs(keys, input, Held::on(db.functions.kernels_shared()), &mut work)? {
+        Sorted::Held(held) => {
+            work.look()?;
+            Ok(held.into_batches(keys, width, work.stop()))
+        }
+        Sorted::Runs(runs) => {
+            let rows = merged(keys, runs, &mut work)?;
+            let batches = crate::storage::batches_of(Box::new(rows.map(|r| r.map(|row| (0, row)))), &(0..width).collect::<Vec<_>>());
+            Ok(Box::new(batches.map(|b| b.map(|b| (b, None)))))
+        }
+    }
+}
+
+/// A sort's rows once read: held in memory, or written as runs.
+enum Sorted {
+    /// Held in memory.
+    Held(Held),
+    /// Written as sorted runs.
+    Runs(Vec<Box<dyn SpillRun>>),
+}
+
+/// The rows of `input`, of `held` held already, held while they fit `work`,
+/// else written as runs, each of a work area's worth.
+fn held_or_runs(keys: &[SortKey], input: Batches, mut held: Held, work: &mut Work) -> Result<Sorted> {
+    let (mut runs, mut layouts) = (Vec::new(), Layouts::default());
     for kept in input {
         let (batch, rows) = kept?;
         let rows = crate::storage::sel::places_of(rows, batch.rows);
         if let Some(k) = keys.iter().find(|k| k.column >= batch.columns.len()).filter(|_| !rows.is_empty()) {
             return Err(broken(&format!("sort column {} is not in the rows sorted", k.column)));
         }
-        held.add(keys, batch, &rows);
+        held.add(batch, rows);
         if held.bytes > work.limit() {
-            runs.push(std::mem::take(&mut held).written(keys, work)?);
+            runs.push(std::mem::take(&mut held).written(keys, work, &mut layouts)?);
         }
     }
     if runs.is_empty() {
-        return Ok(held.into_rows(keys));
+        return Ok(Sorted::Held(held));
     }
-    if !held.places.is_empty() {
-        runs.push(held.written(keys, work)?);
+    if held.count > 0 {
+        runs.push(held.written(keys, work, &mut layouts)?);
     }
-    merged(keys, runs, work)
+    Ok(Sorted::Runs(runs))
 }
 
-/// A row held: its batch's place among those held, its place in the
-/// batch, and the prefix of its first key.
-#[derive(Clone, Copy)]
-struct Place {
-    batch: usize,
-    row: usize,
-    prefix: u64,
-}
-
-/// Batches held, and their rows given, in the order they came.
-struct Held {
-    batches: Vec<Batch>,
-    places: Vec<Place>,
-    /// The kind of the first key's values so far, if they are alike and
-    /// each has a prefix.
-    kind: Option<Kind>,
-    /// Whether every prefix holds its value whole.
-    whole: bool,
-    /// The bytes the batches and places hold.
+/// Batches held, each beside the places of its rows given, in the order
+/// they came.
+#[derive(Default)]
+pub(super) struct Held {
+    /// The kernels its keys are written on; the portable ones if none.
+    kernels: Option<Arc<dyn Kernels>>,
+    batches: Vec<(Batch, Vec<usize>)>,
+    /// The rows given.
+    count: usize,
+    /// The bytes the batches and rows hold.
     bytes: usize,
 }
 
-impl Default for Held {
-    fn default() -> Held {
-        Held { batches: Vec::new(), places: Vec::new(), kind: Some(Kind::Null), whole: true, bytes: 0 }
-    }
-}
-
 impl Held {
-    /// Holds `batch`, its rows `rows` given, sorted by `keys`.
-    fn add(&mut self, keys: &[SortKey], batch: Batch, rows: &[usize]) {
-        let at = self.batches.len();
-        for &row in rows {
-            let prefix = keys.first().and_then(|k| prefix_of_cell(batch.cell(k.column, row), k.order()));
-            self.kind = self.kind.zip(prefix).and_then(|(kind, p)| joined(kind, p.kind));
-            self.whole &= prefix.is_some_and(|p| p.whole);
-            self.places.push(Place { batch: at, row, prefix: prefix.map_or(0, |p| p.bits) });
-        }
-        let places = rows.len().saturating_mul(size_of::<Place>());
-        self.bytes = self.bytes.saturating_add(batch.bytes()).saturating_add(places);
-        self.batches.push(batch);
+    /// None held yet, its keys written on `kernels`.
+    pub(super) fn on(kernels: Arc<dyn Kernels>) -> Held {
+        Held { kernels: Some(kernels), ..Held::default() }
     }
 
-    /// Its places, sorted by `keys` [X3.135-1986 §8.3 GR3b], stably: by
-    /// prefix, if the first key's values have them, ties by the keys'
-    /// values; else by the values alone.
-    fn sort(&mut self, keys: &[SortKey]) {
-        let batches = &self.batches;
-        let compare = |ties: &[SortKey], a: &Place, b: &Place| {
-            batches.get(a.batch).zip(batches.get(b.batch)).map_or(Ordering::Equal, |(x, y)| compare_cells(ties, (x, a.row), (y, b.row)))
-        };
-        if self.kind.is_none() || keys.is_empty() {
-            self.places.sort_by(|a, b| compare(keys, a, b));
-            return;
+    /// The kernels its keys are written on.
+    fn kernels(&self) -> &dyn Kernels {
+        self.kernels.as_deref().unwrap_or(&Portable)
+    }
+
+    /// Holds `batch`, its rows at `rows` given.
+    pub(super) fn add(&mut self, batch: Batch, rows: Vec<usize>) {
+        let places = rows.len().saturating_mul(HELD_ROW_BYTES);
+        self.bytes = self.bytes.saturating_add(batch.bytes()).saturating_add(places);
+        self.count = self.count.saturating_add(rows.len());
+        self.batches.push((batch, rows));
+    }
+
+    /// Each row's batch's place and its place in it, in the order they came.
+    fn places(&self) -> Vec<(u32, u32)> {
+        let mut places = Vec::with_capacity(self.count);
+        for ((_, rows), batch) in self.batches.iter().zip(0_u32..) {
+            places.extend(rows.iter().map(|&r| (batch, u32::try_from(r).unwrap_or(u32::MAX))));
         }
-        // The keys rows of equal prefixes are compared by.
-        let ties = if self.whole { keys.get(1..).unwrap_or_default() } else { keys };
-        self.places.sort_by(|a, b| a.prefix.cmp(&b.prefix).then_with(|| compare(ties, a, b)));
+        places
     }
 
     /// Its rows, sorted by `keys`, each made as it is given.
-    fn into_rows(mut self, keys: &[SortKey]) -> RowIter {
-        self.sort(keys);
-        let Held { batches, places, .. } = self;
-        Box::new(places.into_iter().filter_map(move |p| batches.get(p.batch).map(|batch| Ok(row_of(batch, p.row)))))
+    fn into_rows(self, keys: &[SortKey]) -> RowIter {
+        let places = self.places();
+        let (order, _) = sorted_places(keys, &self.batches, &places, None, self.kernels());
+        // The places in order, read once, so the rows are then made of them
+        // in turn.
+        let sorted: Vec<(u32, u32)> = order.iter().filter_map(|&at| places.get(usize::try_from(at).ok()?).copied()).collect();
+        let batches = self.batches;
+        Box::new(sorted.into_iter().filter_map(move |(batch, row)| {
+            let (batch, _) = batches.get(usize::try_from(batch).ok()?)?;
+            Some(Ok(row_of(batch, usize::try_from(row).ok()?)))
+        }))
+    }
+
+    /// Its rows, sorted by `keys`, as batches of up to `BATCH_ROWS` rows,
+    /// `width` columns wide, gathered of the batches held (`out.rs`),
+    /// each given while the statement `stop` cancels goes on.
+    fn into_batches(self, keys: &[SortKey], width: usize, stop: Option<Arc<Stop>>) -> Batches {
+        let places = self.places();
+        let (order, _) = sorted_places(keys, &self.batches, &places, None, self.kernels());
+        let sorted: Vec<Placed> = order.iter().filter_map(|&at| places.get(usize::try_from(at).ok()?).copied()).collect();
+        let chunks: Vec<Vec<Placed>> = sorted.chunks(BATCH_ROWS).map(<[Placed]>::to_vec).collect();
+        let dictionaries = Dictionaries::of(&self.batches, width);
+        let batches = self.batches;
+        Box::new(looked_every(chunks.into_iter().map(move |picks| Ok((picked(&batches, &picks, width, &dictionaries), None))), (stop, 1)))
     }
 
     /// Its rows, sorted by `keys`, written as a run of `work`'s spill area,
-    /// in chunks of vectors (`chunk.rs`) of about a spill batch's bytes.
-    fn written(mut self, keys: &[SortKey], work: &mut Work) -> Result<Box<dyn SpillRun>> {
-        self.sort(keys);
-        let each = chunk_rows(self.bytes, self.places.len(), work.batch());
-        let (mut run, mut out) = (work.run()?, Vec::new());
-        for places in self.places.chunks(each) {
-            let rows: Vec<Pick<'_>> = places.iter().filter_map(|p| self.batches.get(p.batch).map(|b| (b, p.row))).collect();
-            let heads: Vec<(u8, u64)> =
-                rows.iter().map(|&(b, r)| head(keys.first().and_then(|k| prefix_of_cell(b.cell(k.column, r), k.order())))).collect();
-            put_chunk(&heads, &rows, &mut out, work.lobs());
+    /// in chunks of vectors and keys of a layout of `layouts` (`chunk.rs`)
+    /// of about a spill batch's bytes.
+    fn written(self, keys: &[SortKey], work: &mut Work, layouts: &mut Layouts) -> Result<Box<dyn SpillRun>> {
+        let places = self.places();
+        let (order, made) = sorted_places(keys, &self.batches, &places, Some(layouts), self.kernels());
+        self.written_as((order, made, places), work)
+    }
+
+    /// Its rows, sorted by `keys` already in the order they came, written
+    /// as `written` writes them, their keys made and not sorted again
+    /// (RULES.md D380).
+    fn written_sorted(self, keys: &[SortKey], work: &mut Work, layouts: &mut Layouts) -> Result<Box<dyn SpillRun>> {
+        let places = self.places();
+        let made = made_of(keys, &self.batches, Some(layouts), self.kernels());
+        let order = (0..u32::try_from(places.len()).unwrap_or(u32::MAX)).collect();
+        self.written_as((order, made, places), work)
+    }
+
+    /// Its rows at `places`, in `order`, written to a run of `work`'s spill
+    /// area in chunks beside their keys `made`, if made.
+    fn written_as(self, (order, made, places): (Vec<u32>, Option<Made>, Vec<(u32, u32)>), work: &mut Work) -> Result<Box<dyn SpillRun>> {
+        let each = chunk_rows(self.bytes, self.count, work.batch());
+        let (mut run, mut out, mut bytes) = (work.run()?, Vec::new(), Vec::new());
+        for chunk in order.chunks(each) {
+            let mut rows: Vec<Pick<'_>> = Vec::with_capacity(chunk.len());
+            bytes.clear();
+            for &at in chunk {
+                let Some(&(batch, row)) = places.get(usize::try_from(at).unwrap_or(usize::MAX)) else { continue };
+                let Some((batch, _)) = self.batches.get(usize::try_from(batch).unwrap_or(usize::MAX)) else { continue };
+                rows.push((batch, usize::try_from(row).unwrap_or(usize::MAX)));
+                if let Some(made) = &made {
+                    bytes.extend_from_slice(made.key(at));
+                }
+            }
+            let chunk_keys = made.as_ref().map_or_else(Keys::default, |m| Keys {
+                layout: m.number,
+                truncates: m.layout.truncates,
+                width: m.layout.width,
+                bytes: &bytes,
+            });
+            put_chunk(chunk_keys, &rows, &mut out, work.lobs());
             run.push(&out)?;
+            work.look()?;
         }
         Ok(run)
     }
@@ -160,8 +244,9 @@ fn chunk_rows(bytes: usize, rows: usize, batch: usize) -> usize {
 }
 
 /// `rows`, sorted by `keys`, written as a run of `work`'s spill area as
-/// a sort of batches writes them, of a batch of vectors of their values.
-pub(super) fn written_rows(keys: &[SortKey], rows: Vec<Row>, work: &mut Work) -> Result<Box<dyn SpillRun>> {
+/// a sort of batches writes them, of a batch of vectors of their values,
+/// its keys of a layout of `layouts`.
+pub(super) fn written_rows(keys: &[SortKey], rows: Vec<Row>, work: &mut Work, layouts: &mut Layouts) -> Result<Box<dyn SpillRun>> {
     let width = rows.first().map_or(0, Vec::len);
     let count = rows.len();
     let mut columns: Vec<Vec<Value>> = (0..width).map(|_| Vec::with_capacity(count)).collect();
@@ -171,9 +256,66 @@ pub(super) fn written_rows(keys: &[SortKey], rows: Vec<Row>, work: &mut Work) ->
         }
     }
     let batch = Batch { columns: columns.into_iter().map(Column::Values).collect(), rows: count };
+    // Of vectors of values, its keys are written a value at a time, on no
+    // kernel.
     let mut held = Held::default();
-    held.add(keys, batch, &(0..count).collect::<Vec<usize>>());
-    held.written(keys, work)
+    held.add(batch, (0..count).collect());
+    held.written(keys, work, layouts)
+}
+
+/// The first `most` rows of `input`, a morsel's batches each holding every
+/// column of its rows, sorted by `keys` (RULES.md D364), made in order of
+/// those alone, its keys written on `kernels`: a run of a sort of many
+/// first rows run in parallel.
+///
+/// # Errors
+///
+/// As reading the input fails.
+pub(in crate::exec) fn sorted_morsel(keys: &[SortKey], input: Batches, most: usize, kernels: Arc<dyn Kernels>) -> Result<Vec<Row>> {
+    let mut held = Held::on(kernels);
+    for kept in input {
+        let (batch, rows) = kept?;
+        let rows = crate::storage::sel::places_of(rows, batch.rows);
+        held.add(batch, rows);
+    }
+    held.into_rows(keys).take(most).collect()
+}
+
+/// \[DESIGN\] (RULES.md D380) The rows of `input`, a morsel's batches each
+/// holding every column of its rows, sorted by `keys`, its keys written on
+/// `kernels`, as batches of up to `BATCH_ROWS` rows in order gathered of
+/// those held (`out.rs`): a run of a sort run in parallel, held as
+/// vectors, of no row made.
+///
+/// # Errors
+///
+/// As reading the input fails.
+pub(in crate::exec) fn sorted_morsel_batches(keys: &[SortKey], input: Batches, kernels: Arc<dyn Kernels>) -> Result<Vec<Batch>> {
+    let mut held = Held::on(kernels);
+    for kept in input {
+        let (batch, rows) = kept?;
+        let rows = crate::storage::sel::places_of(rows, batch.rows);
+        held.add(batch, rows);
+    }
+    let width = held.batches.first().map_or(0, |(b, _)| b.columns.len());
+    held.into_batches(keys, width, None).map(|made| made.map(|(batch, _)| batch)).collect()
+}
+
+/// The rows of `batches`, in order, each made of its values.
+pub(in crate::exec) fn rows_of_batches(batches: &[Batch]) -> Vec<Row> {
+    batches.iter().flat_map(|batch| (0..batch.rows).map(move |r| row_of(batch, r))).collect()
+}
+
+/// `batches`, a run sorted by `keys`, written as a run of `work`'s spill
+/// area as a sort of batches writes them, its keys of a layout of
+/// `layouts` (RULES.md D380).
+pub(super) fn written_batches(keys: &[SortKey], batches: Vec<Batch>, work: &mut Work, layouts: &mut Layouts) -> Result<Box<dyn SpillRun>> {
+    let mut held = Held::default();
+    for batch in batches {
+        let rows = (0..batch.rows).collect();
+        held.add(batch, rows);
+    }
+    held.written_sorted(keys, work, layouts)
 }
 
 /// Row `r` of `batch`, made of its values.

@@ -103,8 +103,9 @@ impl<'s> KeyCheck<'s> {
         }
         // [EXTENSION] a key a global index holds for the tree, checked
         // through it, not in each partition (RULES.md D157).
-        let template = global_index_name(&format!("{}.{}.{}", owner.auth, owner.ident, name.ident));
-        let global = st.catalog.index(&template).filter(|_| partition).map(|ix| (ix, Dispatched::of(st, &ix.table)));
+        // Its name made only of a partition's (RULES.md D415).
+        let template = partition.then(|| global_index_name(&format!("{}.{}.{}", owner.auth, owner.ident, name.ident)));
+        let global = template.and_then(|t| st.catalog.index(&t)).map(|ix| (ix, Dispatched::of(st, &ix.table)));
         if global.is_some() {
             family.clear();
         }
@@ -226,6 +227,8 @@ impl<'s> KeyCheck<'s> {
             let mut holders = 0_usize;
             for other in found {
                 let newest = self.storage.newest(self.txn.id, other)?;
+                // [DESIGN] RULES.md D441: a check of the newest state rests on it.
+                self.txn.depend(newest.stamp);
                 holders = holders.saturating_add(usize::from(holds(&newest, &|row| Ok(self.key_of(row)? == *key))?));
             }
             if holders > 1 {
@@ -261,6 +264,8 @@ impl KeyCheck<'_> {
                 continue;
             }
             let newest = self.storage.newest(self.txn.id, id)?;
+            // [DESIGN] RULES.md D441: a check of the newest state rests on it.
+            self.txn.depend(newest.stamp);
             holders = holders.saturating_add(usize::from(holds(&newest, &|row| Ok(overlap(&self.key_of(row)?, key, n)))?));
             if holders > 1 {
                 return fail(Code::Constraint, duplicated(self.desc, self.name, self.columns));
@@ -291,6 +296,8 @@ impl KeyCheck<'_> {
         let mut holders = 0_usize;
         for other in self.st.index_of(&ix.name)?.rows(key)? {
             let newest = rows.newest(self.txn.id, other)?;
+            // [DESIGN] RULES.md D441: a check of the newest state rests on it.
+            self.txn.depend(newest.stamp);
             holders = holders.saturating_add(usize::from(holds(&newest, &|row| Ok(self.key_of(row)? == *key))?));
             if holders > 1 {
                 return fail(Code::Constraint, duplicated(self.desc, self.name, self.columns));
@@ -322,6 +329,8 @@ impl KeyCheck<'_> {
         if let Some(ix) = indexed {
             for other in self.st.index_of(&ix.name)?.rows(key)? {
                 let newest = storage.newest(self.txn.id, other)?;
+                // [DESIGN] RULES.md D441: a check of the newest state rests on it.
+                self.txn.depend(newest.stamp);
                 holders = holders.saturating_add(usize::from(holds(&newest, &|row| Ok(self.key_of(row)? == *key))?));
             }
             return Ok(holders);

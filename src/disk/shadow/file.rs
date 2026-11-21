@@ -20,6 +20,28 @@ pub(super) struct Sealed {
     removed: bool,
 }
 
+/// Where a granule's content is (`Shadow::source`).
+enum Source {
+    /// Written since the last commit, copied.
+    Written(Vec<u8>),
+    /// The file's, to read.
+    Base(Arc<dyn DiskFile>),
+    /// Zeros.
+    Zeros,
+}
+
+/// A run of a read's buffer that is the file's: the file, where in it the
+/// run starts, and the run.
+type BaseRun = (Arc<dyn DiskFile>, u64, std::ops::Range<usize>);
+
+/// Copies `content` from `within` into `buf`'s range `to`.
+fn copy_into(buf: &mut [u8], to: std::ops::Range<usize>, content: &[u8], within: usize) {
+    let n = to.len();
+    if let (Some(to), Some(from)) = (buf.get_mut(to), content.get(within..within.saturating_add(n))) {
+        to.copy_from_slice(from);
+    }
+}
+
 /// What a shadowed file has written since its last commit.
 pub(super) struct Pending {
     pub(super) active: Side,
@@ -163,27 +185,66 @@ impl Shadow {
     /// written to, or the sealed one, or the file, zeros past the end or a
     /// limit.
     fn granule(&self, pending: &Pending, number: u64) -> Result<Vec<u8>> {
+        let mut content = vec![0; GRANULE];
+        match self.source(pending, number)? {
+            Source::Written(written) => return Ok(written),
+            Source::Base(base) => {
+                let _ = base.read_at(&mut content, offset(number))?;
+            }
+            Source::Zeros => {}
+        }
+        Ok(content)
+    }
+
+    /// Where the content of granule `number` is, as written: the side file
+    /// written to, or the sealed one, read here; the file, read by the
+    /// caller; or nowhere, zeros past the end or a limit.
+    fn source(&self, pending: &Pending, number: u64) -> Result<Source> {
         let start = offset(number);
         if let Some(content) = pending.active.held(number)? {
-            return Ok(content);
+            return Ok(Source::Written(content));
         }
         let mut limit = pending.active.limit;
         if let Some(sealed) = pending.sealed.as_ref().filter(|_| start < limit) {
             if let Some(content) = sealed.side.held(number)? {
-                return Ok(content);
+                return Ok(Source::Written(content));
             }
             limit = limit.min(sealed.side.limit);
         }
-        let mut content = vec![0; GRANULE];
         // The file holds zeros past its size at the last commit, or the
         // sealed batch's granules, found above, so it is read only below
         // that size, kept rather than asked for each read; while a batch
         // is committed a read past the file's end gives zeros too.
         let within = start < limit && pending.committed.is_some_and(|size| start < size);
-        if let Some(base) = read(&self.base)?.as_ref().filter(|_| within) {
-            let _ = base.read_at(&mut content, start)?;
+        Ok(read(&self.base)?.as_ref().filter(|_| within).map_or(Source::Zeros, |base| Source::Base(Arc::clone(base))))
+    }
+
+    /// Fills `buf`'s first `available` bytes, read from `at`, with what was
+    /// written since the last commit and zeros, under the lock: the runs
+    /// of `buf` that are the file's left to read, each with where in the
+    /// file it starts.
+    fn placed(&self, pending: &Pending, buf: &mut [u8], (at, available): (u64, usize)) -> Result<Vec<BaseRun>> {
+        let mut runs: Vec<BaseRun> = Vec::new();
+        let mut done = 0_usize;
+        while done < available {
+            let position = at.saturating_add(u64::try_from(done).unwrap_or(u64::MAX));
+            let (number, within) = granule_of(position);
+            let n = (GRANULE.saturating_sub(within)).min(available.saturating_sub(done));
+            let to = done..done.saturating_add(n);
+            match self.source(pending, number)? {
+                Source::Written(content) => copy_into(buf, to, &content, within),
+                Source::Zeros => buf.get_mut(to).unwrap_or_default().fill(0),
+                Source::Base(base) => {
+                    if let Some(last) = runs.last_mut().filter(|last| last.2.end == done && Arc::ptr_eq(&last.0, &base)) {
+                        last.2.end = to.end;
+                    } else {
+                        runs.push((base, position, to));
+                    }
+                }
+            }
+            done = done.saturating_add(n);
         }
-        Ok(content)
+        Ok(runs)
     }
 
     /// Seals what was written for its commit, writes going to the other
@@ -300,20 +361,24 @@ impl Shadow {
 pub(super) struct ShadowFile(pub(super) Arc<Shadow>);
 
 impl DiskFile for ShadowFile {
+    /// \[DESIGN\] Read in two steps (RULES.md D409): under the lock,
+    /// what was written since the last commit is copied and the rest found
+    /// to be the file's; then, the lock let go, each run of the file's
+    /// granules is read with one call. A commit writes into the file only
+    /// granules the sealed batch holds, which are copied from it here, and
+    /// cuts it no lower than the limit read below, so what is read of the
+    /// file is what the lock saw.
     fn read_at(&self, buf: &mut [u8], at: u64) -> Result<usize> {
-        let pending = read(&self.0.pending)?;
-        let wanted = u64::try_from(buf.len()).unwrap_or(u64::MAX);
-        let available = usize::try_from(pending.size.saturating_sub(at).min(wanted)).unwrap_or_default();
-        let mut done = 0_usize;
-        while done < available {
-            let position = at.saturating_add(u64::try_from(done).unwrap_or(u64::MAX));
-            let (number, within) = granule_of(position);
-            let content = self.0.granule(&pending, number)?;
-            let n = (GRANULE.saturating_sub(within)).min(available.saturating_sub(done));
-            if let (Some(to), Some(from)) = (buf.get_mut(done..done.saturating_add(n)), content.get(within..within.saturating_add(n))) {
-                to.copy_from_slice(from);
+        let (available, runs) = {
+            let pending = read(&self.0.pending)?;
+            let wanted = u64::try_from(buf.len()).unwrap_or(u64::MAX);
+            let available = usize::try_from(pending.size.saturating_sub(at).min(wanted)).unwrap_or_default();
+            (available, self.0.placed(&pending, buf, (at, available))?)
+        };
+        for (base, from, range) in runs {
+            if let Some(to) = buf.get_mut(range) {
+                let _ = base.read_at(to, from)?;
             }
-            done = done.saturating_add(n);
         }
         Ok(available)
     }

@@ -73,7 +73,7 @@ fn table(files: &TableFiles, delay: u32, rows: i128) -> (Arc<RowTable>, Vec<RowI
 /// does it (`TableStorage::maintain`).
 fn ended(table: &RowTable, horizon: u64) {
     table.gc(horizon, &mut |_, _| true).unwrap();
-    while table.maintain(horizon).unwrap() {}
+    while table.maintain(horizon, true).unwrap() {}
 }
 
 /// The tree's entries.
@@ -447,7 +447,7 @@ fn groups_are_sorted_again_when_their_order_changes() {
     sorted.order = Places::of(&[1]);
     table.frozen.reconfigure(Some(sorted));
     assert!(table.maintenance_due(), "groups to sort");
-    assert!(table.maintain(1).unwrap());
+    assert!(table.maintain(1, true).unwrap());
     assert_eq!(orders(&table).iter().filter(|o| o.as_slice() == [1]).count(), 2, "a couple a call");
     ended(&table, 1);
     assert_eq!(orders(&table), vec![vec![1]; 3], "every group sorted");
@@ -581,7 +581,7 @@ fn groups_are_written_again_when_their_layout_changes() {
     // A few calls, two groups each: bounded, so a layout never reached
     // fails here rather than calling for ever.
     for _ in 0_u32..4 {
-        table.maintain(1).unwrap();
+        table.maintain(1, true).unwrap();
     }
     assert_eq!(layouts(&table), [true; 3], "every group of the hybrid layout");
     assert!(!table.maintenance_due(), "none left to write again");

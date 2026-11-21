@@ -286,6 +286,16 @@ thread of a parallel query costs a row what the statement's own thread
 alone does. A part whose morsels pass through a hash join's probe reads
 them a row at a time.
 
+An ORDER BY of a batch's rows makes each row's sort keys one string of
+bytes, numbers in as few bytes as their range needs and strings up to
+their first 32 bytes, and sorts the strings, by radix sort when they are
+16 bytes or fewer, its rows made only as they are given. A sort past
+MEMORY.WORK_BYTES writes the keys beside its rows and merges its runs by
+them. A sort under FETCH FIRST keeps a batch's rows only if their keys
+are below the greatest of those it holds, so of a long input it makes
+only the rows it gives. Rows of equal keys keep the order they came in,
+whatever the degree.
+
 A grouping or DISTINCT run in parallel groups each morsel apart, then
 merges the groups each morsel made. Of very many groups, each morsel's
 groups are nearly as many as its rows, so the merge costs more than the

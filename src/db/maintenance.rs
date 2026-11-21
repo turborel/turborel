@@ -50,7 +50,7 @@ impl Database {
         let st = self.snapshot()?;
         let tables: Vec<QualifiedName> = st.catalog.tables().iter().map(|t| t.name.clone()).collect();
         let _turn = self.background().maintenance_turn.take("maintenance")?;
-        while st.maintain_round(&tables)? {}
+        while st.maintain_round(&tables, true)? {}
         Ok(())
     }
 
@@ -75,7 +75,7 @@ pub(super) fn maintained(db: &Database) -> Result<Option<Duration>> {
     let tables: Vec<QualifiedName> = st.tx.take_maintenance().into_iter().collect();
     let worked = {
         let _turn = db.background().maintenance_turn.take("maintenance")?;
-        st.maintain_round(&tables)?
+        st.maintain_round(&tables, false)?
     };
     Ok(if worked { Some(Duration::ZERO) } else { st.tx.maintenance_due().then_some(AGAIN) })
 }
@@ -91,13 +91,14 @@ impl State {
         }
     }
 
-    /// Has each of `tables` do some of its maintenance, noting again
-    /// those still due: whether any did some.
-    fn maintain_round(&self, tables: &[QualifiedName]) -> Result<bool> {
+    /// Has each of `tables` do some of its maintenance, `now` if asked to
+    /// (`TableStorage::maintain`), noting again those still due: whether
+    /// any did some.
+    fn maintain_round(&self, tables: &[QualifiedName], now: bool) -> Result<bool> {
         let (mut worked, mut failed) = (false, None);
         for table in tables {
             let Ok(storage) = self.storage_of(table) else { continue };
-            match self.maintain_table(table, storage) {
+            match self.maintain_table(table, storage, now) {
                 Ok(did) => worked |= did,
                 Err(e) => failed = failed.or(Some(e)),
             }
@@ -111,13 +112,13 @@ impl State {
     /// Has `table`, of `storage`, and then each of its indexes, do some of
     /// its maintenance, under the gate: whether one did some. An index's
     /// failure leaves the others' work done.
-    fn maintain_table(&self, table: &QualifiedName, storage: &Arc<dyn TableStorage>) -> Result<bool> {
+    fn maintain_table(&self, table: &QualifiedName, storage: &Arc<dyn TableStorage>, now: bool) -> Result<bool> {
         let _gate = self.tx.gate.enter();
         let lock = self.lock_of(table)?;
         if lock.collection_held() || lock.changed_after(self.generation) {
             return Ok(false);
         }
-        let mut worked = storage.maintain(self.tx.horizon())?;
+        let mut worked = storage.maintain(self.tx.horizon(), now)?;
         let mut failed = None;
         for index in self.indexes_of(table) {
             match index.maintain() {

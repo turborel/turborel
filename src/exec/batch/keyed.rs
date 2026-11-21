@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use super::late::{Bound, Deferred, resolved};
 use super::stream;
 use crate::db::State;
 use crate::error::Result;
@@ -101,4 +102,24 @@ impl Keyed {
 /// As `stream::open`.
 pub(in crate::exec) fn kept(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<stream::Batches> {
     Ok(stream::open(plan, db, tx)?.batches)
+}
+
+/// \[DESIGN\] (RULES.md D379, D380) As `kept`, for a sort of which only the
+/// first rows are asked for, whose keys read the columns `keys`: of `late`,
+/// its scans' other columns given late, left so for the sort to decode of
+/// the rows it gives alone; and its first key's column and bound, `bound`,
+/// told its scans if given.
+///
+/// # Errors
+///
+/// As `stream::open`.
+pub(in crate::exec) fn topped(
+    plan: Plan,
+    (keys, late, bound): (&[usize], bool, Bound),
+    db: &Arc<State>,
+    tx: TxId,
+) -> Result<stream::Batches> {
+    let width = if late { stream::layout(&plan, db).map_or(0, |l| l.1) } else { 0 };
+    let batches = stream::batches_with(plan, (db, tx), &Deferred::all(width).topped(keys, bound))?;
+    Ok(if late { batches } else { resolved(batches) })
 }
