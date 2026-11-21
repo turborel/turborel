@@ -463,6 +463,7 @@ verification approach DO-178C expects (§8).
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
+| D760 | A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values |
 
 ### The project
 
@@ -13209,6 +13210,21 @@ values, and so do results past 18 digits, which the set functions add
 in 128 bits (D32). A path in 128 bits for whole vectors would double the
 width of every vector of integers, or add a second kind of them to
 every kernel, for values that are rare.
+
+#### D760. A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values
+
+A plan made with slots, to be kept, is estimated with the values of the
+execution that makes it (D613). Filling a slot of a bound such as
+`OL_O_ID >= ST_O_ID - 20` leaves a difference of two constants, which no
+estimate reads as one, so the bound took the default share of a range
+while the plan made with the values had it folded. The rows of a few
+orders' lines were then estimated many times over, and the join over
+them weighed its index probes at those rows (D386). As ORDER_LINE grew,
+STOCK-LEVEL kept a hash join reading STOCK whole instead of probing its
+key for each line. Each compared sum or difference of constants alone
+is now folded to its value as the estimate fills its slots
+(`physical/estimate/valued.rs`), and one that raises an error is left
+as it is, for the execution to raise.
 
 ## 2. Project layout
 
