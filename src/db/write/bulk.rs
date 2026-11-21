@@ -12,28 +12,61 @@
 //! its rows were inserted one at a time. A table whose rows that would not
 //! be so for, a partition or a partitioned table, one whose rows are
 //! sealed, or a row holding a large object, takes them one at a time.
+//!
+//! A batch's rows are read where the statement holds them, never copied
+//! for it (RULES.md D531): its storage encodes each as it is held, its log
+//! record is made from them, and each index's keys, made once, are both
+//! inserted and kept for undo, one undo entry an index a batch. What every
+//! batch needs, the table's storage, its indexes and its checks, is found
+//! once a statement.
 
 use std::sync::Arc;
 
-use super::super::integrity::Effects;
+use super::super::integrity::{Effects, RowsChecked};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::exec::HeldRows;
-use crate::index::Index;
+use crate::index::{Index, Key};
 use crate::log::record::insert_rows_record;
 use crate::spill::row_bytes;
-use crate::storage::{Row, RowId};
+use crate::storage::{Row, RowId, TableStorage};
 use crate::txn::{Txn, Undo, UndoEntry};
 use crate::value::Value;
 
 /// \[DESIGN\] The rows a batch holds at most: enough that the costs of a
-/// batch are shared by many rows, few enough that its rows are held in
-/// memory twice at most.
+/// batch are shared by many rows, few enough that its keys are held in
+/// memory once at most.
 const BATCH_ROWS: usize = 4096;
 /// \[DESIGN\] The bytes of rows one record holds, about, at most: so a
 /// record stays well within a log segment and a replay holds little.
 const RECORD_BYTES: usize = 1 << 20;
+
+/// An index the rows of a table go to, and where its entries are.
+struct Indexed {
+    desc: IndexDesc,
+    partition: Option<u64>,
+    index: Arc<dyn Index>,
+}
+
+/// What each batch of one statement's rows of a table needs, found once.
+pub(in crate::db) struct Together<'s> {
+    table: &'s QualifiedName,
+    storage: Arc<dyn TableStorage>,
+    /// Whether each row inserted takes an undo entry of its own: its
+    /// engine cannot undo its own changes.
+    undone: bool,
+    /// Whether its changes are logged.
+    logs: bool,
+    indexes: Vec<Indexed>,
+}
+
+/// The rows of a batch gone in: their ids, in order, and of each whether
+/// its key was its key's only entry in every unique index.
+pub(in crate::db) struct Gone {
+    ids: Vec<RowId>,
+    alone: Vec<bool>,
+}
 
 impl State {
     /// Whether rows of `table` are inserted together: it is no partition
@@ -48,26 +81,59 @@ impl State {
         Ok(whole && self.seal_of(table)?.is_none())
     }
 
-    /// [X3.135-1986 §8.7] Inserts `rows` into `table`, with their index
-    /// entries, as `insert_row` inserts each: their row ids, in order.
+    /// What the batches of `table` need, of a statement: its storage, how
+    /// it logs and undoes, and its indexes, each found once.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if one of its indexes does not exist; as
+    /// `storage_of` and `capabilities`.
+    pub(in crate::db) fn together<'s>(&self, table: &'s QualifiedName) -> Result<Together<'s>> {
+        let caps = self.capabilities(table)?;
+        let mut indexes = Vec::new();
+        for (desc, partition) in self.table_indexes(table) {
+            let index = self.indexes.get(&desc.name).map(Arc::clone);
+            let index = index.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {} does not exist", desc.name)))?;
+            indexes.push(Indexed { desc, partition, index });
+        }
+        let storage = Arc::clone(self.storage_of(table)?);
+        Ok(Together { table, storage, undone: caps.undo == Undo::Log, logs: Self::logs_changes(caps.persistence), indexes })
+    }
+
+    /// [X3.135-1986 §8.7] Inserts `rows` into the table of `together`, with
+    /// their index entries, as `insert_row` inserts each: their row ids, in
+    /// order, and whether each was alone in every unique index, noted in
+    /// `tx` too if `notes`. A row inserted by `insert_row` is taken not to
+    /// have been, as it notes it itself.
     ///
     /// # Errors
     ///
     /// As `insert_row`'s.
-    pub(crate) fn insert_rows(&self, tx: &Txn, table: &QualifiedName, rows: &[Row]) -> Result<Vec<RowId>> {
+    pub(in crate::db) fn insert_rows(&self, tx: &Txn, together: &Together<'_>, rows: &[Row], notes: bool) -> Result<Gone> {
+        let table = together.table;
         for row in rows {
             crate::geometry::registered::check_row(&*self.catalog, table, row)?;
         }
         let one_at_a_time = rows.len() < 2 || rows.iter().flatten().any(Value::needs_keeping) || !self.inserts_together(table)?;
         if one_at_a_time {
-            return rows.iter().map(|row| self.insert_row(tx, table, row)).collect();
+            let ids = rows.iter().map(|row| self.insert_row(tx, table, row)).collect::<Result<Vec<_>>>()?;
+            return Ok(Gone { alone: vec![false; ids.len()], ids });
         }
         self.prepare_write(tx, table)?;
-        let storage = Arc::clone(self.storage_of(table)?);
-        let caps = self.capabilities(table)?;
-        let logs = Self::logs_changes(caps.persistence);
         // After any wait for a lock: a checkpoint never waits on a waiter.
         let _gate = self.tx.gate.enter();
+        let ids = self.stored_together(tx, together, rows)?;
+        let mut alone = vec![true; ids.len()];
+        for ix in &together.indexes {
+            index_rows(tx, ix, (rows, &ids), (notes, &mut alone))?;
+        }
+        Ok(Gone { ids, alone })
+    }
+
+    /// Puts `rows` in the storage of `together`, each with its undo entry
+    /// if it takes one, and logs them a record at a time: their ids.
+    fn stored_together(&self, tx: &Txn, together: &Together<'_>, rows: &[Row]) -> Result<Vec<RowId>> {
+        let table = together.table;
         let mut ids = Vec::with_capacity(rows.len());
         let mut from = 0;
         while let Some(rest) = rows.get(from..).filter(|r| !r.is_empty()) {
@@ -75,53 +141,52 @@ impl State {
             let part = rest.get(..taken).unwrap_or_default();
             let first = ids.len();
             for row in part {
-                let id = storage.insert(tx.id, row.clone())?;
+                let id = together.storage.insert_from(tx.id, row)?;
                 ids.push(id);
-                if caps.undo == Undo::Log {
-                    tx.log(UndoEntry::Inserted { table: table.clone(), storage: Arc::clone(&storage), id })?;
+                if together.undone {
+                    tx.log(UndoEntry::Inserted { table: table.clone(), storage: Arc::clone(&together.storage), id })?;
                 }
             }
-            if logs {
+            if together.logs {
                 let made = ids.get(first..).unwrap_or_default();
-                tx.log_encoded(
-                    &insert_rows_record(tx.id, (table, self.generation_of(table)), made, part),
-                    u64::try_from(made.len()).unwrap_or(u64::MAX),
-                )?;
+                let record = insert_rows_record(tx.id, (table, self.generation_of(table)), made, part);
+                tx.log_encoded(&record, u64::try_from(made.len()).unwrap_or(u64::MAX))?;
             }
             from = from.saturating_add(taken);
         }
-        for (ix, partition) in self.table_indexes(table) {
-            self.index_rows(tx, &ix, (rows, &ids), partition)?;
-        }
         Ok(ids)
     }
+}
 
-    /// Adds the entries of `rows`, of row ids `ids`, to the index `ix`, in
-    /// their order, as `index_add` adds each.
-    fn index_rows(&self, tx: &Txn, ix: &IndexDesc, (rows, ids): (&[Row], &[RowId]), partition: Option<u64>) -> Result<()> {
-        let index: Arc<dyn Index> = self
-            .indexes
-            .get(&ix.name)
-            .map(Arc::clone)
-            .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {} does not exist", ix.name)))?;
-        for (row, &id) in rows.iter().zip(ids) {
-            let key = ix.computed_key(row)?;
-            if !ix.holds(&key) {
-                continue;
-            }
-            let id = Self::entry_id(partition, id)?;
-            // Of a unique index, whether the key's only entry, so its
-            // constraint need not look for another row (`Txn::alone`).
-            if ix.unique {
-                let alone = index.insert_alone(key.clone(), id)?;
-                tx.note_alone(&ix.name, id, alone)?;
-            } else {
-                index.insert(key.clone(), id)?;
-            }
-            tx.log(UndoEntry::IndexInserted { table: ix.table.clone(), index: Arc::clone(&index), key, id })?;
+/// Adds the entries of `rows`, of row ids `ids`, to the index of `ix`, in
+/// their order, as `index_add` adds each, and their undo entry: of a
+/// unique index, each row not alone under its key marked so in `alone`,
+/// and each noted in `tx` if `notes`.
+fn index_rows(tx: &Txn, ix: &Indexed, (rows, ids): (&[Row], &[RowId]), (notes, alone): (bool, &mut [bool])) -> Result<()> {
+    let mut entries: Vec<(Key, RowId)> = Vec::with_capacity(rows.len());
+    let mut each = Vec::new();
+    for ((row, &id), lone) in rows.iter().zip(ids).zip(alone.iter_mut()) {
+        let key = ix.desc.computed_key(row)?;
+        if !ix.desc.holds(&key) {
+            continue;
         }
-        Ok(())
+        let id = State::entry_id(ix.partition, id)?;
+        // Of a unique index, whether the key's only entry, so its
+        // constraint need not look for another row.
+        let only = ix.index.insert_from(&key, id, ix.desc.unique)?;
+        if ix.desc.unique {
+            *lone = *lone && only;
+            each.push((id, only));
+        }
+        entries.push((key, id));
     }
+    if notes && !each.is_empty() {
+        tx.note_alone_rows(&ix.desc.name, &mut each.into_iter())?;
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    tx.log(UndoEntry::IndexInsertedRows { table: ix.desc.table.clone(), index: Arc::clone(&ix.index), entries })
 }
 
 /// How many of `rows`, at least one, one record holds: as many as come to
@@ -136,9 +201,9 @@ fn record_rows(rows: &[Row]) -> usize {
 }
 
 /// [X3.135-1986 §8.7 GR1c] Inserts the rows `rows` holds into `table`, of
-/// transaction `tx`, noting each in `effects`: a batch at a time, if the
-/// table takes its rows together; else one at a time, each where its
-/// partition holds it (RULES.md D155).
+/// transaction `tx`, noting each in `effects`: a batch at a time, read
+/// where they are held, if the table takes its rows together; else one at
+/// a time, each where its partition holds it (RULES.md D155).
 ///
 /// # Errors
 ///
@@ -147,33 +212,35 @@ pub(super) fn insert_held(st: &State, tx: &Txn, table: &QualifiedName, rows: &mu
     if rows.len() < 2 || !st.inserts_together(table)? {
         return rows.visit(&mut |row| st.insert_routed(tx, table, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)));
     }
-    let mut batch: Vec<Row> = Vec::with_capacity(BATCH_ROWS.min(rows.len()));
-    rows.visit(&mut |row| {
-        batch.push(row.clone());
-        if batch.len() < BATCH_ROWS { Ok(()) } else { inserted(st, (tx, table), &mut batch, effects) }
-    })?;
-    inserted(st, (tx, table), &mut batch, effects)
-}
-
-/// Inserts `batch` into `table` and notes each row in `effects`, leaving
-/// it empty.
-fn inserted(st: &State, (tx, table): (&Txn, &QualifiedName), batch: &mut Vec<Row>, effects: &mut Effects<'_>) -> Result<()> {
-    if batch.is_empty() {
-        return Ok(());
-    }
     // Checked as each goes in where it may be, so most need no note.
     let mut checked = st.rows_checked(table, effects);
-    if let Some(c) = &mut checked {
-        for row in batch.iter() {
+    let together = st.together(table)?;
+    rows.visit_slices(&mut |held| {
+        for batch in held.chunks(BATCH_ROWS) {
+            inserted(st, (tx, &together), batch, (&mut checked, &mut *effects))?;
+        }
+        Ok(())
+    })
+}
+
+/// Inserts `batch` into the table of `together` and notes each row that
+/// needs it in `effects`.
+fn inserted(
+    st: &State,
+    (tx, together): (&Txn, &Together<'_>),
+    batch: &[Row],
+    (checked, effects): (&mut Option<RowsChecked<'_>>, &mut Effects<'_>),
+) -> Result<()> {
+    if let Some(c) = checked.as_mut() {
+        for row in batch {
             c.check((st, tx), row)?;
         }
     }
-    let ids = st.insert_rows(tx, table, batch)?;
-    for (row, id) in batch.iter().zip(ids) {
-        if checked.as_ref().is_none_or(|c| c.needs_note(tx, id)) {
-            effects.inserted(table, id, row)?;
+    let gone = st.insert_rows(tx, together, batch, checked.is_none())?;
+    for ((row, id), alone) in batch.iter().zip(gone.ids).zip(gone.alone) {
+        if checked.as_ref().is_none_or(|c| c.needs_note(alone)) {
+            effects.inserted(together.table, id, row)?;
         }
     }
-    batch.clear();
     Ok(())
 }

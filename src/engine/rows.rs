@@ -194,13 +194,18 @@ pub struct RowTable {
 
 impl TableStorage for RowTable {
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId> {
+        self.insert_from(tx, &row)
+    }
+
+    /// Encoded as it is held, never copied.
+    fn insert_from(&self, tx: TxId, row: &Row) -> Result<RowId> {
         let id = self.next_id()?;
-        let (record, pages) = self.encode(id, &row)?;
+        let (record, pages) = self.encode(id, row)?;
         match self.insert_version(tx, id, &record) {
             Ok(true) => {
                 // Widened once written, so a zone summed meanwhile either
                 // read the row or is summed again (`rows/zones.rs`).
-                self.zones.widen(id, Some(&row), Replaced::Nothing);
+                self.zones.widen(id, Some(row), Replaced::Nothing);
                 self.counted.live.fetch_add(1, Ordering::AcqRel);
                 self.counted_change(tx);
                 Ok(id)

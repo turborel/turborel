@@ -225,8 +225,9 @@ pub(crate) struct TxState {
     first_write_external: Option<bool>,
     /// The rows whose entry in a unique index, named, was the key's only
     /// one as it was last inserted (`Index::insert_alone`): no other row
-    /// to look for at a statement's end (`db/assignment.rs`).
-    alone: HashSet<(String, crate::storage::RowId)>,
+    /// to look for at a statement's end (`db/assignment.rs`); by index, so
+    /// a row is looked up by the index's name as it is held.
+    alone: HashMap<String, HashSet<crate::storage::RowId>>,
     /// Of each table of an assertion's kept totals and form, the row it
     /// wrote of its change, each statement's added to it
     /// (`db/assertions/kept.rs`).

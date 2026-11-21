@@ -19,6 +19,7 @@ use crate::index::{Index, Key};
 use crate::memory::Undoing;
 use crate::spill::{ListItem, ListSpace, SpillList, record_row, row_bytes, row_record};
 use crate::storage::{Row, RowId, TableStorage};
+use crate::value::codec::{put_row, row as read_row};
 use crate::value::types::TypeRegistry;
 
 /// A table's storage that has begun a transaction: a participant in its
@@ -42,11 +43,43 @@ impl Joined {
 /// One change, recorded so that it can be reversed, with the table it was
 /// made to and the storage or index it was made in.
 pub(crate) enum UndoEntry {
-    Inserted { table: QualifiedName, storage: Arc<dyn TableStorage>, id: RowId },
-    Deleted { table: QualifiedName, storage: Arc<dyn TableStorage>, id: RowId, row: Row },
-    Updated { table: QualifiedName, storage: Arc<dyn TableStorage>, id: RowId, old: Row },
-    IndexInserted { table: QualifiedName, index: Arc<dyn Index>, key: Key, id: RowId },
-    IndexRemoved { table: QualifiedName, index: Arc<dyn Index>, key: Key, id: RowId },
+    Inserted {
+        table: QualifiedName,
+        storage: Arc<dyn TableStorage>,
+        id: RowId,
+    },
+    Deleted {
+        table: QualifiedName,
+        storage: Arc<dyn TableStorage>,
+        id: RowId,
+        row: Row,
+    },
+    Updated {
+        table: QualifiedName,
+        storage: Arc<dyn TableStorage>,
+        id: RowId,
+        old: Row,
+    },
+    IndexInserted {
+        table: QualifiedName,
+        index: Arc<dyn Index>,
+        key: Key,
+        id: RowId,
+    },
+    IndexRemoved {
+        table: QualifiedName,
+        index: Arc<dyn Index>,
+        key: Key,
+        id: RowId,
+    },
+    /// \[DESIGN\] The entries of rows inserted together, each as an
+    /// `IndexInserted` of its own, in order: one entry a batch, not one a
+    /// row (RULES.md D531).
+    IndexInsertedRows {
+        table: QualifiedName,
+        index: Arc<dyn Index>,
+        entries: Vec<(Key, RowId)>,
+    },
 }
 
 /// [X3.135-1986 §8.9 GR1, §7.3 GR3b i] Reverse `entries`, newest first.
@@ -61,12 +94,19 @@ pub(super) fn apply_undo(tx: TxId, entries: Vec<UndoEntry>) -> Vec<UndoFailure> 
             UndoEntry::Updated { table, storage, id, old } => (table, storage.update(tx, id, old), true),
             UndoEntry::IndexInserted { table, index, key, id } => (table, index.remove(&key, id), false),
             UndoEntry::IndexRemoved { table, index, key, id } => (table, index.insert(key, id), false),
+            UndoEntry::IndexInsertedRows { table, index, entries } => (table, removed(&*index, &entries), false),
         };
         if let Err(error) = result {
             failures.push(UndoFailure { table: Some(table), error, rows });
         }
     }
     failures
+}
+
+/// Removes each of `entries` from `index`, newest first, every one tried:
+/// the first failure, if one failed.
+fn removed(index: &dyn Index, entries: &[(Key, RowId)]) -> Result<()> {
+    entries.iter().rev().map(|(key, id)| index.remove(key, *id)).fold(Ok(()), Result::and)
 }
 
 /// \[DESIGN\] Where a transaction's undo entries spill (RULES.md D38): the
@@ -105,6 +145,9 @@ impl ListItem for UndoEntry {
             UndoEntry::Inserted { .. } => 0,
             UndoEntry::Deleted { row, .. } | UndoEntry::Updated { old: row, .. } => row_bytes(row),
             UndoEntry::IndexInserted { key, .. } | UndoEntry::IndexRemoved { key, .. } => row_bytes(&key.0),
+            UndoEntry::IndexInsertedRows { entries, .. } => entries
+                .iter()
+                .fold(0_usize, |sum, (key, _)| sum.saturating_add(row_bytes(&key.0)).saturating_add(size_of::<(Key, RowId)>())),
         };
         size_of::<UndoEntry>().saturating_add(values)
     }
@@ -197,12 +240,43 @@ fn encoded(targets: &mut Vec<Target>, entry: &UndoEntry) -> Vec<u8> {
         UndoEntry::Updated { table, storage, id, old } => (2, Target::Storage(table.clone(), Arc::clone(storage)), *id, Some(old)),
         UndoEntry::IndexInserted { table, index, key, id } => (3, Target::Index(table.clone(), Arc::clone(index)), *id, Some(&key.0)),
         UndoEntry::IndexRemoved { table, index, key, id } => (4, Target::Index(table.clone(), Arc::clone(index)), *id, Some(&key.0)),
+        UndoEntry::IndexInsertedRows { table, index, entries } => {
+            return rows_record(target(targets, Target::Index(table.clone(), Arc::clone(index))), entries);
+        }
     };
     let mut out = vec![kind];
     out.put_u32(target(targets, named));
     out.put_u64(id);
     out.extend(values.map(row_record).unwrap_or_default());
     out
+}
+
+/// The kind of record of an `IndexInsertedRows`.
+const INSERTED_ROWS: u8 = 5;
+
+/// The record of an `IndexInsertedRows` of `entries`, of the target at
+/// `place`: its kind and target, its entries' count in place of a row id,
+/// then each one's row id and key.
+fn rows_record(place: u32, entries: &[(Key, RowId)]) -> Vec<u8> {
+    let mut out = vec![INSERTED_ROWS];
+    out.put_u32(place);
+    out.put_u64(u64::try_from(entries.len()).unwrap_or(u64::MAX));
+    for (key, id) in entries {
+        out.put_u64(*id);
+        put_row(&mut out, &key.0);
+    }
+    out
+}
+
+/// The entries `rows_record` wrote, `count` of them, from `rest`.
+fn entries_of(rest: &[u8], count: u64, types: &TypeRegistry) -> Result<Vec<(Key, RowId)>> {
+    let mut r = Reader::new(rest, "undo entry").with_types(types);
+    let mut entries = Vec::new();
+    for _ in 0..count {
+        let id = r.u64()?;
+        entries.push((Key(read_row(&mut r)?), id));
+    }
+    Ok(entries)
 }
 
 /// The entry of `record`.
@@ -218,6 +292,9 @@ fn entry_of((targets, types): (&[Target], &TypeRegistry), record: &[u8]) -> Resu
         (2, Target::Storage(table, storage)) => UndoEntry::Updated { table, storage, id, old: values()? },
         (3, Target::Index(table, index)) => UndoEntry::IndexInserted { table, index, key: Key(values()?), id },
         (4, Target::Index(table, index)) => UndoEntry::IndexRemoved { table, index, key: Key(values()?), id },
+        (INSERTED_ROWS, Target::Index(table, index)) => {
+            UndoEntry::IndexInsertedRows { table, index, entries: entries_of(rest, id, types)? }
+        }
         (_, Target::Storage(..) | Target::Index(..)) => return Err(r.corrupt("not an entry of its target")),
     })
 }

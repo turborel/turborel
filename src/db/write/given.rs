@@ -9,6 +9,7 @@ use crate::ast::{InsertSource, InsertStatement, QueryExpression, RowElement, Val
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::exec::{HeldRows, Subqueries};
+use crate::params::{Given, taken};
 use crate::storage::Row;
 
 /// Whether `stmt` inserts one row whose values are its dynamic parameters,
@@ -27,7 +28,7 @@ fn of_parameters(stmt: &InsertStatement) -> bool {
 }
 
 /// The candidate rows of `given`, each the values of `stmt`'s parameters,
-/// for `target`, as each execution's VALUES would give it.
+/// for `target`, as each execution's VALUES would give it: taken from it.
 ///
 /// # Errors
 ///
@@ -36,15 +37,15 @@ fn of_parameters(stmt: &InsertStatement) -> bool {
 pub(super) fn given_rows(
     st: &State,
     (stmt, target): (&InsertStatement, &Target),
-    given: &[Row],
+    given: &Given,
     subqueries: &dyn Subqueries,
 ) -> Result<HeldRows<Row>> {
     if !of_parameters(stmt) {
         return Err(not_given());
     }
     let mut rows = HeldRows::new(st.list_space());
-    for values in given {
-        rows.push(target.candidate(st, values.clone(), subqueries)?)?;
+    for values in taken(given)? {
+        rows.push(target.candidate(st, values, subqueries)?)?;
     }
     Ok(rows)
 }

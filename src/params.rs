@@ -23,7 +23,7 @@ pub(crate) use transition::Transitions;
 use dynamic::Dynamic;
 pub use dynamic::ParameterType;
 pub(crate) use dynamic::conformed;
-pub(crate) use given::conformed_row;
+pub(crate) use given::{Given, conformed_row, taken};
 
 use crate::ast::{LexicallyScopedOptions, ParameterSpecification, TargetKind};
 use crate::error::{Code, Result, SqlError};
@@ -75,7 +75,7 @@ pub struct Params {
     xml: Option<LexicallyScopedOptions>,
     /// \[EXTENSION\] Of an INSERT of one row of dynamic parameters, the
     /// rows given it, each the values of its parameters (`params/given.rs`).
-    given: Option<std::sync::Arc<Vec<crate::storage::Row>>>,
+    given: Option<Given>,
 }
 
 fn api(msg: impl Into<String>) -> SqlError {

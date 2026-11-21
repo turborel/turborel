@@ -400,7 +400,12 @@ impl Index for BLinkIndex {
     /// (`BLinkTree::update_alone`): an entry of another row under the key
     /// is beside it, as entries are in key order, then row id.
     fn insert_alone(&self, key: Key, row: RowId) -> Result<bool> {
-        let entry = self.entry(&key, row)?;
+        self.insert_from(&key, row, true)
+    }
+
+    /// Encoded from `key` as it is held; alone or not, its tree finds it.
+    fn insert_from(&self, key: &Key, row: RowId, _alone: bool) -> Result<bool> {
+        let entry = self.entry(key, row)?;
         // The key's bytes are the same for equal keys (`engine/key.rs`).
         let prefix = entry.len().saturating_sub(ROW_ID);
         self.keys.added(entry.get(..prefix).unwrap_or_default());

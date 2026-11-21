@@ -8,6 +8,7 @@ use super::{Kind, Prepared};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::params::{Params, conformed_row};
 use crate::storage::Row;
+use crate::value::DataType;
 
 impl Session {
     /// \[EXTENSION\] Executes `p`, an INSERT of one row of dynamic
@@ -24,13 +25,13 @@ impl Session {
         if p.kind != Kind::Statement {
             return Err(super::super::write::not_given());
         }
+        let types: Vec<DataType> = p.parameters.iter().map(|t| t.clone().data_type()).collect();
         let mut given = Vec::with_capacity(rows.len());
         for row in rows {
+            Self::one_each(p, row.len())?;
             // [ISO/IEC 9075-2:2023 §4.37.5] a large object sent by its
             // locator is the value it names.
-            let row = self.unlocated(row)?;
-            Self::values_for(p, &row)?;
-            given.push(conformed_row(row, &p.parameters)?);
+            given.push(conformed_row(self.unlocated(row)?, &types)?);
         }
         let Some(first) = given.first().cloned() else {
             let msg = "[DESIGN] an execution for many rows is given at least one";

@@ -74,6 +74,15 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine cannot store the row; the statement fails.
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId>;
+    /// \[DESIGN\] As `insert` of a copy of `row`, which an engine storing rows encoded need not make: rows inserted together are
+    /// still held by their statement (RULES.md D531). Default: `insert` of a clone.
+    ///
+    /// # Errors
+    ///
+    /// As `insert`.
+    fn insert_from(&self, tx: TxId, row: &Row) -> Result<RowId> {
+        self.insert(tx, row.clone())
+    }
     /// Replaces the live row `id` with `row`.
     ///
     /// # Errors
@@ -109,11 +118,9 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine cannot read the row.
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>>;
-    /// \[DESIGN\] As `get`, of a statement that reads only `columns` of the
-    /// row: a row of the table's degree, those columns' values in their
-    /// places, the others' whatever the engine has at hand, nulls if it
-    /// read none. An engine that keeps columns apart reads only theirs.
-    /// Default: `get`.
+    /// \[DESIGN\] As `get`, of a statement that reads only `columns` of the row: a row of the table's degree, those columns' values in
+    /// their places, the others' whatever the engine has at hand, nulls if it read none. An engine that keeps columns apart reads only
+    /// theirs. Default: `get`.
     ///
     /// # Errors
     ///
@@ -132,13 +139,10 @@ pub trait TableStorage: Send + Sync {
         let _ = near;
         columns.map_or_else(|| self.get(tx, id), |columns| self.get_columns(tx, id, columns))
     }
-    /// Every live row, once each, with its id. The rows have every column
-    /// at its position, but only those in `columns` need hold their value:
-    /// the others may hold anything (a column layout leaves them NULL), and
-    /// callers do not read them (RULES.md D31). A row the engine cannot read
-    /// is an error item, after which the scan may end. The scan holds what
-    /// it reads (`self`), so it can outlive the call that started it: a
-    /// cursor reads its rows as it is fetched from.
+    /// Every live row, once each, with its id. The rows have every column at its position, but only those in `columns` need hold their
+    /// value: the others may hold anything (a column layout leaves them NULL), and callers do not read them (RULES.md D31). A row the
+    /// engine cannot read is an error item, after which the scan may end. The scan holds what it reads (`self`), so it can outlive the call
+    /// that started it: a cursor reads its rows as it is fetched from.
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows;
     /// As `scan`, for a statement that keeps only rows `conditions` all
     /// match, and checks every row itself: an engine may leave out rows that
@@ -147,11 +151,9 @@ pub trait TableStorage: Send + Sync {
     fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], _conditions: &Conjunction) -> Rows {
         self.scan(tx, columns)
     }
-    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
-    /// `conditions`, in no particular order, a batch of up to `BATCH_ROWS` of
-    /// them at a time: the values of `columns`, a vector for each, in the
-    /// order asked (RULES.md D31), of `_late` late if it can (D361). Default:
-    /// `scan_where`'s rows, gathered, none late.
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, in no particular order, a batch of up to `BATCH_ROWS` of
+    /// them at a time: the values of `columns`, a vector for each, in the order asked (RULES.md D31), of `_late` late if it can (D361).
+    /// Default: `scan_where`'s rows, gathered, none late.
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, _late: &[usize]) -> Batches {
         let rows = match conditions {
             Some(c) => self.scan_where(tx, columns, c),
@@ -159,26 +161,20 @@ pub trait TableStorage: Send + Sync {
         };
         batches_of(rows, columns)
     }
-    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
-    /// `conditions`, split into morsels of about `rows` rows each, for
-    /// workers to read at once (RULES.md D290); none if it cannot split
-    /// them, or failed to, its scan then raising what failed. Default: none.
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, split into morsels of about `rows` rows each, for workers to
+    /// read at once (RULES.md D290); none if it cannot split them, or failed to, its scan then raising what failed. Default: none.
     fn split(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, rows: usize) -> Option<Arc<dyn Split>> {
         let _ = (tx, columns, conditions, rows);
         None
     }
-    /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered`
-    /// gives its rows, any first of them (RULES.md D31). Default: none.
+    /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered` gives its rows, any first of them (RULES.md D31). Default: none.
     fn ordered_by(&self) -> Vec<usize> {
         Vec::new()
     }
-    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
-    /// `conditions`, in the order of the columns `keys`, the first of
-    /// `ordered_by`, each ascending as ORDER BY sorts it [X3.135-1986 §8.3
-    /// GR3b], or each descending if `backward`, nulls as it puts them, ties
-    /// in no particular order; none if it cannot give them so. Of `most`,
-    /// no more than the first `most` rows are read, so it may leave out any
-    /// after them, as FETCH FIRST asks (`exec/limit.rs`). Default: none.
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, in the order of the columns `keys`, the first of
+    /// `ordered_by`, each ascending as ORDER BY sorts it [X3.135-1986 §8.3 GR3b], or each descending if `backward`, nulls as it puts them,
+    /// ties in no particular order; none if it cannot give them so. Of `most`, no more than the first `most` rows are read, so it may leave
+    /// out any after them, as FETCH FIRST asks (`exec/limit.rs`). Default: none.
     fn scan_ordered(
         self: Arc<Self>,
         tx: TxId,
