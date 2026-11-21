@@ -83,12 +83,12 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 /// query and the settings it runs under.
 const CASES: [(&str, &str, &str); 14] = [
     ("scan of one column", "SELECT SUM(A) FROM {t}", ""),
-    ("scan of one column, a row at a time", "SELECT SUM(A) FROM {t}", "EXECUTOR.BATCHES = OFF"),
+    ("scan of one column, a row at a time", "SELECT SUM(A) FROM {t}", "EXECUTOR.BATCHES = 'OFF'"),
     ("scan of all columns", "SELECT SUM(K), SUM(G), SUM(H), SUM(A), MAX(P) FROM {t}", ""),
     ("conjunct judged", "SELECT SUM(A) FROM {t} WHERE G >= 0", ""),
-    ("conjunct judged, a row at a time", "SELECT SUM(A) FROM {t} WHERE G >= 0", "EXECUTOR.BATCHES = OFF"),
+    ("conjunct judged, a row at a time", "SELECT SUM(A) FROM {t} WHERE G >= 0", "EXECUTOR.BATCHES = 'OFF'"),
     ("hash join", "SELECT COUNT(*), SUM(Y.A) FROM {t} X JOIN {t} Y ON X.H = Y.K", ""),
-    ("hash join, a row at a time", "SELECT COUNT(*), SUM(Y.A) FROM {t} X JOIN {t} Y ON X.H = Y.K", "EXECUTOR.BATCHES = OFF"),
+    ("hash join, a row at a time", "SELECT COUNT(*), SUM(Y.A) FROM {t} X JOIN {t} Y ON X.H = Y.K", "EXECUTOR.BATCHES = 'OFF'"),
     ("hash join, spilled", "SELECT COUNT(*), SUM(Y.A) FROM {t} X JOIN {t} Y ON X.H = Y.K", "MEMORY.WORK_BYTES = {w}"),
     ("grouping of 1,000 groups", "SELECT COUNT(*) FROM (SELECT G, SUM(A) FROM {t} GROUP BY G) AS Q", ""),
     ("grouping of 1,000,000 groups", "SELECT COUNT(*) FROM (SELECT H, SUM(A) FROM {t} GROUP BY H) AS Q", ""),

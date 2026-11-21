@@ -22,9 +22,10 @@ fn tables() -> (Database, Session) {
     (db, s)
 }
 
-/// The line of `plan` showing its filter.
+/// The line of `plan`'s physical plan showing its filter.
 fn filter_line(plan: &str) -> &str {
-    plan.lines().find(|l| l.contains("Filter")).unwrap_or_else(|| panic!("no filter in {plan}"))
+    let physical = plan.split("-- physical:").nth(1).unwrap_or_else(|| panic!("no physical plan in {plan}"));
+    physical.lines().find(|l| l.contains("Filter")).unwrap_or_else(|| panic!("no filter in {plan}"))
 }
 
 /// Verifies: [DESIGN] (RULES.md D650) a filter judges first the conjunct
