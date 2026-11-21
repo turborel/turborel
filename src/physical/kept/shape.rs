@@ -51,15 +51,11 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         }
         Plan::MergeAppend { .. } => same_merge(one, other),
         Plan::Parallel(p) => same_parallel(p, other),
-        Plan::Product { .. }
-        | Plan::HashJoin { .. }
-        | Plan::GroupJoin(..)
-        | Plan::IndexJoin { .. }
-        | Plan::MergeJoin(_)
         Plan::Product { .. } => same_product(one, other),
         Plan::HashJoin { .. } => same_hash_join(one, other),
         Plan::IndexJoin { .. } => same_index_join(one, other),
         Plan::MergeJoin(_)
+        | Plan::GroupJoin(..)
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
