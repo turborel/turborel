@@ -16,7 +16,7 @@ pub(super) mod sdk;
 pub(super) mod settings;
 
 /// The mutations of extensions and their processes.
-pub const PLUGINS: [Mutation; 9] = [
+pub const PLUGINS: [Mutation; 10] = [
     Mutation {
         name: "plugin-error-class-dropped",
         package: Package::Core,
@@ -106,6 +106,16 @@ pub const PLUGINS: [Mutation; 9] = [
         replacement: "        self.timeout()",
         integration: &[],
         unit: &["plugin::limits::tests::the_limits_are_the_settings_told"],
+    },
+    Mutation {
+        name: "plugin-type-process-wide",
+        package: Package::Core,
+        breaks: "an extension's type is one for every database in the process, its values made by another database's processes",
+        file: "src/plugin/bridge/types.rs",
+        original: "    let key = (owner, extension.to_owned(), name.to_owned(), ordered);",
+        replacement: "    let key = (0, extension.to_owned(), name.to_owned(), ordered);",
+        integration: &["plugin_kinds::each_database_makes_its_types_values_itself"],
+        unit: &[],
     },
 ];
 
