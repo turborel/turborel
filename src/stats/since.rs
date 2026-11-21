@@ -100,8 +100,11 @@ impl Statistics for Changed {
     fn selectivity(&self, column: usize, op: CompOp, value: &Value) -> Option<f64> {
         Some(self.column(column)?.selectivity_since(op, value, self.since))
     }
+    /// The pass's, its most rows of one value raised by the rows written
+    /// since, each of which may hold it, so it stays a bound (RULES.md
+    /// D385).
     fn frequencies(&self, column: usize) -> Option<Frequencies> {
-        self.stats.frequencies(column)
+        self.stats.frequencies(column).map(|f| Frequencies { most: f.most + self.since.changes, ..f })
     }
     fn bounds(&self, column: usize) -> Option<(Value, Value)> {
         self.stats.bounds(column)

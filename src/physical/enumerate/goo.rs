@@ -83,7 +83,7 @@ impl Space<'_> {
         pairs
             .filter_map(|(i, j)| {
                 let applied = self.applies(set(i), set(j))?;
-                Some(((i, j), self.rows_of(&applied)?))
+                Some(((i, j), self.estimate_of(&applied)?))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(pair, _)| pair)

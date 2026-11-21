@@ -21,6 +21,7 @@ mod expr;
 mod estimates;
 mod group_table;
 mod insert_values;
+mod join_estimates;
 mod join_table;
 mod joins;
 mod late;
@@ -142,8 +143,9 @@ fn second() -> [&'static [Mutation]; 44] {
         &expr::EXPR,
         &sorts::SORTS,
         &estimates::ESTIMATES,
-        &analyze::ANALYZE,
         &statistics::STATISTICS,
+        &join_estimates::JOIN_ESTIMATES,
+        &analyze::ANALYZE,
         &range_joins::RANGE_JOINS,
         &cost_model::COST_MODEL,
     ]

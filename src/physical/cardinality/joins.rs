@@ -9,8 +9,13 @@
 //! are, form a class, and a set's class keeps one row in as many as each
 //! of its columns but the least distinct has values, so an equality the
 //! others imply, which predicate transitivity adds, is not counted again.
-//! Other conjuncts are taken as independent.
+//! Other conjuncts are taken as independent. Two relations joined on
+//! several columns, or on a key, are corrected as a pair
+//! (`cardinality/composite.rs`), and a join's rows are at most the bound
+//! the most rows of one value prove (`cardinality/bounds.rs`).
 
+use super::bounds::Equality;
+use super::composite::Member;
 use super::lineage::{Over, one_table};
 use super::{Card, Estimates, at_least_one};
 use crate::logical::{Cond, Expr, LogicalPlan, cond_columns, map_cond_columns, split_and};
@@ -18,30 +23,42 @@ use crate::optimizer::is_guarded;
 use crate::value::CompOp;
 
 /// The classes of a set of equalities: of each, its members, a relation
-/// and its column's distinct values, one for each relation.
+/// and its column's distinct values, one for each relation; and the
+/// correction of each pair of relations they join on several columns or
+/// a key (`cardinality/composite.rs`).
 #[derive(Debug, Clone, Default)]
 pub(in crate::physical) struct Classes {
     members: Vec<Vec<(usize, f64)>>,
+    pairs: Vec<(usize, usize, f64)>,
 }
 
 impl Classes {
     /// Of `members`, each class's.
     pub(in crate::physical) fn new(members: Vec<Vec<(usize, f64)>>) -> Classes {
-        Classes { members }
+        Classes { members, pairs: Vec::new() }
+    }
+
+    /// Them, each pair of relations of `pairs` corrected by its factor.
+    pub(in crate::physical) fn with_pairs(self, pairs: Vec<(usize, usize, f64)>) -> Classes {
+        Classes { pairs, ..self }
     }
 
     /// The fraction of the product of the relations `has` holds that the
     /// equalities of the classes keep: of each class, one in as many as
-    /// each of its members there but the least distinct has values.
+    /// each of its members there but the least distinct has values; times
+    /// the correction of each pair both of whose relations it holds.
     pub(in crate::physical) fn fraction(&self, has: impl Fn(usize) -> bool) -> f64 {
-        self.members
+        let classes = self
+            .members
             .iter()
             .map(|members| {
                 let mut distinct: Vec<f64> = members.iter().filter(|(rel, _)| has(*rel)).map(|(_, d)| d.max(1.0_f64)).collect();
                 distinct.sort_by(f64::total_cmp);
                 distinct.iter().skip(1).map(|d| 1.0_f64 / d).product::<f64>()
             })
-            .product()
+            .product::<f64>();
+        let pairs = self.pairs.iter().filter(|&&(r, s, _)| has(r) && has(s)).map(|&(_, _, factor)| factor).product::<f64>();
+        (classes * pairs).min(1.0_f64)
     }
 }
 
@@ -115,7 +132,6 @@ impl Estimates<'_> {
         }
         let cards: Vec<Card> = chain.leaves.iter().map(|(leaf, _)| self.card_at(leaf, depth.saturating_add(1))).collect();
         let product = cards.iter().map(|c| c.rows).product::<f64>();
-        let upper = cards.iter().map(|c| c.upper).product::<f64>();
         let mut parents: Vec<usize> = (0..span(&chain)).collect();
         let mut others = Vec::new();
         let mut pairs = Vec::new();
@@ -135,14 +151,19 @@ impl Estimates<'_> {
         let rest = self.conjunction(&others, Over::One(plan));
         let classes = self.classes_of(&chain, &parents, &pairs);
         let fraction = classes.fraction(|_| true) * rest;
-        Card { rows: at_least_one(product * fraction, product), upper }
+        let leaves: Vec<&LogicalPlan> = chain.leaves.iter().map(|&(leaf, _)| leaf).collect();
+        let local = |c: usize| chain.rel_of(c).and_then(|r| Some((r, c.checked_sub(chain.leaves.get(r)?.1)?)));
+        let keys: Vec<Equality> = pairs.iter().filter_map(|&(a, b)| Some((local(a)?, local(b)?))).collect();
+        let upper = self.chain_upper(&leaves, &cards, &keys);
+        Card { rows: at_least_one(product * fraction, product).min(upper), upper }
     }
 
     /// The classes of the equalities `equated` of `chain`, by `parents`:
-    /// of each, a member of each relation, its column's distinct values.
+    /// of each, a member of each relation, its column's distinct values;
+    /// with each pair of relations corrected (`cardinality/composite.rs`).
     fn classes_of(&self, chain: &Chain<'_>, parents: &[usize], equated: &[(usize, usize)]) -> Classes {
         let mut roots: Vec<usize> = Vec::new();
-        let mut members: Vec<Vec<(usize, f64)>> = Vec::new();
+        let mut members: Vec<Vec<Member>> = Vec::new();
         for col in equated.iter().flat_map(|&(a, b)| [a, b]) {
             let (root, Some(rel)) = (find(parents, col), chain.rel_of(col)) else { continue };
             let Some(&(leaf, start)) = chain.leaves.get(rel) else { continue };
@@ -152,11 +173,13 @@ impl Estimates<'_> {
                 roots.len().saturating_sub(1)
             });
             let Some(class) = members.get_mut(at) else { continue };
-            if !class.iter().any(|(r, _)| *r == rel) {
-                class.push((rel, self.distinct(leaf, col.saturating_sub(start))));
+            if !class.iter().any(|m| m.rel == rel) {
+                let column = col.saturating_sub(start);
+                class.push(Member { rel, column, distinct: self.distinct(leaf, column) });
             }
         }
-        Classes::new(members)
+        let leaves: Vec<&LogicalPlan> = chain.leaves.iter().map(|&(leaf, _)| leaf).collect();
+        self.keyed_classes(&leaves, &members)
     }
 
     /// The fraction of `input`'s rows the equality of two of its columns

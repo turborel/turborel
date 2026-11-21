@@ -378,6 +378,9 @@ verification approach DO-178C expects (§8).
 | D381 | A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree |
 | D382 | A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff |
 | D383 | An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count |
+| D384 | Two relations joined on several columns, or on a key or a referential constraint, are estimated by the joint distinct values of the columns as a pair |
+| D385 | Each estimate has an upper bound from the most rows of one value and keys, and is never above it |
+| D386 | A hash join and an index nested-loop join are chosen by their regret over the estimate and its pessimistic rows |
 | D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
 | D389 | A pipeline run in parallel under an operator that is not one is read by batch, its scans told its hash joins' runtime filters, a scan's range judged once, and a spilled join's partitions picked by its table's hash and probed by batch |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
@@ -2346,7 +2349,6 @@ Read-ahead is an optimization and never fails a read. The job
 `turborel-read-ahead` (D55) reads STORAGE.READ_AHEAD_PAGES at a time, at
 most an eighth of the pool's frames, and leaves whatever it can't read to
 the scan.
-
 
 #### D31. The built-in engines are a row store and a column store
 
@@ -10748,6 +10750,89 @@ values, which saw every key where a sample scales from some. An
 equality of each of an index's columns with a constant then keeps one
 row in its distinct keys and not the product of each column's share.
 Each index's count is taken once for the statistics one planning asks.
+
+#### D384. Two relations joined on several columns, or on a key or a referential constraint, are estimated by the joint distinct values of the columns as a pair
+
+The classes of equalities (D302) take each class as independent of the
+others, so two relations joined on two columns kept one pair in the
+product of each column's larger distinct values. Where the columns go
+together, as a part and its supplier do in an offer, that is the pairs
+the columns could make, not those they hold, and a join of every order
+line to its one offer was estimated a fraction of its rows. Each pair of
+relations the classes join is so corrected, whenever both are in a set
+(`physical/cardinality/composite.rs`): the product over the pair's
+classes of each class's larger distinct values, over the larger of the
+two relations' joint distinct values of their columns. The correction
+depends on the set alone, so every order of joining it still gives the
+same rows, and it never lowers an estimate.
+
+A relation's joint distinct values are those of a key its columns hold,
+the table's rows; else those its statistics count together, an index of
+those columns among them (D383); else the product of each column's, at
+most the table's rows. The keys come from the catalog
+(`physical/cardinality/keys.rs`): a UNIQUE or PRIMARY KEY constraint not
+deferrable and of no period, or a unique index of columns, as no two
+rows are equal in all of a key's columns and an equality is never true
+of a null [X3.135-1986 §5.11 GR2]. A deferred constraint may be broken
+until it is checked [ISO/IEC 9075-2:2023 §4.25.2], and a period's key is
+unique only of rows whose periods overlap, so neither is one. A guess of
+one side is at most the other side's key, as the values a join matches
+to a key are taken to be among the key's. A referential constraint not
+deferrable and of no period whose referencing columns are NOT NULL makes
+that exact: each referencing row has one referenced row [§4.25.3.3,
+§11.8 GR2], so the join keeps the referencing rows times the share of the
+referenced rows the other side's filter keeps.
+
+#### D385. Each estimate has an upper bound from the most rows of one value and keys, and is never above it
+
+Each estimate carries a bound (`Card::upper`), and the estimate is never
+above it (`physical/cardinality/bounds.rs`). A table's read is at most
+its rows. A filter holding an equality of a column to one value, a
+constant, a parameter or an outer reference, keeps at most the most rows
+of one value of that column, and one row if such columns hold a key. A
+join of a set of relations to one more on an equality gives each row of
+the set at most the most rows of one value of the new relation's column,
+one of a key, the degree bound of Cai, Balazinska and Suciu, SIGMOD 2019,
+and Hertzschuch et al., CIDR 2021. A chain's bound grows from its
+relation of least bound, each step taking the relation an equality
+reaches with the fewest rows of one value. The join enumeration keeps
+each set's bound beside its rows, from the pair that first makes the
+set, so a set has one bound as it has one estimate (D302); an outer join
+adds its preserved rows. The most rows of one value are the
+statistics' (`Frequencies::most`), raised by the rows written since the
+pass, each of which may hold that value, so a table that changed keeps
+a bound.
+
+The bound is a proof only as far as the statistics are true, and at
+depth it overstates many times, so it clamps the estimate and tells how
+far an estimate may be wrong (D386); it is never taken as the estimate.
+A set holding a relation of rows given in place of the estimates (D377)
+has no bound, since those rows overrule the statistics it is drawn from.
+
+#### D386. A hash join and an index nested-loop join are chosen by their regret over the estimate and its pessimistic rows
+
+An index nested-loop join probes once for each left row, so its cost
+grows with the left's rows far faster than a hash join's, which reads
+the right whole once; an estimate low by ten times could make the index
+join many times dearer than the hash join it replaced (Leis et al.,
+"How Good Are Query Optimizers, Really?", 2015, §4.1). Both costs are
+linear in the left's rows, which are taken to lie between the estimate
+and its pessimistic rows: the estimate times PLANNER.ESTIMATE_MARGIN, at
+most the bound (D385), at least the estimate. A method's regret at some
+rows is its cost there over the cheapest method's, and the method taken
+is the one whose larger regret at the two ends is least, which for costs
+linear in the rows is its largest regret over the whole interval:
+minimax regret, as Chu, Halpern and Seshadri, PODS 1999, and Babcock and
+Chaudhuri, SIGMOD 2005, weigh plans over a range of estimates
+(`physical/robust.rs`). The join enumeration and the greedy order both
+choose so (`physical/enumerate/methods.rs`, `physical/indexed.rs`). A
+probe of a key from a left whose bound is small stays an index join, and
+a probe whose left could be large under its bound goes to the hash join
+unless the index join is cheaper even there. PLANNER.ESTIMATE_MARGIN is
+a session setting (D36), eight by default, about the median error of
+the estimates of joins of three relations that paper measures; 1
+restores the cheaper method at the estimate. A merge join keeps its
+rule (D303).
 
 #### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
 

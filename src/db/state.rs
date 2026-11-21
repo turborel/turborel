@@ -375,6 +375,7 @@ impl State {
             range_selectivity: s.number(settings::RANGE_SELECTIVITY),
             null_fraction: s.number(settings::NULL_FRACTION),
             reorder_gain: s.number(settings::REORDER_GAIN),
+            estimate_margin: s.number(settings::ESTIMATE_MARGIN),
         }
     }
 }

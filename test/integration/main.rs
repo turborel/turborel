@@ -299,6 +299,7 @@ mod replicated_state;
 mod restrict;
 mod revoke;
 mod rewrites;
+mod robust_joins;
 mod role_views;
 mod roles;
 mod roles_revoke;

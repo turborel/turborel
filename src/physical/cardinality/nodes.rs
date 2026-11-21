@@ -5,7 +5,8 @@
 //! * a filter, its input's rows times its conjuncts' selectivities, each
 //!   over the base table its columns come from (`cardinality/lineage.rs`),
 //!   an equality of two relations' columns by classes, a filter over a
-//!   product as the join it is (`cardinality/joins.rs`);
+//!   product as the join it is (`cardinality/joins.rs`), at most the
+//!   bound of its equalities to one value (`cardinality/bounds.rs`);
 //! * an operand moved over a guard (`optimizer::is_guarded`), the join of
 //!   it and the guard's one row, so its own rows times its own conjuncts':
 //!   the guard's EXISTS keeps that row or makes none of the statement's,
@@ -80,7 +81,7 @@ impl Estimates<'_> {
         if is_chain(input) {
             return self.chain(Some(cond), input, depth);
         }
-        self.card_at(input, depth).kept(self.selectivity(cond, Over::One(input)))
+        self.card_at(input, depth).kept(self.selectivity(cond, Over::One(input))).bounded(self.filter_upper(cond, input))
     }
 
     /// The card of DISTINCT of `input`: the groups of all its columns.

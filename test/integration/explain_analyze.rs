@@ -243,6 +243,8 @@ fn injected_cardinalities_change_the_plan_not_the_rows() {
     let sql = "SELECT T.V, U.W, S.X FROM T, U, S WHERE T.K = U.K AND U.K = S.K AND S.X = 1";
     let plan = |s: &Session| s.physical_plan(sql, &Params::new()).unwrap();
     let (before, rows_before) = (plan(&s), sorted(&s, sql));
+    let shown = |s: &Session| analyzed(s, sql).operators.iter().map(|o| o.estimate).collect::<Vec<_>>();
+    let unchanged = shown(&s);
     s.with_cardinalities(Injected::new().with(&["NOWHERE"], 5.0_f64));
     assert_eq!(plan(&s), before);
     // A join's rows alone, which the join enumeration takes.
@@ -252,8 +254,9 @@ fn injected_cardinalities_change_the_plan_not_the_rows() {
     let injected = plan(&s);
     assert_ne!(injected, before);
     assert_eq!(sorted(&s, sql), rows_before);
-    let a = analyzed(&s, sql);
-    assert!(a.operators.iter().any(|o| o.estimate.is_some_and(|e| e >= 1.0e7_f64)), "{}", a.text);
+    // The estimates shown come of the given rows, joined by the keys of
+    // the relations (RULES.md D384), not of the statistics'.
+    assert_ne!(shown(&s), unchanged, "{}", analyzed(&s, sql).text);
     s.with_cardinalities(Injected::new());
     assert_eq!(plan(&s), before);
 }

@@ -97,6 +97,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.UNNEST_SUBQUERIES | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.DP_BUDGET | 10000 | INTEGER FROM 1 TO 1000000 | at once | *session* |
 | PLANNER.EQUAL_SELECTIVITY | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
+| PLANNER.ESTIMATE_MARGIN | 8E0 | NUMBER FROM 1E0 TO 1E6 | at once | *session* |
 | PLANNER.INDEX_DESCENT_COST | 6E0 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | PLANNER.JOIN_ENUMERATION | ADAPTIVE | ONE OF ADAPTIVE, GREEDY | at once | *session* |
 | PLANNER.LINEARIZED_RELATIONS | 100 | INTEGER FROM 2 TO 128 | at once | *session* |
@@ -211,6 +212,7 @@ Each in a sentence:
 - **OPTIMIZER.UNNEST_SUBQUERIES**: Whether the optimizer's rule unnest_subqueries rewrites plans: ON; or OFF, as to compare plans made without it.
 - **PLANNER.DP_BUDGET**: The connected subsets of a query's joined tables up to which ADAPTIVE join ordering finds the cheapest plan exactly. Past it the search is linearized, and parts of a greedy plan are planned again by dynamic programming until this many table entries are made.
 - **PLANNER.EQUAL_SELECTIVITY**: The fraction of rows an equality keeps when the statistics do not tell.
+- **PLANNER.ESTIMATE_MARGIN**: How many times its estimated rows the planner takes a join's operand to give at worst, at most the bound its statistics prove, as it weighs probing an index for each of them against hashing: it takes the method whose cost is nearest the cheapest at both. 1 trusts the estimate alone.
 - **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, its page held by the buffer pool, a row read in sequence costing 1.
 - **PLANNER.JOIN_ENUMERATION**: How the joins of a query are ordered. ADAPTIVE orders them by dynamic programming over bushy plans, outer joins among them, linearized or guided greedily as the query grows, and GREEDY orders them left-deep, each next join the cheapest, as to compare the two.
 - **PLANNER.LINEARIZED_RELATIONS**: The most tables ADAPTIVE join ordering plans whole by linearized dynamic programming when exact search is past its budget, and the size of the parts of a greedy plan it plans again so for larger queries.

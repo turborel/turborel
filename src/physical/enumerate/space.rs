@@ -50,11 +50,12 @@ pub(super) struct Cand {
     pub(super) tree: usize,
 }
 
-/// A set's entry: its estimated rows, and its plans, the cheapest of each
-/// order.
+/// A set's entry: its estimated rows, at most its bound (RULES.md D385),
+/// and its plans, the cheapest of each order.
 #[derive(Debug, Clone)]
 pub(super) struct Entry {
     pub(super) rows: f64,
+    pub(super) upper: f64,
     pub(super) cands: Vec<Cand>,
 }
 
@@ -119,7 +120,8 @@ impl<'m> Space<'m> {
     pub(super) fn new(graph: &'m Graph, model: &'m Model) -> Space<'m> {
         let mut space = Space { graph, model, table: HashMap::default(), trees: Vec::new(), pairs: 0, written: false };
         for rel in 0..graph.n {
-            let mut entry = Entry { rows: model.rows(rel), cands: Vec::new() };
+            let upper = model.rels.get(rel).map_or(f64::INFINITY, |r| r.upper);
+            let mut entry = Entry { rows: model.rows(rel), upper, cands: Vec::new() };
             for (order, cost) in model.reads(rel) {
                 let tree = space.tree(Tree::Leaf { rel, order });
                 entry.offer(Cand { cost, order, tree });
@@ -172,30 +174,56 @@ impl<'m> Space<'m> {
         Some(Applied { op: Some(edge.op), left, right, conjuncts })
     }
 
-    /// The rows of the join of `s1` and `s2` applying `applied`, if both
-    /// have entries: the set's, if it has one already, so that every plan
-    /// of a set is costed by the same rows.
-    pub(super) fn rows_of(&self, applied: &Applied) -> Option<f64> {
+    /// The rows of the join of `s1` and `s2` applying `applied`, and its
+    /// bound by the equalities `keys` of the left's columns and the
+    /// right's, if both have entries: the set's, if it has one already, so
+    /// that every plan of a set is costed by the same rows; else of this
+    /// pair, the rows at most the bound.
+    pub(super) fn rows_of(&self, applied: &Applied, keys: &[(usize, usize)]) -> Option<(f64, f64)> {
+        let s = applied.left | applied.right;
+        if let Some(entry) = self.table.get(&s) {
+            return Some((entry.rows, entry.upper));
+        }
+        let (left, right) = (self.table.get(&applied.left)?, self.table.get(&applied.right)?);
+        let rows = self.model.joined_rows((applied.left, left.rows), (applied.right, right.rows), applied);
+        let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
+        let upper = self.model.joined_upper((applied.left, left.upper), (applied.right, right.upper), (kind, keys));
+        Some((rows.min(upper), upper))
+    }
+
+    /// The rows of the join `applied` gives, as `rows_of` says, its bound
+    /// found only where it could lower them: every bound of a join is at
+    /// least the lesser of its sides' and their product, as a column's
+    /// most rows of one value are at least one (`Model::joined_upper`).
+    pub(super) fn estimate_of(&self, applied: &Applied) -> Option<f64> {
         let s = applied.left | applied.right;
         if let Some(entry) = self.table.get(&s) {
             return Some(entry.rows);
         }
-        let (left, right) = (self.table.get(&applied.left)?.rows, self.table.get(&applied.right)?.rows);
-        Some(self.model.joined_rows((applied.left, left), (applied.right, right), applied))
+        let (left, right) = (self.table.get(&applied.left)?, self.table.get(&applied.right)?);
+        let rows = self.model.joined_rows((applied.left, left.rows), (applied.right, right.rows), applied);
+        if rows <= left.upper.min(right.upper).min(left.upper * right.upper) {
+            return Some(rows);
+        }
+        self.rows_of(applied, &self.keys(applied, (applied.left, applied.right))).map(|(bounded, _)| bounded)
     }
 
     /// Joins `s1` and `s2` if they may be, offering each plan of the join
     /// to their union's entry (`enumerate/methods.rs`); whether they were.
     pub(super) fn join(&mut self, s1: Set, s2: Set) -> bool {
         let Some(applied) = self.applies(s1, s2) else { return false };
-        let Some(rows) = self.rows_of(&applied) else { return false };
+        // The keys of one side's columns and the other's, found once for
+        // the bound and the plans of either side's order.
+        let keys = self.keys(&applied, (applied.left, applied.right));
+        let Some((rows, upper)) = self.rows_of(&applied, &keys) else { return false };
         self.pairs = self.pairs.saturating_add(1);
         let s = s1 | s2;
-        self.table.entry(s).or_insert_with(|| Entry { rows, cands: Vec::new() });
+        self.table.entry(s).or_insert_with(|| Entry { rows, upper, cands: Vec::new() });
         let kind = applied.op.and_then(|o| self.graph.ops.get(o)).map_or(Kind::Inner, |o| o.shape.kind);
         let sides = [(applied.left, applied.right), (applied.right, applied.left)];
         for &(l, r) in sides.iter().take(if kind.commutes() { 2 } else { 1 }) {
-            for (cand, tree) in self.offers(&applied, (l, r), rows) {
+            let keyed: Vec<(usize, usize)> = if l == applied.left { keys.clone() } else { keys.iter().map(|&(a, b)| (b, a)).collect() };
+            for (cand, tree) in self.offers(&applied, (l, r), (rows, &keyed)) {
                 if !self.table.get(&s).is_some_and(|entry| entry.takes(&cand)) {
                     continue;
                 }
