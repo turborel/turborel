@@ -33,6 +33,8 @@ use super::{JoinComparison, JoinProbe, PhysicalPlanner, Plan, Preserved};
 mod coordinates;
 mod expand;
 mod fan_out;
+mod fixed;
+pub(super) use fixed::Fixed;
 mod probed;
 mod routed;
 mod spatial;
@@ -327,7 +329,15 @@ impl PhysicalPlanner<'_> {
                 None => self.column_type(left, column),
             },
             LogicalPlan::Project { exprs, input } => {
-                let Some(Expr::Column(c)) = exprs.get(column) else { return None };
+                // A constant or slot a filter fixes, made a column (`indexed/fixed.rs`).
+                let e = exprs.get(column)?;
+                if let Expr::Dynamic(slot) = e {
+                    return Some(slot.data_type.clone());
+                }
+                if let Expr::Const(value) = e {
+                    return crate::exec::slot_type(value);
+                }
+                let Expr::Column(c) = e else { return None };
                 self.column_type(input, *c)
             }
             LogicalPlan::Values { types, .. } => types.get(column).cloned(),

@@ -41,10 +41,11 @@ fn stock() -> (Database, Session) {
 const LEVEL: &str = "SELECT COUNT(DISTINCT S.I) FROM L, S
     WHERE L.W = 1 AND L.D = 3 AND L.O < 25 AND L.O >= 5 AND S.W = 1 AND S.I = L.I AND S.Q < 15";
 
-/// Verifies: [DESIGN] RULES.md D404, two columns of two tables equal to
-/// one number are equated, and the join probes S's key by each line's
-/// item, the warehouse held by the number; the count is the one of a
-/// plan without the rule, which joins by hashing.
+/// Verifies: [DESIGN] RULES.md D404, D761, two columns of two tables
+/// equal to one number are equated, and the join probes S's key by each
+/// line's item, the warehouse held by the number; without the rule the
+/// join probes it still, the warehouse fixed by S's own filter and made a
+/// column of the lines, and counts the same.
 #[test]
 fn columns_equal_to_one_number_join_by_an_index() {
     let (db, a) = stock();
@@ -53,14 +54,15 @@ fn columns_equal_to_one_number_join_by_an_index() {
     let counted = sorted(&a, LEVEL);
     set_rule(&db, PREDICATE_TRANSITIVITY, false);
     let plan = a.physical_plan(LEVEL, &Params::new()).unwrap();
-    assert!(!plan.contains("IndexNestedLoop"), "{plan}");
+    assert!(plan.contains("IndexNestedLoop") && plan.contains("L.I, 1"), "{plan}");
     assert_eq!(sorted(&a, LEVEL), counted);
     assert_ne!(counted, vec!["0".to_owned()], "some items are low");
 }
 
-/// Verifies: [DESIGN] RULES.md D404, columns each equal to one parameter
-/// are equated as those equal to one number are; two different numbers
-/// equate nothing.
+/// Verifies: [DESIGN] RULES.md D404, D761, columns each equal to one
+/// parameter are equated as those equal to one number are; two different
+/// numbers equate nothing, and the join probes S's key by the warehouse
+/// its own filter fixes, made a column of the lines.
 #[test]
 fn columns_equal_to_one_parameter_join_by_an_index() {
     let (_db, a) = stock();
@@ -71,6 +73,6 @@ fn columns_equal_to_one_parameter_join_by_an_index() {
     assert!(plan.contains("IndexNestedLoop"), "{plan}");
     let apart = LEVEL.replace("S.W = 1", "S.W = 2");
     let plan = a.physical_plan(&apart, &Params::new()).unwrap();
-    assert!(!plan.contains("IndexNestedLoop"), "{plan}");
+    assert!(plan.contains("IndexNestedLoop") && plan.contains("L.I, 2"), "{plan}");
     assert_eq!(sorted(&a, &apart), sorted(&a, &apart.replace("S.I = L.I", "S.I + 0 = L.I")));
 }

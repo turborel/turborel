@@ -334,3 +334,26 @@ fn the_stock_level_query_with_slots_probes_stock() {
     let join = |text: &str| text.lines().find(|l| l.contains("IndexNestedLoop")).map(str::to_owned);
     assert_eq!(join(&plan), join(&made), "its join costed as with its values");
 }
+
+/// Verifies: [DESIGN] RULES.md D761: the STOCK-LEVEL query prepared with a
+/// `?` of its own for each warehouse, so no equality of the two tables'
+/// warehouses is known, keeps the plan that probes STOCK's key, its
+/// warehouse fixed by STOCK's own filter and its item by each line; not a
+/// hash join reading STOCK whole.
+#[test]
+fn a_prepared_stock_level_query_keeps_its_probes_by_its_own_warehouse() {
+    let (_db, s) = order_lines();
+    let p = s
+        .prepare(
+            "SELECT COUNT(DISTINCT S_I_ID) FROM ORDER_LINE, STOCK WHERE OL_W_ID = ? AND OL_D_ID = ? \
+             AND OL_O_ID < ? AND OL_O_ID >= ? AND S_W_ID = ? AND S_I_ID = OL_I_ID AND S_QUANTITY < ?",
+        )
+        .unwrap();
+    for n in 0..=i128::from(LEARNED_RUNS) + 1 {
+        let order = 4990 - n;
+        drop(s.open_prepared(&p, &[int(1), int(1), int(order), int(order - 20), int(1), int(15)]).unwrap());
+    }
+    let kept = physical(&p);
+    assert!(kept.starts_with("Some(Fixed") && kept.contains("IndexJoin") && !kept.contains("HashJoin"), "{kept}");
+    assert!(kept.contains("table: QualifiedName { auth: \"T\", ident: \"STOCK\" }"), "{kept}");
+}
