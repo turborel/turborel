@@ -9998,6 +9998,18 @@ whatever any one of them rekeyed. A key made to collide costs one
 partition the keyed hash and the rest nothing. Of keys spread as data
 spreads them, no probe nears the bound, as a table is at most half full.
 
+An operator that spills partitions its rows by a seed its work area
+draws (`Work::drawn`): XXH3-64 of a count, seeded by a word of the
+database's seed. Each partitioner of an operator, and each level that
+partitions one again, has a seed of its own, so a skewed partition
+splits by another hash. Two runs of a statement alike in one database
+draw the same seeds, so a spilled operator gives its rows in the same
+order each time, where a seed drawn afresh for each partitioner gave
+them in another. A hash join's partition mixes its keys' hash, SipHash
+keyed by the database's seed, with the drawn word by MurmurHash3's
+finalizer. The seed is the database's, drawn at random as it opens, so
+no client knows which keys share a partition.
+
 #### D358. A grouping or DISTINCT of the column store runs in parallel by morsels of its frozen groups
 
 D291 kept every part reading the column store serial while
