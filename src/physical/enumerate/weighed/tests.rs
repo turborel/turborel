@@ -7,6 +7,7 @@ use super::super::graph::Graph;
 use super::super::model::{Conj, Model, Order, Rel};
 use super::super::space::{Entry, Space};
 use crate::physical::cardinality::Classes;
+use crate::physical::cost::parallel::ROW_STORE_GAIN;
 use crate::physical::robust::Linear;
 use crate::physical::{CostModel, Degrees};
 
@@ -17,8 +18,8 @@ const DIMENSION: f64 = 100.0;
 
 /// F of `FACT` rows, joined with D of `DIMENSION` rows on a key of which
 /// F has `FACT` values, each relation's stream holding its rows and each
-/// row 24 bytes, priced by `cost`.
-fn star(cost: CostModel) -> Model {
+/// row 24 bytes, its part's threads gaining `gain` each, priced by `cost`.
+fn star(cost: CostModel, gain: f64) -> Model {
     let rel = |rows: f64| Rel {
         rows,
         upper: f64::INFINITY,
@@ -28,6 +29,7 @@ fn star(cost: CostModel) -> Model {
         probes: Vec::new(),
         held: rows,
         bytes: 24.0_f64,
+        gain,
     };
     Model {
         rels: vec![rel(FACT), rel(DIMENSION)],
@@ -45,9 +47,15 @@ fn star(cost: CostModel) -> Model {
     }
 }
 
-/// The cost of the hash join of F, the left, and D, the right, of `kind`.
+/// The cost of the hash join of F, the left, and D, the right, of `kind`,
+/// of tables of the column store.
 fn hashed(cost: CostModel, kind: Kind) -> Linear {
-    let model = star(cost);
+    hashed_gaining(cost, kind, 1.0_f64)
+}
+
+/// `hashed`, each thread past the first of a part gaining `gain`.
+fn hashed_gaining(cost: CostModel, kind: Kind, gain: f64) -> Linear {
+    let model = star(cost, gain);
     let shapes = [Shape { kind, left: bit(0), right: bit(1), reads: 0, strong: true }];
     let graph = Graph::new(2, &shapes, &[(0, bit(0) | bit(1))]);
     let space = Space::new(&graph, &model);
@@ -73,13 +81,17 @@ fn a_build_past_its_grant_costs_its_spill() {
 }
 
 /// Verifies: [DESIGN] (RULES.md D652) a hash join whose parts run on eight
-/// threads costs each row hashed an eighth, and its start once.
+/// threads over the column store costs each row hashed an eighth; over
+/// the row store, whose parts gain nothing, each row whole, and its start
+/// more.
 #[test]
 fn a_parallel_part_shares_the_hashing() {
     let alone = hashed(plain(1e9_f64), Kind::Inner);
     let degrees = Degrees { most: 8, morsel: 1_000, least: 0 };
     let shared = hashed(CostModel { degrees, ..plain(1e9_f64) }, Kind::Inner);
     assert!((shared.per_row * 8.0_f64 - alone.per_row).abs() < 1e-12_f64, "{alone:?} {shared:?}");
+    let rows = hashed_gaining(CostModel { degrees, ..plain(1e9_f64) }, Kind::Inner, ROW_STORE_GAIN);
+    assert!((rows.per_row - alone.per_row).abs() < 1e-12_f64 && rows.fixed > alone.fixed, "{alone:?} {rows:?}");
 }
 
 /// Verifies: [DESIGN] (RULES.md D653) an inner join's probing rows cost

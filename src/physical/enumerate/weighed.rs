@@ -18,7 +18,7 @@ use super::space::{Entry, Space};
 use crate::logical::LogicalPlan;
 use crate::physical::PhysicalPlanner;
 use crate::physical::cost::HASH_ROW;
-use crate::physical::cost::parallel::PART_START;
+use crate::physical::cost::parallel::{PART_START, gain_of};
 use crate::physical::cost::runtime::{kept, probed};
 use crate::physical::cost::spill::hash_spilled;
 use crate::physical::robust::Linear;
@@ -26,12 +26,13 @@ use crate::storage::cost_of;
 
 impl PhysicalPlanner<'_> {
     /// `rel`, relation `plan` of `width` columns, with the rows its read
-    /// in no order gives a parallel part and the bytes its rows hold
-    /// (`PhysicalPlanner::row_bytes_of`).
+    /// in no order gives a parallel part, the bytes its rows hold
+    /// (`PhysicalPlanner::row_bytes_of`), and what its part's threads gain.
     pub(super) fn weigh(&self, rel: &mut Rel, (plan, width): (&LogicalPlan, usize)) {
         rel.held = rel.plans.first().and_then(|(_, read)| crate::physical::parallel::stream(read)).map_or(0.0_f64, cost_of);
         let LogicalPlan::Scan { table, .. } = scanned(plan) else { return };
         rel.bytes = self.row_bytes_of(table, width);
+        rel.gain = gain_of(self.db, table);
     }
 }
 
@@ -49,6 +50,12 @@ impl Model {
     /// the part reading their joins.
     pub(super) fn held(&self, s: Set) -> f64 {
         members(s).filter_map(|r| self.rels.get(r)).map(|r| r.held).fold(0.0_f64, f64::max)
+    }
+
+    /// The least share of each thread past the first a part reading the
+    /// relations of `s` gains, the slowest's.
+    pub(super) fn gain(&self, s: Set) -> f64 {
+        members(s).filter_map(|r| self.rels.get(r)).map(|r| r.gain).fold(1.0_f64, f64::min)
     }
 
     /// The bytes a row of the join of the relations of `s` holds.
@@ -94,9 +101,10 @@ impl Space<'_> {
         let (built, probing) = if probes_left { ((r, right.rows), l) } else { ((l, left.rows), r) };
         let share = if kind == Kind::Inner && w.runtime_filters { m.filter_kept(built, probing) } else { 1.0_f64 };
         let per_row = |probes: bool| if probes { probed(1.0_f64, HASH_ROW, share) } else { HASH_ROW };
-        let (on_left, on_right) = (w.degrees.degree_of(m.held(l)), w.degrees.degree_of(m.held(r)));
+        let (on_left, on_right) = (w.degrees.speedup(m.held(l), m.gain(l)), w.degrees.speedup(m.held(r), m.gain(r)));
         let right_read = if Space::single(r).is_some() { read / on_right } else { read };
-        let start = if on_left.max(on_right) > 1.0_f64 { PART_START } else { 0.0_f64 };
+        let threads = w.degrees.degree_of(m.held(l)).max(w.degrees.degree_of(m.held(r)));
+        let start = if threads > 1.0_f64 { PART_START } else { 0.0_f64 };
         let spill = hash_spilled((built.1, m.bytes(built.0)), left.rows.max(right.rows), w.grant_bytes);
         Linear {
             fixed: right_read + per_row(!probes_left) * right.rows / on_right + start + spill,

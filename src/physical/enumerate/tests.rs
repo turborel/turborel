@@ -43,6 +43,7 @@ fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
             plans: Vec::new(),
             held: 0.0_f64,
             bytes: 0.0_f64,
+            gain: 1.0_f64,
         })
         .collect();
     let model = Model {

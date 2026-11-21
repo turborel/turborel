@@ -55,6 +55,9 @@ pub(super) struct Rel {
     pub(super) held: f64,
     /// \[DESIGN\] (RULES.md D651) The bytes a row of it holds.
     pub(super) bytes: f64,
+    /// \[DESIGN\] (RULES.md D652) The share of each thread past the first
+    /// a part reading it gains (`cost/parallel.rs`).
+    pub(super) gain: f64,
 }
 
 /// A conjunct of an inner join: the relations it reads, the operator it is

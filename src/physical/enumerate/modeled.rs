@@ -21,6 +21,7 @@ use crate::logical::LogicalPlan;
 use crate::logical::{Cond, Expr, SortKey, split_and};
 use crate::physical::PhysicalPlanner;
 use crate::physical::cardinality::{Card, Member, find};
+use crate::physical::cost::parallel::ROW_STORE_GAIN;
 use crate::physical::cost::spill::row_bytes;
 use crate::physical::estimate::{self, Known};
 use crate::physical::indexed::{access_cost, reads_table};
@@ -199,7 +200,8 @@ impl PhysicalPlanner<'_> {
         let keyed: Vec<(usize, usize)> = model.orders.iter().filter_map(|&(col, _, _)| local(col).map(|at| (col, at))).collect();
         let most = self.estimating(|e| e.asked(|| keyed.iter().map(|&(col, at)| (col, e.most_of(&leaf.plan, at))).collect()));
         let bytes = row_bytes(leaf.width, None);
-        let mut rel = Rel { rows, upper, most, reads: Vec::new(), plans: Vec::new(), probes: Vec::new(), held: 0.0_f64, bytes };
+        let mut rel =
+            Rel { rows, upper, most, reads: Vec::new(), plans: Vec::new(), probes: Vec::new(), held: 0.0_f64, bytes, gain: ROW_STORE_GAIN };
         // A relation that is no table's read, a grouping or a join, costs
         // the same in every order, so it is costed as its rows and planned
         // once, as it is realized. Planning it here too, its own relations

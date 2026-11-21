@@ -65,14 +65,15 @@ const JOINED: i32 = 6_000;
 /// Rows of W, whose rows outgrow the least work area sorted.
 const WIDE: i32 = 16_000;
 
-/// Schema K: L of `JOINED` rows, K and F from 0; R of as many, K
+/// Schema K: L of `JOINED` rows of the column store, whose parts gain
+/// their degree, K and F from 0; R of as many, K
 /// indexed; W of `WIDE` rows, K indexed and scattered, P a text of 600
 /// characters; the statistics gathered, so W's rows are known to be wide.
 fn joined() -> Database {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION K
-           CREATE TABLE L (K INTEGER NOT NULL, F INTEGER NOT NULL)
+           CREATE TABLE L (K INTEGER NOT NULL, F INTEGER NOT NULL) USING columnstore
            CREATE TABLE R (K INTEGER NOT NULL, V INTEGER)
            CREATE TABLE W (K INTEGER NOT NULL, P VARCHAR(2000))",
     )

@@ -12317,6 +12317,13 @@ bench measures it, so a part only just past the least rows gains less
 than its degree. The pass still marks the parts; the costs only foresee
 it.
 
+A part gains only what its tables let its threads gain. The calibration
+bench measures a part over the row store no faster on eight threads than
+one thread reading by batch, so a row-store part's threads past the first
+gain nothing in its cost, and a plan is never chosen for a gain its part
+does not give. A column-store part gains its whole degree. The row
+store's share rises as its parallel parts are measured faster.
+
 #### D653. A hash join's cost counts the probing rows its runtime filter leaves
 
 A hash join over batches makes a runtime filter of its built keys

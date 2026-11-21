@@ -8,10 +8,12 @@
 //! operand's rows are shared by its part's threads, where an index
 //! nested-loop join's probes run on the statement's thread, so an index
 //! join is no longer taken over a hash join that eight threads would run
-//! (finding N7 of the planner's review). A part's threads cost
+//! (finding N7 of the planner's review), as far as a part's tables let its
+//! threads gain (`ROW_STORE_GAIN`). A part's threads cost
 //! `PART_START` to begin, as `bench/analytics/costs.rs` measures it, so a
 //! part only just past the least rows gains less than its degree.
 
+use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::settings::{EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS};
 use crate::storage::cost_of;
@@ -20,6 +22,20 @@ use crate::storage::cost_of;
 /// a scan: its workers woken, its morsels handed out and its pieces
 /// merged (`bench/analytics/costs.rs`, its part of two sizes).
 pub(in crate::physical) const PART_START: f64 = 2_600.0;
+
+/// \[DESIGN\] The share of each thread past the first by which a part
+/// reading a table of the row store runs faster: none, as a part of eight
+/// threads over the row store measures no faster than one thread by
+/// batch (`bench/analytics/costs.rs`, its scan of eight threads), so a
+/// plan is never chosen for a gain its part does not give. The column
+/// store's parts gain their whole degree.
+pub(in crate::physical) const ROW_STORE_GAIN: f64 = 0.0;
+
+/// The share of each thread past the first a part reading `table` gains
+/// (`ROW_STORE_GAIN`).
+pub(in crate::physical) fn gain_of(db: &State, table: &QualifiedName) -> f64 {
+    if db.storage_of(table).is_ok_and(|s| s.keeps_columns()) { 1.0_f64 } else { ROW_STORE_GAIN }
+}
 
 /// What the settings ask of a statement's parts: the most threads one
 /// runs on, the rows of a morsel, and the least rows one reads in
@@ -63,5 +79,11 @@ impl Degrees {
     /// `degree` of rows as a cost.
     pub(in crate::physical) fn degree_of(self, rows: f64) -> f64 {
         cost_of(self.degree(crate::physical::parallel::rows_of(rows)))
+    }
+
+    /// How many times faster a part whose tables hold `rows` rows runs on
+    /// its degree than alone, each thread past the first gaining `gain`.
+    pub(in crate::physical) fn speedup(self, rows: f64, gain: f64) -> f64 {
+        1.0_f64 + (self.degree_of(rows) - 1.0_f64) * gain.clamp(0.0, 1.0)
     }
 }
