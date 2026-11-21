@@ -112,8 +112,9 @@ mod tests {
     use crate::hash::HashFunction;
     use crate::hash::crc::{CRC32_ISCSI, Crc};
 
-    /// Writers owning one page take turns: each change they make under
-    /// ownership, read then written, is kept, and the waits are counted.
+    /// Verifies: [DESIGN] RULES.md D503, writers owning one page take turns:
+    /// each change they make under ownership, read then written, is kept,
+    /// and the waits are counted.
     #[test]
     fn owners_of_a_page_take_turns() {
         let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
