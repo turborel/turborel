@@ -197,7 +197,7 @@ impl BufferPool {
     /// capture owes it (`capture.rs`).
     pub(super) fn held_for_writing<'a>(&self, frame: &'a Frame) -> PageMut<'a> {
         let pin = Pin(frame);
-        let content = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+        let content = frame.latched();
         if frame.owed.load(Ordering::Acquire) {
             self.owed_copy(frame, &content);
         }

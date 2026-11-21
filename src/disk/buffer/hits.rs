@@ -61,7 +61,7 @@ impl Hints {
     }
 
     /// The frame `key` was last found in, if any.
-    fn frame_of(&self, key: Key) -> Option<usize> {
+    pub(super) fn frame_of(&self, key: Key) -> Option<usize> {
         let hinted = self.slot(key)?.load(Ordering::Relaxed);
         usize::try_from(hinted.checked_sub(1)?).ok()
     }
@@ -98,7 +98,7 @@ impl BufferPool {
             return None;
         }
         self.hints.hit();
-        Some(PageRef { content, _pin: None })
+        Some(PageRef { content, frame, _pin: None })
     }
 
     /// \[DESIGN\] Page `id` of pager file `file`, held for reading if a frame
@@ -119,7 +119,7 @@ impl BufferPool {
         let Some(frame) = self.settled_holding(pinned, key)? else { return Ok(None) };
         self.hints.note(key, pinned.0);
         let pin = Pin(frame);
-        Ok(Some(PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), _pin: Some(pin) }))
+        Ok(Some(PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), frame, _pin: Some(pin) }))
     }
 }
 

@@ -15,7 +15,7 @@
 
 use std::mem;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 mod ahead;
 mod capture;
@@ -43,15 +43,6 @@ type Map<'a> = RwLockWriteGuard<'a, Xxh3Map<Key, usize>>;
 /// A frame's content, latched exclusively.
 type Latch<'a> = RwLockWriteGuard<'a, Vec<u8>>;
 
-/// `frame` latched exclusively, if no one holds its latch now.
-fn try_latch(frame: &Frame) -> Option<Latch<'_>> {
-    match frame.content.try_write() {
-        Ok(latch) => Some(latch),
-        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-        Err(TryLockError::WouldBlock) => None,
-    }
-}
-
 /// Locks a shard's map exclusively. The pool holds it over no plug-in
 /// call, so a poisoned one is used as it is.
 fn write_map(map: &RwLock<Xxh3Map<Key, usize>>) -> Map<'_> {
@@ -67,7 +58,7 @@ const REUSED_BYTES: usize = 64 * 1024;
 
 /// How a claimed frame is filled.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Fill {
+pub(super) enum Fill {
     /// With its page's content, read from its file.
     Read,
     /// With no content: a page just allocated.
@@ -110,6 +101,7 @@ impl BufferPool {
             counters: Counters::default(),
             hints: super::hits::Hints::new(frames),
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
+            number: super::versions::next_pool(),
             queued: Queued::default(),
             dirtied: Dirtied::default(),
             owed: Owed::default(),
@@ -281,7 +273,7 @@ impl BufferPool {
         }
         let (frame, missed) = self.hold(key, Fill::Read)?;
         let pin = Pin(frame);
-        Ok((PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), _pin: Some(pin) }, missed))
+        Ok((PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), frame, _pin: Some(pin) }, missed))
     }
 
     /// Holds page `id` of pager file `file` for writing; it is dirty from
@@ -365,7 +357,7 @@ impl BufferPool {
             }
             // Held: pinned, or latched by a read that hit by its hint.
             let pinned = frame.pins.load(Ordering::Acquire) > 0;
-            let latch = if pinned { None } else { try_latch(frame) };
+            let latch = if pinned { None } else { frame.try_latched() };
             let Some(mut content) = latch else {
                 drop(map);
                 if !wait {
@@ -401,7 +393,7 @@ impl BufferPool {
 impl BufferPool {
     /// Pins the frame holding `key`, filling one if none does; the hint of
     /// `key` the frame. Whether it filled one.
-    fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
+    pub(super) fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
         loop {
             if let Some(pinned) = self.pin_mapped(key)? {
                 if let Some(frame) = self.settled_holding(pinned, key)? {
@@ -467,7 +459,7 @@ impl BufferPool {
                 return Err(e);
             }
         }
-        *frame.content.write().unwrap_or_else(PoisonError::into_inner) = content;
+        *frame.latched() = content;
         match fill {
             Fill::Empty => self.made_dirty(frame),
             Fill::Read => frame.dirty.store(false, Ordering::Release),
@@ -484,7 +476,7 @@ impl BufferPool {
     /// the error returned.
     fn emptied(&self, key: Key, claim: Claim) -> Result<Vec<u8>> {
         let frame = self.frame(claim.frame)?;
-        let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
+        let old_content = mem::take(&mut *frame.latched());
         if let Some(old) = claim.write_back {
             let written = if claim.owed { self.owed_now(old, &old_content) } else { self.write_back(old, &old_content) };
             if let Err(e) = written {
@@ -526,7 +518,7 @@ impl BufferPool {
         if let Ok((mut map, mut old_map)) = self.maps(key, old) {
             map.remove(&key);
             old_map.as_mut().unwrap_or(&mut map).insert(old, index);
-            let mut latch = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+            let mut latch = frame.latched();
             frame.set_key(Some(old));
             *latch = content;
         }
@@ -540,7 +532,7 @@ impl BufferPool {
         let Some(frame) = self.frames.get(index) else { return };
         if let Ok(mut map) = self.map(key) {
             map.remove(&key);
-            let _latch = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+            let _latch = frame.latched();
             frame.set_key(None);
             lock_builtin(&self.empty).push(index);
         }
