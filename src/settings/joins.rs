@@ -19,8 +19,8 @@ pub const LINEARIZED_RELATIONS: Key = Key(81);
 /// PLANNER.RANGE_JOINS.
 pub const RANGE_JOINS: Key = Key(88);
 /// PLANNER.ESTIMATE_MARGIN, at its key's place after the range joins'
-/// setting and the grouped joins' (RULES.md D386).
-pub const ESTIMATE_MARGIN: Key = Key(90);
+/// setting (RULES.md D386).
+pub const ESTIMATE_MARGIN: Key = Key(89);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
