@@ -59,7 +59,6 @@
 //! commit whose changes can't be read back counts as committed and is never
 //! stamped.
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -82,6 +81,7 @@ use stamps::Unstamped;
 pub(in crate::engine::rows) use status::Statuses;
 
 use super::options::Bounds;
+use super::undo::{Held, Seen};
 use super::version::{Maker, Version};
 use super::{RowTable, key};
 use crate::catalog::TableDesc;
@@ -372,24 +372,26 @@ impl RowTable {
 
     /// As `visible_from`, of a newest version read into `newest`: its own
     /// record is borrowed, not copied, as it is what most reads see.
-    pub(super) fn visible_in<'b>(&self, newest: &'b [u8], reader: Reader) -> Result<Option<Cow<'b, [u8]>>> {
+    pub(super) fn visible_in<'b>(&self, newest: &'b [u8], reader: Reader) -> Result<Option<Seen<'b>>> {
         let version = Version::parse(newest)?;
         if reader.sees(self.maker(&version)) {
-            return Ok((!version.deleted).then_some(Cow::Borrowed(version.record)));
+            return Ok((!version.deleted).then_some(Seen::Borrowed(version.record)));
         }
         let Some(at) = version.older else { return Ok(None) };
-        Ok(self.visible_from(self.undo.read(at)?, reader)?.map(Cow::Owned))
+        Ok(self.visible_from(self.undo.read(at)?, reader)?.map(Seen::Held))
     }
 
     /// The record of the version of the row whose newest version is
-    /// `newest` that `reader` sees, if it sees the row.
-    pub(super) fn visible_from(&self, newest: Vec<u8>, reader: Reader) -> Result<Option<Vec<u8>>> {
-        let mut bytes = newest;
+    /// `newest` that `reader` sees, if it sees the row: the bytes of the
+    /// version it ends, narrowed, not copied out (`undo/held.rs`).
+    pub(super) fn visible_from(&self, newest: impl Into<Held>, reader: Reader) -> Result<Option<Held>> {
+        let mut bytes = newest.into();
         loop {
             let older = {
                 let version = Version::parse(&bytes)?;
                 if reader.sees(self.maker(&version)) {
-                    return Ok((!version.deleted).then(|| version.record.to_vec()));
+                    let record = version.record.len();
+                    return Ok((!version.deleted).then(|| bytes.last(record)));
                 }
                 version.older
             };
@@ -429,7 +431,7 @@ impl RowTable {
             let k = key(change.id);
             let inserted = change.before.is_none() && change.appended.is_none();
             let before = match (change.before, change.appended) {
-                (Some(own), _) => Some(own),
+                (Some(own), _) => Some(Held::from(own)),
                 (None, Some(at)) => Some(self.undo.read(at)?),
                 (None, None) => None,
             };
@@ -522,7 +524,7 @@ impl RowTable {
         columns: &[usize],
     ) -> Result<Vec<(RowId, Row)>> {
         let mut found = Vec::new();
-        let mut bytes = newest;
+        let mut bytes = Held::from(newest);
         loop {
             let (older, readable_before) = {
                 let version = Version::parse(&bytes)?;

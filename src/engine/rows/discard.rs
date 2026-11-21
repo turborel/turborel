@@ -15,6 +15,7 @@ use std::sync::atomic::Ordering;
 
 use super::RowTable;
 use super::ids::row_id;
+use super::undo::Held;
 use super::version::Version;
 use crate::engine::tree::Direction;
 use crate::error::Result;
@@ -33,7 +34,7 @@ impl RowTable {
         for entry in self.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward) {
             let (key, newest) = entry?;
             let id = row_id(&key)?;
-            let mut bytes = newest;
+            let mut bytes = Held::from(newest);
             loop {
                 let version = Version::parse(&bytes)?;
                 if !version.deleted {
