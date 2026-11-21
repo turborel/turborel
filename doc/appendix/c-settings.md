@@ -46,7 +46,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | COLUMNSTORE.HEADER_CACHE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | DIAGNOSTICS.LEVEL | INFO | ONE OF ERROR, WARNING, INFO | at once |  |
 | DIAGNOSTICS.SLOW_STATEMENT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
-| EXECUTOR.BATCHED_INDEX_JOINS | ON | ONE OF ON, OFF | at once | *session* |
+| EXECUTOR.BATCHED_INDEX_JOINS | OFF | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.BATCHES | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.DECORRELATE_AFTER_RUNS | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
 | EXECUTOR.DEGREE | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
@@ -159,7 +159,7 @@ Each in a sentence:
 - **COLUMNSTORE.HEADER_CACHE_BYTES**: The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY.BUDGET_BYTES as they are held; 0 for none, each read as it is needed.
 - **DIAGNOSTICS.LEVEL**: The least level of the events told to the diagnostics: ERROR, those alone; WARNING, warnings too; INFO, every event.
 - **DIAGNOSTICS.SLOW_STATEMENT_MS**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
-- **EXECUTOR.BATCHED_INDEX_JOINS**: Whether an index join probes a unique index for a batch of its outer rows at a time, their keys sorted and each found once: ON; or for each outer row as it comes, OFF, as to compare the two. Its rows are the same either way.
+- **EXECUTOR.BATCHED_INDEX_JOINS**: Whether an index join probes a unique index for a batch of its outer rows at a time, their keys sorted and each found once: ON; or for each outer row as it comes, OFF, the default. Its rows are the same either way.
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **EXECUTOR.DEGREE**: The most threads a statement's query runs on at once, its own among them; 0, the default, for as many as the workers, and 1 for its own thread alone. Its rows are the same either way.

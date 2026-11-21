@@ -100,7 +100,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
 /// FULL, EXECUTOR.BATCHED_INDEX_JOINS is on, and the index's keys are
 /// unique (`indexed/batched.rs`).
 fn batched_of((probe, index, alone): (&JoinProbe, &str, bool), db: &State) -> Option<Batched> {
-    let on = if let Value::Char(s) = db.settings.get(crate::settings::EXECUTOR_BATCHED_INDEX_JOINS) { s != "OFF" } else { true };
+    let on = if let Value::Char(s) = db.settings.get(crate::settings::EXECUTOR_BATCHED_INDEX_JOINS) { s == "ON" } else { false };
     (alone && on).then(|| db.catalog.index(index).and_then(|desc| Batched::of(probe, desc))).flatten()
 }
 

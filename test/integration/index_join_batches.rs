@@ -37,6 +37,7 @@ fn physical(s: &Session, sql: &str) -> String {
 /// The rows of `sql` in order, or its failure, with index joins by batch
 /// and row by row: both alike.
 fn alike(s: &Session, sql: &str) -> Result<Vec<String>, turborel::error::Code> {
+    exec(s, "SET EXECUTOR.BATCHED_INDEX_JOINS = 'ON'").unwrap();
     let batched = rows(s, sql);
     exec(s, "SET EXECUTOR.BATCHED_INDEX_JOINS = 'OFF'").unwrap();
     let alone = rows(s, sql);
@@ -81,6 +82,7 @@ fn a_failure_is_raised_at_its_row() {
     let s = db.session("B");
     let sql = "SELECT O.V, T.N FROM O JOIN T ON O.K = T.K AND 100 / (O.V - 250) > -1000 WHERE O.V < 300";
     assert!(alike(&s, sql).is_err());
+    exec(&s, "SET EXECUTOR.BATCHED_INDEX_JOINS = 'ON'").unwrap();
     let batched = delivered(&s, sql);
     exec(&s, "SET EXECUTOR.BATCHED_INDEX_JOINS = 'OFF'").unwrap();
     assert_eq!(batched, delivered(&s, sql), "the rows before the failure");

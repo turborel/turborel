@@ -3,7 +3,7 @@
 //! statement asks of them, its degree, the rows of its morsels and the
 //! least rows it reads in parallel.
 
-use super::builtin::{ON, SWITCHES, at_least, count, defined, text};
+use super::builtin::{OFF, SWITCHES, at_least, count, defined, text};
 use super::{Definition, Effect, Key, Kind};
 
 /// EXECUTOR.WORKERS.
@@ -59,9 +59,9 @@ pub(super) fn definitions() -> [Definition; 5] {
             "The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.",
         ),
         defined(
-            ("EXECUTOR.BATCHED_INDEX_JOINS", Kind::Choice(SWITCHES), text(ON)),
+            ("EXECUTOR.BATCHED_INDEX_JOINS", Kind::Choice(SWITCHES), text(OFF)),
             SESSION,
-            "Whether an index join probes a unique index for a batch of its outer rows at a time, their keys sorted and each found once: ON; or for each outer row as it comes, OFF, as to compare the two. Its rows are the same either way.",
+            "Whether an index join probes a unique index for a batch of its outer rows at a time, their keys sorted and each found once: ON; or for each outer row as it comes, OFF, the default. Its rows are the same either way.",
         ),
     ]
 }

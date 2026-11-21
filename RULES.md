@@ -11225,7 +11225,7 @@ key that repeats is found once; then each outer row joined in its order
 with what its key found. A batch starts small and doubles to a bound, so
 a query that asks for few rows reads few beyond them. A failure binding,
 searching or fetching is raised at its row, after the rows before it.
-EXECUTOR.BATCHED_INDEX_JOINS turns it off (D36).
+It runs while EXECUTOR.BATCHED_INDEX_JOINS is ON, OFF by default (D36).
 
 ## 2. Project layout
 
