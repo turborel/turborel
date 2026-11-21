@@ -23,7 +23,7 @@ use crate::error::Result;
 use crate::exec::table::{Candidates, Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal};
 use crate::exec::{RowIter, broken, execute};
 use crate::physical::{JoinKey, Plan};
-use crate::storage::Batch;
+use crate::storage::{Batch, Column};
 use crate::txn::TxId;
 
 /// \[DESIGN\] (RULES.md D368) The bytes a built row costs its join beyond
@@ -172,7 +172,12 @@ pub(super) fn read(right: Plan, (keys, filtered): (&[JoinKey], &[usize]), limit:
             return Ok(Read::Rest(Rest { batches: Box::new(read.into_iter().chain(batches)), columns, width }));
         }
     }
-    let batch = Batch::joined(parts);
+    let mut batch = Batch::joined(parts);
+    // Of an operand that gave no batch, a column of no row for each it
+    // holds, so a joined batch has the columns its layout says.
+    if batch.columns.len() < columns.len() {
+        batch.columns.resize_with(columns.len(), || Column::nulls(0));
+    }
     let nulls: Vec<bool> = keys.iter().map(|k| k.nulls).collect();
     let mut held = HeldRight {
         batch: Arc::new(batch),
