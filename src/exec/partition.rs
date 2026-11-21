@@ -9,7 +9,6 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::hash::{BuildHasher, RandomState};
 
 use super::work::Work;
 use crate::error::{Code, Result, SqlError};
@@ -18,17 +17,11 @@ use crate::spill::{Records, SpillRun, SpilledLobs, record_room};
 use crate::storage::Row;
 use crate::value::types::TypeRegistry;
 
-/// A seed drawn at random: of the keys the standard library draws its
-/// SipHash-1-3 keys at random by, the hash of nothing.
-pub(super) fn drawn() -> u64 {
-    RandomState::new().hash_one(())
-}
-
 /// Records written to partitions by the XXH3-64 of a key of theirs, of
 /// a seed of their own.
 pub(super) struct Partitioner {
-    /// The seed of its hash, XXH3-64, drawn at random as it is made, so
-    /// no client knows which keys share a partition.
+    /// The seed of its hash, XXH3-64, its work area's to draw
+    /// (`Work::drawn`).
     seed: u64,
     runs: Vec<Box<dyn SpillRun>>,
 }
@@ -41,7 +34,7 @@ impl Partitioner {
     /// The spill area's.
     pub(super) fn new(count: usize, work: &mut Work) -> Result<Partitioner> {
         let runs = (0..count.max(1)).map(|_| work.run()).collect::<Result<_>>()?;
-        Ok(Partitioner { seed: drawn(), runs })
+        Ok(Partitioner { seed: work.drawn(), runs })
     }
 
     /// As many partitions as `work` writes at once, of SPILL.PARTITIONS.

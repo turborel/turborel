@@ -18,6 +18,7 @@ use std::iter::Peekable;
 
 use super::super::work::Work;
 use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed};
+use super::indexed::Reads;
 use super::rescan::{Pass, Rescanned};
 use crate::error::Result;
 use crate::exec::Db;
@@ -31,11 +32,23 @@ use crate::value::{SortOrder, Value, key_equal};
 /// frame every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn merged(plan: Plan, db: &Db, tx: TxId) -> RowIter {
+    let reads = || -> Reads {
+        let held = db.clone();
+        Box::new(move |operand| execute(operand, &held, tx))
+    };
+    merged_over(plan, (reads(), reads()), db, tx)
+}
+
+/// \[DESIGN\] (RULES.md D600) The rows of the merge join `plan`, each
+/// operand's rows those its `reads` gives of it, as a stream told a
+/// runtime filter gives them.
+#[inline(never)]
+pub(in crate::exec) fn merged_over(plan: Plan, (read_left, read_right): (Reads, Reads), db: &Db, tx: TxId) -> RowIter {
     let Plan::MergeJoin(plan) = plan else { return failed(broken("a merge join is not one")) };
     let physical::MergeJoin { outer, left, right, key, cond, widths, .. } = *plan;
     Box::new(MergeJoin {
-        left: execute(left, db, tx),
-        right: execute(right, db, tx).peekable(),
+        left: read_left(left),
+        right: read_right(right).peekable(),
         key,
         cond,
         nulls: outer.then(|| vec![Value::Null; widths.1]),

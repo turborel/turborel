@@ -24,10 +24,12 @@
 use std::sync::Arc;
 
 use super::stream::{self, Batches};
+use super::told;
+use crate::storage::Batch;
 use crate::db::State;
 use crate::exec::table::RuntimeFilter;
-use crate::logical::Expr;
-use crate::physical::Plan;
+use crate::logical::{Cond, Expr};
+use crate::physical::{Plan, SemiJoin, SemiMethod};
 use ordered::Placed;
 
 mod ordered;
@@ -78,14 +80,16 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         }
         // A semi join's columns are its left's (RULES.md D540).
         Plan::SemiJoin(s) => stream::layout(&s.left, db).filter(|&(_, width)| column < width).map(|_| (column, false)),
+        // A whole sort of a stream's every column keeps a row's place.
+        Plan::Sort { most: None, .. } => stream::layout(plan, db).map(|_| (column, false)),
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => {
+            told::layout(plan, db)?;
+            row_by_row(plan, column, db)
+        }
         Plan::Nearest(_)
-        | Plan::IndexScan { .. }
-        | Plan::IndexJoin { .. }
-        | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
-        | Plan::Aggregate { .. }
         | Plan::Append { .. }
         | Plan::MergeAppend { .. }
         | Plan::SetOp { .. }
@@ -105,6 +109,60 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         // An analyzed plan's count of an operator's rows passes them on.
         Plan::Counted(_) => Some((column, false)),
     }
+}
+
+/// \[DESIGN\] (RULES.md D600) Of an operator run row by row whose rows a
+/// stream gathers (`told.rs`), the column of its input a filter of its
+/// column `column` judges, and whether it crossed an equality: an index
+/// scan's, its table's; an inner index join's, of its left's columns; an
+/// inner merge join's, of its left's columns or the left key its right
+/// key equals; a grouping's, the input column of a grouping column. A
+/// join passes none if the rest of its condition can raise (RULES.md
+/// D15).
+fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
+    match plan {
+        Plan::IndexScan { .. } => Some((column, false)),
+        Plan::IndexJoin { left, cond, .. } => (!raises(cond.as_ref()) && column < stream::layout(left, db)?.1).then_some((column, false)),
+        Plan::MergeJoin(m) => {
+            if raises(m.cond.as_ref()) {
+                return None;
+            }
+            column.checked_sub(m.widths.0).map_or(Some((column, false)), |r| (r == m.key.right).then_some((m.key.left, true)))
+        }
+        Plan::Aggregate { groups, .. } => groups.get(column).map(|&g| (g, false)),
+        Plan::SeqScan { .. }
+        | Plan::Nearest(_)
+        | Plan::Filter { .. }
+        | Plan::Project { .. }
+        | Plan::HashJoin { .. }
+        | Plan::RangeJoin(_)
+        | Plan::Product { .. }
+        | Plan::OuterJoin { .. }
+        | Plan::Append { .. }
+        | Plan::MergeAppend { .. }
+        | Plan::SetOp { .. }
+        | Plan::Values { .. }
+        | Plan::System { .. }
+        | Plan::Sort { .. }
+        | Plan::Limit { .. }
+        | Plan::Distinct { .. }
+        | Plan::Recursive { .. }
+        | Plan::Unnest(..)
+        | Plan::Window { .. }
+        | Plan::Polymorphic(..)
+        | Plan::Recognize { .. }
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. }
+        | Plan::Parallel(..)
+        | Plan::SemiJoin(_)
+        | Plan::Counted(_) => None,
+    }
+}
+
+/// Whether a join's rest of its condition `cond` can raise or reads a
+/// subquery.
+fn raises(cond: Option<&Cond>) -> bool {
+    cond.is_some_and(|c| c.can_raise() || c.has_subquery())
 }
 
 /// The column of a projection's input that its column `column` is, of
@@ -146,6 +204,18 @@ pub(in crate::exec) fn built_side(plan: &Plan, told: &[Told], db: &State) -> Vec
 /// filter of its column `column` judges as it builds it, and whether it
 /// crossed an equality of keys to it (`built_side`).
 fn built_column(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
+    if let Plan::MergeJoin(m) = plan {
+        // Its right operand, as `row_by_row` passes its left (RULES.md D600).
+        told::layout(plan, db)?;
+        if raises(m.cond.as_ref()) {
+            return None;
+        }
+        let right = column.checked_sub(m.widths.0).map(|r| (r, false));
+        return right.or_else(|| (column == m.key.left).then_some((m.key.right, true)));
+    }
+    if let Plan::SemiJoin(s) = plan {
+        return semi_built(s, column);
+    }
     let Plan::HashJoin { left, keys, .. } = plan else { return None };
     let (_, width) = stream::layout(left, db)?;
     column.checked_sub(width).map(|r| (r, false)).or_else(|| keys.iter().find(|k| k.left == column).map(|k| (k.right, true)))
@@ -165,22 +235,73 @@ pub(super) fn parted(plan: &Plan, told: &[Told], db: &State) -> (Vec<Told>, Vec<
 /// in no order, each operator on the way taking it down (`passed`), an
 /// inner hash join to either operand (`built_side`).
 pub(super) fn reaches(plan: &Plan, column: usize, db: &State) -> bool {
-    if let Plan::HashJoin { right, .. } = plan
-        && built_column(plan, column, db).is_some_and(|(r, _)| reaches(right, r, db))
-    {
+    if join_right(plan).is_some_and(|right| built_column(plan, column, db).is_some_and(|(r, _)| reaches(right, r, db))) {
         return true;
     }
     let Some((next, _)) = passed(plan, column, db) else { return false };
-    if let Plan::Filter { input, .. } | Plan::Project { input, .. } = plan {
-        reaches(input, next, db)
-    } else if let Plan::Counted(c) = plan {
-        reaches(&c.input, next, db)
-    } else if let Plan::HashJoin { left, .. } = plan {
-        reaches(left, next, db)
-    } else if let Plan::SemiJoin(s) = plan {
-        reaches(&s.left, next, db)
-    } else {
-        matches!(plan, Plan::SeqScan { .. })
+    match below(plan) {
+        Some(input) => reaches(input, next, db),
+        // A grouping judges it of its input's batches at least.
+        None => matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Aggregate { .. }),
+    }
+}
+
+/// \[DESIGN\] (RULES.md D600) The column of the right operand of the
+/// semi join `s` a filter of its column `column` judges as it builds it:
+/// the right key a left key equals. A right row the filter drops matches
+/// only left rows it drops. Of an antijoin none, as a right row of a null
+/// key it drops would change what NOT IN finds of every left row; of a
+/// semi join whose condition can raise none (RULES.md D15).
+fn semi_built(s: &SemiJoin, column: usize) -> Option<(usize, bool)> {
+    if s.anti || !matches!(s.method, SemiMethod::Hash) || raises(s.cond.as_ref()) {
+        return None;
+    }
+    s.keys.iter().find(|k| k.left == column).map(|k| (k.right, true))
+}
+
+/// The right operand of the join `plan`: a hash join's, a merge join's or
+/// a semi join's.
+fn join_right(plan: &Plan) -> Option<&Plan> {
+    if let Plan::HashJoin { right, .. } = plan {
+        return Some(right);
+    }
+    if let Plan::SemiJoin(s) = plan {
+        return Some(&s.right);
+    }
+    if let Plan::MergeJoin(m) = plan { Some(&m.right) } else { None }
+}
+
+/// The input of `plan`, or its left operand, that a filter `passed` goes
+/// down to, other than a scan's and a grouping's.
+fn below(plan: &Plan) -> Option<&Plan> {
+    match plan {
+        Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, .. } => Some(input),
+        Plan::HashJoin { left, .. } | Plan::IndexJoin { left, .. } => Some(left),
+        Plan::Counted(c) => Some(&c.input),
+        Plan::SemiJoin(s) => Some(&s.left),
+        Plan::MergeJoin(m) => Some(&m.left),
+        Plan::SeqScan { .. }
+        | Plan::IndexScan { .. }
+        | Plan::Aggregate { .. }
+        | Plan::Nearest(_)
+        | Plan::RangeJoin(_)
+        | Plan::Product { .. }
+        | Plan::OuterJoin { .. }
+        | Plan::Append { .. }
+        | Plan::MergeAppend { .. }
+        | Plan::SetOp { .. }
+        | Plan::Values { .. }
+        | Plan::System { .. }
+        | Plan::Limit { .. }
+        | Plan::Distinct { .. }
+        | Plan::Recursive { .. }
+        | Plan::Unnest(..)
+        | Plan::Window { .. }
+        | Plan::Polymorphic(..)
+        | Plan::Recognize { .. }
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => None,
     }
 }
 
@@ -217,6 +338,43 @@ pub(in crate::exec) fn applied(batches: Batches, told: Vec<Told>, columns: &[usi
         let rows = ordered::judged(&mut placed, (&batch, rows), db.functions.kernels())?;
         Ok((batch, rows))
     }))
+}
+
+/// \[DESIGN\] (RULES.md D600, D15) `batches`, of a grouping's input, the
+/// rows each of `told` keeps of each batch kept, as `applied` keeps them
+/// above an operator, and the warning of a null eliminated by a set
+/// function [ISO/IEC 9075-2:2023 §10.9 GR4b] raised if a row a filter
+/// dropped holds a null in a column at a place of `args`, which the set
+/// functions take: the grouping warns as it would of every row.
+pub(super) fn applied_warning(
+    batches: Batches,
+    told: Vec<Told>,
+    (columns, args): (&[usize], Vec<usize>),
+    (db, tx): (&crate::exec::Db, crate::txn::TxId),
+) -> Batches {
+    let mut placed: Vec<Placed> = told
+        .into_iter()
+        .filter_map(|t| columns.iter().position(|&c| c == t.column).map(|at| Placed::new(t.filter, (at, t.moved), (true, true))))
+        .collect();
+    if placed.is_empty() {
+        return batches;
+    }
+    let runner = crate::exec::Runner::new(db, tx);
+    Box::new(batches.map(move |kept| {
+        let (batch, rows) = kept?;
+        let given = crate::storage::sel::places_of(rows.clone(), batch.rows);
+        let rows = ordered::judged(&mut placed, (&batch, rows), runner.kernels())?;
+        super::eliminated(dropped_null(&batch, &args, (&given, rows.as_deref())), &runner);
+        Ok((batch, rows))
+    }))
+}
+
+/// Whether a row of `given` that `kept` leaves out holds a null in a
+/// column of `batch` at a place of `args`.
+fn dropped_null(batch: &Batch, args: &[usize], (given, kept): (&[usize], Option<&[u32]>)) -> bool {
+    let Some(kept) = kept else { return false };
+    let dropped = |r: &&usize| u32::try_from(**r).is_ok_and(|r| kept.binary_search(&r).is_err());
+    given.iter().filter(dropped).any(|&r| args.iter().any(|&c| batch.cell(c, r).is_null()))
 }
 
 // Unit tests: what a filter judges where (RULES.md R-TEST-1, R-TEST-8).
