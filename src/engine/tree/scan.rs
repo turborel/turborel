@@ -24,7 +24,7 @@
 
 use std::ops::{Bound, Deref};
 
-use super::node::Node;
+use super::node::{KeyRef, Node};
 use super::reclaim::Entered;
 use super::{BLinkTree, Path, Target, corrupt};
 use crate::disk::buffer::Ahead;
@@ -122,11 +122,11 @@ fn above(key: &[u8], bound: &Bound<Vec<u8>>) -> bool {
 }
 
 /// Whether `key` is at or below `bound`, an upper bound.
-fn below(key: &[u8], bound: &Bound<Vec<u8>>) -> bool {
+fn below(key: KeyRef<'_>, bound: &Bound<Vec<u8>>) -> bool {
     match bound {
         Bound::Unbounded => true,
-        Bound::Included(b) => key <= b.as_slice(),
-        Bound::Excluded(b) => key < b.as_slice(),
+        Bound::Included(b) => key.cmp_bytes(b) != std::cmp::Ordering::Greater,
+        Bound::Excluded(b) => key.cmp_bytes(b) == std::cmp::Ordering::Less,
     }
 }
 
@@ -291,6 +291,11 @@ impl<T: Deref<Target = BLinkTree>> Iterator for Scan<T> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(entry) = self.ready.pop() {
+                // A table's row: the leaf it was read from noted for its
+                // index entries (`hints.rs`).
+                if let (Some(row), Some(leaf)) = (self.tree.row_of(&entry.0), self.last) {
+                    super::hints::note(row, leaf.0);
+                }
                 return Some(Ok(entry));
             }
             if matches!(self.next, Next::Done) {

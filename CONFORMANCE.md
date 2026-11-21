@@ -5159,12 +5159,12 @@ These figures assume the default 4-byte CRC-32C checksum.
 
 | Page size | B-link tree index | Hash index |
 |---|---|---|
-| 4 KiB | 983 bytes | |
-| 8 KiB (default) | 2,007 bytes | 8,116 bytes |
-| 64 KiB | 16,343 bytes | 65,460 bytes |
+| 4 KiB | 942 bytes | |
+| 8 KiB (default) | 1,966 bytes | 8,116 bytes |
+| 64 KiB | 16,302 bytes | 65,460 bytes |
 
 A B-link node must hold at least four entries to split, and each counts a value
-of 8 bytes. A row's long values go out of line, but an index key is compared in
+of 8 bytes and a slot with its key's head (RULES.md D500). A row's long values go out of line, but an index key is compared in
 its node, so it stays whole. A table's rows are not limited this way.
 STORAGE.PAGE_BYTES, chosen when the database is created, raises the limit. The
 code is in `index/blink.rs`, `index/hash.rs` and `engine/tree.rs`.

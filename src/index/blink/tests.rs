@@ -12,6 +12,7 @@ use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::Pager;
 use crate::engine::memory_file;
+use crate::engine::tree::hints;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::index::searched;
 use crate::value::Spelled;
@@ -370,4 +371,41 @@ fn an_index_tells_the_pages_its_probes_miss() {
     }
     let missed = small.probe_missed().unwrap();
     assert!(missed > 0.0_f64 && (missed - unheld).abs() > 1e-9_f64, "as its searches missed: {missed}");
+}
+
+/// Verifies: [DESIGN] RULES.md D500, an entry's hint: an entry takes the
+/// leaf noted for its row as it is written; a second version's entry
+/// counts it and takes the newer leaf, and a removal keeps it; a read
+/// notes each entry's hint for the row's read; a leaf past what a hint
+/// holds is kept as none; and a load gives each entry the leaf noted as
+/// its row was read, its versions counted as one entry.
+#[test]
+fn entries_carry_the_leaf_noted_for_their_row() {
+    let index = index(&[MONEY]);
+    let key = || Key(vec![exact(5, 0)]);
+    let value = |of: &BLinkIndex, row| of.tree.get(&of.entry(&key(), row).unwrap()).unwrap().unwrap();
+    hints::note(41, 1_234);
+    index.insert(key(), 41).unwrap();
+    assert_eq!((hint_of(&value(&index, 41)).unwrap(), count_of(&value(&index, 41)).unwrap()), (1_234, 1));
+    hints::note(41, 99);
+    index.insert(key(), 41).unwrap();
+    assert_eq!((hint_of(&value(&index, 41)).unwrap(), count_of(&value(&index, 41)).unwrap()), (99, 2));
+    index.remove(&key(), 41).unwrap();
+    assert_eq!((hint_of(&value(&index, 41)).unwrap(), count_of(&value(&index, 41)).unwrap()), (99, 1));
+    hints::note(41, 5);
+    assert_eq!(searched(&index, &Probe::All).unwrap().len(), 1);
+    assert_eq!(hints::leaf_of(41), Some(99), "a read notes the entry's hint");
+    hints::note(42, u64::from(u32::MAX) + 1);
+    index.insert(key(), 42).unwrap();
+    assert_eq!(hint_of(&value(&index, 42)).unwrap(), hints::NO_LEAF);
+    let loaded = self::index(&[MONEY]);
+    let mut rows = [3_u64, 1, 2, 2].into_iter().map(|row| {
+        hints::note(row, 500 + row);
+        Ok((key(), row))
+    });
+    let areas = WorkAreas::new(MemoryBudget::new(usize::MAX));
+    loaded.load(&mut rows, (&areas, Area { bytes: 4 << 10_u32, batch: 1 << 10_u32 })).unwrap();
+    let held: Vec<(u64, u32)> =
+        (1..=3).map(|row| (hint_of(&value(&loaded, row)).unwrap(), count_of(&value(&loaded, row)).unwrap())).collect();
+    assert_eq!(held, [(501, 1), (502, 2), (503, 1)]);
 }

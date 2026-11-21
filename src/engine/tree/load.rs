@@ -58,7 +58,11 @@ impl BLinkTree {
             if !leaf.entries.is_empty() && leaf.bytes.saturating_add(size).saturating_add(key.len()) > target {
                 let next = self.placeholder()?;
                 let high = leaf.entries.last().map(|(last, _)| node::shortest_between(last, &key).to_vec()).unwrap_or_default();
-                self.write_node(leaf.id, &Shape { level: 0, high: Some(&high), right: Some(next), first: PageId(0) }, &leaf.entries)?;
+                self.write_node(
+                    leaf.id,
+                    &Shape { level: 0, high: Some(&high), right: Some(next), first: PageId(0), tree: self.meta.0 },
+                    &leaf.entries,
+                )?;
                 children.push(next);
                 separators.push(high);
                 leaf = Filling { id: next, entries: Vec::new(), bytes: HEADER };
@@ -66,7 +70,7 @@ impl BLinkTree {
             leaf.bytes = leaf.bytes.saturating_add(size);
             leaf.entries.push((key, value));
         }
-        self.write_node(leaf.id, &Shape { level: 0, high: None, right: None, first: PageId(0) }, &leaf.entries)?;
+        self.write_node(leaf.id, &Shape { level: 0, high: None, right: None, first: PageId(0), tree: self.meta.0 }, &leaf.entries)?;
         let mut level = 0_u8;
         while children.len() > 1 {
             level = level.checked_add(1).ok_or_else(|| corrupt("it is too tall"))?;
@@ -103,8 +107,8 @@ impl BLinkTree {
         nodes.push((first, entries));
         let pages = nodes.iter().map(|_| self.placeholder()).collect::<Result<Vec<_>>>()?;
         for (n, ((first_child, node_entries), id)) in nodes.iter().zip(&pages).enumerate() {
-            let shape =
-                Shape { level, high: up.get(n).map(Vec::as_slice), right: pages.get(n.saturating_add(1)).copied(), first: *first_child };
+            let (high, right) = (up.get(n).map(Vec::as_slice), pages.get(n.saturating_add(1)).copied());
+            let shape = Shape { level, high, right, first: *first_child, tree: self.meta.0 };
             self.write_node(*id, &shape, node_entries)?;
         }
         Ok((pages, up))
@@ -113,7 +117,7 @@ impl BLinkTree {
     /// A new page, an empty leaf until it is written.
     fn placeholder(&self) -> Result<PageId> {
         let (id, mut page) = self.pool.new_page(self.file)?;
-        *page = node::build(&Shape { level: 0, high: None, right: None, first: PageId(0) }, &[])?;
+        *page = node::build(&Shape { level: 0, high: None, right: None, first: PageId(0), tree: self.meta.0 }, &[])?;
         Ok(id)
     }
 

@@ -389,6 +389,7 @@ verification approach DO-178C expects (§8).
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
+| D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
 
 ### The project
 
@@ -2335,9 +2336,10 @@ TABLES.ENGINE, and moves by ALTER TABLE ... USING.
 The row store suits SQL's point reads, updates and cursors, and is the base
 other layouts build on. Each table is a B-link tree (Lehman and Yao, 1981)
 keyed by a logical 64-bit row id. Row ids are stable, so indexes never need
-rewriting. The newest version of a row is in the tree and older ones are in
-an undo store, which is on disk for a database in a directory, so a long
-reader holds disk and not memory. A table's large objects are a space of
+rewriting. An index entry carries a hint to its row's table leaf, so a
+lookup by key descends one tree (D500). The newest version of a row is in
+the tree and older ones are in an undo store, which is on disk for a
+database in a directory, so a long reader holds disk and not memory. A table's large objects are a space of
 immutable objects beside it, each owned by one row (D79).
 
 The column store suits scans of a few columns of many rows. New rows stay
@@ -10934,6 +10936,56 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+
+#### D500. B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf
+
+A lookup by key took two descents from the root, one of the index's tree
+and one of the table's, each latching every level. Each node search
+parsed a slot, an offset and a length per probe and compared whole keys.
+
+A node now keeps once the bytes its keys share, the first bytes of its
+high key, and its slots hold beside each offset the key's head: the
+first four bytes of the rest of the key, compared as one integer. Sixteen
+heads sampled evenly from the slots sit in the header as hints and narrow
+a search before it starts. A node also names its tree, by the tree's meta
+page. This follows Müller, Benson and Leis, "B-Trees Are Back", 2025,
+sections 3 and 4 (`engine/tree/node.rs`).
+
+- A node built keeps what its first and last keys share with its high
+  key, which every key between them shares. The rightmost node of a level
+  keeps none, as keys are appended past its end.
+- A key inserted that does not begin with the prefix shortens it, and the
+  node is built again. Only a key below the node's first can do that,
+  after an emptied leaf gave its range to its right neighbour or in the
+  leftmost node of a level.
+- Heads order as keys do or are equal, so a search reads a key's tail
+  only where heads are equal.
+
+An index entry's value starts with a hint, the page of the table's leaf
+its row was in when the entry was written, as four bytes. The count of
+versions follows only when it is above one. A table's tree notes, per
+thread, the leaf each row is written into or scanned from, and an index
+entry written next for that row takes it (`engine/tree/hints.rs`). An
+index read notes each entry's hint the same way, and the table's read of
+the row tries that leaf before it descends (`engine/tree/near.rs`).
+
+A hint is a guess and is checked before it is trusted, so a stale one
+costs at most a few page reads and never a wrong answer.
+
+- The page is used only if a frame holds it now. A freed page has left
+  the pool, so no free page is read.
+- It must be a leaf of the table's tree, not deleted, whose first key is
+  at or below the key. A leaf of the tree holds no key below its range,
+  so it is the key's leaf if its range reaches the key.
+- Past its high key, the key moved right in a split, and the read follows
+  up to four right links (Lehman and Yao 1981, section 4). Otherwise it
+  descends.
+- A hint is never repaired by a write. Row ids come in blocks per thread,
+  so a table's leaves fill once and seldom split afterwards.
+
+The limits of an index key and of a tree's entry shrink by the header's
+growth and the head beside each slot (CONFORMANCE.md, Limits). Formats
+stay at version 1, changed in place.
 
 ## 2. Project layout
 

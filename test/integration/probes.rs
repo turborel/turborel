@@ -184,9 +184,11 @@ fn a_raising_conjunct_of_one_operand_keeps_the_hash_join() {
     let query = "SELECT I.K, S.N FROM I, S WHERE I.K = S.K AND UPPER(S.N) = 'N7' AND I.K < 50";
     let plan = s.explain(query, &Params::new()).unwrap();
     assert!(plan.contains(PUSH_RAISING_FILTER_INTO_PRODUCT), "{plan}");
-    // On the equality: S's few rows each probing I's index, or a hash join
+    // On the equality: S's few rows each probing an index of I, or a hash join
     // of I's rows its index finds.
-    let probed = plan.contains("IndexNestedLoop P.I using I_K [btree]: S.K = I.K AND I.K < 50");
+    let probed = ["I_K [btree]", "I_K_HASH [hash]"]
+        .iter()
+        .any(|index| plan.contains(&format!("IndexNestedLoop P.I using {index}: S.K = I.K AND I.K < 50")));
     assert!(probed || plan.contains("HashJoin") && plan.contains("IndexOnlyScan P.I using I_K [btree]: I.K < 50"), "{plan}");
     let joined = rows(&s, query);
     assert_eq!(joined, Ok(vec!["7,n7".to_string()]));
@@ -533,6 +535,10 @@ fn a_raising_on_conjunct_of_one_operand_is_judged_of_its_rows() {
 #[test]
 fn an_ors_index_scans_are_in_order() {
     let db = twins();
+    // A probe of the hash index reads fewer pages than one of the B-link
+    // tree, and a sort of a few rows costs less than the difference. The
+    // order tested is the B-link tree's, so the hash index goes.
+    db.drop_index("I_K_HASH").unwrap();
     let s = db.session("P");
     for (query, expected) in [
         ("SELECT K FROM I WHERE K IN (150, 3, 299, 7) ORDER BY K", vec!["3", "7", "150", "299"]),
