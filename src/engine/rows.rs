@@ -94,7 +94,7 @@ use crate::log::Lsn;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
 use crate::storage::{Condition, Conjunction, Near, Newest, Region, Row, RowId, Rows, ScanOrder, Split, TableStorage};
-use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
+use crate::txn::{Concurrency, NO_TRANSACTION, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
 /// The name of the row store.
 pub const ROW_STORE: &str = "rowstore";
@@ -217,15 +217,23 @@ impl TableStorage for RowTable {
     }
 
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.write_over(tx, id, Some(row), Past::Snapshot)
+        self.write_over(tx, id, Some(row), Past::Snapshot).map(drop)
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.write_over(tx, id, None, Past::Snapshot)
+        self.write_over(tx, id, None, Past::Snapshot).map(drop)
+    }
+
+    fn replace(&self, tx: TxId, id: RowId, row: Option<Row>) -> Result<Row> {
+        if tx == NO_TRANSACTION {
+            let old = self.get(tx, id)?.map_or_else(|| no_row(id), Ok)?;
+            return self.write_over(tx, id, row, Past::Snapshot).map(|_| old);
+        }
+        self.write_over(tx, id, row, Past::Snapshot)?.map_or_else(|| no_row(id), Ok)
     }
 
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
-        self.write_over(tx, id, row, Past::Stamp(seen))
+        self.write_over(tx, id, row, Past::Stamp(seen)).map(drop)
     }
 
     /// Puts row `id` back, or replaces it if it is there; ids given from
@@ -373,8 +381,7 @@ impl TableStorage for RowTable {
     /// A table opened has none until the database's maintenance gathers
     /// them, due once first asked for (`rows/stats.rs`).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
-        let stats: Arc<dyn Statistics> = self.gathered.asked_for()?;
-        Some(stats)
+        self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
     }
 
     fn garbage(self: Arc<Self>, as_of: Timestamp) -> Rows {
@@ -459,6 +466,10 @@ impl TableStorage for RowTable {
     fn commit(&self, tx: TxId, at: Timestamp) {
         self.commit_open(tx, at);
         self.note_commit(at);
+    }
+
+    fn settle(&self, tx: TxId) {
+        self.settle_open(tx);
     }
 
     fn rollback(&self, tx: TxId) -> Result<()> {

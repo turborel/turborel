@@ -8,7 +8,7 @@ use super::{Completion, Direct, Session};
 use crate::ast::AccessMode;
 use crate::error::{Code, Result, fail};
 use crate::lexer::{Tok, lex};
-use crate::parser::{CANCEL, EXPLAIN, Parser, begins_word_statement};
+use crate::parser::{CANCEL, Parser, begins_word_statement, explained};
 
 impl Session {
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §20.1, §20.2] A `<direct SQL
@@ -35,15 +35,14 @@ impl Session {
         // [ISO/IEC 9075-2:2023 §14.10, §14.12] and INTO PROPERTY alike.
         // \[EXTENSION\] EXPLAIN, no key word either, before a query; and
         // a Cypher query's MATCH [GS §10.3].
-        if let (Some(Tok::Identifier(w)), Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH" | "MATCH") | Tok::Delimiter("("))) =
-            (first, second)
-            && w == EXPLAIN
-        {
+        // EXPLAIN ANALYZE, ANALYZE no key word, runs the query.
+        if let Some((query, analyze)) = explained(tokens.iter().map(|t| &t.tok)) {
             // The query, after as many spaces as EXPLAIN took, so its
             // errors are placed in the statement as written.
-            let at = tokens.get(1).map_or(0, |t| t.start);
+            let at = tokens.get(query).map_or(0, |t| t.start);
             let rest = format!("{}{}", " ".repeat(at), sql.chars().skip(at).collect::<String>());
-            return self.explain_rows(&rest).map(Direct::Rows);
+            let rows = if analyze { self.analyze_rows(&rest) } else { self.explain_rows(&rest) };
+            return rows.map(Direct::Rows);
         }
         // [EXTENSION] EXECUTE GQL, and each statement of a GQL session.
         if let Some(done) = self.gql_direct(sql, first)? {

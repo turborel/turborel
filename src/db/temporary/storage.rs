@@ -344,6 +344,11 @@ impl TableStorage for Rows_ {
         }
         self.ended(tx);
     }
+    fn settle(&self, tx: TxId) {
+        if let Some(rows) = self.made() {
+            rows.settle(tx);
+        }
+    }
     fn durable_through(&self) -> Lsn {
         Lsn(u64::MAX)
     }

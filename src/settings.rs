@@ -80,8 +80,7 @@ pub enum Effect {
     Transaction,
     /// For every connection a server takes after it, read as it is taken.
     Connection,
-    /// When what reads it starts next: a server, as it starts listening; a
-    /// database kept in a directory, as it is opened.
+    /// When what reads it starts next: a server, as it starts listening; a database kept in a directory, as it is opened.
     Start,
     /// When the database is created in its directory: given before, and
     /// fixed after, kept in its files' formats.

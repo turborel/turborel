@@ -85,6 +85,7 @@ use crate::sync::{Gate, lock, lock_builtin};
 mod access;
 mod capabilities;
 mod clock;
+mod durable;
 mod end;
 mod followed;
 mod lobs;
@@ -94,6 +95,7 @@ mod marks;
 mod owed;
 mod pending;
 mod reading;
+mod row_waits;
 mod savepoints;
 mod stop;
 mod undo;
@@ -101,6 +103,7 @@ mod write;
 
 pub use capabilities::{Concurrency, Persistence, Policy, TxCapabilities, Undo};
 use clock::Clock;
+pub(crate) use durable::Committing;
 pub(crate) use end::remove_entries;
 pub(crate) use followed::{Followed, FollowedRecords, Following};
 pub use locks::Damage;
@@ -297,6 +300,9 @@ pub(crate) struct Transactions {
     /// What cancels the statements of each open transaction, for a plan's
     /// scans to look at (`txn/stop.rs`).
     stops: Stops,
+    /// The end of each open transaction, which waiters for its rows queue
+    /// on (`txn/row_waits.rs`).
+    ends: row_waits::Ends,
     /// The lock of each name a transaction defines, a table's or a view's,
     /// or grants or revokes privileges on (`db/definitions.rs`): the
     /// table's own once it is published, so the two are one.
@@ -349,22 +355,9 @@ impl Default for Transactions {
             noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),
             stops: Stops::default(),
+            ends: row_waits::Ends::default(),
             names: Mutex::new(HashMap::new()),
         }
-    }
-}
-
-/// A commit under way, holding its timestamp: until it is dropped, no
-/// snapshot counts commits at or after its timestamp as ended.
-pub(crate) struct Committing<'a> {
-    shared: &'a Transactions,
-    /// Its commit timestamp.
-    pub(crate) at: Timestamp,
-}
-
-impl Drop for Committing<'_> {
-    fn drop(&mut self) {
-        self.shared.clock.end_commit(self.at);
     }
 }
 
@@ -378,6 +371,7 @@ impl Transactions {
         let (id, snapshot) = self.clock.begin();
         self.active.fetch_add(1, Ordering::SeqCst);
         self.stops.insert(id, Arc::clone(&stop));
+        self.ends.begin(id);
         Txn {
             id,
             snapshot: AtomicU64::new(snapshot),
@@ -393,19 +387,8 @@ impl Transactions {
             stop,
             stamp: OnceLock::new(),
             pending: OnceLock::new(),
+            depends: AtomicU64::new(0),
         }
-    }
-
-    /// A commit timestamp, later than every one given out before, held
-    /// until the commit ends.
-    fn commit_timestamp(&self) -> Committing<'_> {
-        Committing { shared: self, at: self.clock.take_commit() }
-    }
-
-    /// Returns once every commit up to `at`, one ended, has ended too, so
-    /// a snapshot taken after counts it (`Clock::wait_stable`).
-    fn wait_stable(&self, at: Timestamp) {
-        self.clock.wait_stable(at);
     }
 
     /// The oldest snapshot any open transaction reads at, or, with none
@@ -479,6 +462,9 @@ pub(crate) struct Txn {
     stamp: OnceLock<i64>,
     /// The records it holds, once it holds one (`txn/pending.rs`).
     pending: OnceLock<Arc<pending::TxLog>>,
+    /// The latest commit not yet durable it read past its snapshot
+    /// (`txn/durable.rs`), 0 for none.
+    depends: AtomicU64,
 }
 
 impl Txn {
@@ -548,6 +534,8 @@ impl Txn {
         for table in held {
             table.release(self.id);
         }
+        // [DESIGN] RULES.md D442: the waiters for its rows go on, in turn.
+        self.shared.ends.end(self.id);
         let pinned = mem::take(&mut lock_builtin(&self.state).pinned);
         if self.open.swap(false, Ordering::AcqRel) {
             self.shared.clock.end(self.id, self.snapshot());

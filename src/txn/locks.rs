@@ -17,6 +17,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
+mod fast;
+
 use super::owed::OwedRemovals;
 use super::{LockMode, LockWait, Timestamp, Transactions, TxId, Txn};
 use crate::catalog::QualifiedName;
@@ -26,7 +28,7 @@ use crate::sync::{Signal, lock, lock_builtin};
 
 /// \[DESIGN\] How long a lock wait sleeps before it looks again for a
 /// cancel of its statement (RULES.md D44), unless a release wakes it.
-const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+pub(super) const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// \[DESIGN\] What a failed undo damaged (RULES.md D19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +166,10 @@ struct Holder {
 #[derive(Default)]
 pub(crate) struct TableLock {
     holders: Mutex<Vec<Holder>>,
+    /// How many `holders` lists, so a release finds an empty list unlocked.
+    listed: AtomicUsize,
+    /// Shared holds taken in stripes (RULES.md D442).
+    fast: fast::Stripes,
     released: Signal,
     /// Set when a change to the table could not be undone, until
     /// `Database::repair_table` builds its indexes again, or opening the
@@ -273,8 +279,31 @@ impl TableLock {
     /// error: the lock is never held across plug-in code, so no panic can
     /// poison it.
     pub(super) fn release(&self, tx: TxId) {
-        lock_builtin(&self.holders).retain(|h| h.tx != tx);
+        self.fast.release(tx);
+        // Its holds all in the stripes, and no exclusive request to wake.
+        if self.listed.load(Ordering::SeqCst) == 0 && !self.fast.blocked() {
+            return;
+        }
+        let mut holders = lock_builtin(&self.holders);
+        if holders.iter().any(|h| h.tx == tx && h.mode == LockMode::Exclusive) {
+            self.fast.unblock();
+        }
+        holders.retain(|h| h.tx != tx);
+        self.listed.store(holders.len(), Ordering::SeqCst);
+        drop(holders);
         self.released.notify_all();
+    }
+
+    /// An exclusive request of `tx` begins: the stripes take no shared hold
+    /// until it ends, unless `tx` holds the lock exclusively already.
+    /// Whether it blocked them.
+    fn block_for(&self, tx: TxId) -> Result<bool> {
+        let holders = lock(&self.holders)?;
+        if holders.iter().any(|h| h.tx == tx && h.mode == LockMode::Exclusive) {
+            return Ok(false);
+        }
+        self.fast.block();
+        Ok(true)
     }
 }
 
@@ -284,7 +313,7 @@ pub(super) type WaitsFor = HashMap<TxId, Vec<TxId>>;
 /// Whether `tx` waiting for `holders` would close a cycle of waiting
 /// transactions back to `tx`: a deadlock. Searched without recursion, each
 /// transaction once (RULES.md R-CF-6).
-fn would_deadlock(waits_for: &WaitsFor, tx: TxId, holders: &[TxId]) -> bool {
+pub(super) fn would_deadlock(waits_for: &WaitsFor, tx: TxId, holders: &[TxId]) -> bool {
     let mut seen: HashSet<TxId> = HashSet::new();
     let mut next: Vec<TxId> = holders.to_vec();
     while let Some(t) = next.pop() {
@@ -344,8 +373,22 @@ impl State {
 
 /// Takes `lk`, the lock of `table`, in `mode` for `tx` (`State::acquire`).
 fn acquire_lock(tx: &Txn, table: &QualifiedName, lk: &Arc<TableLock>, mode: LockMode) -> Result<()> {
-    let (outcome, mut holders) = wait_on(tx, table, lk, &|h| h.tx != tx.id && !mode.compatible(h.mode))?;
+    // [DESIGN] RULES.md D442: a shared hold in a stripe, while no exclusive
+    // request blocks them.
+    let fast = if mode == LockMode::Shared { lk.fast.try_shared(tx) } else { None };
+    if let Some(newly) = fast {
+        if newly {
+            lock_builtin(&tx.state).held.push(Arc::clone(lk));
+        }
+        return Ok(());
+    }
+    let blocks = mode == LockMode::Exclusive && lk.block_for(tx.id)?;
+    let (outcome, mut holders) = wait_on(tx, table, lk, (&|h| h.tx != tx.id && !mode.compatible(h.mode), mode == LockMode::Exclusive))?;
     let newly = outcome.is_ok() && grant(&mut holders, tx, mode);
+    lk.listed.store(holders.len(), Ordering::SeqCst);
+    if outcome.is_err() && blocks {
+        lk.fast.unblock();
+    }
     drop(holders);
     outcome?;
     // Recorded even if a panic poisoned the transaction's lock, so that
@@ -356,9 +399,9 @@ fn acquire_lock(tx: &Txn, table: &QualifiedName, lk: &Arc<TableLock>, mode: Lock
     Ok(())
 }
 
-/// The holders of `lk` once none `conflicts` with `tx`, or the refusal of
-/// the wait, `what` named in it: a table, or a row of one. Its lock held
-/// still, `tx` no longer among those waiting.
+/// The holders of `lk` once none `conflicts` with `tx`, nor, if `striped`,
+/// holds it in a stripe, or the refusal of the wait, `what` named in it.
+/// Its lock held still, `tx` no longer among those waiting.
 ///
 /// # Errors
 ///
@@ -367,7 +410,7 @@ fn wait_on<'l>(
     tx: &Txn,
     what: &dyn Display,
     lk: &'l TableLock,
-    conflicts: &dyn Fn(&Holder) -> bool,
+    (conflicts, striped): (&dyn Fn(&Holder) -> bool, bool),
 ) -> Result<(Result<()>, MutexGuard<'l, Vec<Holder>>)> {
     let me = thread::current().id();
     let mut holders = lock(&lk.holders)?;
@@ -378,7 +421,8 @@ fn wait_on<'l>(
         if let Err(e) = tx.stop.check_now() {
             break Err(e);
         }
-        let conflicting: Vec<&Holder> = holders.iter().filter(|h| conflicts(h)).collect();
+        let fast = if striped { lk.fast.others(tx.id) } else { Vec::new() };
+        let conflicting: Vec<&Holder> = holders.iter().filter(|h| conflicts(h)).chain(fast.iter()).collect();
         if conflicting.is_empty() {
             break Ok(());
         }
@@ -413,23 +457,6 @@ fn wait_on<'l>(
         tx.stop.served().waited(began.elapsed());
     }
     Ok((outcome, holders))
-}
-
-impl State {
-    /// [ISO/IEC 9075:1992 §4.28] Waits, as `acquire` waits, for transaction
-    /// `writer`, which changed a row of `table` that `tx` would change, to
-    /// end: every writer of a table whose engine keeps versions holds its
-    /// lock shared to its end (`prepare_write`), so its end is a release of
-    /// the lock (RULES.md D28, D29).
-    ///
-    /// # Errors
-    ///
-    /// As `acquire`'s, the refusal naming a row of `table`.
-    pub(crate) fn wait_for_writer(&self, tx: &Txn, table: &QualifiedName, writer: TxId) -> Result<()> {
-        let (outcome, holders) = wait_on(tx, &format_args!("a row of {table}"), self.lock_of(table)?, &|h| h.tx == writer)?;
-        drop(holders);
-        outcome
-    }
 }
 
 /// Records `tx` holding the lock in `mode`, and whether it did not hold it before.

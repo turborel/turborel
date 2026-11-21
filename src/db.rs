@@ -152,7 +152,7 @@ pub(crate) mod write;
 
 use assignment::{candidate, check_option, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
-use compiled::{plan, plan_heard, plan_rows, plan_slotted};
+use compiled::{plan, plan_heard, plan_rows, plan_rows_slotted, plan_slotted};
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use rekey::FormatsBehind;
@@ -220,8 +220,7 @@ struct DeclaredCursor {
     /// opening procedure's parameters, and always at OPEN.
     updatable: Option<bool>,
     open: Option<OpenCursor>,
-    /// Of a dynamic cursor, the statement prepared that is its
-    /// specification [ISO/IEC 9075:1992 §17.12, §17.13].
+    /// Of a dynamic cursor, the statement prepared that is its specification [ISO/IEC 9075:1992 §17.12, §17.13].
     statement: Option<dynamic::Name>,
 }
 
@@ -249,9 +248,8 @@ enum CursorRows {
 struct SessionState {
     tx: Option<Arc<Txn>>,
     cursors: HashMap<dynamic::Name, DeclaredCursor>,
-    /// The rows of cursors opened with `open_cursor`, shared with the
-    /// cursors: settled before the transaction changes a table they read,
-    /// taken away when it ends.
+    /// The rows of cursors opened with `open_cursor`, shared with the cursors: settled before the transaction changes a table
+    /// they read, taken away when it ends.
     anonymous: Vec<Weak<Mutex<Option<Stream>>>>,
     /// The definitions its transaction changed, until it ends (`db/ddl.rs`).
     staged: Option<ddl::Staged>,
@@ -261,6 +259,8 @@ struct SessionState {
     dynamic: dynamic::DynamicState,
     /// [ISO/IEC 9075-2:2023 §7.6] Where the change running records its delta table's rows (`db/delta.rs`).
     delta: Option<delta::Collector>,
+    /// \[EXTENSION\] The rows it gave in place of estimates (`db/explain/injected.rs`).
+    injected: Option<Arc<crate::physical::Injected>>,
     /// The procedures' bodies it keeps (`db/routines/kept.rs`).
     routines: routines::KeptRoutines,
 }

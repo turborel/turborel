@@ -238,7 +238,18 @@ SET DATABASE JOBS.POLICY = 'PAUSED'
 A table's statistics are gathered from every row of a table of up to
 60,000 rows. A larger table is sampled, about 30,000 of its rows read, so
 a pass costs the same however large the table grows, and its distinct
-values are estimated from the sample. Of a geometry column, the pass
+values are estimated from the sample, a value's repeats in neighbouring
+rows counted once. Each column keeps its most common values with the
+share of rows each holds, and a histogram of the others, so a value held
+by many rows is not estimated as rare as the rest. The table keeps a
+sample of up to 1,024 of its rows, on which the planner evaluates a
+condition whose parts go together, such as a city and its country, or
+that no column's statistics answer, such as a column compared with
+another or a pattern beginning with `%`. An index's count of its
+distinct keys gives the distinct combinations of its columns. Between
+passes, the planner reads the statistics with the rows written since, so
+a value past the greatest the pass saw, as a key that grows with each
+insert is, is not estimated to match no row. Of a geometry column, the pass
 also keeps a grid of its envelopes, the coordinates a value holds on
 average, and how closely rows near in the table lie near in space, which
 price a search of an `rtree` index against a scan

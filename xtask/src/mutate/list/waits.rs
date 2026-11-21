@@ -12,7 +12,7 @@ pub const WAITS: [Mutation; 9] = [
         package: Package::Core,
         breaks: "a row's second writer is refused at once instead of waiting for the first",
         file: "src/txn/write.rs",
-        original: "                self.wait_for_writer(tx, table, writer)?;",
+        original: "                turn = tx.wait_for_row(&format_args!(\"a row of {table}\"), writer)?;",
         replacement: "                return Err(e);",
         integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
         unit: &[],

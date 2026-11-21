@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use super::{
-    CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc, OrderingDesc,
-    Partitioning, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc, TableDesc,
-    TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
+    CastDesc, Catalog, CollationDesc, Constrained, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc,
+    OrderingDesc, Partitioning, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc,
+    TableDesc, TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
 };
 use crate::hash::xxhash::Xxh3Map;
 use crate::value::DataType;
@@ -21,6 +21,10 @@ pub struct MemoryCatalog {
     /// first asked, and again after a table is added or removed
     /// (RULES.md D405).
     table_order: OnceLock<Vec<QualifiedName>>,
+    /// Whether its tables have a foreign key, or a CHECK constraint that
+    /// reads tables: found once, as first asked, and again after a table
+    /// is added, changed or removed (RULES.md D415).
+    constrained: OnceLock<Constrained>,
     indexes: Vec<IndexDesc>,
     views: HashMap<QualifiedName, ViewDesc>,
     privileges: Vec<PrivilegeDesc>,
@@ -61,6 +65,15 @@ pub struct MemoryCatalog {
     partitioning: Partitioning,
     /// The extensions created.
     extensions: Vec<super::ExtensionDesc>,
+}
+
+impl MemoryCatalog {
+    /// What is kept of its tables made again, after a table is added or
+    /// removed.
+    fn tables_changed(&mut self) {
+        self.table_order = OnceLock::new();
+        self.constrained = OnceLock::new();
+    }
 }
 
 impl Catalog for MemoryCatalog {
@@ -105,14 +118,14 @@ impl Catalog for MemoryCatalog {
         for t in tables {
             self.tables.insert(t.name.clone(), t);
         }
-        self.table_order = OnceLock::new();
+        self.tables_changed();
     }
     fn remove_schema(&mut self, schema: &str) {
         self.schemas.retain(|(s, _)| s != schema);
     }
     fn add_table(&mut self, desc: TableDesc) {
         self.tables.insert(desc.name.clone(), desc);
-        self.table_order = OnceLock::new();
+        self.tables_changed();
     }
     fn table(&self, name: &QualifiedName) -> Option<&TableDesc> {
         self.tables.get(name)
@@ -136,6 +149,9 @@ impl Catalog for MemoryCatalog {
             names.into_iter().cloned().collect()
         });
         order.iter().filter_map(|name| self.tables.get(name)).collect()
+    }
+    fn constrained(&self) -> Constrained {
+        *self.constrained.get_or_init(|| Constrained::of(self.tables.values()))
     }
     fn temporary_tables(&self) -> Vec<&TableDesc> {
         self.tables.values().filter(|t| t.temporary.is_some()).collect()
@@ -166,11 +182,12 @@ impl Catalog for MemoryCatalog {
         if self.tables.insert(desc.name.clone(), desc).is_none() {
             self.table_order = OnceLock::new();
         }
+        self.constrained = OnceLock::new();
     }
     fn remove_table(&mut self, name: &QualifiedName) {
         self.spatial.forget_columns(name, &[]);
         self.tables.remove(name);
-        self.table_order = OnceLock::new();
+        self.tables_changed();
     }
     fn remove_view(&mut self, name: &QualifiedName) {
         self.views.remove(name);

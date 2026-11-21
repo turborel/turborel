@@ -242,13 +242,28 @@ impl Check {
     }
 }
 
+/// A constraint's failure `e`, about constraint `c` of `desc` if about
+/// nothing [ISO/IEC 9075:1992 §18.1 GR3f].
+fn broken(e: SqlError, (desc, c): (&TableDesc, &ConstraintDesc)) -> SqlError {
+    if e.code == Code::Constraint && e.about_nothing() { e.about(Subject::constraint(c.name.parts(), desc.name.parts())) } else { e }
+}
+
+/// What a statement's end checks at once with: its transaction, and what
+/// its checks keep.
+type Now<'t, 'c> = (&'t Txn, &'t mut Checking<'c>);
+
+/// The row a row check read last, of its table and id, if it is there.
+type ReadRow = Option<(QualifiedName, RowId, Option<Row>)>;
+
 /// What the checks of a statement, or those made at once, keep as they
 /// are made: each CHECK condition bound once, the check of the rows of
-/// one UNIQUE constraint, given one after another, and how each deferred
-/// assertion's rows are checked.
+/// one UNIQUE constraint, given one after another, how each deferred
+/// assertion's rows are checked, and the row the last row check read, as
+/// the checks of one row come one after another (RULES.md D415).
 #[derive(Default)]
 pub(super) struct Checking<'s> {
     bound: HashMap<QualifiedName, Cond>,
+    read: ReadRow,
     key: Option<KeyCheck<'s>>,
     asserted: HashMap<QualifiedName, Asserted>,
 }
@@ -289,6 +304,10 @@ impl State {
     /// write, through others too: those whose cursors a statement writing
     /// `table` settles first (`Session::settle_cursors`).
     pub(super) fn written_by(&self, table: &QualifiedName) -> Vec<QualifiedName> {
+        // No referential action where no table has a foreign key (RULES.md D415).
+        if !self.catalog.constrained().foreign_keys {
+            return vec![table.clone()];
+        }
         let mut tables: Vec<QualifiedName> = Vec::new();
         let mut next = vec![table.clone()];
         while let Some(t) = next.pop() {
@@ -340,12 +359,12 @@ impl State {
         self.referential_actions(tx, &mut effects)?;
         let triggered = effects.triggered.take();
         let whole = effects.whole_assertions(self)?;
-        let checks = self.checks(&mut effects)?;
+        let mut checking = Checking::default();
+        let checks = self.checks(&mut effects, (tx, &mut checking))?;
         let (mut deferred, mut wholes) = (HeldRows::new(effects.space.clone()), Vec::new());
         let modes = effects.deferral;
         {
             let deferral = modes.borrow();
-            let mut checking = Checking::default();
             for check in checks {
                 let check = check?;
                 let Some(c) = self.constraint_of(&check) else { continue };
@@ -407,14 +426,19 @@ impl State {
         }
         let Some(table) = check.table() else { return self.check_assertion_whole(tx, check.constraint()) };
         let (Some(c), Some(desc)) = (self.constraint_of(check), self.catalog.table(table)) else { return Ok(()) };
-        let broken = |e: SqlError| {
-            if e.code == Code::Constraint && e.about_nothing() {
-                e.about(Subject::constraint(c.name.parts(), desc.name.parts()))
-            } else {
-                e
-            }
-        };
-        self.check_one(tx, check, (desc, c), checking).map_err(broken)
+        self.check_one(tx, check, (desc, c), checking).map_err(|e| broken(e, (desc, c)))
+    }
+
+    /// Row `id` of `desc` satisfies its constraint `c`, checked as the
+    /// statement's end gathers its checks (RULES.md D421), as `check` makes
+    /// a `Check::Row`.
+    ///
+    /// # Errors
+    ///
+    /// As `check`.
+    fn row_now(&self, tx: &Txn, (desc, c): (&TableDesc, &ConstraintDesc), id: RowId, checking: &mut Checking<'_>) -> Result<()> {
+        let at = (&mut checking.bound, &mut checking.read);
+        self.check_row(tx, (desc, c), id, at).map_err(|e| broken(e, (desc, c)))
     }
 
     /// `check`'s, of constraint `c` of `desc`.
@@ -426,7 +450,7 @@ impl State {
         checking: &mut Checking<'s>,
     ) -> Result<()> {
         match check {
-            Check::Row { id, .. } => self.check_row(tx, (desc, c), *id, &mut checking.bound),
+            Check::Row { id, .. } => self.check_row(tx, (desc, c), *id, (&mut checking.bound, &mut checking.read)),
             Check::Unique { id, .. } => {
                 if checking.key.as_ref().is_some_and(|key| !key.checks(&c.name)) {
                     checking.finish()?;
@@ -475,10 +499,13 @@ impl State {
         tx: &Txn,
         (desc, c): (&TableDesc, &ConstraintDesc),
         id: RowId,
-        bound: &mut HashMap<QualifiedName, Cond>,
+        (bound, read): (&mut HashMap<QualifiedName, Cond>, &mut ReadRow),
     ) -> Result<()> {
         let table = &desc.name;
-        let Some(row) = self.storage_of(table)?.get(tx.id, id)? else { return Ok(()) };
+        if read.as_ref().is_none_or(|(t, at, _)| t != table || *at != id) {
+            *read = Some((table.clone(), id, self.storage_of(table)?.get(tx.id, id)?));
+        }
+        let Some((_, _, Some(row))) = read.as_ref() else { return Ok(()) };
         match &c.kind {
             ConstraintKind::NotNull(at) => {
                 if row.get(*at).is_some_and(Value::is_null) {
@@ -488,19 +515,19 @@ impl State {
             }
             ConstraintKind::Check { text, names, horizon, .. } => {
                 let cond = self.bound(table, (c, (text, names, horizon)), bound)?;
-                if eval_cond(&cond, &row, &Heard(tx.stop.warnings()))? == Truth::False {
+                if eval_cond(&cond, row, &Heard(tx.stop.warnings()))? == Truth::False {
                     return fail(Code::Constraint, format!("[ISO/IEC 9075:1992 §11.6 GR3] CHECK {} of {table} is false for a row", c.name));
                 }
             }
             ConstraintKind::ForeignKey(fk) => {
-                if !self.matches_row(tx, (desc, fk), &row)? {
+                if !self.matches_row(tx, (desc, fk), row)? {
                     return fail(
                         Code::Constraint,
                         format!("[ISO/IEC 9075:1992 §11.8 GR2] a row of {table} references no row of {}: FOREIGN KEY {}", fk.table, c.name),
                     );
                 }
             }
-            ConstraintKind::Connection(k) => self.check_connection(tx, desc, (&c.name, k), &row)?,
+            ConstraintKind::Connection(k) => self.check_connection(tx, desc, (&c.name, k), row)?,
             ConstraintKind::Unique { .. } => {}
         }
         Ok(())

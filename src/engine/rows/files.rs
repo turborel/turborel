@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::UndoStore;
 use super::counted::Counted;
+use super::mvcc::Statuses;
 use super::zones::Zones;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::shadow::ShadowFileSystem;
@@ -31,6 +32,8 @@ pub struct TableFiles {
     /// The database's work areas, once the store is attached: where its
     /// transactions' changes spill (RULES.md D38).
     pub(super) work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
+    /// The statuses of the transactions writing its tables (RULES.md D440).
+    pub(super) statuses: Arc<Statuses>,
     /// Held shared while a table freezes rows into a column group, and
     /// exclusively while a checkpoint is captured, so none captures half
     /// a group (`rows/frozen.rs`).
@@ -70,6 +73,7 @@ impl TableFiles {
             sealed: Arc::new(AtomicU64::new(0)),
             shadows: None,
             work: Arc::default(),
+            statuses: Arc::default(),
             freezes: Arc::default(),
             headers: Arc::default(),
             zones: Arc::default(),

@@ -13,10 +13,10 @@
 //! the commit of a transaction that wrote, a definition, a checkpoint,
 //! whose image would claim what is not durable. Reads, rollbacks and the
 //! commits of transactions that wrote nothing go on. The transaction whose
-//! commit record's sync failed is in doubt: never made visible, its locks
-//! and versions held, its session told (SQLCODE -922). Opening the
-//! database again recovers it from what its log holds, committing it if
-//! its commit record is there.
+//! commit record's sync failed is in doubt, its session told (SQLCODE
+//! -922). It never becomes durable, so no snapshot counts it (RULES.md
+//! D441). Opening the database again recovers it from what its log holds,
+//! committing it if its commit record is there.
 //!
 //! \[DESIGN\] A commit that does not wait for the log (LOG.COMMIT_SYNC OFF)
 //! is noted unsynced, with its log and position, until a sync of that log
@@ -117,11 +117,15 @@ impl Transactions {
     /// As `taking_changes`; the log's.
     pub(crate) fn sync(&self, log: &dyn Log, lsn: Lsn) -> Result<()> {
         self.taking_changes()?;
-        log.sync(lsn).inspect_err(|e| {
+        let reached = log.sync_reached(lsn).inspect_err(|e| {
             lock_builtin(&self.stopped).get_or_insert_with(|| e.clone());
             self.stopping.store(true, Ordering::Release);
+            // [DESIGN] RULES.md D441: no commit is durable from now on.
+            self.clock.halt();
         })?;
-        self.synced(log, lsn);
+        // Every record before `reached` is durable, the unsynced commits
+        // among them too (RULES.md D410).
+        self.synced(log, reached.max(lsn));
         Ok(())
     }
 
@@ -245,25 +249,24 @@ impl Txn {
         self.sync_commit.store(sync, Ordering::Relaxed);
     }
 
-    /// Writes the commit record, at commit timestamp `at`, and syncs it, if
-    /// the transaction logged a change, unless its session's LOG.COMMIT_SYNC
-    /// is OFF (`set_sync_commit`): then the record is noted unsynced, and
-    /// synced by the log's next sync, of a later commit, a definition, a
-    /// checkpoint or the log's sync job, each of which syncs every record
-    /// before its own; until then a failure of
-    /// the system loses it, and recovery undoes the transaction, as every
-    /// one committed after it whose record is lost with it. The commit
-    /// record's position is the order of commits (RULES.md D25).
+    /// Writes the commit record, at commit timestamp `at`, if the
+    /// transaction logged a change: its position, to sync once its locks
+    /// are released (`sync_commit`), or none to sync. Unless its session's
+    /// LOG.COMMIT_SYNC is OFF (`set_sync_commit`): then the record is noted
+    /// unsynced, and synced by the log's next sync, of a later commit, a
+    /// definition, a checkpoint or the log's sync job, each of which syncs
+    /// every record before its own; until then a failure of the system
+    /// loses it, and recovery undoes the transaction, as every one
+    /// committed after it whose record is lost with it. The commit record's
+    /// position is the order of commits (RULES.md D25).
     ///
     /// # Errors
     ///
     /// SQLCODE -913 if the transaction must roll back instead: the commit
-    /// record could not be written. Inside `Ok`, the outcome of the sync:
-    /// SQLCODE -922 if it failed, the transaction then in doubt (RULES.md
-    /// D25).
-    pub(super) fn commit_record(&self, at: Timestamp, wall: i64) -> Result<Result<()>> {
+    /// record could not be written.
+    pub(super) fn append_commit(&self, at: Timestamp, wall: i64) -> Result<Option<Lsn>> {
         let logged = self.state()?.logged;
-        let Some(log) = self.log.as_ref().filter(|_| logged) else { return Ok(Ok(())) };
+        let Some(log) = self.log.as_ref().filter(|_| logged) else { return Ok(None) };
         let refused =
             |why: String| SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §8.2] {why}, so the transaction was rolled back"));
         self.shared.taking_changes().map_err(|e| refused(e.described()))?;
@@ -275,9 +278,20 @@ impl Txn {
         self.stop.served().committed_at(lsn.0);
         if !self.sync_commit.load(Ordering::Relaxed) {
             self.shared.note_unsynced(log, lsn);
-            return Ok(Ok(()));
+            return Ok(None);
         }
-        Ok(self.shared.sync(&**log, lsn).map_err(|e| {
+        Ok(Some(lsn))
+    }
+
+    /// Syncs the commit record `append_commit` wrote at `lsn`: the moment
+    /// the transaction commits (RULES.md D25).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -922 if the sync failed: the transaction is then in doubt.
+    pub(super) fn sync_commit(&self, lsn: Lsn) -> Result<()> {
+        let Some(log) = self.log.as_ref() else { return Ok(()) };
+        self.shared.sync(&**log, lsn).map_err(|e| {
             SqlError::new(
                 Code::InDoubt,
                 format!(
@@ -286,7 +300,7 @@ impl Txn {
                 ),
             )
             .with_state(SqlState::TRANSACTION_RESOLUTION_UNKNOWN)
-        }))
+        })
     }
 
     /// Writes the abort record, if a record of the transaction may have

@@ -28,9 +28,11 @@
 //! joins would be estimated a number of times exponential in its depth.
 
 mod groups;
+mod injected;
 mod joins;
 mod lineage;
 mod nodes;
+mod tables;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -45,6 +47,7 @@ use crate::stats::Statistics;
 use crate::storage::cost_of;
 
 pub(in crate::physical) use groups::cardenas;
+pub use injected::Injected;
 pub(super) use joins::{Classes, find};
 
 // ---------------------------------------------------------------------------
