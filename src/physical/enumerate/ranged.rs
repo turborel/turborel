@@ -75,7 +75,7 @@ impl PhysicalPlanner<'_> {
         (l, r): (&Realized, &Realized),
         (conds, rows, est): (&[Cond], (f64, f64), f64),
     ) -> Option<Realized> {
-        let swap = kind == Kind::Inner && l.order == Order::None && rows.0 < rows.1;
+        let swap = kind == Kind::Inner && rows.0 < rows.1;
         let (l, r) = if swap { (r, l) } else { (l, r) };
         let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
         let mapped: Vec<Cond> = conds.iter().map(|c| cx.mapped(c, &layout)).collect();
@@ -94,7 +94,8 @@ impl PhysicalPlanner<'_> {
         let made = Made { outer: kind == Kind::Left, widths: (width, cx.width(&r.layout)), full, shown: Shown::of(names.as_deref()), est };
         let plan = range_plan(found, (l.plan.clone(), r.plan.clone()), made);
         let shape = if l.shape.is_empty() { String::new() } else { format!("({} {})", l.shape, r.shape) };
-        Some(Realized { plan, layout, order: l.order, shape })
+        // Its rows keep no order, as `physical/range/planned.rs` says.
+        Some(Realized { plan, layout, order: Order::None, shape })
     }
 }
 

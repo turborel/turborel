@@ -162,12 +162,15 @@ fn enumeration_costs_range_joins() {
     assert_eq!(sorted(&s, sql), joined);
 }
 
-/// Verifies: [X3.135-1986 §5.20 GR2b]; [DESIGN] RULES.md D580, D15, D38:
-/// a condition that can raise reading both tables keeps the nested loop,
-/// which raises as before; a right operand past the work area gives way
-/// to the nested loop, with the same rows.
+/// Verifies: [X3.135-1986 §5.20 GR2b]; [ISO/IEC 9075:1992 §7.5]; [DESIGN]
+/// RULES.md D580, D15, D38: a condition that can raise reading both
+/// tables keeps the nested loop, which raises as before; a right operand
+/// past the work area is searched a part at a time, the left read again
+/// for each, giving the nested loop's rows, of a LEFT join its unmatched
+/// rows once; and the rows of an ORDER BY over a range join come in its
+/// order.
 #[test]
-fn raising_conditions_and_large_operands_keep_the_nested_loop() {
+fn raising_conditions_keep_the_nested_loop_and_large_operands_are_parted() {
     let db = tables();
     let s = db.session("Q");
     let raising = "SELECT * FROM A, B WHERE A.X < B.Y AND A.V / (B.W - B.W) > 0";
@@ -180,4 +183,13 @@ fn raising_conditions_and_large_operands_keep_the_nested_loop() {
     exec(&s, "SET MEMORY.WORK_BYTES = 65536").unwrap();
     let joined = agree(&s, "SELECT * FROM B, A WHERE A.X BETWEEN B.Y - 1 AND B.Y + 1 AND A.K = B.K AND A.V < 2", true);
     assert_ne!(joined, Vec::<String>::new());
+    let outer = agree(&s, "SELECT * FROM A LEFT JOIN B ON A.X BETWEEN B.Y - 1 AND B.Y + 1 AND B.W < 3", true);
+    assert!(outer.iter().any(|r| r.ends_with("NULL,NULL,NULL")), "a LEFT join's unmatched rows");
+    let ordered = "SELECT A.X, B.Y, B.W FROM A, B WHERE A.X BETWEEN B.Y - 1 AND B.Y + 1 ORDER BY A.X, B.Y, B.W";
+    assert!(physical(&s, ordered).contains("RangeJoin"));
+    let in_order = rows(&s, ordered).unwrap();
+    assert!(in_order.len() > 100, "{}", in_order.len());
+    range_joins(&s, "OFF");
+    assert_eq!(rows(&s, ordered).unwrap(), in_order);
+    range_joins(&s, "ON");
 }
