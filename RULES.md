@@ -11423,7 +11423,9 @@ statistics, and the maintenance job gathers it only if one did since
 its last pass began, and the table is due and spaced as before. A table
 opened and asked for its first statistics is gathered as before, and
 ANALYZE and the maintenance asked to run now gather at once
-(`engine/rows/stats.rs`).
+(`engine/rows/stats.rs`). A sampled pass of a table of the column store
+decodes the frozen rows of its sample alone, where it decoded every
+frozen row and kept the sampled (`engine/rows/frozen.rs`).
 
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 

@@ -263,13 +263,12 @@ impl RowTable {
         // The frozen rows no entry stands for, each as wide as its record
         // would be (`rows/frozen.rs`).
         let mut record = Vec::new();
-        self.each_unshadowed(&directory, |id, row| {
-            if read(id) {
-                record.clear();
-                self.format.encode(&row, &mut record)?;
-                builder.at_run(id.checked_div(CHUNK_IDS).unwrap_or(0));
-                builder.add(&row, record.len());
-            }
+        // Only the rows sampled are decoded.
+        self.each_unshadowed(&directory, read, |id, row| {
+            record.clear();
+            self.format.encode(&row, &mut record)?;
+            builder.at_run(id.checked_div(CHUNK_IDS).unwrap_or(0));
+            builder.add(&row, record.len());
             Ok(())
         })?;
         let mut stats = if sampling { builder.finish_sampled(rows) } else { builder.finish() };

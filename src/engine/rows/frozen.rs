@@ -377,20 +377,26 @@ impl RowTable {
         Ok(())
     }
 
-    /// Gives `each` every frozen row of `directory` no entry of the tree
-    /// stands for, every column of it, a vector at a time.
-    pub(super) fn each_unshadowed(&self, directory: &Directory, mut each: impl FnMut(RowId, Row) -> Result<()>) -> Result<()> {
+    /// Gives `each` every frozen row of `directory` that `keep` keeps and
+    /// no entry of the tree stands for, every column of it, a vector at a
+    /// time. Only the runs of rows kept are decoded, so a sampled pass
+    /// decodes its sample alone (RULES.md D473).
+    pub(super) fn each_unshadowed(
+        &self,
+        directory: &Directory,
+        keep: impl Fn(RowId) -> bool,
+        mut each: impl FnMut(RowId, Row) -> Result<()>,
+    ) -> Result<()> {
         let pages = self.group_pages()?;
         let types = self.format.types();
         let all: Vec<usize> = (0..types.len()).collect();
         for entry in &directory.groups {
             let group = self.group_of(entry)?;
             let ids = group.row_ids(&pages)?;
-            for (n, chunk) in ids.chunks(merge::VECTOR_ROWS).enumerate() {
-                let from = u32::try_from(n.saturating_mul(merge::VECTOR_ROWS)).map_err(|_| corrupt("a group is too large"))?;
-                let to = from.saturating_add(u32::try_from(chunk.len()).unwrap_or(u32::MAX));
-                let found = crate::engine::columns::scan::rows(&group, &pages, types, &all, (from, to))?;
-                for (&id, row) in chunk.iter().zip(found) {
+            for (from, to) in kept_runs(&ids, &keep) {
+                let span = (u32::try_from(from).map_err(|_| corrupt("a group is too large"))?, u32::try_from(to).unwrap_or(u32::MAX));
+                let found = crate::engine::columns::scan::rows(&group, &pages, types, &all, span)?;
+                for (&id, row) in ids.get(from..to).unwrap_or_default().iter().zip(found) {
                     self.unless_shadowed(id, row, &mut each)?;
                 }
             }
@@ -502,6 +508,22 @@ impl RowTable {
             freeze::noted(&mut lock_builtin(&self.frozen.commits), at, columns.freeze_delay);
         }
     }
+}
+
+/// The spans of positions in `ids` of rows `keep` keeps, each a run of
+/// rows kept next to each other, of at most a vector of them.
+fn kept_runs(ids: &[RowId], keep: &impl Fn(RowId) -> bool) -> Vec<(usize, usize)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for (at, _) in ids.iter().enumerate().filter(|(_, id)| keep(**id)) {
+        let next = at.saturating_add(1);
+        let joined = runs.last_mut().filter(|run| run.1 == at && at.saturating_sub(run.0) < merge::VECTOR_ROWS);
+        if let Some(run) = joined {
+            run.1 = next;
+        } else {
+            runs.push((at, next));
+        }
+    }
+    runs
 }
 
 // Unit tests: rows frozen when due, under readers and as rows are deleted;

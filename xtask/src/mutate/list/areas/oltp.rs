@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 23] = [
+pub const OLTP: [Mutation; 24] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -239,5 +239,15 @@ pub const OLTP: [Mutation; 23] = [
         replacement: "        let due = gathered.due() && (now || gathered.spaced());",
         integration: &[],
         unit: &["engine::rows::stats::tests::statistics_no_plan_reads_are_not_gathered"],
+    },
+    Mutation {
+        name: "oltp-frozen-sample-unfiltered",
+        package: Package::Core,
+        breaks: "a sampled statistics pass decodes and gives every frozen row, not its sample alone, so the pass over a large table of the column store reads it whole",
+        file: "src/engine/rows/frozen.rs",
+        original: "            for (from, to) in kept_runs(&ids, &keep) {",
+        replacement: "            for (from, to) in kept_runs(&ids, &|_| true) {",
+        integration: &[],
+        unit: &["engine::rows::frozen::shadowed::frozen_rows_are_decoded_only_when_kept"],
     },
 ];
