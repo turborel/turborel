@@ -207,3 +207,8 @@ pub(crate) fn changed(old: &Row, new: &Row) -> u64 {
 pub(crate) fn bit(c: usize) -> u64 {
     column_bit(c).unwrap_or(1 << 63)
 }
+
+// Unit tests: a write and a reservation of one row exclude each other
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;
