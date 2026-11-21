@@ -49,10 +49,10 @@ pub fn read_candidates<S: Seal>(group: &Group, pages: &Pages<'_, S>, conditions:
 }
 
 /// As `read_candidates`, narrowed further by imprints, each conjunct's
-/// at the grain of their blocks (`imprints.rs`, RULES.md D511); and the
-/// places of `conditions`' conjuncts, narrowest first, by the rows each
-/// alone keeps of the group by its zone maps and imprints, so a scan
-/// judges first the one that keeps fewest.
+/// at the grain of their blocks (`imprints.rs`, RULES.md D511); and, of a
+/// group with imprints, the places of `conditions`' conjuncts, narrowest
+/// first, by the rows each alone keeps of the group by its zone maps and
+/// imprints, so a scan judges first the one that keeps fewest.
 ///
 /// # Errors
 ///
@@ -71,6 +71,11 @@ pub fn read_ordered<S: Seal>(
         if let Some(kept) = bloom::kept(group, pages, condition, &runs)? {
             runs = both(&runs, &kept);
         }
+    }
+    // Without imprints the order stays as written: by zone maps alone, a
+    // conjunct keeping fewer parts may keep more rows, and cost more.
+    if !group.imprinted() {
+        return Ok((runs, Vec::new()));
     }
     let all = [(0, group.rows)];
     let mut kept: Vec<(usize, u64)> = conditions.conjuncts().iter().map(|c| rows_of(&kept_by(group, c))).enumerate().collect();

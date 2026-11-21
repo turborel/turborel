@@ -348,6 +348,11 @@ pub(super) fn put_filters<S: Seal>(
 }
 
 impl Group {
+    /// Whether it has imprints of any column (`imprints.rs`).
+    pub fn imprinted(&self) -> bool {
+        self.edges.iter().any(|e| !e.is_empty())
+    }
+
     /// Writes `rows`, whose ids are `ids`, a column of each of `types`, as
     /// a group, in their order.
     ///

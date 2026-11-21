@@ -55,7 +55,8 @@ impl Batched {
         // Of many rows kept, the run as it is, which the filter selects of;
         // but a short run, as imprints leave (RULES.md D511), is gathered
         // with others, so batches stay full.
-        if self.pending.is_empty() && rows >= KEPT_ROWS && kept.len().saturating_mul(KEPT_SHARE) >= rows {
+        let whole = rows >= KEPT_ROWS || !group.imprinted();
+        if self.pending.is_empty() && whole && kept.len().saturating_mul(KEPT_SHARE) >= rows {
             if !shadowed {
                 return self.dense(&group, (from, to), (judged.decoded, false)).map(Some);
             }
