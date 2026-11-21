@@ -26,6 +26,9 @@ const SMALL: u64 = 131_072;
 const PER_INSERT: u64 = 1_000;
 /// The work area past which the spilled cases run, 1 MiB.
 const SPILLED_WORK: u64 = 1 << 20;
+/// `ROWS` and `SMALL` as figures.
+const ROWS_F: f64 = 1_000_000.0;
+const SMALL_F: f64 = 131_072.0;
 /// The threads of the parallel cases.
 const THREADS: usize = 8;
 
@@ -35,13 +38,13 @@ const THREADS: usize = 8;
 fn database() -> (Database, Session) {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
-    let table = |name: &str, kept: &str| format!("CREATE TABLE {name} (K INTEGER, G INTEGER, H INTEGER, A INTEGER, P VARCHAR(24)){kept}");
+    let create = |name: &str, kept: &str| format!("CREATE TABLE {name} (K INTEGER, G INTEGER, H INTEGER, A INTEGER, P VARCHAR(24)){kept}");
     db.schema(&format!(
         "CREATE SCHEMA AUTHORIZATION B {} {} {} {}",
-        table("CR", ""),
-        table("CC", " USING columnstore"),
-        table("CS", ""),
-        table("CSC", " USING columnstore")
+        create("CR", ""),
+        create("CC", " USING columnstore"),
+        create("CS", ""),
+        create("CSC", " USING columnstore")
     ))
     .unwrap();
     let s = db.session("B");
@@ -115,7 +118,7 @@ fn timed(bench: &Bench, s: &Session, (name, sql, setting): (&str, &str, &str), (
         s.run(&format!("SET {key} TO DEFAULT")).unwrap();
     }
     s.run("SET EXECUTOR.DEGREE TO DEFAULT").unwrap();
-    1.0 / bench.rate(name, threads).unwrap()
+    1.0_f64 / bench.rate(name, threads).unwrap()
 }
 
 /// The workloads, then the weights they give.
@@ -147,20 +150,20 @@ pub fn workloads(bench: &Bench) {
 /// of `ROWS` and of `SMALL` rows took.
 fn weights(secs: &[f64], (unit, scan): (f64, f64), (big, little): (f64, f64), label: &str) {
     let of = |s: f64| s / unit;
-    let n = ROWS as f64;
+    let n = ROWS_F;
     note(&format!("weights{label}, in rows of the row store's scan:"));
     note(&format!("  scan row {:.3}, a row at a time {:.3}, all columns {:.3}", of(scan), of(secs[1]), of(secs[2])));
     note(&format!("  conjunct {:.3}, a row at a time {:.3}", of(secs[3] - scan), of(secs[4] - secs[1])));
     // A join's time is of two scans and each row of both hashed.
-    let hashed = |join: f64, scanned: f64| of(join - 2.0 * scanned) / 2.0;
+    let hashed = |join: f64, scanned: f64| of(join - 2.0_f64 * scanned) / 2.0_f64;
     note(&format!("  HASH_ROW {:.3}, a row at a time {:.3}", hashed(secs[5], scan), hashed(secs[6], secs[1])));
-    note(&format!("  spilled hash row {:.3}", of(secs[7] - secs[5]) / 2.0));
+    note(&format!("  spilled hash row {:.3}", of(secs[7] - secs[5]) / 2.0_f64));
     note(&format!("  GROUP_ROW few groups {:.3}, a group each {:.3}", of(secs[8] - scan), of(secs[9] - scan)));
     note(&format!("  spilled grouped row {:.3}", of(secs[10] - secs[9])));
     note(&format!("  SORT_COMPARE {:.4}", of(secs[12] - secs[11]) / n.log2()));
     note(&format!("  spilled sorted row {:.3}", of(secs[13] - secs[12])));
     // A part's seconds are its start and its rows' share of each thread:
     // s = start / rows + per_row, of two sizes.
-    let per_row = (big * n - little * SMALL as f64) / (n - SMALL as f64);
-    note(&format!("  part start of {THREADS} threads {:.0}, a row on them {:.3}", of((little - per_row) * SMALL as f64), of(per_row)));
+    let per_row = (big * n - little * SMALL_F) / (n - SMALL_F);
+    note(&format!("  part start of {THREADS} threads {:.0}, a row on them {:.3}", of((little - per_row) * SMALL_F), of(per_row)));
 }

@@ -20,22 +20,11 @@ fn compared(c: usize, op: CompOp, n: i64) -> Cond {
 fn columns(conds: &[Cond]) -> Vec<usize> {
     conds
         .iter()
-        .filter_map(|c| match c {
-            Cond::Compare(Expr::Column(c), ..) | Cond::IsNull(Expr::Column(c), _) => Some(*c),
-            Cond::Compare(..) | Cond::IsNull(..) => None,
-            Cond::Const(_)
-            | Cond::Or(..)
-            | Cond::And(..)
-            | Cond::Not(_)
-            | Cond::Distinct(..)
-            | Cond::Like(..)
-            | Cond::Exists(_)
-            | Cond::Quantified(..)
-            | Cond::Is(..)
-            | Cond::Unique(..)
-            | Cond::Match { .. }
-            | Cond::Value(_)
-            | Cond::In(..) => None,
+        .filter_map(|c| {
+            if let Cond::Compare(Expr::Column(c), ..) = c {
+                return Some(*c);
+            }
+            None
         })
         .collect()
 }
