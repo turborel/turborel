@@ -252,7 +252,8 @@ impl Model {
     /// column of the left and one of the right: their bounds' product, or
     /// where one side is one relation, the other's bound times the most
     /// rows of one value of its column; a LEFT join's at most adds the
-    /// left's rows, a FULL join's both operands'. A set holding a relation
+    /// left's rows, a FULL join's both operands', and a semi join or
+    /// antijoin keeps at most its left's. A set holding a relation
     /// of rows given in place of the estimates has none, as those rows
     /// overrule the statistics the bound is drawn from (RULES.md D377).
     pub(super) fn joined_upper(&self, (s1, u1): (Set, f64), (s2, u2): (Set, f64), (kind, keys): (Kind, &[(usize, usize)])) -> f64 {
@@ -270,6 +271,8 @@ impl Model {
             Kind::Inner => inner,
             Kind::Left => inner + u1,
             Kind::Full => inner + u1 + u2,
+            // Each left row at most once.
+            Kind::Semi | Kind::Anti => u1,
         }
     }
 

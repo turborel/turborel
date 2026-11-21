@@ -101,6 +101,8 @@ impl Estimates<'_> {
                     return self.table_keys(table).covers(&columns).then(|| self.table_rows(table)).flatten();
                 }
                 LogicalPlan::Filter { input, .. } | LogicalPlan::Sort { input, .. } | LogicalPlan::Limit { input, .. } => at = input,
+                // A semi join or antijoin keeps some of its left's rows, each once.
+                LogicalPlan::SemiJoin { left, .. } => at = left,
                 LogicalPlan::Project { exprs, input } => {
                     columns = columns
                         .iter()
