@@ -396,7 +396,7 @@ pub trait ScalarFunction: Send + Sync {
     /// [ISO/IEC 9075-2:2023 §8.20] The operator of a `<period predicate>`
     /// of two periods each named by a `<period reference>`, or of one and a
     /// point in time, whose call is false of a null bound and raises
-    /// nothing [GR4], so a join may judge it as the comparisons it is
+    /// nothing \[GR4\], so a join may judge it as the comparisons it is
     /// made of (`physical/range/periods.rs`, RULES.md D581). None, by
     /// default.
     fn period_operator(&self) -> Option<crate::ast::PeriodOperator> {

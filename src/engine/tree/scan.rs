@@ -184,6 +184,10 @@ fn tally(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Res
     Ok((end.saturating_sub(start), further_of(leaf, upper)))
 }
 
+/// \[DESIGN\] The entries a leaf's take has room for at first: a few
+/// small allocations' worth.
+const TAKEN_FIRST: usize = 16;
+
 /// Takes what is wanted from `leaf`.
 fn take(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Result<Taken> {
     if leaf.level != 0 {
@@ -193,8 +197,11 @@ fn take(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Resu
     if leaf.deleted {
         return Ok(Taken { found: Vec::new(), further: leaf.right });
     }
-    let mut found = Vec::new();
-    for at in start_of(leaf, lower)?..leaf.len() {
+    let start = start_of(leaf, lower)?;
+    // Room for a few entries at once, as a range of many grows from none by
+    // doubling; no more, as a probe of one key takes one.
+    let mut found = Vec::with_capacity(leaf.len().saturating_sub(start).min(TAKEN_FIRST));
+    for at in start..leaf.len() {
         let (key, value) = leaf.entry(at)?;
         if !below(key, upper) {
             break;
