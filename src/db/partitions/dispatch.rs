@@ -14,7 +14,7 @@ use super::global::unpacked;
 use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::storage::{Condition, DEFAULT_FETCH_COST, Newest, Row, RowId, Rows, TableStorage};
-use crate::txn::TxId;
+use crate::txn::{Timestamp, TxId};
 
 /// The partitions holding rows of a partitioned table, by their ids.
 pub(crate) struct Dispatched {
@@ -79,6 +79,9 @@ impl TableStorage for Dispatched {
     }
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
         self.leaf(id).map_or_else(|| Ok(Newest::of(None)), |(s, row)| s.newest(tx, row))
+    }
+    fn newest_writer(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        self.leaf(id).map_or(Ok((None, 0)), |(s, row)| s.newest_writer(tx, row))
     }
     fn fetch_cost(&self) -> f64 {
         self.leaves.values().next().map_or(DEFAULT_FETCH_COST, |s| s.fetch_cost())
