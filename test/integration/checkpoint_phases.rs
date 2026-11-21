@@ -62,6 +62,24 @@ fn writers(db: &Database, stop: &Arc<AtomicBool>) -> Vec<thread::JoinHandle<()>>
         .collect()
 }
 
+/// Readers of T until `stop`, by the key and by the index: their misses,
+/// which a checkpoint's shut does not hold, evict pages as it notes them.
+fn readers(db: &Database, stop: &Arc<AtomicBool>) -> Vec<thread::JoinHandle<()>> {
+    (0..2_u32)
+        .map(|r| {
+            let (db, stop) = (db.clone(), Arc::clone(stop));
+            thread::spawn(move || {
+                let s = db.session("APP");
+                while !stop.load(Ordering::Acquire) {
+                    let query = if r == 0 { "SELECT COUNT(*) FROM T WHERE K >= 0" } else { "SELECT COUNT(*) FROM T WHERE V >= ''" };
+                    let _ = s.run(query);
+                    let _ = s.commit();
+                }
+            })
+        })
+        .collect()
+}
+
 /// The table as a query by the key and one by the index read it.
 fn contents(db: &Database) -> (Vec<String>, Vec<String>) {
     let s = db.session("APP");
@@ -121,16 +139,18 @@ fn a_crash_at_each_step_of_a_checkpoint_recovers() {
 }
 
 /// Verifies: [DESIGN] RULES.md D590, checkpoints taken one after another
-/// while writers run, then a crash: each image whole, the last recovered
-/// from with its log, the rows committed all there and no other.
+/// while writers and readers run, readers evicting pages as each
+/// checkpoint notes them, then a crash: each checkpoint taken, each image
+/// whole, the last recovered from with its log, the rows committed all
+/// there and no other.
 #[test]
 fn checkpoints_while_writers_run_capture_whole_images() {
     let scratch = Scratch::new("checkpoint-images");
     let dir = scratch.path("db");
     let db = opened(&after_crash(), &dir, true);
     let stop = Arc::new(AtomicBool::new(false));
-    let running = writers(&db, &stop);
-    for _ in 0..12 {
+    let running: Vec<_> = writers(&db, &stop).into_iter().chain(readers(&db, &stop)).collect();
+    for _ in 0..40 {
         db.checkpoint().unwrap();
     }
     stop.store(true, Ordering::Release);

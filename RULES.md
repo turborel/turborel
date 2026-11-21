@@ -11432,7 +11432,9 @@ Writers then go on, and each page owed is taken once, as it was at the
 shut, by whoever reaches it first. A writer latching it for writing
 copies it first, under the latch it takes anyway; a free copies it too;
 an eviction captures it, the page kept mapped meanwhile as a dirty one
-is while written back; and the checkpoint walks the pages owed and
+is while written back, which a reader's miss may do during the shut,
+so the capture is set up before the first page is owed; and the
+checkpoint walks the pages owed and
 captures each still owed under its read latch, then each copy
 (`disk/buffer/pool/capture.rs`). A capture is written into the sealed
 batch, held in memory, newer than its blocks and older than anything

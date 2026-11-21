@@ -77,11 +77,21 @@ impl BufferPool {
     /// if it cannot be made to hold the pages: none is owed then.
     pub fn capture(&self, file: FileId) -> Result<Capture> {
         let pager = self.pager(file)?;
-        let Some(capturing) = pager.capturing() else { return Ok(Capture::default()) };
+        let Some(capturing) = pager.capturing().map(Arc::new) else { return Ok(Capture::default()) };
+        // Set before any page is owed: a reader's miss, which the shut
+        // does not hold, may evict a page owed as soon as it is marked.
+        *self.owed.plan.write().unwrap_or_else(PoisonError::into_inner) = Some((file, Arc::clone(&capturing)));
         let mut capture = Capture::default();
         for (index, frame) in self.frames.iter().enumerate() {
             frame.settled();
-            let Some(key) = self.pin_dirty(frame)? else { continue };
+            let key = match self.pin_dirty(frame) {
+                Ok(Some(key)) => key,
+                Ok(None) => continue,
+                Err(e) => {
+                    self.abandon(capture);
+                    return Err(e);
+                }
+            };
             let pin = Pin(frame);
             frame.settled();
             let latch = frame.content.read().unwrap_or_else(PoisonError::into_inner);
@@ -92,7 +102,6 @@ impl BufferPool {
             }
             drop((latch, pin));
         }
-        *self.owed.plan.write().unwrap_or_else(PoisonError::into_inner) = Some((file, Arc::new(capturing)));
         let last = capture.pages.iter().map(|(_, key)| key.id).max();
         if let Some(Err(e)) = last.map(|id| pager.cover(PageId(id))) {
             self.abandon(capture);
@@ -118,9 +127,7 @@ impl BufferPool {
             let copied = self.copied(&pager, key, &capturing);
             first = first.and(walked).and(copied);
         }
-        while self.owed.in_flight.load(Ordering::Acquire) > 0 {
-            thread::sleep(IN_FLIGHT_WAIT);
-        }
+        self.landed();
         let left: Vec<Key> = lock_builtin(&self.owed.copies).keys().copied().collect();
         for key in left {
             first = first.and(self.copied(&pager, key, &capturing));
@@ -131,7 +138,8 @@ impl BufferPool {
     }
 
     /// \[DESIGN\] Gives `capture` up before its batch is sealed: each page
-    /// still owed is dirty again, and the copies are dropped.
+    /// still owed is dirty again, the evictions capturing one ended, and the
+    /// copies are dropped.
     pub fn abandon(&self, capture: Capture) {
         for (index, key) in capture.pages {
             let Some(frame) = self.frames.get(index) else { continue };
@@ -140,9 +148,17 @@ impl BufferPool {
                 frame.dirty.store(true, Ordering::Release);
             }
         }
+        self.landed();
         lock_builtin(&self.owed.copies).clear();
         *self.owed.plan.write().unwrap_or_else(PoisonError::into_inner) = None;
         lock_builtin(&self.owed.failure).take();
+    }
+
+    /// Waits until no eviction is capturing a page owed.
+    fn landed(&self) {
+        while self.owed.in_flight.load(Ordering::Acquire) > 0 {
+            thread::sleep(IN_FLIGHT_WAIT);
+        }
     }
 
     /// Captures the page frame `index` held, `key`, if it is still owed,
