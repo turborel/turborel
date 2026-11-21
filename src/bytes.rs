@@ -219,6 +219,12 @@ impl<'a> Reader<'a> {
         String::from_utf8(bytes.to_vec()).map_err(|_| self.corrupt("a string is not UTF-8"))
     }
 
+    /// How many bytes were read: where the next field begins, so a caller
+    /// can keep where a field lies rather than copy it out.
+    pub fn position(&self) -> usize {
+        self.at
+    }
+
     /// Whether every byte was read: so a message's optional fields after
     /// its required ones are read while any are left.
     pub fn at_end(&self) -> bool {

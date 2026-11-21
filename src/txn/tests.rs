@@ -5,6 +5,7 @@
 use super::*;
 use crate::catalog::MemoryCatalog;
 use crate::db::State;
+use crate::log::Lsn;
 use crate::value::Spelled;
 
 /// Verifies: [DESIGN] commit and rollback reach the storage each
@@ -159,9 +160,10 @@ impl Log for Watching {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md R-ERR-4: a transaction's state is not
-/// locked while the log, a plug-in, appends its records: a change's, nor
-/// the record of its statement undone.
+/// Verifies: [DESIGN] RULES.md R-ERR-4, D470: a transaction's state is not
+/// locked while the log, a plug-in, appends its records: a change's held,
+/// written by a checkpoint, nor the record of its statement undone after.
+/// A statement whose records are all held is undone with none written.
 /// Regression test (R-TEST-7): the state was held locked across the
 /// append of a statement undone.
 #[test]
@@ -172,13 +174,22 @@ fn the_log_appends_with_no_lock_held() {
     let tx = Arc::new(shared.begin(Some(watched), (LockWait::NoWait, Reading::Serializable, Arc::default()), UndoSpace::default()));
     log.tx.set(Arc::downgrade(&tx)).unwrap();
     tx.log_change(crate::log::record::Change::Abort).unwrap();
+    assert!(lock_builtin(&log.locked).is_empty(), "held, not written");
+    shared.write_held().unwrap();
     tx.statement_undone();
+    shared.write_held().unwrap();
     assert_eq!(*lock_builtin(&log.locked), [false, false]);
+    tx.begin_statement(|| false).unwrap();
+    tx.log_change(crate::log::record::Change::Abort).unwrap();
+    tx.statement_undone();
+    shared.write_held().unwrap();
+    assert_eq!(lock_builtin(&log.locked).len(), 2, "held and undone: nothing written");
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D44: a transaction that logged a
-/// record holds the log from its first until it ends, dropped; one that
-/// logged none holds nothing, and its end leaves the other's held; what
+/// Verifies: [DESIGN] RULES.md D25, D44, D470: a transaction whose records
+/// a checkpoint wrote holds the log from its first until it ends, dropped;
+/// one holding them unwritten, or none, holds nothing, and its end leaves
+/// the other's held; what
 /// cancels an open transaction's statements is found by its id, whichever
 /// shard holds it, until it ends.
 #[test]
@@ -188,6 +199,8 @@ fn a_transactions_first_record_and_stop_last_until_it_ends() {
     let begin = || shared.begin(Some(Arc::clone(&log)), (LockWait::NoWait, Reading::Serializable, Arc::default()), UndoSpace::default());
     let (writer, reader) = (begin(), begin());
     writer.log_change(crate::log::record::Change::Abort).unwrap();
+    assert!(shared.oldest_logged().is_none(), "held, not written");
+    shared.write_held().unwrap();
     assert!(shared.oldest_logged().is_some(), "the writer's first");
     let more: Vec<Txn> = (0_u32..40_u32).map(|_| begin()).collect();
     for tx in [&writer, &reader].into_iter().chain(&more) {

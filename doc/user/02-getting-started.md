@@ -87,10 +87,10 @@ SELECT D.NAME, COUNT(*) AS STAFF, AVG(E.SALARY) AS AVERAGE
  Grace                          |     8100.00
  Ada                            |     7200.00
 (2 rows)
- NAME                           |                STAFF |              AVERAGE
---------------------------------+----------------------+----------------------
- Engineering                    |                    2 |            7650.0000
- Operations                     |                    1 |            5400.0000
+ NAME                           |                STAFF |                                  AVERAGE
+--------------------------------+----------------------+------------------------------------------
+ Engineering                    |                    2 |                                7650.0000
+ Operations                     |                    1 |                                5400.0000
 (2 rows)
 ```
 

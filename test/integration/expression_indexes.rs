@@ -150,7 +150,7 @@ fn an_expression_that_can_raise_is_refused() {
     let s = table(&db);
     let refused = [
         "CREATE INDEX X ON T ((A / B))",
-        "CREATE INDEX X ON T ((A * B))",
+        "CREATE INDEX X ON T ((A * B * A * B))",
         "CREATE INDEX X ON T ((CAST(NAME AS INTEGER)))",
         "CREATE INDEX X ON T ((CURRENT_DATE))",
         "CREATE INDEX X ON T ((JSON_VALUE(DOC, 'lax $.k' RETURNING INTEGER ERROR ON ERROR)))",

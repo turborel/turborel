@@ -169,6 +169,7 @@ fn late_columns_raise_as_rows() {
         ("SELECT K, 100 / (A - 7) FROM {t} WHERE C < 600", Err(Code::Data)),
         ("SELECT K, 100 / (A - 7) FROM {t} WHERE C < 600 AND A <> 7", Ok(())),
         ("SELECT SUM(100 / (A - 7)) FROM {t} WHERE C < 600", Err(Code::Data)),
+        ("SELECT SUM(100 / (A - 7)) FROM {t} WHERE C < 600 AND A <> 7", Ok(())),
     ] {
         let of = |t: &str| rows(&a, &q.replace("{t}", t)).map(|mut r| r.sort()).map(drop);
         assert_eq!(of("C"), expected, "{q}");

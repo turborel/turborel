@@ -273,7 +273,7 @@ pub struct BufferPool {
     queued: pool::Queued,
     /// Its share of the database's memory budget, if it was made in one,
     /// held while it lives and given back as it is dropped.
-    _reservation: Option<Reservation>,
+    reservation: Option<Reservation>,
 }
 
 /// A pin on a frame, released when dropped.
@@ -451,5 +451,30 @@ mod tests {
         let mut waited = None;
         assert!(all_held(1, &mut waited, Duration::from_secs(1)).is_ok(), "to try again");
         assert_eq!(all_held(1, &mut waited, Duration::ZERO).err().map(|e| e.code), Some(Code::Resources), "past its bound");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D474, a page read into a frame takes
+    /// the buffer of the page it held, written back first: the content
+    /// read is the new page's whole, in the old page's buffer, and the
+    /// page it held, read again, its own whole.
+    #[test]
+    fn a_page_read_takes_the_buffer_of_the_page_it_replaces() {
+        let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+        let pager = Pager::create(&MemoryFileSystem::new(), Path::new("/p"), hash, Pipeline::none(), 4096).unwrap();
+        let pool = BufferPool::new(1, Box::new(Clock::new(1))).unwrap();
+        let file = pool.add_pager(Arc::new(pager));
+        let page = |fill: u8, len: usize| {
+            let (id, mut held) = pool.new_page(file).unwrap();
+            held.extend(std::iter::repeat_n(fill, len));
+            id
+        };
+        let (a, b) = (page(7, 3000), page(9, 2000));
+        let at = pool.read(file, a.0).unwrap().as_ptr();
+        let read = pool.read(file, b.0).unwrap();
+        assert_eq!((read.len(), read.iter().all(|&v| v == 9)), (2000, true), "read whole, written back");
+        assert_eq!(read.as_ptr(), at, "in the buffer of the page it replaced");
+        drop(read);
+        let again = pool.read(file, a.0).unwrap();
+        assert_eq!((again.len(), again.iter().all(|&v| v == 7)), (3000, true), "longer than the buffer it took");
     }
 }

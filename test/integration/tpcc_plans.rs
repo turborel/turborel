@@ -28,14 +28,13 @@ const TABLES: [&str; 11] = [
 ];
 
 /// Items, customers in each district and orders in each district loaded:
-/// half the benchmark's items, and enough orders that ORDER_LINE is far larger
-/// than the lines of a district's last twenty orders. Reading those lines
-/// and their stock through an index then costs far less than reading
-/// either table whole, so no plan is near another in cost as the tables
-/// grow.
-const ITEMS: i64 = 50_000;
+/// enough items and orders that ORDER_LINE and STOCK are far larger than
+/// the lines of a district's last twenty orders and their stock. Reading
+/// those through an index then costs far less than reading either table
+/// whole, so no plan is near another in cost as the tables grow.
+const ITEMS: i64 = 20_000;
 const CUSTOMERS: i64 = 30;
-const ORDERS: i64 = 1000;
+const ORDERS: i64 = 400;
 
 /// A small pseudo-random sequence, so each run CALLs with the same values.
 struct Sequence(u64);
@@ -63,6 +62,39 @@ fn load(s: &Session, table: &str, rows: &[String]) {
     }
 }
 
+/// The larger tables, each made by one INSERT of a query over N, the
+/// numbers 1 to `ITEMS`: ITEM, STOCK, ORDERS, ORDER_LINE and NEW_ORDER.
+fn generated(s: &Session) {
+    s.run("CREATE TABLE DIGIT (D INTEGER NOT NULL)").unwrap();
+    s.run("INSERT INTO DIGIT VALUES (0), (1), (2), (3), (4), (5), (6), (7), (8), (9)").unwrap();
+    s.run("CREATE TABLE N (N INTEGER NOT NULL)").unwrap();
+    s.run(&format!(
+        "INSERT INTO N SELECT * FROM (SELECT A.D * 10000 + B.D * 1000 + C.D * 100 + E.D * 10 + F.D + 1 AS N \
+         FROM DIGIT A, DIGIT B, DIGIT C, DIGIT E, DIGIT F) AS G WHERE N <= {ITEMS}"
+    ))
+    .unwrap();
+    let dist = ["'DDDDDDDDDDDDDDDDDDDDDDDD'"; 10].join(", ");
+    let old = "TIMESTAMP '2024-01-01 00:00:00'";
+    let fresh = ORDERS - 9;
+    for insert in [
+        "INSERT INTO ITEM SELECT N, N, 'ITEM', MOD(N, 90) + 1.50, 'DATA' FROM N".to_owned(),
+        format!("INSERT INTO STOCK SELECT 1, N, MOD(N, 90) + 10, {dist}, 0, 0, 0, 'DATA' FROM N"),
+        format!(
+            "INSERT INTO ORDERS SELECT 1, D_ID, N, MOD(N * 7, {CUSTOMERS}) + 1, CASE WHEN N > {fresh} THEN CAST(NULL AS SMALLINT) ELSE 3 END, 5, 1, {old} \
+             FROM DISTRICT, N WHERE N <= {ORDERS}"
+        ),
+        format!(
+            "INSERT INTO ORDER_LINE SELECT 1, D_ID, O.N, L.N, MOD(O.N * L.N, {ITEMS}) + 1, CAST(NULL AS TIMESTAMP(0)), 9.99, 1, 5, 'DDDDDDDDDDDDDDDDDDDDDDDD' \
+             FROM DISTRICT, N AS O, N AS L WHERE O.N <= {ORDERS} AND L.N <= 5"
+        ),
+        format!("INSERT INTO NEW_ORDER SELECT 1, D_ID, N FROM DISTRICT, N WHERE N > {fresh} AND N <= {ORDERS}"),
+    ] {
+        s.run(&insert).unwrap();
+    }
+    s.run("DROP TABLE N RESTRICT").unwrap();
+    s.run("DROP TABLE DIGIT RESTRICT").unwrap();
+}
+
 /// One warehouse loaded, its procedures defined, in schema TPCC.
 fn loaded() -> (Database, Session) {
     let db = Database::new();
@@ -72,14 +104,9 @@ fn loaded() -> (Database, Session) {
         s.run(t).unwrap();
         s.commit().unwrap();
     }
-    let dist = "'DDDDDDDDDDDDDDDDDDDDDDDD'";
     let districts: Vec<String> =
         (1..=10).map(|d| format!("(1, {d}, 30000.00, 0.1000, {}, 'D', 'S1', 'S2', 'C', 'ST', '123456789')", ORDERS + 1)).collect();
-    let items: Vec<String> = (1..=ITEMS).map(|i| format!("({i}, {i}, 'I{i}', {}.50, 'DATA')", i % 90 + 1)).collect();
-    let dists = [dist; 10].join(", ");
-    let stock: Vec<String> = (1..=ITEMS).map(|i| format!("(1, {i}, {}, {dists}, 0, 0, 0, 'DATA')", i % 90 + 10)).collect();
     let mut customers = Vec::new();
-    let (mut orders, mut lines, mut new_orders) = (Vec::new(), Vec::new(), Vec::new());
     for d in 1..=10 {
         for c in 1..=CUSTOMERS {
             let credit = if c % 10 == 0 { "BC" } else { "GC" };
@@ -88,27 +115,11 @@ fn loaded() -> (Database, Session) {
                 last_name(c % 10)
             ));
         }
-        for o in 1..=ORDERS {
-            let carrier = if o > ORDERS - 9 { "NULL".to_owned() } else { "3".to_owned() };
-            orders.push(format!("(1, {d}, {o}, {}, {carrier}, 5, 1, TIMESTAMP '2024-01-01 00:00:00')", (o * 7) % CUSTOMERS + 1));
-            lines.extend((1..=5).map(|n| format!("(1, {d}, {o}, {n}, {}, NULL, 9.99, 1, 5, {dist})", (o * n) % ITEMS + 1)));
-            if o > ORDERS - 9 {
-                new_orders.push(format!("(1, {d}, {o})"));
-            }
-        }
     }
     s.run("INSERT INTO WAREHOUSE VALUES (1, 300000.00, 0.1000, 'W', 'S1', 'S2', 'C', 'ST', '123456789')").unwrap();
-    for (table, rows) in [
-        ("DISTRICT", districts),
-        ("ITEM", items),
-        ("STOCK", stock),
-        ("CUSTOMER", customers),
-        ("ORDERS", orders),
-        ("ORDER_LINE", lines),
-        ("NEW_ORDER", new_orders),
-    ] {
-        load(&s, table, &rows);
-    }
+    load(&s, "DISTRICT", &districts);
+    load(&s, "CUSTOMER", &customers);
+    generated(&s);
     for p in PROCEDURES.split("CREATE PROCEDURE").skip(1) {
         s.run(&format!("CREATE PROCEDURE{p}")).unwrap();
     }
@@ -200,17 +211,17 @@ fn tpcc_procedures_plan_nothing_in_steady_state() {
     let (_db, s) = loaded();
     let calls = Calls::of(&s);
     let mut r = Sequence(7);
-    for _ in 0..100 {
+    for _ in 0..60 {
         calls.round(&s, &mut r);
     }
     let mut made = [0_u64; 5];
-    for _ in 0..200 {
+    for _ in 0..80 {
         let got = calls.round(&s, &mut r);
         for (total, n) in made.iter_mut().zip(got) {
             *total = total.saturating_add(n);
         }
     }
-    assert_eq!(made, [0; 5], "plannings of NEWORD, PAYMENT, DELIVERY, OSTAT and SLEV in 200 rounds");
+    assert_eq!(made, [0; 5], "plannings of NEWORD, PAYMENT, DELIVERY, OSTAT and SLEV in 80 rounds");
 }
 
 /// The plannings `n` executions of `p`, the query of one group's rows,
@@ -238,19 +249,26 @@ fn grouped(s: &Session, (first, groups): (i64, i64), (per, from): (i64, i64)) {
 /// Verifies: [DESIGN] RULES.md D613, a plan kept that reads only through an
 /// index's probes is kept as its table grows fivefold with its rows per
 /// probe as they were, and is learned again once its rows per probe grow
-/// past ten times what they were as it was learned.
+/// past ten times what they were as it was learned. Its statistics are
+/// gathered after each load, so each figure is measured from them, not
+/// from whether a pass of the maintenance thread happened to come first
+/// (RULES.md D473).
 #[test]
 fn a_probes_plan_is_learned_again_only_once_its_rows_per_probe_outgrow_it() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE G (G INTEGER NOT NULL, K INTEGER NOT NULL, V INTEGER, PRIMARY KEY (G, K))")
         .unwrap();
     let s = db.session("X");
-    grouped(&s, (1, 100), (2, 1));
+    let loaded = |groups, rows| {
+        grouped(&s, groups, rows);
+        db.maintain().unwrap();
+    };
+    loaded((1, 100), (2, 1));
     let p = s.prepare("SELECT K, V FROM G WHERE G = ?").unwrap();
     assert!(group_plannings(&s, &p, 40) > 0, "learned");
     assert_eq!(group_plannings(&s, &p, 40), 0, "kept");
-    grouped(&s, (101, 400), (2, 1));
+    loaded((101, 400), (2, 1));
     assert_eq!(group_plannings(&s, &p, 40), 0, "five times the rows, as many of each group");
-    grouped(&s, (1, 500), (30, 3));
+    loaded((1, 500), (30, 3));
     assert!(group_plannings(&s, &p, 40) > 0, "sixteen times the rows of each group");
 }

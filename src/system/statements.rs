@@ -32,7 +32,7 @@ use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::txn::{Tallies, Tally};
 use crate::value::datetime::Moment;
-use crate::value::{DataType, Datetime, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Datetime, Decimal, Spelled, Value};
 
 /// \[DESIGN\] The setting that bounds the tallies, and its group, under
 /// which it is declared.
@@ -142,10 +142,7 @@ pub(super) struct StatementStatistics;
 
 /// A column of counts, named `name`.
 pub(super) fn counted(name: &str) -> ColumnDesc {
-    ColumnDesc {
-        data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
-        ..identifier(name, true)
-    }
+    ColumnDesc { data_type: DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric }, ..identifier(name, true) }
 }
 
 /// A count's value.

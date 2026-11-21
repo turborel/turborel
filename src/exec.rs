@@ -57,7 +57,7 @@ use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Cond, Expr, SortKey, Truth};
 use crate::physical::Plan;
-use crate::storage::Row;
+use crate::storage::{Row, sized_row};
 use crate::system::SystemRead;
 use crate::txn::TxId;
 use crate::value::Value;
@@ -329,10 +329,10 @@ fn projected(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if exprs.iter().any(Expr::draws) {
         return Box::new(input.map(move |r| {
             let drawn = Drawn::new(&runner);
-            r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &drawn)).collect())
+            r.and_then(|row| sized_row(exprs.len(), exprs.iter().map(|e| eval(e, &row, &drawn))))
         }));
     }
-    Box::new(input.map(move |r| r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &runner)).collect())))
+    Box::new(input.map(move |r| r.and_then(|row| sized_row(exprs.len(), exprs.iter().map(|e| eval(e, &row, &runner))))))
 }
 
 /// Whether a query reads its tables a batch at a time where it can, as the

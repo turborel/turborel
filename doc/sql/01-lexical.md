@@ -98,7 +98,7 @@ over, and may be written in parts as a character string may. The
 letters X, N and E may be written in either case. SQL-92's bit string
 literal, `B'1010'`, is gone, as SQL:2023 has none.
 
-An exact number holds at most 18 digits; an approximate number is
+An exact number holds at most 38 digits; an approximate number is
 within the range of DOUBLE PRECISION. A datetime literal is a valid
 date or time:
 

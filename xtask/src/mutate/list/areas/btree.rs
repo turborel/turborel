@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 14] = [
+pub const BTREE: [Mutation; 16] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -144,5 +144,25 @@ pub const BTREE: [Mutation; 14] = [
         replacement: "held.contended() >= CONTENDED.saturating_mul(1000);",
         integration: &[],
         unit: &["engine::tree::tests::hot::a_leaf_writers_wait_for_is_split_early"],
+    },
+    Mutation {
+        name: "btree-split-unfitted",
+        package: Package::Core,
+        breaks: "a split by a key without the prefix a leaf's keys share leaves a half past its page",
+        file: "src/engine/tree/node/split.rs",
+        original: "        .find(|&at| fits(at))",
+        replacement: "        .find(|&at| at == start)",
+        integration: &[],
+        unit: &["engine::tree::tests::shared::a_key_without_the_shared_prefix_splits_a_leaf_into_halves_that_fit"],
+    },
+    Mutation {
+        name: "btree-fitted-unsplit",
+        package: Package::Core,
+        breaks: "a split's half past the page is written whole, not split again",
+        file: "src/engine/tree/fit.rs",
+        original: "        if content.len() <= self.capacity {",
+        replacement: "        if content.len() <= usize::MAX {",
+        integration: &[],
+        unit: &["engine::tree::tests::shared::a_node_past_its_page_is_split_until_each_part_fits"],
     },
 ];

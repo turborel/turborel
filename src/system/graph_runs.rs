@@ -23,7 +23,7 @@ use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::datetime::Moment;
 use crate::value::datetime::utc_of_unix;
-use crate::value::{DataType, Datetime, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Datetime, Decimal, Spelled, Value};
 
 /// \[DESIGN\] The runs the log keeps, the oldest dropped past them.
 pub const KEPT: usize = 1_000;
@@ -163,7 +163,7 @@ pub(super) struct GraphAlgoRuns;
 fn count_column(name: &str) -> ColumnDesc {
     ColumnDesc {
         name: name.to_owned(),
-        data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
+        data_type: DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric },
         not_null: true,
         default: None,
         domain: None,

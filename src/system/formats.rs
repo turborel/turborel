@@ -10,7 +10,7 @@ use crate::catalog::ColumnDesc;
 use crate::error::Result;
 use crate::storage::Row;
 use crate::value::Spelled;
-use crate::value::{DataType, Decimal, MAX_EXACT_PRECISION, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Decimal, Value};
 
 /// \[EXTENSION\] INFORMATION_SCHEMA.FILE_FORMATS.
 pub(super) struct FileFormats;
@@ -26,7 +26,7 @@ impl SystemTable for FileFormats {
             text_column(("IS_SETTLED", 3), true),
             ColumnDesc {
                 name: "BEHIND".to_owned(),
-                data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
+                data_type: DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric },
                 not_null: true,
                 default: None,
                 domain: None,

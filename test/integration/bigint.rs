@@ -51,8 +51,8 @@ fn the_bigint_type_6_1() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.1, §4.5.2] the name is no
 /// part of the type: BIGINT and NUMERIC(18, 0) are one type, so a
 /// foreign key of one references the other, and a value compares with
-/// any number. A sum past 18 digits is refused (SQLCODE -301), as of any
-/// exact numbers; a sum within them keeps every digit.
+/// any number. SUM of BIGINTs is of 38 digits [§10.9 SR7g ii], so a sum
+/// past 18 keeps every digit (RULES.md D696).
 #[test]
 fn bigint_is_numeric_of_its_precision_4_5() {
     let db = bigints();
@@ -66,7 +66,7 @@ fn bigint_is_numeric_of_its_precision_4_5() {
     assert_eq!(sorted(&a, "SELECT K FROM T WHERE B > K AND B = 4E9"), ["4000000"]);
     assert_eq!(rows(&a, "SELECT SUM(B), MAX(B) * 1000 FROM T").unwrap(), ["3999999995,4000000000000"]);
     a.run("INSERT INTO T VALUES (999999999999999999, 0)").unwrap();
-    assert_eq!(rows(&a, "SELECT SUM(B) FROM T WHERE B > 0").err(), Some(Code::Data), "past 18 digits");
+    assert_eq!(rows(&a, "SELECT SUM(B) FROM T WHERE B > 0").unwrap(), ["1000000003999999999"], "of 38 digits, past 18");
     a.rollback().unwrap();
 }
 

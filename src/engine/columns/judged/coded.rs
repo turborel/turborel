@@ -14,7 +14,8 @@
 //! column of any character string type (`sorted.rs`). Of a group with a
 //! sketch of the column, a row of a chunk coded by symbols is kept or
 //! left by its sketch's code first, and only a row of a boundary code
-//! compared (`sketched.rs`, RULES.md D525).
+//! compared (`sketched.rs`, RULES.md D525), unless few of a run's rows
+//! are asked for.
 
 use std::cell::Cell;
 
@@ -52,7 +53,8 @@ pub(super) fn kept<S: Seal>(
     let symbols = padding(t) == Some(None);
     let Some(zones) = group.columns.get(pred.column) else { return Ok(None) };
     let all = super::rows(usize::try_from(to.saturating_sub(from)).unwrap_or(0), given);
-    let sketch = if symbols { sketch_of(group, (pages, &mut *prepared), pred, (from, to))? } else { None };
+    let dense = all.len().saturating_mul(SPARSE) >= usize::try_from(to.saturating_sub(from)).unwrap_or(usize::MAX);
+    let sketch = if symbols && dense { sketch_of(group, (pages, &mut *prepared), pred, (from, to))? } else { None };
     let sketch = sketch.as_ref().map(|(codes, verdicts)| (codes.as_slice(), verdicts));
     let mut out = Vec::with_capacity(all.len());
     let mut rest = all.as_slice();
@@ -74,6 +76,12 @@ pub(super) fn kept<S: Seal>(
     }
     Ok(Some(out))
 }
+
+/// \[DESIGN\] A run's rows are judged by their sketch's codes only if at
+/// least one of each `SPARSE` of them is asked for. Of fewer, reading the
+/// codes and judging each code of the group costs more than comparing the
+/// texts of the rows asked for (RULES.md D525).
+const SPARSE: usize = 8;
 
 /// The codes of the sketch of `pred`'s column of the rows `from` to `to`
 /// of `group`, and what each says of it, made once a group; none if the
