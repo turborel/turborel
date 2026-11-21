@@ -148,7 +148,7 @@ under `plugins/`, and a replica's journal are not written again.
 
 Every block and page of the database's files carries a checksum, of the
 hash function STORAGE.CHECKSUM names as the database is made: by
-default CRC-32/ISCSI, which finds damage, not a forger. Three
+default XXH3_64, which finds damage, not a forger. Three
 cryptographic ones are served:
 
 | STORAGE.CHECKSUM | What it stops |
@@ -179,3 +179,64 @@ and the old key is needed until `turborel-rekey` has written every page
 checksummed with it again ([The files' formats](#the-files-formats)).
 An encryption authenticates what it encrypts already: the checksum
 matters most to files not encrypted.
+
+### Hash functions
+
+The hash functions built in, any of which STORAGE.CHECKSUM may name:
+
+| Name | Digest | |
+|---|---|---|
+| `XXH3_64` | 8 bytes | the default; xxHash's XXH3, 64 bits |
+| `XXH3_128` | 16 bytes | XXH3, 128 bits |
+| `CRC-32/ISCSI` | 4 bytes | CRC-32C |
+| `CRC-32/ISO-HDLC` | 4 bytes | the CRC-32 of zip and Ethernet |
+| `CRC-64/ECMA-182`, `CRC-64/XZ`, `CRC-64/NVME` | 8 bytes | the 64-bit CRCs |
+
+```
+$ turboreld --dir db --set STORAGE.CHECKSUM=CRC-32/ISCSI
+```
+
+The engine's hash tables, Bloom filters, hash partitions and sketches
+hash by xxHash too, its values the reference implementation's on every
+machine, so a file hashed on one reads on any other. XXH3's loops over
+long inputs are kernels too: `turboreld` registers those of the crate
+`turborel-simd`, which run them on SSE2, AVX2, AVX-512 or NEON,
+whichever the processor has, to the same values. EXECUTOR.KERNELS =
+'PORTABLE' sets them aside for a session:
+
+```sql
+SET EXECUTOR.KERNELS = 'PORTABLE';
+```
+
+xxHash is Yann Collet's, under the BSD 2-Clause license, which a binary
+distribution of Turborel reproduces:
+
+```
+xxHash - Extremely Fast Hash algorithm
+Copyright (C) 2012-2023 Yann Collet
+
+BSD 2-Clause License (https://www.opensource.org/licenses/bsd-license.php)
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+     notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+     copyright notice, this list of conditions and the following disclaimer
+     in the documentation and/or other materials provided with the
+     distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```

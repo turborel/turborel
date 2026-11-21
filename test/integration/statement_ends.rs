@@ -57,3 +57,27 @@ fn each_row_is_checked_of_its_own_values() {
     assert!(exec(&s, "INSERT INTO N VALUES (1, 1, 1), (2, 2, 2)").is_ok());
     assert_eq!(exec(&s, "UPDATE N SET B = NULL WHERE A = 2"), Err(Code::Constraint), "an update of one");
 }
+
+/// Verifies: [ISO/IEC 9075:1992 §10.6 GR3, §4.10.1]; [DESIGN] RULES.md
+/// D421: a row's constraint that cannot be deferred is checked at the
+/// statement's end, before, between and after a deferred one held, and a
+/// deferred one waits for the commit.
+#[test]
+fn immediate_row_checks_come_around_deferred_ones() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION E CREATE TABLE N (A INTEGER NOT NULL,
+           C INTEGER CONSTRAINT N_C CHECK (C > 0) DEFERRABLE INITIALLY DEFERRED)",
+    )
+    .unwrap();
+    let s = db.session("E");
+    assert_eq!(exec(&s, "INSERT INTO N VALUES (1, -1), (NULL, 1)"), Err(Code::Constraint), "a null after a deferred check held");
+    assert_eq!(exec(&s, "INSERT INTO N VALUES (NULL, 1), (1, -1)"), Err(Code::Constraint), "a null before it");
+    s.run("ROLLBACK").unwrap();
+    s.run("INSERT INTO N VALUES (1, 1), (2, -1), (3, 1)").unwrap();
+    let committed = s.run("COMMIT").map(|done| done.sqlstate().as_str().to_owned());
+    assert_eq!(committed.map_err(|e| e.sqlstate().as_str().to_owned()), Err("40002".to_owned()), "the deferred check at COMMIT");
+    s.run("INSERT INTO N VALUES (1, 1), (2, 2)").unwrap();
+    s.run("COMMIT").unwrap();
+    assert_eq!(crate::common::sorted(&s, "SELECT A FROM N"), vec!["1", "2"]);
+}

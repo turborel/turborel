@@ -27,12 +27,14 @@ mod parallel;
 mod rewrites;
 mod skipping;
 mod sorts;
+mod statistics;
 mod tpcc;
 mod txn_layer;
-// Unnesting's and UUID's mutations, here as `list.rs` holds no more
+// Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
 mod unnesting;
 mod uuid;
+mod xxhash;
 
 use super::Mutation;
 
@@ -95,7 +97,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 41] {
+fn second() -> [&'static [Mutation]; 42] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -138,6 +140,7 @@ fn second() -> [&'static [Mutation]; 41] {
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
+        &statistics::STATISTICS,
     ]
 }
 
@@ -184,7 +187,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     // server, the decode kernels', declared types', batches', late
     // materialization's and the table of groups' last, as `last` holds no
     // more.
-    let after: [&'static [Mutation]; 9] = [
+    let after: [&'static [Mutation]; 10] = [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
@@ -193,6 +196,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &batches::BATCHES,
         &late::LATE,
         &group_table::GROUP_TABLE,
+        &xxhash::XXHASH,
         &skipping::SKIPPING,
     ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)

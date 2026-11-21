@@ -147,10 +147,10 @@ pub enum Served {
     Need(u32, u64, u32),
 }
 
-/// \[DESIGN\] The digest of a chunk: the first half of MurmurHash3 x64
-/// 128 of its bytes, seed 0, which the host checks before it stages them.
+/// \[DESIGN\] The digest of a chunk: XXH3-64 of its bytes, seed 0, which
+/// the host checks before it stages them.
 pub fn chunk_digest(bytes: &[u8]) -> u64 {
-    crate::hash::murmur::murmur3_x64_128(bytes, 0).0
+    crate::hash::xxhash::xxh3_64(bytes)
 }
 
 /// A configuration.

@@ -4,8 +4,8 @@
 //! from the root, array steps dropped, as lax mode unwraps arrays, so a
 //! path a member chain reaches is one whatever arrays lie on the way.
 //!
-//! A term is two 64-bit hashes, of its path and of its value (MurmurHash3
-//! x64 128-bit, `hash/murmur.rs`, its first half, fixed seeds): stable
+//! A term is two 64-bit hashes, of its path and of its value (XXH3-64,
+//! `hash/xxhash.rs`, of fixed seeds): stable
 //! across runs and platforms. Two terms may collide, which only finds a
 //! document more than it should, and every row found is rechecked.
 //!
@@ -20,7 +20,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_64_with_seed;
 use crate::json::{IMPLICIT_RETURNING, Item};
 use crate::value::{Value, cast};
 
@@ -31,9 +31,9 @@ pub(super) const TERM_BYTES: usize = 16;
 pub(super) type Term = [u8; TERM_BYTES];
 
 /// \[DESIGN\] The seed of a path's hash; its bytes spell "JSP1".
-const PATH_SEED: u32 = 0x4A53_5031;
+const PATH_SEED: u64 = 0x4A53_5031;
 /// \[DESIGN\] The seed of a value's hash; its bytes spell "JSV1".
-const VALUE_SEED: u32 = 0x4A53_5631;
+const VALUE_SEED: u64 = 0x4A53_5631;
 /// The value half of a node's term, ⊤: no value's hash is asked to avoid
 /// it, as a collision only finds more.
 const NODE: u64 = 0;
@@ -95,7 +95,7 @@ impl Canon {
                 bytes.extend_from_slice(text.as_bytes());
             }
         }
-        murmur3_x64_128(&bytes, VALUE_SEED).0
+        xxh3_64_with_seed(&bytes, VALUE_SEED)
     }
 }
 
@@ -203,7 +203,7 @@ impl Chain {
 
     /// The hash of the path.
     fn hash(&self) -> u64 {
-        murmur3_x64_128(&self.bytes, PATH_SEED).0
+        xxh3_64_with_seed(&self.bytes, PATH_SEED)
     }
 
     /// The term of its node.

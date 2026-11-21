@@ -111,7 +111,7 @@ its submodules in `foo/`.
 `verify` treats every lint warning as an error. RULES.md §3 and §4 have
 the full list.
 
-- No `unsafe` (R-SAFE-1).
+- No `unsafe` (R-SAFE-1), but in `simd/`, each block after a feature check.
 - No panics in production code. That covers `unwrap`, `expect`, `panic!`,
   `unreachable!`, `todo!`, `unimplemented!`, indexing, slicing and
   `process::exit` (R-ERR-1).

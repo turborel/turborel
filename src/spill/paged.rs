@@ -17,7 +17,6 @@ use crate::disk::pager::{DEFAULT_PAGE_SIZE, PageId, Pager};
 use crate::engine::hash::HashTable;
 use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
-use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::memory::MemoryBudget;
 
 /// The tag of a table's value held in its entry, and of one in a page of
@@ -65,7 +64,7 @@ impl ScratchFile {
     /// file cannot be made.
     pub(crate) fn create(memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, bytes: usize, what: &str) -> Result<ScratchFile> {
         let path = temp.path()?;
-        let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI)?);
+        let hash: Arc<dyn HashFunction> = Arc::new(crate::hash::xxhash::Xxh3Hash);
         let pager = Pager::create_scratch(&**temp.fs(), &path, hash, temp.live_pipeline(), DEFAULT_PAGE_SIZE)?;
         let page_size = pager.page_size();
         let made = BufferPool::in_budget(memory, (bytes, page_size), what).map(Arc::new);
