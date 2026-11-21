@@ -19,7 +19,7 @@ use crate::storage::cost_of;
 /// \[DESIGN\] What beginning a part on several threads costs, in rows of
 /// a scan: its workers woken, its morsels handed out and its pieces
 /// merged (`bench/analytics/costs.rs`, its part of two sizes).
-pub(in crate::physical) const PART_START: f64 = 2_000.0;
+pub(in crate::physical) const PART_START: f64 = 2_600.0;
 
 /// What the settings ask of a statement's parts: the most threads one
 /// runs on, the rows of a morsel, and the least rows one reads in

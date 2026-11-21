@@ -36,8 +36,8 @@ pub const COST_MODEL: [Mutation; 5] = [
         package: Package::Core,
         breaks: "an operator past its grant is priced as if it held its rows in memory",
         file: "src/physical/cost/spill.rs",
-        original: "    moved * (SPILLED_ROW + SPILLED_BYTE * bytes)",
-        replacement: "    0.0_f64 * moved * bytes",
+        original: "    moved * (per_row + SPILLED_BYTE * bytes)",
+        replacement: "    0.0_f64 * moved * per_row * bytes",
         integration: &["cost_model::a_sort_past_its_grant_gives_way_to_the_index_order"],
         unit: &[
             "physical::cost::tests::rows_past_the_grant_are_spilled_once_more",

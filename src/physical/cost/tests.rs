@@ -3,7 +3,7 @@
 
 use super::parallel::Degrees;
 use super::runtime::{FILTER_ROW, kept, probed};
-use super::spill::{ENTRY_BYTES, SPILLED_BYTE, SPILLED_ROW, hash_spilled, row_bytes, sort_spilled};
+use super::spill::{ENTRY_BYTES, PARTITIONED_ROW, SPILLED_BYTE, SPILLED_ROW, hash_spilled, row_bytes, sort_spilled};
 use super::{CostModel, HASH_ROW};
 
 /// Whether `a` and `b` are the same cost, to rounding.
@@ -13,8 +13,8 @@ fn same(a: f64, b: f64) -> bool {
 
 /// Verifies: [DESIGN] (RULES.md D651) an operator whose rows fit its
 /// grant costs nothing more; one byte past it, its rows are written and
-/// read once more, a hash join's of both operands, a sort's its own, each
-/// at its row's weight and its bytes'. The boundary pair of `held * bytes
+/// read once more, a hash join's of both operands at a partitioned row's
+/// weight, a sort's its own at a spilled row's, each with its bytes'. The boundary pair of `held * bytes
 /// <= grant`: at the grant, none; past it, all.
 #[test]
 fn rows_past_the_grant_are_spilled_once_more() {
@@ -22,8 +22,9 @@ fn rows_past_the_grant_are_spilled_once_more() {
     assert!(same(bytes, 16.0_f64 + ENTRY_BYTES));
     let grant = 1_000.0_f64 * bytes;
     assert!(same(hash_spilled((1_000.0_f64, bytes), 5_000.0_f64, grant), 0.0_f64));
+    let partitioned = PARTITIONED_ROW + SPILLED_BYTE * bytes;
+    assert!(same(hash_spilled((1_001.0_f64, bytes), 5_000.0_f64, grant), 6_001.0_f64 * partitioned));
     let each = SPILLED_ROW + SPILLED_BYTE * bytes;
-    assert!(same(hash_spilled((1_001.0_f64, bytes), 5_000.0_f64, grant), 6_001.0_f64 * each));
     assert!(same(sort_spilled((1_000.0_f64, bytes), grant), 0.0_f64));
     assert!(same(sort_spilled((1_001.0_f64, bytes), grant), 1_001.0_f64 * each));
     let model = CostModel { grant_bytes: grant, ..CostModel::default() };

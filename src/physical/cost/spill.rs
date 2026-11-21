@@ -12,9 +12,9 @@
 //! both its operands, as a Grace hash join does (`exec/join/partitioned.rs`),
 //! so each row of either is written and read once more; a grouping writes
 //! its partial groups and its rows past the grant; a sort writes runs and
-//! merges them. Each such row costs `SPILLED_ROW`, and each byte of it
-//! `SPILLED_BYTE`, in rows of a scan, as `bench/analytics/costs.rs`
-//! measures them. So a merge join of inputs already in order, or a
+//! merges them. Each such row costs `SPILLED_ROW`, a hash join's
+//! `PARTITIONED_ROW`, and each byte of it `SPILLED_BYTE`, in rows of a
+//! scan, as `bench/analytics/costs.rs` measures them. So a merge join of inputs already in order, or a
 //! grouping streamed in its keys' order, wins where holding the rows
 //! would spill, and a wide build fills its grant sooner than a narrow one.
 
@@ -26,12 +26,17 @@ use crate::spill::WORK_FLOOR;
 use crate::storage::cost_of;
 
 /// \[DESIGN\] The cost of a row written to the spill area and read back
-/// once more, in rows of a scan (`bench/analytics/costs.rs`, its spilled
-/// hash join, grouping and sort).
-pub(in crate::physical) const SPILLED_ROW: f64 = 1.0;
+/// once more, in rows of a scan: a sort's run written and merged
+/// (`bench/analytics/costs.rs`, its sort spilled, less its rows' bytes).
+pub(in crate::physical) const SPILLED_ROW: f64 = 4.5;
+/// \[DESIGN\] The cost of a row of a hash join's operand partitioned past
+/// its grant, in rows of a scan: written, read back, hashed again and
+/// probed by its partition (`bench/analytics/costs.rs`, its hash join
+/// spilled, less its rows' bytes), dearer than a sort's.
+pub(in crate::physical) const PARTITIONED_ROW: f64 = 15.0;
 /// \[DESIGN\] The cost more of each byte of such a row, in rows of a scan:
-/// a spilled row of 100 bytes costs a scanned row more than one of none.
-pub(in crate::physical) const SPILLED_BYTE: f64 = 0.01;
+/// a spilled row of 20 bytes costs a scanned row more than one of none.
+pub(in crate::physical) const SPILLED_BYTE: f64 = 0.05;
 /// \[DESIGN\] The bytes an operator's table holds for each row besides its
 /// values: its hash, its link and its slot.
 pub(in crate::physical) const ENTRY_BYTES: f64 = 16.0;
@@ -61,17 +66,22 @@ pub(in crate::physical) fn row_bytes(columns: usize, width: Option<f64>) -> f64 
 /// each, past a grant of `grant` bytes, which writes and reads back
 /// `moved` rows once more if they outgrow it: none if they fit.
 pub(in crate::physical) fn spilled((held, bytes): (f64, f64), moved: f64, grant: f64) -> f64 {
+    moved_past((held, bytes), (moved, SPILLED_ROW), grant)
+}
+
+/// `spilled`, each row moved costing `per_row` besides its bytes.
+fn moved_past((held, bytes): (f64, f64), (moved, per_row): (f64, f64), grant: f64) -> f64 {
     if held * bytes <= grant {
         return 0.0_f64;
     }
-    moved * (SPILLED_ROW + SPILLED_BYTE * bytes)
+    moved * (per_row + SPILLED_BYTE * bytes)
 }
 
 /// The cost more of a hash join building `built` rows of `bytes` bytes
 /// and probing with `probing` rows, past a grant of `grant` bytes: both
 /// operands partitioned, each row written and read once more.
 pub(in crate::physical) fn hash_spilled((built, bytes): (f64, f64), probing: f64, grant: f64) -> f64 {
-    spilled((built, bytes), built + probing, grant)
+    moved_past((built, bytes), (built + probing, PARTITIONED_ROW), grant)
 }
 
 /// The cost more of a sort of `rows` rows of `bytes` bytes past a grant
