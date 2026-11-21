@@ -50,7 +50,7 @@ mod ordered;
 mod parallel;
 pub use parallel::Parallel;
 mod plannings;
-pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
+pub(crate) use parallel::{parallel, rows_of as parallel_rows, system_threads, workers_of};
 pub use plannings::plannings;
 mod probe;
 mod project;

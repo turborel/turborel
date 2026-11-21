@@ -130,3 +130,60 @@ fn a_row_is_found_by_the_key_its_seen_version_has() {
     let plan = new.physical_plan(probes[0], &Params::new()).unwrap();
     assert!(plan.contains("T_K"), "{plan}");
 }
+
+/// The key of row `id` of group `g`: 1,690 bytes 'p' then its number, or,
+/// for `id` 0, 845 bytes 'p' then 'q': above every other key of the group,
+/// sharing half their prefix.
+fn long_value(id: i32) -> String {
+    if id == 0 { format!("{}q", "p".repeat(845)) } else { format!("{}{id:06}", "p".repeat(1_690)) }
+}
+
+/// What the groups `groups` of LONGV answer in `s`: each group's rows by
+/// the index, and its high key found by equality.
+fn long_answers(s: &Session, groups: std::ops::RangeInclusive<i32>) -> Vec<Vec<String>> {
+    let mut found = vec![sorted(s, "SELECT COUNT(*) FROM LONGV")];
+    for g in groups {
+        found.push(sorted(s, &format!("SELECT COUNT(*) FROM LONGV WHERE G = {g} AND V >= 'p'")));
+        found.push(sorted(s, &format!("SELECT K FROM LONGV WHERE G = {g} AND V = '{}'", long_value(0))));
+    }
+    found
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D500, D31: an index of keys of 1,696
+/// bytes sharing all but their last few, written in order a group at a
+/// time, so the rightmost leaf of each group holds as many of them as
+/// fit, then a key above them that shares only half their prefix, which
+/// splits that leaf with each part keeping its own prefix; some
+/// checkpointed, the rest crashed: reopened and recovered, the index
+/// finds every key of every group, as the log's changes are made again
+/// and split the leaves again.
+#[test]
+fn leaves_split_by_keys_without_their_prefix_recover_after_a_crash() {
+    let scratch = Scratch::new("btree-layout-multi");
+    let dir = scratch.path("db");
+    let (crashed, _) = open(&dir);
+    crashed
+        .schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE LONGV (K INTEGER NOT NULL PRIMARY KEY, G INTEGER NOT NULL, V VARCHAR(1700))")
+        .unwrap();
+    crashed.create_index("LONGV_GV", "APP.LONGV", &["G", "V"], "btree").unwrap();
+    let s = crashed.session("APP");
+    let mut k = 0;
+    let groups = 190..=230;
+    for g in groups.clone() {
+        for id in (1..=g).chain([0]) {
+            k += 1;
+            s.run(&format!("INSERT INTO LONGV VALUES ({k}, {g}, '{}')", long_value(id))).unwrap();
+        }
+        s.commit().unwrap();
+        if g == 210 {
+            crashed.checkpoint().unwrap();
+        }
+    }
+    let expected = long_answers(&s, groups.clone());
+    assert_eq!(expected[0], [(groups.clone().map(|g| g + 1).sum::<i32>()).to_string()]);
+
+    let (db, opened) = open(&dir);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    assert_eq!(long_answers(&db.session("APP"), groups), expected);
+    drop((db, s, crashed));
+}
