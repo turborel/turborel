@@ -46,6 +46,7 @@ pub(super) fn semi_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
 ///
 /// As `semi_batches`.
 pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Db, TxId)) -> Result<Batches> {
+    let building = runtime::built_side(&plan, deferred.filters(), db);
     let Plan::SemiJoin(s) = plan else { return Err(broken("a semi join is not one")) };
     let SemiJoin { anti, left, right, keys, cond, widths, .. } = *s;
     let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
@@ -59,7 +60,7 @@ pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Db, TxId
     } else {
         Vec::new()
     };
-    let (side, left) = match held::read(right, (&keys, &filtered, Vec::new()), work.limit(), (db, tx))? {
+    let (side, left) = match held::read(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
         Read::Held(held) => {
             let mut told = deferred.filters().to_vec();
             told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told::of(Arc::clone(f), key.left))));
