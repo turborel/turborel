@@ -22,12 +22,12 @@ mod group_table;
 mod insert_values;
 mod joins;
 mod late;
+mod monitoring;
 mod oltp;
 mod parallel;
 mod rewrites;
 mod set_types;
 mod sorts;
-mod studio;
 mod tpcc;
 mod txn_layer;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
@@ -56,7 +56,7 @@ pub fn core() -> [&'static [Mutation]; 17] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
-        &studio::STUDIO,
+        &monitoring::MONITORING,
     ]
 }
 

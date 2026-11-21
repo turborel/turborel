@@ -7,9 +7,9 @@ use super::super::{Mutation, Package};
 
 /// Mechanisms of the sessions' and statements' views whose removal must
 /// fail their tests.
-pub const STUDIO: [Mutation; 5] = [
+pub const MONITORING: [Mutation; 5] = [
     Mutation {
-        name: "studio-wait-not-shown",
+        name: "monitoring-wait-not-shown",
         package: Package::Server,
         breaks: "a wait for a row is not noted, so CONNECTIONS shows the waiting connection waiting on nothing",
         file: "src/txn/row_waits.rs",
@@ -19,7 +19,7 @@ pub const STUDIO: [Mutation; 5] = [
         unit: &[],
     },
     Mutation {
-        name: "studio-monitor-of-anyone",
+        name: "monitoring-monitor-of-anyone",
         package: Package::Core,
         breaks: "a role MONITOR any user created shows every statement's text",
         file: "src/system.rs",
@@ -29,7 +29,7 @@ pub const STUDIO: [Mutation; 5] = [
         unit: &[],
     },
     Mutation {
-        name: "studio-literal-kept",
+        name: "monitoring-literal-kept",
         package: Package::Core,
         breaks: "a literal is kept in a normalized text, so runs differing in their literals are tallied apart",
         file: "src/system/statements/text.rs",
@@ -39,7 +39,7 @@ pub const STUDIO: [Mutation; 5] = [
         unit: &["system::statements::text::tests::literals_become_placeholders"],
     },
     Mutation {
-        name: "studio-kept-unbounded",
+        name: "monitoring-kept-unbounded",
         package: Package::Core,
         breaks: "a new tally past STATEMENTS.KEPT is added, none giving way",
         file: "src/txn/stop/activity/tallies.rs",
@@ -49,7 +49,7 @@ pub const STUDIO: [Mutation; 5] = [
         unit: &[],
     },
     Mutation {
-        name: "studio-rows-read-lost",
+        name: "monitoring-rows-read-lost",
         package: Package::Core,
         breaks: "the rows a scan read are not given to its session's count once it is read through",
         file: "src/txn/stop.rs",
