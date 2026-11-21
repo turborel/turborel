@@ -47,7 +47,8 @@ behind it, and each can be replaced or added to.
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
 - Hash joins probed a batch at a time in one tagged table, shared by
-  parallel morsels, telling the left's scan a range and Bloom filter.
+  parallel morsels, telling the left's scan a range and Bloom filter;
+  dense keys found by their place, their filter an exact bitmap.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
@@ -88,7 +89,8 @@ behind it, and each can be replaced or added to.
   rather than once for each row.
 - [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
   for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
-  and joins under MIN and MAX reduced to semi joins.
+  and joins under MIN and MAX reduced to semi joins; mark joins for
+  those under OR, in CASE and in select lists.
 - Joins removed on unique and foreign keys, filters and FETCH FIRST moved
   into set operations and below windows, and parts of conditions that can
   raise computed on the table they read, so joins over them are reordered.

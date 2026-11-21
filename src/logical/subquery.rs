@@ -66,6 +66,7 @@ pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> Log
         }
         LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: cond.map_exprs(f), left, right },
         LogicalPlan::SemiJoin { anti, cond, left, right } => LogicalPlan::SemiJoin { anti, cond: cond.map_exprs(f), left, right },
+        LogicalPlan::MarkJoin(m) => LogicalPlan::MarkJoin(Box::new(m.map_conds(&mut |c| c.map_exprs(&mut *f)))),
         LogicalPlan::Values { rows, types } => {
             LogicalPlan::Values { rows: rows.into_iter().map(|r| r.into_iter().map(&mut *f).collect()).collect(), types }
         }
@@ -105,6 +106,7 @@ pub fn map_plan_exprs(plan: LogicalPlan, f: &mut dyn FnMut(Expr) -> Expr) -> Log
 fn plan_can_raise(plan: &LogicalPlan) -> bool {
     let own = match plan {
         LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } | LogicalPlan::SemiJoin { cond, .. } => cond.can_raise(),
+        LogicalPlan::MarkJoin(m) => m.conds().any(Cond::can_raise),
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(Expr::can_raise),
         LogicalPlan::Aggregate { aggs, .. } => !aggs.is_empty(),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
@@ -192,6 +194,7 @@ pub fn cond_has_outer(c: &Cond) -> bool {
 pub fn plan_has_outer(plan: &LogicalPlan) -> bool {
     let own = match plan {
         LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } | LogicalPlan::SemiJoin { cond, .. } => cond_has_outer(cond),
+        LogicalPlan::MarkJoin(m) => m.conds().any(cond_has_outer),
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(expr_has_outer),
         LogicalPlan::Aggregate { aggs, .. } => aggs.iter().any(|a| a.exprs().into_iter().any(expr_has_outer)),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(expr_has_outer),

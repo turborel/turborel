@@ -91,7 +91,7 @@ fn hashed(column: Column, nulls: bool) -> KeyHashes {
     };
     let batch = Batch { columns: vec![column], rows };
     let mut out = KeyHashes::default();
-    out.of_batch((&batch, None), (&[0], &[nulls]), Hashing { seed: &seed(), keyed: false }).unwrap();
+    out.of_batch((&batch, None), (&[0], &[nulls]), Hashing { seed: &seed(), keyed: false, direct: false }).unwrap();
     out
 }
 
@@ -101,7 +101,7 @@ fn hashed(column: Column, nulls: bool) -> KeyHashes {
 /// whose nulls match.
 #[test]
 fn a_key_hashes_alike_in_any_vector() {
-    let how = Hashing { seed: &seed(), keyed: false };
+    let how = Hashing { seed: &seed(), keyed: false, direct: false };
     let of = |v: Value| value_hash(&v, false, how).unwrap().unwrap();
     let ints = hashed(Column::Ints(Ints::new(vec![1, 100, 0], 2, Some(Mask::from_bools(&[false, false, true])))), false);
     assert_eq!(ints.hashes[..2], [of(Value::Exact(Decimal::new(1, 2))), of(Value::Exact(Decimal::new(1, 0)))]);

@@ -62,8 +62,8 @@ pub enum Bridged {
     Language(Arc<language::PluginLanguage>),
 }
 
-/// The object `d` declares, calling `pool`.
-pub(super) fn bridge(d: &Declared, pool: &Arc<Pool>, resolve: Resolve<'_>) -> Result<Bridged> {
+/// The object `d` declares, calling `pool`, of the database `owner`.
+pub(super) fn bridge(d: &Declared, (pool, owner): (&Arc<Pool>, u64), resolve: Resolve<'_>) -> Result<Bridged> {
     let link = Link { pool: Arc::clone(pool), kind: d.kind.code(), object: d.name.clone() };
     Ok(match d.kind {
         ObjectKind::Scalar => Bridged::Scalar(Arc::new(scalar::PluginScalar::new(d, link, resolve)?)),
@@ -92,7 +92,7 @@ pub(super) fn bridge(d: &Declared, pool: &Arc<Pool>, resolve: Resolve<'_>) -> Re
         ObjectKind::Credentials => Bridged::Credentials(Arc::new(process::PluginCredentials::new(link))),
         ObjectKind::Diagnostics => Bridged::Diagnostics(Arc::new(process::PluginDiagnostics::new(link, d.batch)?)),
         ObjectKind::Type => {
-            let (made, _) = types::type_of(pool.extension(), &d.name, d.ordered());
+            let (made, _) = types::type_of(owner, pool.extension(), &d.name, d.ordered());
             types::attach(made, pool);
             Bridged::Type(made)
         }

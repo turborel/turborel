@@ -15,6 +15,10 @@ pub struct TypeRegistry {
     /// The kinds, by name; none, reserving nothing, of a registry of no
     /// kind, as each transaction's and list's begins.
     kinds: Option<Arc<BTreeMap<String, Kind>>>,
+    /// The database whose registry it is, as its plug-in host numbers it
+    /// (`plugin::Host::owner`), so the types its extensions declare are
+    /// its own; 0 for none.
+    owner: u64,
 }
 
 /// A kind of type beyond the standard, by a thin reference, so a
@@ -36,6 +40,16 @@ impl TypeRegistry {
     /// Each kind registered that declares settings (RULES.md D36).
     pub(crate) fn configurables(&self) -> impl Iterator<Item = &dyn crate::settings::Configurable> {
         self.kinds.iter().flat_map(|kinds| kinds.values()).filter_map(|k| k.configurable())
+    }
+
+    /// It, of the database `owner`.
+    pub(crate) fn owned_by(self, owner: u64) -> TypeRegistry {
+        TypeRegistry { owner, ..self }
+    }
+
+    /// The database whose registry it is, 0 for none.
+    pub(crate) fn owner(&self) -> u64 {
+        self.owner
     }
 
     /// The names registered, in order.
@@ -69,7 +83,7 @@ impl TypeRegistry {
         for (name, kind) in crate::geometry::sfa::TYPE_NAMES {
             all.insert(name.to_owned(), crate::geometry::kind_of(kind));
         }
-        TypeRegistry { kinds: Some(Arc::new(all)) }
+        TypeRegistry { kinds: Some(Arc::new(all)), owner: 0 }
     }
 
     /// Registers `kind`.

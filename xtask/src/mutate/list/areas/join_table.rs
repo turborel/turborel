@@ -11,12 +11,14 @@
 //! passed through an analyzed plan's count, the filters of one stream
 //! judged the one that kept the least first, a grouping of SUM told no
 //! filter, a grouping told one, its warning of a null it dropped, and an
-//! antijoin's right operand told none.
+//! antijoin's right operand told none; of D601, a direct table's span at
+//! its bound, its counting sort keeping build order, and a bitmap
+//! filter's span at its bound.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the join table's requirements.
-pub const JOIN_TABLE: [Mutation; 19] = [
+pub const JOIN_TABLE: [Mutation; 22] = [
     Mutation {
         name: "join-table-build-order",
         package: Package::Core,
@@ -132,8 +134,8 @@ pub const JOIN_TABLE: [Mutation; 19] = [
         package: Package::Core,
         breaks: "a filter of few keys keeps exactly the rows whose key it holds, at any scale (D600)",
         file: "src/exec/table/runtime.rs",
-        original: "            let held = |u: i64| at_scale(u, ints.scale, scale).is_some_and(|k| keys.binary_search(&k).is_ok());",
-        replacement: "            let held = |u: i64| at_scale(u, ints.scale, scale).is_some();",
+        original: "        Some(Box::new(move |u: i64| at_scale(u, from, scale).is_some_and(|k| keys.binary_search(&k).is_ok())))",
+        replacement: "        Some(Box::new(move |u: i64| at_scale(u, from, scale).is_some()))",
         integration: &[],
         unit: &["exec::table::runtime::tests::few_keys_are_a_set_and_more_are_spans"],
     },
@@ -206,5 +208,35 @@ pub const JOIN_TABLE: [Mutation; 19] = [
         replacement: "    if !matches!(s.method, SemiMethod::Hash) || raises(s.cond.as_ref()) {",
         integration: &["join_filters_told::filters_below_rows_made_row_by_row_answer_alike"],
         unit: &[],
+    },
+    Mutation {
+        name: "join-dense-span",
+        package: Package::Core,
+        breaks: "a span of exactly four times the rows built makes a direct table (D601)",
+        file: "src/exec/table/join/direct.rs",
+        original: "        if keyed.is_empty() || width > keyed.len().saturating_mul(DENSE_SPAN) {",
+        replacement: "        if keyed.is_empty() || width >= keyed.len().saturating_mul(DENSE_SPAN) {",
+        integration: &[],
+        unit: &["exec::table::join::direct::tests::a_span_of_four_times_the_rows_is_direct"],
+    },
+    Mutation {
+        name: "join-dense-build-order",
+        package: Package::Core,
+        breaks: "a direct table finds a key's rows in the order they were built (D601)",
+        file: "src/exec/table/join/direct.rs",
+        original: "        for &(r, key) in &keyed {",
+        replacement: "        for &(r, key) in keyed.iter().rev() {",
+        integration: &["dense_joins::dense_joins_answer_as_hashed"],
+        unit: &["exec::table::join::direct::tests::a_direct_table_finds_a_keys_rows_in_build_order"],
+    },
+    Mutation {
+        name: "join-filters-bitmap-span",
+        package: Package::Core,
+        breaks: "keys whose range is exactly four times the rows built are a bitmap filter (D601)",
+        file: "src/exec/table/runtime.rs",
+        original: "    if width > held.saturating_mul(DENSE_SPAN) {",
+        replacement: "    if width >= held.saturating_mul(DENSE_SPAN) {",
+        integration: &[],
+        unit: &["exec::table::runtime::tests::dense_keys_are_a_bitmap"],
     },
 ];

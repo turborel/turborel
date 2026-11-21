@@ -81,7 +81,7 @@ pub fn of_node(st: &State, plan: &LogicalPlan, inputs: &[Sized]) -> Sized {
             Sized { rows: first.rows * second.rows, width: first.width + second.width }
         }
         // A semi join keeps at most its left's rows, as wide.
-        LogicalPlan::Sort { .. } | LogicalPlan::SemiJoin { .. } => first,
+        LogicalPlan::Sort { .. } | LogicalPlan::SemiJoin { .. } | LogicalPlan::MarkJoin(_) => first,
         LogicalPlan::Project { .. } => Sized { rows: first.rows, width: UNKNOWN },
         LogicalPlan::Limit { limit, .. } => {
             let most = limit.most().and_then(|n| u32::try_from(n).ok()).map_or(first.rows, f64::from);

@@ -49,6 +49,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | EXECUTOR.BATCHES | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.DECORRELATE_AFTER_RUNS | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
 | EXECUTOR.DEGREE | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| EXECUTOR.DENSE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.GRAPH_THREADS | 1 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.KEEP_SUBQUERY_PLANS | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.KERNELS | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once | *session* |
@@ -81,6 +82,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.FACTOR_DISJUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.HOIST_RAISING_EXPRESSIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.INLINE_FUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.MARK_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MAX_PASSES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
 | OPTIMIZER.MERGE_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PREDICATE_TRANSITIVITY | ON | ONE OF ON, OFF | at once | *session* |
@@ -169,6 +171,7 @@ Each in a sentence:
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **EXECUTOR.DEGREE**: The most threads a statement's query runs on at once, its own among them; 0, the default, for as many as the workers, and 1 for its own thread alone. Its rows are the same either way.
+- **EXECUTOR.DENSE_JOINS**: Whether a hash join whose one key is of whole numbers dense in their span, at most four times as wide as its built rows, finds a probe's rows at its key's place in the span, no hash made: ON; or hashes every key, OFF, as to compare the two. Its rows are the same either way.
 - **EXECUTOR.GRAPH_THREADS**: The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.
 - **EXECUTOR.KEEP_SUBQUERY_PLANS**: Whether a correlated subquery, once its first runs show the values of its outer references choose no other plan, keeps its plan made with them as parameters and fills it at each later run: ON; or plans it at each run with its values, OFF, as to compare the two. Its rows are the same either way.
 - **EXECUTOR.KERNELS**: The kernels a statement's batches run on: PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD.
@@ -201,6 +204,7 @@ Each in a sentence:
 - **OPTIMIZER.FACTOR_DISJUNCTIONS**: Whether the optimizer's rule factor_disjunctions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.HOIST_RAISING_EXPRESSIONS**: Whether the optimizer's rule hoist_raising_expressions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.INLINE_FUNCTIONS**: Whether the optimizer's rule inline_functions rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.MARK_JOINS**: Whether the optimizer's rule mark_joins rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.MAX_PASSES**: The most passes the optimizer makes over a plan.
 - **OPTIMIZER.MERGE_FILTERS**: Whether the optimizer's rule merge_filters rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PREDICATE_TRANSITIVITY**: Whether the optimizer's rule predicate_transitivity rewrites plans: ON; or OFF, as to compare plans made without it.

@@ -55,6 +55,16 @@ pub struct Now {
     pub zone: i16,
 }
 
+impl Now {
+    /// Its instant as a TIMESTAMP WITH TIME ZONE of the most precision, in
+    /// its displacement: the value of the slot a statement kept reads it
+    /// from (RULES.md D613).
+    pub fn timestamp(self) -> Datetime {
+        let precision = u8::try_from(MAX_TIME_PRECISION).unwrap_or(u8::MAX);
+        Datetime { moment: Moment::Timestamp, utc: self.utc, zone: self.zone, zoned: true, precision }
+    }
+}
+
 /// \[DESIGN\] `Now` as a statement is bound with it: reading its instant
 /// notes, where a note is asked for, that the binding holds the instant, so
 /// a plan made of it is not kept for another execution (RULES.md D45). Its
