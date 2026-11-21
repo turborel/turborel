@@ -260,8 +260,7 @@ written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =
 table is also filtered first by the OR of its own conditions, here
 `P.B = 'B1' OR P.B = 'B2'`. OPTIMIZER.FACTOR_DISJUNCTIONS turns this off.
 
-A query whose select list is MIN, MAX or set functions of DISTINCT
-alone, with no GROUP BY, needs the rows of the tables those functions
+A query whose select list is MIN and MAX alone, with no GROUP BY, needs the rows of the tables those functions
 read, not how often the other tables repeat them. Each other table then
 only has to have a matching row, and it is joined as a semi join, which
 keeps each row once. Joins that would multiply the rows many times

@@ -2,10 +2,10 @@
 //! duplicates (RULES.md D542; Yan and Larson, VLDB 1995, §2.2; Lanzinger,
 //! Pichler and Selzer, PVLDB 2025).
 //!
-//! MIN and MAX, and any set function of DISTINCT, give the same value over
-//! a multiset as over its set of distinct values, so the rows a join
-//! repeats need not be made. A grouping of no grouping columns whose
-//! every set function is such reads the columns of some relations of the
+//! MIN and MAX give the same value over a multiset as over its set of
+//! distinct values, so the rows a join repeats need not be made. A
+//! grouping of no grouping columns whose every set function is MIN or MAX
+//! reads the columns of some relations of the
 //! chain of inner joins under it, the kept ones. Every other relation that
 //! is an ear of the chain's join tree (`reduced/tree.rs`) joins its parent
 //! as a semi join instead, its own ears joined into it first: the
@@ -74,10 +74,13 @@ impl Rule for SemiReduction {
 }
 
 /// Whether the set function `a` gives the same value of a multiset as of
-/// its set: MIN, MAX, or any of DISTINCT.
+/// its set and is one the rule takes: MIN or MAX. A set function of
+/// DISTINCT is blind to duplicates too, but its grouping by its argument
+/// (`DistinctAggregates`) already drops them, and a relation it reduces
+/// may be the one whose few rows probe the kept one's index.
 fn blind(a: &AggCall, functions: &Registry) -> bool {
     let extreme = matches!(functions.standard(&a.func), Some(Standard::Max | Standard::Min));
-    a.distribution.is_none() && (a.distinct || extreme)
+    a.distribution.is_none() && extreme
 }
 
 /// The relations of a chain: each plan, where its columns begin, and the

@@ -5,17 +5,24 @@
 //! the condition beyond the keys judged of the pair as a LEFT join's is
 //! (`probe.rs`). A left batch is given on, those of its rows kept, or of an
 //! antijoin those not, selected, so no value is copied.
+//!
+//! A semi join keeps only left rows whose keys the right holds, so, as an
+//! inner join, it hands the left's scan a runtime filter of each key
+//! (RULES.md D369); an antijoin keeps the others, so it hands none.
 
 use std::sync::Arc;
 
+use super::super::late::Deferred;
+use super::super::runtime::{self, Told};
 use super::super::stream::{self, Batches, Kept};
 use super::held::{self, HeldRight, Read};
-use super::left_batches;
 use super::pairs::kept_rows;
 use super::probe::{Joined, keyed, keys_match};
+use super::{in_order, left_late_batches};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::join::{Built, Full, Right};
+use crate::exec::table::KeyHashes;
 use crate::exec::work::Work;
 use crate::exec::{Runner, broken};
 use crate::physical::{JoinKey, Plan, SemiJoin};
@@ -29,6 +36,16 @@ use crate::value::{Bucket, Value};
 ///
 /// The right operand's; the spill area's; a key the left's batches lack.
 pub(super) fn semi_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    told_batches(plan, &Deferred::default(), (db, tx))
+}
+
+/// As `semi_batches`, the runtime filters `deferred` tells of its columns,
+/// its left's, handed to its left with its own.
+///
+/// # Errors
+///
+/// As `semi_batches`.
+pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Arc<State>, TxId)) -> Result<Batches> {
     let Plan::SemiJoin(s) = plan else { return Err(broken("a semi join is not one")) };
     let SemiJoin { anti, left, right, keys, cond, widths, .. } = *s;
     let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
@@ -37,22 +54,34 @@ pub(super) fn semi_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batc
         keys.iter().map(|&k| left_columns.iter().position(|&c| c == k.left).map(|at| JoinKey { left: at, ..k })).collect();
     let places = places.ok_or_else(|| broken("a join key the left operand's batch lacks"))?;
     let mut work = Work::of(db, tx);
-    let side = match held::read(right, &keys, work.limit(), (db, tx))? {
-        Read::Held(held) => Side::Vectors(held),
+    let filtered: Vec<usize> = if !anti && runtime::wanted(db) && !in_order(&left) {
+        keys.iter().enumerate().filter(|(_, k)| runtime::reaches(&left, k.left, db)).map(|(n, _)| n).collect()
+    } else {
+        Vec::new()
+    };
+    let (side, left) = match held::read(right, (&keys, &filtered), work.limit(), (db, tx))? {
+        Read::Held(held) => {
+            let mut told = deferred.filters().to_vec();
+            told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told { filter: Arc::clone(f), column: key.left })));
+            let left = left_late_batches(left, (db, tx), &Deferred::default().with_told(told))?;
+            (Side::Vectors(held), left)
+        }
         Read::Rest(rest) => match Built::of(rest.rows(), keys, (&mut work, Full::Table))? {
-            Right::Held(built) => Side::Built(built),
+            Right::Held(built) => {
+                let told = deferred.filters().to_vec();
+                (Side::Built(built), left_late_batches(left, (db, tx), &Deferred::default().with_told(told))?)
+            }
             Right::Partitioned(_) => return Err(broken("a semi join's right operand was partitioned")),
         },
     };
     let joined = Joined::matching((left_columns, right_columns), cond, widths, Runner::new(db, tx));
-    let left = left_batches(left, db, tx)?;
     Ok(Box::new(SemiProbe { left, joined, side, places, anti, _work: work }))
 }
 
 /// A semi join's right operand: held as vectors, or built as the row path
 /// builds it.
 enum Side {
-    Vectors(HeldRight),
+    Vectors(Box<HeldRight>),
     Built(Built),
 }
 
@@ -72,6 +101,16 @@ struct SemiProbe {
 impl SemiProbe {
     /// The rows of `batch` at `rows` it keeps.
     fn kept(&mut self, batch: &Batch, rows: &[usize]) -> Result<Vec<u32>> {
+        if let Side::Vectors(held) = &mut self.side {
+            let left: Vec<usize> = self.places.iter().map(|k| k.left).collect();
+            held.hash_probing((batch, &left), rows)?;
+            let probing = std::mem::take(&mut held.probing);
+            let kept = hashed_kept(held, &mut self.joined, (batch, &left), (rows, &probing), self.anti);
+            held.probing = probing;
+            let kept = kept?;
+            held.settle()?;
+            return Ok(kept);
+        }
         let mut values: Vec<Value> = Vec::with_capacity(self.places.len());
         let mut key: Vec<Bucket> = Vec::with_capacity(self.places.len());
         let mut out = Vec::with_capacity(rows.len());
@@ -89,25 +128,45 @@ impl SemiProbe {
     /// Whether a right row matches left row `r` of `batch`, of key
     /// `values`, bucketed as `key`.
     fn found(&mut self, (batch, r): (&Batch, usize), values: &[Value], key: &[Bucket]) -> Result<bool> {
-        match &self.side {
-            Side::Vectors(held) => {
-                for &p in held.rows_of(key) {
-                    if self.joined.keeps_held((batch, r), (&held.batch, p), held.keys_equal(p, values)?)? {
-                        return Ok(true);
-                    }
-                }
-            }
-            Side::Built(built) => {
-                for right in built.bucket_rows(key)? {
-                    let right = right?;
-                    if self.joined.keeps((batch, r), &right, keys_match(&self.places, values, &right)?)? {
-                        return Ok(true);
-                    }
-                }
+        let Side::Built(built) = &self.side else { return Ok(false) };
+        for right in built.bucket_rows(key)? {
+            let right = right?;
+            if self.joined.keeps((batch, r), &right, keys_match(&self.places, values, &right)?)? {
+                return Ok(true);
             }
         }
         Ok(false)
     }
+}
+
+/// The rows of `batch` at `rows`, its key columns at `left`, their keys'
+/// hashes `probing`, that a row of `held` matches, as `joined` judges, or
+/// of an antijoin, `anti`, those none does.
+///
+/// # Errors
+///
+/// The condition's; SQLCODE -910 if a value nests deeper than a type may.
+fn hashed_kept(
+    held: &HeldRight,
+    joined: &mut Joined,
+    (batch, left): (&Batch, &[usize]),
+    (rows, probing): (&[usize], &KeyHashes),
+    anti: bool,
+) -> Result<Vec<u32>> {
+    let mut out = Vec::with_capacity(rows.len());
+    for ((&r, &h), &miss) in rows.iter().zip(&probing.hashes).zip(&probing.misses) {
+        let mut found = false;
+        for p in held.candidates(h).filter(|_| !miss) {
+            if joined.keeps_held((batch, r), (&held.batch, p), held.matches((batch, left, r), p)?)? {
+                found = true;
+                break;
+            }
+        }
+        if found != anti {
+            out.push(u32::try_from(r).map_err(|_| broken("a batch's row past its count"))?);
+        }
+    }
+    Ok(out)
 }
 
 impl Iterator for SemiProbe {

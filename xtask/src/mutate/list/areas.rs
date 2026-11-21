@@ -20,6 +20,7 @@ mod expr;
 mod estimates;
 mod group_table;
 mod insert_values;
+mod join_table;
 mod joins;
 mod late;
 mod oltp;
@@ -184,14 +185,14 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after())
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
 }
 
-/// The transport's, parallel queries', the client's step with its server,
-/// the decode kernels', declared types', batches', late materialization's,
-/// the table of groups', xxHash's, semi joins' and skipping's, last, as
-/// `last` holds no more.
-fn after() -> [&'static [Mutation]; 11] {
+/// The transport's, parallel queries', the client's step with its
+/// server, the decode kernels', declared types', batches', late
+/// materialization's, the table of groups', the join table's, XXH3's,
+/// semi joins' and skipping's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 12] {
     [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
@@ -201,6 +202,7 @@ fn after() -> [&'static [Mutation]; 11] {
         &batches::BATCHES,
         &late::LATE,
         &group_table::GROUP_TABLE,
+        &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
         &semi_joins::SEMI_JOINS,
         &skipping::SKIPPING,

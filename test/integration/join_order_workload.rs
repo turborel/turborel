@@ -73,9 +73,9 @@ fn every_query_agrees_reduced_to_semi_joins() {
     assert!(reduced_some >= 50, "{reduced_some} of 100 queries reduced");
 }
 
-/// Verifies: [DESIGN] RULES.md D542: the rule leaves COUNT, SUM and a
-/// relation a selected column reads, and makes semi joins of the
-/// relations a MIN does not read.
+/// Verifies: [DESIGN] RULES.md D542: the rule leaves COUNT, SUM, a set
+/// function of DISTINCT and a relation a selected column reads, and makes
+/// semi joins of the relations a MIN does not read.
 #[test]
 fn only_duplicate_blind_set_functions_are_reduced() {
     let db = imdb::load(TITLES);
@@ -86,7 +86,8 @@ fn only_duplicate_blind_set_functions_are_reduced() {
     };
     let from = "FROM title AS t, movie_keyword AS mk, keyword AS k WHERE mk.movie_id = t.id AND mk.keyword_id = k.id";
     assert!(applied(&format!("SELECT MIN(t.title) {from}")));
-    assert!(applied(&format!("SELECT COUNT(DISTINCT t.id), MAX(t.title) {from}")));
+    assert!(applied(&format!("SELECT MIN(t.production_year), MAX(t.title) {from}")));
+    assert!(!applied(&format!("SELECT COUNT(DISTINCT t.id), MAX(t.title) {from}")));
     assert!(!applied(&format!("SELECT COUNT(*) {from}")));
     assert!(!applied(&format!("SELECT SUM(t.production_year) {from}")));
     assert!(!applied(&format!("SELECT MIN(t.title), MIN(k.keyword), MIN(mk.id) {from}")));
