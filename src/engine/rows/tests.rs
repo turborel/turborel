@@ -483,10 +483,11 @@ fn a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D443, D750: collection reads the row of a
-/// version only when the removal needs it: one whose successor kept the
-/// columns asked about is removed unread, one whose successor changed
-/// them is read and given back.
+/// Verifies: [DESIGN] RULES.md D443, D750, D751: collection reads the row
+/// of a version only when the removal needs it: one whose successor kept
+/// the columns asked about is removed unread, one whose successor changed
+/// them is read, of its columns only those the removal asks for, and
+/// given back.
 #[test]
 fn collection_reads_only_the_versions_it_needs() {
     use crate::storage::{Kept, Needed};
@@ -506,11 +507,11 @@ fn collection_reads_only_the_versions_it_needs() {
         table.commit(tx, tx + 1);
         let needs = |of: Kept| of.unchanged & 0b01 == 0;
         let removed = |_, row: Row, _| {
-            read.push(row[1].to_string());
+            read.push(row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
             true
         };
-        table.gc(tx + 2, &mut Needed { needs, removed }).unwrap();
+        table.gc(tx + 2, &mut Needed { needs, columns: &|| Some(&[1][..]), removed }).unwrap();
     }
-    assert_eq!(read, ["v10  "], "only the version whose key changed after it is read");
+    assert_eq!(read, ["NULL,v10  "], "only the version whose key changed after it is read, of the column asked for");
     assert_eq!(files.undo().pinned(), 0, "every version superseded removed");
 }

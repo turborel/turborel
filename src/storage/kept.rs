@@ -43,6 +43,12 @@ pub trait Removal {
         true
     }
 
+    /// The columns of a row read for it, the others left null: those its
+    /// entries' keys read (RULES.md D751). Default: all.
+    fn columns(&self) -> Option<&[usize]> {
+        None
+    }
+
     /// Takes back the entries of row `id`, the row of a version removed,
     /// that its successor `kept`: whether every one is gone.
     fn removed(&mut self, id: RowId, row: Row, kept: Kept) -> bool;
@@ -55,18 +61,25 @@ impl<F: FnMut(RowId, Row, Kept) -> bool> Removal for F {
     }
 }
 
-/// \[DESIGN\] A removal that reads only the versions `needs` says, giving
-/// their rows to `removed` (`Removal`).
-pub struct Needed<N, R> {
+/// \[DESIGN\] A removal that reads only the versions `needs` says, of
+/// their rows only the `columns` it gives, and gives them to `removed`
+/// (`Removal`).
+pub struct Needed<'c, N, R> {
     /// As `Removal::needs`.
     pub needs: N,
+    /// As `Removal::columns`.
+    pub columns: &'c dyn Fn() -> Option<&'c [usize]>,
     /// As `Removal::removed`.
     pub removed: R,
 }
 
-impl<N: Fn(Kept) -> bool, R: FnMut(RowId, Row, Kept) -> bool> Removal for Needed<N, R> {
+impl<N: Fn(Kept) -> bool, R: FnMut(RowId, Row, Kept) -> bool> Removal for Needed<'_, N, R> {
     fn needs(&self, kept: Kept) -> bool {
         (self.needs)(kept)
+    }
+
+    fn columns(&self) -> Option<&[usize]> {
+        (self.columns)()
     }
 
     fn removed(&mut self, id: RowId, row: Row, kept: Kept) -> bool {

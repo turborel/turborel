@@ -9,7 +9,7 @@ use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::kept::needs_row;
+use super::kept::{key_reads, needs_row};
 use super::owed::{Entry, Owed};
 use super::{Committing, Joined, Sharing, TableLock, Timestamp, Transactions, Txn, UndoFailure};
 use crate::catalog::{IndexDesc, QualifiedName};
@@ -326,23 +326,22 @@ impl State {
         let needs = |kept: Kept| {
             needs_row(!globals.get_or_init(over).is_empty(), indexes.get_or_init(sharing).iter().map(|&(_, _, shared)| shared), kept)
         };
+        // Of a version read, only the columns its entries' keys read (RULES.md D751).
+        let reads: OnceCell<Vec<usize>> = OnceCell::new();
+        let local = || found.get_or_init(of_table).iter().map(|&(_, _, ix)| ix);
+        let read = || key_reads(local().chain(globals.get_or_init(over).iter().map(|(_, ix, _)| ix)));
+        let columns = || Some(reads.get_or_init(read).as_slice());
         let removed = |id, row: Row, kept: Kept| {
             remove_global(globals.get_or_init(over), id, &row);
             let found = found.get_or_init(of_table);
-            let failed = remove_entries(indexes.get_or_init(sharing), id, &row, kept);
-            let entries: Vec<Entry> = failed
-                .into_iter()
-                .filter_map(|(at, key)| {
-                    found.get(at).map(|&(name, index, _)| Entry { name: name.to_owned(), index: Arc::clone(index), key })
-                })
-                .collect();
+            let entries = owed_entries(found, remove_entries(indexes.get_or_init(sharing), id, &row, kept));
             let gone = entries.is_empty();
             if !gone {
                 lock.owed.add(Owed { row: id, storage: Arc::clone(storage), entries });
             }
             gone
         };
-        let _ = storage.gc(horizon, &mut Needed { needs, removed });
+        let _ = storage.gc(horizon, &mut Needed { needs, columns: &columns, removed });
     }
 
     /// [X3.135-1986 §8.9 GR1, GR3] cancel every change and terminate the transaction.
@@ -407,6 +406,14 @@ type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
 /// \[EXTENSION\] A global index over a partition's rows (RULES.md D157),
 /// its description, and the partition's id its entries carry.
 type Global = (Arc<dyn Index>, IndexDesc, u64);
+
+/// The entries of `failed`, each the position in `found` of its index and
+/// its key, as owed (`txn/owed.rs`).
+fn owed_entries(found: &[Found<'_>], failed: Vec<(usize, Key)>) -> Vec<Entry> {
+    let owed =
+        |(at, key)| found.get(at).map(|&(name, index, _): &Found<'_>| Entry { name: name.to_owned(), index: Arc::clone(index), key });
+    failed.into_iter().filter_map(owed).collect()
+}
 
 /// \[EXTENSION\] Removes the entries of row `id`, a version collected, of
 /// `row`, from the global indexes `globals` over its partition. One not

@@ -58,6 +58,15 @@ pub(crate) fn needs_row(globals: bool, indexes: impl IntoIterator<Item = Sharing
     globals || indexes.into_iter().any(|sharing| !sharing.shares(kept))
 }
 
+/// The columns the keys of `indexes` read, in order, each once: those a
+/// version collected is read for (RULES.md D751).
+pub(crate) fn key_reads<'a>(indexes: impl Iterator<Item = &'a IndexDesc>) -> Vec<usize> {
+    let mut reads: Vec<usize> = indexes.flat_map(IndexDesc::reads).collect();
+    reads.sort_unstable();
+    reads.dedup();
+    reads
+}
+
 // Unit tests: which versions collection reads (RULES.md R-TEST-1).
 #[cfg(test)]
 mod tests {

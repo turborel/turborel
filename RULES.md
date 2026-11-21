@@ -474,6 +474,7 @@ verification approach DO-178C expects (§8).
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
 | D750 | A row change is logged from its images as the statement holds them, and collection reads no version whose every entry its successor shares |
+| D751 | A record decodes only the columns asked for, each once, and collection reads only the columns its entries' keys read |
 
 ### The project
 
@@ -13341,6 +13342,19 @@ it (D443) has none to take back. So collection asks first whether a
 version needs its row (`storage::Removal`), and frees one that does not
 without reading it. A table with an index sharing nothing, or a
 partition under a global index (D157), needs every row, as before.
+
+#### D751. A record decodes only the columns asked for, each once, and collection reads only the columns its entries' keys read
+
+A record decoded for some of its columns looked at every column in turn,
+searching the list asked for at each. A column named twice, as a scan's
+condition names those it reads beside its output, was decoded twice, and
+its value out of line fetched twice. A record now decodes the columns
+asked for where they are named, each once, and leaves the rest null.
+
+Collection decoded the whole row of each version it removed, to make the
+keys of its index entries. It now reads only the columns those keys read,
+of the table's indexes and the global indexes over a partition
+(`storage::Removal::columns`), found once per collection.
 
 ## 2. Project layout
 
