@@ -426,6 +426,7 @@ verification approach DO-178C expects (§8).
 | D450 | A served session's transactions are collected once their reply is sent |
 | D451 | A busy table is collected a batch of commits at a time |
 | D453 | One transaction that wrote nothing collects at a time |
+| D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
@@ -13756,3 +13757,32 @@ One that finds another under way passes by. The one collecting collects
 the same tables, and what its horizon does not reach waits for any later
 end, as a table passed over does (D445). A transaction that wrote
 still collects its own tables as before.
+
+#### D454. A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own
+
+At READ COMMITTED a statement that would change a row another
+transaction is changing waits for that transaction to end. It then
+writes the version committed, if its search condition still holds of
+it [ISO/IEC 9075:1992 §4.28]. The write is refused only on the lock
+timeout, a deadlock or a cancel. A row many transactions change at once
+used to refuse a waiter after 64 refused tries in all, each holder
+passing it counting two or three. The waiter was then told SQLCODE -911.
+
+Now a try counts only when nothing was committed since the last one.
+A recheck of a version committed after the last one rechecked resets
+the count, and a wait for a writer leads to such a recheck unless the
+writer rolled back. The bound still stops
+an engine whose answers disagree from looping forever. After each wait
+the row is read again at once, so the waiter goes straight to the
+version committed meanwhile without first failing at its old snapshot.
+REPEATABLE READ and SERIALIZABLE keep their one snapshot and are
+refused once a later commit is found, as before.
+
+Reading at a snapshot for each statement, each statement of a
+procedure's body reads at one taken as it begins. The same holds for a
+control statement run directly. A statement after one that waited for a
+row therefore reads what was committed meanwhile, and does not walk the
+older versions back to the CALL's snapshot. A function's or a triggered
+action's statements keep the snapshot of the statement that runs them,
+which is still reading. No statement takes a new snapshot while a
+cursor of the session is open, as with any other statement.
