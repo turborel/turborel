@@ -492,7 +492,7 @@ fn event_of(kind: WriteKind) -> Event {
 /// inserts into, changes, defines, alters, drops, indexes, or grants or
 /// revokes privileges on: the table a syntax error or access rule
 /// violation it raises is about, unless what raised it names another.
-fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
+pub(super) fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
     match stmt {
         SqlStatement::Insert(ins) => Some(&ins.table),
         SqlStatement::Merge(merge) => Some(&merge.target),

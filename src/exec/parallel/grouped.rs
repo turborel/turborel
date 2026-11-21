@@ -295,7 +295,7 @@ fn morsel_pieces(grouping: &Grouping, (m, rows): (usize, Vec<Row>), runner: &Run
     let mut parts: Vec<Vec<Piece>> = (0..PARTS).map(|_| Vec::new()).collect();
     for (first, key, values, states) in made {
         let states = states.iter().map(|s| written(s.as_ref())).collect();
-        parts.get_mut(part_of(&key)).ok_or_else(|| broken("a partition of a grouping is missing"))?.push(Piece {
+        parts.get_mut(part_of(&key, &grouping.seed)).ok_or_else(|| broken("a partition of a grouping is missing"))?.push(Piece {
             first,
             key,
             values,
@@ -359,7 +359,7 @@ fn merged_pieces(grouping: &Grouping, p: usize, chunks: Chunks) -> Result<Vec<(u
     let mut groups: HashMap<Vec<u8>, Merging> = HashMap::new();
     for (n, seed) in (0_u64..).zip(&grouping.spec.seeds) {
         let key = group_key(&grouping.spec, seed)?;
-        if part_of(&key) == p {
+        if part_of(&key, &grouping.seed) == p {
             groups.entry(key).or_insert_with(|| (n, seed.clone(), fresh(aggs)));
         }
     }

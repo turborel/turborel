@@ -31,13 +31,23 @@ fn begins_query(tok: Option<&Tok>) -> bool {
     matches!(tok, Some(Tok::KeyWord(kw::SELECT | kw::VALUES | kw::TABLE | kw::WITH | kw::MATCH) | Tok::Delimiter(delim::LEFT_PAREN)))
 }
 
+/// \[EXTENSION\] Whether `first` and `second` begin a data change
+/// statement EXPLAIN ANALYZE runs (RULES.md D622): INSERT, UPDATE or
+/// DELETE, each reserved, or MERGE, then INTO or WITH, as
+/// `begins_word_statement` reads MERGE.
+pub(crate) fn begins_change(first: Option<&Tok>, second: Option<&Tok>) -> bool {
+    let merge = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::INTO | kw::WITH))) if w == MERGE);
+    merge || matches!(first, Some(Tok::KeyWord(kw::INSERT | kw::UPDATE | kw::DELETE)))
+}
+
 /// \[EXTENSION\] Of `tokens`, those of a direct statement, where the
-/// query of `EXPLAIN [ ANALYZE ] <cursor specification>` begins among
-/// them, and whether ANALYZE is written, if they begin one: EXPLAIN, then
-/// a query's first token; or EXPLAIN, ANALYZE, then a query's first
-/// token, of a parenthesis one that begins a query too, as a table named
-/// EXPLAIN whose correlation name ANALYZE has a list of columns is
-/// followed by a column's name.
+/// statement of `EXPLAIN [ ANALYZE ] <cursor specification>`, or of
+/// `EXPLAIN ANALYZE <data change statement>`, begins among them, and
+/// whether ANALYZE is written, if they begin one: EXPLAIN, then a query's
+/// first token; or EXPLAIN, ANALYZE, then a data change's first tokens,
+/// or a query's first token, of a parenthesis one that begins a query
+/// too, as a table named EXPLAIN whose correlation name ANALYZE has a
+/// list of columns is followed by a column's name.
 pub(crate) fn explained<'t>(mut tokens: impl Iterator<Item = &'t Tok>) -> Option<(usize, bool)> {
     let (first, second, third, fourth) = (tokens.next(), tokens.next(), tokens.next(), tokens.next());
     if !matches!(first, Some(Tok::Identifier(w)) if w == EXPLAIN) {
@@ -48,7 +58,8 @@ pub(crate) fn explained<'t>(mut tokens: impl Iterator<Item = &'t Tok>) -> Option
     }
     let analyze = matches!(second, Some(Tok::Identifier(w)) if w == ANALYZE);
     let parenthesis = matches!(third, Some(Tok::Delimiter(delim::LEFT_PAREN)));
-    (analyze && begins_query(third) && (!parenthesis || begins_query(fourth))).then_some((2, true))
+    let query = begins_query(third) && (!parenthesis || begins_query(fourth));
+    (analyze && (query || begins_change(third, fourth))).then_some((2, true))
 }
 
 /// Whether the tokens `first` and `second` begin a `<truncate table
@@ -325,9 +336,26 @@ mod tests {
         assert_eq!(of("EXPLAIN ANALYZE (SELECT A FROM T)"), Some((2, true)));
         assert_eq!(of("EXPLAIN SELECT A FROM ANALYZE"), Some((1, false)));
         assert_eq!(of("EXPLAIN (VALUES 1)"), Some((1, false)));
-        assert_eq!(of("EXPLAIN ANALYZE INSERT INTO T VALUES (1)"), None);
+        assert_eq!(of("EXPLAIN INSERT INTO T VALUES (1)"), None);
         assert_eq!(of("ANALYZE SELECT 1 FROM T"), None);
         assert_eq!(of("SELECT 1 FROM T"), None);
         assert_eq!(of("EXPLAIN"), None);
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D622, R-TEST-8: EXPLAIN ANALYZE is
+    /// read before a data change's first tokens, EXPLAIN alone not. MC/DC
+    /// of `merge || begins_change's reserved word`: MERGE INTO against
+    /// MERGE T shows `merge`, INSERT against a name the reserved word; of
+    /// `analyze && (query || change)`, the change rows against EXPLAIN
+    /// INSERT show `analyze`.
+    #[test]
+    fn analyze_is_read_before_a_data_change() {
+        for sql in ["EXPLAIN ANALYZE INSERT INTO T VALUES (1)", "EXPLAIN ANALYZE UPDATE T SET A = 1", "EXPLAIN ANALYZE DELETE FROM T"] {
+            assert_eq!(of(sql), Some((2, true)), "{sql}");
+        }
+        assert_eq!(of("EXPLAIN ANALYZE MERGE INTO T USING U ON T.A = U.A WHEN MATCHED THEN DELETE"), Some((2, true)));
+        assert_eq!(of("EXPLAIN ANALYZE MERGE T"), None);
+        assert_eq!(of("EXPLAIN ANALYZE T"), None);
+        assert_eq!(of("EXPLAIN DELETE FROM T"), None);
     }
 }

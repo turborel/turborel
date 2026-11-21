@@ -13,13 +13,23 @@ use std::hash::{BuildHasher, RandomState};
 
 use super::work::Work;
 use crate::error::{Code, Result, SqlError};
+use crate::hash::xxhash::xxh3_64_with_seed;
 use crate::spill::{Records, SpillRun, SpilledLobs, record_room};
 use crate::storage::Row;
 use crate::value::types::TypeRegistry;
 
-/// Records written to partitions by a hash of a key of theirs.
+/// A seed drawn at random: of the keys the standard library draws its
+/// SipHash-1-3 keys at random by, the hash of nothing.
+pub(super) fn drawn() -> u64 {
+    RandomState::new().hash_one(())
+}
+
+/// Records written to partitions by the XXH3-64 of a key of theirs, of
+/// a seed of their own.
 pub(super) struct Partitioner {
-    hasher: RandomState,
+    /// The seed of its hash, XXH3-64, drawn at random as it is made, so
+    /// no client knows which keys share a partition.
+    seed: u64,
     runs: Vec<Box<dyn SpillRun>>,
 }
 
@@ -31,7 +41,7 @@ impl Partitioner {
     /// The spill area's.
     pub(super) fn new(count: usize, work: &mut Work) -> Result<Partitioner> {
         let runs = (0..count.max(1)).map(|_| work.run()).collect::<Result<_>>()?;
-        Ok(Partitioner { hasher: RandomState::new(), runs })
+        Ok(Partitioner { seed: drawn(), runs })
     }
 
     /// As many partitions as `work` writes at once, of SPILL.PARTITIONS.
@@ -51,7 +61,7 @@ impl Partitioner {
     /// As `new`.
     pub(super) fn alike(&self, work: &mut Work) -> Result<Partitioner> {
         let runs = (0..self.runs.len()).map(|_| work.run()).collect::<Result<_>>()?;
-        Ok(Partitioner { hasher: self.hasher.clone(), runs })
+        Ok(Partitioner { seed: self.seed, runs })
     }
 
     /// Writes `record` to the partition of `key`.
@@ -66,7 +76,7 @@ impl Partitioner {
     /// The place of the partition of `key`.
     pub(super) fn place_of(&self, key: &[u8]) -> usize {
         let n = u64::try_from(self.runs.len()).unwrap_or(1);
-        usize::try_from(self.hasher.hash_one(key).checked_rem(n).unwrap_or_default()).unwrap_or_default()
+        usize::try_from(xxh3_64_with_seed(key, self.seed).checked_rem(n).unwrap_or_default()).unwrap_or_default()
     }
 
     /// Writes `record` to the partition at `at`, as `place_of` places it:
