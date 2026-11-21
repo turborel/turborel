@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 22] = [
+pub const OLTP: [Mutation; 23] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -229,5 +229,15 @@ pub const OLTP: [Mutation; 22] = [
         replacement: "        if true {",
         integration: &["durability::a_failed_sync_stops_the_database_taking_changes"],
         unit: &[],
+    },
+    Mutation {
+        name: "oltp-statistics-gathered-unread",
+        package: Package::Core,
+        breaks: "the maintenance job gathers a table's statistics whenever they are due, though no plan read them since the last pass, so tables no plan plans by are sampled again and again",
+        file: "src/engine/rows/stats.rs",
+        original: "        let due = gathered.due() && (now || (gathered.wanted() && gathered.spaced()));",
+        replacement: "        let due = gathered.due() && (now || gathered.spaced());",
+        integration: &[],
+        unit: &["engine::rows::stats::tests::statistics_no_plan_reads_are_not_gathered"],
     },
 ];

@@ -24,8 +24,10 @@
 //! pass also waits `PASS_SPACING` times as long as the last one took, so
 //! a table written fast costs at most a bounded share of one thread's time
 //! (RULES.md D407); one whose changes outnumber the rows of the last pass,
-//! and REFRESH_ROWS more, is not made to wait. One thread gathers at a
-//! time; another finding them due meanwhile leaves them.
+//! and REFRESH_ROWS more, is not made to wait. The thread gathers them
+//! only if a planning read them since the last pass began, so statistics
+//! no plan reads cost nothing to keep (RULES.md D473). One thread gathers
+//! at a time; another finding them due meanwhile leaves them.
 //!
 //! A sampled pass tells the builder which run of row ids each row is of,
 //! so a value seen in one run alone counts as seen once (RULES.md D381).
@@ -97,6 +99,9 @@ pub(super) struct Gathered {
     when_asked: AtomicBool,
     /// Set as a table opened is first asked for them, until gathered.
     asked: AtomicBool,
+    /// Set as a planning reads them, until a pass begins: the maintenance
+    /// job gathers only statistics read since its last pass (RULES.md D473).
+    read: AtomicBool,
     /// When it was made, which `earliest` counts from.
     made: Instant,
     /// The nanoseconds after `made` before which the next pass waits, of
@@ -116,6 +121,7 @@ impl Gathered {
             gathering: AtomicBool::default(),
             when_asked: AtomicBool::default(),
             asked: AtomicBool::default(),
+            read: AtomicBool::default(),
             made: Instant::now(),
             earliest: AtomicU64::default(),
         }
@@ -144,6 +150,13 @@ impl Gathered {
         let Refresh { fraction, rows: more, .. } = self.refresh();
         let rows = count(self.rows.load(Ordering::Relaxed));
         self.asked.load(Ordering::Acquire) || count(self.changes.load(Ordering::Relaxed)) > rows * fraction + count(more)
+    }
+
+    /// Whether a plan read them since the last pass began, or a table
+    /// opened was asked for them: only then does the maintenance job
+    /// gather them.
+    fn wanted(&self) -> bool {
+        self.asked.load(Ordering::Acquire) || self.read.load(Ordering::Acquire)
     }
 
     /// Whether a pass due may be made now: asked for, the last pass long
@@ -190,6 +203,7 @@ impl Gathered {
     /// The statistics of the last pass, as `asked_for` gives them, read
     /// after the rows written since, the table holding `live` rows.
     pub(super) fn answer(&self, live: u64) -> Option<Arc<dyn Statistics>> {
+        self.read.store(true, Ordering::Release);
         let stats = self.asked_for()?;
         Some(Changed::of(stats, self.changes.load(Ordering::Relaxed), live))
     }
@@ -223,6 +237,8 @@ impl RowTable {
         // Changes made during the pass may or may not be seen: they count
         // towards the next.
         let begun = Instant::now();
+        // Read during the pass, they are wanted by the next.
+        self.gathered.read.store(false, Ordering::Release);
         let before = self.gathered.changes.load(Ordering::Relaxed);
         let rows = u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX);
         let sampling = rows > SAMPLED_ROWS.saturating_mul(2);
@@ -287,16 +303,18 @@ impl RowTable {
     }
 
     /// Whether its statistics are due to be gathered again, by the
-    /// database's maintenance thread (`TableStorage::maintain`).
+    /// database's maintenance thread (`TableStorage::maintain`): changed
+    /// enough, and read by a plan since the last pass (RULES.md D473).
     pub(super) fn gather_wanted(&self) -> bool {
-        self.gathered.due()
+        self.gathered.due() && self.gathered.wanted()
     }
 
-    /// Gathers them if due, spaced from the last pass or asked to `now`,
-    /// and no other thread is: whether it did. A failure leaves them for
-    /// the next call.
+    /// Gathers them if due and asked to `now`, or wanted and spaced from
+    /// the last pass, and no other thread is: whether it did. A failure
+    /// leaves them for the next call.
     pub(super) fn gather_if_due(&self, now: bool) -> bool {
-        let due = self.gathered.due() && (now || self.gathered.spaced());
+        let gathered = &self.gathered;
+        let due = gathered.due() && (now || (gathered.wanted() && gathered.spaced()));
         if due && !self.gathered.gathering.swap(true, Ordering::Acquire) {
             let _ = self.gather();
             self.gathered.gathering.store(false, Ordering::Release);
@@ -443,5 +461,28 @@ mod tests {
         assert!(fresh.due() && fresh.spaced(), "spaced");
         fresh.spaced_after(std::time::Duration::from_secs(3_600));
         assert!(fresh.due() && !fresh.spaced(), "after a pass of an hour");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D473, statistics on demand: a table
+    /// changed past the share of its rows whose statistics no plan read
+    /// is not gathered by the maintenance job, though asked to now it is;
+    /// read by a plan, its next due pass is made, and the pass clears the
+    /// mark. MC/DC of the gate: read (made) against not read (not made),
+    /// `now` (made) against not.
+    #[test]
+    fn statistics_no_plan_reads_are_not_gathered() {
+        let table = table_of(1_000);
+        table.gather().unwrap();
+        // Spaced from the last pass at once: only the gate holds a pass back.
+        let spaced = || table.gathered.earliest.store(0, std::sync::atomic::Ordering::Relaxed);
+        spaced();
+        table.gathered.changed(500);
+        assert!(!table.gather_wanted() && !table.gather_if_due(false), "no plan read them");
+        assert!(table.statistics().is_some());
+        assert!(table.gather_wanted() && table.gather_if_due(false), "read since the last pass");
+        spaced();
+        table.gathered.changed(500);
+        assert!(!table.gather_if_due(false), "the pass cleared the mark");
+        assert!(table.gather_if_due(true), "asked to now");
     }
 }

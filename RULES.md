@@ -406,6 +406,7 @@ verification approach DO-178C expects (§8).
 | D470 | A transaction's log records are held until its commit and written in one write before its commit record |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
 | D472 | A page written back again is written over its side-file block with no lock held |
+| D473 | The maintenance job gathers a table's statistics only once a plan has read them since its last pass |
 
 ### The project
 
@@ -11410,6 +11411,20 @@ The semantics hold for these reasons.
   granted together.
 - A waiter that gives up, cancelled or timed out, gives up its ticket, so
   the waiters behind it are not held.
+#### D473. The maintenance job gathers a table's statistics only once a plan has read them since its last pass
+
+A table's statistics were gathered again whenever its changes passed
+their share of its rows (D31), spaced by D407, whether or not anything
+read them. Under an order entry workload every plan is a probe of a
+unique key kept from the start, so no plan reads them, yet the tables
+that churn were sampled again and again, and the pass took the cores
+the sessions run on. A table now notes when a planning reads its
+statistics, and the maintenance job gathers it only if one did since
+its last pass began, and the table is due and spaced as before. A table
+opened and asked for its first statistics is gathered as before, and
+ANALYZE and the maintenance asked to run now gather at once
+(`engine/rows/stats.rs`).
+
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
 The engine hashed with MurmurHash3, FNV-1a, SplitMix64's finalizer, the
