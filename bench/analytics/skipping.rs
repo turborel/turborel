@@ -57,7 +57,7 @@ fn row(k: u64, rows: u64) -> String {
     let day = k * DAYS / rows;
     let (month, date) = (1 + day / 31 % 12, 1 + day % 28);
     let counter = (k * 100 / rows + c % 3) % 100;
-    let phrase = if c % 10 == 0 { format!("phrase {}", c / 10 % 1000) } else { String::new() };
+    let phrase = if c.is_multiple_of(10) { format!("phrase {}", c / 10 % 1000) } else { String::new() };
     format!(
         "({k}, DATE '2013-{month:02}-{date:02}', {counter}, {c}, {}, {}, 'http://site{}.example/page{}', '{phrase}')",
         c % 10_000,
