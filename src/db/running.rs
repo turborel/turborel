@@ -66,8 +66,22 @@ impl Session {
     pub(super) fn begun(&self, st: &State) -> Result<Arc<Txn>> {
         let tx = self.ensure_transaction(st);
         self.runs(&tx);
-        tx.begin_statement(|| !self.cursors_open())?;
+        self.begin_in(st, &tx, false)?;
         Ok(tx)
+    }
+
+    /// Begins the statement next of `tx`, of `st` (`Txn::begin_statement`):
+    /// a load under way in it ended as it begins, unless the statement
+    /// `continues` it (RULES.md D532).
+    ///
+    /// # Errors
+    ///
+    /// As `Txn::begin_statement` and `State::end_load`.
+    pub(super) fn begin_in(&self, st: &State, tx: &Txn, continues: bool) -> Result<()> {
+        if tx.begin_statement(|| !self.cursors_open())? && !continues {
+            st.end_load(tx)?;
+        }
+        Ok(())
     }
 
     /// \[DESIGN\] `result`, told once every commit what the statement saw

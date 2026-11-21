@@ -16,7 +16,7 @@ pub(super) mod sdk;
 pub(super) mod settings;
 
 /// The mutations of extensions and their processes.
-pub const PLUGINS: [Mutation; 8] = [
+pub const PLUGINS: [Mutation; 9] = [
     Mutation {
         name: "plugin-error-class-dropped",
         package: Package::Core,
@@ -96,6 +96,16 @@ pub const PLUGINS: [Mutation; 8] = [
         replacement: "if false && !abandoned.is_empty() {",
         integration: &["plugins::drop_restrict_and_cascade"],
         unit: &[],
+    },
+    Mutation {
+        name: "plugin-start-bound-call",
+        package: Package::Core,
+        breaks: "a program starting is given no more time than a call",
+        file: "src/plugin/limits.rs",
+        original: "        self.timeout().map(|t| t.max(Duration::from_millis(LEAST_START_MS)))",
+        replacement: "        self.timeout()",
+        integration: &[],
+        unit: &["plugin::limits::tests::the_limits_are_the_settings_told"],
     },
 ];
 

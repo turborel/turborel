@@ -420,6 +420,8 @@ verification approach DO-178C expects (§8).
 | D522 | Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes |
 | D525 | A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code |
 | D530 | The rows of an INSERT and of a bulk copy go in together, a batch at a time, one log record each |
+| D531 | Rows inserted together are read where their statement holds them, and each batch takes one undo entry an index |
+| D532 | A load into a table builds each empty index but a unique one whole from its sorted entries as it ends, under the table's lock held alone |
 | D550 | A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less |
 | D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
 | D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
@@ -6696,7 +6698,14 @@ and a built-in or registered object, share a name of a kind.
 
 An extension's pool starts processes as calls need them, at most
 PLUGINS.PROCESSES at once, each greeted by HELLO before its first call
-(`plugin/pool.rs`, `plugin/process.rs`). A process that ends, breaks
+(`plugin/pool.rs`, `plugin/process.rs`). A start waits for the WELCOME
+while the program runs and its output is open, for PLUGINS.CALL_TIMEOUT_MS
+but never less than the least a start is given (`LEAST_START_MS`), as a
+loaded machine may take long to load and schedule a new program; a
+program silent past it is stopped with SQLSTATE 38T02. A start refused
+because the executable is busy, as it is while a process started by
+another thread at that moment still holds the file open for writing, is
+tried again within the same bound. A process that ends, breaks
 the protocol, runs past PLUGINS.CALL_TIMEOUT_MS or sends more than
 PLUGINS.MAX_MESSAGE_BYTES in a message or PLUGINS.MAX_CALL_BYTES in a
 call is stopped and its call fails, and the next call starts another. A
@@ -12000,6 +12009,51 @@ then inserts them all, each row's values those of the parameters, so
 the statement is bound once a batch, not once a row. A bulk copy uses
 it. It is refused for any other statement and for a view with an
 INSTEAD OF trigger.
+#### D531. Rows inserted together are read where their statement holds them, and each batch takes one undo entry an index
+
+A load spent about a quarter of its time making and freeing copies of
+its rows and keys. So a batch is read where the statement holds its rows
+(`HeldRows::visit_slices`), and nothing copies a row for it. The
+storage encodes each row as it is held (`TableStorage::insert_from`), as
+the log record is made from it (D530), and a single row's insert record
+is made the same way. Each index's keys of a batch are made once,
+encoded where they are held as they go in (`Index::insert_from`), and
+kept for undo in one entry of the index and batch (`IndexInsertedRows`),
+not one each. It spills and is read back as the others do, and is undone
+newest entry first. The table's storage, indexes and checks are found
+once a statement, not once a batch. The rows given a prepared INSERT are
+taken by its execution, not copied, and a copy's column types are found
+once. Whether each row's key was alone in a unique index comes back
+with the batch, and is noted in the transaction only when every row is
+noted for the statement's end, which reads it.
+#### D532. A load into a table builds each empty index but a unique one whole from its sorted entries as it ends, under the table's lock held alone
+
+Inserting a load's entries row by row writes an index at random places,
+each entry a descent and some a split. An index built whole from its
+entries sorted is written once, left to right, its pages full. So a
+load, one INSERT of 4096 rows or more, or a bulk copy's executions
+(`Session::execute_prepared_rows` with `Load`), holds back the entries
+of each index of its table that is empty as it begins, but a unique one
+(`db/write/bulk/load.rs`). The load takes the table's lock alone first,
+so no other transaction writes the table until this one ends; its rows
+are not seen by others' readers, who miss no entry. The entries are kept
+only as the undo entries that would take them out, from the load's mark
+in the undo log (`txn/undo/loading.rs`), so a statement that fails takes
+its entries with its undo, and one undone back past the mark undoes the
+load. As the load ends each index held back is built from its entries,
+sorted in a work area that spills (`Index::load`), while checkpoints
+wait; if a row went in another way meanwhile, the entries go in in their
+rows' order instead. A statement of the transaction that is no part of
+the load, and its commit, end the load first, so the transaction reads
+through each index every row it wrote. An entry held back and undone was
+never inserted, so its removal finds none and counts none. A unique index takes its entries as each row goes
+in, so a UNIQUE constraint is checked as before. A table that a trigger,
+a foreign key, a deferred constraint or an assertion reads loads no
+index, as D530 notes every row of such a statement, so nothing reads an
+index held back. Index entries are not logged; recovery mends the
+indexes as before (D25). An index built whole has the distinct keys one
+built row by row has, and its range estimates come within a tenth of
+the other's, its pages being fuller.
 #### D550. A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less
 
 A grouping whose rows come in the order of its grouping columns makes
@@ -12503,7 +12557,15 @@ collection, a row, a structured, JSON, XML or extension value), or
 whose plan holds a slot of its own, is planned at each run. The rows
 of each run are gathered, spilled, kept by outer values and decorrelated
 after EXECUTOR.DECORRELATE_AFTER_RUNS as before (D35, D38), and a run
-checks for a cancel as any plan does (D44). EXECUTOR.KEEP_SUBQUERY_PLANS,
+checks for a cancel as any plan does (D44).
+
+A subquery that will be decorrelated after fewer runs than
+`MOST_LEARNING_RUNS` is planned at each run until then, as before. Its
+learning runs plan it twice, and the few runs left between its plan
+kept and its decorrelation do not win that back. Measured on nested
+EXISTS, NOT EXISTS and NOT IN over unindexed tables, learning there
+cost a little on every statement, and waiting for decorrelation costs
+nothing. EXECUTOR.KEEP_SUBQUERY_PLANS,
 ON by default and of a session's scope, turns it off, as to compare the
 two.
 
