@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{Claim, Latch, try_latch};
+use super::{Claim, Latch};
 use crate::disk::buffer::{BufferPool, Key, UNDO_WAITS, all_held, count};
 use crate::error::Result;
 use crate::hash::xxhash::Xxh3Map;
@@ -217,7 +217,7 @@ impl BufferPool {
         if frame.key() != Some(old) || frame.pins.load(Ordering::Acquire) > 0 {
             return Ok(Attempt::Held);
         }
-        let Some(latch) = try_latch(frame) else { return Ok(Attempt::Latched) };
+        let Some(latch) = frame.try_latched() else { return Ok(Attempt::Latched) };
         count(&self.counters.evictions);
         let claim = self.take(&mut map, (index, latch), key, Some(old))?;
         // A dirty page stays mapped until written back (`fill`).

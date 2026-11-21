@@ -5,8 +5,9 @@
 //! shared, where taking the latch would write the latch's word.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{RwLockWriteGuard, TryLockError};
 
-use super::{BufferPool, FileId, Key, PageRef, Tally};
+use super::{BufferPool, FileId, Frame, Key, PageRef, Tally};
 use crate::error::Result;
 
 /// The pools made so far, so each has a number of its own.
@@ -15,6 +16,20 @@ static POOLS: AtomicU64 = AtomicU64::new(1);
 /// A new pool's number, never one another pool of the process had.
 pub(super) fn next_pool() -> u64 {
     POOLS.fetch_add(1, Ordering::Relaxed)
+}
+
+impl Frame {
+    /// Its content latched exclusively, its version moved on, if no one
+    /// holds its latch now.
+    pub(super) fn try_latched(&self) -> Option<RwLockWriteGuard<'_, Vec<u8>>> {
+        let latch = match self.content.try_write() {
+            Ok(latch) => latch,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        self.version.fetch_add(1, Ordering::SeqCst);
+        Some(latch)
+    }
 }
 
 /// Where and when a page was read: its pool's number, its frame, and the

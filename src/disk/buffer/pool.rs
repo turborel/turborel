@@ -18,7 +18,7 @@
 
 use std::mem;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 mod ahead;
 mod claim;
@@ -41,17 +41,6 @@ type Map<'a> = RwLockWriteGuard<'a, Xxh3Map<Key, usize>>;
 
 /// A frame's content, latched exclusively.
 type Latch<'a> = RwLockWriteGuard<'a, Vec<u8>>;
-
-/// `frame` latched exclusively, if no one holds its latch now.
-fn try_latch(frame: &Frame) -> Option<Latch<'_>> {
-    let latch = match frame.content.try_write() {
-        Ok(latch) => latch,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        Err(TryLockError::WouldBlock) => return None,
-    };
-    frame.version.fetch_add(1, Ordering::SeqCst);
-    Some(latch)
-}
 
 /// Locks a shard's map exclusively. The pool holds it over no plug-in
 /// call, so a poisoned one is used as it is.
@@ -370,7 +359,7 @@ impl BufferPool {
             }
             // Held: pinned, or latched by a read that hit by its hint.
             let pinned = frame.pins.load(Ordering::Acquire) > 0;
-            let latch = if pinned { None } else { try_latch(frame) };
+            let latch = if pinned { None } else { frame.try_latched() };
             let Some(mut content) = latch else {
                 drop(map);
                 if !wait {
