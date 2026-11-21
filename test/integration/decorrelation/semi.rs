@@ -60,6 +60,17 @@ fn joined_otherwise(db: &Database, s: &Session, sql: &str) -> Result<Vec<String>
     rows
 }
 
+/// The rows of `sql` read by batches, counted and grouped as a set
+/// function reads them, and read row by row (EXECUTOR.BATCHES OFF).
+fn both_paths(s: &Session, sql: &str) -> (Result<Vec<String>, turborel::error::Code>, Result<Vec<String>, turborel::error::Code>) {
+    let counted = format!("SELECT COUNT(*), MIN(K), MAX(K) FROM ({sql}) AS Q");
+    let batched = outcome(s, &counted);
+    s.run("SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+    let rows = outcome(s, &counted);
+    s.run("SET EXECUTOR.BATCHES = 'ON'").unwrap();
+    (batched, rows)
+}
+
 /// Verifies: [X3.135-1986 §5.16 GR2, §5.17 GR2, GR3] (RULES.md D540, D541)
 /// every form made a semi join or an antijoin shows it in EXPLAIN and has
 /// the rows the subquery has run for each row, and unnested as an outer
@@ -84,6 +95,8 @@ fn semi_joins_match_the_subqueries() {
                 let (on, off) = both(&db, &s, q);
                 assert_eq!(on, off, "{q}");
                 assert_eq!(on, joined_otherwise(&db, &s, q), "{q}");
+                let (batched, rows) = both_paths(&s, q);
+                assert_eq!(batched, rows, "by batches: {q}");
             }
             for q in NOT_SEMI {
                 let shown = physical(&s, q);
@@ -96,6 +109,8 @@ fn semi_joins_match_the_subqueries() {
         for (q, _) in SEMI {
             let (on, off) = both(&db, &s, q);
             assert_eq!(on, off, "spilled: {q}");
+            let (batched, rows) = both_paths(&s, q);
+            assert_eq!(batched, rows, "spilled, by batches: {q}");
         }
     }
 }

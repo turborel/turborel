@@ -29,6 +29,7 @@ mod outer;
 mod pairs;
 mod parted;
 mod probe;
+mod semi;
 
 use std::sync::Arc;
 
@@ -83,6 +84,9 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
 /// of its rows, if it is a join of streams (`stream::layout`) every column
 /// of whose keys and conditions their batches hold.
 pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
+    if let Plan::SemiJoin(s) = plan {
+        return semi_layout(s, db);
+    }
     let (left, right) = operands(plan)?;
     let (mut columns, left_width) = stream::layout(left, db)?;
     let (right_columns, right_width) = stream::layout(right, db)?;
@@ -92,6 +96,23 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     }
     columns.extend(right_columns.iter().map(|&c| c.saturating_add(left_width)));
     Some((columns, left_width.saturating_add(right_width)))
+}
+
+/// The columns of the hashed semi join `s`'s rows its batches hold, its
+/// left operand's, and their width, if both operands are streams whose
+/// batches hold every column its keys and condition read.
+fn semi_layout(s: &crate::physical::SemiJoin, db: &State) -> Option<(Vec<usize>, usize)> {
+    if s.method == crate::physical::SemiMethod::Nested {
+        return None;
+    }
+    let (columns, left_width) = stream::layout(&s.left, db)?;
+    let (right_columns, _) = stream::layout(&s.right, db)?;
+    let mut read: Vec<usize> = s.keys.iter().flat_map(|k| [k.left, k.right.saturating_add(left_width)]).collect();
+    if let Some(c) = &s.cond {
+        cond_columns(c, &mut read);
+    }
+    let held = |c: &usize| c.checked_sub(left_width).map_or_else(|| columns.contains(c), |r| right_columns.contains(&r));
+    read.iter().all(held).then_some((columns, left_width))
 }
 
 /// The columns of the pairs of its operands' rows the join `plan`, whose
@@ -173,13 +194,13 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         Plan::Product { .. } => product_batches,
         Plan::HashJoin { .. } => hash_batches,
         Plan::OuterJoin { .. } => outer_batches,
+        Plan::SemiJoin(_) => semi::semi_batches,
         Plan::SeqScan { .. }
         | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
