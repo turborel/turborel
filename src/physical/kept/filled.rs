@@ -130,11 +130,11 @@ impl Filling<'_> {
             Plan::IndexScan { .. } => self.scan(plan),
             Plan::SeqScan { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
-            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est } => {
+            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed } => {
                 let aggs = aggs.into_iter().map(|a| self.agg(a)).collect::<Result<_>>()?;
-                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est })
+                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est, streamed })
             }
-            Plan::Distinct { input, est } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est }),
+            Plan::Distinct { input, est, streamed } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est, streamed }),
             Plan::Sort { keys, detail, input, most } => Ok(Plan::Sort { keys, detail, input: Box::new(self.plan(*input)?), most }),
             Plan::Limit { limit, input, est } => {
                 let offset = limit.offset.map(|e| self.expr(e)).transpose()?;

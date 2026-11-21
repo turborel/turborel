@@ -174,6 +174,41 @@ EXPLAIN SELECT COUNT(*) FROM PARTS;
 (14 rows)
 ```
 
+The parts' names grouped, the first three of them. Each name is its own
+group, so sorting the rows by NAME costs less than hashing them and then
+sorting the groups. The grouping is streamed over the sorted rows, a
+group made at a time as they come (RULES.md D550), and it stops once
+three groups are given:
+
+```sql
+EXPLAIN SELECT NAME, COUNT(*) FROM PARTS GROUP BY NAME ORDER BY NAME FETCH FIRST 3 ROWS ONLY;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Limit fetch 3
+   Sort PARTS.NAME
+     Project PARTS.NAME, COUNT(*)
+       Aggregate group by [PARTS.NAME] computing [COUNT(*)]
+         Scan ANN.PARTS
+ -- rules: none
+ -- optimized:
+ Limit fetch 3
+   Sort PARTS.NAME
+     Project PARTS.NAME, COUNT(*)
+       Aggregate group by [PARTS.NAME] computing [COUNT(*)]
+         Scan ANN.PARTS
+ -- physical:
+ Limit fetch 3
+   Project PARTS.NAME, COUNT(*)
+     Aggregate streamed group by [PARTS.NAME] computing [COUNT(*)]
+       Sort PARTS.NAME
+         SeqScan ANN.PARTS  (rows=1000, cost=900.0)
+(19 rows)
+```
+
 Three tables joined, their joins ordered by enumeration. The note on
 the top join gives the order chosen, the offers of the suppliers in Oslo
 first, then their parts by the index of its key, and the algorithm that

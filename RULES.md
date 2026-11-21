@@ -398,6 +398,9 @@ verification approach DO-178C expects (§8).
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
+| D550 | A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less |
+| D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
+| D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
 
 ### The project
 
@@ -11233,6 +11236,82 @@ registered set, which each statement chooses as it begins. Kernels are
 a built-in registration only: a call a batch across a process boundary
 would cost more than the kernel saves, so no out-of-process plug-in is
 one.
+
+#### D550. A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less
+
+A grouping whose rows come in the order of its grouping columns makes
+its groups one at a time, and a group is finished as the first row of
+the next comes [X3.135-1986 §5.22 GR2]. Nothing is hashed or held, and
+no grouping of more groups than its work area spills. The planner
+chooses it in `physical/streamed.rs`. Rows alike in every key come
+together in any order of the keys and either direction, so an ORDER BY
+of the keys in its own order serves.
+
+Under an ORDER BY of the keys, an input that already gives the order is
+streamed. An input that does not is sorted below the grouping, the
+ORDER BY's keys first and then the rest ascending, when sorting every
+row and comparing each costs less than hashing the rows and sorting the
+groups. Of no order asked, a read of one table, filtered or projected to
+columns, is streamed in an order the column store keeps
+(COLUMNSTORE.ORDER) or an ordered index without a collation gives, when
+that read and a comparison of each row cost less than the cheapest read
+hashed. A hashed grouping that would run in parallel (D290) is kept
+hashed, as the parallel grouping divides its rows among workers.
+
+A grouping by a collation compares its values' sort keys, not their
+order, and is hashed. So is one of grouping sets that makes groups
+before any row, one of no grouping column, and one with a DISTINCT set
+function or an inverse distribution function, whose states keep their
+values apart. PLANNER.STREAMED_GROUPING = 'OFF' hashes every grouping.
+EXPLAIN shows `Aggregate streamed` and `Distinct streamed`.
+
+COUNT, MIN and MAX of arguments and filters that cannot raise an error
+cannot raise one, so a grouping of them alone lets FETCH FIRST stop its
+input once its rows are given (`physical/raising.rs`). A count past
+BIGINT would take more rows than any statement reads.
+
+#### D551. A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows
+
+A set function's state may not go to another thread, as a stream of rows
+may. So no state lives between two asks. Row by row
+(`exec/group/streamed.rs`), the grouping keeps the first row of the next
+group, read past the last, and makes that group whole at the next ask.
+By batches (`exec/batch/groups/streamed.rs`), it makes the groups of a
+batch whole and the rest of its last group from the batches after, and
+keeps the batch where the next group begins and the place in it. A batch
+is read at most twice.
+
+A row's key is compared by the bytes a hashed grouping hashes, its
+normalized values (`put_norm`) row by row and a table's lanes of one
+group (`exec/table/keys.rs`) by batches. So a row joins a group exactly
+when the hashed grouping would put it there, nulls in one group and
+strings alike but for trailing spaces in one. Each run of one key in a
+batch is fed to the group's set functions a vector at a time
+(`fed_group`).
+
+#### D552. A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read
+
+How many rows a FETCH FIRST reads of its input is its row goal
+(`PhysicalPlanner::first`). An ordered read below is priced by the share
+of it read (D379, `physical/access.rs`). The goal passes down through
+the nodes that give their rows as they read them (`physical/goals.rs`),
+after Carey and Kossmann, "On Saying 'Enough Already!' in SQL", SIGMOD
+1997.
+
+A projection, a sort and a scan pass it unchanged. A filter divides it
+by the share of rows it keeps, a table read's own condition too. A read
+that probes by that condition reads only the rows it keeps, so it is
+priced at no less than its share, never at less. A hash join, an index join or a product gives
+its rows in its left operand's order, so the goal is divided by the rows
+each left row is estimated to give and passed to the left operand, and
+the right is read whole. A streamed grouping or DISTINCT multiplies it
+by the rows of a group. UNION ALL passes it to each operand. Every other
+node, a hashed grouping, an outer join, a window among them, reads its
+input whole before it gives a row, and the goal stops there.
+
+The goal changes only the choice of an ordered read. A wrong estimate
+costs time, never rows, as the FETCH FIRST still counts the rows it
+gives.
 
 ## 2. Project layout
 

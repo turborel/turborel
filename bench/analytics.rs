@@ -38,8 +38,10 @@
 //! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
 //! to `grouping`, groupings on one thread alone (`analytics/grouping.rs`),
 //! to `late`, a column store's selective queries, the columns they keep
-//! few rows of read late, alone (`analytics/late.rs`), or to `sorts`,
-//! ORDER BY and top-N alone (`analytics/sorts.rs`).
+//! few rows of read late, alone (`analytics/late.rs`), to `sorts`,
+//! ORDER BY and top-N alone (`analytics/sorts.rs`), or to `goals`, FETCH
+//! FIRST over filters, joins and groupings read in order and groupings
+//! streamed alone (`analytics/goals.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -60,6 +62,8 @@ mod decode;
 mod distinct;
 #[path = "analytics/expressions.rs"]
 mod expressions;
+#[path = "analytics/goals.rs"]
+mod goals;
 #[path = "analytics/graph.rs"]
 mod graph;
 #[path = "analytics/grouping.rs"]
@@ -139,6 +143,7 @@ fn main() {
     decode::workloads(&bench);
     late::workloads(&bench);
     sorts::workloads(&bench);
+    goals::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -153,6 +158,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "parallel" => parallel::workloads,
         "late" => late::workloads,
         "sorts" => sorts::workloads,
+        "goals" => goals::workloads,
         _ => return false,
     };
     run(bench);

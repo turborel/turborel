@@ -16,6 +16,9 @@
 //! of what is left, split so again (`group/distribution.rs`).
 
 mod distribution;
+mod streamed;
+
+pub(super) use streamed::{streamed_distinct, streamed_grouping};
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -286,20 +289,11 @@ fn feed(aggs: &[AggCall], group: &mut Group, row: &Row, fed: &mut Fed<'_>) -> Re
     let (runner, seen, sorting, scratch) = (fed.runner, &mut fed.seen, &mut fed.sorting, &mut fed.key);
     let Group { first, key, states, picks, .. } = group;
     for (n, (a, acc)) in aggs.iter().zip(states.iter_mut()).enumerate() {
-        // [ISO/IEC 9075-2:2023 §10.9 GR4] a row its filter is not true of
-        // is not aggregated, its argument not computed.
-        if !admitted(a.filter.as_ref(), row, runner)? {
-            continue;
-        }
-        match &a.arg {
+        match argument(a, row, runner)? {
+            Argument::Passed => {}
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
-            None => acc.update(&Value::Null)?,
-            Some(e) => {
-                let v = eval(e, row, runner)?;
-                // [ISO/IEC 9075:1992 §6.5 GR1b] a null eliminated warns.
-                if v.is_null() {
-                    warn(runner, SqlState::NULL_VALUE_ELIMINATED);
-                }
+            Argument::Counted => acc.update(&Value::Null)?,
+            Argument::Value(v) => {
                 // [ISO/IEC 9075-2:2023 §10.9 GR10f] an inverse distribution
                 // function's values not null are sorted.
                 if let (Some(d), Some(pick), Some(sorting)) = (&a.distribution, picks.get_mut(n).and_then(Option::as_mut), sorting.as_mut())
@@ -323,6 +317,30 @@ fn feed(aggs: &[AggCall], group: &mut Group, row: &Row, fed: &mut Fed<'_>) -> Re
         }
     }
     Ok(())
+}
+
+/// What a set function takes of a row: nothing, its filter not true of
+/// it; the row, counted by COUNT(*); or its argument's value.
+pub(super) enum Argument {
+    Passed,
+    Counted,
+    Value(Value),
+}
+
+/// What the set function `a` takes of `row`, its argument computed by
+/// `runner`: [ISO/IEC 9075-2:2023 §10.9 GR4] nothing of a row its filter is
+/// not true of, the argument not computed; [ISO/IEC 9075:1992 §6.5 GR1b] a
+/// null argument warns as it is eliminated.
+pub(super) fn argument(a: &AggCall, row: &Row, runner: &Runner) -> Result<Argument> {
+    if !admitted(a.filter.as_ref(), row, runner)? {
+        return Ok(Argument::Passed);
+    }
+    let Some(e) = &a.arg else { return Ok(Argument::Counted) };
+    let v = eval(e, row, runner)?;
+    if v.is_null() {
+        warn(runner, SqlState::NULL_VALUE_ELIMINATED);
+    }
+    Ok(Argument::Value(v))
 }
 
 /// [ISO/IEC 9075-2:2023 §10.9 GR4] Whether a set function of the filter

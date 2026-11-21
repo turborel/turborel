@@ -66,7 +66,7 @@ impl PhysicalPlanner<'_> {
     pub(super) fn hash_join(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Option<Built> {
         let LogicalPlan::Product { left, right } = input else { return None };
         if cond.can_raise() {
-            return self.spatial_join(cond, (left, right), want);
+            return self.whole().spatial_join(cond, (left, right), want);
         }
         if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
             let product = LogicalPlan::Product { left: Box::new(left), right: Box::new(right) };
@@ -85,14 +85,17 @@ impl PhysicalPlanner<'_> {
             }
         }
         if keys.is_empty() {
-            return self.comparison_join(cond, (left, right), want);
+            return self.whole().comparison_join(cond, (left, right), want);
         }
         let names = self.names_of(input);
         let shown = Shown::of(names.as_deref());
         let est = self.estimating(|e| e.filter_card(cond, input)).rows;
-        // As in a product, the rows come in the order of the left operand.
+        // As in a product, the rows come in the order of the left operand,
+        // which a row goal passes to as each of its rows gives its matches
+        // (`goals.rs`).
         let want_left = of_left(want, width);
-        let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
+        let l = self.divided(|| self.per_row(est, left)).build_node(left, want_left);
+        let r = self.whole().build_node(right, &[]);
         let ordered = !want_left.is_empty() && l.ordered;
         // A few left rows each probing an index of the right's table.
         if let Some(pairs) = plain(&keys)

@@ -109,9 +109,9 @@ impl Plan {
             Plan::MergeJoin(m) => writeln!(out, "{pad}{}MergeJoin {}", if m.outer { "Left" } else { "" }, m.detail),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
             Plan::IndexJoin { .. } => self.write_index_join(out, &pad),
-            Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
+            Plan::Aggregate { detail, streamed, .. } => writeln!(out, "{pad}Aggregate{} {detail}", streamed_word(*streamed)),
             Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
-            Plan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
+            Plan::Distinct { streamed, .. } => writeln!(out, "{pad}Distinct{}", streamed_word(*streamed)),
             Plan::Append { .. } => writeln!(out, "{pad}Append"),
             Plan::SetOp { op, all, .. } => writeln!(out, "{pad}{op:?}{}", if *all { " all" } else { "" }),
             Plan::Values { detail, .. } => writeln!(out, "{pad}Values {detail}"),
@@ -176,6 +176,12 @@ impl Plan {
             }
         }
     }
+}
+
+/// The word EXPLAIN shows after Aggregate or Distinct if it is streamed,
+/// its input in its keys' order (RULES.md D550).
+fn streamed_word(streamed: bool) -> &'static str {
+    if streamed { " streamed" } else { "" }
 }
 
 /// How EXPLAIN shows a scan in the order of the columns `order`, read

@@ -379,7 +379,7 @@ pub(in crate::exec) struct Keys {
 
 impl Keys {
     /// No group's keys yet, of `width` columns.
-    pub(super) fn new(width: usize) -> Keys {
+    pub(in crate::exec) fn new(width: usize) -> Keys {
         Keys { lanes: (0..width).map(|_| Lane::default()).collect() }
     }
 
@@ -390,24 +390,24 @@ impl Keys {
 
     /// Whether group `g`'s key equals `key`, bytes made in `scratch` where
     /// a lane cannot tell by its values.
-    pub(super) fn equal(&self, g: usize, key: Key<'_>, scratch: &mut Vec<u8>) -> bool {
+    pub(in crate::exec) fn equal(&self, g: usize, key: Key<'_>, scratch: &mut Vec<u8>) -> bool {
         self.lanes.iter().enumerate().all(|(at, lane)| lane.equal(g, key.cell(at), scratch))
     }
 
     /// Appends `key` as a new group's.
-    pub(super) fn push(&mut self, key: Key<'_>) {
+    pub(in crate::exec) fn push(&mut self, key: Key<'_>) {
         for (at, lane) in self.lanes.iter_mut().enumerate() {
             lane.push(key.cell(at));
         }
     }
 
     /// Group `g`'s grouping values.
-    pub(super) fn values(&self, g: usize) -> Row {
+    pub(in crate::exec) fn values(&self, g: usize) -> Row {
         self.lanes.iter().map(|lane| lane.value(g)).collect()
     }
 
     /// Keeps the first `len` groups.
-    pub(super) fn truncate(&mut self, len: usize) {
+    pub(in crate::exec) fn truncate(&mut self, len: usize) {
         self.lanes.iter_mut().for_each(|lane| lane.truncate(len));
     }
 

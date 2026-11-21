@@ -1,9 +1,10 @@
-//! \[DESIGN\] The settings of join enumeration (RULES.md D305): which
-//! search plans a chain of joins, and the limits of the adaptive one's
-//! stages (`physical/enumerate.rs`).
+//! \[DESIGN\] The settings of join enumeration (RULES.md D305), which
+//! search plans a chain of joins and the limits of the adaptive one's
+//! stages (`physical/enumerate.rs`), and whether a grouping may be
+//! streamed (D550, `physical/streamed.rs`).
 
 use super::builtin::{SESSION, count, defined, text};
-use super::{Definition, Key, Kind};
+use super::{Definition, Key, Kind, ON, SWITCHES};
 use crate::physical::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS};
 
 /// PLANNER.JOIN_ENUMERATION.
@@ -12,6 +13,8 @@ pub const JOIN_ENUMERATION: Key = Key(79);
 pub const DP_BUDGET: Key = Key(80);
 /// PLANNER.LINEARIZED_RELATIONS.
 pub const LINEARIZED_RELATIONS: Key = Key(81);
+/// PLANNER.STREAMED_GROUPING.
+pub const STREAMED_GROUPING: Key = Key(87);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
@@ -39,4 +42,14 @@ pub(super) fn definitions() -> [Definition; 3] {
             "The most tables ADAPTIVE join ordering plans whole by linearized dynamic programming when exact search is past its budget, and the size of the parts of a greedy plan it plans again so for larger queries.",
         ),
     ]
+}
+
+/// The setting of streamed groupings, at its key's place after the
+/// executor's.
+pub(super) fn streamed() -> [Definition; 1] {
+    [defined(
+        ("PLANNER.STREAMED_GROUPING", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a grouping or DISTINCT whose rows come in the order of its keys, or cost less sorted, is made a group at a time as its rows come, with nothing held, ON, or always by a table of its groups, OFF, as to compare the two.",
+    )]
 }
