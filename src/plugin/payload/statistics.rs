@@ -9,12 +9,16 @@
 //! table:   u8 0 (none known) | u8 1 | rows f64 | width f64 | refresh u64 | columns: count u32 | column...
 //! column:  distinct f64 | nulls f64 | bounds: u8 0, or u8 1 | low value | high value
 //!          | histogram: count u32 | value... | frequencies: u8 0, or u8 1 | most f64 | median f64 | p90 f64 | p99 f64
+//!          | common: count u32 | (value | share f64)...
 //! index:   u8 0 (none known) | u8 1 | entries f64 | distinct keys f64 | pages f64 | refresh u64
 //! asked:   u8 1 table | name str;  u8 2 column | table name str | column name str;  u8 3 index | name str
 //! ```
 //!
 //! A number not known is negative. A histogram's values are its bounds,
-//! ascending, each bucket between two holding as many values. `refresh`
+//! ascending, each bucket between two holding as many values. A column's
+//! common values are its most common, each with the share of all rows it
+//! holds (RULES.md D381), none of a plug-in that sends none; the
+//! histogram is then of the other values. `refresh`
 //! is how many rows or entries written make the answer stale, so the
 //! database asks again; 0 is never, until ANALYZE or maintenance asks.
 
@@ -52,6 +56,9 @@ pub struct ColumnAnswer {
     pub histogram: Vec<Value>,
     /// How often its values repeat.
     pub frequencies: Option<Frequencies>,
+    /// Its most common values, each with the share of all rows it holds,
+    /// the most frequent first; empty if none.
+    pub common: Vec<(Value, f64)>,
 }
 
 /// What an index's statistics hold.
@@ -119,6 +126,11 @@ pub fn put_table(out: &mut Vec<u8>, t: Option<&TableAnswer>) -> Result<()> {
                 put_f64(out, x);
             }
         }
+        out.put_u32(count(c.common.len()));
+        for (v, share) in &c.common {
+            put_value(out, v)?;
+            put_f64(out, *share);
+        }
     }
     Ok(())
 }
@@ -147,7 +159,8 @@ fn column(r: &mut Reader<'_>) -> Result<ColumnAnswer> {
     } else {
         Some(Frequencies { most: read_f64(r)?, median: read_f64(r)?, p90: read_f64(r)?, p99: read_f64(r)? })
     };
-    Ok(ColumnAnswer { distinct, nulls, bounds, histogram, frequencies })
+    let common = (0..r.u32()?).map(|_| Ok((value(r)?, read_f64(r)?))).collect::<Result<_>>()?;
+    Ok(ColumnAnswer { distinct, nulls, bounds, histogram, frequencies, common })
 }
 
 /// Writes `i`, none if not known.
@@ -219,6 +232,7 @@ pub fn answer_of(stats: &dyn Statistics, columns: usize) -> TableAnswer {
             bounds: stats.bounds(c),
             histogram: stats.histogram(c).unwrap_or_default(),
             frequencies: stats.frequencies(c),
+            common: stats.common(c).map(<[(Value, f64)]>::to_vec).unwrap_or_default(),
         })
         .collect();
     TableAnswer { rows: or_unknown(stats.rows()), width: or_unknown(stats.width(&all)), refresh: 0, columns }
@@ -246,6 +260,8 @@ impl Statistics for TableAnswer {
             min,
             max,
             histogram: Histogram::of_bounds(c.histogram.clone()),
+            common: c.common.clone(),
+            rises: 0,
             unbounded: true,
             frequencies: c.frequencies,
             envelopes: None,
@@ -260,6 +276,9 @@ impl Statistics for TableAnswer {
     }
     fn histogram(&self, column: usize) -> Option<Vec<Value>> {
         Some(self.columns.get(column)?.histogram.clone()).filter(|h| !h.is_empty())
+    }
+    fn common(&self, column: usize) -> Option<&[(Value, f64)]> {
+        Some(&self.columns.get(column)?.common)
     }
 }
 

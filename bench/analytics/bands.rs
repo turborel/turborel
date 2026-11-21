@@ -82,30 +82,29 @@ fn period(k: u64, start: u64, days: u64) -> String {
     format!("({k}, DATE '{s}', DATE '{e}')")
 }
 
-/// Day `n` from 1000-01-01 as a date's text, by the days from the civil
-/// calendar's epoch (Hinnant, "chrono-Compatible Low-Level Date
+/// Day `day` from 1000-01-01 as a date's text, by the days from the
+/// civil calendar's epoch (Hinnant, "chrono-Compatible Low-Level Date
 /// Algorithms", civil_from_days).
-fn civil(n: u64) -> String {
-    let z = n as i64 + days_to_1000();
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
+fn civil(day: u64) -> String {
+    let days = i64::try_from(day).unwrap() + days_to_1000();
+    let era = days.div_euclid(146_097);
+    let of_era = days.rem_euclid(146_097);
+    let year_of_era = (of_era - of_era / 1460 + of_era / 36_524 - of_era / 146_096) / 365;
+    let of_year = of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let from_march = (5 * of_year + 2) / 153;
+    let of_month = of_year - (153 * from_march + 2) / 5 + 1;
+    let month = if from_march < 10 { from_march + 3 } else { from_march - 9 };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{of_month:02}")
 }
 
-/// The days from 0000-03-01, the algorithm's epoch, to 1000-01-01.
+/// The days from 0000-03-01, the algorithm's epoch, to 1000-01-01: of
+/// the year 999 counted from March, the 306 days from March 1 to January 1.
 fn days_to_1000() -> i64 {
-    let (y, m, d) = (999_i64, 13_i64, 1_i64);
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let doy = (153 * (m - 3) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe
+    let (year, era) = (999_i64, 2_i64);
+    let year_of_era = year - era * 400;
+    let of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + 306;
+    era * 146_097 + of_era
 }
 
 /// The rows of `sql`, each fetched, counted.

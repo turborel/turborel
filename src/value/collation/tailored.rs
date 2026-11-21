@@ -36,7 +36,7 @@ use build::{WIDE_SHIFT, build};
 const RULES: &str = include_str!("cldr38.rules");
 /// The digest of the rules as generated (`cargo xtask cldr`).
 #[cfg(test)]
-const RULES_DIGEST: u64 = 0x9b34_77c8_7d6e_80ca;
+const RULES_DIGEST: u64 = 0xaef4_8267_106b_2eed;
 /// What begins each tailoring's line, and the name of rules only imported.
 const HEADER: &str = "\n@ ";
 const NO_NAME: &str = "-";

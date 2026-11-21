@@ -298,7 +298,7 @@ fn storage() -> [Definition; 5] {
             "The bytes of a page of the data file, a power of two.",
         ),
         defined(
-            ("STORAGE.CHECKSUM", Kind::HashFunction, text(crate::hash::crc::CRC32_ISCSI.name)),
+            ("STORAGE.CHECKSUM", Kind::HashFunction, text(crate::hash::xxhash::XXH3_64_NAME)),
             created,
             "The hash function every file is checksummed with.",
         ),

@@ -15,7 +15,7 @@ pub const DP_BUDGET: Key = Key(80);
 /// PLANNER.LINEARIZED_RELATIONS.
 pub const LINEARIZED_RELATIONS: Key = Key(81);
 /// PLANNER.RANGE_JOINS.
-pub const RANGE_JOINS: Key = Key(86);
+pub const RANGE_JOINS: Key = Key(87);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
