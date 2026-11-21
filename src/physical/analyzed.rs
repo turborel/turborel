@@ -211,6 +211,7 @@ pub(crate) fn operators(plan: Plan, depth: usize, out: &mut Vec<Operator>) -> us
         | Plan::IndexJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::GroupJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Distinct { .. }

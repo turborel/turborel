@@ -11203,7 +11203,9 @@ groups, found in the shared table of keys, and grouped by the tag as any
 grouping by batch (`exec/parallel/grouped/joined.rs`). The eager form of
 Fent and Neumann (PVLDB 2021), of an inner join alone, groups the other
 operand by its keys first and joins the groups; it is made only where
-early grouping can raise or warn of no row the join would not keep. Both
+early grouping can raise or warn of no row the join would not keep, and
+only where each early group is estimated to take many rows, as a sample
+counts too few distinct keys of rows that lie together. Both
 give the grouping's groups in its order, the group operand's or that of
 each group's first joined row, and feed each set function its values in
 the join's order, so a sum of approximate numbers is the same sum. Of a

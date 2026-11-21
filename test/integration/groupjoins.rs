@@ -326,7 +326,8 @@ fn empty_operands_give_the_groupings_rows() {
 }
 
 /// Verifies: [DESIGN] (RULES.md D490) a group operand of many rows beside
-/// the few keys of the other's is joined with the other grouped first,
+/// the few keys of the other's, each of many rows, is joined with the
+/// other grouped first,
 /// the eager form, its groups in the group operand's order or in the
 /// order of their first rows as the join's operands say.
 #[test]
@@ -336,7 +337,7 @@ fn eager_form_groups_the_probe_first() {
     s.run("CREATE TABLE BIG (K INTEGER NOT NULL, V INTEGER, CONSTRAINT BIG_K PRIMARY KEY (K))").unwrap();
     s.run("CREATE TABLE FEW (K INTEGER NOT NULL, N INTEGER NOT NULL)").unwrap();
     s.run(&format!("INSERT INTO BIG VALUES {}", values(4000, &|k| format!("({k}, {})", k % 9)))).unwrap();
-    s.run(&format!("INSERT INTO FEW VALUES {}", values(500, &|k| format!("({}, {k})", (k * 7) % 12 * 100)))).unwrap();
+    s.run(&format!("INSERT INTO FEW VALUES {}", values(1000, &|k| format!("({}, {k})", (k * 7) % 12 * 100)))).unwrap();
     s.commit().unwrap();
     db.maintain().unwrap();
     let left = "SELECT BIG.K, COUNT(*), SUM(FEW.N), MAX(FEW.N) FROM BIG JOIN FEW ON BIG.K = FEW.K GROUP BY BIG.K";

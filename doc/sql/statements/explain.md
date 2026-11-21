@@ -426,6 +426,34 @@ the grouping over the join.
 ```sql
 EXPLAIN SELECT PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
     FROM PARTS LEFT JOIN OFFERS ON PARTS.ID = OFFERS.PART GROUP BY PARTS.ID;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
+   Aggregate group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)]
+     Left outer join on PARTS.ID = OFFERS.PART
+       Scan ANN.PARTS
+       Scan ANN.OFFERS
+ -- rules: none
+ -- optimized:
+ Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
+   Aggregate group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)]
+     Left outer join on PARTS.ID = OFFERS.PART
+       Scan ANN.PARTS
+       Scan ANN.OFFERS
+ -- physical:
+ Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
+   Parallel  (degree=2)
+     LeftGroupJoin group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)] on PARTS.ID = OFFERS.PART  (hashed on PARTS.ID = OFFERS.PART)
+       Parallel  (degree=2)
+         SeqScan ANN.PARTS  (rows=1000, cost=900.0)
+       SeqScan ANN.OFFERS  (rows=5000, cost=4666.7)
+(20 rows)
+```
+
 A join of SALES and PARTS, run on one thread. Each row of SALES probes
 the index of PARTS's key:
 
@@ -457,27 +485,6 @@ EXPLAIN ANALYZE SELECT ID FROM PARTS FETCH FIRST 3 ROWS ONLY;
 ```
  PLAN
 --------------------------------------------------------------
- -- bound:
- Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
-   Aggregate group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)]
-     Left outer join on PARTS.ID = OFFERS.PART
-       Scan ANN.PARTS
-       Scan ANN.OFFERS
- -- rules: none
- -- optimized:
- Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
-   Aggregate group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)]
-     Left outer join on PARTS.ID = OFFERS.PART
-       Scan ANN.PARTS
-       Scan ANN.OFFERS
- -- physical:
- Project PARTS.ID, COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)
-   Parallel  (degree=2)
-     LeftGroupJoin group by [PARTS.ID] computing [COUNT(OFFERS.PRICE), MIN(OFFERS.PRICE)] on PARTS.ID = OFFERS.PART  (hashed on PARTS.ID = OFFERS.PART)
-       Parallel  (degree=2)
-         SeqScan ANN.PARTS  (rows=1000, cost=900.0)
-       SeqScan ANN.OFFERS  (rows=5000, cost=4666.7)
-(20 rows)
  -- physical:
  Limit fetch 3  (est. rows=3)  (actual rows=3)
    Project PARTS.ID  (est. rows=1000)  (actual rows=3)
