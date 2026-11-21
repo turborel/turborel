@@ -168,7 +168,11 @@ impl Work {
     ///
     /// SQLCODE -918 if the area cannot be reserved; the area's errors.
     pub(super) fn table(&mut self) -> Result<Box<dyn SpillTable>> {
-        self.area()?.table()
+        let table = self.area()?.table()?;
+        Ok(match &self.stop {
+            Some(stop) => Box::new(Weighed { table, stop: Arc::clone(stop) }),
+            None => table,
+        })
     }
 
     /// A new run of its spill area.
@@ -194,6 +198,8 @@ struct Stopped {
 
 impl SpillRun for Stopped {
     fn push(&mut self, record: &[u8]) -> Result<()> {
+        // [DESIGN] RULES.md D521: the bytes the statement spilled.
+        self.stop.activity().spilled(record.len());
         self.run.push(record)
     }
 
@@ -211,6 +217,32 @@ impl SpillRun for Stopped {
     fn into_batches(self: Box<Self>) -> Result<Batches> {
         let Stopped { run, stop } = *self;
         Ok(Box::new(checked(run.into_batches()?, Some(stop))))
+    }
+}
+
+/// A table of a spill area whose bytes added are counted as the
+/// statement's spilled (RULES.md D521).
+struct Weighed {
+    table: Box<dyn SpillTable>,
+    stop: Arc<Stop>,
+}
+
+impl SpillTable for Weighed {
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+        self.stop.activity().spilled(key.len().saturating_add(value.len()));
+        self.table.insert(key, value)
+    }
+
+    fn get(&self, key: &[u8]) -> Result<Vec<Vec<u8>>> {
+        self.table.get(key)
+    }
+
+    fn values(&self, key: &[u8]) -> Result<Records> {
+        self.table.values(key)
+    }
+
+    fn remove(&mut self, key: &[u8], value: &[u8]) -> Result<bool> {
+        self.table.remove(key, value)
     }
 }
 

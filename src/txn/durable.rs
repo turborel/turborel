@@ -97,6 +97,10 @@ impl Txn {
         if at == 0 {
             return result;
         }
-        self.shared.wait_durable(at).and(result)
+        // [DESIGN] RULES.md D520: shown waiting for I/O meanwhile.
+        self.stop.activity().waits_for_io();
+        let durable = self.shared.wait_durable(at);
+        self.stop.activity().woke();
+        durable.and(result)
     }
 }
