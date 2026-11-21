@@ -2,9 +2,9 @@
 //! state (RULES.md R-TEST-9, D613): a slot less a constant left out of an
 //! index's probe, arithmetic of slots taken as raising, a slotted plan's
 //! estimates reading its slots by default, a hash join's extra key told
-//! apart, a probe's plan learned again at any growth or kept past any, a
-//! FOR statement's cursor opened updatable, and the instant bound as a
-//! constant.
+//! apart, a probe's plan learned again at any growth or kept past any, or
+//! kept after its table's statistics are gathered, a FOR statement's
+//! cursor opened updatable, and the instant bound as a constant.
 
 use super::super::{Mutation, Package};
 
@@ -17,8 +17,11 @@ const STEADY: &str = "tpcc_plans::tpcc_procedures_plan_nothing_in_steady_state";
 /// The test of a probe's plan outgrown.
 const OUTGROWN: &str = "tpcc_plans::a_probes_plan_is_learned_again_only_once_its_rows_per_probe_outgrow_it";
 
+/// The test of a probe's plan learned before its table's statistics.
+const UNKNOWN: &str = "tpcc_plans::a_probes_plan_learned_before_statistics_is_learned_again_once_they_are";
+
 /// Mechanisms of plans kept in a steady state whose removal must fail their tests.
-pub const STEADY_PLANS: [Mutation; 8] = [
+pub const STEADY_PLANS: [Mutation; 9] = [
     Mutation {
         name: "steady-probe-shifted-slot",
         package: Package::Core,
@@ -74,9 +77,19 @@ pub const STEADY_PLANS: [Mutation; 8] = [
         package: Package::Core,
         breaks: "a plan of index probes is learned again whenever a table it reads drifts",
         file: "src/db/prepared/plans/grown.rs",
-        original: "        let Some(probes) = &self.probes else { return Fit::Moved };",
-        replacement: "        let Some(probes) = self.probes.as_ref().filter(|_| false) else { return Fit::Moved };",
+        original: "        let Some(kept) = &self.probes else { return Fit::Moved };",
+        replacement: "        let Some(kept) = self.probes.as_ref().filter(|_| false) else { return Fit::Moved };",
         integration: &[OUTGROWN],
+        unit: &[],
+    },
+    Mutation {
+        name: "steady-probes-known-ignored",
+        package: Package::Core,
+        breaks: "a probe's plan learned before its table's statistics keeps the whole table's rows as its figure",
+        file: "src/db/prepared/plans/grown.rs",
+        original: "        if probes.iter().any(|p| !p.known && st.statistics(&p.table).is_some()) {",
+        replacement: "        if probes.iter().any(|p| !p.known && st.statistics(&p.table).is_none()) {",
+        integration: &[UNKNOWN],
         unit: &[],
     },
     Mutation {
