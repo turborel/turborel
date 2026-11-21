@@ -56,7 +56,7 @@ impl RowTable {
         {
             let mut validated = lock_builtin(&self.versions.validated);
             validated.retain(|v| v.at > horizon);
-            self.versions.validated_due.store(validated.iter().map(|v| v.at).min().unwrap_or(u64::MAX), Ordering::SeqCst);
+            self.versions.validated_due.store(validated.earliest().unwrap_or(u64::MAX), Ordering::SeqCst);
         }
         self.undo.truncate()?;
         failure.map_or(Ok(()), Err)

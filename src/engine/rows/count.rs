@@ -14,7 +14,7 @@ use std::iter;
 use std::sync::Arc;
 
 use super::RowTable;
-use super::mvcc::Read;
+use super::mvcc::{EVERY_COLUMN, Read};
 use crate::storage::{Counts, Ramp};
 use crate::txn::TxId;
 
@@ -35,7 +35,7 @@ impl RowTable {
     /// batches of the rest read with no column. The read is noted first,
     /// of the whole table, as a scan's with no condition is (`rows/mvcc.rs`).
     fn counts(self: Arc<Self>, tx: TxId) -> Counts {
-        let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, || Read::All).map(|()| reader)) {
+        let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, || Read::All(EVERY_COLUMN)).map(|()| reader)) {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),
         };

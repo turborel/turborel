@@ -75,9 +75,10 @@ mod status;
 mod versions;
 mod write;
 
+use commit::Certified;
 use lists::decode_change;
-pub(in crate::engine::rows) use reads::Read;
-use reads::{Changed, Reads};
+pub(in crate::engine::rows) use reads::{EVERY_COLUMN, Read, columns_mask};
+use reads::{Images, Reads};
 use stamps::Unstamped;
 pub(in crate::engine::rows) use status::Statuses;
 
@@ -204,25 +205,9 @@ struct Validated {
     /// every row: its writes and their rows are not kept.
     wrote_many: bool,
     /// What it changed (`reads.rs`), decoded only once a reader's
-    /// conditions or regions are checked against it (RULES.md D444): none
-    /// until then.
-    changed: Option<Changed>,
-}
-
-impl Validated {
-    /// Whether `reads` cover a row this one wrote, without its images: one
-    /// read by id, or with the whole table; or none whatever it changed, as
-    /// `reads` hold no condition or region; else unknown until they are
-    /// matched against what it changed (`RowTable::wrote_any`).
-    fn wrote_by_id(&self, reads: &Reads) -> Option<bool> {
-        if self.wrote_many {
-            return Some(reads.any());
-        }
-        if self.writes.is_empty() || reads.all || reads.rows.iter().any(|id| self.writes.contains(id)) {
-            return Some(!self.writes.is_empty());
-        }
-        (reads.conditions.is_empty() && reads.regions.is_empty()).then_some(false)
-    }
+    /// conditions, regions or scans are checked against it (RULES.md D444,
+    /// D448): none until then.
+    images: Option<Images>,
 }
 
 /// What a commit made garbage, once it is past the horizon.
@@ -249,7 +234,7 @@ enum Dead {
 /// \[DESIGN\] The versions bookkeeping of a table.
 pub(super) struct Versions {
     open: RwLock<MurmurMap<TxId, Arc<Mutex<Open>>>>,
-    validated: Mutex<Vec<Validated>>,
+    validated: Mutex<Certified>,
     /// By commit timestamp, each a list that spills.
     garbage: Mutex<BTreeMap<Timestamp, SpillList<Dead>>>,
     /// The versions undone changes appended (`Dead::Undone`), by the newest

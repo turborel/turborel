@@ -402,6 +402,7 @@ verification approach DO-178C expects (§8).
 | D445 | One transaction's end collects a table at a time; the others pass it over |
 | D446 | A row's write starts from the leaf its read of the newest version found |
 | D447 | A unique constraint added in a transaction fills its index with every version |
+| D448 | SERIALIZABLE certifies by column, and skips the check when no one read |
 
 ### The project
 
@@ -11596,3 +11597,34 @@ fill noted for D443. The transaction holds the table's exclusive lock,
 so nothing commits meanwhile. Each row the transaction changed itself
 adds an entry of the row as it left it. Rolling back removes the index
 with the rest of the statement.
+
+#### D448. SERIALIZABLE certifies by column, and skips the check when no one read
+
+A row store's SERIALIZABLE check (D29) counted a read of a row as a
+read of all of it. A transaction that read one column of a row then
+failed beside one that changed another column of it. An order entry
+that reads a warehouse's tax fails beside every payment that adds to the
+warehouse's year-to-date total.
+
+Each read now carries the columns it consumed, as a 64-bit mask (bit 63
+stands for every column past 62).
+- A read by row id carries the columns it decoded.
+- A scan carries its columns, its condition's and its order's.
+- An index probe carries the index's columns. A covering scan consumes
+  no others, and any other scan reads each chosen row by id, with its
+  own columns.
+- A read that cannot say which columns it consumed, or that decoded
+  none, carries every column.
+
+A write conflicts with a read only if the columns its change changed meet
+those the read consumed. A read that consumed no changed column read the
+same values from both versions, so there is no dependency to order (Adya,
+1999, §3). The changed columns are found by comparing the row's versions
+before and after the change, decoded only when a read's mask does not
+already decide (D444). An insertion or a deletion changes every column.
+A condition whose columns meet no changed column is not matched against
+the images at all.
+
+The check also skips the scan of the transactions kept for it when the
+transaction validated read nothing and no kept transaction read
+anything. A count of those that read, under the same lock, says so.

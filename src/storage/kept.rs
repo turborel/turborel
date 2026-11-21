@@ -59,7 +59,7 @@ pub fn unchanged(old: &Row, new: &Row, columns: u64) -> u64 {
 
 /// Whether `a` and `b` are one value as written out: of the common types
 /// compared by their parts, of the others by their written form.
-fn same(a: &Value, b: &Value) -> bool {
+pub fn same(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Null, Value::Null) => true,
         (Value::Char(x), Value::Char(y)) => x == y,

@@ -6,8 +6,8 @@ use std::mem;
 use std::sync::atomic::Ordering;
 
 use super::lists::decode_change;
-use super::reads::Changed;
-use super::{Maker, Reads, Validated, Version};
+use super::reads::{EVERY_COLUMN, changed_columns};
+use super::{Images, Maker, Reads, Validated, Version};
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::MurmurSet;
@@ -36,10 +36,13 @@ impl RowTable {
                 })?;
             }
             let snapshot = open.reads_since.unwrap_or(open.snapshot);
-            Validated { tx, snapshot, at, reads: mem::take(&mut open.reads), writes, wrote_many, changed: None }
+            Validated { tx, snapshot, at, reads: mem::take(&mut open.reads), writes, wrote_many, images: None }
         };
         let mut validated = lock_builtin(&self.versions.validated);
-        for other in validated.iter_mut().filter(|v| v.tx != tx) {
+        // RULES.md D448: with no reads here nor in any kept, no order is
+        // missed either way.
+        let others: &mut [Validated] = if me.reads.any() || validated.readers > 0 { validated.entries.as_mut_slice() } else { &mut [] };
+        for other in others.iter_mut().filter(|v| v.tx != tx) {
             // It committed between this one's snapshot and its commit, and
             // wrote what this one read: this one missed it.
             let missed_other = me.snapshot < other.at && other.at < at && self.wrote_any(other, &me.reads)?;
@@ -58,27 +61,53 @@ impl RowTable {
         Ok(())
     }
 
-    /// Whether `reads` cover a row `v` wrote (`Validated::wrote_by_id`), or
-    /// one whose version before or after its change a condition or region
-    /// read matches, though the reader never saw it (a phantom). Its images
-    /// are decoded the first time a reader's conditions ask (RULES.md
-    /// D444): its versions are still there, as the reader, open with a
-    /// snapshot before its commit, holds the horizon before it.
+    /// Whether `reads` consumed a column of a row `v` wrote that its change
+    /// changed, read by id or with the whole table, or a condition or
+    /// region read matches the row's version before or after its change,
+    /// though the reader never saw it (a phantom). Its images are decoded
+    /// only when the columns read do not answer (RULES.md D444, D448): its
+    /// versions are still there, as the reader, open with a snapshot
+    /// before its commit, holds the horizon before it.
     fn wrote_any(&self, v: &mut Validated, reads: &Reads) -> Result<bool> {
-        if let Some(known) = v.wrote_by_id(reads) {
-            return Ok(known);
+        if v.wrote_many {
+            return Ok(reads.any());
         }
-        if v.changed.is_none() {
-            let held = self.versions.held();
-            let mut changed = Changed::default();
-            for &id in &v.writes {
-                for row in self.changed_by(id, (v.tx, v.at))?.into_iter().flatten() {
-                    changed.add(row, held);
-                }
+        if v.writes.is_empty() || !reads.any() {
+            return Ok(false);
+        }
+        let mut by_id = reads.rows.iter().filter(|(id, _)| v.writes.contains(id));
+        if reads.all == Some(EVERY_COLUMN) || by_id.clone().any(|(_, &columns)| columns == EVERY_COLUMN) {
+            return Ok(true);
+        }
+        for (&id, &columns) in &mut by_id {
+            let [made, before] = self.changed_by(id, (v.tx, v.at))?;
+            if changed_columns(before.as_ref(), made.as_ref()) & columns != 0 {
+                return Ok(true);
             }
-            v.changed = Some(changed);
         }
-        Ok(v.changed.as_ref().is_some_and(|c| c.matched_by(&reads.conditions, &reads.regions)))
+        if reads.all.is_none() && reads.conditions.is_empty() && reads.regions.is_empty() {
+            return Ok(false);
+        }
+        let images = self.images(v)?;
+        Ok(reads.all.is_some_and(|columns| columns & images.columns != 0)
+            || images.rows.matched_by(&reads.conditions, images.columns, &reads.regions))
+    }
+
+    /// `v`'s images (`Images`), decoded the first time they are asked for.
+    fn images<'v>(&self, v: &'v mut Validated) -> Result<&'v Images> {
+        if let Some(images) = v.images.take() {
+            return Ok(v.images.insert(images));
+        }
+        let held = self.versions.held();
+        let mut images = Images::default();
+        for &id in &v.writes {
+            let [made, before] = self.changed_by(id, (v.tx, v.at))?;
+            images.columns |= changed_columns(before.as_ref(), made.as_ref());
+            for row in [made, before].into_iter().flatten() {
+                images.rows.add(row, held);
+            }
+        }
+        Ok(v.images.insert(images))
     }
 
     /// The rows of the version of row `id` made by transaction `tx`, open
@@ -114,5 +143,38 @@ impl RowTable {
             return Ok(None);
         }
         self.decode(id, version.record, None).map(Some)
+    }
+}
+
+/// \[DESIGN\] The transactions validated in a table that one could still
+/// be ordered against, and how many of them read anything: while none
+/// did, one that read nothing is checked against none (RULES.md D448).
+#[derive(Default)]
+pub(super) struct Certified {
+    pub(super) entries: Vec<Validated>,
+    pub(super) readers: usize,
+}
+
+impl Certified {
+    /// Adds `v`.
+    pub(super) fn push(&mut self, v: Validated) {
+        self.readers = self.readers.saturating_add(usize::from(v.reads.any()));
+        self.entries.push(v);
+    }
+
+    /// Keeps those `keep` says.
+    pub(super) fn retain(&mut self, keep: impl FnMut(&Validated) -> bool) {
+        self.entries.retain(keep);
+        self.readers = self.entries.iter().filter(|v| v.reads.any()).count();
+    }
+
+    /// Whether none is kept.
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The earliest commit of one kept.
+    pub(super) fn earliest(&self) -> Option<Timestamp> {
+        self.entries.iter().map(|v| v.at).min()
     }
 }

@@ -75,7 +75,7 @@ use ids::{key, no_row, row_id};
 use lobs::LobSpace;
 pub use meta::TABLE_FORMAT;
 use meta::{locator_of, meta_content};
-use mvcc::{Past, Read, Versions};
+use mvcc::{Past, Read, Versions, columns_mask};
 pub use options::{DEFAULT_HELD_BYTES, DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS, DEFAULT_TRACKED_ROWS, Refresh, TableOptions};
 use sealing::Sealing;
 use stats::Gathered;
@@ -504,7 +504,9 @@ impl TableStorage for RowTable {
     }
 
     fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {
-        self.note_read(tx, || Read::Condition(Conjunction::of(condition.clone())))
+        // RULES.md D448: a covering scan consumes the index's columns;
+        // any other reads each row it chose by id, with its columns.
+        self.note_read(tx, || Read::Condition(Conjunction::of(condition.clone()), columns_mask(condition.columns.iter().copied())))
     }
 
     fn read_by_region(&self, tx: TxId, region: &Region) -> Result<()> {
