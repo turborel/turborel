@@ -8,6 +8,35 @@ use std::process::ExitCode;
 
 use turboreld::{Command, UserCommand};
 
+// \[DESIGN\] The program allocates through the system's allocator unless
+// it is built with one of the features `mimalloc`, `snmalloc` or
+// `rpmalloc`, an operator's choice (RULES.md D765). Only the program may
+// set one, and the library crates leave it to whoever links them.
+#[cfg(any(
+    all(feature = "mimalloc", feature = "snmalloc"),
+    all(feature = "mimalloc", feature = "rpmalloc"),
+    all(feature = "snmalloc", feature = "rpmalloc")
+))]
+compile_error!("turboreld takes at most one of the features mimalloc, snmalloc and rpmalloc (RULES.md D765)");
+
+/// mimalloc as the global allocator, by the feature `mimalloc` (RULES.md
+/// D765).
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// snmalloc as the global allocator, by the feature `snmalloc` (RULES.md
+/// D765).
+#[cfg(feature = "snmalloc")]
+#[global_allocator]
+static ALLOCATOR: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+
+/// rpmalloc as the global allocator, by the feature `rpmalloc` (RULES.md
+/// D765).
+#[cfg(feature = "rpmalloc")]
+#[global_allocator]
+static ALLOCATOR: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let served = turboreld::parse(&args).and_then(|command| match command {

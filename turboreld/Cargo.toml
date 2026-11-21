@@ -29,6 +29,20 @@ turborel-aes = { version = "0.0.0", path = "../aes" }
 rpassword = "=7.5.4"
 # The program's runtime and its signals (RULES.md D42).
 tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "macros", "signal"] }
+# Allocators an operator may build the program on, one feature each;
+# by default it allocates through the system's (RULES.md D765). The
+# library crates never set one.
+mimalloc = { version = "=0.1.52", optional = true }
+snmalloc-rs = { version = "=0.7.6", optional = true, default-features = false, features = ["build_cc"] }
+rpmalloc = { version = "=0.2.2", optional = true }
+
+[features]
+# The system's allocator: none of the features below.
+default = []
+# At most one of these, the program's global allocator (RULES.md D765).
+mimalloc = ["dep:mimalloc"]
+snmalloc = ["dep:snmalloc-rs"]
+rpmalloc = ["dep:rpmalloc"]
 
 [dev-dependencies]
 turborel-client = { version = "0.0.0", path = "../client", features = ["tls", "scram"] }
