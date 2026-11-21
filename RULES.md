@@ -10590,7 +10590,11 @@ hold it to the portable loop. Any other column is written a value at a
 time as before (D364).
 
 A sort held in memory looks for a cancel (D44) before it sorts, and
-every 1,024 rows (`SORT_RUN_ROWS`) or each batch as it gives them. A
+every `SORT_RUN_ROWS` rows or each batch as it gives them. It looks too
+at the first row each window of its statement asks for, so a cursor
+fetching a row at a time is looked at in every fetch. A cancel counts
+within the fetch it lands in alone, and one landing in a fetch that did
+not look would be dropped. A
 run written to the spill area looks after each chunk. At a cancel it
 gives its error, and the same error at every ask after.
 
