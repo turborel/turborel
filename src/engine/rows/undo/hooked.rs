@@ -1,7 +1,7 @@
 //! A log for the tests of the undo store's races, shared by those of the
 //! store itself and of the passes reading it (`zones/tests.rs`).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::error::{Code, Result, SqlError};
@@ -11,7 +11,8 @@ use crate::sync::lock_builtin;
 /// What a log does once, at a point a race would fall on.
 pub(in crate::engine::rows) type Hook = Mutex<Option<Box<dyn FnOnce() + Send>>>;
 
-/// A log in memory, counting its records, whose appends fail while told
+/// A log in memory, counting its records and the reads of one by its
+/// position (`reads`), whose appends fail while told
 /// to; and which does what it is given once, as its end is next asked for
 /// (`on_end`), once its next record is appended (`on_append`), or as a
 /// record is next read by its position, before it is (`on_read`).
@@ -22,6 +23,7 @@ pub(in crate::engine::rows) struct Hooked {
     pub(in crate::engine::rows) on_end: Hook,
     pub(in crate::engine::rows) on_append: Hook,
     pub(in crate::engine::rows) on_read: Hook,
+    pub(in crate::engine::rows) reads: AtomicUsize,
 }
 
 /// Does what `hook` holds, if anything, once.
@@ -52,6 +54,7 @@ impl Log for Hooked {
     }
     fn read_at(&self, at: Lsn) -> Result<Option<Vec<u8>>> {
         fire(&self.on_read);
+        self.reads.fetch_add(1, Ordering::Relaxed);
         self.log.read_at(at)
     }
     fn truncate_before(&self, before: Lsn) -> Result<()> {

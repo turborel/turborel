@@ -21,6 +21,22 @@ pub fn project(row: &[Value], columns: &[usize]) -> Option<Row> {
     columns.iter().map(|&c| row.get(c).cloned()).collect()
 }
 
+/// \[DESIGN\] The row of `values`, of `len` values at most, made once per
+/// row read or computed: sized once, as a vector collected through
+/// `Result` does not know its length and grows from a few values by
+/// doubling, each growth a copy and an allocation.
+///
+/// # Errors
+///
+/// The first of `values`' errors.
+pub fn sized_row(len: usize, values: impl Iterator<Item = Result<Value>>) -> Result<Row> {
+    let mut row = Vec::with_capacity(len);
+    for value in values {
+        row.push(value?);
+    }
+    Ok(row)
+}
+
 /// Identifies a row within its table, for as long as the table exists.
 pub type RowId = u64;
 
