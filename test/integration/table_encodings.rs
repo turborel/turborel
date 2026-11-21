@@ -170,10 +170,10 @@ fn encodings_not_registered_are_refused() {
     assert_eq!(all(&open(&dir, true)), written(0..2));
 }
 
-/// Verifies: [EXTENSION] RULES.md D25, D48: a table's log records are
-/// sealed through its encodings, so the log holds none of an encrypted
-/// table's text, as it does a plain table's; recovery reads them back
-/// through the encodings after a crash.
+/// Verifies: [EXTENSION] RULES.md D25, D48, D750: a table's log records,
+/// of inserts, updates and deletes, are sealed through its encodings, so
+/// the log holds none of an encrypted table's text, as it does a plain
+/// table's; recovery reads them back through the encodings after a crash.
 #[test]
 fn an_encrypted_tables_log_records_are_sealed() {
     let scratch = Scratch::new("table-encodings-log");
@@ -186,12 +186,18 @@ fn an_encrypted_tables_log_records_are_sealed() {
     exec(&p, "INSERT INTO PLAIN VALUES ('in plain view')").unwrap();
     exec(&p, "COMMIT WORK").unwrap();
     insert(&db, 0..4);
+    let s = db.session("S");
+    exec(&s, "UPDATE T SET S = 'secret changed' WHERE K = 0").unwrap();
+    exec(&s, "DELETE FROM T WHERE K = 1").unwrap();
+    exec(&s, "COMMIT WORK").unwrap();
     let logged = bytes_of(&dir, "log");
     assert!(holds(&logged, "in plain view"), "a plain table's rows are logged as they are");
     assert!(!holds(&logged, "secret "), "an encrypted table's are not");
-    drop((p, db));
+    drop((p, s, db));
     let again = open(&dir, true);
-    assert_eq!(all(&again), written(0..4), "recovered through them");
+    let mut expected = vec![format!("0,{:4000}", "secret changed")];
+    expected.extend(written(2..4));
+    assert_eq!(all(&again), expected, "recovered through them");
 }
 
 /// Verifies: [EXTENSION] RULES.md D48: an index keeps its keys in order, in

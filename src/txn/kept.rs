@@ -49,3 +49,44 @@ impl Sharing {
 pub(crate) fn key_columns(ix: &IndexDesc) -> u64 {
     ix.reads().into_iter().try_fold(0u64, |mask, c| column_bit(c).map(|bit| mask | bit)).unwrap_or(0)
 }
+
+/// Whether collection reads the row of a version its successor `kept`, to
+/// take back its entries: unless every one of `indexes` shares its entry,
+/// and no global index over the partition holds one of its own (RULES.md
+/// D157, D750).
+pub(crate) fn needs_row(globals: bool, indexes: impl IntoIterator<Item = Sharing>, kept: Kept) -> bool {
+    globals || indexes.into_iter().any(|sharing| !sharing.shares(kept))
+}
+
+/// The columns the keys of `indexes` read, in order, each once: those a
+/// version collected is read for (RULES.md D751).
+pub(crate) fn key_reads<'a>(indexes: impl Iterator<Item = &'a IndexDesc>) -> Vec<usize> {
+    let mut reads: Vec<usize> = indexes.flat_map(IndexDesc::reads).collect();
+    reads.sort_unstable();
+    reads.dedup();
+    reads
+}
+
+// Unit tests: which versions collection reads (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies: [DESIGN] RULES.md D750: a version is read only when an
+    /// index does not share its entry, or a global index holds one of its
+    /// own; one whose every entry is shared, or of a table without
+    /// indexes, is not.
+    #[test]
+    fn a_version_is_read_only_for_entries_of_its_own() {
+        let kept = Kept { at: 5, unchanged: 0b011 };
+        let shared = Sharing { columns: 0b001, filled: 0 };
+        let changed = Sharing { columns: 0b100, filled: 0 };
+        let filled_after = Sharing { columns: 0b001, filled: 5 };
+        assert!(!needs_row(false, [shared], kept));
+        assert!(!needs_row(false, [], kept));
+        assert!(needs_row(true, [shared], kept), "a global index's entry is its own");
+        assert!(needs_row(false, [shared, changed], kept));
+        assert!(needs_row(false, [filled_after], kept));
+        assert!(needs_row(false, [Sharing::NONE], kept));
+    }
+}

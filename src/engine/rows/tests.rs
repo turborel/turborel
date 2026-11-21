@@ -482,3 +482,36 @@ fn a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open() {
         assert_eq!(table.get_near(10, id, None, &mut near).err().map(|e| e.code), api, "ended, committed {committed}");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D443, D750, D751: collection reads the row
+/// of a version only when the removal needs it: one whose successor kept
+/// the columns asked about is removed unread, one whose successor changed
+/// them is read, of its columns only those the removal asks for, and
+/// given back.
+#[test]
+fn collection_reads_only_the_versions_it_needs() {
+    use crate::storage::{Kept, Needed};
+    use crate::value::Value;
+    let scratch = Scratch::new("unit-needed");
+    let pager =
+        Pager::create(&OsFileSystem, &scratch.path("rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let files = TableFiles::new(Arc::clone(&pool), pool.add_pager(Arc::new(pager)), Arc::new(MemoryLog::new()));
+    let table = RowTable::create(&files, &[DataType::character(5), DataType::character(5)], TableOptions::default()).unwrap();
+    let id = table.insert(NO_TRANSACTION, vec![Value::Char("key  ".into()), Value::Char("v0   ".into())]).unwrap();
+    let mut read = Vec::new();
+    for (tx, (key, kept)) in [(10, ("key  ", 0b01)), (12, ("other", 0))] {
+        table.begin(tx, tx - 1).unwrap();
+        table.update(tx, id, vec![Value::Char(key.into()), Value::Char(format!("v{tx}  "))]).unwrap();
+        assert_eq!(table.keep_entries(tx, id, kept), kept);
+        table.commit(tx, tx + 1);
+        let needs = |of: Kept| of.unchanged & 0b01 == 0;
+        let removed = |_, row: Row, _| {
+            read.push(row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+            true
+        };
+        table.gc(tx + 2, &mut Needed { needs, columns: &|| Some(&[1][..]), removed }).unwrap();
+    }
+    assert_eq!(read, ["NULL,v10  "], "only the version whose key changed after it is read, of the column asked for");
+    assert_eq!(files.undo().pinned(), 0, "every version superseded removed");
+}

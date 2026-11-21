@@ -484,6 +484,8 @@ verification approach DO-178C expects (§8).
 | D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
 | D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
 | D747 | A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it |
+| D750 | A row change is logged from its images as the statement holds them, and collection reads no version whose every entry its successor shares |
+| D751 | A record decodes only the columns asked for, each once, and collection reads only the columns its entries' keys read |
 | D760 | A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values |
 | D761 | A join probes the inner table's index by the columns its own filter fixes, made columns of the left, with the join's keys |
 | D767 | A connection's requests run on one thread of its own, its home |
@@ -13571,6 +13573,36 @@ stamp alone, which the row store reads from the newest version's maker
 (`RowTable::writer_of`). The row is read only when the statement rechecks
 its search condition over a version committed after its snapshot, and if
 the row changed again in between, the write is tried again.
+
+#### D750. A row change is logged from its images as the statement holds them, and collection reads no version whose every entry its successor shares
+
+An update's and a delete's log records were built as a change holding
+copies of the rows before and after, written out and dropped, and a
+sealed table's insert copied its row the same way. Each record is now
+written straight from the rows the statement holds
+(`record::update_record`, `record::delete_record`), and sealed from
+those bytes (`sealed::seal_plain`). The bytes are those `Record::encode`
+writes, so recovery and every reader of the log see no change.
+
+Collection read and decoded the row of every version it removed, to take
+back its index entries. A version whose successor shares every entry of
+it (D443) has none to take back. So collection asks first whether a
+version needs its row (`storage::Removal`), and frees one that does not
+without reading it. A table with an index sharing nothing, or a
+partition under a global index (D157), needs every row, as before.
+
+#### D751. A record decodes only the columns asked for, each once, and collection reads only the columns its entries' keys read
+
+A record decoded for some of its columns looked at every column in turn,
+searching the list asked for at each. A column named twice, as a scan's
+condition names those it reads beside its output, was decoded twice, and
+its value out of line fetched twice. A record now decodes the columns
+asked for where they are named, each once, and leaves the rest null.
+
+Collection decoded the whole row of each version it removed, to make the
+keys of its index entries. It now reads only the columns those keys read,
+of the table's indexes and the global indexes over a partition
+(`storage::Removal::columns`), found once per collection.
 
 #### D760. A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values
 
