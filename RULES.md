@@ -410,6 +410,7 @@ verification approach DO-178C expects (§8).
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 | D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
 | D513 | An index scan reads its rows in batches, and a column store reads a batch's frozen rows group by group |
+| D525 | A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code |
 
 ### The project
 
@@ -11682,6 +11683,66 @@ rows of the batch in it.
 A row whose entry the scan has not yet reached may be read before it is
 asked for, as many as a batch holds. Reading it changes nothing a
 reader sees, and the probe's reads were noted before the first entry.
+
+#### D525. A frozen group keeps column sketches of the texts COLUMNSTORE.SKETCH names, and a scan keeps or leaves a row by its code
+
+A condition of a VARCHAR coded by a table of symbols (`fsst.rs`) was
+judged of every row's codes, each compared with the constants in place
+(D360). Of texts of many values, such as web addresses, that was the
+slowest filter a column store table ran. Neither a dictionary in order
+(D512) nor imprints (D511) serve them, as their chunks hold few rows to
+a value, and their values are scattered.
+
+A group now keeps a column sketch (Hentschel, Kester and Idreos, SIGMOD
+2018) of each column COLUMNSTORE.SKETCH names, if it is VARCHAR and one
+of its chunks is coded by symbols (`engine/columns/sketch.rs`). Edges
+are drawn from a sorted sample of the group's values, an equi-depth
+histogram of at most 255 codes. A value found in a share of the sample
+larger than a bin's, up to 64 of them, is an edge with a code of its
+own, a point, and the code below it holds the values between it and the
+edge before; each other code holds the values above the edge before up
+to its own. Of a column of no more than 127 values in the sample, each
+is a point. Each row gets a byte, its value's code, and a null the code
+255. Codes order as the values do, by the order comparisons of the
+default collation take (`compare_strings`), which bytes give of UTF-8
+padded with spaces (`padded_order`). The codes of a part are kept
+together on pages of their own, as many parts' as a page holds, read
+only by a scan that judges a conjunct of the column; the edges in the
+group's header.
+
+A scan judges a conjunct of such a column once a code, of each group
+(`engine/columns/judged/sketched.rs`). A binary search places each
+string constant among the edges. Against a constant, every value of a
+code orders alike, told by places alone, unless the code's bin holds
+the constant between its bounds. So the conjunct is true of every value
+of a code, false of every one, or, of a code a constant falls within, a
+boundary. A row of a chunk coded by symbols is then kept or left by its
+code alone, and only a row of a boundary code is compared as before. A
+comparison, a range, a LIKE prefix (as the two comparisons the planner
+pushes), IN, NOT IN and an OR of these leave at most a code a constant
+to compare, and an equality of a point none. A null's code is judged as
+the conjunct is of a null. A conjunct of a column of another collation
+reaches the scan as sort keys, never string constants (D512), so it is
+judged as before, and the sketch is never read for it. What the scan
+keeps is what the conjunct keeps, as a code is said to keep or leave
+its rows only where every value it holds orders alike against every
+constant.
+
+Columns of numbers and datetimes get none, as decoding their frames of
+reference costs about what reading a byte a row costs, and so do texts
+coded by a dictionary, which a dictionary in order judges by codes
+already. The option names columns as COLUMNSTORE.BLOOM does, and groups
+frozen before it is changed are written again in the background. A group
+keeps the places the option named as it was written, in its header and
+its summary, so a column named that takes no sketch is not written again
+and again. The codes take a byte a row.
+
+Rejected was BitWeaving (D352 stands), which packs codes vertically for
+predicates over words: a byte a row compared by a table of verdicts is
+read as fast as the scan's other work, and keeps the group's layout.
+Rejected too were codes drawn from the imprints' edges: their 64 bins
+leave a boundary code four times as wide, and a column without imprints
+would have none.
 
 ## 2. Project layout
 
