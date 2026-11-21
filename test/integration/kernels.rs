@@ -1,13 +1,14 @@
 //! \[DESIGN\] The kernels (RULES.md D354): the portable ones keep the
 //! contract every implementation keeps (`support/src/kernels.rs`), and a
-//! database runs its batches on the kernels it is given.
+//! database runs its batches, its vector distances and its checksums on
+//! the kernels it is given.
 
 use std::sync::Arc;
 
-use turborel::db::Database;
-use turborel::kernels::{Kernels, PORTABLE, Portable};
+use turborel::db::{Database, OpenOptions};
+use turborel::kernels::{DistanceTerm, Kernels, PORTABLE, Packed, Portable};
 
-use crate::common::{both_ways, exec};
+use crate::common::{Scratch, both_ways, exec, os, rows};
 use crate::kernel_contract::contract;
 
 /// Verifies: [DESIGN] RULES.md D354 each portable kernel gives what a plain
@@ -247,4 +248,107 @@ fn the_kernels_registered_hash_groupings() {
     let (portable, none) = run(&a);
     assert_eq!(portable, one);
     assert_eq!(none, 0, "PORTABLE ran the registered kernels in a grouping");
+}
+
+/// Kernels that count their distance sums and their CRCs, each the
+/// portable one's.
+struct Measuring {
+    sums: Arc<std::sync::atomic::AtomicUsize>,
+    crcs: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Measuring {
+    fn summed(&self) {
+        self.sums.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Kernels for Measuring {
+    fn name(&self) -> &'static str {
+        "MEASURING"
+    }
+
+    fn distance_f32(&self, a: &[f32], b: &[f32], term: DistanceTerm) -> f32 {
+        self.summed();
+        Portable.distance_f32(a, b, term)
+    }
+
+    fn cosine_f32(&self, a: &[f32], b: &[f32]) -> (f32, f32, f32) {
+        self.summed();
+        Portable.cosine_f32(a, b)
+    }
+
+    fn distance_packed(&self, a: &[u8], b: &[u8], shape: (Packed, DistanceTerm)) -> f32 {
+        self.summed();
+        Portable.distance_packed(a, b, shape)
+    }
+
+    fn distance_i8(&self, a: &[u8], b: &[u8], term: DistanceTerm) -> i64 {
+        self.summed();
+        Portable.distance_i8(a, b, term)
+    }
+
+    fn crc32c(&self, register: u32, data: &[u8]) -> u32 {
+        self.crcs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Portable.crc32c(register, data)
+    }
+}
+
+/// A vector of 40 elements of `k`, whole numbers an INT8 holds, no two
+/// rows' alike.
+fn vector_of(k: i64) -> String {
+    let elements: Vec<String> = (0..40).map(|d| ((k * 7 + d * 13 + k * d * d) % 201 - 100).to_string()).collect();
+    format!("[{}]", elements.join(", "))
+}
+
+/// Verifies: [DESIGN] RULES.md D571, D572 the kernels registered sum the
+/// built-in metrics' distances of FLOAT32, FLOAT16 and INT8 vectors, and
+/// an HNSW index's, each the distance the portable kernels give; and they
+/// checksum the files by CRC-32/ISCSI where STORAGE.CHECKSUM names it,
+/// whose pages a database without them reads.
+#[test]
+fn the_kernels_registered_measure_vectors_and_checksum_files() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let scratch = Scratch::new("kernels-measure");
+    let (sums, crcs) = (Arc::new(std::sync::atomic::AtomicUsize::new(0)), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+    let db = Database::new();
+    db.register_kernels(Box::new(Measuring { sums: Arc::clone(&sums), crcs: Arc::clone(&crcs) })).unwrap();
+    db.set_setting("STORAGE.CHECKSUM", &turborel::value::Value::Char("CRC-32/ISCSI".to_owned())).unwrap();
+    db.open_files(&os(), &scratch.dir, &OpenOptions::default()).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A CREATE TABLE V (K INTEGER PRIMARY KEY, E VECTOR(40), H VECTOR(40, FLOAT16), I VECTOR(40, INT8))",
+    )
+    .unwrap();
+    let a = db.session("A");
+    for k in 0..300 {
+        let v = vector_of(k);
+        a.run(&format!("INSERT INTO V VALUES ({k}, '{v}', '{v}', '{v}')")).unwrap();
+    }
+    a.commit().unwrap();
+    let q = vector_of(7);
+    let measure = format!(
+        "SELECT K, VECTOR_DISTANCE(E, '{q}', COSINE), VECTOR_DISTANCE(H, CAST('{q}' AS VECTOR(40, FLOAT16)), EUCLIDEAN), \
+         VECTOR_DISTANCE(I, CAST('{q}' AS VECTOR(40, INT8)), DOT) FROM V ORDER BY K"
+    );
+    let measured = rows(&a, &measure).unwrap();
+    let nearest = format!("SELECT K FROM V ORDER BY VECTOR_DISTANCE(E, '{q}', COSINE), K FETCH FIRST 1 ROWS ONLY");
+    let exact = rows(&a, &nearest).unwrap();
+    a.commit().unwrap();
+    assert!(sums.load(Relaxed) >= 900, "the metrics summed on the kernels registered {} times", sums.load(Relaxed));
+    a.run("CREATE INDEX V_E ON V (E) USING hnsw WITH (HNSW.METRIC = COSINE)").unwrap();
+    a.commit().unwrap();
+    let before = sums.load(Relaxed);
+    let near = format!("SELECT K FROM V ORDER BY VECTOR_DISTANCE(E, '{q}', COSINE) FETCH APPROX FIRST 3 ROWS ONLY");
+    let found = rows(&a, &near).unwrap();
+    assert!(found.contains(&exact[0]), "the index finds the nearest row {exact:?}: {found:?}");
+    assert!(sums.load(Relaxed) > before, "the index measured on the kernels registered");
+    a.commit().unwrap();
+    drop(a);
+    db.checkpoint().unwrap();
+    assert!(crcs.load(Relaxed) > 0, "no page checksummed by the kernels registered");
+    db.close().unwrap();
+    drop(db);
+    let plain = Database::new();
+    plain.open_files(&os(), &scratch.dir, &OpenOptions::default()).unwrap();
+    assert_eq!(rows(&plain.session("A"), &measure).unwrap(), measured, "the portable kernels' distances, of the pages read back");
 }

@@ -2,7 +2,8 @@
 //! D460, D570). The core forbids `unsafe` (R-SAFE-1), and intrinsics need
 //! it, so the kernels that run on them live in this crate: SSE2, AVX2 and
 //! AVX-512 on x86-64 (`x86/`), NEON on AArch64 (`aarch64/`), the widest
-//! the processor has chosen as it runs. Every kernel gives exactly what
+//! the processor has chosen as it runs, and CRC-32C on the instructions
+//! of each that carry its register (`crc.rs`). Every kernel gives exactly what
 //! the core's portable body gives, and the tests hold each level the
 //! processor has to the kernels' contract and to the portable bodies, of
 //! random inputs of every length and alignment.
@@ -20,7 +21,7 @@
 //! writes, a SAFETY comment on each block.
 
 use turborel::hash::xxhash::{ACC_NB, Seeded, Stripe, Stripes};
-use turborel::kernels::{AlpScale, Given, Kernels, portable};
+use turborel::kernels::{AlpScale, DistanceTerm, Given, Kernels, Packed, portable};
 use turborel::storage::mask::index;
 use turborel::value::CompOp;
 
@@ -37,6 +38,8 @@ mod generic;
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 use generic as arch;
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+mod crc;
 mod rows;
 
 /// The name of these kernels, as diagnostics and EXECUTOR.KERNELS show it.
@@ -155,6 +158,21 @@ impl Kernels for Simd {
     }
     fn xxh3_scramble(&self, acc: &mut [u64; ACC_NB], key: &Stripe) {
         arch::xxh3_scramble(self.isa, acc, key);
+    }
+    fn distance_f32(&self, a: &[f32], b: &[f32], term: DistanceTerm) -> f32 {
+        arch::distance_f32(self.isa, a, b, term)
+    }
+    fn cosine_f32(&self, a: &[f32], b: &[f32]) -> (f32, f32, f32) {
+        arch::cosine_f32(self.isa, a, b)
+    }
+    fn distance_packed(&self, a: &[u8], b: &[u8], shape: (Packed, DistanceTerm)) -> f32 {
+        arch::distance_packed(self.isa, a, b, shape)
+    }
+    fn distance_i8(&self, a: &[u8], b: &[u8], term: DistanceTerm) -> i64 {
+        arch::distance_i8(self.isa, a, b, term)
+    }
+    fn crc32c(&self, register: u32, data: &[u8]) -> u32 {
+        arch::crc32c(self.isa, register, data)
     }
 }
 

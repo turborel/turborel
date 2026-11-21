@@ -3,8 +3,11 @@
 //! biased to the edges, of lengths around the vector widths, a word of
 //! bits and a chunk of 2,048 rows, from unaligned starts, of every width
 //! and operator, NaN, -0.0, the infinities and the extreme integers among
-//! them, nulls of none, few, half and all rows, selections or none; each
-//! output compared with the portable body's bit for bit. A failure names
+//! them, nulls of none, few, half and all rows, selections or none;
+//! vectors of every element format, FLOAT16's every kind of bit pattern
+//! and INT8's extremes among them, and CRCs of every short length and some
+//! long ones. Each output is compared with the portable body's bit for
+//! bit, a NaN distance with a NaN. A failure names
 //! its seed, which `cargo xtask kernels --from SEED --seeds 1` runs alone.
 #![allow(
     clippy::unwrap_used,
@@ -26,7 +29,7 @@
 
 use std::ops::Range;
 
-use turborel::kernels::{AlpScale, Kernels, Portable};
+use turborel::kernels::{AlpScale, DistanceTerm, Kernels, Packed, Portable};
 use turborel::storage::Mask;
 use turborel::value::CompOp;
 
@@ -136,6 +139,8 @@ pub fn differential(kernels: &dyn Kernels, seeds: Range<u64>) {
         aggregates(kernels, rng, (seed, len));
         hashes(kernels, rng, (seed, len));
         decoding(kernels, rng, seed);
+        distances(kernels, rng, seed);
+        crc(kernels, rng, seed);
     }
 }
 
@@ -186,6 +191,13 @@ fn aggregates(kernels: &dyn Kernels, rng: &mut Rng, (seed, len): (u64, usize)) {
     let picks: Vec<u32> = (0..rng.below(300)).map(|_| rng.below(len as u64 + 20) as u32).collect();
     let want = appended(5, |out| Portable.gather_i64(ints, &picks, out));
     assert_eq!(appended(5, |out| kernels.gather_i64(ints, &picks, out)), want, "gather_i64, seed {seed}");
+    // Sums and extremes of picks out of order, repeated and past the end.
+    assert_eq!(kernels.sum_i64(ints, Some(&picks)), Portable.sum_i64(ints, Some(&picks)), "sum_i64 picked, seed {seed}");
+    let picked = (nulls.as_ref(), Some(&picks[..]));
+    assert_eq!(kernels.min_max_i64(ints, picked), Portable.min_max_i64(ints, picked), "min_max_i64 picked, seed {seed}");
+    let within: Vec<u32> = picks.iter().copied().filter(|&r| (r as usize) < len).collect();
+    let held = (nulls.as_ref(), Some(&within[..]));
+    assert_eq!(kernels.min_max_i64(ints, held), Portable.min_max_i64(ints, held), "min_max_i64 within, seed {seed}");
     let hash_seed = rng.next();
     let want = appended(7, |out| Portable.hash_i64(ints, hash_seed, sel.as_deref(), out));
     assert_eq!(appended(7, |out| kernels.hash_i64(ints, hash_seed, sel.as_deref(), out)), want, "hash_i64, seed {seed}");
@@ -257,4 +269,100 @@ fn normal_keys(kernels: &dyn Kernels, rng: &mut Rng, seed: u64) {
     let made = Portable.normalize_i64((&values, &rows), (base, bytes, invert), (width, at), &mut want);
     assert_eq!(kernels.normalize_i64((&values, &rows), (base, bytes, invert), (width, at), &mut got), made, "normalize_i64, seed {seed}");
     assert_eq!(got, want, "normalize_i64 keys, seed {seed}");
+}
+
+/// A FLOAT32 element, of NaN, the zeros, the infinities, the least
+/// subnormal, any bits, or a small number most often.
+fn single(rng: &mut Rng) -> f32 {
+    match rng.below(24) {
+        0 => rng.pick(&[f32::NAN, -0.0, 0.0, f32::INFINITY, f32::NEG_INFINITY, f32::from_bits(1), f32::MAX]),
+        1 => f32::from_bits(rng.next() as u32),
+        _ => (rng.below(1 << 24) as f32 / (1 << 20) as f32 - 8.0) * if rng.below(2) == 0 { 1.0 } else { 1e-3 },
+    }
+}
+
+/// A FLOAT16 element's bits, of NaN quiet and signalling, the zeros, the
+/// infinities, subnormals, the greatest, or any bits.
+fn half_bits(rng: &mut Rng) -> u16 {
+    match rng.below(4) {
+        0 => rng.pick(&[0x7E00, 0x7C01, 0xFE00, 0x0000, 0x8000, 0x7C00, 0xFC00, 0x0001, 0x83FF, 0x7BFF, 0xFBFF, 0x3C00]),
+        _ => rng.next() as u16,
+    }
+}
+
+/// An INT8 element, of the extremes, or any byte.
+fn byte(rng: &mut Rng) -> u8 {
+    if rng.below(4) == 0 { rng.pick(&[0x80, 0x7F, 0x00, 0xFF, 0x81]) } else { rng.next() as u8 }
+}
+
+/// Whether two distances are the same, bit for bit or both NaN, whose
+/// payload no sum fixes.
+fn same(got: f32, want: f32) -> bool {
+    got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan())
+}
+
+/// The elements of a vector and its pair, most often of one length, at
+/// times of another.
+fn lengths(rng: &mut Rng) -> (usize, usize) {
+    let len = if rng.below(8) == 0 { rng.pick(&[768, 1536, 2048]) } else { rng.below(200) as usize };
+    (len, if rng.below(10) == 0 { rng.below(200) as usize } else { len })
+}
+
+/// `make`'s bytes of `len` elements from an unaligned start, past a
+/// longer vector's first 0 to 7 bytes.
+fn packed(rng: &mut Rng, len: usize, make: impl Fn(&mut Rng) -> Vec<u8>) -> (Vec<u8>, usize) {
+    let skip = rng.below(8) as usize;
+    let mut bytes: Vec<u8> = (0..skip).map(|_| rng.next() as u8).collect();
+    for _ in 0..len {
+        bytes.extend(make(rng));
+    }
+    (bytes, skip)
+}
+
+/// Checks the distance sums of `kernels`, of every term and format.
+fn distances(kernels: &dyn Kernels, rng: &mut Rng, seed: u64) {
+    let (len_a, len_b) = lengths(rng);
+    let (a, skip_a) = unaligned(rng, len_a, single);
+    let (b, skip_b) = unaligned(rng, len_b, single);
+    let (left, right) = (&a[skip_a..], &b[skip_b..]);
+    for term in DistanceTerm::ALL {
+        let (got, want) = (kernels.distance_f32(left, right, term), Portable.distance_f32(left, right, term));
+        assert!(same(got, want), "distance_f32 {term:?} {len_a}/{len_b}: {got} against {want}, seed {seed}");
+    }
+    let (got, want) = (kernels.cosine_f32(left, right), Portable.cosine_f32(left, right));
+    assert!(
+        same(got.0, want.0) && same(got.1, want.1) && same(got.2, want.2),
+        "cosine_f32 {len_a}/{len_b}: {got:?} against {want:?}, seed {seed}"
+    );
+    let (single_a, skip_a) = packed(rng, len_a, |g| single(g).to_le_bytes().to_vec());
+    let (single_b, skip_b) = packed(rng, len_b, |g| single(g).to_le_bytes().to_vec());
+    let (half_a, half_skip_a) = packed(rng, len_a, |g| half_bits(g).to_le_bytes().to_vec());
+    let (half_b, half_skip_b) = packed(rng, len_b, |g| half_bits(g).to_le_bytes().to_vec());
+    let (bytes_a, bytes_skip_a) = packed(rng, len_a, |g| vec![byte(g)]);
+    let (bytes_b, bytes_skip_b) = packed(rng, len_b, |g| vec![byte(g)]);
+    for term in DistanceTerm::ALL {
+        for (format, xs, ys) in
+            [(Packed::Single, &single_a[skip_a..], &single_b[skip_b..]), (Packed::Half, &half_a[half_skip_a..], &half_b[half_skip_b..])]
+        {
+            let (got, want) = (kernels.distance_packed(xs, ys, (format, term)), Portable.distance_packed(xs, ys, (format, term)));
+            assert!(same(got, want), "distance_packed {format:?} {term:?} {len_a}/{len_b}: {got} against {want}, seed {seed}");
+        }
+        let (xs, ys) = (&bytes_a[bytes_skip_a..], &bytes_b[bytes_skip_b..]);
+        assert_eq!(
+            kernels.distance_i8(xs, ys, term),
+            Portable.distance_i8(xs, ys, term),
+            "distance_i8 {term:?} {len_a}/{len_b}, seed {seed}"
+        );
+    }
+}
+
+/// Checks CRC-32C's register of `kernels`, of every length to 300 most often,
+/// at times one past many rounds of the long streams, from an unaligned
+/// start and any register.
+fn crc(kernels: &dyn Kernels, rng: &mut Rng, seed: u64) {
+    let len = if rng.below(8) == 0 { rng.below(80_000) as usize } else { rng.below(300) as usize };
+    let (data, skip) = unaligned(rng, len, |r| r.next() as u8);
+    let register = if rng.below(2) == 0 { u32::MAX } else { rng.next() as u32 };
+    let data = &data[skip..];
+    assert_eq!(kernels.crc32c(register, data), Portable.crc32c(register, data), "crc32c of {len} bytes, seed {seed}");
 }

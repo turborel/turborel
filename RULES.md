@@ -404,6 +404,8 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D570 | Each kernel has a body for every vector set, chosen once by the set detected; the column store decodes and judges on the registered set |
+| D571 | A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply |
+| D572 | CRC-32/ISCSI checksums by the kernels' CRC-32C, the processor's instruction where it has one |
 | D573 | A grouping's keys hash by XXH3-64 of the database's seed, a word as 8 bytes, a text trimmed, columns joined as 16 bytes, on the kernels |
 
 ### The project
@@ -11431,6 +11433,35 @@ kernels of a statement's executor, its filters over batches, groupings
 and sorts; a table's storage keeps the set registered, whatever the
 setting, since a table is opened once for many statements.
 
+
+#### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
+
+The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
+INT8 vectors sum their terms by the kernels `distance_f32`,
+`cosine_f32`, `distance_packed` and `distance_i8`. The portable body
+keeps 16 lanes, each the terms at its place modulo 16 added in order,
+then adds the lanes and the tail in a fixed order (`finish_*` in
+`kernels/portable/distance.rs`); a vector set's body fills the same 16
+lanes, two registers of 8 (AVX2, F16C for FLOAT16), one of 16
+(AVX-512) or four of 4 (NEON), with no fused multiply, and leaves the
+finish to the portable code, so a distance is the same bits at every
+level and an index built on one machine searches alike on another. The
+database's metrics, and the DiskANN, HNSW and IVF indexes and the
+product quantizer's query tables that measure by them, take the set
+registered (`SharedVectors`); a sum of codes looked up by a quantizer
+adds in element order and stays portable.
+
+#### D572. CRC-32/ISCSI checksums by the kernels' CRC-32C, the processor's instruction where it has one
+
+The kernel `crc32c` computes CRC-32C (CRC-32/ISCSI): portably by the
+table code of `hash/crc.rs`; at the AVX2 and AVX-512 levels by SSE4.2's
+`crc32`, three streams of a long input joined by shift tables; on
+AArch64 by the CRC extension, an instruction set (`Isa::NeonCrc`) made
+only where it is detected. A database registering kernels replaces the
+CRC-32/ISCSI hash function by one of the same id, name and digest that
+runs the kernel, so a file checksummed either way reads either way. It
+runs only where STORAGE.CHECKSUM names CRC-32/ISCSI; the default is
+XXH3-64 (D460).
 
 #### D573. A grouping's keys hash by XXH3-64 of the database's seed, a word as 8 bytes, a text trimmed, columns joined as 16 bytes, on the kernels
 

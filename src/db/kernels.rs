@@ -8,11 +8,19 @@
 //! setting is the executor's: a table of the column store decodes and
 //! judges on the set registered, which it takes as it opens (RULES.md
 //! D570), and SET leaves it as it is.
+//!
+//! The set registered also sums the built-in vector metrics, with the
+//! vector indexes and quantizers that measure by them (RULES.md D571).
+//! Where STORAGE.CHECKSUM names CRC-32/ISCSI, the set's CRC-32C kernel
+//! checksums the files (D572). The function keeps its id, name and
+//! digests, so every file reads as before.
 
 use std::sync::Arc;
 
 use super::{Database, State, api};
 use crate::error::Result;
+use crate::hash::crc::CRC32_ISCSI;
+use crate::hash::{Digest, HashFunction, HashId};
 use crate::kernels::{Kernels, PORTABLE, Portable};
 use crate::settings::EXECUTOR_KERNELS;
 use crate::value::Value;
@@ -37,6 +45,11 @@ impl Database {
             for engine in st.engines.values() {
                 engine.use_kernels(Arc::clone(&kernels));
             }
+            st.vectors.use_kernels(Arc::clone(&kernels));
+            let crc: Arc<dyn HashFunction> = Arc::new(Crc32c(Arc::clone(&kernels)));
+            for hash in st.hashes.iter_mut().filter(|h| h.id() == CRC32_ISCSI.id) {
+                *hash = Arc::clone(&crc);
+            }
             Ok(())
         })
     }
@@ -51,4 +64,30 @@ pub(crate) fn chosen(st: &State) -> Arc<dyn Kernels> {
         return Arc::new(Portable);
     }
     st.functions.kernels_shared()
+}
+
+/// \[DESIGN\] CRC-32/ISCSI checksummed by a set's CRC-32C kernel (RULES.md
+/// D572), with the built-in function's id, name and digest, least
+/// significant byte first, each bit the same.
+struct Crc32c(Arc<dyn Kernels>);
+
+/// The bytes of a CRC-32 digest.
+const CRC32_BYTES: usize = 4;
+
+impl HashFunction for Crc32c {
+    fn id(&self) -> HashId {
+        CRC32_ISCSI.id
+    }
+    fn name(&self) -> &'static str {
+        CRC32_ISCSI.name
+    }
+    fn digest_len(&self) -> usize {
+        CRC32_BYTES
+    }
+    fn hash_parts(&self, parts: &[&[u8]]) -> Digest {
+        // CRC-32/ISCSI's starting value and final exclusive or are each all
+        // ones, and its register is reflected, as the kernel keeps it.
+        let register = parts.iter().fold(u32::MAX, |r, part| self.0.crc32c(r, part));
+        Digest::from_le(u64::from(register ^ u32::MAX), CRC32_BYTES).unwrap_or_default()
+    }
 }

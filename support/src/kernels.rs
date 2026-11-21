@@ -20,7 +20,7 @@
     reason = "test code: a panic is a test failure, its fixtures literal (RULES.md R-TEST-4)"
 )]
 
-use turborel::kernels::Kernels;
+use turborel::kernels::{DistanceTerm, Kernels, Packed};
 use turborel::storage::Mask;
 use turborel::value::CompOp;
 
@@ -87,6 +87,8 @@ pub fn contract(kernels: &dyn Kernels) {
     texts(kernels);
     xxh3_stripes(kernels);
     normalizing(kernels);
+    distances(kernels);
+    crc32c(kernels);
 }
 
 /// Checks the hashes of texts `kernels` makes against XXH3-64 of each
@@ -294,4 +296,69 @@ fn normalizing(kernels: &dyn Kernels) {
     assert_eq!(kernels.normalize_i64((&[1], &[4]), (0, 4, false), (8, 0), &mut keys), None, "past the end");
     assert_eq!(kernels.normalize_i64((&[0, 300], &[0, 1]), (0, 2, false), (2, 0), &mut keys[..4]), Some(()));
     assert_eq!(&keys[..4], &[0, 0, 1, 44], "two keys of two bytes");
+}
+
+/// The sixteen lanes' sum of `term` over `a` and `b` as the contract
+/// orders it (RULES.md D571), lane `i % 16` of each whole chunk, the lanes
+/// in order, then the rest one pair at a time.
+fn lanes_sum(a: &[f32], b: &[f32], term: impl Fn(f32, f32) -> f32) -> f32 {
+    let whole = a.len().min(b.len()) / 16 * 16;
+    let mut lanes = [0.0_f32; 16];
+    for i in 0..whole {
+        lanes[i % 16] += term(a[i], b[i]);
+    }
+    let tail = (whole..a.len().min(b.len())).fold(0.0_f32, |s, i| s + term(a[i], b[i]));
+    lanes.iter().fold(0.0_f32, |s, x| s + x) + tail
+}
+
+/// A distance term and a plain function of it.
+type Term = (DistanceTerm, fn(f32, f32) -> f32);
+
+/// Checks the distance sums of `kernels` against the lanes' sums, of every
+/// length to `LONGEST`, every term and format.
+fn distances(kernels: &dyn Kernels) {
+    let terms: [Term; 3] =
+        [(DistanceTerm::Dot, |p, q| p * q), (DistanceTerm::Square, |p, q| (p - q) * (p - q)), (DistanceTerm::Gap, |p, q| (p - q).abs())];
+    for len in 0..=LONGEST {
+        let a: Vec<f32> = (0..len).map(|n| ((n * 37) % 23) as f32 * 0.37 - 4.1).collect();
+        let b: Vec<f32> = (0..len).map(|n| ((n * 53) % 29) as f32 * -0.21 + 2.9).collect();
+        let bytes = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        for (term, f) in terms {
+            let want = lanes_sum(&a, &b, f);
+            assert_eq!(kernels.distance_f32(&a, &b, term).to_bits(), want.to_bits(), "distance_f32 {term:?} of {len}");
+            assert_eq!(
+                kernels.distance_packed(&bytes(&a), &bytes(&b), (Packed::Single, term)).to_bits(),
+                want.to_bits(),
+                "{term:?} of {len}"
+            );
+            let (x, y): (Vec<u8>, Vec<u8>) = (0..len).map(|n| ((n * 37 % 256) as u8, (n * 91 % 256) as u8)).unzip();
+            let int = |v: u8| f32::from(v as i8);
+            let whole: i64 = x.iter().zip(&y).map(|(p, q)| f(int(*p), int(*q)) as i64).sum();
+            assert_eq!(kernels.distance_i8(&x, &y, term), whole, "distance_i8 {term:?} of {len}");
+        }
+        // FLOAT16 of whole numbers and halves, exact in both formats.
+        let halves: Vec<u8> = (0..len).flat_map(|n| [0x3C00_u16, 0xC100, 0x3800, 0x0000][n % 4].to_le_bytes()).collect();
+        let as_f32: Vec<f32> = (0..len).map(|n| [1.0, -2.5, 0.5, 0.0][n % 4]).collect();
+        let want = lanes_sum(&as_f32, &as_f32, |p, q| p * q);
+        assert_eq!(
+            kernels.distance_packed(&halves, &halves, (Packed::Half, DistanceTerm::Dot)).to_bits(),
+            want.to_bits(),
+            "FLOAT16 of {len}"
+        );
+        let (aa, bb, ab) = kernels.cosine_f32(&a, &b);
+        let dots = (lanes_sum(&a, &a, |p, q| p * q), lanes_sum(&b, &b, |p, q| p * q), lanes_sum(&a, &b, |p, q| p * q));
+        assert_eq!((aa.to_bits(), bb.to_bits(), ab.to_bits()), (dots.0.to_bits(), dots.1.to_bits(), dots.2.to_bits()), "cosine of {len}");
+    }
+}
+
+/// Checks CRC-32C of `kernels`, the catalogue's check value of "123456789",
+/// and of every split of a long input the register carried across.
+fn crc32c(kernels: &dyn Kernels) {
+    assert_eq!(kernels.crc32c(u32::MAX, b"123456789") ^ u32::MAX, 0xE306_9283);
+    let input = pattern(70_000, 3);
+    let whole = kernels.crc32c(u32::MAX, &input);
+    for split in [0, 1, 7, 8, 255, 769, 24_576, 24_577, 69_999] {
+        let (head, rest) = input.split_at(split);
+        assert_eq!(kernels.crc32c(kernels.crc32c(u32::MAX, head), rest), whole, "CRC-32C split at {split}");
+    }
 }

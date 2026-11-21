@@ -4,6 +4,8 @@
 //! `Kernels` method and the reference its contract tests compare with.
 
 pub mod alp;
+pub mod crc;
+pub mod distance;
 pub mod gather;
 pub mod hash;
 pub mod normal;

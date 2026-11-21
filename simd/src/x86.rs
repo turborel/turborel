@@ -4,16 +4,22 @@
 //! processor's, and the compiler already builds the portable bodies for
 //! it, so a kernel no SSE2 instruction speeds runs its portable body
 //! there; AVX2 and AVX-512 have their own bodies (`select.rs`, `sum.rs`,
-//! `alp.rs`), XXH3's loops theirs at each set (`xxh3.rs`).
+//! `alp.rs`, `distance.rs`), XXH3's loops theirs at each set (`xxh3.rs`),
+//! and CRC-32C SSE4.2's `crc32`, which both levels have (`crate::crc`).
 
+use std::arch::x86_64::_mm_crc32_u64;
 use turborel::hash::xxhash::{ACC_NB, Scalar, Stripe, Stripes as _, keyed};
-use turborel::kernels::{AlpScale, Given, portable};
+
+use turborel::kernels::portable::distance::{self as distances, HALF_STEP, LANES, SINGLE_STEP};
+use turborel::kernels::{AlpScale, DistanceTerm, Given, Packed, portable};
 use turborel::value::CompOp;
 
 use crate::Level;
 
 mod alp;
+mod distance;
 mod hash;
+mod picked;
 mod select;
 mod sum;
 pub(crate) mod xxh3;
@@ -109,24 +115,26 @@ pub(crate) fn select_codes(isa: Isa, codes: &[u32], keep: &[u64], given: Given<'
     }
 }
 
-/// `Kernels::sum_i64`: of all rows on AVX2 or AVX-512, of a selection by
-/// the portable body.
+/// `Kernels::sum_i64`: of all rows on AVX2 or AVX-512, of a selection
+/// gathered a block at a time (`picked.rs`).
 pub(crate) fn sum_i64(isa: Isa, values: &[i64], sel: Option<&[u32]>) -> i128 {
-    let None = sel else { return portable::sum::sum_i64(values, sel) };
-    match isa {
-        Isa::Portable | Isa::Sse2 => portable::sum::sum_i64(values, sel),
-        Isa::Avx2 => sum::sum_avx2(values),
-        Isa::Avx512 => sum::sum_avx512(values),
+    match (isa, sel) {
+        (Isa::Portable | Isa::Sse2, _) => portable::sum::sum_i64(values, sel),
+        (Isa::Avx2, None) => sum::sum_avx2(values),
+        (Isa::Avx512, None) => sum::sum_avx512(values),
+        (Isa::Avx2, Some(sel)) => picked::sum_at(picked::Wide::Avx2, values, sel),
+        (Isa::Avx512, Some(sel)) => picked::sum_at(picked::Wide::Avx512, values, sel),
     }
 }
 
 /// `Kernels::min_max_i64`, as `sum_i64`.
 pub(crate) fn min_max_i64(isa: Isa, values: &[i64], given: Given<'_>) -> Option<(i64, i64)> {
-    let (nulls, None) = given else { return portable::sum::min_max_i64(values, given) };
-    match isa {
-        Isa::Portable | Isa::Sse2 => portable::sum::min_max_i64(values, given),
-        Isa::Avx2 => sum::min_max_avx2(values, nulls),
-        Isa::Avx512 => sum::min_max_avx512(values, nulls),
+    match (isa, given) {
+        (Isa::Portable | Isa::Sse2, _) => portable::sum::min_max_i64(values, given),
+        (Isa::Avx2, (nulls, None)) => sum::min_max_avx2(values, nulls),
+        (Isa::Avx512, (nulls, None)) => sum::min_max_avx512(values, nulls),
+        (Isa::Avx2, (nulls, Some(sel))) => picked::min_max_at(picked::Wide::Avx2, values, (nulls, sel)),
+        (Isa::Avx512, (nulls, Some(sel))) => picked::min_max_at(picked::Wide::Avx512, values, (nulls, sel)),
     }
 }
 
@@ -208,4 +216,93 @@ pub(crate) fn xxh3_scramble(isa: Isa, acc: &mut [u64; ACC_NB], key: &Stripe) {
         // SAFETY: as above, of AVX-512.
         Isa::Avx512 => unsafe { xxh3::avx512::xxh3_scramble(acc, key) },
     }
+}
+
+/// `Kernels::distance_f32`: sixteen lanes a chunk on AVX2 or AVX-512.
+pub(crate) fn distance_f32(isa: Isa, a: &[f32], b: &[f32], term: DistanceTerm) -> f32 {
+    let ((ca, ra), (cb, rb)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());
+    let (starts, chunks) = ((ca.as_ptr().cast(), cb.as_ptr().cast()), ca.len().min(cb.len()));
+    let lanes = match isa {
+        Isa::Portable | Isa::Sse2 => return distances::distance_f32(a, b, term),
+        // SAFETY: an `Isa` of AVX2 is made only where the processor has AVX2
+        // and F16C (`isa`), and each start has `chunks` whole chunks of
+        // sixteen `f32`s.
+        Isa::Avx2 => unsafe { distance::floats_avx2(term, false, starts, chunks) },
+        // SAFETY: as above, of AVX-512 F.
+        Isa::Avx512 => unsafe { distance::floats_avx512(term, false, starts, chunks) },
+    };
+    distances::finish_f32(lanes, (ra, rb), term)
+}
+
+/// `Kernels::cosine_f32`, as `distance_f32`.
+pub(crate) fn cosine_f32(isa: Isa, a: &[f32], b: &[f32]) -> (f32, f32, f32) {
+    let ((ca, ra), (cb, rb)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());
+    let (starts, chunks) = ((ca.as_ptr().cast(), cb.as_ptr().cast()), ca.len().min(cb.len()));
+    let lanes = match isa {
+        Isa::Portable | Isa::Sse2 => return distances::cosine_f32(a, b),
+        // SAFETY: as `distance_f32`'s, of AVX2.
+        Isa::Avx2 => unsafe { distance::cosine_avx2(starts, chunks) },
+        // SAFETY: as `distance_f32`'s, of AVX-512 F.
+        Isa::Avx512 => unsafe { distance::cosine_avx512(starts, chunks) },
+    };
+    distances::finish_cosine(lanes, (ra, rb))
+}
+
+/// `Kernels::distance_packed`, as `distance_f32`: FLOAT16 widened by F16C
+/// or AVX-512's conversion.
+pub(crate) fn distance_packed(isa: Isa, a: &[u8], b: &[u8], shape: (Packed, DistanceTerm)) -> f32 {
+    let (format, term) = shape;
+    let (step, half) = match format {
+        Packed::Single => (SINGLE_STEP, false),
+        Packed::Half => (HALF_STEP, true),
+    };
+    let (ca, cb) = (a.chunks_exact(step), b.chunks_exact(step));
+    let (rest, chunks) = ((ca.remainder(), cb.remainder()), ca.len().min(cb.len()));
+    let starts = (a.as_ptr(), b.as_ptr());
+    let lanes = match isa {
+        Isa::Portable | Isa::Sse2 => return distances::distance_packed(a, b, shape),
+        // SAFETY: an `Isa` of AVX2 is made only where the processor has AVX2
+        // and F16C (`isa`), and each start has `chunks` whole chunks of
+        // `step` bytes, sixteen elements of the format.
+        Isa::Avx2 => unsafe { distance::floats_avx2(term, half, starts, chunks) },
+        // SAFETY: as above, of AVX-512 F.
+        Isa::Avx512 => unsafe { distance::floats_avx512(term, half, starts, chunks) },
+    };
+    distances::finish_packed(lanes, rest, shape)
+}
+
+/// `Kernels::distance_i8`, as `distance_f32`, in `i32` lanes.
+pub(crate) fn distance_i8(isa: Isa, a: &[u8], b: &[u8], term: DistanceTerm) -> i64 {
+    let ((ca, ra), (cb, rb)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());
+    let (starts, chunks) = ((ca.as_ptr().cast(), cb.as_ptr().cast()), ca.len().min(cb.len()));
+    let lanes = match isa {
+        Isa::Portable | Isa::Sse2 => return distances::distance_i8(a, b, term),
+        // SAFETY: an `Isa` of AVX2 is made only where the processor has it
+        // (`isa`), and each start has `chunks` whole chunks of sixteen bytes.
+        Isa::Avx2 => unsafe { distance::i8_avx2(term, starts, chunks) },
+        // SAFETY: as above, of AVX-512 F.
+        Isa::Avx512 => unsafe { distance::i8_avx512(term, starts, chunks) },
+    };
+    distances::finish_i8(lanes, (ra, rb), term)
+}
+
+/// `Kernels::crc32c`: SSE4.2's `crc32` at AVX2 and AVX-512, whose levels
+/// have it (`has_avx2`).
+pub(crate) fn crc32c(isa: Isa, register: u32, data: &[u8]) -> u32 {
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::crc::crc32c(register, data),
+        // SAFETY: an `Isa` of AVX2 or AVX-512 is made only where the
+        // processor has SSE4.2 (`has_avx2`), all the function asks.
+        Isa::Avx2 | Isa::Avx512 => unsafe { crc32c_sse42(register, data) },
+    }
+}
+
+/// The low 32 bits of a register, where `crc32` leaves it.
+const REGISTER: u64 = 0xFFFF_FFFF;
+
+/// CRC-32C's register after `data`, a word an instruction.
+#[target_feature(enable = "sse4.2")]
+fn crc32c_sse42(register: u32, data: &[u8]) -> u32 {
+    let word = |r: u32, w: u64| u32::try_from(_mm_crc32_u64(u64::from(r), w) & REGISTER).unwrap_or_default();
+    crate::crc::crc32c_by(word, register, data)
 }

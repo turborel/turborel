@@ -222,7 +222,7 @@ fn extremes_avx512(values: &[i64], nulls: Option<&Mask>) -> Option<(i64, i64)> {
 
 /// Whether a gather's 32-bit signed indices reach every value of
 /// `values`: if not, the portable gather.
-fn indexable(values: &[i64]) -> Option<i32> {
+pub(super) fn indexable(values: &[i64]) -> Option<i32> {
     i32::try_from(values.len()).ok()
 }
 
@@ -290,4 +290,19 @@ fn gathered_avx512(values: &[i64], (sel, len): (&[u32], i32), slots: &mut [i64])
     for (slot, &r) in rest.iter_mut().zip(tail) {
         *slot = usize::try_from(r).ok().and_then(|r| values.get(r)).copied().unwrap_or(0);
     }
+}
+
+/// The values of `values` at `sel`, below `len` its length, into `slots`,
+/// one a row, on AVX2: 0 of a row past the end.
+pub(super) fn picked_avx2(values: &[i64], (sel, len): (&[u32], i32), slots: &mut [i64]) {
+    // SAFETY: an `Isa` of AVX2 is made only where the processor has it
+    // (`x86::isa`), and only such a one calls this.
+    unsafe { gathered_avx2(values, (sel, len), slots) }
+}
+
+/// `picked_avx2`, on AVX-512.
+pub(super) fn picked_avx512(values: &[i64], (sel, len): (&[u32], i32), slots: &mut [i64]) {
+    // SAFETY: an `Isa` of AVX-512 is made only where the processor has it
+    // (`x86::isa`), and only such a one calls this.
+    unsafe { gathered_avx512(values, (sel, len), slots) }
 }

@@ -2,7 +2,7 @@
 //! (RULES.md D570): every kernel its portable body, the one level had.
 
 use turborel::hash::xxhash::{ACC_NB, Scalar, Stripe, Stripes as _, keyed};
-use turborel::kernels::{AlpScale, Given, portable};
+use turborel::kernels::{AlpScale, DistanceTerm, Given, Packed, portable};
 use turborel::value::CompOp;
 
 use crate::Level;
@@ -94,4 +94,29 @@ pub(crate) fn xxh3_accumulate(_isa: Isa, acc: &mut [u64; ACC_NB], stripes: &[Str
 /// `Kernels::xxh3_scramble`.
 pub(crate) fn xxh3_scramble(_isa: Isa, acc: &mut [u64; ACC_NB], key: &Stripe) {
     Scalar.scramble(acc, key);
+}
+
+/// `Kernels::distance_f32`.
+pub(crate) fn distance_f32(_isa: Isa, a: &[f32], b: &[f32], term: DistanceTerm) -> f32 {
+    portable::distance::distance_f32(a, b, term)
+}
+
+/// `Kernels::cosine_f32`.
+pub(crate) fn cosine_f32(_isa: Isa, a: &[f32], b: &[f32]) -> (f32, f32, f32) {
+    portable::distance::cosine_f32(a, b)
+}
+
+/// `Kernels::distance_packed`.
+pub(crate) fn distance_packed(_isa: Isa, a: &[u8], b: &[u8], shape: (Packed, DistanceTerm)) -> f32 {
+    portable::distance::distance_packed(a, b, shape)
+}
+
+/// `Kernels::distance_i8`.
+pub(crate) fn distance_i8(_isa: Isa, a: &[u8], b: &[u8], term: DistanceTerm) -> i64 {
+    portable::distance::distance_i8(a, b, term)
+}
+
+/// `Kernels::crc32c`.
+pub(crate) fn crc32c(_isa: Isa, register: u32, data: &[u8]) -> u32 {
+    portable::crc::crc32c(register, data)
 }

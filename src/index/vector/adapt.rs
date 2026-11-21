@@ -5,9 +5,10 @@
 //! slices; DiskANN's `Quantizer`, `Codes` and `CodeTable`; and HNSW's
 //! and IVF's `Quantizer` and `Codec`.
 //!
-//! A built-in metric is measured on the slices at once, by the vector
-//! module's kernels: an index orders candidates only, and the executor
-//! measures each again by the SQL call (D94), so the `f32` sum of a
+//! A built-in metric is measured on the slices at once, by the kernels it
+//! sums on, the database's (RULES.md D571). An index orders candidates
+//! only, and the executor measures each again by the SQL call (D94), so
+//! the `f32` sum of a
 //! FLOAT16 or INT8 column (R3.10) serves. A user-defined metric is given
 //! the two vectors in the column's own format, as a SQL call gives them;
 //! a failure or a null is taken as farthest, so a broken metric misplaces
@@ -18,7 +19,7 @@ use std::sync::Arc;
 use crate::engine::diskann::{self, CodeTable, Codes};
 use crate::engine::hnsw::{self, Codec};
 use crate::error::{Code, Result, SqlError};
-use crate::vector::kernels::{cosine_terms, fold_f32, gap, product, square};
+use crate::kernels::{DistanceTerm, Kernels};
 use crate::vector::metric::{COSINE, DOT, EUCLIDEAN, EUCLIDEAN_SQUARED, HAMMING, JACCARD, MANHATTAN, VectorMetric};
 use crate::vector::quantizer::{CodeDistance, Codebook, Quantizer};
 use crate::vector::{Element, VectorRef, half_bits, single};
@@ -29,7 +30,7 @@ use super::Column;
 pub(crate) type Distance = Arc<dyn Fn(&[f32], &[f32]) -> f32 + Send + Sync>;
 
 /// A distance of two vectors each given with its squared norm
-/// (`kernels::squared_norm`), which the engines keep with what they hold
+/// (`vector::kernels::squared_norm`), which the engines keep with what they hold
 /// and work out once for a query.
 pub(crate) type NormedDistance = Arc<dyn Fn((&[f32], f32), (&[f32], f32)) -> f32 + Send + Sync>;
 
@@ -46,11 +47,11 @@ const HIGH_BIT: u8 = 0x80;
 /// `f32`s.
 pub(crate) fn distance(metric: &Arc<dyn VectorMetric>, column: Column) -> Distance {
     match metric.name() {
-        EUCLIDEAN_SQUARED => Arc::new(|a: &[f32], b: &[f32]| fold_f32(a, b, square)),
-        EUCLIDEAN => Arc::new(|a: &[f32], b: &[f32]| fold_f32(a, b, square).sqrt()),
-        DOT => Arc::new(|a: &[f32], b: &[f32]| -fold_f32(a, b, product)),
-        MANHATTAN => Arc::new(|a: &[f32], b: &[f32]| fold_f32(a, b, gap)),
-        COSINE => Arc::new(cosine),
+        EUCLIDEAN_SQUARED => on(metric, |k, a, b| k.distance_f32(a, b, DistanceTerm::Square)),
+        EUCLIDEAN => on(metric, |k, a, b| k.distance_f32(a, b, DistanceTerm::Square).sqrt()),
+        DOT => on(metric, |k, a, b| -k.distance_f32(a, b, DistanceTerm::Dot)),
+        MANHATTAN => on(metric, |k, a, b| k.distance_f32(a, b, DistanceTerm::Gap)),
+        COSINE => on(metric, cosine),
         HAMMING => Arc::new(hamming),
         JACCARD => Arc::new(jaccard),
         _ => {
@@ -58,6 +59,12 @@ pub(crate) fn distance(metric: &Arc<dyn VectorMetric>, column: Column) -> Distan
             Arc::new(move |a: &[f32], b: &[f32]| called(&*metric, column, (a, b)))
         }
     }
+}
+
+/// `measure` on the kernels `metric` sums on.
+fn on(metric: &Arc<dyn VectorMetric>, measure: impl Fn(&dyn Kernels, &[f32], &[f32]) -> f32 + Send + Sync + 'static) -> Distance {
+    let metric = Arc::clone(metric);
+    Arc::new(move |a: &[f32], b: &[f32]| measure(metric.kernels(), a, b))
 }
 
 /// `metric` as DiskANN measures with it: `distance`, and of a metric
@@ -101,23 +108,27 @@ impl diskann::Metric for DiskMetric {
 /// them (COSINE), giving bit for bit `distance`'s distance; none for any
 /// other, which the engines measure by `distance`.
 pub(crate) fn normed(metric: &Arc<dyn VectorMetric>) -> Option<NormedDistance> {
-    (metric.name() == COSINE).then(|| -> NormedDistance { Arc::new(cosine_normed) })
+    (metric.name() == COSINE).then(|| -> NormedDistance {
+        let metric = Arc::clone(metric);
+        Arc::new(move |a: (&[f32], f32), b: (&[f32], f32)| cosine_normed(metric.kernels(), a, b))
+    })
 }
 
 /// COSINE of `a` and `b` given `a·a` and `b·b`, each summed as
-/// `cosine_terms` sums it, so the distance is `cosine`'s bit for bit.
-fn cosine_normed((a, aa): (&[f32], f32), (b, bb): (&[f32], f32)) -> f32 {
+/// `Kernels::cosine_f32` sums it, so the distance is `cosine`'s bit for
+/// bit.
+fn cosine_normed(kernels: &dyn Kernels, (a, aa): (&[f32], f32), (b, bb): (&[f32], f32)) -> f32 {
     let scale = (aa * bb).sqrt();
-    if scale > 0.0_f32 { 1.0_f32 - fold_f32(a, b, product) / scale } else { 1.0_f32 }
+    if scale > 0.0_f32 { 1.0_f32 - kernels.distance_f32(a, b, DistanceTerm::Dot) / scale } else { 1.0_f32 }
 }
 
 /// COSINE: `1 - a·b / (|a| |b|)`; of a zero vector, whose SQL distance is
 /// null (R6.7), the middle of its range.
 ///
-/// Its three sums are taken in one pass (`cosine_terms`), each as a
-/// separate fold would sum it, so the distance is bit for bit the same.
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    let (aa, bb, ab) = cosine_terms(a, b);
+/// Its three sums are taken in one pass (`Kernels::cosine_f32`), each as
+/// a separate sum would take it, so the distance is bit for bit the same.
+fn cosine(kernels: &dyn Kernels, a: &[f32], b: &[f32]) -> f32 {
+    let (aa, bb, ab) = kernels.cosine_f32(a, b);
     let scale = (aa * bb).sqrt();
     if scale > 0.0_f32 { 1.0_f32 - ab / scale } else { 1.0_f32 }
 }

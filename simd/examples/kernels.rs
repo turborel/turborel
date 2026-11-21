@@ -1,7 +1,9 @@
 //! How fast each kernel runs at each level this processor has, beside the
 //! portable bodies (RULES.md D570, R-BENCH-2): nanoseconds a row, the
 //! median of repeated runs, of vectors of a few sizes, selections at a
-//! low and a middle selectivity. Run with `cargo run --release -p
+//! low and a middle selectivity; distances of vectors of a few
+//! dimensions, a row an element, and CRC-32C of a few lengths, a row a
+//! byte. Run with `cargo run --release -p
 //! turborel-simd --example kernels`; `ONLY` set to a kernel's name runs
 //! that one alone.
 #![allow(
@@ -26,13 +28,19 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use turborel::hash::xxhash::Seeded;
-use turborel::kernels::{AlpScale, Kernels, Portable};
+use turborel::kernels::{AlpScale, DistanceTerm, Kernels, Packed, Portable};
 use turborel::storage::Mask;
 use turborel::value::CompOp;
 use turborel_simd::{Level, Simd};
 
 /// The sizes measured.
 const SIZES: [usize; 4] = [64, 2048, 16_384, 1 << 20];
+
+/// The dimensions of the vectors measured.
+const DIMS: [usize; 4] = [96, 128, 768, 1536];
+
+/// The lengths of the inputs CRC-32C is measured on.
+const CRC_BYTES: [usize; 4] = [64, 4096, 8192, 1 << 20];
 
 /// Rows run per measurement, about: small sizes repeat.
 const ROWS_A_RUN: usize = 1 << 22;
@@ -184,6 +192,15 @@ fn main() {
             line("sum_i64", "all", size, &sets, |k| {
                 black_box(k.sum_i64(black_box(&ints), None));
             });
+            line("sum_i64", "half picked", size, &sets, |k| {
+                black_box(k.sum_i64(black_box(&ints), Some(&sel)));
+            });
+            for few in [16_usize, 64, 256] {
+                let picks: Vec<u32> = sel.iter().copied().step_by(7).take(few).collect();
+                line("sum_i64", &format!("{} picked", picks.len()), picks.len(), &sets, |k| {
+                    black_box(k.sum_i64(black_box(&ints), Some(&picks)));
+                });
+            }
         }
         if wanted("min_max_i64") {
             line("min_max_i64", "all", size, &sets, |k| {
@@ -192,6 +209,15 @@ fn main() {
             line("min_max_i64", "nulls", size, &sets, |k| {
                 black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), None)));
             });
+            line("min_max_i64", "half picked", size, &sets, |k| {
+                black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), Some(&sel))));
+            });
+            for few in [16_usize, 64, 256] {
+                let picks: Vec<u32> = sel.iter().copied().step_by(7).take(few).collect();
+                line("min_max_i64", &format!("{} picked", picks.len()), picks.len(), &sets, |k| {
+                    black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), Some(&picks))));
+                });
+            }
         }
         if wanted("gather_i64") {
             let mut gathered = Vec::with_capacity(size);
@@ -209,5 +235,56 @@ fn main() {
                 black_box(&words);
             });
         }
+    }
+    vectors_and_crcs(&sets, &mut rng, &wanted);
+}
+
+/// The lines of the distance kernels and of CRC-32C.
+fn vectors_and_crcs(sets: &[(String, Box<dyn Kernels>)], rng: &mut Rng, wanted: &impl Fn(&str) -> bool) {
+    for dims in DIMS {
+        distances(sets, rng, dims, wanted);
+    }
+    if wanted("crc32c") {
+        for bytes in CRC_BYTES {
+            let data: Vec<u8> = (0..bytes).map(|_| rng.next() as u8).collect();
+            line("crc32c", "bytes", bytes, sets, |k| {
+                black_box(k.crc32c(u32::MAX, black_box(&data)));
+            });
+        }
+    }
+}
+
+/// The lines of the distance kernels, of vectors of `dims` elements.
+fn distances(sets: &[(String, Box<dyn Kernels>)], rng: &mut Rng, dims: usize, wanted: &impl Fn(&str) -> bool) {
+    let mut float = || (rng.next() % 2000) as f32 / 1000.0 - 1.0;
+    let (a, b): (Vec<f32>, Vec<f32>) = (0..dims).map(|_| (float(), float())).unzip();
+    let packed = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+    let halves = |v: &[f32]| v.iter().flat_map(|x| turborel::vector::half_bits(f64::from(*x)).to_le_bytes()).collect::<Vec<u8>>();
+    let bytes = |v: &[f32]| v.iter().map(|x| (x * 127.0) as i8 as u8).collect::<Vec<u8>>();
+    let (pa, pb, ha, hb, ia, ib) = (packed(&a), packed(&b), halves(&a), halves(&b), bytes(&a), bytes(&b));
+    for (case, term) in [("dot", DistanceTerm::Dot), ("square", DistanceTerm::Square), ("gap", DistanceTerm::Gap)] {
+        if wanted("distance_f32") {
+            line("distance_f32", case, dims, sets, |k| {
+                black_box(k.distance_f32(black_box(&a), black_box(&b), term));
+            });
+        }
+        if wanted("distance_packed") {
+            line("packed_f32", case, dims, sets, |k| {
+                black_box(k.distance_packed(black_box(&pa), black_box(&pb), (Packed::Single, term)));
+            });
+            line("packed_f16", case, dims, sets, |k| {
+                black_box(k.distance_packed(black_box(&ha), black_box(&hb), (Packed::Half, term)));
+            });
+        }
+        if wanted("distance_i8") {
+            line("distance_i8", case, dims, sets, |k| {
+                black_box(k.distance_i8(black_box(&ia), black_box(&ib), term));
+            });
+        }
+    }
+    if wanted("cosine_f32") {
+        line("cosine_f32", "three sums", dims, sets, |k| {
+            black_box(k.cosine_f32(black_box(&a), black_box(&b)));
+        });
     }
 }

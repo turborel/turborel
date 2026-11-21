@@ -147,6 +147,63 @@ pub trait Kernels: Send + Sync {
     ) -> Option<()> {
         portable::normal::normalize_i64((values, rows), (base, bytes, invert), (width, at), keys)
     }
+
+    /// The sum over each pair of `f32`s of `a` and `b` of `term`, in
+    /// sixteen lanes over whole chunks, each lane summed alone, then the
+    /// lanes in order and the rest one pair at a time (RULES.md D571). A
+    /// dense vector index measures by it, the same at every instruction set.
+    fn distance_f32(&self, a: &[f32], b: &[f32], term: DistanceTerm) -> f32 {
+        portable::distance::distance_f32(a, b, term)
+    }
+    /// `a·a`, `b·b` and `a·b` of `f32`s in one pass, each as
+    /// `distance_f32` sums a dot product: COSINE's three sums.
+    fn cosine_f32(&self, a: &[f32], b: &[f32]) -> (f32, f32, f32) {
+        portable::distance::cosine_f32(a, b)
+    }
+    /// As `distance_f32`, of two vectors of FLOAT32 or FLOAT16 elements
+    /// packed little-endian, each read as an `f32`.
+    fn distance_packed(&self, a: &[u8], b: &[u8], shape: (Packed, DistanceTerm)) -> f32 {
+        portable::distance::distance_packed(a, b, shape)
+    }
+    /// As `distance_f32`, of two vectors of INT8 elements, in `i32` lanes
+    /// added in an `i64`.
+    fn distance_i8(&self, a: &[u8], b: &[u8], term: DistanceTerm) -> i64 {
+        portable::distance::distance_i8(a, b, term)
+    }
+
+    /// CRC-32C's register after `data`, from `register`: CRC-32/ISCSI's,
+    /// reflected, its starting value and final exclusive or left to the
+    /// caller (RULES.md D572).
+    fn crc32c(&self, register: u32, data: &[u8]) -> u32 {
+        portable::crc::crc32c(register, data)
+    }
+}
+
+/// \[DESIGN\] The term a distance kernel sums over each pair of elements
+/// (RULES.md D571).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistanceTerm {
+    /// `p * q`.
+    Dot,
+    /// `(p - q)^2`.
+    Square,
+    /// `|p - q|`.
+    Gap,
+}
+
+impl DistanceTerm {
+    /// Every term.
+    pub const ALL: [DistanceTerm; 3] = [DistanceTerm::Dot, DistanceTerm::Square, DistanceTerm::Gap];
+}
+
+/// \[DESIGN\] A floating element format a distance kernel reads packed
+/// little-endian.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Packed {
+    /// FLOAT32.
+    Single,
+    /// FLOAT16.
+    Half,
 }
 
 /// A database's kernels run XXH3's long inputs' loops: XXH3 of a vector's
