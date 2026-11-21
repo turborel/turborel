@@ -32,6 +32,7 @@
 
 mod common;
 
+mod activity;
 mod agents;
 mod authentication;
 mod certificates;

@@ -2,6 +2,8 @@
 //! what it guesses when statistics do not tell, each a setting's (RULES.md
 //! D36).
 
+pub(super) mod conjuncts;
+
 use crate::error::{Code, Result, fail};
 
 /// \[DESIGN\] The default cost of one level of an index descent, its page

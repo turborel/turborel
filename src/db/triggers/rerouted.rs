@@ -72,6 +72,9 @@ impl Session {
         let (Some(view), Some(instead)) = (cx.st.catalog.view(&name).cloned(), instead_for(cx.st, &name, event)) else {
             return Ok(None);
         };
+        if params.given().is_some() {
+            return Err(crate::db::write::not_given());
+        }
         // [§15.15 GR3c iv 2, §15.9] An UPDATE or DELETE of a view under the
         // one named is decided over the base table's rows (`searched_instead`).
         if instead.view != name && event != Event::Insert {

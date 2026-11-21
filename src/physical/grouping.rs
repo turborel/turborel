@@ -1,6 +1,7 @@
 //! The plan of a grouping: its input in the order its groups can give,
 //! built for the columns the grouping reads.
 
+use super::streamed::{Grouping, streamable};
 use super::{Built, PhysicalPlanner, Plan};
 use crate::logical::{AggCall, LogicalPlan, SortKey, column_name, cond_columns, expr_columns};
 
@@ -26,16 +27,20 @@ impl PhysicalPlanner<'_> {
             .map(|k| groups.get(k.column).filter(|_| ordered).map(|&c| SortKey { column: c, ..*k }))
             .collect::<Option<_>>()
             .unwrap_or_default();
-        let read = reads(groups, aggs);
-        let b = self.build_input(input, &inner, &read);
+        let reads = reads(groups, aggs);
+        let est = self.card(logical).rows;
+        let width = groups.len().saturating_add(aggs.len());
+        let streamable = streamable(collations, seeds.len(), aggs);
+        let g = Grouping { input, keys: groups, reads: Some(&reads), groups: est, width, streamable };
         // Of MIN and MAX alone, its input's joins made semi joins where they
         // can be (`physical/blind.rs`, RULES.md D542).
         let unseeded = if seeds.is_empty() { groups.as_slice() } else { &[0] };
-        let (reduced, aggs) = self.blind_joins(b.plan, (unseeded, aggs.clone(), &read));
-        let (groups, collations, seeds) = (groups.clone(), collations.clone(), seeds.clone());
-        let est = self.card(logical).rows;
-        let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(reduced), est };
-        Built { plan, ordered: !inner.is_empty() && b.ordered }
+        let make = |rows: Plan, streamed: bool| {
+            let (reduced, aggs) = self.blind_joins(rows, (unseeded, aggs.clone(), &reads));
+            let (groups, collations, seeds) = (groups.clone(), collations.clone(), seeds.clone());
+            Plan::Aggregate { groups, collations, aggs, seeds, detail: detail.clone(), input: Box::new(reduced), est, streamed }
+        };
+        self.grouped(g, &inner, make)
     }
 }
 

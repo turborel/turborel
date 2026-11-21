@@ -7,6 +7,10 @@
 //! values as constants makes, which the optimizer and the physical planner
 //! see as they would see that: the indexes chosen are those its values
 //! choose.
+//!
+//! \[DESIGN\] A correlated subquery's plan kept across its runs holds its
+//! outer references as slots too, filled with their values as they are,
+//! not cast, as a bound subquery holds them (RULES.md D675).
 
 use std::sync::Arc;
 
@@ -31,7 +35,7 @@ pub fn warned(value: Value, warning: Option<SqlState>) -> Expr {
 /// CAST's, of a value its slot's type takes none of [§17.9 GR5f]: the
 /// first met; SQLCODE -910 for a slot `values` has none for.
 pub fn filled(plan: LogicalPlan, values: &[Value]) -> Result<LogicalPlan> {
-    let mut filling = Filling { values, failed: None, filled: 0 };
+    let mut filling = Filling { values, failed: None, filled: 0, placing: Placing::Cast };
     let plan = filling.plan(plan);
     filling.failed.map_or(Ok(plan), Err)
 }
@@ -42,7 +46,16 @@ pub fn filled(plan: LogicalPlan, values: &[Value]) -> Result<LogicalPlan> {
 ///
 /// As `filled`.
 pub fn filled_expr(e: Expr, values: &[Value]) -> Result<Expr> {
-    let mut filling = Filling { values, failed: None, filled: 0 };
+    filled_expr_as(e, values, Placing::Cast)
+}
+
+/// `e`, each slot filled as `placing` says.
+///
+/// # Errors
+///
+/// As `filled`.
+pub fn filled_expr_as(e: Expr, values: &[Value], placing: Placing) -> Result<Expr> {
+    let mut filling = Filling { values, failed: None, filled: 0, placing };
     let e = filling.expr(e);
     filling.failed.map_or(Ok(e), Err)
 }
@@ -53,9 +66,28 @@ pub fn filled_expr(e: Expr, values: &[Value]) -> Result<Expr> {
 ///
 /// As `filled`.
 pub fn filled_cond(c: Cond, values: &[Value]) -> Result<Cond> {
-    let mut filling = Filling { values, failed: None, filled: 0 };
+    filled_cond_as(c, values, Placing::Cast)
+}
+
+/// `c`, each slot filled as `placing` says.
+///
+/// # Errors
+///
+/// As `filled`.
+pub fn filled_cond_as(c: Cond, values: &[Value], placing: Placing) -> Result<Cond> {
+    let mut filling = Filling { values, failed: None, filled: 0, placing };
     let c = filling.cond(c);
     filling.failed.map_or(Ok(c), Err)
+}
+
+/// \[DESIGN\] How a slot is filled with its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placing {
+    /// Cast to the slot's type, as a `?`'s value is [§17.9 GR5f, GR5g].
+    Cast,
+    /// As it is, as the value of an outer reference a subquery's kept plan
+    /// holds as a slot is: a bound subquery holds it so (RULES.md D675).
+    AsIs,
 }
 
 /// The values slots are filled with, and the first error met.
@@ -64,6 +96,7 @@ struct Filling<'a> {
     failed: Option<SqlError>,
     /// The slots filled so far.
     filled: usize,
+    placing: Placing,
 }
 
 impl Filling<'_> {
@@ -80,6 +113,9 @@ impl Filling<'_> {
             self.fail(SqlError::new(Code::Api, missing));
             return Expr::Dynamic(slot);
         };
+        if self.placing == Placing::AsIs {
+            return Expr::Const(value);
+        }
         match conformed(value, &slot.data_type).or_at(slot.at) {
             Ok((v, warning)) => warned(v, warning),
             Err(e) => {

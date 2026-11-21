@@ -32,7 +32,7 @@ use crate::exec::Runner;
 use crate::logical::{Cond, Expr, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{Batch, Column, Conjunct, Conjunction, Sel};
-use crate::txn::{TxId, checked};
+use crate::txn::{TxId, counted};
 
 /// A batch, and the rows of it a filter kept, if one did.
 pub(in crate::exec) type Kept = (Batch, Option<Sel>);
@@ -199,7 +199,9 @@ fn ordered_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     if let Plan::SeqScan { table, columns, order, backward, most, .. } = &plan {
         let storage = Arc::clone(db.storage_of(table)?);
         if let Some(batches) = storage.scan_ordered_batches(tx, columns, (order, *backward, *most), None) {
-            return Ok(Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None)))));
+            return Ok(Box::new(
+                counted(batches, db.tx.stop_of(tx), |b| u64::try_from(b.rows).unwrap_or(u64::MAX)).map(|b| b.map(|b| (b, None))),
+            ));
         }
     }
     let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
@@ -473,7 +475,8 @@ fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred,
         pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.extend(more);
     }
     let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), &deferred.late_of(scan.1));
-    let batches: Batches = Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None))));
+    let batches: Batches =
+        Box::new(counted(batches, db.tx.stop_of(tx), |b| u64::try_from(b.rows).unwrap_or(u64::MAX)).map(|b| b.map(|b| (b, None))));
     Ok(runtime::applied(batches, told.to_vec(), scan.1, (db, true)))
 }
 

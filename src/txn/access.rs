@@ -97,7 +97,7 @@ impl State {
     }
 
     /// Before changing a table: policy, lock, participant and savepoint bookkeeping.
-    pub(super) fn prepare_write(&self, tx: &Txn, table: &QualifiedName) -> Result<()> {
+    pub(crate) fn prepare_write(&self, tx: &Txn, table: &QualifiedName) -> Result<()> {
         self.check_damaged(table)?;
         self.lock_of(table)?.check_generation(table, self.generation_of(table), tx)?;
         let caps = self.capabilities(table)?;

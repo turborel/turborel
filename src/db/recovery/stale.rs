@@ -45,6 +45,7 @@ impl Database {
             Change::Stale { .. }
             | Change::LobStale { .. }
             | Change::Insert { .. }
+            | Change::InsertRows { .. }
             | Change::Update { .. }
             | Change::Delete { .. }
             | Change::Commit { .. }
