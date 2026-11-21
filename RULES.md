@@ -401,6 +401,7 @@ verification approach DO-178C expects (§8).
 | D444 | A validated transaction's images are decoded only when a reader's conditions are checked against them |
 | D445 | One transaction's end collects a table at a time; the others pass it over |
 | D446 | A row's write starts from the leaf its read of the newest version found |
+| D447 | A unique constraint added in a transaction fills its index with every version |
 
 ### The project
 
@@ -11580,3 +11581,18 @@ was fixed that week, and lint baselines and over-long files were paid down.
   M. E. Kounavis and F. L. Berry, *A Systematic Approach to Building High
   Performance Software-based CRC Generators* (2005); D. V. Sarwate,
   *Computation of Cyclic Redundancy Checks via Table Look-Up* (1988).
+
+#### D447. A unique constraint added in a transaction fills its index with every version
+
+ALTER TABLE ADD UNIQUE inside a transaction filled the constraint's
+index with only the rows the transaction saw. Collection takes back an
+entry for each older version it removes, so once those versions went, a
+row whose older version had the same key lost its entry, and the
+constraint stopped finding it.
+
+Of an engine keeping versions, the index is now filled as CREATE INDEX
+fills one, with every committed version a reader may still see, and the
+fill noted for D443. The transaction holds the table's exclusive lock,
+so nothing commits meanwhile. Each row the transaction changed itself
+adds an entry of the row as it left it. Rolling back removes the index
+with the rest of the statement.

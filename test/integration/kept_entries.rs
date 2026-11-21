@@ -227,3 +227,28 @@ fn a_crash_keeps_shared_entries() {
     }
     drop((db, old, crashed));
 }
+
+/// Verifies: [DESIGN] RULES.md D447: a UNIQUE constraint added in a
+/// transaction, while an older snapshot keeps row 7's versions, X changed
+/// away and back, and row 8 changed by the transaction itself, keeps an
+/// entry of each row once the old versions are collected.
+#[test]
+fn a_constraint_added_in_a_transaction_keeps_its_entries_after_collection() {
+    let db = setup();
+    let (old, s) = (reader(&db), db.session("APP"));
+    assert_eq!(by_x(&old, 7), vec!["0".to_owned()]);
+    for x in [1007, 7] {
+        s.run(&format!("UPDATE T SET X = {x} WHERE ID = 7")).unwrap();
+        s.commit().unwrap();
+    }
+    s.run("UPDATE T SET Y = 5 WHERE ID = 8").unwrap();
+    s.run("ALTER TABLE T ADD CONSTRAINT T_X_UNIQUE UNIQUE (X)").unwrap();
+    s.commit().unwrap();
+    old.commit().unwrap();
+    settle(&db);
+    let (sql, name) = ("SELECT Y FROM T WHERE X = 8", "APP.T.UNIQUE1");
+    assert_eq!(db.index_entries(name).unwrap(), ROWS, "one entry of each row");
+    assert_eq!(rows(&s, sql).unwrap(), vec!["5".to_owned()]);
+    let err = s.run("INSERT INTO T VALUES (500, 7, 0)").unwrap_err();
+    assert!(err.to_string().contains("23505") || err.to_string().to_lowercase().contains("unique"), "{err}");
+}
