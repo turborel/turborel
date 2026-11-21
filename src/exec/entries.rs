@@ -157,7 +157,10 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         Plan::SeqScan { table, columns, .. } => {
             Ok(Box::new(counted(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx), |_| 1)))
         }
-        Plan::IndexScan { table, index, probe, reverse, decided, .. } => index_entries((&table, &index, probe, reverse), decided, db, tx),
+        Plan::IndexScan { table, index, probe, slots, reverse, decided, .. } => {
+            let probe = super::scan::slotted(probe, &slots, db)?;
+            index_entries((&table, &index, probe, reverse), decided, db, tx)
+        }
         Plan::Filter { cond, input, .. } => {
             let rows = match pushed_conjuncts(&cond) {
                 Some(condition) => told_entries(*input, &condition, db, tx)?,
@@ -181,6 +184,7 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }

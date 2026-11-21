@@ -15,13 +15,17 @@
 //!
 //! The same preparation serves PREPARE in SQL text (`db/dynamic.rs`).
 
+mod given;
 mod outputs;
 mod plans;
+mod shared;
 
 use std::sync::Arc;
 
 use outputs::Outputs;
-pub(super) use plans::{Keeping, KeptPlan, Key, Learned, Learning, Plans, moved, rows_of};
+pub(super) use plans::{Keeping, KeptPlan, Key, Plans, moved, rows_of};
+pub(crate) use plans::{Learned, Learning};
+pub(crate) use shared::Shared;
 
 use super::area::commands::{self, Command};
 use super::collations::Collating;
@@ -328,7 +332,9 @@ impl Session {
         };
         let parameters = input_types(&params, &outputs)?;
         let collation = self.collation.borrow().clone();
-        let plans = Arc::default();
+        // Shared by the statements prepared alike (RULES.md D610).
+        let alike = format!("{kind:?}\u{0}{collation:?}\u{0}{parameters:?}\u{0}{sql}");
+        let plans = Arc::new(Plans::in_place(self.db.prepared().place(alike)));
         Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans, single_row, cursor, implicit, outputs })
     }
 

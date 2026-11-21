@@ -66,6 +66,8 @@ impl Plan {
             super::Preserved::Inner => "",
             super::Preserved::Outer => "LeftOuter",
             super::Preserved::Both(_) => "FullOuter",
+            super::Preserved::Semi => "Semi",
+            super::Preserved::Anti => "Anti",
         };
         match spatial.as_deref() {
             Some(super::Spatial::Adaptive) => writeln!(
@@ -110,10 +112,11 @@ impl Plan {
             Plan::MergeJoin(m) => writeln!(out, "{pad}{}MergeJoin {}", if m.outer { "Left" } else { "" }, m.detail),
             Plan::RangeJoin(r) => writeln!(out, "{pad}{}RangeJoin {}", if r.outer { "Left" } else { "" }, r.detail),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
+            Plan::SemiJoin(s) => writeln!(out, "{pad}{} {}", s.operator(), s.detail),
             Plan::IndexJoin { .. } => self.write_index_join(out, &pad),
-            Plan::Aggregate { detail, .. } => writeln!(out, "{pad}Aggregate {detail}"),
+            Plan::Aggregate { detail, streamed, .. } => writeln!(out, "{pad}Aggregate{} {detail}", streamed_word(*streamed)),
             Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
-            Plan::Distinct { .. } => writeln!(out, "{pad}Distinct"),
+            Plan::Distinct { streamed, .. } => writeln!(out, "{pad}Distinct{}", streamed_word(*streamed)),
             Plan::Append { .. } => writeln!(out, "{pad}Append"),
             Plan::SetOp { op, all, .. } => writeln!(out, "{pad}{op:?}{}", if *all { " all" } else { "" }),
             Plan::Values { detail, .. } => writeln!(out, "{pad}Values {detail}"),
@@ -176,12 +179,22 @@ impl Plan {
                 m.left.write(out, depth);
                 m.right.write(out, depth);
             }
+            Plan::SemiJoin(s) => {
+                s.left.write(out, depth);
+                s.right.write(out, depth);
+            }
             Plan::RangeJoin(r) => {
                 r.left.write(out, depth);
                 r.right.write(out, depth);
             }
         }
     }
+}
+
+/// The word EXPLAIN shows after Aggregate or Distinct if it is streamed,
+/// its input in its keys' order (RULES.md D550).
+fn streamed_word(streamed: bool) -> &'static str {
+    if streamed { " streamed" } else { "" }
 }
 
 /// How EXPLAIN shows a scan in the order of the columns `order`, read

@@ -222,8 +222,10 @@ fn the_clauses_past_the_work_area_and_both_ways_7_17() {
 /// `physical/access.rs`): a table's index is read in order and limited, no
 /// Sort, forward and backward, whether its zones are settled or not. Read
 /// whole it is not: of no FETCH FIRST, of a count of every row, or of all
-/// but a few after OFFSET's, of WITH TIES and through a filter the table
-/// unsettled is scanned and sorted.
+/// but a few after OFFSET's, of WITH TIES and through a filter of few rows
+/// the table unsettled is scanned and sorted. Through a filter of most rows
+/// the index is read in order, the rows read divided by the share the
+/// filter keeps (RULES.md D552).
 ///
 /// Regression test: the plan of FETCH FIRST 3 rows hung on background
 /// maintenance, and sorted the whole table until its zones were settled.
@@ -248,7 +250,9 @@ fn fetch_first_prices_a_path_in_order_by_the_rows_it_reads() {
     assert!(sorted("SELECT I FROM M ORDER BY I FETCH FIRST 3000 ROWS ONLY"), "every row");
     assert!(sorted("SELECT I FROM M ORDER BY I OFFSET 2990 ROWS FETCH FIRST 3 ROWS ONLY"), "OFFSET's rows read");
     assert!(sorted("SELECT I FROM M ORDER BY I FETCH FIRST 3 ROWS WITH TIES"), "WITH TIES");
-    assert!(sorted("SELECT I FROM M WHERE V > 5 ORDER BY I FETCH FIRST 3 ROWS ONLY"), "a filter");
+    assert!(sorted("SELECT I FROM M WHERE V = 5 AND P = 'x' ORDER BY I FETCH FIRST 3 ROWS ONLY"), "a filter of few rows");
+    assert!(!sorted("SELECT I FROM M WHERE V > 5 ORDER BY I FETCH FIRST 3 ROWS ONLY"), "a filter of most rows");
+    assert_eq!(rows(&a, "SELECT I FROM M WHERE V > 5 ORDER BY I FETCH FIRST 3 ROWS ONLY"), expected(&["6", "7", "8"]));
     assert_eq!(rows(&a, "SELECT I, P FROM M ORDER BY I DESC OFFSET 1 ROW FETCH FIRST 2 ROWS ONLY").unwrap().len(), 2);
     assert_eq!(rows(&a, first), expected(&["1", "2", "3"]));
     for _ in 0..4 {

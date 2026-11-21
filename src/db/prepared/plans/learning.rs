@@ -12,7 +12,7 @@ use super::Physical;
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::engine::rows::{DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS};
-use crate::physical::{Plan, same_shape};
+use crate::physical::{Plan, prepared_plan, same_shape};
 use crate::storage::cost_of;
 
 /// \[DESIGN\] The executions in a row whose plans, made with their values
@@ -29,7 +29,7 @@ pub(super) const MOST_LEARNING_RUNS: u8 = 20;
 
 /// What a query learning its plan has learned (`Physical::Learning`).
 #[derive(Debug, Clone, Default)]
-pub(in crate::db) struct Learning {
+pub(crate) struct Learning {
     /// The plan the last execution made with its slots, if of the shape of
     /// the one made with its values.
     last: Option<Box<Plan>>,
@@ -43,7 +43,7 @@ pub(in crate::db) struct Learning {
 impl Learning {
     /// After an execution that planned `custom` with its values and
     /// `slotted` with its slots.
-    pub(in crate::db) fn after(self, custom: &Plan, slotted: Plan) -> Learning {
+    pub(crate) fn after(self, custom: &Plan, slotted: Plan) -> Learning {
         let shaped = same_shape(&slotted, custom);
         let continued = shaped && self.last.as_deref().is_some_and(|last| same_shape(last, &slotted));
         let agreed = if continued { self.agreed.saturating_add(1) } else { u8::from(shaped) };
@@ -51,10 +51,15 @@ impl Learning {
     }
 
     /// What is kept of the query after it: its plan with slots, once
-    /// learned, reading `reads`, of `rows`; nothing, once learning fails.
-    pub(super) fn kept(self, reads: &Arc<[QualifiedName]>, rows: Arc<[usize]>) -> Physical {
+    /// learned, reading `reads`, of `rows`, its scalar calls prepared in
+    /// `st` (RULES.md D610); nothing, once learning fails, or of a plan
+    /// that cannot be kept.
+    pub(super) fn kept(self, reads: &Arc<[QualifiedName]>, (st, rows): (&State, Arc<[usize]>)) -> Physical {
         match self.outcome() {
-            Learned::Kept(plan) => Physical::Fixed(plan, Arc::clone(reads), Some(rows)),
+            Learned::Kept(plan) => match prepared_plan(*plan, crate::optimizer::prepared::budget(st)) {
+                Ok(kept) => Physical::Fixed(Arc::new(kept), Arc::clone(reads), Some(rows)),
+                Err(_) => Physical::Varies,
+            },
             Learned::Learning(learning) => Physical::Learning(learning),
             Learned::Stopped => Physical::Varies,
         }
@@ -62,7 +67,7 @@ impl Learning {
 
     /// What it has learned: its plan with slots, once learned; that it
     /// stopped, once learning fails; else itself, learning on.
-    pub(in crate::db) fn outcome(mut self) -> Learned {
+    pub(crate) fn outcome(mut self) -> Learned {
         if self.agreed >= LEARNED_RUNS
             && let Some(plan) = self.last.take()
         {
@@ -74,7 +79,7 @@ impl Learning {
 
 /// What a plan learning has learned after an execution (`Learning::outcome`).
 #[derive(Debug)]
-pub(in crate::db) enum Learned {
+pub(crate) enum Learned {
     /// Its plan with slots, kept.
     Kept(Box<Plan>),
     /// Not yet learned, so it learns on.
@@ -145,7 +150,8 @@ mod tests {
     /// pairs of keeping: enough in a row or not, with a plan or not.
     #[test]
     fn a_plan_is_kept_once_learned_and_learning_stops_after_enough_runs() {
-        let kept = |l: Learning| format!("{:?}", l.kept(&Arc::from(Vec::new()), Arc::from(Vec::new())));
+        let st = State::with_builtins(Box::new(crate::catalog::MemoryCatalog::default()));
+        let kept = |l: Learning| format!("{:?}", l.kept(&Arc::from(Vec::new()), (&st, Arc::from(Vec::new()))));
         assert!(kept(learned(LEARNED_RUNS, LEARNED_RUNS)).starts_with("Fixed"));
         assert!(kept(learned(LEARNED_RUNS - 1, LEARNED_RUNS)).starts_with("Learning"), "one too few in a row");
         let planless = Learning { last: None, agreed: LEARNED_RUNS, runs: LEARNED_RUNS };

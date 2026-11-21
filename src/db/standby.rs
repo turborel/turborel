@@ -172,6 +172,7 @@ fn scope(record: &Record) -> Scope {
         // A session's `<schema definition>` is made as its transaction
         // commits; outside one, at once (`Database::definition_at`).
         Change::Insert { .. }
+        | Change::InsertRows { .. }
         | Change::Update { .. }
         | Change::Delete { .. }
         | Change::StatementUndone { .. }

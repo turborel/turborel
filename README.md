@@ -37,6 +37,9 @@ behind it, and each can be replaced or added to.
 - Row and columnar storage, chosen per table, the columnar store's filters
   judged in place and its other columns decoded of the rows kept alone.
 - DISTINCT set functions computed by two groupings, read by batches.
+- Groupings and DISTINCT streamed over rows in their keys' order, a group
+  at a time, and FETCH FIRST's row goal passed through filters, joins and
+  groupings to an ordered read.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
 - One table of groups with typed keys and columns of set functions'
@@ -62,6 +65,9 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match, and a row-store COUNT(*) is summed from its settled zones.
+- Column store skipping that survives writes: shadow bits and zones over
+  the delta, optional column imprints, column sketches of compressed
+  texts, and sorted dictionaries judged by codes.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
@@ -76,6 +82,9 @@ behind it, and each can be replaced or added to.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
+- [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
+  for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
+  and joins under MIN and MAX reduced to semi joins.
 - Joins removed on unique and foreign keys, filters and FETCH FIRST moved
   into set operations and below windows, and parts of conditions that can
   raise computed on the table they read, so joins over them are reordered.

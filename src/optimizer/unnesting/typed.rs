@@ -72,7 +72,8 @@ fn plain_column(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog) -> boo
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Sort { input, .. }
-        | LogicalPlan::Limit { input, .. } => plain_column(input, column, catalog),
+        | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::SemiJoin { left: input, .. } => plain_column(input, column, catalog),
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
             Some(of_right) => plain_column(right, of_right, catalog),
             None => plain_column(left, column, catalog),
