@@ -249,17 +249,6 @@ impl Txn {
         self.sync_commit.store(sync, Ordering::Relaxed);
     }
 
-    /// \[DESIGN\] Writes the records it holds as its commit begins, before
-    /// the gate and its commit timestamp, so while it holds them it writes
-    /// only its commit record (RULES.md D470). Not while the database takes
-    /// no change, whose refusal the commit record's write gives. A failure
-    /// is kept for the commit record's write, which then gives it.
-    pub(super) fn write_held_first(&self) {
-        if self.shared.taking_changes().is_ok() {
-            let _kept = self.write_held_now();
-        }
-    }
-
     /// Writes the commit record, at commit timestamp `at`, if the
     /// transaction logged a change: its position, to sync once its locks
     /// are released (`sync_commit`), or none to sync. Unless its session's
@@ -282,7 +271,7 @@ impl Txn {
             |why: String| SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §8.2] {why}, so the transaction was rolled back"));
         self.shared.taking_changes().map_err(|e| refused(e.described()))?;
         let record = Record { tx: self.id, change: Change::Commit { at, wall } }.encode();
-        // [DESIGN] RULES.md D470: with what it still holds, if writing it first failed.
+        // [DESIGN] RULES.md D470: its held records and the commit record, one write.
         let lsn =
             self.write_with(log, record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
         // [DESIGN] RULES.md D194: its position, for the client's read-after.

@@ -163,7 +163,7 @@ that fails leaves the changes since the last counted, so the next is due
 as soon as a transaction ends.
 
 A transaction holds its log records in memory until it commits, then
-writes them in one write, and its commit record after; one that rolls back
+writes them with its commit record in one write; one that rolls back
 before any was written writes nothing. A checkpoint first writes the
 records every open transaction holds, and a transaction holding more
 than 1 MiB writes them as it goes.

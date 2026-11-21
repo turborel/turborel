@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 25] = [
+pub const OLTP: [Mutation; 23] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -102,8 +102,8 @@ pub const OLTP: [Mutation; 25] = [
         package: Package::Core,
         breaks: "Database::maintain leaves a pass due to its spacing instead of making it at once",
         file: "src/engine/rows/stats.rs",
-        original: "        let due = self.gathered.due() && (now || self.gathered.spaced());",
-        replacement: "        let due = self.gathered.due() && self.gathered.spaced();",
+        original: "        let due = gathered.due() && (now || (gathered.wanted() && gathered.spaced()));",
+        replacement: "        let due = gathered.due() && gathered.wanted() && gathered.spaced();",
         integration: &["statistics::statistics_follow_the_table"],
         unit: &[],
     },
@@ -209,26 +209,6 @@ pub const OLTP: [Mutation; 25] = [
         replacement: "        if false {",
         integration: &[],
         unit: &["disk::shadow::tests::runs::a_reader_waits_for_its_granule_in_flight"],
-    },
-    Mutation {
-        name: "oltp-held-written-in-commit-window",
-        package: Package::Core,
-        breaks: "a commit writes what it holds only with its commit record, while it holds its commit timestamp, so every snapshot taken meanwhile waits through that write",
-        file: "src/txn/end.rs",
-        original: "        tx.write_held_first();",
-        replacement: "",
-        integration: &["durability::a_commit_is_its_record_made_durable"],
-        unit: &[],
-    },
-    Mutation {
-        name: "oltp-held-written-while-refused",
-        package: Package::Core,
-        breaks: "a commit writes what it holds though the database takes no change, so a database stopped by a failed sync, or no longer the primary, writes records of a commit it then refuses",
-        file: "src/txn/logging.rs",
-        original: "        if self.shared.taking_changes().is_ok() {",
-        replacement: "        if true {",
-        integration: &["durability::a_failed_sync_stops_the_database_taking_changes"],
-        unit: &[],
     },
     Mutation {
         name: "oltp-statistics-gathered-unread",

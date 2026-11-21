@@ -71,9 +71,6 @@ impl State {
             // durable before it says it committed.
             return tx.replied(Ok(()));
         }
-        // [DESIGN] RULES.md D470: its held records first, so while it holds
-        // its commit timestamp it writes only its commit record.
-        tx.write_held_first();
         // The commit record and the versions stamped are one change to a
         // checkpoint.
         let gate = self.tx.gate.enter();
