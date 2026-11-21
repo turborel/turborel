@@ -26,6 +26,7 @@ mod late;
 mod oltp;
 mod parallel;
 mod rewrites;
+mod skipping;
 mod sorts;
 mod statistics;
 mod tpcc;
@@ -188,7 +189,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     // server, the decode kernels', declared types', batches', late
     // materialization's and the table of groups' last, as `last` holds no
     // more.
-    let after: [&'static [Mutation]; 9] = [
+    let after: [&'static [Mutation]; 10] = [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
@@ -198,6 +199,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &late::LATE,
         &group_table::GROUP_TABLE,
         &xxhash::XXHASH,
+        &skipping::SKIPPING,
     ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }

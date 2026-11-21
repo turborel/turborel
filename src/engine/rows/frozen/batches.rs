@@ -32,19 +32,19 @@ use std::collections::VecDeque;
 use std::ops::Bound;
 use std::sync::Arc;
 
-use super::Directory;
 use super::late::FrozenLate;
 use super::merge::VECTOR_ROWS;
+use super::{Directory, Entry};
 use crate::engine::columns::ahead::GroupAhead;
-use crate::engine::columns::group::{Group, Summary};
+use crate::engine::columns::group::Group;
 use crate::engine::columns::judged::Judgment;
 use crate::engine::columns::prepared::Prepared;
 use crate::engine::columns::scan::read_candidates;
 use crate::engine::rows::gathered::Gathering;
 use crate::engine::rows::mvcc::Reader;
-use crate::engine::rows::scan::TreeOf;
+use crate::engine::rows::scan::Ranged;
 use crate::engine::rows::{RowTable, key, row_id};
-use crate::engine::tree::{Direction, Scan};
+use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::{BATCH_ROWS, Batch, Conjunction, LateSource, Ramp, RowId};
 
@@ -78,8 +78,9 @@ pub(in crate::engine::rows) struct Batched {
     /// The records, unsealed, of the tree's entries in the group's range,
     /// left to give, each of its row.
     entries: Vec<(RowId, Vec<u8>)>,
-    /// The tree's entries, once the groups are read.
-    delta: Option<Scan<TreeOf>>,
+    /// The tree's entries, of the zones the condition may match, once the
+    /// groups are read.
+    delta: Option<Ranged>,
     /// The ranges of row ids of the tree's entries read with the groups'
     /// rows, in order, left out of `delta`.
     read: Vec<(RowId, RowId)>,
@@ -133,7 +134,7 @@ impl Batched {
         (columns, condition): (Vec<usize>, Option<Conjunction>),
         range: (RowId, Option<RowId>),
     ) -> Batched {
-        let delta = Some(RowTable::range(&table, range));
+        let delta = Some(RowTable::ranged(&table, table.zones.ranges_within(condition.as_ref(), range)));
         Batched { delta, ramp: Ramp::whole(), ..Batched::new(table, (reader, directory), columns, condition) }
     }
 
@@ -156,7 +157,7 @@ impl Batched {
             self.next_group = self.next_group.saturating_add(1);
             return Ok(true);
         }
-        let shadowed = self.entries_in(&entry.summary)?;
+        let shadowed = self.entries_in(&entry)?;
         let pages = self.table.group_pages()?;
         let group = self.table.group_of(&entry)?;
         // Its row ids read only to tell the rows the tree shadows.
@@ -195,19 +196,22 @@ impl Batched {
 
     /// The ids of the tree's entries in `group`'s range of row ids, in
     /// order, the records of those the reader sees kept to give, and the
-    /// range noted as read.
-    fn entries_in(&mut self, group: &Summary) -> Result<Vec<RowId>> {
-        let (low, high) = (key(group.first), key(group.last));
+    /// range noted as read. The tree is read only over the ids whose
+    /// shadow bits are set, not at all if none is (`shadow_bits.rs`).
+    fn entries_in(&mut self, group: &Entry) -> Result<Vec<RowId>> {
         let mut shadowed = Vec::new();
-        for entry in self.table.tree.scan(Bound::Included(&low[..]), Bound::Included(&high[..]), Direction::Forward) {
-            let (k, newest) = entry?;
-            let id = row_id(&k)?;
-            shadowed.push(id);
-            if let Some(record) = self.delta_record((id, newest))? {
-                self.entries.push((id, record));
+        for (first, last) in self.table.shadow_ranges(group) {
+            let (low, high) = (key(first), key(last));
+            for entry in self.table.tree.scan(Bound::Included(&low[..]), Bound::Included(&high[..]), Direction::Forward) {
+                let (k, newest) = entry?;
+                let id = row_id(&k)?;
+                shadowed.push(id);
+                if let Some(record) = self.delta_record((id, newest))? {
+                    self.entries.push((id, record));
+                }
             }
         }
-        self.read.push((group.first, group.last));
+        self.read.push((group.summary.first, group.summary.last));
         Ok(shadowed)
     }
 
@@ -245,7 +249,10 @@ impl Batched {
 
     /// The next batch of the tree's rows the reader sees, if any is left.
     fn delta_batch(&mut self) -> Result<Option<Batch>> {
-        let mut delta = self.delta.take().unwrap_or_else(|| RowTable::entries(&self.table));
+        // Only the zones of the tree's rows the condition may match
+        // (`rows/zones.rs`).
+        let mut delta =
+            self.delta.take().unwrap_or_else(|| RowTable::ranged(&self.table, self.table.zones.ranges(self.condition.as_ref())));
         let mut gathering = Gathering::new(self.table.format.types(), &self.columns);
         let mut failed = None;
         let rows = self.ramp.next_rows();

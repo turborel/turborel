@@ -1,7 +1,7 @@
 //! \[DESIGN\] The key under which a table's sample remembers what was
 //! asked of it (`RowSample::remembered`, RULES.md D382): a structural
 //! fingerprint of the question and of the conditions it is asked of,
-//! hashed by MurmurHash3 (`hash/murmur.rs`). Each condition and
+//! hashed by XXH3 (`hash/xxhash.rs`). Each condition and
 //! expression writes its kind, then what it holds: a column its place, a
 //! constant its value as `Value::norm` makes it, so values identical by
 //! the standard are one, an operator its kind, a function, a collation, a
@@ -16,22 +16,22 @@
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem::discriminant;
 
-use crate::hash::murmur::{MurmurBuildHasher, MurmurHasher};
+use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Hasher};
 use crate::logical::{Cond, Expr};
 
 /// The key of the question `question` asked of the conjuncts `conds`,
 /// and of `more`, written after them.
-pub(super) fn key_of(question: &str, conds: &[&Cond], more: &dyn Fn(&mut MurmurHasher)) -> u64 {
+pub(super) fn key_of(question: &str, conds: &[&Cond], more: &dyn Fn(&mut Xxh3Hasher)) -> u64 {
     let mut each: Vec<u64> = conds
         .iter()
         .map(|c| {
-            let mut h = MurmurBuildHasher::default().build_hasher();
+            let mut h = Xxh3BuildHasher::default().build_hasher();
             cond(c, &mut h);
             h.finish()
         })
         .collect();
     each.sort_unstable();
-    let mut h = MurmurBuildHasher::default().build_hasher();
+    let mut h = Xxh3BuildHasher::default().build_hasher();
     h.write(question.as_bytes());
     each.hash(&mut h);
     more(&mut h);
@@ -39,7 +39,7 @@ pub(super) fn key_of(question: &str, conds: &[&Cond], more: &dyn Fn(&mut MurmurH
 }
 
 /// Writes `c` to `h`.
-fn cond(c: &Cond, h: &mut MurmurHasher) {
+fn cond(c: &Cond, h: &mut Xxh3Hasher) {
     discriminant(c).hash(h);
     match c {
         Cond::Const(t) => discriminant(t).hash(h),
@@ -85,7 +85,7 @@ fn cond(c: &Cond, h: &mut MurmurHasher) {
 }
 
 /// Writes `e` to `h`.
-fn expr(e: &Expr, h: &mut MurmurHasher) {
+fn expr(e: &Expr, h: &mut Xxh3Hasher) {
     discriminant(e).hash(h);
     match e {
         Expr::Column(at) => at.hash(h),

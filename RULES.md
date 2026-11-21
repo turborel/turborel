@@ -400,10 +400,13 @@ verification approach DO-178C expects (§8).
 | D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
 | D419 | A row of values that reads nothing is evaluated, not planned |
 | D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
+| D421 | A row's constraint that cannot be deferred is checked as the statement's end gathers its checks |
+| D422 | A kept UPDATE or DELETE learns its object rows' plan with slots as a query does |
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
+| D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 
 ### The project
 
@@ -2790,7 +2793,9 @@ A connection's place is given back before its socket closes, so a client
 reconnecting at the limit isn't refused (`holding.rs`).
 
 An operator ends a connection with `END CONNECTION id`, or cancels its work
-with `CANCEL CONNECTION id` (owner only, SQLCODE -104). The core reaches the
+with `CANCEL CONNECTION id` (owner only, SQLCODE -104). A connection that
+ends with a reply telling why has its row taken out before that reply, since
+its client takes the reply for the close (`native.rs`). The core reaches the
 server through the extension point `ServedConnections`. The other extension
 points are `auth::Authenticator`, `transport::Listener` and
 `server::Protocol`.
@@ -10605,7 +10610,7 @@ sampled too, where the sample is most of the table and a conjunction
 that keeps no row is estimated to keep none. The sample remembers what
 was asked of it, up to 1,024 answers, each kept under a fingerprint of
 the conjuncts' columns, operators and constants in any order, hashed by
-MurmurHash3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
+XXH3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
 statement it plans again: it never changes, so an answer holds until the
 next pass replaces it. An index remembers its distinct keys' estimate
 until a register of its sketch is raised. Of fewer, equalities of two or more
@@ -11276,6 +11281,30 @@ variable at each line, and the copies were a fiftieth of it. A value of
 the type's length is now kept as it is (`types/character.rs`), the value
 the cut and the padding would give.
 
+#### D421. A row's constraint that cannot be deferred is checked as the statement's end gathers its checks
+
+A statement's end gathered a check of each constraint of each row it
+wrote, each naming its table and constraint, held them in a list, and
+then found each constraint again by name to check it. An order entry
+writes a dozen rows of tables with NOT NULL constraints only, and the
+gathering, the list and the finding were most of its statements' ends.
+A row's constraint that cannot be deferred, gathered while no check is
+held before it, is now checked at once, as it would be the first of the
+list (`db/integrity/gather.rs`). What may wait, or follows a check held,
+is held as before, so checks are made in the order they were.
+
+#### D422. A kept UPDATE or DELETE learns its object rows' plan with slots as a query does
+
+A kept UPDATE or DELETE kept the plan of its object rows only if it was
+one probe of a whole unique key (D45); any other was optimized and
+planned again at each run. A table of few rows, as an order entry's
+districts, is read whole and filtered rather than probed, so each of
+its order entries planned its district's update again. Such a write now
+learns its plan as a query does (D414): each of its first runs plans its
+object rows with its values, which it runs, and with its slots, and the
+one with slots is kept once `LEARNED_RUNS` in a row give both one shape,
+to be learned again once a table it reads gains or loses rows as its
+statistics would be gathered again for (`db/prepared/plans.rs`).
 #### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
 
 The row store stamped each changed row with its commit timestamp, a tree
@@ -11461,6 +11490,43 @@ registered set, which each statement chooses as it begins. Kernels are
 a built-in registration only: a call a batch across a process boundary
 would cost more than the kernel saves, so no out-of-process plug-in is
 one.
+#### D510. A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows
+
+A scan of the column store read the tree over each group's range of row
+ids, to find the rows changed or deleted since the group was frozen,
+even when none was. Each group now keeps in memory a bitmap of the rows
+of its range the tree may have an entry for, a bit a row, or a bit a
+block of ids if its range is wider than 65,536
+(`engine/rows/frozen/shadow_bits.rs`). A scan reads the tree only over
+the ranges of set bits, and not at all for a group no write touched;
+past 64 ranges it reads the group's range whole. The bits are a
+superset, so what a reader sees is unchanged.
+
+A writer sets a row's bit after its entry is written, if a group of the
+directory holds the row. A group published sets the bits of every entry
+the tree holds in its range after it is in the directory, but those of
+the rows it froze as they were, which are taken out once no reader
+needs them. So either the writer finds the group, or the group finds
+the writer's entry, and no change is missed. Bits are never cleared: a
+rewrite makes a new group, marked as it is published. A table opened
+marks them from one scan of the tree over its groups' ranges. A write
+of a row past every group, as nearly every insert is, costs one atomic
+load.
+
+The tree of a column store table keeps zone maps of 1,024 row ids, as a
+row store table does (D31), kept in memory alone. They hold the tree's
+rows, not the frozen ones: a freeze leaves the zones of the rows it took
+out stale, so the maintenance thread sums them up again from the tree,
+and a zone of no row takes no memory for its bounds. A scan reads the
+tree's rows last only of the zones its conditions may match, so a
+filter skips the delta as it skips frozen parts. Rows of a group passed
+over by its summary are read this way too, and their zones hold every
+version a reader may read, so none is missed.
+
+Rejected were positional delta trees (Héman, Zukowski, Nes, Sidirourgos
+and Boncz, SIGMOD 2010) and base and tail pages with lineage (Sadoghi
+et al., L-Store, 2018): both replace the tree, which already holds the
+row versions and their undo.
 
 ## 2. Project layout
 
