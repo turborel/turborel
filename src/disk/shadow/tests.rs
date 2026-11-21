@@ -365,6 +365,8 @@ fn a_block_damaged_before_a_commit_block_is_refused() {
 
 // Files made and removed at commits: split for size (RULES.md R-SIZE-4).
 mod made;
+// Whole granules written as runs: split for size (RULES.md R-SIZE-4).
+mod runs;
 
 /// Verifies: [DESIGN] RULES.md D30, shadow files: a granule written in
 /// part after a commit keeps the rest the file holds, read from the file

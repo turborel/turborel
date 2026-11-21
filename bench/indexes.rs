@@ -8,8 +8,10 @@
 //! scan (`json.rs`); the vector methods, built and searched by a sweep of
 //! their knobs (`vector.rs`); and "adjacency" (`index/adjacency.rs`), a
 //! million edges built and followed beside a btree on their source
-//! (`adjacency.rs`). TURBOREL_INDEXES names one of btree, hash, fulltext,
-//! json, vector and adjacency to run it alone. Run with `cargo xtask
+//! (`adjacency.rs`); and "btree" by key pattern, in order, scattered and
+//! at a hot right edge, looked up and read by ranges (`patterns.rs`).
+//! TURBOREL_INDEXES names one of btree, hash, patterns, fulltext, json,
+//! vector and adjacency to run it alone. Run with `cargo xtask
 //! bench`, on the harness
 //! (RULES.md R-BENCH-1).
 
@@ -32,6 +34,8 @@ mod fulltext;
 mod harness;
 #[path = "indexes/json.rs"]
 mod json;
+#[path = "indexes/patterns.rs"]
+mod patterns;
 #[path = "indexes/vector.rs"]
 mod vector;
 
@@ -59,6 +63,9 @@ fn main() {
         for threads in THREADS {
             workloads(&bench, method, threads);
         }
+    }
+    if runs("patterns") {
+        patterns::workloads(&bench);
     }
     if runs("fulltext") {
         fulltext::workloads(&bench);

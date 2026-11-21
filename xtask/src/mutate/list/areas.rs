@@ -4,6 +4,7 @@ mod altered_tables;
 mod analyze;
 mod analyze_more;
 mod batches;
+mod btree;
 mod budget;
 mod bulk;
 // The count's, kept beside the other areas' files.
@@ -52,7 +53,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 19] {
+pub fn core() -> [&'static [Mutation]; 20] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -70,6 +71,7 @@ pub fn core() -> [&'static [Mutation]; 19] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &btree::BTREE,
         &monitoring::MONITORING,
         &bulk::BULK,
         &steady::STEADY_PLANS,

@@ -14,6 +14,15 @@ fn total_cmp(a: &Value, b: &Value) -> Ordering {
     compare(a, b).unwrap_or_else(|| a.is_null().cmp(&b.is_null()).reverse())
 }
 
+impl Key {
+    /// Whether the values of `row` at `columns` are this key, compared as
+    /// two keys are, with no key made of them (RULES.md D501).
+    pub fn is_of(&self, row: &[Value], columns: &[usize]) -> bool {
+        let same = |(&column, value): (&usize, &Value)| row.get(column).is_some_and(|v| total_cmp(v, value) == Ordering::Equal);
+        columns.len() == self.0.len() && columns.iter().zip(&self.0).all(same)
+    }
+}
+
 impl Ord for Key {
     fn cmp(&self, o: &Self) -> Ordering {
         for (a, b) in self.0.iter().zip(&o.0) {

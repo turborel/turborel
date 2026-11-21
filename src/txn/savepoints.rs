@@ -20,11 +20,10 @@
 //! (`db/savepoints.rs`).
 
 use super::undo::Joined;
-use super::{Txn, Undo, UndoFailure};
+use super::{LogPos, Txn, Undo, UndoFailure};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::log::Lsn;
 use crate::memory::Undoing;
 use crate::storage::TableStorage;
 use crate::sync::lock_builtin;
@@ -38,9 +37,8 @@ struct Savepoint {
     /// A savepoint of each engine that undoes its own changes, of those
     /// joined when it was taken and those joined since.
     engines: Vec<(Joined, u64)>,
-    /// The place in the log of the first change after it, once one is
-    /// logged.
-    from: Option<Lsn>,
+    /// The place of the first change after it, once one is made.
+    from: Option<LogPos>,
     /// The statement it was taken in, by its number among those begun.
     statement: u64,
     /// How many savepoints that statement had taken of engines then.
@@ -63,12 +61,20 @@ impl Savepoints {
         self.statement = self.statement.wrapping_add(1);
     }
 
-    /// Notes `lsn`, the place in the log of a change, as the first after
-    /// each savepoint that has none yet: the last ones.
-    pub(super) fn logged_at(&mut self, lsn: Lsn) {
+    /// Notes `at`, the place of a change, as the first after each
+    /// savepoint that has none yet, the last ones: whether one took it.
+    pub(super) fn logged_at(&mut self, at: LogPos) -> bool {
+        let mut took = false;
         for savepoint in self.open.iter_mut().rev().take_while(|s| s.from.is_none()) {
-            savepoint.from = Some(lsn);
+            savepoint.from = Some(at);
+            took = true;
         }
+        took
+    }
+
+    /// The places of the first changes after the savepoints.
+    pub(super) fn places(&mut self) -> impl Iterator<Item = &mut Option<LogPos>> {
+        self.open.iter_mut().map(|s| &mut s.from)
     }
 
     /// The id the next savepoint will be given: those taken from now on
@@ -161,7 +167,7 @@ impl Txn {
 /// bookkeeping: the undo entries after it, its engines' savepoints, where
 /// its first change was logged, and the engines the statement running
 /// took savepoints of after it.
-type Taken = (super::UndoLog, Vec<(Joined, u64)>, Option<Lsn>, Vec<Joined>);
+type Taken = (super::UndoLog, Vec<(Joined, u64)>, Option<LogPos>, Vec<Joined>);
 
 impl State {
     /// [ISO/IEC 9075-2:2023 §17.8 GR3d, GR3e] Cancels every change `tx`

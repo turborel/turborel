@@ -354,6 +354,9 @@ impl State {
     fn capture_checkpoint(&self, clean: bool) -> Result<(Image, u64)> {
         let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
         self.checkpoint_refused()?;
+        // [DESIGN] RULES.md D470: the records open transactions hold go
+        // before L, as the changes the image holds were made before it.
+        self.tx.write_held()?;
         if clean {
             let at = log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode())?;
             self.tx.sync(&*log, at)?;
