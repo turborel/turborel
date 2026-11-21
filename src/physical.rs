@@ -52,7 +52,9 @@ mod order;
 mod ordered;
 mod parallel;
 pub use parallel::Parallel;
+mod plannings;
 pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
+pub use plannings::plannings;
 mod probe;
 mod project;
 mod range;
@@ -519,8 +521,9 @@ impl<'a> PhysicalPlanner<'a> {
         if self.est.is_some() {
             return self.build(logical, &[]).plan;
         }
-        let estimates = Estimates::over(self.db, logical);
-        let plan = PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan;
+        plannings::counted();
+        let estimates = Estimates::over(self.db, logical, self.values);
+        let plan = estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan);
         // [DESIGN] groupings of joins computed as groupjoins (RULES.md D490),
         // looked for only if a grouping was planned over a join.
         if estimates.grouped_join() { groupjoined(self.db, plan) } else { plan }

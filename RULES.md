@@ -438,6 +438,7 @@ verification approach DO-178C expects (§8).
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
 | D601 | A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
+| D613 | A kept statement or body plans nothing again in a steady state: its instant is a slot, its probes take slot arithmetic, and a plan of index probes is learned again only once a probe outgrows it |
 | D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
 | D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
 | D622 | EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read |
@@ -7012,7 +7013,11 @@ cast to or from any type but character and binary, a type modifier,
 fields a query reaches into, or a collation. Its values are those its
 program made, so a program that changes its text form for the same
 value changes no stored value. A snapshot writes its extensions first,
-so the types they bring are known as its tables are read.
+so the types they bring are known as its tables are read. A type is
+kept per database, keyed by the number its plug-in host is given, so
+two databases in one process with the same extension each make their
+values through their own processes, under their own settings, and each
+counts its own calls.
 
 #### D224. A plug-in storage engine keeps the rows, and the coordinator keeps the transactions
 
@@ -8290,7 +8295,9 @@ A client that shuts its side after its requests, without Terminate, has
 each request that came whole answered, in order, then its connection
 closed and its session rolled back, a connection lost [ISO/IEC 9075:1992
 §20.1 GR2a]: requests are taken from the inbox before it is read again,
-so the end of the stream is met only once they are done. Over TLS the
+so the end of the stream is met only once they are done. The last of
+them runs with nothing sent ahead, so a watch that finds the stream
+ended while it runs takes the client for gone and cancels it (D335). Over TLS the
 end is close_notify; a socket closed without it is a failure, never an
 end, whether the runtime or the worker reads it (D230).
 
@@ -9667,9 +9674,13 @@ byte every LOOK_AGAIN, on a thread of the blocking pool, as the copy
 shares the socket's mode and may wait a moment. No byte to read, or an
 error, is the client gone, and what runs is cancelled as an operator's
 ending cancels it (D44). The connection then ends and its session rolls
-back. A byte waiting is a request sent ahead and tells nothing. So a
-client that sent one and closed, or closed TLS with its closing alert,
-is found only once the statement ends. A request answered within
+back. A byte waiting is a request sent ahead and tells nothing, and so
+is the end of the stream while the connection's inbox holds bytes the
+client sent ahead, already read from the socket (`Wire::note_ahead`), so
+a client that shut its side after its requests hears each of them
+answered but the last (D234), however long they run. So a client that
+sent one and closed, or closed TLS with its closing alert, is found only
+once the statement ends. A request answered within
 LOOK_AGAIN is never looked at, so the fast path costs nothing.
 
 #### D336. A prepared CALL's output dynamic parameters are its columns, sent as a row
@@ -12587,6 +12598,52 @@ again once a table it reads moves as its statistics would be gathered
 again for (D422). The places are found by an XXH3 hash of what the
 statements were prepared alike in (D460), compared whole, and a place no
 statement holds is gone.
+
+#### D613. A kept statement or body plans nothing again in a steady state: its instant is a slot, its probes take slot arithmetic, and a plan of index probes is learned again only once a probe outgrows it
+
+A procedure called again and again with new values should make no plan
+after its first calls. `physical::plannings()` counts the physical plans
+the thread makes, wherever they start, and an order entry test
+(`tpcc_plans.rs`) asserts that each of its five procedures makes none
+once warm. Five things kept them planning.
+
+A statement that reads its instant (CURRENT_TIMESTAMP and the others of
+ISO/IEC 9075-2:2023 §6.43) bound it as a constant, so its binding was
+held and bound and planned at each execution. A prepared statement's
+write, and an INSERT of one or of a kept body, now binds the instant as
+the slot past its `?`s (`Params::clock_slot`), which each execution
+fills with its statement's instant, the one value every read of it in the
+statement gives [ISO/IEC 9075:1992 §6.8 GR3]. A CAST of a date or a
+timestamp reads only the session's displacement, which a kept plan
+compares, so it holds no instant.
+
+A comparison of a column with a slot plus or minus a constant probes an
+index as one with a slot does. The probe carries its expression and
+evaluates it as it is placed, cast to the column's type as the plan made
+with values casts it. Arithmetic of slots and constants alone is judged
+by their types for whether it can raise (D373), so a sum that cannot
+overflow its type no longer keeps the comparison out of the index.
+
+The estimates of a learning run read a slot's value, so the plan made
+with slots and the plan made with values are costed alike and agree. A
+hash join whose keys the plan made with values has more of, keys that
+equal two columns to one value give, is of the same shape.
+
+A FOR statement's cursor of no `<cursor name>` can be named by no
+statement [ISO/IEC 9075-4:2006 draft §14.13 SR4]. When its body runs no
+statement and no CALL, no change can be made while it is open, so it is
+opened read only, from the plan its body keeps, not planned again for an
+update at each open. A body that writes opens it as before.
+
+A plan learned is learned again once a table it reads drifts (D610). A
+plan that reads every table only through index probes is not: it is
+learned again only once a probe's estimated rows per probe, its table's
+rows over the distinct values of the columns it fixes, grows past ten
+times its figure as the plan was learned (`prepared/plans/grown.rs`).
+Until then each drift moves the rows it is measured from. A statement or
+leaf whose plans varied tries to learn again once a table it reads
+drifts, so a plan that varied while its tables were small can be kept
+once they settle.
 
 #### D620. EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made
 

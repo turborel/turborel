@@ -15,7 +15,7 @@ const EXTENSION: &str = "BRIDGE_TYPE_TESTS";
 
 /// The type POINTISH, ordered, of `EXTENSION`.
 fn pointish() -> &'static PluginType {
-    type_of(EXTENSION, "POINTISH", true).0
+    type_of(0, EXTENSION, "POINTISH", true).0
 }
 
 /// A value of POINTISH of key `key` and text `text`.
@@ -35,7 +35,7 @@ fn integer() -> DataType {
 #[test]
 fn a_plugin_type_is_one_kind() {
     let t = pointish();
-    let other = type_of(EXTENSION, "POINTISH", false).0;
+    let other = type_of(0, EXTENSION, "POINTISH", false).0;
     assert!(t.is(*t.kind()) && !t.is(*other.kind()), "ORDERED or not, two kinds");
     assert_eq!((t.name(), format!("{t:?}")), ("POINTISH", format!("{EXTENSION}.POINTISH")));
     let dt = t.data_type();
