@@ -7,6 +7,7 @@ mod assertions;
 mod backup;
 mod bigint;
 mod bounded;
+mod call_floor;
 mod check_rebind;
 mod cli;
 mod client;
