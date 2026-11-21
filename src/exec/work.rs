@@ -11,13 +11,13 @@
 //! which look so, yet may read many records.
 
 use crate::value::types::TypeRegistry;
-use std::collections::HashMap;
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::db::State;
-use crate::exec::Seed;
 use crate::error::{Code, Result, SqlError};
+use crate::exec::Seed;
 use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, batch_bytes, work_bytes};
 use crate::spill::{Area, Batches, Grant, Records, SpillArea, SpillRun, SpillTable, SpilledLobs, WORK_FLOOR, WorkAreas};
 use crate::txn::{Stop, TxId, checked};

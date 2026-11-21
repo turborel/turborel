@@ -12519,7 +12519,15 @@ collection, a row, a structured, JSON, XML or extension value), or
 whose plan holds a slot of its own, is planned at each run. The rows
 of each run are gathered, spilled, kept by outer values and decorrelated
 after EXECUTOR.DECORRELATE_AFTER_RUNS as before (D35, D38), and a run
-checks for a cancel as any plan does (D44). EXECUTOR.KEEP_SUBQUERY_PLANS,
+checks for a cancel as any plan does (D44).
+
+A subquery that will be decorrelated after fewer runs than
+`MOST_LEARNING_RUNS` is planned at each run until then, as before. Its
+learning runs plan it twice, and the few runs left between its plan
+kept and its decorrelation do not win that back. Measured on nested
+EXISTS, NOT EXISTS and NOT IN over unindexed tables, learning there
+cost a little on every statement, and waiting for decorrelation costs
+nothing. EXECUTOR.KEEP_SUBQUERY_PLANS,
 ON by default and of a session's scope, turns it off, as to compare the
 two.
 

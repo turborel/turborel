@@ -2,7 +2,8 @@
 //! (RULES.md R-TEST-9, D675): a null or a value of another kind filled
 //! into a kept plan, a timestamp typed as a date, a value cast to its
 //! slot's type, a plan learned and not kept, a null typing a slot, a
-//! unique probe left to learn, and a plan of slots of its own kept.
+//! unique probe left to learn, a plan of slots of its own kept, and a
+//! subquery decorrelated soon left to learn.
 
 use super::super::{Mutation, Package};
 
@@ -16,9 +17,11 @@ const UNIQUE: &str = "exec::subquery::planned::tests::a_unique_probe_is_kept_at_
 const KINDS: &str = "exec::subquery::planned::tests::a_kept_plan_fits_values_of_its_slots_kinds_alone";
 /// The unit test of nulls and kinds no slot takes.
 const WAITS: &str = "exec::subquery::planned::tests::a_null_waits_and_a_kind_no_slot_takes_plans_each_run";
+/// The unit test of a subquery decorrelated soon.
+const SOON: &str = "exec::subquery::planned::tests::a_subquery_decorrelated_soon_is_planned_at_each_run";
 
 /// The mutations of kept subquery plans.
-pub const SUBQUERY_PLANS: [Mutation; 8] = [
+pub const SUBQUERY_PLANS: [Mutation; 9] = [
     Mutation {
         name: "subplan-fits",
         package: Package::Core,
@@ -98,5 +101,15 @@ pub const SUBQUERY_PLANS: [Mutation; 8] = [
         replacement: "        if false {",
         integration: &[],
         unit: &[WAITS],
+    },
+    Mutation {
+        name: "subplan-decorrelated-soon",
+        package: Package::Core,
+        breaks: "a subquery decorrelated after a few runs learns its plan over them, planning each twice",
+        file: PLANNED,
+        original: "        if self.decorrelated_soon(subquery) {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &[SOON],
     },
 ];
