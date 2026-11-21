@@ -6697,7 +6697,14 @@ and a built-in or registered object, share a name of a kind.
 
 An extension's pool starts processes as calls need them, at most
 PLUGINS.PROCESSES at once, each greeted by HELLO before its first call
-(`plugin/pool.rs`, `plugin/process.rs`). A process that ends, breaks
+(`plugin/pool.rs`, `plugin/process.rs`). A start waits for the WELCOME
+while the program runs and its output is open, for PLUGINS.CALL_TIMEOUT_MS
+but never less than the least a start is given (`LEAST_START_MS`), as a
+loaded machine may take long to load and schedule a new program; a
+program silent past it is stopped with SQLSTATE 38T02. A start refused
+because the executable is busy, as it is while a process started by
+another thread at that moment still holds the file open for writing, is
+tried again within the same bound. A process that ends, breaks
 the protocol, runs past PLUGINS.CALL_TIMEOUT_MS or sends more than
 PLUGINS.MAX_MESSAGE_BYTES in a message or PLUGINS.MAX_CALL_BYTES in a
 call is stopped and its call fails, and the next call starts another. A
