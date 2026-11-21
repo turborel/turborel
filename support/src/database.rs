@@ -88,7 +88,7 @@ pub fn count(s: &Session, sql: &str) -> usize {
 /// The Information Schema's tables that show what a database is doing
 /// now, not what it holds, so differ between two runs of it, or two
 /// replicas of it.
-pub const RUNNING: [&str; 3] = ["FILES", "JOBS", "MEMORY_RESERVATIONS"];
+pub const RUNNING: [&str; 4] = ["FILES", "JOBS", "MEMORY_RESERVATIONS", "STATEMENT_STATISTICS"];
 
 /// What `db` holds, as its users see it: each Information Schema table's
 /// rows but those of `RUNNING`, each base table's rows, and each index's

@@ -18,7 +18,7 @@ use crate::engine::rows::{COLUMN_STORE, ROW_STORE, RowStore, TableOptions};
 use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::Xxh3Map;
 use crate::index::vector::hybrid::HybridMethod;
 use crate::index::{
     AdjacencyMethod, BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod,
@@ -33,6 +33,7 @@ use crate::settings::{
 };
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
+use crate::stats::keyed::{KeyIndex, Keyed};
 use crate::storage::{StorageEngine, TableOption, TableStorage};
 use crate::system::SystemTables;
 use crate::txn::{Beginning, LockWait, Policy, Reading, TableLock, Transactions, Txn, UndoSpace};
@@ -101,9 +102,9 @@ pub struct State {
     pub(crate) system: SystemTables,
     /// Each table's storage, by its name, which is shared: a transaction
     /// the table joins holds it, so it copies no name (`State::join`).
-    pub(crate) storage: MurmurMap<Arc<QualifiedName>, Arc<dyn TableStorage>>,
+    pub(crate) storage: Xxh3Map<Arc<QualifiedName>, Arc<dyn TableStorage>>,
     /// Each table's lock, shared by every snapshot that knows the table.
-    pub(crate) locks: MurmurMap<QualifiedName, Arc<TableLock>>,
+    pub(crate) locks: Xxh3Map<QualifiedName, Arc<TableLock>>,
     pub(crate) indexes: HashMap<String, Arc<dyn Index>>,
     /// Indexes being built: kept up to date by every write, but not read
     /// until built (`Database::create_index`).
@@ -394,7 +395,8 @@ impl State {
         self.catalog.partitioning().leaves(table).iter().map(|t| self.storage.get(t).map(|s| s.row_count())).sum()
     }
 
-    /// What `table`'s engine knows of its rows, if anything (`stats.rs`).
+    /// What `table`'s engine knows of its rows, if anything (`stats.rs`),
+    /// with what its indexes count of their keys (`stats/keyed.rs`).
     /// If nothing, and asking made its gathering due, the table is noted
     /// for the database's maintenance (`db/maintenance.rs`), which gathers
     /// them: planning never waits for a pass over a table (RULES.md D35).
@@ -404,7 +406,18 @@ impl State {
         if stats.is_none() && storage.maintenance_due() {
             self.tx.note_maintenance(table);
         }
-        stats
+        Some(Keyed::of(stats?, self.key_indexes(table)))
+    }
+
+    /// `table`'s indexes whose keys are its columns as they are, which
+    /// count their distinct keys (RULES.md D383): none of an expression, a
+    /// collation or being built.
+    fn key_indexes(&self, table: &QualifiedName) -> Vec<KeyIndex> {
+        let usable = |ix: &&crate::catalog::IndexDesc| {
+            !ix.columns.is_empty() && ix.expressions.is_empty() && !ix.is_collated() && !self.building.contains(&ix.name)
+        };
+        let found = |ix: &crate::catalog::IndexDesc| Some(KeyIndex::new(&ix.columns, ix.unique, Arc::clone(self.index_of(&ix.name).ok()?)));
+        self.catalog.indexes(table).into_iter().filter(usable).filter_map(found).collect()
     }
 
     /// The distinct keys `index`, of `table`, knows it holds, if it knows

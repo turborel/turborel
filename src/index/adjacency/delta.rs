@@ -21,7 +21,6 @@
 //! time, so a stripe's readers never see one without the other.
 
 use std::collections::HashSet;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -76,9 +75,8 @@ impl Delta {
     ///
     /// SQLCODE -916 if it is missing, which it never is.
     fn stripe(&self, vertex: &[u8]) -> Result<&RwLock<Stripe>> {
-        let mut hasher = DefaultHasher::new();
-        vertex.hash(&mut hasher);
-        let at = usize::try_from(hasher.finish().checked_rem(STRIPES).unwrap_or_default()).unwrap_or_default();
+        let hash = crate::hash::xxhash::xxh3_64(vertex);
+        let at = usize::try_from(hash.checked_rem(STRIPES).unwrap_or_default()).unwrap_or_default();
         self.stripes.get(at).ok_or_else(corrupt)
     }
 

@@ -66,7 +66,7 @@ use shape::Shape;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_64;
 use crate::sync::lock_builtin;
 
 /// The format of the meta page.
@@ -87,7 +87,7 @@ fn corrupt(why: &str) -> SqlError {
 /// The hash of `key`: the same on every platform and run, as it places
 /// entries in a file.
 fn hash(key: &[u8]) -> u64 {
-    murmur3_x64_128(key, 0).0
+    xxh3_64(key)
 }
 
 /// Adds `n` to `counter`, which wraps: the counts are summed over stripes.

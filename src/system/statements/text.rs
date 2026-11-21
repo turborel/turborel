@@ -3,13 +3,13 @@
 //! that runs differing in their literals alone are tallied as one, with
 //! the dynamic parameters a prepared statement writes. Key words are as
 //! the lexer folds them, a regular identifier upper case, a delimited one
-//! quoted as written. Its key is the normalized text's MurmurHash3
-//! (`hash/murmur.rs`). A text the lexer refuses is its words one space
+//! quoted as written. Its key is the normalized text's XXH3-64
+//! (`hash/xxhash.rs`). A text the lexer refuses is its words one space
 //! apart. It is made once for a prepared statement, and once for each
 //! text a session runs directly while it keeps it (`Activity::text_of`),
 //! never at each run.
 
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_64;
 use crate::lexer::{Tok, delim, lex};
 
 /// What a literal is written as in a normalized text.
@@ -27,7 +27,7 @@ impl Text {
     /// The text `sql`, normalized.
     pub fn of(sql: &str) -> Text {
         let normalized = normalized(sql);
-        let key = murmur3_x64_128(normalized.as_bytes(), 0).0;
+        let key = xxh3_64(normalized.as_bytes());
         Text { raw: sql.to_owned(), normalized, key }
     }
 

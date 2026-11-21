@@ -20,7 +20,7 @@ const MAGIC: &[u8; 8] = b"TBREG130";
 const HEADER: usize = 24;
 /// The digest of the table as generated (`cargo xtask unicode`).
 #[cfg(test)]
-const DIGEST: u64 = 0x0f16_3df8_d6b7_c962;
+const DIGEST: u64 = 0xb0f4_be1c_675a_e645;
 /// A section's record sizes.
 const RUN_BYTES: usize = 8;
 const BLOCK_BYTES: usize = 16;
@@ -214,10 +214,10 @@ impl Table {
     }
 }
 
-/// The table's FNV-1a digest, to hold it to `DIGEST`.
+/// The table's XXH3-64 digest, to hold it to `DIGEST`.
 #[cfg(test)]
 fn digest() -> u64 {
-    crate::value::collation::fnv(BYTES)
+    crate::hash::xxhash::xxh3_64(BYTES)
 }
 
 #[cfg(test)]

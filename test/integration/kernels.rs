@@ -20,7 +20,7 @@ fn portable_kernels_keep_the_contract() {
 }
 
 /// Kernels that count their selections, each the portable one's.
-struct Counting(std::sync::atomic::AtomicUsize);
+struct Counting(Arc<std::sync::atomic::AtomicUsize>);
 
 impl Kernels for Counting {
     fn name(&self) -> &'static str {
@@ -33,14 +33,17 @@ impl Kernels for Counting {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D354 a database given its kernels
-/// (`Database::set_kernels`) judges its batches' filters by them, with the
-/// rows the portable ones keep.
+/// Verifies: [DESIGN] RULES.md D354, D460 a database whose kernels are
+/// registered (`Database::register_kernels`) judges its batches' filters by
+/// them, with the rows the portable ones keep; a second set is refused
+/// (SQLCODE -910); EXECUTOR.KERNELS = 'PORTABLE' runs the portable ones.
 #[test]
-fn a_database_runs_the_kernels_it_is_given() {
+fn a_database_runs_the_kernels_registered() {
     let db = Database::new();
-    let counting = Arc::new(Counting(std::sync::atomic::AtomicUsize::new(0)));
-    db.set_kernels(Arc::clone(&counting) as Arc<dyn Kernels>).unwrap();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    db.register_kernels(Box::new(Counting(Arc::clone(&count)))).unwrap();
+    let again = db.register_kernels(Box::new(Portable)).unwrap_err();
+    assert_eq!(again.sqlcode(), -910, "{again}");
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, N INTEGER)").unwrap();
     let a = db.session("A");
     let values: Vec<String> = (0..3000).map(|k| format!("({k}, {})", k % 17)).collect();
@@ -49,5 +52,10 @@ fn a_database_runs_the_kernels_it_is_given() {
     exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
     let (batched, by_rows) = both_ways(&a, "SELECT COUNT(*), SUM(K) FROM T WHERE N < 5");
     assert_eq!(batched, by_rows);
-    assert!(counting.0.load(std::sync::atomic::Ordering::Relaxed) > 0, "no selection by the kernels given");
+    let counted = count.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(counted > 0, "no selection by the kernels registered");
+    exec(&a, "SET EXECUTOR.KERNELS = 'PORTABLE'").unwrap();
+    let (forced, _) = both_ways(&a, "SELECT COUNT(*), SUM(K) FROM T WHERE N < 5");
+    assert_eq!(forced, batched);
+    assert_eq!(count.load(std::sync::atomic::Ordering::Relaxed), counted, "PORTABLE ran the registered kernels");
 }

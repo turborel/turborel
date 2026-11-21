@@ -83,7 +83,7 @@ their number less 1, has at most the 18 digits of its type.
 
 | What | Limit |
 |---|---|
-| An index's key | of the default 8 KiB page, 2,007 bytes in a B-link tree, 8,116 in a hash index; of a 4 KiB page, 983 in a B-link tree; of a 64 KiB page, 16,343 in a B-link tree, 65,460 in a hash index |
+| An index's key | of the default 8 KiB page, 2,006 bytes in a B-link tree, 8,112 in a hash index; of a 4 KiB page, 982 in a B-link tree; of a 64 KiB page, 16,342 in a B-link tree, 65,456 in a hash index |
 | A word a full-text index keeps | its first 256 characters, and of those its first 255 bytes in UTF-8; a longer word is found by that prefix and checked against the row |
 | A document a full-text index reads | none: it is read a word at a time |
 | A GEOMETRY value | 16 MiB of WKT or WKB, 100,000 components, rings and coordinates in all, and 16 levels of nesting, the value's own included; more is refused with SQLCODE -900 |

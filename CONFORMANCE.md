@@ -5164,13 +5164,13 @@ SQLCODE -900 (RULES.md D18).
 | JSON object members and array elements | 1,048,576 of an object or an array constructed, one more SQLSTATE 2203E or 2203D | §6.34 GR2d ii 3, GR3c ii 2, GR4b ii 2 and §10.11 GR4b ii 4, GR5g leave the number to the implementation (IL051, IL052) and name these exceptions past it. The limit bounds what an aggregate holds. | `json/construct.rs` |
 
 An index entry is an encoded key plus an 8-byte row id, and has its own limit.
-These figures assume the default 4-byte CRC-32C checksum.
+These figures assume the default 8-byte XXH3-64 checksum.
 
 | Page size | B-link tree index | Hash index |
 |---|---|---|
-| 4 KiB | 983 bytes | |
-| 8 KiB (default) | 2,007 bytes | 8,116 bytes |
-| 64 KiB | 16,343 bytes | 65,460 bytes |
+| 4 KiB | 982 bytes | |
+| 8 KiB (default) | 2,006 bytes | 8,112 bytes |
+| 64 KiB | 16,342 bytes | 65,456 bytes |
 
 A B-link node must hold at least four entries to split, and each counts a value
 of 8 bytes. A row's long values go out of line, but an index key is compared in

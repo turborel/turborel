@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::TxId;
-use crate::hash::murmur::{MurmurMap, murmur3_x64_128};
+use crate::hash::xxhash::{Xxh3Map, xxh3_64};
 use crate::sync::lock_builtin;
 use crate::system::Text;
 
@@ -85,7 +85,7 @@ pub struct Activity {
     tallies: Arc<Mutex<Tallies>>,
     /// Whether `tallies` is listed with the database's (`Statements`).
     listed: AtomicBool,
-    texts: Mutex<MurmurMap<u64, Arc<Text>>>,
+    texts: Mutex<Xxh3Map<u64, Arc<Text>>>,
     /// The user its statements last ran as.
     user: tallies::User,
 }
@@ -93,7 +93,7 @@ pub struct Activity {
 impl Activity {
     /// The text of `sql`, run directly: made once while it is kept.
     pub fn text_of(&self, sql: &str) -> Arc<Text> {
-        let (hash, _) = murmur3_x64_128(sql.as_bytes(), 0);
+        let hash = xxh3_64(sql.as_bytes());
         let mut texts = lock_builtin(&self.texts);
         if let Some(text) = texts.get(&hash).filter(|t| t.raw() == sql) {
             return Arc::clone(text);

@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::Activity;
-use crate::hash::murmur::{MurmurMap, murmur3_x64_128};
+use crate::hash::xxhash::{Xxh3Map, xxh3_64};
 use crate::sync::lock_builtin;
 use crate::system::Text;
 
@@ -80,7 +80,7 @@ impl Tally {
 /// of their user.
 #[derive(Debug, Default)]
 pub struct Tallies {
-    by: MurmurMap<(u64, u64), Tally>,
+    by: Xxh3Map<(u64, u64), Tally>,
 }
 
 impl Tallies {
@@ -167,7 +167,7 @@ impl User {
         if let Some((_, hash)) = user.as_ref().filter(|(had, _)| &**had == name) {
             return *hash;
         }
-        let hash = murmur3_x64_128(name.as_bytes(), 0).0;
+        let hash = xxh3_64(name.as_bytes());
         *user = Some((Arc::from(name), hash));
         hash
     }
