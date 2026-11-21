@@ -65,16 +65,16 @@ const JOINED: i32 = 6_000;
 /// Rows of W, whose rows outgrow the least work area sorted.
 const WIDE: i32 = 16_000;
 
-/// Schema K: L of `JOINED` rows of the column store, whose parts gain
-/// their degree, K and F from 0; R of as many, K
+/// Schema K: L of `JOINED` rows, K and F from 0; R of as many, of the
+/// column store, whose parts gain their degree, K
 /// indexed; W of `WIDE` rows, K indexed and scattered, P a text of 600
 /// characters; the statistics gathered, so W's rows are known to be wide.
 fn joined() -> Database {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION K
-           CREATE TABLE L (K INTEGER NOT NULL, F INTEGER NOT NULL) USING columnstore
-           CREATE TABLE R (K INTEGER NOT NULL, V INTEGER)
+           CREATE TABLE L (K INTEGER NOT NULL, F INTEGER NOT NULL)
+           CREATE TABLE R (K INTEGER NOT NULL, V INTEGER) USING columnstore
            CREATE TABLE W (K INTEGER NOT NULL, P VARCHAR(2000))",
     )
     .unwrap();
@@ -110,7 +110,7 @@ fn probed_at(s: &Session, sql: &str, degree: usize) -> (bool, Vec<String>) {
 
 /// Verifies: [DESIGN] (RULES.md D652, D291) a join's method is chosen
 /// seeing the degree its part will run at: as the left's rows grow, the
-/// hash join, whose read of the indexed table and hashing eight threads
+/// hash join, whose read of the indexed column-store table and hashing eight threads
 /// share, is taken at EXECUTOR.DEGREE 8 where one thread still probes the
 /// index; a degree never moves the choice to the index join; and every
 /// plan gives the same rows. MC/DC of the degree: it alone decides the
