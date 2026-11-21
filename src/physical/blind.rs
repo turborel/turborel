@@ -121,6 +121,7 @@ impl PhysicalPlanner<'_> {
             | Plan::MergeJoin(_)
             | Plan::SemiJoin(_)
             | Plan::RangeJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::Aggregate { .. }
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }

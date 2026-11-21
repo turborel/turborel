@@ -62,6 +62,7 @@ fn rereadable(plan: &LogicalPlan) -> bool {
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }

@@ -1,14 +1,16 @@
 //! How fast correlated subqueries run unnested (RULES.md D310 to D319)
 //! and nested, each run for each binding of its outer references, the
-//! rules OPTIMIZER.SEMI_JOINS and OPTIMIZER.UNNEST_SUBQUERIES on and off: over TPC-H-shaped tables
-//! of 2,000 orders and 8,000 line items, the subqueries of queries 2, 4,
-//! 17, 21 and 22, a join beside a correlated subquery, a scalar subquery
-//! of a select list, NOT IN, and a SQL
-//! function whose body is a correlated subquery (RULES.md R-BENCH-1).
+//! rules OPTIMIZER.SEMI_JOINS, OPTIMIZER.MARK_JOINS and
+//! OPTIMIZER.UNNEST_SUBQUERIES on and off: over TPC-H-shaped tables of
+//! 2,000 orders and 8,000 line items, the subqueries of queries 2, 4, 17,
+//! 21 and 22, a join beside a correlated subquery, a scalar subquery of a
+//! select list, NOT IN, a SQL function whose body is a correlated
+//! subquery, and EXISTS under OR, IN and ALL in a select list, which mark
+//! joins take (RULES.md D641, R-BENCH-1).
 
 use super::harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
-use turborel::optimizer::{INLINE_FUNCTIONS, SEMI_JOINS, UNNEST_SUBQUERIES, switch_name};
+use turborel::optimizer::{INLINE_FUNCTIONS, MARK_JOINS, SEMI_JOINS, UNNEST_SUBQUERIES, switch_name};
 use turborel::value::Value;
 
 /// Orders.
@@ -98,12 +100,28 @@ const QUERIES: &[(&str, &str, u64)] = &[
         ORDERS,
     ),
     ("SQL function of a correlated COUNT", "SELECT C_CUSTKEY, ORDERED(C_CUSTKEY) FROM CUSTOMER", CUSTOMERS),
+    (
+        "EXISTS of the order's late lines, under OR",
+        "SELECT COUNT(*) FROM ORDERS WHERE EXISTS (SELECT * FROM LINEITEM WHERE L_ORDERKEY = O_ORDERKEY AND L_COMMITDATE < L_RECEIPTDATE)
+         OR O_ORDERDATE < 30",
+        ORDERS,
+    ),
+    (
+        "IN of the order's commit dates, in a select list",
+        "SELECT O_ORDERKEY, (O_ORDERDATE IN (SELECT L_COMMITDATE FROM LINEITEM WHERE L_ORDERKEY = O_ORDERKEY)) FROM ORDERS",
+        ORDERS,
+    ),
+    (
+        "ALL of the part's costs, in a select list",
+        "SELECT PS_PARTKEY, (PS_SUPPLYCOST <= ALL (SELECT PS_SUPPLYCOST FROM PARTSUPP P2 WHERE P2.PS_PARTKEY = P.PS_PARTKEY)) FROM PARTSUPP P",
+        4 * PARTS,
+    ),
 ];
 
 /// Switches unnesting and inlining `on` or off.
 fn switched(db: &Database, on: bool) {
     let value = Value::Char(if on { "ON" } else { "OFF" }.to_owned());
-    for rule in [SEMI_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS] {
+    for rule in [SEMI_JOINS, MARK_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS] {
         db.set_setting(&switch_name(rule), &value).unwrap();
     }
 }
