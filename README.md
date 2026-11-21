@@ -67,6 +67,8 @@ behind it, and each can be replaced or added to.
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables, on statistics of most common values, a
   sample of rows for correlated conditions and indexes' joint key counts.
+- [Eager aggregation](doc/sql/06-queries.md#how-joins-are-planned-extension),
+  a grouping over joins computed in part below them where the costs say so.
 - [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
   bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a

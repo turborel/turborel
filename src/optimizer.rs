@@ -19,6 +19,7 @@
 
 mod disjunctions;
 mod distinct_aggregates;
+mod eager;
 mod elimination;
 mod extremes;
 mod folding;
@@ -60,6 +61,7 @@ pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 
 pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
+pub use eager::{EAGER_AGGREGATION, EagerAggregation};
 pub use elimination::{ELIMINATE_JOINS, EliminateJoins};
 pub use extremes::{EXTREMES_BY_ORDER, ExtremesByOrder};
 pub use folding::ConstantFolding;
@@ -184,6 +186,8 @@ impl Optimizer {
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
         o.add(Box::new(ExtremesByOrder));
+        // Last: it rewrites nothing, its switch read as the plan is made.
+        o.add(Box::new(EagerAggregation));
         o
     }
 

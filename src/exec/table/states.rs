@@ -36,6 +36,10 @@ const STATE_BYTES: usize = crate::exec::group::STATE_BYTES;
 /// The states of one set function of a table's groups.
 pub(in crate::exec) enum States {
     Typed(Typed),
+    /// \[DESIGN\] (RULES.md D661) The states of a part of a built-in
+    /// (`functions/partial.rs`) in the built-in's column, each group's
+    /// finished as its part.
+    Parted(Typed),
     Boxed(Boxed),
 }
 
@@ -80,14 +84,27 @@ impl States {
     /// it is a built-in set function of a result one holds, else an
     /// accumulator a group.
     pub(super) fn of(agg: &AggCall) -> States {
+        if let Some((parted, result)) = agg.func.0.parted()
+            && let Some(typed) = Typed::of(Some(parted.0), &result)
+        {
+            return States::Parted(typed);
+        }
         let kind = agg.func.0.columnar().map(|c| c.0);
         Typed::of(kind, &agg.result).map_or_else(|| States::Boxed(Boxed::of(agg)), States::Typed)
+    }
+
+    /// Its column of states, if it keeps one.
+    fn typed_mut(&mut self) -> Option<&mut Typed> {
+        match self {
+            States::Typed(typed) | States::Parted(typed) => Some(typed),
+            States::Boxed(_) => None,
+        }
     }
 
     /// Adds a group's, fed nothing.
     pub(super) fn grow(&mut self) {
         match self {
-            States::Typed(typed) => typed.grow(),
+            States::Typed(typed) | States::Parted(typed) => typed.grow(),
             States::Boxed(boxed) => boxed.grow(),
         }
     }
@@ -103,7 +120,7 @@ impl States {
         (batch, take, lane): (&Batch, &Taken, &Option<Fed<'_>>),
         (scratch, runner): (&mut Row, &Runner),
     ) -> Result<()> {
-        if let States::Typed(typed) = self {
+        if let Some(typed) = self.typed_mut() {
             if typed.feed(pending, (batch, take, lane.as_ref()), runner)? {
                 return Ok(());
             }
@@ -111,16 +128,19 @@ impl States {
         }
         match self {
             States::Boxed(boxed) => boxed.feed(pending, (batch, take, lane), (scratch, runner)),
-            States::Typed(_) => Ok(()),
+            States::Typed(_) | States::Parted(_) => Ok(()),
         }
     }
 
     /// Turns a column of states of `agg` into an accumulator a group, each
     /// as it was.
     fn boxed(&mut self, agg: &AggCall) {
-        if let States::Typed(typed) = self {
-            *self = States::Boxed(typed.to_boxed(agg));
-        }
+        let boxed = match &*self {
+            States::Typed(typed) => typed.to_boxed(agg, false),
+            States::Parted(typed) => typed.to_boxed(agg, true),
+            States::Boxed(_) => return,
+        };
+        *self = States::Boxed(boxed);
     }
 
     /// Merges group `i`'s of `other` into group `g`'s: added, if both are
@@ -130,7 +150,7 @@ impl States {
     ///
     /// As `Accumulator::merge`; a sum past 128 bits.
     pub(super) fn merge(&mut self, (g, agg): (usize, &AggCall), (other, i): (&Sent, usize)) -> Result<()> {
-        if let (States::Typed(typed), Sent::Typed(theirs)) = (&mut *self, other)
+        if let (Some(typed), Sent::Typed(theirs)) = (self.typed_mut(), other)
             && typed.merge_from(g, theirs, i)?
         {
             return Ok(());
@@ -149,7 +169,7 @@ impl States {
     ///
     /// As `Accumulator::merge`.
     pub(super) fn merge_written(&mut self, (g, agg): (usize, &AggCall), state: &[u8]) -> Result<()> {
-        if let States::Typed(typed) = self {
+        if let Some(typed) = self.typed_mut() {
             if typed.merge_written(g, state)? {
                 return Ok(());
             }
@@ -157,7 +177,7 @@ impl States {
         }
         match self {
             States::Boxed(boxed) => boxed.merge(g, state),
-            States::Typed(_) => Ok(()),
+            States::Typed(_) | States::Parted(_) => Ok(()),
         }
     }
 
@@ -165,7 +185,7 @@ impl States {
     /// whether it has one.
     pub(super) fn write(&self, g: usize, out: &mut Vec<u8>) -> bool {
         match self {
-            States::Typed(typed) => typed.write(g, out),
+            States::Typed(typed) | States::Parted(typed) => typed.write(g, out),
             States::Boxed(boxed) => boxed.write(g, out),
         }
     }
@@ -178,6 +198,7 @@ impl States {
     pub(super) fn finish(&self, g: usize) -> Result<crate::value::Value> {
         match self {
             States::Typed(typed) => typed.finish(g),
+            States::Parted(typed) => typed.finish_part(g),
             States::Boxed(boxed) => boxed.finish(g),
         }
     }
@@ -185,7 +206,7 @@ impl States {
     /// Keeps the first `len` groups'.
     pub(super) fn truncate(&mut self, len: usize) {
         match self {
-            States::Typed(typed) => typed.truncate(len),
+            States::Typed(typed) | States::Parted(typed) => typed.truncate(len),
             States::Boxed(boxed) => boxed.truncate(len),
         }
     }
@@ -193,7 +214,7 @@ impl States {
     /// The bytes it holds.
     pub(super) fn bytes(&self) -> usize {
         match self {
-            States::Typed(typed) => typed.bytes(),
+            States::Typed(typed) | States::Parted(typed) => typed.bytes(),
             States::Boxed(boxed) => boxed.bytes(),
         }
     }
@@ -206,7 +227,7 @@ impl States {
     /// As `Accumulator::merge`.
     pub(super) fn thawed(sent: Sent, agg: &AggCall, len: usize) -> Result<States> {
         if let Sent::Typed(typed) = sent {
-            return Ok(States::Typed(typed));
+            return Ok(if agg.func.0.parted().is_some() { States::Parted(typed) } else { States::Typed(typed) });
         }
         let (mut states, mut state) = (States::Boxed(Boxed::of(agg)), Vec::new());
         for g in 0..len {
@@ -228,7 +249,7 @@ impl States {
     /// parallel has none such.
     pub(super) fn sent(self) -> Result<Sent> {
         match self {
-            States::Typed(typed) => Ok(Sent::Typed(typed)),
+            States::Typed(typed) | States::Parted(typed) => Ok(Sent::Typed(typed)),
             States::Boxed(boxed) => boxed.written(),
         }
     }

@@ -12,7 +12,11 @@
 //! its group in the first grouping, which the rule sees to by giving it
 //! the rows of one group alone.
 
-use super::{Accumulator, AggregateFunction, AggregateRef};
+mod scaled;
+
+pub(crate) use scaled::{Paired, SCALED, Scaled};
+
+use super::{Accumulator, AggregateFunction, AggregateRef, Columnar};
 use crate::bytes::Reader;
 use crate::error::{Code, Result, fail};
 use crate::storage::{Floats, Ints, Texts};
@@ -75,6 +79,17 @@ impl AggregateFunction for Partial {
     fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
         Box::new(PartAcc(self.func.0.accumulator(self.result.clone())))
     }
+    /// \[DESIGN\] (RULES.md D661) The function's kind, if it is a
+    /// built-in a grouping keeps in columns, and its result type.
+    fn parted(&self) -> Option<(Columnar, DataType)> {
+        self.func.0.columnar().map(|c| (c, self.result.clone()))
+    }
+}
+
+/// \[DESIGN\] (RULES.md D661) `acc`, a built-in's accumulator a grouping
+/// made of a column of states, as the accumulator of its part.
+pub(crate) fn parted(acc: Box<dyn Accumulator>) -> Box<dyn Accumulator> {
+    Box::new(PartAcc(acc))
 }
 
 /// The accumulator of a part: the function's own, given what it is.

@@ -129,6 +129,7 @@ mod durability;
 mod dynamic_cursors;
 mod dynamic_manual;
 mod dynamic_statements;
+mod eager_aggregation;
 mod embedding_models;
 mod embedding_queue;
 mod embedding_sources;

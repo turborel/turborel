@@ -75,6 +75,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | MEMORY.WORK_BYTES | 268435456 | INTEGER FROM 65536 TO 9223372036854775807 | at once | *session* |
 | OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.DISTINCT_AGGREGATES | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.EAGER_AGGREGATION | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.ELIMINATE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.EXTREMES_BY_ORDER | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.FACTOR_DISJUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
@@ -96,6 +97,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.SIMPLIFY_CONDITIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.UNNEST_SUBQUERIES | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.DP_BUDGET | 10000 | INTEGER FROM 1 TO 1000000 | at once | *session* |
+| PLANNER.EAGER_GAIN | 7E-1 | NUMBER FROM 0E0 TO 1E6 | at once | *session* |
 | PLANNER.EQUAL_SELECTIVITY | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.INDEX_DESCENT_COST | 6E0 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | PLANNER.JOIN_ENUMERATION | ADAPTIVE | ONE OF ADAPTIVE, GREEDY | at once | *session* |
@@ -189,6 +191,7 @@ Each in a sentence:
 - **MEMORY.WORK_BYTES**: The most a sort, hash join, grouping, DISTINCT, EXCEPT, INTERSECT or window holds in memory before it spills: half the free MEMORY.BUDGET_BYTES as it starts, reserved, but 4 MiB unreserved where that is less, and itself below 4 MiB. The lesser of it and 4 MiB bounds a cursor's rows read ahead or kept to scroll, the rows a change chooses and keeps for its checks and referential actions, and a session's temporary tables' pages, the rest spilled.
 - **OPTIMIZER.CONSTANT_FOLDING**: Whether the optimizer's rule constant_folding rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.DISTINCT_AGGREGATES**: Whether the optimizer's rule distinct_aggregates rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.EAGER_AGGREGATION**: Whether the optimizer's rule eager_aggregation rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.ELIMINATE_JOINS**: Whether the optimizer's rule eliminate_joins rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.EXTREMES_BY_ORDER**: Whether the optimizer's rule extremes_by_order rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.FACTOR_DISJUNCTIONS**: Whether the optimizer's rule factor_disjunctions rewrites plans: ON; or OFF, as to compare plans made without it.
@@ -210,6 +213,7 @@ Each in a sentence:
 - **OPTIMIZER.SIMPLIFY_CONDITIONS**: Whether the optimizer's rule simplify_conditions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.UNNEST_SUBQUERIES**: Whether the optimizer's rule unnest_subqueries rewrites plans: ON; or OFF, as to compare plans made without it.
 - **PLANNER.DP_BUDGET**: The connected subsets of a query's joined tables up to which ADAPTIVE join ordering finds the cheapest plan exactly. Past it the search is linearized, and parts of a greedy plan are planned again by dynamic programming until this many table entries are made.
+- **PLANNER.EAGER_GAIN**: How much less work a grouping over joins, planned with one of its tables grouped first by the columns the joins and the grouping read, must be estimated to do than the grouping planned as written, to be planned so. 0 never groups first, and a value past 1 groups first even where that is estimated to cost more, as to compare the two.
 - **PLANNER.EQUAL_SELECTIVITY**: The fraction of rows an equality keeps when the statistics do not tell.
 - **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, its page held by the buffer pool, a row read in sequence costing 1.
 - **PLANNER.JOIN_ENUMERATION**: How the joins of a query are ordered. ADAPTIVE orders them by dynamic programming over bushy plans, outer joins among them, linearized or guided greedily as the query grows, and GREEDY orders them left-deep, each next join the cheapest, as to compare the two.

@@ -274,6 +274,22 @@ written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =
 table is also filtered first by the OR of its own conditions, here
 `P.B = 'B1' OR P.B = 'B2'`. OPTIMIZER.FACTOR_DISJUNCTIONS turns this off.
 
+A grouping over inner joins may group one of its tables first, by the
+columns the joins and the grouping read of it, so the joins pair its
+groups rather than its rows, as `SELECT D.NAME, SUM(F.A) FROM F JOIN D
+ON F.G = D.G GROUP BY D.NAME` may sum F by G before the join. COUNT,
+SUM, AVG, MAX and MIN of the table's columns are computed in parts there
+and merged above; the other table's are computed above, a count or a
+sum multiplied by the rows each early group stands for. The results and
+the warnings are the grouping's: a function whose argument could be
+null or raise an error is computed above the join, of the values the
+early groups pass up, and a sum of approximate numbers, whose total
+depends on the order of its values, leaves the grouping as written. The planner
+groups first only where it estimates the plan does at most
+PLANNER.EAGER_GAIN of the work of the plan as written, and
+OPTIMIZER.EAGER_AGGREGATION turns it off. EXPLAIN shows `(eager: ...)`
+on such a grouping.
+
 SET PLANNER.JOIN_ENUMERATION = 'GREEDY' plans a session's joins in a
 left-deep order instead, each next join the cheapest, as to compare the
 two. EXPLAIN shows the order and the algorithm chosen

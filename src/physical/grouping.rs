@@ -30,7 +30,8 @@ impl PhysicalPlanner<'_> {
         let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
         let est = self.card(logical).rows;
         let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(b.plan), est };
-        Built { plan, ordered: !inner.is_empty() && b.ordered }
+        // [DESIGN] or with a relation of its joins grouped first (RULES.md D660).
+        self.eager(logical, want, Built { plan, ordered: !inner.is_empty() && b.ordered })
     }
 }
 

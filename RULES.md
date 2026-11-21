@@ -411,6 +411,10 @@ verification approach DO-178C expects (§8).
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
+| D660 | A grouping over inner joins may group one table first, chosen by the estimated work of both plans |
+| D661 | A part of a built-in set function is kept in the built-in's column of states |
+| D662 | COUNT and exact SUM and AVG of values each of n rows take each as the state of n values |
+| D663 | PLANNER.EAGER_GAIN sets how much less work a plan grouped first must do, OPTIMIZER.EAGER_AGGREGATION turns it off |
 
 ### The project
 
@@ -11712,6 +11716,78 @@ planner choose range joins (D580). OFF plans such joins as nested loops,
 or hash joins on their equalities, as to compare the two. Period
 predicates are still read as comparisons (D581) when it is OFF, so their
 equalities can be a hash join's keys.
+
+#### D660. A grouping over inner joins may group one table first, chosen by the estimated work of both plans
+
+Yan and Larson's eager group-by (VLDB 1995) groups a table X of a join by
+the columns the joins and the grouping read of it, so the joins pair its
+groups rather than its rows. Each table of a chain of inner joins under
+a grouping is tried (`physical/eager.rs`). The chain is made again with
+X grouped first, planned whole by the planner, its joins ordered as any
+chain's, and weighed against the plan as written by the work their
+estimates give (`eager/cost.rs`). A table whose groups are estimated to
+take fewer than two rows each, a grouping by what is nearly a key, is
+not tried. The full grouping search of Eich and Moerkotte, groupings
+inside the join enumeration's table, was rejected for the size of the
+search it adds; lazy aggregation has nothing to pull up, as plans start
+with the grouping on top; and outer joins are left whole, as Yan and
+Larson do not cover them.
+
+Each set function has a role (`eager/classify.rs`). One of X's columns
+alone is pushed when its state merges whatever its order and nothing it
+reads can raise or be null: COUNT, SUM, AVG, MAX and MIN, never of
+approximate numbers or DECFLOAT. The early grouping takes rows the join
+drops, so an argument that could raise or be null would raise an error
+or the warning of a null eliminated that the join's rows never raise
+(D15, [ISO/IEC 9075:1992 §6.5 GR1b]). Its part is merged above (D341).
+Any other function is computed above the join, of the values the early
+groups pass up as grouping columns: MAX, MIN and DISTINCT functions as
+they are, duplicates not changing them; COUNT, and SUM and AVG of exact
+numbers, scaled by each early group's count (D662). Anything else leaves
+the grouping as written. So does a grouping of empty grouping sets, one
+by a collation, a function of both X and another table, a condition of
+X and another that can raise, which would be judged of fewer pairs, or
+a grouping column of X whose equal values may differ, as character
+strings and approximate numbers, since a group's first value stands for
+all its rows above.
+
+#### D661. A part of a built-in set function is kept in the built-in's column of states
+
+An early grouping computes parts of every row of a table, so a part kept
+as an accumulator a group would cost more than the join it saves. A
+part of COUNT, SUM, AVG, MAX or MIN is kept in the built-in's column of
+states (D356), fed and merged as the built-in's, and each group's is
+written as its part when it is finished (`exec/table/states.rs`). Turned
+into accumulators, as a column that cannot hold a value is, each is the
+part's own accumulator, so a group's part, its error and its state are
+the same either way.
+
+#### D662. COUNT and exact SUM and AVG of values each of n rows take each as the state of n values
+
+Above a join of early groups, a row stands for as many rows of the join
+as its early group counts. COUNT, and SUM and AVG of exact numbers,
+computed there take each value with that count (`functions/partial/scaled.rs`)
+as the state of that many values: COUNT's count, SUM's total of the
+value times the count, AVG's both, merged as states are (D53). The value
+and its count come as a row of the two that is null when the value is,
+so the executor takes the null out and warns of it as it would of every
+row it stands for. The product is a 128-bit multiply, past which it
+raises SQLCODE -900, the limit a sum on the way already has (D18); the
+result is judged once, as the function's own. Approximate numbers and
+DECFLOAT are not scaled, as a product rounds where repeated sums would
+round otherwise.
+
+#### D663. PLANNER.EAGER_GAIN sets how much less work a plan grouped first must do, OPTIMIZER.EAGER_AGGREGATION turns it off
+
+A plan grouped first is taken when its estimated work is at most
+PLANNER.EAGER_GAIN times that of the plan as written, 0.7 by default and
+of a session's scope: estimates of groups are less sure than those of
+rows, and eager aggregation loses as much as it wins where they are
+wrong (Fent and Neumann, 2021). 0 never groups first; above 1 a plan
+grouped first is taken even where it is estimated to cost more, which
+tests use to compare the plans. OPTIMIZER.EAGER_AGGREGATION is the
+switch of a rule that rewrites nothing (`optimizer/eager.rs`), as the
+choice is made with the physical plan.
 
 ## 2. Project layout
 

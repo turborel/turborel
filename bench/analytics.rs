@@ -64,6 +64,8 @@ mod counts;
 mod decode;
 #[path = "analytics/distinct.rs"]
 mod distinct;
+#[path = "analytics/eager.rs"]
+mod eager;
 #[path = "analytics/expressions.rs"]
 mod expressions;
 #[path = "analytics/graph.rs"]
@@ -97,7 +99,8 @@ use turborel::db::{Database, Session};
 /// morsels, `distinct` for the DISTINCT set functions', `expressions`
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
-/// `grouping` for groupings on one thread, `joins` for hash joins, `late`
+/// `grouping` for groupings on one thread, `joins` for hash joins, `eager`
+/// for groupings over joins, `late`
 /// for a column store's selective queries, `skipping` for a large column
 /// store table's filters, `sorts` for ORDER BY and top-N, `bands` and
 /// `bands-large` for joins on comparisons by order.
@@ -167,6 +170,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "parallel" => parallel::workloads,
         "late" => late::workloads,
         "joins" => joins::workloads,
+        "eager" => eager::workloads,
         "skipping" => skipping::workloads,
         "sorts" => sorts::workloads,
         "bands" => bands::small,

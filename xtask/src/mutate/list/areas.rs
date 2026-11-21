@@ -14,6 +14,7 @@ mod declared_types;
 #[path = "decode.rs"]
 mod decode;
 mod distinct_aggregates;
+mod eager;
 mod expr;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
 #[path = "estimates.rs"]
@@ -99,7 +100,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 43] {
+fn second() -> [&'static [Mutation]; 44] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -144,6 +145,7 @@ fn second() -> [&'static [Mutation]; 43] {
         &analyze::ANALYZE,
         &statistics::STATISTICS,
         &range_joins::RANGE_JOINS,
+        &eager::EAGER,
     ]
 }
 

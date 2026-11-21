@@ -76,9 +76,7 @@ pub use numeric::{
 mod octet_like;
 pub(crate) mod over_vectors;
 mod partial;
-#[cfg(test)]
-pub(crate) use partial::MERGED;
-pub(crate) use partial::{Merged, PART_TYPE, PARTIAL, Partial, Split, split_of};
+pub(crate) use partial::{MERGED, Merged, PART_TYPE, PARTIAL, Paired, Partial, SCALED, Scaled, Split, parted, split_of};
 mod periods;
 pub use octet_like::OctetLike;
 pub use periods::PeriodTest;
@@ -574,6 +572,14 @@ pub trait AggregateFunction: Send + Sync {
     /// MAX and MIN tell one, as only the core makes a `Columnar`. Default:
     /// none.
     fn columnar(&self) -> Option<Columnar> {
+        None
+    }
+    /// \[DESIGN\] (RULES.md D661) Of a part of a built-in set function a
+    /// grouping keeps in columns (`functions/partial.rs`), the built-in's
+    /// kind and result type, so the parts are kept in its columns and each
+    /// group's written as its part. Only the core's parts tell one, as
+    /// only the core makes a `Columnar`. Default: none.
+    fn parted(&self) -> Option<(Columnar, DataType)> {
         None
     }
 }

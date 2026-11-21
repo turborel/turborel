@@ -24,6 +24,8 @@ mod carried;
 mod collated;
 mod cost;
 mod decided;
+mod eager;
+pub use eager::{DEFAULT_EAGER_GAIN, EAGER_AGGREGATION};
 mod enumerate;
 pub use decided::Decided;
 pub(crate) mod estimate;

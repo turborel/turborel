@@ -10,8 +10,8 @@ use crate::error::{Code, Result, fail};
 use crate::exec::Runner;
 use crate::exec::batch::{Fed, Taken, eliminated};
 use crate::functions::{
-    Accumulator, ColumnarKind, NO_FLOATS, Summed, Wide, avg_acc, avg_finished, count_acc, count_finished, extreme_acc, plus_float, sum_acc,
-    sum_finished,
+    self, Accumulator, ColumnarKind, NO_FLOATS, Summed, Wide, avg_acc, avg_finished, count_acc, count_finished, extreme_acc, plus_float,
+    sum_acc, sum_finished,
 };
 use crate::logical::AggCall;
 use crate::storage::{Batch, Column, Ints, Mask};
@@ -172,9 +172,21 @@ impl Typed {
     }
 
     /// Each group's accumulator, as it would be, of the function and
-    /// result of `agg`.
-    pub(super) fn to_boxed(&self, agg: &AggCall) -> Boxed {
-        Boxed::made((0..self.len()).map(|g| self.boxed_of(g)).collect(), agg)
+    /// result of `agg`; if `parted`, of the part of the built-in it holds
+    /// (RULES.md D661).
+    pub(super) fn to_boxed(&self, agg: &AggCall, parted: bool) -> Boxed {
+        let boxed = |g| if parted { functions::parted(self.boxed_of(g)) } else { self.boxed_of(g) };
+        Boxed::made((0..self.len()).map(boxed).collect(), agg)
+    }
+
+    /// Group `g`'s part (RULES.md D661): its state, as the part of the
+    /// built-in it holds finishes it, unjudged.
+    ///
+    /// # Errors
+    ///
+    /// As the part's `finish`, which fails of no state alone.
+    pub(super) fn finish_part(&self, g: usize) -> Result<Value> {
+        functions::parted(self.boxed_of(g)).finish()
     }
 
     /// How many groups.
