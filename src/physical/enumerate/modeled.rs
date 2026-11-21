@@ -21,6 +21,7 @@ use crate::logical::LogicalPlan;
 use crate::logical::{Cond, Expr, SortKey, split_and};
 use crate::physical::PhysicalPlanner;
 use crate::physical::cardinality::{Card, Member, find};
+use crate::physical::cost::spill::row_bytes;
 use crate::physical::estimate::{self, Known};
 use crate::physical::indexed::{access_cost, reads_table};
 use crate::value::{CompOp, DataType};
@@ -197,7 +198,8 @@ impl PhysicalPlanner<'_> {
         let local = |c: usize| c.checked_sub(leaf.start).filter(|&l| l < leaf.width);
         let keyed: Vec<(usize, usize)> = model.orders.iter().filter_map(|&(col, _, _)| local(col).map(|at| (col, at))).collect();
         let most = self.estimating(|e| e.asked(|| keyed.iter().map(|&(col, at)| (col, e.most_of(&leaf.plan, at))).collect()));
-        let mut rel = Rel { rows, upper, most, reads: Vec::new(), plans: Vec::new(), probes: Vec::new() };
+        let bytes = row_bytes(leaf.width, None);
+        let mut rel = Rel { rows, upper, most, reads: Vec::new(), plans: Vec::new(), probes: Vec::new(), held: 0.0_f64, bytes };
         // A relation that is no table's read, a grouping or a join, costs
         // the same in every order, so it is costed as its rows and planned
         // once, as it is realized. Planning it here too, its own relations
@@ -229,6 +231,7 @@ impl PhysicalPlanner<'_> {
         }
         let any = |_: usize, _: &DataType| true;
         rel.probes = keyed.into_iter().filter_map(|(col, at)| self.probing(&leaf.plan, &[(0, at)], &any).map(|p| (col, p.cost))).collect();
+        self.weigh(&mut rel, (&leaf.plan, leaf.width));
         Some(rel)
     }
 }

@@ -376,6 +376,9 @@ impl State {
             null_fraction: s.number(settings::NULL_FRACTION),
             reorder_gain: s.number(settings::REORDER_GAIN),
             estimate_margin: s.number(settings::ESTIMATE_MARGIN),
+            grant_bytes: crate::physical::cost::spill::grant_bytes(self),
+            degrees: crate::physical::cost::parallel::Degrees::of(self),
+            runtime_filters: crate::exec::batched(self) && crate::physical::cost::runtime::wanted(self),
         }
     }
 }

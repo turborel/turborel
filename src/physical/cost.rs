@@ -3,6 +3,12 @@
 //! D36).
 
 pub(super) mod conjuncts;
+mod hashed;
+pub(crate) mod parallel;
+pub(crate) mod runtime;
+pub(crate) mod spill;
+#[cfg(test)]
+mod tests;
 
 use crate::error::{Code, Result, fail};
 
@@ -40,6 +46,10 @@ pub const DEFAULT_ESTIMATE_MARGIN: f64 = 8.0;
 /// taken as unbounded.
 pub const MOST_ESTIMATE_MARGIN: f64 = 1_000_000.0;
 
+/// \[DESIGN\] The default of the bytes an operator is taken to be granted:
+/// MEMORY.WORK_BYTES's default (RULES.md D298).
+pub(crate) const DEFAULT_GRANT_BYTES: f64 = 268_435_456.0;
+
 /// Weights the planner cannot get from a plugin. Units are those of the
 /// storage engines: 1.0 is reading one whole row sequentially.
 ///
@@ -67,6 +77,15 @@ pub struct CostModel {
     /// How many times its estimate an operand's rows are taken to be at
     /// worst, as a join's method is chosen; 1 to trust the estimate.
     pub estimate_margin: f64,
+    /// \[DESIGN\] (RULES.md D651) The bytes an operator would be granted
+    /// as the statement is planned (`cost/spill.rs`).
+    pub grant_bytes: f64,
+    /// \[DESIGN\] (RULES.md D652) The degrees the statement's parts would
+    /// run at (`cost/parallel.rs`).
+    pub degrees: parallel::Degrees,
+    /// \[DESIGN\] (RULES.md D653) Whether hash joins over batches make
+    /// runtime filters (`cost/runtime.rs`).
+    pub runtime_filters: bool,
 }
 
 impl Default for CostModel {
@@ -79,6 +98,9 @@ impl Default for CostModel {
             null_fraction: DEFAULT_NULL,
             reorder_gain: DEFAULT_REORDER_GAIN,
             estimate_margin: DEFAULT_ESTIMATE_MARGIN,
+            grant_bytes: DEFAULT_GRANT_BYTES,
+            degrees: parallel::Degrees::default(),
+            runtime_filters: true,
         }
     }
 }
@@ -91,7 +113,9 @@ impl CostModel {
     ///
     /// SQLCODE -910 naming the first weight or fraction out of its range.
     pub fn check(&self) -> Result<()> {
-        for (name, weight) in [("index_descent", self.index_descent), ("sort_compare", self.sort_compare)] {
+        for (name, weight) in
+            [("index_descent", self.index_descent), ("sort_compare", self.sort_compare), ("grant_bytes", self.grant_bytes)]
+        {
             if !weight.is_finite() || weight < 0.0_f64 {
                 return fail(Code::Api, format!("[DESIGN] the cost weight {name} is {weight}; weights are finite and not negative"));
             }
@@ -114,6 +138,12 @@ impl CostModel {
             );
         }
         Ok(())
+    }
+
+    /// The cost of sorting `rows` rows of `bytes` bytes each: comparing
+    /// them, and writing and merging runs past the grant (RULES.md D651).
+    pub fn sort_held(&self, rows: f64, bytes: f64) -> f64 {
+        self.sort(rows) + spill::sort_spilled((rows, bytes), self.grant_bytes)
     }
 
     /// The cost of sorting `rows` rows.

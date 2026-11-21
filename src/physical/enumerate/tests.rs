@@ -41,6 +41,8 @@ fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
             reads: vec![(Order::None, r)],
             probes: Vec::new(),
             plans: Vec::new(),
+            held: 0.0_f64,
+            bytes: 0.0_f64,
         })
         .collect();
     let model = Model {

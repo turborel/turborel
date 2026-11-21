@@ -22,7 +22,7 @@ mod built;
 mod cardinality;
 mod carried;
 mod collated;
-mod cost;
+pub(crate) mod cost;
 mod decided;
 mod enumerate;
 pub use decided::Decided;
@@ -57,6 +57,7 @@ mod shown;
 pub(crate) mod spatial;
 
 pub use cardinality::Injected;
+pub use cost::parallel::Degrees;
 pub use cost::{
     CostModel, DEFAULT_EQUAL, DEFAULT_ESTIMATE_MARGIN, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN,
     DEFAULT_SORT_COMPARE, MOST_ESTIMATE_MARGIN,

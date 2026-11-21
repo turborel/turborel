@@ -241,7 +241,7 @@ impl<'m> Space<'m> {
     pub(super) fn chosen(&self, s: Set, want: Order) -> Option<Cand> {
         let entry = self.table.get(&s)?;
         let best = entry.best()?;
-        let sorted = best.cost + self.model.sort(entry.rows);
+        let sorted = best.cost + self.model.sorted(s, entry.rows);
         let answering =
             entry.cands.iter().filter(|c| want != Order::None && self.model.answers(c.order)).min_by(|a, b| a.cost.total_cmp(&b.cost));
         Some(answering.filter(|o| o.cost <= sorted).copied().unwrap_or(best))

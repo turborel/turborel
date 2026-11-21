@@ -11821,6 +11821,57 @@ each of those past a small work area, and a part on several threads.
 It then prints each weight in rows of the row store's scan, the unit of
 the planner's costs.
 
+#### D651. Costs count what an operator spills past its grant, at its rows' width
+
+A hash join's build, a hashed grouping and a sort were priced as if they
+held every row in memory, though past their grant they write rows to the
+spill area and read them back. The planner now estimates the grant
+`spill/grant.rs` would give the operator as the statement is planned
+(D298). That is half of what the grants' half of the budget has free, at
+most MEMORY.WORK_BYTES and at least the floor every operator holds. Rows
+are held at their width, the bytes the table's statistics give a row
+for the columns read, else an integer's a column, and an entry's bytes
+more (`physical/cost/spill.rs`). An operator whose rows outgrow the
+grant pays for each row written and read once more, at a weight a row
+and a weight a byte. A hash join past its grant partitions both of its
+operands, as a Grace hash join does, so it pays for the rows of both.
+A sort pays for its own rows. So a merge join of inputs already in
+order, an index read in the order asked and a grouping streamed in its
+keys' order win where holding the rows would spill, and a wide build
+fills its grant sooner than a narrow one. The weights come from
+`bench/analytics/costs.rs` (D650).
+
+#### D652. A join's method is chosen seeing the degree its part will run at
+
+The parallel pass (D291) comes after the plan is chosen, so an index
+nested-loop join running on one thread could be taken over a hash join
+that eight threads would run. Costs now anticipate the pass by its own
+rule. A part's degree is as many threads as morsels its tables hold, up
+to EXECUTOR.DEGREE or the workers, and one below
+EXECUTOR.PARALLEL_MIN_ROWS (`physical/cost/parallel.rs`, which the pass
+calls too). A hash join's read of a built table and the hashing of
+either operand's rows are divided by the degree of their parts. An
+index join's probes are not, since they run on the statement's thread.
+A part of more than one thread costs its start, as the calibration
+bench measures it, so a part only just past the least rows gains less
+than its degree. The pass still marks the parts; the costs only foresee
+it.
+
+#### D653. A hash join's cost counts the probing rows its runtime filter leaves
+
+A hash join over batches makes a runtime filter of its built keys
+(D369), and the filter drops each probing row whose key no built row
+holds before the join hashes it. Of each class of the join's
+equalities, the share of probing rows it keeps is the built operand's
+distinct values, at most its rows, over the probing operand's
+(`physical/cost/runtime.rs`, after Zhu et al., PVLDB 2017). The join's
+classes give the least share. Each probing row still pays the filter's
+test. A filter keeping more than nine rows in ten costs nothing, as the
+executor stops judging by one. Only inner joins count it, since the
+preserved side of an outer join keeps every row. With EXECUTOR.BATCHES
+or EXECUTOR.RUNTIME_FILTERS OFF, none is counted. So join orders put a
+selective build where its filter reaches the scan it drops rows of.
+
 ## 2. Project layout
 
 ```

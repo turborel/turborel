@@ -38,6 +38,12 @@ impl Classes {
         Classes { members, pairs: Vec::new() }
     }
 
+    /// Of each class, its members: a relation and its column's distinct
+    /// values (RULES.md D653).
+    pub(in crate::physical) fn members(&self) -> &[Vec<(usize, f64)>] {
+        &self.members
+    }
+
     /// Them, each pair of relations of `pairs` corrected by its factor.
     pub(in crate::physical) fn with_pairs(self, pairs: Vec<(usize, usize, f64)>) -> Classes {
         Classes { pairs, ..self }

@@ -31,13 +31,13 @@ use super::conflicts::Kind;
 use super::model::Order;
 use super::ranged::range_join_cost;
 use super::space::{Applied, Cand, Entry, Method, Space, Tree};
-use crate::physical::cost::HASH_ROW;
 use crate::physical::robust::{Linear, choose, pessimistic};
 
 /// A join's operands as it is costed: each side's entry.
 struct Sides<'e> {
     left: &'e Entry,
     right: &'e Entry,
+    sets: (Set, Set),
 }
 
 impl Space<'_> {
@@ -47,7 +47,7 @@ impl Space<'_> {
     /// cheapest of each method for each plan of the left.
     pub(super) fn offers(&self, applied: &Applied, (l, r): (Set, Set), (rows, keys): (f64, &[(usize, usize)])) -> Vec<(Cand, Tree)> {
         let (Some(left), Some(right)) = (self.table.get(&l), self.table.get(&r)) else { return Vec::new() };
-        let sides = Sides { left, right };
+        let sides = Sides { left, right, sets: (l, r) };
         let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
         let ranges = matches!(kind, Kind::Inner | Kind::Left) && self.model.ranged.of(applied);
         let mut out = Vec::new();
@@ -65,7 +65,7 @@ impl Space<'_> {
                 out.push((Cand { cost, order, tree: 0 }, tree(Method::Nested, (cand.tree, build.tree))));
                 continue;
             }
-            let hash = Linear { fixed: build.cost + HASH_ROW * right.rows, per_row: HASH_ROW };
+            let hash = self.hash_linear((left, right), (l, r), (kind, build.cost));
             let probed = self.probe_cost(kind, keys, r).map(|probe| Linear { fixed: 0.0_f64, per_row: probe });
             let how = probed.map_or(Method::Hash, |index| self.robust(&sides, hash, index));
             let cost = match how {
@@ -133,7 +133,10 @@ impl Space<'_> {
         let mut out = Vec::new();
         for &(a, b) in keys {
             let (Some((ka, true)), Some((kb, true))) = (self.model.order_of(a), self.model.order_of(b)) else { continue };
-            let (Some(left), Some(right)) = (self.ordered(sides.left, ka), self.ordered(sides.right, kb)) else { continue };
+            let (Some(left), Some(right)) = (self.ordered((sides.left, sides.sets.0), ka), self.ordered((sides.right, sides.sets.1), kb))
+            else {
+                continue;
+            };
             if !(left.2 || right.2) {
                 continue;
             }
@@ -147,9 +150,9 @@ impl Space<'_> {
     /// The cheapest way to have the rows of `entry` in the order of class
     /// `class`: a plan of that order, or its best sorted; its cost, tree,
     /// and whether it is in the order unsorted.
-    fn ordered(&self, entry: &Entry, class: usize) -> Option<(f64, usize, bool)> {
+    fn ordered(&self, (entry, s): (&Entry, Set), class: usize) -> Option<(f64, usize, bool)> {
         let best = entry.best()?;
-        let sorted = (best.cost + self.model.sort(entry.rows), best.tree, false);
+        let sorted = (best.cost + self.model.sorted(s, entry.rows), best.tree, false);
         Some(entry.of_order(Order::Class(class)).filter(|c| c.cost < sorted.0).map_or(sorted, |c| (c.cost, c.tree, true)))
     }
 }

@@ -24,7 +24,6 @@
 
 use std::sync::Arc;
 
-use super::cost::HASH_ROW;
 use super::estimate::Known;
 use super::join::Flip;
 use super::robust::{Linear, choose, pessimistic};
@@ -184,7 +183,7 @@ impl PhysicalPlanner<'_> {
         let of_kind = |l: usize, t: &DataType| self.column_type(left, l).is_some_and(|lt| alike(&lt, t));
         let probing = self.probing(right, keys, &of_kind)?;
         let card = self.card(left);
-        let hash = Linear { fixed: access_cost(read)? + HASH_ROW * self.rows_of(right), per_row: HASH_ROW };
+        let hash = self.hash_linear((left, right), (read, access_cost(read)?));
         let index = Linear { fixed: 0.0_f64, per_row: probing.cost };
         let worst = pessimistic(card.rows, card.upper, self.weights().estimate_margin);
         let probes = choose(&[(false, hash), (true, index)], (card.rows, worst)).unwrap_or(false);

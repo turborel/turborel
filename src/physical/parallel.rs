@@ -90,10 +90,11 @@ impl<'a> Asked<'a> {
     /// The degree of the part `plan` reading `rows` rows: 1 to run it
     /// alone, as one a serial scan by batch serves better.
     fn degree(self, plan: &Plan, rows: usize) -> usize {
-        if rows < self.least || (crate::exec::batched(self.db) && by_batch(self.db, plan)) {
+        if crate::exec::batched(self.db) && by_batch(self.db, plan) {
             return 1;
         }
-        self.most.min(rows.div_ceil(self.morsel))
+        // The rule the costs anticipate (`cost/parallel.rs`, RULES.md D652).
+        super::Degrees { most: self.most, morsel: self.morsel, least: self.least }.degree(rows)
     }
 
     /// \[DESIGN\] (RULES.md D355) Whether the part `plan` reading `rows`

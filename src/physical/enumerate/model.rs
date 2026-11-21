@@ -50,6 +50,11 @@ pub(super) struct Rel {
     /// Of its columns, by the chain's places, those an index of its table
     /// answers an equality of, and the cost of each probe.
     pub(super) probes: Vec<(usize, f64)>,
+    /// \[DESIGN\] (RULES.md D652) The rows its read gives a parallel part,
+    /// its stream's, 0 if it is none (`enumerate/weighed.rs`).
+    pub(super) held: f64,
+    /// \[DESIGN\] (RULES.md D651) The bytes a row of it holds.
+    pub(super) bytes: f64,
 }
 
 /// A conjunct of an inner join: the relations it reads, the operator it is
@@ -193,11 +198,6 @@ impl Model {
             Order::Class(k) => self.want_class == Some(k),
             Order::None => false,
         }
-    }
-
-    /// The cost of sorting `rows` rows.
-    pub(super) fn sort(&self, rows: f64) -> f64 {
-        self.cost.sort(rows)
     }
 
     /// The fraction of the product of the relations of `s` the
