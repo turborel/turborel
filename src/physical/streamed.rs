@@ -17,11 +17,12 @@
 //! of a set function DISTINCT or of an inverse distribution is hashed.
 
 use super::cost::HASH_ROW;
+use super::cost::spill::grouped_spilled;
 use super::indexed::access_cost;
 use super::{Built, PhysicalPlanner, Plan};
 use crate::catalog::QualifiedName;
 use crate::logical::{AggCall, Expr, LogicalPlan, SortKey, render_keys};
-use crate::settings::{MEMORY_WORK_BYTES, OFF, STREAMED_GROUPING, work_bytes};
+use crate::settings::{OFF, STREAMED_GROUPING};
 use crate::storage::cost_of;
 use crate::value::collation::CollationRef;
 
@@ -33,10 +34,6 @@ const GROUP_MADE: f64 = 1.0;
 /// columns, a key's or a set function's: a value and its share of the
 /// table's slots, as `exec/group.rs` counts a state (`STATE_BYTES`).
 const COLUMN_BYTES: f64 = 64.0;
-/// \[DESIGN\] The cost of a row a hashed grouping past its work area
-/// writes and reads back, in rows of a scan: written to the spill area
-/// and read again, twice a row's read.
-const SPILLED_ROW: f64 = 2.0;
 
 /// A grouping's or DISTINCT's keys and size, as its choice is made.
 #[derive(Clone, Copy)]
@@ -130,12 +127,11 @@ impl PhysicalPlanner<'_> {
     }
 
     /// What hashing `n` rows into the groups of `g` costs: each row hashed,
-    /// each group made, and, past the work area, each row written and read
-    /// back.
+    /// each group made, and, past its grant, each row partitioned, written
+    /// and read back (`cost/spill.rs`, RULES.md D651).
     fn hashed_cost(&self, n: f64, g: Grouping<'_>) -> f64 {
-        let area = cost_of(work_bytes(self.db.settings.get(MEMORY_WORK_BYTES)));
-        let held = g.groups * cost_of(g.width.max(1)) * COLUMN_BYTES;
-        let spilled = if held > area { n * SPILLED_ROW } else { 0.0_f64 };
+        let bytes = cost_of(g.width.max(1)) * COLUMN_BYTES;
+        let spilled = grouped_spilled((g.groups, bytes), n, self.weights().grant_bytes);
         n * HASH_ROW + g.groups * GROUP_MADE + spilled
     }
 
