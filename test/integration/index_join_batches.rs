@@ -8,8 +8,8 @@ use turborel::params::Params;
 use crate::common::{exec, rows};
 
 /// Schema B: table T of 5000 rows keyed by its PRIMARY KEY K, and table O
-/// of 600 rows whose keys K repeat, are null in some rows and missing
-/// from T in others, in no order.
+/// of 600 rows whose keys K each repeat in the next row, are null in some
+/// rows and missing from T in others, in no order.
 fn batches() -> Database {
     let db = Database::new();
     db.schema(
@@ -22,7 +22,7 @@ fn batches() -> Database {
     let t: Vec<String> = (0..5000).map(|k| format!("({k}, 'n{k}')")).collect();
     s.run(&format!("INSERT INTO T VALUES {}", t.join(", "))).unwrap();
     let key = |v: i64| if v % 17 == 0 { "NULL".to_owned() } else { format!("{}", (v * 7919) % 6000) };
-    let o: Vec<String> = (0..600).map(|v| format!("({}, {v})", key(v % 450))).collect();
+    let o: Vec<String> = (0..600_i64).map(|v| format!("({}, {v})", key(v.div_euclid(2)))).collect();
     s.run(&format!("INSERT INTO O VALUES {}", o.join(", "))).unwrap();
     s.commit().unwrap();
     db.maintain().unwrap();
