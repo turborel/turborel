@@ -9,6 +9,7 @@
 //! (SQLSTATE 38T07).
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use crate::error::Result;
@@ -41,6 +42,9 @@ pub struct Answered {
 
 /// What a database gives its extensions.
 pub struct Host {
+    /// Which database it is of, apart from every other in the process:
+    /// its extensions' types are its own (RULES.md D223).
+    owner: u64,
     /// The limits of PLUGINS.*.
     pub limits: Arc<Limits>,
     /// The budget a program's frames are reserved from.
@@ -66,7 +70,10 @@ impl Host {
     /// A host of the budget `memory`, its limits the defaults, trusting
     /// no key, no cryptography registered.
     pub fn new(memory: Arc<MemoryBudget>) -> Host {
+        // Numbered from 1, as 0 is no database's (`TypeRegistry::owner`).
+        static OWNERS: AtomicU64 = AtomicU64::new(1);
         Host {
+            owner: OWNERS.fetch_add(1, Ordering::Relaxed),
             limits: Arc::new(Limits::default()),
             memory,
             crypto: RwLock::new(None),
@@ -76,6 +83,11 @@ impl Host {
             eviction: crate::disk::buffer::EvictionSlot::default(),
             statistician: RwLock::new(None),
         }
+    }
+
+    /// Which database it is of, as its extensions' types are kept.
+    pub fn owner(&self) -> u64 {
+        self.owner
     }
 
     /// Registers what answers the statistics plug-ins ask, as the database

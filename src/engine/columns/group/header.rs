@@ -114,28 +114,33 @@ fn put_filter(out: &mut Vec<u8>, filter: Option<Filter>) {
     }
 }
 
+/// Why a header ends before its fields do. Its layout changes in place
+/// while the format stays 1 (no migration), so a group written by a build
+/// of an older layout reads so, as a damaged one does.
+const SHORT: &str = "its header ends before its fields do, as one written by a build of an older layout of this format would (reload the table), or a damaged one";
+
 /// A header's bytes, read in order.
 struct Reader<'a>(&'a [u8]);
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let (taken, rest) = self.0.split_at_checked(n).ok_or_else(|| corrupt("its header is too short"))?;
+        let (taken, rest) = self.0.split_at_checked(n).ok_or_else(|| corrupt(SHORT))?;
         self.0 = rest;
         Ok(taken)
     }
 
     fn byte(&mut self) -> Result<u8> {
-        self.take(1)?.first().copied().ok_or_else(|| corrupt("its header is too short"))
+        self.take(1)?.first().copied().ok_or_else(|| corrupt(SHORT))
     }
 
     fn u32(&mut self) -> Result<u32> {
         let b = self.take(4)?;
-        Ok(u32::from_le_bytes(<[u8; 4]>::try_from(b).map_err(|_| corrupt("its header is too short"))?))
+        Ok(u32::from_le_bytes(<[u8; 4]>::try_from(b).map_err(|_| corrupt(SHORT))?))
     }
 
     fn u64(&mut self) -> Result<u64> {
         let b = self.take(8)?;
-        Ok(u64::from_le_bytes(<[u8; 8]>::try_from(b).map_err(|_| corrupt("its header is too short"))?))
+        Ok(u64::from_le_bytes(<[u8; 8]>::try_from(b).map_err(|_| corrupt(SHORT))?))
     }
 
     fn count(&mut self) -> Result<usize> {

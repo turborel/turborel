@@ -14,6 +14,29 @@ use turborel_protocol::capability::{CONDITIONS, ROW_COUNTS};
 use crate::common::{rows, start, state};
 use crate::negotiated::offering;
 
+/// How long the holder of a row keeps it once the other connection waits
+/// for it: the least that connection's statement waits for the lock.
+const LOCK_HELD: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// The looks at CONNECTIONS for a connection waiting on a lock, 5 ms
+/// apart, before a run that never gets there gives up.
+const LOOKS: usize = 2_000;
+
+/// Whether a connection of X's to `db` waits on a lock, looked at until
+/// one does or `LOOKS` looks have passed.
+fn waits_on_a_lock(db: &Database) -> bool {
+    let looking = db.session("X");
+    let sql = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.CONNECTIONS WHERE WAITING_ON = 'LOCK'";
+    (0..LOOKS).any(|_| {
+        let seen = turborel_test_support::database::rows(&looking, sql).unwrap();
+        looking.rollback().unwrap();
+        seen == ["1"] || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            false
+        }
+    })
+}
+
 /// A database whose schema X holds T, of an INTEGER K, and I, of an
 /// identity column ID and a V.
 fn database() -> Database {
@@ -193,7 +216,9 @@ fn an_error_says_what_it_is_about() {
 /// Verifies: [DESIGN] RULES.md D240: granted `row-counts`, a completion
 /// carries the server's time for its statement, no more than the client
 /// waited for it; a cursor's summed over its requests and told by the
-/// Fetch that completes it; the time waited for a lock among it, and
+/// Fetch that completes it, no more than the client waited for those
+/// requests, so not the time between them; the time waited for a lock
+/// among it, at least as long as the lock was held once it waited, and
 /// none of a statement that waited for none; none of a Close; not
 /// granted, none.
 #[test]
@@ -210,21 +235,29 @@ fn a_completion_tells_the_servers_time() {
     assert!(time.total > 0 && time.total <= waited, "{time:?}, waited {waited} us");
     assert_eq!(time.locks, 0, "no lock waited for");
     let query = c.prepare("SELECT K FROM T").unwrap();
+    let began = std::time::Instant::now();
     c.open_cursor(&query, &[], 1).unwrap();
+    let opening = began.elapsed();
     std::thread::sleep(std::time::Duration::from_millis(30));
+    let began = std::time::Instant::now();
     c.fetch(&query, 0).unwrap();
+    let asked = u64::try_from((opening + began.elapsed()).as_micros()).unwrap();
     let cursor = c.server_time().unwrap();
-    assert!(cursor.total < 30_000, "the time between requests is not the server's: {cursor:?}");
+    assert!(cursor.total <= asked, "the time between requests is not the server's: {cursor:?}, asked {asked} us");
     let mut holder = server.connect("X");
     holder.query("UPDATE T SET K = K WHERE K = 1").unwrap();
+    let watched = db.clone();
     let releasing = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        let waited = waits_on_a_lock(&watched);
+        std::thread::sleep(LOCK_HELD);
         holder.query("COMMIT").unwrap();
+        waited
     });
     c.query("UPDATE T SET K = K WHERE K = 1").unwrap();
-    releasing.join().unwrap();
+    assert!(releasing.join().unwrap(), "the second UPDATE waits for the row");
     let blocked = c.server_time().unwrap();
-    assert!(blocked.locks >= 50_000 && blocked.locks <= blocked.total, "{blocked:?}");
+    let held = u64::try_from(LOCK_HELD.as_micros()).unwrap();
+    assert!(blocked.locks >= held && blocked.locks <= blocked.total, "{blocked:?}");
     c.open_cursor(&query, &[], 1).unwrap();
     c.close(&query).unwrap();
     assert_eq!(c.server_time(), None, "a Close is no statement");

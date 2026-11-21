@@ -317,3 +317,47 @@ fn a_kept_write_learns_its_plan_and_changes_each_calls_rows() {
     want.push("104,0".to_owned());
     assert_eq!(read, want, "each CALL changed its own rows, and DELETE took row 103 alone");
 }
+
+/// Verifies: [ISO/IEC 9075-4:2006 draft §14.13 SR4]; [DESIGN] RULES.md
+/// D613, a FOR statement's cursor no statement can name reads each CALL's
+/// rows read only when its body writes nothing, and as before when its
+/// body updates the rows it reads: each row once, as it was when the
+/// cursor opened, and every change made.
+#[test]
+fn a_for_cursor_reads_its_rows_whether_its_body_writes_them_or_not() {
+    let (_db, a) = defined();
+    a.run(
+        "CREATE PROCEDURE SUMS (IN WH INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE N INTEGER DEFAULT 0;
+           FOR R AS SELECT Q FROM S WHERE W = WH ORDER BY I DO
+             SET N = N + R.Q;
+           END FOR;
+           INSERT INTO L VALUES (WH, N);
+         END",
+    )
+    .unwrap();
+    a.run(
+        "CREATE PROCEDURE BUMPS (IN WH INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE N INTEGER DEFAULT 0;
+           FOR R AS SELECT I, Q FROM S WHERE W = WH ORDER BY I DO
+             UPDATE S SET Q = Q + 1 WHERE W = WH AND I = R.I + 1;
+             SET N = N + R.Q;
+           END FOR;
+           INSERT INTO L VALUES (WH, N);
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    for _ in 0..3 {
+        a.run("CALL SUMS(1)").unwrap();
+    }
+    a.run("CALL BUMPS(1)").unwrap();
+    a.run("CALL SUMS(1)").unwrap();
+    a.commit().unwrap();
+    let mut read = rows(&a, "SELECT LOW FROM L WHERE W = 1");
+    read.sort();
+    assert_eq!(read, ["1000", "1000", "1000", "1000", "1049"], "BUMPS read each row as it was as its cursor opened");
+    assert_eq!(rows(&a, "SELECT SUM(Q) FROM S WHERE W = 1"), ["1049"], "every row past the first bumped once");
+}

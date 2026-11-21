@@ -687,6 +687,17 @@ the subquery equals it or may equal it. EXPLAIN shows HashSemiJoin,
 HashAntiJoin and their kin, and the setting OPTIMIZER.SEMI_JOINS turns
 the rewrite off.
 
+EXISTS, IN, NOT IN and the comparisons with SOME, ANY and ALL of a
+correlated subquery anywhere else, under OR or NOT, in a CASE or in the
+select list, become a mark join. Each outer row is given once with a
+mark of whether the subquery has a matching row, true, false or
+unknown, and the condition reads the mark. The subquery's rows are held
+once, by the values the outer rows are matched on, and no grouping of
+them is made. IN is unknown, never false, when a null among the
+subquery's values or the outer row's own null could have matched, as
+the standard asks. EXPLAIN shows HashMarkJoin or NestedLoopMarkJoin, and
+the setting OPTIMIZER.MARK_JOINS turns the rewrite off.
+
 A subquery stays nested if it invokes a function that is not
 deterministic or that may change data, takes a sequence's next value, is
 of UNIQUE or MATCH, or stands where a CASE may leave it unevaluated and

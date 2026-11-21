@@ -19,6 +19,12 @@
 //! of more, the spans between the `SPANS - 1` widest gaps among them, so
 //! a store skips a group or part that lies in a gap.
 //!
+//! Of an exact key whose built values are dense in their range, at most
+//! `DENSE_SPAN` times as many as the rows built, a bitmap of the range,
+//! a bit a value (RULES.md D601): a row's key found exactly by its place,
+//! with no false hit, in place of the key set and the Bloom filter, in
+//! fewer bits a key than the Bloom filter's.
+//!
 //! A row it drops is one the join drops: its key outside the range, or
 //! not in the filter, matches no built key, and a null matches none but
 //! on a key whose nulls match, of which no range is made and whose
@@ -31,7 +37,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::hash::Seed;
-use super::join::{Hashing, KeyHashes};
+use super::join::{DENSE_SPAN, Hashing, KeyHashes};
 use crate::error::Result;
 use crate::index::Probe;
 use crate::kernels::Kernels;
@@ -86,6 +92,9 @@ pub(in crate::exec) struct RuntimeFilter {
     /// The spans of an exact key's values the scan is told, as units of
     /// the range's scale, ascending and apart.
     spans: Option<Vec<(i64, i64)>>,
+    /// Of keys dense in their range, a bit of each value from its least
+    /// on, set if a built key is it (RULES.md D601).
+    bitmap: Option<Vec<u64>>,
     /// The words of a blocked Bloom filter of the keys' hashes, if made.
     bloom: Option<Vec<u64>>,
     seed: Seed,
@@ -116,7 +125,8 @@ impl RuntimeFilter {
         } else {
             (None, None)
         };
-        let bloom = (held <= BLOOM_MAX_ROWS).then(|| bloom_of(hashes, held));
+        let bitmap = range.zip(built.columns.get(at)).filter(|_| held <= BLOOM_MAX_ROWS).and_then(|(r, c)| bitmap_of(c, r, held));
+        let bloom = (held <= BLOOM_MAX_ROWS && bitmap.is_none()).then(|| bloom_of(hashes, held));
         if range.is_none() && bloom.is_none() {
             return None;
         }
@@ -126,6 +136,7 @@ impl RuntimeFilter {
             range,
             keys,
             spans,
+            bitmap,
             bloom,
             seed,
             keyed,
@@ -159,9 +170,9 @@ impl RuntimeFilter {
     }
 
     /// Whether it judges each row past its range: by its Bloom filter, of
-    /// no more than `BLOOM_MAX_ROWS` built rows, or its key set.
+    /// no more than `BLOOM_MAX_ROWS` built rows, its key set or its bitmap.
     pub(in crate::exec) fn blooms(&self) -> bool {
-        self.bloom.is_some() || self.keys.is_some()
+        self.bloom.is_some() || self.keys.is_some() || self.bitmap.is_some()
     }
 
     /// Whether it still judges rows: not once its first `TRIED` batches
@@ -176,9 +187,9 @@ impl RuntimeFilter {
 
     /// The rows of `batch` at `rows`, or of all, whose key, of its column
     /// at `at`, the filter may hold, in order: of an exact key, those in
-    /// its range, if `range` asks; then, if `bloom` asks, those its key
-    /// set holds, of a vector of exact numbers, else those its Bloom
-    /// filter holds.
+    /// its range, if `range` asks; then, if `bloom` asks, those its bitmap
+    /// or key set holds, of a vector of exact numbers, else those its
+    /// Bloom filter holds.
     ///
     /// # Errors
     ///
@@ -198,9 +209,9 @@ impl RuntimeFilter {
         } else {
             given
         };
-        let set = self.keys.as_ref().filter(|_| bloom).zip(self.range).zip(batch.columns.get(at));
-        if let Some(((keys, (_, _, scale)), Column::Ints(ints))) = set {
-            let held = |u: i64| at_scale(u, ints.scale, scale).is_some_and(|k| keys.binary_search(&k).is_ok());
+        if let (Some(Column::Ints(ints)), true) = (batch.columns.get(at), bloom)
+            && let Some(held) = self.exactly(ints)
+        {
             let kept: Vec<usize> =
                 ranged.into_iter().filter(|&r| !ints.is_null(r) && ints.units.get(r).is_some_and(|&u| held(u))).collect();
             self.count((rows.map_or(batch.rows, <[u32]>::len), kept.len()));
@@ -209,7 +220,11 @@ impl RuntimeFilter {
         let kept = match self.bloom.as_ref().filter(|_| bloom) {
             Some(words) => {
                 let mut hashes = KeyHashes::default();
-                hashes.of_batch((batch, Some(&ranged)), (&[at], &[self.nulls]), Hashing { seed: &self.seed, keyed: self.keyed })?;
+                hashes.of_batch(
+                    (batch, Some(&ranged)),
+                    (&[at], &[self.nulls]),
+                    Hashing { seed: &self.seed, keyed: self.keyed, direct: false },
+                )?;
                 let mut held = Vec::with_capacity(ranged.len());
                 kernels.bloom_probe(words, &hashes.hashes, &mut held);
                 let held = held.into_iter().map(crate::storage::mask::index).filter(|&n| hashes.misses.get(n).is_some_and(|m| !m));
@@ -219,6 +234,21 @@ impl RuntimeFilter {
         };
         self.count((rows.map_or(batch.rows, <[u32]>::len), kept.len()));
         Ok(crate::storage::sel::rows_of(kept))
+    }
+
+    /// Whether it holds a key of units `u` at the scale of `ints`, judged
+    /// exactly by its bitmap, else its key set; none if it has neither.
+    fn exactly<'a>(&'a self, ints: &crate::storage::Ints) -> Option<Box<dyn Fn(i64) -> bool + 'a>> {
+        let (least, _, scale) = self.range?;
+        let from = ints.scale;
+        if let Some(bits) = &self.bitmap {
+            return Some(Box::new(move |u: i64| {
+                let place = at_scale(u, from, scale).and_then(|k| k.checked_sub(least)).and_then(|p| usize::try_from(p).ok());
+                place.is_some_and(|p| bits.get(p.div_euclid(64)).is_some_and(|w| (w >> (p % 64)) & 1 == 1))
+            }));
+        }
+        let keys = self.keys.as_ref()?;
+        Some(Box::new(move |u: i64| at_scale(u, from, scale).is_some_and(|k| keys.binary_search(&k).is_ok())))
     }
 
     /// Counts a batch judged, of `judged` rows of which it kept `kept`.
@@ -288,6 +318,25 @@ fn keyset_of(ints: &crate::storage::Ints) -> KeySet {
     (None, Some(spans))
 }
 
+/// The bitmap of the integers of `column` not null, of `range`, a bit a
+/// value from its least, if their range is at most `DENSE_SPAN` times
+/// `held`, the rows built (RULES.md D601).
+fn bitmap_of(column: &Column, (least, most, _): (i64, i64, u32), held: usize) -> Option<Vec<u64>> {
+    let Column::Ints(ints) = column else { return None };
+    let width = usize::try_from(most.checked_sub(least)?).ok()?.checked_add(1)?;
+    if width > held.saturating_mul(DENSE_SPAN) {
+        return None;
+    }
+    let mut bits = vec![0_u64; width.div_ceil(64)];
+    for (_, &u) in ints.units.iter().enumerate().filter(|&(r, _)| !ints.is_null(r)) {
+        let Some(p) = u.checked_sub(least).and_then(|p| usize::try_from(p).ok()) else { continue };
+        if let Some(word) = bits.get_mut(p.div_euclid(64)) {
+            *word |= 1 << (p % 64);
+        }
+    }
+    Some(bits)
+}
+
 /// A blocked Bloom filter of the hashes of `hashes` not misses, `held` of
 /// them: blocks of 512 bits, `BITS_PER_KEY` bits a key, at least one.
 fn bloom_of(hashes: &KeyHashes, held: usize) -> Vec<u64> {
@@ -315,7 +364,7 @@ mod tests {
     /// match.
     fn filter(keys: &[i64]) -> RuntimeFilter {
         let seed = Seed::fixed(0x5EED);
-        let how = Hashing { seed: &seed, keyed: false };
+        let how = Hashing { seed: &seed, keyed: false, direct: false };
         let built = Batch { columns: vec![Column::Ints(Ints::new(keys.to_vec(), 0, None))], rows: keys.len() };
         let mut hashes = KeyHashes::default();
         hashes.of_batch((&built, None), (&[0], &[false]), how).unwrap();
@@ -380,5 +429,24 @@ mod tests {
         assert!(spans.iter().zip(spans.iter().skip(1)).all(|(a, b)| a.1 < b.0), "ascending and apart");
         let dense: Vec<i64> = (0..=most).collect();
         assert_eq!(keyset_of(&Ints::new(dense, 0, None)), (None, None));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D601 (MC/DC): keys whose range is at
+    /// most `DENSE_SPAN` times the rows built are a bitmap, with no Bloom
+    /// filter, judged exactly at another scale, a key out of the range
+    /// or a fraction of it dropped; a range one wider is none.
+    #[test]
+    fn dense_keys_are_a_bitmap() {
+        let built: Vec<i64> = (0..5_000).map(|k| k * 4 + 1_000).collect();
+        let dense = filter(&built);
+        assert!(dense.bitmap.is_some() && dense.bloom.is_none() && dense.blooms());
+        let probes: Vec<i64> = (0..30_000).map(|k| k * 50 + 99_900).collect();
+        let held: Vec<u32> = (0..30_000_u32).filter(|&k| k % 8 == 2).collect();
+        assert_eq!(kept(&dense, &probes), held, "exactly the built keys among them");
+        let at_bound = [built.as_slice(), &[21_003]].concat();
+        assert!(filter(&at_bound).bitmap.is_some(), "a range of 20004 of 5001 rows");
+        let past = [built.as_slice(), &[21_004]].concat();
+        assert!(filter(&past).bitmap.is_none(), "a range of 20005 of 5001 rows");
+        assert!(filter(&past).bloom.is_some());
     }
 }

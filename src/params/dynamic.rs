@@ -56,6 +56,9 @@ pub(crate) struct Dynamic {
     /// Whether the binding holds a value it read: a `?`'s other than as a
     /// slot, or the statement's instant (`Clocked`).
     held: Cell<bool>,
+    /// Whether the statement's instant binds as a slot past the `?`s, each
+    /// execution's (`clock_slot`, RULES.md D613), and whether one did.
+    clock: Option<Cell<bool>>,
     /// [§17.19 SR1, §17.20 SR1] Of a positioned DELETE or UPDATE that
     /// names no table, the table of its cursor.
     implicit: Option<TableName>,
@@ -84,7 +87,10 @@ impl Params {
     /// parameters, their types still to be deduced.
     pub(crate) fn preparing(count: usize) -> Params {
         let types = RefCell::new(vec![None; count]);
-        Params { dynamic: Some(Dynamic { values: None, types, slots: false, held: Cell::new(false), implicit: None }), ..Params::default() }
+        Params {
+            dynamic: Some(Dynamic { values: None, types, slots: false, held: Cell::new(false), clock: None, implicit: None }),
+            ..Params::default()
+        }
     }
 
     /// The parameters of a prepared statement being executed with `values`,
@@ -92,7 +98,14 @@ impl Params {
     pub(crate) fn executing(values: Vec<Value>) -> Params {
         let types = RefCell::new(vec![None; values.len()]);
         Params {
-            dynamic: Some(Dynamic { values: Some(values.into()), types, slots: false, held: Cell::new(false), implicit: None }),
+            dynamic: Some(Dynamic {
+                values: Some(values.into()),
+                types,
+                slots: false,
+                held: Cell::new(false),
+                clock: None,
+                implicit: None,
+            }),
             ..Params::default()
         }
     }
@@ -104,7 +117,7 @@ impl Params {
         let types = RefCell::new(vec![None; values.len()]);
         let implicit = self.dynamic.as_ref().and_then(|d| d.implicit.clone());
         Params {
-            dynamic: Some(Dynamic { values: Some(values.into()), types, slots: true, held: Cell::new(false), implicit }),
+            dynamic: Some(Dynamic { values: Some(values.into()), types, slots: true, held: Cell::new(false), clock: None, implicit }),
             transitions: self.transitions.clone(),
             routine: self.routine.clone(),
             execution: self.execution,
@@ -150,6 +163,32 @@ impl Params {
     /// Whether the binding holds a value it read, so is not kept.
     pub(crate) fn held(&self) -> bool {
         self.dynamic.as_ref().is_some_and(|d| d.held.get())
+    }
+
+    /// `keeping`, of a statement whose each execution gives its kept plan
+    /// the statement's instant as a slot past its `?`s (`clock_slot`).
+    pub(crate) fn keeping_clocked(&self) -> Params {
+        let mut kept = self.keeping();
+        if let Some(dynamic) = kept.dynamic.as_mut() {
+            dynamic.clock = Some(Cell::new(false));
+        }
+        kept
+    }
+
+    /// [ISO/IEC 9075:1992 §6.8 GR3] The slot the statement's instant binds
+    /// as, if its binding is to be kept with one (`keeping_clocked`): the
+    /// one past its `?`s, filled at each execution (RULES.md D613); the
+    /// read noted (`clocked`).
+    pub(crate) fn clock_slot(&self) -> Option<usize> {
+        let dynamic = self.dynamic.as_ref()?;
+        let clock = dynamic.clock.as_ref()?;
+        clock.set(true);
+        Some(dynamic.values.as_deref().map_or(0, <[Value]>::len))
+    }
+
+    /// Whether its binding read the statement's instant as a slot.
+    pub(crate) fn clocked(&self) -> bool {
+        self.dynamic.as_ref().and_then(|d| d.clock.as_ref()).is_some_and(Cell::get)
     }
 
     /// These parameters, of a positioned DELETE or UPDATE prepared that

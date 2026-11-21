@@ -7,12 +7,13 @@
 //! outgrows the work area (`exec/join/rescan.rs`); and an outer join's is
 //! either (`exec/join/outer.rs`); an index nested-loop join holds nothing,
 //! each left row probing an index (`exec/join/indexed.rs`); a merge join
-//! holds the run of right rows of one key (`exec/join/merge.rs`); a semi
-//! join or an antijoin gives each left row once, or none
-//! (`exec/join/semi.rs`); a range join holds its right operand sorted
-//! (`exec/join/range.rs`).
+//! holds the run of right rows of one key (`exec/join/merge.rs`); a range
+//! join holds its right operand sorted (`exec/join/range.rs`); a semi
+//! join or an antijoin gives each left row once, or none (`exec/join/semi.rs`);
+//! a mark join each with its mark (`exec/join/mark.rs`).
 
 mod indexed;
+mod mark;
 mod merge;
 mod outer;
 mod partitioned;
@@ -23,6 +24,8 @@ mod semi;
 pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
 pub(in crate::exec) use indexed::{Reads, indexed_over};
+pub(super) use mark::mark;
+pub(in crate::exec) use mark::{Marker, Side as MarkSide};
 pub(super) use merge::merged;
 pub(in crate::exec) use merge::merged_over;
 pub(super) use outer::outer;

@@ -26,8 +26,8 @@ pub const STREAMED_GROUPING: Key = Key(90);
 /// PLANNER.ESTIMATE_MARGIN, at its key's place after the streamed groupings'
 /// setting (RULES.md D386).
 pub const ESTIMATE_MARGIN: Key = Key(91);
-/// PLANNER.EAGER_GAIN, at its key's place after the estimate margin's.
-pub const EAGER_GAIN: Key = Key(92);
+/// PLANNER.EAGER_GAIN, at its key's place after the dense joins' setting.
+pub const EAGER_GAIN: Key = Key(93);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
@@ -89,7 +89,7 @@ pub(super) fn margin() -> Definition {
     )
 }
 
-/// PLANNER.EAGER_GAIN, at its key's place after the estimate margin's.
+/// PLANNER.EAGER_GAIN, at its key's place after the dense joins' setting.
 pub(super) fn eager_gain() -> Definition {
     defined(
         ("PLANNER.EAGER_GAIN", Kind::Number { min: 0.0, max: MOST_GAIN }, Value::Approx(DEFAULT_EAGER_GAIN)),

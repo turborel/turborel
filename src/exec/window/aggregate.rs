@@ -61,7 +61,7 @@ pub(in crate::exec) struct Framed<'a> {
 enum Way {
     /// One accumulator fed the rows up to the frame's end, and how many it
     /// was fed, the nulls it left out, and the values it took if DISTINCT.
-    Growing { acc: Box<dyn Accumulator>, fed: usize, nulls: bool, seen: Option<Bag>, reader: Reader },
+    Growing { acc: Box<dyn Accumulator>, fed: usize, nulls: bool, seen: Option<Box<Bag>>, reader: Reader },
     /// A tree of states, its leaves from `size` on.
     Tree { nodes: Vec<Option<Node>>, size: usize },
     /// Each frame fed to a new accumulator.
@@ -86,7 +86,7 @@ impl<'a> Framed<'a> {
         work: &Work,
     ) -> Result<Framed<'a>> {
         let way = if bounds.grows() {
-            let seen = call.distinct.then(|| Bag::new(work.another()));
+            let seen = call.distinct.then(|| Box::new(Bag::new(work.another())));
             Way::Growing { acc: fresh(call), fed: 0, nulls: false, seen, reader: Reader::default() }
         } else if call.distinct {
             // [ISO/IEC 9075-2:2023 §9.23 SR8d ii] COUNT alone, of DISTINCT
@@ -124,7 +124,7 @@ impl<'a> Framed<'a> {
                 while *fed < to {
                     let row = reader.get(&mut part.keys, *fed)?;
                     if admitted(call, slot, &row.values)? {
-                        take(acc.as_mut(), argument(call, slot, &row.values)?, (nulls, seen.as_mut()))?;
+                        take(acc.as_mut(), argument(call, slot, &row.values)?, (nulls, seen.as_deref_mut()))?;
                     }
                     *fed = fed.saturating_add(1);
                 }

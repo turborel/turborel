@@ -65,6 +65,9 @@ pub(in crate::db) struct Together<'s> {
     /// Whether its changes are logged.
     logs: bool,
     indexes: Vec<Indexed>,
+    /// The rows of a group, if a load writes its rows straight as frozen
+    /// groups (RULES.md D533).
+    grouped: Option<usize>,
 }
 
 /// The rows of a batch gone in: their ids, in order, and of each whether
@@ -103,7 +106,8 @@ impl State {
             indexes.push(Indexed { desc, partition, index, held: false });
         }
         let storage = Arc::clone(self.storage_of(table)?);
-        Ok(Together { table, storage, undone: caps.undo == Undo::Log, logs: Self::logs_changes(caps.persistence), indexes })
+        let logs = Self::logs_changes(caps.persistence);
+        Ok(Together { table, storage, undone: caps.undo == Undo::Log, logs, indexes, grouped: None })
     }
 
     /// [X3.135-1986 §8.7] Inserts `rows` into the table of `together`, with
@@ -136,17 +140,20 @@ impl State {
         Ok(Gone { ids, alone })
     }
 
-    /// Puts `rows` in the storage of `together`, each with its undo entry
+    /// Puts `rows` in the storage of `together`, as a frozen group if a
+    /// load writes them so (RULES.md D533), else each with its undo entry
     /// if it takes one, and logs them a record at a time: their ids.
     fn stored_together(&self, tx: &Txn, together: &Together<'_>, rows: &[Row]) -> Result<Vec<RowId>> {
         let table = together.table;
-        let mut ids = Vec::with_capacity(rows.len());
+        let loading = together.grouped.and_then(|_| together.storage.loading());
+        let grouped = loading.map(|l| l.insert_group(tx.id, rows)).transpose()?.flatten();
+        let given = grouped.is_some();
+        let mut ids = grouped.unwrap_or_else(|| Vec::with_capacity(rows.len()));
         let mut from = 0;
         while let Some(rest) = rows.get(from..).filter(|r| !r.is_empty()) {
             let taken = record_rows(rest);
             let part = rest.get(..taken).unwrap_or_default();
-            let first = ids.len();
-            for row in part {
+            for row in part.iter().filter(|_| !given) {
                 let id = together.storage.insert_from(tx.id, row)?;
                 ids.push(id);
                 if together.undone {
@@ -154,7 +161,7 @@ impl State {
                 }
             }
             if together.logs {
-                let made = ids.get(first..).unwrap_or_default();
+                let made = ids.get(from..from.saturating_add(taken)).unwrap_or_default();
                 let record = insert_rows_record(tx.id, (table, self.generation_of(table)), made, part);
                 tx.log_encoded(&record, u64::try_from(made.len()).unwrap_or(u64::MAX))?;
             }
@@ -236,8 +243,9 @@ pub(super) fn insert_held(
     if load.is_some() && checked.is_some() {
         load::hold_back(st, tx, &mut together)?;
     }
+    let each = together.grouped.unwrap_or(BATCH_ROWS).max(1);
     rows.visit_slices(&mut |held| {
-        for batch in held.chunks(BATCH_ROWS) {
+        for batch in held.chunks(each) {
             inserted(st, (tx, &together), batch, (&mut checked, &mut *effects))?;
         }
         Ok(())
