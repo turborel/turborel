@@ -105,13 +105,12 @@ pub(crate) fn select_mask(isa: Isa, bits: &[u64], given: Given<'_>, out: &mut Ve
     }
 }
 
-/// `Kernels::select_codes`, as `select_i64`.
-pub(crate) fn select_codes(isa: Isa, codes: &[u32], keep: &[u64], given: Given<'_>, out: &mut Vec<u32>) {
-    let (nulls, None) = given else { return portable::select::select_codes(codes, keep, given, out) };
-    match isa {
-        Isa::Portable | Isa::Sse2 => portable::select::select_codes(codes, keep, given, out),
-        Isa::Avx2 | Isa::Avx512 => select::codes(isa, (codes, keep), nulls, out),
-    }
+/// `Kernels::select_codes`: by the portable body at every set, whose
+/// lookups of a code's bit a row at a time measured faster than truth
+/// words made of the same lookups and written by the set's stores
+/// (RULES.md D570).
+pub(crate) fn select_codes(_isa: Isa, codes: &[u32], keep: &[u64], given: Given<'_>, out: &mut Vec<u32>) {
+    portable::select::select_codes(codes, keep, given, out);
 }
 
 /// `Kernels::sum_i64`: of all rows on AVX2 or AVX-512; of a selection

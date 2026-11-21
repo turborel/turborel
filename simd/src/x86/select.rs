@@ -105,11 +105,6 @@ pub(super) fn mask(isa: Isa, bits: &[u64], nulls: Option<&Mask>, out: &mut Vec<u
     rows::select_mask(bits, nulls, out, |w: &[u64], b, s: &mut [u32]| emit(isa, w, b, s));
 }
 
-/// `Kernels::select_codes` of all rows, by the set's stores.
-pub(super) fn codes(isa: Isa, given: (&[u32], &[u64]), nulls: Option<&Mask>, out: &mut Vec<u32>) {
-    rows::select_codes(given, nulls, out, |w: &[u64], b, s: &mut [u32]| emit(isa, w, b, s));
-}
-
 /// The truth bits of `v op c` of four integers, `OP` one of the operators'
 /// constants.
 #[target_feature(enable = "avx2")]

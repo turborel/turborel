@@ -11907,7 +11907,9 @@ picks at least a quarter of the rows it spans runs the loop of all rows
 over them, the rows not picked masked off as nulls are; of fewer, the
 portable body, whose loads are each a picked row's. A gathering runs the
 portable body at every set: the vector gathers measured slower than its
-loads a row at a time at every size.
+loads a row at a time at every size. So does a selection of dictionary
+codes on x86, whose code-by-code lookups the portable body runs faster
+than truth words of the same lookups.
 Every body gives the portable body's result bit for bit, which the
 differential tests (`support/src/differential.rs`) hold it to, on random
 inputs of every length and alignment at every set the processor has.

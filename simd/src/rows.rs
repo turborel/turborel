@@ -160,7 +160,9 @@ pub(crate) fn select_mask(bits: &[u64], nulls: Option<&Mask>, out: &mut Vec<u32>
 }
 
 /// `Kernels::select_codes` of all rows: each code's bit of `keep` read
-/// into its word, their places by `emit`, a set's stores.
+/// into its word, their places by `emit`, a set's stores: on NEON, as x86
+/// runs the portable body for it.
+#[cfg(target_arch = "aarch64")]
 pub(crate) fn select_codes(
     (codes, keep): (&[u32], &[u64]),
     nulls: Option<&Mask>,
