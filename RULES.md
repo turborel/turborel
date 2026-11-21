@@ -12916,7 +12916,9 @@ which a statement reserves and which never shrink the grants' share. A
 database's areas count the bytes their grants hold, and a grant takes
 half of the share they left. Every grant is reserved of the budget, so
 however many run at once they never take more than is free
-(`spill/grant.rs`).
+(`spill/grant.rs`). The planner's estimate of an operator's grant, by
+which it costs what the operator spills (D651), is the same function's
+(`WorkAreas::would_grant`).
 #### D651. Costs count what an operator spills past its grant, at its rows' width
 
 A hash join's build, a hashed grouping and a sort were priced as if they

@@ -61,6 +61,16 @@ impl WorkAreas {
         Arc::new(grant_of((&self.memory, &self.granted), ceiling))
     }
 
+    /// The bytes a grant of up to `ceiling` would be now, reserving
+    /// nothing: for the planner, which costs what an operator spills past
+    /// its grant (RULES.md D651, D683).
+    pub(crate) fn would_grant(&self, ceiling: usize) -> usize {
+        if self.covered || ceiling <= WORK_FLOOR {
+            return ceiling;
+        }
+        wanted_of(&self.memory, self.granted.load(Ordering::Acquire), ceiling).max(WORK_FLOOR)
+    }
+
     /// Its areas, for the operators of a part of a statement whose grant
     /// already holds their bytes: each granted its ceiling, none reserved
     /// again, so the parts of one grant never take the budget twice.
@@ -77,11 +87,7 @@ fn grant_of((budget, granted): (&Arc<crate::memory::MemoryBudget>, &Arc<AtomicUs
     if ceiling <= WORK_FLOOR {
         return Grant { bytes: ceiling, held: None };
     }
-    // Half of what the standing reservations left is kept for what
-    // reserves beside grants, spill areas first.
-    let held = granted.load(Ordering::Acquire);
-    let share = budget.limit().saturating_sub(budget.standing()) >> 1_u32;
-    let wanted = ceiling.min(share.saturating_sub(held) >> 1_u32);
+    let wanted = wanted_of(budget, granted.load(Ordering::Acquire), ceiling);
     if wanted <= WORK_FLOOR {
         return Grant { bytes: WORK_FLOOR, held: None };
     }
@@ -93,6 +99,15 @@ fn grant_of((budget, granted): (&Arc<crate::memory::MemoryBudget>, &Arc<AtomicUs
         // Taken by another between the look and the reservation.
         Err(_) => Grant { bytes: WORK_FLOOR, held: None },
     }
+}
+
+/// The bytes a grant of `budget` of up to `ceiling` takes, its areas'
+/// grants holding `held`: half of their share left, the share half of
+/// what the standing reservations leave of the budget, the other half
+/// kept for what reserves beside grants, spill areas first.
+fn wanted_of(budget: &crate::memory::MemoryBudget, held: usize, ceiling: usize) -> usize {
+    let share = budget.limit().saturating_sub(budget.standing()) >> 1_u32;
+    ceiling.min(share.saturating_sub(held) >> 1_u32)
 }
 
 #[cfg(test)]
