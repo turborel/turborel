@@ -26,10 +26,15 @@ impl PhysicalPlanner<'_> {
             .map(|k| groups.get(k.column).filter(|_| ordered).map(|&c| SortKey { column: c, ..*k }))
             .collect::<Option<_>>()
             .unwrap_or_default();
-        let b = self.build_input(input, &inner, &reads(groups, aggs));
-        let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
+        let read = reads(groups, aggs);
+        let b = self.build_input(input, &inner, &read);
+        // Of MIN and MAX alone, its input's joins made semi joins where they
+        // can be (`physical/blind.rs`, RULES.md D542).
+        let unseeded = if seeds.is_empty() { groups.as_slice() } else { &[0] };
+        let (reduced, aggs) = self.blind_joins(b.plan, (unseeded, aggs.clone(), &read));
+        let (groups, collations, seeds) = (groups.clone(), collations.clone(), seeds.clone());
         let est = self.card(logical).rows;
-        let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(b.plan), est };
+        let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(reduced), est };
         Built { plan, ordered: !inner.is_empty() && b.ordered }
     }
 }

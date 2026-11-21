@@ -1,8 +1,8 @@
 //! The mutations of semi joins and antijoins (RULES.md R-TEST-9, D540,
 //! D541): the rows a built left keeps, the right rows a hashed join
 //! holds, the conflict rule that lets an inner join reassociate over one,
-//! NOT IN's exact truth with nulls, and the set functions and relations
-//! the reduction to semi joins takes.
+//! NOT IN's exact truth with nulls, and the set functions and joins the
+//! reduction to semi joins takes.
 
 use super::super::{Mutation, Package};
 
@@ -10,7 +10,7 @@ use super::super::{Mutation, Package};
 const MATCHED: &str = "decorrelation::semi::semi_joins_match_the_subqueries";
 
 /// Mechanisms whose removal must fail the semi join requirements.
-pub const SEMI_JOINS: [Mutation; 6] = [
+pub const SEMI_JOINS: [Mutation; 7] = [
     Mutation {
         name: "semi-built-left-keeps-matched",
         package: Package::Core,
@@ -55,23 +55,33 @@ pub const SEMI_JOINS: [Mutation; 6] = [
         name: "reduce-count-blind",
         package: Package::Core,
         breaks: "COUNT and SUM are taken as blind to duplicates, their joins reduced to semi joins",
-        file: "src/optimizer/reduced.rs",
-        original: "    a.distribution.is_none() && extreme",
-        replacement: "    a.distribution.is_none() && (extreme || !extreme)",
+        file: "src/physical/blind.rs",
+        original: "aggs.iter().all(|a| a.distribution.is_none() && extreme(a))",
+        replacement: "aggs.iter().all(|a| a.distribution.is_none())",
         integration: &["join_order_workload::only_duplicate_blind_set_functions_are_reduced"],
         unit: &[],
     },
     Mutation {
         name: "reduce-read-relation-semi",
         package: Package::Core,
-        breaks: "a relation a set function reads is made a semi join, its columns lost",
-        file: "src/optimizer/reduced.rs",
-        original: "let kept = read.iter().filter_map(|&c| chain.rel_of(c)).fold(0, |set, r| set | bit(r));",
-        replacement: "let kept = read.iter().filter_map(|&c| chain.rel_of(c)).fold(0, |set, r| set | bit(r)) & 1;",
+        breaks: "a hash join whose right operand a set function reads is made a semi join, its columns lost",
+        file: "src/physical/blind.rs",
+        original: "let semi = of_right.is_empty();",
+        replacement: "let semi = true;",
         integration: &[
             "join_order_workload::only_duplicate_blind_set_functions_are_reduced",
             "join_order_workload::every_query_agrees_reduced_to_semi_joins",
         ],
+        unit: &[],
+    },
+    Mutation {
+        name: "reduce-read-table-semi",
+        package: Package::Core,
+        breaks: "an index join whose table a set function reads stops at each left row's first match, its columns lost",
+        file: "src/physical/blind.rs",
+        original: "let semi = !needed.iter().any(|&c| c >= lw) && ",
+        replacement: "let semi = !needed.iter().any(|&c| c > lw + 1_000) && ",
+        integration: &["join_order_workload::every_query_agrees_reduced_to_semi_joins"],
         unit: &[],
     },
 ];

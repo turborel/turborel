@@ -276,12 +276,13 @@ written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =
 table is also filtered first by the OR of its own conditions, here
 `P.B = 'B1' OR P.B = 'B2'`. OPTIMIZER.FACTOR_DISJUNCTIONS turns this off.
 
-A query whose select list is MIN and MAX alone, with no GROUP BY, needs the rows of the tables those functions
-read, not how often the other tables repeat them. Each other table then
-only has to have a matching row, and it is joined as a semi join, which
-keeps each row once. Joins that would multiply the rows many times
-make none. EXPLAIN shows HashSemiJoin, SemiIndexNestedLoop and their
-kin, and OPTIMIZER.SEMI_REDUCTION turns this off.
+A query whose select list is MIN and MAX alone, with no GROUP BY, needs
+the values of the columns those functions read, not how often a join
+repeats them. Once its joins are ordered, each join of a table nothing
+above it reads is a semi join, which gives each row once at its first
+match. Joins that would multiply the rows many times make none. EXPLAIN
+shows HashSemiJoin and SemiIndexNestedLoop, and
+OPTIMIZER.SEMI_REDUCTION turns this off.
 
 SET PLANNER.JOIN_ENUMERATION = 'GREEDY' plans a session's joins in a
 left-deep order instead, each next join the cheapest, as to compare the

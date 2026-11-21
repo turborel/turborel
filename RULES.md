@@ -324,7 +324,7 @@ verification approach DO-178C expects (§8).
 | D319 | A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct |
 | D540 | A semi join and an antijoin are join kinds of their own, enumerated with the others under CD-C's conflict rules |
 | D541 | A subquery of existence that is a conjunct of WHERE or HAVING is made a semi join or an antijoin before it is unnested otherwise |
-| D542 | Under MIN and MAX alone, the relations no output reads join as semi joins along the chain's join tree |
+| D542 | Under MIN and MAX alone, a join whose right operand nothing above reads is a semi join |
 | D640 | A mark join gives each left row once with its mark, the OR of the truth values of the right rows that count for it |
 | D641 | EXISTS and quantified comparisons of correlated subqueries that no semi join takes are made mark joins, ALL as NOT of the negated SOME |
 | D642 | A mark join is hashed on its keys and on the equalities it marks by, a right row of a null value kept on its keys' null list |
@@ -9242,31 +9242,37 @@ that can raise, one under OR, and one of an impure plan; and it is off,
 with the other unnesting rules, for a plan that finds the rows a
 searched change updates (D318).
 
-#### D542. Under MIN and MAX alone, the relations no output reads join as semi joins along the chain's join tree
+#### D542. Under MIN and MAX alone, a join whose right operand nothing above reads is a semi join
 
 MIN and MAX give one value of a multiset and of its set (Yan and
-Larson, VLDB 1995). Of a grouping of no grouping columns whose every set
-function is MIN or MAX, over a chain of inner
-joins, the rule `semi_reduction` (OPTIMIZER.SEMI_REDUCTION) keeps the
-relations whose columns the set functions read and makes each other
-relation that is an ear of the chain's join tree a semi join into its
-parent, its own ears first, as the bottom-up pass of Yannakakis'
-algorithm does (Lanzinger, Pichler and Selzer, PVLDB 2025). The tree is
-found by GYO ear removal. A relation is an ear of a parent when each of
-its conjuncts with relations left reads the two alone, or is an equality
-with a third relation that the parent's equalities with both imply, of
-columns of one numeric type. The kept relations' rows that the chain
-joins are those the reduced chain joins, so the values are the same,
-while the rows a relation repeated are never made. The join enumeration
-then orders the semi joins with the rest (D540).
+Larson, VLDB 1995), so the rows a join repeats need not be made. Of a
+grouping of no grouping columns whose every set function is MIN or MAX,
+the physical planner walks the plan of its input, its joins already
+ordered as they cost least, from the top, with the columns the operators
+above each one read (`physical/blind.rs`, OPTIMIZER.SEMI_REDUCTION). An
+inner hash join of whose right operand nothing above reads a column is
+made a hashed semi join, and an inner index join of whose table nothing
+above reads is made one that stops at each left row's first match (D540).
+Each left row is given once rather than once for each match, so the
+joins above it see fewer rows. The columns of the operators above are
+renumbered, and a projection gives a null for a column nothing above
+reads that its input no longer has.
 
-It leaves a chain any conjunct of which can raise or holds a subquery,
-since a semi join evaluates its condition on fewer pairs (D15), and a
-grouping with grouping columns, whose groups come in the order of their
-first rows. A set function of DISTINCT is blind to duplicates too, but
-it is left: its grouping by its argument drops them already (D340), and
-a relation the rule would reduce may be the one whose few rows probe the
-kept one's index, as a stock level's order lines probe its stock.
+The reduction is of the plan the join enumeration chose and not of the
+logical plan before it. A chain rewritten as semi joins along its join
+tree, the bottom-up pass of Yannakakis' algorithm (Lanzinger, Pichler
+and Selzer, PVLDB 2025), drives every semi join from the relations the
+set functions read, so it must scan them whole, where the plan without
+it reaches them by an index from a few selective rows. Each join made a
+semi join here keeps the order and the method chosen, so none does more
+work than it did. The setting stays an optimizer rule's, whose rule
+rewrites no logical plan, so it is turned off as the others are.
+
+An index join whose condition can raise is left, as the first match
+stops it judging the other pairs (D15); a hash join's keys cannot raise,
+and the conditions above it judge rows it gives either way. A grouping
+with grouping columns is left, as are set functions of DISTINCT: those
+drop duplicates by their own grouping by the argument (D340).
 
 #### D640. A mark join gives each left row once with its mark, the OR of the truth values of the right rows that count for it
 

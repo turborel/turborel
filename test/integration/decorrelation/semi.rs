@@ -134,6 +134,30 @@ fn not_in_with_nulls_as_an_antijoin() {
     assert_eq!(off, Ok(want));
 }
 
+/// Verifies: [ISO/IEC 9075:1992 §7.5 GR4, GR5b; X3.135-1986 §5.16 GR2]
+/// (RULES.md D540) a semi join keyed on a LEFT join's right columns, read
+/// by batches, of a right operand none of whose rows is kept, has the rows
+/// it has read row by row and of the subquery run for each row: the right
+/// columns of the join's batches, all null, are there to be hashed.
+#[test]
+fn exists_of_an_outer_joins_nulls() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE B (N INTEGER, G INTEGER) CREATE TABLE C (N INTEGER, G INTEGER)").unwrap();
+    let s = db.session("A");
+    s.run("INSERT INTO B VALUES (1, 1), (2, 2), (12, NULL)").unwrap();
+    s.run("INSERT INTO C VALUES (1, 1), (2, 2)").unwrap();
+    for bound in ["11", "0"] {
+        let q =
+            format!("SELECT X.N FROM B X LEFT JOIN C Y ON X.N = Y.N AND Y.N > {bound} WHERE EXISTS (SELECT * FROM B S WHERE S.G = Y.G)");
+        assert!(physical(&s, &q).contains("SemiJoin"), "{q}");
+        let (batched, rows) = both_paths(&s, &q.replace("SELECT X.N", "SELECT X.N AS K"));
+        assert_eq!(batched, rows, "{q}");
+        let (on, off) = both(&db, &s, &q);
+        assert_eq!(on, off, "{q}");
+        assert_eq!(on.map(|r| r.len()), Ok(if bound == "0" { 2 } else { 0 }), "{q}");
+    }
+}
+
 /// Verifies: [DESIGN] (RULES.md D540) the TPC-H query 4 and 21 shapes are
 /// planned as semi joins and antijoins: EXISTS of the orders' line items
 /// a semi join hashed on the order key, and query 21's NOT EXISTS of
