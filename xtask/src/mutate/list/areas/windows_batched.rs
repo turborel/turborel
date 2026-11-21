@@ -2,7 +2,8 @@
 //! boundary of keys alike, the peer groups found of the partitioning's
 //! bytes alone, a partition's last peer group, a frame's prefix sum off
 //! by one, the place LAG takes under IGNORE NULLS, and a frame's readers
-//! let go of the partition before's segments.
+//! let go of the partition before's segments, and the groups a window
+//! computes on several threads cut at partition starts.
 
 use super::super::{Mutation, Package};
 
@@ -12,12 +13,14 @@ const CONTRACT: &str = "kernels::portable_kernels_keep_the_contract";
 const BOTH_WAYS: &str = "window_batches::windows_over_batches_are_those_of_rows";
 /// Windows over batches of a spilled sort against the same a row at a time.
 const SPILLED: &str = "window_batches::windows_over_a_spilled_sort_are_those_of_rows";
+/// Windows over batches in parallel against the same a row at a time.
+const PARALLEL: &str = "window_batches::windows_over_batches_in_parallel_are_those_of_rows";
 /// Frames found at once against frames found row after row.
 const FRAMES: &str = "exec::window::batched::frames::tests::frames_found_at_once_are_those_found_row_after_row";
 
 /// Mechanisms whose removal must fail the requirements of windows over
 /// batches.
-pub const WINDOWS_BATCHED: [Mutation; 6] = [
+pub const WINDOWS_BATCHED: [Mutation; 7] = [
     Mutation {
         name: "window-boundary-alike",
         package: Package::Core,
@@ -76,6 +79,16 @@ pub const WINDOWS_BATCHED: [Mutation; 6] = [
         original: "        self.end.reader = Reader::default();\n",
         replacement: "",
         integration: &[SPILLED],
+        unit: &[],
+    },
+    Mutation {
+        name: "window-groups-cut-mid-partition",
+        package: Package::Core,
+        breaks: "the groups computed on several threads are cut at any row, a partition's rows split between two",
+        file: "src/exec/window/batched/spread.rs",
+        original: ".skip(need.max(1)).find(|(_, p)| **p)",
+        replacement: ".skip(need.max(1)).find(|_| true)",
+        integration: &[PARALLEL],
         unit: &[],
     },
 ];

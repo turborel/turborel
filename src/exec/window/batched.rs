@@ -29,6 +29,7 @@ mod lanes;
 mod picks;
 mod reading;
 mod sets;
+mod spread;
 mod states;
 
 use std::collections::VecDeque;
@@ -119,6 +120,16 @@ fn arguments(call: &WindowCall) -> Vec<&Expr> {
 ///
 /// As its input's batches fail.
 pub(in crate::exec) fn window_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
+    window_batches_on(plan, (db, tx), 1)
+}
+
+/// As `window_batches`, its whole partitions computed on up to `degree`
+/// threads (`spread.rs`).
+///
+/// # Errors
+///
+/// As its input's batches fail.
+pub(in crate::exec) fn window_batches_on(plan: Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Batches> {
     let Plan::Window { window, .. } = plan else { return Err(crate::exec::broken("a window is not one")) };
     let (w, input) = window.split();
     let partition: Vec<SortKey> = w.partition.iter().map(|&c| SortKey::ascending(c)).collect();
@@ -127,6 +138,7 @@ pub(in crate::exec) fn window_batches(plan: Plan, db: &Db, tx: TxId) -> Result<B
     let limit = Work::of(db, tx).limit();
     let windowing = Windowing {
         limit,
+        degree,
         w,
         sorted: (partition, both),
         input: Some(keyed),
@@ -239,7 +251,9 @@ struct Windowing {
     /// Its input, none once read to its end.
     input: Option<KeyedBatches>,
     /// Its calls' frames and counts, prepared as the first row is read.
-    prepared: Option<Prepared>,
+    prepared: Option<Arc<Prepared>>,
+    /// The threads its whole partitions are computed on.
+    degree: usize,
     runner: Runner,
     db: Db,
     tx: TxId,

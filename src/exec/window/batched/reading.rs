@@ -4,15 +4,24 @@
 //! before added to those held and computed, the rest held; and how it
 //! gives way to the rows' form for the rows held and all after them.
 
+use std::sync::Arc;
+
 use super::boundaries::{Last, edges};
 use super::compute::computed;
+use super::lanes::Built;
+use super::spread::{computed_apart, groups};
 use super::{Arg, Held, PARTS, Windowing, arguments, prepared, rows_made_batches};
 use crate::error::Result;
 use crate::exec::batch::vector_of;
 use crate::exec::sort::{RunKeys, keys_of, rows_of_batches};
 use crate::exec::window::windowed_rows;
 use crate::logical::Expr;
-use crate::storage::{Batch, Column, Row};
+use crate::storage::{BATCH_ROWS, Batch, Column, Row};
+
+/// The batches of whole partitions each thread takes, at least, before a
+/// window of several threads computes them: enough that a thread's share
+/// outweighs handing it out.
+const GATHERED: usize = 8;
 
 /// A batch read and its rows' keys, if the sort made them.
 type Read = Option<Result<(Batch, Option<RunKeys>)>>;
@@ -40,7 +49,7 @@ impl Windowing {
                 self.give_way(Some(batch));
                 return Ok(());
             };
-            self.prepared = Some(made);
+            self.prepared = Some(Arc::new(made));
         }
         let Some(args) = self.arguments(&batch) else {
             self.give_way(Some(batch));
@@ -58,7 +67,7 @@ impl Windowing {
             Some(cut) => {
                 let (before, after) = split(held, cut);
                 self.hold(before);
-                if !self.flushed() {
+                if self.gathered() && !self.flushed() {
                     self.give_way(Some(after.batch));
                     return Ok(());
                 }
@@ -104,26 +113,51 @@ impl Windowing {
         self.held.push(held);
     }
 
+    /// Whether it holds enough whole partitions to compute them: at once
+    /// on one thread, else enough for each of its threads to take a share.
+    fn gathered(&self) -> bool {
+        let rows = self.held.iter().map(|h| h.batch.rows).fold(0, usize::saturating_add);
+        self.degree <= 1 || rows >= self.degree.saturating_mul(GATHERED).saturating_mul(BATCH_ROWS)
+    }
+
     /// Computes the calls' values of the rows held, every partition of
     /// them whole, and gives them, beside the batches held: false, the
     /// rows still held, if computing them raises an error, so the window
-    /// gives way.
+    /// gives way. Of several threads, groups of whole partitions are
+    /// computed on each (`spread.rs`).
     fn flushed(&mut self) -> bool {
-        let Some(prepared) = self.prepared.as_ref().filter(|_| !self.held.is_empty()) else { return true };
+        let Some(prepared) = self.prepared.clone().filter(|_| !self.held.is_empty()) else { return true };
         let calls = self.w.calls.len().max(1);
         let trees = self.limit.checked_div(PARTS).unwrap_or_default().checked_div(calls).unwrap_or_default();
-        let Ok(built) = computed(&self.w, prepared, &self.held, (trees, &self.runner)) else { return false };
+        let held = groups(std::mem::take(&mut self.held), self.degree);
+        let (held, built) = if held.len() > 1 {
+            let shared = (Arc::new(self.w.clone()), prepared);
+            computed_apart(held, shared, (&self.db, self.tx, self.degree, trees.checked_div(self.degree).unwrap_or_default()))
+        } else {
+            let one = held.first().map_or_else(|| Ok(Vec::new()), |h| computed(&self.w, &prepared, h, (trees, &self.runner)));
+            (held, one.map(|b| vec![b]))
+        };
+        let Ok(built) = built else {
+            self.held = held.into_iter().flatten().collect();
+            return false;
+        };
+        for (group, values) in held.into_iter().zip(built) {
+            self.given(group, &values);
+        }
+        self.bytes = 0;
+        true
+    }
+
+    /// Gives the batches of `group`, each with its rows' values of `built`.
+    fn given(&mut self, group: Vec<Held>, built: &[Built]) {
         let mut at = 0_usize;
-        for held in std::mem::take(&mut self.held) {
-            let rows = held.batch.rows;
-            let to = at.saturating_add(rows);
+        for held in group {
+            let to = at.saturating_add(held.batch.rows);
             let mut batch = held.batch;
             batch.columns.extend(built.iter().map(|b| b.column((at, to))));
             self.out.push_back(batch);
             at = to;
         }
-        self.bytes = 0;
-        true
     }
 
     /// Gives way to the rows' form of the window for the rows held, then
@@ -142,7 +176,7 @@ impl Windowing {
 }
 
 /// `held` cut before its row `cut`: the rows before, if any, and the rest.
-fn split(held: Held, cut: usize) -> (Option<Held>, Held) {
+pub(super) fn split(held: Held, cut: usize) -> (Option<Held>, Held) {
     if cut == 0 {
         return (None, held);
     }

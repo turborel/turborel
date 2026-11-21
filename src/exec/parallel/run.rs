@@ -32,7 +32,7 @@ use crate::txn::{Stop, TxId};
 const AHEAD_PER_THREAD: usize = 2;
 
 /// The work of each morsel, by its number.
-type Work<T> = Box<dyn Fn(usize) -> Result<T> + Send + Sync>;
+pub(in crate::exec) type Work<T> = Box<dyn Fn(usize) -> Result<T> + Send + Sync>;
 
 /// A run of morsels, shared by the workers taking them and its reader.
 struct Run<T> {
@@ -58,7 +58,7 @@ struct Run<T> {
 
 /// What a run's reader holds: the run's results, in order. Dropped, the
 /// run takes no more morsels.
-pub(super) struct Morsels<T: Send + 'static> {
+pub(in crate::exec) struct Morsels<T: Send + 'static> {
     run: Arc<Run<T>>,
 }
 
@@ -166,7 +166,7 @@ impl<T: Send + 'static> Morsels<T> {
     /// A run of `count` morsels, each `work` of its number, on up to
     /// `degree` threads of `db`'s workers and the statement's own, for the
     /// statement of `tx`.
-    pub(super) fn start(db: &State, tx: TxId, (count, degree): (usize, usize), work: Work<T>) -> Morsels<T> {
+    pub(in crate::exec) fn start(db: &State, tx: TxId, (count, degree): (usize, usize), work: Work<T>) -> Morsels<T> {
         let degree = degree.max(1);
         let run = Arc::new(Run {
             work,

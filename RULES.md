@@ -12075,8 +12075,14 @@ held pass half the work area, so the rows' form spills them. Calls only
 the rows' form computes (nested window functions, row pattern measures,
 filtered, DISTINCT or inverse distribution set functions) leave the
 whole window to it. EXECUTOR.BATCHES OFF runs every window a row at a
-time. A window run in parallel splits its rows into partitions by the
-seeded XXH3 of their partitioning's normal bytes (D357, D460).
+time. A window run in parallel over batches gathers whole partitions, several
+batches for each thread, cuts them at partition starts into a group for
+each thread, near equal in rows, and computes each group's calls on a
+thread of the statement's run (`batched/spread.rs`). The groups' values
+come back in order, and a group that raises an error leaves every row
+held, so the window gives way as on one thread. A window run in
+parallel a row at a time splits its rows into partitions by the seeded
+XXH3 of their partitioning's normal bytes (D357, D460).
 
 #### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
 

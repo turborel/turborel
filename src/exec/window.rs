@@ -96,7 +96,7 @@ pub(super) fn windowed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     windowed_rows(w, execute(input, db, tx), (db, tx))
 }
 
-pub(super) use batched::{admits as admits_batches, window_batches};
+pub(super) use batched::{admits as admits_batches, window_batches, window_batches_on};
 
 /// The rows of the window `w` over `rows`, a row at a time.
 pub(super) fn windowed_rows(w: Window<()>, rows: RowIter, (db, tx): (&Db, TxId)) -> RowIter {

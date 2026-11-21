@@ -8,6 +8,8 @@
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
+use turborel::params::Params;
+use turborel::value::{Decimal, Value};
 
 use crate::common::{Rng, exec, rows};
 
@@ -136,6 +138,21 @@ fn windows_over_a_spilled_sort_are_those_of_rows() {
     let (_db, a) = tables();
     exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
     exec(&a, "SET SPILL.BATCH_BYTES = 4096").unwrap();
+    all_alike(&a);
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §7.15 GR5] each window over batches run
+/// in parallel, its whole partitions computed on 4 threads, gives the rows
+/// the window gives a row at a time in parallel.
+#[test]
+fn windows_over_batches_in_parallel_are_those_of_rows() {
+    let (db, a) = tables();
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
+    for set in ["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 64", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"] {
+        exec(&a, set).unwrap();
+    }
+    let sql = "SELECT I, RANK() OVER (PARTITION BY P ORDER BY K) FROM WC";
+    assert!(a.physical_plan(sql, &Params::new()).unwrap().contains("Parallel  (degree=4)"));
     all_alike(&a);
 }
 
