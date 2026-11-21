@@ -151,8 +151,8 @@ pub fn workloads(bench: &Bench) {
         bench.measure_fresh(
             case,
             || filled(rows / 4, options),
-            |db| {
-                db.maintain().unwrap();
+            |fresh| {
+                fresh.maintain().unwrap();
                 rows / 4
             },
         );

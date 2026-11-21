@@ -172,7 +172,7 @@ fn scans_skip_chunks_a_condition_cannot_match() {
 #[test]
 fn a_top_bound_skips_chunks_past_it() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain, compress: true, pax: false };
+    let pages = Pages { pool: &pool, file, capacity: 512, sealing: &Plain, compress: true, pax: false, imprints: false };
     let group = written(&pages, (1, 1), 4000);
     let read = |t: &Arc<Threshold>| {
         let told = Conjunction(vec![Conjunct::Dynamic { column: 0, threshold: Arc::clone(t) }]);
