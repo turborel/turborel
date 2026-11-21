@@ -80,6 +80,7 @@ mod blocks;
 mod booleans;
 mod buffer;
 mod buffer_claims;
+mod bulk_groups;
 mod bulk_insert;
 mod bulk_load;
 mod call_outputs;
