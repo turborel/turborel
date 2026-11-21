@@ -70,7 +70,7 @@ impl Space<'_> {
             let how = probed.map_or(Method::Hash, |index| self.robust(&sides, hash, index));
             let cost = match how {
                 Method::Index => probed.unwrap_or(hash),
-                Method::Hash | Method::Merge(_) | Method::Nested => hash,
+                Method::Hash | Method::Merge(_) | Method::Nested | Method::Range => hash,
             };
             out.push((Cand { cost: base + cost.at(left.rows), order, tree: 0 }, tree(how, (cand.tree, build.tree))));
         }
