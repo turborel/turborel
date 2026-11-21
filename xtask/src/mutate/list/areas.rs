@@ -20,6 +20,7 @@ mod expr;
 mod estimates;
 mod group_table;
 mod insert_values;
+mod join_table;
 mod joins;
 mod late;
 mod oltp;
@@ -185,9 +186,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     ];
     // The transport's, parallel queries', the client's step with its
     // server, the decode kernels', declared types', batches', late
-    // materialization's and the table of groups' last, as `last` holds no
-    // more.
-    let after: [&'static [Mutation]; 10] = [
+    // materialization's, the table of groups', the join table's and
+    // XXH3's and skipping's last, as `last` holds no more.
+    let after: [&'static [Mutation]; 11] = [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
@@ -196,6 +197,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &batches::BATCHES,
         &late::LATE,
         &group_table::GROUP_TABLE,
+        &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
         &skipping::SKIPPING,
     ];
