@@ -85,7 +85,7 @@ fn shown(leaf: &Node<'_>, (lower, upper): (&Bound<Vec<u8>>, &Bound<Vec<u8>>), f:
             }
         }
     }
-    shown.resume = taken.map(<[u8]>::to_vec);
+    shown.resume = taken.map(super::super::node::KeyRef::to_vec);
     shown.further = further_of(leaf, upper);
     Ok(shown)
 }

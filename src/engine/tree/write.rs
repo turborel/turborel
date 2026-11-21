@@ -34,8 +34,8 @@ pub enum Update {
 pub(super) enum Written {
     /// Nothing: the key was present for an insert, absent for a replace.
     Refused,
-    /// The change, and the value replaced, if any.
-    Done(Option<Vec<u8>>),
+    /// The change: the value replaced, if any, and the leaf the entry is in.
+    Done(Option<Vec<u8>>, PageId),
 }
 
 impl BLinkTree {
@@ -61,7 +61,7 @@ impl BLinkTree {
     ///
     /// SQLCODE -910 if the entry is longer than `max_entry`; as `get`.
     pub fn insert(&self, key: &[u8], value: &[u8]) -> Result<bool> {
-        Ok(matches!(self.write(key, value, Mode::Insert)?, Written::Done(_)))
+        Ok(matches!(self.write(key, value, Mode::Insert)?, Written::Done(..)))
     }
 
     /// Replaces the value of `key` with `value`; the value replaced, read
@@ -73,7 +73,7 @@ impl BLinkTree {
     /// As `insert`.
     pub fn replace(&self, key: &[u8], value: &[u8]) -> Result<Option<Vec<u8>>> {
         Ok(match self.write(key, value, Mode::Replace)? {
-            Written::Done(old) => old,
+            Written::Done(old, _) => old,
             Written::Refused => None,
         })
     }
@@ -85,7 +85,7 @@ impl BLinkTree {
     ///
     /// As `insert`.
     pub fn replace_if(&self, key: &[u8], expected: &[u8], value: &[u8]) -> Result<bool> {
-        Ok(matches!(self.write(key, value, Mode::ReplaceIf(expected))?, Written::Done(_)))
+        Ok(matches!(self.write(key, value, Mode::ReplaceIf(expected))?, Written::Done(..)))
     }
 
     /// Removes `key` if its value is still `expected`, compared under the
@@ -122,7 +122,7 @@ impl BLinkTree {
             Ok(at) => Ok(Some((at, node.entry(at)?.1.to_vec()))),
             Err(_) => Ok(None),
         })?;
-        let Some((at, old)) = found.filter(|(_, old)| expected.is_none_or(|e| e == old.as_slice())) else { return Ok(None) };
+        let Some((at, old)) = found.filter(|(_, old)| expected.is_none_or(|e| e == *old)) else { return Ok(None) };
         self.remove_at(path, held, at)?;
         Ok(Some(old))
     }
@@ -189,7 +189,7 @@ impl BLinkTree {
             (Update::Put(value), Err(at)) => (Slot::Insert(at), value),
         };
         self.fits(key, &value)?;
-        self.place(path, held, (key, &value), slot).map(|()| alone)
+        self.place(path, held, (key, &value), slot).map(|_| alone)
     }
 
     /// Refuses an entry longer than `max_entry`.
@@ -213,7 +213,12 @@ impl BLinkTree {
         self.fits(key, value)?;
         let mut path = Path::default();
         let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
-        self.write_from(path, leaf, (key, value), mode)
+        let written = self.write_from(path, leaf, (key, value), mode)?;
+        // A table's row: its leaf noted for its index entries (`hints.rs`).
+        if let (Written::Done(_, into), Some(row)) = (&written, self.row_of(key)) {
+            super::hints::note(row, into.0);
+        }
+        Ok(written)
     }
 
     /// The rest of `write`, from `leaf`, reached by `path`: either may be
@@ -236,14 +241,16 @@ impl BLinkTree {
             (Err(at), Mode::Insert) => (Slot::Insert(at), None),
             (Ok(_), Mode::Insert) | (Err(_), Mode::Replace | Mode::ReplaceIf(_)) => return Ok(Written::Refused),
         };
-        self.place(path, held, (key, value), slot)?;
-        Ok(Written::Done(old))
+        let into = self.place(path, held, (key, value), slot)?;
+        Ok(Written::Done(old, into))
     }
 
     /// Makes `slot`'s change in the leaf `held`, reached by `path`, and
-    /// posts the splits it causes up the tree.
-    pub(super) fn place<'a>(&'a self, mut path: Path, mut held: NodeLock<'a>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<()> {
+    /// posts the splits it causes up the tree. The leaf the entry is in:
+    /// the right half of a split if it is past the separator.
+    pub(super) fn place<'a>(&'a self, mut path: Path, mut held: NodeLock<'a>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<PageId> {
         let mut split = self.change(&held, key, value, slot)?;
+        let leaf = split.as_ref().filter(|s| key > s.separator.as_slice()).map_or(held.id, |s| s.right);
         while let Some(done) = split {
             let Some((parent, at)) = self.lock_parent(&mut path, &done)? else { break };
             // The child's lock is released only now, with the parent's
@@ -251,6 +258,6 @@ impl BLinkTree {
             held = parent;
             split = self.change(&held, &done.separator, &done.right.0.to_le_bytes(), Slot::Insert(at))?;
         }
-        Ok(())
+        Ok(leaf)
     }
 }
