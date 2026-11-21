@@ -160,12 +160,12 @@ impl Zones {
     fn put_zone(&self, zone: &Zone, out: &mut Vec<u8>) -> Result<()> {
         out.put_u32(zone.rows);
         out.put_u8(if zone.known { KNOWN } else { 0 } | if zone.stale { STALE } else { 0 });
-        zone.nulls.iter().for_each(|&null| out.put_u8(u8::from(null)));
+        // A zone that held no row has no bounds nor nulls made.
+        (0..self.kept.len()).for_each(|c| out.put_u8(u8::from(zone.nulls.get(c).copied().unwrap_or(false))));
         for end in [true, false] {
-            let values = zone
-                .bounds
-                .iter()
-                .map(|b| b.as_ref().map_or(Value::Null, |(least, greatest)| (if end { least } else { greatest }).clone()));
+            let values = (0..self.kept.len())
+                .map(|c| zone.bounds.get(c).and_then(Option::as_ref))
+                .map(|b| b.map_or(Value::Null, |(least, greatest)| (if end { least } else { greatest }).clone()));
             let mut record = Vec::new();
             self.format.encode(&values.collect(), &mut record)?;
             out.put_bytes(&record);
@@ -210,12 +210,12 @@ impl Zones {
             for (segment, page) in place.segments.iter().enumerate() {
                 let zones = self.segment(place, *page)?;
                 let first = segment.saturating_mul(SEGMENT_ZONES);
-                loaded.resize_with(first.max(loaded.len()), || Zone::empty(self.kept.len(), false));
+                loaded.resize_with(first.max(loaded.len()), || Zone::empty(false));
                 loaded.extend(zones);
             }
         }
         let count = usize::try_from(below.div_ceil(ZONE_ROWS)).unwrap_or(usize::MAX).max(loaded.len());
-        loaded.resize_with(count, || Zone::empty(self.kept.len(), false));
+        loaded.resize_with(count, || Zone::empty(false));
         for zone in &mut loaded {
             zone.unsettled = true;
         }

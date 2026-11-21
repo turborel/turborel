@@ -232,23 +232,20 @@ fn widened(bounds: &mut Option<(Value, Value)>, v: &Value) {
 }
 
 impl Zone {
-    /// A zone of no row, known or not, of `columns` kept: settled, of no
-    /// row, if known; else to be summed up and settled.
-    fn empty(columns: usize, known: bool) -> Zone {
-        Zone {
-            bounds: vec![None; columns],
-            nulls: vec![false; columns],
-            rows: 0,
-            changes: 0,
-            stale: !known,
-            known,
-            unsettled: !known,
-            seen: Seen::Visible,
-        }
+    /// A zone of no row, known or not: settled, of no row, if known; else
+    /// to be summed up and settled. Its bounds and nulls are made as it
+    /// first holds a row, so a zone of none, as those of a column store
+    /// table's frozen rows are once summed up, takes no memory for them.
+    fn empty(known: bool) -> Zone {
+        Zone { bounds: Vec::new(), nulls: Vec::new(), rows: 0, changes: 0, stale: !known, known, unsettled: !known, seen: Seen::Visible }
     }
 
-    /// Widens it to hold `values`, those of the columns kept.
-    fn hold<'v>(&mut self, values: impl Iterator<Item = &'v Value>) {
+    /// Widens it to hold `values`, those of the `columns` kept.
+    fn hold<'v>(&mut self, columns: usize, values: impl Iterator<Item = &'v Value>) {
+        if self.bounds.len() < columns {
+            self.bounds.resize(columns, None);
+            self.nulls.resize(columns, false);
+        }
         for ((bounds, null), v) in self.bounds.iter_mut().zip(self.nulls.iter_mut()).zip(values) {
             if v.is_null() {
                 *null = true;
@@ -307,7 +304,7 @@ impl Zones {
                 self.stale.fetch_add(1, AtomicOrdering::AcqRel);
                 self.unsettled.fetch_add(1, AtomicOrdering::AcqRel);
             }
-            map.push(Zone::empty(self.kept.len(), known));
+            map.push(Zone::empty(known));
         }
         if let Some(zone) = map.zones.get(at) {
             self.change((&map, at), &mut lock_builtin(zone), (row, replaced));
@@ -339,7 +336,7 @@ impl Zones {
         }
         let stales = !zone.stale && self.narrows(zone, row, replaced);
         if let Some(row) = row {
-            zone.hold(self.kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
+            zone.hold(self.kept.len(), self.kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
         }
         if stales {
             zone.stale = true;
@@ -387,6 +384,24 @@ impl Zones {
         }
         past(&mut ranges, &map);
         ranges
+    }
+
+    /// The ranges `ranges` gives within the row ids from `first` up to, not
+    /// including, `end`, if it has one.
+    pub(super) fn ranges_within(
+        &self,
+        conditions: Option<&Conjunction>,
+        (first, end): (RowId, Option<RowId>),
+    ) -> Vec<(RowId, Option<RowId>)> {
+        let within = |(from, to): (RowId, Option<RowId>)| {
+            let from = from.max(first);
+            let to = match (to, end) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            to.is_none_or(|t| from < t).then_some((from, to))
+        };
+        self.ranges(conditions).into_iter().filter_map(within).collect()
     }
 
     /// The share of the rows a scan told `conditions` reads, by the rows of
