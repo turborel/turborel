@@ -98,7 +98,16 @@ fn conditions() -> Vec<Conjunct> {
 #[test]
 fn imprints_never_leave_out_a_matching_row() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 4096, sealing: &Plain, compress: true, pax: false, imprints: true };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 4096,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     for (s, shape) in SHAPES.into_iter().enumerate() {
         let all: Vec<Row> = (0..ROWS).map(|n| row(n, shape)).collect();
         let ids: Vec<RowId> = (1..=u64::try_from(ROWS).unwrap()).collect();
@@ -169,7 +178,16 @@ fn masks_are_of_the_bins_a_condition_may_match() {
 #[test]
 fn conjuncts_are_ordered_narrowest_first() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 4096, sealing: &Plain, compress: true, pax: false, imprints: true };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 4096,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     let all: Vec<Row> = (0..ROWS).map(|n| row(n, SHAPES[1])).collect();
     let ids: Vec<RowId> = (1..=u64::try_from(ROWS).unwrap()).collect();
     let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[])).unwrap();
