@@ -11713,6 +11713,29 @@ or hash joins on their equalities, as to compare the two. Period
 predicates are still read as comparisons (D581) when it is OFF, so their
 equalities can be a hash join's keys.
 
+#### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
+
+The batch filter passes each conjunct only the rows the one before it
+kept (D354), so the order of a filter's conjuncts decides how many rows
+each one judges. The planner orders the conjuncts of a filter over a
+table read in ascending order of rank, a conjunct's cost a row over
+the share of rows it drops, as Hellerstein and Stonebraker order a
+selection's predicates (SIGMOD 1993). Conjuncts of equal rank keep the
+written order (`physical/cost/conjuncts.rs`). A column compared with a
+constant or tested for null costs least. A set of constants searched
+costs more, then a comparison of expressions, then a pattern, and a
+conjunct with a subquery comes last. A filter one of whose conjuncts
+can raise an error keeps the written order, because each of its
+conjuncts is judged of every row anyway (D15).
+
+The weights the planner prices operators by are measured by
+`bench/analytics/costs.rs` (`TURBOREL_BENCH_ANALYTICS_ONLY=costs`). It
+times a scan by batch and a row at a time, of the row store and the
+column store, a hash join, groupings of few and of many groups, a sort,
+each of those past a small work area, and a part on several threads.
+It then prints each weight in rows of the row store's scan, the unit of
+the planner's costs.
+
 ## 2. Project layout
 
 ```

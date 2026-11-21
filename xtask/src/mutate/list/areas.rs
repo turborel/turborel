@@ -6,6 +6,7 @@ mod batches;
 mod budget;
 // The count's, kept beside the other areas' files.
 mod client_sync;
+mod cost_model;
 #[path = "count.rs"]
 mod count;
 mod declared_types;
@@ -99,7 +100,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 43] {
+fn second() -> [&'static [Mutation]; 44] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -144,6 +145,7 @@ fn second() -> [&'static [Mutation]; 43] {
         &analyze::ANALYZE,
         &statistics::STATISTICS,
         &range_joins::RANGE_JOINS,
+        &cost_model::COST_MODEL,
     ]
 }
 

@@ -91,6 +91,7 @@ mod column_usage;
 mod conformance_views;
 mod constraints;
 mod contracts;
+mod cost_model;
 mod creation;
 mod cursors;
 mod damage;
