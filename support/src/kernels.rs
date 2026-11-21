@@ -271,7 +271,7 @@ fn bounding(kernels: &dyn Kernels, width: usize) {
         // Runs of equal keys of varied lengths, differing in one byte each.
         let keys: Vec<u8> = (0..count)
             .flat_map(|r| {
-                (0..width).map(move |b| if b == (r / 3) % width.max(1) { ((r / 3) % 5) as u8 } else { (r % 7 == 0) as u8 * b as u8 })
+                (0..width).map(move |b| if b == (r / 3) % width.max(1) { ((r / 3) % 5) as u8 } else { u8::from(r % 7 == 0) * b as u8 })
             })
             .collect();
         for (from, to) in [(0, width), (0, width / 2), (width / 2, width), (1, width), (0, 0), (width, width + 1)] {

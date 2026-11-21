@@ -26,14 +26,15 @@ fn tables() -> (Database, Session) {
     let a = db.session("A");
     let mut rng = Rng::new(0x5EED_0560);
     let mut values = Vec::new();
-    for i in 0..300 {
-        let p = if rng.chance(5) { "NULL".to_string() } else { rng.below(4).to_string() };
-        let k = if rng.chance(8) { "NULL".to_string() } else { rng.below(40).to_string() };
-        let d = if rng.chance(10) { "NULL".to_string() } else { format!("{}.{:02}", rng.below(2000) as i64 - 1000, rng.below(100)) };
-        let f = if rng.chance(10) { "NULL".to_string() } else { format!("{}.5E{}", rng.below(100) as i64 - 50, rng.below(5)) };
-        let s = format!("'a long shared start of a string, past the key: {}'", rng.below(6));
-        let t = format!("DATE '2024-0{}-{:02}'", 1 + rng.below(3), 1 + rng.below(28));
-        values.push(format!("({i}, {p}, {k}, {d}, {f}, {s}, {t})"));
+    let signed = |n: usize| i64::try_from(n).unwrap();
+    for row in 0..300 {
+        let part = if rng.chance(5) { "NULL".to_string() } else { rng.below(4).to_string() };
+        let key = if rng.chance(8) { "NULL".to_string() } else { rng.below(40).to_string() };
+        let exact = if rng.chance(10) { "NULL".to_string() } else { format!("{}.{:02}", signed(rng.below(2000)) - 1000, rng.below(100)) };
+        let approx = if rng.chance(10) { "NULL".to_string() } else { format!("{}.5E{}", signed(rng.below(100)) - 50, rng.below(5)) };
+        let text = format!("'a long shared start of a string, past the key: {}'", rng.below(6));
+        let date = format!("DATE '2024-0{}-{:02}'", 1 + rng.below(3), 1 + rng.below(28));
+        values.push(format!("({row}, {part}, {key}, {exact}, {approx}, {text}, {date})"));
     }
     for table in ["W", "WC"] {
         a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();

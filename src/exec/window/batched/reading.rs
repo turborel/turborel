@@ -36,13 +36,11 @@ impl Windowing {
             return Ok(());
         }
         if self.prepared.is_none() {
-            match prepared(&self.w, &self.runner) {
-                Ok(p) => self.prepared = Some(p),
-                Err(_) => {
-                    self.give_way(Some(batch));
-                    return Ok(());
-                }
-            }
+            let Ok(made) = prepared(&self.w, &self.runner) else {
+                self.give_way(Some(batch));
+                return Ok(());
+            };
+            self.prepared = Some(made);
         }
         let Some(args) = self.arguments(&batch) else {
             self.give_way(Some(batch));
@@ -68,7 +66,7 @@ impl Windowing {
             }
             None => self.hold(Some(held)),
         }
-        if self.bytes > self.limit.checked_div(PARTS).unwrap_or_default() {
+        if self.bytes > self.work.limit().checked_div(PARTS).unwrap_or_default() {
             self.give_way(None);
         }
         Ok(())
@@ -113,7 +111,7 @@ impl Windowing {
     fn flushed(&mut self) -> bool {
         let Some(prepared) = self.prepared.as_ref().filter(|_| !self.held.is_empty()) else { return true };
         let calls = self.w.calls.len().max(1);
-        let trees = self.limit.checked_div(PARTS).unwrap_or_default().checked_div(calls).unwrap_or_default();
+        let trees = self.work.limit().checked_div(PARTS).unwrap_or_default().checked_div(calls).unwrap_or_default();
         let Ok(built) = computed(&self.w, prepared, &self.held, (trees, &self.runner)) else { return false };
         let mut at = 0_usize;
         for held in std::mem::take(&mut self.held) {

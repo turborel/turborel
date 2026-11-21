@@ -44,6 +44,8 @@ behind it, and each can be replaced or added to.
   keyed past long probes; EXCEPT and INTERSECT counted in it.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
+- Window functions over batches, partitions found of the sort's keys by a
+  kernel, moving frames by prefix sums and segment trees.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
   losers, and FETCH FIRST that makes only the rows it gives, reading its
   other columns late and skipping groups past its bound.

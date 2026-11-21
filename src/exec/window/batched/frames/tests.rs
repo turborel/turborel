@@ -43,15 +43,15 @@ fn both(keys: &[Value]) -> (Partition, Part) {
     let mut starts = Vec::new();
     let mut group = 0_u64;
     for (n, k) in keys.iter().enumerate() {
-        if n == 0 || crate::value::sort_cmp(&keys[n - 1], k) != std::cmp::Ordering::Equal {
-            group += u64::from(n > 0);
+        if n == 0 || crate::value::sort_cmp(&keys[n.saturating_sub(1)], k) != std::cmp::Ordering::Equal {
+            group = group.saturating_add(u64::from(n > 0));
             starts.push(n);
         }
         held.push(Placed { group, values: vec![k.clone()] }).unwrap();
     }
     let len = keys.len();
     let first = keys.iter().position(Value::is_null);
-    let past = keys.iter().rposition(Value::is_null).map_or(len, |p| p + 1);
+    let past = keys.iter().rposition(Value::is_null).map_or(len, |p| p.saturating_add(1));
     let nulls = first.map_or((len, len), |f| (f, past));
     (Partition { keys: held, len, nulls }, Part::of(len, starts))
 }
@@ -69,6 +69,20 @@ fn edges(order: SortOrder) -> Vec<Edge> {
     all
 }
 
+/// Checks the frames of `bounds` found at once over `part`, of range keys
+/// `ks`, against those `frame.rs` finds row after row of `partition`.
+fn alike(bounds: (&Edge, &Edge, Exclusion), ks: &[Value], (partition, part): (&mut Partition, &Part)) {
+    let (start, end, exclusion) = bounds;
+    let found = frames(bounds, part, Some((ks, partition.nulls))).unwrap();
+    let mut row_after_row = Bounds::new(start.clone(), end.clone(), exclusion);
+    for (row, frame) in found.iter().enumerate() {
+        let mut current = part.current(row);
+        current.key = ks[row].clone();
+        let want = row_after_row.frame(&current, partition).unwrap();
+        assert_eq!(*frame, want, "{start:?} {end:?} {exclusion:?} row {row} of {ks:?}");
+    }
+}
+
 /// Verifies: [ISO/IEC 9075-2:2023 §7.15 GR5b] each frame found at once,
 /// of ROWS, GROUPS and RANGE bounds of every kind, offsets 0 to 2, every
 /// exclusion, keys ascending and descending with nulls first and last, is
@@ -82,19 +96,10 @@ fn frames_found_at_once_are_those_found_row_after_row() {
         for len in [0_usize, 1, 2, 5, 9] {
             let ks = keys(&mut state, len, order);
             let (mut partition, part) = both(&ks);
-            for start in edges(order) {
-                for end in edges(order) {
-                    for exclusion in exclusions {
-                        let found = frames((&start, &end, exclusion), &part, Some((&ks, partition.nulls))).unwrap();
-                        let mut bounds = Bounds::new(start.clone(), end.clone(), exclusion);
-                        for (row, frame) in found.iter().enumerate() {
-                            let mut current = part.current(row);
-                            current.key = ks[row].clone();
-                            let want = bounds.frame(&current, &mut partition).unwrap();
-                            assert_eq!(*frame, want, "{start:?} {end:?} {exclusion:?} row {row} of {ks:?}");
-                        }
-                    }
-                }
+            let (starts, ends) = (edges(order), edges(order));
+            let combos = starts.iter().flat_map(|s| ends.iter().flat_map(move |e| exclusions.map(|x| (s, e, x))));
+            for bounds in combos {
+                alike(bounds, &ks, (&mut partition, &part));
             }
         }
     }

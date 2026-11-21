@@ -62,8 +62,8 @@ pub(in crate::exec::window) fn computed(
         }
         let part = Part::of(to.saturating_sub(from), own);
         let range = keys.as_ref().map(|k| key_block(k, (from, to)));
-        for ((call, (bounds, count)), (own, out)) in w.calls.iter().zip(prepared).zip(lanes.iter().zip(built.iter_mut())) {
-            let sliced: Vec<Lane> = own.iter().map(|l| l.slice((from, to))).collect();
+        for ((call, (bounds, count)), (args, out)) in w.calls.iter().zip(prepared).zip(lanes.iter().zip(built.iter_mut())) {
+            let sliced: Vec<Lane> = args.iter().map(|l| l.slice((from, to))).collect();
             let ranged = range.as_ref().map(|(k, nulls)| (k.as_slice(), *nulls));
             value_of(call, (bounds, *count), (&part, &sliced, ranged), (bytes, runner), out)?;
         }

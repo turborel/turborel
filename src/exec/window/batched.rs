@@ -123,9 +123,9 @@ pub(in crate::exec) fn window_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> 
     let (w, input) = window.split();
     let partition: Vec<SortKey> = w.partition.iter().map(|&c| SortKey::ascending(c)).collect();
     let both: Vec<SortKey> = partition.iter().chain(&w.order).copied().collect();
-    let keyed = input_of(input, &both, db, tx)?;
-    let limit = Work::of(db, tx).limit();
+    let keyed = input_of(input, (partition.len(), &both), db, tx)?;
     let windowing = Windowing {
+        work: Work::of(db, tx),
         w,
         sorted: (partition, both),
         input: Some(keyed),
@@ -136,7 +136,6 @@ pub(in crate::exec) fn window_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> 
         kernels: db.functions.kernels_shared(),
         held: Vec::new(),
         bytes: 0,
-        limit,
         last: None,
         out: VecDeque::new(),
         rows: None,
@@ -148,9 +147,9 @@ pub(in crate::exec) fn window_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> 
 /// partitioning's and ordering's keys: of a sort by those keys whose input
 /// gives whole batches, with the keys it made; of a stream giving whole
 /// batches, as they come; else its rows made batches.
-fn input_of(input: Plan, both: &[SortKey], db: &Arc<State>, tx: TxId) -> Result<KeyedBatches> {
+fn input_of(input: Plan, (parted, both): (usize, &[SortKey]), db: &Arc<State>, tx: TxId) -> Result<KeyedBatches> {
     if let Plan::Sort { keys, input: inner, most: None, .. } = &input
-        && keys.as_slice() == both
+        && sorts_as(keys, (parted, both))
         && let Some(width) = whole_width(inner, db)
     {
         let Plan::Sort { keys: by, input: sorted, .. } = input else { return Err(crate::exec::broken("a sort is not one")) };
@@ -161,6 +160,15 @@ fn input_of(input: Plan, both: &[SortKey], db: &Arc<State>, tx: TxId) -> Result<
         return Ok(Box::new(batches.map(|kept| kept.map(|(batch, sel)| (compact(batch, sel), None)))));
     }
     Ok(Box::new(rows_made_batches(execute(input, db, tx)).map(|b| b.map(|b| (b, None)))))
+}
+
+/// Whether a sort by `keys` gives rows in the order of `both`, a window's
+/// partitioning's keys then its ordering's: of its columns, each
+/// partitioning key in either direction, as a partition's rows are
+/// together either way, then the ordering's keys as they are.
+fn sorts_as(keys: &[SortKey], (parted, both): (usize, &[SortKey])) -> bool {
+    let alike = |(n, (k, b)): (usize, (&SortKey, &SortKey))| if n < parted { k.column == b.column } else { k == b };
+    keys.len() == both.len() && keys.iter().zip(both).enumerate().all(alike)
 }
 
 /// `batch`, of the rows `sel` keeps alone if given.
@@ -221,8 +229,8 @@ struct Windowing {
     held: Vec<Held>,
     /// The bytes they hold.
     bytes: usize,
-    /// The bytes of the work area.
-    limit: usize,
+    /// Its work area, held so its grant is charged with the rows held.
+    work: Work,
     /// The last row read.
     last: Option<Last>,
     /// Batches computed, to give.

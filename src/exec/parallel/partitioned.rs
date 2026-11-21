@@ -98,10 +98,10 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: 
 }
 
 /// The partition of a row whose key's normal bytes are `key`: of their
-/// MurmurHash3, a vetted hash (RULES.md D357), so the partitions do not
-/// depend on a hasher's seed or version.
+/// XXH3 (RULES.md D460), so the partitions do not depend on a hasher's
+/// seed or version.
 fn part_of_key(key: &[u8]) -> usize {
-    let (low, _) = crate::hash::murmur::murmur3_x64_128(key, 0);
+    let low = crate::hash::xxhash::xxh3_64(key);
     usize::try_from(low.checked_rem(u64::try_from(PARTS).unwrap_or(u64::MAX)).unwrap_or_default()).unwrap_or_default()
 }
 
