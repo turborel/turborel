@@ -26,11 +26,14 @@ use crate::txn::{Again, Txn};
 use crate::value::datetime::Now;
 use crate::value::{Value, assign};
 
+mod bulk;
 mod degree;
+mod given;
 mod portion;
 pub(crate) mod system_time;
 
 use degree::degree_at;
+pub(super) use given::not_given;
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
@@ -38,7 +41,7 @@ use degree::degree_at;
 pub(super) struct Target {
     /// The base table: it, or an updatable view's [X3.135-1986 §6.5 GR2].
     name: QualifiedName,
-    desc: TableDesc,
+    desc: Arc<TableDesc>,
     /// The object columns, as columns of the base table.
     object: Vec<usize>,
     /// [X3.135-1986 §8.7 GR2; ISO/IEC 9075:1992 §11.19 GR11] the views
@@ -212,7 +215,10 @@ impl Session {
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
         let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
-        let rows = if let Some(logical) = query {
+        let rows = if let Some(given) = params.given() {
+            // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
+            given::given_rows(st, (stmt, &target), given, &Runner::new(st, tx.id))?
+        } else if let Some(logical) = query {
             query_rows((self, cx), &target, logical)?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
@@ -231,7 +237,8 @@ impl Session {
         // [ISO/IEC 9075-2:2023 §15.11 GR4] its BEFORE triggers first.
         let mut rows = effects.before_insert(cx, &target.name, rows)?;
         // [X3.135-1986 §8.7 GR1c], [EXTENSION] in the partition that holds it (RULES.md D155).
-        rows.visit(&mut |row| st.insert_routed(tx, &target.name, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))?;
+        // [EXTENSION] a batch at a time where it may be (RULES.md D530).
+        bulk::insert_held(st, tx, &target.name, &mut rows, &mut effects)?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
             rows.visit(&mut |row| check_option(&target.checks, [row], ("X3.135-1986 §8.7 GR2", &runner)))?;
@@ -255,7 +262,7 @@ impl Session {
         let values = params.dynamic_values();
         if let Some(KeptPlan::Insert(target, query)) = keeping.map(Keeping::plan).transpose()?.flatten() {
             let authorization = self.authorization();
-            let target = target.refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
+            let target = Arc::unwrap_or_clone(target).refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
             return Ok((target, query.map(|q| filled(q, values)).transpose()?));
         }
         let kept = keeping.map(|_| params.keeping());
@@ -266,7 +273,7 @@ impl Session {
             InsertSource::DefaultValues => None,
         };
         let Some(k) = keeping else { return Ok((target, query)) };
-        k.made((!binding.held()).then(|| KeptPlan::Insert(Box::new(target.clone()), query.clone())))?;
+        k.made((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())))?;
         Ok((target, query.map(|q| filled(q, values)).transpose()?))
     }
 
@@ -586,5 +593,5 @@ pub(super) fn insert_target_in(
     let draws = check_override(&target.base, &object, into.given).or_at(into.table.at)?;
     let generating = Generating::of(st, &target.base, draws)?;
     let table = target.base.name.clone();
-    Ok(Target { name: table, desc: target.base, object, checks: target.checks, defaults, generating })
+    Ok(Target { name: table, desc: Arc::new(target.base), object, checks: target.checks, defaults, generating })
 }

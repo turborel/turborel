@@ -44,10 +44,13 @@ const COMPRESSION: &str = "COLUMNSTORE.COMPRESSION";
 const ORDER: &str = "COLUMNSTORE.ORDER";
 const BLOOM: &str = "COLUMNSTORE.BLOOM";
 const LAYOUT: &str = "COLUMNSTORE.LAYOUT";
+const IMPRINTS: &str = "COLUMNSTORE.IMPRINTS";
 /// What COLUMNSTORE.COMPRESSION takes.
 const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
 /// What COLUMNSTORE.LAYOUT takes.
 const LAYOUTS: &[&str] = &["COLUMNS", "PAX"];
+/// What COLUMNSTORE.IMPRINTS takes.
+const SWITCH: &[&str] = &["ON", "OFF"];
 /// \[DESIGN\] The default of COLUMNSTORE.REWRITE_FRACTION: a fifth of a group's
 /// rows changed, deleted or added to before it is written again, as
 /// Vertica's mergeout purges and SQL Server's guidance has it.
@@ -112,6 +115,9 @@ pub struct Columns {
     /// Whether groups are written in the hybrid layout, a page a range of
     /// rows holding a chunk of each column (`engine/columns/group/pax.rs`).
     pub pax: bool,
+    /// Whether groups are written with imprints of the columns that take
+    /// them (`engine/columns/imprints.rs`).
+    pub imprints: bool,
 }
 
 /// \[DESIGN\] Columns of a table by their places in the row, at most
@@ -151,6 +157,7 @@ impl Default for Columns {
             order: Places::default(),
             bloom: Places::default(),
             pax: false,
+            imprints: false,
         }
     }
 }
@@ -293,6 +300,11 @@ fn columns_declared(cols: Columns) -> Vec<TableOption> {
             Rebuild::No,
             "How a table of the column store lays out the groups it freezes: COLUMNS, each column's values on pages of their own, so a scan of a few columns reads only theirs; PAX, each page a range of rows, a chunk of each column on it, so a row read whole reads one page. Groups frozen before are written again so in the background.",
         ),
+        TableOption::new(
+            (IMPRINTS, Kind::Choice(SWITCH), Value::Char(if cols.imprints { "ON" } else { "OFF" }.into())),
+            Rebuild::No,
+            "Whether a table of the column store keeps, of the groups it freezes from then on, imprints of each column of exact numbers, datetimes or character strings: of each 64 rows, the bins of the group's values they fall in, so a comparison, IN or LIKE prefix skips stretches of rows that cannot match within 1024; ON or OFF.",
+        ),
     ]
 }
 
@@ -365,6 +377,7 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         order: set(ORDER).map_or(c.order, |v| order_of(desc, v)),
         bloom: set(BLOOM).map_or(c.bloom, |v| bloom_of(desc, v)),
         pax: set(LAYOUT).map_or(c.pax, |v| v.to_string().trim_end() == "PAX"),
+        imprints: set(IMPRINTS).map_or(c.imprints, |v| v.to_string().trim_end() != "OFF"),
     });
     out
 }

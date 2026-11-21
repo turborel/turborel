@@ -29,7 +29,7 @@ pub(super) const MOST_LEARNING_RUNS: u8 = 20;
 
 /// What a query learning its plan has learned (`Physical::Learning`).
 #[derive(Debug, Clone, Default)]
-pub(in crate::db) struct Learning {
+pub(crate) struct Learning {
     /// The plan the last execution made with its slots, if of the shape of
     /// the one made with its values.
     last: Option<Box<Plan>>,
@@ -43,7 +43,7 @@ pub(in crate::db) struct Learning {
 impl Learning {
     /// After an execution that planned `custom` with its values and
     /// `slotted` with its slots.
-    pub(in crate::db) fn after(self, custom: &Plan, slotted: Plan) -> Learning {
+    pub(crate) fn after(self, custom: &Plan, slotted: Plan) -> Learning {
         let shaped = same_shape(&slotted, custom);
         let continued = shaped && self.last.as_deref().is_some_and(|last| same_shape(last, &slotted));
         let agreed = if continued { self.agreed.saturating_add(1) } else { u8::from(shaped) };
@@ -62,7 +62,7 @@ impl Learning {
 
     /// What it has learned: its plan with slots, once learned; that it
     /// stopped, once learning fails; else itself, learning on.
-    pub(in crate::db) fn outcome(mut self) -> Learned {
+    pub(crate) fn outcome(mut self) -> Learned {
         if self.agreed >= LEARNED_RUNS
             && let Some(plan) = self.last.take()
         {
@@ -74,7 +74,7 @@ impl Learning {
 
 /// What a plan learning has learned after an execution (`Learning::outcome`).
 #[derive(Debug)]
-pub(in crate::db) enum Learned {
+pub(crate) enum Learned {
     /// Its plan with slots, kept.
     Kept(Box<Plan>),
     /// Not yet learned, so it learns on.

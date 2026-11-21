@@ -4265,7 +4265,9 @@ PARTITIONS and PARTITION_INDEXES are extensions
 
 | View | Shows |
 |---|---|
-| CONNECTIONS, SERVER, REPLICAS | A server's connections, its counts with the database's transactions committed and rolled back (RULES.md D334), and its replicas |
+| CONNECTIONS, SERVER, REPLICAS | A server's connections, each with the statement it runs, its transaction's start and what it waits on (RULES.md D520), its counts with the database's transactions committed and rolled back (RULES.md D334), and its replicas |
+| STATEMENT_STATISTICS | The statements run since the database opened, by normalized text and user, with their calls, times, rows, rows read and bytes spilled (RULES.md D521) |
+| TABLE_STATISTICS, INDEX_STATISTICS | Each table's rows, bytes, last change and last compaction, and each index's searches, entries read and size as its method knows it (RULES.md D522) |
 | FILES, FILE_FORMATS | A database's files and their formats |
 | JOBS | Its background jobs |
 | MEMORY_RESERVATIONS | What holds its memory |
@@ -5024,7 +5026,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §21.2.2 the catalog's name | The setting CATALOG.NAME, `TURBOREL` by default | `settings.rs`, `system.rs` |
 | §21.2.27, §21.2.28 L and ML, the lengths of SQL_IDENTIFIER and CHARACTER_DATA | CHARACTER VARYING(128) and CHARACTER VARYING(32767), the longest identifier and character string. A longer text, as a view's definition may be, is shown as null [§21.3.9 Description 3], its definition completing with a warning, 01009 of a search condition, 0100A of a query expression [§11.9 GR2, §11.19 GR13, §11.34 GR4]. This implementation's own system tables are of CHARACTER VARYING too. | `system.rs`, `system/definition.rs` |
 | §21.3.23, §21.3.24 the character set SQL_TEXT | Form-of-use UTF-8, 1,112,064 characters (every Unicode scalar value), PAD SPACE | `system/definition.rs` |
-| §21.3.5 how data types are described | A number's by the name it was written with, INTEGER, SMALLINT, BIGINT, DECIMAL or NUMERIC, radix 10, or REAL, DOUBLE PRECISION or FLOAT, radix 2, of the binary precision it holds values of, 24 or 53. A type computed is NUMERIC or FLOAT. The name is no part of the type, so INTEGER and NUMERIC(10,0) are one type. A character string's octet length is 4n. | `value.rs`, `value/types/exact.rs`, `value/types/approximate.rs` |
+| §21.3.5 how data types are described | A number's by the name it was written with, INTEGER, SMALLINT, BIGINT, DECIMAL or NUMERIC, radix 10, or REAL, DOUBLE PRECISION or FLOAT, radix 2, of the binary precision it holds values of, 24 or 53. A type computed is NUMERIC or FLOAT, but values of one number type written alike, as one row of VALUES or a set operation of INTEGER columns, keep its name (IV159, IV160). The name is no part of the type, so INTEGER and NUMERIC(10,0) are one type. A character string's octet length is 4n. | `value.rs`, `value/types/exact.rs`, `value/types/approximate.rs`, `binder/case.rs` |
 | §21.3.13 names of unnamed constraints | The table's name, the constraint's kind and a number, as `T_PRIMARY1`, `T_NOTNULL2` | `db/constraints.rs` |
 | 2023 §11.3 SR2e v 2 B (UV100) the name of a period constraint | The table's name, the period's and PERIOD, joined by underscores, as `T_P_PERIOD`, an underscore and a number after if its schema has the name | `db/constraints/periods.rs` |
 | ID106, ISO/IEC 9075-2:2023 §8.11 SR3, §11.7 SR5 the `<unique null treatment>` not written | NULLS DISTINCT, as every key and UNIQUE predicate was before one could be written | `ast/schema.rs` |

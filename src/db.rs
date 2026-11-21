@@ -111,7 +111,7 @@ mod nested;
 mod observed;
 pub(crate) mod partitions;
 mod position;
-mod prepared;
+pub(crate) mod prepared;
 pub(crate) mod ptf;
 mod rankings;
 mod recovery;
@@ -152,7 +152,7 @@ pub(crate) mod write;
 
 use assignment::{candidate, check_option, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
-use compiled::{plan, plan_heard, plan_rows, plan_slotted};
+use compiled::{plan, plan_heard, plan_rows, plan_rows_slotted, plan_slotted};
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use rekey::FormatsBehind;

@@ -54,6 +54,7 @@ mod options;
 mod recovery;
 mod scan;
 mod sealing;
+mod sizes;
 mod split;
 mod stats;
 mod store;
@@ -352,6 +353,10 @@ impl TableStorage for RowTable {
         self.counted.live.load(Ordering::Acquire)
     }
 
+    fn sizes(&self) -> Option<crate::storage::TableSizes> {
+        self.measured()
+    }
+
     /// A row of the tree costs 0.8, up to 1 as all its columns are read; a
     /// frozen row 0.25, up to 1 (`rows/frozen.rs`).
     fn scan_cost(&self, columns: &[usize]) -> f64 {
@@ -381,8 +386,7 @@ impl TableStorage for RowTable {
     /// A table opened has none until the database's maintenance gathers
     /// them, due once first asked for (`rows/stats.rs`).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
-        let stats: Arc<dyn Statistics> = self.gathered.asked_for()?;
-        Some(stats)
+        self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
     }
 
     fn garbage(self: Arc<Self>, as_of: Timestamp) -> Rows {

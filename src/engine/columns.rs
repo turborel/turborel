@@ -28,6 +28,7 @@ pub mod cache;
 mod encoded;
 mod fsst;
 pub mod group;
+pub mod imprints;
 pub mod judged;
 mod packed;
 pub mod prepared;
@@ -171,7 +172,8 @@ impl Fields {
             }
         }
         out.extend_from_slice(&nulls);
-        encoded::encode(plan, fields, sizer.table(), &mut out)?;
+        // A dictionary of texts in order, so a range is a range of codes.
+        encoded::encode(plan, fields, (sizer.table(), padding(t).is_some()), &mut out)?;
         Ok(out)
     }
 

@@ -27,8 +27,8 @@ use super::held::{self, HeldRight, Read as HeldRead};
 use super::pairs::{Out, kept_rows};
 use super::probe::{keyed, keys_match};
 use super::{gathered, in_order, left_batches, operand_rows};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::eval_cond;
 use crate::exec::join::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 use crate::exec::table::KeyHashes;
@@ -45,7 +45,7 @@ use crate::value::{Bucket, Value};
 ///
 /// The right operand's; the spill area's; an operand's own condition of a
 /// join on no keys; a column the left's batches lack.
-pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Db, tx: TxId) -> Result<Batches> {
     let (left_columns, left_width) = stream::layout(&left, db).unwrap_or_default();
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let spec = spec_of(joining, (db, tx))?;

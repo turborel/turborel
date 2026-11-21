@@ -66,7 +66,7 @@ impl PhysicalPlanner<'_> {
     pub(super) fn hash_join(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Option<Built> {
         let LogicalPlan::Product { left, right } = input else { return None };
         if cond.can_raise() {
-            return self.spatial_join(cond, (left, right), want);
+            return self.whole().spatial_join(cond, (left, right), want);
         }
         if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
             let product = LogicalPlan::Product { left: Box::new(left), right: Box::new(right) };
@@ -78,21 +78,25 @@ impl PhysicalPlanner<'_> {
         let mut conjuncts = Vec::new();
         split_and(cond.clone(), &mut conjuncts);
         let (mut keys, mut rest) = (Vec::new(), Vec::new());
-        for c in conjuncts {
+        // A period predicate's equalities are keys too (RULES.md D581).
+        for c in super::range::expanded_periods(conjuncts) {
             match equated(&c, width) {
                 Some(key) => keys.push(key),
                 None => rest.push(c),
             }
         }
         if keys.is_empty() {
-            return self.comparison_join(cond, (left, right), want);
+            return self.whole().comparison_join(cond, (left, right), want);
         }
         let names = self.names_of(input);
         let shown = Shown::of(names.as_deref());
         let est = self.estimating(|e| e.filter_card(cond, input)).rows;
-        // As in a product, the rows come in the order of the left operand.
+        // As in a product, the rows come in the order of the left operand,
+        // which a row goal passes to as each of its rows gives its matches
+        // (`goals.rs`).
         let want_left = of_left(want, width);
-        let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
+        let l = self.divided(|| self.per_row(est, left)).build_node(left, want_left);
+        let r = self.whole().build_node(right, &[]);
         let ordered = !want_left.is_empty() && l.ordered;
         // A few left rows each probing an index of the right's table.
         if let Some(pairs) = plain(&keys)
@@ -315,6 +319,10 @@ impl PhysicalPlanner<'_> {
         }
         // A spatial condition probes an R-tree instead (`indexed/spatial/outer.rs`).
         if let Some(built) = self.spatial_outer_join((kind, cond), (left, right), want) {
+            return built;
+        }
+        // A comparison by order searches a sorted operand (`physical/range/outer.rs`).
+        if let Some(built) = self.range_outer_join((kind, cond), (left, right)) {
             return built;
         }
         let width = left.width();

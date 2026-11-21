@@ -22,6 +22,7 @@
 //! column's vector cannot be judged over is left to the filter.
 
 mod coded;
+mod sorted;
 
 use std::cmp::Ordering;
 
@@ -40,6 +41,8 @@ use crate::value::{CompOp, DataType, Decimal, Value, compare_strings};
 /// true of a null.
 #[derive(Debug, Clone)]
 struct Pred {
+    /// Its conjunct's place in the condition.
+    at: usize,
     column: usize,
     conjunct: Conjunct,
     of_null: bool,
@@ -71,17 +74,24 @@ impl Judgment {
     pub fn of(condition: Option<&Conjunction>, types: &[DataType]) -> Judgment {
         let preds = condition
             .iter()
-            .flat_map(|c| c.conjuncts())
-            .filter(|c| judged_conjunct(c))
-            .filter_map(|c| {
+            .flat_map(|c| c.conjuncts().iter().enumerate())
+            .filter(|(_, c)| judged_conjunct(c))
+            .filter_map(|(at, c)| {
                 let columns = c.columns();
                 let [column] = columns.as_slice() else { return None };
                 let column = *column;
                 types.get(column).filter(|t| judged_type(t))?;
-                Some(Pred { column, conjunct: c.clone(), of_null: c.matches_key(&[&Value::Null]) })
+                Some(Pred { at, column, conjunct: c.clone(), of_null: c.matches_key(&[&Value::Null]) })
             })
             .collect();
         Judgment { preds }
+    }
+
+    /// Puts its conjuncts in the order of `order`, their places in the
+    /// condition, narrowest first (`scan::read_ordered`, RULES.md D511);
+    /// one `order` leaves out after the rest, as they were.
+    pub fn order_by(&mut self, order: &[usize]) {
+        self.preds.sort_by_key(|p| order.iter().position(|&at| at == p.at).unwrap_or(usize::MAX));
     }
 
     /// Whether it judges nothing.

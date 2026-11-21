@@ -47,6 +47,7 @@ pub(super) use stream::{Batches, Kept};
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
 use crate::error::{Result, SqlState};
+use crate::exec::Db;
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
@@ -133,7 +134,7 @@ pub(super) fn distinct_groupable(plan: &Plan, db: &State) -> Option<usize> {
 /// them, none of no rows.
 #[inline(never)]
 pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
-    let Plan::Distinct { input, est } = plan else { return plan };
+    let Plan::Distinct { input, est, streamed } = plan else { return plan };
     Plan::Aggregate {
         groups: (0..width).collect(),
         collations: Vec::new(),
@@ -142,6 +143,7 @@ pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
         detail: String::new(),
         input,
         est,
+        streamed,
     }
 }
 
@@ -151,8 +153,8 @@ pub(super) fn aggregable(plan: &Plan, db: &State) -> bool {
 }
 
 /// The rows of the aggregation `plan`, one read by batches (`aggregable`).
-pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIter {
-    let (Some(read), Plan::Aggregate { aggs, input, .. }) = (read_of(&plan, db), plan) else {
+pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
+    let (Some(read), Plan::Aggregate { aggs, input, streamed, .. }) = (read_of(&plan, db), plan) else {
         return failed(super::broken("an aggregation not read by batches"));
     };
     // A bare COUNT(*), counted by the table's storage if it can (`count.rs`).
@@ -168,6 +170,11 @@ pub(super) fn aggregated(plan: Plan, db: &Arc<State>, tx: TxId) -> super::RowIte
             Ok(row) => Box::new(std::iter::once(Ok(row))),
             Err(e) => failed(e),
         };
+    }
+    // Its rows in the order of its grouping columns, a group at a time
+    // (`groups/streamed.rs`, RULES.md D551).
+    if streamed {
+        return groups::streamed(read, aggs, (db, tx), stream.batches);
     }
     groups::grouped_all(&read, &aggs, (db, tx), stream.batches).unwrap_or_else(failed)
 }
@@ -439,6 +446,7 @@ mod tests {
             detail: String::new(),
             input: Box::new(scan()),
             est: 0.0_f64,
+            streamed: false,
         };
         assert!(aggregable(&aggregate(Vec::new(), Vec::new()), &st));
         assert!(!aggregable(&aggregate(vec![Vec::new()], Vec::new()), &st));

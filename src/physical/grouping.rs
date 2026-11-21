@@ -1,6 +1,7 @@
 //! The plan of a grouping: its input in the order its groups can give,
 //! built for the columns the grouping reads.
 
+use super::streamed::{Grouping, streamable};
 use super::{Built, PhysicalPlanner, Plan};
 use crate::logical::{AggCall, LogicalPlan, SortKey, column_name, cond_columns, expr_columns};
 
@@ -26,11 +27,16 @@ impl PhysicalPlanner<'_> {
             .map(|k| groups.get(k.column).filter(|_| ordered).map(|&c| SortKey { column: c, ..*k }))
             .collect::<Option<_>>()
             .unwrap_or_default();
-        let b = self.build_input(input, &inner, &reads(groups, aggs));
-        let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
+        let reads = reads(groups, aggs);
         let est = self.card(logical).rows;
-        let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(b.plan), est };
-        Built { plan, ordered: !inner.is_empty() && b.ordered }
+        let width = groups.len().saturating_add(aggs.len());
+        let streamable = streamable(collations, seeds.len(), aggs);
+        let g = Grouping { input, keys: groups, reads: Some(&reads), groups: est, width, streamable };
+        let make = |rows: Plan, streamed: bool| {
+            let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
+            Plan::Aggregate { groups, collations, aggs, seeds, detail: detail.clone(), input: Box::new(rows), est, streamed }
+        };
+        self.grouped(g, &inner, make)
     }
 }
 

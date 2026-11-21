@@ -80,6 +80,7 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
@@ -206,7 +207,7 @@ pub(in crate::exec) fn applied(batches: Batches, told: Vec<Told>, columns: &[usi
     if placed.is_empty() {
         return batches;
     }
-    let db = Arc::clone(db);
+    let db = db.clone();
     Box::new(batches.map(move |kept| {
         let (batch, rows) = kept?;
         let rows = ordered::judged(&mut placed, (&batch, rows), db.functions.kernels())?;

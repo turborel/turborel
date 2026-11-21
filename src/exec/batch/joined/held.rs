@@ -20,8 +20,8 @@ use super::super::late::Deferred;
 use super::super::runtime::{self, Told};
 use super::super::stream::{self, Batches, Kept};
 use super::{gathered, rows_of};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::table::{Candidates, Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal};
 use crate::exec::{RowIter, broken, execute};
 use crate::physical::{JoinKey, Plan};
@@ -160,7 +160,7 @@ pub(super) fn read(
     right: Plan,
     (keys, filtered, told): (&[JoinKey], &[usize], Vec<Told>),
     limit: usize,
-    (db, tx): (&Arc<State>, TxId),
+    (db, tx): (&Db, TxId),
 ) -> Result<Read> {
     let (columns, width) = stream::layout(&right, db).unwrap_or_default();
     let places: Vec<usize> = keys

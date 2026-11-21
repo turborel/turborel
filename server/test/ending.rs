@@ -28,6 +28,30 @@ fn count(db: &Database, user: &str, table: &str) -> String {
     n.to_string()
 }
 
+/// How many connections the test of the rows of ended connections ends.
+const ENDED: usize = 200;
+
+/// Verifies: [DESIGN] RULES.md D42: a connection its operator ended is
+/// no longer listed once its client has read why it closed, so a client
+/// that finds it lost and looks again never finds it, nor ends it in
+/// another's place.
+///
+/// Regression test (R-TEST-7): the row went only as the socket shut down,
+/// after the reply telling why, so a client that read it could find the
+/// row a moment after and an operator end it again, ending none.
+#[test]
+fn a_connection_ended_is_not_listed_once_its_client_is_told() {
+    let db = Database::new();
+    let server = start(&db, &[]);
+    for _ in 0..ENDED {
+        let mut x = server.connect("X");
+        assert!(server.operator.end(id_of(&server, "X")));
+        let ended = x.query("VALUES 1").unwrap_err();
+        assert_eq!(state(&ended), ("08006", -919));
+        assert_eq!(server.operator.connections(), Vec::new(), "none listed");
+    }
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §20.1 GR2a]; [DESIGN] RULES.md
 /// D42, D44: an operator ends a connection by its ID: one idle is closed,
 /// told so (SQLSTATE 08006), its transaction rolled back; one whose

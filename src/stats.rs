@@ -19,25 +19,38 @@
 //! values, so an engine feeds them a row at a time or a column at a time.
 //! `TableStats` is one way to answer from them: per column, the distinct
 //! values, the fraction that is NULL, the least and greatest values, and a
-//! histogram, how often its values repeat (`frequencies`), which a
-//! property graph's statistics are made of (`graph`), and of a geometry
-//! column, its envelopes' (`envelopes`). `ColumnBuilder` gathers a
-//! column's; `StatsBuilder` gathers a table's from its rows.
+//! histogram of the values but its most common, which it keeps apart
+//! with their shares (`common`), how often its values repeat
+//! (`frequencies`), which a property graph's statistics are made of
+//! (`graph`), and of a geometry column, its envelopes' (`envelopes`); and
+//! of the table, a sample of whole rows (`sample`). `ColumnBuilder`
+//! gathers a column's; `StatsBuilder` gathers a table's from its rows.
+//! What changed since a pass is told by `since`, and what the table's
+//! indexes count of their keys by `keyed`.
 
+pub mod common;
 pub mod envelopes;
 pub mod frequencies;
 pub mod graph;
+pub mod keyed;
 pub mod parts;
+pub mod sample;
+mod selectivity;
+pub mod since;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::BuildHasher;
+use std::sync::Arc;
 
+pub use common::Common;
 pub use envelopes::{EnvelopeBuilder, EnvelopeStats};
 pub use frequencies::Frequencies;
 pub use parts::{Histogram, Sampling};
 use parts::{HyperLogLog, Reservoir, count};
+pub use sample::{RowReservoir, RowSample};
+pub use since::Since;
 
 use crate::geometry::Geometry;
 use crate::hash::xxhash::Xxh3BuildHasher;
@@ -86,6 +99,23 @@ pub trait Statistics: Send + Sync + Debug {
     fn histogram(&self, _column: usize) -> Option<Vec<Value>> {
         None
     }
+    /// The most common values of `column`, each with the share of all
+    /// rows it holds, the most frequent first (RULES.md D381).
+    fn common(&self, _column: usize) -> Option<&[(Value, f64)]> {
+        None
+    }
+    /// A sample of the table's whole rows, its columns in order
+    /// (RULES.md D382).
+    fn sample(&self) -> Option<&RowSample> {
+        None
+    }
+    /// The distinct combinations of the values of `columns`, together,
+    /// rows with a null in any left out: of one column, its distinct
+    /// values; of several, as an index whose key they are counts its
+    /// keys, or the rows if they hold a unique key (RULES.md D383).
+    fn group_distinct(&self, _columns: &[usize]) -> Option<f64> {
+        None
+    }
 }
 
 /// What a column's values are like.
@@ -99,8 +129,14 @@ pub struct ColumnStats {
     pub min: Option<Value>,
     /// Its greatest value, if it has any but NULL.
     pub max: Option<Value>,
-    /// Its non-null values' histogram.
+    /// The histogram of its non-null values but its most common.
     pub histogram: Histogram,
+    /// Its most common values, each with the share of all rows it holds,
+    /// the most frequent first (`stats/common.rs`).
+    pub common: Common,
+    /// At how many passes in a row, up to `since::GROWING`, its greatest
+    /// value had risen past the pass before's.
+    pub rises: u8,
     /// Whether values may lie past `min` and `max`, they being a sample's,
     /// so a value outside them is not estimated to match no row.
     pub unbounded: bool,
@@ -108,33 +144,6 @@ pub struct ColumnStats {
     pub frequencies: Option<Frequencies>,
     /// Of a column of geometries, their envelopes' statistics.
     pub envelopes: Option<Box<EnvelopeStats>>,
-}
-
-impl ColumnStats {
-    /// The fraction of rows for which "column `op` `value`" is true, a
-    /// comparison with NULL being true for none [X3.135-1986 §5.11 GR2]:
-    /// for equality, the non-null rows shared among the distinct values,
-    /// none outside the least and greatest; for an order, the histogram.
-    pub fn selectivity(&self, op: CompOp, value: &Value) -> f64 {
-        if value.is_null() {
-            return 0.0;
-        }
-        let present = (1.0_f64 - self.nulls).clamp(0.0, 1.0);
-        let outside = !self.unbounded
-            && (self.min.as_ref().is_some_and(|min| compare(value, min) == Some(Ordering::Less))
-                || self.max.as_ref().is_some_and(|max| compare(value, max) == Some(Ordering::Greater)));
-        let equal = if outside || self.min.is_none() { 0.0_f64 } else { present / self.distinct.max(1.0) };
-        let below = present * self.histogram.below(value).unwrap_or(0.5_f64);
-        let fraction = match op {
-            CompOp::Eq => equal,
-            CompOp::Ne => present - equal,
-            CompOp::Lt => below,
-            CompOp::Le => below + equal,
-            CompOp::Gt => present - below - equal,
-            CompOp::Ge => present - below,
-        };
-        fraction.clamp(0.0, 1.0)
-    }
 }
 
 /// \[DESIGN\] Statistics of a table's rows, column by column, as
@@ -147,6 +156,8 @@ pub struct TableStats {
     pub width: f64,
     /// Its columns, in order.
     pub columns: Vec<ColumnStats>,
+    /// A sample of its rows, if it has any.
+    pub sample: Option<Arc<RowSample>>,
 }
 
 impl Statistics for TableStats {
@@ -179,6 +190,20 @@ impl Statistics for TableStats {
     fn histogram(&self, column: usize) -> Option<Vec<Value>> {
         Some(self.columns.get(column)?.histogram.bounds().to_vec())
     }
+    fn common(&self, column: usize) -> Option<&[(Value, f64)]> {
+        Some(&self.columns.get(column)?.common)
+    }
+    fn sample(&self) -> Option<&RowSample> {
+        self.sample.as_deref()
+    }
+    /// Of one column, its distinct values; of several, not known: no
+    /// index tells them here (`stats/keyed.rs`).
+    fn group_distinct(&self, columns: &[usize]) -> Option<f64> {
+        match columns {
+            [one] => self.distinct(*one),
+            [] | [_, _, ..] => None,
+        }
+    }
 }
 
 /// \[DESIGN\] Gathers one column's statistics from its values, in one pass.
@@ -191,9 +216,13 @@ pub struct ColumnBuilder {
     sample: Reservoir,
     min: Option<Value>,
     max: Option<Value>,
-    /// Of a sample of the rows, how often each value was seen, by the hash
-    /// of its normalized form, for the distinct values to be scaled.
-    seen: Option<HashMap<u64, u32>>,
+    /// Of a sample of the rows, in how many of the runs read each value
+    /// was seen, by the hash of its normalized form, for the distinct
+    /// values to be scaled.
+    seen: Option<HashMap<u64, Runs>>,
+    /// The run of rows the values added now are of, if told: if not,
+    /// each value is of a run of its own.
+    run: Option<u64>,
     /// Of a column of geometries, their envelopes, begun at the first.
     envelopes: Option<EnvelopeBuilder>,
 }
@@ -218,8 +247,7 @@ impl ColumnBuilder {
         }
         self.sketch.add(value);
         if let Some(seen) = self.seen.as_mut() {
-            let times = seen.entry(Xxh3BuildHasher::default().hash_one(value.norm())).or_default();
-            *times = times.saturating_add(1);
+            seen.entry(Xxh3BuildHasher::default().hash_one(value.norm())).or_insert(Runs { runs: 0, last: None }).saw(self.run);
         }
         if Geometry::is_geometry(value) {
             self.add_geometry(value);
@@ -248,16 +276,29 @@ impl ColumnBuilder {
 
     /// The statistics of the values added.
     pub fn finish(self) -> ColumnStats {
+        let distinct = self.sketch.estimate().min(count(self.values.saturating_sub(self.nulls)));
+        self.finish_with(distinct)
+    }
+
+    /// The statistics of the values added, of `distinct` distinct values:
+    /// the most common of the sample kept apart, the histogram of the
+    /// rest (`stats/common.rs`).
+    fn finish_with(self, distinct: f64) -> ColumnStats {
         let present = self.values.saturating_sub(self.nulls);
+        let nulls = if self.values == 0 { 0.0_f64 } else { count(self.nulls) / count(self.values) };
         let sorted = self.sample.into_sorted();
+        let frequencies = Frequencies::of_sorted(&sorted, count(present));
+        let (common, rest) = common::common_of(sorted, 1.0_f64 - nulls, distinct);
         ColumnStats {
-            distinct: self.sketch.estimate().min(count(present)),
-            nulls: if self.values == 0 { 0.0 } else { count(self.nulls) / count(self.values) },
+            distinct,
+            nulls,
             min: self.min,
             max: self.max,
-            histogram: Histogram::of_sorted(&sorted, self.sampling.buckets),
+            histogram: Histogram::of_sorted(&rest, self.sampling.buckets),
+            common,
+            rises: 0,
             unbounded: false,
-            frequencies: Frequencies::of_sorted(&sorted, count(present)),
+            frequencies,
             envelopes: self.envelopes.and_then(EnvelopeBuilder::finish).map(Box::new),
         }
     }
@@ -269,10 +310,19 @@ impl ColumnBuilder {
     fn finish_scaled(mut self, rows: f64) -> ColumnStats {
         let seen = self.seen.take().unwrap_or_default();
         let present = count(self.values.saturating_sub(self.nulls));
-        let once = count(seen.values().map(|&t| u64::from(t == 1)).sum());
-        let mut stats = self.finish();
-        stats.distinct =
-            scaled_distinct((count(u64::try_from(seen.len()).unwrap_or(u64::MAX)), once), present, rows * (1.0_f64 - stats.nulls));
+        // Each run's repeats of a value are collapsed to one, and the
+        // sample and the table taken as the values so collapsed
+        // (Chaudhuri, Das and Srivastava, "Effective use of block-level
+        // sampling in statistics estimation", SIGMOD 2004): rows near in a
+        // table often share a value, which a sample of runs would
+        // otherwise take for a value repeated across the table.
+        let collapsed = count(seen.values().map(|r| u64::from(r.runs)).sum());
+        let once = count(seen.values().map(|r| u64::from(r.runs == 1)).sum());
+        let nulls = if self.values == 0 { 0.0_f64 } else { count(self.nulls) / count(self.values) };
+        let found = count(u64::try_from(seen.len()).unwrap_or(u64::MAX));
+        let of = rows * (1.0_f64 - nulls) * collapsed / present.max(1.0_f64);
+        let distinct = scaled_distinct((found, once), collapsed, of).min(rows * (1.0_f64 - nulls));
+        let mut stats = self.finish_with(distinct);
         stats.unbounded = true;
         // Each value's rows of the sample, scaled to the table's.
         let factor = rows * (1.0_f64 - stats.nulls) / present.max(1.0_f64);
@@ -292,11 +342,30 @@ pub fn scaled_distinct((distinct, once): (f64, f64), sampled: f64, of: f64) -> f
     scaled.clamp(distinct.min(of), of.max(distinct))
 }
 
+/// In how many runs of rows a value was seen, and the last.
+#[derive(Debug, Clone, Copy)]
+struct Runs {
+    runs: u32,
+    last: Option<u64>,
+}
+
+impl Runs {
+    /// Counts the value seen in run `run`, once for each run; of no run
+    /// told, once each time.
+    fn saw(&mut self, run: Option<u64>) {
+        if run.is_none() || self.last != run {
+            self.runs = self.runs.saturating_add(1);
+            self.last = run;
+        }
+    }
+}
+
 /// \[DESIGN\] Gathers a table's statistics from its rows, in one pass.
 pub struct StatsBuilder {
     rows: u64,
     bytes: u64,
     columns: Vec<ColumnBuilder>,
+    sample: RowReservoir,
 }
 
 impl StatsBuilder {
@@ -307,14 +376,22 @@ impl StatsBuilder {
 
     /// A builder for rows of `columns` columns, sampling as `sampling` says.
     pub fn sampling(columns: usize, sampling: Sampling) -> StatsBuilder {
-        StatsBuilder { rows: 0, bytes: 0, columns: vec![ColumnBuilder::sampling(sampling); columns] }
+        StatsBuilder { rows: 0, bytes: 0, columns: vec![ColumnBuilder::sampling(sampling); columns], sample: RowReservoir::default() }
     }
 
     /// As `sampling`, for rows that are a sample of a table's, to be
     /// finished by `finish_sampled`: each value counted as it is seen.
     pub fn counting(columns: usize, sampling: Sampling) -> StatsBuilder {
         let column = ColumnBuilder { seen: Some(HashMap::new()), ..ColumnBuilder::sampling(sampling) };
-        StatsBuilder { rows: 0, bytes: 0, columns: vec![column; columns] }
+        StatsBuilder { rows: 0, bytes: 0, columns: vec![column; columns], sample: RowReservoir::default() }
+    }
+
+    /// Tells it the rows added from now on are of the run of rows `run`,
+    /// a sampled pass reading the table a run at a time.
+    pub fn at_run(&mut self, run: u64) {
+        for column in &mut self.columns {
+            column.run = Some(run);
+        }
     }
 
     /// Adds `row`, which takes `bytes` bytes as stored.
@@ -322,6 +399,7 @@ impl StatsBuilder {
         for (column, value) in self.columns.iter_mut().zip(row) {
             column.add(value);
         }
+        self.sample.add(row);
         self.rows = self.rows.saturating_add(1);
         self.bytes = self.bytes.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
     }
@@ -329,7 +407,8 @@ impl StatsBuilder {
     /// The statistics of the rows added.
     pub fn finish(self) -> TableStats {
         let width = if self.rows == 0 { 0.0_f64 } else { count(self.bytes) / count(self.rows) };
-        TableStats { rows: self.rows, width, columns: self.columns.into_iter().map(ColumnBuilder::finish).collect() }
+        let sample = self.sample.finish().map(Arc::new);
+        TableStats { rows: self.rows, width, columns: self.columns.into_iter().map(ColumnBuilder::finish).collect(), sample }
     }
 
     /// The statistics of a table of `rows` rows, those added a sample of
@@ -338,7 +417,7 @@ impl StatsBuilder {
     pub fn finish_sampled(self, rows: u64) -> TableStats {
         let width = if self.rows == 0 { 0.0_f64 } else { count(self.bytes) / count(self.rows) };
         let columns = self.columns.into_iter().map(|c| c.finish_scaled(count(rows))).collect();
-        TableStats { rows, width, columns }
+        TableStats { rows, width, columns, sample: self.sample.finish().map(Arc::new) }
     }
 }
 

@@ -16,12 +16,11 @@ use std::sync::Arc;
 use super::super::entries::{Reading, fetch};
 use super::super::project::Columns;
 use super::super::read::Asked;
-use super::super::{RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
+use super::super::{Db, RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
-use crate::db::State;
 use crate::error::Result;
 use crate::functions::ScalarRef;
-use crate::index::{Entries, Index, Key, KeyOrder};
+use crate::index::{Entries, Index, Key, KeyOrder, Using};
 use crate::logical::{Cond, Truth};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
@@ -44,13 +43,13 @@ use routed::{Opened, Routes};
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
 /// R-CF-6).
 #[inline(never)]
-pub(in crate::exec) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     projected(plan, None, db, tx)
 }
 
 /// Fuse a column projection into a join, preserving its full predicate.
 #[inline(never)]
-pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, tx: TxId) -> RowIter {
     let Plan::IndexJoin { outer, spatial, left, table, index, probe, cond, width, columns: needed, located, .. } = plan else {
         return failed(broken("an index join is not one"));
     };
@@ -70,6 +69,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
                     stop: db.tx.stop_of(tx),
                     located,
                     routes,
+                    using: Using::of(db.uses_of(&index)),
                 },
                 budget: prepared::budget(db).filter(|_| matches!(probe, JoinProbe::Predicate { .. })).map(Arc::clone),
                 prepared: None,
@@ -92,7 +92,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
 /// What an index join of `table` by `index` reads: the table's rows, the
 /// index, its key's shape, and \[EXTENSION\] of a partitioned table's
 /// template, the routes of its probes (`indexed/routed.rs`).
-fn opened(db: &Arc<State>, table: &QualifiedName, index: &str) -> Result<Opened> {
+fn opened(db: &Db, table: &QualifiedName, index: &str) -> Result<Opened> {
     if let Some((storage, found, ix, routes)) = routed::opened(db, table, index)? {
         return Ok((storage, found, ix, routes));
     }
@@ -104,12 +104,7 @@ fn opened(db: &Arc<State>, table: &QualifiedName, index: &str) -> Result<Opened>
 /// `joined` driven by the rows of `left`, or, of a spatial join, perhaps
 /// by a scan of its table (`indexed/adaptive.rs`) or a traversal of both
 /// tables' trees (`indexed/paired.rs`).
-fn driven(
-    mut joined: IndexJoin,
-    (spatial, left): (Option<Box<Spatial>>, Plan),
-    (inner, needed): (bool, Vec<usize>),
-    db: &Arc<State>,
-) -> RowIter {
+fn driven(mut joined: IndexJoin, (spatial, left): (Option<Box<Spatial>>, Plan), (inner, needed): (bool, Vec<usize>), db: &Db) -> RowIter {
     match spatial.map(|spatial| *spatial) {
         Some(Spatial::Paired(paired)) => paired::start(joined, (*paired, left), db),
         Some(Spatial::Adaptive) => {
@@ -140,6 +135,9 @@ struct Probed {
     /// \[EXTENSION\] Of a partitioned table's template, each partition's
     /// index, a probe routed to those its values may be in.
     routes: Option<Routes>,
+    /// Its probes and the entries they gave, counted as the index's
+    /// (RULES.md D522).
+    using: Using,
 }
 
 impl Probed {
@@ -155,6 +153,7 @@ impl Probed {
         };
         Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
+        self.using.searched();
         let entries = match &self.routes {
             Some(routes) => routes.search(&probe),
             None => Arc::clone(&self.index).search(&probe, KeyOrder::Ascending),
@@ -166,6 +165,7 @@ impl Probed {
     /// followed by its id if located.
     fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
+        self.using.gave(1);
         let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
         Ok(found.map(|(_, mut row)| {
             if self.located {
@@ -321,6 +321,7 @@ impl Iterator for IndexJoin {
 mod tests {
     use super::*;
     use crate::catalog::{MemoryCatalog, QualifiedName, TableDesc};
+    use crate::db::State;
     use crate::engine::rows::{ROW_STORE, RowStore, TableOptions};
     use crate::error::Code;
     use crate::storage::StorageEngine;
@@ -352,7 +353,8 @@ mod tests {
     /// rather than panicking (RULES.md R-ERR-1).
     #[test]
     fn a_join_of_what_is_not_there_is_reported() {
-        let code = |st: &Arc<State>, plan: Plan| indexed(plan, st, NO_TRANSACTION).collect::<Result<Vec<Row>>>().err().map(|e| e.code);
+        let code =
+            |st: &Arc<State>, plan: Plan| indexed(plan, &Db::of(st), NO_TRANSACTION).collect::<Result<Vec<Row>>>().err().map(|e| e.code);
         let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
         let empty = Arc::new(State::with_builtins(Box::new(MemoryCatalog::default())));
         assert_eq!(code(&empty, Plan::Values { rows: Vec::new(), detail: String::new() }), Some(Code::Api));

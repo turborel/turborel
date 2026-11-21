@@ -185,13 +185,17 @@ and an index method operation 9 of an index's.
 table:   u8 0 (none) | u8 1 | rows f64 | width f64 | refresh u64 | count u32 | column...
 column:  distinct f64 | nulls f64 | u8 0, or u8 1 | least value | greatest value
          | count u32 | histogram bound values... | u8 0, or u8 1 | most f64 | median f64 | p90 f64 | p99 f64
+         | count u32 | (common value | share f64)...
 index:   u8 0 (none) | u8 1 | entries f64 | distinct keys f64 | pages f64 | refresh u64
 ```
 
 A histogram's values are its bounds, ascending, each bucket between two
 of them holding as many values. The frequencies are how many times the
 most repeated value appears, and the median, 90th and 99th percentile
-of the repetitions. The first time the planner asks, the program is
+of the repetitions. The common values are the values many rows hold,
+each with the share of the table's rows it holds, and the histogram
+then describes the other values; a program that keeps none sends a
+count of 0. The first time the planner asks, the program is
 asked, and its answer is kept, so later questions cost no call. It is
 asked again at the planner's next question once the rows or entries
 written since reach `refresh`, and when the table is analyzed
