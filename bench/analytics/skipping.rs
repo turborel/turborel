@@ -26,20 +26,27 @@ fn rows() -> u64 {
     std::env::var(ROWS_VAR).ok().and_then(|v| v.parse().ok()).unwrap_or(ROWS)
 }
 
-/// Schema B with HITS, in the column store: K its key, in order; EDATE a
-/// date, in the rows' order; COUNTER a counter of 100, mostly in order;
-/// USERID scattered, each row's own; REGION one of 10,000, scattered;
-/// WIDTH one of 20; URL a text of 500 sites and 100,000 pages; PHRASE
-/// empty in nine rows of ten, else one of 1,000. Background work runs
-/// only when asked.
+/// Schema B with HITS, in the column store, its rows frozen.
 fn database(rows: u64) -> Database {
+    let db = filled(rows, "");
+    db.maintain().unwrap();
+    db
+}
+
+/// Schema B with HITS, in the column store, of `options`, its rows
+/// written and none frozen: K its key, in order; EDATE a date, in the
+/// rows' order; COUNTER a counter of 100, mostly in order; USERID
+/// scattered, each row's own; REGION one of 10,000, scattered; WIDTH one
+/// of 20; URL a text of 500 sites and 100,000 pages; PHRASE empty in nine
+/// rows of ten, else one of 1,000. Background work runs only when asked.
+fn filled(rows: u64, options: &str) -> Database {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
-    db.schema(
+    db.schema(&format!(
         "CREATE SCHEMA AUTHORIZATION B
            CREATE TABLE HITS (K BIGINT, EDATE DATE, COUNTER INTEGER, USERID BIGINT, REGION INTEGER, WIDTH INTEGER,
-             URL VARCHAR(100), PHRASE VARCHAR(40)) USING columnstore",
-    )
+             URL VARCHAR(100), PHRASE VARCHAR(40)) USING columnstore {options}"
+    ))
     .unwrap();
     let s = db.session("B");
     for first in (0..rows).step_by(PER_INSERT as usize) {
@@ -47,7 +54,6 @@ fn database(rows: u64) -> Database {
         s.run(&format!("INSERT INTO HITS VALUES {}", values.join(", "))).unwrap();
         s.commit().unwrap();
     }
-    db.maintain().unwrap();
     db
 }
 
@@ -102,11 +108,17 @@ const QUERIES: [(&str, &str); 14] = [
     ("MIN and MAX of texts", "SELECT MIN(PHRASE), MAX(URL) FROM HITS"),
 ];
 
+/// The choices of what a frozen group keeps whose freezing is measured,
+/// each named, as HITS' options.
+const FREEZES: [(&str, &str); 2] =
+    [("imprints", "WITH (COLUMNSTORE.IMPRINTS = 'ON')"), ("no imprints", "WITH (COLUMNSTORE.IMPRINTS = 'OFF')")];
+
 /// The queries measured again once rows of every group are updated.
 const AFTER: [usize; 4] = [1, 3, 8, 11];
 
 /// Measures each query of HITS, then again after updates, and fetches
-/// through an index.
+/// through an index; and last, the freezing of a quarter of its rows,
+/// with each choice of what a group keeps.
 pub fn workloads(bench: &Bench) {
     let rows = rows();
     let db = database(rows);
@@ -134,4 +146,15 @@ pub fn workloads(bench: &Bench) {
     s.commit().unwrap();
     measure("skipping, index", ("fetch 4 columns of 0.01% through an index", "SELECT K, EDATE, URL, WIDTH FROM HITS WHERE REGION = 4321"));
     measure("skipping, index", ("fetch 2 columns of 0.03% through an index", "SELECT K, WIDTH FROM HITS WHERE REGION IN (11, 12, 13)"));
+    for (name, options) in FREEZES {
+        let case = Case::new(format!("freeze, {name} (skipping, write)"), "rows");
+        bench.measure_fresh(
+            case,
+            || filled(rows / 4, options),
+            |fresh| {
+                fresh.maintain().unwrap();
+                rows / 4
+            },
+        );
+    }
 }

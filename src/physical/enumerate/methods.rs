@@ -22,10 +22,14 @@
 //!   (`CostModel::sort_compare`). Its rows are in the key's order. Where
 //!   both would be sorted the hash join is taken, which reads each once.
 //! * A nested loop, which pairs every row, when no equality joins them.
+//! * A range join, of an inner or LEFT join judging a comparison by order
+//!   of a value of each operand: the right sorted, each left row searching
+//!   it (`enumerate/ranged.rs`, RULES.md D580).
 
 use super::bits::Set;
 use super::conflicts::Kind;
 use super::model::Order;
+use super::ranged::range_join_cost;
 use super::space::{Applied, Cand, Entry, Method, Space, Tree};
 use crate::physical::cost::HASH_ROW;
 use crate::physical::robust::{Linear, choose, pessimistic};
@@ -45,12 +49,17 @@ impl Space<'_> {
         let (Some(left), Some(right)) = (self.table.get(&l), self.table.get(&r)) else { return Vec::new() };
         let sides = Sides { left, right };
         let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
+        let ranges = matches!(kind, Kind::Inner | Kind::Left) && self.model.ranged.of(applied);
         let mut out = Vec::new();
         let Some(build) = right.best() else { return out };
         let tree = |how: Method, (a, b): (usize, usize)| Tree::Join { how, op: applied.op, left: a, right: b, sets: (l, r) };
         for cand in &left.cands {
             let order = if kind == Kind::Full { Order::None } else { cand.order };
             let base = cand.cost + rows;
+            if ranges {
+                let cost = base + build.cost + range_join_cost(&self.model.cost, (left.rows, right.rows), rows);
+                out.push((Cand { cost, order, tree: 0 }, tree(Method::Range, (cand.tree, build.tree))));
+            }
             if keys.is_empty() {
                 let cost = base + build.cost + left.rows * right.rows;
                 out.push((Cand { cost, order, tree: 0 }, tree(Method::Nested, (cand.tree, build.tree))));
