@@ -18,7 +18,7 @@ use super::pipeline::{Branch, Pipeline, Step};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{Batches, Deferred, Shaped, filter_step, project_step, resolved, rows_of, through};
+use crate::exec::batch::{Batches, Deferred, Shaped, filter_step, probe_step, project_step, resolved, rows_of, runtime_step, through};
 use crate::exec::broken;
 use crate::storage::Row;
 use crate::txn::TxId;
@@ -68,8 +68,14 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
                 shaped.push(made);
                 (layout, width) = (after, exprs.len());
             }
+            Step::Probe(table) => {
+                let left: Vec<usize> = table.keys().iter().map(|k| k.left).collect();
+                let made;
+                (made, layout, width) = probe_step(&table.shared, &left, (&layout, width))?;
+                shaped.push(made);
+            }
+            Step::Runtime(told) => shaped.push(runtime_step(told, &layout)),
             Step::Count(count) => shaped.push(Shaped::Count(Arc::clone(count))),
-            Step::Probe(_) => return None,
         }
     }
     Some((shaped, layout, width))
@@ -87,7 +93,7 @@ fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
             Step::Filter(cond) => deferred.filtered(cond),
             Step::Project(exprs) => deferred.projected(exprs),
             Step::Probe(_) => Deferred::default(),
-            Step::Count(_) => deferred,
+            Step::Runtime(..) | Step::Count(_) => deferred,
         };
     }
     deferred.late_of(scanned)

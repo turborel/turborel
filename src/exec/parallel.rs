@@ -27,6 +27,7 @@
 //! split.
 
 mod batched;
+mod batches;
 mod grouped;
 mod indexed;
 mod partitioned;
@@ -38,7 +39,9 @@ mod sorted;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+pub(super) use self::batches::streamed_batches;
 use self::pipeline::Pipeline;
+pub(super) use self::probe::pipelined;
 use self::run::Morsels;
 use super::{RowIter, Runner, broken, execute, failed};
 use crate::db::State;
@@ -51,7 +54,7 @@ use crate::storage::Row;
 use crate::txn::{Stop, TxId};
 
 /// What a part holds, or that it gave way to the plan run alone.
-enum Held<T> {
+pub(in crate::exec) enum Held<T> {
     Kept(T),
     GaveWay,
 }
