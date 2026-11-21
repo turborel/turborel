@@ -73,8 +73,8 @@ behind it, and each can be replaced or added to.
 - Column store skipping that survives writes: shadow bits and zones over
   the delta, optional column imprints, column sketches of compressed
   texts, and sorted dictionaries judged by codes.
-- Bulk loads by INSERT or copy that build empty indexes whole and write
-  column store rows straight into frozen groups.
+- Bulk loads by INSERT or copy that build empty indexes whole and, if
+  asked, write column store rows straight into frozen groups.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to

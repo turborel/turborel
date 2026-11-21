@@ -23,6 +23,7 @@
 //!             each group's summary (`group/header.rs`)
 //! ```
 
+use crate::engine::rows::options::LoadTo;
 use std::mem;
 use std::ops::Bound;
 use std::sync::Arc;
@@ -240,7 +241,7 @@ impl RowTable {
 
 impl Loading for RowTable {
     fn begin_load(&self, tx: TxId) -> Result<Option<usize>> {
-        let Some(columns) = *read(&self.frozen.columns)? else { return Ok(None) };
+        let Some(columns) = (*read(&self.frozen.columns)?).filter(|c| c.load == LoadTo::Groups) else { return Ok(None) };
         let past = self.frozen.directory()?.last().map(|l| key(l.saturating_add(1)));
         let lower = past.as_ref().map_or(Bound::Unbounded, |k| Bound::Included(&k[..]));
         if self.tree.scan(lower, Bound::Unbounded, Direction::Forward).next().is_some() {
