@@ -29,6 +29,7 @@ mod enumerate;
 pub use decided::Decided;
 pub(crate) mod estimate;
 mod expression_index;
+mod filtered;
 mod goals;
 mod grouping;
 mod indexed;
@@ -79,7 +80,6 @@ use crate::exec::{TransitionRows, WorkRows};
 use crate::index::Probe;
 use crate::logical::{
     AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Polymorphic, Recognize, SetOp, SortKey, Unnest, Window,
-    judged_by_sets, render_cond,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -564,33 +564,6 @@ impl<'a> PhysicalPlanner<'a> {
                 names: p.names.clone(),
             }))),
         }
-    }
-
-    /// A filter directly on a table, or over a table's read and a guard
-    /// (`physical/access/guarded.rs`), becomes part of the access path,
-    /// told the columns the node above reads, `above`, if known; any other
-    /// keeps the order of its input, its long IN lists judged by sets
-    /// (`logical::judged_by_sets`).
-    fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey], above: Option<&[usize]>) -> Built {
-        // A row goal is of the rows the filter keeps: its input is read
-        // for as many more as it drops (`goals.rs`). A join divides its
-        // own.
-        let kept = |p: &PhysicalPlanner<'_>| p.per_row(p.estimating(|e| e.filter_card(cond, input)).rows, input);
-        let goal = self.divided(|| kept(self));
-        if let Some(read) = goal.filtered_read(cond, input, (want, above)) {
-            return read;
-        }
-        if let Some(join) = self.range_join(cond, input) {
-            return join;
-        }
-        if let Some(join) = self.hash_join(cond, input, want) {
-            return join;
-        }
-        let est = self.estimating(|e| e.filter_card(cond, input)).rows;
-        let b = goal.build_node(input, want);
-        let cond = judged_by_sets(cond.clone());
-        let detail = self.described(input, |names| render_cond(&cond, names));
-        Built { plan: Plan::Filter { cond, detail, est, of_read: false, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 }
 
