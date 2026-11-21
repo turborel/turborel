@@ -13,8 +13,8 @@ use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::routines::{Hosted, hosted_rows};
 use super::{Session, State, StatementContext, plan, plan_rows, rule, set_columns};
-use crate::ast::{ColumnName, InsertSource, InsertStatement, Overriding, QueryExpression, SelectList, SelectSublist, TableName};
-use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
+use crate::ast::{InsertSource, InsertStatement, QueryExpression, SelectList, SelectSublist};
+use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, qualify};
 use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
@@ -29,11 +29,13 @@ use crate::value::{Value, assign};
 mod bulk;
 mod degree;
 mod given;
+mod into;
 mod portion;
 pub(crate) mod system_time;
 
 use degree::degree_at;
 pub(super) use given::not_given;
+pub(super) use into::{INSERT_RULES, InsertInto, InsertRules, object_columns};
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
@@ -340,53 +342,6 @@ impl Session {
         }
         Ok(bound.plan)
     }
-}
-
-/// What an INSERT, or a MERGE's WHEN NOT MATCHED clause, inserts into: its
-/// table, its `<insert column list>`, if written, the values it gives and
-/// its `<override clause>`, and the rules it cites.
-pub(super) struct InsertInto<'a> {
-    pub(super) table: &'a TableName,
-    pub(super) columns: Option<&'a [ColumnName]>,
-    pub(super) given: (Inserted<'a>, Option<Overriding>),
-    pub(super) rules: &'a InsertRules,
-    /// The columns seen of the table without a column list: a triggered
-    /// action's, as they were when its trigger was defined [ISO/IEC
-    /// 9075-2:2023 §11.21 GR2, Note 561].
-    pub(super) horizon: &'a Horizon,
-}
-
-/// The rules an insert cites, each in full: of a read-only table, of a
-/// column of its column list its table lacks, of one listed twice, and of
-/// the privileges it needs.
-pub(super) struct InsertRules {
-    pub(super) read_only: &'static str,
-    pub(super) missing: &'static str,
-    pub(super) twice: &'static str,
-    pub(super) privilege: &'static str,
-}
-
-/// [X3.135-1986 §8.7 SR1 to SR3] The rules of an INSERT.
-pub(super) const INSERT_RULES: InsertRules = InsertRules {
-    read_only: "X3.135-1986 §8.7 SR2",
-    missing: "X3.135-1986 §8.7 SR3",
-    twice: "X3.135-1986 §8.7 SR3",
-    privilege: "X3.135-1986 §8.7 SR1",
-};
-
-/// The columns `columns` of the table or view `name` that `list` names,
-/// by their positions, in order: each a column of it, none named twice.
-pub(super) fn object_columns(name: &QualifiedName, columns: &[ColumnDesc], list: &[ColumnName], rules: &InsertRules) -> Result<Vec<usize>> {
-    let mut cols = Vec::new();
-    for ColumnName { name: c, at } in list {
-        let missing = || no_column(name, format!("[{}] {name} has no column {c}", rules.missing), c).or_at(*at);
-        let i = columns.iter().position(|d| d.name == *c).ok_or_else(missing)?;
-        if cols.contains(&i) {
-            return Err(rule(format!("[{}] column {c} is listed twice", rules.twice)).or_at(*at));
-        }
-        cols.push(i);
-    }
-    Ok(cols)
 }
 
 /// [X3.135-1986 §8.7 GR3, GR4; ISO/IEC 9075:1992 §13.8 GR3, GR4] the

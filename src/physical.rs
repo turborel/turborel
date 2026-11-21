@@ -24,7 +24,7 @@ mod built;
 mod cardinality;
 mod carried;
 mod collated;
-mod cost;
+pub(crate) mod cost;
 mod decided;
 mod enumerate;
 pub use decided::Decided;
@@ -55,6 +55,7 @@ mod range;
 pub use range::{Bound, Pruned, RangeJoin};
 mod raising;
 mod recognized;
+mod robust;
 mod semi;
 pub use semi::{SemiJoin, SemiMethod};
 mod shown;
@@ -62,14 +63,15 @@ pub(crate) mod spatial;
 mod streamed;
 
 pub use cardinality::Injected;
-pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
+pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_ESTIMATE_MARGIN, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE};
+pub use cost::{DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE, MOST_ESTIMATE_MARGIN, parallel::Degrees};
 pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
 pub(crate) use kept::{Kept, filled_plan_as_is, keepable, placed, prepared_plan, same_shape};
 pub use kept::{Place, ProbeSlot};
-
 use std::sync::Arc;
 
-use built::Built;
+pub use built::Own;
+use built::{Built, of_left};
 use cardinality::Estimates;
 
 use crate::catalog::QualifiedName;
@@ -589,16 +591,6 @@ impl<'a> PhysicalPlanner<'a> {
         Built { plan: Plan::Filter { cond, detail, est, of_read: false, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 }
-
-/// `want`, if each of its keys is of a product's left operand, `width`
-/// columns wide, whose order the product keeps; else none.
-fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
-    if want.iter().all(|k| k.column < width) { want } else { &[] }
-}
-
-/// An outer join's own conditions, of its left operand's columns and of
-/// its right's (`Plan::OuterJoin`), if either has one.
-pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;
 
 // Unit tests: the planner's response to a state that breaks its invariants
 // (RULES.md R-TEST-2 robustness), and the orders its plans give.
