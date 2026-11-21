@@ -494,6 +494,7 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D805 | A pool finds its files with no lock and no reference count moved |
 
 ### The project
 
@@ -13823,6 +13824,22 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
+#### D805. A pool finds its files with no lock and no reference count moved
+
+Each page a pool writes, and each it reads from its file, finds the file
+by number. The files were kept behind one reader-writer lock, and the
+file's `Arc` was cloned out of it, so every such call wrote the lock's
+reader count and the file's reference count. Threads writing pages of
+different tables passed both cache lines between them: a profile of
+contended cache lines at 32 threads put it among the shared lines of
+row updates. Files are only ever added to a pool, so each is now set
+once in a slot never changed again: slots in chunks of 1,024 made as
+files are added, each chunk set once in a fixed table of 1,024
+(`disk/buffer/sources.rs`). A lookup loads two `OnceLock`s and borrows
+the file for as long as the pool lives. A pool registers at most
+1,048,576 files; one added past that is given a number no file has, so
+every use of it is refused.
 
 ## 2. Project layout
 
