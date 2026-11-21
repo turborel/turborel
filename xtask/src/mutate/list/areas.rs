@@ -30,6 +30,7 @@ mod rewrites;
 mod skipping;
 mod sorts;
 mod statistics;
+mod subquery_plans;
 mod tpcc;
 mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
@@ -99,7 +100,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 43] {
+fn second() -> [&'static [Mutation]; 44] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -137,6 +138,7 @@ fn second() -> [&'static [Mutation]; 43] {
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &rewrites::REWRITES,
         &unnesting::UNNESTING,
+        &subquery_plans::SUBQUERY_PLANS,
         &insert_values::INSERT_VALUES,
         &expr::EXPR,
         &sorts::SORTS,

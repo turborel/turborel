@@ -179,6 +179,7 @@ pub use stores::{CatalogStorage, CatalogStore, FileLogs, LOG_DIR, LogStorage, Op
 pub(crate) use {
     assignment::{assign_targets, assignment_type, check_targets},
     database::WeakDatabase,
+    prepared::{Learned, Learning},
     routines::run_unhosted,
     triggers::trigger_texts,
 };

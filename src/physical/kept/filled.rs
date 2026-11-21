@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::filled_scan;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Truth, filled_cond, filled_expr};
+use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Placing, Truth, filled_cond_as, filled_expr_as};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
 use crate::physical::{JoinProbe, Plan, Preserved};
@@ -20,27 +20,39 @@ use crate::value::Value;
 ///
 /// As `logical::filled`; SQLCODE -910 for an operator no kept plan holds.
 pub(crate) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
-    Filling { values, budget }.plan(plan)
+    Filling { values, budget, placing: Placing::Cast }.plan(plan)
+}
+
+/// As `filled_plan`, each value placed as it is, not cast: of a
+/// correlated subquery's plan kept across its runs, its outer references
+/// the slots (RULES.md D675).
+///
+/// # Errors
+///
+/// As `filled_plan`.
+pub(crate) fn filled_plan_as_is(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
+    Filling { values, budget, placing: Placing::AsIs }.plan(plan)
 }
 
 struct Filling<'a> {
     values: &'a [Value],
     budget: Option<&'a Arc<MemoryBudget>>,
+    placing: Placing,
 }
 
 impl Filling<'_> {
     fn expr(&self, expr: Expr) -> Result<Expr> {
-        Ok(prepared::expression(filled_expr(expr, self.values)?, self.budget))
+        Ok(prepared::expression(filled_expr_as(expr, self.values, self.placing)?, self.budget))
     }
 
     fn cond(&self, cond: Cond) -> Result<Cond> {
-        Ok(prepared::condition(filled_cond(cond, self.values)?, self.budget))
+        Ok(prepared::condition(filled_cond_as(cond, self.values, self.placing)?, self.budget))
     }
 
     /// A scan's probe filled, and the conjunct it decides, if one, filled
     /// and prepared as a filter's would be.
     fn scan(&self, plan: Plan) -> Result<Plan> {
-        let mut plan = filled_scan(plan, self.values)?;
+        let mut plan = filled_scan(plan, self.values, self.placing)?;
         if let Plan::IndexScan { decided: Some(decided), .. } = &mut plan {
             let cond = std::mem::replace(&mut decided.cond, Cond::Const(Truth::True));
             decided.cond = self.cond(cond)?;
