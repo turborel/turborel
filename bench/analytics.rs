@@ -41,9 +41,12 @@
 //! (`analytics/joins.rs`), to `late`, a column store's selective
 //! queries, the columns they keep few rows of read late, alone
 //! (`analytics/late.rs`), to `skipping`, a large column store table's
-//! filters, by what they skip, alone (`analytics/skipping.rs`), or to
-//! `sorts`, ORDER BY and top-N alone
-//! (`analytics/sorts.rs`).
+//! filters, by what they skip, alone (`analytics/skipping.rs`), to
+//! `sorts`, ORDER BY and top-N alone (`analytics/sorts.rs`), to
+//! `goals`, FETCH FIRST over filters, joins and groupings read in order
+//! and groupings streamed alone (`analytics/goals.rs`), or to `costs`,
+//! the operators whose speeds the planner's weights stand for, and the
+//! weights they give, alone (`analytics/costs.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -58,6 +61,8 @@
 
 #[path = "analytics/bands.rs"]
 mod bands;
+#[path = "analytics/costs.rs"]
+mod costs;
 #[path = "analytics/counts.rs"]
 mod counts;
 #[path = "analytics/decode.rs"]
@@ -68,6 +73,8 @@ mod distinct;
 mod eager;
 #[path = "analytics/expressions.rs"]
 mod expressions;
+#[path = "analytics/goals.rs"]
+mod goals;
 #[path = "analytics/graph.rs"]
 mod graph;
 #[path = "analytics/grouping.rs"]
@@ -103,7 +110,8 @@ use turborel::db::{Database, Session};
 /// for groupings over joins, `late`
 /// for a column store's selective queries, `skipping` for a large column
 /// store table's filters, `sorts` for ORDER BY and top-N, `bands` and
-/// `bands-large` for joins on comparisons by order.
+/// `bands-large` for joins on comparisons by order, `goals` for FETCH
+/// FIRST and groupings read in order, `costs` for the planner's weights.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -156,6 +164,7 @@ fn main() {
     joins::workloads(&bench);
     sorts::workloads(&bench);
     bands::small(&bench);
+    goals::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -165,6 +174,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "social" => social::workloads,
         "graph" => graph::workloads,
         "unnesting" => unnesting::workloads,
+        "costs" => costs::workloads,
         "counts" => counts::workloads,
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
@@ -175,6 +185,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "sorts" => sorts::workloads,
         "bands" => bands::small,
         "bands-large" => bands::large,
+        "goals" => goals::workloads,
         _ => return false,
     };
     run(bench);

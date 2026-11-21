@@ -412,6 +412,10 @@ verification approach DO-178C expects (§8).
 | D520 | CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session |
 | D521 | Statements are tallied by normalized text and user, each session in its own tallies |
 | D522 | Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes |
+| D530 | The rows of an INSERT and of a bulk copy go in together, a batch at a time, one log record each |
+| D550 | A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less |
+| D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
+| D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
@@ -419,6 +423,7 @@ verification approach DO-178C expects (§8).
 | D661 | A part of a built-in set function is kept in the built-in's column of states |
 | D662 | COUNT and exact SUM and AVG of values each of n rows take each as the state of n values |
 | D663 | PLANNER.EAGER_GAIN sets how much less work a plan grouped first must do, OPTIMIZER.EAGER_AGGREGATION turns it off |
+| D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
 
@@ -7941,8 +7946,9 @@ With `copy`, CopyIn names a table and its columns, CopyData sends rows
 with no reply, and CopyEnd ends the copy, or abandons it. Each value is
 assigned to its column as INSERT assigns it [ISO/IEC 9075:1992 §13.8 GR4b
 iii], so a string too long is refused rather than cut. Rows are inserted
-in batches of 64 by one prepared INSERT, a batch that fails retried row
-by row to find the row, its failure's detail "row N of the copy". A copy
+in batches of 4096, each by one execution of a prepared INSERT of one
+row given them all (D530). A batch that fails is retried row by row to
+find the row, its failure's detail "row N of the copy". A copy
 is all or nothing, under a savepoint within the transaction, or its own
 transaction if CopyIn says it ends it. A savepoint that cannot be taken
 fails the copy before it inserts anything, and a client that terminates
@@ -11772,6 +11778,116 @@ and an index dropped takes its counts with it.
 The database's owner and a user granted MONITOR (D520) see every row.
 Another user sees the rows of the tables on which they hold a privilege,
 as the views of the Information Schema show what is accessible to them.
+#### D530. The rows of an INSERT and of a bulk copy go in together, a batch at a time, one log record each
+
+The standard says what an INSERT does to its table, not how its rows
+reach the storage, and has no bulk load. Inserting row by row cost each
+row its own lock check, log record and append, and an index write at a
+random place. So the candidate rows of an INSERT, of a query or of many
+rows of values, and so of a bulk copy (D195), are inserted a batch of up
+to 4096 at a time (`db/write/bulk.rs`). The table's lock is taken once.
+Each batch's rows go to the storage, then to the log as one record of
+kind 26, insert rows, of up to about a mebibyte of rows, each with its
+row id (`log/record/batch.rs`), then to each index in the rows' order,
+so each index's pages, and the estimates read from them, are as row by
+row inserts leave them. Each
+row keeps its own undo entries, and recovery redoes the record as one
+insert record a row, so a statement's effect, its failure undoing all of
+it, and what a crash keeps are as if the rows went in one at a time. A
+statement of one row, a partition or a partitioned table, a table whose
+rows are sealed, and a row holding a large object go one row at a time.
+The record format stays version 1, the kind added in place.
+
+Each row's NOT NULL constraints and CHECKs without a subquery are
+checked as it goes in, and a UNIQUE key found alone in its unique index
+needs no check after (`db/integrity/inserted.rs`). Such a row is noted
+for the statement's end only if its key was not alone. A row of an
+INSERT holds still once in when no trigger, delta table, referential
+action, deferred constraint, assertion or CHECK with a subquery can see
+or change it, so it is checked once that way. Any other statement has
+every row noted and checked at its end, as before.
+
+A program gives a batch of rows to a prepared INSERT of one row of
+dynamic parameters by `Session::execute_prepared_rows`. One execution
+then inserts them all, each row's values those of the parameters, so
+the statement is bound once a batch, not once a row. A bulk copy uses
+it. It is refused for any other statement and for a view with an
+INSTEAD OF trigger.
+#### D550. A grouping or DISTINCT is streamed over rows in its keys' order when its input gives that order, a sort of it costs less than hashing, or a table's kept order or an index gives it for less
+
+A grouping whose rows come in the order of its grouping columns makes
+its groups one at a time, and a group is finished as the first row of
+the next comes [X3.135-1986 §5.22 GR2]. Nothing is hashed or held, and
+no grouping of more groups than its work area spills. The planner
+chooses it in `physical/streamed.rs`. Rows alike in every key come
+together in any order of the keys and either direction, so an ORDER BY
+of the keys in its own order serves.
+
+Under an ORDER BY of the keys, an input that already gives the order is
+streamed. An input that does not is sorted below the grouping, the
+ORDER BY's keys first and then the rest ascending, when sorting every
+row and comparing each costs less than hashing the rows and sorting the
+groups. Of no order asked, a read of one table, filtered or projected to
+columns, is streamed in an order the column store keeps
+(COLUMNSTORE.ORDER) or an ordered index without a collation gives, when
+that read and a comparison of each row cost less than the cheapest read
+hashed. A hashed grouping that would run in parallel (D290) is kept
+hashed, as the parallel grouping divides its rows among workers.
+
+A grouping by a collation compares its values' sort keys, not their
+order, and is hashed. So is one of grouping sets that makes groups
+before any row, one of no grouping column, and one with a DISTINCT set
+function or an inverse distribution function, whose states keep their
+values apart. PLANNER.STREAMED_GROUPING = 'OFF' hashes every grouping.
+EXPLAIN shows `Aggregate streamed` and `Distinct streamed`.
+
+COUNT, MIN and MAX of arguments and filters that cannot raise an error
+cannot raise one, so a grouping of them alone lets FETCH FIRST stop its
+input once its rows are given (`physical/raising.rs`). A count past
+BIGINT would take more rows than any statement reads.
+
+#### D551. A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows
+
+A set function's state may not go to another thread, as a stream of rows
+may. So no state lives between two asks. Row by row
+(`exec/group/streamed.rs`), the grouping keeps the first row of the next
+group, read past the last, and makes that group whole at the next ask.
+By batches (`exec/batch/groups/streamed.rs`), it makes the groups of a
+batch whole and the rest of its last group from the batches after, and
+keeps the batch where the next group begins and the place in it. A batch
+is read at most twice.
+
+A row's key is compared by the bytes a hashed grouping hashes, its
+normalized values (`put_norm`) row by row and a table's lanes of one
+group (`exec/table/keys.rs`) by batches. So a row joins a group exactly
+when the hashed grouping would put it there, nulls in one group and
+strings alike but for trailing spaces in one. Each run of one key in a
+batch is fed to the group's set functions a vector at a time
+(`fed_group`).
+
+#### D552. A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read
+
+How many rows a FETCH FIRST reads of its input is its row goal
+(`PhysicalPlanner::first`). An ordered read below is priced by the share
+of it read (D379, `physical/access.rs`). The goal passes down through
+the nodes that give their rows as they read them (`physical/goals.rs`),
+after Carey and Kossmann, "On Saying 'Enough Already!' in SQL", SIGMOD
+1997.
+
+A projection, a sort and a scan pass it unchanged. A filter divides it
+by the share of rows it keeps, a table read's own condition too. A read
+that probes by that condition reads only the rows it keeps, so it is
+priced at no less than its share, never at less. A hash join, an index join or a product gives
+its rows in its left operand's order, so the goal is divided by the rows
+each left row is estimated to give and passed to the left operand, and
+the right is read whole. A streamed grouping or DISTINCT multiplies it
+by the rows of a group. UNION ALL passes it to each operand. Every other
+node, a hashed grouping, an outer join, a window among them, reads its
+input whole before it gives a row, and the goal stops there.
+
+The goal changes only the choice of an ordered read. A wrong estimate
+costs time, never rows, as the FETCH FIRST still counts the rows it
+gives.
 
 #### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
 
@@ -11864,6 +11980,28 @@ or hash joins on their equalities, as to compare the two. Period
 predicates are still read as comparisons (D581) when it is OFF, so their
 equalities can be a hash join's keys.
 
+#### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
+
+The batch filter passes each conjunct only the rows the one before it
+kept (D354), so the order of a filter's conjuncts decides how many rows
+each one judges. The planner orders the conjuncts of a filter over a
+table read in ascending order of rank, a conjunct's cost a row over
+the share of rows it drops, as Hellerstein and Stonebraker order a
+selection's predicates (SIGMOD 1993). Conjuncts of equal rank keep the
+written order (`physical/cost/conjuncts.rs`). A column compared with a
+constant or tested for null costs least. A set of constants searched
+costs more, then a comparison of expressions, then a pattern, and a
+conjunct with a subquery comes last. A filter one of whose conjuncts
+can raise an error keeps the written order, because each of its
+conjuncts is judged of every row anyway (D15).
+
+The weights the planner prices operators by are measured by
+`bench/analytics/costs.rs` (`TURBOREL_BENCH_ANALYTICS_ONLY=costs`). It
+times a scan by batch and a row at a time, of the row store and the
+column store, a hash join, groupings of few and of many groups, a sort,
+each of those past a small work area, and a part on several threads.
+It then prints each weight in rows of the row store's scan, the unit of
+the planner's costs.
 #### D660. A grouping over inner joins may group one table first, chosen by the estimated work of both plans
 
 Yan and Larson's eager group-by (VLDB 1995) groups a table X of a join by
@@ -11935,6 +12073,55 @@ grouped first is taken even where it is estimated to cost more, which
 tests use to compare the plans. OPTIMIZER.EAGER_AGGREGATION is the
 switch of a rule that rewrites nothing (`optimizer/eager.rs`), as the
 choice is made with the physical plan.
+
+#### D675. A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run
+
+A correlated subquery left nested ran once for each distinct set of its
+outer values, and each run bound the values as constants, then
+optimized and planned the subquery as any query. Every rule's and the
+planner's fixed cost was paid once for each outer row, and that cost
+was most of a nested scalar COUNT, MIN or AVG, as queries 2 and 17 of
+TPC-H have.
+
+The runner now also makes the subquery's plan with each outer reference
+a slot (`Expr::Dynamic`), optimized once (`exec/subquery/planned.rs`).
+A slot takes the type of its first value's kind, as wide as the kind
+is; it says only whether an index places the value as it is, and stands
+for it as the planner estimates. A subquery learns its plan as a
+prepared query does (D45, D414): each of its first runs plans it with
+its values, which it runs, and with its slots, its paths chosen by its
+values. A plan with slots that is one probe of a whole unique key is
+kept at once; any other once `LEARNED_RUNS` runs in a row make the two
+plans one shape. Each later run fills the kept plan with its values as
+they are, never cast, so the plan is the one binding them makes
+(`Placing::AsIs`), and runs it. A subquery whose plans keep changing is
+planned at each run after `MOST_LEARNING_RUNS`.
+
+Some values choose another plan than others. A value of many rows may
+choose a scan, and one of few an index. Planning once per shape, or again whenever
+the estimate's bucket changes, would need the estimate of each run's
+values before its plan, which is most of planning's cost. The rule
+measured instead keeps a plan only once consecutive runs agree, as a
+prepared query does, and plans every run of a subquery whose values
+disagree, as before. A plan kept is the plan the next values would
+choose until values that would choose another arrive, the trade D45
+already makes.
+
+A run is planned alone, the plan still kept, when a value is of
+another kind than its slot's, or null. Bound, a comparison with a null
+is unknown and reads nothing, where a probe by it would find the rows
+whose key is null. A null says nothing of its kind either, so a
+subquery learns from its first run with none. Within a kind a value is
+placed as it is whatever its scale, length or precision, as an index
+places it (`physical/probe.rs`). A subquery whose outer
+value is of a kind no index places as it is (a large object, a
+collection, a row, a structured, JSON, XML or extension value), or
+whose plan holds a slot of its own, is planned at each run. The rows
+of each run are gathered, spilled, kept by outer values and decorrelated
+after EXECUTOR.DECORRELATE_AFTER_RUNS as before (D35, D38), and a run
+checks for a cancel as any plan does (D44). EXECUTOR.KEEP_SUBQUERY_PLANS,
+ON by default and of a session's scope, turns it off, as to compare the
+two.
 
 ## 2. Project layout
 

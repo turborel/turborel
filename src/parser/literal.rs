@@ -17,6 +17,17 @@ use crate::value::{Decimal, MAX_EXACT_PRECISION};
 pub(crate) const CURRENT_ROLE: &str = "CURRENT_ROLE";
 
 impl Parser {
+    /// The `?`s before the token at hand: counted on from the position
+    /// last counted to, or from the start if the parser backtracked before
+    /// it.
+    fn questions_before(&mut self) -> usize {
+        let (from, before) = if self.questions.0 <= self.pos { self.questions } else { (0, 0) };
+        let between = self.toks.get(from..self.pos).unwrap_or_default();
+        let n = before.saturating_add(between.iter().filter(|t| matches!(t.tok, Tok::Delimiter(delim::QUESTION))).count());
+        self.questions = (self.pos, n);
+        n
+    }
+
     /// [X3.135-1986 §5.6] `<value specification>` ::= `<literal>` | USER
     /// | CURRENT_USER | CURRENT_ROLE | SESSION_USER | SYSTEM_USER | `<parameter
     /// specification>` | `<dynamic parameter specification>` [ISO/IEC
@@ -38,7 +49,7 @@ impl Parser {
             };
             // Numbered by the ones before it in the text, so one read again
             // as the parser backtracks keeps its number.
-            let place = self.toks.iter().take(self.pos).filter(|t| matches!(t.tok, Tok::Delimiter(delim::QUESTION))).count();
+            let place = self.questions_before();
             let index = self.numbers.get(place).copied().unwrap_or(place);
             let at = self.here();
             self.advance();
