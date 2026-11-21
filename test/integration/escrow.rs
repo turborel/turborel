@@ -68,6 +68,22 @@ fn holds(escrow: &str, setup: &[&str], (held, sql): (&str, &str)) -> bool {
     refused.is_some()
 }
 
+/// Thirty transactions of session `s`, the `t`th of many, each committing
+/// one increment of a row of T, or a decrement, run again until it commits.
+fn adding(s: &Session, t: usize) {
+    for n in 0..30 {
+        let id = (n + t) % 4 + 1;
+        let sql = match n % 3 {
+            0 => format!("UPDATE T SET X = X + 1.25, Y = Y - 2 WHERE ID = {id}"),
+            1 => format!("UPDATE T SET X = X - 0.5 WHERE ID = {id}"),
+            _ => format!("UPDATE T SET N = N + 1 WHERE ID = {id} AND Y <= 0"),
+        };
+        while s.run(&sql).and_then(|_| s.commit()).is_err() {
+            s.rollback().unwrap();
+        }
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D452: sixteen sessions adding to and
 /// subtracting from T's rows at once, each committing every change, leave
 /// the sums the rows written and held leave.
@@ -79,20 +95,7 @@ fn many_sessions_adding_leave_the_sums_of_the_locked_path() {
         let threads: Vec<_> = (0..16)
             .map(|t| {
                 let db = db.clone();
-                thread::spawn(move || {
-                    let s = db.session("A");
-                    for n in 0..30 {
-                        let id = (n + t) % 4 + 1;
-                        let sql = match n % 3 {
-                            0 => format!("UPDATE T SET X = X + 1.25, Y = Y - 2 WHERE ID = {id}"),
-                            1 => format!("UPDATE T SET X = X - 0.5 WHERE ID = {id}"),
-                            _ => format!("UPDATE T SET N = N + 1 WHERE ID = {id} AND Y <= 0"),
-                        };
-                        while s.run(&sql).and_then(|_| s.commit()).is_err() {
-                            s.rollback().unwrap();
-                        }
-                    }
-                })
+                thread::spawn(move || adding(&db.session("A"), t))
             })
             .collect();
         for t in threads {
