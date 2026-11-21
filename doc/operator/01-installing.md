@@ -53,6 +53,15 @@ cargo build --release -p turboreld -p turborel-cli
 The tests run with `cargo test --workspace`; `cargo xtask verify` runs
 every check a change must pass.
 
+`turboreld` allocates memory through the system's allocator. An operator
+may build it on another instead, with at most one of the features
+`mimalloc`, `snmalloc` or `rpmalloc`, which need a C compiler (C++ for
+`snmalloc`) and change nothing else the server does:
+
+```
+cargo build --release -p turboreld --features mimalloc
+```
+
 ## What is installed
 
 Two programs, in `target/release`:

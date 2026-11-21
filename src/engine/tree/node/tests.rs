@@ -144,6 +144,22 @@ fn runs_split_where_the_entry_goes() {
     assert_eq!((inner_right.first_child(), keys(&inner_halves.right)), (PageId(12), vec![b"x".to_vec(), b"y".to_vec()]));
 }
 
+/// Verifies: [DESIGN] RULES.md D31, D500: a run's split that moves left
+/// to fit, the rightmost leaf full to its page without the high key its
+/// left half then takes, keeps the new entry marked inserted last in the
+/// right half, so the run goes on there.
+#[test]
+fn a_run_split_moved_left_keeps_the_new_entry_marked() {
+    let entries: Vec<(&[u8], &[u8])> = vec![(b"a", b"1"), (b"b", b"2"), (b"c", b"3"), (b"d", b"4"), (b"e", b"5")];
+    let (full, _) = entries.split_at(4);
+    let capacity = leaf(None, None, full).len();
+    let shape = Shape { level: 0, high: None, right: None, first: PageId(0), tree: TREE };
+    let halves = split(&shape, &refs(&entries), Some(4), (PageId(4), capacity)).unwrap();
+    assert!(halves.left.len() <= capacity && halves.right.len() <= capacity);
+    assert_eq!(keys(&halves.right), vec![b"d".to_vec(), b"e".to_vec()], "moved left of the new entry");
+    assert_eq!(Node::parse(&halves.right).unwrap().last_insert().unwrap(), Some(1), "the new entry, not the one before it");
+}
+
 /// Verifies: [DESIGN] RULES.md D31, B-link node: content that is not a
 /// node is refused with SQLCODE -916: too short for its header, slots
 /// overlapping the header, a high key without a right neighbour, an
@@ -190,12 +206,13 @@ fn leaf_separators_are_truncated() {
     assert_eq!(up.separator, b"alpha two", "an inner separator is kept whole");
 }
 
-/// Verifies: [DESIGN] RULES.md D31, a value written over in place (a
-/// version stamped committed): its entry reads back with it, the node's
-/// live bytes, garbage and last insert as they were; one of another
-/// length is refused.
+/// Verifies: [DESIGN] RULES.md D31, D500, a value written over in place
+/// (a version stamped committed): its entry reads back with it, the
+/// node's live bytes, garbage and last insert as they were; a shorter one
+/// is written in place too, the bytes it leaves counted as garbage, which
+/// building the node again reclaims; a longer one is refused.
 #[test]
-fn values_of_one_length_are_written_over_in_place() {
+fn values_no_longer_are_written_over_in_place() {
     let mut content = leaf(None, None, &[(b"a", b"11"), (b"c", b"33")]);
     insert(&mut content, 1, b"b", b"22").unwrap();
     let before = {
@@ -206,6 +223,16 @@ fn values_of_one_length_are_written_over_in_place() {
     let node = Node::parse(&content).unwrap();
     assert_eq!(entry_of(&node, 1), (b"b".to_vec(), b"xy".to_vec()));
     assert_eq!((node.live(), node.garbage, node.last_insert().unwrap(), content.len()), before);
-    assert_eq!(overwrite(&mut content, 1, b"xyz").err().map(|e| e.code), Some(Code::Corrupt), "another length");
+    assert_eq!(overwrite(&mut content, 1, b"xyz").err().map(|e| e.code), Some(Code::Corrupt), "longer");
     assert_eq!(overwrite(&mut content, 3, b"xy").err().map(|e| e.code), Some(Code::Corrupt), "no such entry");
+    overwrite(&mut content, 1, b"z").unwrap();
+    let shorter = Node::parse(&content).unwrap();
+    assert_eq!(entry_of(&shorter, 1), (b"b".to_vec(), b"z".to_vec()), "a shorter value, in place");
+    assert_eq!(
+        (shorter.live(), shorter.garbage, content.len()),
+        (before.0.checked_sub(1).unwrap(), before.1.checked_add(1).unwrap(), before.3),
+        "its byte left is garbage"
+    );
+    assert_eq!((entry_of(&shorter, 0), entry_of(&shorter, 2)), ((b"a".to_vec(), b"11".to_vec()), (b"c".to_vec(), b"33".to_vec())));
+    assert_eq!(compact(&content).unwrap().len(), content.len().checked_sub(1).unwrap(), "and is reclaimed as the node is built again");
 }

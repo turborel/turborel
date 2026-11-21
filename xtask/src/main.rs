@@ -68,6 +68,12 @@ const EXAMPLE_ARGS: [&str; 6] = ["build", "--workspace", "--features", SIMULATOR
 /// tests may use the crate without it: built and linted with the
 /// workspace, its `simulate` binary among them (RULES.md D57).
 const SIMULATOR: &str = "turborel-test-support/replication";
+/// The features of `turboreld` that each build it on an allocator of its
+/// own, never by default; each is built alone, on every platform, so none
+/// is found broken only when an operator picks it (RULES.md D765).
+const ALLOCATORS: [&str; 3] = ["mimalloc", "snmalloc", "rpmalloc"];
+/// Builds the server program with one feature, named after it.
+const ALLOCATOR_ARGS: [&str; 7] = ["build", "--package", "turboreld", "--bin", "turboreld", "--quiet", "--features"];
 /// Makes warnings errors, for clippy and for rustdoc (R-DOC-3).
 const DENY: &str = "-D";
 const WARNINGS: &str = "warnings";
@@ -159,6 +165,10 @@ fn verify(root: &Path, with_coverage: bool) -> Result<()> {
     threads::check(root)?;
     step("claimed features (R-TRACE-3)");
     features::check(root)?;
+    step("allocators (D765)");
+    for allocator in ALLOCATORS {
+        command::cargo(root, &[ALLOCATOR_ARGS.as_slice(), &[allocator]].concat(), NO_ENV)?;
+    }
     step("tests: unit and integration (R-TEST)");
     command::cargo(root, &EXAMPLE_ARGS, NO_ENV)?;
     command::cargo(root, &TEST_ARGS, NO_ENV)?;

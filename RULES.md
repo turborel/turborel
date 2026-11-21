@@ -98,6 +98,7 @@ verification approach DO-178C expects (§8).
 | D44 | A running statement is cancelled from another thread |
 | D45 | Protocol version 1, and prepared statements |
 | D46 | The command-line client |
+| D765 | The server program allocates through the system's allocator, and an operator may build it on mimalloc, snmalloc or rpmalloc |
 | D59 | Import is rows from a pluggable source, over a connection |
 | D60 | Collations are sort keys, and a collation never changes |
 | D61 | Regular expressions are XQuery's, by a matcher of our own |
@@ -441,6 +442,8 @@ verification approach DO-178C expects (§8).
 | D772 | A table's maintenance sums up no zone while its zones rest, unless asked to now |
 | D500 | B-link nodes keep a prefix, key heads and hints, and index entries carry a hint to their row's table leaf |
 | D501 | An index fetch checks a row's key in place, and a search decodes a key once for its entries |
+| D502 | Each frame keeps a version word, and descents read inner nodes from per-thread copies it validates |
+| D503 | A writer owns a node through its frame; keys in order go to the rightmost leaf with no descent; a leaf writers wait for splits early |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 | D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
@@ -520,6 +523,7 @@ reviewable and no supply chain needs qualifying. The exceptions are:
 - tokio and socket2 in the server crate (D42)
 - tokio's signals in the command-line client
 - rpassword in the command-line client and `turboreld` (D46)
+- an allocator in `turboreld` only, by a feature an operator picks, never by default (D765)
 
 Generated data counts too. `src/value/collation/unicode13.bin` is no
 dependency, but it can't be read line by line. So `cargo xtask unicode` makes
@@ -3089,6 +3093,36 @@ R-SAFE-4 records two dependencies. tokio 1.54.1 (MIT) is already the
 server's, with features rt and signal only. rpassword 7.5.4 (Apache-2.0)
 reads unechoed terminal input on Unix and Windows, is small enough to
 review, and has been maintained since 2015.
+
+#### D765. The server program allocates through the system's allocator, and an operator may build it on mimalloc, snmalloc or rpmalloc
+
+`turboreld` sets no global allocator by default, so the program that ships,
+and every comparison with other systems, runs on the platform's allocator as
+theirs do. An operator may build it on another with one of its features
+`mimalloc`, `snmalloc` or `rpmalloc`. They exclude each other, and
+`main.rs` refuses to compile with two. Only the program's binary sets one.
+The library crates, `turborel` and `turborel-server` among them, leave the
+choice to whoever links them, and the program's own tests run on the
+system's allocator.
+
+Each candidate was measured against the system's allocator on TPC-C and
+sysbench, with the server's resident memory read at the end of each run.
+jemalloc was measured too but is not offered, since its build refuses
+Windows' MSVC target. `cargo xtask verify` builds the program once per
+feature, so CI shows each one building on Linux, macOS and Windows and none
+is found broken only when an operator picks it.
+
+An allocator only makes allocation cheaper. The core cuts its own
+allocations independently, in the paths that make them, and that work is
+what the shipped build gains from.
+
+R-SAFE-4 records three dependencies, each optional and none in a library
+crate. mimalloc 0.1.52 (MIT) with libmimalloc-sys 0.1.49 builds mimalloc's
+C sources with cc. snmalloc-rs 0.7.6 (MIT) with snmalloc-sys 0.7.6 builds
+snmalloc's C++ with cc, without CMake (its feature `build_cc`). rpmalloc
+0.2.2 (MIT or Apache-2.0) with rpmalloc-sys 0.2.3 builds rpmalloc's C with
+cc. Each declares its `GlobalAlloc` once in its own crate, so the program's
+`#[global_allocator]` static is safe code and R-SAFE-1 holds.
 
 #### D59. Import is rows from a pluggable source, over a connection
 
@@ -12290,6 +12324,12 @@ entered before is under way (`reclaim.rs`). So the write starts from the
 leaf only while the stamp is the one the read saw, and descends again
 otherwise.
 
+A read by key that keeps its leaf for the next (`get_near`, `near.rs`)
+gives a write the same start: `replace_if_near` writes from the leaf the
+read left, on the same stamp terms. That leaf may have been left by a
+read of another key, so a write refused from it descends once before it
+answers.
+
 #### D511. A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first
 
 The least and greatest values of 1,024 rows skip a part only if no row
@@ -13354,6 +13394,24 @@ The limits of an index key and of a tree's entry shrink by the header's
 growth and the head beside each slot (CONFORMANCE.md, Limits). Formats
 stay at version 1, changed in place.
 
+An entry removed, or replaced by a longer one, leaves its bytes in the
+heap as garbage, which only building the node again reclaims. A node
+full of live entries whose entries are replaced, or removed and added
+again, as a row's versions and its index entries are, was built again at
+nearly every write, each change leaving a little more garbage than the
+next one needed. A node is now built again for the room only once its
+garbage is an eighth of the page, or it has too few entries to split;
+short of that a write with no room splits it, as one full of live
+entries does (`engine/tree/room.rs`). A value replaced by one no longer
+is written over in place, the bytes it leaves counted as garbage.
+
+An entry's size in the room check is what the page stores of it, its key
+less the node's prefix, so the rightmost leaf of keys added in order
+fills its page. Its split gives the left half a high key, so the entry
+before the new one moves right with it. The new entry stays marked
+inserted last in the right half; else the next insert would start a run
+and split the leaf again, leaving leaves half full.
+
 #### D501. An index fetch checks a row's key in place, and a search decodes a key once for its entries
 
 An index holds the entries of versions a reader may not see (D34). So a
@@ -13376,6 +13434,76 @@ The check is unchanged in what it keeps, and cheaper (`exec/entries.rs`,
 - The probe is copied only by a search whose range is not exact, the one
   case that checks entries against it. The key's types are shared by
   every search of the index.
+
+#### D502. Each frame keeps a version word, and descents read inner nodes from per-thread copies it validates
+
+Every descent took each node's latch shared, the root's included, and a
+shared take writes the latch's word. So every thread reading a tree wrote
+one cache line, the root's latch, and the threads queued on it as they
+grew in number.
+
+Each frame of the buffer pool now keeps a version word. Whatever takes
+the frame's latch exclusively moves the version on, as soon as it holds
+the latch and before it changes a byte or gives the frame another page
+(`disk/buffer/versions.rs`). A page read under its latch can be stamped
+with its frame and the version then. Each thread keeps copies of up to
+sixteen inner nodes it read, each with its stamp, and a descent reads an
+inner node from its copy while the frame holds the page at that version
+(`engine/tree/inner.rs`). This follows Leis et al., "The ART of Practical
+Synchronization", 2016, section 3, and Leis et al., "LeanStore", 2018,
+section 4, which validate a version the same way over the node itself.
+Safe Rust reads no page while a writer may change it, so the copy stands
+in for the node.
+
+The semantics hold for these reasons.
+
+- A copy is the node's content when its frame's version still reads as
+  stamped. A write that took the latch before the stamp was taken
+  finished before it, as the stamp is taken under the latch shared. One
+  that took it after moved the version on first.
+- A write that takes the latch as a descent checks the copy is ordered
+  after the descent's read, as a write that waited for the descent's
+  latch would be. B-link descents allow a parent read before its child
+  split, and move right (Lehman and Yao 1981, section 4).
+- A page freed is retired by the epochs of D31 first, and its frame is
+  latched exclusively as it is emptied or reused, so no copy of it is
+  current after. A pool numbers itself, so a copy of another pool's page
+  is never taken for one of its own.
+- Leaves are not copied. A leaf's read latches it, so what a reader finds
+  in a leaf is as before.
+
+#### D503. A writer owns a node through its frame; keys in order go to the rightmost leaf with no descent; a leaf writers wait for splits early
+
+Writers of a B-link tree kept each other off a node through a table of
+held locks, in shards by page number. Each lock and each release took a
+shard's mutex, and every release woke whoever waited on the shard.
+
+A writer now owns the node through the frame that holds it
+(`disk/buffer/owned.rs`). The frame keeps an ownership word beside its
+latch, taken by one atomic exchange when no one else holds it, and stays
+pinned while owned, so it keeps the same page. A writer that finds the
+page owned counts itself, then waits on the frame's signal. The owner
+wakes waiters only if one counted itself, under the lock the waiter
+looks under, so no wake is missed. The order writers own nodes in is
+D31's, bottom to top and left to right, so they never deadlock.
+
+The tree remembers the rightmost leaf when an entry goes past its end,
+and writes the next key there with no descent if the leaf may be
+trusted as a noted leaf is (D500). A frame holds it, it is a leaf of
+the tree, not deleted, with no right neighbour, and its first key is at
+or below the key. A leaf the tree's epochs have not freed while the
+write runs is one the write may lock and move right from, as from a
+leaf its descent found. A split of it finds its parent again from the
+root, as a split past the top of a remembered path does.
+
+A frame counts the writers that waited for it. A leaf at least three
+quarters full that 32 writers waited for is split at its middle by the
+next entry written into it, though the entry fits, so the writers of
+its keys go to two leaves (Alhomssi and Leis, "Contention and Space
+Management in B-Trees", CIDR 2021). An entry past the end of
+the rightmost leaf never splits it early, so leaves of keys written in
+order stay full. The split is D31's split, so readers, recovery and
+the format are as before.
 
 #### D695. Exact numbers hold 38 digits, and BIGINT, counts and a column of 18 or fewer keep 64 bits
 
