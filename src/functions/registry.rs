@@ -128,6 +128,11 @@ impl Registry {
         &*self.kernels
     }
 
+    /// The kernels batches run on, shared, for what holds them past a call.
+    pub(crate) fn kernels_shared(&self) -> Arc<dyn crate::kernels::Kernels> {
+        Arc::clone(&self.kernels)
+    }
+
     /// The seed groupings hash their keys by (RULES.md D357).
     pub(crate) fn seed(&self) -> &crate::exec::Seed {
         &self.seed

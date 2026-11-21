@@ -57,7 +57,7 @@ pub const LOBS: [Mutation; 20] = [
         name: "lob-unadopted-kept",
         package: Package::Core,
         breaks: "an object made and named by no row written is kept past the commit",
-        file: "src/engine/rows/mvcc/commit.rs",
+        file: "src/engine/rows/mvcc/stamps.rs",
         original: "                self.free_objects(&[change.id]);",
         replacement: "                let _ = change.id;",
         integration: &[],

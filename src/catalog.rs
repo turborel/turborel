@@ -46,7 +46,7 @@ pub mod xquery_modules;
 use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
 pub use columns::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity};
-pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
+pub use constraints::{Constrained, ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
 pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use embedding::{Embeddings, ModelDesc, ModelOption, PipelineDesc, TRIGGER_SUFFIXES};
 pub(crate) use embedding::{embeddings, put_embeddings};
@@ -336,6 +336,10 @@ pub trait Catalog: Send + Sync {
     fn indexes(&self, table: &QualifiedName) -> Vec<&IndexDesc>;
     /// Every table, in a stable order, so a `Database` can give each its storage.
     fn tables(&self) -> Vec<&TableDesc>;
+    /// \[DESIGN\] Whether its tables have a foreign key, or a CHECK
+    /// constraint that reads tables, which a statement's end looks for
+    /// over every table (RULES.md D415).
+    fn constrained(&self) -> Constrained;
     /// Every temporary table, in no fixed order, so a session can stand
     /// its own instances in for them at each statement without the
     /// ordering `tables` does (`db/temporary.rs`). By default, those among

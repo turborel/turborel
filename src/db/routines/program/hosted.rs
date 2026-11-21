@@ -79,8 +79,10 @@ impl Subqueries for Hosted<'_> {
 /// VALUES of an INSERT, or the arguments of a CALL, as a row, or a
 /// projection of one, if it invokes a function that possibly modifies
 /// SQL-data: each evaluated in turn by `hosted`, not as a query, which no
-/// SQL-session runs, the tables it reads locked first. None if it invokes
-/// none.
+/// SQL-session runs, the tables it reads locked first. \[DESIGN\] So too
+/// if every value reads nothing (`Expr::reads_nothing`), as planning
+/// such a row would give the same values with more work (RULES.md
+/// D419). None else.
 pub(in crate::db) fn hosted_rows(plan: &LogicalPlan, hosted: &Hosted<'_>) -> Option<Result<Vec<Row>>> {
     let (rows, projected) = if let LogicalPlan::Values { rows, .. } = plan {
         (rows, None)
@@ -91,7 +93,8 @@ pub(in crate::db) fn hosted_rows(plan: &LogicalPlan, hosted: &Hosted<'_>) -> Opt
     } else {
         return None;
     };
-    if !rows.iter().flatten().any(Expr::invokes_modifying) {
+    let reads_none = rows.iter().flatten().chain(projected.into_iter().flatten()).all(Expr::reads_nothing);
+    if !reads_none && !rows.iter().flatten().any(Expr::invokes_modifying) {
         return None;
     }
     for t in plan.tables() {

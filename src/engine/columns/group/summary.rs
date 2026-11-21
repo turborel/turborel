@@ -82,7 +82,7 @@ impl Summary {
         match condition {
             Conjunct::Null { not: false, .. } => overall.nulls > 0,
             Conjunct::Null { not: true, .. } => overall.nulls < self.rows,
-            Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) => {
+            Conjunct::Condition(_) | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) | Conjunct::Dynamic { .. } => {
                 let mut bounds: Vec<Option<(Value, Value)>> = vec![None; column.saturating_add(1)];
                 if let Some(b) = bounds.get_mut(*column) {
                     b.clone_from(&overall.bounds);
