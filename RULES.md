@@ -402,6 +402,7 @@ verification approach DO-178C expects (§8).
 | D445 | One transaction's end collects a table at a time; the others pass it over |
 | D446 | A row's write starts from the leaf its read of the newest version found |
 | D447 | A unique constraint added in a transaction fills its index with every version |
+| D449 | A row's turn passed wakes only the waiter whose turn it is |
 
 ### The project
 
@@ -11596,3 +11597,18 @@ fill noted for D443. The transaction holds the table's exclusive lock,
 so nothing commits meanwhile. Each row the transaction changed itself
 adds an entry of the row as it left it. Rolling back removes the index
 with the rest of the statement.
+
+#### D449. A row's turn passed wakes only the waiter whose turn it is
+
+D442 queued a row's waiters on the writer's end in ticket order, all
+asleep on one signal. Each turn passed, and the writer's end, woke every
+waiter, though only one could go on. With many sessions on a hot row,
+each write woke the whole line, and every waiter took the queue's lock
+only to sleep again.
+
+Each waiter now sleeps on a signal of its own, kept with its ticket in
+the queue. The writer's end, a turn passed and a ticket given up each
+wake the one waiter whose ticket is served next, if it is asleep. One
+not yet asleep finds its turn when it looks, under the queue's lock. The
+order stays D442's. A waiter still wakes now and then by itself, to look
+for a cancel or its timeout.
