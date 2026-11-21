@@ -51,20 +51,17 @@ use crate::value::{CompOp, DataType, Value};
 
 /// Bytes of a row id at the end of an entry's key.
 const ROW_ID: usize = 8;
-/// \[DESIGN\] The most entries an estimate counts. Fixed, not a setting
-/// (RULES.md D36): what an index method spends on its own estimate, as
-/// it states its costs.
+/// \[DESIGN\] The most entries an estimate counts. Fixed, not a setting (RULES.md D36): what an index method spends on
+/// its own estimate, as it states its costs.
 const MOST_COUNTED: usize = 1_000;
 /// \[DESIGN\] The most entries of a range of unchecked keys an estimate
 /// counts before it takes the range's share of the tree instead: about a
 /// leaf's, so a small range is counted exactly in a page or two.
 const SMALL_COUNT: usize = 128;
 
-/// \[DESIGN\] The built-in ordered index method: B-link trees in one pager
-/// file.
+/// \[DESIGN\] The built-in ordered index method: B-link trees in one pager file.
 pub struct BTreeMethod {
-    /// Where its indexes are; for a method in memory, made when the first
-    /// index is.
+    /// Where its indexes are; for a method in memory, made when the first index is.
     files: Mutex<Option<(Arc<BufferPool>, FileId)>>,
     /// Its pages in memory, for a file made in memory: of a budget of its
     /// own until it is attached to a database's (`attach`).
@@ -400,7 +397,17 @@ impl Index for BLinkIndex {
     /// (`BLinkTree::update_alone`): an entry of another row under the key
     /// is beside it, as entries are in key order, then row id.
     fn insert_alone(&self, key: Key, row: RowId) -> Result<bool> {
-        let entry = self.entry(&key, row)?;
+        self.insert_from(&key, row, true)
+    }
+
+    /// A scan from its first key on finds no entry.
+    fn holds_none(&self) -> bool {
+        self.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).next().is_none()
+    }
+
+    /// Encoded from `key` as it is held; alone or not, its tree finds it.
+    fn insert_from(&self, key: &Key, row: RowId, _alone: bool) -> Result<bool> {
+        let entry = self.entry(key, row)?;
         // The key's bytes are the same for equal keys (`engine/key.rs`).
         let prefix = entry.len().saturating_sub(ROW_ID);
         self.keys.added(entry.get(..prefix).unwrap_or_default());
@@ -435,14 +442,20 @@ impl Index for BLinkIndex {
     }
 
     fn remove(&self, key: &Key, row: RowId) -> Result<()> {
-        self.keys.removed();
+        // Counted only if there: a load's entries held back are undone though never inserted (RULES.md D532).
+        let mut found = false;
         self.tree.update(&self.entry(key, row)?, |old| {
+            found = old.is_some();
             Ok(match old.map(count_of).transpose()? {
                 None => Update::Keep,
                 Some(0 | 1) => Update::Remove,
                 Some(n) => Update::Put(value_of(n.saturating_sub(1))),
             })
-        })
+        })?;
+        if found {
+            self.keys.removed();
+        }
+        Ok(())
     }
 
     fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
