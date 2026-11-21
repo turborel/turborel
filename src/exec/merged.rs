@@ -4,19 +4,18 @@
 //! over it reads no more of each input than the rows it gives need.
 
 use std::cmp::Ordering;
-use std::sync::Arc;
 
 use super::sort::compare_rows;
 use super::{RowIter, TxId, broken, execute, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::logical::SortKey;
 use crate::physical::Plan;
 use crate::storage::Row;
 
 /// The rows of the merge `plan`.
 #[inline(never)]
-pub(super) fn merged(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn merged(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::MergeAppend { inputs, keys, .. } = plan else { return failed(broken("a merge is not one")) };
     let inputs: Vec<RowIter> = inputs.into_iter().map(|p| execute(p, db, tx)).collect();
     Box::new(Merged { keys, heads: Vec::new(), inputs, started: false })

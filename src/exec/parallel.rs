@@ -46,6 +46,7 @@ use self::run::Morsels;
 use super::{RowIter, Runner, broken, execute, failed};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::physical::{Parallel, Plan};
 use crate::settings::{MEMORY_WORK_BYTES, work_bytes};
 use crate::spill::Grant;
@@ -116,14 +117,14 @@ impl Limit {
 }
 
 /// A part run in parallel: of each, its rows, or that it gave way.
-type Runs = fn(&Plan, (&Arc<State>, TxId), usize) -> Result<Held<RowIter>>;
+type Runs = fn(&Plan, (&Db, TxId), usize) -> Result<Held<RowIter>>;
 
 /// The rows of `plan`, a part run in parallel, read as `tx` sees them; of
 /// one that gave way, those of its plan run alone. Never inlined into
 /// `execute`, whose frame every level of a plan adds to the stack
 /// (RULES.md R-CF-6).
 #[inline(never)]
-pub(super) fn parallel(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn parallel(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Parallel(p) = plan else { return failed(broken("a part run in parallel is not one")) };
     let Parallel { degree, input } = *p;
     // [EXTENSION] the operator at its top counted as the part's rows (RULES.md D378).
@@ -152,10 +153,10 @@ pub(super) fn parallel(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// The rows of the stream `plan`, its morsels taken by up to `degree`
 /// threads, given in order.
-fn streamed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
+fn streamed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(plan, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
-    let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
+    let (pipeline, db_for) = (Arc::new(pipeline), db.clone());
     let count = pipeline.count();
     let work = Box::new(move |m: usize| pipeline.morsel_rows(m, (&db_for, tx), &Runner::new(&db_for, tx)));
     Ok(Held::Kept(Box::new(Streamed::of(db, tx, Morsels::start(db, tx, (count, degree), work)))))

@@ -37,8 +37,8 @@ use super::pipeline::Pipeline;
 use super::probe::{PARTS, part_of};
 use super::run::Morsels;
 use super::{Held, Limit};
-use crate::db::State;
 use crate::error::{Result, SqlState};
+use crate::exec::Db;
 use crate::exec::batch::{Read, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::groupjoin::Tag;
@@ -113,7 +113,7 @@ impl Grouping {
 /// # Errors
 ///
 /// As reading the stream, or a set function, fails.
-pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
+pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
         (Grouping { spec, distinct: false, read: None, seed: db.functions.seed().clone(), tag: None }, input)
@@ -150,7 +150,7 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize)
 /// # Errors
 ///
 /// As reading the pipeline, or a set function, fails.
-fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Arc<State>, TxId, usize), limit: &Limit) -> Result<Runs> {
+fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Runs> {
     let Held::Kept(chunks) = pieces(pipeline, Arc::clone(grouping), (db, tx, degree), limit)? else { return Ok(Held::GaveWay) };
     let chunks: Arc<Vec<Mutex<Chunks>>> = Arc::new(chunks.into_iter().map(Mutex::new).collect());
     let merging = Arc::clone(grouping);
@@ -210,13 +210,8 @@ impl Iterator for Ordered {
 /// The pieces of `pipeline`'s rows under `grouping`, each morsel's made
 /// by a thread of up to `degree`, by partition, each partition's by
 /// morsel in order; given way past `limit`.
-fn pieces(
-    pipeline: Pipeline,
-    grouping: Arc<Grouping>,
-    (db, tx, degree): (&Arc<State>, TxId, usize),
-    limit: &Limit,
-) -> Result<Held<Vec<Chunks>>> {
-    let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
+fn pieces(pipeline: Pipeline, grouping: Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Held<Vec<Chunks>>> {
+    let (pipeline, db_for) = (Arc::new(pipeline), db.clone());
     let count = pipeline.count();
     let work = Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);

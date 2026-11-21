@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::labels::GraphLabels;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::graph::adjacency::Adjacency;
 use crate::graph::view::{ElementId, Endpoints, GraphSize, GraphView, Hop, LabelId, Orientation};
 use crate::index::Probe;
@@ -92,7 +93,7 @@ impl Store {
     /// # Errors
     ///
     /// Any error opening a table.
-    pub(super) fn new(db: &Arc<State>, tx: TxId, graph: Arc<GraphMatch>, mut held: Vec<Option<Vec<Row>>>) -> Result<Store> {
+    pub(super) fn new(db: &Db, tx: TxId, graph: Arc<GraphMatch>, mut held: Vec<Option<Vec<Row>>>) -> Result<Store> {
         let mut tables = Vec::new();
         let mut adjacency = Vec::new();
         for (k, source) in graph.tables.iter().enumerate() {

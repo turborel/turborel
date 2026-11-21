@@ -23,8 +23,8 @@ use super::super::super::entries::Reading;
 use super::super::super::{RowIter, Runner, broken, eval_cond, execute, failed};
 use super::{IndexJoin, Probed, Step, preserved::Ids};
 use crate::catalog::IndexDesc;
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::index::{Key, KeyPairs, Probe};
 use crate::logical::{Cond, Truth};
 use crate::physical::{Paired, Plan};
@@ -33,7 +33,7 @@ use crate::txn::checked;
 
 /// The join of `paired`'s table with `join`'s by their trees, or, if
 /// either has none, `join` driven by the rows of `left`.
-pub(super) fn start(mut join: IndexJoin, (paired, left): (Paired, Plan), db: &Arc<State>) -> RowIter {
+pub(super) fn start(mut join: IndexJoin, (paired, left): (Paired, Plan), db: &Db) -> RowIter {
     let opened = Traversal::open(&join, paired, db);
     match opened {
         Ok(Some(traversal)) => Box::new(Driven { join, traversal, last: None, phase: Phase::Pairs }),
@@ -57,7 +57,7 @@ struct Traversal {
 }
 
 impl Traversal {
-    fn open(join: &IndexJoin, paired: Paired, db: &Arc<State>) -> Result<Option<Traversal>> {
+    fn open(join: &IndexJoin, paired: Paired, db: &Db) -> Result<Option<Traversal>> {
         let Paired { table, index, filter, through, columns, located } = paired;
         let shape = db.catalog.index(&index).map(IndexDesc::key_shape);
         let (Some(ix), Ok(found)) = (shape, db.index_of(&index)) else { return Ok(None) };

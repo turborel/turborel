@@ -8,12 +8,12 @@
 use super::{RangeJoin, Ranged, expanded_periods, range_cost, ranged};
 use std::fmt::Write;
 
-use crate::logical::{Cond, Expr, LogicalPlan, SortKey, and_all, cond_can_raise_typed, judged_by_sets};
+use crate::logical::{Cond, Expr, LogicalPlan, and_all, cond_can_raise_typed, judged_by_sets};
 use crate::logical::{map_expr_columns, plan_column_type, render_cond, render_expr, split_and};
 use crate::physical::cost::HASH_ROW;
 use crate::physical::join::Flip;
 use crate::physical::shown::Shown;
-use crate::physical::{Built, PhysicalPlanner, Plan, of_left};
+use crate::physical::{Built, PhysicalPlanner, Plan};
 use crate::settings::RANGE_JOINS;
 
 /// One way round of a range join: what its search answers, its cost, and
@@ -39,14 +39,15 @@ impl PhysicalPlanner<'_> {
     /// `cond` over `input` as a range join, if `input` is a product,
     /// PLANNER.RANGE_JOINS is ON, `cond` cannot raise and compares a value
     /// of each operand by order, and it is estimated cheapest.
-    pub(in crate::physical) fn range_join(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Option<Built> {
+    /// Its rows keep no order: past the work area they come a part of the
+    /// sorted operand at a time (`exec/join/range.rs`).
+    pub(in crate::physical) fn range_join(&self, cond: &Cond, input: &LogicalPlan) -> Option<Built> {
         let LogicalPlan::Product { left, right } = input else { return None };
         if !self.searchable(cond, left.width()) {
             return None;
         }
         let est = self.estimating(|e| e.filter_card(cond, input)).rows;
-        let want_left = of_left(want, left.width());
-        let way = self.range_way(cond, (left, right), (est, !want_left.is_empty()))?;
+        let way = self.range_way(cond, (left, right), (est, false))?;
         if way.cost >= self.joined_otherwise(cond, (left, right), &way.ranged) {
             return None;
         }
@@ -61,10 +62,9 @@ impl PhysicalPlanner<'_> {
             let made = Made { outer: false, widths: (widths.1, widths.0), full: flip.cond(cond.clone()), shown: of_flipped, est };
             return Some(Built::unordered(flip.restored(range_plan(way.ranged, (l.plan, r.plan), made), of_flipped)));
         }
-        let (l, r) = (self.build_node(left, want_left), self.build_node(right, &[]));
-        let ordered = !want_left.is_empty() && l.ordered;
+        let (l, r) = (self.build_node(left, &[]), self.build_node(right, &[]));
         let made = Made { outer: false, widths, full: cond.clone(), shown, est };
-        Some(Built { plan: range_plan(way.ranged, (l.plan, r.plan), made), ordered })
+        Some(Built::unordered(range_plan(way.ranged, (l.plan, r.plan), made)))
     }
 
     /// Whether PLANNER.RANGE_JOINS is ON and a search answers part of

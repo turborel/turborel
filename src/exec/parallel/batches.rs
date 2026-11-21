@@ -14,8 +14,8 @@ use std::sync::Arc;
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::batch::{Batches, Kept, gathered, rows_of};
 use crate::physical::Plan;
 use crate::txn::{Stop, TxId};
@@ -29,14 +29,14 @@ use crate::txn::{Stop, TxId};
 /// As splitting the pipeline or building a hash join's operand fails.
 pub(in crate::exec) fn streamed_batches(
     plan: &Plan,
-    (db, tx): (&Arc<State>, TxId),
+    (db, tx): (&Db, TxId),
     degree: usize,
     layout: &(Vec<usize>, usize),
 ) -> Result<Held<Batches>> {
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(plan, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
     let Some(shape) = pipeline.batched.as_ref().map(|b| (b.layout.clone(), b.width)) else { return Ok(Held::GaveWay) };
-    let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
+    let (pipeline, db_for) = (Arc::new(pipeline), db.clone());
     let count = pipeline.count();
     let work = Box::new(move |m: usize| -> Result<Vec<Kept>> { pipeline.morsel_kept(m, (&db_for, tx))?.collect() });
     let morsels = Morsels::start(db, tx, (count, degree), work);
