@@ -4,22 +4,21 @@
 
 use super::super::{IndexJoin, Step};
 use super::{RowIter, chosen, failed};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::storage::Row;
-use std::sync::Arc;
 
 pub(super) struct Observed {
     join: Option<IndexJoin>,
     columns: Vec<usize>,
-    state: Arc<State>,
+    state: Db,
     remainder: Option<RowIter>,
     candidates: usize,
 }
 
 impl Observed {
-    pub(super) fn new(join: IndexJoin, columns: Vec<usize>, state: &Arc<State>) -> Self {
-        Self { join: Some(join), columns, state: Arc::clone(state), remainder: None, candidates: 0 }
+    pub(super) fn new(join: IndexJoin, columns: Vec<usize>, state: &Db) -> Self {
+        Self { join: Some(join), columns, state: state.clone(), remainder: None, candidates: 0 }
     }
 
     fn promising(&mut self) -> bool {
