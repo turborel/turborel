@@ -15,7 +15,7 @@ use super::{RowIter, broken, execute, failed, sort};
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe};
+use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe, Used, used};
 use crate::logical::{Cond, Most, SortKey, pushed_conjuncts};
 use crate::physical::Plan;
 use crate::storage::{self, Condition, Conjunction, Row, RowId, ScanOrder, TableStorage};
@@ -160,8 +160,9 @@ pub(super) struct Found {
     pub(super) storage: Arc<dyn TableStorage>,
     /// The index's key.
     pub(super) ix: KeyShape,
-    /// The entries, in index order or reversed, read as they are taken.
-    pub(super) entries: IndexEntries,
+    /// The entries, in index order or reversed, read as they are taken,
+    /// counted as the index's (RULES.md D522).
+    pub(super) entries: Used<IndexEntries>,
     /// Present only when entries contain projections of the original keys.
     pub(super) projection: Option<Arc<dyn KeyProjection>>,
     /// What the probe read, which callers record before taking an entry.
@@ -207,10 +208,11 @@ pub(super) fn probe_index(
     let ix =
         db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
     let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };
+    let uses = db.uses_of(index);
     let index = db.index_of(index)?;
     let projection = index.key_projection();
     let read = Asked::of(&**index, &ix, probe);
-    let entries = Arc::clone(index).search_for(probe, order, reading);
+    let entries = used(Arc::clone(index).search_for(probe, order, reading), uses);
     Ok(Found { storage, ix, entries, projection, read })
 }
 

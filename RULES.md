@@ -409,6 +409,7 @@ verification approach DO-178C expects (§8).
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D520 | CONNECTIONS shows what each session runs and waits on, and the role MONITOR sees every session |
 | D521 | Statements are tallied by normalized text and user, each session in its own tallies |
+| D522 | Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes |
 
 ### The project
 
@@ -11644,6 +11645,45 @@ place of the one called least. At 0 nothing is tallied, and setting it to
 its own. The database's owner and a user granted MONITOR (D520) see every
 text. Another user sees every row, the texts of other users' statements
 as the null value, as VIEWS hides the definitions of others' views.
+
+#### D522. Tables show their rows, bytes, last change and compaction; indexes their searches, counted in stripes
+
+INFORMATION_SCHEMA.TABLE_STATISTICS has a row for each base table: its
+engine, its rows, the bytes it takes, whether some are estimated, when a
+transaction that wrote it last committed, and when its engine's
+maintenance last did some work on it. INDEX_STATISTICS has a row for each
+index: its method, the searches made of it and the entries they gave
+since the database was opened or the index made, and its entries, height
+and bytes as far as its method knows them cheaply.
+
+An engine tells its bytes through `TableStorage::sizes`, with no pass over
+its rows, none by default. The built-in engine counts the pages of a
+table's frozen groups, and estimates the rows of its tree as their number
+times the mean width its statistics last measured: the tree shares its
+pages with the store's other tables, so no count of its own is kept on
+the write path. An index method tells what it knows through
+`Index::sizes`. The B-link tree gives its entries, once counted (D35), and
+its height; its bytes would need a walk of every page, so they are left
+unknown.
+
+The two stamps sit with the table's lock, which every snapshot shares.
+A commit stores the instant it already reads for its commit record in
+each table it wrote, one relaxed store each, so a rolled-back write
+changes nothing. Maintenance stores its own instant when a table's engine
+reports work done.
+
+A search counts its entries in its own fields and adds them, with one
+search, to the index's counts once, as it is read through or dropped. An
+index join counts each probe a search. The counts are kept in
+stripes, a thread's own, each on a cache line of its own, so searches on
+many threads at once do not take turns at one line. A snapshot maps each
+index's name to its counts. The map is brought in step with the indexes
+as each snapshot is published, so a search takes no lock to find them,
+and an index dropped takes its counts with it.
+
+The database's owner and a user granted MONITOR (D520) see every row.
+Another user sees the rows of the tables on which they hold a privilege,
+as the views of the Information Schema show what is accessible to them.
 
 ## 2. Project layout
 

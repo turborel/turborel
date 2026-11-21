@@ -5,7 +5,9 @@
 A database shows what its sessions do now and what its statements have
 done, in views of the Information Schema. A server's connections are in
 CONNECTIONS, and the statements run since the database was opened are in
-STATEMENT_STATISTICS. Both are this implementation's own
+STATEMENT_STATISTICS. What each table holds and takes is in
+TABLE_STATISTICS, and how each index is used in INDEX_STATISTICS. All
+four are this implementation's own
 ([The Information Schema](../sql/07-information-schema.md#this-implementations-own-views-extension)).
 
 ## Who sees what
@@ -28,7 +30,8 @@ OK
 REVOKE MONITOR FROM BOB takes it back. A role named MONITOR that another
 user created gives nothing. Any other user sees their own connections in
 CONNECTIONS, and in STATEMENT_STATISTICS every statement, other users'
-texts shown as NULL.
+texts shown as NULL. In TABLE_STATISTICS and INDEX_STATISTICS they see
+the tables on which they hold a privilege, and those tables' indexes.
 
 ## What each session does
 
@@ -126,3 +129,70 @@ OK
 OK
 OK
 ```
+
+## Table and index statistics
+
+TABLE_STATISTICS has a row for each base table, and INDEX_STATISTICS a
+row for each index. A partitioned table's row sums its partitions'.
+
+| Column | |
+|---|---|
+| ENGINE_NAME | the table's engine |
+| ROW_COUNT | its rows |
+| BYTES | the bytes it takes, or NULL if its engine does not know them |
+| BYTES_ESTIMATED | YES if some of BYTES is estimated, else NO |
+| LAST_CHANGED | when a transaction that wrote it last committed, or NULL if none has since the database was opened |
+| LAST_COMPACTED | when its engine's maintenance last did some work on it, or NULL |
+
+The built-in engines count the pages of a column store table's frozen
+groups. They estimate the rows still in a table's tree as their number
+times the mean width its statistics last measured, so BYTES of a row
+store table is NULL until its statistics are first gathered. Reading
+TABLE_STATISTICS asks for them, and the database's maintenance gathers
+them soon after.
+
+| Column | |
+|---|---|
+| METHOD_NAME | the index's method |
+| SEARCHES | the searches made of it since the database was opened or it was made: a scan of it, or a probe of an index join |
+| ENTRIES_READ | the entries those searches gave |
+| ENTRY_COUNT | its entries, or NULL if its method does not know them yet |
+| HEIGHT | the levels of its tree, 1 while the root is a leaf, or NULL of a method keeping none |
+| BYTES | its bytes, or NULL if its method does not know them |
+
+An index whose SEARCHES stays 0 under a workload costs its writes and
+helps no read.
+
+```sql
+CREATE INDEX T_K ON T (K);
+INSERT INTO T SELECT K + 2 FROM T;
+INSERT INTO T SELECT K + 4 FROM T;
+SELECT K FROM T WHERE K = 3;
+COMMIT;
+SELECT TABLE_NAME, ENGINE_NAME, ROW_COUNT, LAST_CHANGED
+    FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_SCHEMA = 'ANN';
+SELECT INDEX_NAME, METHOD_NAME, SEARCHES, ENTRIES_READ, ENTRY_COUNT, HEIGHT
+    FROM INFORMATION_SCHEMA.INDEX_STATISTICS WHERE TABLE_SCHEMA = 'ANN';
+```
+
+```
+OK
+OK
+OK
+            K
+--------------
+            3
+(1 row)
+OK
+ TABLE_NAME                                                   | ENGINE_NAME                                                  |            ROW_COUNT | LAST_CHANGED
+--------------------------------------------------------------+--------------------------------------------------------------+----------------------+----------------------------------
+ T                                                            | rowstore                                                     |                    8 | 2026-11-20 12:00:00.000000+00:00
+(1 row)
+ INDEX_NAME                                                   | METHOD_NAME                                                  |             SEARCHES |         ENTRIES_READ |          ENTRY_COUNT |               HEIGHT
+--------------------------------------------------------------+--------------------------------------------------------------+----------------------+----------------------+----------------------+----------------------
+ T_K                                                          | btree                                                        |                    0 |                    0 |                    8 |                    1
+(1 row)
+```
+
+Eight rows are read faster by a scan than through T_K, so the query did
+not search it, and its SEARCHES stays 0.

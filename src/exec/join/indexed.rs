@@ -21,7 +21,7 @@ use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::Result;
 use crate::functions::ScalarRef;
-use crate::index::{Entries, Index, Key, KeyOrder};
+use crate::index::{Entries, Index, Key, KeyOrder, Using};
 use crate::logical::{Cond, Truth};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
@@ -70,6 +70,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
                     stop: db.tx.stop_of(tx),
                     located,
                     routes,
+                    using: Using::of(db.uses_of(&index)),
                 },
                 budget: prepared::budget(db).filter(|_| matches!(probe, JoinProbe::Predicate { .. })).map(Arc::clone),
                 prepared: None,
@@ -140,6 +141,9 @@ struct Probed {
     /// \[EXTENSION\] Of a partitioned table's template, each partition's
     /// index, a probe routed to those its values may be in.
     routes: Option<Routes>,
+    /// Its probes and the entries they gave, counted as the index's
+    /// (RULES.md D522).
+    using: Using,
 }
 
 impl Probed {
@@ -155,6 +159,7 @@ impl Probed {
         };
         Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
+        self.using.searched();
         let entries = match &self.routes {
             Some(routes) => routes.search(&probe),
             None => Arc::clone(&self.index).search(&probe, KeyOrder::Ascending),
@@ -166,6 +171,7 @@ impl Probed {
     /// followed by its id if located.
     fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
         let (key, id) = entry?;
+        self.using.gave(1);
         let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
         Ok(found.map(|(_, mut row)| {
             if self.located {

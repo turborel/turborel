@@ -390,6 +390,7 @@ mod system_versioned;
 mod table_contents;
 mod table_encodings;
 mod table_settings;
+mod table_statistics;
 mod temporal_keys;
 mod temporal_references;
 mod temporary_changes;

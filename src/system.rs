@@ -23,9 +23,11 @@
 //!   background work (`JOBS`, D55, `system/jobs.rs`), the files it
 //!   holds (`FILES`, D56, `system/files.rs`), the formats they are in
 //!   (`FILE_FORMATS`, D48, `system/formats.rs`), the totals its
-//!   assertions keep (`ASSERTION_TOTALS`, D51, `system/totals.rs`), and
-//!   the statements run since it was opened (`STATEMENT_STATISTICS`,
-//!   D521, `system/statements.rs`).
+//!   assertions keep (`ASSERTION_TOTALS`, D51, `system/totals.rs`), the
+//!   statements run since it was opened (`STATEMENT_STATISTICS`, D521,
+//!   `system/statements.rs`), and what its tables hold and take and how
+//!   its indexes are used (`TABLE_STATISTICS`, `INDEX_STATISTICS`, D522,
+//!   `system/sizes.rs`).
 //!
 //! A system table is an extension point (`SystemTable`): a plug-in may add
 //! one (`Database::register_system_table`), an engine's statistics, say.
@@ -49,6 +51,7 @@ mod information;
 mod jobs;
 mod memory;
 mod settings;
+mod sizes;
 mod spatial;
 mod statements;
 mod totals;
@@ -59,14 +62,17 @@ pub use graph_runs::{GraphRun, GraphRuns, Held, Status};
 
 /// What a database keeps in memory of what ran since it was opened, shared
 /// by every snapshot: the latest runs of the graph algorithms
-/// (`system/graph_runs.rs`) and the tallies of its statements
-/// (`system/statements.rs`, RULES.md D521).
+/// (`system/graph_runs.rs`), the tallies of its statements
+/// (`system/statements.rs`, RULES.md D521), and the last version 7 UUID
+/// it made (RULES.md D183).
 #[derive(Debug, Default)]
 pub struct Ran {
     /// The latest runs of the graph algorithms.
     pub graph_runs: Arc<GraphRuns>,
     /// The tallies of the statements.
     pub statements: Statements,
+    /// \[EXTENSION\] The last version 7 UUID made (RULES.md D183).
+    pub uuids: Arc<crate::value::types::uuid::generate::Ordered>,
 }
 pub use statements::{DEFAULT_KEPT as STATEMENTS_KEPT_DEFAULT, GROUP as STATEMENTS_GROUP, KEPT as STATEMENTS_KEPT, Statements, Text};
 
@@ -206,6 +212,7 @@ pub(crate) fn builtin() -> SystemTables {
     tables.extend(embedding::tables());
     tables.extend(extensions::tables());
     tables.extend(vectors::tables());
+    tables.extend(sizes::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
 }
 

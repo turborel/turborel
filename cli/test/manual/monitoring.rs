@@ -12,9 +12,10 @@ use super::Client;
 /// microseconds from the epoch.
 const SHOWN_AT: i64 = 1_795_176_000_000_000;
 
-/// Verifies: [EXTENSION] RULES.md R-DOC-8, D520, D521: the examples of
-/// Monitoring run as printed, by the database's owner, ANN, in a schema
-/// of its own, beside the user BOB, the clock standing at `SHOWN_AT`.
+/// Verifies: [EXTENSION] RULES.md R-DOC-8, D520, D521, D522: the
+/// examples of Monitoring run as printed, by the database's owner, ANN, in
+/// a schema of its own, beside the user BOB, the clock standing at
+/// `SHOWN_AT`.
 #[test]
 fn the_monitoring_examples_run_as_printed() {
     let db = Database::new();

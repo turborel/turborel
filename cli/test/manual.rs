@@ -10,6 +10,7 @@ mod commands;
 mod delta;
 mod embedding;
 mod extensions;
+mod graph;
 mod hybrid;
 mod information;
 mod monitoring;
@@ -28,8 +29,6 @@ use turborel_cli::{Command, Dialer, Input, Io, Terminal};
 use turborel_client::agent::Agent;
 
 use crate::common::{Running, Scratch, command, options, start};
-
-mod graph;
 
 /// What the manual's examples show a null value as.
 const NULL_SHOWN: &str = "NULL";

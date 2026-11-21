@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::stats::KeyCounts;
-use super::{BTREE_METHOD, Entries, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
+use super::{BTREE_METHOD, Entries, Index, IndexMethod, IndexSizes, Key, KeyOrder, Probe, RowIds};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
@@ -492,6 +492,10 @@ impl Index for BLinkIndex {
     /// has made its pass (`index/stats.rs`).
     fn distinct_keys(&self) -> Option<f64> {
         self.keys.distinct()
+    }
+    /// Its entries, once counted, and its tree's levels (RULES.md D522).
+    fn sizes(&self) -> IndexSizes {
+        IndexSizes { entries: self.keys.entries(), height: self.tree.height().ok().map(u64::from), bytes: None }
     }
 
     /// A pass over its keys, once asked for.

@@ -1,13 +1,15 @@
-//! The mutations of what a database shows of its sessions and statements
-//! (RULES.md R-TEST-9, D520, D521): a session's wait, the role MONITOR's
-//! creator, a literal's placeholder, the tally that gives way, and the
-//! rows a scan read.
+//! The mutations of what a database shows of its sessions, statements,
+//! tables and indexes (RULES.md R-TEST-9, D520, D521, D522): a session's
+//! wait, the role MONITOR's creator, a literal's placeholder, the tally
+//! that gives way, the rows a scan read, an index's searches and probes,
+//! the counts a dropped index leaves, a table's commit and compaction
+//! stamps, and who sees which table.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the sessions' and statements' views whose removal must
 /// fail their tests.
-pub const MONITORING: [Mutation; 5] = [
+pub const MONITORING: [Mutation; 11] = [
     Mutation {
         name: "monitoring-wait-not-shown",
         package: Package::Server,
@@ -56,6 +58,66 @@ pub const MONITORING: [Mutation; 5] = [
         original: "                    None => self.flush(),",
         replacement: "                    None => {}",
         integration: &["statement_statistics::statements_are_tallied_by_their_normalized_text"],
+        unit: &[],
+    },
+    Mutation {
+        name: "monitoring-search-uncounted",
+        package: Package::Core,
+        breaks: "an index scan's search and entries are not counted as the index's",
+        file: "src/exec/scan.rs",
+        original: "used(Arc::clone(index).search_for(probe, order, reading), uses)",
+        replacement: "used(Arc::clone(index).search_for(probe, order, reading), None)",
+        integration: &["table_statistics::an_indexs_searches_and_entries_are_counted"],
+        unit: &[],
+    },
+    Mutation {
+        name: "monitoring-probe-uncounted",
+        package: Package::Core,
+        breaks: "an index join's probe is not counted a search",
+        file: "src/exec/join/indexed.rs",
+        original: "        self.using.searched();\n",
+        replacement: "",
+        integration: &["table_statistics::an_indexs_searches_and_entries_are_counted"],
+        unit: &[],
+    },
+    Mutation {
+        name: "monitoring-dropped-uses-kept",
+        package: Package::Core,
+        breaks: "a dropped index's counts are kept, so one made again under its name counts on from them",
+        file: "src/db/state/uses.rs",
+        original: "        self.index_uses.retain(|name, _| indexes.contains_key(name));\n",
+        replacement: "",
+        integration: &["table_statistics::an_indexs_searches_and_entries_are_counted"],
+        unit: &[],
+    },
+    Mutation {
+        name: "monitoring-commit-unstamped",
+        package: Package::Core,
+        breaks: "a commit does not stamp the tables it wrote, so LAST_CHANGED stays null",
+        file: "src/txn/end.rs",
+        original: "                tx.stamp_written(now);\n",
+        replacement: "",
+        integration: &["table_statistics::a_tables_rows_bytes_and_last_change_are_shown"],
+        unit: &[],
+    },
+    Mutation {
+        name: "monitoring-compaction-unstamped",
+        package: Package::Core,
+        breaks: "maintenance's work does not stamp its table, so LAST_COMPACTED stays null",
+        file: "src/db/maintenance.rs",
+        original: "            lock.stamp(self.clock.now(), true);\n",
+        replacement: "",
+        integration: &["table_statistics::a_column_stores_groups_are_counted_and_its_compaction_stamped"],
+        unit: &[],
+    },
+    Mutation {
+        name: "monitoring-tables-to-all",
+        package: Package::Core,
+        breaks: "every user sees every table's statistics, privilege or none",
+        file: "src/system/sizes.rs",
+        original: ".filter(|t| every || !applicable(&*seen.state.catalog, who, &t.name).0.is_empty())",
+        replacement: ".filter(|t| every || applicable(&*seen.state.catalog, who, &t.name).0.is_empty() || true)",
+        integration: &["table_statistics::a_user_sees_the_tables_it_holds_a_privilege_on"],
         unit: &[],
     },
 ];

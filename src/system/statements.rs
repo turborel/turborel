@@ -141,7 +141,7 @@ impl Configurable for Statements {
 pub(super) struct StatementStatistics;
 
 /// A column of counts, named `name`.
-fn counted(name: &str) -> ColumnDesc {
+pub(super) fn counted(name: &str) -> ColumnDesc {
     ColumnDesc {
         data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
         ..identifier(name, true)
@@ -149,7 +149,7 @@ fn counted(name: &str) -> ColumnDesc {
 }
 
 /// A count's value.
-fn count(n: u64) -> Value {
+pub(super) fn count(n: u64) -> Value {
     Value::Exact(Decimal::new(i128::from(n), 0))
 }
 
