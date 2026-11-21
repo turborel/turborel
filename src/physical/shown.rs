@@ -113,6 +113,7 @@ impl Plan {
             Plan::RangeJoin(r) => writeln!(out, "{pad}{}RangeJoin {}", if r.outer { "Left" } else { "" }, r.detail),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
             Plan::SemiJoin(s) => writeln!(out, "{pad}{} {}", s.operator(), s.detail),
+            Plan::MarkJoin(m) => writeln!(out, "{pad}{} {}", m.operator(), m.detail),
             Plan::IndexJoin { .. } => self.write_index_join(out, &pad),
             Plan::Aggregate { detail, streamed, .. } => writeln!(out, "{pad}Aggregate{} {detail}", streamed_word(*streamed)),
             Plan::Project { detail, .. } => writeln!(out, "{pad}Project {detail}"),
@@ -175,20 +176,18 @@ impl Plan {
             Plan::Recognize { recognize, .. } => recognize.input.write(out, depth),
             Plan::Polymorphic(p) => p.inputs.iter().for_each(|input| input.write(out, depth)),
             Plan::MergeAppend { inputs, .. } => inputs.iter().for_each(|input| input.write(out, depth)),
-            Plan::MergeJoin(m) => {
-                m.left.write(out, depth);
-                m.right.write(out, depth);
-            }
-            Plan::SemiJoin(s) => {
-                s.left.write(out, depth);
-                s.right.write(out, depth);
-            }
-            Plan::RangeJoin(r) => {
-                r.left.write(out, depth);
-                r.right.write(out, depth);
-            }
+            Plan::MergeJoin(m) => written((&m.left, &m.right), out, depth),
+            Plan::RangeJoin(r) => written((&r.left, &r.right), out, depth),
+            Plan::SemiJoin(s) => written((&s.left, &s.right), out, depth),
+            Plan::MarkJoin(m) => written((&m.left, &m.right), out, depth),
         }
     }
+}
+
+/// Writes a join's operands, each at `depth`.
+fn written((left, right): (&Plan, &Plan), out: &mut String, depth: usize) {
+    left.write(out, depth);
+    right.write(out, depth);
 }
 
 /// The word EXPLAIN shows after Aggregate or Distinct if it is streamed,

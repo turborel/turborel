@@ -74,6 +74,8 @@ fn plain_column(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog) -> boo
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. }
         | LogicalPlan::SemiJoin { left: input, .. } => plain_column(input, column, catalog),
+        // A mark is a truth value.
+        LogicalPlan::MarkJoin(m) => column >= m.left.width() || plain_column(&m.left, column, catalog),
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
             Some(of_right) => plain_column(right, of_right, catalog),
             None => plain_column(left, column, catalog),

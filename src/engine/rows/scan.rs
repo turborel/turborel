@@ -69,8 +69,9 @@ impl RowTable {
     pub(super) fn get_of(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
         let reader = self.read_row(tx, id, near)?;
         if !self.tree.get_near(&key(id), near)? {
-            // Frozen, so committed before every snapshot (`rows/frozen.rs`).
-            return self.frozen_row(id, columns);
+            // Frozen, so committed before every snapshot (`rows/frozen.rs`),
+            // unless a load made it (`frozen/stamped.rs`).
+            return self.frozen_seen(id, columns, reader);
         }
         self.visible_in(&near.bytes, reader)?.map(|record| self.decode(id, &record, columns)).transpose()
     }
@@ -108,8 +109,9 @@ impl RowTable {
         // The condition's columns are decoded too, to check it.
         let mut columns = columns.to_vec();
         columns.extend(condition.iter().flat_map(Conjunction::columns));
-        // Its groups as they are before its tree is read (`rows/frozen.rs`).
-        let directory = match self.frozen.directory() {
+        // Its groups as they are before its tree is read (`rows/frozen.rs`),
+        // those it sees (`frozen/stamped.rs`).
+        let directory = match self.directory_for(reader) {
             Ok(directory) => directory,
             Err(e) => return Box::new(iter::once(Err(e))),
         };
@@ -167,7 +169,7 @@ impl RowTable {
         let read = || condition.clone().map_or(Read::All, Read::Condition);
         let reader = self.reader(tx)?;
         self.note_read(tx, read)?;
-        let directory = self.frozen.directory()?;
+        let directory = self.directory_for(reader)?;
         Ok(Ordered::new(Arc::clone(&self), (reader, directory), (columns, order), condition))
     }
 
@@ -192,7 +194,7 @@ impl RowTable {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),
         };
-        match self.frozen.directory() {
+        match self.directory_for(reader) {
             Ok(directory) => Box::new(Batched::new(Arc::clone(&self), (reader, directory), columns.to_vec(), condition).with_late(late)),
             Err(e) => Box::new(iter::once(Err(e))),
         }

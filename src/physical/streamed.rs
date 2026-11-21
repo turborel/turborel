@@ -187,6 +187,7 @@ fn table_columns<'p>(plan: &'p LogicalPlan, columns: &[usize], depth: usize) -> 
         }
         LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Product { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
