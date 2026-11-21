@@ -179,17 +179,20 @@ impl Joining {
             Some(Side::Nested(_)) | None => None,
         };
         loop {
-            let right = match &mut current.matches {
+            // The pair made at once of a held row, not of a copy of it.
+            let pair: Row = match &mut current.matches {
                 Matches::Places(places) => match places.next() {
-                    Some(at) => rows.and_then(|r| r.get(at)).cloned().ok_or_else(|| broken("a range join's place is past its rows"))?,
+                    Some(at) => {
+                        let right = rows.and_then(|r| r.get(at)).ok_or_else(|| broken("a range join's place is past its rows"))?;
+                        current.left.iter().chain(right).cloned().collect()
+                    }
                     None => return Ok(None),
                 },
                 Matches::Pass(pass) => match pass.next() {
-                    Some(row) => row?,
+                    Some(row) => current.left.iter().cloned().chain(row?).collect(),
                     None => return Ok(None),
                 },
             };
-            let pair: Row = current.left.iter().cloned().chain(right).collect();
             let judged = if current.whole { Some(&self.spec.full) } else { self.spec.cond.as_ref() };
             let kept = match judged {
                 Some(c) => eval_cond(c, &pair, &self.runner)? == Truth::True,
