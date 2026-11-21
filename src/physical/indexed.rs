@@ -275,7 +275,8 @@ impl PhysicalPlanner<'_> {
             LogicalPlan::Filter { input, .. }
             | LogicalPlan::Distinct { input }
             | LogicalPlan::Sort { input, .. }
-            | LogicalPlan::Limit { input, .. } => self.column_type(input, column),
+            | LogicalPlan::Limit { input, .. }
+            | LogicalPlan::SemiJoin { left: input, .. } => self.column_type(input, column),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
                 Some(of_right) => self.column_type(right, of_right),
                 None => self.column_type(left, column),
@@ -406,6 +407,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         }
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }

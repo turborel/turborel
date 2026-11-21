@@ -515,6 +515,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Filter { cond, input } => self.filter(cond, input, want, None),
             LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
+            LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_join((*anti, cond), (left, right), want),
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
             LogicalPlan::Distinct { input } => self.distinct(input, want),

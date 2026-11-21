@@ -165,6 +165,7 @@ fn one_row(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Product { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }

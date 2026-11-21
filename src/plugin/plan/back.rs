@@ -180,17 +180,22 @@ impl Building<'_> {
         depth: usize,
     ) -> Result<LogicalPlan> {
         let (left, right) = (left.ok_or_else(|| refused("no left"))?, right.ok_or_else(|| refused("no right"))?);
-        let kind = match (kind, condition) {
+        let anti = kind == JoinKind::Anti;
+        let outer = match (kind, condition) {
             (JoinKind::Cross, None) => return Ok(LogicalPlan::Product { left, right }),
-            (JoinKind::Left, Some(_)) => OuterJoin::Left,
-            (JoinKind::Right, Some(_)) => OuterJoin::Right,
-            (JoinKind::Full, Some(_)) => OuterJoin::Full,
-            (JoinKind::Cross, Some(_)) | (JoinKind::Left | JoinKind::Right | JoinKind::Full, None) => {
-                return Err(refused("a cross join has no condition, and an outer join one"));
+            (JoinKind::Left, Some(_)) => Some(OuterJoin::Left),
+            (JoinKind::Right, Some(_)) => Some(OuterJoin::Right),
+            (JoinKind::Full, Some(_)) => Some(OuterJoin::Full),
+            (JoinKind::Semi | JoinKind::Anti, Some(_)) => None,
+            (JoinKind::Cross, Some(_)) | (JoinKind::Left | JoinKind::Right | JoinKind::Full | JoinKind::Semi | JoinKind::Anti, None) => {
+                return Err(refused("a cross join has no condition, and every other join one"));
             }
         };
         let cond = self.cond_of(condition.ok_or_else(|| refused("no condition"))?, types, depth)?;
-        Ok(LogicalPlan::OuterJoin { kind, cond, left, right })
+        Ok(match outer {
+            Some(kind) => LogicalPlan::OuterJoin { kind, cond, left, right },
+            None => LogicalPlan::SemiJoin { anti, cond, left, right },
+        })
     }
 
     /// The rows of a VALUES node `n`, of the types its columns say.

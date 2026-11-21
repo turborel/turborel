@@ -32,6 +32,7 @@ mod injected;
 mod joins;
 mod lineage;
 mod nodes;
+mod semi;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};

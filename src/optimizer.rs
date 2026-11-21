@@ -493,6 +493,7 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         LogicalPlan::Filter { input, .. } => base_table(input),
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }
