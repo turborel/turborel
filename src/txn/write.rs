@@ -14,7 +14,7 @@ use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
 use crate::log::record::{Change, insert_record};
-use crate::storage::{Row, RowId, TableStorage, unchanged};
+use crate::storage::{Newest, Row, RowId, TableStorage, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
 use crate::value::Value;
 
@@ -218,16 +218,10 @@ impl State {
             if !waits || self.capabilities(table)?.concurrency == Concurrency::Coordinator {
                 return Err(self.refused(tx, table, id, e));
             }
-            let newest = self.storage_of(table)?.newest(tx.id, id)?;
-            if let Some(writer) = newest.writer {
-                drop(turn.take());
-                turn = tx.wait_for_row((table, id), writer)?;
-                seen = None;
-                continue;
-            }
+            let newest = self.newest_unwritten(tx, (table, id), &mut turn)?;
+            let before = seen.take().map(|(at, _)| at);
             // Its writer rolled back as this one looked.
             if newest.stamp <= tx.snapshot() {
-                seen = None;
                 continue;
             }
             // [§4.28] Committed since its one snapshot: what it read changed.
@@ -241,8 +235,26 @@ impl State {
                 Again::Delete => Write::Delete,
                 Again::Skip => return Ok(None),
             };
+            // A recheck of a version newer than the last is no failed try.
+            if before != Some(newest.stamp) {
+                tries = 0;
+            }
             seen = Some((newest.stamp, row));
         }
+    }
+
+    /// \[DESIGN\] RULES.md D454: the newest version of row `id` of
+    /// `table` once no transaction is writing it, waited for in `turn`.
+    /// The row is read again after each wait, so a waiter goes from its
+    /// wait straight to the version committed meanwhile.
+    fn newest_unwritten(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), turn: &mut Option<super::row_waits::Turn>) -> Result<Newest> {
+        let mut newest = self.storage_of(table)?.newest(tx.id, id)?;
+        while let Some(writer) = newest.writer {
+            drop(turn.take());
+            *turn = tx.wait_for_row((table, id), writer)?;
+            newest = self.storage_of(table)?.newest(tx.id, id)?;
+        }
+        Ok(newest)
     }
 
     /// `e`, the refusal of a write of row `id` of `table`: a conflict is
@@ -412,9 +424,11 @@ pub(crate) enum Again {
 /// committed after its snapshot (`State::rewrite_row`).
 pub(crate) type Recheck<'a> = &'a mut dyn FnMut(&Row) -> Result<Again>;
 
-/// \[DESIGN\] How many times a row's write is refused by another
-/// transaction's change before the statement is, bounding the waits for
-/// an engine whose answers disagree.
+/// \[DESIGN\] How many times in a row a row's write is refused by another
+/// transaction's change with no recheck of a newer version between,
+/// before the statement is: a bound only for
+/// an engine whose answers disagree, never for a row in demand, so READ
+/// COMMITTED waits until its lock timeout or a deadlock (RULES.md D454).
 const MOST_CONFLICTS: usize = 64;
 
 impl Txn {
