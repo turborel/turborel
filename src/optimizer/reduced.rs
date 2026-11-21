@@ -51,7 +51,9 @@ impl Rule for SemiReduction {
         }
         let mut read = Vec::new();
         let (exprs, chain) = if let LogicalPlan::Project { exprs, input } = &**input {
-            exprs.iter().for_each(|e| expr_columns(e, &mut read));
+            for e in exprs {
+                expr_columns(e, &mut read);
+            }
             (Some(exprs), &**input)
         } else {
             aggs.iter().flat_map(AggCall::exprs).for_each(|e| expr_columns(e, &mut read));
@@ -64,8 +66,8 @@ impl Rule for SemiReduction {
             None => (0..chain.width()).map(|c| at(c).map_or(Expr::Const(Value::Null), Expr::Column)).collect(),
         };
         let mut out = plan.clone();
-        if let LogicalPlan::Aggregate { input, .. } = &mut out {
-            *input = Box::new(LogicalPlan::Project { exprs, input: Box::new(reduced) });
+        if let LogicalPlan::Aggregate { input: below, .. } = &mut out {
+            **below = LogicalPlan::Project { exprs, input: Box::new(reduced) };
         }
         Some(out)
     }
