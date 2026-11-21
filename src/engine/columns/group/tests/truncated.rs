@@ -8,7 +8,7 @@ use super::*;
 fn group(pages: &Pages<'_, Plain>) -> Group {
     let ids: Vec<RowId> = (1..=600_u64).collect();
     let rows: Vec<Row> = (0..600).map(row).collect();
-    Group::write(pages, &TYPES, (&ids, &rows), (&[1], &[0])).unwrap()
+    Group::write(pages, &TYPES, (&ids, &rows), (&[1], &[0], &[])).unwrap()
 }
 
 /// Verifies: [DESIGN] RULES.md D31, a group's header, R-ERR-2: a header

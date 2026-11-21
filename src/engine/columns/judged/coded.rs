@@ -11,15 +11,19 @@
 //! reads, of most texts, a code or two.
 //!
 //! A chunk of a dictionary in order is judged by its codes instead, of a
-//! column of any character string type (`sorted.rs`).
+//! column of any character string type (`sorted.rs`). Of a group with a
+//! sketch of the column, a row of a chunk coded by symbols is kept or
+//! left by its sketch's code first, and only a row of a boundary code
+//! compared (`sketched.rs`, RULES.md D525).
 
 use std::cell::Cell;
 
 use super::super::encoded::Body;
 use super::super::group::{Group, Seal};
 use super::super::scan::Reading;
+use super::super::sketch::{Verdict, Verdicts};
 use super::super::{Chunk, padding};
-use super::{Pred, sorted, text_keeps};
+use super::{Pred, sketched, sorted, text_keeps};
 use crate::error::Result;
 use crate::storage::mask::index;
 use crate::value::DataType;
@@ -48,6 +52,8 @@ pub(super) fn kept<S: Seal>(
     let symbols = padding(t) == Some(None);
     let Some(zones) = group.columns.get(pred.column) else { return Ok(None) };
     let all = super::rows(usize::try_from(to.saturating_sub(from)).unwrap_or(0), given);
+    let sketch = if symbols { sketch_of(group, (pages, &mut *prepared), pred, (from, to))? } else { None };
+    let sketch = sketch.as_ref().map(|(codes, verdicts)| (codes.as_slice(), verdicts));
     let mut out = Vec::with_capacity(all.len());
     let mut rest = all.as_slice();
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
@@ -60,7 +66,7 @@ pub(super) fn kept<S: Seal>(
         let first = zone.run.first;
         let judged = prepared.with(pages, (pred.column, zone, t), |chunk, _| {
             Ok(sorted::judged(chunk, pred, (first, from), these, &mut out)
-                .or_else(|| symbols.then(|| judged(chunk, pred, (first, from), these, &mut out)).flatten()))
+                .or_else(|| symbols.then(|| judged(chunk, (pred, sketch), (first, from), these, &mut out)).flatten()))
         })?;
         if judged.is_none() {
             return Ok(None);
@@ -69,14 +75,49 @@ pub(super) fn kept<S: Seal>(
     Ok(Some(out))
 }
 
+/// The codes of the sketch of `pred`'s column of the rows `from` to `to`
+/// of `group`, and what each says of it, made once a group; none if the
+/// group has no sketch of the column or the conjunct is not judged by one.
+///
+/// # Errors
+///
+/// As `Pages::with`.
+fn sketch_of<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    pred: &Pred,
+    (from, to): (u32, u32),
+) -> Result<Option<(Vec<u8>, Verdicts)>> {
+    let Some(edges) = group.sketches.get(pred.column).filter(|e| !e.is_empty()) else { return Ok(None) };
+    let Some(verdicts) = prepared.sketches.verdicts(pred.at, || sketched::verdicts(edges, pred)) else { return Ok(None) };
+    Ok(prepared.sketches.codes(group, pages, pred.column, (from, to))?.map(|codes| (codes, verdicts)))
+}
+
 /// Pushes to `out` the rows of `these`, places from `from`, that `pred`
-/// keeps of `chunk`, whose first row is `first`: none if it is not coded
-/// by symbols, or a text's codes are malformed, so it is decoded and
-/// raises what is malformed as it would have.
-fn judged(chunk: &Chunk<'_>, pred: &Pred, (first, from): (u32, u32), these: &[u32], out: &mut Vec<u32>) -> Option<()> {
+/// keeps of `chunk`, whose first row is `first`, by the codes of their
+/// sketch first, if given, each code as `sketch` says: none if it is not
+/// coded by symbols, or a text's codes are malformed, so it is decoded
+/// and raises what is malformed as it would have.
+fn judged(
+    chunk: &Chunk<'_>,
+    (pred, sketch): (&Pred, Option<(&[u8], &Verdicts)>),
+    (first, from): (u32, u32),
+    these: &[u32],
+    out: &mut Vec<u32>,
+) -> Option<()> {
     let Body::Fsst(coded) = &chunk.body else { return None };
     let failed = Cell::new(false);
     for &r in these {
+        if let Some((codes, verdicts)) = sketch {
+            match codes.get(index(r)).map_or(Verdict::Check, |&code| verdicts.of(code)) {
+                Verdict::Keep => {
+                    out.push(r);
+                    continue;
+                }
+                Verdict::Drop => continue,
+                Verdict::Check => {}
+            }
+        }
         let n = index(from.saturating_add(r).saturating_sub(first));
         if chunk.is_null(n) {
             if pred.of_null {

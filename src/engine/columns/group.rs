@@ -9,7 +9,8 @@
 //! COLUMNSTORE.BLOOM names a Bloom filter of each part of it (`bloom.rs`),
 //! and of each column of exact numbers, datetimes or character strings
 //! the imprints of each part, unless COLUMNSTORE.IMPRINTS is OFF
-//! (`imprints.rs`), on pages of their own too. A group is written
+//! (`imprints.rs`), and of the columns COLUMNSTORE.SKETCH names the codes
+//! of their sketch (`sketch.rs`), on pages of their own too. A group is written
 //! once and never changed: a change of one of its rows is the delta's.
 //!
 //! Its row ids are its least and greatest if every id between is its, in
@@ -28,8 +29,11 @@
 //!          parts u32 | each, of PART_ROWS rows: nulls u32 | bounds u8 |
 //!          least | greatest | filter u8 (1 if any) | page u64 | at u32 |
 //!          bytes u32 | imprints u8 (1 if any) | page u64 | at u32 |
+//!          bytes u32 | sketch u8 (1 if any) | page u64 | at u32 |
 //!          bytes u32;
-//!          then of each column: edges u32 | each: bound
+//!          then of each column: edges u32 | each: bound;
+//!          then sketched u32 | each: column u32;
+//!          then of each column: sketch edges u32 | each: point u8 | bound
 //! run:     first row u32 | rows u32 | page u64 | at u32 | len u32 (0
 //!          for the whole page)
 //! bound:   length u32 | the value as its type writes it in a record
@@ -42,20 +46,21 @@ mod header;
 mod ids;
 mod pax;
 mod summary;
+mod zones;
 
 use std::borrow::Cow;
-use std::cmp::Ordering;
 
 pub use header::{put_summary, read, read_summaries};
 use ids::{write_by_id, write_ids};
 pub use summary::{Overall, Summary};
+use zones::{bounds_of, put_filters, write_column, zone_of};
 
-use super::{Chunk, Fields, bloom, imprints};
+use super::{Chunk, imprints, sketch};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::{Row, RowId};
-use crate::value::{DataType, Value, compare};
+use crate::value::{DataType, Value};
 
 /// The format of a group's header.
 const GROUP_FORMAT: u8 = 1;
@@ -217,6 +222,9 @@ pub struct Part {
     /// Where their imprints are, if their column has them
     /// (`columns/imprints.rs`).
     pub imprint: Option<Filter>,
+    /// Where the codes of their sketch are, if their column has one
+    /// (`columns/sketch.rs`).
+    pub sketch: Option<Filter>,
 }
 
 /// Where a part's Bloom filter is: `len` bytes from `at` of page `page`.
@@ -257,94 +265,18 @@ pub struct Group {
     /// Of each column, the edges of its imprints' bins, none if it has no
     /// imprints (`columns/imprints.rs`).
     pub edges: Vec<Vec<Value>>,
+    /// The places of the columns COLUMNSTORE.SKETCH named as it was
+    /// written, in order.
+    pub sketched: Vec<usize>,
+    /// Of each column, the edges of its sketch, none if it has none
+    /// (`columns/sketch.rs`).
+    pub sketches: Vec<sketch::Edges>,
     /// The pages of its header.
     pub header: Vec<PageId>,
 }
 
-/// The least and greatest of `values` that are not null, and the nulls.
-fn bounds_of(values: &[Value]) -> (Option<(Value, Value)>, u32) {
-    let mut bounds: Option<(Value, Value)> = None;
-    let mut nulls = 0_u32;
-    for v in values {
-        if v.is_null() {
-            nulls = nulls.saturating_add(1);
-            continue;
-        }
-        bounds = Some(match bounds {
-            None => (v.clone(), v.clone()),
-            Some((least, greatest)) => {
-                let least = if compare(v, &least) == Some(Ordering::Less) { v.clone() } else { least };
-                let greatest = if compare(v, &greatest) == Some(Ordering::Greater) { v.clone() } else { greatest };
-                (least, greatest)
-            }
-        });
-    }
-    (bounds, nulls)
-}
-
 fn count32(n: usize) -> Result<u32> {
     u32::try_from(n).map_err(|_| too_large())
-}
-
-/// Writes the column `column` of `rows`, of type `t`, in chunks, and a
-/// Bloom filter of each part if `bloom`.
-fn write_column<S: Seal>(
-    pages: &Pages<'_, S>,
-    t: &DataType,
-    (rows, column, bloom): (&[Row], usize, bool),
-    written: &mut Vec<PageId>,
-) -> Result<Vec<Zone>> {
-    let values: Vec<Value> = rows.iter().map(|r| r.get(column).cloned().unwrap_or(Value::Null)).collect();
-    let fields = Fields::of(t, values.iter().cloned())?;
-    let mut zones = Vec::new();
-    let mut from = 0_usize;
-    while from < fields.len() {
-        let count = fields.fitting(t, from, (pages.capacity, pages.compress));
-        let page = pages.put(&fields.chunk(t, from, (count, pages.compress))?, written)?;
-        zones.push(zone_of(&values, Run::whole(count32(from)?, count32(count)?, page)));
-        from = from.saturating_add(count);
-    }
-    if bloom {
-        put_filters(pages, (&values, &mut zones), written)?;
-    }
-    Ok(zones)
-}
-
-/// The zone of the chunk of `run`, of the values of its column `values`:
-/// its nulls and bounds, and those of each part of it.
-pub(super) fn zone_of(values: &[Value], run: Run) -> Zone {
-    let first = usize::try_from(run.first).unwrap_or(usize::MAX);
-    let held = values.get(first..first.saturating_add(usize::try_from(run.rows).unwrap_or(0))).unwrap_or_default();
-    let (bounds, nulls) = bounds_of(held);
-    let parts = held
-        .chunks(usize::try_from(PART_ROWS).unwrap_or(usize::MAX))
-        .map(|part| {
-            let (part_bounds, part_nulls) = bounds_of(part);
-            Part { nulls: part_nulls, bounds: part_bounds, filter: None, imprint: None }
-        })
-        .collect();
-    Zone { run, nulls, bounds, parts }
-}
-
-/// Writes a Bloom filter of each part of `zones`, of `values`, and puts
-/// where each is in its part.
-pub(super) fn put_filters<S: Seal>(
-    pages: &Pages<'_, S>,
-    (values, zones): (&[Value], &mut [Zone]),
-    written: &mut Vec<PageId>,
-) -> Result<()> {
-    let (part, bytes) = (usize::try_from(PART_ROWS).unwrap_or(usize::MAX), bloom::filter_bytes(pages.capacity));
-    let mut filters = Vec::new();
-    for zone in zones.iter() {
-        let first = usize::try_from(zone.run.first).unwrap_or(usize::MAX);
-        let held = values.get(first..first.saturating_add(usize::try_from(zone.run.rows).unwrap_or(0))).unwrap_or_default();
-        filters.extend(held.chunks(part).map(|these| bloom::filter_of(these, bytes)));
-    }
-    let places = bloom::write_filters(pages, &filters, written)?;
-    for (p, place) in zones.iter_mut().flat_map(|z| z.parts.iter_mut()).zip(places) {
-        p.filter = Some(place);
-    }
-    Ok(())
 }
 
 impl Group {
@@ -360,16 +292,16 @@ impl Group {
     ///
     /// SQLCODE -910 if the rows are not of the types; -900 if there are too
     /// many; an error of the pages; nothing written is kept. Its rows are
-    /// in the order of the columns at `order`, and those at `bloom` have
-    /// Bloom filters.
+    /// in the order of the columns at `order`, those at `bloom` have
+    /// Bloom filters, and those at `named` sketches, if they take them.
     pub fn write<S: Seal>(
         pages: &Pages<'_, S>,
         types: &[DataType],
         (ids, rows): (&[RowId], &[Row]),
-        (order, bloom): (&[usize], &[usize]),
+        (order, bloom, named): (&[usize], &[usize], &[usize]),
     ) -> Result<Group> {
         let mut written = Vec::new();
-        let made = Self::write_all(pages, types, (ids, rows), (order, bloom), &mut written);
+        let made = Self::write_all(pages, types, (ids, rows), (order, bloom, named), &mut written);
         if made.is_err() {
             pages.free(&written);
         }
@@ -380,7 +312,7 @@ impl Group {
         pages: &Pages<'_, S>,
         types: &[DataType],
         (ids, rows): (&[RowId], &[Row]),
-        (order, bloom): (&[usize], &[usize]),
+        (order, bloom, named): (&[usize], &[usize], &[usize]),
         written: &mut Vec<PageId>,
     ) -> Result<Group> {
         let (Some(&first), Some(&last)) = (ids.iter().min(), ids.iter().max()) else {
@@ -398,6 +330,7 @@ impl Group {
                 .collect::<Result<Vec<_>>>()?
         };
         let edges = imprints::put_all(pages, (types, rows), &mut columns, written)?;
+        let sketches = sketch::put_all(pages, (types, rows, named), &mut columns, written)?;
         let mut group = Group {
             first,
             last,
@@ -408,6 +341,8 @@ impl Group {
             order: order.to_vec(),
             pax: pages.pax,
             edges,
+            sketched: named.to_vec(),
+            sketches,
             header: Vec::new(),
         };
         group.header = put_chain(pages, &header::encode(&group, types)?, written)?;
@@ -420,7 +355,7 @@ impl Group {
         let chunks = self.columns.iter().flatten().map(|z| z.run.page);
         let ids = self.ids.iter().chain(&self.by_id).map(|r| r.page);
         let parts = self.columns.iter().flatten().flat_map(|z| &z.parts);
-        let filters = parts.flat_map(|p| p.filter.into_iter().chain(p.imprint)).map(|f| f.page);
+        let filters = parts.flat_map(|p| p.filter.into_iter().chain(p.imprint).chain(p.sketch)).map(|f| f.page);
         let mut all: Vec<PageId> = ids.chain(chunks).chain(filters).chain(self.header.iter().copied()).collect();
         all.sort_unstable_by_key(|p| p.0);
         all.dedup();
