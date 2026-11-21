@@ -117,7 +117,7 @@ pub const PARALLEL: [Mutation; 13] = [
         name: "parallel-index-last-part-lost",
         package: Package::Core,
         breaks: "an index range cut at its tree's keys loses its part past the last cut",
-        file: "src/index/blink.rs",
+        file: "src/index/blink/range.rs",
         original: "parts.push(Range { lower, upper: range.upper, checked: range.checked });",
         replacement: "drop((lower, range.upper));",
         integration: &[INDEX_RANGES],

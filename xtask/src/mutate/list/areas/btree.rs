@@ -1,0 +1,88 @@
+//! The mutations of the B-link tree's node layout and leaf hints (RULES.md
+//! R-TEST-9, D500).
+
+use super::super::{Mutation, Package};
+
+/// Mechanisms of the B-link tree whose removal must fail their tests.
+pub const BTREE: [Mutation; 8] = [
+    Mutation {
+        name: "btree-hints-misread",
+        package: Package::Core,
+        breaks: "a hint equal to the key's head bounds the search from below, past slots that may hold the key",
+        file: "src/engine/tree/node.rs",
+        original: "            if hint < head {",
+        replacement: "            if hint <= head {",
+        integration: &[],
+        unit: &["engine::tree::node::tests::layout::heads_and_hints_find_every_key"],
+    },
+    Mutation {
+        name: "btree-prefix-kept",
+        package: Package::Core,
+        breaks: "a key inserted without the node's prefix leaves the prefix as it was, so keys read back wrong",
+        file: "src/engine/tree/node/build.rs",
+        original: "        (kept < node.prefix.len()).then(",
+        replacement: "        (kept > node.prefix.len()).then(",
+        integration: &[],
+        unit: &["engine::tree::node::tests::layout::prefixes_are_kept_once_and_keys_read_whole"],
+    },
+    Mutation {
+        name: "btree-foreign-leaf-trusted",
+        package: Package::Core,
+        breaks: "a noted page of another tree is trusted as a leaf of this one",
+        file: "src/engine/tree/near.rs",
+        original: "    if node.tree != tree || node.level != 0 || node.deleted || node.len() == 0 {",
+        replacement: "    if node.level != 0 || node.deleted || node.len() == 0 {",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_noted_leaf_gone_is_not_trusted"],
+    },
+    Mutation {
+        name: "btree-split-leaf-misnoted",
+        package: Package::Core,
+        breaks: "a row written into the right half of a split is noted in the left",
+        file: "src/engine/tree/write.rs",
+        original: ".filter(|s| key > s.separator.as_slice())",
+        replacement: ".filter(|s| key < s.separator.as_slice())",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_row_read_starts_at_the_leaf_noted_for_it"],
+    },
+    Mutation {
+        name: "btree-no-right-hops",
+        package: Package::Core,
+        breaks: "a read from a noted leaf split since descends instead of moving right",
+        file: "src/engine/tree/near.rs",
+        original: "        for hop in 0..=HOPS {",
+        replacement: "        for hop in 0..1 {",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_noted_leaf_split_since_leads_right"],
+    },
+    Mutation {
+        name: "btree-entry-hint-stale",
+        package: Package::Core,
+        breaks: "an index entry keeps its old hint, not the leaf noted for its row as it is written",
+        file: "src/index/blink/value.rs",
+        original: "        Some(leaf) => Ok(leaf),",
+        replacement: "        Some(_) => old.map_or(Ok(hints::NO_LEAF), hint_of),",
+        integration: &[],
+        unit: &["index::blink::tests::entries_carry_the_leaf_noted_for_their_row"],
+    },
+    Mutation {
+        name: "btree-fetch-any-version",
+        package: Package::Core,
+        breaks: "a row found by an entry is kept whatever key the version the reader sees has",
+        file: "src/index/key.rs",
+        original: "row.get(column).is_some_and(|v| total_cmp(v, value) == Ordering::Equal);",
+        replacement: "row.get(column).is_some_and(|v| total_cmp(v, value) == Ordering::Equal || true);",
+        integration: &["btree_layout::a_row_is_found_by_the_key_its_seen_version_has"],
+        unit: &[],
+    },
+    Mutation {
+        name: "btree-decoded-key-kept",
+        package: Package::Core,
+        breaks: "a search gives the key it last decoded for an entry of other bytes",
+        file: "src/index/blink.rs",
+        original: "        if let Some(key) = self.key.as_ref().filter(|_| self.bytes == bytes) {",
+        replacement: "        if let Some(key) = self.key.as_ref() {",
+        integration: &[],
+        unit: &["index::blink::tests::a_key_is_decoded_once_for_its_entries"],
+    },
+];
