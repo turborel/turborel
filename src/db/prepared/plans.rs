@@ -58,7 +58,7 @@ use crate::physical::{Plan, filled_plan, keepable};
 use crate::settings::Own;
 use crate::sync::lock;
 use crate::value::Value;
-pub(crate) use learning::{Learned, Learning};
+pub(crate) use learning::{Learned, Learning, MOST_LEARNING_RUNS};
 pub(in crate::db) use learning::{moved, rows_of};
 
 mod learning;

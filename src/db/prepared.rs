@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use outputs::Outputs;
 pub(super) use plans::{Keeping, KeptPlan, Key, Plans, moved, rows_of};
-pub(crate) use plans::{Learned, Learning};
+pub(crate) use plans::{Learned, Learning, MOST_LEARNING_RUNS};
 
 use super::area::commands::{self, Command};
 use super::collations::Collating;

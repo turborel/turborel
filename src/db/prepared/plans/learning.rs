@@ -25,7 +25,7 @@ pub(super) const LEARNED_RUNS: u8 = 5;
 /// \[DESIGN\] The executions after which a query whose plans have not
 /// kept one shape `LEARNED_RUNS` times in a row stops learning, so a
 /// query whose values choose its paths is planned twice no longer.
-pub(super) const MOST_LEARNING_RUNS: u8 = 20;
+pub(crate) const MOST_LEARNING_RUNS: u8 = 20;
 
 /// What a query learning its plan has learned (`Physical::Learning`).
 #[derive(Debug, Clone, Default)]
