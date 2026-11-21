@@ -415,6 +415,7 @@ verification approach DO-178C expects (§8).
 | D473 | The maintenance job gathers a table's statistics only once a plan has read them since its last pass |
 | D474 | A page read into a frame takes the buffer of the page it replaces |
 | D475 | An update's log record holds the row after whole and of the row before only the columns changed |
+| D476 | A value on a zone's bound changed to one past it leaves the zone not stale |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 | D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
@@ -11704,6 +11705,20 @@ changed if its bytes differ, so a value equal to another but written
 apart, as a decimal of another scale, is kept as it was. A row before
 of another width than the row after is written whole
 (`log/record/images.rs`).
+
+#### D476. A value on a zone's bound changed to one past it leaves the zone not stale
+
+A write staled its zone unless each value it replaced lay strictly
+inside the zone's bounds or was kept, so the maintenance thread summed
+the zone up again from every version of its rows (D31). A count, a
+running total or a next number grows at each write, and the row holding
+the greatest of a zone is the one most often written, so under an order
+entry workload nearly every zone of the tables written was summed up
+again each second, and the pass took a core of its own. A value on a
+bound changed to one past it now leaves the bound reached, by the row
+written, as the zone is widened to hold it, so the zone stays as narrow
+as its rows. A value on a bound changed back inside it, or deleted, or a
+null changed, stales the zone as before (`engine/rows/zones.rs`).
 
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
