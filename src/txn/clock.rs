@@ -27,9 +27,10 @@
 //!   that moves to a new snapshot (READ COMMITTED) does so the same way.
 
 use std::collections::BTreeMap;
+use std::mem;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex};
-use std::thread;
+use std::thread::{self, Thread};
 use std::time::Duration;
 
 use super::{Timestamp, TxId};
@@ -42,7 +43,8 @@ const STRIPES: u64 = 32;
 /// A stripe with no snapshot.
 const NONE: u64 = u64::MAX;
 /// How long a wait for the durable timestamp sleeps before it looks again,
-/// should a wake-up be missed.
+/// should a wake-up be missed: none is, as a waiter is counted before it
+/// looks, so this only bounds a defect's cost.
 const DURABLE_POLL: Duration = Duration::from_millis(10);
 
 /// One stripe of the open snapshots, alone on its cache lines.
@@ -67,8 +69,10 @@ pub(super) struct Clock {
     synced: Box<[AtomicU64]>,
     /// Whether a sync failed: the durable timestamp moves no more.
     halted: AtomicBool,
-    /// Waits for the durable timestamp, and how many wait.
-    waits: (Mutex<()>, Condvar),
+    /// The threads waiting for the durable timestamp, by the timestamp
+    /// each waits for, and how many wait: each is woken alone, once the
+    /// durable timestamp reaches its own (RULES.md D740).
+    waits: Mutex<BTreeMap<Timestamp, Vec<Thread>>>,
     waiting: AtomicUsize,
     stripes: Box<[Stripe]>,
 }
@@ -84,7 +88,7 @@ impl Clock {
             durable: AtomicU64::new(0),
             synced: (0..RING).map(|_| AtomicU64::new(0)).collect(),
             halted: AtomicBool::new(false),
-            waits: (Mutex::new(()), Condvar::new()),
+            waits: Mutex::new(BTreeMap::new()),
             waiting: AtomicUsize::new(0),
             stripes: (0..STRIPES).map(|_| Stripe { snapshots: Mutex::new(BTreeMap::new()), oldest: AtomicU64::new(NONE) }).collect(),
         }
@@ -191,12 +195,16 @@ impl Clock {
         self.stable.load(Ordering::SeqCst)
     }
 
-    /// The commit at `at`, ended, is durable: its commit record synced, or
-    /// it needs none. The durable timestamp moves past it once every commit
-    /// before it is durable too, and its waiters are woken.
-    pub(super) fn end_sync(&self, at: Timestamp) {
-        if let Some(slot) = self.synced(at) {
-            slot.store(at, Ordering::SeqCst);
+    /// The commits at `ats`, ended, are durable: their commit records
+    /// synced, or they need none. Each is marked, then the durable
+    /// timestamp moves past those whose predecessors are all durable too,
+    /// once for a group's sync, and the waiters it reaches are woken, each
+    /// alone (RULES.md D740).
+    pub(super) fn end_syncs(&self, ats: impl Iterator<Item = Timestamp>) {
+        for at in ats {
+            if let Some(slot) = self.synced(at) {
+                slot.store(at, Ordering::SeqCst);
+            }
         }
         let mut moved = false;
         loop {
@@ -208,8 +216,21 @@ impl Clock {
             moved |= self.durable.compare_exchange(durable, next, Ordering::SeqCst, Ordering::SeqCst).is_ok();
         }
         if moved && self.waiting.load(Ordering::SeqCst) > 0 {
-            let _held = lock_builtin(&self.waits.0);
-            self.waits.1.notify_all();
+            self.wake_through(self.durable.load(Ordering::SeqCst));
+        }
+    }
+
+    /// Wakes the threads waiting for a timestamp at or before `durable`.
+    fn wake_through(&self, durable: Timestamp) {
+        let reached = {
+            let mut waits = lock_builtin(&self.waits);
+            let later = waits.split_off(&durable.saturating_add(1));
+            mem::replace(&mut *waits, later)
+        };
+        let threads: Vec<Thread> = reached.into_values().flatten().collect();
+        self.waiting.fetch_sub(threads.len(), Ordering::SeqCst);
+        for thread in threads {
+            thread.unpark();
         }
     }
 
@@ -219,30 +240,42 @@ impl Clock {
     }
 
     /// Returns once the durable timestamp has reached `at`: whether it has,
-    /// or a failed sync halted it first.
+    /// or a failed sync halted it first. The thread waits on its own,
+    /// counted before it looks again under the lock a waker takes, so a
+    /// move of the durable timestamp between the look and the wait wakes it.
     pub(super) fn wait_durable(&self, at: Timestamp) -> bool {
-        while self.durable.load(Ordering::SeqCst) < at {
+        if self.durable.load(Ordering::SeqCst) >= at {
+            return true;
+        }
+        if self.halted.load(Ordering::SeqCst) {
+            return false;
+        }
+        {
+            let mut waits = lock_builtin(&self.waits);
+            self.waiting.fetch_add(1, Ordering::SeqCst);
+            waits.entry(at).or_default().push(thread::current());
+        }
+        // Looked at after it is counted: a waker either sees it counted,
+        // or moved the durable timestamp before this look.
+        if self.durable.load(Ordering::SeqCst) >= at {
+            self.wake_through(self.durable.load(Ordering::SeqCst));
+        }
+        loop {
+            if self.durable.load(Ordering::SeqCst) >= at {
+                return true;
+            }
             if self.halted.load(Ordering::SeqCst) {
                 return false;
             }
-            self.waiting.fetch_add(1, Ordering::SeqCst);
-            let held = lock_builtin(&self.waits.0);
-            // Looked at again under the lock a waker takes, so no wake-up
-            // between the look and the wait is missed.
-            if self.durable.load(Ordering::SeqCst) < at && !self.halted.load(Ordering::SeqCst) {
-                let _ = self.waits.1.wait_timeout(held, DURABLE_POLL);
-            }
-            self.waiting.fetch_sub(1, Ordering::SeqCst);
+            thread::park_timeout(DURABLE_POLL);
         }
-        true
     }
 
     /// A sync of the log failed: the durable timestamp moves no more, and
     /// every wait for it ends.
     pub(super) fn halt(&self) {
         self.halted.store(true, Ordering::SeqCst);
-        let _held = lock_builtin(&self.waits.0);
-        self.waits.1.notify_all();
+        self.wake_through(Timestamp::MAX);
     }
 
     /// The oldest snapshot of an open transaction, or with none open, the
@@ -285,7 +318,7 @@ mod tests {
     /// Ends commit `at`, durable as it ends.
     fn ended(clock: &Clock, at: Timestamp) {
         clock.end_commit(at);
-        clock.end_sync(at);
+        clock.end_syncs(std::iter::once(at));
     }
 
     /// Verifies: [DESIGN] RULES.md D29, D441, the clock: commits ending out
@@ -332,7 +365,7 @@ mod tests {
         let waiter = thread::spawn(move || first.wait_durable(b));
         thread::sleep(Duration::from_millis(20));
         assert!(!waiter.is_finished(), "1 is not synced");
-        clock.end_sync(a);
+        clock.end_syncs(std::iter::once(a));
         assert!(waiter.join().unwrap());
         assert_eq!(clock.begin().1, 2);
         let c = clock.take_commit();
@@ -342,5 +375,33 @@ mod tests {
         clock.halt();
         assert!(!halted.join().unwrap(), "halted");
         assert_eq!(clock.durable(), 2);
+    }
+    /// Verifies: [DESIGN] RULES.md D441, D740: a waiter for the durable
+    /// timestamp is woken alone, once it reaches the waiter's own: commits
+    /// marked durable out of order wake no one until those before them are;
+    /// one call marks several at once; a waiter for a later timestamp stays
+    /// counted and asleep.
+    #[test]
+    fn a_waiter_is_woken_once_its_timestamp_is_durable() {
+        let clock = std::sync::Arc::new(Clock::new(1));
+        for _ in 0_u8..4 {
+            let at = clock.take_commit();
+            clock.end_commit(at);
+        }
+        let (early, late) = (std::sync::Arc::clone(&clock), std::sync::Arc::clone(&clock));
+        let second = thread::spawn(move || early.wait_durable(2));
+        let fourth = thread::spawn(move || late.wait_durable(4));
+        while clock.waiting.load(Ordering::SeqCst) < 2 {
+            thread::yield_now();
+        }
+        clock.end_syncs([2, 3].into_iter());
+        assert_eq!((clock.durable(), clock.waiting.load(Ordering::SeqCst)), (0, 2), "1 is not durable");
+        clock.end_syncs(std::iter::once(1));
+        assert!(second.join().unwrap());
+        assert_eq!((clock.durable(), clock.waiting.load(Ordering::SeqCst)), (3, 1), "4 waits on");
+        assert!(!fourth.is_finished());
+        clock.end_syncs(std::iter::once(4));
+        assert!(fourth.join().unwrap());
+        assert_eq!(clock.waiting.load(Ordering::SeqCst), 0);
     }
 }

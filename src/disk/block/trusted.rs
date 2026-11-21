@@ -60,7 +60,7 @@ impl BlockFile {
         let written = self.file.write_all_at(&frame, id.0);
         if written.is_err() {
             self.failed.store(true, Ordering::SeqCst);
-            self.wake();
+            self.wake_all();
         }
         written
     }
