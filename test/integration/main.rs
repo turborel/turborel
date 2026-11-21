@@ -106,6 +106,7 @@ mod defaults_kept;
 mod deferred;
 mod delta_placement;
 mod delta_tables;
+mod dense_joins;
 mod dependencies;
 mod dependencies_drops;
 mod descriptor_lobs;

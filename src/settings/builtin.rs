@@ -253,7 +253,7 @@ fn last() -> impl Iterator<Item = Definition> {
         .chain(super::executor::definitions())
         .chain([super::joins::range_joins(), super::executor::kept_subquery_plans()])
         .chain(super::joins::streamed())
-        .chain([super::joins::margin()])
+        .chain([super::joins::margin(), super::executor::dense_joins()])
 }
 
 /// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the

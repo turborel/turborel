@@ -11,13 +11,13 @@
 //! which look so, yet may read many records.
 
 use crate::value::types::TypeRegistry;
-use std::collections::HashMap;
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::db::State;
-use crate::exec::Seed;
 use crate::error::{Code, Result, SqlError};
+use crate::exec::Seed;
 use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, batch_bytes, work_bytes};
 use crate::spill::{Area, Batches, Grant, Records, SpillArea, SpillRun, SpillTable, SpilledLobs, WORK_FLOOR, WorkAreas};
 use crate::txn::{Stop, TxId, checked};
@@ -47,10 +47,22 @@ pub(super) struct Work {
     /// What cancels the statement it works for, looked at as its runs are
     /// read back; none if it is not known.
     stop: Option<Arc<Stop>>,
-    /// The database's seed, and the word and count of the seeds it draws
-    /// for its partitioners (`drawn`), boxed, as an operator holds its
-    /// work area beside its state.
-    seed: Box<(Seed, u64, Cell<u64>)>,
+    /// How its tables hash, boxed, as an operator holds its work area
+    /// beside its state.
+    hashing: Box<Hashing>,
+}
+
+/// How a work area's tables hash.
+struct Hashing {
+    /// The database's seed.
+    seed: Seed,
+    /// The word and count of the seeds it draws for its partitioners
+    /// (`drawn`).
+    word: u64,
+    count: Cell<u64>,
+    /// Whether a hash join it holds builds a direct table of keys dense
+    /// in their span (EXECUTOR.DENSE_JOINS, RULES.md D601).
+    dense: bool,
 }
 
 impl Work {
@@ -61,8 +73,9 @@ impl Work {
         let (areas, types) = (Arc::clone(&db.work), db.types.clone());
         let grant = areas.grant(ceiling);
         let limit = grant.bytes();
-        let seed = Box::new((db.functions.seed().clone(), db.functions.seed().xxh3(b"partitions"), Cell::new(0)));
-        Work { limit, grant, batch, partitions, areas, area: None, types, lobs: SpilledLobs::new(), stop: None, seed }
+        let (seed, dense) = (db.functions.seed().clone(), super::batch::dense_wanted(db));
+        let hashing = Box::new(Hashing { word: seed.xxh3(b"partitions"), seed, count: Cell::new(0), dense });
+        Work { limit, grant, batch, partitions, areas, area: None, types, lobs: SpilledLobs::new(), stop: None, hashing }
     }
 
     /// The most an operator of `db` is granted, MEMORY.WORK_BYTES, for
@@ -109,8 +122,9 @@ impl Work {
     fn shared(&self, limit: usize) -> Work {
         let (batch, partitions, stop) = (self.batch, self.partitions, self.stop.clone());
         let (areas, types, lobs, grant) = (Arc::clone(&self.areas), self.types.clone(), self.lobs.clone(), Arc::clone(&self.grant));
-        let seed = Box::new((self.seed.0.clone(), self.drawn(), Cell::new(0)));
-        Work { limit, grant, batch, partitions, areas, area: None, types, lobs, stop, seed }
+        let hashing =
+            Box::new(Hashing { seed: self.hashing.seed.clone(), word: self.drawn(), count: Cell::new(0), dense: self.hashing.dense });
+        Work { limit, grant, batch, partitions, areas, area: None, types, lobs, stop, hashing }
     }
 
     /// \[DESIGN\] (RULES.md D357) The seed of the next partitioner it
@@ -122,15 +136,21 @@ impl Work {
     /// gives its rows in the same order each time. A part of the work area
     /// draws its word from the area's.
     pub(super) fn drawn(&self) -> u64 {
-        let (_, word, count) = &*self.seed;
+        let Hashing { word, count, .. } = &*self.hashing;
         let n = count.get();
         count.set(n.wrapping_add(1));
         crate::hash::xxhash::xxh3_64_with_seed(&n.to_le_bytes(), *word)
     }
 
+    /// Whether a hash join it holds builds a direct table of keys dense
+    /// in their span, each partition's of its own (RULES.md D601).
+    pub(super) fn dense(&self) -> bool {
+        self.hashing.dense
+    }
+
     /// The database's seed of its hash tables (RULES.md D357).
     pub(super) fn seed(&self) -> &Seed {
-        &self.seed.0
+        &self.hashing.seed
     }
 
     /// Half of it, of its own, the other half left to it, an area of each

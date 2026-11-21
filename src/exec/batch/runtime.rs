@@ -25,11 +25,11 @@ use std::sync::Arc;
 
 use super::stream::{self, Batches};
 use super::told;
-use crate::storage::Batch;
 use crate::db::State;
 use crate::exec::table::RuntimeFilter;
 use crate::logical::{Cond, Expr};
 use crate::physical::{Plan, SemiJoin, SemiMethod};
+use crate::storage::Batch;
 use ordered::Placed;
 
 mod ordered;
@@ -417,7 +417,7 @@ mod tests {
     /// A filter of built keys 1 and 2, told of `column`.
     fn told(column: usize) -> Told {
         let seed = Seed::fixed(7);
-        let how = Hashing { seed: &seed, keyed: false };
+        let how = Hashing { seed: &seed, keyed: false, direct: false };
         let built = Batch { columns: vec![Column::Ints(Ints::new(vec![1, 2], 0, None))], rows: 2 };
         let mut hashes = KeyHashes::default();
         hashes.of_batch((&built, None), (&[0], &[false]), how).unwrap();
