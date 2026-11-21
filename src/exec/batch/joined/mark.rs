@@ -8,14 +8,13 @@
 //! The join gives every left row on, so a runtime filter of a column of its
 //! left that reaches it is told its left (`batch/runtime.rs`).
 
-use std::sync::Arc;
-
 use super::super::late::Deferred;
 use super::super::stream::{self, Batches, Kept};
 use super::left_late_batches;
 use super::pairs::kept_rows;
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::join::{MarkSide, Marker};
 use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner, broken, execute};
@@ -55,7 +54,7 @@ pub(super) fn layout(m: &MarkJoin, db: &State) -> Option<(Vec<usize>, usize)> {
 /// # Errors
 ///
 /// The right operand's; the spill area's; a column the left's batches lack.
-pub(super) fn mark_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn mark_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     told_batches(plan, &Deferred::default(), (db, tx))
 }
 
@@ -65,7 +64,7 @@ pub(super) fn mark_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batc
 /// # Errors
 ///
 /// As `mark_batches`.
-pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Arc<State>, TxId)) -> Result<Batches> {
+pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Db, TxId)) -> Result<Batches> {
     let Plan::MarkJoin(m) = plan else { return Err(broken("a mark join is not one")) };
     let (left_columns, width) = stream::layout(&m.left, db).ok_or_else(|| broken("a mark join's left operand gives no batches"))?;
     let places: Option<Vec<(usize, usize)>> =

@@ -21,13 +21,11 @@
 
 mod side;
 
-use std::sync::Arc;
-
 use super::super::work::Work;
 use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed};
 use super::equal;
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::logical::{Cond, Truth};
 use crate::physical::{JoinKey, MarkJoin, Plan};
 use crate::storage::Row;
@@ -38,7 +36,7 @@ pub(in crate::exec) use side::Side;
 /// The rows of the mark join `plan`. Never inlined into `execute`, whose
 /// frame every level of a plan adds to the stack (RULES.md R-CF-6).
 #[inline(never)]
-pub(in crate::exec) fn mark(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(in crate::exec) fn mark(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::MarkJoin(m) = plan else { return failed(broken("a mark join is not one")) };
     let MarkJoin { left, right, keys, cond, marks, compared, .. } = *m;
     let marker = Marker { keys, cond, marks, compared, runner: Runner::new(db, tx) };

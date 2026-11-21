@@ -19,8 +19,8 @@ use super::held::{self, HeldRight, Read};
 use super::pairs::kept_rows;
 use super::probe::{Joined, keyed, keys_match};
 use super::{in_order, left_late_batches};
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::join::{Built, Full, Right};
 use crate::exec::table::KeyHashes;
 use crate::exec::work::Work;
@@ -35,7 +35,7 @@ use crate::value::{Bucket, Value};
 /// # Errors
 ///
 /// The right operand's; the spill area's; a key the left's batches lack.
-pub(super) fn semi_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn semi_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     told_batches(plan, &Deferred::default(), (db, tx))
 }
 
@@ -45,7 +45,7 @@ pub(super) fn semi_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batc
 /// # Errors
 ///
 /// As `semi_batches`.
-pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Arc<State>, TxId)) -> Result<Batches> {
+pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Db, TxId)) -> Result<Batches> {
     let Plan::SemiJoin(s) = plan else { return Err(broken("a semi join is not one")) };
     let SemiJoin { anti, left, right, keys, cond, widths, .. } = *s;
     let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
