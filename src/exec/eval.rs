@@ -7,7 +7,7 @@ use super::{NoSubqueries, Subqueries, SubqueryRows, broken};
 use crate::catalog::MatchType;
 use crate::error::{Code, Result, SqlError, SqlState, Subject, Warnings, fail, fail_with};
 use crate::functions::ScalarRef;
-use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Subquery, Truth};
+use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Slot, Subquery, Truth};
 use crate::spill::norm_row;
 use crate::storage::Row;
 use crate::value::types::rows_hold;
@@ -78,6 +78,20 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
     }
 }
 
+/// [ISO/IEC 9075:1992 §17.9 GR5f, GR5g] The value of `slot`, as
+/// `subqueries` hold it, cast to the slot's type as filling the slot would
+/// cast it, with the warning that raises (RULES.md D610).
+fn slot_value(slot: &Slot, subqueries: &dyn Subqueries) -> Result<Value> {
+    let Some(value) = subqueries.slot(slot.index) else {
+        return Err(broken(&format!("<dynamic parameter specification> {} has no value", slot.index.saturating_add(1))));
+    };
+    let (v, warning) = cast_warned(value.clone(), &slot.data_type).map_err(|e| e.or_at(slot.at))?;
+    if let Some(state) = warning {
+        warn(subqueries, state);
+    }
+    Ok(v)
+}
+
 /// `e`, an expression other than a column, a constant or an operation of
 /// two operands, evaluated for `row`.
 fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
@@ -92,9 +106,9 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
                 called(f, args, row, subqueries)
             }
         }
-        Expr::Outer(_, name) => Err(broken(&format!("the outer reference {name} has no value"))),
+        Expr::Outer(at, name) => subqueries.outer(*at).cloned().ok_or_else(|| broken(&format!("the outer reference {name} has no value"))),
         Expr::Invoked(i) => super::invoked::invoke(i, row, subqueries),
-        Expr::Dynamic(slot) => Err(broken(&format!("<dynamic parameter specification> {} has no value", slot.index.saturating_add(1)))),
+        Expr::Dynamic(slot) => slot_value(slot, subqueries),
         // [ISO/IEC 9075:1992 §6.9 GR2] the first WHEN true gives the result,
         // the others not evaluated; else the ELSE.
         Expr::Case(whens, otherwise) => {
