@@ -109,3 +109,47 @@ fn a_large_transaction_writes_as_it_goes_and_recovers() {
     assert_eq!(rows(&t, "SELECT COUNT(*) FROM T WHERE V = 'rolled' OR K >= 10000"), Ok(vec!["0".into()]));
     drop((db, t, s, rolled, crashed));
 }
+
+/// Verifies: [DESIGN] RULES.md D25, D470, a transaction whose records are
+/// written open, past what it holds or by the checkpoint, a checkpoint
+/// taken before its commit record: after a crash, each row it changed
+/// reads as it committed, a row of a transaction open at the crash as it
+/// was, and each is updated and deleted again; for each seed of how its
+/// records were written and whether it changes a row after the
+/// checkpoint.
+#[test]
+fn a_change_spanning_a_checkpoint_is_written_again_after_recovery() {
+    for seed in 0_u64..4 {
+        let scratch = Scratch::new(&format!("held-spanning-{seed}"));
+        let dir = scratch.path("db");
+        let (crashed, _) = open(&dir);
+        crashed.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V CHAR(1000))").unwrap();
+        let s = crashed.session("APP");
+        for k in 0..1_200 {
+            s.run(&format!("INSERT INTO T VALUES ({k}, 'base')")).unwrap();
+        }
+        s.commit().unwrap();
+        let (spans, open_tx) = (crashed.session("APP"), crashed.session("APP"));
+        // Past a run's worth when the seed is odd: written as it goes.
+        let upto = if seed % 2 == 1 { 1_100 } else { 10 };
+        spans.run(&format!("UPDATE T SET V = 'spans' WHERE K < {upto}")).unwrap();
+        open_tx.run("UPDATE T SET V = 'open' WHERE K = 1150").unwrap();
+        crashed.checkpoint().unwrap();
+        if seed >= 2 {
+            spans.run("UPDATE T SET V = 'twice' WHERE K = 0").unwrap();
+        }
+        spans.commit().unwrap();
+        let expected = sorted(&crashed.session("APP"), "SELECT K, V FROM T WHERE K < 2 OR K = 1150");
+
+        let (db, opened) = open(&dir);
+        assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+        let t = db.session("APP");
+        assert_eq!(sorted(&t, "SELECT K, V FROM T WHERE K < 2 OR K = 1150"), expected, "seed {seed}");
+        t.run("UPDATE T SET V = 'again' WHERE K < 5 OR K = 1150").unwrap();
+        t.run("DELETE FROM T WHERE K = 6").unwrap();
+        t.commit().unwrap();
+        db.checkpoint().unwrap();
+        assert_eq!(rows(&t, "SELECT COUNT(*) FROM T WHERE V = 'again'"), Ok(vec!["6".into()]), "seed {seed}");
+        drop((db, t, s, spans, open_tx, crashed));
+    }
+}

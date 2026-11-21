@@ -185,3 +185,198 @@ fn a_deposed_database_is_opened_again_in_place() {
     memory.depose().unwrap();
     assert_eq!(memory.reopen().err().map(|e| e.code), Some(Code::Api), "not from files");
 }
+
+/// Verifies: [DESIGN] RULES.md D57, D470, a promoted database's change
+/// spanning its checkpoint: serving, a transaction updates committed rows,
+/// its records written open, a checkpoint is taken before its commit
+/// record, and the rows are changed again after; deposed and opened again
+/// in place from that checkpoint, given the log again from the
+/// transaction's first record, it holds what it held serving, for each
+/// seed of how its records were written and where a second update falls.
+#[test]
+fn a_change_spanning_a_promoted_checkpoint_is_followed_again() {
+    for seed in 0_u64..4 {
+        let fs: Arc<dyn FileSystem> = Arc::new(MemoryFileSystem::new());
+        let log = Arc::new(MemoryLog::new());
+        let primary = primary(&log);
+        let (db, holds) = following(&fs, &log);
+        give(&db, &log, holds, last(&log));
+        drop(primary);
+        db.promote(Arc::clone(&log) as Arc<dyn Log>).unwrap();
+        let spans = db.session("APP");
+        exec(&spans, "UPDATE T SET V = 'spans' WHERE K = 1").unwrap();
+        if seed % 2 == 0 {
+            db.write_held().unwrap();
+        }
+        db.checkpoint().unwrap();
+        if seed >= 2 {
+            exec(&spans, "UPDATE T SET V = 'twice' WHERE K = 2").unwrap();
+        }
+        spans.commit().unwrap();
+        committed(&db, &["UPDATE T SET V = 'after' WHERE K = 1", "DELETE FROM T WHERE K = 2"]);
+        let served = shown(&db);
+        db.depose().unwrap();
+        let holds = db.reopen().unwrap();
+        give(&db, &log, holds, last(&log));
+        assert_eq!(shown(&db), served, "seed {seed}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D57, D470, a change spanning a following
+/// checkpoint: the primary's transaction updates and deletes committed
+/// rows, its records written open, and the following database is given
+/// them and checkpoints before their commit record; the rows are changed
+/// again after. Opened again from that checkpoint and given the log from
+/// the transaction's first record, or promoted after, it holds what the
+/// primary holds, for each seed of where the later change falls.
+#[test]
+fn a_change_spanning_a_following_checkpoint_is_followed_again() {
+    for seed in 0_u64..4 {
+        let fs: Arc<dyn FileSystem> = Arc::new(MemoryFileSystem::new());
+        let log = Arc::new(MemoryLog::new());
+        let primary = primary(&log);
+        let (db, holds) = following(&fs, &log);
+        give(&db, &log, holds, last(&log));
+        let given = last(&log);
+        let spans = primary.session("APP");
+        exec(&spans, "UPDATE T SET V = 'spans' WHERE K = 1").unwrap();
+        exec(&spans, "DELETE FROM T WHERE K = 2").unwrap();
+        primary.write_held().unwrap();
+        give(&db, &log, given, last(&log));
+        db.checkpoint().unwrap();
+        let checkpointed = last(&log);
+        if seed % 2 == 1 {
+            exec(&spans, "INSERT INTO T VALUES (2, 'again')").unwrap();
+        }
+        spans.commit().unwrap();
+        committed(&primary, &["UPDATE T SET V = 'after' WHERE K = 1"]);
+        if seed >= 2 {
+            give(&db, &log, checkpointed, last(&log));
+            assert_eq!(shown(&db), shown(&primary), "seed {seed}, given on");
+        }
+        drop(db);
+        let (again, holds) = following(&fs, &log);
+        give(&again, &log, holds, last(&log));
+        assert_eq!(shown(&again), shown(&primary), "seed {seed}");
+        let own = Arc::new(MemoryLog::new());
+        again.promote(Arc::clone(&own) as Arc<dyn Log>).unwrap();
+        committed(&again, &["UPDATE T SET V = 'promoted' WHERE K = 1", "DELETE FROM T WHERE K = 1"]);
+        assert_eq!(rows(&again.session("APP"), "SELECT COUNT(*) FROM T WHERE K = 1").unwrap(), ["0"], "seed {seed}");
+    }
+}
+
+/// A database serving from files of its own, logging to `log`: T of 1200
+/// rows of V 'base', then two transactions open across a checkpoint, the
+/// first updating and deleting some rows, the second, whose records follow
+/// the first's, one more. By `seed`'s bits: the first past what it holds,
+/// its records written as it goes, or not, the checkpoint writing them;
+/// the first updating a row again after or not; both committing or, an
+/// index on T made while they are open, rolled back. The rows are then
+/// changed again.
+fn spanned(log: &Arc<MemoryLog>, seed: u64) -> Database {
+    let (past, twice, commits) = (seed & 1 == 0, seed & 2 != 0, seed & 4 == 0);
+    let fs: Arc<dyn FileSystem> = Arc::new(MemoryFileSystem::new());
+    let source = Database::new();
+    source.set_log_storage(Box::new(Given(Arc::clone(log)))).unwrap();
+    source.open_files(&fs, Path::new("/source"), &OpenOptions::default()).unwrap();
+    source.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V CHAR(1000))").unwrap();
+    let s = source.session("APP");
+    for k in 0..1_200_i32 {
+        exec(&s, &format!("INSERT INTO T VALUES ({k}, 'base')")).unwrap();
+    }
+    s.commit().unwrap();
+    let (spans, second) = (source.session("APP"), source.session("APP"));
+    exec(&spans, &format!("UPDATE T SET V = 'spans' WHERE K < {}", if past { 1_100 } else { 10 })).unwrap();
+    exec(&spans, "DELETE FROM T WHERE K = 1150").unwrap();
+    exec(&second, "UPDATE T SET V = 'second' WHERE K = 1199").unwrap();
+    source.checkpoint().unwrap();
+    if twice {
+        exec(&spans, "UPDATE T SET V = 'twice' WHERE K = 0").unwrap();
+    }
+    if commits {
+        spans.commit().unwrap();
+        second.commit().unwrap();
+    } else {
+        // An index made meanwhile reads every version of T's rows, and
+        // has the transactions roll back.
+        source.create_index("T_V", "APP.T", &["V"], "btree").unwrap();
+        spans.rollback().unwrap();
+        second.rollback().unwrap();
+    }
+    committed(&source, &["UPDATE T SET V = 'after' WHERE K < 5", "DELETE FROM T WHERE K = 6"]);
+    source
+}
+
+/// The count of T's rows of each value of V, as `db` shows them.
+fn values(db: &Database) -> Vec<String> {
+    rows(&db.session("APP"), "SELECT V, COUNT(*) FROM T GROUP BY V ORDER BY V").unwrap()
+}
+
+/// Verifies: [DESIGN] RULES.md D57, D470, a state transfer of a checkpoint
+/// a transaction spans (`spanned`), for each of its seeds: a database
+/// following installs the primary's export, holding the group's log, and
+/// given the records after where it then holds it, holds what the
+/// primary holds; promoted, it changes those rows again.
+#[test]
+fn a_transfer_of_a_checkpoint_a_transaction_spans_is_followed() {
+    for seed in 0_u64..8 {
+        let log = Arc::new(MemoryLog::new());
+        let source = spanned(&log, seed);
+        let (db, _) = following(&(Arc::new(MemoryFileSystem::new()) as Arc<dyn FileSystem>), &log);
+        let holds = Standby::import(&db, source.export().unwrap()).unwrap();
+        give(&db, &log, holds, last(&log));
+        assert_eq!(values(&db), values(&source), "seed {seed}");
+        db.promote(Arc::new(MemoryLog::new()) as Arc<dyn Log>).unwrap();
+        committed(&db, &["UPDATE T SET V = 'promoted' WHERE K < 20", "DELETE FROM T WHERE K = 1"]);
+        assert_eq!(rows(&db.session("APP"), "SELECT COUNT(*) FROM T WHERE V = 'promoted'").unwrap(), ["18"], "seed {seed}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D57, a database following whose replica's
+/// log no longer holds every record before its checkpoint's position, as
+/// a crash after a state transfer leaves it once its replica cut the log
+/// to the position it holds it through (a view change may replace the
+/// records after): opened to follow, its files are of no use, the
+/// records the open transactions are undone with gone, so it is made
+/// again from nothing, holding the log through 0; the group's state
+/// fetched again, its log holding the records again, and given the
+/// records after, it holds what the primary holds; for each seed of
+/// `spanned`. Regression test (R-TEST-7): it recovered from the checkpoint
+/// with the records it had, so a transaction open there whose records
+/// were cut off was not undone. In the replication simulation
+/// (`reconfigure`, seed 1) replaying an index made after then read one of
+/// its versions' older ones, gone with the undo store of the database
+/// exported (SQLCODE -916). In one process the rows here come back right
+/// even so, as the dropped records' versions are not read through to an
+/// older one, so the test asserts the database is made again.
+#[test]
+fn a_following_database_whose_log_was_cut_is_made_again() {
+    for seed in (0_u64..8).rev() {
+        let log = Arc::new(MemoryLog::new());
+        let source = spanned(&log, seed);
+        let fs: Arc<dyn FileSystem> = Arc::new(MemoryFileSystem::new());
+        let (db, _) = following(&fs, &log);
+        let installed = Standby::import(&db, source.export().unwrap()).unwrap();
+        drop(db);
+        // The replica's log as the crash left it, through two records
+        // after where the transfer held it; those let go of are empty.
+        let records: Vec<(Lsn, Vec<u8>)> = log.read_from(Lsn(1)).map(Result::unwrap).collect();
+        let cut = Arc::new(MemoryLog::new());
+        let first = records.first().map_or(1, |(at, _)| at.0);
+        for _ in 1..first {
+            cut.append(&[]).unwrap();
+        }
+        let (kept, cut_off): (Vec<_>, Vec<_>) = records.into_iter().partition(|(at, _)| at.0 <= installed.0 + 2);
+        for (_, record) in &kept {
+            cut.append(record).unwrap();
+        }
+        let (again, holds) = following(&fs, &cut);
+        assert_eq!(holds, Lsn(0), "seed {seed}");
+        for (_, record) in &cut_off {
+            cut.append(record).unwrap();
+        }
+        let holds = Standby::import(&again, source.export().unwrap()).unwrap();
+        give(&again, &log, holds, last(&log));
+        assert_eq!(values(&again), values(&source), "seed {seed}");
+    }
+}

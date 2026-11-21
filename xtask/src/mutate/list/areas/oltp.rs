@@ -1,4 +1,4 @@
-//! The mutations of the OLTP paths (RULES.md R-TEST-9, D403 to D412, D470): a
+//! The mutations of the OLTP paths (RULES.md R-TEST-9, D403 to D412, D470, D57): a
 //! B-tree index made by CREATE INDEX holding no key with a null, the sort
 //! an ORDER BY asks dropped where a null key survives a probe, and the
 //! equality of two columns equal to one number or one `?` not added.
@@ -6,7 +6,17 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 24] = [
+pub const OLTP: [Mutation; 25] = [
+    Mutation {
+        name: "oltp-cut-log-recovered",
+        package: Package::Core,
+        breaks: "a following database whose log was cut short of its checkpoint recovers from it, its open transactions not undone",
+        file: "src/db/standby/reopen.rs",
+        original: "        Ok(log.log.end() < image.through)",
+        replacement: "        Ok(log.log.end() < Lsn(2))",
+        integration: &["following::a_following_database_whose_log_was_cut_is_made_again"],
+        unit: &[],
+    },
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,

@@ -2212,7 +2212,11 @@ every departure.
 A database following a group refuses what it would log (SQLCODE -917) and
 keeps serving reads. It recovers from its last checkpoint alone
 (`Database::open_following`), because its log's later records may not be
-committed.
+committed. A log that no longer holds every record before that
+checkpoint's position, lost or cut back to where a state transfer left
+it, makes its files of no use, since the transactions open at the
+checkpoint cannot be undone without those records. The database is then
+made again from nothing and takes the group's state.
 
 These were approved with this decision.
 
