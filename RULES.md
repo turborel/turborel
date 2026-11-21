@@ -11642,7 +11642,10 @@ than the batches save. Of a sort
 the planner placed under it by its partitioning's and ordering's keys,
 each batch comes beside the normal keys the sort made of its rows
 (D364), so no key is written twice; of any other input, each batch's
-keys are written of it alone. Where a row begins a partition or a peer
+keys are written of it alone. A scan's batches that hold only the
+columns read are made rows' width, each column not read a vector of
+nulls that holds none, so the sort, the window and the operator above
+read by batch. Where a row begins a partition or a peer
 group is found by `Kernels::boundaries`, each row's key bytes compared
 with the row's before it, of the partitioning's bytes and of all. Rows
 of equal bytes whose key cuts a string short are compared by their

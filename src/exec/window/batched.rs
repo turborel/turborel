@@ -40,7 +40,7 @@ use super::frame::Bounds;
 use super::value::Count;
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{Batches, whole_batches, whole_width};
+use crate::exec::batch::{Batches, layout, whole_batches};
 use crate::exec::sort::{KeyedBatches, sorted_keyed};
 use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner, execute};
@@ -145,20 +145,22 @@ pub(in crate::exec) fn window_batches(plan: Plan, db: &Db, tx: TxId) -> Result<B
 }
 
 /// The input of a window, `input`, as batches in order of `both`, its
-/// partitioning's and ordering's keys: of a sort by those keys whose input
-/// gives whole batches, with the keys it made; of a stream giving whole
-/// batches, as they come; else its rows made batches.
+/// partitioning's and ordering's keys, each of every column of its rows:
+/// of a sort by those keys of a stream, with the keys it made; of a
+/// stream, as they come; else its rows made batches.
 fn input_of(input: Plan, (parted, both): (usize, &[SortKey]), db: &Db, tx: TxId) -> Result<KeyedBatches> {
     if let Plan::Sort { keys, input: inner, most: None, .. } = &input
         && sorts_as(keys, (parted, both))
-        && let Some(width) = whole_width(inner, db)
+        && let Some((columns, width)) = layout(inner, db)
     {
         let Plan::Sort { keys: by, input: sorted, .. } = input else { return Err(crate::exec::broken("a sort is not one")) };
-        return sorted_keyed(&by, whole_batches(*sorted, db, tx)?, width, db, tx);
+        let batches = whole_batches(*sorted, db, tx)?;
+        let widened = Box::new(batches.map(move |kept| kept.map(|(batch, sel)| (widened(compact(batch, sel), &columns, width), None))));
+        return sorted_keyed(&by, widened, width, db, tx);
     }
-    if whole_width(&input, db).is_some() {
+    if let Some((columns, width)) = layout(&input, db) {
         let batches = whole_batches(input, db, tx)?;
-        return Ok(Box::new(batches.map(|kept| kept.map(|(batch, sel)| (compact(batch, sel), None)))));
+        return Ok(Box::new(batches.map(move |kept| kept.map(|(batch, sel)| (widened(compact(batch, sel), &columns, width), None)))));
     }
     Ok(Box::new(rows_made_batches(execute(input, db, tx)).map(|b| b.map(|b| (b, None)))))
 }
@@ -170,6 +172,22 @@ fn input_of(input: Plan, (parted, both): (usize, &[SortKey]), db: &Db, tx: TxId)
 fn sorts_as(keys: &[SortKey], (parted, both): (usize, &[SortKey])) -> bool {
     let alike = |(n, (k, b)): (usize, (&SortKey, &SortKey))| if n < parted { k.column == b.column } else { k == b };
     keys.len() == both.len() && keys.iter().zip(both).enumerate().all(alike)
+}
+
+/// `batch`, its `n`th vector that of the `columns[n]`th column of rows of
+/// `width`, as a batch of every column, those it does not hold nulls.
+fn widened(batch: Batch, columns: &[usize], width: usize) -> Batch {
+    if columns.iter().copied().eq(0..width) {
+        return batch;
+    }
+    let rows = batch.rows;
+    let mut placed: Vec<Option<Column>> = (0..width).map(|_| None).collect();
+    for (column, vector) in columns.iter().zip(batch.columns) {
+        if let Some(slot) = placed.get_mut(*column) {
+            *slot = Some(vector);
+        }
+    }
+    Batch { columns: placed.into_iter().map(|c| c.unwrap_or_else(|| Column::nulls(rows))).collect(), rows }
 }
 
 /// `batch`, of the rows `sel` keeps alone if given.

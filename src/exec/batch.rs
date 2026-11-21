@@ -42,7 +42,7 @@ use project::Place;
 pub(super) use project::{projectable, projected, vector_of};
 pub(super) use runtime::{Told, taken as runtime_taken, wanted};
 pub(super) use shaped::{Shaped, filter_step, probe_step, project_step, runtime_step, through};
-pub(super) use stream::{Batches, Kept, reads_by_batch, whole_batches};
+pub(super) use stream::{Batches, Kept, layout, reads_by_batch, whole_batches};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
@@ -110,7 +110,7 @@ fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     if !collations.is_empty() || !seeds.is_empty() {
         return None;
     }
-    let (columns, _) = stream::layout(input, db)?;
+    let (columns, _) = layout(input, db)?;
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
     Some(Read { taken: taken(aggs, &columns)?, groups: at })
 }

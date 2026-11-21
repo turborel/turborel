@@ -50,7 +50,7 @@ pub(super) struct Stream {
 
 /// The columns of `plan`'s rows its batches hold, and the width of its
 /// rows, if it is a subtree that gives batches.
-pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
+pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     match plan {
         Plan::SeqScan { table, columns, located: false, .. } => Some((columns.clone(), db.catalog.table(table)?.columns.len())),
         Plan::Filter { input, .. } => layout(input, db),
@@ -143,10 +143,11 @@ pub(super) fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
     exprs.iter().map(|e| if let Expr::Column(c) = e { columns.iter().position(|held| held == c) } else { None }).collect()
 }
 
-/// [ISO/IEC 9075-2:2023 §7.15] The layout of a window over batches: its
-/// input's columns and a column of each call (RULES.md D560).
+/// [ISO/IEC 9075-2:2023 §7.15] The layout of a window over batches: every
+/// column of its input's rows, those its input's batches do not hold
+/// nulls, and a column of each call (RULES.md D560).
 fn windowed_layout(window: &Window<Plan>, db: &State) -> Option<(Vec<usize>, usize)> {
-    let width = crate::exec::batch::whole_width(&window.input, db)?;
+    let (_, width) = layout(&window.input, db)?;
     let all = width.checked_add(window.calls.len())?;
     crate::exec::window::admits_batches(window).then(|| ((0..all).collect(), all))
 }
