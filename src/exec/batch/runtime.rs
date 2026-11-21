@@ -25,11 +25,11 @@ use std::sync::Arc;
 
 use super::stream::{self, Batches};
 use super::told;
-use crate::storage::Batch;
 use crate::db::State;
 use crate::exec::table::RuntimeFilter;
 use crate::logical::{Cond, Expr};
 use crate::physical::{Plan, SemiJoin, SemiMethod};
+use crate::storage::Batch;
 use ordered::Placed;
 
 mod ordered;
