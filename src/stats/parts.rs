@@ -21,7 +21,7 @@
 use std::cmp::Ordering;
 use std::hash::BuildHasher;
 
-use crate::hash::murmur::MurmurBuildHasher;
+use crate::hash::xxhash::Xxh3BuildHasher;
 use crate::value::{Value, compare};
 
 /// \[DESIGN\] Bits of a hash choosing a sketch's register: 4,096
@@ -90,7 +90,7 @@ impl HyperLogLog {
         if value.is_null() {
             return;
         }
-        self.add_hash(MurmurBuildHasher::default().hash_one(value.norm()));
+        self.add_hash(Xxh3BuildHasher::default().hash_one(value.norm()));
     }
 
     /// Adds a value given as `bytes`, the same bytes for the same value: a
@@ -133,9 +133,10 @@ pub fn placed(hash: u64) -> (usize, u8) {
     (register, u8::try_from(rank).unwrap_or(u8::MAX))
 }
 
-/// The hash a sketch takes of a value given as `bytes`.
+/// The hash a sketch takes of a value given as `bytes`: XXH3-64 of them,
+/// the same on every machine, as an index's sketch is kept.
 pub fn hash_of(bytes: &[u8]) -> u64 {
-    MurmurBuildHasher::default().hash_one(bytes)
+    crate::hash::xxhash::xxh3_64(bytes)
 }
 
 /// The estimated number of distinct values of a sketch of `registers`.

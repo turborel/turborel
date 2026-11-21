@@ -53,7 +53,7 @@ pub use sample::{RowReservoir, RowSample};
 pub use since::Since;
 
 use crate::geometry::Geometry;
-use crate::hash::murmur::MurmurBuildHasher;
+use crate::hash::xxhash::Xxh3BuildHasher;
 use crate::storage::Row;
 use crate::value::{CompOp, Value, compare};
 
@@ -247,7 +247,7 @@ impl ColumnBuilder {
         }
         self.sketch.add(value);
         if let Some(seen) = self.seen.as_mut() {
-            seen.entry(MurmurBuildHasher::default().hash_one(value.norm())).or_insert(Runs { runs: 0, last: None }).saw(self.run);
+            seen.entry(Xxh3BuildHasher::default().hash_one(value.norm())).or_insert(Runs { runs: 0, last: None }).saw(self.run);
         }
         if Geometry::is_geometry(value) {
             self.add_geometry(value);

@@ -14,9 +14,8 @@ const CHAIN: usize = 32;
 /// The most and fewest bits of a hash.
 const MOST_HASH_BITS: u32 = 15;
 const FEWEST_HASH_BITS: u32 = 8;
-/// The shifts mixing a position's three bytes into its hash.
-const FIRST_SHIFT: u32 = 10;
-const SECOND_SHIFT: u32 = 5;
+/// The bytes a position's hash is of: the shortest match.
+const HASHED: usize = 3;
 /// A chain's end: no earlier position.
 const NONE: usize = usize::MAX;
 
@@ -66,9 +65,10 @@ impl Chains {
     }
 
     fn hash(&self, data: &[u8], at: usize) -> Option<usize> {
-        let byte = |i: usize| data.get(at.saturating_add(i)).map(|b| usize::from(*b));
-        let mixed = (byte(0)? << FIRST_SHIFT) ^ (byte(1)? << SECOND_SHIFT) ^ byte(2)?;
-        Some(mixed & self.hash_mask)
+        // XXH3-64 of the three bytes (RULES.md D460), its low bits the head.
+        let bytes = data.get(at..at.checked_add(HASHED)?)?;
+        let hash = usize::try_from(turborel::hash::xxhash::xxh3_64(bytes) & u64::from(u32::MAX)).ok()?;
+        Some(hash & self.hash_mask)
     }
 
     /// Position `at` added to its hash's chain.

@@ -11,7 +11,7 @@ use std::ops::Bound;
 
 use crate::engine::tree::Direction;
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::murmur3_x64_128;
+use crate::hash::xxhash::xxh3_64;
 
 use super::DiskAnn;
 use super::node::{corrupt, u32_at};
@@ -52,7 +52,7 @@ fn row_of(k: &[u8]) -> u64 {
 
 /// The hash of stored vector bytes.
 pub(super) fn hash_of(stored: &[u8]) -> u64 {
-    murmur3_x64_128(stored, 0).0
+    xxh3_64(stored)
 }
 
 impl DiskAnn {

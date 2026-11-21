@@ -98,9 +98,9 @@ pub(super) struct Model {
     /// \[EXTENSION\] The rows given of sets of its relations in place of
     /// their estimates (`physical/cardinality/injected.rs`, RULES.md D377).
     pub(super) injected: Vec<(Set, f64)>,
-    /// The classes of columns the inner joins' keys make equal
-    /// (`key_classes`, RULES.md D387).
-    pub(super) implied: Vec<Vec<usize>>,
+    /// The classes of columns the inner joins' keys make equal, each with
+    /// the relations its columns are of (`implied_classes`, RULES.md D387).
+    pub(super) implied: Vec<(Vec<usize>, Set)>,
 }
 
 impl Model {
@@ -151,7 +151,25 @@ impl Model {
     /// a product (RULES.md D387).
     pub(super) fn implied_keys(&self, (l, r): (Set, Set)) -> Vec<(usize, usize)> {
         let side = |class: &[usize], s: Set| class.iter().copied().find(|&c| self.holds(s, c));
-        self.implied.iter().filter_map(|class| Some((side(class, l)?, side(class, r)?))).collect()
+        self.implied
+            .iter()
+            .filter(|&&(_, rels)| rels & l != 0 && rels & r != 0)
+            .filter_map(|(class, _)| Some((side(class, l)?, side(class, r)?)))
+            .collect()
+    }
+
+    /// `key_classes`, each with the relations its columns are of, so a
+    /// join whose sets hold none of a class's on one side passes it by a
+    /// test of bits.
+    pub(super) fn implied_classes(&self) -> Vec<(Vec<usize>, Set)> {
+        let rels = |class: &[usize]| class.iter().filter_map(|&c| self.rel_of(c)).fold(0, |s, r| s | bit(r));
+        self.key_classes()
+            .into_iter()
+            .map(|class| {
+                let of = rels(&class);
+                (class, of)
+            })
+            .collect()
     }
 
     /// The relation whose column the chain's column `column` is.

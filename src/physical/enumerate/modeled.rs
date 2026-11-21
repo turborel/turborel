@@ -114,7 +114,7 @@ impl PhysicalPlanner<'_> {
             implied: Vec::new(),
         };
         model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
-        model.implied = model.key_classes();
+        model.implied = model.implied_classes();
         Some(model)
     }
 

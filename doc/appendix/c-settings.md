@@ -50,6 +50,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | EXECUTOR.DECORRELATE_AFTER_RUNS | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
 | EXECUTOR.DEGREE | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.GRAPH_THREADS | 1 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
+| EXECUTOR.KERNELS | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once | *session* |
 | EXECUTOR.MAX_ITERATIONS | 1000000 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.MORSEL_ROWS | 16384 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.PARALLEL_MIN_ROWS | 65536 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
@@ -122,7 +123,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | SPILL.PARTITION_DEPTH | 8 | INTEGER FROM 0 TO 64 | at once | *session* |
 | SQL.FUNCTION_CALLS | ON | ONE OF ON, OFF | at once | *session* |
 | STATEMENT.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
-| STORAGE.CHECKSUM | CRC-32/ISCSI | A HASH FUNCTION | when the database is made |  |
+| STORAGE.CHECKSUM | XXH3_64 | A HASH FUNCTION | when the database is made |  |
 | STORAGE.CHECKSUM_KEY | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once |  |
 | STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
 | STORAGE.PAGE_BYTES | 8192 | INTEGER FROM 4096 TO 65536 | when the database is made |  |
@@ -162,6 +163,7 @@ Each in a sentence:
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **EXECUTOR.DEGREE**: The most threads a statement's query runs on at once, its own among them; 0, the default, for as many as the workers, and 1 for its own thread alone. Its rows are the same either way.
 - **EXECUTOR.GRAPH_THREADS**: The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.
+- **EXECUTOR.KERNELS**: The kernels a statement's batches run on: PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD.
 - **EXECUTOR.MAX_ITERATIONS**: The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.
 - **EXECUTOR.MORSEL_ROWS**: The rows of a table, about, that a worker of a parallel query reads at a time, a morsel.
 - **EXECUTOR.PARALLEL_MIN_ROWS**: The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.

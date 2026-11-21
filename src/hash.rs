@@ -7,10 +7,11 @@
 //! A digest is bytes in a fixed order, never a native integer, so a file
 //! checksummed on one machine verifies on any other.
 //!
-//! Built in: the CRC family (`hash/crc.rs`), for checksums; MurmurHash3
-//! (`hash/murmur.rs`), for hash tables and filters. Cryptographic ones,
-//! SHA-256, SHA-512 and HMAC-SHA-256, are plug-ins on a vetted crate
-//! (`turborel-aes`, RULES.md D26).
+//! Built in: xxHash's XXH3 and XXH64 (`hash/xxhash.rs`, RULES.md D460),
+//! for checksums, hash tables, filters, partitions, sketches and digests,
+//! XXH3-64 the default checksum; and the CRC family (`hash/crc.rs`), for
+//! checksums. Cryptographic ones, SHA-256, SHA-512 and HMAC-SHA-256, are
+//! plug-ins on a vetted crate (`turborel-aes`, RULES.md D26).
 
 use std::sync::Arc;
 
@@ -18,6 +19,15 @@ use crate::error::{Code, Result, SqlError};
 
 pub mod crc;
 pub mod murmur;
+pub mod xxhash;
+
+/// \[DESIGN\] The hash functions every database has: XXH3-64 first, the
+/// default checksum (STORAGE.CHECKSUM, RULES.md D460), then XXH3-128 and
+/// the CRCs.
+pub fn builtin() -> Vec<Arc<dyn HashFunction>> {
+    let xxh3: [Arc<dyn HashFunction>; 2] = [Arc::new(xxhash::Xxh3Hash), Arc::new(xxhash::Xxh128Hash)];
+    xxh3.into_iter().chain(crc::builtin()).collect()
+}
 
 /// \[DESIGN\] The most bytes a digest holds: 512 bits, SHA-512's (RULES.md
 /// D26). Every format that stores a digest has room for this many: a block

@@ -14,9 +14,9 @@ pub const JOIN_ENUMERATION: Key = Key(79);
 pub const DP_BUDGET: Key = Key(80);
 /// PLANNER.LINEARIZED_RELATIONS.
 pub const LINEARIZED_RELATIONS: Key = Key(81);
-/// PLANNER.ESTIMATE_MARGIN, at its key's place after the parallel
-/// queries' settings (RULES.md D386).
-pub const ESTIMATE_MARGIN: Key = Key(86);
+/// PLANNER.ESTIMATE_MARGIN, at its key's place after the executor's
+/// settings (RULES.md D386).
+pub const ESTIMATE_MARGIN: Key = Key(87);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
