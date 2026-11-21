@@ -109,6 +109,7 @@ impl Plan {
             Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
             Plan::MergeJoin(m) => writeln!(out, "{pad}{}MergeJoin {}", if m.outer { "Left" } else { "" }, m.detail),
+            Plan::RangeJoin(r) => writeln!(out, "{pad}{}RangeJoin {}", if r.outer { "Left" } else { "" }, r.detail),
             Plan::OuterJoin { kind, detail, .. } => writeln!(out, "{pad}{kind:?}OuterJoin {detail}"),
             Plan::SemiJoin(s) => writeln!(out, "{pad}{} {}", s.operator(), s.detail),
             Plan::IndexJoin { .. } => self.write_index_join(out, &pad),
@@ -180,6 +181,10 @@ impl Plan {
             Plan::SemiJoin(s) => {
                 s.left.write(out, depth);
                 s.right.write(out, depth);
+            }
+            Plan::RangeJoin(r) => {
+                r.left.write(out, depth);
+                r.right.write(out, depth);
             }
         }
     }

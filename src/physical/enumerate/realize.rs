@@ -65,17 +65,17 @@ impl Context<'_> {
     }
 
     /// The width of the columns of `layout`.
-    fn width(&self, layout: &[usize]) -> usize {
+    pub(super) fn width(&self, layout: &[usize]) -> usize {
         layout.iter().filter_map(|&r| self.query.leaves.get(r)).map(|l| l.width).sum()
     }
 
     /// `c`, over the chain's columns, over those of `layout`.
-    fn mapped(&self, c: &Cond, layout: &[usize]) -> Cond {
+    pub(super) fn mapped(&self, c: &Cond, layout: &[usize]) -> Cond {
         map_cond_columns(c.clone(), &|col| self.place_of(layout, col).unwrap_or(col))
     }
 
     /// The names of the columns of `layout`, if the plan is shown.
-    fn names(&self, layout: &[usize], shown: bool) -> Option<Vec<String>> {
+    pub(super) fn names(&self, layout: &[usize], shown: bool) -> Option<Vec<String>> {
         shown.then(|| layout.iter().filter_map(|&r| self.query.leaves.get(r)).flat_map(|l| l.plan.names()).collect())
     }
 
@@ -190,11 +190,16 @@ impl PhysicalPlanner<'_> {
                 Some(done) => Some(done),
                 None => Some(self.semi_realized(cx, kind, (l, r), (&conds, rows, est))),
             },
-            (Method::Hash | Method::Nested | Method::Merge(_), Kind::Semi | Kind::Anti) => {
+            (Method::Hash | Method::Nested | Method::Merge(_) | Method::Range, Kind::Semi | Kind::Anti) => {
                 Some(self.semi_realized(cx, kind, (l, r), (&conds, rows, est)))
             }
+            // A range join that cannot be made is a nested loop (`enumerate/ranged.rs`).
+            (Method::Range, Kind::Inner | Kind::Left) => match self.range_realized(cx, kind, (&l, &r), (&conds, rows, est)) {
+                Some(done) => Some(done),
+                None => self.realize_join(cx, (Method::Nested, kind), (l, r), (conds, rows, est)),
+            },
             (Method::Hash, Kind::Inner) => Some(self.hash_realized(cx, (l, r), &conds, (rows, est))),
-            (Method::Hash | Method::Nested | Method::Index | Method::Merge(_), Kind::Left | Kind::Full) => {
+            (Method::Hash | Method::Nested | Method::Index | Method::Merge(_), Kind::Left | Kind::Full) | (Method::Range, Kind::Full) => {
                 Some(self.outer_realized(cx, kind, (l, r), (&conds, rows, est)))
             }
             (Method::Nested, Kind::Inner) => {

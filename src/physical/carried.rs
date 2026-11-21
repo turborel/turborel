@@ -24,6 +24,7 @@ impl Plan {
             | Plan::Window { est, .. } => Some(*est),
             Plan::MergeJoin(m) => Some(m.est),
             Plan::SemiJoin(s) => Some(s.est),
+            Plan::RangeJoin(r) => Some(r.est),
             Plan::Project { input, .. } | Plan::Sort { input, .. } => input.est(),
             Plan::Parallel(p) => p.input.est(),
             Plan::Counted(c) => c.input.est(),

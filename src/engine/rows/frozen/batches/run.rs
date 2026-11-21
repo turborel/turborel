@@ -52,8 +52,11 @@ impl Batched {
         let judged = self.judgment.judge(&group, (&pages, &mut self.prepared), (types, (from, to)), given)?;
         let rows = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
         let kept: Vec<u32> = judged.kept.iter().map(|&r| from.saturating_add(r)).collect();
-        // Of many rows kept, the run as it is, which the filter selects of.
-        if self.pending.is_empty() && kept.len().saturating_mul(KEPT_SHARE) >= rows {
+        // Of many rows kept, the run as it is, which the filter selects of;
+        // but a short run, as imprints leave (RULES.md D511), is gathered
+        // with others, so batches stay full.
+        let whole = rows >= KEPT_ROWS || !group.imprinted();
+        if self.pending.is_empty() && whole && kept.len().saturating_mul(KEPT_SHARE) >= rows {
             if !shadowed {
                 return self.dense(&group, (from, to), (judged.decoded, false)).map(Some);
             }

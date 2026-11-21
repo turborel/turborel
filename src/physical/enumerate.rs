@@ -38,6 +38,7 @@ mod linear;
 mod methods;
 mod model;
 mod modeled;
+mod ranged;
 mod realize;
 mod space;
 
@@ -237,6 +238,7 @@ fn annotate(plan: &mut Plan, note: &str) {
         }
         Plan::MergeJoin(m) => m.detail.push_str(note),
         Plan::SemiJoin(s) => s.detail.push_str(note),
+        Plan::RangeJoin(r) => r.detail.push_str(note),
         Plan::IndexJoin { detail, .. } => *detail = format!("{detail}{note}").into(),
         Plan::Project { input, .. } => annotate(input, note),
         Plan::SeqScan { .. }

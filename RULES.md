@@ -410,6 +410,10 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
+| D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
+| D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
+| D581 | A period predicate of two period references is the comparisons of its bounds |
+| D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 
 ### The project
 
@@ -11655,6 +11659,143 @@ Rejected were positional delta trees (Héman, Zukowski, Nes, Sidirourgos
 and Boncz, SIGMOD 2010) and base and tail pages with lineage (Sadoghi
 et al., L-Store, 2018): both replace the tree, which already holds the
 row versions and their undo.
+
+#### D511. A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first
+
+The least and greatest values of 1,024 rows skip a part only if no row
+of it may match. On a column in no order they almost never do, and on
+one in near order they skip at a grain sixteen times the decoders' block.
+A group now keeps column imprints (Sidirourgos and Kersten, SIGMOD
+2013) of each column of exact numbers, datetimes and character strings,
+if COLUMNSTORE.IMPRINTS is ON (`engine/columns/imprints.rs`). The
+group's values are cut into at most 64 bins by edges drawn from a sorted
+sample of them, an equi-depth histogram, each value of few its own bin.
+Each 64 rows get a word, a bit for each bin a value of them falls in. A
+conjunct of the column makes a mask of the bins it may match, by the
+test the zone maps take (`Condition::may_match`) of each bin's bounds,
+so the mask is never narrower than the conjunct. A block whose word
+shares no bit with it is skipped. A null sets no bit, so a conjunct true
+of a null is not judged by imprints. The words of a part are kept
+together on pages of their own, read only by a scan whose condition can
+use them, and the edges in the group's header.
+
+Approximate numbers are left out, as a value no comparison orders would
+fall in a bin the mask may not hold. Imprints are not compressed: the
+words of a part take 128 bytes, a byte for 8 rows.
+
+Of each group, the scan orders the conjuncts it judges by the rows each
+keeps alone, by its zone maps and imprints, fewest first, so the
+narrowest is judged over the whole run and the others only over the rows
+it keeps. A conjunct of several columns, which the zone maps passed
+whole, now keeps the parts of each of its columns it may match with the
+others' values anywhere in the group.
+
+Imprints pay on columns in near order and on values rare among skewed
+ones. Of a column whose values are scattered evenly, 64 rows set most
+of the bits, so a narrow condition keeps most blocks, and the few it
+skips cut the scan's runs short, which costs more than judging them. A
+column whose blocks fall in more than a quarter of the bins on average
+therefore gets no imprints, as its group is written, and costs neither
+the words nor their reading. A scan skips only gaps of at least four
+blocks between the runs imprints keep. Even so, a scan whose runs
+imprints cut short pays more to start each than it saves, on the
+analytics bench's columns, so the option is OFF by default, for a table
+whose columns come in long stretches to turn on. Rejected was the positional SMA
+of Data Blocks (Lang et al., SIGMOD 2016), which narrows sorted columns
+alike but cannot skip a block of a rare value among skewed ones.
+
+A run the imprints leave short is gathered with the scan's other runs
+into full batches, not given alone (`frozen/batches/run.rs`).
+#### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
+
+A join whose condition compares a value of each operand by `<`, `<=`,
+`>` or `>=` had no plan but a filter over the product, which judges
+every pair. A band such as `A.X BETWEEN B.Y - 5 AND B.Y + 5`, an
+inequality, or the overlap of two periods is now planned as a range join
+(`physical/range.rs`, `exec/join/range.rs`) where its cost is the least.
+The right operand is read whole and its rows sorted by the compared
+value, grouped first by any equalities of a column of each operand. Each
+left row computes its bounds and finds the run of rows between them by
+binary search. One more comparison of other values, as the second half
+of an overlap, is answered by a tree of the greatest or least of those
+values over the sorted rows, which skips the parts no row of which can
+match. The rest of the condition is judged of each pair found.
+
+A sorted array with a pruning tree is used in place of a plane sweep over
+both operands sorted. It keeps the left operand streaming in its own
+order, holds only the right in memory, and gives each left row's matches
+in one search, so a LEFT join knows at once which left rows match none.
+
+The semantics hold for these reasons.
+
+- A pair is kept only when the whole condition is True. The search finds
+  every pair whose searched comparisons are True: a null value, of either
+  side, makes a comparison Unknown, so a row of one finds nothing and is
+  not sorted. The rest is judged of the pairs found, as the filter judges
+  it.
+- The matches of a left row are put back in the right's order before they
+  are judged, so while the right fits the work area the rows come in the
+  order of the filter over the product. The plan claims no order of its
+  rows all the same, since past the work area they come part by part, and
+  no order is defined without ORDER BY.
+- The search computes each compared value once for each row, not for each
+  pair, so the whole condition must be unable to raise by its columns'
+  declared types (D15). A part that can is made a column of its operand
+  first (D373), or the join stays a nested loop. A value compared must be
+  of one operand's columns, deterministic, and of no subquery, CASE,
+  outer reference or routine.
+- Values of a kind not wholly ordered, or two that do not compare, give no
+  search: the join judges the whole condition of every pair instead.
+- Past MEMORY.WORK_BYTES (D38) the right operand is written to a run of
+  the spill area and read back once, a part at a time, each part as many
+  rows as the work area holds, sorted and searched as before. The left is
+  gathered in memory or a run and read again for each part, so every pair
+  is judged by exactly one part. A LEFT join keeps a flag for each left
+  row, whether it matched in some part, and reads the left a last time
+  for those that matched in none.
+- A LEFT join keeps each left row with nulls when no pair of it is kept.
+  A RIGHT join is the LEFT join of its operands swapped, put back in order
+  by a projection. A FULL join stays as it was.
+
+The cost counts each operand's rows read, the sort of the right, two
+searches for each left row, and the pairs found, as a hash join's
+matches are counted. It is weighed against the nested loop, the hash
+join on any equalities and an index probed by the comparisons, both ways
+round, and in join enumeration (D303) as one more method of each pair of
+relations.
+
+#### D581. A period predicate of two period references is the comparisons of its bounds
+
+A `<period predicate>` [ISO/IEC 9075-2:2023 §8.20] was one call judged
+of each pair, so a join on OVERLAPS judged every pair. A predicate of two
+`<period reference>`s, or of one and a point in time after CONTAINS, is
+now read by a join as the comparisons GR4 defines it by: OVERLAPS as
+`S1 < E2 AND E1 > S2`, CONTAINS as `S1 <= S2 AND E1 >= E2` or of a point
+`S1 <= P AND E1 > P`, PRECEDES as `E1 <= S2`, SUCCEEDS as `S1 >= E2`,
+EQUALS and the IMMEDIATELY ones as equalities. These are range joins
+(D580) or hash joins on the bounds.
+
+The semantics hold for these reasons.
+
+- The predicate is True exactly when each of its comparisons is. A null
+  bound, of a row an outer join made, makes the predicate False and a
+  comparison Unknown, and a join keeps a pair only when its condition is
+  True, so the two keep the same pairs. Only a top level conjunct is
+  read so; one under NOT or OR is judged whole.
+- The bounds are the casts to TIMESTAMP WITH TIME ZONE the binder made
+  [GR4a ii, GR4b iii], compared as the call compares them.
+- A period written `PERIOD (start, end)` can raise 22020 [GR2b] and is
+  Unknown of a null bound [GR2a], so a predicate of one is never read so
+  and stays a call. A predicate of `<period reference>`s alone raises
+  nothing, which `ScalarFunction::raise_free` says.
+
+#### D582. PLANNER.RANGE_JOINS turns range joins on and off
+
+PLANNER.RANGE_JOINS, ON by default and of a session's scope, lets the
+planner choose range joins (D580). OFF plans such joins as nested loops,
+or hash joins on their equalities, as to compare the two. Period
+predicates are still read as comparisons (D581) when it is OFF, so their
+equalities can be a hash join's keys.
 
 ## 2. Project layout
 

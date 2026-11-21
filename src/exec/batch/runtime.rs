@@ -53,6 +53,7 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<usize> {
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Product { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }

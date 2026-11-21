@@ -385,6 +385,7 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::SemiJoin(_)
+        | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }

@@ -224,6 +224,10 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
             give(&mut s.left, work);
             give(&mut s.right, work);
         }
+        Plan::RangeJoin(r) => {
+            give(&mut r.left, work);
+            give(&mut r.right, work);
+        }
         Plan::Product { left, right, .. }
         | Plan::HashJoin { left, right, .. }
         | Plan::OuterJoin { left, right, .. }
