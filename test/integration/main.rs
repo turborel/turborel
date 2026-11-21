@@ -335,6 +335,7 @@ mod set_tables;
 mod settings;
 mod short_name_views;
 mod simple_features;
+mod sketches;
 mod spatial_catalog;
 mod spatial_constructors;
 mod spatial_conversions;

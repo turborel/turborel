@@ -32,6 +32,14 @@ impl Subqueries for Drawn<'_> {
         self.inner.rows(subquery, outer, limit)
     }
 
+    fn slot(&self, index: usize) -> Option<&Value> {
+        self.inner.slot(index)
+    }
+
+    fn outer(&self, index: usize) -> Option<&Value> {
+        self.inner.outer(index)
+    }
+
     fn warnings(&self) -> Option<&Warnings> {
         self.inner.warnings()
     }

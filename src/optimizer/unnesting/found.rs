@@ -35,6 +35,7 @@ impl<'a> Node<'a> {
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::OuterJoin { .. }
+            | LogicalPlan::SemiJoin { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Values { .. }

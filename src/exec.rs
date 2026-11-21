@@ -123,6 +123,7 @@ fn opened(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         Plan::OuterJoin { .. } => join::outer,
         Plan::IndexJoin { .. } => join::indexed,
         Plan::MergeJoin(_) => join::merged,
+        Plan::SemiJoin(_) => join::semi,
         Plan::RangeJoin(_) => join::ranged,
         // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
         Plan::Aggregate { .. } => grouped,
@@ -180,6 +181,7 @@ fn joined_plan(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }

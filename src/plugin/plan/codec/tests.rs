@@ -42,7 +42,7 @@ fn every_body() -> Form {
     let filter = made(Op::Filter, Body::Filter(every_expression()), vec![kept]);
     let values = made(Op::Values, Body::Values(vec![vec![int(1)], vec![int(2)]]), Vec::new());
     let mut joined = made(Op::Join, Body::Join { kind: JoinKind::Cross, condition: None }, vec![filter, values]);
-    for kind in [JoinKind::Left, JoinKind::Right, JoinKind::Full] {
+    for kind in [JoinKind::Left, JoinKind::Right, JoinKind::Full, JoinKind::Semi, JoinKind::Anti] {
         let cond = Expression::Operator { op: Operator::Eq, args: vec![Expression::Column(0), Expression::Column(1)] };
         joined = made(Op::Join, Body::Join { kind, condition: Some(cond) }, vec![joined, scan.clone()]);
     }
@@ -124,8 +124,8 @@ fn a_code_no_operator_has_is_refused() {
         assert_eq!(refused(&head(op.code())), VIOLATION, "{op:?} made");
     }
     let mut join = head(Op::Join.code());
-    join.put_u8(4);
-    assert_eq!(refused(&join), VIOLATION, "join kind 4");
+    join.put_u8(6);
+    assert_eq!(refused(&join), VIOLATION, "join kind 6");
     for code in [0_u8, 4] {
         let mut set = head(Op::Set.code());
         set.extend_from_slice(&[code, 0]);

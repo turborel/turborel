@@ -1,6 +1,6 @@
 //! How fast correlated subqueries run unnested (RULES.md D310 to D319)
 //! and nested, each run for each binding of its outer references, the
-//! rule OPTIMIZER.UNNEST_SUBQUERIES on and off: over TPC-H-shaped tables
+//! rules OPTIMIZER.SEMI_JOINS and OPTIMIZER.UNNEST_SUBQUERIES on and off: over TPC-H-shaped tables
 //! of 2,000 orders and 8,000 line items, the subqueries of queries 2, 4,
 //! 17, 21 and 22, a join beside a correlated subquery, a scalar subquery
 //! of a select list, NOT IN, and a SQL
@@ -8,7 +8,7 @@
 
 use super::harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
-use turborel::optimizer::{INLINE_FUNCTIONS, UNNEST_SUBQUERIES, switch_name};
+use turborel::optimizer::{INLINE_FUNCTIONS, SEMI_JOINS, UNNEST_SUBQUERIES, switch_name};
 use turborel::value::Value;
 
 /// Orders.
@@ -103,7 +103,7 @@ const QUERIES: &[(&str, &str, u64)] = &[
 /// Switches unnesting and inlining `on` or off.
 fn switched(db: &Database, on: bool) {
     let value = Value::Char(if on { "ON" } else { "OFF" }.to_owned());
-    for rule in [UNNEST_SUBQUERIES, INLINE_FUNCTIONS] {
+    for rule in [SEMI_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS] {
         db.set_setting(&switch_name(rule), &value).unwrap();
     }
 }

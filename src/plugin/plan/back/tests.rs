@@ -95,7 +95,14 @@ fn each_node_a_rule_makes_is_taken_back() {
     let cond = Expression::Operator { op: crate::plugin::plan::Operator::Eq, args: vec![Expression::Column(0), Expression::Column(4)] };
     let cross = made(Op::Join, Body::Join { kind: JoinKind::Cross, condition: None }, vec![s(), s()]);
     assert!(g.back(three(cross)).unwrap().explain().contains("Product"));
-    for (kind, word) in [(JoinKind::Left, "LEFT"), (JoinKind::Right, "RIGHT"), (JoinKind::Full, "FULL")] {
+    let kinds = [
+        (JoinKind::Left, "LEFT"),
+        (JoinKind::Right, "RIGHT"),
+        (JoinKind::Full, "FULL"),
+        (JoinKind::Semi, "SEMI"),
+        (JoinKind::Anti, "ANTI"),
+    ];
+    for (kind, word) in kinds {
         let join = made(Op::Join, Body::Join { kind, condition: Some(cond.clone()) }, vec![s(), s()]);
         let shown = g.back(three(join)).unwrap().explain();
         assert!(shown.to_uppercase().contains(word), "{shown}");

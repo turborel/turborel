@@ -57,6 +57,7 @@ fn table(rows: i128) -> (Arc<RowTable>, Vec<RowId>) {
         bloom: Places::default(),
         pax: false,
         imprints: true,
+        sketch: Places::default(),
     };
     let table = Arc::new(RowTable::create(&files, &types(), TableOptions { columns: Some(columns), ..TableOptions::default() }).unwrap());
     let ids = (0..rows).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();

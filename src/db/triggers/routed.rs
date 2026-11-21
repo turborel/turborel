@@ -143,7 +143,7 @@ impl Session {
         let StatementContext { st, tx } = cx;
         let updates = instead.trigger.event != TriggerEvent::Delete;
         let (w, objects) = object_rows(st, tx, w)?;
-        let runner = Runner::new(st, tx.id);
+        let runner = Runner::new(&w.db(st), tx.id);
         let mut transitions = HeldRows::new(st.list_space());
         for object in objects {
             let (id, old) = object?;
@@ -181,7 +181,7 @@ impl Session {
                 st.read_lock(tx, &t)?;
             }
         }
-        let new = if deletes { Row::new() } else { instead.of_base(&replaced(w, &old, &Runner::new(st, tx.id))?)? };
+        let new = if deletes { Row::new() } else { instead.of_base(&replaced(w, &old, &Runner::new(&w.db(st), tx.id))?)? };
         let mut transitions: HeldRows<(RowId, Row, Row)> = HeldRows::new(st.list_space());
         transitions.push((id, instead.of_base(&old)?, new))?;
         self.execute_trigger(cx, &instead.trigger, transitions)?;

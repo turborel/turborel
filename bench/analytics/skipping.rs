@@ -1,7 +1,8 @@
-//! How much of a column store table its filters skip (RULES.md D510-D514):
-//! of HITS, a table shaped as the ClickBench one, its rows frozen, counts
-//! and sums by selective ranges of a scattered integer, ranges of dates in
-//! the rows' order, prefixes of LIKE and ranges of texts, IN lists and the
+//! How much of a column store table its filters skip (RULES.md D510-D514,
+//! D525): of HITS, a table shaped as the ClickBench one, its rows frozen,
+//! its URL sketched, counts and sums by selective ranges of a scattered
+//! integer, ranges of dates in the rows' order, prefixes of LIKE, equals,
+//! ranges and IN lists of texts, IN lists of numbers and the
 //! combinations of these; then the same after a few rows of every group
 //! are updated, so the tree shadows them; and rows fetched through an
 //! index (RULES.md R-BENCH-1). `ROWS_VAR` sets its rows.
@@ -20,15 +21,18 @@ const PER_INSERT: u64 = 2_000;
 const REPEATS: u64 = 3;
 /// Days of HITS' dates.
 const DAYS: u64 = 365;
+/// HITS' options: a sketch of its URL.
+const SKETCHED: &str = "WITH (COLUMNSTORE.SKETCH = 'URL')";
 
 /// The rows of HITS.
 fn rows() -> u64 {
     std::env::var(ROWS_VAR).ok().and_then(|v| v.parse().ok()).unwrap_or(ROWS)
 }
 
-/// Schema B with HITS, in the column store, its rows frozen.
+/// Schema B with HITS, in the column store, its rows frozen, its URL
+/// sketched.
 fn database(rows: u64) -> Database {
-    let db = filled(rows, "");
+    let db = filled(rows, SKETCHED);
     db.maintain().unwrap();
     db
 }
@@ -85,7 +89,7 @@ fn fetched(s: &Session, sql: &str) -> u64 {
 }
 
 /// The queries measured, each named; `{r}` stands for HITS' rows.
-const QUERIES: [(&str, &str); 14] = [
+const QUERIES: [(&str, &str); 17] = [
     ("COUNT of 0.1% by a scattered range", "SELECT COUNT(*) FROM HITS WHERE USERID < {r} / 1000"),
     ("COUNT of 1% by a scattered range", "SELECT COUNT(*) FROM HITS WHERE USERID < {r} / 100"),
     ("SUM of 10% by a scattered range", "SELECT SUM(WIDTH) FROM HITS WHERE USERID < {r} / 10"),
@@ -106,12 +110,18 @@ const QUERIES: [(&str, &str); 14] = [
     ),
     ("COUNT by a scattered range and a LIKE prefix", "SELECT COUNT(*) FROM HITS WHERE USERID < {r} / 100 AND URL LIKE 'http://site4%'"),
     ("MIN and MAX of texts", "SELECT MIN(PHRASE), MAX(URL) FROM HITS"),
+    ("COUNT by an equal text of many", "SELECT COUNT(*) FROM HITS WHERE URL = 'http://site7.example/page7'"),
+    ("COUNT by a range of texts of many", "SELECT COUNT(*) FROM HITS WHERE URL >= 'http://site2' AND URL < 'http://site3'"),
+    (
+        "COUNT by IN of 3 texts of many",
+        "SELECT COUNT(*) FROM HITS WHERE URL IN ('http://site1.example/page1', 'http://site2.example/page2', 'http://site3.example/page3')",
+    ),
 ];
 
 /// The choices of what a frozen group keeps whose freezing is measured,
 /// each named, as HITS' options.
-const FREEZES: [(&str, &str); 2] =
-    [("imprints", "WITH (COLUMNSTORE.IMPRINTS = 'ON')"), ("no imprints", "WITH (COLUMNSTORE.IMPRINTS = 'OFF')")];
+const FREEZES: [(&str, &str); 3] =
+    [("imprints", "WITH (COLUMNSTORE.IMPRINTS = 'ON')"), ("no imprints", "WITH (COLUMNSTORE.IMPRINTS = 'OFF')"), ("a sketch", SKETCHED)];
 
 /// The queries measured again once rows of every group are updated.
 const AFTER: [usize; 4] = [1, 3, 8, 11];

@@ -13,7 +13,7 @@ fn int(n: i128) -> Value {
 
 /// What `p` keeps of its physical plan, written.
 fn physical(p: &Prepared) -> String {
-    format!("{:?}", lock(&p.plans.kept).unwrap().as_ref().map(|k| &k.physical))
+    format!("{:?}", read(&p.plans.kept.kept).unwrap().as_ref().map(|k| &k.physical))
 }
 
 fn spatial_table() -> (Database, Session) {

@@ -92,6 +92,7 @@ fn nodes_pure(plan: &LogicalPlan, depth: usize) -> bool {
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
@@ -112,7 +113,7 @@ fn nodes_pure(plan: &LogicalPlan, depth: usize) -> bool {
 /// count reaches its type's limit and an extreme only compares.
 pub(super) fn plan_raises(plan: &LogicalPlan, functions: &Registry) -> bool {
     let own = match plan {
-        LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } => cond.can_raise(),
+        LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } | LogicalPlan::SemiJoin { cond, .. } => cond.can_raise(),
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(Expr::can_raise),
         LogicalPlan::Aggregate { aggs, .. } => aggs.iter().any(|a| agg_raises(a, functions)),
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),

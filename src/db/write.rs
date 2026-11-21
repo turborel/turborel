@@ -17,10 +17,10 @@ use crate::ast::{ColumnName, InsertSource, InsertStatement, Overriding, QueryExp
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, no_column, qualify};
 use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
-use crate::exec::{HeldRows, Runner, Subqueries, eval_cond, execute, row_entries};
-use crate::logical::{Expr, LogicalPlan, Truth, filled, filled_cond, filled_expr};
+use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
+use crate::logical::{Expr, LogicalPlan, Truth, filled};
 use crate::params::Params;
-use crate::physical::{Plan, filled_plan};
+use crate::physical::Plan;
 use crate::storage::{Row, RowId};
 use crate::txn::{Again, Txn};
 use crate::value::datetime::Now;
@@ -121,18 +121,16 @@ impl Target {
 }
 
 /// An UPDATE or DELETE as one execution runs it: as bound, shared with
-/// the plan a prepared statement keeps (RULES.md D45), its SET values and
-/// the plan of its object rows filled with the execution's values.
+/// the plan a prepared statement keeps (RULES.md D45), and, of a kept
+/// plan, the execution's values, which its SET values, its search
+/// condition and its object rows' plan kept read where they are as slots
+/// (RULES.md D610).
 pub(super) struct Written {
     /// As bound; of a kept plan, its slots unfilled.
     pub(super) bound: Arc<BoundWrite>,
-    /// Its SET values filled, of a kept plan; else none, and the bound
-    /// ones are.
-    set: Option<Vec<(usize, Option<Expr>)>>,
     rows: ObjectRows,
-    /// The values it was filled with, of a kept plan: its search condition
-    /// is filled with them only if a row is checked again (`condition`).
-    values: Option<Vec<Value>>,
+    /// The values of its slots, of a kept plan.
+    slots: Option<Slots>,
 }
 
 /// The plan of an UPDATE's or DELETE's object rows.
@@ -141,64 +139,56 @@ enum ObjectRows {
     Bound,
     /// A kept plan's, filled, planned as the statement runs.
     Filled(LogicalPlan),
-    /// Planned once with its slots and kept, filled; the tables its
-    /// object rows' plan reads.
+    /// Its kept plan, as this execution runs it (`physical::Kept`), or one
+    /// planned for it as a plan is learned; the tables it reads.
     Kept(Plan, Arc<[QualifiedName]>),
 }
 
 impl Written {
     /// `bound`, as a statement not prepared runs it.
     pub(super) fn of(bound: BoundWrite) -> Written {
-        Written { bound: Arc::new(bound), set: None, rows: ObjectRows::Bound, values: None }
+        Written { bound: Arc::new(bound), rows: ObjectRows::Bound, slots: None }
     }
 
-    /// `bound`, a kept plan, filled with `values`: its object rows by
-    /// `kept`, its plan made once with its slots and the tables it reads,
-    /// if given; else by its logical plan, filled.
+    /// `bound`, a kept plan, run with the values `slots`: its object rows
+    /// by `kept`, its plan and the tables it reads, if given; else by its
+    /// logical plan, filled to be planned with its values.
     ///
     /// # Errors
     ///
-    /// As `filled` and `physical::filled_plan`.
-    pub(super) fn filled(
-        bound: Arc<BoundWrite>,
-        kept: Option<(Plan, Arc<[QualifiedName]>)>,
-        values: &[Value],
-        budget: Option<&Arc<crate::memory::MemoryBudget>>,
-    ) -> Result<Written> {
-        let fill = |(c, e): &(usize, Option<Expr>)| {
-            let expression =
-                e.clone().map(|e| filled_expr(e, values).map(|e| crate::optimizer::prepared::expression(e, budget))).transpose()?;
-            Ok((*c, expression))
-        };
-        let set = bound.set.iter().map(fill).collect::<Result<_>>()?;
+    /// As `logical::filled`.
+    pub(super) fn slotted(bound: Arc<BoundWrite>, kept: Option<(Plan, Arc<[QualifiedName]>)>, slots: Slots) -> Result<Written> {
         let rows = match kept {
-            Some((plan, reads)) => ObjectRows::Kept(filled_plan(plan, values, budget)?, reads),
-            None => ObjectRows::Filled(filled(bound.rows.clone(), values)?),
+            Some((plan, reads)) => ObjectRows::Kept(plan, reads),
+            None => ObjectRows::Filled(filled(bound.rows.clone(), &slots)?),
         };
-        Ok(Written { bound, set: Some(set), rows, values: Some(values.to_vec()) })
+        Ok(Written { bound, rows, slots: Some(slots) })
     }
 
     /// Its SET values: column position and new value (`None` is NULL), in
     /// the order written.
     pub(super) fn set(&self) -> &[(usize, Option<Expr>)] {
-        self.set.as_deref().unwrap_or(&self.bound.set)
+        &self.bound.set
+    }
+
+    /// `st`, as its plans and expressions are executed in: with its slots'
+    /// values, of a kept plan.
+    pub(super) fn db(&self, st: &Arc<State>) -> Db {
+        self.slots.as_ref().map_or_else(|| Db::of(st), |slots| Db::slotted(st, Arc::clone(slots)))
     }
 
     /// Whether row `row` of the object table, a version another
     /// transaction committed after the statement's snapshot, is one it
     /// changes: its views' conditions and its search condition hold of it
-    /// [ISO/IEC 9075:1992 §4.28] (RULES.md D29).
+    /// [ISO/IEC 9075:1992 §4.28] (RULES.md D29), its slots read by
+    /// `runner`, which runs it (`db`).
     ///
     /// # Errors
     ///
     /// As `eval_cond`.
     pub(in crate::db) fn holds_of(&self, row: &Row, runner: &Runner) -> Result<bool> {
         let LogicalPlan::Filter { cond, .. } = &self.bound.rows else { return Ok(true) };
-        let truth = match &self.values {
-            Some(values) => eval_cond(&filled_cond(cond.clone(), values)?, row, runner)?,
-            None => eval_cond(cond, row, runner)?,
-        };
-        Ok(truth == Truth::True)
+        Ok(eval_cond(cond, row, runner)? == Truth::True)
     }
 }
 
@@ -215,11 +205,12 @@ impl Session {
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
         let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
+        let slots = keeping.and(params.dynamic_slots());
         let rows = if let Some(given) = params.given() {
             // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
             given::given_rows(st, (stmt, &target), given, &Runner::new(st, tx.id))?
         } else if let Some(logical) = query {
-            query_rows((self, cx), &target, logical)?
+            query_rows((self, cx), &target, (logical, slots))?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default, or its generated value.
@@ -251,7 +242,7 @@ impl Session {
 
     /// The table `stmt` inserts into and the plan of the rows its query
     /// gives, if it has one: of a prepared statement, as it keeps them,
-    /// its values filled in (RULES.md D45).
+    /// its slots unfilled, for `query_rows` to read (RULES.md D45, D610).
     fn insert_bound(
         &self,
         st: &State,
@@ -259,11 +250,10 @@ impl Session {
         params: &Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<(Target, Option<LogicalPlan>)> {
-        let values = params.dynamic_values();
         if let Some(KeptPlan::Insert(target, query)) = keeping.map(Keeping::plan).transpose()?.flatten() {
             let authorization = self.authorization();
             let target = Arc::unwrap_or_clone(target).refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
-            return Ok((target, query.map(|q| filled(q, values)).transpose()?));
+            return Ok((target, query));
         }
         let kept = keeping.map(|_| params.keeping());
         let binding = kept.as_ref().unwrap_or(params);
@@ -274,7 +264,7 @@ impl Session {
         };
         let Some(k) = keeping else { return Ok((target, query)) };
         k.made((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())))?;
-        Ok((target, query.map(|q| filled(q, values)).transpose()?))
+        Ok((target, query))
     }
 
     /// [X3.135-1986 §8.7 SR1-SR4] the table `stmt` inserts into, which is
@@ -406,9 +396,14 @@ pub(super) fn object_columns(name: &QualifiedName, columns: &[ColumnDesc], list:
 ///
 /// Of VALUES that invoke a function that possibly modifies SQL-data, each
 /// row is evaluated in turn by the session (`routines::hosted_rows`).
-fn query_rows((session, cx): (&Session, StatementContext<'_>), target: &Target, logical: LogicalPlan) -> Result<HeldRows<Row>> {
+fn query_rows(
+    (session, cx): (&Session, StatementContext<'_>),
+    target: &Target,
+    (logical, slots): (LogicalPlan, Option<Slots>),
+) -> Result<HeldRows<Row>> {
     let StatementContext { st, tx } = cx;
-    let hosted = Hosted::new(Some(session), cx);
+    let db = slots.as_ref().map_or_else(|| Db::of(st), |slots| Db::slotted(st, Arc::clone(slots)));
+    let hosted = Hosted::in_db(Some(session), cx, &db);
     // Held up to MEMORY.WORK_BYTES, the rest spilled (RULES.md D38).
     let mut rows = HeldRows::new(st.list_space());
     if let Some(found) = hosted_rows(&logical, &hosted) {
@@ -417,6 +412,12 @@ fn query_rows((session, cx): (&Session, StatementContext<'_>), target: &Target, 
         }
         return Ok(rows);
     }
+    // A query other than a row of values is planned with its values, as
+    // its paths follow them.
+    let logical = match &slots {
+        Some(slots) => filled(logical, slots)?,
+        None => logical,
+    };
     let (optimized, _, physical) = plan(st, logical);
     for t in optimized.tables() {
         st.read_lock(tx, &t)?;
@@ -431,7 +432,8 @@ fn query_rows((session, cx): (&Session, StatementContext<'_>), target: &Target, 
 /// changed [X3.135-1986 §8.5 GR1, §8.12 GR1], held up to MEMORY.WORK_BYTES, the
 /// rest spilled (RULES.md D38).
 pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Written, HeldRows<(RowId, Row)>)> {
-    let Written { bound, set, rows, values } = w;
+    let db = w.db(st);
+    let Written { bound, rows, slots } = w;
     // T, to be written, and the tables its subqueries read.
     st.update_lock(tx, &bound.table)?;
     let (logical, kept) = match rows {
@@ -455,8 +457,8 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
         (Some((physical, _)), _) => physical,
         (None, logical) => plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone())).2,
     };
-    let entries = row_entries(physical, st, tx.id)?;
-    Ok((Written { bound, set, rows: ObjectRows::Bound, values }, entries))
+    let entries = row_entries(physical, &db, tx.id)?;
+    Ok((Written { bound, rows: ObjectRows::Bound, slots }, entries))
 }
 
 /// [X3.135-1986 §8.12] the searched UPDATE bound as `w`, the number of
@@ -471,7 +473,7 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         return Ok(None);
     }
     let columns = set_columns(&w);
-    let hosted = Hosted::new(effects.host, cx);
+    let hosted = Hosted::in_db(effects.host, cx, &w.db(st));
     let runner = hosted.runner();
     let mut leftovers = portion::Leftovers::of(st, &w)?;
     let changes = super::assignment::changes_of(st, &w, objects, (effects, &hosted))?;
@@ -542,7 +544,7 @@ pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     }
     // [ISO/IEC 9075-2:2023 §15.8 GR2] its BEFORE triggers first.
     effects.before_delete(cx, &w.bound.table, &mut objects)?;
-    let runner = Runner::new(st, tx.id);
+    let runner = Runner::new(&w.db(st), tx.id);
     let mut leftovers = portion::Leftovers::of(st, &w)?;
     let mut count = 0_usize;
     for object in objects {

@@ -152,7 +152,7 @@ fn narrowed(
 /// operand's rows its batches hold, which rows it gives, and the row a
 /// condition is judged of, of every column of the pair, with what runs its
 /// subqueries.
-struct Joined {
+pub(super) struct Joined {
     left_columns: Vec<usize>,
     /// The columns of the right operand's rows its batches hold.
     right_columns: Vec<usize>,
@@ -162,17 +162,31 @@ struct Joined {
 }
 
 impl Joined {
+    /// What matches the pairs of a semi join or an antijoin (RULES.md
+    /// D540): their keys, and the condition `cond`, if any, of the pair of
+    /// a left row of `widths.0` columns, its batches' `left_columns`, and
+    /// a right row, its batches' `right_columns`.
+    pub(super) fn matching(
+        (left_columns, right_columns): (Vec<usize>, Vec<usize>),
+        cond: Option<Cond>,
+        widths: (usize, usize),
+        runner: Runner,
+    ) -> Joined {
+        let scratch = if cond.is_some() { vec![Value::Null; widths.0.saturating_add(widths.1)] } else { Vec::new() };
+        Joined { left_columns, right_columns, kind: Kind::Left(cond, widths), scratch, runner }
+    }
+
     /// Whether left row `r` of `batch` and `right` are a pair the join
     /// keeps: their keys equal, as `equal` says, and the condition, if
     /// any, true of them [ISO/IEC 9075:1992 §7.5 GR1c].
-    fn keeps(&mut self, (batch, r): (&Batch, usize), right: &Row, equal: bool) -> Result<bool> {
+    pub(super) fn keeps(&mut self, (batch, r): (&Batch, usize), right: &Row, equal: bool) -> Result<bool> {
         let Kind::Left(Some(cond), (width, _)) = &self.kind else { return Ok(equal) };
         Ok(equal && judged(cond, (&mut self.scratch, *width), (batch, r), (right, &self.left_columns), &self.runner)?)
     }
 
     /// Whether left row `r` of `batch` and row `p` of `right`, held as
     /// vectors, are a pair the join keeps, as `keeps` says.
-    fn keeps_held(&mut self, (batch, r): (&Batch, usize), (right, p): (&Batch, usize), equal: bool) -> Result<bool> {
+    pub(super) fn keeps_held(&mut self, (batch, r): (&Batch, usize), (right, p): (&Batch, usize), equal: bool) -> Result<bool> {
         let Joined { left_columns, right_columns, kind, scratch, runner } = self;
         let Kind::Left(Some(cond), (width, _)) = kind else { return Ok(equal) };
         if !equal {
