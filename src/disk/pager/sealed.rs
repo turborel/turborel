@@ -76,10 +76,10 @@ impl Pager {
             return Ok(None);
         }
         let mut page = self.read_run(id, 1)?;
-        // The body begins the page, so the page cut to it is the body, with
-        // no copy (RULES.md D591).
-        let Some(len) = self.unseal(id, &page)?.map(<[u8]>::len) else { return Ok(None) };
-        page.truncate(len);
+        // [DESIGN] RULES.md D474: the body is the page's front, so the
+        // page read is cut to it, not copied.
+        let Some(body) = self.unseal(id, &page)?.map(<[u8]>::len) else { return Ok(None) };
+        page.truncate(body);
         Ok(Some(page))
     }
 

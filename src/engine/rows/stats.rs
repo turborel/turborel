@@ -203,7 +203,11 @@ impl Gathered {
     /// The statistics of the last pass, as `asked_for` gives them, read
     /// after the rows written since, the table holding `live` rows.
     pub(super) fn answer(&self, live: u64) -> Option<Arc<dyn Statistics>> {
-        self.read.store(true, Ordering::Release);
+        // Written only as it changes, so plans reading them at once share
+        // the line and do not take it from each other's cores.
+        if !self.read.load(Ordering::Relaxed) {
+            self.read.store(true, Ordering::Release);
+        }
         let stats = self.asked_for()?;
         Some(Changed::of(stats, self.changes.load(Ordering::Relaxed), live))
     }
@@ -252,7 +256,7 @@ impl RowTable {
             for entry in self.tree.scan(low.as_ref().map(Vec::as_slice), high.as_ref().map(Vec::as_slice), Direction::Forward) {
                 let (key, newest) = entry?;
                 // Read again if an older version is released as it is read.
-                let visible = self.unpinned((&key, newest), 0, &mut |bytes, _| self.visible_from(bytes, Reader::Latest))?;
+                let visible = self.unpinned((&key, newest), 0, &mut |bytes, _| self.visible_from(bytes.to_vec(), Reader::Latest))?;
                 let Some(record) = visible.flatten() else { continue };
                 let id = row_id(&key)?;
                 let row = self.decode(id, &record, None)?;
@@ -483,5 +487,23 @@ mod tests {
         table.gathered.changed(500);
         assert!(!table.gather_if_due(false), "the pass cleared the mark");
         assert!(table.gather_if_due(true), "asked to now");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D473: a planning reading statistics
+    /// marks them read once, and plans reading them again leave the mark
+    /// set; a pass clears it and the next reading sets it again.
+    #[test]
+    fn statistics_read_again_keep_their_mark() {
+        let table = table_of(100);
+        table.gather().unwrap();
+        let read = || table.gathered.read.load(std::sync::atomic::Ordering::Acquire);
+        assert!(!read(), "cleared by the pass");
+        for _ in 0..3_u8 {
+            assert!(table.statistics().is_some());
+            assert!(read(), "read since the pass");
+        }
+        table.gather().unwrap();
+        assert!(!read());
+        assert!(table.statistics().is_some() && read());
     }
 }

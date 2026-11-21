@@ -28,7 +28,8 @@
 //! conditions of the plan it made as of any (2015 paper, §3.2).
 //!
 //! A subquery of EXISTS, NOT EXISTS or such a comparison is made a semi
-//! join or an antijoin first, by a rule of its own (`semi.rs`).
+//! join or an antijoin first, by a rule of its own (`semi.rs`), and one of
+//! EXISTS or a quantified comparison elsewhere a mark join (`marked.rs`).
 //!
 //! Subqueries it leaves are run as before, for each binding
 //! (`exec/subquery.rs`). Those are the subqueries of UNIQUE or MATCH, of
@@ -43,12 +44,14 @@ mod calls;
 mod domain;
 mod found;
 mod joined;
+mod marked;
 mod pure;
 mod semi;
 mod simple;
 mod typed;
 
 pub(crate) use calls::Assigned;
+pub use marked::{MARK_JOINS, MarkJoins};
 pub(crate) use pure::expr_pure;
 pub use semi::{SEMI_JOINS, SemiJoins};
 
@@ -171,6 +174,7 @@ fn one_row(plan: &LogicalPlan) -> bool {
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::OuterJoin { .. }
         | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }

@@ -32,6 +32,10 @@ use crate::storage::{BATCH_ROWS, Batch, Cell, Column, Row};
 use crate::txn::{Stop, TxId};
 use crate::value::{Value, sort_cmp};
 
+/// A sort's batches held, each beside its rows given; the places of its
+/// rows; and its kernels (`Held::parts`).
+pub(super) type HeldParts = (Vec<(Batch, Vec<usize>)>, Vec<(u32, u32)>, Arc<dyn Kernels>);
+
 /// \[DESIGN\] The fewest and the most rows of a chunk of a run.
 const CHUNK_ROWS: (usize, usize) = (16, 1 << 16);
 
@@ -88,7 +92,7 @@ pub(in crate::exec) fn sorted_out(keys: &[SortKey], input: Batches, width: usize
 }
 
 /// A sort's rows once read: held in memory, or written as runs.
-enum Sorted {
+pub(super) enum Sorted {
     /// Held in memory.
     Held(Held),
     /// Written as sorted runs.
@@ -97,7 +101,7 @@ enum Sorted {
 
 /// The rows of `input`, of `held` held already, held while they fit `work`,
 /// else written as runs, each of a work area's worth.
-fn held_or_runs(keys: &[SortKey], input: Batches, mut held: Held, work: &mut Work) -> Result<Sorted> {
+pub(super) fn held_or_runs(keys: &[SortKey], input: Batches, mut held: Held, work: &mut Work) -> Result<Sorted> {
     let (mut runs, mut layouts) = (Vec::new(), Layouts::default());
     for kept in input {
         let (batch, rows) = kept?;
@@ -172,6 +176,14 @@ impl Held {
             let (batch, _) = batches.get(usize::try_from(batch).ok()?)?;
             Some(Ok(row_of(batch, usize::try_from(row).ok()?)))
         }))
+    }
+
+    /// Its batches, each beside its rows given; the places of its rows, as
+    /// `places` gives them; and its kernels.
+    pub(super) fn parts(self) -> HeldParts {
+        let places = self.places();
+        let kernels = self.kernels.unwrap_or_else(|| Arc::new(Portable));
+        (self.batches, places, kernels)
     }
 
     /// Its rows, sorted by `keys`, as batches of up to `BATCH_ROWS` rows,

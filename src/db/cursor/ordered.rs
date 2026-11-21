@@ -23,6 +23,7 @@ pub(super) fn row_condition(plan: &LogicalPlan) -> Option<Cond> {
             | LogicalPlan::Limit { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
@@ -70,6 +71,7 @@ fn sort_of(plan: &LogicalPlan) -> Result<Option<(&[SortKey], &LogicalPlan)>> {
             | LogicalPlan::Limit { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
@@ -111,6 +113,7 @@ fn table_columns(mut columns: Vec<usize>, plan: &LogicalPlan) -> Result<Vec<usiz
             | LogicalPlan::Limit { .. }
             | LogicalPlan::OuterJoin { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }

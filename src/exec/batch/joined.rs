@@ -24,6 +24,7 @@
 //! rows in it.
 
 mod held;
+mod mark;
 mod nested;
 mod outer;
 mod pairs;
@@ -33,6 +34,7 @@ mod semi;
 mod shared;
 
 use super::late::Deferred;
+use super::runtime;
 use super::stream::{self, Batches};
 use crate::db::State;
 use crate::error::Result;
@@ -44,7 +46,7 @@ use crate::physical::Plan;
 use crate::storage::{Row, batches_of};
 use crate::txn::{TxId, checked};
 use crate::value::Value;
-pub(in crate::exec) use held::TABLE_ROW_BYTES;
+pub(in crate::exec) use held::{TABLE_ROW_BYTES, dense_wanted};
 use probe::Kind;
 pub(in crate::exec) use shared::SharedTable;
 
@@ -59,8 +61,9 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -89,6 +92,9 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
 pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     if let Plan::SemiJoin(s) = plan {
         return semi_layout(s, db);
+    }
+    if let Plan::MarkJoin(m) = plan {
+        return mark::layout(m, db);
     }
     let (left, right) = operands(plan)?;
     let (mut columns, left_width) = stream::layout(left, db)?;
@@ -144,8 +150,9 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Filter { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -181,15 +188,21 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
 /// A table's storage missing; the right operand's errors.
 pub(super) fn batches_with(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let stop = db.tx.stop_of(tx);
-    if let Plan::HashJoin { left, right, keys, .. } = plan {
+    if let Plan::HashJoin { .. } = &plan {
+        // The filters told it reach its left of the left's columns, and its
+        // right of the right's (`runtime::taken`, `runtime::built_side`).
+        let (told, built) = (runtime::taken(&plan, deferred.filters(), db).0, runtime::built_side(&plan, deferred.filters(), db));
+        let Plan::HashJoin { left, right, keys, .. } = plan else { return Err(crate::exec::broken("a hash join is not one")) };
         let width = stream::layout(&left, db).map_or(0, |(_, width)| width);
         let below = if deferred.any() { deferred.left_of(&keys, width) } else { Deferred::default() };
-        // The filters told it reach it of its left's columns (`runtime::taken`).
-        let below = below.with_told(deferred.filters().to_vec());
-        return Ok(Box::new(checked(probe::probed((*left, *right, keys), (Kind::Inner, below), db, tx)?, stop)));
+        let joined = probe::probed((*left, *right, keys), (Kind::Inner, below.with_told(told), built), db, tx)?;
+        return Ok(Box::new(checked(joined, stop)));
     }
     if let Plan::SemiJoin(_) = plan {
         return Ok(Box::new(checked(semi::told_batches(plan, deferred, (db, tx))?, stop)));
+    }
+    if let Plan::MarkJoin(_) = plan {
+        return Ok(Box::new(checked(mark::told_batches(plan, deferred, (db, tx))?, stop)));
     }
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))
 }
@@ -204,6 +217,7 @@ fn joined(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
         Plan::HashJoin { .. } => hash_batches,
         Plan::OuterJoin { .. } => outer_batches,
         Plan::SemiJoin(_) => semi::semi_batches,
+        Plan::MarkJoin(_) => mark::mark_batches,
         Plan::SeqScan { .. }
         | Plan::Nearest(_)
         | Plan::IndexScan { .. }
@@ -260,7 +274,7 @@ fn product_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
 /// As `batches_with`.
 fn hash_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     let Plan::HashJoin { left, right, keys, .. } = plan else { return no_join(plan, db, tx) };
-    probe::probed((*left, *right, keys), (Kind::Inner, Deferred::default()), db, tx)
+    probe::probed((*left, *right, keys), (Kind::Inner, Deferred::default(), Vec::new()), db, tx)
 }
 
 /// The batches of `plan`, an outer join of streams: a LEFT one probing, if
@@ -274,7 +288,7 @@ fn outer_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
         return Err(crate::exec::broken("an outer join is not one"));
     };
     if kind == OuterJoin::Left && own.is_none() && cond.as_ref().is_none_or(|c| !c.can_raise()) {
-        return probe::probed((*left, *right, keys), (Kind::Left(cond, widths), Deferred::default()), db, tx);
+        return probe::probed((*left, *right, keys), (Kind::Left(cond, widths), Deferred::default(), Vec::new()), db, tx);
     }
     outer::joined(Joining { kind, keys, cond, own, widths }, (*left, *right), db, tx)
 }
@@ -369,7 +383,9 @@ fn left_late_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> 
 /// in an order, as the planner relies on (`physical.rs`) where a batch
 /// comes in none (RULES.md D31): a scan's in its table's
 /// (`TableStorage::scan_ordered`), a join's in its left operand's. A plan
-/// that gives no batches is taken to be, so its order is kept.
+/// that gives no batches is taken to be, so its order is kept, as are an
+/// index scan's and an index or merge join's, which a stream gathers
+/// (`told.rs`). A grouping by hash gives its groups in none.
 fn in_order(plan: &Plan) -> bool {
     match plan {
         Plan::SeqScan { order, .. } => !order.is_empty(),
@@ -377,13 +393,14 @@ fn in_order(plan: &Plan) -> bool {
         Plan::Counted(c) => in_order(&c.input),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
+        Plan::Aggregate { streamed, .. } => *streamed,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::RangeJoin(_)
-        | Plan::Aggregate { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }

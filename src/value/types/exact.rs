@@ -2,16 +2,19 @@
 //! SMALLINT, which are exact numbers of it, as is SQL:2023's BIGINT
 //! [ISO/IEC 9075-2:2023 §6.1 SR30].
 //!
-//! Its record bytes and its key are the units at the column's scale, a
-//! 64-bit integer, which holds `MAX_EXACT_PRECISION` (18) digits: little-
-//! endian in a record; in a key big-endian, its sign bit flipped, so the
-//! bytes order as the numbers do.
+//! Its record bytes and its key are the units at the column's scale: a
+//! 64-bit integer, which holds `NARROW_EXACT_PRECISION` (18) digits, of a
+//! type of no more, and a 128-bit one, which holds `MAX_EXACT_PRECISION`
+//! (38), of a wider type (RULES.md D698). Each is little-endian in a
+//! record; in a key big-endian, its sign bit flipped, so the bytes order
+//! as the numbers do.
 
 use std::cmp::Ordering;
 
 use super::{Descriptor, NUMBER_BYTES, SIGN, SqlType, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
+use crate::value::NARROW_EXACT_PRECISION;
 use crate::value::cast::{approximate_to_exact, numeric_literal, uncastable};
 use crate::value::comparison::{compare_numbers, number_bucket};
 use crate::value::{Bucket, DataType, Decimal, Value, assignment_rule, pow10, unassignable};
@@ -30,6 +33,25 @@ pub const BIGINT_NAME: &str = "BIGINT";
 
 /// [§21.3.5 Description 3] The radix of its precision: decimal digits.
 const DECIMAL_RADIX: u32 = 10;
+
+/// Bytes of the units of a wide type in a record or a key: a 128-bit word.
+const WIDE_BYTES: usize = 16;
+/// The sign bit of a 128-bit word.
+const WIDE_SIGN: u128 = 1 << 127;
+
+/// Whether `t`'s values are kept in 128 bits: of more digits than 64 bits
+/// always hold.
+fn wide(t: &DataType) -> bool {
+    shape(t).0 > NARROW_EXACT_PRECISION
+}
+
+/// \[DESIGN\] (RULES.md D698) The scale of `t` if it is an exact numeric
+/// type whose values 64 bits hold, as a record does and a batch's
+/// integers (`storage::Ints`): none of a wider one, or of another type.
+pub fn narrow_scale(t: &DataType) -> Option<u32> {
+    let DataType::Exact { precision, scale, .. } = t else { return None };
+    (*precision <= NARROW_EXACT_PRECISION).then_some(*scale)
+}
 
 /// The precision and scale of `t`, an exact numeric type.
 fn shape(t: &DataType) -> (u32, u32) {
@@ -50,27 +72,44 @@ fn mismatch(v: &Value, t: &DataType) -> SqlError {
 /// keeps, or more digits in all than 64 bits hold: a value not of the
 /// column's type.
 pub(crate) fn units_at(value: &Decimal, scale: u32) -> Result<i64> {
+    wide_units_at(value, scale).and_then(|u| i64::try_from(u).map_err(|_| unstorable(value, scale, "64")))
+}
+
+/// The units of `value` at `scale`, if they are whole there: as a column
+/// of that scale and a wide type stores them.
+///
+/// # Errors
+///
+/// SQLCODE -910 if `value` has more digits after the point than `scale`
+/// keeps, or more digits in all than 128 bits hold.
+fn wide_units_at(value: &Decimal, scale: u32) -> Result<i128> {
     let units = if value.scale <= scale {
         pow10(scale.saturating_sub(value.scale)).and_then(|f| value.units.checked_mul(f))
     } else {
         pow10(value.scale.saturating_sub(scale)).filter(|&f| value.units.checked_rem(f) == Some(0)).and_then(|f| value.units.checked_div(f))
     };
-    units.and_then(|u| i64::try_from(u).ok()).ok_or_else(|| {
-        SqlError::new(Code::Api, format!("[DESIGN] {value} cannot be stored at scale {scale} in 64 bits: it is not of the column's type"))
-    })
+    units.ok_or_else(|| unstorable(value, scale, "128"))
 }
 
-/// The units of the greatest number at `scale` not above `d`, within 64
+/// A value a column of `scale` cannot store in `bits` bits.
+fn unstorable(value: &Decimal, scale: u32, bits: &str) -> SqlError {
+    SqlError::new(Code::Api, format!("[DESIGN] {value} cannot be stored at scale {scale} in {bits} bits: it is not of the column's type"))
+}
+
+/// The units of the greatest number at `scale` not above `d`, within 128
 /// bits.
-fn floor_units(d: &Decimal, scale: u32) -> i64 {
-    let clamp = |negative: bool| if negative { i64::MIN } else { i64::MAX };
-    let units = if d.scale <= scale {
-        pow10(scale.saturating_sub(d.scale)).and_then(|f| d.units.checked_mul(f))
-    } else {
-        // Divided by more than 10^38, a value of 38 digits is below 1.
-        Some(pow10(d.scale.saturating_sub(scale)).map_or(if d.units < 0 { -1 } else { 0 }, |f| d.units.div_euclid(f)))
-    };
-    units.map_or_else(|| clamp(d.units < 0), |u| i64::try_from(u).unwrap_or_else(|_| clamp(u < 0)))
+fn floor_units(d: &Decimal, scale: u32) -> i128 {
+    let clamp = |negative: bool| if negative { i128::MIN } else { i128::MAX };
+    if d.scale <= scale {
+        return pow10(scale.saturating_sub(d.scale)).and_then(|f| d.units.checked_mul(f)).unwrap_or_else(|| clamp(d.units < 0));
+    }
+    // Divided by more than 10^38, a value of 38 digits is below 1.
+    pow10(d.scale.saturating_sub(scale)).map_or(if d.units < 0 { -1 } else { 0 }, |f| d.units.div_euclid(f))
+}
+
+/// `units` within 64 bits, clamped.
+fn narrowed(units: i128) -> i64 {
+    i64::try_from(units).unwrap_or(if units < 0 { i64::MIN } else { i64::MAX })
 }
 
 impl SqlType for Exact {
@@ -235,38 +274,65 @@ impl SqlType for Exact {
         Ok(DataType::Exact { precision: r.u32()?, scale: r.u32()?, spelled: Spelled::Numeric })
     }
 
-    fn record_width(&self, _: &DataType) -> Option<usize> {
-        Some(NUMBER_BYTES)
+    fn record_width(&self, t: &DataType) -> Option<usize> {
+        Some(if wide(t) { WIDE_BYTES } else { NUMBER_BYTES })
     }
 
     fn encode_record(&self, v: &Value, t: &DataType) -> Result<Vec<u8>> {
         let Value::Exact(d) = v else { return Err(mismatch(v, t)) };
-        Ok(units_at(d, shape(t).1)?.to_le_bytes().to_vec())
+        let scale = shape(t).1;
+        if wide(t) {
+            return Ok(wide_units_at(d, scale)?.to_le_bytes().to_vec());
+        }
+        Ok(units_at(d, scale)?.to_le_bytes().to_vec())
     }
 
+    /// Of its width, which its type gives: 8 bytes or 16.
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
-        let word = <[u8; NUMBER_BYTES]>::try_from(field).ok()?;
-        Some(Value::Exact(Decimal::new(i128::from(i64::from_le_bytes(word)), shape(t).1)))
+        let units = match <[u8; NUMBER_BYTES]>::try_from(field) {
+            Ok(word) => i128::from(i64::from_le_bytes(word)),
+            Err(_) => i128::from_le_bytes(<[u8; WIDE_BYTES]>::try_from(field).ok()?),
+        };
+        Some(Value::Exact(Decimal::new(units, shape(t).1)))
     }
 
     fn encode_key(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
         let Value::Exact(d) = v else { return Err(mismatch(v, t)) };
-        let units = u64::from_be_bytes(units_at(d, shape(t).1)?.to_be_bytes());
+        let scale = shape(t).1;
+        if wide(t) {
+            let units = u128::from_be_bytes(wide_units_at(d, scale)?.to_be_bytes());
+            out.extend_from_slice(&(units ^ WIDE_SIGN).to_be_bytes());
+            return Ok(());
+        }
+        let units = u64::from_be_bytes(units_at(d, scale)?.to_be_bytes());
         out.extend_from_slice(&(units ^ SIGN).to_be_bytes());
         Ok(())
     }
 
     fn decode_key(&self, rest: &mut &[u8], t: &DataType) -> Result<Value> {
+        let scale = shape(t).1;
+        if wide(t) {
+            let word = <[u8; WIDE_BYTES]>::try_from(take(rest, WIDE_BYTES)?).map_err(|_| super::malformed())?;
+            let units = i128::from_be_bytes((u128::from_be_bytes(word) ^ WIDE_SIGN).to_be_bytes());
+            return Ok(Value::Exact(Decimal::new(units, scale)));
+        }
         let word = <[u8; NUMBER_BYTES]>::try_from(take(rest, NUMBER_BYTES)?).map_err(|_| super::malformed())?;
         let units = i64::from_be_bytes((u64::from_be_bytes(word) ^ SIGN).to_be_bytes());
-        Ok(Value::Exact(Decimal::new(i128::from(units), shape(t).1)))
+        Ok(Value::Exact(Decimal::new(i128::from(units), scale)))
     }
 
-    /// Rounded down at the column's scale, within 64 bits.
+    /// Rounded down at the column's scale, within the bits it is kept in.
     fn anchor(&self, v: &Value, t: &DataType) -> Option<(Value, bool)> {
         let Value::Exact(d) = v else { return None };
         let scale = shape(t).1;
-        let units = floor_units(d, scale);
-        Some((Value::Exact(Decimal::new(i128::from(units), scale)), units_at(d, scale).ok() == Some(units)))
+        let floor = floor_units(d, scale);
+        let units = if wide(t) { floor } else { i128::from(narrowed(floor)) };
+        let exact = wide_units_at(d, scale).ok() == Some(units);
+        Some((Value::Exact(Decimal::new(units, scale)), exact))
     }
 }
+
+// Unit tests: records and keys of narrow and wide exact types (RULES.md
+// R-TEST-1, D698).
+#[cfg(test)]
+mod tests;

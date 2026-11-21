@@ -141,6 +141,7 @@ impl Rule for ConstantFolding {
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
             | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Values { .. }

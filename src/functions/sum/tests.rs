@@ -6,7 +6,7 @@ use crate::error::Code;
 use crate::value::interval::Qualifier;
 use crate::value::{DOUBLE_PRECISION, MAX_EXACT_PRECISION, Spelled, datetime::Field, pow10};
 
-/// NUMERIC(18, 0), the type of SUM of an integer column.
+/// NUMERIC(38, 0), the type of SUM of an integer column.
 const WHOLE: DataType = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
 /// DOUBLE PRECISION.
 const DOUBLE: DataType = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };
@@ -64,9 +64,9 @@ fn finished(function: &dyn AggregateFunction, result: DataType, values: &[Value]
 }
 
 /// Verifies: [DESIGN] RULES.md D15 [ISO/IEC 9075:1992 §6.5 GR2b iv]: SUM
-/// of 10^18 - 1, 1 and -1, whose total fits 18 digits, gives it in every
-/// order, a value, a vector or integers at a time, as does AVG its mean;
-/// a total past 18 digits is 22003 in every order. Regression test
+/// of 10^38 - 1, 1 and -1, whose total fits 38 digits, gives it in every
+/// order, a value or a vector at a time, as does AVG its mean, integers
+/// at a time too; a total past 38 digits is 22003 in every order. Regression test
 /// (R-TEST-7): a running sum was judged, so 10^18 - 1 then 1 raised.
 #[test]
 fn an_exact_sum_is_judged_as_a_total() {
@@ -77,31 +77,42 @@ fn an_exact_sum_is_judged_as_a_total() {
     let mean = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 2, spelled: Spelled::Numeric };
     for order in ORDERS {
         for got in finished(&Sum, WHOLE, &fits, order) {
-            assert_eq!(got, "Ok(\"999999999999999999\")", "SUM in {order:?}");
+            assert_eq!(got, format!("Ok({:?})", most.to_string()), "SUM in {order:?}");
         }
         for got in finished(&Avg, mean.clone(), &[exact(10_i128), exact(1_i128), exact(-1_i128)], order) {
             assert_eq!(got, "Ok(\"3.33\")", "AVG in {order:?}");
         }
         for got in finished(&Sum, WHOLE, &past, order) {
-            assert_eq!(got, "Err(\"22003\")", "SUM past 18 digits in {order:?}");
+            assert_eq!(got, "Err(\"22003\")", "SUM past 38 digits in {order:?}");
         }
     }
 }
 
 /// Verifies: [DESIGN] RULES.md D32 [ISO/IEC 9075:1992 §6.5 GR2b ii]: AVG judges
 /// its mean, not its sum, which SQL-92 sets no range for: the mean of
-/// 10^18 - 1 twice is 10^18 - 1, AVG of a scale that holds it.
+/// 6 × 10^37 twice, whose sum is of 39 digits, is 6 × 10^37, AVG of a
+/// scale that holds it.
 #[test]
 fn an_average_is_judged_alone() {
-    let most = Value::Exact(Decimal::new(pow10(MAX_EXACT_PRECISION).unwrap() - 1_i128, 0));
+    let big = Value::Exact(Decimal::new(6_i128 * pow10(MAX_EXACT_PRECISION - 1).unwrap(), 0));
     let mut avg = Avg.accumulator(WHOLE);
-    avg.update_many(&[most.clone(), most], None).unwrap();
-    assert_eq!(avg.finish().unwrap().to_string(), "999999999999999999");
+    avg.update_many(&[big.clone(), big], None).unwrap();
+    assert_eq!(avg.finish().unwrap().to_string(), format!("6{}", "0".repeat(37)));
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §10.9 SR7g ii] RULES.md D696, D699: SUM
+/// of integers of 64 bits adds them in 128, so a total past 64 bits and
+/// past 18 digits is given exactly, of the 38 digits of its type.
+#[test]
+fn a_sum_of_integers_passes_64_bits() {
+    let mut sum = Sum.accumulator(WHOLE);
+    sum.update_ints(&Ints::new(vec![i64::MAX, i64::MAX, 2_i64], 0, None), None).unwrap();
+    assert_eq!(sum.finish().unwrap().to_string(), "18446744073709551616");
 }
 
 /// Verifies: [DESIGN] RULES.md D18 (robustness, R-TEST-2): a sum 128 bits
 /// cannot hold, a limit, is refused as it is taken in, SQLCODE -900, a
-/// value or integers at a time.
+/// value or integers at a time: two values of 38 digits reach it.
 #[test]
 fn a_sum_past_128_bits_is_refused() {
     let half = Value::Exact(Decimal::new((i128::MAX >> 1_u32) + 1_i128, 0));

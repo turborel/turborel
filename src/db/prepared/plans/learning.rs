@@ -4,16 +4,16 @@
 //! two plans one shape (`physical/kept/shape.rs`), it keeps the one with
 //! slots; one whose plans keep changing stops learning after
 //! `MOST_LEARNING_RUNS`. A table the kept plan reads that gains or loses
-//! rows as its statistics would be gathered again for has it learn again.
+//! rows as its statistics would be gathered again for has it learn again,
+//! as `grown.rs` says; so does one a query that stopped learning reads.
 
 use std::sync::Arc;
 
 use super::Physical;
+use super::grown::Learnt;
 use crate::catalog::QualifiedName;
 use crate::db::State;
-use crate::engine::rows::{DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS};
-use crate::physical::{Plan, same_shape};
-use crate::storage::cost_of;
+use crate::physical::{Plan, prepared_plan, same_shape};
 
 /// \[DESIGN\] The executions in a row whose plans, made with their values
 /// and with their slots, must have one shape before the one with slots is
@@ -25,7 +25,7 @@ pub(super) const LEARNED_RUNS: u8 = 5;
 /// \[DESIGN\] The executions after which a query whose plans have not
 /// kept one shape `LEARNED_RUNS` times in a row stops learning, so a
 /// query whose values choose its paths is planned twice no longer.
-pub(super) const MOST_LEARNING_RUNS: u8 = 20;
+pub(crate) const MOST_LEARNING_RUNS: u8 = 20;
 
 /// What a query learning its plan has learned (`Physical::Learning`).
 #[derive(Debug, Clone, Default)]
@@ -51,12 +51,21 @@ impl Learning {
     }
 
     /// What is kept of the query after it: its plan with slots, once
-    /// learned, reading `reads`, of `rows`; nothing, once learning fails.
-    pub(super) fn kept(self, reads: &Arc<[QualifiedName]>, rows: Arc<[usize]>) -> Physical {
+    /// learned, reading `reads`, measured from them as they are in `st`
+    /// (`grown.rs`), its scalar calls prepared (RULES.md D610); nothing,
+    /// once learning fails, until a table it reads drifts, or of a plan
+    /// that cannot be kept.
+    pub(super) fn kept(self, reads: &Arc<[QualifiedName]>, st: &State) -> Physical {
         match self.outcome() {
-            Learned::Kept(plan) => Physical::Fixed(plan, Arc::clone(reads), Some(rows)),
+            Learned::Kept(plan) => {
+                let learnt = Learnt::of(st, reads, &plan);
+                match prepared_plan(*plan, crate::optimizer::prepared::budget(st)) {
+                    Ok(kept) => Physical::Fixed(Arc::new(kept), Arc::clone(reads), Some(learnt)),
+                    Err(_) => Physical::Varies(None),
+                }
+            }
             Learned::Learning(learning) => Physical::Learning(learning),
-            Learned::Stopped => Physical::Varies,
+            Learned::Stopped => Physical::Varies(Some(Learnt::rows(st, reads))),
         }
     }
 
@@ -81,26 +90,6 @@ pub(crate) enum Learned {
     Learning(Learning),
     /// Its plans keep changing, so it is planned at each execution.
     Stopped,
-}
-
-/// The rows of each table of `reads` in `st`.
-pub(in crate::db) fn rows_of(st: &State, reads: &[QualifiedName]) -> Arc<[usize]> {
-    reads.iter().map(|t| st.row_count(t).unwrap_or(0)).collect()
-}
-
-/// Whether a table of `reads` has gained or lost too many of the `rows`
-/// it had in `st` for a plan learned then (`drifted`).
-pub(in crate::db) fn moved(st: &State, reads: &[QualifiedName], rows: &[usize]) -> bool {
-    reads.iter().zip(rows).any(|(t, &was)| drifted(was, st.row_count(t).unwrap_or(0)))
-}
-
-/// \[DESIGN\] Whether a table of `was` rows that now has `now` gained or
-/// lost more than its statistics are gathered again for by default
-/// (`STATISTICS.REFRESH_FRACTION` of them and `REFRESH_ROWS`), so a plan
-/// learned follows what the statistics follow.
-fn drifted(was: usize, now: usize) -> bool {
-    let least = u32::try_from(DEFAULT_REFRESH_ROWS).map_or(f64::MAX, f64::from);
-    cost_of(now.abs_diff(was)) > cost_of(was) * DEFAULT_REFRESH_FRACTION + least
 }
 
 // Unit tests: what a query learning its plan keeps after each execution
@@ -145,23 +134,13 @@ mod tests {
     /// pairs of keeping: enough in a row or not, with a plan or not.
     #[test]
     fn a_plan_is_kept_once_learned_and_learning_stops_after_enough_runs() {
-        let kept = |l: Learning| format!("{:?}", l.kept(&Arc::from(Vec::new()), Arc::from(Vec::new())));
+        let st = State::with_builtins(Box::new(crate::catalog::MemoryCatalog::default()));
+        let kept = |l: Learning| format!("{:?}", l.kept(&Arc::from(Vec::new()), &st));
         assert!(kept(learned(LEARNED_RUNS, LEARNED_RUNS)).starts_with("Fixed"));
         assert!(kept(learned(LEARNED_RUNS - 1, LEARNED_RUNS)).starts_with("Learning"), "one too few in a row");
         let planless = Learning { last: None, agreed: LEARNED_RUNS, runs: LEARNED_RUNS };
         assert!(kept(planless).starts_with("Learning"), "no plan kept from the last");
         assert!(kept(learned(1, MOST_LEARNING_RUNS)).starts_with("Varies"));
         assert!(kept(learned(1, MOST_LEARNING_RUNS - 1)).starts_with("Learning"));
-    }
-
-    /// Verifies: [DESIGN] RULES.md D45: a table has drifted from a plan
-    /// learned once it gains or loses more than a tenth of its rows and
-    /// 50 more, as its statistics are gathered again by default; at the
-    /// bound, not.
-    #[test]
-    fn a_table_drifts_past_its_statistics_refresh() {
-        assert!(!drifted(1000, 1150) && drifted(1000, 1151));
-        assert!(!drifted(1000, 850) && drifted(1000, 849));
-        assert!(!drifted(0, 50) && drifted(0, 51));
     }
 }

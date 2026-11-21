@@ -29,7 +29,11 @@ fn case_expressions_6_9() {
         expected(&["1,1,ANN   ", "2,NULL,BOB   ", "3,3,NONE  "])
     );
     assert_eq!(rows(&s, "SELECT ID, COALESCE(AMT, F, ID) FROM T ORDER BY ID"), expected(&["1,1.05E1", "2,-3E0", "3,3E0"]), "approximate");
-    assert_eq!(rows(&s, "SELECT CASE WHEN ID = 0 THEN 1 / 0 ELSE ID END FROM T WHERE ID = 1"), expected(&["1"]), "not evaluated");
+    assert_eq!(
+        rows(&s, "SELECT CASE WHEN ID = 0 THEN 1 / 0 ELSE ID END FROM T WHERE ID = 1"),
+        expected(&["1.000000"]),
+        "not evaluated, of the quotient's scale"
+    );
     assert_eq!(rows(&s, "SELECT ID FROM T WHERE CASE WHEN NAME IS NULL THEN 0 ELSE 1 END = 0"), expected(&["3"]));
     assert_eq!(code(&s, "SELECT CASE WHEN ID = 1 THEN NULL END FROM T"), Code::SyntaxRule, "SR5");
     assert_eq!(code(&s, "SELECT CASE WHEN ID = 1 THEN 'A' ELSE 1 END FROM T"), Code::SyntaxRule, "§9.3 SR3a");

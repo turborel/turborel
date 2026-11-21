@@ -44,9 +44,10 @@
 //! filters, by what they skip, alone (`analytics/skipping.rs`), to
 //! `sorts`, ORDER BY and top-N alone (`analytics/sorts.rs`), to
 //! `goals`, FETCH FIRST over filters, joins and groupings read in order
-//! and groupings streamed alone (`analytics/goals.rs`), or to `costs`,
+//! and groupings streamed alone (`analytics/goals.rs`), to `costs`,
 //! the operators whose speeds the planner's weights stand for, and the
-//! weights they give, alone (`analytics/costs.rs`).
+//! weights they give, alone (`analytics/costs.rs`), or to `core`, the
+//! filters, groupings, joins and sorts of F and FC alone.
 
 #![allow(
     clippy::unwrap_used,
@@ -94,6 +95,8 @@ mod social;
 mod sorts;
 #[path = "analytics/unnesting.rs"]
 mod unnesting;
+#[path = "analytics/windows.rs"]
+mod windows;
 
 use harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
@@ -108,7 +111,8 @@ use turborel::db::{Database, Session};
 /// for a column store's selective queries, `skipping` for a large column
 /// store table's filters, `sorts` for ORDER BY and top-N, `bands` and
 /// `bands-large` for joins on comparisons by order, `goals` for FETCH
-/// FIRST and groupings read in order, `costs` for the planner's weights.
+/// FIRST and groupings read in order, `costs` for the planner's weights,
+/// `windows` for window functions of every frame type.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -133,6 +137,12 @@ fn main() {
     let db = database();
     let s = db.session("B");
     let tables = [("F", "W", ""), ("FC", "WC", " (columnstore)")];
+    if only == "core" {
+        for (table, keyed, label) in tables {
+            measure(&bench, &s, (table, keyed, label));
+        }
+        return;
+    }
     if only == "distinct" || only == "expressions" {
         for (table, _, label) in tables {
             if only == "distinct" {
@@ -162,6 +172,7 @@ fn main() {
     sorts::workloads(&bench);
     bands::small(&bench);
     goals::workloads(&bench);
+    windows::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -182,6 +193,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "bands" => bands::small,
         "bands-large" => bands::large,
         "goals" => goals::workloads,
+        "windows" => windows::workloads,
         _ => return false,
     };
     run(bench);

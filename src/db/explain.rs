@@ -6,6 +6,7 @@
 //! (`explain/analyzed.rs`).
 
 mod analyzed;
+mod changed;
 mod injected;
 
 use std::sync::Arc;
@@ -19,6 +20,7 @@ use crate::error::Result;
 use crate::params::Params;
 use crate::physical::Plan;
 use crate::value::{DataType, Value};
+pub(super) use changed::analyzing;
 
 /// The name of EXPLAIN's one column.
 const PLAN_COLUMN: &str = "PLAN";
@@ -27,16 +29,21 @@ impl Session {
     /// Every stage for a `<cursor specification>`: the plan as bound, the rules
     /// that fired, the optimized plan, and the physical plan. Its parameters
     /// have the values in `params`, as at OPEN [X3.135-1986 §8.8 GR3a].
+    /// Maintenance its planning noted due is asked for, as no transaction's
+    /// end asks for it here (RULES.md D473).
     ///
     /// # Errors
     ///
     /// Any error of parsing or binding the cursor specification.
     pub fn explain(&self, sql: &str, params: &Params) -> Result<String> {
         let call = self.enter()?;
-        self.planned(call.state(), sql, params)
+        let planned = self.planned(call.state(), sql, params);
+        self.db.maintain_if_due();
+        planned
     }
 
-    /// Just the physical plan, its parameters with the values in `params`.
+    /// Just the physical plan, its parameters with the values in `params`;
+    /// maintenance its planning noted due asked for, as `explain` asks.
     ///
     /// # Errors
     ///
@@ -45,7 +52,9 @@ impl Session {
         let call = self.enter()?;
         let st = call.state();
         let spec = Self::parse_cursor(st, sql, params)?;
-        Ok(self.compile(st, &spec, params)?.physical.explain())
+        let planned = self.compile(st, &spec, params).map(|compiled| compiled.physical.explain());
+        self.db.maintain_if_due();
+        planned
     }
 
     /// The state `sql` is planned in and its optimized logical plan, for

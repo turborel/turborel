@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::Plan;
 pub(crate) use super::shown::millis;
+use crate::noted::{Notes, NotesRead};
 
 /// \[DESIGN\] How deep a plan is wrapped (RULES.md R-CF-6): deeper than any
 /// plan the binder makes nests. An operator below it runs uncounted.
@@ -35,6 +36,8 @@ pub struct NodeCount {
     stepped: AtomicBool,
     /// Whether its time is shown, as the statement's clock moved.
     timed: AtomicBool,
+    /// What it did beside giving rows (`noted.rs`, RULES.md D620).
+    notes: Arc<Notes>,
 }
 
 impl NodeCount {
@@ -58,6 +61,16 @@ impl NodeCount {
     /// Sets whether its time is shown, by whether the statement's clock moved.
     pub fn show_time(&self, moved: bool) {
         self.timed.store(moved, Ordering::Relaxed);
+    }
+
+    /// Its notes, the thread's as it is pulled (`noted::within`).
+    pub(crate) fn notes(&self) -> &Arc<Notes> {
+        &self.notes
+    }
+
+    /// What its notes hold.
+    pub fn noted(&self) -> NotesRead {
+        self.notes.read()
     }
 
     /// The rows it gave.
@@ -151,6 +164,7 @@ impl Plan {
                 | Plan::RangeJoin(_)
                 | Plan::OuterJoin { .. }
                 | Plan::SemiJoin(_)
+                | Plan::MarkJoin(_)
         )
     }
 
@@ -182,6 +196,8 @@ pub struct Operator {
     pub tables: usize,
     /// Whether it joins.
     pub join: bool,
+    /// What it spilled, its batches, and what it read of indexes.
+    pub notes: NotesRead,
 }
 
 /// \[EXTENSION\] What EXPLAIN ANALYZE found of a query it ran: each
@@ -220,8 +236,9 @@ pub(crate) fn operators(plan: Plan, depth: usize, out: &mut Vec<Operator>) -> us
         | Plan::IndexJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Distinct { .. }
@@ -262,6 +279,7 @@ fn operator(node: &Plan, count: &NodeCount, depth: usize) -> Operator {
         micros: count.micros(),
         tables: 0,
         join: node.is_join(),
+        notes: count.noted(),
     }
 }
 

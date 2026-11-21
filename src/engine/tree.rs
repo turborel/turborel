@@ -48,8 +48,11 @@
 //! checkpoint left it, no split half written, and the log redoes what came
 //! after (`disk/shadow.rs`, RULES.md D25).
 
+mod counts;
 mod cuts;
 mod estimate;
+mod fit;
+pub(crate) mod hints;
 mod load;
 mod near;
 mod node;
@@ -59,10 +62,13 @@ mod write;
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+pub use counts::TreeCounts;
+use counts::{Counters, count};
 
 use super::locks::{Locks, NodeLock};
-use node::{CHILD, ENTRY_OVERHEAD, HEADER, Node, Shape};
+use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
 pub(crate) use reclaim::{Entered, Epochs};
 pub use scan::{Direction, Scan, Visit, Visited, scan_of};
 pub use write::Update;
@@ -85,33 +91,6 @@ fn corrupt(why: &str) -> SqlError {
     SqlError::new(Code::Corrupt, format!("[DESIGN] a B-link tree is malformed: {why}"))
 }
 
-/// The counters of a tree, for the heuristics above it (RULES.md D30).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TreeCounts {
-    /// Nodes split.
-    pub splits: u64,
-    /// Of those, roots: the tree grew a level.
-    pub root_splits: u64,
-    /// Links followed to a right neighbour, by readers and writers: a
-    /// node had split since its parent was read.
-    pub right_moves: u64,
-    /// Leaves emptied and taken out of the tree (`reclaim.rs`).
-    pub unlinked: u64,
-}
-
-#[derive(Default)]
-struct Counters {
-    splits: AtomicU64,
-    root_splits: AtomicU64,
-    right_moves: AtomicU64,
-    unlinked: AtomicU64,
-}
-
-/// Adds 1 to `counter`; it would wrap only after 2^64.
-fn count(counter: &AtomicU64) {
-    counter.fetch_add(1, Ordering::Relaxed);
-}
-
 /// \[DESIGN\] A B-link tree in a pager file of a buffer pool. It may be
 /// shared between threads.
 pub struct BLinkTree {
@@ -132,6 +111,10 @@ pub struct BLinkTree {
     /// The operations under way by epoch, and the pages taken out
     /// (`reclaim.rs`).
     epochs: Epochs,
+    /// Whether it is a table's, keyed by row id: it notes the leaf of each
+    /// row it writes or scans, and reads a row from the leaf noted for it
+    /// first (`hints.rs`).
+    rows: AtomicBool,
 }
 
 /// What a descent looks for at each level.
@@ -154,7 +137,7 @@ impl Target<'_> {
         }
     }
 
-    fn child<'n>(self, node: &Node<'n>) -> Result<(PageId, Option<&'n [u8]>)> {
+    fn child<'n>(self, node: &Node<'n>) -> Result<(PageId, Option<KeyRef<'n>>)> {
         match self {
             Target::Key(key) => node.child(key),
             Target::First => Ok((node.first_child(), None)),
@@ -220,16 +203,15 @@ impl BLinkTree {
     /// pool's errors.
     pub fn create(pool: Arc<BufferPool>, file: FileId) -> Result<BLinkTree> {
         let capacity = pool.capacity(file)?;
+        // The meta page first, as every node names it.
+        let (meta, mut meta_page) = pool.new_page(file)?;
         let root = {
             let (root, mut page) = pool.new_page(file)?;
-            *page = node::build(&Shape { level: 0, high: None, right: None, first: PageId(0) }, &[])?;
+            *page = node::build(&Shape { level: 0, high: None, right: None, first: PageId(0), tree: meta.0 }, &[])?;
             root
         };
-        let meta = {
-            let (meta, mut page) = pool.new_page(file)?;
-            *page = meta_content(root);
-            meta
-        };
+        *meta_page = meta_content(root);
+        drop(meta_page);
         Ok(BLinkTree::with(pool, file, meta, root, capacity))
     }
 
@@ -261,7 +243,19 @@ impl BLinkTree {
             counters: Counters::default(),
             tally: Tally::default(),
             epochs: Epochs::new(),
+            rows: AtomicBool::new(false),
         }
+    }
+
+    /// Makes it a table's, keyed by row id (`hints.rs`).
+    pub fn note_rows(&self) {
+        self.rows.store(true, Ordering::Relaxed);
+    }
+
+    /// The row id of `key`, if it is a table's and `key` is one.
+    fn row_of(&self, key: &[u8]) -> Option<u64> {
+        let row = <[u8; 8]>::try_from(key).ok().map(u64::from_be_bytes)?;
+        self.rows.load(Ordering::Relaxed).then_some(row)
     }
 
     /// Its meta page, by which `open` finds it.
@@ -272,7 +266,8 @@ impl BLinkTree {
     /// The most bytes a key and its value may take together; a value
     /// shorter than 8 bytes counts as 8, the size of a page number, as its
     /// key may become a separator in an inner node. Entries this size keep
-    /// at least four to a node, so a split always leaves halves that fit.
+    /// at least four to a node, so a split always leaves halves that fit,
+    /// whatever prefix they keep.
     pub fn max_entry(&self) -> usize {
         self.capacity.saturating_sub(HEADER.saturating_mul(2)).checked_div(4).unwrap_or_default().saturating_sub(ENTRY_OVERHEAD)
     }
@@ -332,39 +327,6 @@ impl BLinkTree {
     /// The buffer pool's errors.
     pub fn free_retired(&self) -> Result<()> {
         self.epochs.all_retired().into_iter().try_for_each(|p| self.pool.free(self.file, p))
-    }
-
-    /// The pages its lookups by key read that the pool missed, per lookup,
-    /// at most 1, once at least `least` are counted.
-    pub fn missed_share(&self, least: u64) -> Option<f64> {
-        self.tally.missed_share(least)
-    }
-
-    /// The pages its lookups by key read that the pool missed, per lookup,
-    /// once at least `least` are counted.
-    pub fn missed_pages(&self, least: u64) -> Option<f64> {
-        self.tally.missed_per_lookup(least)
-    }
-
-    /// The share of its file's pages in use the pool has no frames for,
-    /// none if it has for all.
-    pub fn unheld_share(&self) -> f64 {
-        let pages = |n: u64| crate::stats::parts::count(n);
-        let used = pages(self.pool.pages_in_use(self.file).unwrap_or(0));
-        let frames = pages(u64::try_from(self.pool.frames()).unwrap_or(u64::MAX));
-        if used > frames { 1.0_f64 - frames / used } else { 0.0_f64 }
-    }
-
-    /// The counters now.
-    pub fn counts(&self) -> TreeCounts {
-        let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
-        let c = &self.counters;
-        TreeCounts {
-            splits: get(&c.splits),
-            root_splits: get(&c.root_splits),
-            right_moves: get(&c.right_moves),
-            unlinked: get(&c.unlinked),
-        }
     }
 }
 
@@ -451,28 +413,39 @@ impl BLinkTree {
     }
 
     /// Makes `slot`'s change to locked node `held`: in place if the node
-    /// then fits its page, else by splitting it. The split, if any.
-    fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Option<Split>> {
+    /// then fits its page, else by splitting it. The splits, if any.
+    fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Vec<Split>> {
         let copy = {
             let mut page = self.pool.write(self.file, held.id)?;
             let (live, old, new_run) = {
                 let node = Node::parse(&page)?;
                 let old = match slot {
-                    Slot::Insert(_) => 0,
-                    Slot::Replace(at) => node::entry_size(node.key(at)?, node.entry(at)?.1),
+                    // What the node's keys grow by, if the key does not
+                    // begin with its prefix.
+                    Slot::Insert(_) => Some(node::grown(&node, key)),
+                    Slot::Replace(at) => {
+                        let (k, v) = node.entry(at)?;
+                        // None of the same length, as a version stamped
+                        // committed: written over in place, nothing moved.
+                        (v.len() != value.len()).then(|| node::entry_size(&[], v).saturating_add(k.len()))
+                    }
                 };
                 (node.live(), old, starts_run(&node, slot)?)
             };
-            // A value of the same length, as a version stamped committed:
-            // written over in place, nothing moved.
-            if let Slot::Replace(at) = slot
-                && old == node::entry_size(key, value)
-            {
-                node::overwrite(&mut page, at, value)?;
-                return Ok(None);
-            }
+            let Some(old) = old else {
+                if let Slot::Replace(at) = slot {
+                    node::overwrite(&mut page, at, value)?;
+                }
+                return Ok(Vec::new());
+            };
             let added = node::entry_size(key, value);
-            if new_run || live.saturating_sub(old).saturating_add(added) > self.capacity {
+            let after = match slot {
+                Slot::Insert(_) => live.saturating_add(old).saturating_add(added),
+                Slot::Replace(_) => live.saturating_sub(old).saturating_add(added),
+            };
+            let fits =
+                after <= self.capacity || (!new_run && matches!(slot, Slot::Insert(_)) && self.fits_compacted(&mut page, key, added)?);
+            if new_run || !fits {
                 page.clone()
             } else {
                 let at = match slot {
@@ -486,18 +459,33 @@ impl BLinkTree {
                     *page = node::compact(&page)?;
                 }
                 node::insert(&mut page, at, key, value)?;
-                return Ok(None);
+                return Ok(Vec::new());
             }
         };
-        self.split(held.id, &copy, (key, value), slot).map(Some)
+        self.split(held.id, &copy, (key, value), slot)
+    }
+
+    /// Whether an entry of `key`, `added` bytes whole, fits the node `page`
+    /// holds once it is built again, its garbage gone and its prefix what
+    /// its first and last keys now share (RULES.md D500); if it does, the
+    /// node is left built again.
+    fn fits_compacted(&self, page: &mut Vec<u8>, key: &[u8], added: usize) -> Result<bool> {
+        let compacted = node::compact(page)?;
+        let grown = node::grown(&Node::parse(&compacted)?, key);
+        let fits = compacted.len().saturating_add(grown).saturating_add(added) <= self.capacity;
+        if fits {
+            *page = compacted;
+        }
+        Ok(fits)
     }
 
     /// Splits node `id`, whose content was `copy`, making `slot`'s change
     /// (§4): the right half written to a new page, then the left half over
-    /// the old, linked to it.
-    fn split(&self, id: PageId, copy: &[u8], entry: (&[u8], &[u8]), slot: Slot) -> Result<Split> {
+    /// the old, linked to it; a half past the page split again (`fit.rs`).
+    fn split(&self, id: PageId, copy: &[u8], entry: (&[u8], &[u8]), slot: Slot) -> Result<Vec<Split>> {
         let node = Node::parse(copy)?;
         let mut entries = node.entries()?;
+        let entry = (KeyRef::whole(entry.0), entry.1);
         let run = match slot {
             Slot::Insert(at) => {
                 if at > entries.len() {
@@ -516,7 +504,7 @@ impl BLinkTree {
             }
         };
         let (new, mut page) = self.pool.new_page(self.file)?;
-        let halves = match node::split(&node.shape(), &entries, run, new) {
+        let halves = match node::split(&node.shape(), &entries, run, (new, self.capacity)) {
             Ok(halves) => halves,
             Err(e) => {
                 drop(page);
@@ -525,11 +513,12 @@ impl BLinkTree {
                 return Err(e);
             }
         };
-        *page = halves.right;
+        let mut splits = vec![Split { separator: halves.separator, right: new, level: node.level }];
+        *page = self.fitted(halves.right, &mut splits)?;
         drop(page);
-        *self.pool.write(self.file, id)? = halves.left;
+        *self.pool.write(self.file, id)? = self.fitted(halves.left, &mut splits)?;
         count(&self.counters.splits);
-        Ok(Split { separator: halves.separator, right: new, level: node.level })
+        Ok(splits)
     }
 
     /// Locks the node one level above `split` that takes its separator, and
@@ -572,7 +561,7 @@ impl BLinkTree {
         let new_root = {
             let (new_root, mut page) = self.pool.new_page(self.file)?;
             let child = split.right.0.to_le_bytes();
-            *page = node::build(&Shape { level, high: None, right: None, first: root }, &[(&split.separator, &child)])?;
+            *page = node::build(&Shape { level, high: None, right: None, first: root, tree: self.meta.0 }, &[(&split.separator, &child)])?;
             new_root
         };
         *self.pool.write(self.file, self.meta)? = meta_content(new_root);

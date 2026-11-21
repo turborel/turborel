@@ -18,7 +18,7 @@ use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, 
 use crate::binder::{self, OutColumn, bind_select};
 use crate::catalog::QualifiedName;
 use crate::error::{At, Code, Result, fail};
-use crate::exec::execute;
+use crate::exec::{Db, execute};
 use crate::params::Params;
 use crate::parser::Parser;
 use crate::settings::FUNCTION_CALLS;
@@ -37,7 +37,7 @@ const CARDINALITY_PROBE_ROWS: usize = 2;
 mod ordered;
 mod updatability;
 
-use updatability::{Wanted, check_object_columns, open_updatable, wanted};
+use updatability::{Wanted, check_object_columns, nameless_read_only, open_updatable, wanted};
 pub(super) use updatability::{declared_updatable, movement};
 
 impl Session {
@@ -139,8 +139,9 @@ impl Session {
             let (columns, logical) = self.cursor_bound(st, spec, params, None)?;
             return Ok((columns, Stream::planned(st, tx, logical)?.read_now()?));
         }
-        if let Some((columns, physical, reads)) = keeping.map(|k| k.physical(params.dynamic_values())).transpose()?.flatten() {
-            return Ok((columns, Stream::kept(st, tx, physical, reads)?));
+        if let Some((columns, physical, reads, slots)) = keeping.map(|k| k.physical(params)).transpose()?.flatten() {
+            let db = slots.map_or_else(|| Db::of(st), |slots| Db::slotted(st, slots));
+            return Ok((columns, Stream::kept(&db, tx, physical, reads)?));
         }
         let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
         Ok((columns, Stream::planned(st, tx, logical)?))
@@ -227,18 +228,21 @@ impl Session {
         if dynamic {
             return self.open_dynamic(cx, name, None, params);
         }
-        self.open_text(cx, name, (&text, flags, None), params)
+        self.open_text(cx, name, (&text, flags, None, false), params)
     }
 
     /// OPEN of the cursor `name`, of the `<cursor specification>` `text`,
     /// INSENSITIVE and SCROLL as `flags` say, with the parameters `params`:
     /// of a prepared statement's, a dynamic cursor's, from the
-    /// specification and plan it keeps (`keeping`, RULES.md D45).
+    /// specification and plan it keeps (`keeping`, RULES.md D45). A cursor
+    /// no statement can name and through which no change can be seen,
+    /// `nameless`, is read only unless its text says FOR UPDATE
+    /// (`nameless_read_only`).
     pub(super) fn open_text(
         &self,
         cx: StatementContext<'_>,
         name: &Name,
-        (text, flags, keeping): (&str, (bool, bool), Option<&Keeping<'_>>),
+        (text, flags, keeping, nameless): (&str, (bool, bool), Option<&Keeping<'_>>, bool),
         params: &Params,
     ) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
@@ -247,7 +251,7 @@ impl Session {
         }
         // [X3.135-1986 §8.8 GR3a] a copy of S with each parameter replaced by its value.
         let spec = Self::cursor_specification(st, text, params, keeping)?;
-        let wanted = wanted(&spec, flags)?;
+        let wanted = nameless_read_only(wanted(&spec, flags)?, nameless);
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {
                 self.updatable_plan(st, &spec, params, keeping)?.map(|updating| (named, updating))
@@ -394,7 +398,7 @@ impl Session {
         for t in w.bound.set_tables() {
             st.read_lock(tx, &t)?;
         }
-        let runner = Hosted::new(Some(self), cx);
+        let runner = Hosted::in_db(Some(self), cx, &w.db(cx.st));
         let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.9 GR9", &runner))?;
         let mut effects = self.effects(st);
         // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.

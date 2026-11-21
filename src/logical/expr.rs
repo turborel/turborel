@@ -310,16 +310,14 @@ impl Expr {
     /// warning 01004 (RULES.md D391), a completion condition, as an error
     /// raises an exception condition [ISO/IEC 9075:1992 §3.3.4.1]. So a
     /// cursor of it reads its rows at OPEN and completes with the warning,
-    /// however far it is fetched (RULES.md D15).
+    /// however far it is fetched (RULES.md D15). Arithmetic on slots and
+    /// constants alone is judged by their types (`can_raise_typed`), so a
+    /// sum of a `?` and a constant whose digits fit raises nothing, as the
+    /// constant it folds to with a value does not (RULES.md D613).
     pub fn can_raise(&self) -> bool {
         match self {
-            Expr::Arith(..)
-            | Expr::Cast(..)
-            | Expr::Domain(..)
-            | Expr::Subquery(..)
-            | Expr::NextValue(_)
-            | Expr::Invoked(_)
-            | Expr::Warned(..) => true,
+            Expr::Arith(..) => super::can_raise_typed(self, &|_| None),
+            Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) | Expr::Warned(..) => true,
             // D34: the function's promise does not cover argument expressions.
             Expr::Call(f, args) => {
                 (!f.0.raise_free() && (!f.0.index_predicate() || !f.0.deterministic())) || args.iter().any(Expr::can_raise)

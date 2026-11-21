@@ -217,6 +217,17 @@ impl<T: Holdable> HeldRows<T> {
         let decode = self.decode();
         self.list.visit(&decode, each)
     }
+
+    /// Calls `each` with them all, in order, kept, a slice at a time: those
+    /// held as they are held, a run read back a segment at a time.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's, or `each`'s.
+    pub fn visit_slices(&mut self, each: &mut dyn FnMut(&[T]) -> Result<()>) -> Result<()> {
+        let decode = self.decode();
+        self.list.visit_slices(&decode, each)
+    }
 }
 
 impl<T: Holdable> IntoIterator for HeldRows<T> {

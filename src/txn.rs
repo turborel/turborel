@@ -230,8 +230,9 @@ pub(crate) struct TxState {
     forced: bool,
     /// The rows whose entry in a unique index, named, was the key's only
     /// one as it was last inserted (`Index::insert_alone`): no other row
-    /// to look for at a statement's end (`db/assignment.rs`).
-    alone: HashSet<(String, crate::storage::RowId)>,
+    /// to look for at a statement's end (`db/assignment.rs`); by index, so
+    /// a row is looked up by the index's name as it is held.
+    alone: HashMap<String, HashSet<crate::storage::RowId>>,
     /// Of each table of an assertion's kept totals and form, the row it
     /// wrote of its change, each statement's added to it
     /// (`db/assertions/kept.rs`).
@@ -500,25 +501,29 @@ impl Txn {
     /// for each statement, it takes a new one if `fresh` says so: when its
     /// session has no cursor open, which reads at the one it has.
     ///
+    /// Whether a load is under way in it (RULES.md D532), which a statement
+    /// that is no part of it ends first.
+    ///
     /// # Errors
     ///
     /// SQLCODE -910 if its lock is poisoned; a participant's, told of the
     /// new snapshot.
-    pub(crate) fn begin_statement(&self, fresh: impl FnOnce() -> bool) -> Result<()> {
+    pub(crate) fn begin_statement(&self, fresh: impl FnOnce() -> bool) -> Result<bool> {
         self.check_definitions()?;
-        {
+        let loads = {
             let mut st = self.state()?;
             st.statement_start = st.undo.mark();
             st.statement_savepoints.clear();
             st.statement_from = None;
             st.clear_marks();
             self.settle_places(&mut st);
-        }
+            st.undo.loads()
+        };
         if self.reading == Reading::Statement && self.open.load(Ordering::Acquire) && fresh() {
             self.snapshot.store(self.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);
             self.tell_participants()?;
         }
-        Ok(())
+        Ok(loads)
     }
 
     /// Records the thread its running call is on, or that none runs.

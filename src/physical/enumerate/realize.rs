@@ -186,6 +186,11 @@ impl PhysicalPlanner<'_> {
                 }
             }
             (Method::Merge(class), Kind::Inner | Kind::Left) => self.merge_realized(cx, (class, kind), (l, r), (&conds, est)),
+            // A range join that cannot be made is a nested loop (`enumerate/ranged.rs`).
+            (Method::Range, Kind::Inner | Kind::Left) => match self.range_realized(cx, kind, (&l, &r), (&conds, rows, est)) {
+                Some(done) => Some(done),
+                None => self.realize_join(cx, (Method::Nested, kind), (l, r), (conds, rows, est)),
+            },
             (Method::Index, Kind::Semi | Kind::Anti) => match self.index_realized(cx, kind, (&l, &r), (&conds, rows.0)) {
                 Some(done) => Some(done),
                 None => Some(self.semi_realized(cx, kind, (l, r), (&conds, rows, est))),
@@ -193,11 +198,6 @@ impl PhysicalPlanner<'_> {
             (Method::Hash | Method::Nested | Method::Merge(_) | Method::Range, Kind::Semi | Kind::Anti) => {
                 Some(self.semi_realized(cx, kind, (l, r), (&conds, rows, est)))
             }
-            // A range join that cannot be made is a nested loop (`enumerate/ranged.rs`).
-            (Method::Range, Kind::Inner | Kind::Left) => match self.range_realized(cx, kind, (&l, &r), (&conds, rows, est)) {
-                Some(done) => Some(done),
-                None => self.realize_join(cx, (Method::Nested, kind), (l, r), (conds, rows, est)),
-            },
             (Method::Hash, Kind::Inner) => Some(self.hash_realized(cx, (l, r), &conds, (rows, est))),
             (Method::Hash | Method::Nested | Method::Index | Method::Merge(_), Kind::Left | Kind::Full) | (Method::Range, Kind::Full) => {
                 Some(self.outer_realized(cx, kind, (l, r), (&conds, rows, est)))

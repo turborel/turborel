@@ -199,6 +199,16 @@ impl Database {
         self.replay_records(&mut opened, definitions)
     }
 
+    /// Keeps or drops each table's groups of loads open as it was stored
+    /// (`Loading::recovered_loads`), by `analysis`.
+    fn settle_loads(&self, analysis: &Analysis) -> Result<()> {
+        for storage in self.snapshot()?.storage.values() {
+            let durable = storage.durable_through();
+            storage.loading().map_or(Ok(()), |l| l.recovered_loads(&|tx| analysis.redoes(tx, durable)))?;
+        }
+        Ok(())
+    }
+
     /// What opens a log's records: the database's encodings, of sealed
     /// ones (`log/sealed.rs`), and its types.
     pub(super) fn openers(&self) -> Result<(Arc<Encodings>, TypeRegistry)> {
@@ -225,6 +235,8 @@ impl Database {
                 changes.push(change, &mut encode_change)?;
             }
         }
+        // [EXTENSION] the groups of loads open as a table was stored, kept or dropped first (RULES.md D533).
+        self.settle_loads(&analysis)?;
         changes.visit_newest(&|record| decode_change(record, &types), &mut |change| {
             if !analysis.stands(change) && self.undo(change, &analysis)? {
                 report.undone = report.undone.saturating_add(1);
@@ -525,7 +537,7 @@ impl State {
     }
 
     /// MEMORY.WORK_BYTES in batches of SPILL.BATCH_BYTES, for a load.
-    fn load_area(&self) -> Area {
+    pub(super) fn load_area(&self) -> Area {
         use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, batch_bytes, held_bytes};
         Area::new(held_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)))
     }

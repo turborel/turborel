@@ -18,10 +18,10 @@ use super::super::super::{Session, StatementContext};
 use crate::catalog::{SequenceDesc, owner_of};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, Warnings};
-use crate::exec::{Ended, Runner, Subqueries, SubqueryRows, eval};
+use crate::exec::{Db, Ended, Runner, Subqueries, SubqueryRows, eval};
 use crate::logical::{Expr, Invocation, LogicalPlan, Subquery};
 use crate::params::Params;
-use crate::storage::Row;
+use crate::storage::{Row, sized_row};
 use crate::value::Value;
 
 /// \[DESIGN\] A statement's runner, with the session that runs a function
@@ -38,6 +38,12 @@ impl<'s> Hosted<'s> {
         Hosted { session, cx, runner: Runner::new(cx.st, cx.tx.id) }
     }
 
+    /// The runner of the statement in `cx` of `session`, in `db`, whose
+    /// slots its plans and expressions read (RULES.md D610).
+    pub(in crate::db) fn in_db(session: Option<&'s Session>, cx: StatementContext<'s>, db: &Db) -> Hosted<'s> {
+        Hosted { session, cx, runner: Runner::new(db, cx.tx.id) }
+    }
+
     /// Its runner.
     pub(in crate::db) fn runner(&self) -> &Runner {
         &self.runner
@@ -47,6 +53,14 @@ impl<'s> Hosted<'s> {
 impl Subqueries for Hosted<'_> {
     fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
         self.runner.rows(subquery, outer, limit)
+    }
+
+    fn slot(&self, index: usize) -> Option<&Value> {
+        self.runner.slot(index)
+    }
+
+    fn outer(&self, index: usize) -> Option<&Value> {
+        self.runner.outer(index)
     }
 
     fn warnings(&self) -> Option<&Warnings> {
@@ -102,12 +116,16 @@ pub(in crate::db) fn hosted_rows(plan: &LogicalPlan, hosted: &Hosted<'_>) -> Opt
             return Some(Err(e));
         }
     }
-    let row_of = |exprs: &[Expr], input: &Row| exprs.iter().map(|e| eval(e, input, hosted)).collect::<Result<Row>>();
-    Some(
-        rows.iter()
-            .map(|r| row_of(r, &Row::new()).and_then(|values| projected.map_or(Ok(values.clone()), |p| row_of(p, &values))))
-            .collect(),
-    )
+    let row_of = |exprs: &[Expr], input: &Row| sized_row(exprs.len(), exprs.iter().map(|e| eval(e, input, hosted)));
+    // A row of no projection is the values themselves, not a copy.
+    let made = |r: &Vec<Expr>| {
+        let values = row_of(r, &Row::new())?;
+        match projected {
+            Some(p) => row_of(p, &values),
+            None => Ok(values),
+        }
+    };
+    Some(rows.iter().map(made).collect())
 }
 
 impl Session {

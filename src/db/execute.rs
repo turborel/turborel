@@ -18,7 +18,7 @@ use crate::ast::{
 use crate::binder::{Context, SearchedTarget, WriteKind, bind_member_write, bind_searched_write, bind_write, qualify};
 use crate::catalog::proper_subtables;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
-use crate::params::Params;
+use crate::params::{Load, Params};
 use crate::settings::FUNCTION_CALLS;
 
 mod command;
@@ -250,7 +250,7 @@ impl Session {
         };
         call.runs(&tx);
         self.may_run(st, stmt)?;
-        tx.begin_statement(|| !self.cursors_open())?;
+        self.begin_in(st, &tx, matches!(params.load(), Some(Load::Going | Load::Ending)))?;
         let cx = StatementContext { st, tx: &tx };
         let ran = self.run_statement(cx, stmt, params, keeping);
         self.db.noted(self.replied(&tx, settled(cx, stmt, ran)))
@@ -492,7 +492,7 @@ fn event_of(kind: WriteKind) -> Event {
 /// inserts into, changes, defines, alters, drops, indexes, or grants or
 /// revokes privileges on: the table a syntax error or access rule
 /// violation it raises is about, unless what raised it names another.
-fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
+pub(super) fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
     match stmt {
         SqlStatement::Insert(ins) => Some(&ins.table),
         SqlStatement::Merge(merge) => Some(&merge.target),

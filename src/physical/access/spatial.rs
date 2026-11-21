@@ -65,10 +65,10 @@ fn probed(
     beside: &Beside<'_>,
     (srid, against): (i32, &Against<'_>),
 ) -> Option<(Value, Vec<ProbeSlot>)> {
-    let field = |given: Option<Slot>, n: usize| given.map(|at| ProbeSlot { place: Place::PredicateField(n), slot: at });
+    let field = |given: Option<Slot>, n: usize| given.map(|at| ProbeSlot::of(Place::PredicateField(n), at));
     match beside {
         Beside::Nothing => {
-            let slots = slot.into_iter().map(|slot| ProbeSlot { place: Place::PredicateValue, slot }).collect();
+            let slots = slot.into_iter().map(|slot| ProbeSlot::of(Place::PredicateValue, slot)).collect();
             Some((geometry, slots))
         }
         Beside::Pattern(pattern) => Some((window::related(geometry, (*pattern).clone()), field(slot, 0).into_iter().collect())),

@@ -55,7 +55,7 @@ pub(super) fn joined(joining: Joining, (left, right): (Plan, Plan), db: &Db, tx:
     let rows = if spec.keys.is_empty() {
         operand_rows(right, db, tx)
     } else {
-        match held::read(right, (&spec.keys, &[]), work.limit(), (db, tx))? {
+        match held::read(right, (&spec.keys, &[], Vec::new()), work.limit(), (db, tx))? {
             HeldRead::Held(held) => {
                 let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
                 let read = places(&spec, &left_columns)?;

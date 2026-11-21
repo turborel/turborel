@@ -34,6 +34,7 @@ mod gather;
 mod held;
 mod inherited;
 mod inserted;
+pub(in crate::db) use inserted::RowsChecked;
 mod keys;
 mod modes;
 mod references;

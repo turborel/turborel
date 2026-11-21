@@ -5,9 +5,12 @@
 //! the probe's order, whose bounds skip the column store's groups; with a
 //! large build side of 1,000,000 rows; with one of 4 rows of each key, so
 //! each probe row matches 4; on two keys; by LEFT, RIGHT and FULL outer
-//! joins; and with the large build side past a work area of 4 MiB, its
-//! partitions spilled. Each runs at EXECUTOR.DEGREE 1 and at the system's
-//! threads, and the selective ones at EXECUTOR.RUNTIME_FILTERS OFF too.
+//! joins; with keys in clusters whose spans skip the groups between them
+//! (D600); a chain whose range reaches a join's build and its other
+//! operand (D600); and with the large build side past a work area of 4
+//! MiB, its partitions spilled. Each runs at EXECUTOR.DEGREE 1 and at the
+//! system's threads, and the selective ones at EXECUTOR.RUNTIME_FILTERS
+//! OFF too.
 //! Run with `cargo xtask bench`, on the harness (RULES.md R-BENCH-1); with
 //! `ONLY_VAR` of `analytics.rs` set to `joins`, these alone.
 
@@ -27,7 +30,7 @@ const DUPLICATES: u64 = 4_000;
 const PER_INSERT: u64 = 1_000;
 
 /// Queries of `{t}`, each with the name it is reported by.
-const QUERIES: [(&str, &str); 9] = [
+const QUERIES: [(&str, &str); 11] = [
     ("join, 2,000 scattered keys built", "SELECT COUNT(*), SUM({t}.A) FROM {t} JOIN JS ON {t}.H = JS.H"),
     ("join, a range of 2,000 keys built", "SELECT COUNT(*), SUM({t}.A) FROM {t} JOIN JR ON {t}.K = JR.K"),
     ("join, 1,000,000 rows built", "SELECT COUNT(*), SUM(JL.V) FROM {t} JOIN JL ON {t}.K = JL.K"),
@@ -37,12 +40,15 @@ const QUERIES: [(&str, &str); 9] = [
     ("RIGHT join, 2,000 keys built", "SELECT COUNT(*), SUM(JS.V) FROM {t} RIGHT JOIN JS ON {t}.H = JS.H"),
     ("FULL join, 2,000 keys built", "SELECT COUNT(*), SUM(JS.V) FROM {t} FULL JOIN JS ON {t}.H = JS.H"),
     ("join on a decimal key", "SELECT COUNT(*), SUM(JS.V) FROM {t} JOIN JS ON {t}.D = JS.D"),
+    ("join, 2,000 keys built in 20 clusters", "SELECT COUNT(*), SUM({t}.A) FROM {t} JOIN JG ON {t}.K = JG.K"),
+    ("chain, a range's filter through a join", "SELECT COUNT(*), SUM({t}.A) FROM {t} JOIN JL ON {t}.K = JL.K JOIN JR ON JL.K = JR.K"),
 ];
 
 /// Schema B: JF and JFC, `ROWS` rows each, K their key in order, G one of
 /// 1,000, H one of `KEYS` scattered, A one of 97, D H as a price; JL, a
 /// row of each of their keys; JS, `SELECTIVE` of H's keys scattered; JR,
-/// `SELECTIVE` keys of K in a narrow range; JD, 4 rows of each G; JM, a
+/// `SELECTIVE` keys of K in a narrow range; JG, as many in 20 clusters
+/// spread over K's range; JD, 4 rows of each G; JM, a
 /// row of each G and A of 50 values. Background work runs only when asked.
 fn database() -> (Database, Session) {
     let db = Database::new();
@@ -54,6 +60,7 @@ fn database() -> (Database, Session) {
            CREATE TABLE JL (K INTEGER, V INTEGER)
            CREATE TABLE JS (H INTEGER, D DECIMAL(9,2), V INTEGER)
            CREATE TABLE JR (K INTEGER, V INTEGER)
+           CREATE TABLE JG (K INTEGER, V INTEGER)
            CREATE TABLE JD (G INTEGER, V INTEGER)
            CREATE TABLE JM (G INTEGER, A INTEGER, V INTEGER)",
     )
@@ -71,6 +78,7 @@ fn database() -> (Database, Session) {
     let keys = |n: u64| scatter(n * (KEYS / SELECTIVE) + 3, KEYS);
     insert(&s, "JS", (0..SELECTIVE).map(|n| format!("({}, {}.{:02}, {n})", keys(n), keys(n) / 100, keys(n) % 100)));
     insert(&s, "JR", (0..SELECTIVE).map(|n| format!("({}, {n})", ROWS / 2 + n)));
+    insert(&s, "JG", (0..SELECTIVE).map(|n| format!("({}, {n})", n / 100 * (ROWS / 20) + n % 100)));
     insert(&s, "JD", (0..DUPLICATES).map(|n| format!("({}, {n})", n % 1_000)));
     insert(&s, "JM", (0..1_000_u64).flat_map(|g| (0..50_u64).map(move |a| format!("({g}, {}, {})", a * 2, g + a))));
     s.commit().unwrap();
@@ -121,13 +129,15 @@ fn measured(bench: &Bench, s: &Session, (name, sql): (&str, &str), degrees: &[us
 pub fn workloads(bench: &Bench) {
     let (_db, s) = database();
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    // Degree 1 alone when the system has one thread, so no case is measured twice under one name.
+    let degrees: &[usize] = if threads > 1 { &[1, threads] } else { &[1] };
     for (table, label) in [("JF", ""), ("JFC", " (columnstore)")] {
         for (name, sql) in QUERIES {
-            measured(bench, &s, (&format!("{name}{label}"), &sql.replace("{t}", table)), &[1, threads]);
+            measured(bench, &s, (&format!("{name}{label}"), &sql.replace("{t}", table)), degrees);
         }
         // Of a build without the setting, as it was: the same runs.
         let _ = s.run("SET EXECUTOR.RUNTIME_FILTERS = 'OFF'");
-        for (name, sql) in QUERIES.iter().take(2) {
+        for (name, sql) in QUERIES.iter().take(2).chain(QUERIES.iter().skip(9)) {
             measured(bench, &s, (&format!("{name}{label}, no runtime filter"), &sql.replace("{t}", table)), &[1]);
         }
         let _ = s.run("SET EXECUTOR.RUNTIME_FILTERS TO DEFAULT");

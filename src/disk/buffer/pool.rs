@@ -2,19 +2,16 @@
 //! files, holding pages, filling frames on a miss, evicting, writing back
 //! and syncing.
 //!
-//! The page table is sharded by page. A frame is pinned under the shard of
-//! the page it holds, locked shared, so threads reading one page (a tree's
-//! root) pin it at once; and claimed for another page under the shards of
-//! both, locked exclusively in shard order, after checking it is still
-//! unpinned, and latching it exclusively without waiting, as a read that
-//! hit by its hint holds its latch but no pin (`hits.rs`; how a claim
-//! treats frames held, `claim.rs`); then it is marked loading, and the old
-//! page's content is written back and the new one read with no lock held.
-//! A dirty old page stays mapped to the frame until it is written back, so
-//! a thread wanting it waits for the frame rather than reading the file's
-//! older copy. A thread that waited for a frame checks that it holds the
-//! page it wanted, and tries again if not, so a load or a write-back that
-//! fails need only put the frame back as it was.
+//! The page table is sharded by page. A frame is pinned under the shard of the page it holds,
+//! locked shared, so threads reading one page (a tree's root) pin it at once; and claimed for
+//! another page under the shards of both, locked exclusively in shard order, after checking it
+//! is still unpinned, and latching it exclusively without waiting, as a read that hit by its
+//! hint holds its latch but no pin (`hits.rs`; how a claim treats frames held, `claim.rs`);
+//! then it is marked loading, and the old page's content is written back and the new one read
+//! with no lock held. A dirty old page stays mapped to the frame until it is written back, so a
+//! thread wanting it waits for the frame rather than reading the file's older copy. A thread
+//! that waited for a frame checks that it holds the page it wanted, and tries again if not, so
+//! a load or a write-back that fails need only put the frame back as it was.
 
 use std::mem;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -114,7 +111,7 @@ impl BufferPool {
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
             queued: Queued::default(),
             owed: Owed::default(),
-            _reservation: None,
+            reservation: None,
         })
     }
 
@@ -145,7 +142,17 @@ impl BufferPool {
         let frames = bytes.checked_div(page_size).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a page has at least one byte"))?.max(1);
         let reservation = budget.reserve(frames.saturating_mul(page_size), what)?;
         let pool = BufferPool::new(frames, eviction(frames))?;
-        Ok(BufferPool { _reservation: Some(reservation), ..pool })
+        Ok(BufferPool { reservation: Some(reservation), ..pool })
+    }
+
+    /// It, its reservation standing while the database is open (RULES.md
+    /// D683): a database's pool, not a statement's spill area's.
+    #[must_use]
+    pub fn standing(mut self) -> BufferPool {
+        if let Some(held) = &mut self.reservation {
+            held.stand();
+        }
+        self
     }
 
     /// Registers a pager file, read and written through the pool.
@@ -414,7 +421,7 @@ impl BufferPool {
     /// was loading when pinned, seen under the shard's lock, as a frame
     /// starts loading, and a page mapped to a loading frame is unmapped,
     /// only under the shard's exclusive lock.
-    fn pin_mapped(&self, key: Key) -> Result<Option<(usize, bool)>> {
+    pub(super) fn pin_mapped(&self, key: Key) -> Result<Option<(usize, bool)>> {
         let map = self.shared_map(key)?;
         let Some(&index) = map.get(&key) else { return Ok(None) };
         let frame = self.frame(index)?;
@@ -427,7 +434,7 @@ impl BufferPool {
     /// pinned holds `key` and cannot change page while pinned; one that was
     /// is checked, whether or not it is loading still: it may have been
     /// filled for another page while `key` was written back, or emptied.
-    fn settled_holding(&self, (index, loading): (usize, bool), key: Key) -> Result<Option<&Frame>> {
+    pub(super) fn settled_holding(&self, (index, loading): (usize, bool), key: Key) -> Result<Option<&Frame>> {
         let frame = self.frame(index)?;
         // Not loading when pinned, it cannot start to while pinned.
         let waited = loading && frame.settled();

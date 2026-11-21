@@ -13,7 +13,7 @@ use crate::ast::{DatetimeFunction, ExtractField, ValueExpression};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::functions::over_vectors::ints_of;
 use crate::functions::{Arg, ScalarFunction, ScalarRef};
-use crate::logical::Expr;
+use crate::logical::{Expr, Slot};
 use crate::storage::Column;
 use crate::value::Spelled;
 use crate::value::datetime::{Clocked, Datetime, Field, MAX_TIME_PRECISION, MICROS_PER_SECOND, Moment, Now, Written};
@@ -82,7 +82,9 @@ impl ScalarFunction for CastAt {
 pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
     match from {
         DataType::Time { zoned: false, .. } | DataType::Timestamp { zoned: false, .. } => {
-            Expr::Call(ScalarRef(Arc::new(CastAt { to: from, now: now.instant() })), vec![e])
+            // A CAST to its own type reads the displacement alone, which
+            // what keeps a plan compares (RULES.md D613).
+            Expr::Call(ScalarRef(Arc::new(CastAt { to: from, now: Now { utc: 0, zone: now.zone() } })), vec![e])
         }
         DataType::Date
         | DataType::Time { .. }
@@ -339,6 +341,13 @@ impl Binder<'_> {
         }
         let t = function_type(f);
         let precision = if let DataType::Time { precision, .. } | DataType::Timestamp { precision, .. } = t { precision } else { 0 };
+        // A statement kept with its instant a slot reads it from the slot,
+        // filled at each execution (RULES.md D613).
+        if let Some(index) = self.params.clock_slot() {
+            let slot = Slot { index, data_type: type_of(Moment::Timestamp, TIMESTAMP_PRECISION, true), at: 0 };
+            let at = Current { moment: f.moment, precision, local: f.local, to: t.clone() };
+            return Ok((Expr::Call(ScalarRef(Arc::new(at)), vec![Expr::Dynamic(slot)]), t));
+        }
         let now = self.now.instant();
         let value = if f.local { current_local(f.moment, precision, now) } else { current(f.moment, precision, now) };
         Ok((Expr::Const(value), t))
@@ -378,7 +387,42 @@ impl Binder<'_> {
         if !castable(from, &to) {
             return Err(SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.10 SR4] CAST of {from} to {to} is not valid")));
         }
-        Ok(Expr::Call(ScalarRef(Arc::new(CastAt { to, now: self.now.instant() })), vec![e]))
+        // [§6.10 GR11c] Only a time CAST to a timestamp, or a string, may
+        // read the current date; any other the displacement alone, which
+        // what keeps a plan compares, so its instant is not held.
+        let dated = matches!(from, DataType::Date | DataType::Timestamp { .. });
+        let now = if dated { Now { utc: 0, zone: self.now.zone() } } else { self.now.instant() };
+        Ok(Expr::Call(ScalarRef(Arc::new(CastAt { to, now })), vec![e]))
+    }
+}
+
+/// [ISO/IEC 9075:1992 §6.8] CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP,
+/// LOCALTIME or LOCALTIMESTAMP of a statement kept with its instant a
+/// slot: the value of `moment` and `precision` of the instant its one
+/// argument gives, a TIMESTAMP WITH TIME ZONE, of type `to` (RULES.md D613).
+struct Current {
+    moment: Moment,
+    precision: u32,
+    local: bool,
+    to: DataType,
+}
+
+impl ScalarFunction for Current {
+    fn name(&self) -> &'static str {
+        "CURRENT_TIMESTAMP"
+    }
+    fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
+        Ok(self.to.clone())
+    }
+    fn raise_free(&self) -> bool {
+        true
+    }
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let Some(Value::Datetime(instant)) = args.first() else {
+            return Err(SqlError::new(Code::Api, "[DESIGN] the statement's instant is a timestamp"));
+        };
+        let now = Now { utc: instant.utc, zone: instant.zone };
+        Ok(if self.local { current_local(self.moment, self.precision, now) } else { current(self.moment, self.precision, now) })
     }
 }
 

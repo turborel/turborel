@@ -76,6 +76,12 @@ impl Seed {
         self.word(NULL_WORD)
     }
 
+    /// The XXH3 of `bytes`, seeded by the seed's word (RULES.md D357), as
+    /// a parallel grouping parts its rows' keys.
+    pub(crate) fn xxh3(&self, bytes: &[u8]) -> u64 {
+        crate::hash::xxhash::xxh3_64_with_seed(bytes, self.word)
+    }
+
     /// The SipHash-1-3 of `bytes`, keyed by the seed (RULES.md D357).
     pub(super) fn keyed(&self, bytes: &[u8]) -> u64 {
         self.keyed.hash_one(bytes)

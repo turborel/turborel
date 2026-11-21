@@ -62,16 +62,18 @@ fn stale_paths_move_right_and_find_their_parent_again() {
     fill(&tree, n);
     assert_eq!(tree.height().unwrap(), 3);
     let before = tree.counts();
-    assert!(matches!(tree.write_from(path, first, (&key(0), &VALUE), Mode::Insert).unwrap(), Written::Done(None)));
+    // Longer than the room its prefix left in the full leaf.
+    let long = [7_u8; 400];
+    assert!(matches!(tree.write_from(&path, first, (&key(0), &long), Mode::Insert).unwrap(), Written::Done(None, _)));
     let after = tree.counts();
     assert!(after.splits > before.splits && after.root_splits == before.root_splits, "the full leaf split; no new root");
-    assert_eq!(tree.get(&key(0)).unwrap(), Some(VALUE.to_vec()));
+    assert_eq!(tree.get(&key(0)).unwrap(), Some(long.to_vec()));
     let mut expected: Vec<Vec<u8>> = (0..=n).map(|i| key(i).to_vec()).collect();
     assert_eq!(keys(&tree, Direction::Forward), expected);
     assert_eq!(tree.delete_from(&Path::default(), first, &key(19_000), None).unwrap(), Some(VALUE.to_vec()));
     assert!(tree.counts().right_moves > after.right_moves + 400, "moved right across the leaves");
     assert_eq!(tree.get(&key(19_000)).unwrap(), None);
-    assert!(matches!(tree.write_from(Path::default(), first, (&key(19_000), b"back"), Mode::Insert).unwrap(), Written::Done(None)));
+    assert!(matches!(tree.write_from(&Path::default(), first, (&key(19_000), b"back"), Mode::Insert).unwrap(), Written::Done(None, _)));
     assert_eq!(tree.get(&key(19_000)).unwrap(), Some(b"back".to_vec()));
     expected.reverse();
     assert_eq!(keys(&tree, Direction::Backward), expected);
@@ -111,7 +113,8 @@ fn malformed_trees_are_refused() {
     fill(&tree, 100);
     let root = PageId(tree.root.load(Ordering::Acquire));
     let leaf = Node::parse(&tree.pool.read(tree.file, root.0).unwrap()).unwrap().first_child();
-    *tree.pool.write(tree.file, leaf).unwrap() = node::build(&Shape { level: 1, high: None, right: None, first: leaf }, &[]).unwrap();
+    *tree.pool.write(tree.file, leaf).unwrap() =
+        node::build(&Shape { level: 1, high: None, right: None, first: leaf, tree: tree.meta.0 }, &[]).unwrap();
     assert_eq!(tree.get(&key(1)).err().map(|e| e.code), Some(Code::Corrupt), "a leaf at level 1");
     *tree.pool.write(tree.file, root).unwrap() = b"not a node".to_vec();
     assert_eq!(tree.get(&key(1)).err().map(|e| e.code), Some(Code::Corrupt));
@@ -121,7 +124,7 @@ fn malformed_trees_are_refused() {
     let small_root = PageId(small.root.load(Ordering::Acquire));
     let high = [0xFF; 5000];
     *small.pool.write(small.file, small_root).unwrap() =
-        node::build(&Shape { level: 0, high: Some(&high), right: Some(small_root), first: PageId(0) }, &[]).unwrap();
+        node::build(&Shape { level: 0, high: Some(&high), right: Some(small_root), first: PageId(0), tree: small.meta.0 }, &[]).unwrap();
     assert!(high.len() > small.pool.capacity(small.file).unwrap());
     assert_eq!(small.insert(b"a", b"1").err().map(|e| e.code), Some(Code::Corrupt));
 }
@@ -245,7 +248,7 @@ fn stale_paths_follow_a_leaf_taken_out() {
     assert!(Node::parse(&page).unwrap().deleted, "kept, marked, while an operation may hold it");
     drop(page);
     let moved = in_leaf[0];
-    assert!(matches!(tree.write_from(path, leaf, (&key(moved), &VALUE), Mode::Insert).unwrap(), Written::Done(None)));
+    assert!(matches!(tree.write_from(&path, leaf, (&key(moved), &VALUE), Mode::Insert).unwrap(), Written::Done(None, _)));
     assert_eq!(tree.get(&key(moved)).unwrap(), Some(VALUE.to_vec()));
     assert_eq!(tree.delete_from(&Path::default(), leaf, &key(moved), None).unwrap(), Some(VALUE.to_vec()));
     seen.extend(scan.map(|e| e.unwrap().0));
@@ -259,13 +262,13 @@ fn stale_paths_follow_a_leaf_taken_out() {
 }
 
 /// Verifies: [DESIGN] CONFORMANCE.md, Limits: a B-link tree counts an
-/// entry to 990 bytes at 4 KiB pages, 2,014 at 8 KiB and 16,350 at 64 KiB,
+/// entry to 967 bytes at 4 KiB pages, 1,991 at 8 KiB and 16,327 at 64 KiB,
 /// with the default XXH3-64 page checksums, its value as 8 bytes at least,
-/// so an index has 982, 2,006 and 16,342 for a key and its row id.
+/// so an index has 959, 1,983 and 16,319 for a key and its row id.
 #[test]
 fn the_longest_entry_is_as_documented() {
     use crate::disk::memory::MemoryFileSystem;
-    for (page_size, most, key) in [(4_096_u32, 990_usize, 982_usize), (8_192, 2_014, 2_006), (65_536, 16_350, 16_342)] {
+    for (page_size, most, key) in [(4_096_u32, 967_usize, 959_usize), (8_192, 1_991, 1_983), (65_536, 16_327, 16_319)] {
         let pager = Pager::create(
             &MemoryFileSystem::new(),
             std::path::Path::new("/t"),
@@ -538,3 +541,12 @@ fn a_visit_gives_back_what_a_scan_copied() {
     assert_eq!(refused.unwrap_err().code, Code::Api);
     assert_eq!(failing.visit(|_| Ok(Visit::Taken)).unwrap(), Visited::Done, "the scan ended");
 }
+
+// Reads from the leaf noted for a row (RULES.md D500).
+mod hinted;
+
+// Threads writing and reading at once, against models.
+mod stress;
+
+// Splits of leaves whose keys share a long prefix (RULES.md D500).
+mod shared;

@@ -29,26 +29,27 @@ mod project;
 mod runtime;
 mod shaped;
 mod stream;
+mod told;
 
 use std::sync::Arc;
 
 pub(crate) use count::storage_counted;
 use expr::Program;
 pub(super) use groups::morsel_groups;
-pub(super) use joined::{SharedTable, TABLE_ROW_BYTES, gathered, rows_of};
+pub(super) use joined::{SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
 pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
 pub(super) use late::{Deferred, resolved};
 use project::Place;
-pub(super) use project::{projectable, projected};
+pub(super) use project::{projectable, projected, vector_of};
 pub(super) use runtime::{Told, taken as runtime_taken, wanted};
 pub(super) use shaped::{Shaped, filter_step, probe_step, project_step, runtime_step, through};
-pub(super) use stream::{Batches, Kept};
+pub(super) use stream::{Batches, Kept, layout, reads_by_batch, whole_batches};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
-use crate::functions::Accumulator;
+use crate::functions::{Accumulator, Columnar, ColumnarKind};
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
 use crate::storage::mask::index;
@@ -103,14 +104,14 @@ pub(in crate::exec) fn read_for(groups: &[usize], aggs: &[AggCall], layout: &[us
 
 /// What `plan` reads, if it is an aggregation read by batches: of a
 /// subtree that gives them (`stream::layout`).
-fn read_of(plan: &Plan, db: &State) -> Option<Read> {
+pub(super) fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return None };
     // Batches key groups by their values, not by a collation's sort keys,
     // and make none before their rows.
     if !collations.is_empty() || !seeds.is_empty() {
         return None;
     }
-    let (columns, _) = stream::layout(input, db)?;
+    let (columns, _) = layout(input, db)?;
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
     Some(Read { taken: taken(aggs, &columns)?, groups: at })
 }
@@ -149,7 +150,20 @@ pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
 
 /// Whether `plan` is an aggregation read by batches.
 pub(super) fn aggregable(plan: &Plan, db: &State) -> bool {
-    read_of(plan, db).is_some()
+    let Plan::Aggregate { input, .. } = plan else { return false };
+    stream::untold(input) && read_of(plan, db).is_some()
+}
+
+/// \[DESIGN\] (RULES.md D600, D15) Whether `plan` is a grouping read by
+/// batches that takes a runtime filter of a grouping column to its input
+/// (`told.rs`): by some column, each set function COUNT, MIN or MAX, of
+/// every row or of a column, none of which can raise. SUM and AVG can
+/// overflow, so a group a filter dropped could have raised an error.
+pub(super) fn filterable(plan: &Plan, db: &State) -> bool {
+    let Plan::Aggregate { groups, aggs, .. } = plan else { return false };
+    let kept = |a: &AggCall| matches!(a.func.0.columnar(), Some(Columnar(ColumnarKind::Count | ColumnarKind::Min | ColumnarKind::Max)));
+    let taken = |r: Read| r.taken.iter().all(|t| matches!(t, Taken::Count | Taken::Column(_)));
+    !groups.is_empty() && aggs.iter().all(kept) && read_of(plan, db).is_some_and(taken)
 }
 
 /// The rows of the aggregation `plan`, one read by batches (`aggregable`).
@@ -182,14 +196,16 @@ pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
 /// Feeds `states` the rows of one group of `batch`, as `taken` says: the
 /// `given`th of those given, the rows `read_rows` of the batch; each set
 /// function a vector of them at a time, of values or of integers, but of
-/// an expression not evaluated by vectors, a row at a time.
-pub(in crate::exec) fn fed_group(
-    states: &mut [Box<dyn Accumulator>],
+/// an expression not evaluated by vectors, a row at a time. Generic in
+/// how `states` come, so each caller has its own copy made inline in it: a
+/// hashed grouping's one accumulator at a time, a streamed one's group.
+pub(in crate::exec) fn fed_group<'s>(
+    states: impl IntoIterator<Item = &'s mut Box<dyn Accumulator>>,
     (taken, scratch, runner): (&[Taken], &mut Row, &Runner),
     (batch, lanes): (&Batch, &[Option<Fed<'_>>]),
     (given, read_rows): (&[u32], &[u32]),
 ) -> Result<()> {
-    for ((state, take), lane) in states.iter_mut().zip(taken).zip(lanes) {
+    for ((state, take), lane) in states.into_iter().zip(taken).zip(lanes) {
         eliminated(group_nulled((take, lane), batch, (given, read_rows)), runner);
         match (take, lane) {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.

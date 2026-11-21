@@ -79,19 +79,32 @@ fn timed(server: &Running, pki: &Pki, password: &str) -> (connection::Result<Con
     (made, began.elapsed())
 }
 
-/// Verifies: [DESIGN] RULES.md D43: after a failed login, the next from
-/// the same address waits at least 100 ms before it is checked, a right
-/// password's too; accepted, it forgets the failure. The user is never
-/// locked out. SERVER.LOGIN_DELAY_MS 0 slows none.
+/// The failed logins in a row `a_failed_login_slows_its_address` makes.
+const FAILURES: u32 = 3;
+
+/// Verifies: [DESIGN] RULES.md D43: after failed logins, the next from
+/// the same address is checked no sooner than 100 ms after the last
+/// failure, doubled with each failure after the first, a right
+/// password's too; accepted, it forgets the failures. The user is never
+/// locked out. SERVER.LOGIN_DELAY_MS 0 slows none. The delay runs from
+/// the failure, which comes after its login began, so the right login
+/// ends at least the delay after the last wrong one began, however long
+/// a loaded machine takes between them.
 #[test]
 fn a_failed_login_slows_its_address() {
     let pki = pki("logins-delay");
     let server = of_ann(&pki, 10_000);
-    let (wrong, _) = timed(&server, &pki, "bob's");
-    assert_eq!(state(&wrong.err().unwrap()), ("28000", -919));
-    let (right, took) = timed(&server, &pki, "ann's");
+    let mut last = Instant::now();
+    for _ in 0..FAILURES {
+        last = Instant::now();
+        let (wrong, _) = timed(&server, &pki, "bob's");
+        assert_eq!(state(&wrong.err().unwrap()), ("28000", -919));
+    }
+    let (right, _) = timed(&server, &pki, "ann's");
+    let took = last.elapsed();
     assert_eq!(right.unwrap().authorization(), "ANN", "never locked out");
-    assert!(took >= FIRST_DELAY, "{took:?}");
+    let delay = FIRST_DELAY.saturating_mul(1 << (FAILURES - 1));
+    assert!(took >= delay, "{took:?}");
     let undelayed = of_ann(&pki, 0);
     for _ in 0..3 {
         assert!(timed(&undelayed, &pki, "bob's").0.is_err());
