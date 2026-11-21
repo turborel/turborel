@@ -19,6 +19,7 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 | COLUMNSTORE.FREEZE_DELAY | 0 | INTEGER FROM 0 TO 31622400 | in place |
 | COLUMNSTORE.FREEZE_ROWS | 0 | INTEGER FROM 0 TO 9223372036854775807 | in place |
 | COLUMNSTORE.GROUP_ROWS | 65536 | INTEGER FROM 2048 TO 65536 | in place |
+| COLUMNSTORE.IMPRINTS | OFF | ONE OF ON, OFF | in place |
 | COLUMNSTORE.LAYOUT | COLUMNS | ONE OF COLUMNS, PAX | in place |
 | COLUMNSTORE.ORDER | none | AT MOST 8 OF THE TABLE'S COLUMNS, BY COMMAS | in place |
 | COLUMNSTORE.REWRITE_FRACTION | 0.2 | NUMBER FROM 0 TO 1 | in place |
@@ -38,6 +39,7 @@ Each in a sentence:
 - **COLUMNSTORE.FREEZE_DELAY**: The seconds a row of a table of the column store stays as it was written after its commit before it may be frozen, so rows changed soon after are not.
 - **COLUMNSTORE.FREEZE_ROWS**: The rows committed past the last group after which a table of the column store freezes them; 0 for COLUMNSTORE.GROUP_ROWS.
 - **COLUMNSTORE.GROUP_ROWS**: The rows of each group a table of the column store freezes; groups frozen before keep theirs.
+- **COLUMNSTORE.IMPRINTS**: Whether a table of the column store keeps, of the groups it freezes from then on, imprints of each column of exact numbers, datetimes or character strings: of each 64 rows, the bins of the group's values they fall in, so a comparison, IN or LIKE prefix skips stretches of rows that cannot match within 1024; ON or OFF.
 - **COLUMNSTORE.LAYOUT**: How a table of the column store lays out the groups it freezes: COLUMNS, each column's values on pages of their own, so a scan of a few columns reads only theirs; PAX, each page a range of rows, a chunk of each column on it, so a row read whole reads one page. Groups frozen before are written again so in the background.
 - **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.
 - **COLUMNSTORE.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.
@@ -125,6 +127,28 @@ before.
 Once the option is set or changed, groups frozen before are written
 again in the background, as for COLUMNSTORE.ORDER, and it names columns
 as that option does.
+
+COLUMNSTORE.IMPRINTS, OFF by default, keeps column imprints of each
+frozen group's columns of exact numbers, datetimes and character
+strings. A group's values of such a column are cut into at most 64
+bins of about as many rows each, and each 64 rows get a word with a bit
+set for each bin a value of them falls in. A comparison with a
+constant, BETWEEN, IN, NOT IN or a LIKE prefix of the column then skips
+the stretches of at least 256 rows whose words share no bit with the
+bins it may match, where the least and greatest values of 1,024 rows
+skip none. This pays on columns whose values come in long stretches,
+such as codes of rows written by one source at a time, and for
+conditions of values found in few of them. A scan cut into many short
+stretches costs more than it saves, which is why the option is off by
+default. A column whose values are scattered evenly gets no imprints, as
+its 64 rows would fall in most bins. A condition several columns share,
+and a condition true of a null, read as before. The words take a byte
+for each 8 rows. Groups frozen before the option is changed keep what
+they have; a query gives the same rows either way.
+
+Whatever the option, a query judges first, of each group, the condition
+that keeps fewest of its rows by the least and greatest values of each
+1,024 rows, and by imprints where it has them.
 
 COLUMNSTORE.LAYOUT says how a frozen group is laid out on its pages.
 COLUMNS, the default, puts each column's values on pages of their own: a
