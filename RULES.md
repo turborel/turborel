@@ -468,6 +468,14 @@ verification approach DO-178C expects (§8).
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
+| D740 | Commits waiting for a sync form a group whose leader syncs once for all, marks them durable in one pass and wakes each alone |
+| D741 | A log appender waiting for the blocks before its own to be published is woken alone, by the one that publishes up to it |
+| D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
+| D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
+| D747 | A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it |
+| D767 | A connection's requests run on one thread of its own, its home |
+| D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
+| D769 | A request is handed to a home under one lock, which decides its retirement too |
 
 ### The project
 
@@ -2855,7 +2863,8 @@ waits wakes no other. A waiting worker holds no permit, so as many keep
 waiting as the blocking pool has threads for, while statements wait for
 permits too. A request that comes
 later the connection's task reads through the runtime, which takes the
-socket back. A stream TLS secures is read so too, through its session
+socket back, and hands to the connection's home, the one thread that runs
+its requests while they keep coming (D767). A stream TLS secures is read so too, through its session
 (D230); a named pipe is not handed so, and takes the task's path. Each
 connection runs one request at a time.
 
@@ -12285,6 +12294,11 @@ counts and no shared lock. A text is normalized once, for a prepared
 statement in what it keeps between executions and for a direct one in
 its session's activity. Each session tallies its own runs in a map only
 it writes, under a lock only a reader of the table takes besides. A
+statement takes that lock once, as it ends. The user its session runs as
+is kept with the map, so a statement by the same user as the last finds
+its user's key without it. A statement's timing is held in its call or
+its cursor, and what is told of a slow one apart, as that is seldom
+asked for. A
 session's tallies are listed with the database's the first time it
 tallies, and kept once it ends, merged, until the table is next read.
 Rows read are counted by each scan as it reads, and given to its
@@ -13339,6 +13353,171 @@ values, and so do results past 18 digits, which the set functions add
 in 128 bits (D32). A path in 128 bits for whole vectors would double the
 width of every vector of integers, or add a second kind of them to
 every kernel, for values that are rare.
+
+#### D740. Commits waiting for a sync form a group whose leader syncs once for all, marks them durable in one pass and wakes each alone
+
+Each committer synced its commit record itself (D441). The file log
+grouped the syncs under one lock and woke every waiter through one
+condition variable when a sync ended. Each committer then marked its own
+commit durable on the clock, and waited for the durable timestamp on a
+second shared condition variable, which every move of it woke whole.
+So each sync woke every committer twice, they crowded onto two locks,
+and a commit covered by a sync waited for its own thread to be run
+again before the durable timestamp could pass it.
+
+Group commit now sits in the transaction layer (`txn/group.rs`). A
+committer queues its commit record's position and commit timestamp with
+a ticket of its own. The first to come while no sync runs leads. It
+syncs the log through the last record queued, and the sync's reach
+covers every record appended before it began. Under the queue's lock it
+takes every commit whose record that reach covers, then marks them all
+durable on the clock in one pass (`Clock::end_syncs`) and wakes each
+alone. The commits that came during the sync and were not covered are
+the next group. The first of them is woken to lead, and syncs once for
+all of them. The queue's lock is held only to add a commit or take a
+group, never during the sync, so appends, commits and their waits go on
+while the log syncs. A thread waiting for the durable timestamp parks
+under the timestamp it waits for (`Clock::wait_durable`), and whoever
+moves the durable timestamp wakes only those it reached.
+
+The semantics hold for these reasons.
+
+- A commit is marked durable only by a sync whose reach covers its
+  record, as `Log::sync_reached` promises (D410). The durable timestamp
+  still passes a commit only once every commit before it is marked, so
+  what a snapshot holds is still a prefix recovery keeps (D441).
+- A commit returns as before, once the durable timestamp reaches it.
+- A failed sync fails every commit of its group and every one queued
+  behind it, none marked durable. It halts the durable timestamp and
+  stops the database's changes as before, and every wait for the durable
+  timestamp ends.
+- A ticket's state is set before its thread is woken, so a wake-up is
+  never lost. A park that returns early looks again, and a bounded poll
+  only bounds a defect's cost.
+
+#### D741. A log appender waiting for the blocks before its own to be published is woken alone, by the one that publishes up to it
+
+A block file publishes its blocks in order (D30), so an appender whose
+write finished waits until every block before its own is published.
+Those that had to wait slept on one condition variable, and every
+publish woke all of them, though only the one whose block came next
+could go on. The commit records of many committers are appended to the
+log this way, so under load each commit woke every appender queued
+behind it.
+
+An appender that must wait now parks under the offset its block starts
+at (`disk/block.rs`). The appender that publishes up to that offset
+wakes it, and no other. A write that fails wakes them all, as they then
+fail too. The order of publication, and what a reader or a sync sees, are
+D30's as before. An appender is counted before it looks at the published
+end, under the lock a waker takes, so a publish after its look wakes it.
+
+#### D745. The undo store's batches in memory are found through shards locked for reading, with no lock all readers share
+
+One lock guarded the undo store's batches (D31), the batch being gathered,
+those being written, and those read back from the log. Every append took it,
+and so did every read of an older version, by a scan's visibility check, a
+UNIQUE check, a commit's validation and garbage collection. With many
+sessions on a few hot rows, readers queued behind each other and behind
+appends on that lock. Batches in memory are now held in shards by their
+number, each shard under a read-write lock (`undo/resident.rs`). A reader
+takes one shard's lock for reading only as long as it takes to count a share
+of the version, which is a range of the batch's record or a version gathered
+alone, so it decodes nothing and copies nothing. Readers never wait on one
+another, and wait on an append only for a version of the batch being
+gathered. Consecutive batches fall in different shards. The lock of the
+appends is taken by a reader only for a version memory no longer holds,
+to learn where the log has it.
+
+#### D746. Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them
+
+A batch was let go once written to the log, and a reader of one of its
+versions read the batch back with a system call, kept among the last few
+read. With many sessions, readers of open snapshots went back to more
+batches than the few kept, and read the log at nearly every older version.
+A batch written now stays in memory as the record it was written as, until
+the store is truncated past it, which happens once no pinned version is in
+it (`undo/kept.rs`). The batches kept are bounded by a sixteenth of the
+memory budget, reserved of it as they are kept and given back as they go,
+standing as a buffer pool's pages do (D683). Past the bound, or when the
+budget refuses, the oldest go first, as the newest are what open snapshots
+go back to most. A version of a batch gone is read from the log as before.
+A store of pages (temporary tables) keeps none, as its pages are in the
+buffer pool already. The log is never synced (D31), so a crash loses
+nothing it needs. Recovery starts with no open snapshot.
+
+#### D747. A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it
+
+A write refused because another transaction changed the row asked the
+engine for the row's newest state (`TableStorage::newest`), which decodes
+the pending row and reads the committed version below it from the undo
+store. A writer only needs to know whom to wait for and the stamp of the
+newest commit, and with many sessions on a few hot rows it asked again at
+every refusal. `TableStorage::newest_writer` gives the writer and the
+stamp alone, which the row store reads from the newest version's maker
+(`RowTable::writer_of`). The row is read only when the statement rechecks
+its search condition over a version committed after its snapshot, and if
+the row changed again in between, the write is tried again.
+
+#### D767. A connection's requests run on one thread of its own, its home
+
+A request a fast client sent within `lent::WAITED` ran on the worker that
+answered the last (D42), but any later one was handed to whichever thread
+of the blocking pool was free, and the pool wakes its idle threads in
+turn. A session moved between threads at nearly every transaction of a
+client that thinks between them. What a statement allocated on one thread
+was then freed on another, so every serving thread took the locks of
+every arena of the allocator, freed chunks were merged across threads,
+and the session's state went cold in each processor's cache.
+
+So a connection's first request opens its home (`native/home.rs`), one
+long task of the blocking pool that runs each of the connection's
+requests until the connection ends or goes idle. The connection's task
+still reads a slow client's request, takes a permit of SERVER.WORKERS for
+it, and waits for the loan back (`native/lent.rs`). It then hands the
+request to the home instead of the pool, and the home parks between
+requests holding no permit. Statements are bounded, queued, cancelled and
+timed out as before, and a fast client's next request is still read by
+the worker itself.
+
+A home per connection, not a fixed set of threads each serving many
+connections, because a statement may wait for a row lock another
+connection holds. On a shared thread the holder's commit could queue
+behind its waiter, and stealing work to undo that moves the session
+again. With a thread each, no session waits behind another's statement,
+and an idle home costs a parked thread. A session's end, a Reset and a
+ChangeUser still run on any free thread, once a connection or rarely.
+This helps any allocator, since each one's per-thread caches serve a
+thread that both takes and frees.
+
+#### D768. Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread
+
+A home holds one of the MAX_WORKERS places of the connections that keep a
+thread of the pool (`Services::hot`), which a worker waiting on its client
+for the next request takes too. So the pool's bound, twice MAX_WORKERS
+beside the logins' threads (`runtime.rs`), still leaves a thread for every
+statement SERVER.WORKERS allows. A connection that finds no place runs
+each request on any free thread, as every request ran before. A worker at
+home waits on its client without taking a second place.
+
+A home with no request for `home::KEPT`, ten seconds, retires, giving its
+thread and place back, and the connection opens another at its next
+request. Ten seconds is how long the runtime keeps an idle thread of its
+pool, so an idle connection gives back its thread when the pool would
+have. A connection idle that long pays one move of thread, and idle
+connections never keep active ones out of the places.
+
+#### D769. A request is handed to a home under one lock, which decides its retirement too
+
+The connection's task and its home share one slot and a condition
+variable. The task puts a request in the slot unless the home has retired.
+The home takes it, or retires under the same lock once its wait times out
+with the slot empty, so no request is ever left with a thread that has
+gone. A home whose thread ends otherwise, by a panic or because the runtime
+stops before it ran, retires as its thread's guard is dropped, dropping any
+request left in the slot. That gives the loan back failed, so the
+connection ends rather than waits. A request a retired home refuses is
+handed back, and runs on a new home or on any free thread.
 
 ## 2. Project layout
 

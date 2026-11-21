@@ -3,13 +3,13 @@
 //! wait, the role MONITOR's creator, a literal's placeholder, the tally
 //! that gives way, the rows a scan read, an index's searches and probes,
 //! the counts a dropped index leaves, a table's commit and compaction
-//! stamps, and who sees which table.
+//! stamps, who sees which table, and the user a session's tallies keep.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the sessions' and statements' views whose removal must
 /// fail their tests.
-pub const MONITORING: [Mutation; 11] = [
+pub const MONITORING: [Mutation; 12] = [
     Mutation {
         name: "monitoring-wait-not-shown",
         package: Package::Server,
@@ -118,6 +118,16 @@ pub const MONITORING: [Mutation; 11] = [
         original: ".filter(|t| every || !applicable(&*seen.state.catalog, who, &t.name).0.is_empty())",
         replacement: ".filter(|t| every || applicable(&*seen.state.catalog, who, &t.name).0.is_empty() || true)",
         integration: &["table_statistics::a_user_sees_the_tables_it_holds_a_privilege_on"],
+        unit: &[],
+    },
+    Mutation {
+        name: "monitoring-first-user-kept",
+        package: Package::Core,
+        breaks: "a session keeps the first user it ran as with its tallies, so its statements as another user are never tallied",
+        file: "src/txn/stop/activity/tallies.rs",
+        original: "        if self.0.load(Ordering::Relaxed) != hash {",
+        replacement: "        if self.0.load(Ordering::Relaxed) == 0 {",
+        integration: &["statement_statistics::a_session_tallies_each_user_it_runs_as"],
         unit: &[],
     },
 ];

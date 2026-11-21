@@ -20,16 +20,17 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 mod ahead;
 mod capture;
 mod claim;
+mod dirty;
 mod passing;
 
 pub(super) use ahead::Queued;
 pub use ahead::READ_AHEAD_PAGES;
 pub use capture::Capture;
 pub(super) use capture::Owed;
+pub(super) use dirty::Dirtied;
 
 use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
 use crate::disk::block::{BlockFile, BlockId};
-use crate::disk::io::Durability;
 use crate::disk::pager::{Extent, PageId, Pager};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::xxhash::{Words, Xxh3Map};
@@ -101,7 +102,7 @@ impl BufferPool {
             return Err(SqlError::new(Code::Api, "[DESIGN] a buffer pool needs at least one frame"));
         }
         Ok(BufferPool {
-            frames: (0..frames).map(|_| Frame::empty()).collect(),
+            frames: (0..frames).map(Frame::empty).collect(),
             shards: (0..SHARDS).map(|_| Shard::default()).collect(),
             empty: Mutex::new((0..frames).rev().collect()),
             sources: RwLock::new(Vec::new()),
@@ -110,6 +111,7 @@ impl BufferPool {
             hints: super::hits::Hints::new(frames),
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
             queued: Queued::default(),
+            dirtied: Dirtied::default(),
             owed: Owed::default(),
             reservation: None,
         })
@@ -466,7 +468,10 @@ impl BufferPool {
             }
         }
         *frame.content.write().unwrap_or_else(PoisonError::into_inner) = content;
-        frame.dirty.store(fill == Fill::Empty, Ordering::Release);
+        match fill {
+            Fill::Empty => self.made_dirty(frame),
+            Fill::Read => frame.dirty.store(false, Ordering::Release),
+        }
         frame.ready();
         self.eviction.accessed(claim.frame);
         Ok(frame)
@@ -525,7 +530,7 @@ impl BufferPool {
             frame.set_key(Some(old));
             *latch = content;
         }
-        frame.dirty.store(true, Ordering::Release);
+        self.made_dirty(frame);
         frame.ready();
         drop(Pin(frame));
     }
@@ -541,60 +546,5 @@ impl BufferPool {
         }
         frame.ready();
         drop(Pin(frame));
-    }
-}
-
-impl BufferPool {
-    /// Writes back every dirty page. A page is copied under its shared latch
-    /// and written with no lock held; one written to again meanwhile stays
-    /// dirty. A frame being filled is waited for first: the dirty page it
-    /// held may be being written back, no longer marked dirty.
-    ///
-    /// # Errors
-    ///
-    /// The first error of writing a page back; that page stays dirty.
-    pub fn flush(&self) -> Result<()> {
-        for frame in &self.frames {
-            frame.settled();
-            let Some(key) = self.pin_dirty(frame)? else { continue };
-            let pin = Pin(frame);
-            frame.settled();
-            let content = {
-                let latch = frame.content.read().unwrap_or_else(PoisonError::into_inner);
-                frame.dirty.store(false, Ordering::Release);
-                latch.clone()
-            };
-            if let Err(e) = self.write_back(key, &content) {
-                frame.dirty.store(true, Ordering::Release);
-                return Err(e);
-            }
-            drop(pin);
-        }
-        Ok(())
-    }
-
-    /// The page `frame` holds, pinned under its shard, if it is dirty.
-    fn pin_dirty(&self, frame: &Frame) -> Result<Option<Key>> {
-        let Some(key) = frame.key() else { return Ok(None) };
-        let _map = self.shared_map(key)?;
-        let dirty = frame.key() == Some(key) && frame.dirty.load(Ordering::Acquire);
-        if dirty {
-            frame.pins.fetch_add(1, Ordering::AcqRel);
-        }
-        Ok(dirty.then_some(key))
-    }
-
-    /// Writes back every dirty page, then syncs `file` as `durability` says.
-    ///
-    /// # Errors
-    ///
-    /// As `flush`; SQLCODE -910 if `file` is not registered; the errors of
-    /// the file's sync.
-    pub fn sync(&self, file: FileId, durability: Durability) -> Result<()> {
-        self.flush()?;
-        match self.source(file)? {
-            Source::Pages(pager) => pager.sync(durability),
-            Source::Blocks(blocks) => blocks.sync(durability),
-        }
     }
 }

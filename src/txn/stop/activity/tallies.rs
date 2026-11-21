@@ -2,10 +2,12 @@
 //! normalized text and user, the calls, their time, the most one took, the
 //! rows they gave or changed, read and spilled, and the last run. A
 //! statement's run is counted as it ends (`Tallied::done`), into its own
-//! session's tallies, so no two sessions ever take one lock as they run.
+//! session's tallies, so no two sessions ever take one lock as they run,
+//! and a statement takes its session's lock once.
 //! At most the STATEMENTS.KEPT the run began under are kept: a new one
 //! past them takes the place of the one called least.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::Activity;
@@ -77,10 +79,12 @@ impl Tally {
 }
 
 /// The tallies of statements, by the hashes of their normalized text and
-/// of their user.
+/// of their user, and the user a session's statements last ran as, with
+/// the hash of their name, so a run copies neither.
 #[derive(Debug, Default)]
 pub struct Tallies {
     by: Xxh3Map<(u64, u64), Tally>,
+    user: Option<(Arc<str>, u64)>,
 }
 
 impl Tallies {
@@ -96,15 +100,16 @@ impl Tallies {
         }
     }
 
-    /// Adds `run` under `key`, as `add` does, its text and user, given by
-    /// `named`, taken only for a new one: a run of a statement tallied
-    /// before copies nothing shared.
-    pub fn ran(&mut self, key: (u64, u64), run: &Run, kept: usize, named: impl FnOnce() -> Option<(Arc<Text>, Arc<str>)>) {
+    /// Adds `run` under `key`, as `add` does, its text, given by `named`,
+    /// and its user, the one kept, taken only for a new one: a run of a
+    /// statement tallied before copies nothing shared.
+    pub fn ran(&mut self, key: (u64, u64), run: &Run, kept: usize, named: impl FnOnce() -> Option<Arc<Text>>) {
         if let Some(had) = self.by.get_mut(&key) {
             had.ran(run);
             return;
         }
-        let Some((text, user)) = named() else { return };
+        let Some(user) = self.user.as_ref().filter(|(_, hash)| *hash == key.1).map(|(name, _)| Arc::clone(name)) else { return };
+        let Some(text) = named() else { return };
         if self.room(kept) {
             let mut tally = Tally { text, user, calls: 0, micros: 0, most: 0, rows: 0, read: 0, spilled: 0, last: run.last };
             tally.ran(run);
@@ -155,26 +160,22 @@ impl Tallies {
     }
 }
 
-/// The user a session's statements last ran as, and the hash of their
-/// name, kept so a run copies neither.
+/// The hash of the name of the user a session's tallies keep, 0 for none:
+/// only its session writes it, so a statement run by the same user as the
+/// last takes no lock to find its user's key.
 #[derive(Debug, Default)]
-pub(super) struct User(Mutex<Option<(Arc<str>, u64)>>);
+pub(super) struct User(AtomicU64);
 
 impl User {
-    /// The hash of the user `name`, kept as the user statements run as.
-    fn of(&self, name: &str) -> u64 {
-        let mut user = lock_builtin(&self.0);
-        if let Some((_, hash)) = user.as_ref().filter(|(had, _)| &**had == name) {
-            return *hash;
-        }
+    /// The hash of the user `name`, kept in `tallies` as the user
+    /// statements run as if it is not already.
+    fn of(&self, tallies: &Mutex<Tallies>, name: &str) -> u64 {
         let hash = xxh3_64(name.as_bytes());
-        *user = Some((Arc::from(name), hash));
+        if self.0.load(Ordering::Relaxed) != hash {
+            lock_builtin(tallies).user = Some((Arc::from(name), hash));
+            self.0.store(hash, Ordering::Relaxed);
+        }
         hash
-    }
-
-    /// The user kept, if its hash is `hash`.
-    fn named(&self, hash: u64) -> Option<Arc<str>> {
-        lock_builtin(&self.0).as_ref().filter(|(_, h)| *h == hash).map(|(name, _)| Arc::clone(name))
     }
 }
 
@@ -194,20 +195,18 @@ impl Tallied {
     /// The run of `text` by `user`, of `activity`'s session, begun at
     /// `began` while `kept` tallies are kept.
     pub fn of(activity: &Activity, text: &Text, (user, kept): (&str, usize), began: i64) -> Tallied {
-        Tallied { key: (text.key(), activity.user.of(user)), counts: activity.counts(), kept, began }
+        Tallied { key: (text.key(), activity.user.of(&activity.tallies, user)), counts: activity.counts(), kept, began }
     }
 
     /// The run ended, after `micros` of work, having given or changed
-    /// `rows` rows: tallied in `activity`'s session's tallies, a new
-    /// tally's text the statement the session notes running.
+    /// `rows` rows: tallied in `activity`'s session's tallies, under their
+    /// one lock, a new tally's text the statement the session notes
+    /// running.
     pub fn done(self, activity: &Activity, micros: u64, rows: u64) {
         let (read, spilled) = activity.counts();
         let (read, spilled) = (read.saturating_sub(self.counts.0), spilled.saturating_sub(self.counts.1));
         let run = Run { micros, rows, read, spilled, last: self.began };
-        let named = || {
-            let text = lock_builtin(&activity.statement).as_ref().map(|(t, _)| Arc::clone(t)).filter(|t| t.key() == self.key.0)?;
-            Some((text, activity.user.named(self.key.1)?))
-        };
+        let named = || lock_builtin(&activity.statement).as_ref().map(|(t, _)| Arc::clone(t)).filter(|t| t.key() == self.key.0);
         lock_builtin(&activity.tallies).ran(self.key, &run, self.kept, named);
     }
 }

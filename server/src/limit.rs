@@ -97,6 +97,16 @@ impl Permit {
         Permit { workers: Arc::clone(workers), shown: Arc::clone(shown), db: db.clone(), held: Some((held, busy)) }
     }
 
+    /// One of `workers`, once fewer statements run than SERVER.WORKERS of
+    /// `db` says: counted waiting in `shown` until then, and busy while it
+    /// is held.
+    pub(crate) async fn taken(workers: &Arc<Limit>, shown: &Arc<Shown>, db: &Database) -> Permit {
+        let waiting = Counted::of(shown, |s| &s.waiting);
+        let held = workers.take(|| count(db, WORKERS)).await;
+        drop(waiting);
+        Permit::new(workers, shown, db, held)
+    }
+
     /// Gives the permit up, for another statement.
     pub fn release(&mut self) {
         self.held = None;
