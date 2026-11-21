@@ -415,6 +415,7 @@ verification approach DO-178C expects (§8).
 | D450 | A served session's transactions are collected once their reply is sent |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
+| D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 
 ### The project
 
@@ -11685,6 +11686,53 @@ is retired, which moves the tree's stamp, and only once no operation
 entered before is under way (`reclaim.rs`). So the write starts from the
 leaf only while the stamp is the one the read saw, and descends again
 otherwise.
+
+#### D511. A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first
+
+The least and greatest values of 1,024 rows skip a part only if no row
+of it may match. On a column in no order they almost never do, and on
+one in near order they skip at a grain sixteen times the decoders' block.
+A group now keeps column imprints (Sidirourgos and Kersten, SIGMOD
+2013) of each column of exact numbers, datetimes and character strings,
+if COLUMNSTORE.IMPRINTS is ON (`engine/columns/imprints.rs`). The
+group's values are cut into at most 64 bins by edges drawn from a sorted
+sample of them, an equi-depth histogram, each value of few its own bin.
+Each 64 rows get a word, a bit for each bin a value of them falls in. A
+conjunct of the column makes a mask of the bins it may match, by the
+test the zone maps take (`Condition::may_match`) of each bin's bounds,
+so the mask is never narrower than the conjunct. A block whose word
+shares no bit with it is skipped. A null sets no bit, so a conjunct true
+of a null is not judged by imprints. The words of a part are kept
+together on pages of their own, read only by a scan whose condition can
+use them, and the edges in the group's header.
+
+Approximate numbers are left out, as a value no comparison orders would
+fall in a bin the mask may not hold. Imprints are not compressed: the
+words of a part take 128 bytes, a byte for 8 rows.
+
+Of each group, the scan orders the conjuncts it judges by the rows each
+keeps alone, by its zone maps and imprints, fewest first, so the
+narrowest is judged over the whole run and the others only over the rows
+it keeps. A conjunct of several columns, which the zone maps passed
+whole, now keeps the parts of each of its columns it may match with the
+others' values anywhere in the group.
+
+Imprints pay on columns in near order and on values rare among skewed
+ones. Of a column whose values are scattered evenly, 64 rows set most
+of the bits, so a narrow condition keeps most blocks, and the few it
+skips cut the scan's runs short, which costs more than judging them. A
+column whose blocks fall in more than a quarter of the bins on average
+therefore gets no imprints, as its group is written, and costs neither
+the words nor their reading. A scan skips only gaps of at least four
+blocks between the runs imprints keep. Even so, a scan whose runs
+imprints cut short pays more to start each than it saves, on the
+analytics bench's columns, so the option is OFF by default, for a table
+whose columns come in long stretches to turn on. Rejected was the positional SMA
+of Data Blocks (Lang et al., SIGMOD 2016), which narrows sorted columns
+alike but cannot skip a block of a rare value among skewed ones.
+
+A run the imprints leave short is gathered with the scan's other runs
+into full batches, not given alone (`frozen/batches/run.rs`).
 
 ## 2. Project layout
 

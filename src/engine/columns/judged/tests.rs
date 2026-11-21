@@ -43,7 +43,7 @@ fn judged_as_values(column: &Column, values: &[Value], conjuncts: &[Conjunct], w
     let all: Vec<u32> = (0..values.len()).map(|r| u32::try_from(r).unwrap()).collect();
     let given: Vec<u32> = all.iter().copied().step_by(3).collect();
     for conjunct in conjuncts {
-        let pred = Pred { column: 0, conjunct: conjunct.clone(), of_null: conjunct.matches_key(&[&Value::Null]) };
+        let pred = Pred { at: 0, column: 0, conjunct: conjunct.clone(), of_null: conjunct.matches_key(&[&Value::Null]) };
         let expected =
             |rows: &[u32]| -> Vec<u32> { rows.iter().copied().filter(|&r| conjunct.matches_key(&[&values[index(r)]])).collect() };
         assert_eq!(pred.kept(column, None), Some(expected(&all)), "{what}: {conjunct:?}");
