@@ -40,7 +40,7 @@ pub(super) use late::{Deferred, resolved};
 use project::Place;
 pub(super) use project::{projectable, projected, vector_of};
 pub(super) use shaped::{Shaped, filter_step, project_step, through};
-pub(super) use stream::{Batches, whole_batches};
+pub(super) use stream::{Batches, reads_by_batch, whole_batches};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;

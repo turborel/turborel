@@ -11407,7 +11407,10 @@ one.
 
 #### D560. Window functions run over batches, partitions and peers found by a kernel over the sort's keys, giving way to the rows' form for errors and the work area
 
-A window reads its input's batches (`exec/window/batched.rs`). Of a sort
+A window whose input reads by batch reads its batches
+(`exec/window/batched.rs`); over any other input it runs a row at a
+time, as making its rows batches and its batches rows again costs more
+than the batches save. Of a sort
 the planner placed under it by its partitioning's and ordering's keys,
 each batch comes beside the normal keys the sort made of its rows
 (D364), so no key is written twice; of any other input, each batch's

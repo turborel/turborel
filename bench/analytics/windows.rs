@@ -7,13 +7,19 @@
 //! Each window's values are summed by the query, so the rows are not
 //! fetched one by one. Each runs at EXECUTOR.DEGREE 1 and 6. Run with
 //! `cargo xtask bench`, on the harness (RULES.md R-BENCH-1); with
-//! `ONLY_VAR` of `analytics.rs` set to `windows`, these alone.
+//! `ONLY_VAR` of `analytics.rs` set to `windows`, these alone;
+//! `STORE_VAR` of `rows` or `columns` runs one table's alone, and
+//! `DEGREE_VAR` one degree's, so a run stays short.
 
 use super::harness::{Bench, Case};
 use turborel::db::{Database, Session};
 
 /// The variable giving the rows of V and VC.
 const ROWS_VAR: &str = "TURBOREL_BENCH_WINDOWS_ROWS";
+/// The variable naming the one table run: `rows` for V, `columns` for VC.
+const STORE_VAR: &str = "TURBOREL_BENCH_WINDOWS_STORE";
+/// The variable naming the one degree run.
+const DEGREE_VAR: &str = "TURBOREL_BENCH_WINDOWS_DEGREE";
 /// Rows of V and VC unless `ROWS_VAR` gives them.
 const ROWS: u64 = 2_000_000;
 /// Rows each INSERT of the setup writes.
@@ -47,6 +53,22 @@ fn rows() -> u64 {
     std::env::var(ROWS_VAR).ok().and_then(|v| v.parse().ok()).unwrap_or(ROWS)
 }
 
+/// The tables run, each with its label: both unless `STORE_VAR` names one.
+fn tables() -> Vec<(&'static str, &'static str)> {
+    let store = std::env::var(STORE_VAR).unwrap_or_default();
+    [("V", "", "rows"), ("VC", " (columnstore)", "columns")]
+        .into_iter()
+        .filter(|(_, _, s)| store.is_empty() || store == *s)
+        .map(|(table, label, _)| (table, label))
+        .collect()
+}
+
+/// The degrees run: both unless `DEGREE_VAR` names one.
+fn degrees() -> Vec<usize> {
+    let one: Option<usize> = std::env::var(DEGREE_VAR).ok().and_then(|v| v.parse().ok());
+    DEGREES.into_iter().filter(|d| one.is_none_or(|o| o == *d)).collect()
+}
+
 /// Schema B: V and VC, filled with `n` rows.
 fn database(n: u64) -> (Database, Session) {
     let db = Database::new();
@@ -61,7 +83,7 @@ fn database(n: u64) -> (Database, Session) {
         let values: Vec<String> = (first..(first + PER_INSERT).min(n))
             .map(|k| format!("({k}, {}, {}, {}, {}, {}.25)", k % 1_000, k * 7_919 % 200_000, k % 97, k * 104_729 % n, k % 13))
             .collect();
-        for table in ["V", "VC"] {
+        for (table, _) in tables() {
             s.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
         }
         s.commit().unwrap();
@@ -83,10 +105,10 @@ fn fetched(s: &Session, sql: &str, n: u64) -> u64 {
 pub fn workloads(bench: &Bench) {
     let n = rows();
     let (_db, s) = database(n);
-    for (table, label) in [("V", ""), ("VC", " (columnstore)")] {
+    for (table, label) in tables() {
         for (name, call) in QUERIES {
             let sql = format!("SELECT COUNT(*), SUM(W) FROM (SELECT {call} AS W FROM {table}) AS Q");
-            for degree in DEGREES {
+            for degree in degrees() {
                 s.run(&format!("SET EXECUTOR.DEGREE = {degree}")).unwrap();
                 bench.measure(Case::new(format!("window {name}{label}"), "rows").threads(degree), || fetched(&s, &sql, n));
             }

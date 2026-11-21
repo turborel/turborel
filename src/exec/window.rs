@@ -77,12 +77,13 @@ const LIST_SEGMENTS: usize = 2;
 const OFFSET_VALUES: usize = 2;
 
 /// The rows of `plan`, window functions over its input: over batches
-/// where its calls admit it (`batched.rs`, RULES.md D560), else a row at
-/// a time.
+/// where its calls admit it and its input reads by batch (`batched.rs`,
+/// RULES.md D560), else a row at a time, as rows made batches and back
+/// cost more than the batches save.
 #[inline(never)]
 pub(super) fn windowed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::Window { window: shape, .. } = &plan else { return failed(broken("a window is not one")) };
-    if super::batched(db) && batched::admits(shape) {
+    if super::batched(db) && batched::admits(shape) && super::batch::reads_by_batch(&shape.input, db) {
         return match window_batches(plan, db, tx) {
             Ok(batches) => Box::new(batches.flat_map(|kept| match kept {
                 Ok((batch, _)) => rows_of_batches(&[batch]).into_iter().map(Ok).collect::<Vec<_>>(),

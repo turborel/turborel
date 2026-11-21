@@ -147,7 +147,7 @@ pub(super) fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
 
 /// Whether every table `plan` scans reads by batch
 /// (`TableStorage::reads_by_batch`).
-pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
+pub(in crate::exec) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
     match plan {
         // A scan in an order too, merged by batch
         // (`TableStorage::scan_ordered_batches`).
