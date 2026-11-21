@@ -29,6 +29,7 @@ impl PhysicalPlanner<'_> {
             | Plan::MergeJoin(_)
             | Plan::RangeJoin(_)
             | Plan::Aggregate { .. }
+            | Plan::GroupJoin(_)
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }

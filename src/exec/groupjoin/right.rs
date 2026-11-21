@@ -28,7 +28,10 @@ impl RightBytes {
     /// batches it holds; whether the join still holds them all.
     pub(in crate::exec) fn read(&self, batch: &Batch, rows: usize) -> bool {
         let more = batch.bytes().saturating_add(rows.saturating_mul(TABLE_ROW_BYTES));
-        let before = self.bytes.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |b| Some(b.saturating_add(more))).unwrap_or_else(|b| b);
+        let mut before = self.bytes.load(Ordering::Relaxed);
+        while let Err(now) = self.bytes.compare_exchange_weak(before, before.saturating_add(more), Ordering::Relaxed, Ordering::Relaxed) {
+            before = now;
+        }
         before.saturating_add(more) <= self.limit
     }
 
