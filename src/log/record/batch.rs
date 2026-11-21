@@ -85,7 +85,7 @@ pub fn update_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: R
     out.put_u8(RECORD_VERSION);
     out.put_u8(UPDATE);
     out.put_u64(tx);
-    put_row_change(&mut out, (table, generation, id), &[before, after]);
+    super::images::put_update(&mut out, (table, generation, id), before, after);
     out
 }
 

@@ -9,6 +9,7 @@ use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use super::kept::needs_row;
 use super::owed::{Entry, Owed};
 use super::{Committing, Joined, Sharing, TableLock, Timestamp, Transactions, Txn, UndoFailure};
 use crate::catalog::{IndexDesc, QualifiedName};
@@ -323,7 +324,7 @@ impl State {
         // entries are each version's own.
         let sharing = || found.get_or_init(of_table).iter().map(|&(_, index, ix)| (&**index, ix, Sharing::of(ix, lock))).collect();
         let needs = |kept: Kept| {
-            !globals.get_or_init(over).is_empty() || indexes.get_or_init(sharing).iter().any(|&(_, _, shared)| !shared.shares(kept))
+            needs_row(!globals.get_or_init(over).is_empty(), indexes.get_or_init(sharing).iter().map(|&(_, _, shared)| shared), kept)
         };
         let removed = |id, row: Row, kept: Kept| {
             remove_global(globals.get_or_init(over), id, &row);
