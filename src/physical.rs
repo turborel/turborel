@@ -16,6 +16,7 @@
 
 mod access;
 mod analyzed;
+mod blind;
 pub use analyzed::{Analyzed, Counted, NodeCount, Operator};
 pub(crate) use analyzed::{counted, millis, operators};
 mod built;
@@ -53,6 +54,8 @@ mod range;
 pub use range::{Bound, Pruned, RangeJoin};
 mod raising;
 mod recognized;
+mod semi;
+pub use semi::{SemiJoin, SemiMethod};
 mod shown;
 pub(crate) mod spatial;
 mod streamed;
@@ -60,8 +63,8 @@ mod streamed;
 pub use cardinality::Injected;
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
+pub(crate) use kept::{Kept, filled_plan_as_is, keepable, placed, prepared_plan, same_shape};
 pub use kept::{Place, ProbeSlot};
-pub(crate) use kept::{filled_plan, filled_plan_as_is, keepable, same_shape};
 
 use std::sync::Arc;
 
@@ -269,6 +272,8 @@ pub enum Plan {
     },
     /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
     MergeJoin(Box<MergeJoin>),
+    /// \[DESIGN\] A semi join or an antijoin (`physical/semi.rs`, RULES.md D540).
+    SemiJoin(Box<SemiJoin>),
     /// \[DESIGN\] A range join (`physical/range.rs`, RULES.md D580).
     RangeJoin(Box<RangeJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
@@ -530,6 +535,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Filter { cond, input } => self.filter(cond, input, want, None),
             LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
+            LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_join((*anti, cond), (left, right), want),
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
             LogicalPlan::Distinct { input } => self.distinct(input, want),

@@ -221,6 +221,10 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
             give(&mut m.left, work);
             give(&mut m.right, work);
         }
+        Plan::SemiJoin(s) => {
+            give(&mut s.left, work);
+            give(&mut s.right, work);
+        }
         Plan::RangeJoin(r) => {
             give(&mut r.left, work);
             give(&mut r.right, work);

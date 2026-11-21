@@ -8,10 +8,10 @@
 //!   each row hashed (`HASH_ROW`); the build side, chosen as the plan is
 //!   made, is the operand of fewer rows (`enumerate/realize.rs`). It keeps
 //!   the order of the side probing it.
-//! * An index nested-loop join, of an inner or LEFT join whose right
-//!   operand is one relation an index of whose table answers an equality:
-//!   each left row probes it (`physical/indexed.rs`). It keeps the left's
-//!   order.
+//! * An index nested-loop join, of an inner, LEFT or semi join or an
+//!   antijoin whose right operand is one relation an index of whose table
+//!   answers an equality: each left row probes it (`physical/indexed.rs`),
+//!   a semi join's stopping at the first match. It keeps the left's order.
 //! * A merge join, of an inner or LEFT join on an equality of columns
 //!   whose types order as they compare, if one operand has a plan in the
 //!   key's order, as Selinger et al., "Access Path Selection in a
@@ -103,7 +103,7 @@ impl Space<'_> {
     /// The cost of a probe of an index of `r`'s table by one of `keys`, if
     /// the join is inner or LEFT and `r` is one relation one answers.
     fn probe_cost(&self, kind: Kind, keys: &[(usize, usize)], r: Set) -> Option<f64> {
-        if !matches!(kind, Kind::Inner | Kind::Left) {
+        if !matches!(kind, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) {
             return None;
         }
         let rel = Space::single(r)?;

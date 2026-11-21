@@ -144,6 +144,19 @@ fn scan_branch(
     true
 }
 
+/// Adds the branch of `plan`, an index scan, to `out`, split into morsels
+/// of about `rows` rows, its probe placed with its statement's slots
+/// (RULES.md D610), judged by the runtime filters `told`: whether it
+/// could be.
+fn index_branch(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), told: &[Told], out: &mut Vec<Branch>) -> Result<bool> {
+    let Plan::IndexScan { table, index, probe, slots, columns, covering, est, .. } = plan else { return Ok(false) };
+    let placed = db.probe(probe, slots)?;
+    let scanned = Scanned { table, index, probe: &placed, columns, covering: *covering };
+    let Some(split) = indexed::split(db, tx, &scanned, (crate::physical::parallel_rows(*est), rows))? else { return Ok(false) };
+    out.push(Branch { split, steps: judged(told.to_vec()), scanned: None });
+    Ok(true)
+}
+
 /// Adds the branches of `plan` to `out`, each split into morsels of about
 /// `rows` rows, `told` the runtime filters of its rows' columns taken
 /// down it: whether each could be, and each built operand held.
@@ -157,11 +170,8 @@ fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Li
     if let Plan::SeqScan { table, columns, .. } = plan {
         return Ok(scan_branch(db, (table, columns), (tx, rows), (None, &below), out) && stepped(out, first, judged(here)));
     }
-    if let Plan::IndexScan { table, index, probe, columns, covering, est, .. } = plan {
-        let scanned = Scanned { table, index, probe, columns, covering: *covering };
-        let Some(split) = indexed::split(db, tx, &scanned, (crate::physical::parallel_rows(*est), rows))? else { return Ok(false) };
-        out.push(Branch { split, steps: judged(told.to_vec()), scanned: None });
-        return Ok(true);
+    if let Plan::IndexScan { .. } = plan {
+        return index_branch(plan, (db, tx, rows), told, out);
     }
     if let Plan::Filter { cond, input, .. } = plan
         && let Plan::SeqScan { table, columns, .. } = input.bare()

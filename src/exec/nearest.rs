@@ -15,7 +15,7 @@ use crate::catalog::{IndexDesc, KeyShape};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::index::{Key, NeighbourEntries, Probe};
-use crate::logical::Truth;
+use crate::logical::{Truth, filled_expr};
 use crate::physical::{NearestRead, Plan};
 use crate::storage::{Condition, Row, RowId, TableStorage};
 use crate::txn::{TxId, checked};
@@ -31,11 +31,21 @@ pub(super) fn nearest(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     }
 }
 
+/// `read`, the distance operand of its measure, a slot of a kept plan,
+/// given its statement's value (RULES.md D610).
+fn slotted_measure(mut read: NearestRead, db: &Db) -> Result<NearestRead> {
+    if let Some(slots) = db.slots() {
+        read.measure = filled_expr(read.measure, slots)?;
+    }
+    Ok(read)
+}
+
 fn open(read: NearestRead, db: &Db, tx: TxId) -> Result<RowIter> {
     if let Some(stop) = db.tx.stop_of(tx) {
         stop.check()?;
     }
     let storage = Arc::clone(db.storage_of(&read.table)?);
+    let read = slotted_measure(read, db)?;
     let Some(mut query) = read.query() else { return Err(broken("a nearest read has no constant distance operand")) };
     // A score's bounds and its calls read one snapshot (D87).
     if read.approximate.is_some() {

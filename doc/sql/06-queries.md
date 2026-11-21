@@ -276,6 +276,14 @@ written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =
 table is also filtered first by the OR of its own conditions, here
 `P.B = 'B1' OR P.B = 'B2'`. OPTIMIZER.FACTOR_DISJUNCTIONS turns this off.
 
+A query whose select list is MIN and MAX alone, with no GROUP BY, needs
+the values of the columns those functions read, not how often a join
+repeats them. Once its joins are ordered, each join of a table nothing
+above it reads is a semi join, which gives each row once at its first
+match. Joins that would multiply the rows many times make none. EXPLAIN
+shows HashSemiJoin and SemiIndexNestedLoop, and
+OPTIMIZER.SEMI_REDUCTION turns this off.
+
 SET PLANNER.JOIN_ENUMERATION = 'GREEDY' plans a session's joins in a
 left-deep order instead, each next join the cheapest, as to compare the
 two. EXPLAIN shows the order and the algorithm chosen
@@ -644,6 +652,15 @@ for each row. A scalar subquery of two rows for a row still fails with
 SQLCODE -811, and COUNT of a row with no match is still 0. A function
 that returns one value from a subquery of its parameters is unnested
 the same way, inlined where it is invoked.
+
+EXISTS, NOT EXISTS, IN and NOT IN of a subquery that is one of the
+conditions ANDed in a WHERE or HAVING clause become a semi join or an
+antijoin. Each outer row is kept at its first matching row, or kept for
+having none, and no row of the subquery is read twice for it. NOT IN
+keeps its exact meaning with nulls: a row is kept only if no value of
+the subquery equals it or may equal it. EXPLAIN shows HashSemiJoin,
+HashAntiJoin and their kin, and the setting OPTIMIZER.SEMI_JOINS turns
+the rewrite off.
 
 A subquery stays nested if it invokes a function that is not
 deterministic or that may change data, takes a sequence's next value, is

@@ -14,6 +14,7 @@
 //! and is not kept.
 
 use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 
 use super::Params;
 use crate::ast::TableName;
@@ -45,7 +46,9 @@ impl ParameterType {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Dynamic {
     /// Their values, as the statement is executed; none as it is prepared.
-    values: Option<Vec<Value>>,
+    /// Shared with the plans an execution opens, which read them as
+    /// slots (RULES.md D610): one set while one is open copies them.
+    values: Option<Arc<[Value]>>,
     /// Each one's type, once its context gave it one.
     types: RefCell<Vec<Option<ParameterType>>>,
     /// Whether each typed `?` is bound as a slot, to be kept.
@@ -89,7 +92,7 @@ impl Params {
     pub(crate) fn executing(values: Vec<Value>) -> Params {
         let types = RefCell::new(vec![None; values.len()]);
         Params {
-            dynamic: Some(Dynamic { values: Some(values), types, slots: false, held: Cell::new(false), implicit: None }),
+            dynamic: Some(Dynamic { values: Some(values.into()), types, slots: false, held: Cell::new(false), implicit: None }),
             ..Params::default()
         }
     }
@@ -101,7 +104,7 @@ impl Params {
         let types = RefCell::new(vec![None; values.len()]);
         let implicit = self.dynamic.as_ref().and_then(|d| d.implicit.clone());
         Params {
-            dynamic: Some(Dynamic { values: Some(values), types, slots: true, held: Cell::new(false), implicit }),
+            dynamic: Some(Dynamic { values: Some(values.into()), types, slots: true, held: Cell::new(false), implicit }),
             transitions: self.transitions.clone(),
             routine: self.routine.clone(),
             execution: self.execution,
@@ -116,13 +119,19 @@ impl Params {
         self.dynamic.as_ref().and_then(|d| d.values.as_deref()).unwrap_or_default()
     }
 
+    /// The values of its dynamic parameters, shared, for a kept plan to
+    /// read as its slots (RULES.md D610); none as a statement is prepared.
+    pub(crate) fn dynamic_slots(&self) -> Option<Arc<[Value]>> {
+        self.dynamic.as_ref().and_then(|d| d.values.clone())
+    }
+
     /// Makes `value` the value of its `index`-th dynamic parameter.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if it has no such parameter.
     pub(crate) fn set_dynamic(&mut self, index: usize, value: Value) -> Result<()> {
-        let slot = self.dynamic.as_mut().and_then(|d| d.values.as_mut()).and_then(|v| v.get_mut(index));
+        let slot = self.dynamic.as_mut().and_then(|d| d.values.as_mut()).and_then(|v| Arc::make_mut(v).get_mut(index));
         let slot = slot.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] there is no dynamic value {index}")))?;
         *slot = value;
         Ok(())

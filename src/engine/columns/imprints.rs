@@ -208,7 +208,7 @@ pub fn put_words<S: Seal>(
 }
 
 /// The runs of the parts of `zone`, in order.
-fn parts_of(zone: &Zone) -> impl Iterator<Item = (u32, u32)> + '_ {
+pub(super) fn parts_of(zone: &Zone) -> impl Iterator<Item = (u32, u32)> + '_ {
     let end = zone.run.first.saturating_add(zone.run.rows);
     (0..zone.parts.len()).map(move |n| {
         let from = zone.run.first.saturating_add(u32::try_from(n).unwrap_or(u32::MAX).saturating_mul(PART_ROWS));
