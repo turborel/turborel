@@ -245,6 +245,15 @@ pub fn constant_prefix(pattern: &Value, escape: Option<&Value>) -> Option<String
     Some(literal.collect())
 }
 
+/// \[DESIGN\] Of a LIKE of constant `pattern` and `escape`, if it cannot
+/// raise an error: whether what follows its prefix (`constant_prefix`) is
+/// `%` alone, so every string beginning with the prefix matches it.
+pub fn constant_rest_is_any(pattern: &Value, escape: Option<&Value>) -> bool {
+    let Some(Some(compiled)) = constant_pattern(pattern, escape) else { return false };
+    let mut rest = compiled.specs.iter().skip_while(|s| matches!(s, Spec::Character(_)));
+    matches!(rest.next(), Some(Spec::AnyString)) && rest.next().is_none()
+}
+
 // Unit tests: the specifiers, escapes, and padding (RULES.md R-TEST-1,
 // R-TEST-2).
 #[cfg(test)]

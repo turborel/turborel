@@ -81,8 +81,12 @@ fn maps(bench: &Bench) {
     bench.measure(keys("map key u64, Xxh3Hasher"), || each(|n| xxh3.hash_one(n)));
     bench.measure(keys("map key (u64, u64), MurmurHasher"), || each(|n| murmur.hash_one((n, n ^ 7))));
     bench.measure(keys("map key (u64, u64), Xxh3Hasher"), || each(|n| xxh3.hash_one((n, n ^ 7))));
-    bench.measure(keys("map key short name, MurmurHasher"), || each(|n| murmur.hash_one(short.get(..10 - (n & 1) as usize).unwrap_or_default())));
-    bench.measure(keys("map key short name, Xxh3Hasher"), || each(|n| xxh3.hash_one(short.get(..10 - (n & 1) as usize).unwrap_or_default())));
+    bench.measure(keys("map key short name, MurmurHasher"), || {
+        each(|n| murmur.hash_one(short.get(..10 - (n & 1) as usize).unwrap_or_default()))
+    });
+    bench.measure(keys("map key short name, Xxh3Hasher"), || {
+        each(|n| xxh3.hash_one(short.get(..10 - (n & 1) as usize).unwrap_or_default()))
+    });
     bench.measure(keys("map key (name, u64), MurmurHasher"), || each(|n| murmur.hash_one((name, n))));
     bench.measure(keys("map key (name, u64), Xxh3Hasher"), || each(|n| xxh3.hash_one((name, n))));
     bench.measure(keys("map key 64 bytes, MurmurHasher"), || each(|n| murmur.hash_one(wide(n))));

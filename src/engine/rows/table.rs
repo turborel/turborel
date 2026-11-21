@@ -120,7 +120,7 @@ impl RowTable {
             pool: Arc::clone(&files.pool),
             file: files.file,
             undo: Arc::clone(&files.undo),
-            versions: Versions::bounded(options.bounds(), Arc::clone(&files.work)),
+            versions: Versions::bounded(options.bounds(), Arc::clone(&files.work), Arc::clone(&files.statuses)),
             meta,
             tree,
             format: RecordFormat::new(types),

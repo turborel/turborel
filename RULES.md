@@ -373,6 +373,9 @@ verification approach DO-178C expects (§8).
 | D378 | An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock |
 | D379 | A top-N reads its other columns late and tells the scan the bound of its first key, so groups past it are not read |
 | D380 | A whole sort gives batches, writes integer keys by a kernel, looks for a cancel as it gives rows, and spills its runs run in parallel |
+| D381 | A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree |
+| D382 | A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff |
+| D383 | An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count |
 | D387 | Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
@@ -394,6 +397,11 @@ verification approach DO-178C expects (§8).
 | D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
 | D419 | A row of values that reads nothing is evaluated, not planned |
 | D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
+| D421 | A row's constraint that cannot be deferred is checked as the statement's end gathers its checks |
+| D422 | A kept UPDATE or DELETE learns its object rows' plan with slots as a query does |
+| D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
+| D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
+| D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 
 ### The project
@@ -2277,8 +2285,10 @@ rolled back. If it committed, a transaction reading at one snapshot is
 refused (SQLCODE -911), and commit checks that nothing read has changed.
 
 Commit is atomic across engines. Each validates at the commit timestamp and
-then commits at it. A commit returns only once every commit before it has
-ended, so its session's next snapshot counts it. A transaction that wrote
+then commits at it. The built-in engines commit with one store in a status
+table and stamp their versions after the locks are released (D440). The locks go before the commit record's sync, and
+snapshots read only commits made durable (D441). A commit returns only once every commit up to it is durable, so its
+session's next snapshot counts it. A transaction that wrote
 nothing commits at its snapshot, unchecked. Its end collects only the tables
 whose versions await collection, since it leaves no garbage of its own.
 
@@ -10509,6 +10519,146 @@ rows past the greatest held not taken, so only those the run keeps are
 sorted and made. Of more, nearly every row of a morsel is taken, so the
 morsel is sorted whole by its keys and only its first rows made.
 
+#### D381. A column keeps its most common values and a histogram of the rest, read with the changes since its pass; an index estimates a range by its share of the tree
+
+A statistics pass keeps, of each column, up to 32 values that its sample
+holds at least twice and at least one and a half times as often as the
+average distinct value, each with the share of the table's rows it holds
+(`stats/common.rs`). The histogram is drawn from the sample without them,
+an end-biased histogram (Ioannidis and Poosala, SIGMOD 1995). An equality
+with a common value keeps its share, and with any other value the rest of
+the rows shared among the other distinct values. An order comparison
+keeps the common values on its side and the histogram's share of the
+rest. A histogram alone gives every value of a bucket its average share,
+so a value held by half a table was estimated as rare as any other, and
+an index was read for it. The sample is sorted, so a value's repeats are
+one run and the list costs no second pass. A string the sample cuts is
+never common, since no value equals the part kept.
+
+A sampled pass reads runs of 128 row ids, and rows near in a table often
+share a value. Each value's repeats within one run count once before its
+distinct values are scaled (Chaudhuri, Das and Srivastava, SIGMOD 2004),
+so a clustered column is not taken for one of few values.
+
+The row store answers with the rows written since the pass and the rows
+it holds now (`stats/since.rs`). Once rows were written, the least and
+greatest values are no longer bounds, so a range past the greatest keeps
+at least what an equality would. A column whose greatest value rose at
+each of the last two passes that found it changed grows with insertion,
+and a range past it keeps the share of rows written since. A pass that
+finds the same greatest value, as one soon after another may, keeps the
+count. A column whose distinct values
+were within 5% of its rows is a key, and its distinct values grow with
+the rows.
+
+A LIKE whose constant pattern begins with characters keeps the strings
+from that prefix up to the next one, by the common values and the
+histogram, never less than an equality with the prefix keeps, and a
+part of them if the rest of the pattern asks more than `%`
+(`physical/estimate/like.rs`): the share of the sampled strings with the
+prefix that the whole pattern keeps, if the sample holds at least 8 of
+them, as no synopsis tells how often characters follow others, else a
+quarter. Within a histogram's bucket a string is placed by its first
+four characters past the bucket's bounds' common prefix, read as a
+fraction whose digits are each character's place among those the
+bounds span, widened to the digits or the letters when the bounds' lie
+among them, so a prefix narrower than a bucket keeps its part of it
+(`stats/parts.rs`).
+
+A B-link index counts the entries of a range of keys it need not check
+up to 128 of them. Past that it descends to each bound, taking at each
+node the share of its children left of the child it follows, and gives
+the difference of the two shares times its live entries
+(`engine/tree/estimate.rs`), never fewer than it counted (D302). A range
+of any size is so estimated in a few pages, where counting up to 1,000
+entries read up to eight leaves and gave nothing past them. Within a
+B-tree's factor of two in how full its nodes are, the estimate is within
+one and a half times the entries on trees filled in key order or not.
+
+The plug-in STATISTICS payload carries each column's common values at
+format 1, none from a plug-in that sends none.
+
+#### D382. A table keeps a sample of its rows, which estimates a conjunction that goes together or that no synopsis answers; other conjuncts combine by exponential backoff
+
+A statistics pass keeps up to 1,024 whole rows by Vitter's Algorithm R
+over the rows it reads, from a fixed seed (`stats/sample.rs`). A string
+is kept as its first 256 characters and a large object as an empty one.
+The sample is in memory only and is neither sent to nor asked of
+plug-ins.
+
+The planner estimates a table's conjuncts together
+(`physical/estimate/conjunction.rs`). Those on one column are one range,
+so a BETWEEN keeps the rows between its bounds and not the product of
+each half. Equalities with constants whose columns an index's key
+answers are one factor (D383). A conjunction of two or more conjuncts
+over two or more columns, or with a conjunct no column's synopsis
+answers, is evaluated on the sample when each of its conjuncts can be,
+deterministic and of no subquery, routine, sequence value or `?` not yet
+given (`physical/estimate/sampled.rs`). Of n rows, k kept give k/n when
+k is at least 8 or the sample is the whole table, which it is of a table
+of up to 1,024 rows. Fewer give the synopses' estimate, at most
+(k + 3(1 - f))/n of a sample of the share f of the table: the rule of
+three, the bound an empty sample allows (Hertzschuch et al., SIGMOD
+2021), narrowed as the sample nears the whole table. The sample costs at
+most 1,024 evaluations however large the table, so small tables are
+sampled too, where the sample is most of the table and a conjunction
+that keeps no row is estimated to keep none. The sample remembers what
+was asked of it, up to 1,024 answers, each kept under a fingerprint of
+the conjuncts' columns, operators and constants in any order, hashed by
+XXH3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
+statement it plans again: it never changes, so an answer holds until the
+next pass replaces it. An index remembers its distinct keys' estimate
+until a register of its sketch is raised. Of fewer, equalities of two or more
+columns with constants not common take the columns' joint distinct
+values in the sample instead, scaled to the table as a column's are
+(`physical/estimate/joint.rs`): a combination the sample holds keeps the
+rows present over them, where the product of each column's share takes
+every pair as possible and falls ten times and more below the truth of
+correlated columns. A combination the sample does not hold keeps, by
+Good and Turing, the share of rows of combinations seen once among the
+combinations never seen, so values that never go together, of columns
+whose every combination the sample saw more than once, keep no row. A
+row whose evaluation fails counts as
+kept and nothing is raised, as planning raises nothing of a condition
+the statement evaluates (D15). The sample answers a city and its country,
+a column compared with another and a pattern with a leading wildcard,
+which synopses of single columns cannot.
+
+The factors left combine by exponential backoff, the most selective
+whole, the next by its square root, the third its fourth root and the
+fourth its eighth, the rest ignored (`physical/estimate/backoff.rs`).
+Multiplying them is right only of independent columns, and conjuncts
+written together seldom are, so an estimate by the product falls below
+the truth by every correlation, and a join ordered on it multiplies the
+error. Backoff errs between the product and the most selective conjunct
+alone.
+
+A filter's conjuncts are grouped by the scan their columns come from,
+and a filter over a table's access takes its conjuncts the same way, so
+the plan's estimate and the join enumeration's agree (D370). The sample
+costs at most 1,024 evaluations of each conjunct of a conjunction it
+estimates, and is never asked of a filter of one conjunct a synopsis
+answers, nor of a probe of a unique key, so point queries never pay it.
+
+Rejected. A per-column sketch kept as rows are written is the most
+accurate distinct count but costs a hash of each written column on every
+insert and update. Multi-dimensional histograms are costly to build and
+poor beyond two columns, where the sample answers any number.
+
+#### D383. An index's distinct keys are its columns' joint distinct values, and a column alone in a key takes its index's count
+
+An index's sketch counts every key written to it (`index/stats.rs`), so
+its distinct keys are the distinct combinations of its key's columns,
+correlated columns counted once. The state answers
+`Statistics::group_distinct` from the table's indexes of plain columns
+(`stats/keyed.rs`): of columns that are exactly an index's key, its
+distinct keys, and of columns holding a unique key's, the rows. A
+column alone in an index's key takes the index's count for its distinct
+values, which saw every key where a sample scales from some. An
+equality of each of an index's columns with a constant then keeps one
+row in its distinct keys and not the product of each column's share.
+Each index's count is taken once for the statistics one planning asks.
+
 #### D387. Two relations a class of equalities joins are joined by its key, never by a product, though no conjunct reads both
 
 The inner joins' equalities of two columns make classes of columns
@@ -11005,7 +11155,6 @@ the committed one its snapshot shows, as the write refuses any other
 ends. Another engine reads the row and writes it, as before. A row of a
 system-time period is read first still, so that its period refuses a
 write before it is made.
-
 #### D418. A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot
 
 A kept or learned plan held no join (D45), so a query joining two
@@ -11044,6 +11193,158 @@ variable at each line, and the copies were a fiftieth of it. A value of
 the type's length is now kept as it is (`types/character.rs`), the value
 the cut and the padding would give.
 
+#### D421. A row's constraint that cannot be deferred is checked as the statement's end gathers its checks
+
+A statement's end gathered a check of each constraint of each row it
+wrote, each naming its table and constraint, held them in a list, and
+then found each constraint again by name to check it. An order entry
+writes a dozen rows of tables with NOT NULL constraints only, and the
+gathering, the list and the finding were most of its statements' ends.
+A row's constraint that cannot be deferred, gathered while no check is
+held before it, is now checked at once, as it would be the first of the
+list (`db/integrity/gather.rs`). What may wait, or follows a check held,
+is held as before, so checks are made in the order they were.
+
+#### D422. A kept UPDATE or DELETE learns its object rows' plan with slots as a query does
+
+A kept UPDATE or DELETE kept the plan of its object rows only if it was
+one probe of a whole unique key (D45); any other was optimized and
+planned again at each run. A table of few rows, as an order entry's
+districts, is read whole and filtered rather than probed, so each of
+its order entries planned its district's update again. Such a write now
+learns its plan as a query does (D414): each of its first runs plans its
+object rows with its values, which it runs, and with its slots, and the
+one with slots is kept once `LEARNED_RUNS` in a row give both one shape,
+to be learned again once a table it reads gains or loses rows as its
+statistics would be gathered again for (`db/prepared/plans.rs`).
+#### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
+
+The row store stamped each changed row with its commit timestamp, a tree
+read and a tree write per row, after the sync of the commit record and
+before the transaction's locks were released. A hot row, such as an order
+entry's warehouse, stayed owned through all of it.
+
+Each store now keeps the statuses of its writing transactions
+(`engine/rows/mvcc/status.rs`), a fixed array of slots read without a
+lock. A transaction claims its slot before its first version is written.
+Commit stores the commit timestamp there. That one store makes every
+version it wrote committed for every reader and writer of the store, and
+the garbage is filed without touching the tree. The versions are stamped
+once the locks are released, still inside the checkpoint gate
+(`TableStorage::settle`). A writer that replaces a version not yet stamped
+appends it to the undo store stamped, so only a row's newest version is
+ever unstamped. A stamp replaces an entry only as it read it.
+
+The semantics hold for these reasons.
+
+- Before the store every version of the transaction reads as open, which
+  only the transaction sees. After it, all read as committed at its
+  timestamp. The stable timestamp passes the commit only after the store,
+  as before, so no snapshot sees part of a commit.
+- A reader at a snapshot gets the same answer from a slot as from a stamp.
+- A rollback forgets the slot. Its versions read as open either way, and
+  are taken out as before. Savepoints are unchanged.
+- A slot is claimed again only once no transaction can hold a version it
+  read before the stamping. Its mark is the latest snapshot any
+  transaction joined a table of the store at once the stamping ended, and
+  never before the commit timestamp. A horizon past the mark finds every
+  such transaction ended, and the commit's phase 2 done in every table.
+  Only a read outside any transaction can meet a forgotten transaction. It
+  reads the version as open, as it did when a stamp was written after its
+  read.
+- The stamping ends before the gate opens, so a checkpoint's image holds
+  stamps, or the versions of open transactions, which recovery resolves
+  by the log as before. A version that cannot be stamped is stamped by a
+  later collection, and its slot is kept until then.
+- Constraints, triggers, history tables, replication, DDL and recovery
+  read versions only through who made them, so they are unchanged.
+
+#### D441. A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on
+
+A commit held its locks through the sync of its commit record. The next
+writer of a hot row waited for the whole sync, so a row took one commit
+per sync.
+
+A commit now writes its commit record, makes its changes committed in
+every engine, releases its locks and stamps its versions, and only then
+syncs the record (`txn/end.rs`). The clock keeps a second watermark
+beside the stable timestamp, the durable timestamp, below which every
+commit has ended and has its record synced or needs no sync
+(`txn/clock.rs`). Snapshots are taken at it, and the horizon is
+bounded by it. A commit returns once the durable timestamp reaches it.
+
+A transaction can learn of a commit past its snapshot in a few places.
+These are a READ COMMITTED write over a newer committed version, a
+uniqueness or referential check of the newest state, and a refusal
+(SQLCODE -911) that a newer commit caused, at a write or at commit.
+Each marks the commit it met (`Txn::depend`). No statement result, cursor
+or commit outcome reaches the session until the durable timestamp covers
+that mark (`txn/durable.rs`). A failed sync halts the durable timestamp,
+so every such wait ends with SQLCODE -922.
+
+The semantics hold for these reasons.
+
+- No snapshot sees a commit a crash could lose. The durable timestamp
+  passes a commit only once it and every commit before it have their
+  records synced. A crash loses only a suffix of the log, so what a
+  snapshot holds is a prefix recovery keeps.
+- What a transaction reads past its snapshot is never told before it is
+  durable. A write over such a version, or a check against it, puts the
+  transaction's own commit record after that commit's in the log, so a
+  crash that loses that commit loses this one too, and recovery undoes
+  both. Until the commit is durable nothing of the dependent reaches its
+  client.
+- Locks guard writers against writers. A writer released early writes
+  over committed versions, as it did after the sync before. Every
+  isolation level's rules on what a transaction reads are those of its
+  snapshot, so they are unchanged (anomaly matrix in
+  `test/integration/isolation_anomalies.rs`).
+- A failed sync leaves the commit in doubt as before. It never becomes
+  durable, so no snapshot counts it. A transaction that read past its
+  snapshot into it is told -922, and the database takes no change after
+  the failure, so none of them commits.
+- Its own session's next snapshot counts the commit, since the commit
+  returns only once the durable timestamp reaches it.
+- A checkpoint's image holds the commits the gate let finish, stamped.
+  The checkpoint syncs its own record, and every commit record before it
+  with it, so its image claims nothing the log could lose.
+- A commit with LOG.COMMIT_SYNC OFF, a commit that logged nothing and a
+  refused commit count as durable as they end, as they did when they
+  returned.
+
+#### D442. Row waits queue on the writer's own end in order, and shared table locks are held in stripes
+
+A row's second writer waited on its table's lock, which the first held
+shared to its end. Every release of the lock woke every waiter of the
+table, and they raced for the row. Every writer of a hot table also took
+the lock's one list of holders twice.
+
+Each open transaction now has an end of its own (`txn/row_waits.rs`).
+A writer that meets a row another open transaction changed takes a
+ticket on that transaction's end and waits. When it ends, the waiters go
+on one at a time in ticket order, each once the one before has tried its
+write again. A shared hold of a table's lock is taken in one of sixteen
+stripes, chosen by the transaction's id, while no exclusive request
+blocks them (`txn/locks/fast.rs`). An exclusive request marks the lock
+blocked under its holders' lock, then waits for the stripes to hold no
+one else.
+
+The semantics hold for these reasons.
+
+- A waiter goes on only once the writer it waited for has ended, as
+  before, and then writes as D28 and D29 say. The order among waiters
+  changes only which of them writes first, which no isolation level
+  fixes.
+- Every row wait is in the graph of who waits for whom, as a lock wait
+  is, so a cycle through row waits and lock waits is refused at once. An
+  exclusive request names the stripes' holders in the graph too.
+- A shared request reads the blocked mark under its stripe's lock, and
+  the exclusive request reads the stripes after setting the mark. So
+  either the shared request takes the slow path, or the exclusive request
+  sees its hold and waits for it. No shared and exclusive hold are ever
+  granted together.
+- A waiter that gives up, cancelled or timed out, gives up its ticket, so
+  the waiters behind it are not held.
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 
 The engine hashed with MurmurHash3, FNV-1a, SplitMix64's finalizer, the

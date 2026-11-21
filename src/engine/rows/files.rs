@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::UndoStore;
 use super::counted::Counted;
+use super::mvcc::Statuses;
 use super::zones::Zones;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::shadow::ShadowFileSystem;
@@ -34,6 +35,8 @@ pub struct TableFiles {
     /// The kernels its tables decode and judge their vectors on, once its
     /// store is told them (RULES.md D570); until then, the portable ones.
     pub(super) kernels: Kernels,
+    /// The statuses of the transactions writing its tables (RULES.md D440).
+    pub(super) statuses: Arc<Statuses>,
     /// Held shared while a table freezes rows into a column group, and
     /// exclusively while a checkpoint is captured, so none captures half
     /// a group (`rows/frozen.rs`).
@@ -74,6 +77,7 @@ impl TableFiles {
             shadows: None,
             work: Arc::default(),
             kernels: Arc::default(),
+            statuses: Arc::default(),
             freezes: Arc::default(),
             headers: Arc::default(),
             zones: Arc::default(),

@@ -387,8 +387,7 @@ impl TableStorage for RowTable {
     /// A table opened has none until the database's maintenance gathers
     /// them, due once first asked for (`rows/stats.rs`).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
-        let stats: Arc<dyn Statistics> = self.gathered.asked_for()?;
-        Some(stats)
+        self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
     }
 
     fn garbage(self: Arc<Self>, as_of: Timestamp) -> Rows {
@@ -473,6 +472,10 @@ impl TableStorage for RowTable {
     fn commit(&self, tx: TxId, at: Timestamp) {
         self.commit_open(tx, at);
         self.note_commit(at);
+    }
+
+    fn settle(&self, tx: TxId) {
+        self.settle_open(tx);
     }
 
     fn rollback(&self, tx: TxId) -> Result<()> {
