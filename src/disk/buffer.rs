@@ -191,8 +191,6 @@ struct Frame {
     /// latch is current while it reads the same (`versions.rs`, RULES.md
     /// D502).
     version: AtomicU64,
-    /// Its place among the pool's frames.
-    index: usize,
     /// Whether a writer owns its page, and how many wait to, and have
     /// waited since the count was cleared (`owned.rs`, RULES.md D503).
     owned: AtomicBool,
@@ -215,7 +213,6 @@ impl Frame {
             changed: Signal::default(),
             content: RwLock::new(Vec::new()),
             version: AtomicU64::new(0),
-            index,
             owned: AtomicBool::new(false),
             owners_waiting: AtomicU32::new(0),
             contended: AtomicU32::new(0),
