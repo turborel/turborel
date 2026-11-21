@@ -2791,7 +2791,9 @@ A connection's place is given back before its socket closes, so a client
 reconnecting at the limit isn't refused (`holding.rs`).
 
 An operator ends a connection with `END CONNECTION id`, or cancels its work
-with `CANCEL CONNECTION id` (owner only, SQLCODE -104). The core reaches the
+with `CANCEL CONNECTION id` (owner only, SQLCODE -104). A connection that
+ends with a reply telling why has its row taken out before that reply, since
+its client takes the reply for the close (`native.rs`). The core reaches the
 server through the extension point `ServedConnections`. The other extension
 points are `auth::Authenticator`, `transport::Listener` and
 `server::Protocol`.
