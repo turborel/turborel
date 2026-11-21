@@ -132,6 +132,54 @@ fn hashes(wanted: &dyn Fn(&str) -> bool, (size, ints, sel): (usize, &[i64], &[u3
     }
 }
 
+/// The sums' and extremes' lines: of all rows, nulls, a half picked,
+/// picks either side of the share a masked run takes, and a few picks.
+fn aggregates(wanted: &dyn Fn(&str) -> bool, (size, ints, sel): (usize, &[i64], &[u32]), nulls: &Mask, sets: &[(String, Box<dyn Kernels>)]) {
+    if wanted("sum_i64") {
+        line("sum_i64", "all", size, sets, |k| {
+            black_box(k.sum_i64(black_box(ints), None));
+        });
+        line("sum_i64", "half picked", size, sets, |k| {
+            black_box(k.sum_i64(black_box(ints), Some(sel)));
+        });
+        for share in [3_u32, 4, 5, 8] {
+            let picks: Vec<u32> = (0..size as u32).filter(|r| r % share == 0).collect();
+            line("sum_i64", &format!("1 in {share} picked"), picks.len(), sets, |k| {
+                black_box(k.sum_i64(black_box(ints), Some(&picks)));
+            });
+        }
+        for few in [16_usize, 64, 256] {
+            let picks: Vec<u32> = sel.iter().copied().step_by(7).take(few).collect();
+            line("sum_i64", &format!("{} picked", picks.len()), picks.len(), sets, |k| {
+                black_box(k.sum_i64(black_box(ints), Some(&picks)));
+            });
+        }
+    }
+    if wanted("min_max_i64") {
+        line("min_max_i64", "all", size, sets, |k| {
+            black_box(k.min_max_i64(black_box(ints), (None, None)));
+        });
+        line("min_max_i64", "nulls", size, sets, |k| {
+            black_box(k.min_max_i64(black_box(ints), (Some(nulls), None)));
+        });
+        line("min_max_i64", "half picked", size, sets, |k| {
+            black_box(k.min_max_i64(black_box(ints), (Some(nulls), Some(sel))));
+        });
+        for share in [3_u32, 4, 5, 8] {
+            let picks: Vec<u32> = (0..size as u32).filter(|r| r % share == 0).collect();
+            line("min_max_i64", &format!("1 in {share} picked"), picks.len(), sets, |k| {
+                black_box(k.min_max_i64(black_box(ints), (Some(nulls), Some(&picks))));
+            });
+        }
+        for few in [16_usize, 64, 256] {
+            let picks: Vec<u32> = sel.iter().copied().step_by(7).take(few).collect();
+            line("min_max_i64", &format!("{} picked", picks.len()), picks.len(), sets, |k| {
+                black_box(k.min_max_i64(black_box(ints), (Some(nulls), Some(&picks))));
+            });
+        }
+    }
+}
+
 fn main() {
     let only = std::env::var("ONLY").ok();
     let wanted = |name: &str| only.as_deref().is_none_or(|o| o == name);
@@ -188,49 +236,7 @@ fn main() {
                 black_box(&out);
             });
         }
-        if wanted("sum_i64") {
-            line("sum_i64", "all", size, &sets, |k| {
-                black_box(k.sum_i64(black_box(&ints), None));
-            });
-            line("sum_i64", "half picked", size, &sets, |k| {
-                black_box(k.sum_i64(black_box(&ints), Some(&sel)));
-            });
-            for share in [3_u32, 4, 5, 8] {
-                let picks: Vec<u32> = (0..size as u32).filter(|r| r % share == 0).collect();
-                line("sum_i64", &format!("1 in {share} picked"), picks.len(), &sets, |k| {
-                    black_box(k.sum_i64(black_box(&ints), Some(&picks)));
-                });
-            }
-            for few in [16_usize, 64, 256] {
-                let picks: Vec<u32> = sel.iter().copied().step_by(7).take(few).collect();
-                line("sum_i64", &format!("{} picked", picks.len()), picks.len(), &sets, |k| {
-                    black_box(k.sum_i64(black_box(&ints), Some(&picks)));
-                });
-            }
-        }
-        if wanted("min_max_i64") {
-            line("min_max_i64", "all", size, &sets, |k| {
-                black_box(k.min_max_i64(black_box(&ints), (None, None)));
-            });
-            line("min_max_i64", "nulls", size, &sets, |k| {
-                black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), None)));
-            });
-            line("min_max_i64", "half picked", size, &sets, |k| {
-                black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), Some(&sel))));
-            });
-            for share in [3_u32, 4, 5, 8] {
-                let picks: Vec<u32> = (0..size as u32).filter(|r| r % share == 0).collect();
-                line("min_max_i64", &format!("1 in {share} picked"), picks.len(), &sets, |k| {
-                    black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), Some(&picks))));
-                });
-            }
-            for few in [16_usize, 64, 256] {
-                let picks: Vec<u32> = sel.iter().copied().step_by(7).take(few).collect();
-                line("min_max_i64", &format!("{} picked", picks.len()), picks.len(), &sets, |k| {
-                    black_box(k.min_max_i64(black_box(&ints), (Some(&nulls), Some(&picks))));
-                });
-            }
-        }
+        aggregates(&wanted, (size, &ints, &sel), &nulls, &sets);
         if wanted("gather_i64") {
             let mut gathered = Vec::with_capacity(size);
             line("gather_i64", "half", size, &sets, |k| {

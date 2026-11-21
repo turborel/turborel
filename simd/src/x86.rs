@@ -136,22 +136,16 @@ pub(crate) fn min_max_i64(isa: Isa, values: &[i64], given: Given<'_>) -> Option<
         (Isa::Portable | Isa::Sse2, _) => portable::sum::min_max_i64(values, given),
         (Isa::Avx2, (nulls, None)) => sum::min_max_avx2(values, nulls),
         (Isa::Avx512, (nulls, None)) => sum::min_max_avx512(values, nulls),
-        (Isa::Avx2, (nulls, Some(picks))) => {
-            sum::min_max_picked(sum::Wide::Avx2, values, (nulls, picks)).unwrap_or_else(|| portable::sum::min_max_i64(values, given))
-        }
-        (Isa::Avx512, (nulls, Some(picks))) => {
-            sum::min_max_picked(sum::Wide::Avx512, values, (nulls, picks)).unwrap_or_else(|| portable::sum::min_max_i64(values, given))
-        }
+        (Isa::Avx2, (nulls, Some(picks))) => sum::min_max_picked(sum::Wide::Avx2, values, (nulls, picks)),
+        (Isa::Avx512, (nulls, Some(picks))) => sum::min_max_picked(sum::Wide::Avx512, values, (nulls, picks)),
     }
 }
 
-/// `Kernels::gather_i64`: by the vector gathers of AVX2 or AVX-512.
-pub(crate) fn gather_i64(isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
-    match isa {
-        Isa::Portable | Isa::Sse2 => portable::gather::gather_i64(values, sel, out),
-        Isa::Avx2 => sum::gather_avx2(values, sel, out),
-        Isa::Avx512 => sum::gather_avx512(values, sel, out),
-    }
+/// `Kernels::gather_i64`: by the portable body at every set, whose loads
+/// a row at a time measured faster than the vector gathers of AVX2 at
+/// every size (RULES.md D570).
+pub(crate) fn gather_i64(_isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
+    portable::gather::gather_i64(values, sel, out);
 }
 
 /// `Kernels::hash_i64`: four or eight words a step on AVX2 or AVX-512,

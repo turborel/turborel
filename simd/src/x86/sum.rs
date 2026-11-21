@@ -1,4 +1,4 @@
-//! \[DESIGN\] Sums, extremes and gathers on AVX2 and AVX-512 (RULES.md
+//! \[DESIGN\] Sums and extremes on AVX2 and AVX-512 (RULES.md
 //! D570). An exact sum adds each value's low 32 bits and its high 32 bits,
 //! both unsigned, in 64-bit lanes, and counts the negatives: the sum of
 //! the values is that of their bits unsigned less 2^64 a negative, joined
@@ -6,19 +6,14 @@
 //! a lane's least and greatest, a null's lane left as it was. A
 //! selection that picks at least a quarter of the rows it spans runs the
 //! loop of all rows over those rows, the rows not picked masked off as
-//! nulls are: no gather, which measured slower than the portable body's
-//! loads a row at a time at every size. A gather
-//! reads the rows of a selection four (`vpgatherqq`) or eight at a time,
-//! each lane's load masked off for a row past the end, which gives 0, as
-//! the portable gather gives it. A function of a set is called only by an
+//! nulls are. It takes no vector gather, which measured slower than the
+//! portable body's loads a row at a time at every size. A function of a set is called only by an
 //! `Isa` of it, made only where the processor has it (`x86::isa`).
 
 use std::arch::x86_64::{
-    __m256i, _mm_cmpgt_epi32, _mm_loadu_si128, _mm_set1_epi32, _mm_xor_si128, _mm256_add_epi64, _mm256_and_si256, _mm256_blendv_epi8,
-    _mm256_cmpeq_epi64, _mm256_cmpgt_epi64, _mm256_cmplt_epu32_mask, _mm256_cvtepi32_epi64, _mm256_loadu_si256,
-    _mm256_loadu_si256 as load256, _mm256_mask_i32gather_epi64, _mm256_set1_epi32, _mm256_set1_epi64x, _mm256_setr_epi64x,
-    _mm256_setzero_si256, _mm256_srli_epi64, _mm256_storeu_si256, _mm256_sub_epi64, _mm512_add_epi64, _mm512_and_si512,
-    _mm512_cmplt_epi64_mask, _mm512_loadu_si512, _mm512_mask_add_epi64, _mm512_mask_i32gather_epi64, _mm512_mask_max_epi64,
+    __m256i, _mm256_add_epi64, _mm256_and_si256, _mm256_blendv_epi8, _mm256_cmpeq_epi64, _mm256_cmpgt_epi64, _mm256_loadu_si256,
+    _mm256_set1_epi64x, _mm256_setr_epi64x, _mm256_setzero_si256, _mm256_srli_epi64, _mm256_storeu_si256, _mm256_sub_epi64,
+    _mm512_add_epi64, _mm512_and_si512, _mm512_cmplt_epi64_mask, _mm512_loadu_si512, _mm512_mask_add_epi64, _mm512_mask_max_epi64,
     _mm512_mask_min_epi64, _mm512_set1_epi64, _mm512_setzero_si512, _mm512_srli_epi64, _mm512_storeu_si512,
 };
 
@@ -54,20 +49,20 @@ fn picked_words(sel: &[u32], len: usize) -> Option<(usize, Vec<u64>)> {
     if sel.len().saturating_mul(DENSE_SHARE) < span || span > CHUNK || !sel.is_sorted_by(|a, b| a < b) {
         return None;
     }
-    let base = first / 64;
-    let mut words = vec![0_u64; (last / 64).saturating_sub(base).saturating_add(1)];
+    let base = first >> 6_u32;
+    let mut words = vec![0_u64; (last >> 6_u32).saturating_sub(base).saturating_add(1)];
     for r in sel.iter().filter_map(|&r| usize::try_from(r).ok()).take_while(|&r| r < len) {
-        if let Some(w) = words.get_mut((r / 64).saturating_sub(base)) {
+        if let Some(w) = words.get_mut((r >> 6_u32).saturating_sub(base)) {
             *w |= 1_u64 << (r % 64);
         }
     }
     Some((base, words))
 }
 
-/// The rows of `values` from the block `base`, as many as `words` cover.
-fn spanned(values: &[i64], (base, words): (usize, &[u64])) -> &[i64] {
+/// The rows of `values` from the block `base`, `blocks` blocks of them.
+fn spanned(values: &[i64], (base, blocks): (usize, usize)) -> &[i64] {
     let start = base.saturating_mul(64).min(values.len());
-    let end = base.saturating_add(words.len()).saturating_mul(64).min(values.len());
+    let end = base.saturating_add(blocks).saturating_mul(64).min(values.len());
     values.get(start..end).unwrap_or_default()
 }
 
@@ -75,7 +70,7 @@ fn spanned(values: &[i64], (base, words): (usize, &[u64])) -> &[i64] {
 /// are too few for that (`picked_words`).
 pub(super) fn sum_picked(wide: Wide, values: &[i64], sel: &[u32]) -> Option<i128> {
     let (base, words) = picked_words(sel, values.len())?;
-    let rows = spanned(values, (base, &words));
+    let rows = spanned(values, (base, words.len()));
     Some(match wide {
         // SAFETY: a `Wide` is chosen only by an `Isa` of its set, made only
         // where the processor has it (`x86::isa`).
@@ -141,28 +136,30 @@ fn masked_halves_avx512(values: &[i64], words: &[u64]) -> i128 {
         tails = (tails.0.wrapping_add(l), tails.1.wrapping_add(h), tails.2.wrapping_add(n));
     }
     let added = |v| {
-        let mut words = [0_u64; 8];
+        let mut lanes = [0_u64; 8];
         // SAFETY: `words` is 64 bytes, and an unaligned store writes exactly them.
-        unsafe { _mm512_storeu_si512(words.as_mut_ptr().cast(), v) };
-        words.iter().fold(0_u64, |s, &w| s.wrapping_add(w))
+        unsafe { _mm512_storeu_si512(lanes.as_mut_ptr().cast(), v) };
+        lanes.iter().fold(0_u64, |s, &w| s.wrapping_add(w))
     };
     let (l, h, n) = tails;
     joined((added(lows).wrapping_add(l), added(highs).wrapping_add(h), negatives.wrapping_add(n)))
 }
 
-/// `Kernels::min_max_i64` of the rows `sel` picks not null, run masked;
-/// none if they are too few for that (`picked_words`).
-pub(super) fn min_max_picked(wide: Wide, values: &[i64], (nulls, sel): (Option<&Mask>, &[u32])) -> Option<Option<(i64, i64)>> {
-    let (base, words) = picked_words(sel, values.len())?;
-    let rows = spanned(values, (base, &words));
+/// `Kernels::min_max_i64` of the rows `sel` picks not null: run masked,
+/// or by the portable body if they are too few for that (`picked_words`).
+pub(super) fn min_max_picked(wide: Wide, values: &[i64], (nulls, sel): (Option<&Mask>, &[u32])) -> Option<(i64, i64)> {
+    let Some((base, words)) = picked_words(sel, values.len()) else {
+        return portable::sum::min_max_i64(values, (nulls, Some(sel)));
+    };
+    let rows = spanned(values, (base, words.len()));
     let held = Held { nulls, picks: Some(&words), base };
-    Some(match wide {
+    match wide {
         // SAFETY: a `Wide` is chosen only by an `Isa` of its set, made only
         // where the processor has it (`x86::isa`).
         Wide::Avx2 => unsafe { extremes_avx2(rows, held) },
         // SAFETY: as above.
         Wide::Avx512 => unsafe { extremes_avx512(rows, held) },
-    })
+    }
 }
 
 /// The rows an extremes loop holds: not null, and picked if a selection
@@ -373,76 +370,4 @@ fn extremes_avx512(values: &[i64], held: Held<'_>) -> Option<(i64, i64)> {
     // SAFETY: as above.
     unsafe { _mm512_storeu_si512(highs.as_mut_ptr().cast(), most) };
     any.then(|| reduced((lows, highs), tails))
-}
-
-/// Whether a gather's 32-bit signed indices reach every value of
-/// `values`: if not, the portable gather.
-fn indexable(values: &[i64]) -> Option<i32> {
-    i32::try_from(values.len()).ok()
-}
-
-/// `Kernels::gather_i64` on AVX2.
-pub(super) fn gather_avx2(values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
-    let Some(len) = indexable(values) else { return portable::gather::gather_i64(values, sel, out) };
-    let start = out.len();
-    out.resize(start.saturating_add(sel.len()), 0);
-    // SAFETY: an `Isa` of AVX2 is made only where the processor has it
-    // (`x86::isa`), and only such a one calls this.
-    unsafe { gathered_avx2(values, (sel, len), out.get_mut(start..).unwrap_or_default()) }
-}
-
-/// `gather_avx2`'s loop, into `slots`, one a row of `sel`.
-#[target_feature(enable = "avx2")]
-fn gathered_avx2(values: &[i64], (sel, len): (&[u32], i32), slots: &mut [i64]) {
-    let (quads, tail) = sel.as_chunks::<4>();
-    let (dests, rest) = slots.as_chunks_mut::<4>();
-    // Unsigned order by signed compares: each side's sign bit flipped.
-    let (sign, bound) = (_mm_set1_epi32(i32::MIN), _mm_set1_epi32(len ^ i32::MIN));
-    for (dest, quad) in dests.iter_mut().zip(quads) {
-        // SAFETY: `quad` is 16 bytes, and an unaligned load reads exactly them.
-        let rows = unsafe { _mm_loadu_si128(quad.as_ptr().cast()) };
-        let within = _mm256_cvtepi32_epi64(_mm_cmpgt_epi32(bound, _mm_xor_si128(rows, sign)));
-        let (zero, base) = (_mm256_setzero_si256(), values.as_ptr());
-        // SAFETY: a lane is loaded only if its row is below `len`, the
-        // length of `values`, below 2^31, so its signed index is the row;
-        // every other lane is masked off and reads nothing.
-        let got = unsafe { _mm256_mask_i32gather_epi64::<8>(zero, base, rows, within) };
-        // SAFETY: `dest` is 32 bytes, and an unaligned store writes exactly them.
-        unsafe { _mm256_storeu_si256(dest.as_mut_ptr().cast(), got) };
-    }
-    for (slot, &r) in rest.iter_mut().zip(tail) {
-        *slot = usize::try_from(r).ok().and_then(|r| values.get(r)).copied().unwrap_or(0);
-    }
-}
-
-/// `Kernels::gather_i64` on AVX-512.
-pub(super) fn gather_avx512(values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
-    let Some(len) = indexable(values) else { return portable::gather::gather_i64(values, sel, out) };
-    let start = out.len();
-    out.resize(start.saturating_add(sel.len()), 0);
-    // SAFETY: an `Isa` of AVX-512 is made only where the processor has it
-    // (`x86::isa`), and only such a one calls this.
-    unsafe { gathered_avx512(values, (sel, len), out.get_mut(start..).unwrap_or_default()) }
-}
-
-/// `gather_avx512`'s loop, into `slots`, one a row of `sel`.
-#[target_feature(enable = "avx512f,avx512vl")]
-fn gathered_avx512(values: &[i64], (sel, len): (&[u32], i32), slots: &mut [i64]) {
-    let (octets, tail) = sel.as_chunks::<8>();
-    let (dests, rest) = slots.as_chunks_mut::<8>();
-    let bound = _mm256_set1_epi32(len);
-    for (dest, octet) in dests.iter_mut().zip(octets) {
-        // SAFETY: `octet` is 32 bytes, and an unaligned load reads exactly them.
-        let rows = unsafe { load256(octet.as_ptr().cast()) };
-        let within = _mm256_cmplt_epu32_mask(rows, bound);
-        let (zero, base) = (_mm512_setzero_si512(), values.as_ptr());
-        // SAFETY: as `gathered_avx2`'s: a lane is loaded only if its row is
-        // below the length of `values`, below 2^31.
-        let got = unsafe { _mm512_mask_i32gather_epi64::<8>(zero, within, rows, base) };
-        // SAFETY: `dest` is 64 bytes, and an unaligned store writes exactly them.
-        unsafe { _mm512_storeu_si512(dest.as_mut_ptr().cast(), got) };
-    }
-    for (slot, &r) in rest.iter_mut().zip(tail) {
-        *slot = usize::try_from(r).ok().and_then(|r| values.get(r)).copied().unwrap_or(0);
-    }
 }
