@@ -33,8 +33,11 @@ pub(super) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<Memo
 /// SQLCODE -910 for an operator no kept plan holds.
 pub(crate) fn prepared_plan(plan: Plan, budget: Option<&Arc<MemoryBudget>>) -> Result<Kept> {
     let filling = Filling { values: None, budget, fills: Cell::new(false) };
-    let plan = filling.plan(plan)?;
-    Ok(Kept { plan, fills: filling.fills.get() })
+    let prepared = filling.plan(plan.clone())?;
+    // A plan filled at each execution is kept as it was made, to be filled
+    // and prepared then, as before it was kept.
+    let fills = filling.fills.get();
+    Ok(Kept { plan: if fills { plan } else { prepared }, fills })
 }
 
 struct Filling<'a> {
