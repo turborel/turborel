@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use super::stats::KeyCounts;
-use super::{Entries, HASH_METHOD, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
+use super::{Entries, HASH_METHOD, Index, IndexMethod, IndexSizes, Key, KeyOrder, Probe, RowIds};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
@@ -343,6 +343,10 @@ impl Index for HashIndex {
     /// has made its pass (`index/stats.rs`).
     fn distinct_keys(&self) -> Option<f64> {
         self.keys.distinct()
+    }
+    /// Its entries, once counted (RULES.md D522).
+    fn sizes(&self) -> IndexSizes {
+        IndexSizes { entries: self.keys.entries(), ..IndexSizes::default() }
     }
 
     /// A pass over its keys, once asked for.

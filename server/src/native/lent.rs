@@ -129,7 +129,10 @@ impl Lent {
         permit.release();
         let next = self.arrived_or_waited(running)?;
         match next {
-            Some(_) => permit.retake(&running.handle),
+            Some(_) => {
+                running.present.queued();
+                permit.retake(&running.handle);
+            }
             None => running.flush(&mut self.wire)?,
         }
         Ok(next)

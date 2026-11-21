@@ -16,3 +16,4 @@ For whoever installs, runs and looks after a turborel server and its databases.
 - [Diagnostics](08-diagnostics.md)
 - [Replication](09-replication.md) *(extension)*
 - [Backups and Recovery](10-backups.md) *(extension)*
+- [Monitoring](11-monitoring.md) *(extension)*

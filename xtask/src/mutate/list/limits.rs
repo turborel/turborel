@@ -254,10 +254,10 @@ pub const LIMITS: [Mutation; 22] = [
     Mutation {
         name: "limit-first-through-a-filter",
         package: Package::Core,
-        breaks: "the first rows read are taken as known through a filter",
+        breaks: "a filter divides the first rows read below it by the share of rows it keeps",
         file: "src/physical.rs",
-        original: "        if self.first.is_some() && !matches!(",
-        replacement: "        if false && self.first.is_some() && !matches!(",
+        original: "        let goal = self.divided(|| kept(self));",
+        replacement: "        let goal = *self;",
         integration: &[PRICED],
         unit: &[],
     },

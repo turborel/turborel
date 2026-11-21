@@ -34,6 +34,7 @@ pub mod reachability;
 mod rtree;
 mod sparse;
 mod stats;
+mod uses;
 pub(crate) mod vector;
 pub mod xml;
 
@@ -49,11 +50,12 @@ pub use ivf::{IVF_METHOD, IvfMethod};
 pub use json::{JSON_METHOD, JsonMethod};
 pub use labels::{LABELS_METHOD, LabelsMethod};
 pub use nearest::{Approximation, FilterHint, NearestQuery, NearestSupport, NeighbourEntries, RowFilter, same_metric};
-pub use probe::{ColumnComparison, Predicate, Probe};
+pub use probe::{ColumnComparison, KeyOrder, Predicate, Probe};
 pub use projection::KeyProjection;
 pub use reachability::{REACHABILITY_METHOD, ReachabilityMethod};
 pub use rtree::{Envelopes, KeyPairs, RTreeMethod};
 pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
+pub use uses::{IndexSizes, Used, Uses, Using, part_of, used};
 pub use xml::{XML_PATH_METHOD, XML_PRIMARY_METHOD, XML_PROPERTY_METHOD, XML_VALUE_METHOD, XmlMethod};
 
 use crate::catalog::{IndexDesc, TableDesc};
@@ -70,17 +72,6 @@ pub type Entries = Box<dyn Iterator<Item = Result<(Key, RowId)>> + Send>;
 /// \[DESIGN\] The rows with an entry under one key, read as they are taken
 /// (`Index::key_rows`).
 pub type RowIds = Box<dyn Iterator<Item = Result<RowId>> + Send>;
-
-/// \[DESIGN\] The order an ordered method's search gives its entries in
-/// (`IndexMethod::ordered`); a method that is not ordered gives them in
-/// its own, whichever is asked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyOrder {
-    /// Ascending keys, by the [X3.135-1986 §5.11] comparison rules.
-    Ascending,
-    /// Descending keys.
-    Descending,
-}
 
 /// \[EXTENSION\] A kind of index: creates `Index`es and says which probes they answer.
 ///
@@ -510,6 +501,10 @@ pub trait Index: Send + Sync {
     /// them first gives none, and makes that work due (`maintenance_due`), for the database's maintenance. Default: not known.
     fn distinct_keys(&self) -> Option<f64> {
         None
+    }
+    /// \[DESIGN\] What it knows of its size cheaply, without a pass over it (INDEX_STATISTICS, RULES.md D522). Default: nothing.
+    fn sizes(&self) -> IndexSizes {
+        IndexSizes::default()
     }
     /// \[DESIGN\] Whether work is due that the index leaves to the database's maintenance (`maintain`), as a count of its keys asked for:
     /// asked as planning reads its statistics, so it should be quick. Default: none.
