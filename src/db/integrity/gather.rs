@@ -6,7 +6,7 @@
 //! with a subquery of a table written [§11.6 GR3], and each assertion
 //! reading one [§11.34 GR2].
 
-use super::{Check, Effect, Effects};
+use super::{Check, Effect, Effects, Now};
 use crate::catalog::{ConstraintDesc, ConstraintKind, FROM_ID, QualifiedName, TO_ID, TableDesc};
 use crate::db::State;
 use crate::error::Result;
@@ -20,12 +20,15 @@ impl State {
     /// the foreign keys that reference it; each CHECK with a subquery of a
     /// table written, or reading one; and each assertion reading one. The
     /// rows of each UNIQUE constraint come one after another, read in a
-    /// pass of their own over what it did.
+    /// pass of their own over what it did. A row's constraint that cannot
+    /// be deferred, with no check held before it, is checked at once of
+    /// transaction `now`, with what its checks keep (RULES.md D421).
     ///
     /// # Errors
     ///
-    /// The spill area's.
-    pub(super) fn checks(&self, effects: &mut Effects<'_>) -> Result<HeldRows<Check>> {
+    /// The spill area's; a constraint's checked at once.
+    pub(super) fn checks(&self, effects: &mut Effects<'_>, now: Now<'_, '_>) -> Result<HeldRows<Check>> {
+        let (tx, checking) = now;
         let mut out = HeldRows::new(effects.space.clone());
         let mut changed: Vec<QualifiedName> = Vec::new();
         effects.done.visit(&mut |effect| {
@@ -43,10 +46,17 @@ impl State {
             if !changed.contains(table) {
                 changed.push(table.clone());
             }
-            match id {
-                Some(id) => row_checks((self.catalog.table(table), &self.constraints_of(table)), (table, id), columns, &mut out),
-                None => Ok(()),
+            let Some(id) = id else { return Ok(()) };
+            let (desc, constraints) = (self.catalog.table(table), self.constraints_of(table));
+            for c in constraints.into_iter().filter(|c| of_row(desc, c, columns)) {
+                // [ISO/IEC 9075:1992 §10.6 GR3] one that cannot be deferred,
+                // nothing before it to check, checked at once (RULES.md D421).
+                match desc.filter(|_| out.is_empty() && !c.attributes.deferrable) {
+                    Some(d) => self.row_now(tx, (d, c), id, checking)?,
+                    None => out.push(Check::Row { table: table.clone(), constraint: c.name.clone(), id })?,
+                }
             }
+            Ok(())
         })?;
         // [§11.6 GR3, §11.34 GR2] a table whose rows it wrote again whole,
         // or took away at once, is one written.
@@ -145,38 +155,22 @@ fn assigned(of: &[usize], columns: Option<&[usize]>) -> bool {
     columns.is_none_or(|set| of.iter().any(|x| set.contains(x)))
 }
 
-/// Adds to `out` the checks of row `id` of `table`, described by `desc`,
-/// written, giving values to `columns`, or to every column if none: of its
-/// `constraints` on a column given a value, but UNIQUE ones
-/// (`State::checks`), and of its CHECKs without a subquery.
-///
-/// # Errors
-///
-/// The spill area's.
-fn row_checks(
-    (desc, constraints): (Option<&TableDesc>, &[&ConstraintDesc]),
-    (table, id): (&QualifiedName, RowId),
-    columns: Option<&[usize]>,
-    out: &mut HeldRows<Check>,
-) -> Result<()> {
-    for c in constraints {
-        let of_row = match &c.kind {
-            ConstraintKind::NotNull(at) => assigned(std::slice::from_ref(at), columns),
-            ConstraintKind::ForeignKey(fk) => assigned(&desc.map_or_else(|| fk.columns.clone(), |d| fk.referencing_key(d)), columns),
-            ConstraintKind::Check { reads, .. } => reads.is_empty(),
-            // [EXTENSION] (§4.2) Of an edge given an endpoint.
-            ConstraintKind::Connection(_) => {
-                let ends: Vec<usize> =
-                    desc.map(|d| [FROM_ID, TO_ID].iter().filter_map(|n| d.pseudo_column(n)).collect()).unwrap_or_default();
-                assigned(&ends, columns)
-            }
-            ConstraintKind::Unique { .. } => false,
-        };
-        if of_row {
-            out.push(Check::Row { table: table.clone(), constraint: c.name.clone(), id })?;
+/// Whether row constraint `c` of `desc` is to be checked of a row written,
+/// giving values to `columns`, or to every column if none: one on a column
+/// given a value, but a UNIQUE one (`State::checks`), or a CHECK without
+/// a subquery.
+fn of_row(desc: Option<&TableDesc>, c: &ConstraintDesc, columns: Option<&[usize]>) -> bool {
+    match &c.kind {
+        ConstraintKind::NotNull(at) => assigned(std::slice::from_ref(at), columns),
+        ConstraintKind::ForeignKey(fk) => assigned(&desc.map_or_else(|| fk.columns.clone(), |d| fk.referencing_key(d)), columns),
+        ConstraintKind::Check { reads, .. } => reads.is_empty(),
+        // [EXTENSION] (§4.2) Of an edge given an endpoint.
+        ConstraintKind::Connection(_) => {
+            let ends: Vec<usize> = desc.map(|d| [FROM_ID, TO_ID].iter().filter_map(|n| d.pseudo_column(n)).collect()).unwrap_or_default();
+            assigned(&ends, columns)
         }
+        ConstraintKind::Unique { .. } => false,
     }
-    Ok(())
 }
 
 /// The row of `desc` `effect` inserted, or updated giving a value to one of

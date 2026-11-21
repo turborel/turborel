@@ -10,7 +10,7 @@ use super::reads::{EVERY_COLUMN, changed_columns};
 use super::{Images, Maker, Reads, Validated, Version};
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Code, Result, SqlError};
-use crate::hash::murmur::MurmurSet;
+use crate::hash::xxhash::Xxh3Set;
 use crate::storage::{Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{Timestamp, TxId};
@@ -28,7 +28,7 @@ impl RowTable {
                 return Ok(());
             }
             let wrote_many = open.changes.len() > self.versions.tracked();
-            let mut writes = MurmurSet::default();
+            let mut writes = Xxh3Set::default();
             if !wrote_many {
                 open.changes.visit(&decode_change, &mut |c| {
                     writes.extend((!c.made).then_some(c.id));

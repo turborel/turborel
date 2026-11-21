@@ -49,6 +49,7 @@
 //! after (`disk/shadow.rs`, RULES.md D25).
 
 mod cuts;
+mod estimate;
 mod load;
 mod near;
 mod node;

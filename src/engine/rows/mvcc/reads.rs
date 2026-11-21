@@ -13,7 +13,7 @@
 
 use std::cmp::Ordering;
 
-use crate::hash::murmur::MurmurMap;
+use crate::hash::xxhash::Xxh3Map;
 use crate::spill::row_bytes;
 use crate::storage::{Conjunction, Region, Row, RowId, merged, same};
 use crate::value::{Value, compare};
@@ -74,7 +74,7 @@ impl Read {
 /// whole table.
 #[derive(Default)]
 pub(super) struct Reads {
-    pub(super) rows: MurmurMap<RowId, u64>,
+    pub(super) rows: Xxh3Map<RowId, u64>,
     pub(super) conditions: Vec<(Conjunction, u64)>,
     pub(super) regions: Vec<Region>,
     /// The envelopes of `regions`, counted as they are added.

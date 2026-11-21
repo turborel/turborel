@@ -26,6 +26,7 @@ impl RowTable {
         if !self.tree.insert(&key(id), &version)? {
             return Ok(false);
         }
+        self.mark_shadow(id);
         if tx != NO_TRANSACTION {
             let named = self.objects(id, record)?;
             self.owns(tx, &named)?;
@@ -84,6 +85,7 @@ impl RowTable {
             self.free(&thawed.unwrap_or_default());
             return Ok(None);
         }
+        self.mark_shadow(id);
         if thawed.is_some() {
             self.frozen.shadow();
         }
@@ -158,11 +160,13 @@ impl RowTable {
         let version =
             Version { maker: Maker::Committed(0), deleted: record.is_none(), older: None, record: record.unwrap_or_default() }.encode();
         let old = if record.is_some() || frozen { self.tree.replace(&k, &version)? } else { self.tree.delete(&k)? };
+        self.mark_shadow(id);
         let Some(old) = old else {
             if self.frozen_row(id, Some(&[]))?.is_none() {
                 return no_row(id);
             }
             self.tree.insert(&k, &version)?;
+            self.mark_shadow(id);
             self.frozen.shadow();
             return Ok(());
         };
