@@ -8286,7 +8286,9 @@ A client that shuts its side after its requests, without Terminate, has
 each request that came whole answered, in order, then its connection
 closed and its session rolled back, a connection lost [ISO/IEC 9075:1992
 §20.1 GR2a]: requests are taken from the inbox before it is read again,
-so the end of the stream is met only once they are done. Over TLS the
+so the end of the stream is met only once they are done. The last of
+them runs with nothing sent ahead, so a watch that finds the stream
+ended while it runs takes the client for gone and cancels it (D335). Over TLS the
 end is close_notify; a socket closed without it is a failure, never an
 end, whether the runtime or the worker reads it (D230).
 
@@ -9589,9 +9591,13 @@ byte every LOOK_AGAIN, on a thread of the blocking pool, as the copy
 shares the socket's mode and may wait a moment. No byte to read, or an
 error, is the client gone, and what runs is cancelled as an operator's
 ending cancels it (D44). The connection then ends and its session rolls
-back. A byte waiting is a request sent ahead and tells nothing. So a
-client that sent one and closed, or closed TLS with its closing alert,
-is found only once the statement ends. A request answered within
+back. A byte waiting is a request sent ahead and tells nothing, and so
+is the end of the stream while the connection's inbox holds bytes the
+client sent ahead, already read from the socket (`Wire::note_ahead`), so
+a client that shut its side after its requests hears each of them
+answered but the last (D234), however long they run. So a client that
+sent one and closed, or closed TLS with its closing alert, is found only
+once the statement ends. A request answered within
 LOOK_AGAIN is never looked at, so the fast path costs nothing.
 
 #### D336. A prepared CALL's output dynamic parameters are its columns, sent as a row

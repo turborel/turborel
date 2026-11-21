@@ -18,6 +18,8 @@
 //! its diagnostics only to a client granted `diagnostics` (D186).
 
 use std::io::ErrorKind;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -55,6 +57,9 @@ pub(super) struct Wire {
     /// carries diagnostics.
     compress: Option<usize>,
     diagnostics: bool,
+    /// Whether the inbox holds what the client sent and is not taken yet,
+    /// as the connection's watch is told (`transport/watch.rs`).
+    ahead: Arc<AtomicBool>,
 }
 
 /// A whole request in the inbox, as `Wire::arrived` finds it.
@@ -131,7 +136,8 @@ impl Wire {
     /// bytes, and its replies.
     pub(super) fn new(transport: Box<dyn Transport>, max_body: u32, types: TypeRegistry) -> Wire {
         let (out, compress, diagnostics) = (Vec::new(), None, false);
-        Wire { transport, inbox: vec![0; INBOX], start: 0, end: 0, max_body, types, out, sent: 0, compress, diagnostics }
+        let ahead = Arc::new(AtomicBool::new(false));
+        Wire { transport, inbox: vec![0; INBOX], start: 0, end: 0, max_body, types, out, sent: 0, compress, diagnostics, ahead }
     }
 
     /// Compresses each frame sent of at least `threshold` bytes from now
@@ -148,7 +154,13 @@ impl Wire {
 
     /// A watch on its peer, if its transport has one (RULES.md D335).
     pub(super) fn watch(&self) -> Option<crate::transport::Watch> {
-        self.transport.watch()
+        self.transport.watch().map(|w| w.told(Arc::clone(&self.ahead)))
+    }
+
+    /// Tells the watch whether the inbox holds what the client sent and
+    /// is not taken yet.
+    fn note_ahead(&self) {
+        self.ahead.store(self.start < self.end, Ordering::Release);
     }
 
     /// Whether a thread can read and write it apart from the runtime.
@@ -170,6 +182,7 @@ impl Wire {
                 return Err(closed(*start < *end));
             }
             *end = end.saturating_add(n);
+            self.note_ahead();
         }
     }
 
@@ -187,6 +200,7 @@ impl Wire {
                 Ok(0) => return Err(closed(*start < *end)),
                 Ok(n) => {
                     *end = end.saturating_add(n);
+                    self.note_ahead();
                     return Ok(true);
                 }
                 Err(e) => {
@@ -262,6 +276,7 @@ impl Wire {
     /// back to `INBOX`.
     fn consume(&mut self, len: usize) {
         self.start = self.start.saturating_add(len);
+        self.note_ahead();
         if self.start == self.end {
             (self.start, self.end) = (0, 0);
             if self.inbox.len() > INBOX {
