@@ -407,6 +407,7 @@ verification approach DO-178C expects (§8).
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
+| D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 
 ### The project
 
@@ -11577,6 +11578,43 @@ Rejected were positional delta trees (Héman, Zukowski, Nes, Sidirourgos
 and Boncz, SIGMOD 2010) and base and tail pages with lineage (Sadoghi
 et al., L-Store, 2018): both replace the tree, which already holds the
 row versions and their undo.
+
+#### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
+
+A kept plan (D45, D414, D422) was copied at each execution, its slots
+replaced by the execution's values and its scalar calls folded again, so
+a point query or write paid for a whole plan's copy and walk before it
+read a row. Now a kept plan is prepared once, its scalar calls folded
+as it is kept, and held behind a shared pointer. An execution opens it
+in a `Db` (`exec/db.rs`), the state with its statement's slot values,
+which every operator hands to those it opens and to the runner of its
+subqueries. The evaluator reads a slot's value from there and casts it
+to the slot's type as it is read, and an index scan places its probe's
+slots as it opens. An UPDATE's SET values and its search condition read
+their slots the same way, and an INSERT's row of values too. A kept
+procedure body's leaf reads its frame's values as slots and its outer
+values as outer references where they stand (`exec/program/framed.rs`),
+and its subqueries' kept plans read those values as slots.
+
+A kept plan holding a scalar call that takes a slot is filled and
+prepared again at each execution, as it was, since a call prepared from
+its constant operands (`optimizer/prepared.rs`) is prepared from the
+execution's values. A
+plan that is not kept, as one whose paths follow its values, is still
+planned with them filled in, so its paths are chosen by them. A MERGE
+keeps its bound statement and fills it at each execution, its join
+planned with its values.
+
+What a prepared statement keeps is shared by every session of the
+database that prepares a statement alike in its text, its collation and
+its parameters' types (`db/prepared/shared.rs`). Each execution takes a
+kept plan only while the definitions, the authorization, the schema, the
+time zone and the settings are those it was kept with, so a change of
+the definitions or of privileges drops it, and a learned plan is learned
+again once a table it reads moves as its statistics would be gathered
+again for (D422). The places are found by an XXH3 hash of what the
+statements were prepared alike in (D460), compared whole, and a place no
+statement holds is gone.
 
 ## 2. Project layout
 

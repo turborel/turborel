@@ -56,8 +56,8 @@ pub(crate) mod spatial;
 pub use cardinality::Injected;
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
+pub(crate) use kept::{Kept, keepable, placed, prepared_plan, same_shape};
 pub use kept::{Place, ProbeSlot};
-pub(crate) use kept::{filled_plan, keepable, same_shape};
 
 use std::sync::Arc;
 

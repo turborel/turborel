@@ -9,10 +9,12 @@ use std::thread::{self, ThreadId};
 pub(super) mod ended;
 mod handles;
 mod service;
+mod turn;
 
 pub use ended::{EndedCounts, TransactionsEnded};
 use handles::Program;
 pub(crate) use handles::WeakDatabase;
+use turn::Turn;
 
 use super::background::Background;
 use super::files::DatabaseFiles;
@@ -96,21 +98,9 @@ struct Shared {
     /// Its services: opened again in place, it begins another, and the
     /// sessions of earlier ones are refused (`database/service.rs`).
     service: AtomicU64,
-}
-
-/// One thread's turn to change the definitions. Dropping it ends the turn.
-struct Turn<'a> {
-    shared: &'a Shared,
-}
-
-impl Drop for Turn<'_> {
-    fn drop(&mut self) {
-        // The slot is only ever set and cleared, so a lock poisoned by a
-        // panicking thread still guards a valid slot.
-        let mut changing = self.shared.changing.lock().unwrap_or_else(PoisonError::into_inner);
-        *changing = None;
-        self.shared.turn_ended.notify_one();
-    }
+    /// What its prepared statements keep, shared by its sessions
+    /// (`prepared/shared.rs`, RULES.md D610).
+    prepared: super::prepared::Shared,
 }
 
 impl Default for Database {
@@ -147,6 +137,7 @@ impl Database {
             opening: Mutex::new(None),
             service: AtomicU64::new(0),
             ended: Arc::default(),
+            prepared: super::prepared::Shared::default(),
         });
         db.serve_read_ahead();
         db
@@ -194,6 +185,11 @@ impl Database {
         *lock(&self.0.files)? = Some(Arc::new(files));
         // Written in the formats its settings say, restored or given.
         self.tell_formats()
+    }
+
+    /// What its prepared statements keep (RULES.md D610).
+    pub(super) fn prepared(&self) -> &super::prepared::Shared {
+        &self.0.prepared
     }
 
     /// Its background work.

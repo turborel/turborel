@@ -18,7 +18,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::exec::Db;
 use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe};
 use crate::logical::{Cond, Most, SortKey, pushed_conjuncts};
-use crate::physical::Plan;
+use crate::physical::{Plan, ProbeSlot};
 use crate::storage::{self, Condition, Conjunction, Row, RowId, ScanOrder, TableStorage};
 use crate::txn::{TxId, checked};
 use crate::value::SortOrder;
@@ -122,8 +122,12 @@ pub(super) fn filtered_input(input: Plan, cond: &Cond, db: &Db, tx: TxId) -> Row
 /// stack (RULES.md R-CF-6), as are the helpers below.
 #[inline(never)]
 pub(super) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
-    let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, located, decided, .. } = plan else {
+    let Plan::IndexScan { table, index, probe, slots, reverse, covering, columns: needed, located, decided, .. } = plan else {
         return failed(broken("an index scan is not one"));
+    };
+    let probe = match slotted(probe, &slots, db) {
+        Ok(probe) => probe,
+        Err(e) => return failed(e),
     };
     if let Probe::Xml(asked) = &probe
         && asked.answered
@@ -154,6 +158,18 @@ pub(super) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         },
         Err(e) => failed(e),
     }
+}
+
+/// `probe`, its slots placed with their values in `db` (RULES.md D610).
+///
+/// # Errors
+///
+/// As `Db::probe`.
+pub(super) fn slotted(probe: Probe, slots: &[ProbeSlot], db: &Db) -> Result<Probe> {
+    if slots.is_empty() {
+        return Ok(probe);
+    }
+    Ok(db.probe(&probe, slots)?.into_owned())
 }
 
 /// What an index found: its entries, and how to read their rows.

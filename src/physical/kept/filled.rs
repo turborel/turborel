@@ -4,6 +4,7 @@
 //! a product, a hash join or an index join by the outer row's columns, is
 //! filled too (D418).
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use super::filled_scan;
@@ -19,28 +20,63 @@ use crate::value::Value;
 /// # Errors
 ///
 /// As `logical::filled`; SQLCODE -910 for an operator no kept plan holds.
-pub(crate) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
-    Filling { values, budget }.plan(plan)
+pub(super) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
+    Filling { values: Some(values), budget, fills: Cell::new(false) }.plan(plan)
+}
+
+/// `plan`, a kept plan whose slots stay for each execution to read where
+/// they are (RULES.md D610), its scalar calls prepared against `budget`
+/// once, as it is kept.
+///
+/// # Errors
+///
+/// SQLCODE -910 for an operator no kept plan holds.
+pub(crate) fn prepared_plan(plan: Plan, budget: Option<&Arc<MemoryBudget>>) -> Result<Kept> {
+    let filling = Filling { values: None, budget, fills: Cell::new(false) };
+    let plan = filling.plan(plan)?;
+    Ok(Kept { plan, fills: filling.fills.get() })
 }
 
 struct Filling<'a> {
-    values: &'a [Value],
+    /// The slots' values; none, for slots left in place.
+    values: Option<&'a [Value]>,
     budget: Option<&'a Arc<MemoryBudget>>,
+    /// Whether a scalar call it prepares takes a slot (`Kept`).
+    fills: Cell<bool>,
 }
 
 impl Filling<'_> {
+    /// `expr`, noted if a scalar call of it takes a slot.
+    fn noted(&self, expr: Expr) -> Expr {
+        if calls_slot(&expr) {
+            self.fills.set(true);
+        }
+        expr
+    }
+
     fn expr(&self, expr: Expr) -> Result<Expr> {
-        Ok(prepared::expression(filled_expr(expr, self.values)?, self.budget))
+        let expr = match self.values {
+            Some(values) => filled_expr(expr, values)?,
+            None => self.noted(expr),
+        };
+        Ok(prepared::expression(expr, self.budget))
     }
 
     fn cond(&self, cond: Cond) -> Result<Cond> {
-        Ok(prepared::condition(filled_cond(cond, self.values)?, self.budget))
+        let cond = match self.values {
+            Some(values) => filled_cond(cond, values)?,
+            None => cond.map_exprs(&mut |e| self.noted(e)),
+        };
+        Ok(prepared::condition(cond, self.budget))
     }
 
     /// A scan's probe filled, and the conjunct it decides, if one, filled
     /// and prepared as a filter's would be.
     fn scan(&self, plan: Plan) -> Result<Plan> {
-        let mut plan = filled_scan(plan, self.values)?;
+        let mut plan = match self.values {
+            Some(values) => filled_scan(plan, values)?,
+            None => plan,
+        };
         if let Plan::IndexScan { decided: Some(decided), .. } = &mut plan {
             let cond = std::mem::replace(&mut decided.cond, Cond::Const(Truth::True));
             decided.cond = self.cond(cond)?;
@@ -160,4 +196,56 @@ impl Filling<'_> {
             | Plan::Counted(_) => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
         }
     }
+}
+
+/// A kept plan, its scalar calls prepared once (RULES.md D610): each
+/// execution reads its slots where they are; or, if a scalar call takes a
+/// slot, which a value would prepare, it is filled and prepared again at
+/// each execution, as the values come.
+#[derive(Debug)]
+pub(crate) struct Kept {
+    plan: Plan,
+    fills: bool,
+}
+
+impl Kept {
+    /// The plan one execution runs with its slots' values `slots`, and the
+    /// values it reads where its slots are, if it does.
+    ///
+    /// # Errors
+    ///
+    /// As `filled_plan`.
+    pub(crate) fn opened(&self, slots: Option<Arc<[Value]>>, budget: Option<&Arc<MemoryBudget>>) -> Result<(Plan, Option<Arc<[Value]>>)> {
+        if !self.fills {
+            return Ok((self.plan.clone(), slots));
+        }
+        Ok((filled_plan(self.plan.clone(), slots.as_deref().unwrap_or_default(), budget)?, None))
+    }
+}
+
+/// Whether a scalar call of `e`, at any depth, takes an argument that reads
+/// a slot.
+fn calls_slot(e: &Expr) -> bool {
+    let mut work = vec![e];
+    while let Some(next) = work.pop() {
+        if let Expr::Call(_, args) = next
+            && args.iter().any(reads_slot)
+        {
+            return true;
+        }
+        next.for_each_child(&mut |child| work.push(child));
+    }
+    false
+}
+
+/// Whether `e` reads a slot, at any depth.
+fn reads_slot(e: &Expr) -> bool {
+    let mut work = vec![e];
+    while let Some(next) = work.pop() {
+        if let Expr::Dynamic(_) = next {
+            return true;
+        }
+        next.for_each_child(&mut |child| work.push(child));
+    }
+    false
 }

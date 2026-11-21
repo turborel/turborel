@@ -12,6 +12,9 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::db::State;
+use crate::error::Result;
+use crate::index::Probe;
+use crate::physical::{ProbeSlot, placed};
 use crate::value::Value;
 
 /// The values of a statement's slots, by place, shared by what its
@@ -31,6 +34,11 @@ impl Db {
         Db { state: Arc::clone(state), slots: None }
     }
 
+    /// `state`, for a kept plan whose slots hold `slots` (RULES.md D610).
+    pub fn slotted(state: &Arc<State>, slots: Slots) -> Db {
+        Db { state: Arc::clone(state), slots: Some(slots) }
+    }
+
     /// Its statement's slots, executed in `state`, a copy of its own made
     /// for a part of the statement.
     #[must_use]
@@ -41,6 +49,16 @@ impl Db {
     /// The state it is executed in.
     pub fn state(&self) -> &Arc<State> {
         &self.state
+    }
+
+    /// `probe`, each of `slots` placed with its slot's value: as it is if
+    /// it has none (RULES.md D610).
+    ///
+    /// # Errors
+    ///
+    /// As `physical::placed`; SQLCODE -910 if it has no slot values.
+    pub fn probe<'p>(&self, probe: &'p Probe, slots: &[ProbeSlot]) -> Result<Cow<'p, Probe>> {
+        placed(probe, slots, self.slots.as_deref().unwrap_or_default())
     }
 
     /// The values of its statement's slots, if it has any.

@@ -139,6 +139,20 @@ pub trait Subqueries {
         None
     }
 
+    /// The value of the slot `index` of the kept plan its statement runs
+    /// (`Expr::Dynamic`, RULES.md D610): a runner's, of its `Db`; by
+    /// default none, as a plan with slots is then filled before it runs.
+    fn slot(&self, _index: usize) -> Option<&Value> {
+        None
+    }
+
+    /// The value of the outer reference `index` of the program's leaf it
+    /// evaluates (`Expr::Outer`, RULES.md D610); by default none, as an
+    /// outer reference is then bound to its value before it runs.
+    fn outer(&self, _index: usize) -> Option<&Value> {
+        None
+    }
+
     /// [X3.135-1986 §5.14 GR5] Whether `value` matches `pattern`, `escape`
     /// its escape character if given, of a LIKE whose pattern is not a
     /// constant, as `value::like` says: by default its pattern split each
@@ -436,6 +450,10 @@ impl Subqueries for Runner {
         // for each set of outer values.
         self.keep(key, outer, &found);
         Ok(found)
+    }
+
+    fn slot(&self, index: usize) -> Option<&Value> {
+        self.db.slots().and_then(|slots| slots.get(index))
     }
 
     fn warnings(&self) -> Option<&Warnings> {
