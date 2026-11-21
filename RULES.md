@@ -2813,7 +2813,10 @@ SERVER.WORKERS blocking workers, and authentication on at most
 SERVER.MAX_LOGINS other threads. A worker writes the replies of the request
 it runs, a batch of SERVER.BATCH_BYTES at a time, each within
 SERVER.IDLE_TIMEOUT_MS, so a slow client holds its worker and a batch of
-memory, no more. A fast client's next request the worker reads itself. The
+memory, no more. A statement that fails, or is cancelled, before a batch
+of its result is sent sends only its failure, its notices and status
+with it, so a client never shows the columns of a result it never had
+(`Outgoing::unanswered`). A fast client's next request the worker reads itself. The
 socket is handed to it, the runtime's interest in it given up, and it waits
 a millisecond or so apart from the runtime (`transport::Direct`), its
 permit to run statements given up meanwhile. So a request answered wakes
