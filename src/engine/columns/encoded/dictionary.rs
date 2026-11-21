@@ -66,6 +66,6 @@ fn in_order(entries: &mut Vec<&[u8]>, codes: Vec<u64>) -> Vec<u64> {
         }
     }
     *entries = order.iter().filter_map(|&old| entries.get(old).copied()).collect();
-    // A null's code, 0, is no entry's: it stays 0 whatever entry 0 is.
+    // A null's code, 0, moves as entry 0's does; its null bit tells it.
     codes.into_iter().map(|c| usize::try_from(c).ok().and_then(|c| place.get(c)).copied().unwrap_or(0)).collect()
 }
