@@ -35,7 +35,7 @@ pub use cast::{cast, cast_warned};
 pub use comparison::{Bucket, LobEquality, any_lob, bucket, compare, compare_checked, compare_strings, lob_proxies, proxies, row_proxies};
 pub use datetime::Datetime;
 pub use decfloat::DecFloat;
-pub use decimal::{Decimal, pow10};
+pub use decimal::{Decimal, bound_of, pow10};
 pub use distinct::{distinct, key_bucket, key_equal};
 pub use like::{
     LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern, constant_prefix, constant_rest_is_any, like,
@@ -49,16 +49,23 @@ pub use types::{Descriptor, SqlType};
 // Implementor-defined choices. The standard leaves each of these to us.
 // ---------------------------------------------------------------------------
 
-/// Largest exact numeric precision (decimal digits) this implementation supports.
-pub const MAX_EXACT_PRECISION: u32 = 18;
+/// [ISO/IEC 9075-2:2023 §6.1 SR27a, §6.30 SR1c] Largest exact numeric
+/// precision (decimal digits) this implementation supports (IL043), of a
+/// declared type and of every exact result (IV136): the most digits whose units
+/// an `i128` always holds (RULES.md D695).
+pub const MAX_EXACT_PRECISION: u32 = 38;
+/// \[DESIGN\] (RULES.md D695) The most digits whose units an `i64` always
+/// holds: a column of no more is stored in 64 bits, as a batch computes
+/// it, and one of more in 128.
+pub const NARROW_EXACT_PRECISION: u32 = 18;
 /// [X3.135-1986 §5.5 SR8] INTEGER has implementor-defined precision and scale 0.
 pub const INTEGER_PRECISION: u32 = 10;
 /// [X3.135-1986 §5.5 SR9] SMALLINT precision is not larger than INTEGER's.
 pub const SMALLINT_PRECISION: u32 = 5;
 /// [ISO/IEC 9075-2:2023 §6.1 SR30] BIGINT's precision is not smaller than
 /// INTEGER's, and decimal as theirs is (IV032): the most digits an exact
-/// value holds, which a row keeps in 64 bits.
-pub const BIGINT_PRECISION: u32 = MAX_EXACT_PRECISION;
+/// value of 64 bits holds, which a row keeps in 64 bits.
+pub const BIGINT_PRECISION: u32 = NARROW_EXACT_PRECISION;
 /// [X3.135-1986 §5.5 SR3] precision of NUMERIC / DECIMAL when omitted.
 pub const DEFAULT_EXACT_PRECISION: u32 = 18;
 /// [X3.135-1986 §5.5 SR11] REAL precision, in binary digits (IEEE single).

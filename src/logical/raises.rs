@@ -19,7 +19,7 @@
 
 use super::{Cond, Expr, LogicalPlan};
 use crate::catalog::Catalog;
-use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, constant_prefix};
+use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, bound_of, constant_prefix};
 
 /// The declared type of a column of the rows an expression is over, if
 /// known.
@@ -202,15 +202,7 @@ fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
 /// `MAX_EXACT_PRECISION` digits: of a sum or difference, or a product.
 fn arith_shape((a, op, b): (&Expr, ArithOp, &Expr), types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
     let ((pa, sa), (pb, sb)) = (exact_shape(a, types, depth)?, exact_shape(b, types, depth)?);
-    let (precision, scale) = match op {
-        ArithOp::Add | ArithOp::Sub => {
-            let scale = sa.max(sb);
-            let whole = pa.saturating_sub(sa).max(pb.saturating_sub(sb)).saturating_add(1);
-            (whole.saturating_add(scale), scale)
-        }
-        ArithOp::Mul => (pa.saturating_add(pb), sa.saturating_add(sb)),
-        ArithOp::Div => return None,
-    };
+    let (precision, scale) = bound_of(op, (pa, sa), (pb, sb))?;
     (precision <= MAX_EXACT_PRECISION).then_some((precision, scale))
 }
 

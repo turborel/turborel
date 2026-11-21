@@ -10,7 +10,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::logical::{Expr, LogicalPlan};
 use crate::parser::Parser;
-use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value, bound_of};
 
 /// A column's type, or none if not known.
 pub type Typed = Option<DataType>;
@@ -85,12 +85,13 @@ pub fn of_arithmetic(op: ArithOp, a: &Typed, b: &Typed) -> Typed {
         return None;
     }
     Some(match (a, b) {
-        (DataType::Exact { scale: s1, .. }, DataType::Exact { scale: s2, .. }) => {
-            let scale = match op {
-                ArithOp::Mul => s1.checked_add(*s2).filter(|s| *s <= MAX_EXACT_PRECISION)?,
-                ArithOp::Add | ArithOp::Sub | ArithOp::Div => *s1.max(s2),
-            };
-            DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric }
+        (DataType::Exact { precision: p1, scale: s1, .. }, DataType::Exact { precision: p2, scale: s2, .. }) => {
+            // As the binder types it (`binder/arithmetic.rs`).
+            let (precision, scale) = bound_of(op, (*p1, *s1), (*p2, *s2)).unwrap_or((MAX_EXACT_PRECISION, *s1.max(s2)));
+            if scale > MAX_EXACT_PRECISION {
+                return None;
+            }
+            DataType::Exact { precision: precision.min(MAX_EXACT_PRECISION), scale, spelled: Spelled::Numeric }
         }
         (DataType::DecFloat { .. }, _) | (_, DataType::DecFloat { .. }) => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
         _ => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },

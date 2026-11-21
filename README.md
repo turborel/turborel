@@ -146,6 +146,8 @@ behind it, and each can be replaced or added to.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.
+- Exact numbers of up to 38 digits, in arithmetic and in columns of
+  either store.
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
 - [UUIDs](doc/sql/02-data-types.md#uuids), with UUID_V4() and time-ordered

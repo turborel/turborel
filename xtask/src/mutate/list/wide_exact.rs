@@ -1,0 +1,100 @@
+//! The mutations of exact numbers of 38 digits (RULES.md R-TEST-9, D695
+//! to D699): a quotient's scale, long division and stripped zeros, the
+//! precision of a result, and the 128-bit records and keys of a wide
+//! column and how it is read.
+
+use super::{Mutation, Package};
+
+/// The mutations of wide exact numbers, in the order they run.
+pub const WIDE_EXACT: [Mutation; 9] = [
+    Mutation {
+        name: "wide-quotient-no-step-back",
+        package: Package::Core,
+        breaks: "a quotient one digit past 38 at its estimated scale is not taken at one less, so it overflows",
+        file: "src/value/decimal/quotient.rs",
+        original: "            None => (fitting(at.checked_sub(1)?)?, at.checked_sub(1)?),",
+        replacement: "            None => (fitting(at)?, at),",
+        integration: &[],
+        unit: &["value::decimal::quotient::tests::quotient_scale_steps_back_once"],
+    },
+    Mutation {
+        name: "wide-quotient-ten-over-no-digit",
+        package: Package::Core,
+        breaks: "long division by a divisor past a tenth of the range appends 0 for each digit",
+        file: "src/value/decimal/quotient.rs",
+        original: "            digit = digit.saturating_add(1);\n",
+        replacement: "",
+        integration: &[],
+        unit: &["value::decimal::quotient::tests::shifted_quotients_are_exact"],
+    },
+    Mutation {
+        name: "wide-quotient-strip-skips-one",
+        package: Package::Core,
+        breaks: "a quotient's last odd trailing zero is kept",
+        file: "src/value/decimal/quotient.rs",
+        original: "const STRIP_STEPS: [u32; 5] = [16, 8, 4, 2, 1];",
+        replacement: "const STRIP_STEPS: [u32; 5] = [16, 8, 4, 2, 2];",
+        integration: &[],
+        unit: &["value::decimal::quotient::tests::stripped_stops_at_its_floor"],
+    },
+    Mutation {
+        name: "wide-quotient-at-scale-unsigned",
+        package: Package::Core,
+        breaks: "a quotient at a fixed scale, as AVG's, of operands of unlike signs is positive",
+        file: "src/value/decimal/quotient.rs",
+        original: "            Some(q) => Decimal::new(if negative { q.saturating_neg() } else { q }, scale).checked(),",
+        replacement: "            Some(q) => Decimal::new(q, scale).checked(),",
+        integration: &[],
+        unit: &["value::decimal::quotient::tests::quotients_at_a_scale"],
+    },
+    Mutation {
+        name: "wide-result-precision-38",
+        package: Package::Core,
+        breaks: "every exact sum, difference and product is of 38 digits, so a column made of one is wide",
+        file: "src/binder/arithmetic.rs",
+        original: "    Ok(DataType::Exact { precision: precision.min(MAX_EXACT_PRECISION), scale, spelled: Spelled::Numeric })",
+        replacement: "    Ok(DataType::Exact { precision: MAX_EXACT_PRECISION.max(precision), scale, spelled: Spelled::Numeric })",
+        integration: &["wide_exact::wide_results_are_stored_by_create_and_insert"],
+        unit: &["binder::arithmetic::tests::exact_result_precisions"],
+    },
+    Mutation {
+        name: "wide-type-read-as-narrow",
+        package: Package::Core,
+        breaks: "a wide column is read as integers of 64 bits, by a scan and the row store's gathering",
+        file: "src/value/types/exact.rs",
+        original: "    (*precision <= NARROW_EXACT_PRECISION).then_some(*scale)",
+        replacement: "    Some(*scale)",
+        integration: &["wide_exact::wide_columns_round_trip_on_both_stores"],
+        unit: &["value::types::exact::tests::wide_types_keep_16_bytes"],
+    },
+    Mutation {
+        name: "wide-record-width-8",
+        package: Package::Core,
+        breaks: "a wide column's field is said to be of 8 bytes, though written in 16",
+        file: "src/value/types/exact.rs",
+        original: "        Some(if wide(t) { WIDE_BYTES } else { NUMBER_BYTES })",
+        replacement: "        Some(NUMBER_BYTES)",
+        integration: &["wide_exact::wide_columns_round_trip_on_both_stores"],
+        unit: &["value::types::exact::tests::wide_types_keep_16_bytes"],
+    },
+    Mutation {
+        name: "wide-key-sign-kept",
+        package: Package::Core,
+        breaks: "a wide key's sign bit is not flipped, so a negative key sorts after the positive ones",
+        file: "src/value/types/exact.rs",
+        original: "            out.extend_from_slice(&(units ^ WIDE_SIGN).to_be_bytes());",
+        replacement: "            out.extend_from_slice(&units.to_be_bytes());",
+        integration: &["wide_exact::wide_columns_round_trip_on_both_stores"],
+        unit: &["value::types::exact::tests::wide_keys_order_as_values"],
+    },
+    Mutation {
+        name: "wide-anchor-clamped-narrow",
+        package: Package::Core,
+        breaks: "a wide column's anchor is clamped to 64 bits",
+        file: "src/value/types/exact.rs",
+        original: "        let units = if wide(t) { floor } else { i128::from(narrowed(floor)) };",
+        replacement: "        let units = i128::from(narrowed(floor));",
+        integration: &[],
+        unit: &["value::types::exact::tests::wide_anchors_are_kept_in_128_bits"],
+    },
+];

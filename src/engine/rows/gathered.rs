@@ -14,6 +14,7 @@ use crate::engine::record::{RecordFormat, Reference};
 use crate::error::Result;
 use crate::storage::{Batch, Bools, Column, Datetimes, Ints, Mask, Texts};
 use crate::value::datetime::Moment;
+use crate::value::types::narrow_scale;
 use crate::value::{DataType, Value};
 
 /// Bytes of an exact number's field in a record.
@@ -69,8 +70,10 @@ impl Gathering {
     /// The vector a column of type `t`, if the table has it, is gathered
     /// into.
     fn vector(t: Option<&DataType>) -> Gathered {
+        if let Some(scale) = t.and_then(narrow_scale) {
+            return Gathered::Ints { units: Vec::new(), scale, nulls: Nulls::default() };
+        }
         match t {
-            Some(DataType::Exact { scale, .. }) => Gathered::Ints { units: Vec::new(), scale: *scale, nulls: Nulls::default() },
             Some(DataType::Boolean) => Gathered::Bools(Mask::none(0), Nulls::default()),
             Some(t @ DataType::Date) => Self::datetimes(t, (Moment::Date, false, 0)),
             Some(t @ DataType::Time { precision, zoned }) => Self::datetimes(t, (Moment::Time, *zoned, *precision)),

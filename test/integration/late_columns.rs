@@ -168,7 +168,9 @@ fn late_columns_raise_as_rows() {
     for (q, expected) in [
         ("SELECT K, 100 / (A - 7) FROM {t} WHERE C < 600", Err(Code::Data)),
         ("SELECT K, 100 / (A - 7) FROM {t} WHERE C < 600 AND A <> 7", Ok(())),
-        ("SELECT SUM(100 / (A - 7)) FROM {t} WHERE C < 600", Err(Code::Data)),
+        // The quotients whole: of 38 digits, hundreds of them would pass
+        // the 128 bits a sum is kept in (RULES.md D696).
+        ("SELECT SUM(CAST(100 / (A - 7) AS INTEGER)) FROM {t} WHERE C < 600", Err(Code::Data)),
     ] {
         let of = |t: &str| rows(&a, &q.replace("{t}", t)).map(|mut r| r.sort()).map(drop);
         assert_eq!(of("C"), expected, "{q}");

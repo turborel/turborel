@@ -76,7 +76,7 @@ so none of them is a type a column is of.
 | ST_LRM, ST_LRCURVE, ST_POSITIONEXP, ... | a linear referencing method, a linear element, a position along it | the 13 types of [Linear Referencing](17-linear-referencing.md) |
 
 The longest string is 32,767 characters, the longest binary string 32,767
-octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
+octets, the longest large object 4G characters or octets, an exact number holds at most 38 digits and a DECFLOAT at most
 34. A type past a limit
 is valid SQL Turborel does not process: SQLCODE -900, SQLSTATE 0A000.
 The [Limits](../appendix/d-limits.md) appendix lists them all.
@@ -339,10 +339,12 @@ NUMERIC(18, 0). A value with more
 fraction digits than its column's scale is truncated to fit; one with
 more digits before the point than the column holds is refused.
 
-Arithmetic on exact numbers is exact, to 18 digits. A sum or a product
-has the precision 18; a quotient is exact at the largest scale that
-fits in 18 digits, so 7 / 2 is 3.5, and 1 / 3.0 is
-0.333333333333333333. A result past 18 digits is refused.
+Arithmetic on exact numbers is exact, to 38 digits. A sum has one digit
+before the point more than the wider of its operands, a product the
+digits of both, each up to 38; a quotient is exact at the largest scale
+that fits in 38 digits, so 7 / 2 is 3.5, and 1 / 3.0 is 0.3 and 37 more
+threes. A result past 38 digits is refused. A column of up to 18
+digits keeps each value in 8 bytes, a wider one in 16.
 
 **Approximate numbers** are binary floating point: REAL of 24 binary
 digits, DOUBLE PRECISION of 53. FLOAT(p) is REAL for p up to 24, else
@@ -355,7 +357,7 @@ INSERT INTO NUM VALUES (2147483647, 32767, 123.456, 0.1, 0.1);
 SELECT * FROM NUM;
 INSERT INTO NUM (D) VALUES (1234.5);
 SELECT 7 / 2, 7.0 / 2, 1 / 3.0, 7E0 / 2 FROM NUM;
-SELECT 999999999999999999 + 1 FROM NUM;
+SELECT 99999999999999999999999999999999999999 + 1 FROM NUM;
 ```
 
 ```
@@ -366,11 +368,11 @@ OK
    2147483647 |   32767 |  123.45 |    1.0000000149011612E-1 |                     1E-1
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22003): 1234.50 does not fit DECIMAL(5,2) without losing leading digits [ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3k]
-                      |                      |                      |
-----------------------+----------------------+----------------------+--------------------------
-                  3.5 |                  3.5 | 0.333333333333333333 |                    3.5E0
+                                          |                                          |                                          |
+------------------------------------------+------------------------------------------+------------------------------------------+--------------------------
+                                      3.5 |                                      3.5 | 0.33333333333333333333333333333333333333 |                    3.5E0
 (1 row)
-turborel: SQLCODE -301 (SQLSTATE 22003): the exact numeric result needs more than the implementor-defined 18 digits [X3.135-1986 §5.9 GR6]
+turborel: SQLCODE -301 (SQLSTATE 22003): the exact numeric result needs more than the implementor-defined 38 digits [X3.135-1986 §5.9 GR6]
 ```
 
 INTEGER holds 2147483647, and more: it is NUMERIC(10, 0), of ten
@@ -383,9 +385,9 @@ type: INTEGER and NUMERIC(10, 0) are one type, so a foreign key of one
 references the other.
 
 BIGINT holds every number of 18 digits, from -999999999999999999 to
-999999999999999999. That is the most digits an exact value holds here,
-so a 64-bit integer past them, as 9223372036854775807 is, does not fit
-and is refused. BIGINT is no key word, so a column may be named BIGINT.
+999999999999999999, the most digits a 64-bit integer always holds, so
+a 64-bit integer past them, as 9223372036854775807 is, does not fit
+and is refused; DECIMAL(19) holds it. BIGINT is no key word, so a column may be named BIGINT.
 
 DECFLOAT(p) is decimal floating point. A value has at most p digits, p
 from 1 to 34, with a decimal exponent, so it keeps decimal fractions

@@ -72,11 +72,11 @@ a value inserted, a SET, a DEFAULT, or `CAST(NULL AS INTEGER)`.
 
 `+`, `-`, `*` and `/` on numbers, and a sign, `-x`. `*` and `/` bind
 tighter than `+` and `-`; parentheses group. An expression of exact
-numbers is exact, of 18 digits at most; one of an approximate number is
+numbers is exact, of 38 digits at most; one of an approximate number is
 approximate; one of a DECFLOAT is DECFLOAT(34), rounded to 34 digits.
 A quotient of exact numbers is at the largest scale that
 fits, so 10 / 4 is 2.5; a product's scale is its operands' scales
-summed. Division by zero is refused, and so is a result past 18 digits.
+summed. Division by zero is refused, and so is a result past 38 digits.
 
 ```sql
 VALUES (1 + 2 * 3, -(4 - 6), 10 / 4, 2.50 * 2, 1E0 / 3);
@@ -85,17 +85,17 @@ SELECT ID, SALARY * 1.1 FROM STAFF ORDER BY ID;
 ```
 
 ```
-                      |                      |                      |                      |
-----------------------+----------------------+----------------------+----------------------+--------------------------
-                    7 |                    2 |                  2.5 |                 5.00 |     3.333333333333333E-1
+       |      |                                          |        |
+-------+------+------------------------------------------+--------+--------------------------
+     7 |    2 |                                      2.5 |   5.00 |     3.333333333333333E-1
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22012): a divisor shall not be 0 [X3.135-1986 §5.9 GR5]
            ID |
---------------+----------------------
-            1 |             7920.000
-            2 |             8910.000
-            3 |             5940.000
-            4 |                 NULL
+--------------+---------------
+            1 |      7920.000
+            2 |      8910.000
+            3 |      5940.000
+            4 |          NULL
 (4 rows)
 ```
 
@@ -528,7 +528,7 @@ included. EXPLAIN names the rule that does so, distinct_aggregates
 OPTIMIZER.DISTINCT_AGGREGATES turns it off.
 
 SUM is refused, SQLSTATE 22003, only if its total does not fit its
-type, whatever order the rows are read in: past 18 digits of exact
+type, whatever order the rows are read in: past 38 digits of exact
 numbers, the range of approximate ones or of DECFLOAT, or an interval's
 leading field.
 So 999999999999999999, 1 and -1 sum to 999999999999999999. AVG is
@@ -544,8 +544,8 @@ SELECT AVG(X) FROM (VALUES (10.00), (10.00), (12.00)) AS V (X);
 
 ```
 
-----------------------
-              10.6666
+------------------------------------------
+                                  10.6666
 (1 row)
 ```
 
@@ -556,19 +556,19 @@ SELECT SUM(SALARY) FROM STAFF WHERE 1 = 0;
 ```
 
 ```
-                      |                      |                      |                      |                      |                                |
-----------------------+----------------------+----------------------+----------------------+----------------------+--------------------------------+-------------
-                    4 |                    3 |                    2 |             20700.00 |            6900.0000 | Ada                            |     8100.00
+                      |                      |                      |                                          |                                          |                                |
+----------------------+----------------------+----------------------+------------------------------------------+------------------------------------------+--------------------------------+-------------
+                    4 |                    3 |                    2 |                                 20700.00 |                                6900.0000 | Ada                            |     8100.00
 (1 row, with a warning: SQLSTATE 01003)
  DEPT |                      |
-------+----------------------+----------------------
- ENG  |                    2 |            7650.0000
- OPS  |                    1 |            5400.0000
- NULL |                    1 |                 NULL
+------+----------------------+------------------------------------------
+ ENG  |                    2 |                                7650.0000
+ OPS  |                    1 |                                5400.0000
+ NULL |                    1 |                                     NULL
 (3 rows, with a warning: SQLSTATE 01003)
 
-----------------------
-                 NULL
+------------------------------------------
+                                     NULL
 (1 row)
 ```
 
@@ -678,11 +678,11 @@ SELECT ID, NAME, COUNT(*) FILTER (WHERE SALARY > 6000) OVER (ORDER BY ID) AS SO_
 ```
 
 ```
- DEPT |            WELL_PAID |              NOT_ADA
-------+----------------------+----------------------
- ENG  |                    2 |              8100.00
- OPS  |                    0 |              5400.00
- NULL |                    0 |                 NULL
+ DEPT |            WELL_PAID |                                  NOT_ADA
+------+----------------------+------------------------------------------
+ ENG  |                    2 |                                  8100.00
+ OPS  |                    0 |                                  5400.00
+ NULL |                    0 |                                     NULL
 (3 rows, with a warning: SQLSTATE 01003)
            ID | NAME                           |               SO_FAR
 --------------+--------------------------------+----------------------
@@ -872,10 +872,10 @@ SELECT NEXT VALUE FOR BADGE, NEXT VALUE FOR BADGE + 1, NAME FROM STAFF WHERE DEP
 
 ```
 OK
-                      |                      | NAME
-----------------------+----------------------+--------------------------------
-                  100 |                  101 | Ada
-                  110 |                  111 | Grace
+                      |                       | NAME
+----------------------+-----------------------+--------------------------------
+                  100 |                   101 | Ada
+                  110 |                   111 | Grace
 (2 rows)
 ```
 
@@ -913,10 +913,10 @@ VALUES (ARRAY[1, 2, 3])[4];
 ```
 
 ```
-           ID | PAIR                                                | PERSON
---------------+-----------------------------------------------------+-----------------------------------------------------
-            1 | ARRAY[1, 10]                                        | ROW(1, 'Ada')
-            2 | ARRAY[2, 20]                                        | ROW(2, 'Grace')
+           ID | PAIR                                    | PERSON
+--------------+-----------------------------------------+-----------------------------------------------------
+            1 | ARRAY[1, 10]                            | ROW(1, 'Ada')
+            2 | ARRAY[2, 20]                            | ROW(2, 'Grace')
 (2 rows)
  BY_PAY
 --------------------------------------------------------------

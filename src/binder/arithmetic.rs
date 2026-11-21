@@ -9,32 +9,35 @@ use crate::ast::ValueExpression;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::Expr;
 use crate::params::ParameterType;
-use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled};
+use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, bound_of};
 
-/// [X3.135-1986 §5.9 SR4] The type of an operation on two exact numbers. Its
-/// precision is implementor-defined: `MAX_EXACT_PRECISION`. Its scale is
-/// max(s1, s2) for + and - \[SR4b\], s1 + s2 for * \[SR4c\], and for / at least
-/// max(s1, s2): a quotient keeps as many more fractional digits as fit, so
-/// as to lose no leading digit \[GR6b\], the implementor-defined choice of
-/// \[SR4d\] (`Decimal::checked_div`).
+/// [X3.135-1986 §5.9 SR4; ISO/IEC 9075-2:2023 §6.30 SR1c] The type of an
+/// operation on two exact numbers, of types `(p1, s1)` and `(p2, s2)`.
+/// Its scale is max(s1, s2) for + and - \[SR4b\], s1 + s2 for * \[SR4c\],
+/// and for / at least max(s1, s2): a quotient keeps as many more
+/// fractional digits as fit, so as to lose no leading digit \[GR6b\], the
+/// implementor-defined choice of \[SR4d\] (`Decimal::checked_div`). Its
+/// precision is implementation-defined (IV136): \[DESIGN\] (RULES.md
+/// D696) the digits every value of the operands' types gives
+/// (`value::bound_of`), up to `MAX_EXACT_PRECISION`, and of a quotient
+/// `MAX_EXACT_PRECISION`; so a sum of two columns of 18 digits is of 19,
+/// stored as such, and a value past the precision raises [GR6a].
 ///
 /// A scale above the precision is not a type [X3.135-1986 §5.5 SR4], so a
 /// product whose scale would exceed `MAX_EXACT_PRECISION` is valid SQL-86 that
 /// this implementation does not process: SQLCODE -900. Capping the scale
 /// instead made every row fail at run time.
-fn exact_result_type(op: ArithOp, s1: u32, s2: u32) -> Result<DataType> {
-    let scale = match op {
-        ArithOp::Mul => s1.checked_add(s2).filter(|s| *s <= MAX_EXACT_PRECISION).ok_or_else(|| {
-            SqlError::new(
-                Code::Unsupported,
-                format!(
-                    "[X3.135-1986 §5.9 SR4c, §5.5 SR4] a product of scales {s1} and {s2} needs a scale above this implementation's maximum precision of {MAX_EXACT_PRECISION}"
-                ),
-            )
-        })?,
-        ArithOp::Add | ArithOp::Sub | ArithOp::Div => s1.max(s2),
-    };
-    Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric })
+fn exact_result_type(op: ArithOp, (p1, s1): (u32, u32), (p2, s2): (u32, u32)) -> Result<DataType> {
+    let (precision, scale) = bound_of(op, (p1, s1), (p2, s2)).unwrap_or((MAX_EXACT_PRECISION, s1.max(s2)));
+    if scale > MAX_EXACT_PRECISION {
+        return Err(SqlError::new(
+            Code::Unsupported,
+            format!(
+                "[X3.135-1986 §5.9 SR4c, §5.5 SR4] a product of scales {s1} and {s2} needs a scale above this implementation's maximum precision of {MAX_EXACT_PRECISION}"
+            ),
+        ));
+    }
+    Ok(DataType::Exact { precision: precision.min(MAX_EXACT_PRECISION), scale, spelled: Spelled::Numeric })
 }
 
 impl Binder<'_> {
@@ -81,7 +84,9 @@ impl Binder<'_> {
             return self.temporal((a, left_type), op, (b, right_type), dynamic);
         }
         let t = match (left_type, right_type) {
-            (DataType::Exact { scale: s1, .. }, DataType::Exact { scale: s2, .. }) => exact_result_type(op, s1, s2)?,
+            (DataType::Exact { precision: p1, scale: s1, .. }, DataType::Exact { precision: p2, scale: s2, .. }) => {
+                exact_result_type(op, (p1, s1), (p2, s2))?
+            }
             // [ISO/IEC 9075-2:2023 §6.30 SR1a] DECFLOAT of 34 digits (IV134).
             (DataType::DecFloat { .. }, _) | (_, DataType::DecFloat { .. }) => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
             // [X3.135-1986 §5.9 SR5]
@@ -125,20 +130,41 @@ pub(super) fn distinct_operand(t: &DataType) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn shape(op: ArithOp, a: (u32, u32), b: (u32, u32)) -> std::result::Result<(u32, u32), Code> {
+        match exact_result_type(op, a, b) {
+            Ok(DataType::Exact { precision, scale, .. }) => Ok((precision, scale)),
+            Ok(_) => Err(Code::Api),
+            Err(e) => Err(e.code),
+        }
+    }
+
     /// Verifies: [X3.135-1986 §5.9 SR4b, SR4c, §5.5 SR4] product scale is s1 + s2 up to
     /// `MAX_EXACT_PRECISION` and rejected beyond it; sums keep max(s1, s2).
     #[test]
     fn exact_result_scales() {
-        let half = 9_u32; // any split of MAX_EXACT_PRECISION into two scales
-        let scale = |op, s1, s2| {
-            exact_result_type(op, s1, s2)
-                .map(|t| if let DataType::Exact { scale, .. } = t { Some(scale) } else { None })
-                .map_err(|e| e.code)
-        };
-        assert_eq!(scale(ArithOp::Mul, half, MAX_EXACT_PRECISION - half), Ok(Some(MAX_EXACT_PRECISION)));
-        assert_eq!(scale(ArithOp::Mul, half, MAX_EXACT_PRECISION - half + 1), Err(Code::Unsupported));
-        assert_eq!(scale(ArithOp::Add, MAX_EXACT_PRECISION, MAX_EXACT_PRECISION), Ok(Some(MAX_EXACT_PRECISION)));
-        assert_eq!(scale(ArithOp::Sub, 2, 5), Ok(Some(5)));
-        assert_eq!(scale(ArithOp::Div, 5, 2), Ok(Some(5)));
+        let half = 19_u32; // any split of MAX_EXACT_PRECISION into two scales
+        let max = MAX_EXACT_PRECISION;
+        assert_eq!(shape(ArithOp::Mul, (half, half), (max - half, max - half)), Ok((max, max)));
+        assert_eq!(shape(ArithOp::Mul, (half, half), (max, max - half + 1)), Err(Code::Unsupported));
+        assert_eq!(shape(ArithOp::Add, (max, max), (max, max)), Ok((max, max)));
+        assert_eq!(shape(ArithOp::Sub, (9, 2), (9, 5)), Ok((13, 5)));
+        assert_eq!(shape(ArithOp::Div, (9, 5), (9, 2)), Ok((max, 5)));
+    }
+
+    /// Verifies: [ISO/IEC 9075-2:2023 §6.30 SR1c ii, iii] (IV136) the
+    /// precision of a sum, difference or product is the digits its
+    /// operands' types give, up to 38: two DECIMAL(15,2) sum to 16 digits
+    /// and multiply to 30, two INTEGERs to 11 and 20, and two of 30 digits
+    /// to 38 either way.
+    #[test]
+    fn exact_result_precisions() {
+        assert_eq!(shape(ArithOp::Add, (15, 2), (15, 2)), Ok((16, 2)));
+        assert_eq!(shape(ArithOp::Sub, (15, 2), (10, 0)), Ok((16, 2)));
+        assert_eq!(shape(ArithOp::Mul, (15, 2), (15, 2)), Ok((30, 4)));
+        assert_eq!(shape(ArithOp::Add, (10, 0), (10, 0)), Ok((11, 0)));
+        assert_eq!(shape(ArithOp::Mul, (10, 0), (10, 0)), Ok((20, 0)));
+        assert_eq!(shape(ArithOp::Add, (30, 0), (30, 0)), Ok((31, 0)));
+        assert_eq!(shape(ArithOp::Mul, (30, 0), (30, 0)), Ok((MAX_EXACT_PRECISION, 0)));
+        assert_eq!(shape(ArithOp::Add, (MAX_EXACT_PRECISION, 0), (1, 0)), Ok((MAX_EXACT_PRECISION, 0)));
     }
 }

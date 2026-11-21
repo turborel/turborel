@@ -6,7 +6,7 @@ use super::{Accumulator, AggregateFunction, floats, ints};
 use crate::error::{Code, Result, fail};
 use crate::lexer::kw;
 use crate::storage::{Floats, Ints, Texts};
-use crate::value::{DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Decimal, Spelled, Value};
 
 /// COUNT(*) and COUNT(DISTINCT c). [X3.135-1986 §5.8 GR4a, GR4b] the cardinality.
 pub(super) struct Count;
@@ -17,7 +17,7 @@ impl AggregateFunction for Count {
     }
     // [X3.135-1986 §5.8 SR7] exact numeric with implementor-defined precision and scale 0.
     fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
-        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
+        Ok(DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric })
     }
     fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
         Box::new(CountAcc(0))

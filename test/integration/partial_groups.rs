@@ -170,24 +170,25 @@ fn an_error_of_a_group_made_partly_is_raised() {
 
 /// Verifies: [DESIGN] RULES.md D15, D38, D53 [ISO/IEC 9075:1992 §6.5 GR2b
 /// iv]: a SUM of groups made partly is judged on its total alone, never
-/// on a part merged: of keys each of 10^18 - 1, 1, -1, 1 and -1, each
-/// key's rows among those of 99 others, every sum is 10^18 - 1, by batch
-/// and row by row, of either store; of a key whose total is past 18
-/// digits, 22003 alike.
+/// on a part merged: of keys each of 10^38 - 1, 1, -1, 1 and -1, each
+/// key's rows among those of 99 others, every sum is 10^38 - 1, by batch
+/// and row by row, of either store, its columns of 128 bits; of a key
+/// whose total is past 38 digits, or past 128 bits on the way, 22003
+/// alike (RULES.md D696).
 #[test]
 fn a_sum_of_groups_made_partly_is_judged_on_its_total() {
     const KEYS: i64 = 3000;
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
-           CREATE TABLE R (K INTEGER, N NUMERIC(18))
-           CREATE TABLE C (K INTEGER, N NUMERIC(18)) USING columnstore",
+           CREATE TABLE R (K INTEGER, N NUMERIC(38))
+           CREATE TABLE C (K INTEGER, N NUMERIC(38)) USING columnstore",
     )
     .unwrap();
     let a = db.session("A");
     for block in (0..KEYS).step_by(100) {
         let mut values = Vec::new();
-        for n in ["999999999999999999", "1", "-1", "1", "-1"] {
+        for n in ["99999999999999999999999999999999999999", "1", "-1", "1", "-1"] {
             values.extend((block..block + 100).map(|k| format!("({k}, {n})")));
         }
         for t in ["R", "C"] {
@@ -202,10 +203,10 @@ fn a_sum_of_groups_made_partly_is_judged_on_its_total() {
         let (batched, by_row) = both_ways(&a, &sql);
         assert_eq!(batched, by_row, "{sql}");
         assert_eq!(batched.len(), 3000_usize);
-        assert!(batched.iter().all(|r| r.contains(",999999999999999999,")), "{sql}");
+        assert!(batched.iter().all(|r| r.contains(",99999999999999999999999999999999999999,")), "{sql}");
     }
-    a.run("INSERT INTO R VALUES (7, 999999999999999999)").unwrap();
-    a.run("INSERT INTO C VALUES (7, 999999999999999999)").unwrap();
+    a.run("INSERT INTO R VALUES (7, 99999999999999999999999999999999999999)").unwrap();
+    a.run("INSERT INTO C VALUES (7, 99999999999999999999999999999999999999)").unwrap();
     for t in ["C", "R"] {
         let sql = format!("SELECT K, SUM(N) FROM {t} GROUP BY K");
         let batched = rows(&a, &sql).err();

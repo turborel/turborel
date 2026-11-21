@@ -6,7 +6,7 @@ use super::{Interval, MAX_LEADING_PRECISION, Qualifier, unit};
 use crate::error::{Code, Result, SqlState, fail_with};
 use crate::value::cast::approximate_to_exact;
 use crate::value::datetime::{Datetime, Field, MICROS_PER_DAY, Moment, civil_from_days, days_from_civil, days_in};
-use crate::value::{ArithOp, MAX_EXACT_PRECISION, Value, pow10};
+use crate::value::{ArithOp, NARROW_EXACT_PRECISION, Value, pow10};
 
 /// The digits of fraction an approximate factor is taken to.
 const FACTOR_SCALE: u32 = 9;
@@ -50,15 +50,15 @@ pub fn add(a: &Interval, b: &Interval, subtract: bool) -> Result<Value> {
 ///
 /// SQLSTATE 22012 for a divisor 0; 22015 if the result leaves its
 /// leading field; 22003 if an approximate factor does not fit
-/// `MAX_EXACT_PRECISION` digits at scale `FACTOR_SCALE`; 22000 if `factor`
+/// `NARROW_EXACT_PRECISION` digits at scale `FACTOR_SCALE`; 22000 if `factor`
 /// is no number.
 pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> {
     let result = Qualifier { leading: u8::try_from(MAX_LEADING_PRECISION).unwrap_or(9), ..interval.qualifier };
     let exact = match factor {
-        Value::Approx(x) => approximate_to_exact(*x, (MAX_EXACT_PRECISION, FACTOR_SCALE), "ISO/IEC 9075:1992 §6.15 GR4")?,
+        Value::Approx(x) => approximate_to_exact(*x, (NARROW_EXACT_PRECISION, FACTOR_SCALE), "ISO/IEC 9075:1992 §6.15 GR4")?,
         // [ISO/IEC 9075-2:2023 §6.44 GR5] its digits past the factor's
         // scale truncated.
-        Value::DecFloat(d) => match d.to_decimal(FACTOR_SCALE).filter(|n| n.fits(MAX_EXACT_PRECISION, FACTOR_SCALE)) {
+        Value::DecFloat(d) => match d.to_decimal(FACTOR_SCALE).filter(|n| n.fits(NARROW_EXACT_PRECISION, FACTOR_SCALE)) {
             Some(n) => Value::Exact(n),
             None => {
                 return fail_with(

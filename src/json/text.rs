@@ -20,7 +20,13 @@ use std::ops::RangeInclusive;
 
 use super::{Item, MAX_NESTING, Member, Scalar, beyond};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::value::{DecFloat, Decimal, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
+use crate::value::{DecFloat, Decimal, MAX_DECFLOAT_PRECISION, NARROW_EXACT_PRECISION, Value};
+
+/// \[DESIGN\] (RULES.md D84, D695) The most digits of a JSON number
+/// held exact, as RFC 8259 §6 lets precision be limited: those of 64
+/// bits, as JSON's integers of 19 and 20 digits are identifiers; more are
+/// DECFLOAT.
+pub(crate) const JSON_EXACT_DIGITS: u32 = NARROW_EXACT_PRECISION;
 
 // [RFC 8259 §3] The literal names.
 /// `false`.
@@ -98,7 +104,7 @@ fn non_unique(key: &str) -> SqlError {
 /// The exact number of the sign `negative` says, the digits `whole`
 /// before its decimal point and `fraction` after it, either of them empty
 /// if the other is not. Its leading zeros, and the trailing zeros of its
-/// fraction, are insignificant: of more digits than `MAX_EXACT_PRECISION`,
+/// fraction, are insignificant: of more digits than `JSON_EXACT_DIGITS`,
 /// it is exact without them if they are what made it too long, else the
 /// decimal floating-point number it is, which holds
 /// `MAX_DECFLOAT_PRECISION` significant digits exactly.
@@ -115,11 +121,11 @@ pub(super) fn exact(negative: bool, whole: &str, fraction: &str) -> Result<Item>
     let trimmed = format!("{whole}{significant}");
     let trimmed = trimmed.trim_start_matches('0');
     let (units, scale) = if fits(&digits, fraction) { (digits.as_str(), fraction.len()) } else { (trimmed, significant.len()) };
-    if fits(units, "") && u32::try_from(scale).is_ok_and(|scale| scale <= MAX_EXACT_PRECISION) {
-        // At most MAX_EXACT_PRECISION digits always fit an i128 and a u32,
+    if fits(units, "") && u32::try_from(scale).is_ok_and(|scale| scale <= JSON_EXACT_DIGITS) {
+        // At most JSON_EXACT_DIGITS digits always fit an i128 and a u32,
         // so neither fallback below is ever taken.
         let units: i128 = if units.is_empty() { 0 } else { units.parse().unwrap_or(0) };
-        let scale = u32::try_from(scale).unwrap_or(MAX_EXACT_PRECISION);
+        let scale = u32::try_from(scale).unwrap_or(JSON_EXACT_DIGITS);
         return Ok(Item::Scalar(Decimal::new(if negative { units.wrapping_neg() } else { units }, scale).into()));
     }
     let coefficient = trimmed.trim_end_matches('0');
@@ -135,8 +141,8 @@ pub(super) fn exact(negative: bool, whole: &str, fraction: &str) -> Result<Item>
 /// Whether `digits`, of which `fraction` are after the decimal point, are
 /// few enough for an exact number.
 fn fits(digits: &str, fraction: &str) -> bool {
-    u32::try_from(digits.len()).is_ok_and(|count| count <= MAX_EXACT_PRECISION)
-        && u32::try_from(fraction.len()).is_ok_and(|count| count <= MAX_EXACT_PRECISION)
+    u32::try_from(digits.len()).is_ok_and(|count| count <= JSON_EXACT_DIGITS)
+        && u32::try_from(fraction.len()).is_ok_and(|count| count <= JSON_EXACT_DIGITS)
 }
 
 /// The approximate number the number `text`, one with an exponent, is:
