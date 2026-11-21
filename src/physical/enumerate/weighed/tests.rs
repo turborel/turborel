@@ -103,6 +103,6 @@ fn a_selective_build_filters_its_probing_rows() {
     let filtered = hashed(CostModel { grant_bytes: 1e9_f64, ..CostModel::default() }, Kind::Inner);
     let off = hashed(plain(1e9_f64), Kind::Inner);
     let outer = hashed(CostModel { grant_bytes: 1e9_f64, ..CostModel::default() }, Kind::Left);
-    assert!(filtered.per_row < off.per_row / 4.0_f64, "{filtered:?} {off:?}");
+    assert!(filtered.per_row < off.per_row / 2.0_f64, "{filtered:?} {off:?}");
     assert!((outer.per_row - off.per_row).abs() < f64::EPSILON);
 }

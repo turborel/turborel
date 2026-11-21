@@ -16,7 +16,7 @@
 //! their order, one making groups before any row, one by no column, and one
 //! of a set function DISTINCT or of an inverse distribution is hashed.
 
-use super::cost::HASH_ROW;
+use super::cost::hashing::hash_row;
 use super::cost::spill::grouped_spilled;
 use super::indexed::access_cost;
 use super::{Built, PhysicalPlanner, Plan};
@@ -132,7 +132,7 @@ impl PhysicalPlanner<'_> {
     fn hashed_cost(&self, n: f64, g: Grouping<'_>) -> f64 {
         let bytes = cost_of(g.width.max(1)) * COLUMN_BYTES;
         let spilled = grouped_spilled((g.groups, bytes), n, self.weights().grant_bytes);
-        n * HASH_ROW + g.groups * GROUP_MADE + spilled
+        n * hash_row(g.groups * bytes) + g.groups * GROUP_MADE + spilled
     }
 
     /// Whether a read of the input of `g` in its keys' order, of cost

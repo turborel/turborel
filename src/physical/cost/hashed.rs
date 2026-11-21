@@ -5,7 +5,7 @@
 //! a part's start, and past the grant both operands spilled
 //! (`cost/spill.rs`), as `enumerate/weighed.rs` costs one of a chain.
 
-use super::HASH_ROW;
+use super::hashing::hash_row;
 use super::parallel::{PART_START, ROW_STORE_GAIN, gain_of};
 use super::spill::{hash_spilled, row_bytes};
 use crate::catalog::QualifiedName;
@@ -26,8 +26,10 @@ impl PhysicalPlanner<'_> {
         let threads = w.degrees.degree_of(streamed).max(w.degrees.degree_of(self.held_rows(left)));
         let start = if threads > 1.0_f64 { PART_START } else { 0.0_f64 };
         let (built, plan) = if rows_l < rows_r { (rows_l, left) } else { (rows_r, right) };
-        let spill = hash_spilled((built, row_bytes(plan.width(), None)), rows_l.max(rows_r), w.grant_bytes);
-        Linear { fixed: (cost + HASH_ROW * rows_r) / on_right + start + spill, per_row: HASH_ROW / on_left }
+        let bytes = row_bytes(plan.width(), None);
+        let spill = hash_spilled((built, bytes), rows_l.max(rows_r), w.grant_bytes);
+        let each = hash_row(built * bytes);
+        Linear { fixed: (cost + each * rows_r) / on_right + start + spill, per_row: each / on_left }
     }
 
     /// The rows the table `plan` reads under its filters holds, the rows

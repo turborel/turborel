@@ -5,7 +5,7 @@
 //! does (Neumann and Radke, 2018, §2).
 //!
 //! * A hash join, on the equalities of a column of each operand: both read,
-//!   each row hashed (`HASH_ROW`); the build side, chosen as the plan is
+//!   each row hashed (`cost/hashing.rs`); the build side, chosen as the plan is
 //!   made, is the operand of fewer rows (`enumerate/realize.rs`). It keeps
 //!   the order of the side probing it.
 //! * An index nested-loop join, of an inner, LEFT or semi join or an

@@ -27,10 +27,9 @@ pub(crate) fn wanted(db: &State) -> bool {
 }
 
 /// \[DESIGN\] What a probing row costs to be judged by a runtime filter, in
-/// the hashed rows of `HASH_ROW`: a hash of its key and a test of a block
-/// of bits, as a conjunct judged by batch costs, an eighth of a row hashed
-/// into a join's table (`bench/analytics/costs.rs`).
-pub(in crate::physical) const FILTER_ROW: f64 = 0.06;
+/// rows of a scan: a hash of its key and a test of a block of bits, as a
+/// conjunct judged by batch costs (`bench/analytics/costs.rs`).
+pub(in crate::physical) const FILTER_ROW: f64 = 0.45;
 /// \[DESIGN\] The share of the probing rows past which the executor stops
 /// judging them by the filter, nine in ten (`exec/table/runtime.rs`).
 const KEEP_MOST: f64 = 0.9;

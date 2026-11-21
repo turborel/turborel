@@ -10,7 +10,7 @@ use super::super::{Mutation, Package};
 const CONJUNCTS_FILE: &str = "src/physical/cost/conjuncts.rs";
 
 /// Mechanisms of the cost model whose removal must fail their tests.
-pub const COST_MODEL: [Mutation; 5] = [
+pub const COST_MODEL: [Mutation; 6] = [
     Mutation {
         name: "conjuncts-unranked",
         package: Package::Core,
@@ -66,5 +66,15 @@ pub const COST_MODEL: [Mutation; 5] = [
         replacement: "        let share = if kind == Kind::Inner && w.runtime_filters && false {",
         integration: &[],
         unit: &["physical::enumerate::weighed::tests::a_selective_build_filters_its_probing_rows"],
+    },
+    Mutation {
+        name: "hash-size-ignored",
+        package: Package::Core,
+        breaks: "a row hashed into a table far past the cache is priced as one into a small table",
+        file: "src/physical/cost/hashing.rs",
+        original: "    if bytes <= CACHED_BYTES {",
+        replacement: "    if bytes <= CACHED_BYTES || bytes > 0.0_f64 {",
+        integration: &[],
+        unit: &["physical::cost::tests::a_row_hashed_into_a_larger_table_costs_more"],
     },
 ];

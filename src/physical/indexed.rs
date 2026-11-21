@@ -208,7 +208,7 @@ impl PhysicalPlanner<'_> {
     /// D386): at `left`'s estimate and at its pessimistic rows, its bound
     /// or its estimate times PLANNER.ESTIMATE_MARGIN, each probe against
     /// `read`, the read of its rows the hash join's right operand would be
-    /// (`access_cost`), and each row of either operand hashed (`HASH_ROW`).
+    /// (`access_cost`), and each row of either operand hashed (`cost/hashing.rs`).
     pub(super) fn probed_instead(
         &self,
         (left, right): (&LogicalPlan, &LogicalPlan),

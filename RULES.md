@@ -435,6 +435,7 @@ verification approach DO-178C expects (§8).
 | D651 | Costs count what an operator spills past its grant, at its rows' width |
 | D652 | A join's method is chosen seeing the degree its part will run at |
 | D653 | A hash join's cost counts the probing rows its runtime filter leaves |
+| D654 | A row hashed costs more as its table outgrows the cache |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
 
 ### The project
@@ -12481,6 +12482,22 @@ executor stops judging by one. Only inner joins count it, since the
 preserved side of an outer join keeps every row. With EXECUTOR.BATCHES
 or EXECUTOR.RUNTIME_FILTERS OFF, none is counted. So join orders put a
 selective build where its filter reaches the scan it drops rows of.
+
+#### D654. A row hashed costs more as its table outgrows the cache
+
+A hash join's built rows and a grouping's groups are held in a table.
+A row hashed into a table a core's cache holds costs about a row of a
+scan, and one hashed into a table far past the cache several, since each
+probe misses (`physical/cost/hashing.rs`, measured by the calibration
+bench's grouping of few groups and its hash join of many built rows).
+Between the two the cost grows with the logarithm of the table's bytes.
+Hash joins, groupings and the greedy join order price their hashing by
+the size of the table they build, the build's rows times their bytes, so
+an index nested-loop join wins over a hash join of a large build sooner
+than over one of a small build. Where the size is not known, as for a
+range join's computed values, a row costs the small table's weight. A
+runtime filter's probe costs a row judged by batch, about half a scan's
+row.
 
 ## 2. Project layout
 

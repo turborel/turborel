@@ -21,7 +21,8 @@
 //! gain PLANNER.REORDER_GAIN gives (`CostModel::reorder_gain`). The relation of the first key of the order asked for stays first.
 
 use super::PhysicalPlanner;
-use super::cost::HASH_ROW;
+use super::cost::hashing::hash_row;
+use super::cost::spill::row_bytes;
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, and_all, cond_columns, map_cond_columns, split_and};
 use crate::optimizer::is_guarded;
 use crate::value::CompOp;
@@ -185,7 +186,7 @@ fn cost(order: &[usize], relations: &[Relation<'_>], conjuncts: &[Conjunct]) -> 
 
 /// The estimated cost of joining relation `next` to the product of
 /// `placed`, and the rows that yields: a hash join reads `next` and hashes
-/// each row of either side (`HASH_ROW`), if a conjunct equates a column of
+/// each row of either side (`cost/hashing.rs`), if a conjunct equates a column of
 /// each, or each row of the product probes an index of `next`'s, if that
 /// costs less; a nested loop pairs every row.
 fn step(placed: &[usize], next: usize, relations: &[Relation<'_>], conjuncts: &[Conjunct]) -> f64 {
@@ -204,7 +205,9 @@ fn step(placed: &[usize], next: usize, relations: &[Relation<'_>], conjuncts: &[
         probe = probe.min(probe_cost(&c.cond, relations.get(next)));
     }
     let yields = outer * inner * fraction;
-    let join = if hashed { (inner + HASH_ROW * (outer + inner)).min(outer * probe) } else { outer * inner };
+    // Its rows' widths unknown here, each built row is taken as two columns.
+    let each = hash_row(inner * row_bytes(2, None));
+    let join = if hashed { (inner + each * (outer + inner)).min(outer * probe) } else { outer * inner };
     join + yields
 }
 

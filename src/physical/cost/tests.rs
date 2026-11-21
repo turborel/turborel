@@ -1,6 +1,7 @@
 //! Tests of the costs of spills, of the degree a part runs at, and of the
 //! rows a runtime filter leaves (RULES.md D651 to D653).
 
+use super::hashing::{HASH_LARGE, HASH_SMALL, hash_row};
 use super::parallel::Degrees;
 use super::runtime::{FILTER_ROW, kept, probed};
 use super::spill::{ENTRY_BYTES, PARTITIONED_ROW, SPILLED_BYTE, SPILLED_ROW, hash_spilled, row_bytes, sort_spilled};
@@ -63,4 +64,19 @@ fn a_runtime_filter_leaves_the_built_keys_share_of_the_probe() {
     assert!(same(kept(&[], 10.0_f64), 1.0_f64));
     assert!(same(probed(1_000.0_f64, HASH_ROW, 0.01_f64), 1_000.0_f64 * (FILTER_ROW + HASH_ROW * 0.01_f64)));
     assert!(same(probed(1_000.0_f64, HASH_ROW, 0.95_f64), 1_000.0_f64 * HASH_ROW));
+}
+
+/// Verifies: [DESIGN] (RULES.md D654) a row hashed into a table the cache
+/// holds costs the small table's weight, one far past it the large
+/// table's, and between them more as the table grows; a table of unknown
+/// size, the small one's.
+#[test]
+fn a_row_hashed_into_a_larger_table_costs_more() {
+    assert!(same(hash_row(0.0_f64), HASH_SMALL));
+    assert!(same(hash_row(1_048_576.0_f64), HASH_SMALL));
+    let (mid, more) = (hash_row(4_194_304.0_f64), hash_row(16_777_216.0_f64));
+    assert!(HASH_SMALL < mid && mid < more && more < HASH_LARGE, "{mid} {more}");
+    assert!(same(hash_row(33_554_432.0_f64), HASH_LARGE));
+    assert!(same(hash_row(1e12_f64), HASH_LARGE));
+    assert!(same(HASH_ROW, HASH_SMALL));
 }

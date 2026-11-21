@@ -17,7 +17,7 @@ use super::model::{Model, Rel};
 use super::space::{Entry, Space};
 use crate::logical::LogicalPlan;
 use crate::physical::PhysicalPlanner;
-use crate::physical::cost::HASH_ROW;
+use crate::physical::cost::hashing::hash_row;
 use crate::physical::cost::parallel::{PART_START, gain_of};
 use crate::physical::cost::runtime::{kept, probed};
 use crate::physical::cost::spill::hash_spilled;
@@ -100,7 +100,8 @@ impl Space<'_> {
         let probes_left = left.rows >= right.rows;
         let (built, probing) = if probes_left { ((r, right.rows), l) } else { ((l, left.rows), r) };
         let share = if kind == Kind::Inner && w.runtime_filters { m.filter_kept(built, probing) } else { 1.0_f64 };
-        let per_row = |probes: bool| if probes { probed(1.0_f64, HASH_ROW, share) } else { HASH_ROW };
+        let each = hash_row(built.1 * m.bytes(built.0));
+        let per_row = |probes: bool| if probes { probed(1.0_f64, each, share) } else { each };
         let (on_left, on_right) = (w.degrees.speedup(m.held(l), m.gain(l)), w.degrees.speedup(m.held(r), m.gain(r)));
         let right_read = if Space::single(r).is_some() { read / on_right } else { read };
         let threads = w.degrees.degree_of(m.held(l)).max(w.degrees.degree_of(m.held(r)));
