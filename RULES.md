@@ -407,6 +407,7 @@ verification approach DO-178C expects (§8).
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
 | D472 | A page written back again is written over its side-file block with no lock held |
 | D473 | The maintenance job gathers a table's statistics only once a plan has read them since its last pass |
+| D474 | A page read into a frame takes the buffer of the page it replaces |
 
 ### The project
 
@@ -11426,6 +11427,18 @@ ANALYZE and the maintenance asked to run now gather at once
 (`engine/rows/stats.rs`). A sampled pass of a table of the column store
 decodes the frozen rows of its sample alone, where it decoded every
 frozen row and kept the sampled (`engine/rows/frozen.rs`).
+
+#### D474. A page read into a frame takes the buffer of the page it replaces
+
+Each page a frame was given freed the buffer of the page it held and
+allocated another for the page read: two calls of the allocator per
+miss, each taking a lock of an arena the session threads share, and
+with many sessions missing at once they waited on each other there. A
+frame emptied now hands its buffer, cleared, to the page read into it,
+so a miss allocates nothing in the pool. A buffer grown past
+`REUSED_BYTES`, as a page with an overflow grows it, is let go, so a
+frame keeps no more than a page's worth once that page leaves
+(`disk/buffer/pool.rs`).
 
 #### D460. Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum
 

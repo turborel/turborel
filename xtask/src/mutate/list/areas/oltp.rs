@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 24] = [
+pub const OLTP: [Mutation; 25] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -249,5 +249,15 @@ pub const OLTP: [Mutation; 24] = [
         replacement: "            for (from, to) in kept_runs(&ids, &|_| true) {",
         integration: &[],
         unit: &["engine::rows::frozen::shadowed::frozen_rows_are_decoded_only_when_kept"],
+    },
+    Mutation {
+        name: "oltp-page-buffer-not-reused",
+        package: Package::Core,
+        breaks: "a frame given a page frees the buffer of the page it held and allocates another, so every miss calls the allocator twice and the sessions wait on its locks",
+        file: "src/disk/buffer/pool.rs",
+        original: "        let mut content = self.emptied(key, claim)?;",
+        replacement: "        let mut content = self.emptied(key, claim).map(|_| Vec::new())?;",
+        integration: &[],
+        unit: &["disk::buffer::tests::a_page_read_takes_the_buffer_of_the_page_it_replaces"],
     },
 ];
