@@ -193,7 +193,7 @@ impl Building<'_> {
         };
         let cond = self.cond_of(condition.ok_or_else(|| refused("no condition"))?, types, depth)?;
         Ok(match outer {
-            Some(kind) => LogicalPlan::OuterJoin { kind, cond, left, right },
+            Some(outer_kind) => LogicalPlan::OuterJoin { kind: outer_kind, cond, left, right },
             None => LogicalPlan::SemiJoin { anti, cond, left, right },
         })
     }

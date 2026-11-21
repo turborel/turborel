@@ -182,7 +182,7 @@ fn expr_has_outer(e: &Expr) -> bool {
 
 /// Whether `c` has an outer reference slot, also among the outer
 /// expressions of the subqueries nested in it.
-fn cond_has_outer(c: &Cond) -> bool {
+pub fn cond_has_outer(c: &Cond) -> bool {
     let mut found = false;
     c.for_each_expr(&mut |e| found = found || expr_has_outer(e));
     found

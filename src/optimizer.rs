@@ -29,6 +29,7 @@ mod outer;
 pub(crate) mod plugged;
 pub(crate) mod prepared;
 mod raising;
+mod reduced;
 mod setops;
 mod transitivity;
 pub(crate) mod unnesting;
@@ -42,7 +43,7 @@ use crate::db::State;
 use crate::logical::{Cond, Expr, LogicalPlan, Truth, and_all, cond_columns, map_cond_columns, split_and};
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
-pub use unnesting::{UNNEST_SUBQUERIES, UnnestSubqueries};
+pub use unnesting::{SEMI_JOINS, SemiJoins, UNNEST_SUBQUERIES, UnnestSubqueries};
 
 /// The names of the built-in rules, as EXPLAIN shows them and their
 /// settings name them (`switch_name`).
@@ -68,6 +69,7 @@ pub use limits::{PUSH_LIMIT_THROUGH_UNION, PushLimitThroughUnion};
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
 pub(crate) use raising::is_guarded;
 pub use raising::{PUSH_RAISING_FILTER_INTO_PRODUCT, PushRaisingFilterIntoProduct};
+pub use reduced::{SEMI_REDUCTION, SemiReduction};
 pub use setops::{PUSH_FILTER_THROUGH_SET_OPERATION, PushFilterThroughSetOperation};
 pub use transitivity::{PREDICATE_TRANSITIVITY, PredicateTransitivity};
 pub(crate) use views::substitute;
@@ -161,6 +163,8 @@ impl Optimizer {
         let mut o = Optimizer::empty();
         // Before the others, which then move the conditions they make.
         o.add(Box::new(InlineFunctions));
+        // Before unnesting, which would make the same subquery a join.
+        o.add(Box::new(SemiJoins));
         o.add(Box::new(UnnestSubqueries));
         o.add(Box::new(ConstantFolding));
         o.add(Box::new(SimplifyConditions));
@@ -180,6 +184,8 @@ impl Optimizer {
         o.add(Box::new(PushFilterThroughWindow));
         o.add(Box::new(PushLimitThroughUnion));
         o.add(Box::new(EliminateJoins));
+        // After the joins that cannot change the rows are gone.
+        o.add(Box::new(SemiReduction));
         o.add(Box::new(PushHavingIntoWhere));
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));

@@ -21,11 +21,11 @@ pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
 pub(super) use merge::merged;
 pub(super) use outer::outer;
-pub(super) use semi::semi;
 pub(in crate::exec) use outer::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub(in crate::exec) use partitioned::{Partitions, Pending, joined as partitioned_joined};
 pub(in crate::exec) use rescan::{Pass, Rescanned, product};
+pub(super) use semi::semi;
 
 use std::borrow::Cow;
 use std::collections::HashMap;

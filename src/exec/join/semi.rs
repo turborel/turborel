@@ -214,8 +214,8 @@ fn built_left(judge: Judge, (left, right): (Plan, Plan), work: Work, (db, tx): (
         held.push(row);
         if bytes > work.limit() {
             // Too many to hold: the hashed join of them and the rest.
-            let left: RowIter = Box::new(held.into_iter().map(Ok).chain(rows));
-            return Ok(Box::new(HashSemi { left, right: Some(execute(right, db, tx)), side: None, judge, work }));
+            let rest: RowIter = Box::new(held.into_iter().map(Ok).chain(rows));
+            return Ok(Box::new(HashSemi { left: rest, right: Some(execute(right, db, tx)), side: None, judge, work }));
         }
     }
     // Of no left row, no right row is read.

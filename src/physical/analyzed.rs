@@ -144,7 +144,12 @@ impl Plan {
     fn is_join(&self) -> bool {
         matches!(
             self,
-            Plan::Product { .. } | Plan::HashJoin { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::OuterJoin { .. } | Plan::SemiJoin(_)
+            Plan::Product { .. }
+                | Plan::HashJoin { .. }
+                | Plan::IndexJoin { .. }
+                | Plan::MergeJoin(_)
+                | Plan::OuterJoin { .. }
+                | Plan::SemiJoin(_)
         )
     }
 

@@ -109,9 +109,13 @@ pub(super) fn semi_plan(semi: Semi, (left, right): (Plan, Plan), (shown, est): (
         (false, false) => SemiMethod::Hash,
     };
     let rendered = shown.text(|names| render_cond(&cond, names));
-    let detail = if keys.is_empty() { rendered } else { shown.text(|names| format!("{rendered}  (hashed on {})", keys_detail(&keys, names, widths.0))) };
-    let cond = and_all(rest).map(judged_by_sets);
-    Plan::SemiJoin(Box::new(SemiJoin { anti, method, left, right, keys, cond, widths, detail, est }))
+    let detail = if keys.is_empty() {
+        rendered
+    } else {
+        shown.text(|names| format!("{rendered}  (hashed on {})", keys_detail(&keys, names, widths.0)))
+    };
+    let residual = and_all(rest).map(judged_by_sets);
+    Plan::SemiJoin(Box::new(SemiJoin { anti, method, left, right, keys, cond: residual, widths, detail, est }))
 }
 
 impl PhysicalPlanner<'_> {

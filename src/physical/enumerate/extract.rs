@@ -117,11 +117,7 @@ fn raw(plan: &LogicalPlan, (start, cx): (usize, Cx<'_>), leaves: &mut Vec<Leaf>,
             if !is_chain(plan) {
                 return Some(leaf(plan, start, leaves));
             }
-            let mut conds = Vec::new();
-            split_and(shifted(cond), &mut conds);
-            if conds.iter().any(|c| fixed(c, types)) {
-                return None;
-            }
+            let conds = unfixed(shifted(cond), types)?;
             Some(Raw::Filtered(conds, Box::new(raw(input, (start, cx), leaves, deeper)?)))
         }
         LogicalPlan::OuterJoin { kind, cond, left, right } => {
@@ -154,6 +150,13 @@ fn raw(plan: &LogicalPlan, (start, cx): (usize, Cx<'_>), leaves: &mut Vec<Leaf>,
         | LogicalPlan::Recognize(..)
         | LogicalPlan::Polymorphic(..) => Some(leaf(plan, start, leaves)),
     }
+}
+
+/// The conjuncts of `cond`, if none is fixed by the types `types`.
+fn unfixed(cond: Cond, types: Types<'_>) -> Option<Vec<Cond>> {
+    let mut conds = Vec::new();
+    split_and(cond, &mut conds);
+    (!conds.iter().any(|c| fixed(c, types))).then_some(conds)
 }
 
 /// What taking a chain apart reads: the types of its columns, the catalog

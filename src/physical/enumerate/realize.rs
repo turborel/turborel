@@ -19,8 +19,8 @@ use super::space::{Method, Space, Tree};
 use crate::logical::{Cond, Expr, OuterJoin, SortKey, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
 use crate::physical::indexed::{EquiKind, Equijoin, alike, index_join};
 use crate::physical::join::{JoinKey, Parted, hashed, hashed_outer};
-use crate::physical::shown::Shown;
 use crate::physical::semi::{Semi, semi_plan};
+use crate::physical::shown::Shown;
 use crate::physical::{MergeJoin, PhysicalPlanner, Plan};
 use crate::value::{CompOp, DataType};
 
@@ -262,7 +262,13 @@ impl PhysicalPlanner<'_> {
     /// A semi join or an antijoin, hashed on its equalities, the left
     /// built if it has fewer rows, else nested (`physical/semi.rs`). Its
     /// columns are its left's, in their order.
-    fn semi_realized(&self, cx: &Context<'_>, kind: Kind, (l, r): (Realized, Realized), (conds, rows, est): (&[Cond], (f64, f64), f64)) -> Realized {
+    fn semi_realized(
+        &self,
+        cx: &Context<'_>,
+        kind: Kind,
+        (l, r): (Realized, Realized),
+        (conds, rows, est): (&[Cond], (f64, f64), f64),
+    ) -> Realized {
         let shape = joined_shape(&l, &r);
         let pair: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
         let widths = (cx.width(&l.layout), cx.width(&r.layout));
