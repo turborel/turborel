@@ -36,7 +36,7 @@ mod indexed;
 mod join_probe;
 pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spatial, Supplied, Unmatched};
 mod join;
-pub use join::JoinKey;
+pub use join::{JoinKey, Own};
 mod kept;
 mod merged;
 pub use merged::MergeJoin;
@@ -44,11 +44,14 @@ mod nearest;
 mod nodes;
 pub(crate) use nearest::distance_call;
 pub use nearest::{ApproximateRead, NearestRead};
+use nodes::of_left;
 mod order;
 mod ordered;
 mod parallel;
 pub use parallel::Parallel;
+mod plannings;
 pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
+pub use plannings::plannings;
 mod probe;
 mod project;
 mod range;
@@ -508,8 +511,9 @@ impl<'a> PhysicalPlanner<'a> {
         if self.est.is_some() {
             return self.build(logical, &[]).plan;
         }
-        let estimates = Estimates::over(self.db, logical);
-        PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan
+        plannings::counted();
+        let estimates = Estimates::over(self.db, logical, self.values);
+        estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan)
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if
@@ -589,16 +593,6 @@ impl<'a> PhysicalPlanner<'a> {
         Built { plan: Plan::Filter { cond, detail, est, of_read: false, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 }
-
-/// `want`, if each of its keys is of a product's left operand, `width`
-/// columns wide, whose order the product keeps; else none.
-fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
-    if want.iter().all(|k| k.column < width) { want } else { &[] }
-}
-
-/// An outer join's own conditions, of its left operand's columns and of
-/// its right's (`Plan::OuterJoin`), if either has one.
-pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;
 
 // Unit tests: the planner's response to a state that breaks its invariants
 // (RULES.md R-TEST-2 robustness), and the orders its plans give.

@@ -43,9 +43,10 @@ use super::{CostModel, PhysicalPlanner};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::index::Index;
-use crate::logical::LogicalPlan;
+use crate::logical::{Cond, LogicalPlan, filled_cond};
 use crate::stats::Statistics;
 use crate::storage::cost_of;
+use crate::value::Value;
 
 pub(in crate::physical) use groups::cardenas;
 pub use injected::Injected;
@@ -125,6 +126,9 @@ pub(super) struct Estimates<'a> {
     kept: RefCell<HashMap<usize, Card>>,
     /// How many askings are under way, nested.
     asking: Cell<usize>,
+    /// A prepared statement's values, of a plan made with its slots: each
+    /// slot estimated as its value is (RULES.md D613).
+    values: Option<&'a [Value]>,
 }
 
 impl<'a> Estimates<'a> {
@@ -133,15 +137,24 @@ impl<'a> Estimates<'a> {
         let (stats, rows, keys) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
         let (memo, asking) = (RefCell::new(HashMap::new()), Cell::new(0));
         let (planned, kept) = (HashSet::new(), RefCell::new(HashMap::new()));
-        Estimates { db, cost: db.cost(), stats, rows, keys, memo, asking, planned, kept }
+        Estimates { db, cost: db.cost(), stats, rows, keys, memo, asking, planned, kept, values: None }
     }
 
     /// An estimator over `db` for the planning of `plan`, whose nodes live
-    /// as long as it.
-    pub(super) fn over(db: &'a State, plan: &LogicalPlan) -> Estimates<'a> {
+    /// as long as it, its slots estimated by `values`, if given.
+    pub(super) fn over(db: &'a State, plan: &LogicalPlan, values: Option<&'a [Value]>) -> Estimates<'a> {
         let mut planned = HashSet::new();
         addresses(plan, &mut planned);
-        Estimates { planned, ..Estimates::new(db) }
+        Estimates { planned, values, ..Estimates::new(db) }
+    }
+
+    /// `cond`, each slot its value, if the estimator is given values and
+    /// it fills; else itself.
+    pub(super) fn valued<'c>(&self, cond: &'c Cond) -> std::borrow::Cow<'c, Cond> {
+        match self.values.and_then(|values| filled_cond(cond.clone(), values).ok()) {
+            Some(filled) => std::borrow::Cow::Owned(filled),
+            None => std::borrow::Cow::Borrowed(cond),
+        }
     }
 
     /// The state estimated of.

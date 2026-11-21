@@ -425,6 +425,7 @@ verification approach DO-178C expects (§8).
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
+| D613 | A kept statement or body plans nothing again in a steady state: its instant is a slot, its probes take slot arithmetic, and a plan of index probes is learned again only once a probe outgrows it |
 | D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
 | D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
 | D622 | EXPLAIN ANALYZE runs INSERT, UPDATE, DELETE and MERGE in the session's transaction and counts the plan of the rows they read |
@@ -12207,6 +12208,52 @@ again once a table it reads moves as its statistics would be gathered
 again for (D422). The places are found by an XXH3 hash of what the
 statements were prepared alike in (D460), compared whole, and a place no
 statement holds is gone.
+
+#### D613. A kept statement or body plans nothing again in a steady state: its instant is a slot, its probes take slot arithmetic, and a plan of index probes is learned again only once a probe outgrows it
+
+A procedure called again and again with new values should make no plan
+after its first calls. `physical::plannings()` counts the physical plans
+the thread makes, wherever they start, and an order entry test
+(`tpcc_plans.rs`) asserts that each of its five procedures makes none
+once warm. Five things kept them planning.
+
+A statement that reads its instant (CURRENT_TIMESTAMP and the others of
+ISO/IEC 9075-2:2023 §6.43) bound it as a constant, so its binding was
+held and bound and planned at each execution. A prepared statement's
+write, and an INSERT of one or of a kept body, now binds the instant as
+the slot past its `?`s (`Params::clock_slot`), which each execution
+fills with its statement's instant, the one value every read of it in the
+statement gives [ISO/IEC 9075:1992 §6.8 GR3]. A CAST of a date or a
+timestamp reads only the session's displacement, which a kept plan
+compares, so it holds no instant.
+
+A comparison of a column with a slot plus or minus a constant probes an
+index as one with a slot does. The probe carries its expression and
+evaluates it as it is placed, cast to the column's type as the plan made
+with values casts it. Arithmetic of slots and constants alone is judged
+by their types for whether it can raise (D373), so a sum that cannot
+overflow its type no longer keeps the comparison out of the index.
+
+The estimates of a learning run read a slot's value, so the plan made
+with slots and the plan made with values are costed alike and agree. A
+hash join whose keys the plan made with values has more of, keys that
+equal two columns to one value give, is of the same shape.
+
+A FOR statement's cursor of no `<cursor name>` can be named by no
+statement [ISO/IEC 9075-4:2006 draft §14.13 SR4]. When its body runs no
+statement and no CALL, no change can be made while it is open, so it is
+opened read only, from the plan its body keeps, not planned again for an
+update at each open. A body that writes opens it as before.
+
+A plan learned is learned again once a table it reads drifts (D610). A
+plan that reads every table only through index probes is not: it is
+learned again only once a probe's estimated rows per probe, its table's
+rows over the distinct values of the columns it fixes, grows past ten
+times its figure as the plan was learned (`prepared/plans/grown.rs`).
+Until then each drift moves the rows it is measured from. A statement or
+leaf whose plans varied tries to learn again once a table it reads
+drifts, so a plan that varied while its tables were small can be kept
+once they settle.
 
 #### D620. EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made
 

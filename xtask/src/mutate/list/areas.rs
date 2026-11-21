@@ -42,6 +42,7 @@ mod txn_layer;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
 mod semi_joins;
+mod steady;
 mod unnesting;
 mod uuid;
 mod xxhash;
@@ -49,7 +50,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 18] {
+pub fn core() -> [&'static [Mutation]; 19] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -69,6 +70,7 @@ pub fn core() -> [&'static [Mutation]; 18] {
         &txn_layer::TXN_LAYER,
         &monitoring::MONITORING,
         &bulk::BULK,
+        &steady::STEADY_PLANS,
     ]
 }
 

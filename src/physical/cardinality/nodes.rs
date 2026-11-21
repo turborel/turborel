@@ -100,7 +100,7 @@ impl Estimates<'_> {
     /// conjuncts of each table together (`cardinality/tables.rs`).
     pub(super) fn selectivity(&self, cond: &Cond, over: Over<'_>) -> f64 {
         let mut conjuncts = Vec::new();
-        split_and(cond.clone(), &mut conjuncts);
+        split_and(self.valued(cond).into_owned(), &mut conjuncts);
         self.conjunction(&conjuncts, over)
     }
 

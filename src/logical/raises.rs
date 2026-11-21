@@ -17,7 +17,7 @@
 //! iv, GR5b iii 4]. Anything else is judged as `Expr::can_raise` judges it,
 //! and a column of no known type as of no exact type.
 
-use super::{Cond, Expr, LogicalPlan};
+use super::{Cond, Expr, LogicalPlan, Slot};
 use crate::catalog::Catalog;
 use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, constant_prefix};
 
@@ -180,7 +180,10 @@ fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
         }
         Expr::Const(Value::Exact(d)) => Some((d.digits().max(d.scale), d.scale)),
         Expr::Neg(x) => exact_shape(x, types, deeper),
-        Expr::Cast(_, DataType::Exact { precision, scale, .. }) => Some((*precision, *scale)),
+        // A slot's value is of its type, cast to it as it is filled or
+        // assigned (RULES.md D613).
+        Expr::Cast(_, DataType::Exact { precision, scale, .. })
+        | Expr::Dynamic(Slot { data_type: DataType::Exact { precision, scale, .. }, .. }) => Some((*precision, *scale)),
         Expr::Arith(a, op, b) => arith_shape((a, *op, b), types, deeper),
         Expr::Const(_)
         | Expr::Cast(..)

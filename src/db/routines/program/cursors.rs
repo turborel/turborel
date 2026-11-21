@@ -39,7 +39,9 @@ impl Session {
 
     /// [§12.2] Opens the local cursor `key`, its specification's values
     /// those of `frame`: of a program kept, from the specification and plan
-    /// `keeping` keeps, its variables slots (RULES.md D416).
+    /// `keeping` keeps, its variables slots (RULES.md D416); read only if
+    /// it is a FOR statement's no statement can name whose body writes
+    /// nothing (`Cursor::read_only`, RULES.md D613).
     ///
     /// # Errors
     ///
@@ -52,7 +54,7 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<()> {
         let flags = (cursor.insensitive, cursor.scroll);
-        self.open_text(cx, &Name::plain(key), (&cursor.text, flags, keeping), frame).map(|_| ())
+        self.open_text(cx, &Name::plain(key), (&cursor.text, flags, keeping, cursor.read_only), frame).map(|_| ())
     }
 
     /// [§12.3] The row the local cursor `key` fetches in `orientation`;
