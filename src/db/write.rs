@@ -26,11 +26,14 @@ use crate::txn::{Again, Txn};
 use crate::value::datetime::Now;
 use crate::value::{Value, assign};
 
+mod bulk;
 mod degree;
+mod given;
 mod portion;
 pub(crate) mod system_time;
 
 use degree::degree_at;
+pub(super) use given::not_given;
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
@@ -148,9 +151,8 @@ impl Written {
     }
 
     /// `bound`, a kept plan, run with the values `slots`: its object rows
-    /// by `kept`, its plan made once with its slots and the tables it
-    /// reads, if given; else by its logical plan, filled to be planned
-    /// with its values.
+    /// by `kept`, its plan and the tables it reads, if given; else by its
+    /// logical plan, filled to be planned with its values.
     ///
     /// # Errors
     ///
@@ -172,10 +174,7 @@ impl Written {
     /// `st`, as its plans and expressions are executed in: with its slots'
     /// values, of a kept plan.
     pub(super) fn db(&self, st: &Arc<State>) -> Db {
-        match &self.slots {
-            Some(slots) => Db::slotted(st, Arc::clone(slots)),
-            None => Db::of(st),
-        }
+        self.slots.as_ref().map_or_else(|| Db::of(st), |slots| Db::slotted(st, Arc::clone(slots)))
     }
 
     /// Whether row `row` of the object table, a version another
@@ -207,7 +206,10 @@ impl Session {
         let StatementContext { st, tx } = cx;
         let (target, query) = self.insert_bound(st, stmt, params, keeping)?;
         let slots = keeping.and(params.dynamic_slots());
-        let rows = if let Some(logical) = query {
+        let rows = if let Some(given) = params.given() {
+            // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
+            given::given_rows(st, (stmt, &target), given, &Runner::new(st, tx.id))?
+        } else if let Some(logical) = query {
             query_rows((self, cx), &target, (logical, slots))?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
@@ -226,7 +228,8 @@ impl Session {
         // [ISO/IEC 9075-2:2023 §15.11 GR4] its BEFORE triggers first.
         let mut rows = effects.before_insert(cx, &target.name, rows)?;
         // [X3.135-1986 §8.7 GR1c], [EXTENSION] in the partition that holds it (RULES.md D155).
-        rows.visit(&mut |row| st.insert_routed(tx, &target.name, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))?;
+        // [EXTENSION] a batch at a time where it may be (RULES.md D530).
+        bulk::insert_held(st, tx, &target.name, &mut rows, &mut effects)?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
             rows.visit(&mut |row| check_option(&target.checks, [row], ("X3.135-1986 §8.7 GR2", &runner)))?;

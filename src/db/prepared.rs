@@ -15,6 +15,7 @@
 //!
 //! The same preparation serves PREPARE in SQL text (`db/dynamic.rs`).
 
+mod given;
 mod outputs;
 mod plans;
 mod shared;
@@ -22,7 +23,8 @@ mod shared;
 use std::sync::Arc;
 
 use outputs::Outputs;
-pub(super) use plans::{Keeping, KeptPlan, Key, Learned, Learning, Plans, moved, rows_of};
+pub(super) use plans::{Keeping, KeptPlan, Key, Plans, moved, rows_of};
+pub(crate) use plans::{Learned, Learning};
 pub(crate) use shared::Shared;
 
 use super::area::commands::{self, Command};

@@ -221,7 +221,7 @@ impl Database {
             let (lsn, record) = read?;
             report.records = report.records.saturating_add(1);
             analysis.note(lsn, &record);
-            if let Some(change) = self.replay_record(lsn, record, &mut replaying, &mut report)? {
+            for change in self.replay_record(lsn, record, &mut replaying, &mut report)? {
                 changes.push(change, &mut encode_change)?;
             }
         }
@@ -251,12 +251,17 @@ impl Database {
 
     /// Replays a definition: one made outside transactions at once, one a
     /// transaction made at its commit record, if `replaying` says so;
-    /// returns a row change, kept for undo and redo.
-    fn replay_record(&self, lsn: Lsn, record: Record, replaying: &mut Replaying, report: &mut RecoveryReport) -> Result<Option<RowChange>> {
+    /// returns its row changes, kept for undo and redo: \[EXTENSION\] of
+    /// rows inserted together, one for each (RULES.md D530).
+    fn replay_record(&self, lsn: Lsn, record: Record, replaying: &mut Replaying, report: &mut RecoveryReport) -> Result<Vec<RowChange>> {
         let tx = record.tx;
-        let change = |table, generation, row, before, after| Some(RowChange { lsn, tx, table, generation, row, before, after });
-        Ok(match record.change {
+        let one = |table, generation, row, before, after| RowChange { lsn, tx, table, generation, row, before, after };
+        let change = |table, generation, row, before, after| Some(one(table, generation, row, before, after));
+        Ok(Vec::from_iter(match record.change {
             Change::Insert { table, generation, row, after } => change(table, generation, row, None, Some(after)),
+            Change::InsertRows { table, generation, rows } => {
+                return Ok(rows.into_iter().map(|(row, after)| one(table.clone(), generation, row, None, Some(after))).collect());
+            }
             Change::Update { table, generation, row, before, after } => change(table, generation, row, Some(before), Some(after)),
             Change::Delete { table, generation, row, before } => change(table, generation, row, Some(before), None),
             definition @ (Change::Schema { .. }
@@ -294,7 +299,7 @@ impl Database {
                 None
             }
             Change::Checkpoint | Change::RestorePoint { .. } => None,
-        })
+        }))
     }
 
     /// [ISO/IEC 9075:1992 §20.1 GR6b ii] The definitions `tx`, committed at
@@ -369,6 +374,7 @@ impl Database {
                     st.apply_change(change, None)?.discard();
                 }
                 Change::Insert { .. }
+                | Change::InsertRows { .. }
                 | Change::Update { .. }
                 | Change::Delete { .. }
                 | Change::Commit { .. }

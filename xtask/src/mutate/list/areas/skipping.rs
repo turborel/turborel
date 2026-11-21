@@ -1,7 +1,7 @@
 //! The mutations of the column store's skipping (RULES.md R-TEST-9,
-//! D510, D511): the shadow bits a write and a group published set, the
+//! D510-D512): the shadow bits a write and a group published set, the
 //! zones of the tree's rows a scan reads the delta by, and imprints, their
-//! masks and the order conjuncts are judged in.
+//! masks and the order conjuncts are judged in, and dictionaries in order.
 
 use super::super::{Mutation, Package};
 
@@ -11,10 +11,12 @@ const DELTA: &str = "engine::rows::frozen::shadowed::delta_zones_skip_the_tree_r
 /// Imprints' unit tests.
 const KEPT: &str = "engine::columns::imprints::tests::imprints_never_leave_out_a_matching_row";
 const MASKS: &str = "engine::columns::imprints::tests::masks_are_of_the_bins_a_condition_may_match";
+/// Dictionaries in order.
+const SORTED: &str = "engine::columns::judged::sorted::tests::dictionaries_in_order_judge_by_codes";
 const ORDERED: &str = "engine::columns::imprints::tests::conjuncts_are_ordered_narrowest_first";
 
 /// Mechanisms whose removal must fail the skipping's requirements.
-pub const SKIPPING: [Mutation; 10] = [
+pub const SKIPPING: [Mutation; 13] = [
     Mutation {
         name: "shadow-bits-writer",
         package: Package::Core,
@@ -114,5 +116,35 @@ pub const SKIPPING: [Mutation; 10] = [
         replacement: "from.saturating_sub(last.1) < 1",
         integration: &[],
         unit: &[MASKS],
+    },
+    Mutation {
+        name: "dictionary-in-order",
+        package: Package::Core,
+        breaks: "a dictionary of texts keeps its entries as first seen",
+        file: "src/engine/columns.rs",
+        original: "(sizer.table(), padding(t).is_some())",
+        replacement: "(sizer.table(), false)",
+        integration: &[],
+        unit: &[SORTED],
+    },
+    Mutation {
+        name: "dictionary-order-unsorted",
+        package: Package::Core,
+        breaks: "a dictionary says its entries are in order and keeps them in reverse",
+        file: "src/engine/columns/encoded/dictionary.rs",
+        original: "compare_strings(x, y).then_with",
+        replacement: "compare_strings(y, x).then_with",
+        integration: &[],
+        unit: &[SORTED],
+    },
+    Mutation {
+        name: "dictionary-spans",
+        package: Package::Core,
+        breaks: "the entries equal to a constant are taken to begin where those above it do",
+        file: "src/engine/columns/judged/sorted.rs",
+        original: "Some(order(e)? != Ordering::Less)",
+        replacement: "Some(order(e)? == Ordering::Greater)",
+        integration: &[],
+        unit: &[SORTED],
     },
 ];

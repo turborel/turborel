@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::filled_scan;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Truth, filled_cond, filled_expr};
+use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Placing, Truth, filled_cond_as, filled_expr_as};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
 use crate::physical::{JoinProbe, Plan, Preserved};
@@ -20,8 +20,19 @@ use crate::value::Value;
 /// # Errors
 ///
 /// As `logical::filled`; SQLCODE -910 for an operator no kept plan holds.
-pub(super) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
-    Filling { values: Some(values), budget, fills: Cell::new(false) }.plan(plan)
+pub(crate) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
+    Filling { values: Some(values), budget, placing: Placing::Cast, fills: Cell::new(false) }.plan(plan)
+}
+
+/// As `filled_plan`, each value placed as it is, not cast: of a
+/// correlated subquery's plan kept across its runs, its outer references
+/// the slots (RULES.md D675).
+///
+/// # Errors
+///
+/// As `filled_plan`.
+pub(crate) fn filled_plan_as_is(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
+    Filling { values: Some(values), budget, placing: Placing::AsIs, fills: Cell::new(false) }.plan(plan)
 }
 
 /// `plan`, a kept plan whose slots stay for each execution to read where
@@ -32,7 +43,7 @@ pub(super) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<Memo
 ///
 /// SQLCODE -910 for an operator no kept plan holds.
 pub(crate) fn prepared_plan(plan: Plan, budget: Option<&Arc<MemoryBudget>>) -> Result<Kept> {
-    let filling = Filling { values: None, budget, fills: Cell::new(false) };
+    let filling = Filling { values: None, budget, placing: Placing::Cast, fills: Cell::new(false) };
     let prepared = filling.plan(plan.clone())?;
     // A plan filled at each execution is kept as it was made, to be filled
     // and prepared then, as before it was kept.
@@ -44,6 +55,7 @@ struct Filling<'a> {
     /// The slots' values; none, for slots left in place.
     values: Option<&'a [Value]>,
     budget: Option<&'a Arc<MemoryBudget>>,
+    placing: Placing,
     /// Whether a scalar call it prepares takes a slot (`Kept`).
     fills: Cell<bool>,
 }
@@ -59,7 +71,7 @@ impl Filling<'_> {
 
     fn expr(&self, expr: Expr) -> Result<Expr> {
         let expr = match self.values {
-            Some(values) => filled_expr(expr, values)?,
+            Some(values) => filled_expr_as(expr, values, self.placing)?,
             None => self.noted(expr),
         };
         Ok(prepared::expression(expr, self.budget))
@@ -67,7 +79,7 @@ impl Filling<'_> {
 
     fn cond(&self, cond: Cond) -> Result<Cond> {
         let cond = match self.values {
-            Some(values) => filled_cond(cond, values)?,
+            Some(values) => filled_cond_as(cond, values, self.placing)?,
             None => cond.map_exprs(&mut |e| self.noted(e)),
         };
         Ok(prepared::condition(cond, self.budget))
@@ -77,7 +89,7 @@ impl Filling<'_> {
     /// and prepared as a filter's would be.
     fn scan(&self, plan: Plan) -> Result<Plan> {
         let mut plan = match self.values {
-            Some(values) => filled_scan(plan, values)?,
+            Some(values) => filled_scan(plan, values, self.placing)?,
             None => plan,
         };
         if let Plan::IndexScan { decided: Some(decided), .. } = &mut plan {
@@ -169,11 +181,11 @@ impl Filling<'_> {
             Plan::IndexScan { .. } => self.scan(plan),
             Plan::SeqScan { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
-            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est } => {
+            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed } => {
                 let aggs = aggs.into_iter().map(|a| self.agg(a)).collect::<Result<_>>()?;
-                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est })
+                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est, streamed })
             }
-            Plan::Distinct { input, est } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est }),
+            Plan::Distinct { input, est, streamed } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est, streamed }),
             Plan::Sort { keys, detail, input, most } => Ok(Plan::Sort { keys, detail, input: Box::new(self.plan(*input)?), most }),
             Plan::Limit { limit, input, est } => {
                 let offset = limit.offset.map(|e| self.expr(e)).transpose()?;

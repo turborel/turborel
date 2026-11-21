@@ -60,7 +60,8 @@ use crate::physical::{Kept as KeptPhysical, Plan, keepable, prepared_plan};
 use crate::settings::Own;
 use crate::sync::{read, write};
 use crate::value::Value;
-pub(in crate::db) use learning::{Learned, Learning, moved, rows_of};
+pub(crate) use learning::{Learned, Learning};
+pub(in crate::db) use learning::{moved, rows_of};
 
 mod learning;
 
@@ -72,17 +73,25 @@ pub(crate) struct Plans {
     kept: Arc<Place>,
     /// The plans its executions made.
     made: AtomicU64,
+    /// Its text, normalized once (RULES.md D521).
+    text: std::sync::OnceLock<Arc<crate::system::Text>>,
 }
 
 impl Plans {
     /// What keeps its plans in `place`.
     pub(super) fn in_place(place: Arc<Place>) -> Plans {
-        Plans { kept: place, made: AtomicU64::default() }
+        Plans { kept: place, made: AtomicU64::default(), text: std::sync::OnceLock::default() }
     }
 
     /// How many plans its executions made.
     pub(super) fn made(&self) -> u64 {
         self.made.load(Ordering::Relaxed)
+    }
+
+    /// Its text, `sql`, normalized the first time, never at each run
+    /// (RULES.md D521).
+    pub(in crate::db) fn text(&self, sql: &str) -> &Arc<crate::system::Text> {
+        self.text.get_or_init(|| Arc::new(crate::system::Text::of(sql)))
     }
 }
 
@@ -503,7 +512,7 @@ impl Session {
     pub(in crate::db) fn open_kept(&self, call: &Call<'_>, p: &Prepared, params: &Params) -> Result<Cursor> {
         let st = call.state();
         let k = self.keeping(st, &p.plans);
-        let timed = super::super::slow::Timed::of(st, || p.sql.clone(), (&self.auth(), &self.stop));
+        let timed = self.timed(st, || p.sql.clone(), p.plans.text(&p.sql));
         let spec = Self::cursor_specification(st, &p.sql, params, Some(&k))?;
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |snapshot, tx| self.open_rows(snapshot, tx, &spec, (params, Some(&k))))
