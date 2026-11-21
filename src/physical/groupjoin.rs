@@ -51,14 +51,6 @@ const MEMO_RATIO: f64 = 4.0;
 /// memoizing form would build every group operand row.
 const EAGER_RATIO: f64 = 8.0;
 
-/// \[DESIGN\] How many rows of the other operand each of its groups must
-/// be estimated to take for the eager form to be made. Its distinct keys
-/// are counted from a sample, which counts too few of keys whose rows lie
-/// together, as a sample of whole pages finds each such key's rows at
-/// once; a grouping that collapses so many rows a group stays ahead of the
-/// memoizing form when its groups are many times more than counted.
-const EAGER_ROWS: f64 = 64.0;
-
 /// \[DESIGN\] (RULES.md D490) A memoizing groupjoin: the rows of `build`
 /// read into a table by their keys' columns, each a group, then each row
 /// of `probe` whose keys equal a group's fed to its set functions; each
@@ -139,7 +131,6 @@ fn planned(plan: &Plan, db: &State) -> Option<Plan> {
     let (built, probing) = (rows(found.build), rows(found.probe));
     if let Some((eager, groups)) = eager::eager(&found, plan, db)
         && built > EAGER_RATIO * groups
-        && probing > EAGER_ROWS * groups
     {
         return Some(eager);
     }

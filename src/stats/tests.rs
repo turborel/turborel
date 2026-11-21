@@ -290,3 +290,27 @@ fn frequencies_of_each_value() {
     }
     assert_eq!(sampled.finish_sampled(1_000).frequencies(0).map(|f| f.most), Some(400.0_f64), "a sample of 10 of 1,000 rows");
 }
+
+/// Verifies: [DESIGN] RULES.md D31, distinct values of a sample read by
+/// runs of rows: keys whose rows lie together, four to a key, each found
+/// whole in the runs read, are counted as the table holds them, not as the
+/// sample's few; values scattered over the table, each in many runs, are
+/// not counted more for it.
+#[test]
+fn a_sample_of_runs_counts_keys_whose_rows_lie_together() {
+    let (rows, run) = (600_000_u32, 128_u32);
+    let sampled = |value: &dyn Fn(u32) -> u32| {
+        let mut builder = StatsBuilder::counting(1, Sampling::default());
+        for id in (0..rows).filter(|id| id.div_euclid(run) % 20 == 0) {
+            builder.run(u64::from(id.div_euclid(run)));
+            builder.add(&vec![number(value(id))], 9);
+        }
+        builder.finish_sampled(u64::from(rows)).columns[0].distinct
+    };
+    let clustered = sampled(&|id| id.div_euclid(4));
+    assert!(near(clustered, 150_000.0_f64, 15_000.0_f64), "{clustered} distinct of 150,000");
+    let scattered = sampled(&|id| id % 2_401);
+    assert!(near(scattered, 2_401.0_f64, 1.0_f64), "{scattered} distinct of 2,401");
+    assert!(near(with_clustered(10.0_f64, 0.0_f64, (100.0_f64, 1_000.0_f64)), 10.0_f64, 1e-9_f64), "none clustered");
+    assert!(near(with_clustered(10.0_f64, 10.0_f64, (100.0_f64, 1_000.0_f64)), 100.0_f64, 1e-9_f64), "each a tenth");
+}

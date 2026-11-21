@@ -7,7 +7,7 @@ use super::{Mutation, Package};
 
 /// The mutations of groupjoins and index joins by batch, in the order
 /// they run.
-pub const GROUPJOINS: [Mutation; 5] = [
+pub const GROUPJOINS: [Mutation; 6] = [
     Mutation {
         name: "groupjoin-left-unmatched-dropped",
         package: Package::Core,
@@ -57,5 +57,15 @@ pub const GROUPJOINS: [Mutation; 5] = [
         replacement: "let taken = if *uses <= 1 {",
         integration: &["index_join_batches::batches_of_outer_rows_join_as_rows_alone"],
         unit: &[],
+    },
+    Mutation {
+        name: "sampled-distinct-clusters-unscaled",
+        package: Package::Core,
+        breaks: "a sample read by runs counts keys whose rows lie together as the sample's few",
+        file: "src/stats.rs",
+        original: "(scaled + clustered * (scale - 1.0_f64).max(0.0_f64))",
+        replacement: "(scaled + clustered * 0.0_f64)",
+        integration: &[],
+        unit: &["stats::tests::a_sample_of_runs_counts_keys_whose_rows_lie_together"],
     },
 ];

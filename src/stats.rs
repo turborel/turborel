@@ -9,7 +9,9 @@
 //! one does, its column store's frozen rows among them, every row of a
 //! small table and a sample of a large one's (`StatsBuilder::counting`):
 //! distinct values then scaled from the sample's, as Haas and Stokes
-//! estimate them, and its least and greatest values not taken as bounds
+//! estimate them, a value whose rows lie together in one run of the
+//! sample's scaled as one seen once, and its least and greatest values not
+//! taken as bounds
 //! (`ColumnStats::unbounded`); a columnar
 //! engine may know distinct values exactly from its dictionaries, least and
 //! greatest values from each segment, and the width of each column apart,
@@ -191,9 +193,11 @@ pub struct ColumnBuilder {
     sample: Reservoir,
     min: Option<Value>,
     max: Option<Value>,
-    /// Of a sample of the rows, how often each value was seen, by the hash
-    /// of its normalized form, for the distinct values to be scaled.
-    seen: Option<HashMap<u64, u32>>,
+    /// Of a sample of the rows, how each value was seen, by the hash of its
+    /// normalized form, for the distinct values to be scaled.
+    seen: Option<HashMap<u64, Seen>>,
+    /// Of a sample read by runs of rows, the run the rows added are of.
+    run: Option<u64>,
     /// Of a column of geometries, their envelopes, begun at the first.
     envelopes: Option<EnvelopeBuilder>,
 }
@@ -218,8 +222,7 @@ impl ColumnBuilder {
         }
         self.sketch.add(value);
         if let Some(seen) = self.seen.as_mut() {
-            let times = seen.entry(MurmurBuildHasher::default().hash_one(value.norm())).or_default();
-            *times = times.saturating_add(1);
+            seen.entry(MurmurBuildHasher::default().hash_one(value.norm())).or_default().add(self.run);
         }
         if Geometry::is_geometry(value) {
             self.add_geometry(value);
@@ -264,15 +267,18 @@ impl ColumnBuilder {
 
     /// The statistics of a table of `rows` rows, the values added a sample
     /// of them: the share NULL and the histogram the sample's, the distinct
-    /// values scaled from its (`scaled_distinct`), and not bounded by its
-    /// least and greatest.
+    /// values scaled from its (`scaled_distinct`), those of rows that lie
+    /// together in its runs scaled too (`with_clustered`), and not bounded
+    /// by its least and greatest.
     fn finish_scaled(mut self, rows: f64) -> ColumnStats {
         let seen = self.seen.take().unwrap_or_default();
         let present = count(self.values.saturating_sub(self.nulls));
-        let once = count(seen.values().map(|&t| u64::from(t == 1)).sum());
+        let once = count(seen.values().map(|s| u64::from(s.times == 1)).sum());
+        let clustered = count(seen.values().map(|s| u64::from(s.clustered())).sum());
         let mut stats = self.finish();
-        stats.distinct =
-            scaled_distinct((count(u64::try_from(seen.len()).unwrap_or(u64::MAX)), once), present, rows * (1.0_f64 - stats.nulls));
+        let (distinct, of) = (count(u64::try_from(seen.len()).unwrap_or(u64::MAX)), rows * (1.0_f64 - stats.nulls));
+        let scaled = scaled_distinct((distinct, once), present, of);
+        stats.distinct = with_clustered(scaled, clustered, (present, of)).max(distinct.min(of));
         stats.unbounded = true;
         // Each value's rows of the sample, scaled to the table's.
         let factor = rows * (1.0_f64 - stats.nulls) / present.max(1.0_f64);
@@ -290,6 +296,46 @@ pub fn scaled_distinct((distinct, once): (f64, f64), sampled: f64, of: f64) -> f
     let below = sampled - once + once * sampled / of.max(1.0_f64);
     let scaled = if below > 0.0_f64 { sampled * distinct / below } else { of };
     scaled.clamp(distinct.min(of), of.max(distinct))
+}
+
+/// \[DESIGN\] The distinct values `scaled` of a sample, read by runs of
+/// rows, of `present` of `of` values, `clustered` of whose values were each
+/// seen in several rows of one run alone: a value whose rows lie together,
+/// as a key's rows written at once do, which a sample of runs finds whole
+/// or not at all, so it is seen more than once though few of the table's
+/// rows hold it, and Duj1 takes it for a value the sample has found all
+/// of. Each such value stands for as many as the sample is a part of the
+/// table, as a value seen once does; at most `of`.
+pub fn with_clustered(scaled: f64, clustered: f64, (present, of): (f64, f64)) -> f64 {
+    let scale = of / present.max(1.0_f64);
+    (scaled + clustered * (scale - 1.0_f64).max(0.0_f64)).min(of.max(scaled))
+}
+
+/// How a value of a sample was seen: in how many rows, and of a sample
+/// read by runs of rows, the run of its first and whether another run's
+/// rows held it too.
+#[derive(Debug, Clone, Copy, Default)]
+struct Seen {
+    times: u32,
+    run: Option<u64>,
+    runs: bool,
+}
+
+impl Seen {
+    /// The value seen once more, in a row of `run`.
+    fn add(&mut self, run: Option<u64>) {
+        if self.times == 0 {
+            self.run = run;
+        } else if self.run != run {
+            self.runs = true;
+        }
+        self.times = self.times.saturating_add(1);
+    }
+
+    /// Whether it was seen in several rows of one run alone.
+    fn clustered(&self) -> bool {
+        self.times > 1 && self.run.is_some() && !self.runs
+    }
 }
 
 /// \[DESIGN\] Gathers a table's statistics from its rows, in one pass.
@@ -315,6 +361,14 @@ impl StatsBuilder {
     pub fn counting(columns: usize, sampling: Sampling) -> StatsBuilder {
         let column = ColumnBuilder { seen: Some(HashMap::new()), ..ColumnBuilder::sampling(sampling) };
         StatsBuilder { rows: 0, bytes: 0, columns: vec![column; columns] }
+    }
+
+    /// Makes the rows added next of the run `run` of a sample read by runs
+    /// of rows (`ColumnBuilder::finish_scaled`).
+    pub fn run(&mut self, run: u64) {
+        for column in &mut self.columns {
+            column.run = Some(run);
+        }
     }
 
     /// Adds `row`, which takes `bytes` bytes as stored.

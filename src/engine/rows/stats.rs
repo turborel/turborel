@@ -209,7 +209,9 @@ impl RowTable {
                 // Read again if an older version is released as it is read.
                 let visible = self.unpinned((&key, newest), 0, &mut |bytes, _| self.visible_from(bytes, Reader::Latest))?;
                 let Some(record) = visible.flatten() else { continue };
-                let row = self.decode(row_id(&key)?, &record, None)?;
+                let id = row_id(&key)?;
+                let row = self.decode(id, &record, None)?;
+                builder.run(id.checked_div(CHUNK_IDS).unwrap_or(0));
                 builder.add(&row, record.len());
             }
         }
@@ -218,6 +220,7 @@ impl RowTable {
         let mut record = Vec::new();
         self.each_unshadowed(&directory, |id, row| {
             if read(id) {
+                builder.run(id.checked_div(CHUNK_IDS).unwrap_or(0));
                 record.clear();
                 self.format.encode(&row, &mut record)?;
                 builder.add(&row, record.len());
