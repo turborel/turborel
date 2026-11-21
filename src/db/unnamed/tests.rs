@@ -15,7 +15,7 @@ fn closed_cursors_are_forgotten() {
     db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER)").unwrap();
     let s = db.session("APP");
     s.run("INSERT INTO T VALUES (1), (2)").unwrap();
-    for _ in 0..10_000 {
+    for _ in 0_u32..10_000_u32 {
         let cursor = s.open_cursor("SELECT K FROM T").unwrap();
         drop(cursor);
     }
