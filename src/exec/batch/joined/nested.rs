@@ -48,7 +48,7 @@ pub(super) fn multiplied((left, right): (Plan, Plan), db: &Db, tx: TxId) -> Resu
 fn product_of((left, width, ordered): (Batches, usize, bool), right: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let mut work = Work::of(db, tx);
-    let rows = match held::read(right, (&[], &[]), work.limit(), (db, tx))? {
+    let rows = match held::read(right, (&[], &[], Vec::new()), work.limit(), (db, tx))? {
         Read::Held(held) => {
             let (out, vectors) = (Out::over(width, Arc::clone(&held.batch)), Right::Vectors(held.batch.rows));
             return Ok(Box::new(Product { left, right: vectors, by_batch: false, current: None, out, ended: false, _work: work }));

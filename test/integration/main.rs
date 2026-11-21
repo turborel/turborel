@@ -193,6 +193,7 @@ mod intervals;
 mod isolation;
 mod isolation_anomalies;
 mod join_enumeration;
+mod join_filters;
 mod join_order_workload;
 mod join_tables;
 mod joined_tables;

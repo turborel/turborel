@@ -6,12 +6,15 @@
 //! parallel in its plan's order, a pipeline's scan told its filters, a
 //! scan's range judged once, a spilled join's probes numbered, and a
 //! filter stopped at a projection that can raise, as a part hoisted under
-//! its guard is.
+//! its guard is; of D600, a filter told a build by the key that equates
+//! it, a key set judged exactly, spans passing over their gaps, a filter
+//! passed through an analyzed plan's count, and the filters of one stream
+//! judged the one that kept the least first.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the join table's requirements.
-pub const JOIN_TABLE: [Mutation; 10] = [
+pub const JOIN_TABLE: [Mutation; 15] = [
     Mutation {
         name: "join-table-build-order",
         package: Package::Core,
@@ -47,8 +50,8 @@ pub const JOIN_TABLE: [Mutation; 10] = [
         package: Package::Core,
         breaks: "a runtime filter goes below no condition that can raise (D15)",
         file: "src/exec/batch/runtime.rs",
-        original: "        Plan::Filter { cond, .. } => (!cond.can_raise() && !cond.has_subquery()).then_some(column),",
-        replacement: "        Plan::Filter { cond, .. } => (!cond.has_subquery()).then_some(column),",
+        original: "        Plan::Filter { cond, .. } => (!cond.can_raise() && !cond.has_subquery()).then_some((column, false)),",
+        replacement: "        Plan::Filter { cond, .. } => (!cond.has_subquery()).then_some((column, false)),",
         integration: &["join_tables::a_filter_hides_no_error"],
         unit: &[],
     },
@@ -107,9 +110,59 @@ pub const JOIN_TABLE: [Mutation; 10] = [
         package: Package::Core,
         breaks: "a runtime filter goes below no projection that can raise, so into no part hoisted under its guard (D15, D373)",
         file: "src/exec/batch/runtime.rs",
-        original: "        Plan::Project { exprs, .. } => moved(exprs, column).filter(|_| !exprs.iter().any(Expr::can_raise)),",
-        replacement: "        Plan::Project { exprs, .. } => moved(exprs, column),",
+        original: "        Plan::Project { exprs, .. } => moved(exprs, column).filter(|_| !exprs.iter().any(Expr::can_raise)).map(|c| (c, false)),",
+        replacement: "        Plan::Project { exprs, .. } => moved(exprs, column).map(|c| (c, false)),",
         integration: &["join_tables::a_filter_enters_no_guarded_part"],
         unit: &[],
+    },
+    Mutation {
+        name: "join-filter-built-by-wrong-key",
+        package: Package::Core,
+        breaks: "a hash join tells its right a filter of a left key as the right key that equals it (D600)",
+        file: "src/exec/batch/runtime.rs",
+        original: "    column.checked_sub(width).map(|r| (r, false)).or_else(|| keys.iter().find(|k| k.left == column).map(|k| (k.right, true)))",
+        replacement: "    column.checked_sub(width).map(|r| (r, false)).or_else(|| keys.iter().find(|k| k.left == column).map(|k| (k.left, true)))",
+        integration: &[],
+        unit: &["exec::batch::runtime::tests::a_hash_join_tells_both_operands_by_its_keys"],
+    },
+    Mutation {
+        name: "join-keyset-keeps-all",
+        package: Package::Core,
+        breaks: "a filter of few keys keeps exactly the rows whose key it holds, at any scale (D600)",
+        file: "src/exec/table/runtime.rs",
+        original: "            let held = |u: i64| at_scale(u, ints.scale, scale).is_some_and(|k| keys.binary_search(&k).is_ok());",
+        replacement: "            let held = |u: i64| at_scale(u, ints.scale, scale).is_some();",
+        integration: &[],
+        unit: &["exec::table::runtime::tests::few_keys_are_a_set_and_more_are_spans"],
+    },
+    Mutation {
+        name: "join-spans-skip-nothing",
+        package: Package::Core,
+        breaks: "a scan told spans passes over a group that lies in their gaps (D600)",
+        file: "src/storage/condition.rs",
+        original: "    spans.get(first).is_some_and(|(start, _)| compare(start, greatest) != Some(Ordering::Greater))",
+        replacement: "    spans.get(first).is_some_and(|(start, _)| compare(start, greatest).is_some())",
+        integration: &[],
+        unit: &["storage::condition::tests::spans_pass_over_their_gaps"],
+    },
+    Mutation {
+        name: "join-filter-stops-at-count",
+        package: Package::Core,
+        breaks: "an analyzed plan's count of an operator's rows passes a runtime filter on (D600)",
+        file: "src/exec/batch/runtime.rs",
+        original: "        Plan::Counted(_) => Some((column, false)),",
+        replacement: "        Plan::Counted(_) => None,",
+        integration: &["join_filters::a_filter_reaches_both_operands_of_a_join_below"],
+        unit: &[],
+    },
+    Mutation {
+        name: "join-filters-unordered",
+        package: Package::Core,
+        breaks: "the filters of one stream are judged the one that kept the least first (D600)",
+        file: "src/exec/batch/runtime/ordered.rs",
+        original: "    placed.sort_by(Placed::keeps_less);",
+        replacement: "    placed.sort_by(|a, b| Placed::keeps_less(b, a));",
+        integration: &[],
+        unit: &["exec::batch::runtime::ordered::tests::the_filter_that_keeps_least_goes_first"],
     },
 ];
