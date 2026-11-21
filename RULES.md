@@ -12125,6 +12125,53 @@ or hash joins on their equalities, as to compare the two. Period
 predicates are still read as comparisons (D581) when it is OFF, so their
 equalities can be a hash join's keys.
 
+#### D600. A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans
+
+A runtime filter (D369) went down a hash join's left operand alone, and
+through an inner hash join below it only to that join's left. Such a
+join's keys equate a column of its left with one of its right, so a
+filter of one is the same filter of the other, as Ives and Taylor
+(ICDE 2008) pass a join's filter sideways. An inner hash join now takes
+a filter to both its operands (`batch/runtime.rs`). Its left is told it
+of a left column, or of the left key a right key it judges equals; its
+right, as the join builds it, of a right column, or of the right key a
+left key equals (`built_side`). A hash join reads its right operand
+first, so every build inside a join's left is built after that join's
+filter is made, and can be told it. A row of the right the filter drops
+matches only left rows whose joined rows it drops. A filter so moved
+across an equality judges a vector of exact numbers alone, whose
+equality is their value's whatever their scales, never a text whose
+equality is its collation's. An analyzed plan's count of an operator's
+rows (D378) passes a filter on, so EXPLAIN ANALYZE counts the rows the
+filter left.
+
+The walk keeps D15 as before. It stops above a condition that can
+raise, a projection that can, and any operator but these, so a filter
+reaches a build only through operators that cannot raise, and never a
+guard's operand (D389).
+
+A range skips a group or a part only if it lies wholly outside the
+least and greatest built keys. An exact key of a build of no more than
+2^20 rows now gives its distinct values (`table/runtime.rs`), as Qiao,
+Boncz and Zhang's RPT+ (PVLDB 2026) cascade a range, a key set and a
+Bloom filter. Of no more than 4,096 of them, a row's key is found in
+the set by halving, exactly, at any scale, the Bloom filter left for a
+vector of other values, and the scan
+is told each as a span. Of more, the scan is told the spans between
+the 63 widest gaps among them, of more than one unit, and none of keys
+without such a gap. A scan is told spans as a conjunct true of every
+row (`Conjunct::Spans`), which a store judges only against a group's or
+a part's least and greatest, finding the first span not below them by
+halving, so a group that lies in a gap is skipped and no row is judged
+by a list.
+
+Several filters judged of one stream are judged in the order of the
+share of the rows each kept so far, the one that kept the least first,
+as Zhu et al. (PVLDB 2017) order a scan's filters by their observed
+misses between batches (`runtime/ordered.rs`). Each judges only the rows
+those before it kept, so the one that drops the most spares the others
+the most work, and the order changes the work, never the rows kept.
+
 #### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
 
 A kept plan (D45, D414, D422) was copied at each execution, its slots
@@ -12161,28 +12208,6 @@ again for (D422). The places are found by an XXH3 hash of what the
 statements were prepared alike in (D460), compared whole, and a place no
 statement holds is gone.
 
-#### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
-
-The batch filter passes each conjunct only the rows the one before it
-kept (D354), so the order of a filter's conjuncts decides how many rows
-each one judges. The planner orders the conjuncts of a filter over a
-table read in ascending order of rank, a conjunct's cost a row over
-the share of rows it drops, as Hellerstein and Stonebraker order a
-selection's predicates (SIGMOD 1993). Conjuncts of equal rank keep the
-written order (`physical/cost/conjuncts.rs`). A column compared with a
-constant or tested for null costs least. A set of constants searched
-costs more, then a comparison of expressions, then a pattern, and a
-conjunct with a subquery comes last. A filter one of whose conjuncts
-can raise an error keeps the written order, because each of its
-conjuncts is judged of every row anyway (D15).
-
-The weights the planner prices operators by are measured by
-`bench/analytics/costs.rs` (`TURBOREL_BENCH_ANALYTICS_ONLY=costs`). It
-times a scan by batch and a row at a time, of the row store and the
-column store, a hash join, groupings of few and of many groups, a sort,
-each of those past a small work area, and a part on several threads.
-It then prints each weight in rows of the row store's scan, the unit of
-the planner's costs.
 #### D620. EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made
 
 Each counted operator has notes beside its rows (`noted.rs`). While a
@@ -12239,53 +12264,28 @@ heads the plan with a line naming the statement and its table with
 that makes no such plan, as an INSERT of VALUES, shows the head line
 alone. A statement that raises makes EXPLAIN ANALYZE raise the same,
 undone as any failed statement is.
-#### D600. A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and a build of few keys is judged as a set and told the scan as spans
+#### D650. A filter judges its conjuncts in ascending order of rank, and the planner's weights are measured
 
-A runtime filter (D369) went down a hash join's left operand alone, and
-through an inner hash join below it only to that join's left. Such a
-join's keys equate a column of its left with one of its right, so a
-filter of one is the same filter of the other, as Ives and Taylor
-(ICDE 2008) pass a join's filter sideways. An inner hash join now takes
-a filter to both its operands (`batch/runtime.rs`). Its left is told it
-of a left column, or of the left key a right key it judges equals; its
-right, as the join builds it, of a right column, or of the right key a
-left key equals (`built_side`). A hash join reads its right operand
-first, so every build inside a join's left is built after that join's
-filter is made, and can be told it. A row of the right the filter drops
-matches only left rows whose joined rows it drops. A filter so moved
-across an equality judges a vector of exact numbers alone, whose
-equality is their value's whatever their scales, never a text whose
-equality is its collation's. An analyzed plan's count of an operator's
-rows (D378) passes a filter on, so EXPLAIN ANALYZE counts the rows the
-filter left.
+The batch filter passes each conjunct only the rows the one before it
+kept (D354), so the order of a filter's conjuncts decides how many rows
+each one judges. The planner orders the conjuncts of a filter over a
+table read in ascending order of rank, a conjunct's cost a row over
+the share of rows it drops, as Hellerstein and Stonebraker order a
+selection's predicates (SIGMOD 1993). Conjuncts of equal rank keep the
+written order (`physical/cost/conjuncts.rs`). A column compared with a
+constant or tested for null costs least. A set of constants searched
+costs more, then a comparison of expressions, then a pattern, and a
+conjunct with a subquery comes last. A filter one of whose conjuncts
+can raise an error keeps the written order, because each of its
+conjuncts is judged of every row anyway (D15).
 
-The walk keeps D15 as before. It stops above a condition that can
-raise, a projection that can, and any operator but these, so a filter
-reaches a build only through operators that cannot raise, and never a
-guard's operand (D389).
-
-A range skips a group or a part only if it lies wholly outside the
-least and greatest built keys. An exact key of a build of no more than
-2^20 rows now gives its distinct values (`table/runtime.rs`), as Qiao,
-Boncz and Zhang's RPT+ (PVLDB 2026) cascade a range, a key set and a
-Bloom filter. Of no more than 4,096 of them, a row's key is found in
-the set by halving, exactly, at any scale, the Bloom filter left for a
-vector of other values, and the scan
-is told each as a span. Of more, the scan is told the spans between
-the 63 widest gaps among them, of more than one unit, and none of keys
-without such a gap. A scan is told spans as a conjunct true of every
-row (`Conjunct::Spans`), which a store judges only against a group's or
-a part's least and greatest, finding the first span not below them by
-halving, so a group that lies in a gap is skipped and no row is judged
-by a list.
-
-Several filters judged of one stream are judged in the order of the
-share of the rows each kept so far, the one that kept the least first,
-as Zhu et al. (PVLDB 2017) order a scan's filters by their observed
-misses between batches (`runtime/ordered.rs`). Each judges only the rows
-those before it kept, so the one that drops the most spares the others
-the most work, and the order changes the work, never the rows kept.
-
+The weights the planner prices operators by are measured by
+`bench/analytics/costs.rs` (`TURBOREL_BENCH_ANALYTICS_ONLY=costs`). It
+times a scan by batch and a row at a time, of the row store and the
+column store, a hash join, groupings of few and of many groups, a sort,
+each of those past a small work area, and a part on several threads.
+It then prints each weight in rows of the row store's scan, the unit of
+the planner's costs.
 #### D675. A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run
 
 A correlated subquery left nested ran once for each distinct set of its
