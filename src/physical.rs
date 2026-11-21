@@ -475,6 +475,10 @@ pub struct PhysicalPlanner<'a> {
     fetch: Option<&'a crate::logical::Fetch>,
     /// The planning's estimator (`physical/cardinality.rs`), made by `plan`.
     est: Option<&'a Estimates<'a>>,
+    /// Whether the plan made is one with a relation grouped first
+    /// (`physical/eager.rs`), whose groupings are planned as written, so
+    /// none is grouped first again.
+    regrouped: bool,
 }
 
 /// One table to read: its name, how the operators over it are described
@@ -496,20 +500,20 @@ struct TableRead<'a> {
 impl<'a> PhysicalPlanner<'a> {
     /// A planner over the state `db`, of plans to run.
     pub fn new(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: false, values: None, first: None, fetch: None, est: None }
+        PhysicalPlanner { db, shown: false, values: None, first: None, fetch: None, est: None, regrouped: false }
     }
 
     /// A planner over the state `db`, of plans to run made with a prepared
     /// statement's slots, their paths chosen by `values`, one execution's,
     /// so that another's may fill them (`physical/kept.rs`).
     pub fn slotted(db: &'a State, values: &'a [Value]) -> Self {
-        PhysicalPlanner { db, shown: false, values: Some(values), first: None, fetch: None, est: None }
+        PhysicalPlanner { db, shown: false, values: Some(values), first: None, fetch: None, est: None, regrouped: false }
     }
 
     /// A planner over the state `db`, of plans to show: each operator
     /// described, as EXPLAIN shows it.
     pub fn describing(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: true, values: None, first: None, fetch: None, est: None }
+        PhysicalPlanner { db, shown: true, values: None, first: None, fetch: None, est: None, regrouped: false }
     }
 
     /// The physical plan for `logical`, estimated by one estimator for

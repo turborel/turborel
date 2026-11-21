@@ -65,7 +65,7 @@ impl PhysicalPlanner<'_> {
     pub(super) fn eager(&self, logical: &LogicalPlan, want: &[SortKey], plain: Built) -> Built {
         let LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } = logical else { return plain };
         let grouped = !seeds.is_empty() || collations.iter().any(Option::is_some);
-        if grouped || !self.db.optimizer.enabled(EAGER_AGGREGATION, &self.db.settings) {
+        if grouped || self.regrouped || !self.db.optimizer.enabled(EAGER_AGGREGATION, &self.db.settings) {
             return plain;
         }
         let (Some(chain), Some(count)) = (Chain::of(input), self.count()) else { return plain };
@@ -109,7 +109,7 @@ impl PhysicalPlanner<'_> {
     /// grouping of a relation grouped first.
     fn eager_planned(&self, alt: &LogicalPlan, want: &[SortKey]) -> Built {
         let estimates = Estimates::over(self.db, alt, self.values);
-        let mut built = PhysicalPlanner { est: Some(&estimates), ..*self }.build_node(alt, want);
+        let mut built = PhysicalPlanner { est: Some(&estimates), regrouped: true, ..*self }.build_node(alt, want);
         if let Plan::Aggregate { detail, .. } = &mut built.plan
             && self.shown
         {

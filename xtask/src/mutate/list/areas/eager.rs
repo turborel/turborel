@@ -1,8 +1,9 @@
 //! The mutations of eager aggregation (RULES.md R-TEST-9, D660 to D662):
 //! a scaled sum not multiplied, sums of approximate numbers computed
 //! above the join, an argument that may be null pushed, a part finished as
-//! a result, grouping columns whose equal values may differ, and a chain
-//! made again with its conjuncts above its last relation.
+//! a result, grouping columns whose equal values may differ, a chain
+//! made again with its conjuncts above its last relation, and a plan
+//! grouped first grouped first again.
 
 use super::super::{Mutation, Package};
 
@@ -10,7 +11,7 @@ use super::super::{Mutation, Package};
 const GROUPED: &str = "eager_aggregation::groupings_grouped_first_are_the_groupings_10_9";
 
 /// Mechanisms whose removal must fail eager aggregation's requirements.
-pub const EAGER: [Mutation; 6] = [
+pub const EAGER: [Mutation; 7] = [
     Mutation {
         name: "eager-scaled-unmultiplied",
         package: Package::Core,
@@ -70,5 +71,15 @@ pub const EAGER: [Mutation; 6] = [
         replacement: "    let (here, later): (Vec<_>, Vec<_>) = std::mem::take(pending).into_iter().partition(|(last, _)| *last < width && width == usize::MAX);",
         integration: &[],
         unit: &["physical::eager::tests::chains_made_again_place_each_conjunct_lowest"],
+    },
+    Mutation {
+        name: "eager-regrouped",
+        package: Package::Core,
+        breaks: "a plan grouped first is never grouped first again",
+        file: "src/physical/eager.rs",
+        original: "PhysicalPlanner { est: Some(&estimates), regrouped: true, ..*self }",
+        replacement: "PhysicalPlanner { est: Some(&estimates), regrouped: false, ..*self }",
+        integration: &["plan_space::a_grouping_is_grouped_first_once_under_any_cardinalities"],
+        unit: &[],
     },
 ];

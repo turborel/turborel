@@ -32,6 +32,8 @@ const TIMEOUT_MS: u64 = 60_000;
 
 /// Titles of the small database.
 const TITLES: u64 = 100;
+/// Titles of the database of a test of one query's plans.
+const FEW_TITLES: u64 = 20;
 /// The seeds of the cardinalities given, one run of each query each.
 const SEEDS: [u64; 2] = [0x5EED_0001, 0x5EED_0002];
 /// The powers of ten a set's rows are drawn from, -3 to 3, the titles'
@@ -217,4 +219,28 @@ fn relations_of_one_class_join_by_its_implied_key() {
     let keyed = |l: &str| l.contains("MI.MOVIE_ID = AKT.MOVIE_ID") || l.contains("AKT.MOVIE_ID = MI.MOVIE_ID");
     assert!(plan.lines().any(|l| l.contains("Join") && keyed(l) && !l.contains("T.ID")), "{plan}");
     assert_eq!(found, Ok(rows), "{plan}");
+}
+
+/// Verifies: [DESIGN] RULES.md D660, D377: a grouping over joins is
+/// grouped first at most once, never again within its own plan grouped
+/// first, under any cardinalities: query w020 of the workload under the
+/// cardinalities of seed 0x5EED_0001, which once grouped its plan first
+/// again and again, each part of a part, gives its rows, its grouping
+/// shown grouped first on one line at most.
+#[test]
+fn a_grouping_is_grouped_first_once_under_any_cardinalities() {
+    // The plan is made by the cardinalities given, not the data, so few
+    // titles keep the test short.
+    let db = imdb::load(FEW_TITLES);
+    let s = db.session("IMDB");
+    let (_, sql) = imdb::queries().into_iter().find(|(name, _)| *name == "w020").unwrap();
+    let names: Vec<String> = imdb::relations(sql).iter().map(|(_, alias)| alias.to_uppercase()).collect();
+    let (_, rows) = under(&s, sql, Injected::new());
+    for seed in SEEDS {
+        let (plan, found) = tried(&s, sql, drawn(&names, &joined_pairs(sql), seed));
+        assert!(plan.lines().all(|l| l.matches("(eager:").count() <= 1), "seed {seed:#x}:\n{plan}");
+        assert!(!plan.contains("PARTIAL PARTIAL") && !plan.contains("MERGED MERGED"), "seed {seed:#x}:\n{plan}");
+        assert_eq!(found, Ok(rows.clone()), "seed {seed:#x}:\n{plan}");
+    }
+    s.with_cardinalities(Injected::new());
 }
