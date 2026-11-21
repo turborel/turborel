@@ -180,7 +180,7 @@ impl Made {
     ) -> Result<()> {
         let Some(given) = self.given.get(from..to).filter(|g| !g.is_empty()) else { return Ok(()) };
         let read_rows = rows.and_then(|r| r.get(from..to)).unwrap_or(given);
-        fed_group(states, (&how.read.taken, &mut self.scratch, &how.runner), (batch, lanes), (given, read_rows))
+        fed_group(states.iter_mut(), (&how.read.taken, &mut self.scratch, &how.runner), (batch, lanes), (given, read_rows))
     }
 }
 

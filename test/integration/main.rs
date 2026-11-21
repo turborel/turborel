@@ -453,6 +453,7 @@ mod views;
 mod warnings;
 mod wide_exact;
 mod width_bucket;
+mod window_batches;
 mod window_distinct;
 mod window_nested;
 mod window_nested_rules;

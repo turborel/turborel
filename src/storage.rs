@@ -34,7 +34,7 @@ pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of};
+pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of, sized_row};
 pub use split::Split;
 
 use std::sync::Arc;

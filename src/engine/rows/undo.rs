@@ -21,6 +21,14 @@
 //! batch, and the store keeps where each batch it wrote is in the log.
 //! Versions of a batch not yet written are read from memory: the batch
 //! being gathered, and those being written, which no lock is held over.
+//!
+//! A version read is shared, not copied (`undo/held.rs`): each gathered is
+//! kept alone, and each batch read from the log is kept as its record and
+//! where each version lies in it, so a read costs no allocation per
+//! version. The last `CACHED` batches read are kept, as readers of many
+//! sessions going back through hot rows read a few recent batches over and
+//! over, and one batch kept would be read again from the log, and
+//! checked, at nearly every read.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +38,7 @@ use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError};
 use crate::log::{Log, Lsn};
 use crate::sync::lock_builtin;
+pub(super) use held::{Held, Seen};
 
 /// Bits of a batched position that hold a version's index in its batch.
 const INDEX_BITS: u32 = 16;
@@ -40,6 +49,9 @@ const MOST_VERSIONS: usize = 1 << INDEX_BITS;
 /// Bytes of a batch's record before its versions, a `u32` count, and
 /// before each version, its length, a `u32`.
 const LENGTH_BYTES: usize = 4;
+/// \[DESIGN\] The batches read from the log kept in memory: a few of
+/// `UNDO_BATCH`'s 32 KiB each (`db/files.rs`).
+const CACHED: usize = 8;
 
 /// \[DESIGN\] The undo store: a log of older versions, with the positions
 /// still needed.
@@ -60,14 +72,29 @@ pub struct UndoStore {
 }
 
 /// The versions of a batch, shared with its readers.
-type Versions = Arc<Vec<Vec<u8>>>;
+type Versions = Arc<Vec<Arc<[u8]>>>;
+
+/// A batch read from the log: its number, its record, and where each of
+/// its versions lies in the record.
+struct Read {
+    number: u64,
+    record: Arc<Vec<u8>>,
+    spans: Vec<(usize, usize)>,
+}
+
+impl Read {
+    /// Its version at `index`, shared.
+    fn held(&self, index: usize) -> Option<Held> {
+        self.spans.get(index).map(|&span| Held::in_record(&self.record, span))
+    }
+}
 
 /// The batches of a batched store.
 #[derive(Default)]
 struct Batches {
     /// The number of the batch being gathered, its versions, and their bytes.
     number: u64,
-    gathering: Vec<Vec<u8>>,
+    gathering: Vec<Arc<[u8]>>,
     bytes: usize,
     /// Batches being written, by number, read from memory until they are;
     /// each with the log's end as it was taken, which its record will be
@@ -75,9 +102,35 @@ struct Batches {
     writing: BTreeMap<u64, (Lsn, Versions)>,
     /// Batches written, by number: where the log holds each.
     written: BTreeMap<u64, Lsn>,
-    /// The batch last read from the log, as readers going back through a
-    /// row's versions, or along a table, read one batch many times.
-    last: Option<(u64, Arc<Vec<Vec<u8>>>)>,
+    /// The batches last read from the log, at most `CACHED`, the oldest
+    /// first, as readers going back through a row's versions, or along a
+    /// table, read one batch many times.
+    read: Vec<Read>,
+}
+
+impl Batches {
+    /// The version at `index` of batch `number`, if memory holds it.
+    fn in_memory(&self, number: u64, index: usize) -> Option<Held> {
+        if number == self.number {
+            return self.gathering.get(index).map(Held::version);
+        }
+        if let Some(read) = self.read.iter().rev().find(|r| r.number == number) {
+            return read.held(index);
+        }
+        self.writing.get(&number).and_then(|(_, b)| b.get(index)).map(Held::version)
+    }
+
+    /// Keeps `read`, a batch read from the log, the oldest kept forgotten
+    /// if `CACHED` are; unless another reader kept it meanwhile.
+    fn keep(&mut self, read: Read) {
+        if self.read.iter().any(|r| r.number == read.number) {
+            return;
+        }
+        if self.read.len() >= CACHED {
+            self.read.remove(0);
+        }
+        self.read.push(read);
+    }
 }
 
 impl UndoStore {
@@ -120,7 +173,7 @@ impl UndoStore {
             let mut batches = lock_builtin(&self.batches);
             let early = self.overflows(&batches, version).then(|| take_batch(&mut batches, self.log.end()));
             let at = Lsn(batches.number.checked_shl(INDEX_BITS).unwrap_or(u64::MAX) | index(batches.gathering.len()));
-            batches.gathering.push(version.to_vec());
+            batches.gathering.push(Arc::from(version));
             batches.bytes = batches.bytes.saturating_add(version.len());
             pin(&mut lock_builtin(&self.pinned), at);
             let reached = !self.fit && batches.bytes >= self.batch;
@@ -149,7 +202,7 @@ impl UndoStore {
 
     /// Writes batch `number`, then records where it is: no lock held over
     /// the write, so appends and reads go on.
-    fn write(&self, number: u64, batch: &[Vec<u8>]) -> Result<()> {
+    fn write(&self, number: u64, batch: &[Arc<[u8]>]) -> Result<()> {
         let mut record = Vec::new();
         record.put_u32(u32::try_from(batch.len()).unwrap_or(u32::MAX));
         for version in batch {
@@ -168,28 +221,23 @@ impl UndoStore {
     ///
     /// SQLCODE -916 if the log no longer holds it: it was released too soon,
     /// or lost; the log's errors.
-    pub(super) fn read(&self, at: Lsn) -> Result<Vec<u8>> {
+    pub(super) fn read(&self, at: Lsn) -> Result<Held> {
         let gone = || SqlError::new(Code::Corrupt, format!("[DESIGN] an older row version, at {}, is not in the undo store", at.0));
         if self.batch == 0 {
-            return self.log.read_at(at)?.ok_or_else(gone);
+            return self.log.read_at(at)?.map(Held::from).ok_or_else(gone);
         }
         let (number, at_index) = (at.0 >> INDEX_BITS, usize::try_from(at.0 & INDEX_MASK).unwrap_or(usize::MAX));
         let lsn = {
             let batches = lock_builtin(&self.batches);
-            let in_memory = if number == batches.number {
-                batches.gathering.get(at_index).cloned()
-            } else {
-                let cached = batches.last.as_ref().filter(|(n, _)| *n == number).map(|(_, b)| b);
-                cached.or_else(|| batches.writing.get(&number).map(|(_, b)| b)).and_then(|b| b.get(at_index).cloned())
-            };
-            if let Some(version) = in_memory {
+            if let Some(version) = batches.in_memory(number, at_index) {
                 return Ok(version);
             }
             *batches.written.get(&number).ok_or_else(gone)?
         };
-        let batch = Arc::new(decoded(&self.log.read_at(lsn)?.ok_or_else(gone)?)?);
-        let version = batch.get(at_index).cloned().ok_or_else(gone)?;
-        lock_builtin(&self.batches).last = Some((number, batch));
+        let record = self.log.read_at(lsn)?.ok_or_else(gone)?;
+        let read = Read { number, spans: spans(&record)?, record: Arc::new(record) };
+        let version = read.held(at_index).ok_or_else(gone)?;
+        lock_builtin(&self.batches).keep(read);
         Ok(version)
     }
 
@@ -244,9 +292,7 @@ impl UndoStore {
         let needed = oldest.map_or(batches.number, |at| at.0 >> INDEX_BITS);
         batches.written = batches.written.split_off(&needed);
         batches.writing = batches.writing.split_off(&needed);
-        if batches.last.as_ref().is_some_and(|(n, _)| *n < needed) {
-            batches.last = None;
-        }
+        batches.read.retain(|r| r.number >= needed);
         let floors = batches.writing.values().map(|(floor, _)| floor);
         batches.written.values().chain(floors).copied().min().map_or_else(|| self.log.end(), |least| least.min(self.log.end()))
     }
@@ -279,21 +325,25 @@ fn take_batch(batches: &mut Batches, end: Lsn) -> (u64, Versions) {
     (number, batch)
 }
 
-/// The versions of a batch's record.
+/// Where each version of a batch's record lies in it.
 ///
 /// # Errors
 ///
 /// SQLCODE -916 if it is not one.
-fn decoded(record: &[u8]) -> Result<Vec<Vec<u8>>> {
+fn spans(record: &[u8]) -> Result<Vec<(usize, usize)>> {
     let mut r = Reader::new(record, "undo batch");
     let count = r.u32()?;
-    let mut versions = Vec::new();
+    let mut spans = Vec::with_capacity(usize::try_from(count).unwrap_or(0).min(MOST_VERSIONS));
     for _ in 0..count {
-        versions.push(r.bytes()?.to_vec());
+        let version = r.bytes()?;
+        let end = r.position();
+        spans.push((end.saturating_sub(version.len()), end));
     }
     r.finish()?;
-    Ok(versions)
+    Ok(spans)
 }
+
+mod held;
 
 // A log for the tests of the store's races.
 #[cfg(test)]

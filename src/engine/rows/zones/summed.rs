@@ -14,6 +14,7 @@ use super::super::{RowTable, key, row_id};
 use super::{MOST_SUMMED, ZONE_ROWS, Zone, Zones};
 use crate::engine::tree::Direction;
 use crate::error::Result;
+use crate::log::Lsn;
 use crate::storage::RowId;
 use crate::sync::{lock_builtin, read};
 use crate::txn::Timestamp;
@@ -116,8 +117,8 @@ impl RowTable {
             let (k, newest) = entry?;
             let id = row_id(&k)?;
             zone.seen = zone.seen.and(self.seen_of(&newest, horizon)?);
-            let mut held = |bytes: Vec<u8>, reading_at: Timestamp| {
-                let live = !Version::parse(&bytes)?.deleted;
+            let mut held = |bytes: &[u8], reading_at: Timestamp| {
+                let live = !Version::parse(bytes)?.deleted;
                 self.hold_versions(&mut zone, id, bytes, reading_at)?;
                 Ok(live)
             };
@@ -131,26 +132,31 @@ impl RowTable {
     /// Widens `zone` to hold each version of row `id`, whose newest is
     /// `newest`, a reader at or after `horizon` may read: stale if one is
     /// not its newest.
-    fn hold_versions(&self, zone: &mut Zone, id: RowId, newest: Vec<u8>, horizon: Timestamp) -> Result<()> {
-        let kept = &self.zones.kept;
-        let mut bytes = newest;
-        loop {
-            let older = {
-                let version = Version::parse(&bytes)?;
-                if !version.deleted {
-                    let row = self.decode(id, version.record, Some(kept))?;
-                    zone.hold(kept.len(), kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
-                }
-                // Versions before one committed at or before the horizon
-                // no reader reads.
-                match self.maker(&version) {
-                    Maker::Committed(stamp) => version.older.filter(|_| stamp > horizon),
-                    Maker::Open(_) => version.older,
-                }
-            };
-            zone.stale |= older.is_some();
-            let Some(older) = older else { return Ok(()) };
-            bytes = self.undo.read(older)?;
+    fn hold_versions(&self, zone: &mut Zone, id: RowId, newest: &[u8], horizon: Timestamp) -> Result<()> {
+        let mut older = self.hold_version(zone, id, newest, horizon)?;
+        while let Some(at) = older {
+            older = self.hold_version(zone, id, &self.undo.read(at)?, horizon)?;
         }
+        Ok(())
+    }
+
+    /// Widens `zone` to hold `bytes`, a version of row `id`, unless a
+    /// deletion: where the version before it is, if a reader at or after
+    /// `horizon` may read it, the zone then stale.
+    fn hold_version(&self, zone: &mut Zone, id: RowId, bytes: &[u8], horizon: Timestamp) -> Result<Option<Lsn>> {
+        let kept = &self.zones.kept;
+        let version = Version::parse(bytes)?;
+        if !version.deleted {
+            let row = self.decode(id, version.record, Some(kept))?;
+            zone.hold(kept.len(), kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
+        }
+        // Versions before one committed at or before the horizon no
+        // reader reads.
+        let older = match self.maker(&version) {
+            Maker::Committed(stamp) => version.older.filter(|_| stamp > horizon),
+            Maker::Open(_) => version.older,
+        };
+        zone.stale |= older.is_some();
+        Ok(older)
     }
 }
