@@ -21,15 +21,17 @@
 //! made, written to no run (`exec/batch/joined/parted.rs`).
 //!
 //! A row's partition is of bits of its key's hash as a join's table
-//! hashes it (`exec/table/join.rs`, RULES.md D389), above the 4 its tag
-//! takes and below those its slot takes, by a seed drawn for each
-//! partitioning, so a partitioning again splits by another hash. Each
+//! hashes it (`exec/table/join.rs`, RULES.md D389), by the database's
+//! seed, mixed by MurmurHash3's finalizer with a word its work area draws
+//! for each partitioning (`Work::drawn`), so a partitioning again splits
+//! by another hash, and two runs alike split alike. Each
 //! pair's right partition held in memory is put in a join's table, its
 //! left's rows probing it a batch at a time, each joined row written with
 //! its left row's number as before.
 
 use crate::exec::batch::SharedTable;
 use crate::exec::table::{Hashing, Seed, values_hash};
+use crate::hash::murmur::fmix64;
 use crate::storage::{BATCH_ROWS, Batch};
 
 use super::super::partition::{Merge, merge_all, numbered, unnumbered};
@@ -52,7 +54,8 @@ pub const DEFAULT_PARTITION_DEPTH: usize = 8;
 /// A hash join's operands, as they are partitioned.
 pub(in crate::exec) struct Partitions {
     keys: Vec<JoinKey>,
-    seed: Seed,
+    /// The seed its keys hash by, and the word their hash is mixed with.
+    seed: (Seed, u64),
     /// The right operand's partitions, each with the bytes its rows take
     /// in memory.
     right: Vec<(Box<dyn SpillRun>, usize)>,
@@ -68,7 +71,7 @@ impl Partitions {
         for _ in 0..work.width().min(work.partitions()) {
             right.push((work.run()?, 0));
         }
-        Ok(Partitions { keys, seed: drawn(), right, lobs: work.lobs().clone() })
+        Ok(Partitions { keys, seed: (work.seed().clone(), work.drawn()), right, lobs: work.lobs().clone() })
     }
 
     /// The right operand's partitions, of the rows `built` holds and the
@@ -91,7 +94,8 @@ impl Partitions {
         let columns = self.keys.iter().map(|k| if matches!(operand, Operand::Left) { k.left } else { k.right });
         let values = columns.filter_map(|c| row.get(c));
         let nulls: Vec<bool> = self.keys.iter().map(|k| k.nulls).collect();
-        let hash = values_hash(values, &nulls, Hashing { seed: &self.seed, keyed: true })?.unwrap_or_default();
+        let hash = values_hash(values, &nulls, Hashing { seed: &self.seed.0, keyed: true })?.unwrap_or_default();
+        let hash = fmix64(hash ^ self.seed.1);
         let n = u64::try_from(self.right.len()).unwrap_or(1);
         Ok(usize::try_from((hash >> TAG_BITS).checked_rem(n).unwrap_or_default()).unwrap_or_default())
     }

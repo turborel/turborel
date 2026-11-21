@@ -7,7 +7,7 @@
 //! and CHECKs without a subquery hold of it at the statement's end if they
 //! hold of it as it goes in; and its key, of a UNIQUE constraint whose
 //! unique index of exactly its columns found its key's only entry as it
-//! went in (`Txn::alone`), is no duplicate. Such a row needs no note; any
+//! went in (`Index::insert_alone`), is no duplicate. Such a row needs no note; any
 //! other is noted, and checked at the end as every row was. A statement,
 //! or a table, for which that does not hold has every row noted: one whose
 //! changes a trigger or a delta table reads, one with a constraint
@@ -22,7 +22,7 @@ use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::error::{Code, Result, Subject};
 use crate::logical::Cond;
-use crate::storage::{Row, RowId};
+use crate::storage::Row;
 use crate::txn::Txn;
 
 /// The checks of the rows of a table inserted together, made as each goes
@@ -31,8 +31,9 @@ pub(in crate::db) struct RowsChecked<'s> {
     desc: &'s TableDesc,
     /// Its NOT NULL constraints and CHECKs, in the order of its constraints.
     rows: Vec<&'s ConstraintDesc>,
-    /// The unique index of each of its UNIQUE constraints.
-    unique: Vec<&'s str>,
+    /// Whether it has UNIQUE constraints, each with a unique index of
+    /// exactly its columns.
+    unique: bool,
     /// Each CHECK's condition, bound once.
     bound: HashMap<QualifiedName, Cond>,
 }
@@ -47,7 +48,7 @@ impl State {
             return None;
         }
         let desc = self.catalog.table(table)?;
-        let mut checked = RowsChecked { desc, rows: Vec::new(), unique: Vec::new(), bound: HashMap::new() };
+        let mut checked = RowsChecked { desc, rows: Vec::new(), unique: false, bound: HashMap::new() };
         let deferral = effects.deferral.borrow();
         for c in self.constraints_of(table) {
             if deferral.deferred(c) {
@@ -63,8 +64,10 @@ impl State {
                 }
                 ConstraintKind::Unique { columns, period: None, .. } => {
                     let key = desc.key_columns(columns, None);
-                    let mut indexes = self.catalog.indexes(table).into_iter();
-                    checked.unique.push(&indexes.find(|ix| ix.unique && ix.columns == key)?.name);
+                    if !self.catalog.indexes(table).into_iter().any(|ix| ix.unique && ix.columns == key) {
+                        return None;
+                    }
+                    checked.unique = true;
                 }
                 ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => return None,
             }
@@ -99,9 +102,10 @@ impl RowsChecked<'_> {
         Ok(())
     }
 
-    /// Whether row `id`, gone in, needs a note for the statement's end:
-    /// its key was not its unique index's only entry.
-    pub(in crate::db) fn needs_note(&self, tx: &Txn, id: RowId) -> bool {
-        self.unique.iter().any(|ix| !tx.alone(ix, id))
+    /// Whether a row gone in needs a note for the statement's end: the
+    /// table has UNIQUE constraints, and its key was not `alone`, the only
+    /// entry of its unique indexes'.
+    pub(in crate::db) fn needs_note(&self, alone: bool) -> bool {
+        self.unique && !alone
     }
 }

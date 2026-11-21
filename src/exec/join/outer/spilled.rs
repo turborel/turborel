@@ -16,7 +16,7 @@
 //! [X3.135-1986 §5.11 GR2]: it goes straight to the rows of a preserved
 //! side.
 
-use super::super::super::partition::{drawn, merge_all, numbered, unnumbered};
+use super::super::super::partition::{merge_all, numbered, unnumbered};
 use super::super::super::work::Work;
 use super::super::super::{RowIter, failed};
 use super::super::{Operand, key};
@@ -111,7 +111,7 @@ fn pair(
 /// How an outer join's rows are partitioned: by a hash of their key
 /// values, into as many partitions as the work area writes at once.
 pub(super) struct Parts {
-    /// The seed of its hash, XXH3-64, drawn at random (`partition::drawn`).
+    /// The seed of its hash, XXH3-64, its work area's to draw (`Work::drawn`).
     seed: u64,
     count: usize,
 }
@@ -121,7 +121,7 @@ impl Parts {
         if spec.keys.is_empty() {
             return Err(lost());
         }
-        Ok(Parts { seed: drawn(), count: work.width().min(work.partitions()) })
+        Ok(Parts { seed: work.drawn(), count: work.width().min(work.partitions()) })
     }
 
     /// The partition of key values `b`.

@@ -206,7 +206,7 @@ its own; class TB is turborel's own.
 | 37000 | Syntax error or access rule violation in a dynamic SQL statement |
 | 38000 | External routine exception: a plug-in's error of a class a routine may not raise |
 | 38T01 | External routine exception: a plug-in's process ended, crashed or closed a pipe; the next call starts another |
-| 38T02 | External routine exception: a plug-in's call ran past PLUGINS.CALL_TIMEOUT_MS, its process stopped |
+| 38T02 | External routine exception: a plug-in's call ran past PLUGINS.CALL_TIMEOUT_MS, or a starting plug-in gave no WELCOME in time, its process stopped |
 | 38T03 | External routine exception: a plug-in broke protocol 1, its process stopped |
 | 38T04 | External routine exception: a plug-in sent more than PLUGINS.MAX_MESSAGE_BYTES in a message or PLUGINS.MAX_CALL_BYTES in a call |
 | 38T05 | External routine exception: a plug-in cannot be started, its directory under none of PLUGINS.DIRECTORIES, its executable missing, or no cryptography given to check its package |

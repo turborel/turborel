@@ -146,7 +146,8 @@ fn a_slots_value_is_placed_only_as_it_is() {
 fn a_slot_shifted_by_a_constant_is_compared_with_its_value() {
     let slot = Slot { index: 0, data_type: exact(0), at: 1 };
     let shifted = |op| Expr::Arith(Box::new(Expr::Dynamic(slot.clone())), op, Box::new(Expr::Const(int(20))));
-    let known = || Known { stats: None, cost: &crate::physical::CostModel::default() };
+    let cost = crate::physical::CostModel::default();
+    let known = || Known { stats: None, cost: &cost };
     let cond = Cond::Compare(Expr::Column(2), CompOp::Ge, shifted(ArithOp::Sub));
     let (compared, _) = comparisons(&[cond], known(), Some(&[int(30)]));
     let [c] = compared.as_slice() else { panic!("{} compared", compared.len()) };
@@ -154,8 +155,8 @@ fn a_slot_shifted_by_a_constant_is_compared_with_its_value() {
     assert_eq!(compare(&c.value, &int(10)), Some(Ordering::Equal), "the difference of the value and the constant");
     assert!(c.expr.is_some(), "the expression kept to place again");
     let product = Cond::Compare(Expr::Column(2), CompOp::Ge, shifted(ArithOp::Mul));
-    let (compared, _) = comparisons(&[product], known(), Some(&[int(30)]));
-    assert!(compared.iter().all(|c| c.slot.is_none()), "a product compared with no slot");
+    let (products, _) = comparisons(&[product], known(), Some(&[int(30)]));
+    assert!(products.iter().all(|p| p.slot.is_none()), "a product compared with no slot");
 }
 
 /// Verifies: [DESIGN] a probe is shown as the comparisons it makes of

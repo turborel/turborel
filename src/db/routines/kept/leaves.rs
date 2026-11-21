@@ -70,8 +70,8 @@ impl LeafPlan {
     ///
     /// As `logical::filled`; SQLCODE -910 if a lock is poisoned.
     fn physical(&self, st: &State, outer: &[Value]) -> Result<Option<(Plan, Option<Slots>)>> {
-        let now = std::mem::replace(&mut *lock(&self.kept)?, Physical::Varies(None));
-        let learning = match now {
+        let held = std::mem::replace(&mut *lock(&self.kept)?, Physical::Varies(None));
+        let learning = match held {
             Physical::Varies(stopped) => {
                 if !stopped.as_ref().is_some_and(|s| matches!(s.now(st), Fit::Moved)) {
                     *lock(&self.kept)? = Physical::Varies(stopped);
@@ -83,12 +83,12 @@ impl LeafPlan {
             Physical::Fixed(plan, reads, learnt) => {
                 let kept = match learnt.as_ref().map(|l| l.now(st)) {
                     None | Some(Fit::Still) => Some(learnt),
-                    Some(Fit::Grown(now)) => Some(Some(now)),
+                    Some(Fit::Grown(grown)) => Some(Some(grown)),
                     Some(Fit::Moved) => None,
                 };
-                if let Some(learnt) = kept {
+                if let Some(still) = kept {
                     let opened = plan.opened(Some(outer.into()), crate::optimizer::prepared::budget(st));
-                    *lock(&self.kept)? = Physical::Fixed(plan, reads, learnt);
+                    *lock(&self.kept)? = Physical::Fixed(plan, reads, still);
                     return opened.map(Some);
                 }
                 Learning::default()

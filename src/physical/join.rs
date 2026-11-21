@@ -403,7 +403,3 @@ pub(super) fn hashed_outer(
         est,
     }
 }
-
-/// An outer join's own conditions, of its left operand's columns and of
-/// its right's (`Plan::OuterJoin`), if either has one.
-pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;

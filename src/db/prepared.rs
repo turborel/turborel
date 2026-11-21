@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use outputs::Outputs;
 pub(super) use plans::{Fit, Keeping, KeptPlan, Key, Learnt, Plans};
-pub(crate) use plans::{Learned, Learning};
+pub(crate) use plans::{Learned, Learning, MOST_LEARNING_RUNS};
 pub(crate) use shared::Shared;
 
 use super::area::commands::{self, Command};
@@ -464,14 +464,18 @@ impl Session {
 
     /// [§17.9 GR5a] `values`, one for each of `p`'s parameters.
     fn values_for(p: &Prepared, values: &[Value]) -> Result<Params> {
-        if values.len() != p.parameters.len() {
-            let (given, taken) = (values.len(), p.parameters.len());
-            return Err(dynamic(
-                SqlState::USING_CLAUSE_MISMATCH,
-                format!("[ISO/IEC 9075:1992 §17.9 GR5a] {given} values for {taken} <dynamic parameter specification>s"),
-            ));
-        }
+        Self::one_each(p, values.len())?;
         Ok(Params::executing(values.to_vec()))
+    }
+
+    /// [§17.9 GR5a] That `given` values are one for each of `p`'s parameters.
+    fn one_each(p: &Prepared, given: usize) -> Result<()> {
+        if given == p.parameters.len() {
+            return Ok(());
+        }
+        let taken = p.parameters.len();
+        let msg = format!("[ISO/IEC 9075:1992 §17.9 GR5a] {given} values for {taken} <dynamic parameter specification>s");
+        Err(dynamic(SqlState::USING_CLAUSE_MISMATCH, msg))
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.10] Executes `p`, not a query,

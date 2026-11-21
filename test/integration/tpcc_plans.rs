@@ -53,7 +53,7 @@ impl Sequence {
 fn last_name(n: i64) -> String {
     const SYLLABLES: [&str; 10] = ["BAR", "OUGHT", "ABLE", "PRI", "PRES", "ESE", "ANTI", "CALLY", "ATION", "EING"];
     let at = |k: i64| SYLLABLES[usize::try_from(k).unwrap()];
-    format!("{}{}{}", at(n / 100), at(n / 10 % 10), at(n % 10))
+    format!("{}{}{}", at(n.div_euclid(100)), at(n.div_euclid(10) % 10), at(n % 10))
 }
 
 /// `rows` inserted into `table` by statements of at most 200 rows each.
@@ -151,7 +151,7 @@ impl Calls {
             made[0] = made[0].saturating_add(planned(s, &self.neword, &new_order(r, district)));
         }
         let byname = int(i64::from(r.between(1, 100) <= 60));
-        let name = Value::Char(last_name(r.between(0, 9)).into());
+        let name = Value::Char(last_name(r.between(0, 9)));
         let (d, c) = (int(r.between(1, 10)), int(r.between(1, CUSTOMERS)));
         let payment = vec![int(1), d.clone(), int(1), d.clone(), c.clone(), byname.clone(), int(r.between(1, 5000)), name.clone()];
         let calls: [(&Prepared, Vec<Value>); 4] = [

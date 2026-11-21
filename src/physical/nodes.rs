@@ -7,7 +7,7 @@
 //! R-CF-6).
 
 use super::streamed::Grouping;
-use super::{Built, PhysicalPlanner, Plan};
+use super::{Built, PhysicalPlanner, Plan, of_left};
 use crate::functions::XmlFilter;
 use crate::logical::{Cond, Expr, Fixpoint, Limit, LogicalPlan, SetOp, SortKey, Unnest, render_expr};
 use crate::system::SystemRead;
@@ -108,10 +108,4 @@ fn implied_filter(u: &Unnest<LogicalPlan>) -> Option<Box<LogicalPlan>> {
     }
     let cond = Cond::Value(Expr::Call(rows, vec![args.first()?.clone()]));
     Some(Box::new(LogicalPlan::Filter { cond, input: Box::new(u.input.clone()) }))
-}
-
-/// `want`, if each of its keys is of a product's left operand, `width`
-/// columns wide, whose order the product keeps; else none.
-pub(super) fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
-    if want.iter().all(|k| k.column < width) { want } else { &[] }
 }

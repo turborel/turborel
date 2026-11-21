@@ -116,10 +116,12 @@ fn slot_bound(c: &Cond, values: &[Value]) -> Option<SlotBound> {
         (other, Expr::Column(column)) => (*column, op.flip(), other),
         _ => return None,
     };
-    let (slot, expr) = match other {
-        Expr::Dynamic(slot) => (slot.clone(), None),
-        Expr::Arith(a, ArithOp::Add | ArithOp::Sub, b) => (shifted_slot(a, b)?, Some(Box::new(other.clone()))),
-        _ => return None,
+    let (slot, expr) = if let Expr::Dynamic(slot) = other {
+        (slot.clone(), None)
+    } else if let Expr::Arith(a, ArithOp::Add | ArithOp::Sub, b) = other {
+        (shifted_slot(a, b)?, Some(Box::new(other.clone())))
+    } else {
+        return None;
     };
     if expr.as_ref().is_some_and(|e| e.can_raise()) {
         return None;

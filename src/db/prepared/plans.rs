@@ -61,7 +61,7 @@ use crate::settings::Own;
 use crate::sync::{read, write};
 use crate::value::Value;
 pub(in crate::db) use grown::{Fit, Learnt};
-pub(crate) use learning::{Learned, Learning};
+pub(crate) use learning::{Learned, Learning, MOST_LEARNING_RUNS};
 
 mod grown;
 mod learning;
