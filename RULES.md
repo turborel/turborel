@@ -425,6 +425,8 @@ verification approach DO-178C expects (§8).
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 | D675 | A correlated subquery learns its plan with its outer references as slots, keeps it once its runs agree, and fills it at each later run |
+| D682 | The system's threads are asked once, by the thread starting the first database |
+| D683 | Work grants share half of what the buffer pools leave of the budget |
 
 ### The project
 
@@ -12228,6 +12230,33 @@ after EXECUTOR.DECORRELATE_AFTER_RUNS as before (D35, D38), and a run
 checks for a cancel as any plan does (D44). EXECUTOR.KEEP_SUBQUERY_PLANS,
 ON by default and of a session's scope, turns it off, as to compare the
 two.
+
+#### D682. The system's threads are asked once, by the thread starting the first database
+
+EXECUTOR.WORKERS of 0 sizes the workers and every parallel part's
+degree by the threads the system runs at once (D290, D291), asked once
+(D405). It was asked as the first statement was planned, by that
+statement's thread. A thread held to fewer processors than its process,
+as a session's thread may be, saw only those, and every part after was
+planned for them. It is now asked as the first database starts
+(`Database::over`), by the thread starting it, and kept for every
+statement after (`physical::system_threads`).
+
+#### D683. Work grants share half of what the buffer pools leave of the budget
+
+Grants kept half the whole budget for what reserves beside them (D298).
+A buffer pool is reserved of the same budget, and one of more than half
+of it left the grants nothing. Every operator then held the floor, and a
+hash join whose right operand was a few megabytes was partitioned and
+spilled, while the same join run in parallel was granted its ceiling.
+A database's buffer pools now reserve their bytes as standing, held
+while it is open (`Reservation::stand`). Grants share half of what the
+standing reservations leave, and the other half stays for spill areas,
+which a statement reserves and which never shrink the grants' share. A
+database's areas count the bytes their grants hold, and a grant takes
+half of the share they left. Every grant is reserved of the budget, so
+however many run at once they never take more than is free
+(`spill/grant.rs`).
 
 ## 2. Project layout
 

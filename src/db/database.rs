@@ -117,6 +117,9 @@ impl Database {
     }
 
     fn over(mut state: State) -> Self {
+        // The system's threads asked once, by the thread starting it
+        // (RULES.md D682), not by a statement's, which may be held to fewer.
+        crate::physical::system_threads();
         state.published();
         // Its backups' views read what its background work keeps (RULES.md D166).
         let backups = Arc::default();

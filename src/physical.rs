@@ -47,7 +47,7 @@ mod order;
 mod ordered;
 mod parallel;
 pub use parallel::Parallel;
-pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
+pub(crate) use parallel::{parallel, rows_of as parallel_rows, system_threads, workers_of};
 mod probe;
 mod project;
 mod range;

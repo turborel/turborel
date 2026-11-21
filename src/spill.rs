@@ -38,7 +38,7 @@ pub(crate) mod testing;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 pub use grant::Grant;
@@ -264,6 +264,8 @@ pub struct WorkAreas {
     /// Whether its operators' grants are held of another's grant, not of
     /// the budget (RULES.md D298).
     covered: bool,
+    /// The bytes its grants hold reserved of the budget (RULES.md D683).
+    granted: Arc<AtomicUsize>,
 }
 
 impl WorkAreas {
@@ -272,7 +274,7 @@ impl WorkAreas {
     pub fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
         let files = MemoryFileSystem::within(Arc::clone(&memory), "a spill file");
         let temp = TempFiles::new(Arc::new(files), Path::new("/tmp"));
-        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))), covered: false }
+        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))), covered: false, granted: Arc::default() }
     }
 
     /// The budget its areas are reserved of, for what is held beside them.

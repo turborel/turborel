@@ -243,7 +243,7 @@ pub struct BufferPool {
     queued: pool::Queued,
     /// Its share of the database's memory budget, if it was made in one,
     /// held while it lives and given back as it is dropped.
-    _reservation: Option<Reservation>,
+    reservation: Option<Reservation>,
 }
 
 /// A pin on a frame, released when dropped.
