@@ -142,7 +142,21 @@ impl Kernels for Simd {
             Level::Neon => on_neon(Op::Scramble(acc, key)),
         }
     }
+    fn prefetch(&self, words: &[u64], places: &[u32]) {
+        prefetched(words, places);
+    }
 }
+
+/// Asks for the words of `words` at `places` ahead of their reads (RULES.md
+/// D602): on x86-64 by SSE's prefetch, which every such processor has.
+#[cfg(target_arch = "x86_64")]
+fn prefetched(words: &[u64], places: &[u32]) {
+    x86::prefetch(words, places);
+}
+
+/// Off x86-64 a prefetch asks for nothing, as the portable body.
+#[cfg(not(target_arch = "x86_64"))]
+fn prefetched(_words: &[u64], _places: &[u32]) {}
 
 /// XXH3 of long inputs on these kernels: `hash::xxhash::xxh3_64_on(&simd, ...)`.
 impl Stripes for Simd {

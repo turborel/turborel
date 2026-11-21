@@ -19,6 +19,7 @@ use super::super::runtime::Told;
 use super::super::stream::Kept;
 use crate::error::{Result, SqlError};
 use crate::exec::table::{Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal, values_hash};
+use crate::kernels::Kernels;
 use crate::physical::JoinKey;
 use crate::storage::{BATCH_ROWS, Batch, Column, Row};
 use crate::value::{Value, key_equal};
@@ -39,6 +40,9 @@ pub(in crate::exec) struct SharedTable {
     /// The places among `right`'s vectors of those a probe's batches hold,
     /// in order; all, if none.
     shown: Option<Vec<usize>>,
+    /// The kernels its probes ask for directory words by (RULES.md D602):
+    /// the portable ones, which ask for none, unless it is told others.
+    kernels: Arc<dyn Kernels>,
 }
 
 impl SharedTable {
@@ -76,6 +80,7 @@ impl SharedTable {
             seed,
             keyed,
             shown: None,
+            kernels: Arc::new(crate::kernels::Portable),
         };
         // A direct table of keys dense in their span if `dense` (RULES.md
         // D601), else hashed.
@@ -112,6 +117,13 @@ impl SharedTable {
         let mut shared = SharedTable::of(parts, (columns, width), keys, (seed, dense))?;
         shared.shown = Some(shown);
         Ok(shared)
+    }
+
+    /// It, its probes asking for directory words by `kernels` (RULES.md
+    /// D602).
+    pub(in crate::exec) fn on(mut self, kernels: Arc<dyn Kernels>) -> SharedTable {
+        self.kernels = kernels;
+        self
     }
 
     /// The runtime filters of its keys `keys` (RULES.md D369, D389), each
@@ -254,8 +266,11 @@ impl SharedTable {
     ) -> std::result::Result<(), SqlError> {
         let mut hashes = KeyHashes::default();
         hashes.of_batch((batch, Some(given)), (left, &self.nulls), self.hashing())?;
-        for ((&r, &h), &miss) in given.iter().zip(&hashes.hashes).zip(&hashes.misses) {
-            for p in self.table.candidates(h).filter(|_| !miss) {
+        let mut hits = Vec::new();
+        self.table.locate((&hashes.hashes, &hashes.misses), self.kernels.as_ref(), &mut hits);
+        for hit in hits {
+            let (Some(&r), Some(&h)) = (given.get(hit.place()), hashes.hashes.get(hit.place())) else { continue };
+            for p in self.table.found(hit, h) {
                 if keys_equal((batch, left, r), (&self.right, &self.places, p), &self.nulls)? {
                     pairs.0.push(Some(r));
                     pairs.1.push(Some(p));

@@ -43,6 +43,8 @@
 //!   - xxHash source repository: https://github.com/Cyan4973/xxHash
 //! ```
 
+use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+
 use turborel::hash::xxhash::{ACC_NB, SECRET_CONSUME_RATE};
 
 pub(crate) mod avx2;
@@ -79,4 +81,16 @@ pub(crate) fn acc_bytes(acc: &[u64; ACC_NB]) -> [u8; 64] {
 /// The accumulators of their bytes, as `acc_bytes` wrote them.
 pub(crate) fn acc_words(bytes: &[u8; 64], acc: &mut [u64; ACC_NB]) {
     acc.iter_mut().zip(bytes.as_chunks::<8>().0).for_each(|(a, b)| *a = u64::from_ne_bytes(*b));
+}
+
+/// Asks the processor to bring the words of `words` at `places` into its
+/// first cache (RULES.md D602), a place past the end skipped. A prefetch
+/// reads nothing and faults on no address, and SSE, which it needs, is
+/// part of x86-64.
+pub(crate) fn prefetch(words: &[u64], places: &[u32]) {
+    for word in places.iter().filter_map(|&p| words.get(usize::try_from(p).ok()?)) {
+        // SAFETY: the address is of `word`, a reference into `words`; a
+        // prefetch neither reads nor writes it, and x86-64 has SSE.
+        unsafe { _mm_prefetch::<_MM_HINT_T0>(std::ptr::from_ref(word).cast::<i8>()) };
+    }
 }

@@ -87,6 +87,19 @@ pub fn contract(kernels: &dyn Kernels) {
     blooms(kernels);
     xxh3_stripes(kernels);
     normalizing(kernels);
+    prefetching(kernels);
+}
+
+/// Checks that a prefetch of words, at places in and past the end, changes
+/// none of them and gives what the portable body gives (RULES.md D602).
+fn prefetching(kernels: &dyn Kernels) {
+    let words: Vec<u64> = (0..1_000_u64).map(|n| n.wrapping_mul(0x9E37_79B9_7F4A_7C15)).collect();
+    let kept = words.clone();
+    let places: Vec<u32> = (0..2_000_u32).map(|n| n.wrapping_mul(7_919) % 1_500).collect();
+    kernels.prefetch(&words, &places);
+    kernels.prefetch(&[], &places);
+    kernels.prefetch(&words, &[]);
+    assert_eq!(words, kept, "{}: a prefetch changes no word", kernels.name());
 }
 
 /// Bytes of a fixed pattern, each of the low byte of an odd multiple.

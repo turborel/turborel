@@ -29,6 +29,7 @@
 mod direct;
 mod equal;
 mod keys;
+mod located;
 mod placed;
 
 #[cfg(test)]
@@ -37,6 +38,7 @@ mod tests;
 pub(in crate::exec) use direct::DENSE_SPAN;
 pub(in crate::exec) use equal::keys_equal;
 pub(in crate::exec) use keys::{Hashing, KeyHashes, values_hash};
+pub(in crate::exec) use located::Hit;
 
 /// \[DESIGN\] How far a directory word's 16 tag bits are turned.
 const TAG_SHIFT: u32 = 48;
@@ -145,13 +147,23 @@ impl JoinTable {
         if let Some(dense) = &self.dense {
             return Candidates::Run(dense.candidates(h).iter());
         }
+        self.slot_of(h).map_or(Candidates::Run([].iter()), |span| self.within(span, h))
+    }
+
+    /// Where the rows of the slot of hash `h` begin and end among `rows`,
+    /// if its directory word holds `h`'s tag.
+    fn slot_of(&self, h: u64) -> Option<(usize, usize)> {
         let at = self.slot(h);
-        let Some(&word) = self.directory.get(at.saturating_add(1)) else { return Candidates::Run([].iter()) };
+        let word = *self.directory.get(at.saturating_add(1))?;
         if word & tag(h) == 0 {
-            return Candidates::Run([].iter());
+            return None;
         }
-        let from = self.directory.get(at).map_or(0, |&w| end_of(w));
-        let to = end_of(word);
+        Some((self.directory.get(at).map_or(0, |&w| end_of(w)), end_of(word)))
+    }
+
+    /// The rows of hash `h` among those `from` to `to`, a slot's: read in
+    /// turn of a slot of no more than `LINEAR`, else searched.
+    fn within(&self, (from, to): (usize, usize), h: u64) -> Candidates<'_> {
         let (Some(hashes), Some(rows)) = (self.hashes.get(from..to), self.rows.get(from..to)) else {
             return Candidates::Run([].iter());
         };

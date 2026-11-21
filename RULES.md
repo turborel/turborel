@@ -430,6 +430,7 @@ verification approach DO-178C expects (§8).
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
 | D600 | A hash join's runtime filter goes down both operands of an inner hash join below it by their keys, and below index scans, index and merge joins and groupings of COUNT, MIN and MAX; a build of few keys is judged as a set and told the scan as spans |
 | D601 | A hash join of one key of whole numbers dense in their span finds a probe's rows at its key's place, and its runtime filter is a bitmap of the span |
+| D602 | A hash join probes a batch in two passes, the rows whose slot holds their tag found first, and asks for the directory words of the next rows ahead of their reads past 8 MiB |
 | D610 | A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep |
 | D620 | EXPLAIN ANALYZE shows what an operator spilled, by notes a pull makes the thread's and a spill area takes as it is made |
 | D621 | EXPLAIN ANALYZE shows an operator's batches and mean rows, and of an index read its entries, leaf pages, fetches and rechecks |
@@ -12397,6 +12398,30 @@ direct table's numbers.
 EXECUTOR.DENSE_JOINS, ON by default, turns direct tables on and off for
 a session's statements, as to compare the two. Its rows are the same
 either way.
+
+#### D602. A hash join probes a batch in two passes, the rows whose slot holds their tag found first, and asks for the directory words of the next rows ahead of their reads past 8 MiB
+
+A hash join probes its table a batch at a time in two passes
+(exec/table/join/located.rs). The first reads the directory word of
+each probing row's hash and keeps, as hits, the rows whose slot holds
+the hash's tag, with where the slot's rows begin and end. It is a tight
+loop of loads none of which waits on another, so a processor has many
+misses of a table past its caches in flight at once, as a vectorized
+probe's independent loads hide them (Kersten et al., PVLDB 2018, §4.1).
+The second pass reads the rows of the hits alone, so the rows no built
+row can match are left out before any key is compared, as Behm et al.
+(SIGMOD 2022, §6.4) compact a sparse batch before its probe. A direct
+table's hits are the rows whose number has rows (D601). The rows each
+probe finds, and their order, are those of a probe of one row at a
+time.
+
+Of a directory past `PREFETCH_BYTES`, 8 MiB, beyond a share of a
+last-level cache, the first pass asks the processor for the words of
+the next 16 rows' slots while it reads those of the present ones, as
+Menon, Mowry and Pavlo (PVLDB 2017, §5.5) prefetch a group of probes
+ahead. It asks through `Kernels::prefetch`, whose portable body asks
+for nothing; the SIMD kernels ask by SSE's prefetch on x86-64. A
+prefetch reads nothing and changes no result.
 
 #### D610. A kept plan is shared and never filled, its slots read where they are, and statements prepared alike share what they keep
 

@@ -125,7 +125,8 @@ fn measured(bench: &Bench, s: &Session, (name, sql): (&str, &str), degrees: &[us
 }
 
 /// The workloads of each table, alone and in parallel, the selective ones
-/// without runtime filters too, and the large one past a work area.
+/// without runtime filters too, two of dense keys hashed, and the large
+/// one past a work area.
 pub fn workloads(bench: &Bench) {
     let (_db, s) = database();
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
@@ -139,6 +140,14 @@ pub fn workloads(bench: &Bench) {
             measured(bench, &s, (&format!("{name}{label}, no runtime filter"), &sql.replace("{t}", table)), &[1]);
         }
         let _ = s.run("SET EXECUTOR.RUNTIME_FILTERS TO DEFAULT");
+        // Of dense keys hashed, as a build without direct tables was: one
+        // in a cache and one whose directory is past it (RULES.md D601,
+        // D602).
+        let _ = s.run("SET EXECUTOR.DENSE_JOINS = 'OFF'");
+        for (name, sql) in QUERIES.iter().skip(1).take(2) {
+            measured(bench, &s, (&format!("{name}{label}, hashed"), &sql.replace("{t}", table)), &[1, threads]);
+        }
+        let _ = s.run("SET EXECUTOR.DENSE_JOINS TO DEFAULT");
         s.run("SET MEMORY.WORK_BYTES = 4194304").unwrap();
         let (name, sql) = QUERIES[2];
         measured(bench, &s, (&format!("{name}{label}, 4 MiB work area"), &sql.replace("{t}", table)), &[1]);

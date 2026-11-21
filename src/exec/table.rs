@@ -28,7 +28,7 @@ mod states;
 
 pub(crate) use hash::Seed;
 pub(in crate::exec) use hash::{hash_rows, hash_values};
-pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, keys_equal, values_hash};
+pub(in crate::exec) use join::{Candidates, Hashing, Hit, JoinTable, KeyHashes, keys_equal, values_hash};
 pub(in crate::exec) use keys::{Key, Keys};
 pub(in crate::exec) use made::Made;
 pub(in crate::exec) use runtime::RuntimeFilter;

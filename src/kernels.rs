@@ -126,6 +126,13 @@ pub trait Kernels: Send + Sync {
     ) -> Option<()> {
         portable::normal::normalize_i64((values, rows), (base, bytes, invert), (width, at), keys)
     }
+
+    /// Asks the processor to bring into its cache the words of `words` at
+    /// `places`, a place past the end skipped, ahead of their reads, as a
+    /// hash join's probe asks for the directory words of its next rows
+    /// (RULES.md D602). It changes nothing a kernel gives; the portable
+    /// body asks for none.
+    fn prefetch(&self, _words: &[u64], _places: &[u32]) {}
 }
 
 /// A database's kernels run XXH3's long inputs' loops: XXH3 of a vector's

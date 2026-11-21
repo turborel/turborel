@@ -22,7 +22,7 @@ use super::{in_order, left_late_batches};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::join::{Built, Full, Right};
-use crate::exec::table::KeyHashes;
+use crate::exec::table::{Hit, KeyHashes};
 use crate::exec::work::Work;
 use crate::exec::{Runner, broken};
 use crate::physical::{JoinKey, Plan, SemiJoin};
@@ -105,9 +105,9 @@ impl SemiProbe {
         if let Side::Vectors(held) = &mut self.side {
             let left: Vec<usize> = self.places.iter().map(|k| k.left).collect();
             held.hash_probing((batch, &left), rows)?;
-            let probing = std::mem::take(&mut held.probing);
-            let kept = hashed_kept(held, &mut self.joined, (batch, &left), (rows, &probing), self.anti);
-            held.probing = probing;
+            let (probing, hits) = (std::mem::take(&mut held.probing), std::mem::take(&mut held.hits));
+            let kept = hashed_kept(held, &mut self.joined, (batch, &left), (rows, (&probing, &hits)), self.anti);
+            (held.probing, held.hits) = (probing, hits);
             let kept = kept?;
             held.settle()?;
             return Ok(kept);
@@ -151,13 +151,14 @@ fn hashed_kept(
     held: &HeldRight,
     joined: &mut Joined,
     (batch, left): (&Batch, &[usize]),
-    (rows, probing): (&[usize], &KeyHashes),
+    (rows, (probing, hits)): (&[usize], (&KeyHashes, &[Hit])),
     anti: bool,
 ) -> Result<Vec<u32>> {
     let mut out = Vec::with_capacity(rows.len());
-    for ((&r, &h), &miss) in rows.iter().zip(&probing.hashes).zip(&probing.misses) {
+    let mut hits = hits.iter().copied().peekable();
+    for (n, (&r, &h)) in rows.iter().zip(&probing.hashes).enumerate() {
         let mut found = false;
-        for p in held.candidates(h).filter(|_| !miss) {
+        for p in hits.next_if(|hit| hit.place() == n).into_iter().flat_map(|hit| held.found(hit, h)) {
             if joined.keeps_held((batch, r), (&held.batch, p), held.matches((batch, left, r), p)?)? {
                 found = true;
                 break;

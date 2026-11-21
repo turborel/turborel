@@ -13,12 +13,13 @@
 //! filter, a grouping told one, its warning of a null it dropped, and an
 //! antijoin's right operand told none; of D601, a direct table's span at
 //! its bound, its counting sort keeping build order, and a bitmap
-//! filter's span at its bound.
+//! filter's span at its bound; of D602, a hit's place among a batch's
+//! probes past the prefetch bound, and the bound itself.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the join table's requirements.
-pub const JOIN_TABLE: [Mutation; 22] = [
+pub const JOIN_TABLE: [Mutation; 24] = [
     Mutation {
         name: "join-table-build-order",
         package: Package::Core,
@@ -238,5 +239,25 @@ pub const JOIN_TABLE: [Mutation; 22] = [
         replacement: "    if width >= held.saturating_mul(DENSE_SPAN) {",
         integration: &[],
         unit: &["exec::table::runtime::tests::dense_keys_are_a_bitmap"],
+    },
+    Mutation {
+        name: "join-probe-hit-place",
+        package: Package::Core,
+        breaks: "a hit past the prefetch bound keeps its place among the batch's probes (D602)",
+        file: "src/exec/table/join/located.rs",
+        original: "                hits.extend(self.hit(start.saturating_add(n), h));",
+        replacement: "                hits.extend(self.hit(n, h));",
+        integration: &[],
+        unit: &["exec::table::join::located::tests::hits_find_a_probes_candidates"],
+    },
+    Mutation {
+        name: "join-probe-prefetch-bound",
+        package: Package::Core,
+        breaks: "a probe asks for directory words only past PREFETCH_BYTES (D602)",
+        file: "src/exec/table/join/located.rs",
+        original: "        if self.directory.len().saturating_mul(8) <= PREFETCH_BYTES {",
+        replacement: "        if self.directory.len().saturating_mul(8) > PREFETCH_BYTES {",
+        integration: &[],
+        unit: &["exec::table::join::located::tests::hits_find_a_probes_candidates"],
     },
 ];

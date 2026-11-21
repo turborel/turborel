@@ -23,8 +23,9 @@ use super::{gathered, rows_of};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::table::{Candidates, Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal};
+use crate::exec::table::{Candidates, Hashing, Hit, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal};
 use crate::exec::{RowIter, broken, execute};
+use crate::kernels::Kernels;
 use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Column};
 use crate::txn::TxId;
@@ -57,6 +58,11 @@ pub(super) struct HeldRight {
     strays: Cell<usize>,
     /// The hashes of the keys of the rows of the batch probing it.
     pub(super) probing: KeyHashes,
+    /// Of the rows of the batch probing it, those a built row may match
+    /// (RULES.md D602).
+    pub(super) hits: Vec<Hit>,
+    /// The kernels its probes ask for directory words by.
+    kernels: Arc<dyn Kernels>,
     /// Of each key whose filter was asked for, its place among the keys
     /// and its runtime filter (RULES.md D369).
     pub(super) filters: Vec<(usize, Arc<RuntimeFilter>)>,
@@ -104,7 +110,8 @@ impl HeldRight {
     }
 
     /// Hashes the keys of the rows of `batch` at `rows`, its key columns at
-    /// `left`, into `probing`.
+    /// `left`, into `probing`, and puts those a built row may match in
+    /// `hits` (RULES.md D602).
     ///
     /// # Errors
     ///
@@ -112,8 +119,15 @@ impl HeldRight {
     pub(super) fn hash_probing(&mut self, (batch, left): (&Batch, &[usize]), rows: &[usize]) -> Result<()> {
         let mut probing = std::mem::take(&mut self.probing);
         let hashed = probing.of_batch((batch, Some(rows)), (left, &self.nulls), self.hashing());
+        self.table.locate((&probing.hashes, &probing.misses), &*self.kernels, &mut self.hits);
         self.probing = probing;
         hashed
+    }
+
+    /// The places of the rows of `hit`, whose key's hash is `h`, in order
+    /// (RULES.md D602).
+    pub(super) fn found(&self, hit: Hit, h: u64) -> Candidates<'_> {
+        self.table.found(hit, h)
     }
 
     /// The places of the rows whose key's hash is `h`, in order.
@@ -207,6 +221,8 @@ pub(super) fn read(
         keyed: false,
         strays: Cell::new(0),
         probing: KeyHashes::default(),
+        hits: Vec::new(),
+        kernels: db.functions.kernels_shared(),
         filters: Vec::new(),
     };
     built(&mut held, filtered, dense_wanted(db))?;

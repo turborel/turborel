@@ -22,7 +22,7 @@ use super::{gathered, in_order, left_batches, left_late_batches, narrow_rows, pa
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::join::{Built, Full, Right, partitioned_joined};
-use crate::exec::table::KeyHashes;
+use crate::exec::table::{Hit, KeyHashes};
 use crate::exec::work::Work;
 use crate::exec::{Runner, column, eval_cond};
 use crate::logical::{Cond, Truth};
@@ -259,9 +259,9 @@ impl Probe {
         if let Holding::Vectors(held) = &mut self.right {
             let left: Vec<usize> = self.places.iter().map(|k| k.left).collect();
             held.hash_probing((batch, &left), rows)?;
-            let probing = std::mem::take(&mut held.probing);
-            let probed = probe_hashed(held, (&mut self.joined, &mut self.out), (batch, &left), (rows, &probing));
-            held.probing = probing;
+            let (probing, hits) = (std::mem::take(&mut held.probing), std::mem::take(&mut held.hits));
+            let probed = probe_hashed(held, (&mut self.joined, &mut self.out), (batch, &left), (rows, (&probing, &hits)));
+            (held.probing, held.hits) = (probing, hits);
             probed?;
             return held.settle();
         }
@@ -290,9 +290,9 @@ impl Probe {
 
 /// Adds to `out` the pairs `joined` keeps of each left row of `batch` at
 /// `rows` and the rows of `held` of its key, its key columns at `left`,
-/// their hashes `probing`: each row's in the order they were built, and
-/// of a LEFT join, a row none matches with nulls [ISO/IEC 9075:1992 §7.5
-/// GR4, GR5b].
+/// their hashes `probing`, those a built row may match `hits` (RULES.md
+/// D602): each row's in the order they were built, and of a LEFT join, a
+/// row none matches with nulls [ISO/IEC 9075:1992 §7.5 GR4, GR5b].
 ///
 /// # Errors
 ///
@@ -301,18 +301,22 @@ fn probe_hashed(
     held: &HeldRight,
     (joined, out): (&mut Joined, &mut Out),
     (batch, left): (&Batch, &[usize]),
-    (rows, probing): (&[usize], &KeyHashes),
+    (rows, (probing, hits)): (&[usize], (&KeyHashes, &[Hit])),
 ) -> Result<()> {
-    for ((&r, &h), &miss) in rows.iter().zip(&probing.hashes).zip(&probing.misses) {
+    let mut hits = hits.iter().copied().peekable();
+    let outer = matches!(joined.kind, Kind::Left(..));
+    for (n, (&r, &h)) in rows.iter().zip(&probing.hashes).enumerate() {
         let mut found = false;
-        for p in held.candidates(h).filter(|_| !miss) {
-            let equal = held.matches((batch, left, r), p)?;
-            if joined.keeps_held((batch, r), (&held.batch, p), equal)? {
-                found = true;
-                out.push_held(Some(batch), Some(r), Some(p));
+        if let Some(hit) = hits.next_if(|hit| hit.place() == n) {
+            for p in held.found(hit, h) {
+                let equal = held.matches((batch, left, r), p)?;
+                if joined.keeps_held((batch, r), (&held.batch, p), equal)? {
+                    found = true;
+                    out.push_held(Some(batch), Some(r), Some(p));
+                }
             }
         }
-        if !found && matches!(joined.kind, Kind::Left(..)) {
+        if !found && outer {
             out.push_held(Some(batch), Some(r), None);
         }
     }
