@@ -30,7 +30,6 @@ mod reader;
 mod value;
 
 use std::cmp::Ordering;
-use std::sync::Arc;
 
 use self::aggregate::Framed;
 use self::distribution::{DISTRIBUTION_READERS, Distributed};
@@ -43,8 +42,8 @@ use super::group::admitted;
 use super::sort::rows_of_batches;
 use super::work::Work;
 use super::{HeldRows, RowIter, Runner, broken, column, eval, execute, failed, warn};
-use crate::db::State;
 use crate::error::{Result, SqlState};
+use crate::exec::Db;
 use crate::logical::{AggCall, SortKey, Window, WindowCall, WindowKind};
 use crate::physical::Plan;
 use crate::spill::ListSpace;
@@ -81,7 +80,7 @@ const OFFSET_VALUES: usize = 2;
 /// RULES.md D560), else a row at a time, as rows made batches and back
 /// cost more than the batches save.
 #[inline(never)]
-pub(super) fn windowed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
+pub(super) fn windowed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Window { window: shape, .. } = &plan else { return failed(broken("a window is not one")) };
     if super::batched(db) && batched::admits(shape) && super::batch::reads_by_batch(&shape.input, db) {
         return match window_batches(plan, db, tx) {
@@ -100,9 +99,9 @@ pub(super) fn windowed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 pub(super) use batched::{admits as admits_batches, window_batches};
 
 /// The rows of the window `w` over `rows`, a row at a time.
-pub(super) fn windowed_rows(w: Window<()>, rows: RowIter, (db, tx): (&Arc<State>, TxId)) -> RowIter {
+pub(super) fn windowed_rows(w: Window<()>, rows: RowIter, (db, tx): (&Db, TxId)) -> RowIter {
     let partition = w.partition.iter().map(|&c| SortKey::ascending(c)).collect();
-    let (db_held, runner) = (Arc::clone(db), Runner::new(db, tx));
+    let (db_held, runner) = (db.clone(), Runner::new(db, tx));
     let (slots, shapes) = (Vec::new(), Vec::new());
     let given = Windowed { w, partition, slots, shapes, rows, runner, db: db_held, tx, bounds: None, next: None, given: None, done: false };
     Box::new(checked(given, db.tx.stop_of(tx)))
@@ -124,7 +123,7 @@ struct Windowed {
     shapes: Vec<Option<Shape>>,
     rows: RowIter,
     runner: Runner,
-    db: Arc<State>,
+    db: Db,
     tx: TxId,
     /// Each call's frame bounds and count, their offsets and counts
     /// evaluated as the first row is read [§7.15 GR5b, §6.10 GR1a i, GR1d

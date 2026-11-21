@@ -37,9 +37,13 @@
 //! summed, its zones settled and not, alone (`analytics/counts.rs`),
 //! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
 //! to `grouping`, groupings on one thread alone (`analytics/grouping.rs`),
-//! to `late`, a column store's selective queries, the columns they keep
-//! few rows of read late, alone (`analytics/late.rs`), or to `sorts`,
-//! ORDER BY and top-N alone (`analytics/sorts.rs`).
+//! to `joins`, hash joins and their runtime filters alone
+//! (`analytics/joins.rs`), to `late`, a column store's selective
+//! queries, the columns they keep few rows of read late, alone
+//! (`analytics/late.rs`), to `skipping`, a large column store table's
+//! filters, by what they skip, alone (`analytics/skipping.rs`), or to
+//! `sorts`, ORDER BY and top-N alone
+//! (`analytics/sorts.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -52,6 +56,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "analytics/bands.rs"]
+mod bands;
 #[path = "analytics/counts.rs"]
 mod counts;
 #[path = "analytics/decode.rs"]
@@ -65,12 +71,16 @@ mod graph;
 #[path = "analytics/grouping.rs"]
 mod grouping;
 mod harness;
+#[path = "analytics/joins.rs"]
+mod joins;
 #[path = "analytics/json.rs"]
 mod json;
 #[path = "analytics/late.rs"]
 mod late;
 #[path = "analytics/parallel.rs"]
 mod parallel;
+#[path = "analytics/skipping.rs"]
+mod skipping;
 #[path = "analytics/social.rs"]
 mod social;
 #[path = "analytics/sorts.rs"]
@@ -89,9 +99,11 @@ use turborel::db::{Database, Session};
 /// morsels, `distinct` for the DISTINCT set functions', `expressions`
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
-/// `grouping` for groupings on one thread, `late` for a column store's
-/// selective queries, `sorts` for ORDER BY and top-N, `windows` for
-/// window functions of every frame type.
+/// `grouping` for groupings on one thread, `joins` for hash joins, `late`
+/// for a column store's selective queries, `skipping` for a large column
+/// store table's filters, `sorts` for ORDER BY and top-N, `bands` and
+/// `bands-large` for joins on comparisons by order, `windows` for window
+/// functions of every frame type.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -141,7 +153,9 @@ fn main() {
     counts::workloads(&bench);
     decode::workloads(&bench);
     late::workloads(&bench);
+    joins::workloads(&bench);
     sorts::workloads(&bench);
+    bands::small(&bench);
     windows::workloads(&bench);
 }
 
@@ -156,7 +170,11 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
         "late" => late::workloads,
+        "joins" => joins::workloads,
+        "skipping" => skipping::workloads,
         "sorts" => sorts::workloads,
+        "bands" => bands::small,
+        "bands-large" => bands::large,
         "windows" => windows::workloads,
         _ => return false,
     };

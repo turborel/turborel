@@ -23,6 +23,7 @@ use super::sorted::merge_by;
 use super::{Held, Limit};
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::{HeldRows, RowIter, Runner, TransitionRows, broken, execute};
 use crate::logical::SortKey;
 use crate::physical::Plan;
@@ -46,7 +47,7 @@ type Parts = Vec<HeldRows<Row>>;
 /// # Errors
 ///
 /// As reading the stream fails.
-pub(super) fn windowed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
+pub(super) fn windowed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
     let Plan::Window { window, detail, .. } = plan else { return Err(broken("not a window run in parallel")) };
     let Plan::Sort { keys, input, .. } = &window.input else { return Err(broken("a window run in parallel reads no sort")) };
     let columns = window.partition.clone();
@@ -70,7 +71,7 @@ pub(super) fn windowed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize
 /// # Errors
 ///
 /// As reading the operands fails.
-pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
+pub(super) fn set_operation(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
     let Plan::SetOp { op, all, compared, left, right, .. } = plan else { return Err(broken("not a set operation run in parallel")) };
     let n = *compared;
     let key = move |row: &Row| Some(row.get(..n.unwrap_or(row.len()).min(row.len()))?.to_vec());
@@ -123,12 +124,12 @@ fn space(db: &State, share: usize) -> ListSpace {
 /// if a table cannot be split.
 fn split(
     input: &Plan,
-    (db, tx, degree): (&Arc<State>, TxId, usize),
+    (db, tx, degree): (&Db, TxId, usize),
     (key, numbered): (impl Fn(&Row) -> Option<Row> + Send + Sync + 'static, bool),
     (limit, bytes): (&Limit, usize),
 ) -> Result<Held<(Parts, Option<usize>)>> {
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), limit)? else { return Ok(Held::GaveWay) };
-    let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
+    let (pipeline, db_for) = (Arc::new(pipeline), db.clone());
     let count = pipeline.count();
     let work = Box::new(move |m: usize| {
         let mut parts: Vec<Vec<Row>> = (0..PARTS).map(|_| Vec::new()).collect();
@@ -163,7 +164,7 @@ fn split(
 /// to `degree`, each in a share of `bytes`: their rows, by partition.
 fn per_part(
     parts: Parts,
-    (db, tx, degree): (&Arc<State>, TxId, usize),
+    (db, tx, degree): (&Db, TxId, usize),
     (each, bytes): (impl Fn(TransitionRows) -> Plan + Send + Sync + 'static, usize),
 ) -> Result<Vec<Vec<Row>>> {
     per_part_numbered(parts, (db, tx, degree), (move |rows, _| each(rows), bytes))
@@ -172,7 +173,7 @@ fn per_part(
 /// As `per_part`, `each` told the partition's number.
 fn per_part_numbered(
     parts: Parts,
-    (db, tx, degree): (&Arc<State>, TxId, usize),
+    (db, tx, degree): (&Db, TxId, usize),
     (each, bytes): (impl Fn(TransitionRows, usize) -> Plan + Send + Sync + 'static, usize),
 ) -> Result<Vec<Vec<Row>>> {
     let shared = shared(db, bytes.checked_div(degree.max(1)).unwrap_or_default().max(1));
@@ -190,9 +191,9 @@ fn per_part_numbered(
 /// A copy of `db` whose operators are each granted `work` bytes of the
 /// statement's grant, not of the budget again, for a part of a statement
 /// run beside others in its grant (RULES.md D298).
-fn shared(db: &Arc<State>, work: usize) -> Arc<State> {
+fn shared(db: &Db, work: usize) -> Db {
     let mut copy = State::clone(db);
     copy.work = Arc::new(db.work.covered());
     copy.settings.set_key(MEMORY_WORK_BYTES, Value::Exact(Decimal::new(i128::try_from(work).unwrap_or(i128::MAX), 0)));
-    Arc::new(copy)
+    db.in_state(Arc::new(copy))
 }

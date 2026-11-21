@@ -71,19 +71,31 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
             for part in &zone.parts {
                 put_u32(&mut out, part.nulls);
                 put_bounds(&mut out, part.bounds.as_ref(), t)?;
-                match part.filter {
-                    Some(f) => {
-                        out.push(1);
-                        put_u64(&mut out, f.page.0);
-                        put_u32(&mut out, f.at);
-                        put_u32(&mut out, f.len);
-                    }
-                    None => out.push(0),
-                }
+                put_filter(&mut out, part.filter);
+                put_filter(&mut out, part.imprint);
             }
         }
     }
+    for (edges, t) in group.edges.iter().zip(types) {
+        put_u32(&mut out, count32(edges.len())?);
+        for edge in edges {
+            put_bound(&mut out, edge, t)?;
+        }
+    }
     Ok(out)
+}
+
+/// Appends where a part's filter or imprints are, if they are.
+fn put_filter(out: &mut Vec<u8>, filter: Option<Filter>) {
+    match filter {
+        Some(f) => {
+            out.push(1);
+            put_u64(out, f.page.0);
+            put_u32(out, f.at);
+            put_u32(out, f.len);
+        }
+        None => out.push(0),
+    }
 }
 
 /// A header's bytes, read in order.
@@ -149,7 +161,7 @@ impl<'a> Reader<'a> {
     }
 
     fn part(&mut self, t: &DataType) -> Result<Part> {
-        Ok(Part { nulls: self.u32()?, bounds: self.bounds(t)?, filter: self.filter()? })
+        Ok(Part { nulls: self.u32()?, bounds: self.bounds(t)?, filter: self.filter()?, imprint: self.filter()? })
     }
 
     fn zone(&mut self, t: &DataType) -> Result<Zone> {
@@ -188,10 +200,11 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
         let zones = (0..r.count()?).map(|_| r.zone(t)).collect::<Result<Vec<_>>>()?;
         columns.push(zones);
     }
+    let edges = types.iter().map(|t| (0..r.count()?).map(|_| r.bound(t)).collect::<Result<Vec<_>>>()).collect::<Result<Vec<_>>>()?;
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }
-    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, header })
+    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, edges, header })
 }
 
 /// Appends `summary`, its columns of `types`, as a table's directory holds

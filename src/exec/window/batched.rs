@@ -38,8 +38,8 @@ use self::boundaries::Last;
 use self::compute::Prepared;
 use super::frame::Bounds;
 use super::value::Count;
-use crate::db::State;
 use crate::error::Result;
+use crate::exec::Db;
 use crate::exec::batch::{Batches, whole_batches, whole_width};
 use crate::exec::sort::{KeyedBatches, sorted_keyed};
 use crate::exec::work::Work;
@@ -118,7 +118,7 @@ fn arguments(call: &WindowCall) -> Vec<&Expr> {
 /// # Errors
 ///
 /// As its input's batches fail.
-pub(in crate::exec) fn window_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(in crate::exec) fn window_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     let Plan::Window { window, .. } = plan else { return Err(crate::exec::broken("a window is not one")) };
     let (w, input) = window.split();
     let partition: Vec<SortKey> = w.partition.iter().map(|&c| SortKey::ascending(c)).collect();
@@ -132,7 +132,7 @@ pub(in crate::exec) fn window_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> 
         input: Some(keyed),
         prepared: None,
         runner: Runner::new(db, tx),
-        db: Arc::clone(db),
+        db: db.clone(),
         tx,
         kernels: db.functions.kernels_shared(),
         held: Vec::new(),
@@ -148,7 +148,7 @@ pub(in crate::exec) fn window_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> 
 /// partitioning's and ordering's keys: of a sort by those keys whose input
 /// gives whole batches, with the keys it made; of a stream giving whole
 /// batches, as they come; else its rows made batches.
-fn input_of(input: Plan, (parted, both): (usize, &[SortKey]), db: &Arc<State>, tx: TxId) -> Result<KeyedBatches> {
+fn input_of(input: Plan, (parted, both): (usize, &[SortKey]), db: &Db, tx: TxId) -> Result<KeyedBatches> {
     if let Plan::Sort { keys, input: inner, most: None, .. } = &input
         && sorts_as(keys, (parted, both))
         && let Some(width) = whole_width(inner, db)
@@ -223,7 +223,7 @@ struct Windowing {
     /// Its calls' frames and counts, prepared as the first row is read.
     prepared: Option<Prepared>,
     runner: Runner,
-    db: Arc<State>,
+    db: Db,
     tx: TxId,
     kernels: Arc<dyn Kernels>,
     /// The batches held, the first beginning a partition.

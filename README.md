@@ -42,6 +42,8 @@ behind it, and each can be replaced or added to.
 - One table of groups with typed keys and columns of set functions'
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
+- Hash joins probed a batch at a time in one tagged table, shared by
+  parallel morsels, telling the left's scan a range and Bloom filter.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Window functions over batches, partitions found of the sort's keys by a
@@ -67,6 +69,8 @@ behind it, and each can be replaced or added to.
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables, on statistics of most common values, a
   sample of rows for correlated conditions and indexes' joint key counts.
+- [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
+  bands and overlapping periods, one table sorted and searched by the other.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
   query and shows each operator's rows beside its estimate, and a program
   may give the planner true row counts to test its plans.
