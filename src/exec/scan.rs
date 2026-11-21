@@ -6,7 +6,6 @@
 //! while the statement is not cancelled (RULES.md D44).
 
 mod decided;
-mod fetched;
 
 use std::sync::Arc;
 
@@ -138,12 +137,6 @@ pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Ok(Found { storage, ix, entries, projection, read }) => match read.record(&*storage, tx) {
             Ok(()) => {
                 let mut reading = Reading::of(&ix, Some(&needed), projection);
-                // Of no conjunct decided, the rows read in batches (RULES.md D513).
-                if deciding.is_none() {
-                    let entries = checked(entries, db.tx.stop_of(tx));
-                    let rows = fetched::Fetched::new(entries, (storage, ix, reading), (tx, width, located));
-                    return Box::new(checked(rows, db.tx.stop_of(tx)));
-                }
                 let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
                     let row = |(key, id)| {
                         let row = match &deciding {

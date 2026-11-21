@@ -193,28 +193,3 @@ fn delta_zones_skip_the_tree_rows_no_condition_matches() {
     assert_eq!(matching, 11, "rows 0 to 9 and the one updated");
     assert_eq!(given.len(), 11, "the tree's other zones not read");
 }
-
-/// Verifies: [DESIGN] RULES.md D513, rows fetched in batches: of ids
-/// frozen in two groups, one updated and one deleted in the tree, one
-/// never written and one twice, in no order, with some columns or all,
-/// the rows `get_many` gives are those `get_near` gives of each.
-#[test]
-fn rows_fetched_in_batches_are_those_got_one_by_one() {
-    let (table, ids) = table(5000);
-    table.gc(1, &mut |_, _| true).unwrap();
-    while table.maintain(1, true).unwrap() {}
-    table.begin(10, 9).unwrap();
-    table.update(10, ids[3000], row(-1)).unwrap();
-    table.delete(10, ids[17]).unwrap();
-    table.validate(10, 10).unwrap();
-    table.commit(10, 10);
-    let mut asked: Vec<RowId> = [4999, 17, 3000, 0, 2047, 2048, 17, 1234, 3999].iter().map(|&n| ids[n]).collect();
-    asked.push(ids[4999] + 100);
-    for columns in [None, Some(&[4, 0][..]), Some(&[][..])] {
-        let mut near = crate::storage::Near::default();
-        let many = table.get_many(NO_TRANSACTION, &asked, columns, &mut near).unwrap();
-        let each: Vec<Option<Row>> = asked.iter().map(|&id| table.get_near(NO_TRANSACTION, id, columns, &mut near).unwrap()).collect();
-        assert_eq!(format!("{many:?}"), format!("{each:?}"), "{columns:?}");
-        assert!(many[1].is_none() && many[9].is_none() && many[0].is_some(), "deleted and never written");
-    }
-}

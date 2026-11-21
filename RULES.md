@@ -406,7 +406,6 @@ verification approach DO-178C expects (§8).
 | D510 | A frozen group keeps shadow bits of the rows the tree may have entries for, and a column store table keeps zones of its tree's rows |
 | D511 | A frozen group keeps column imprints of 64 rows, and a scan judges its conjuncts narrowest first |
 | D512 | A chunk's dictionary of texts keeps its entries in order, and a scan judges a condition of it by codes |
-| D513 | An index scan reads its rows in batches, and a column store reads a batch's frozen rows group by group |
 
 ### The project
 
@@ -11521,32 +11520,6 @@ The order is the one comparisons of the default collation take
 (`compare_strings`). A condition of a column of another collation
 reaches the scan as sort keys, never string constants, so it is judged
 as before, and the order of the entries is never read for it.
-
-#### D513. An index scan reads its rows in batches, and a column store reads a batch's frozen rows group by group
-
-An index scan read each entry's row alone, and of a frozen row each
-value alone, opening its chunk for the one value. A scan of rows
-scattered over a group opened the same chunks again and again.
-
-`TableStorage::get_many` reads the rows of several ids, in their order;
-by default each by `get_near`. An index scan of no conjunct it decides
-reads its entries' rows in batches (`exec/scan/fetched.rs`), the first
-of one entry, each next twice as many up to a most, so a scan of which
-one row is asked reads one, and a long one reads many at once. A
-covering scan still makes a row of its entry where every reader sees
-the row, and each row read is kept only if that version has the
-entry's key (`exec/entries.rs`), as before.
-
-The column store reads a batch's rows the tree holds from the tree, as
-`get` does, and the frozen ones by group (`engine/rows/frozen/fetch.rs`).
-Their ids, sorted, are cut by the directory into the groups holding
-them, and of each group the places of its rows found and each column
-read at those places in order, so a chunk is opened once for all the
-rows of the batch in it.
-
-A row whose entry the scan has not yet reached may be read before it is
-asked for, as many as a batch holds. Reading it changes nothing a
-reader sees, and the probe's reads were noted before the first entry.
 
 ## 2. Project layout
 

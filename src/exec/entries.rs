@@ -96,50 +96,6 @@ pub(super) fn entry_row(
     Ok(fetch(storage, ix, reading, (tx, id), &key)?.map(|(_, row)| row))
 }
 
-/// \[DESIGN\] (RULES.md D513) The rows of the entries `wanted`, each a
-/// key and a row id, as `entry_row` reads each, in their order: those it
-/// does not make of their key read of `storage` together
-/// (`TableStorage::get_many`), each kept if that version has its key.
-pub(in crate::exec) fn entry_rows(
-    storage: &dyn TableStorage,
-    (ix, width): (&KeyShape, Option<usize>),
-    reading: &mut Reading,
-    tx: TxId,
-    wanted: &[(Key, RowId)],
-) -> Result<Vec<Option<Row>>> {
-    let mut rows: Vec<Option<Row>> = Vec::with_capacity(wanted.len());
-    let mut read = Vec::new();
-    for (n, (key, id)) in wanted.iter().enumerate() {
-        if let Some(width) = width.filter(|_| reading.projection.is_none())
-            && storage.visible_to_all(*id)
-        {
-            let mut row = vec![Value::Null; width];
-            for (&column, value) in ix.columns.iter().zip(&key.0) {
-                if let Some(slot) = row.get_mut(column) {
-                    *slot = value.clone();
-                }
-            }
-            rows.push(Some(row));
-        } else {
-            rows.push(None);
-            read.push(n);
-        }
-    }
-    let Reading { columns, near, projection } = reading;
-    let ids: Vec<RowId> = read.iter().filter_map(|&n| wanted.get(n).map(|(_, id)| *id)).collect();
-    for (&n, row) in read.iter().zip(storage.get_many(tx, &ids, columns.as_deref(), near)?) {
-        let (Some(row), Some((key, _))) = (row, wanted.get(n)) else { continue };
-        let Some(mut seen) = ix.key_of(&row) else { continue };
-        if let Some(project) = projection {
-            seen = project.project(&seen)?;
-        }
-        if let Some(slot) = rows.get_mut(n).filter(|_| seen == *key) {
-            *slot = Some(row);
-        }
-    }
-    Ok(rows)
-}
-
 /// Rows with their ids, each read when it is pulled.
 pub type Entries = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 
