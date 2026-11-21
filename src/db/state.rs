@@ -408,13 +408,16 @@ impl State {
 
     /// What `table`'s engine knows of its rows, if anything (`stats.rs`),
     /// with what its indexes count of their keys (`stats/keyed.rs`).
-    /// If nothing, and asking made its gathering due, the table is noted
-    /// for the database's maintenance (`db/maintenance.rs`), which gathers
-    /// them: planning never waits for a pass over a table (RULES.md D35).
+    /// If nothing, and asking made its gathering due, or this read made
+    /// statistics changed enough wanted, the table is noted for the
+    /// database's maintenance (`db/maintenance.rs`), which gathers them:
+    /// planning never waits for a pass over a table (RULES.md D35, D473).
+    /// A table no write commits to after the read is gathered so too.
     pub fn statistics(&self, table: &QualifiedName) -> Option<Arc<dyn Statistics>> {
         let storage = self.storage.get(table)?;
+        let wanted = storage.statistics_wanted();
         let stats = storage.statistics();
-        if stats.is_none() && storage.maintenance_due() {
+        if (stats.is_none() && storage.maintenance_due()) || (!wanted && storage.statistics_wanted()) {
             self.tx.note_maintenance(table);
         }
         Some(Keyed::of(stats?, self.key_indexes(table)))

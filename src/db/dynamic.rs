@@ -98,7 +98,7 @@ pub(super) fn value_of(session: &Session, v: &ValueSpecification, params: &Param
 }
 
 /// The value of `v`, exact with scale 0, as `rule` says it is, as an
-/// `i64`: of at most 18 digits (`MAX_EXACT_PRECISION`), so it fits.
+/// `i64`, the greatest if it is past it.
 ///
 /// # Errors
 ///

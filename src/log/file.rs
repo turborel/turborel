@@ -478,22 +478,24 @@ impl Log for FileLog {
     }
 
     fn append(&self, record: &[u8]) -> Result<Lsn> {
-        if self.rotate_asked.load(Ordering::Acquire) {
-            self.rotate_for_formats();
+        let (number, id) = self.on_active(|blocks| blocks.append(record), 1, record.len())?;
+        Ok(lsn(number, id))
+    }
+
+    /// As many as the active segment has room for go in one write
+    /// (`BlockFile::append_all`), at least one, then the rest, so a run
+    /// grows a segment past its size no more than one record does.
+    fn append_all(&self, records: &[Vec<u8>]) -> Result<Vec<Lsn>> {
+        let mut lsns = Vec::with_capacity(records.len());
+        let mut rest = records;
+        while !rest.is_empty() {
+            let (now, later) = rest.split_at_checked(self.fitting(rest)).unwrap_or((rest, &[]));
+            let bytes = now.iter().map(Vec::len).sum();
+            let (number, ids) = self.on_active(|blocks| blocks.append_all(now), now.len(), bytes)?;
+            lsns.extend(ids.into_iter().map(|id| lsn(number, id)));
+            rest = later;
         }
-        let segment = self.take_active();
-        let appended = segment.blocks.append(record);
-        segment.finished();
-        let id = appended?;
-        add(&self.counters.appends, 1);
-        add(&self.counters.appended_bytes, u64::try_from(record.len()).unwrap_or(u64::MAX));
-        if segment.blocks.end().0 >= self.options.segment_size {
-            // A segment that cannot be begun leaves this one growing past
-            // its size; the record is appended either way, a failure told,
-            // and a failed seal kept to fail the next sync.
-            self.rotate(&segment);
-        }
-        Ok(lsn(segment.number, id))
+        Ok(lsns)
     }
 
     fn sync(&self, through: Lsn) -> Result<()> {

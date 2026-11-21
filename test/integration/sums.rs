@@ -28,10 +28,10 @@ fn row(k: usize, at: usize) -> String {
 
 /// Tables R0-R5 of the row store and C0-C5 of the column store, rows
 /// frozen, each the three values in one of `ORDERS`, an index on N and
-/// on F; and T, of 10^18 - 1 and 1, whose sum does not fit.
+/// on F; and T, of 10^38 - 1 and 1, whose sum does not fit 38 digits.
 fn tables(db: &Database) -> Session {
     db.set_job_policy(JobPolicy::Manual).unwrap();
-    let mut schema = String::from("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, N NUMERIC(18), F DOUBLE PRECISION, G INTEGER)");
+    let mut schema = String::from("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, N NUMERIC(38), F DOUBLE PRECISION, G INTEGER)");
     for n in 0..ORDERS.len() {
         let columns = "(K INTEGER, N NUMERIC(18), F DOUBLE PRECISION, G INTEGER)";
         write!(schema, " CREATE TABLE R{n} {columns} CREATE TABLE C{n} {columns} USING columnstore").unwrap();
@@ -47,7 +47,7 @@ fn tables(db: &Database) -> Session {
             a.commit().unwrap();
         }
     }
-    a.run(&format!("INSERT INTO T VALUES (0, {MOST}, 1E308, 0), (1, 1, 1E308, 0)")).unwrap();
+    a.run(&format!("INSERT INTO T VALUES (0, {}, 1E308, 0), (1, 1, 1E308, 0)", "9".repeat(38))).unwrap();
     a.commit().unwrap();
     db.maintain().unwrap();
     a
@@ -68,7 +68,7 @@ fn refused(s: &Session, sql: &str) -> (String, i32) {
 /// twice, and its negative is that double, whatever order the rows were
 /// written in, of the row store or the column store, read by batches or
 /// row by row, by an index or a scan, grouped or not; AVG is their mean.
-/// A sum that does not fit is 22003, SQLCODE -301, alike. Regression test
+/// A sum that does not fit 38 digits is 22003, SQLCODE -301, alike. Regression test
 /// (R-TEST-7): a running sum was judged, so the orders whose first two
 /// values were 10^18 - 1 and 1, or the two doubles, raised 22003.
 #[test]

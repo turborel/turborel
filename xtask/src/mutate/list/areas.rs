@@ -4,6 +4,7 @@ mod altered_tables;
 mod analyze;
 mod analyze_more;
 mod batches;
+mod btree;
 mod budget;
 mod bulk;
 // The count's, kept beside the other areas' files.
@@ -52,7 +53,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 19] {
+pub fn core() -> [&'static [Mutation]; 20] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -70,6 +71,7 @@ pub fn core() -> [&'static [Mutation]; 19] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &btree::BTREE,
         &monitoring::MONITORING,
         &bulk::BULK,
         &steady::STEADY_PLANS,
@@ -83,7 +85,7 @@ pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// The first half of the areas, in order.
-fn first() -> [&'static [Mutation]; 25] {
+fn first() -> [&'static [Mutation]; 26] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -99,6 +101,7 @@ fn first() -> [&'static [Mutation]; 25] {
         &super::composite::COMPOSITE,
         &super::distinct::DISTINCT,
         &super::bigint::BIGINT,
+        &super::wide_exact::WIDE_EXACT,
         &super::distinct_predicate::DISTINCT_PREDICATE,
         &super::partitioned_joins::PARTITIONED_JOINS,
         &super::grouping_sets::GROUPING_SETS,

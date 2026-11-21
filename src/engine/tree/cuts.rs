@@ -12,7 +12,7 @@ use std::ops::Bound;
 use std::sync::atomic::Ordering;
 
 use super::BLinkTree;
-use super::node::Node;
+use super::node::{KeyRef, Node};
 use crate::disk::pager::PageId;
 use crate::error::Result;
 
@@ -64,12 +64,13 @@ fn within(
 ) -> Result<()> {
     for at in 0..=node.len() {
         let (child, below) = node.child_at(at)?;
-        let above = if at < node.len() { Some(node.key(at)?) } else { node.high };
-        let past_upper = below.is_some_and(|b| match upper {
+        let below = below.map(KeyRef::to_vec);
+        let above = if at < node.len() { Some(node.key(at)?.to_vec()) } else { node.high.map(<[u8]>::to_vec) };
+        let past_upper = below.as_deref().is_some_and(|b| match upper {
             Bound::Included(u) | Bound::Excluded(u) => b >= u,
             Bound::Unbounded => false,
         });
-        let before_lower = above.is_some_and(|a| match lower {
+        let before_lower = above.as_deref().is_some_and(|a| match lower {
             Bound::Included(l) | Bound::Excluded(l) => a < l,
             Bound::Unbounded => false,
         });
@@ -77,7 +78,7 @@ fn within(
             continue;
         }
         if let Some(b) = below.filter(|b| inside(b, lower)) {
-            keys.push(b.to_vec());
+            keys.push(b);
         }
         children.push(child);
     }

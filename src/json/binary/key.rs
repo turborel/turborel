@@ -49,9 +49,10 @@ use std::cmp::Ordering;
 
 use super::{Node, NodeKind, root, within};
 use crate::error::{Code, Result, SqlError};
+use crate::json::text::JSON_EXACT_DIGITS;
 use crate::json::{Item, Member, Scalar};
 use crate::value::datetime::Moment;
-use crate::value::{Datetime, DecFloat, Decimal, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
+use crate::value::{Datetime, DecFloat, Decimal, MAX_DECFLOAT_PRECISION, Value};
 
 // The tags of a key's nodes, in the order §8.2 GR10 and the choices above
 // give them.
@@ -402,7 +403,7 @@ fn number_of_digits(negative: bool, digits: &str, exponent: i64) -> Result<Value
     let count = i64::try_from(digits.len()).unwrap_or(i64::MAX);
     let scale = count.saturating_sub(exponent);
     let precision = u32::try_from(count.max(exponent)).unwrap_or(u32::MAX);
-    if let (Ok(scale), true) = (u32::try_from(scale), precision <= MAX_EXACT_PRECISION) {
+    if let (Ok(scale), true) = (u32::try_from(scale), precision <= JSON_EXACT_DIGITS) {
         let units: i128 = digits.parse().map_err(|_| malformed("a number's digits are not digits"))?;
         return Ok(Value::Exact(Decimal::new(if negative { units.saturating_neg() } else { units }, scale)));
     }

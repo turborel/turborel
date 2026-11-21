@@ -263,7 +263,10 @@ fn groups() -> (Database, Session) {
 /// Verifies: [DESIGN] RULES.md D613, a plan kept that reads only through an
 /// index's probes is kept as its table grows fivefold with its rows per
 /// probe as they were, and is learned again once its rows per probe grow
-/// past ten times what they were as it was learned.
+/// past ten times what they were as it was learned. Its statistics are
+/// gathered after each load, so each figure is measured from them, not
+/// from whether a pass of the maintenance thread happened to come first
+/// (RULES.md D473).
 #[test]
 fn a_probes_plan_is_learned_again_only_once_its_rows_per_probe_outgrow_it() {
     let (db, s) = groups();

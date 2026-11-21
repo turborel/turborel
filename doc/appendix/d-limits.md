@@ -18,7 +18,7 @@ SQLSTATE 0A000.
 | BINARY and BINARY VARYING | 32,767 octets |
 | CHARACTER LARGE OBJECT and BINARY LARGE OBJECT | 4G, 4,294,967,296 characters or octets |
 | A LIKE pattern or escape, or a regular expression's pattern, flag or replacement, of a large object | 262,144 octets, a chunk; a LIKE match value under UNICODE or a tailoring too |
-| NUMERIC, DECIMAL and an exact literal | 18 digits |
+| NUMERIC, DECIMAL, an exact literal and an exact result | 38 digits |
 | FLOAT | 53 binary digits; an approximate literal within the range of DOUBLE PRECISION |
 | DECFLOAT | 34 digits; an exponent of its leading digit from -6143 to 6144 |
 | A datetime's fraction of a second | 6 digits |
@@ -29,7 +29,7 @@ SQLSTATE 0A000.
 | An XML value | Elements nested 512 deep; 16 MiB of text and 1,048,576 nodes and namespace bindings in one tree; 16 MiB more of entities' text in one parse; 64 MiB of text XMLPARSE reads; a stored form of 64 MiB |
 | An XQuery query | Expressions nested 64 deep; operations and function calls nested 256 deep as it is evaluated, expressions 256 deep as it is statically typed, a static type 256 deep, 4,096 item types an axis's closure meets; 1,048,576 items in one sequence; 64 MiB of nodes one evaluation constructs |
 | A number in JSON text or an SQL/JSON path | an exact one within DECFLOAT's range, an approximate one within DOUBLE PRECISION's |
-| The precision of an SQL/JSON item method | decimal() 18 digits; time(), time_tz(), timestamp() and timestamp_tz() 6, and a string datetime() reads, or its template's FF*n*, 6 digits of a second's fraction |
+| The precision of an SQL/JSON item method | decimal() 38 digits; time(), time_tz(), timestamp() and timestamp_tz() 6, and a string datetime() reads, or its template's FF*n*, 6 digits of a second's fraction |
 | A FULLTEXT value or a full-text search pattern | 32,767 characters; past it, SQLSTATE 22001 |
 | A full-text language's name | 32 characters |
 | The array a full-text tokenizing method gives | 65,535 elements; past it, SQLSTATE 2202F |
@@ -83,7 +83,7 @@ their number less 1, has at most the 18 digits of its type.
 
 | What | Limit |
 |---|---|
-| An index's key | of the default 8 KiB page, 2,006 bytes in a B-link tree, 8,112 in a hash index; of a 4 KiB page, 982 in a B-link tree; of a 64 KiB page, 16,342 in a B-link tree, 65,456 in a hash index |
+| An index's key | of the default 8 KiB page, 1,983 bytes in a B-link tree, 8,112 in a hash index; of a 4 KiB page, 959 in a B-link tree; of a 64 KiB page, 16,319 in a B-link tree, 65,456 in a hash index |
 | A word a full-text index keeps | its first 256 characters, and of those its first 255 bytes in UTF-8; a longer word is found by that prefix and checked against the row |
 | A document a full-text index reads | none: it is read a word at a time |
 | A GEOMETRY value | 16 MiB of WKT or WKB, 100,000 components, rings and coordinates in all, and 16 levels of nesting, the value's own included; more is refused with SQLCODE -900 |
