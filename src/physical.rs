@@ -16,6 +16,7 @@
 
 mod access;
 mod analyzed;
+mod blind;
 pub use analyzed::{Analyzed, Counted, NodeCount, Operator};
 pub(crate) use analyzed::{counted, millis, operators};
 mod built;
@@ -54,6 +55,8 @@ pub use range::{Bound, Pruned, RangeJoin};
 mod raising;
 mod recognized;
 mod robust;
+mod semi;
+pub use semi::{SemiJoin, SemiMethod};
 mod shown;
 pub(crate) mod spatial;
 mod streamed;
@@ -66,7 +69,8 @@ pub use kept::{Place, ProbeSlot};
 pub(crate) use kept::{filled_plan, filled_plan_as_is, keepable, same_shape};
 use std::sync::Arc;
 
-use built::Built;
+pub use built::Own;
+use built::{Built, of_left};
 use cardinality::Estimates;
 
 use crate::catalog::QualifiedName;
@@ -270,6 +274,8 @@ pub enum Plan {
     },
     /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
     MergeJoin(Box<MergeJoin>),
+    /// \[DESIGN\] A semi join or an antijoin (`physical/semi.rs`, RULES.md D540).
+    SemiJoin(Box<SemiJoin>),
     /// \[DESIGN\] A range join (`physical/range.rs`, RULES.md D580).
     RangeJoin(Box<RangeJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
@@ -531,6 +537,7 @@ impl<'a> PhysicalPlanner<'a> {
             LogicalPlan::Filter { cond, input } => self.filter(cond, input, want, None),
             LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
+            LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_join((*anti, cond), (left, right), want),
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
             LogicalPlan::Project { exprs, input } => self.project(exprs, input, want),
             LogicalPlan::Distinct { input } => self.distinct(input, want),
@@ -583,16 +590,6 @@ impl<'a> PhysicalPlanner<'a> {
         Built { plan: Plan::Filter { cond, detail, est, of_read: false, input: Box::new(b.plan) }, ordered: b.ordered }
     }
 }
-
-/// `want`, if each of its keys is of a product's left operand, `width`
-/// columns wide, whose order the product keeps; else none.
-fn of_left(want: &[SortKey], width: usize) -> &[SortKey] {
-    if want.iter().all(|k| k.column < width) { want } else { &[] }
-}
-
-/// An outer join's own conditions, of its left operand's columns and of
-/// its right's (`Plan::OuterJoin`), if either has one.
-pub type Own = Option<Box<(Option<Cond>, Option<Cond>)>>;
 
 // Unit tests: the planner's response to a state that breaks its invariants
 // (RULES.md R-TEST-2 robustness), and the orders its plans give.

@@ -190,6 +190,7 @@ fn table_columns<'p>(plan: &'p LogicalPlan, columns: &[usize], depth: usize) -> 
             table_columns(input, &below, depth.saturating_add(1))
         }
         LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::Product { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }

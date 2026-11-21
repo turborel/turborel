@@ -35,6 +35,7 @@ mod joins;
 mod keys;
 mod lineage;
 mod nodes;
+mod semi;
 mod tables;
 
 use std::cell::{Cell, RefCell};

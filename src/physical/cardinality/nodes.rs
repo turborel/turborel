@@ -12,7 +12,8 @@
 //!   the guard's EXISTS keeps that row or makes none of the statement's,
 //!   and no conjunct relates the two, so nothing takes a third of them;
 //! * a product, the product; an outer join, the inner join's rows, at
-//!   least each preserved operand's;
+//!   least each preserved operand's; a semi join and an antijoin, the
+//!   share of the left's rows `cardinality/semi.rs` gives;
 //! * a grouping and DISTINCT, their groups (`cardinality/groups.rs`);
 //! * UNION ALL, the sum; UNION, the groups of the sum; INTERSECT, at most
 //!   the smaller operand; EXCEPT, at most the left;
@@ -54,6 +55,7 @@ impl Estimates<'_> {
             LogicalPlan::Filter { cond, input } => self.filter_at((cond, input), next),
             LogicalPlan::Product { .. } => self.chain(None, plan, depth),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_at((*kind, cond), (left, right), next),
+            LogicalPlan::SemiJoin { anti, cond, left, right } => self.semi_at((*anti, cond), (left, right), next),
             LogicalPlan::Aggregate { groups, seeds, input, .. } => self.grouped(groups, seeds.len(), input, next),
             LogicalPlan::Distinct { input } => self.distinct_at(input, next),
             LogicalPlan::SetOp { op, all, left, right, .. } => self.combined((*op, *all), (left, right), next),

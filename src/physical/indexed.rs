@@ -75,14 +75,43 @@ pub(super) struct Probing {
 /// type, so that the index places them among its keys.
 pub(super) type OfKind<'a> = &'a dyn Fn(usize, &DataType) -> bool;
 
+/// \[DESIGN\] Which rows of an index join's left operand it gives: each
+/// with its matches; of a LEFT join, one none matches with nulls too; or,
+/// of a semi join or an antijoin (RULES.md D540), each once, alone, that
+/// one matches, or that none does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EquiKind {
+    Inner,
+    Left,
+    Semi,
+    Anti,
+}
+
+impl EquiKind {
+    /// The rows the join keeps that match none.
+    fn preserved(self) -> Preserved {
+        match self {
+            EquiKind::Inner => Preserved::Inner,
+            EquiKind::Left => Preserved::Outer,
+            EquiKind::Semi => Preserved::Semi,
+            EquiKind::Anti => Preserved::Anti,
+        }
+    }
+
+    /// Whether its rows are its left operand's alone.
+    fn left_alone(self) -> bool {
+        matches!(self, EquiKind::Semi | EquiKind::Anti)
+    }
+}
+
 /// A join to plan by probes: its left operand's width, the pairs of a left
 /// and a right column its equalities equate, the rest of its condition,
-/// and whether it is a LEFT outer join.
+/// and which rows of the left it gives.
 pub(super) struct Equijoin<'a> {
     pub(super) width: usize,
     pub(super) keys: &'a [(usize, usize)],
     pub(super) rest: Vec<Cond>,
-    pub(super) outer: bool,
+    pub(super) outer: EquiKind,
 }
 
 /// `join` as an index nested-loop join of `left`, built, probing as
@@ -94,6 +123,9 @@ pub(super) struct Equijoin<'a> {
 /// operand's columns.
 pub(super) fn index_join(mut probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), shown: Shown<'_>) -> Plan {
     let Some((columns, table_names)) = probing.through.take() else { return table_join(probing, join, (left, rows), shown) };
+    // A semi join's columns are its left operand's alone, which no
+    // projection puts back.
+    let alone = join.outer.left_alone();
     let width = join.width;
     let of_table = |c: usize| c.checked_sub(width).map_or(Some(c), |at| columns.get(at).map(|&t| t.saturating_add(width)));
     let keys: Vec<(usize, usize)> = join.keys.iter().map(|&(l, r)| (l, columns.get(r).copied().unwrap_or(r))).collect();
@@ -105,6 +137,9 @@ pub(super) fn index_join(mut probing: Probing, join: Equijoin<'_>, (left, rows):
     });
     let of_joined = Shown::of(joined_names.as_deref());
     let joined = table_join(probing, Equijoin { keys: &keys, rest, ..join }, (left, rows), of_joined);
+    if alone {
+        return joined;
+    }
     let exprs: Vec<Expr> = (0..width).chain(columns.iter().map(|&t| t.saturating_add(width))).map(Expr::Column).collect();
     let detail = of_joined.text(|names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
     Plan::Project { exprs, detail, input: Box::new(joined) }
@@ -127,7 +162,7 @@ pub(super) fn right_index_join(
     let rest = rest.into_iter().map(|c| flip.cond(c)).collect();
     let flipped = flip.names(shown);
     let of_flipped = Shown::of(flipped.as_deref());
-    let join = Equijoin { width: flip.right_width, keys: swapped, rest, outer: true };
+    let join = Equijoin { width: flip.right_width, keys: swapped, rest, outer: EquiKind::Left };
     flip.restored(index_join(probing, join, (right, rows), of_flipped), of_flipped)
 }
 
@@ -143,7 +178,7 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
     let probed = probing.used.iter().filter_map(|&k| join.keys.get(k)).map(equal);
     let detail = shown.text(|names| and_all(probed.chain(cond.clone()).collect()).map(|c| render_cond(&c, names)).unwrap_or_default());
     Plan::IndexJoin {
-        outer: if join.outer { Preserved::Outer } else { Preserved::Inner },
+        outer: join.outer.preserved(),
         spatial: None,
         left: Box::new(left),
         table: probing.table,
@@ -281,7 +316,8 @@ impl PhysicalPlanner<'_> {
             LogicalPlan::Filter { input, .. }
             | LogicalPlan::Distinct { input }
             | LogicalPlan::Sort { input, .. }
-            | LogicalPlan::Limit { input, .. } => self.column_type(input, column),
+            | LogicalPlan::Limit { input, .. }
+            | LogicalPlan::SemiJoin { left: input, .. } => self.column_type(input, column),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
                 Some(of_right) => self.column_type(right, of_right),
                 None => self.column_type(left, column),
@@ -354,6 +390,7 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
+        | Plan::SemiJoin(_)
         | Plan::RangeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
@@ -413,6 +450,7 @@ fn read_table(plan: &LogicalPlan) -> Option<Read<'_>> {
         }
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }

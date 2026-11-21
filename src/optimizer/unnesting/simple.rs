@@ -87,6 +87,7 @@ fn pull(plan: &LogicalPlan, functions: &Registry) -> Option<Pulled> {
         LogicalPlan::Scan { .. }
         | LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
