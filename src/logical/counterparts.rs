@@ -34,7 +34,8 @@ impl LogicalPlan {
             LogicalPlan::Filter { input, .. }
             | LogicalPlan::Distinct { input }
             | LogicalPlan::Sort { input, .. }
-            | LogicalPlan::Limit { input, .. } => input.counterparts(),
+            | LogicalPlan::Limit { input, .. }
+            | LogicalPlan::SemiJoin { left: input, .. } => input.counterparts(),
             LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => {
                 let mut out = left.counterparts();
                 out.extend(right.counterparts());

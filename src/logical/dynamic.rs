@@ -224,6 +224,7 @@ impl Filling<'_> {
                 LogicalPlan::Aggregate { groups, collations, aggs, seeds, input }
             }
             LogicalPlan::OuterJoin { kind, cond, left, right } => LogicalPlan::OuterJoin { kind, cond: self.cond(cond), left, right },
+            LogicalPlan::SemiJoin { anti, cond, left, right } => LogicalPlan::SemiJoin { anti, cond: self.cond(cond), left, right },
             LogicalPlan::Values { rows, types } => LogicalPlan::Values { rows: rows.into_iter().map(|r| self.exprs(r)).collect(), types },
             LogicalPlan::Unnest(mut u) => {
                 u.collections = self.exprs(std::mem::take(&mut u.collections));

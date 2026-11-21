@@ -176,6 +176,7 @@ fn scanned(plan: &LogicalPlan) -> Option<&QualifiedName> {
         LogicalPlan::Filter { input, .. } => scanned(input),
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }

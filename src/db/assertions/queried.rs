@@ -71,6 +71,7 @@ fn joined(plan: &LogicalPlan) -> bool {
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().all(row_expr),
         LogicalPlan::Aggregate { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Sort { .. }
@@ -116,6 +117,7 @@ fn grouped(plan: &LogicalPlan, known: &Known<'_>) -> Option<Shape> {
             | LogicalPlan::Product { .. }
             | LogicalPlan::Distinct { .. }
             | LogicalPlan::OuterJoin { .. }
+            | LogicalPlan::SemiJoin { .. }
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::System { .. }
             | LogicalPlan::Values { .. }
@@ -189,6 +191,7 @@ fn column_never_null(plan: &LogicalPlan, at: usize, known: &Known<'_>) -> bool {
         },
         LogicalPlan::Values { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Sort { .. }
@@ -260,6 +263,7 @@ pub(super) fn of_groups(plan: LogicalPlan, (keys, types): (&[Row], Option<&[Data
         | LogicalPlan::Product { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Values { .. }
