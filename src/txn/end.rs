@@ -282,6 +282,11 @@ impl State {
         }
         // One collector at a time (RULES.md D445): another ending now finds
         // the work under way and passes the table over, noted as awaiting.
+        // Nor, at a transaction's end, before it is worth its cost (RULES.md
+        // D451); a checkpoint's collection, which waits, takes everything.
+        if !wait && !storage.collection_due(horizon) {
+            return Some(true);
+        }
         let Some(_collecting) = lock.try_collect(wait) else { return Some(true) };
         {
             // The table's indexes, found as the first version is removed:

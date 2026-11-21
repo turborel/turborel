@@ -531,6 +531,10 @@ impl TableStorage for RowTable {
         self.awaits_collection()
     }
 
+    fn collection_due(&self, horizon: Timestamp) -> bool {
+        self.due_at(horizon)
+    }
+
     fn gc(&self, horizon: Timestamp, removed: Removed<'_>) -> Result<()> {
         self.collect(horizon, removed)
     }

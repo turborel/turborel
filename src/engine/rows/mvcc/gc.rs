@@ -17,6 +17,12 @@ use crate::storage::{Kept, Removed, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 
+/// The commits a busy table's earliest garbage waits past the horizon for
+/// before a transaction's end collects it (`RowTable::due_at`).
+const COLLECT_AFTER: u64 = 64;
+/// The versions filed as garbage that make a collection due at once.
+const COLLECT_ITEMS: u64 = 4_096;
+
 impl RowTable {
     /// Removes the garbage of commits at or before `horizon`, each removed
     /// version's row given to `removed` as it goes, a segment of garbage
@@ -38,7 +44,7 @@ impl RowTable {
             self.versions.garbage_due.store(garbage.first_key_value().map_or(u64::MAX, |(&at, _)| at), Ordering::SeqCst);
             ready
         };
-        let mut failure = None;
+        let (mut failure, mut taken) = (None, 0_u64);
         for (at, dead) in ready {
             // A segment at a time; one that cannot be read back is lost to
             // collection, its versions left where they are.
@@ -50,9 +56,14 @@ impl RowTable {
                         continue;
                     }
                 };
+                taken = taken.saturating_add(u64::try_from(items.len()).unwrap_or(u64::MAX));
                 self.remove_all(items, at, (&mut *removed, &mut failure));
             }
         }
+        // Counted down by what was taken, each item counted as it was filed
+        // (`add_garbage`), an item filed again counted again; the garbage of
+        // later commits still counted.
+        self.versions.garbage_items.fetch_sub(taken, Ordering::Relaxed);
         {
             let mut validated = lock_builtin(&self.versions.validated);
             validated.retain(|v| v.at > horizon);
@@ -107,6 +118,23 @@ impl RowTable {
         }
     }
 
+    /// \[DESIGN\] Whether a collection at `horizon` is due (RULES.md D451):
+    /// with no transaction open in the table, as after every end in a quiet
+    /// database, at once; else once the horizon is `COLLECT_AFTER` commits
+    /// past the earliest garbage, or `COLLECT_ITEMS` versions are filed, so
+    /// a busy table is collected a batch of commits at a time and not by
+    /// every end; or while versions undone by rollbacks wait, released as
+    /// soon as the readers that may go back to them end (RULES.md D29).
+    /// Stamps left wait with the garbage, a reader resolving an unstamped
+    /// version by its transaction's status.
+    pub(in crate::engine::rows) fn due_at(&self, horizon: Timestamp) -> bool {
+        let due = self.versions.garbage_due.load(Ordering::SeqCst).min(self.versions.validated_due.load(Ordering::SeqCst));
+        horizon.checked_sub(due).is_some_and(|past| past >= COLLECT_AFTER)
+            || self.versions.garbage_items.load(Ordering::Relaxed) >= COLLECT_ITEMS
+            || self.versions.undone_waiting.load(Ordering::Relaxed)
+            || self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()
+    }
+
     /// Whether anything awaits collection: garbage, versions undone changes
     /// appended, transactions validated that others may be ordered
     /// against, or stamps left to make.
@@ -122,6 +150,7 @@ impl RowTable {
         let space = self.versions.space();
         let mut garbage = lock_builtin(&self.versions.garbage);
         let list = garbage.entry(at).or_insert_with(|| SpillList::new(space));
+        self.versions.garbage_items.fetch_add(u64::try_from(dead.len()).unwrap_or(u64::MAX), Ordering::Relaxed);
         for item in dead {
             // An item that cannot be written is held all the same.
             list.push(item, &mut encode_dead).unwrap_or_default();
@@ -148,6 +177,7 @@ impl RowTable {
         let list = undone.entry(newest.unwrap_or(NO_TRANSACTION)).or_insert_with(|| SpillList::new(space));
         // An item that cannot be written is held all the same.
         list.push(Dead::Undone(appended), &mut encode_dead).unwrap_or_default();
+        self.versions.undone_waiting.store(true, Ordering::Relaxed);
     }
 
     /// Releases the versions undone changes appended for which no
@@ -161,6 +191,7 @@ impl RowTable {
             }
             let oldest = self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).keys().min().copied();
             let later = oldest.map(|tx| undone.split_off(&tx)).unwrap_or_default();
+            self.versions.undone_waiting.store(!later.is_empty(), Ordering::Relaxed);
             mem::replace(&mut *undone, later)
         };
         // A segment that cannot be read back is lost, its versions kept in
