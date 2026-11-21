@@ -12166,6 +12166,16 @@ already decide (D444). An insertion or a deletion changes every column.
 A condition whose columns meet no changed column is not matched against
 the images at all.
 
+A write of the value a column already holds changes nothing a read could
+see, so it meets no read. The standard defines a serializable execution
+as one with "the same effect as some serial execution" of the same
+transactions [ISO/IEC 9075-2:2023 §4.43.4]. A read that consumed only
+columns another transaction left as they were returns the same rows and
+values before that transaction and after it, so either order is a serial
+execution with the same effect. Two transactions where each reads only
+columns the other leaves alone both commit, though each wrote a row the
+other read.
+
 The check also skips the scan of the transactions kept for it when the
 transaction validated read nothing and no kept transaction read
 anything. A count of those that read, under the same lock, says so.

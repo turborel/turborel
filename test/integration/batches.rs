@@ -108,23 +108,29 @@ fn set_functions_by_batch_answer_as_row_by_row() {
     assert_eq!(columns[18], vec!["0".to_owned()], "NOT IN a list with a null: none");
 }
 
-/// Verifies: [DESIGN] RULES.md D31, D29, serializability under batches:
-/// a set function read by batches counts the rows it reads as read, so of
-/// two transactions each reading what the other writes, the second to
-/// commit is refused (SQLCODE -911), in a table of either layout.
+/// Verifies: [DESIGN] RULES.md D31, D29, D448, serializability under
+/// batches: a set function read by batches counts the columns of the rows
+/// it reads as read, so of two transactions one reading what the other
+/// changes, the reader committing second is refused (SQLCODE -911), in a
+/// table of either layout. A change that writes the value N already held
+/// changes nothing the sum read, and both commit.
 #[test]
 fn rows_read_by_batch_are_read() {
     let db = Database::new();
     crate::common::serializable(&db);
     let a = both(&db);
     for table in ["R", "C"] {
-        let (one, two) = (db.session("A"), db.session("A"));
-        assert_eq!(rows(&one, &format!("SELECT COUNT(*) FROM {table} WHERE K = -1")), Ok(vec!["1".to_owned()]));
-        assert_eq!(rows(&two, &format!("SELECT SUM(N) FROM {table}")).map(|r| r.len()), Ok(1));
-        exec(&one, &format!("UPDATE {table} SET N = 0 WHERE K = 3")).unwrap();
-        exec(&two, &format!("UPDATE {table} SET N = 0 WHERE K = -1")).unwrap();
-        one.commit().unwrap();
-        assert_eq!(two.commit().err().map(|e| e.code), Some(Code::Conflict), "{table}");
+        // Row 3's N is 0 (`both`); row 4's, 0 too, becomes 1000.
+        for (change, refused) in [("SET N = 0 WHERE K = 3", false), ("SET N = 1000 WHERE K = 4", true)] {
+            let (one, two) = (db.session("A"), db.session("A"));
+            assert_eq!(rows(&one, &format!("SELECT COUNT(*) FROM {table} WHERE K = -1")), Ok(vec!["1".to_owned()]));
+            assert_eq!(rows(&two, &format!("SELECT SUM(N) FROM {table}")).map(|r| r.len()), Ok(1));
+            exec(&one, &format!("UPDATE {table} {change}")).unwrap();
+            exec(&two, &format!("UPDATE {table} SET N = N + 1 WHERE K = -1")).unwrap();
+            one.commit().unwrap();
+            let ended = two.commit().err().map(|e| e.code);
+            assert_eq!(ended, refused.then_some(Code::Conflict), "{table}: {change}");
+        }
     }
     drop(a);
 }
