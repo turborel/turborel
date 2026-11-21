@@ -465,6 +465,9 @@ verification approach DO-178C expects (§8).
 | D697 | A quotient keeps integer room: scale max(6, s1 + p2 + 1), by long division of 128-bit units |
 | D698 | A column of more than 18 digits is kept in 128 bits by both stores and their keys, and read as values |
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
+| D767 | A connection's requests run on one thread of its own, its home |
+| D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
+| D769 | A request is handed to a home under one lock, which decides its retirement too |
 
 ### The project
 
@@ -2852,7 +2855,8 @@ waits wakes no other. A waiting worker holds no permit, so as many keep
 waiting as the blocking pool has threads for, while statements wait for
 permits too. A request that comes
 later the connection's task reads through the runtime, which takes the
-socket back. A stream TLS secures is read so too, through its session
+socket back, and hands to the connection's home, the one thread that runs
+its requests while they keep coming (D767). A stream TLS secures is read so too, through its session
 (D230); a named pipe is not handed so, and takes the task's path. Each
 connection runs one request at a time.
 
@@ -13296,6 +13300,66 @@ values, and so do results past 18 digits, which the set functions add
 in 128 bits (D32). A path in 128 bits for whole vectors would double the
 width of every vector of integers, or add a second kind of them to
 every kernel, for values that are rare.
+
+#### D767. A connection's requests run on one thread of its own, its home
+
+A request a fast client sent within `lent::WAITED` ran on the worker that
+answered the last (D42), but any later one was handed to whichever thread
+of the blocking pool was free, and the pool wakes its idle threads in
+turn. A session moved between threads at nearly every transaction of a
+client that thinks between them. What a statement allocated on one thread
+was then freed on another, so every serving thread took the locks of
+every arena of the allocator, freed chunks were merged across threads,
+and the session's state went cold in each processor's cache.
+
+So a connection's first request opens its home (`native/home.rs`), one
+long task of the blocking pool that runs each of the connection's
+requests until the connection ends or goes idle. The connection's task
+still reads a slow client's request, takes a permit of SERVER.WORKERS for
+it, and waits for the loan back (`native/lent.rs`). It then hands the
+request to the home instead of the pool, and the home parks between
+requests holding no permit. Statements are bounded, queued, cancelled and
+timed out as before, and a fast client's next request is still read by
+the worker itself.
+
+A home per connection, not a fixed set of threads each serving many
+connections, because a statement may wait for a row lock another
+connection holds. On a shared thread the holder's commit could queue
+behind its waiter, and stealing work to undo that moves the session
+again. With a thread each, no session waits behind another's statement,
+and an idle home costs a parked thread. A session's end, a Reset and a
+ChangeUser still run on any free thread, once a connection or rarely.
+This helps any allocator, since each one's per-thread caches serve a
+thread that both takes and frees.
+
+#### D768. Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread
+
+A home holds one of the MAX_WORKERS places of the connections that keep a
+thread of the pool (`Services::hot`), which a worker waiting on its client
+for the next request takes too. So the pool's bound, twice MAX_WORKERS
+beside the logins' threads (`runtime.rs`), still leaves a thread for every
+statement SERVER.WORKERS allows. A connection that finds no place runs
+each request on any free thread, as every request ran before. A worker at
+home waits on its client without taking a second place.
+
+A home with no request for `home::KEPT`, ten seconds, retires, giving its
+thread and place back, and the connection opens another at its next
+request. Ten seconds is how long the runtime keeps an idle thread of its
+pool, so an idle connection gives back its thread when the pool would
+have. A connection idle that long pays one move of thread, and idle
+connections never keep active ones out of the places.
+
+#### D769. A request is handed to a home under one lock, which decides its retirement too
+
+The connection's task and its home share one slot and a condition
+variable. The task puts a request in the slot unless the home has retired.
+The home takes it, or retires under the same lock once its wait times out
+with the slot empty, so no request is ever left with a thread that has
+gone. A home whose thread ends otherwise, by a panic or because the runtime
+stops before it ran, retires as its thread's guard is dropped, dropping any
+request left in the slot. That gives the loan back failed, so the
+connection ends rather than waits. A request a retired home refuses is
+handed back, and runs on a new home or on any free thread.
 
 ## 2. Project layout
 

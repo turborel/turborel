@@ -154,7 +154,13 @@ impl Lent {
         if !may.allowed() {
             return Ok(None);
         }
-        let Some(kept) = running.services.hot() else { return Ok(None) };
+        // A home waits on its own thread, which holds a place already.
+        let kept = if running.homed {
+            None
+        } else {
+            let Some(place) = running.services.hot() else { return Ok(None) };
+            Some(place)
+        };
         let began = Instant::now();
         let next = loop {
             let left = WAITED.saturating_sub(began.elapsed());
@@ -293,6 +299,8 @@ pub(super) struct Running {
     ended: watch::Receiver<bool>,
     /// The user whose session it is, if a user's (RULES.md D43).
     user: Option<String>,
+    /// Whether its worker is the connection's home (`native/home.rs`).
+    homed: bool,
 }
 
 impl Running {
@@ -300,7 +308,13 @@ impl Running {
     /// runtime of the task calling this.
     pub(super) fn new(services: &Services, present: &Present, user: Option<&str>) -> Running {
         let (services, present, ended, user) = (services.clone(), present.clone(), present.watching(), user.map(str::to_owned));
-        Running { services, handle: Handle::current(), present, ended, user }
+        Running { services, handle: Handle::current(), present, ended, user, homed: false }
+    }
+
+    /// Its worker the connection's home if `homed`, else a thread of the
+    /// pool's taken for this request alone.
+    pub(super) fn at_home(&mut self, homed: bool) {
+        self.homed = homed;
     }
 
     /// Whether the connection is still served, as the task asks before

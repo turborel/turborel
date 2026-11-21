@@ -5,7 +5,10 @@
 //!
 //! A request runs on a worker, lent the session, its prepared statements
 //! and their open cursors, and the wire of the connection's messages,
-//! while it runs (`native/requests.rs`, `native/lent.rs`). It writes its
+//! while it runs (`native/requests.rs`, `native/lent.rs`): the
+//! connection's home, one thread that runs each of its requests while
+//! they keep coming, so a session's memory is freed on the thread that
+//! took it (`native/home.rs`, RULES.md D767). It writes its
 //! replies itself, a batch at a time, each within SERVER.IDLE_TIMEOUT_MS,
 //! so a client reading slowly holds the worker but never more than a batch
 //! of memory, and a client gone fails a write, so the worker stops
@@ -33,6 +36,7 @@
 //! once the user is dropped (RULES.md D43).
 
 mod copy;
+mod home;
 mod lent;
 mod lobs;
 mod next;
@@ -40,6 +44,7 @@ mod notices;
 mod position;
 mod renew;
 mod requests;
+mod served;
 mod status;
 mod wire;
 
@@ -49,6 +54,7 @@ use std::sync::Arc;
 use lent::{Lent, Loan, Running, Slot};
 use next::{Next, next_work};
 use requests::{Held, Serves};
+use served::Served;
 use turborel::db::Session;
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::value::types::TypeRegistry;
@@ -384,6 +390,7 @@ async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer)
     let mut fresh = Held::new(session, serves, granted);
     fresh.status = told;
     let mut lent = Lent::new(fresh, wire);
+    let mut home = None;
     let ended = loop {
         let work = match next_work(&mut lent, (services, present), login.user.as_deref()).await {
             Ok(Next::Work(work)) => work,
@@ -409,13 +416,16 @@ async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer)
         // then, an operator ending the connection, or its client gone,
         // cancels what runs.
         present.queued();
-        drop(services.spawn_with(move |permit| loan.run(work, &running, permit, limits)).await);
+        let permit = services.permit().await;
+        served::homed(&mut home, services, Served { loan, work, running, permit, limits });
         lent = stopped(slot.take(), present, watch).await;
         // A read or a write that failed lost the connection.
         if let Some(failed) = lent.failed.take() {
             break Err(failed);
         }
     };
+    // The home closes, once its last request is done.
+    drop(home);
     let Lent { held, wire: returned, .. } = lent;
     let ended = match ended {
         Ok(()) => terminated(services, held).await,
