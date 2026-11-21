@@ -81,9 +81,7 @@ fn every_query_agrees_reduced_to_semi_joins() {
 fn only_duplicate_blind_set_functions_are_reduced() {
     let db = imdb::load(TITLES);
     let s = db.session("IMDB");
-    let applied = |sql: &str| {
-        s.physical_plan(sql, &turborel::params::Params::new()).unwrap().contains("Semi")
-    };
+    let applied = |sql: &str| s.physical_plan(sql, &turborel::params::Params::new()).unwrap().contains("Semi");
     let from = "FROM title AS t, movie_keyword AS mk, keyword AS k WHERE mk.movie_id = t.id AND mk.keyword_id = k.id";
     assert!(applied(&format!("SELECT MIN(t.title) {from}")));
     assert!(applied(&format!("SELECT MIN(t.production_year), MAX(t.title) {from}")));

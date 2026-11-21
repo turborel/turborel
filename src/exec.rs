@@ -261,9 +261,14 @@ fn grouped(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if batched(db) && batch::aggregable(&plan, db) {
         return batch::aggregated(plan, db, tx);
     }
-    let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
+    let Plan::Aggregate { groups, collations, aggs, seeds, input, streamed, .. } = plan else {
+        return failed(broken("an aggregation is not one"));
+    };
     let rows = execute(*input, db, tx);
-    group::grouping(group::Spec { groups, collations, aggs, seeds }, rows, db, tx)
+    let spec = group::Spec { groups, collations, aggs, seeds };
+    // Its rows in the order of its grouping columns, a group at a time
+    // (`group/streamed.rs`, RULES.md D551).
+    if streamed { group::streamed_grouping(spec, rows, db, tx) } else { group::grouping(spec, rows, db, tx) }
 }
 
 /// [X3.135-1986 §8.3 GR3b] The rows of `input`, sorted by `keys`.
@@ -285,8 +290,9 @@ fn distinct_rows(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if let Some(width) = batched(db).then(|| batch::distinct_groupable(&plan, db)).flatten() {
         return grouped(batch::distinct_grouping(plan, width), db, tx);
     }
-    let Plan::Distinct { input, .. } = plan else { return failed(broken("a duplicate elimination is not one")) };
-    distinct::distinct_of(execute(*input, db, tx), db, tx)
+    let Plan::Distinct { input, streamed, .. } = plan else { return failed(broken("a duplicate elimination is not one")) };
+    let rows = execute(*input, db, tx);
+    if streamed { group::streamed_distinct(rows) } else { distinct::distinct_of(rows, db, tx) }
 }
 
 /// [X3.135-1986 §5.21 GR2] keep the rows for which the condition is true,
@@ -477,7 +483,7 @@ mod tests {
     #[test]
     fn row_entries_needs_a_table_access() {
         let st = Arc::new(state());
-        let plan = Plan::Distinct { input: Box::new(one_row(vec![])), est: 0.0_f64 };
+        let plan = Plan::Distinct { input: Box::new(one_row(vec![])), est: 0.0_f64, streamed: false };
         assert_eq!(row_entries(plan, &st, NO_TRANSACTION).err().map(|e| e.code), Some(Code::Api));
     }
 
@@ -497,6 +503,7 @@ mod tests {
             detail: String::new(),
             input: Box::new(one_row(row.clone())),
             est: 0.0_f64,
+            streamed: false,
         };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey::ascending(1)];
@@ -527,7 +534,7 @@ mod tests {
         for run in executors {
             assert_eq!(code(run(other(), &st, NO_TRANSACTION)), Some(Code::Api));
         }
-        let distinct = Plan::Distinct { input: Box::new(other()), est: 0.0_f64 };
+        let distinct = Plan::Distinct { input: Box::new(other()), est: 0.0_f64, streamed: false };
         assert_eq!(code(set::values(distinct, &st, NO_TRANSACTION)), Some(Code::Api));
         assert!(!batch::aggregable(&other(), &st) && batch::distinct_groupable(&other(), &st).is_none());
         assert!(matches!(batch::distinct_grouping(other(), 1_usize), Plan::Values { .. }), "not a DISTINCT: left as it is");

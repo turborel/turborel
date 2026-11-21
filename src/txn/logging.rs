@@ -284,7 +284,11 @@ impl Txn {
     /// SQLCODE -922 if the sync failed: the transaction is then in doubt.
     pub(super) fn sync_commit(&self, lsn: Lsn) -> Result<()> {
         let Some(log) = self.log.as_ref() else { return Ok(()) };
-        self.shared.sync(&**log, lsn).map_err(|e| {
+        // [DESIGN] RULES.md D520: shown waiting for I/O while it syncs.
+        self.stop.activity().waits_for_io();
+        let synced = self.shared.sync(&**log, lsn);
+        self.stop.activity().woke();
+        synced.map_err(|e| {
             SqlError::new(
                 Code::InDoubt,
                 format!(

@@ -54,6 +54,7 @@ mod options;
 mod recovery;
 mod scan;
 mod sealing;
+mod sizes;
 mod split;
 mod stats;
 mod store;
@@ -350,6 +351,10 @@ impl TableStorage for RowTable {
 
     fn row_count(&self) -> usize {
         self.counted.live.load(Ordering::Acquire)
+    }
+
+    fn sizes(&self) -> Option<crate::storage::TableSizes> {
+        self.measured()
     }
 
     /// A row of the tree costs 0.8, up to 1 as all its columns are read; a

@@ -670,6 +670,15 @@ subqueries were unnested, and the settings OPTIMIZER.UNNEST_SUBQUERIES
 and OPTIMIZER.INLINE_FUNCTIONS turn the rewrites off
 ([Settings](../appendix/c-settings.md)).
 
+A subquery that stays nested runs once for each distinct set of its
+outer values. Its first runs plan it with the values as constants, so
+an index can answer a comparison with them, and also with the outer
+references as parameters. Once a few runs in a row make one plan both
+ways, the plan with parameters is kept, and each later run fills in its
+values and runs it without planning again. A subquery whose values keep
+choosing other plans is planned at each run.
+EXECUTOR.KEEP_SUBQUERY_PLANS OFF plans every run, as to compare the two.
+
 ```sql
 SELECT NAME, (SELECT COUNT(*) FROM STAFF T WHERE T.DEPT = S.DEPT) AS PEERS FROM STAFF S
     WHERE EXISTS (SELECT * FROM DEPT WHERE DEPT.DEPT = S.DEPT) ORDER BY NAME;

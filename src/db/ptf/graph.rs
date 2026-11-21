@@ -80,7 +80,7 @@ impl GraphCall {
     pub(crate) fn run(&self, values: Vec<Value>, inputs: &[Vec<Row>], (db, tx): (&Arc<State>, TxId)) -> Result<Vec<Row>> {
         // An invocation its statement reads again, of the rows it gave.
         let call = format!("{}({}) {:?}", self.algorithm.name(), self.shown(&values), self.edge_columns);
-        if let Some(rows) = db.graph_runs.held(tx, &call) {
+        if let Some(rows) = db.ran.graph_runs.held(tx, &call) {
             return Ok(rows.to_vec());
         }
         let started = Instant::now();
@@ -92,7 +92,7 @@ impl GraphCall {
         let rows = match found {
             Ok((rows, sizes)) => {
                 (noted.vertices, noted.edges, noted.rows) = (sizes.vertices, sizes.edges, rows.len());
-                db.graph_runs.keep(tx, &call, &rows);
+                db.ran.graph_runs.keep(tx, &call, &rows);
                 Ok(rows)
             }
             Err(e) => {
@@ -100,7 +100,7 @@ impl GraphCall {
                 Err(e)
             }
         };
-        db.graph_runs.note(noted);
+        db.ran.graph_runs.note(noted);
         rows
     }
 

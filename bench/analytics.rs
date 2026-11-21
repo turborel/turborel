@@ -41,9 +41,10 @@
 //! (`analytics/joins.rs`), to `late`, a column store's selective
 //! queries, the columns they keep few rows of read late, alone
 //! (`analytics/late.rs`), to `skipping`, a large column store table's
-//! filters, by what they skip, alone (`analytics/skipping.rs`), or to
-//! `sorts`, ORDER BY and top-N alone
-//! (`analytics/sorts.rs`).
+//! filters, by what they skip, alone (`analytics/skipping.rs`), to
+//! `sorts`, ORDER BY and top-N alone (`analytics/sorts.rs`), or to
+//! `goals`, FETCH FIRST over filters, joins and groupings read in order
+//! and groupings streamed alone (`analytics/goals.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -66,6 +67,8 @@ mod decode;
 mod distinct;
 #[path = "analytics/expressions.rs"]
 mod expressions;
+#[path = "analytics/goals.rs"]
+mod goals;
 #[path = "analytics/graph.rs"]
 mod graph;
 #[path = "analytics/grouping.rs"]
@@ -100,7 +103,8 @@ use turborel::db::{Database, Session};
 /// `grouping` for groupings on one thread, `joins` for hash joins, `late`
 /// for a column store's selective queries, `skipping` for a large column
 /// store table's filters, `sorts` for ORDER BY and top-N, `bands` and
-/// `bands-large` for joins on comparisons by order.
+/// `bands-large` for joins on comparisons by order, `goals` for FETCH
+/// FIRST and groupings read in order.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -153,6 +157,7 @@ fn main() {
     joins::workloads(&bench);
     sorts::workloads(&bench);
     bands::small(&bench);
+    goals::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -171,6 +176,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "sorts" => sorts::workloads,
         "bands" => bands::small,
         "bands-large" => bands::large,
+        "goals" => goals::workloads,
         _ => return false,
     };
     run(bench);

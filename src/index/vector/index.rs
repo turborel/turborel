@@ -26,7 +26,7 @@ use crate::bytes::{Put, Reader};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
-use crate::index::{Entries, Index, Key, KeyOrder, KeyProjection, NearestQuery, NeighbourEntries, Probe, RowFilter};
+use crate::index::{Entries, Index, IndexSizes, Key, KeyOrder, KeyProjection, NearestQuery, NeighbourEntries, Probe, RowFilter};
 use crate::memory::MemoryBudget;
 use crate::spill::{Area, WorkAreas};
 use crate::storage::RowId;
@@ -290,6 +290,10 @@ impl<E: Engine> Index for VectorIndex<E> {
     }
     fn distinct_keys(&self) -> Option<f64> {
         self.engine().live().and_then(|n| u32::try_from(n).ok()).map(f64::from)
+    }
+    /// Its live vectors, its entries (RULES.md D522).
+    fn sizes(&self) -> IndexSizes {
+        IndexSizes { entries: self.engine().live(), ..IndexSizes::default() }
     }
     fn maintenance_due(&self) -> bool {
         self.engine().maintenance_due()

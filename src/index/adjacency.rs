@@ -33,7 +33,7 @@ pub use options::{
 };
 
 use super::stats::KeyCounts;
-use super::{Entries, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
+use super::{Entries, Index, IndexMethod, IndexSizes, Key, KeyOrder, Probe, RowIds};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
@@ -279,6 +279,10 @@ impl Index for AdjacencyIndex {
     }
     fn distinct_keys(&self) -> Option<f64> {
         self.keys.distinct()
+    }
+    /// Its entries, once counted (RULES.md D522).
+    fn sizes(&self) -> IndexSizes {
+        IndexSizes { entries: self.keys.entries(), ..IndexSizes::default() }
     }
     fn maintenance_due(&self) -> bool {
         self.keys.due() || self.compaction_due()
