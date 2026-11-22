@@ -287,6 +287,17 @@ impl SqlType for Exact {
         Ok(units_at(d, scale)?.to_le_bytes().to_vec())
     }
 
+    fn encode_record_into(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
+        let Value::Exact(d) = v else { return Err(mismatch(v, t)) };
+        let scale = shape(t).1;
+        if wide(t) {
+            out.extend_from_slice(&wide_units_at(d, scale)?.to_le_bytes());
+        } else {
+            out.extend_from_slice(&units_at(d, scale)?.to_le_bytes());
+        }
+        Ok(())
+    }
+
     /// Of its width, which its type gives: 8 bytes or 16.
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
         let units = match <[u8; NUMBER_BYTES]>::try_from(field) {

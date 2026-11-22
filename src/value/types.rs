@@ -275,6 +275,18 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     /// SQLCODE -910 if `v` is not a value of `t`.
     fn encode_record(&self, v: &Value, t: &DataType) -> Result<Vec<u8>>;
 
+    /// As `encode_record`, the bytes appended to `out`: a kind a record
+    /// holds often writes them there, so a row's record is written in place,
+    /// no value's bytes allocated apart.
+    ///
+    /// # Errors
+    ///
+    /// As `encode_record`, `out` then as it was.
+    fn encode_record_into(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.encode_record(v, t)?);
+        Ok(())
+    }
+
     /// The value of a column of `t` whose record bytes are `field`; none if
     /// they are not one.
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value>;

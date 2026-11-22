@@ -69,8 +69,10 @@ struct Held {
     given: Option<Given>,
 }
 
-/// The rows given a delta table, of the table named, of these columns.
-pub type Given = (TransitionRows, QualifiedName, Vec<ColumnDesc>);
+/// The rows given a delta table, of the table named, of these columns:
+/// none for a base table's own, which the catalog holds, so that a run whose
+/// query is kept bound copies none of them.
+pub type Given = (TransitionRows, QualifiedName, Option<Vec<ColumnDesc>>);
 
 impl fmt::Debug for DeltaRows {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

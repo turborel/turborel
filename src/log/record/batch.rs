@@ -17,7 +17,7 @@ use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::storage::{Row, RowId};
 use crate::txn::TxId;
-use crate::value::codec::{put_row, row};
+use crate::value::codec::{put_row, row, row_len};
 
 /// Writes the body of a record of `rows`, each a row id and the row
 /// inserted with it, into `table`'s storage of `generation`.
@@ -57,7 +57,8 @@ pub(super) fn rows_change(r: &mut Reader<'_>) -> Result<Change> {
 /// writes a `Change::InsertRows`, made from the rows as they are held, so
 /// none is copied for it (RULES.md D530).
 pub fn insert_rows_record(tx: TxId, (table, generation): (&QualifiedName, u32), ids: &[RowId], rows: &[Row]) -> Vec<u8> {
-    let mut out = Vec::new();
+    let images = rows.iter().fold(0_usize, |n, r| n.saturating_add(size_of::<RowId>()).saturating_add(row_len(r)));
+    let mut out = Vec::with_capacity(head_len(table).saturating_add(images));
     out.put_u8(RECORD_VERSION);
     out.put_u8(INSERT_ROWS);
     out.put_u64(tx);
@@ -70,7 +71,7 @@ pub fn insert_rows_record(tx: TxId, (table, generation): (&QualifiedName, u32), 
 /// writes a `Change::Insert`, made from the row as it is held, so it is not
 /// copied for it (RULES.md D531).
 pub fn insert_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, row: &Row) -> Vec<u8> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(head_len(table).saturating_add(row_len(row)));
     out.put_u8(RECORD_VERSION);
     out.put_u8(INSERT);
     out.put_u64(tx);
@@ -81,7 +82,9 @@ pub fn insert_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: R
 /// \[DESIGN\] As `insert_record`, of a `Change::Update` of row `id` made
 /// `after` from `before` (RULES.md D750).
 pub fn update_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, (before, after): (&Row, &Row)) -> Vec<u8> {
-    let mut out = Vec::new();
+    // At most the row before whole, each of its columns with its position.
+    let images = row_len(after).saturating_add(row_len(before)).saturating_add(before.len().saturating_mul(POSITION_LEN));
+    let mut out = Vec::with_capacity(head_len(table).saturating_add(images));
     out.put_u8(RECORD_VERSION);
     out.put_u8(UPDATE);
     out.put_u64(tx);
@@ -92,10 +95,25 @@ pub fn update_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: R
 /// \[DESIGN\] As `insert_record`, of a `Change::Delete` of row `id`, which
 /// was `before` (RULES.md D750).
 pub fn delete_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, before: &Row) -> Vec<u8> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(head_len(table).saturating_add(row_len(before)));
     out.put_u8(RECORD_VERSION);
     out.put_u8(DELETE);
     out.put_u64(tx);
     put_row_change(&mut out, (table, generation, id), &[before]);
     out
 }
+
+/// The bytes of a changed column's position in an update's row before.
+const POSITION_LEN: usize = size_of::<u32>();
+
+/// The bytes of a row's record before its images: its version, its kind,
+/// its transaction, its table's two names each after its length, its
+/// generation, its row id, and the tag of its row before. The images'
+/// bytes follow, as `codec::row_len` counts them, so a record is written
+/// into one allocation, not grown as it is written.
+fn head_len(table: &QualifiedName) -> usize {
+    HEAD_FIXED_LEN.saturating_add(table.auth.len()).saturating_add(table.ident.len())
+}
+
+/// The bytes of `head_len` but its table's names.
+const HEAD_FIXED_LEN: usize = size_of::<u8>() * 3 + size_of::<u64>() * 2 + size_of::<u32>() * 4;

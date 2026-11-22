@@ -6,7 +6,7 @@ use super::from::{Bounds, FromItem};
 use super::qualify;
 use super::views::Source;
 use crate::ast::{DeltaTable, Given};
-use crate::catalog::{QualifiedName, TableDesc};
+use crate::catalog::{ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{Code, Result, SqlError};
 use crate::exec::TransitionRows;
 use crate::logical::LogicalPlan;
@@ -27,15 +27,28 @@ fn given(b: &Bounds<'_>, d: &DeltaTable) -> Result<Given> {
         )
     })?;
     let name = qualify(subject, b.cx.schema);
+    Ok((TransitionRows::new(b.cx.db.list_space()), name, None))
+}
+
+/// The columns of the subject `name` of a delta table, as `given` holds
+/// them, or else as the catalog has them: a base table's, or of one not
+/// run yet, a view's.
+///
+/// # Errors
+///
+/// SQLCODE -103 if `name` is neither.
+fn subject_columns(b: &Bounds<'_>, name: &QualifiedName, given: Option<Vec<ColumnDesc>>) -> Result<Vec<ColumnDesc>> {
+    if let Some(columns) = given {
+        return Ok(columns);
+    }
     let catalog = &b.cx.db.catalog;
-    let columns = catalog.table(&name).map(|t| t.columns.clone()).or_else(|| catalog.view(&name).map(|v| v.columns.clone()));
-    let columns = columns.ok_or_else(|| {
+    let columns = catalog.table(name).map(|t| t.columns.clone()).or_else(|| catalog.view(name).map(|v| v.columns.clone()));
+    columns.ok_or_else(|| {
         SqlError::new(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075-2:2023 §7.6 SR11] {name}, a <data change delta table>'s subject, is not a table"),
         )
-    })?;
-    Ok((TransitionRows::new(b.cx.db.list_space()), name, columns))
+    })
 }
 
 /// The delta table `d`, its first column at `offset` of the FROM row.
@@ -46,7 +59,8 @@ fn given(b: &Bounds<'_>, d: &DeltaTable) -> Result<Given> {
 /// (`QueryExpression::deltas`); -103 if its derived column list names
 /// other than one column of each of the subject table's.
 pub(super) fn delta_item(b: &Bounds<'_>, d: &DeltaTable, offset: usize) -> Result<FromItem> {
-    let (rows, table, mut columns) = given(b, d)?;
+    let (rows, table, columns) = given(b, d)?;
+    let mut columns = subject_columns(b, &table, columns)?;
     if let Some(names) = &d.columns {
         if names.len() != columns.len() {
             let msg =

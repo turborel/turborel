@@ -259,3 +259,34 @@ fn records_are_appended_and_a_failed_one_leaves_none() {
     assert_eq!(format.encode(&wrong, &mut out).err().map(|e| e.code), Some(Code::Api));
     assert_eq!(out, before, "nothing of the refused record left");
 }
+
+/// Verifies: [DESIGN] RULES.md D31, a record kept whole is written in line
+/// at once (`record/inline.rs`): the bytes of one no value of which goes
+/// out of line are those `encode` writes, after what the buffer holds; one
+/// exactly as long as the most a row may take stays whole, one a byte
+/// longer is measured, and refused as none of its values is long enough
+/// to move out (SQLCODE -900); a value one byte past the
+/// threshold goes out, one at it stays; a value not of its column's type
+/// leaves the buffer as it was.
+#[test]
+fn records_kept_whole_are_written_in_line() {
+    let format = RecordFormat::new(&types());
+    let mut whole = Vec::new();
+    format.encode(&row(), &mut whole).unwrap();
+    let mut store = Vec::new();
+    let most = whole.len();
+    assert_eq!(spill(&format, &row(), Spill { threshold: 5, most }, &mut store).unwrap(), whole);
+    assert_eq!(store.len(), 0, "nothing out of line");
+    let shorter = spill(&format, &row(), Spill { threshold: 5, most: most - 1 }, &mut store);
+    assert_eq!(shorter.err().map(|e| e.code), Some(Code::Unsupported), "a byte too long, and no value long enough to move out");
+    assert_eq!(spill(&format, &row(), Spill { threshold: 3, most: 1000 }, &mut store).unwrap(), whole, "\"xyz\" at the threshold");
+    assert_eq!(store.len(), 0);
+    spill(&format, &row(), Spill { threshold: 2, most: 1000 }, &mut store).unwrap();
+    assert_eq!(store, [(9, b"xyz".to_vec())], "\"xyz\" a byte past it; \"ab\" and \"é\" at it");
+    let mut out = vec![9_u8];
+    let mut wrong = row();
+    wrong[3] = Value::Char("x".into());
+    let refused = format.encode_spilling(&wrong, Spill { threshold: 5, most: 1000 }, &mut out, |_, _| Ok(0));
+    assert_eq!(refused.err().map(|e| e.code), Some(Code::Api));
+    assert_eq!(out, [9_u8], "nothing of the refused record left");
+}

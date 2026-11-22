@@ -357,6 +357,15 @@ impl SqlType for Chronon {
         Ok(out)
     }
 
+    fn encode_record_into(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
+        let d = datetime(v).filter(|d| d.moment == self.moment).ok_or_else(|| mismatch(v, t))?;
+        out.extend_from_slice(&d.utc.to_le_bytes());
+        if self.zoned {
+            out.extend_from_slice(&d.zone.to_le_bytes());
+        }
+        Ok(())
+    }
+
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
         let (micros, zone) = field.split_at_checked(NUMBER_BYTES)?;
         let utc = i64::from_le_bytes(micros.try_into().ok()?);

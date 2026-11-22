@@ -39,9 +39,11 @@ impl State {
     /// The indexes `table`'s rows have entries in: its own, each entry of
     /// the row's id, and \[EXTENSION\] of a partition, the global indexes
     /// over it, each of the id packed with the partition's (RULES.md D157).
-    pub(crate) fn table_indexes(&self, table: &QualifiedName) -> Vec<(IndexDesc, Option<u64>)> {
-        let own = self.catalog.indexes(table).into_iter().map(|ix| (ix.clone(), None));
-        own.chain(self.globals_over(table).into_iter().map(|(ix, partition)| (ix, Some(partition)))).collect()
+    /// Its own are borrowed from the catalog, not copied for each row
+    /// written.
+    pub(crate) fn table_indexes(&self, table: &QualifiedName) -> Vec<(Cow<'_, IndexDesc>, Option<u64>)> {
+        let own = self.catalog.indexes(table).into_iter().map(|ix| (Cow::Borrowed(ix), None));
+        own.chain(self.globals_over(table).into_iter().map(|(ix, partition)| (Cow::Owned(ix), Some(partition)))).collect()
     }
 
     /// The id of the entry of row `id` in an index, packed with `partition`.
@@ -104,8 +106,8 @@ impl State {
         }
         let plain = record(self.generation_of(table));
         match seal {
-            Some(pipeline) => tx.log_encoded(&seal_plain(&plain, id, &pipeline)?, 1),
-            None => tx.log_encoded(&plain, 1),
+            Some(pipeline) => tx.log_encoded(seal_plain(&plain, id, &pipeline)?, 1),
+            None => tx.log_encoded(plain, 1),
         }
     }
 
@@ -409,11 +411,14 @@ impl State {
         // of an index whose key reads only columns it kept, where the two
         // share one (RULES.md D443).
         let versions = caps.concurrency != Concurrency::Coordinator;
-        let own = |(ix, p): (IndexDesc, Option<u64>)| {
-            let columns = if p.is_none() { key_columns(&ix) } else { 0 };
-            (ix, p, columns)
-        };
-        let indexes: Vec<_> = self.table_indexes(table).into_iter().map(own).collect();
+        let indexes: Vec<_> = self
+            .table_indexes(table)
+            .into_iter()
+            .map(|(ix, p)| {
+                let columns = if p.is_none() { key_columns(&ix) } else { 0 };
+                (ix, p, columns)
+            })
+            .collect();
         let kept = if versions { Self::keep_entries((tx, storage), id, (old, row), &indexes) } else { 0 };
         for (ix, partition, columns) in indexes {
             // RULES.md D92: an entry of one row's one version keeps
@@ -440,7 +445,7 @@ impl State {
         (tx, storage): (&Txn, &Arc<dyn TableStorage>),
         id: RowId,
         (old, row): (&Row, &Row),
-        indexes: &[(IndexDesc, Option<u64>, u64)],
+        indexes: &[(Cow<'_, IndexDesc>, Option<u64>, u64)],
     ) -> u64 {
         let columns = indexes.iter().fold(0, |all, &(_, _, columns)| all | columns);
         match unchanged(old, row, columns) {
