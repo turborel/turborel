@@ -86,7 +86,6 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.MARK_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MAX_PASSES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
 | OPTIMIZER.MERGE_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
-| OPTIMIZER.PREDICATE_TRANSFER | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PREDICATE_TRANSITIVITY | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_FILTER_INTO_OUTER_JOIN | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
@@ -109,6 +108,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | PLANNER.JOIN_ENUMERATION | ADAPTIVE | ONE OF ADAPTIVE, GREEDY | at once | *session* |
 | PLANNER.LINEARIZED_RELATIONS | 100 | INTEGER FROM 2 TO 128 | at once | *session* |
 | PLANNER.NULL_FRACTION | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
+| PLANNER.PREDICATE_TRANSFER | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.RANGE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.RANGE_SELECTIVITY | 3.333333333333333E-1 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.REORDER_GAIN | 9E-1 | NUMBER FROM 0E0 TO 9.99E-1 | at once |  |
@@ -210,7 +210,6 @@ Each in a sentence:
 - **OPTIMIZER.MARK_JOINS**: Whether the optimizer's rule mark_joins rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.MAX_PASSES**: The most passes the optimizer makes over a plan.
 - **OPTIMIZER.MERGE_FILTERS**: Whether the optimizer's rule merge_filters rewrites plans: ON; or OFF, as to compare plans made without it.
-- **OPTIMIZER.PREDICATE_TRANSFER**: Whether a chain of inner hash joins may first read its tables in turn, each filtered by Bloom filters of the join keys of the tables read before it, from the smaller tables to the largest and back, so a selective condition on any table shrinks the others before they are joined. OFF joins them as planned, as to compare the two.
 - **OPTIMIZER.PREDICATE_TRANSITIVITY**: Whether the optimizer's rule predicate_transitivity rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_FILTER_INTO_OUTER_JOIN**: Whether the optimizer's rule push_filter_into_outer_join rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.
@@ -233,6 +232,7 @@ Each in a sentence:
 - **PLANNER.JOIN_ENUMERATION**: How the joins of a query are ordered. ADAPTIVE orders them by dynamic programming over bushy plans, outer joins among them, linearized or guided greedily as the query grows, and GREEDY orders them left-deep, each next join the cheapest, as to compare the two.
 - **PLANNER.LINEARIZED_RELATIONS**: The most tables ADAPTIVE join ordering plans whole by linearized dynamic programming when exact search is past its budget, and the size of the parts of a greedy plan it plans again so for larger queries.
 - **PLANNER.NULL_FRACTION**: The fraction of a column's values taken to be null when the statistics do not tell.
+- **PLANNER.PREDICATE_TRANSFER**: Whether a chain of inner hash joins and LEFT joins may first read its tables in turn, each filtered by Bloom filters of the join keys of the tables read before it, from the smaller tables to the largest and back, so a selective condition on any table shrinks the others before they are joined. OFF joins them as planned, as to compare the two.
 - **PLANNER.RANGE_JOINS**: Whether a join whose condition compares a value of each table by <, <=, > or >=, a band or an overlap of periods among them, may sort one table and have each row of the other search it, rather than judge every pair. OFF plans such joins as nested loops, as to compare the two.
 - **PLANNER.RANGE_SELECTIVITY**: The fraction of rows an order comparison, a pattern or a subquery keeps when the statistics do not tell.
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.

@@ -289,7 +289,7 @@ MEMORY.WORK_BYTES, a table past it read again with its filters. The
 rows, and their order, are the same either way. A chain of a condition
 that could raise an error, one under FETCH FIRST without ORDER BY, and
 one run in parallel are joined as planned. SET
-OPTIMIZER.PREDICATE_TRANSFER = 'OFF' turns it off.
+PLANNER.PREDICATE_TRANSFER = 'OFF' turns it off.
 
 An equality repeated in each operand of an OR joins its tables as if
 written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =

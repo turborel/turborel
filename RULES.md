@@ -14474,7 +14474,7 @@ over a chain once the rest of the plan is made, and EXPLAIN shows it as
   every table it reads read by batch, its rows asked for in no order.
 - A plan with a phase is never kept for a prepared statement's next
   executions (D422): a phase is of no shape a kept plan compares alike.
-- OPTIMIZER.PREDICATE_TRANSFER, ON by default and of a session's scope,
+- PLANNER.PREDICATE_TRANSFER, ON by default and of a session's scope,
   plans phases; OFF plans none, as to compare the two.
 
 #### D666. Predicate transfer goes along a maximum spanning tree of the chain's leaves rooted at the largest, up and back

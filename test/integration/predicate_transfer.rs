@@ -84,16 +84,16 @@ fn rows(s: &Session, sql: &str) -> Vec<String> {
     crate::common::rows(s, sql).unwrap()
 }
 
-/// Of each of `CHAINS`, its rows with OPTIMIZER.PREDICATE_TRANSFER ON and
+/// Of each of `CHAINS`, its rows with PLANNER.PREDICATE_TRANSFER ON and
 /// OFF are the same, in the same order, but `sorted`, past the work area,
 /// where a spilled join gives its rows in its partitions' order.
 fn chains_agree(p: &Session, (how, sorted): (&str, bool)) {
     let read = |sql: &str| if sorted { crate::common::sorted(p, sql) } else { rows(p, sql) };
     for sql in CHAINS {
         let on = read(sql);
-        exec(p, "SET OPTIMIZER.PREDICATE_TRANSFER = 'OFF'").unwrap();
+        exec(p, "SET PLANNER.PREDICATE_TRANSFER = 'OFF'").unwrap();
         let off = read(sql);
-        exec(p, "SET OPTIMIZER.PREDICATE_TRANSFER = 'ON'").unwrap();
+        exec(p, "SET PLANNER.PREDICATE_TRANSFER = 'ON'").unwrap();
         assert_eq!(on, off, "{sql}, {how}");
     }
 }
@@ -135,9 +135,9 @@ fn a_phase_is_planned_where_it_pays() {
     let (_db, p) = tables(11);
     let [selective, ..] = CHAINS;
     assert!(transferred(&p, selective), "{}", p.explain(selective, &Params::new()).unwrap());
-    exec(&p, "SET OPTIMIZER.PREDICATE_TRANSFER = 'OFF'").unwrap();
+    exec(&p, "SET PLANNER.PREDICATE_TRANSFER = 'OFF'").unwrap();
     assert!(!transferred(&p, selective), "the setting OFF");
-    exec(&p, "SET OPTIMIZER.PREDICATE_TRANSFER = 'ON'").unwrap();
+    exec(&p, "SET PLANNER.PREDICATE_TRANSFER = 'ON'").unwrap();
     assert!(!transferred(&p, &format!("{selective} FETCH FIRST 3 ROWS ONLY")), "under a limit");
     let raising = "SELECT F.K, DA.X, 10 / (DB.Y - 7) FROM F JOIN DA ON F.A = DA.A JOIN DB ON F.B = DB.B WHERE F.V < 300 AND DB.Y < 20";
     assert!(!transferred(&p, raising), "an expression that can raise");
@@ -154,7 +154,7 @@ fn a_chain_that_can_raise_raises() {
     exec(&p, "UPDATE DB SET Y = 7 WHERE B = 3").unwrap();
     let raising = "SELECT F.K FROM F JOIN DA ON F.A = DA.A JOIN DB ON F.B = DB.B WHERE F.V < 300 AND 10 / (DB.Y - 7) > 0";
     let on = failed(&p, raising).code;
-    exec(&p, "SET OPTIMIZER.PREDICATE_TRANSFER = 'OFF'").unwrap();
+    exec(&p, "SET PLANNER.PREDICATE_TRANSFER = 'OFF'").unwrap();
     assert_eq!(failed(&p, raising).code, on);
     assert_eq!(on, Code::Data);
 }
@@ -167,8 +167,8 @@ fn the_join_order_workload_agrees_with_transfer() {
     let s = db.session("IMDB");
     for (name, sql) in imdb::queries() {
         let on = rows(&s, sql);
-        exec(&s, "SET OPTIMIZER.PREDICATE_TRANSFER = 'OFF'").unwrap();
+        exec(&s, "SET PLANNER.PREDICATE_TRANSFER = 'OFF'").unwrap();
         assert_eq!(rows(&s, sql), on, "{name}");
-        exec(&s, "SET OPTIMIZER.PREDICATE_TRANSFER = 'ON'").unwrap();
+        exec(&s, "SET PLANNER.PREDICATE_TRANSFER = 'ON'").unwrap();
     }
 }

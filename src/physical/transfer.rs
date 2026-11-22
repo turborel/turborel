@@ -104,7 +104,7 @@ impl Transfer {
 }
 
 /// `plan` with a phase of predicate transfer over each chain worth one,
-/// if OPTIMIZER.PREDICATE_TRANSFER is ON.
+/// if PLANNER.PREDICATE_TRANSFER is ON.
 pub(crate) fn transferred(db: &State, mut plan: Plan) -> Plan {
     if db.settings.is_on(PREDICATE_TRANSFER) {
         walk(db, &mut plan, 0);

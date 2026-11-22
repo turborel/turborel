@@ -26,7 +26,7 @@ pub const STREAMED_GROUPING: Key = Key(90);
 /// PLANNER.ESTIMATE_MARGIN, at its key's place after the streamed groupings'
 /// setting (RULES.md D386).
 pub const ESTIMATE_MARGIN: Key = Key(91);
-/// OPTIMIZER.PREDICATE_TRANSFER.
+/// PLANNER.PREDICATE_TRANSFER.
 pub const PREDICATE_TRANSFER: Key = Key(95);
 
 /// The most connected subgraphs the budget may be: a million, past which
@@ -85,10 +85,10 @@ pub(super) fn margin() -> Definition {
     )
 }
 
-/// OPTIMIZER.PREDICATE_TRANSFER, at its key's place after the others.
+/// PLANNER.PREDICATE_TRANSFER, at its key's place after the others.
 pub(super) fn predicate_transfer() -> Definition {
     defined(
-        ("OPTIMIZER.PREDICATE_TRANSFER", Kind::Choice(SWITCHES), text(ON)),
+        ("PLANNER.PREDICATE_TRANSFER", Kind::Choice(SWITCHES), text(ON)),
         SESSION,
         "Whether a chain of inner hash joins and LEFT joins may first read its tables in turn, each filtered by Bloom filters of the join keys of the tables read before it, from the smaller tables to the largest and back, so a selective condition on any table shrinks the others before they are joined. OFF joins them as planned, as to compare the two.",
     )
