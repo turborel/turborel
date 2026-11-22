@@ -491,6 +491,7 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
 
 ### The project
 
@@ -13695,6 +13696,27 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
+#### D790. A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would
+
+A subquery run EXECUTOR.DECORRELATE_AFTER_RUNS times is decorrelated
+(`exec/subquery.rs`). It runs once without its equalities with outer
+references and builds every row it gives into a keyed table. For a
+scalar subquery over a table's key, such as a price read by an item's
+id, that build is the whole table, made again by each statement that
+runs the subquery past those runs. A run whose plan is kept as one probe
+of a whole unique key (D675) costs a single descent instead.
+
+So the runner keeps such a subquery probed past those runs
+(`exec/subquery/probed.rs`). It decorrelates it only once its probes,
+each weighed as `PROBE_ROWS` rows built, reach the rows the build would
+hold, as planning estimates them. The runs so far stand for the runs to
+come. Up to that point the probes cost no more than the build, and past
+it a build is as likely to pay as not. A subquery whose run is any other
+plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
+before. A probe plan is kept from the first run even when decorrelation
+is due before a plan could be learned, since a unique probe needs no
+learning.
 
 ## 2. Project layout
 

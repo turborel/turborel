@@ -120,6 +120,13 @@ pub(super) fn at_least_one(rows: f64, of: f64) -> f64 {
     rows.max(of.min(1.0_f64)).max(0.0_f64)
 }
 
+/// \[DESIGN\] The rows `plan` is estimated to give, as planning estimates
+/// them: what a subquery's runner weighs a decorrelated build by
+/// (`exec/subquery/probed.rs`, RULES.md D790).
+pub(crate) fn estimated_rows(db: &State, plan: &LogicalPlan) -> f64 {
+    Estimates::over(db, plan, None).card(plan).rows
+}
+
 /// One planning's estimator: the state, the weights read once, and each
 /// table's statistics and rows, asked once.
 pub(super) struct Estimates<'a> {
