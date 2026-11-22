@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
 
 use super::Ending;
 use crate::catalog::{MemoryCatalog, QualifiedName};
@@ -19,11 +18,10 @@ fn seated(ending: &Ending) -> Vec<TxId> {
     seats.into_iter().map(|(_, waiter)| waiter).collect()
 }
 
-/// Waits until `ending` has `count` seated, for a few seconds at most.
+/// Waits until `ending` has `count` seated.
 fn until_seated(ending: &Ending, count: usize) {
-    let began = std::time::Instant::now();
-    while seated(ending).len() < count && began.elapsed() < Duration::from_secs(5) {
-        thread::sleep(Duration::from_millis(1));
+    while seated(ending).len() < count {
+        thread::yield_now();
     }
 }
 
@@ -49,7 +47,7 @@ fn a_rows_waiters_are_handed_to_its_next_writer() {
     let [holder, first, second, other, third] = std::array::from_fn(|_| waiting(&st));
     let held = end_of(&holder);
     // What is seen, kept until every transaction has ended, so a failed
-    // check never leaves a waiter asleep.
+    // check leaves no waiter asleep for long.
     let (stayed, moved, graph, others_went, still, all_went) = thread::scope(|s| {
         let a = s.spawn(|| first.wait_for_row((&table, 1), holder.id));
         until_seated(&held, 1);
@@ -65,10 +63,12 @@ fn a_rows_waiters_are_handed_to_its_next_writer() {
         let (stayed, moved) = (seated(&held), seated(&end_of(&first)));
         let graph = lock_builtin(&first.shared.waits_for).get(&second.id).cloned();
         drop(firsts);
-        let others_went = finishes(&c);
+        // The other row's waiter goes on now, unless it was moved too.
+        let mut c = Some(c);
+        let others_went = (stayed == [other.id]).then(|| c.take().is_some_and(|c| c.join().unwrap().unwrap()));
         let still = seated(&end_of(&first));
         st.rollback(&first).unwrap();
-        let all_went = [b, c, d].into_iter().all(|waiter| waiter.join().unwrap().unwrap());
+        let all_went = [Some(b), c, Some(d)].into_iter().flatten().all(|waiter| waiter.join().unwrap().unwrap());
         (stayed, moved, graph, others_went, still, all_went)
     });
     for tx in [&second, &other, &third] {
@@ -77,18 +77,9 @@ fn a_rows_waiters_are_handed_to_its_next_writer() {
     assert_eq!(stayed, [other.id]);
     assert_eq!(moved, [second.id, third.id], "moved in order, asleep");
     assert_eq!(graph, Some(vec![first.id]), "waiting for the next writer");
-    assert!(others_went, "the other row's waiter goes on");
+    assert_eq!(others_went, Some(true), "the other row's waiter goes on");
     assert_eq!(still, [second.id, third.id], "the moved still wait");
     assert!(all_went);
-}
-
-/// Whether `waiter` finishes within a few seconds.
-fn finishes<T>(waiter: &thread::ScopedJoinHandle<'_, T>) -> bool {
-    let began = std::time::Instant::now();
-    while !waiter.is_finished() && began.elapsed() < Duration::from_secs(5) {
-        thread::sleep(Duration::from_millis(1));
-    }
-    waiter.is_finished()
 }
 
 /// Verifies: [DESIGN] RULES.md D743: a moved waiter cancelled leaves the
@@ -127,6 +118,50 @@ fn a_moved_waiter_gives_up_where_it_was_moved() {
     assert!(cancelled);
     assert_eq!(left, [third.id]);
     assert!(passed, "the turn passes over the one that left");
+}
+
+/// Verifies: [DESIGN] RULES.md D743, R-TEST-8: a seat moves only if its
+/// row's id, its table and the absence of a deadlock all hold. Condition
+/// pairs against the moved seat (same id, same table, no deadlock): the
+/// same table's other row stays (id), another table's same row stays
+/// (table), and the same row's waiter that the next writer already waits
+/// for stays (deadlock).
+#[test]
+fn a_seat_moves_only_for_the_same_row_free_of_deadlock() {
+    let st = State::with_builtins(Box::new(MemoryCatalog::default()));
+    let table = QualifiedName { auth: "A".into(), ident: "T".into() };
+    let elsewhere = QualifiedName { auth: "A".into(), ident: "U".into() };
+    let [holder, first, same, other_id, other_table, cyclic] = std::array::from_fn(|_| waiting(&st));
+    let held = end_of(&holder);
+    let (moved, stayed, all_went) = thread::scope(|s| {
+        let a = s.spawn(|| first.wait_for_row((&table, 1), holder.id));
+        until_seated(&held, 1);
+        let mut waiters = Vec::new();
+        for (n, (tx, row)) in [(&same, (&table, 1)), (&other_id, (&table, 2)), (&other_table, (&elsewhere, 1)), (&cyclic, (&table, 1))]
+            .into_iter()
+            .enumerate()
+        {
+            waiters.push(s.spawn(move || tx.wait_for_row(row, holder.id).map(|turn| turn.is_some())));
+            until_seated(&held, n + 2);
+        }
+        st.rollback(&holder).unwrap();
+        let firsts = a.join().unwrap().unwrap().unwrap();
+        // The next writer waiting for `cyclic`, as if for a row it holds.
+        lock_builtin(&first.shared.waits_for).insert(first.id, vec![cyclic.id]);
+        super::Turn::hand_over(Some(&firsts), &first, (&table, 1));
+        lock_builtin(&first.shared.waits_for).remove(&first.id);
+        let (moved, stayed) = (seated(&end_of(&first)), seated(&held));
+        drop(firsts);
+        st.rollback(&first).unwrap();
+        let all_went = waiters.into_iter().all(|waiter| waiter.join().unwrap().unwrap());
+        (moved, stayed, all_went)
+    });
+    for tx in [&same, &other_id, &other_table, &cyclic] {
+        st.rollback(tx).unwrap();
+    }
+    assert_eq!(moved, [same.id]);
+    assert_eq!(stayed, [other_id.id, other_table.id, cyclic.id]);
+    assert!(all_went);
 }
 
 /// Verifies: [DESIGN] RULES.md D456: once a row's writer ends, a newcomer

@@ -180,14 +180,10 @@ impl Turn {
         if to.ended {
             return;
         }
-        let mut moving: Vec<(u64, Arc<Seat>)> = Vec::new();
-        from.seated.retain(|(t, seat)| {
-            let moves = seat.row.1 == id && seat.row.0 == *table && !super::locks::would_deadlock(&waits_for, seat.waiter, &[tx.id]);
-            if moves {
-                moving.push((*t, Arc::clone(seat)));
-            }
-            !moves
-        });
+        let moves =
+            |seat: &Seat| seat.row.1 == id && seat.row.0 == *table && !super::locks::would_deadlock(&waits_for, seat.waiter, &[tx.id]);
+        let (mut moving, staying): (Vec<_>, Vec<_>) = std::mem::take(&mut from.seated).into_iter().partition(|(_, seat)| moves(seat));
+        from.seated = staying;
         moving.sort_unstable_by_key(|&(t, _)| t);
         for (old, seat) in moving {
             from.left.push(old);
