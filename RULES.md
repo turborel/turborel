@@ -404,7 +404,7 @@ verification approach DO-178C expects (§8).
 | D400 | DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's |
 | D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
 | D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
-| D413 | MIN or MAX of a column known not null is read from the first row in order |
+| D413 | MIN or MAX of a column known not null, or whose nulls the filter rejects, is read from the first row in order |
 | D414 | Every query of a kept procedure body over its variables learns its plan with slots |
 | D415 | A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks |
 | D416 | A local cursor of a kept procedure body keeps its specification and plan |
@@ -544,6 +544,8 @@ verification approach DO-178C expects (§8).
 | D667 | A transfer step is kept where its keys are at most half the values it judges, and the phase is planned where it pays |
 | D668 | A phase holds its leaves within its work area, reads a leaf past it again with its filters, and stops a filter that keeps most rows |
 | D836 | A routine's variable in a subquery of a change is the subquery's slot, not an outer reference, so the subquery probes a key |
+| D837 | A scan takes back the index entries of rows gone for every reader as it meets them |
+| D838 | A scan priced by a sample of its zones reads at least one zone of the sample |
 
 ### The project
 
@@ -11745,7 +11747,7 @@ file to land, so a waiter may hold it.
 
 ### Order entry execution
 
-#### D413. MIN or MAX of a column known not null is read from the first row in order
+#### D413. MIN or MAX of a column known not null, or whose nulls the filter rejects, is read from the first row in order
 
 An order entry's delivery takes the least new order of each district by
 MIN over the district's rows, and the aggregation read every one of
@@ -11757,12 +11759,17 @@ rewritten to aggregate its rows sorted by the column under FETCH FIRST
 1 ROW ONLY (rule `extremes_by_order`, `optimizer/extremes.rs`). The
 planner reads such rows from an index whose first columns the filter
 fixes and whose next is the column, and stops at the first; else a sort
-of the first row holds one. A column that may hold a null is left, as
-its nulls eliminated raise a warning [ISO/IEC 9075-2:2023 §10.9 GR7a]
-that the rows sorted would not, and so are a condition that may raise,
-whose rows a stopped read would evaluate fewer of. Only exact numbers
-are taken, whose values alike are one value, as the sort and MIN each
-keep the first of rows alike.
+of the first row holds one. A column that may hold a null is taken only
+where a conjunct of the filter over it alone is not true of its null, as
+`K > 10` or `K IS NOT NULL`, evaluated on a row of nulls, so no row the
+aggregation reads holds one. Else it is left, as its nulls eliminated
+raise a warning [ISO/IEC 9075-2:2023 §10.9 GR7a] that the rows sorted
+would not, and so are a condition that may raise, whose rows a stopped
+read would evaluate fewer of. Only exact numbers, dates, and times and
+timestamps without time zone are taken, whose values alike are one
+value, as the sort and MIN each keep the first of rows alike. Strings
+alike may differ under their collation, approximate zeros by sign, and
+times with time zone by zone, so those are left.
 
 #### D414. Every query of a kept procedure body over its variables learns its plan with slots
 
@@ -14945,6 +14952,68 @@ A collection constant, as a filled array slot is, had no declared type,
 so a probe took no value from its elements (D779). Its type is now the
 collection type of its elements' type, when each element that is not
 null is of one kind (`physical/indexed/typed.rs`).
+
+#### D837. A scan takes back the index entries of rows gone for every reader as it meets them
+
+A queue's rows are inserted at the high end of its key's range and
+deleted from the low end, and the search for its first row begins at
+the low end. A deleted row's index entries stay until collection takes
+them back (D29), and every search before then passes them, each a read
+of a row it does not see. Collection waits for the horizon and runs a
+batch of commits at a time (D451), one collector a table (D445), so
+under many writers the deletions pile up at the low end, the search for
+the head of the queue passes more of them each time, and its
+transaction holds its row locks longer while others queue behind it.
+
+A read by row id that finds no row now tells, in its `Near`, the commit
+of the deletion that the row's newest version is, if it is a committed
+one (`RowTable::deletion_of`). A scan of an index that meets such an
+entry, the deletion at or before the horizon, takes the entry back on
+the spot by the call collection would make, `Index::remove`
+(`exec/entries/pruning.rs`). The searches of an index scan, a point
+read, a data change's object rows and an index join do so. The horizon
+is read once and again only for a deletion past it, as it only moves
+on.
+
+The semantics hold for these reasons.
+
+- No snapshot open or to come is before the horizon, and a deletion at
+  or before it is seen by all of them, so none reads any version of the
+  row. Row ids are never given again, so every entry of the row is
+  garbage, whatever its count.
+- A deletion not committed, or committed after an open snapshot, is
+  never taken back, so undo and every older reader find what they did.
+- The removal is collection's own, made earlier. Collection, finding an
+  entry gone, has nothing to take back (an ordered index and a hash
+  index count only what they remove), and a checkpoint's stale entries
+  are taken back at recovery the same way. Like collection, it logs
+  nothing: the row store's files are shadowed (D25), so a crash leaves
+  the last checkpoint's entries, and recovery's replay of the deletion
+  and its collection take them back again.
+- An index whose entries are projections of their keys, and a global
+  index over partitions (D157), whose rows are read through their
+  partitions, are left to collection.
+
+Collecting the table at the first such meeting was rejected. It would
+move a batch of commits' collection onto one reader's statement, and
+the one collector a table (D445) would make every other reader pass the
+same entries meanwhile.
+
+#### D838. A scan priced by a sample of its zones reads at least one zone of the sample
+
+A scan of a row store table is priced by the share of the rows its
+conditions may match, by its zones (`TableStorage::scan_share`), and of
+a table of more than `SAMPLED` zones the planner looks at that many,
+evenly apart, so planning costs no more as the table grows. A delivery's
+update of an order's lines asks for one order, whose lines lie in one
+zone, and once the table held twice as many zones the sample passed
+over every other one. Of an order in a zone passed over, no zone of the
+sample held it, so the scan was priced at nothing, below the index that
+finds the lines, and the procedure kept that plan, reading every line of
+the table at each call. So a share of a sample is never less than one
+zone of the sample (`rows/zones.rs`): the zones passed over may hold
+the rows asked for, as many as one zone looked at. Of a table whose
+every zone is looked at, the share is what they hold, none if none may.
 
 ## 2. Project layout
 

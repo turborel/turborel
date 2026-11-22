@@ -334,9 +334,13 @@ impl Index for HashIndex {
         self.table.insert(&encoded, &row.to_be_bytes())
     }
 
+    /// Counted only if there: a scan may have taken an entry back before
+    /// its collection comes to it (RULES.md D837).
     fn remove(&self, key: &Key, row: RowId) -> Result<()> {
-        self.keys.removed();
-        self.table.remove(&self.encoded(key)?, &row.to_be_bytes()).map(|_| ())
+        if self.table.remove(&self.encoded(key)?, &row.to_be_bytes())? {
+            self.keys.removed();
+        }
+        Ok(())
     }
 
     /// Every entry's key, counted: of an index opened, once maintenance

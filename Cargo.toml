@@ -40,6 +40,11 @@ path = "bench/scaling.rs"
 harness = false
 
 [[bench]]
+name = "oltp"
+path = "bench/oltp.rs"
+harness = false
+
+[[bench]]
 name = "hash"
 path = "bench/hash.rs"
 harness = false

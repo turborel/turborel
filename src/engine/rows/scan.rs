@@ -68,12 +68,17 @@ impl RowTable {
     /// Row `id` as `tx` sees it, `columns` decoded, or all.
     pub(super) fn get_of(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
         let reader = self.read_row(tx, (id, columns.map_or(EVERY_COLUMN, |c| columns_mask(c.iter().copied()))), near)?;
+        near.gone = None;
         if !self.tree.get_near(&key(id), near)? {
             // Frozen, so committed before every snapshot (`rows/frozen.rs`),
             // unless a load made it (`frozen/stamped.rs`).
             return self.frozen_seen(id, columns, reader);
         }
-        self.visible_in(&near.bytes, reader)?.map(|record| self.decode(id, &record, columns)).transpose()
+        let seen = self.visible_in(&near.bytes, reader)?.map(|record| self.decode(id, &record, columns)).transpose()?;
+        if seen.is_none() {
+            near.gone = self.deletion_of(&near.bytes);
+        }
+        Ok(seen)
     }
 
     /// Every entry of the table's tree, in row id order, read through
@@ -217,3 +222,7 @@ impl RowTable {
         self.gathered_in((reader, Ramp::default()), columns, ranges)
     }
 }
+
+// Unit tests: what a read that finds no row tells (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

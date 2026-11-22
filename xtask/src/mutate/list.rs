@@ -14,6 +14,7 @@ mod client;
 mod collations;
 mod composite;
 mod contents;
+mod dead_entries;
 mod delta_tables;
 mod dependencies;
 mod diagnostics;

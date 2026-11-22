@@ -93,10 +93,10 @@ impl PointRead {
     /// failed read.
     pub(crate) fn read(&self, st: &State, tx: TxId, values: &[Value]) -> Result<Option<Row>> {
         let probe = placed(&self.probe, &self.slots, values)?;
-        let Found { storage, ix, entries, projection, read } = probe_index(st, &self.table, &self.index, &probe, (false, true))?;
+        let Found { storage, ix, entries, projection, read, pruning } = probe_index(st, &self.table, &self.index, &probe, (false, true))?;
         read.record(&*storage, tx)?;
         let width = self.covering.then(|| st.catalog.table(&self.table).map(|t| t.columns.len())).flatten();
-        let mut reading = Reading::of(&ix, Some(&self.needed), projection);
+        let mut reading = Reading::of(&ix, Some(&self.needed), projection).pruned(pruning);
         // Each entry is counted and its read looked to for a cancel as the
         // scan does (RULES.md D44, D521).
         for entry in counted(entries, st.tx.stop_of(tx), |_| 1) {
@@ -119,9 +119,9 @@ impl PointRead {
     /// As `read`.
     pub(crate) fn entry(&self, st: &State, tx: TxId, values: &[Value]) -> Result<Option<(RowId, Row)>> {
         let probe = placed(&self.probe, &self.slots, values)?;
-        let Found { storage, ix, entries, projection, read } = probe_index(st, &self.table, &self.index, &probe, (false, true))?;
+        let Found { storage, ix, entries, projection, read, pruning } = probe_index(st, &self.table, &self.index, &probe, (false, true))?;
         read.record(&*storage, tx)?;
-        let mut reading = Reading::of(&ix, None, projection);
+        let mut reading = Reading::of(&ix, None, projection).pruned(pruning);
         for entry in counted(entries, st.tx.stop_of(tx), |_| 1) {
             let (key, id) = entry?;
             if let Some(found) = fetch(&*storage, &ix, &mut reading, (tx, id), &key)? {

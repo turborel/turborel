@@ -416,7 +416,10 @@ impl Zones {
     /// the zones it reads, those not known among them, as blocks of row ids
     /// are not as full as one another (`TableStorage::scan_share`). Of
     /// `SAMPLED` zones at most, evenly apart, so planning costs no more as
-    /// a table grows; all read if none is known to hold a row.
+    /// a table grows; all read if none is known to hold a row. A sample of
+    /// some of the zones is never less than one zone of it, as the zones
+    /// it passed over may hold the rows asked for, as the rows of the
+    /// order just written lie in one zone (RULES.md D838).
     pub(super) fn share(&self, conditions: &Conjunction) -> f64 {
         let Ok(map) = read(&self.map) else { return 1.0_f64 };
         if self.kept.is_empty() || map.zones.is_empty() {
@@ -424,8 +427,9 @@ impl Zones {
         }
         let tests = prepared(conditions, &self.kept);
         let step = map.zones.len().div_ceil(SAMPLED).max(1);
-        let (mut all, mut read_rows) = (0.0_f64, 0.0_f64);
+        let (mut all, mut read_rows, mut sampled) = (0.0_f64, 0.0_f64, 0.0_f64);
         for slot in map.zones.iter().step_by(step) {
+            sampled += 1.0_f64;
             let zone = lock_builtin(slot);
             // A zone not known holds as many rows as a block may.
             let rows = if zone.known { f64::from(zone.rows) } else { f64::from(u32::try_from(ZONE_ROWS).unwrap_or(u32::MAX)) };
@@ -434,7 +438,11 @@ impl Zones {
                 read_rows += rows;
             }
         }
-        if all > 0.0_f64 { read_rows / all } else { 1.0_f64 }
+        if all <= 0.0_f64 {
+            return 1.0_f64;
+        }
+        let least = if step > 1 { 1.0_f64 / sampled } else { 0.0_f64 };
+        (read_rows / all).max(least)
     }
 
     /// Whether a zone is stale or not known, or unsettled.

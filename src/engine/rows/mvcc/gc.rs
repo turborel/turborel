@@ -115,6 +115,18 @@ impl RowTable {
         }
     }
 
+    /// \[DESIGN\] (RULES.md D837) The commit of the deletion that the
+    /// newest version `newest` of a row is, if it is a committed one: no
+    /// snapshot at or after it reads the row, so once the horizon reaches
+    /// it every index entry of the row is garbage, as its collection would
+    /// find (`remove_dead`). None of a version unreadable, kept for that
+    /// collection to report.
+    pub(in crate::engine::rows) fn deletion_of(&self, newest: &[u8]) -> Option<Timestamp> {
+        let version = Version::parse(newest).ok()?;
+        let Maker::Committed(at) = self.maker(&version) else { return None };
+        version.deleted.then_some(at)
+    }
+
     /// Removes `items`, garbage of `at`, their rows to `removed`; one that
     /// cannot be is garbage again, its error the first `failure`.
     fn remove_all(&self, items: Vec<Dead>, at: Timestamp, (removed, failure): (Removed<'_>, &mut Option<SqlError>)) {

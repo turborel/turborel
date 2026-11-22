@@ -1,0 +1,119 @@
+//! The TPROC-C-style procedures of the `new` set that differ from the
+//! `old`: NEWORD prices every line by one join of the items to ITEM and
+//! changes every stock row by one MERGE, DELIVERY deletes, updates and
+//! credits all ten districts by set statements, and SLEV reads the
+//! district within its join. PAYMENT and OSTAT are the `old` set's. The
+//! text is exactly what the newer driver installs.
+
+/// NEW ORDER of the `new` set.
+pub const NEWORD: &str = r"CREATE PROCEDURE NEWORD (
+        IN NO_W_ID INTEGER,
+        IN NO_D_ID INTEGER,
+        IN NO_C_ID INTEGER,
+        IN NO_O_OL_CNT INTEGER,
+        IN NO_O_ALL_LOCAL SMALLINT,
+        IN NO_ITEMS INTEGER ARRAY[15],
+        IN NO_SUPPLY INTEGER ARRAY[15],
+        IN NO_QUANTITY INTEGER ARRAY[15])
+        MODIFIES SQL DATA
+        BEGIN
+        DECLARE NO_C_DISCOUNT DECIMAL(4,4);
+        DECLARE NO_C_LAST VARCHAR(16);
+        DECLARE NO_C_CREDIT CHAR(2);
+        DECLARE NO_W_TAX DECIMAL(4,4);
+        DECLARE NO_D_TAX DECIMAL(4,4);
+        DECLARE NO_O_ID INTEGER;
+        DECLARE NO_PRICES DECIMAL(5,2) ARRAY[15];
+        DECLARE NO_FOUND INTEGER;
+        DECLARE NO_S_ITEMS INTEGER ARRAY[15];
+        DECLARE NO_S_SUPPLY INTEGER ARRAY[15];
+        DECLARE NO_S_DISTS CHAR(24) ARRAY[15];
+        DECLARE ITEM_NOT_VALID CONDITION;
+        SELECT C_DISCOUNT, C_LAST, C_CREDIT, W_TAX
+            INTO NO_C_DISCOUNT, NO_C_LAST, NO_C_CREDIT, NO_W_TAX
+            FROM CUSTOMER, WAREHOUSE
+            WHERE W_ID = NO_W_ID AND C_W_ID = NO_W_ID AND C_D_ID = NO_D_ID AND C_ID = NO_C_ID;
+        SELECT D_NEXT_O_ID - 1, D_TAX INTO NO_O_ID, NO_D_TAX
+            FROM FINAL TABLE (UPDATE DISTRICT SET D_NEXT_O_ID = D_NEXT_O_ID + 1
+                WHERE D_ID = NO_D_ID AND D_W_ID = NO_W_ID);
+        INSERT INTO ORDERS (O_ID, O_D_ID, O_W_ID, O_C_ID, O_ENTRY_D, O_OL_CNT, O_ALL_LOCAL)
+            VALUES (NO_O_ID, NO_D_ID, NO_W_ID, NO_C_ID, CAST(CURRENT_TIMESTAMP(0) AS TIMESTAMP(0)), NO_O_OL_CNT, NO_O_ALL_LOCAL);
+        INSERT INTO NEW_ORDER (NO_O_ID, NO_D_ID, NO_W_ID) VALUES (NO_O_ID, NO_D_ID, NO_W_ID);
+        SELECT ARRAY_AGG(I_PRICE ORDER BY L.N), COUNT(I_ID) INTO NO_PRICES, NO_FOUND
+            FROM UNNEST(NO_ITEMS) WITH ORDINALITY AS L (L_I_ID, N)
+            LEFT JOIN ITEM ON I_ID = L.L_I_ID;
+        IF NO_FOUND < CARDINALITY(NO_ITEMS) THEN
+            SIGNAL ITEM_NOT_VALID;
+        END IF;
+        SELECT ARRAY_AGG(S_I_ID), ARRAY_AGG(S_W_ID),
+                ARRAY_AGG(CASE NO_D_ID WHEN 1 THEN S_DIST_01 WHEN 2 THEN S_DIST_02 WHEN 3 THEN S_DIST_03
+                    WHEN 4 THEN S_DIST_04 WHEN 5 THEN S_DIST_05 WHEN 6 THEN S_DIST_06
+                    WHEN 7 THEN S_DIST_07 WHEN 8 THEN S_DIST_08 WHEN 9 THEN S_DIST_09
+                    ELSE S_DIST_10 END)
+            INTO NO_S_ITEMS, NO_S_SUPPLY, NO_S_DISTS
+            FROM FINAL TABLE (MERGE INTO STOCK
+                USING (SELECT L_I_ID, L_W_ID, SUM(L_QUANTITY)
+                    FROM UNNEST(NO_ITEMS, NO_SUPPLY, NO_QUANTITY) AS L (L_I_ID, L_W_ID, L_QUANTITY)
+                    GROUP BY L_I_ID, L_W_ID) AS L (L_I_ID, L_W_ID, L_QUANTITY)
+                ON S_I_ID = L.L_I_ID AND S_W_ID = L.L_W_ID
+                WHEN MATCHED THEN UPDATE SET S_QUANTITY =
+                    CASE WHEN S_QUANTITY < L.L_QUANTITY + 10 THEN S_QUANTITY + 91 ELSE S_QUANTITY END
+                        - L.L_QUANTITY);
+        INSERT INTO ORDER_LINE (OL_O_ID, OL_D_ID, OL_W_ID, OL_NUMBER, OL_I_ID,
+            OL_SUPPLY_W_ID, OL_QUANTITY, OL_AMOUNT, OL_DIST_INFO)
+            SELECT NO_O_ID, NO_D_ID, NO_W_ID, L.N, L.L_I_ID, L.L_W_ID, L.L_QUANTITY,
+                L.L_QUANTITY * L.L_PRICE * (1 + NO_W_TAX + NO_D_TAX) * (1 - NO_C_DISCOUNT),
+                S.S_DIST
+            FROM UNNEST(NO_ITEMS, NO_SUPPLY, NO_QUANTITY, NO_PRICES) WITH ORDINALITY
+                AS L (L_I_ID, L_W_ID, L_QUANTITY, L_PRICE, N)
+            LEFT JOIN UNNEST(NO_S_ITEMS, NO_S_SUPPLY, NO_S_DISTS) AS S (S_I_ID, S_W_ID, S_DIST)
+                ON S.S_I_ID = L.L_I_ID AND S.S_W_ID = L.L_W_ID;
+        END";
+
+/// DELIVERY of the `new` set.
+pub const DELIVERY: &str = r"CREATE PROCEDURE DELIVERY (
+        IN D_W_ID INTEGER,
+        IN D_O_CARRIER_ID INTEGER)
+        MODIFIES SQL DATA
+        BEGIN
+        DECLARE D_D_IDS INTEGER ARRAY[10];
+        DECLARE D_O_IDS INTEGER ARRAY[10];
+        DECLARE D_C_IDS INTEGER ARRAY[10];
+        SELECT ARRAY_AGG(NO_D_ID ORDER BY NO_D_ID), ARRAY_AGG(NO_O_ID ORDER BY NO_D_ID)
+            INTO D_D_IDS, D_O_IDS
+            FROM OLD TABLE (DELETE FROM NEW_ORDER WHERE NO_W_ID = D_W_ID AND (NO_D_ID, NO_O_ID) IN
+                (SELECT X.D, M.O FROM UNNEST(ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) AS X (D),
+                    LATERAL (SELECT MIN(NO_O_ID) FROM NEW_ORDER WHERE NO_W_ID = D_W_ID AND NO_D_ID = X.D) AS M (O)));
+        IF D_D_IDS IS NOT NULL THEN
+            SELECT ARRAY_AGG(O_C_ID ORDER BY O_D_ID) INTO D_C_IDS
+                FROM FINAL TABLE (UPDATE ORDERS SET O_CARRIER_ID = D_O_CARRIER_ID
+                    WHERE O_W_ID = D_W_ID AND (O_D_ID, O_ID) IN
+                        (SELECT D, O FROM UNNEST(D_D_IDS, D_O_IDS) AS X (D, O)));
+            UPDATE ORDER_LINE SET OL_DELIVERY_D = CAST(CURRENT_TIMESTAMP(0) AS TIMESTAMP(0))
+                WHERE OL_W_ID = D_W_ID AND (OL_D_ID, OL_O_ID) IN
+                    (SELECT D, O FROM UNNEST(D_D_IDS, D_O_IDS) AS X (D, O));
+            MERGE INTO CUSTOMER
+                USING (SELECT OL_W_ID, X.D, X.C, SUM(OL_AMOUNT)
+                    FROM UNNEST(D_D_IDS, D_O_IDS, D_C_IDS) AS X (D, O, C)
+                    JOIN ORDER_LINE ON OL_W_ID = D_W_ID AND OL_D_ID = X.D AND OL_O_ID = X.O
+                    GROUP BY OL_W_ID, X.D, X.C) AS S (W, D, C, T)
+                ON C_W_ID = S.W AND C_D_ID = S.D AND C_ID = S.C
+                WHEN MATCHED THEN UPDATE SET C_BALANCE = COALESCE(C_BALANCE, 0) + S.T;
+        END IF;
+        END";
+
+/// STOCK LEVEL of the `new` set.
+pub const SLEV: &str = r"CREATE PROCEDURE SLEV (
+        IN ST_W_ID INTEGER,
+        IN ST_D_ID INTEGER,
+        IN THRESHOLD INTEGER)
+        READS SQL DATA
+        BEGIN
+        DECLARE STOCK_COUNT INTEGER;
+        SELECT COUNT(DISTINCT S_I_ID) INTO STOCK_COUNT
+            FROM DISTRICT, ORDER_LINE, STOCK
+            WHERE D_W_ID = ST_W_ID AND D_ID = ST_D_ID
+            AND OL_W_ID = D_W_ID AND OL_D_ID = D_ID
+            AND OL_O_ID < D_NEXT_O_ID AND OL_O_ID >= D_NEXT_O_ID - 20
+            AND S_W_ID = OL_W_ID AND S_I_ID = OL_I_ID AND S_QUANTITY < THRESHOLD;
+        END";
