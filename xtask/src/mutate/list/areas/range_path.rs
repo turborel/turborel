@@ -21,7 +21,7 @@ pub const RANGE_PATH: [Mutation; 3] = [
         name: "range-path-first-key-kept",
         package: Package::Core,
         breaks: "a key is kept as it is first decoded and its bytes are not, so a repeat decodes it again",
-        file: "src/index/blink.rs",
+        file: "src/index/blink/entries.rs",
         original: "        if again {",
         replacement: "        if !again {",
         integration: &[],

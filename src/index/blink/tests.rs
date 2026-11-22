@@ -6,6 +6,7 @@
 use std::path::Path;
 use std::thread;
 
+use super::entries::Decoded;
 use super::*;
 use crate::disk::buffer::Clock;
 use crate::disk::encoding::Pipeline;

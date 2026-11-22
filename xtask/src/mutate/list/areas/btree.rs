@@ -79,7 +79,7 @@ pub const BTREE: [Mutation; 26] = [
         name: "btree-decoded-key-kept",
         package: Package::Core,
         breaks: "a search gives the key it last decoded for an entry of other bytes",
-        file: "src/index/blink.rs",
+        file: "src/index/blink/entries.rs",
         original: "        if let Some(key) = self.key.as_ref().filter(|_| again) {",
         replacement: "        if let Some(key) = self.key.as_ref() {",
         integration: &[],
