@@ -16,6 +16,9 @@
 //! of what is left, split so again (`group/distribution.rs`).
 
 mod distribution;
+mod streamed;
+
+pub(super) use streamed::{streamed_distinct, streamed_grouping};
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -92,11 +95,17 @@ pub(super) type Finished = Vec<(u64, Row)>;
 /// [X3.135-1986 §5.11 GR7], each the grouping values, then one result per
 /// set function, in the order their first rows came, in a work area of
 /// `db`, read as `tx` sees it. They are made now, as grouping must see
-/// every row. Never inlined into the caller, whose frame is on the stack
-/// while its input is made (RULES.md R-CF-6).
+/// every row; the one group of a grouping by no column, of set functions
+/// none DISTINCT or of an inverse distribution, is made as it is asked for,
+/// with no key or work area (`streamed::whole`, RULES.md D785). Never
+/// inlined into the caller, whose frame is on the stack while its input is
+/// made (RULES.md R-CF-6).
 #[inline(never)]
 pub(super) fn grouping(spec: Spec, input: RowIter, db: &Db, tx: TxId) -> RowIter {
-    Grouper::new(spec, db, tx).grouped(input).unwrap_or_else(failed)
+    match streamed::whole(spec, input, db, tx) {
+        streamed::Whole::Made(rows) => rows,
+        streamed::Whole::Keyed(spec, input) => Grouper::new(spec, db, tx).grouped(input).unwrap_or_else(failed),
+    }
 }
 
 /// A grouping being made: in its work area, and, of DISTINCT set
@@ -324,6 +333,31 @@ fn feed(aggs: &[AggCall], group: &mut Group, row: &Row, fed: &mut Fed<'_>) -> Re
     Ok(())
 }
 
+/// What a set function takes of a row: nothing, its filter not true of
+/// it; the row, counted by COUNT(*); or its argument's value.
+pub(super) enum Argument {
+    Passed,
+    Counted,
+    Value(Value),
+}
+
+/// What the set function `a` takes of `row`, as a streamed grouping
+/// feeds it (`group/streamed.rs`), its argument computed by
+/// `runner`: [ISO/IEC 9075-2:2023 §10.9 GR4] nothing of a row its filter is
+/// not true of, the argument not computed; [ISO/IEC 9075:1992 §6.5 GR1b] a
+/// null argument warns as it is eliminated.
+pub(super) fn argument(a: &AggCall, row: &Row, runner: &Runner) -> Result<Argument> {
+    if !admitted(a.filter.as_ref(), row, runner)? {
+        return Ok(Argument::Passed);
+    }
+    let Some(e) = &a.arg else { return Ok(Argument::Counted) };
+    let v = eval(e, row, runner)?;
+    if v.is_null() {
+        warn(runner, SqlState::NULL_VALUE_ELIMINATED);
+    }
+    Ok(Argument::Value(v))
+}
+
 /// [ISO/IEC 9075-2:2023 §10.9 GR4] Whether a set function of the filter
 /// `filter` aggregates `row`: the filter true of it, or none written.
 pub(super) fn admitted(filter: Option<&Cond>, row: &Row, runner: &Runner) -> Result<bool> {
@@ -394,6 +428,47 @@ mod tests {
         assert_eq!(grouped(Vec::new()), [format!("{nine},{:?}", int(0))]);
         assert_eq!(grouped(vec![vec![int(9)]]), [format!("{nine},{:?}", int(1))]);
         assert_eq!(grouped(vec![vec![int(5)]]), [format!("{nine},{:?}", int(0)), format!("{five},{:?}", int(1))]);
+    }
+
+    /// Verifies: [X3.135-1986 §5.23 GR1, §5.25 GR1] RULES.md D785: a
+    /// grouping by no column, made before no row, of set functions none
+    /// DISTINCT, is its one group, made whole. Of no rows too, its set
+    /// functions fed nothing; any grouping column, seed or DISTINCT set
+    /// function makes it by key.
+    ///
+    /// Decision: `!groups.is_empty() || !seeds.is_empty() || alone`. MC/DC:
+    /// all false (whole), then each true alone (by key).
+    #[test]
+    fn a_grouping_by_no_column_is_made_whole() {
+        let db = Arc::new(State::with_builtins(Box::new(MemoryCatalog::default())));
+        let count = db.functions.aggregate("COUNT").unwrap();
+        let result = count.0.result_type(None).unwrap();
+        let agg = |distinct: bool| AggCall {
+            func: count.clone(),
+            arg: distinct.then(|| crate::logical::Expr::Column(0)),
+            distinct,
+            result: result.clone(),
+            filter: None,
+            distribution: None,
+            label: "COUNT".into(),
+        };
+        let int = |n: i128| Value::Exact(Decimal::new(n, 0));
+        let spec =
+            |groups: Vec<usize>, seeds: Vec<Row>, distinct| Spec { groups, collations: Vec::new(), aggs: vec![agg(distinct)], seeds };
+        let rows = |n: i128| -> RowIter { Box::new((0..n).map(move |i| Ok(vec![int(i.rem_euclid(2))]))) };
+        let shown = |given: RowIter| given.map(|r| format!("{:?}", r.unwrap())).collect::<Vec<_>>();
+        let made = |s: Spec, n| match streamed::whole(s, rows(n), &Db::of(&db), NO_TRANSACTION) {
+            streamed::Whole::Made(given) => Some(shown(given)),
+            streamed::Whole::Keyed(..) => None,
+        };
+        let one = |n| Some(vec![format!("{:?}", vec![int(n)])]);
+        assert_eq!(made(spec(Vec::new(), Vec::new(), false), 0), one(0));
+        assert_eq!(made(spec(Vec::new(), Vec::new(), false), 3), one(3));
+        assert_eq!(made(spec(vec![0], Vec::new(), false), 3), None);
+        assert_eq!(made(spec(Vec::new(), vec![Vec::new()], false), 3), None);
+        assert_eq!(made(spec(Vec::new(), Vec::new(), true), 3), None);
+        let grouped = grouping(spec(Vec::new(), Vec::new(), true), rows(3), &Db::of(&db), NO_TRANSACTION);
+        assert_eq!(Some(shown(grouped)), one(2));
     }
 
     /// Verifies: [X3.135-1986 §5.8 GR1, GR2] nulls never join a set function's

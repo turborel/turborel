@@ -61,6 +61,8 @@ fn rereadable(plan: &LogicalPlan) -> bool {
         LogicalPlan::Project { exprs, input } => exprs.iter().all(steady) && rereadable(input),
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }

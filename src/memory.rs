@@ -20,7 +20,7 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::disk::encoding::Encodings;
@@ -45,6 +45,8 @@ const SHARDS: usize = 64;
 struct Held {
     what: Box<str>,
     bytes: AtomicUsize,
+    /// Whether it stands while the database is open (`Reservation::stand`).
+    standing: AtomicBool,
 }
 
 /// A shard of the list: entries by their reservation's number.
@@ -56,6 +58,9 @@ type Shard = Mutex<BTreeMap<u64, Arc<Held>>>;
 pub struct MemoryBudget {
     limit: AtomicUsize,
     reserved: AtomicUsize,
+    /// The bytes of its standing reservations, held while the database is
+    /// open, as its buffer pools (RULES.md D683).
+    standing: AtomicUsize,
     /// What holds each reservation, and its bytes, in the shard its
     /// number picks.
     held: [Shard; SHARDS],
@@ -69,6 +74,7 @@ impl MemoryBudget {
         Arc::new(MemoryBudget {
             limit: AtomicUsize::new(limit),
             reserved: AtomicUsize::new(0),
+            standing: AtomicUsize::new(0),
             held: std::array::from_fn(|_| Mutex::new(BTreeMap::new())),
             next: AtomicU64::new(0),
         })
@@ -103,6 +109,11 @@ impl MemoryBudget {
         self.reserved.load(Ordering::Acquire)
     }
 
+    /// The bytes of its standing reservations (`Reservation::stand`).
+    pub fn standing(&self) -> usize {
+        self.standing.load(Ordering::Acquire)
+    }
+
     /// Makes `limit` its limit, for the reservations made after.
     pub fn set_limit(&self, limit: usize) {
         self.limit.store(limit, Ordering::Release);
@@ -116,7 +127,7 @@ impl MemoryBudget {
     pub fn reserve(self: &Arc<Self>, bytes: usize, what: &str) -> Result<Reservation> {
         self.take(bytes, what)?;
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let held = Arc::new(Held { what: what.into(), bytes: AtomicUsize::new(bytes) });
+        let held = Arc::new(Held { what: what.into(), bytes: AtomicUsize::new(bytes), standing: AtomicBool::new(false) });
         if let Some(shard) = self.shard(id) {
             lock_builtin(shard).insert(id, Arc::clone(&held));
         }
@@ -256,9 +267,22 @@ impl Reservation {
         self.held(bytes);
     }
 
+    /// \[DESIGN\] (RULES.md D683) Counts it among its budget's standing
+    /// reservations, held while the database is open, as a buffer pool,
+    /// not by a statement: what work grants share half of the rest of.
+    pub fn stand(&mut self) {
+        if !self.held.standing.swap(true, Ordering::AcqRel) {
+            self.budget.standing.fetch_add(self.bytes, Ordering::AcqRel);
+        }
+    }
+
     /// Notes that it holds `bytes`, in its entry too, without a lock: the
     /// list reads the entry's atomic.
     fn held(&mut self, bytes: usize) {
+        if self.held.standing.load(Ordering::Acquire) {
+            self.budget.standing.fetch_add(bytes, Ordering::AcqRel);
+            self.budget.standing.fetch_sub(self.bytes, Ordering::AcqRel);
+        }
         self.bytes = bytes;
         self.held.bytes.store(bytes, Ordering::Relaxed);
     }
@@ -270,6 +294,9 @@ impl Drop for Reservation {
             lock_builtin(shard).remove(&self.id);
         }
         self.budget.reserved.fetch_sub(self.bytes, Ordering::AcqRel);
+        if self.held.standing.load(Ordering::Acquire) {
+            self.budget.standing.fetch_sub(self.bytes, Ordering::AcqRel);
+        }
     }
 }
 

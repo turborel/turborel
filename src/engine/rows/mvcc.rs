@@ -59,15 +59,15 @@
 //! commit whose changes can't be read back counts as committed and is never
 //! stamped.
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 mod commit;
 mod gc;
 mod lists;
 mod open;
+mod opens;
 mod pending;
 mod reads;
 mod stamps;
@@ -75,19 +75,22 @@ mod status;
 mod versions;
 mod write;
 
-use lists::decode_change;
-pub(in crate::engine::rows) use reads::Read;
-use reads::{Changed, Reads};
+use commit::Certified;
+use lists::{decode_change, encode_change};
+pub(in crate::engine::rows) use reads::{EVERY_COLUMN, Read, columns_mask};
+use reads::{Images, Reads};
 use stamps::Unstamped;
 pub(in crate::engine::rows) use status::Statuses;
 
 use super::options::Bounds;
+use super::undo::{Held, Seen};
 use super::version::{Maker, Version};
 use super::{RowTable, key};
 use crate::catalog::TableDesc;
 use crate::disk::pager::PageId;
+use crate::engine::tree::Descended;
 use crate::error::{Code, Result, SqlError};
-use crate::hash::xxhash::{Xxh3Map, Xxh3Set};
+use crate::hash::xxhash::Xxh3Set;
 use crate::log::Lsn;
 use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, SpillList, WorkAreas};
 use crate::storage::{Newest, Row, RowId};
@@ -115,8 +118,9 @@ pub(super) enum Past {
 }
 
 /// A row's newest version, and, if it is one made of its frozen values,
-/// the pages of its values out of line (`RowTable::newest_or_frozen`).
-type Found = (Vec<u8>, Option<Vec<PageId>>);
+/// the pages of its values out of line; else where the tree's descent
+/// found it (`RowTable::newest_or_frozen`).
+type Found = (Vec<u8>, std::result::Result<Descended, Vec<PageId>>);
 
 /// Who reads.
 #[derive(Debug, Clone, Copy)]
@@ -155,6 +159,12 @@ struct Change {
     /// Whether it is not a row's change but a large object's making: `id`
     /// is the object's.
     made: bool,
+    /// The columns the version it replaced holds as its new one does, whose
+    /// index entries the two share (`TableStorage::keep_entries`).
+    unchanged: u64,
+    /// Whether it is not a row's change but a group's making, of a load:
+    /// `id` is its first row's (`frozen/stamped.rs`).
+    group: bool,
 }
 
 impl Change {
@@ -162,14 +172,18 @@ impl Change {
     /// committed one it appended at `appended`, or neither, dropping the
     /// objects `dropped`.
     fn of_row(id: RowId, before: Option<Vec<u8>>, appended: Option<Lsn>, dropped: Vec<u64>) -> Change {
-        Change { id, before, appended, dropped, made: false }
+        Change { id, before, appended, dropped, made: false, unchanged: 0, group: false }
     }
 }
 
 /// A transaction's bookkeeping in a table.
 struct Open {
     snapshot: Timestamp,
+    /// Its changes: given the work areas to spill to only at its first,
+    /// so a transaction that reads alone takes nothing the store's
+    /// transactions share (RULES.md D783).
     changes: SpillList<Change>,
+    spilling: Spilling,
     reads: Reads,
     /// Whether what it reads is recorded, to be checked at commit.
     checked: bool,
@@ -187,6 +201,26 @@ struct Open {
     adopted: Xxh3Set<u64>,
 }
 
+/// Where a transaction's list of changes spills.
+enum Spilling {
+    /// Nowhere: it holds none yet.
+    Held,
+    /// To the store's work areas, from its first change on.
+    ToAreas,
+}
+
+impl Open {
+    /// Its changes, to push one to: from the first, a list that spills to
+    /// `versions`' work areas.
+    fn changes_in(&mut self, versions: &Versions) -> &mut SpillList<Change> {
+        if matches!(self.spilling, Spilling::Held) {
+            self.changes = SpillList::new(versions.space());
+            self.spilling = Spilling::ToAreas;
+        }
+        &mut self.changes
+    }
+}
+
 /// A transaction validated in the table: kept while one could still be
 /// ordered against it.
 struct Validated {
@@ -198,34 +232,21 @@ struct Validated {
     /// Whether it wrote more rows than are tracked, which then count as
     /// every row: its writes and their rows are not kept.
     wrote_many: bool,
-    /// What it changed (`reads.rs`). Decoded before the validation lock is
-    /// taken, so the lock is held only to compare.
-    changed: Changed,
-}
-
-impl Validated {
-    /// Whether `reads` cover a row this one wrote: one read by id, or with
-    /// the whole table, or one whose version before or after this one's
-    /// change a condition read matches, though the reader never saw it (a
-    /// phantom).
-    fn wrote_any(&self, reads: &Reads) -> bool {
-        if self.wrote_many {
-            return reads.any();
-        }
-        !self.writes.is_empty()
-            && (reads.all
-                || reads.rows.iter().any(|id| self.writes.contains(id))
-                || self.changed.matched_by(&reads.conditions, &reads.regions))
-    }
+    /// What it changed (`reads.rs`), decoded only once a reader's
+    /// conditions, regions or scans are checked against it (RULES.md D444,
+    /// D448): none until then.
+    images: Option<Images>,
 }
 
 /// What a commit made garbage, once it is past the horizon.
 #[derive(Clone)]
 enum Dead {
-    /// A version the transaction made and then replaced itself.
-    Own(RowId, Vec<u8>),
-    /// The committed version it replaced, in the undo store.
-    Older(RowId, Lsn),
+    /// A version the transaction made and then replaced itself, and the
+    /// columns its successor kept (`Change::unchanged`).
+    Own(RowId, Vec<u8>, u64),
+    /// The committed version it replaced, in the undo store, and the
+    /// columns its successor kept.
+    Older(RowId, Lsn, u64),
     /// A row it deleted, whose deletion then leaves the tree.
     Deletion(RowId),
     /// The large objects a change dropped (`rows/lobs/owned.rs`), freed
@@ -240,8 +261,8 @@ enum Dead {
 
 /// \[DESIGN\] The versions bookkeeping of a table.
 pub(super) struct Versions {
-    open: RwLock<Xxh3Map<TxId, Arc<Mutex<Open>>>>,
-    validated: Mutex<Vec<Validated>>,
+    open: opens::Opens,
+    validated: Mutex<Certified>,
     /// By commit timestamp, each a list that spills.
     garbage: Mutex<BTreeMap<Timestamp, SpillList<Dead>>>,
     /// The versions undone changes appended (`Dead::Undone`), by the newest
@@ -254,6 +275,11 @@ pub(super) struct Versions {
     /// collect, which every transaction's end finds without a lock.
     garbage_due: AtomicU64,
     validated_due: AtomicU64,
+    /// The versions filed as garbage and not yet collected, which make a
+    /// collection due however near its horizon (`due_at`).
+    garbage_items: AtomicU64,
+    /// Whether `undone` holds versions, which make a collection due.
+    undone_waiting: AtomicBool,
     /// The latest horizon the table was collected at: no reader is before
     /// it, and what commits at or before it superseded may be gone from
     /// the undo store (`RowTable::unpinned`).
@@ -279,12 +305,14 @@ impl Versions {
     pub(super) fn bounded(bounds: Bounds, work: Arc<RwLock<Option<Arc<WorkAreas>>>>, statuses: Arc<Statuses>) -> Versions {
         let (tracked, held) = (AtomicUsize::new(bounds.tracked), AtomicUsize::new(bounds.held));
         Versions {
-            open: RwLock::default(),
+            open: opens::Opens::default(),
             validated: Mutex::default(),
             garbage: Mutex::default(),
             undone: Mutex::default(),
             garbage_due: AtomicU64::default(),
             validated_due: AtomicU64::default(),
+            garbage_items: AtomicU64::default(),
+            undone_waiting: AtomicBool::default(),
             collected: AtomicU64::default(),
             statuses,
             unstamped: Mutex::default(),
@@ -330,11 +358,10 @@ impl RowTable {
 
     pub(super) fn begin_open(&self, tx: TxId, snapshot: Timestamp) {
         self.seen(snapshot);
-        let mut open = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let changes = SpillList::new(self.versions.space());
         let made = || Open {
             snapshot,
-            changes,
+            changes: SpillList::new(ListSpace::default()),
+            spilling: Spilling::Held,
             reads: Reads::default(),
             checked: true,
             reads_since: None,
@@ -343,7 +370,7 @@ impl RowTable {
             made: Xxh3Set::default(),
             adopted: Xxh3Set::default(),
         };
-        open.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));
+        self.versions.open.begin(tx, made);
     }
 
     /// From now, `tx` reads as `mode` says.
@@ -369,24 +396,26 @@ impl RowTable {
 
     /// As `visible_from`, of a newest version read into `newest`: its own
     /// record is borrowed, not copied, as it is what most reads see.
-    pub(super) fn visible_in<'b>(&self, newest: &'b [u8], reader: Reader) -> Result<Option<Cow<'b, [u8]>>> {
+    pub(super) fn visible_in<'b>(&self, newest: &'b [u8], reader: Reader) -> Result<Option<Seen<'b>>> {
         let version = Version::parse(newest)?;
         if reader.sees(self.maker(&version)) {
-            return Ok((!version.deleted).then_some(Cow::Borrowed(version.record)));
+            return Ok((!version.deleted).then_some(Seen::Borrowed(version.record)));
         }
         let Some(at) = version.older else { return Ok(None) };
-        Ok(self.visible_from(self.undo.read(at)?, reader)?.map(Cow::Owned))
+        Ok(self.visible_from(self.undo.read(at)?, reader)?.map(Seen::Held))
     }
 
     /// The record of the version of the row whose newest version is
-    /// `newest` that `reader` sees, if it sees the row.
-    pub(super) fn visible_from(&self, newest: Vec<u8>, reader: Reader) -> Result<Option<Vec<u8>>> {
-        let mut bytes = newest;
+    /// `newest` that `reader` sees, if it sees the row: the bytes of the
+    /// version it ends, narrowed, not copied out (`undo/held.rs`).
+    pub(super) fn visible_from(&self, newest: impl Into<Held>, reader: Reader) -> Result<Option<Held>> {
+        let mut bytes = newest.into();
         loop {
             let older = {
                 let version = Version::parse(&bytes)?;
                 if reader.sees(self.maker(&version)) {
-                    return Ok((!version.deleted).then(|| version.record.to_vec()));
+                    let record = version.record.len();
+                    return Ok((!version.deleted).then(|| bytes.last(record)));
                 }
                 version.older
             };
@@ -415,6 +444,9 @@ impl RowTable {
     /// Undoes `change` of `tx`: the entry it replaced put back, or the row
     /// it added taken out.
     fn undo_change(&self, tx: TxId, change: Change) -> Result<()> {
+        if change.group {
+            return self.unpublish_group(tx, change.id);
+        }
         if change.made {
             self.free_objects(&[change.id]);
             return Ok(());
@@ -423,7 +455,7 @@ impl RowTable {
             let k = key(change.id);
             let inserted = change.before.is_none() && change.appended.is_none();
             let before = match (change.before, change.appended) {
-                (Some(own), _) => Some(own),
+                (Some(own), _) => Some(Held::from(own)),
                 (None, Some(at)) => Some(self.undo.read(at)?),
                 (None, None) => None,
             };
@@ -459,13 +491,21 @@ impl RowTable {
     /// Ends `tx` without committing it here.
     pub(super) fn end_open(&self, tx: TxId) -> Result<()> {
         let undone = self.undo_changes(tx, 0);
-        let removed = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
+        let removed = self.versions.open.remove(tx);
         if let Some(open) = removed {
             lock_builtin(&open).ended = true;
         }
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
         self.versions.statuses.abort(tx);
         undone
+    }
+
+    /// Notes the group `tx` made, holding row `first`, to be undone with
+    /// its other changes (`frozen/stamped.rs`).
+    pub(super) fn note_group(&self, tx: TxId, first: RowId) -> Result<()> {
+        let open = self.open_of(tx)?;
+        let change = Change { group: true, ..Change::of_row(first, None, None, Vec::new()) };
+        lock_builtin(&open).changes_in(&self.versions).push(change, &mut encode_change).map(drop)
     }
 
     /// How many changes `tx` has made, those from now on begun apart: its
@@ -497,6 +537,17 @@ impl RowTable {
         Ok(Newest { row, pending: Some(pending), writer: Some(by), stamp: 0 })
     }
 
+    /// Of `newest_of`, the writer and the stamp alone: the newest version's
+    /// maker, with no older version read nor any row decoded, as a writer
+    /// refused needs no more to decide whether to wait (RULES.md D747).
+    pub(super) fn writer_of(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        let Some(newest) = self.tree.get(&key(id))? else { return Ok((None, 0)) };
+        Ok(match self.maker(&Version::parse(&newest)?) {
+            Maker::Open(by) => (Some(by).filter(|by| *by != tx), 0),
+            Maker::Committed(at) => (None, at),
+        })
+    }
+
     /// Every version of row `id`, whose newest version is `newest`,
     /// committed at or before `as_of`, that a reader at or after `horizon`
     /// may read.
@@ -508,7 +559,7 @@ impl RowTable {
         columns: &[usize],
     ) -> Result<Vec<(RowId, Row)>> {
         let mut found = Vec::new();
-        let mut bytes = newest;
+        let mut bytes = Held::from(newest);
         loop {
             let (older, readable_before) = {
                 let version = Version::parse(&bytes)?;

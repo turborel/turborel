@@ -15,8 +15,23 @@
 use crate::functions::ScalarRef;
 use crate::index::Probe;
 use crate::logical::Limit;
-use crate::physical::{JoinProbe, Plan, Preserved};
+use crate::physical::{JoinProbe, OuterBound, Plan, Preserved};
 use std::sync::Arc;
+
+/// Whether `one` and `other`, groupings, group by the same columns of
+/// inputs of one shape, as many set functions and seeds, both streamed or
+/// both hashed.
+fn same_aggregate(one: &Plan, other: &Plan) -> bool {
+    let (
+        Plan::Aggregate { groups, aggs, seeds, input, streamed, .. },
+        Plan::Aggregate { groups: groups2, aggs: aggs2, seeds: seeds2, input: input2, streamed: streamed2, .. },
+    ) = (one, other)
+    else {
+        return false;
+    };
+    let counts = (aggs.len(), seeds.len(), streamed) == (aggs2.len(), seeds2.len(), streamed2);
+    groups == groups2 && counts && same_shape(input, input2)
+}
 
 /// Whether `one` and `other` have one shape, as the module says.
 pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
@@ -32,13 +47,10 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             let Plan::Project { exprs: exprs2, input: input2, .. } = other else { return false };
             exprs.len() == exprs2.len() && same_shape(input, input2)
         }
-        Plan::Aggregate { groups, aggs, seeds, input, .. } => {
-            let Plan::Aggregate { groups: groups2, aggs: aggs2, seeds: seeds2, input: input2, .. } = other else { return false };
-            groups == groups2 && aggs.len() == aggs2.len() && seeds.len() == seeds2.len() && same_shape(input, input2)
-        }
-        Plan::Distinct { input, .. } => {
-            let Plan::Distinct { input: input2, .. } = other else { return false };
-            same_shape(input, input2)
+        Plan::Aggregate { .. } => same_aggregate(one, other),
+        Plan::Distinct { input, streamed, .. } => {
+            let Plan::Distinct { input: input2, streamed: streamed2, .. } = other else { return false };
+            streamed == streamed2 && same_shape(input, input2)
         }
         Plan::Sort { keys, input, .. } => {
             let Plan::Sort { keys: keys2, input: input2, .. } = other else { return false };
@@ -56,6 +68,8 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         Plan::IndexJoin { .. } => same_index_join(one, other),
         Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
@@ -79,21 +93,24 @@ fn same_product(one: &Plan, other: &Plan) -> bool {
     same_shape(left, left2) && same_shape(right, right2)
 }
 
-/// Whether `one` and `other` are hash joins by the same keys of inputs of
-/// one shape each (RULES.md D418).
+/// Whether `one` and `other` are hash joins of inputs of one shape each
+/// (RULES.md D418), by the same keys, or `other` by more: a plan made with
+/// values may join two columns equal to one value, which one made with two
+/// slots cannot know are equal (`optimizer/transitivity/joined.rs`,
+/// RULES.md D613), and that key drops no pair the rest of the plan keeps.
 fn same_hash_join(one: &Plan, other: &Plan) -> bool {
     let (Plan::HashJoin { left, right, keys, .. }, Plan::HashJoin { left: left2, right: right2, keys: keys2, .. }) = (one, other) else {
         return false;
     };
-    keys == keys2 && same_shape(left, left2) && same_shape(right, right2)
+    keys.iter().all(|k| keys2.contains(k)) && !keys.is_empty() && same_shape(left, left2) && same_shape(right, right2)
 }
 
 /// Whether `one` and `other` are inner index joins of one table, by one
-/// index, probed by the same columns of outer inputs of one shape, both
-/// with a condition or neither (RULES.md D418).
+/// index, probed by the same columns of outer inputs of one shape, and
+/// the same bounds of them if any (RULES.md D776), both with a condition
+/// or neither (RULES.md D418).
 fn same_index_join(one: &Plan, other: &Plan) -> bool {
-    let Plan::IndexJoin { outer: Preserved::Inner, spatial: None, left, table, index, probe: JoinProbe::Prefix(columns), cond, .. } = one
-    else {
+    let Plan::IndexJoin { outer: Preserved::Inner, spatial: None, left, table, index, probe, cond, .. } = one else {
         return false;
     };
     let Plan::IndexJoin {
@@ -102,15 +119,26 @@ fn same_index_join(one: &Plan, other: &Plan) -> bool {
         left: left2,
         table: table2,
         index: index2,
-        probe: JoinProbe::Prefix(columns2),
+        probe: probe2,
         cond: cond2,
         ..
     } = other
     else {
         return false;
     };
-    let read = table == table2 && index == index2 && columns == columns2;
+    let read = table == table2 && index == index2 && same_join_probe(probe, probe2);
     read && cond.is_some() == cond2.is_some() && same_shape(left, left2)
+}
+
+/// Whether `one` and `other` probe by the same outer columns, and of a
+/// range by the same bounds; none but these is kept.
+fn same_join_probe(one: &JoinProbe, other: &JoinProbe) -> bool {
+    let written = |b: &OuterBound| (b.op, b.outer, b.shift.as_ref().map(|e| format!("{e:?}")));
+    match (one, other) {
+        (JoinProbe::Prefix(a), JoinProbe::Prefix(b)) => a == b,
+        (JoinProbe::Range(a), JoinProbe::Range(b)) => a.equal == b.equal && a.bounds.iter().map(written).eq(b.bounds.iter().map(written)),
+        _ => false,
+    }
 }
 
 /// Whether `one` and `other` are limits alike, of inputs of one shape.
@@ -360,8 +388,8 @@ mod tests {
         };
         assert!(same_shape(&sorted(false), &sorted(false)));
         assert!(!same_shape(&sorted(false), &sorted(true)), "another order");
-        let distinct = Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64 };
-        assert!(same_shape(&distinct, &Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64 }));
+        let distinct = Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64, streamed: false };
+        assert!(same_shape(&distinct, &Plan::Distinct { input: Box::new(sorted(false)), est: 0.0_f64, streamed: false }));
         assert!(!same_shape(&distinct, &sorted(false)), "another operator");
         let product = |descending: bool| Plan::Product { left: Box::new(sorted(false)), right: Box::new(sorted(descending)), est: 0.0_f64 };
         assert!(same_shape(&product(false), &product(false)));

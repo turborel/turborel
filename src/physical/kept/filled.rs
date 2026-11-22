@@ -4,11 +4,14 @@
 //! a product, a hash join or an index join by the outer row's columns, is
 //! filled too (D418).
 
-use std::sync::Arc;
+use std::cell::Cell;
+use std::sync::{Arc, OnceLock};
 
 use super::filled_scan;
+use crate::db::State;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Truth, filled_cond, filled_expr};
+use crate::exec::PointRead;
+use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Placing, Truth, filled_cond_as, filled_expr_as};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
 use crate::physical::{JoinProbe, Plan, Preserved};
@@ -20,27 +23,77 @@ use crate::value::Value;
 ///
 /// As `logical::filled`; SQLCODE -910 for an operator no kept plan holds.
 pub(crate) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
-    Filling { values, budget }.plan(plan)
+    Filling { values: Some(values), budget, placing: Placing::Cast, fills: Cell::new(false) }.plan(plan)
+}
+
+/// As `filled_plan`, each value placed as it is, not cast: of a
+/// correlated subquery's plan kept across its runs, its outer references
+/// the slots (RULES.md D675).
+///
+/// # Errors
+///
+/// As `filled_plan`.
+pub(crate) fn filled_plan_as_is(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
+    Filling { values: Some(values), budget, placing: Placing::AsIs, fills: Cell::new(false) }.plan(plan)
+}
+
+/// `plan`, a kept plan whose slots stay for each execution to read where
+/// they are (RULES.md D610), its scalar calls prepared against `budget`
+/// once, as it is kept.
+///
+/// # Errors
+///
+/// SQLCODE -910 for an operator no kept plan holds.
+pub(crate) fn prepared_plan(plan: Plan, budget: Option<&Arc<MemoryBudget>>) -> Result<Kept> {
+    let filling = Filling { values: None, budget, placing: Placing::Cast, fills: Cell::new(false) };
+    let prepared = filling.plan(plan.clone())?;
+    // A plan filled at each execution is kept as it was made, to be filled
+    // and prepared then, as before it was kept.
+    let fills = filling.fills.get();
+    Ok(Kept { plan: if fills { plan } else { prepared }, fills, point: OnceLock::new() })
 }
 
 struct Filling<'a> {
-    values: &'a [Value],
+    /// The slots' values; none, for slots left in place.
+    values: Option<&'a [Value]>,
     budget: Option<&'a Arc<MemoryBudget>>,
+    placing: Placing,
+    /// Whether a scalar call it prepares takes a slot (`Kept`).
+    fills: Cell<bool>,
 }
 
 impl Filling<'_> {
+    /// `expr`, noted if a scalar call of it takes a slot.
+    fn noted(&self, expr: Expr) -> Expr {
+        if calls_slot(&expr) {
+            self.fills.set(true);
+        }
+        expr
+    }
+
     fn expr(&self, expr: Expr) -> Result<Expr> {
-        Ok(prepared::expression(filled_expr(expr, self.values)?, self.budget))
+        let expr = match self.values {
+            Some(values) => filled_expr_as(expr, values, self.placing)?,
+            None => self.noted(expr),
+        };
+        Ok(prepared::expression(expr, self.budget))
     }
 
     fn cond(&self, cond: Cond) -> Result<Cond> {
-        Ok(prepared::condition(filled_cond(cond, self.values)?, self.budget))
+        let cond = match self.values {
+            Some(values) => filled_cond_as(cond, values, self.placing)?,
+            None => cond.map_exprs(&mut |e| self.noted(e)),
+        };
+        Ok(prepared::condition(cond, self.budget))
     }
 
     /// A scan's probe filled, and the conjunct it decides, if one, filled
     /// and prepared as a filter's would be.
     fn scan(&self, plan: Plan) -> Result<Plan> {
-        let mut plan = filled_scan(plan, self.values)?;
+        let mut plan = match self.values {
+            Some(values) => filled_scan(plan, values, self.placing)?,
+            None => plan,
+        };
         if let Plan::IndexScan { decided: Some(decided), .. } = &mut plan {
             let cond = std::mem::replace(&mut decided.cond, Cond::Const(Truth::True));
             decided.cond = self.cond(cond)?;
@@ -75,7 +128,7 @@ impl Filling<'_> {
             table,
             index,
             method,
-            probe: probe @ JoinProbe::Prefix(_),
+            probe: probe @ (JoinProbe::Prefix(_) | JoinProbe::Range(_)),
             cond,
             width,
             columns,
@@ -130,11 +183,11 @@ impl Filling<'_> {
             Plan::IndexScan { .. } => self.scan(plan),
             Plan::SeqScan { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
-            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est } => {
+            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed } => {
                 let aggs = aggs.into_iter().map(|a| self.agg(a)).collect::<Result<_>>()?;
-                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est })
+                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est, streamed })
             }
-            Plan::Distinct { input, est } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est }),
+            Plan::Distinct { input, est, streamed } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est, streamed }),
             Plan::Sort { keys, detail, input, most } => Ok(Plan::Sort { keys, detail, input: Box::new(self.plan(*input)?), most }),
             Plan::Limit { limit, input, est } => {
                 let offset = limit.offset.map(|e| self.expr(e)).transpose()?;
@@ -147,6 +200,8 @@ impl Filling<'_> {
             Plan::Product { .. } | Plan::HashJoin { .. } | Plan::IndexJoin { .. } => self.join(plan),
             Plan::MergeJoin(_)
             | Plan::RangeJoin(_)
+            | Plan::SemiJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::OuterJoin { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }
@@ -162,4 +217,70 @@ impl Filling<'_> {
             | Plan::Counted(_) => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
         }
     }
+}
+
+/// A kept plan, its scalar calls prepared once (RULES.md D610): each
+/// execution reads its slots where they are; or, if a scalar call takes a
+/// slot, which a value would prepare, it is filled and prepared again at
+/// each execution, as the values come.
+#[derive(Debug, Clone)]
+pub(crate) struct Kept {
+    plan: Plan,
+    fills: bool,
+    /// The point read it is, if one, found as first asked (RULES.md D752).
+    point: OnceLock<Option<PointRead>>,
+}
+
+impl Kept {
+    /// The plan one execution runs with its slots' values `slots`, and the
+    /// values it reads where its slots are, if it does.
+    ///
+    /// # Errors
+    ///
+    /// As `filled_plan`.
+    pub(crate) fn opened(&self, slots: Option<Arc<[Value]>>, budget: Option<&Arc<MemoryBudget>>) -> Result<(Plan, Option<Arc<[Value]>>)> {
+        if !self.fills {
+            return Ok((self.plan.clone(), slots));
+        }
+        Ok((filled_plan(self.plan.clone(), slots.as_deref().unwrap_or_default(), budget)?, None))
+    }
+
+    /// The point read its plan is, run without the executor's operators,
+    /// if it is one and `st` runs point operations (RULES.md D752). A
+    /// point read gives its columns as they are and places its probe's
+    /// values with no call, so its plan is never one filled at each
+    /// execution (`fills`), and is kept as made.
+    pub(crate) fn point(&self, st: &State) -> Option<&PointRead> {
+        if !crate::exec::point_operations(st) {
+            return None;
+        }
+        self.point.get_or_init(|| PointRead::of(&self.plan, st)).as_ref()
+    }
+}
+
+/// Whether a scalar call of `e`, at any depth, takes an argument that reads
+/// a slot.
+fn calls_slot(e: &Expr) -> bool {
+    let mut work = vec![e];
+    while let Some(next) = work.pop() {
+        if let Expr::Call(_, args) = next
+            && args.iter().any(reads_slot)
+        {
+            return true;
+        }
+        next.for_each_child(&mut |child| work.push(child));
+    }
+    false
+}
+
+/// Whether `e` reads a slot, at any depth.
+fn reads_slot(e: &Expr) -> bool {
+    let mut work = vec![e];
+    while let Some(next) = work.pop() {
+        if let Expr::Dynamic(_) = next {
+            return true;
+        }
+        next.for_each_child(&mut |child| work.push(child));
+    }
+    false
 }

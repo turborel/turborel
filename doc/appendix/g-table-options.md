@@ -21,8 +21,10 @@ table made anew and its rows copied, as ALTER TABLE ... USING makes it.
 | COLUMNSTORE.GROUP_ROWS | 65536 | INTEGER FROM 2048 TO 65536 | in place |
 | COLUMNSTORE.IMPRINTS | OFF | ONE OF ON, OFF | in place |
 | COLUMNSTORE.LAYOUT | COLUMNS | ONE OF COLUMNS, PAX | in place |
+| COLUMNSTORE.LOAD | TREE | ONE OF TREE, GROUPS | in place |
 | COLUMNSTORE.ORDER | none | AT MOST 8 OF THE TABLE'S COLUMNS, BY COMMAS | in place |
 | COLUMNSTORE.REWRITE_FRACTION | 0.2 | NUMBER FROM 0 TO 1 | in place |
+| COLUMNSTORE.SKETCH | none | AT MOST 8 OF THE TABLE'S COLUMNS, BY COMMAS | in place |
 | ENCODINGS | none | ENCODINGS, BY COMMAS | in place |
 | OUT_OF_LINE | 0 | INTEGER FROM 0 TO 1073741824 | rebuild |
 | STATISTICS.BUCKETS | 100 | INTEGER FROM 1 TO 10000 | in place |
@@ -41,12 +43,14 @@ Each in a sentence:
 - **COLUMNSTORE.GROUP_ROWS**: The rows of each group a table of the column store freezes; groups frozen before keep theirs.
 - **COLUMNSTORE.IMPRINTS**: Whether a table of the column store keeps, of the groups it freezes from then on, imprints of each column of exact numbers, datetimes or character strings: of each 64 rows, the bins of the group's values they fall in, so a comparison, IN or LIKE prefix skips stretches of rows that cannot match within 1024; ON or OFF.
 - **COLUMNSTORE.LAYOUT**: How a table of the column store lays out the groups it freezes: COLUMNS, each column's values on pages of their own, so a scan of a few columns reads only theirs; PAX, each page a range of rows, a chunk of each column on it, so a row read whole reads one page. Groups frozen before are written again so in the background.
+- **COLUMNSTORE.LOAD**: How a load into a table of the column store holding no row past its groups writes its rows: TREE, through the table's tree, frozen into groups in the background as any rows; GROUPS, each batch straight as a frozen group, seen by others once its transaction commits, on the load's own time.
 - **COLUMNSTORE.ORDER**: The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.
 - **COLUMNSTORE.REWRITE_FRACTION**: The share of a frozen group's rows changed, deleted or added to, past which a table of the column store writes the group again with them; 0 for never.
+- **COLUMNSTORE.SKETCH**: The columns, by commas, of which a table of the column store keeps a sketch of each group it freezes, a byte of each row ordered as its value, if the column is VARCHAR and its values are compressed by a table of symbols, so a comparison, IN or LIKE prefix compares the texts of few rows, groups frozen before written again so in the background; none if empty.
 - **ENCODINGS**: The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY, ChaCha20-Poly1305:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own, until the table is sealed again (`turboreld ... reseal`). See [Encryption](../operator/07-encryption.md).
 - **OUT_OF_LINE**: Values of varying width longer than this, in bytes, are kept out of their row's record; 0 for a quarter of a page.
 - **STATISTICS.BUCKETS**: The buckets of each column's histogram.
-- **STATISTICS.REFRESH_FRACTION**: The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again.
+- **STATISTICS.REFRESH_FRACTION**: The share of the table's rows changed, and STATISTICS.REFRESH_ROWS more, after which its statistics are gathered again, once a plan has read them since.
 - **STATISTICS.REFRESH_ROWS**: The changes past STATISTICS.REFRESH_FRACTION of the rows after which the statistics are gathered again.
 - **STATISTICS.SAMPLE**: The most values of each column the statistics sample, a character string by its first 64 characters, a binary string its first 64 octets, a geometry by its envelope.
 - **TRANSACTIONS.HELD_BYTES**: The bytes of a transaction's changes to the table held in memory, to undo them and check others' reads by; past them, changes are written to a spill area, and a committed one's rows kept as each column's least and greatest value.
@@ -145,6 +149,28 @@ its 64 rows would fall in most bins. A condition several columns share,
 and a condition true of a null, read as before. The words take a byte
 for each 8 rows. Groups frozen before the option is changed keep what
 they have; a query gives the same rows either way.
+
+COLUMNSTORE.SKETCH keeps a column sketch of each frozen group's VARCHAR
+columns it names whose values are compressed by a table of symbols, as
+texts of many values each are, such as web addresses or names. The
+group's values of such a column are cut into at most 255 bins of about
+as many rows each, in their order, a value found often among them a bin
+of its own, and each row gets a byte, its bin's code. A comparison with
+a string, BETWEEN, IN, NOT IN or a LIKE prefix of the column then keeps
+or leaves each row by its code alone, and compares with its constants
+only the rows of the one bin a constant falls within, where without the
+sketch it compares every row. A query gives the same rows either way,
+of a column of another collation too, which is judged as before. A
+column of a dictionary's texts, of numbers or of datetimes gets none, as
+it gains nothing. The codes take a byte for each row. Once the option is
+set or changed, groups frozen before are written again in the background,
+as for COLUMNSTORE.ORDER, and it names columns as that option does.
+
+```sql
+CREATE TABLE HITS (K BIGINT, URL VARCHAR(100)) USING columnstore
+  WITH (COLUMNSTORE.SKETCH = 'URL');
+SELECT COUNT(*) FROM HITS WHERE URL LIKE 'http://site7.example/%';
+```
 
 Whatever the option, a query judges first, of each group, the condition
 that keeps fewest of its rows by the least and greatest values of each

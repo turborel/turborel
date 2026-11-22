@@ -19,9 +19,10 @@ use crate::txn::TxId;
 use crate::value::Value;
 
 /// The width of the rows of `plan`, if it is a stream whose batches hold
-/// every column of its rows, in order (`stream::layout`).
+/// every column of its rows, in order (`stream::layout`), of its own
+/// (`stream::untold`).
 pub(in crate::exec) fn whole_width(plan: &Plan, db: &State) -> Option<usize> {
-    stream::layout(plan, db).filter(|(columns, width)| columns.iter().copied().eq(0..*width)).map(|l| l.1)
+    stream::layout(plan, db).filter(|_| stream::untold(plan)).filter(|(columns, width)| columns.iter().copied().eq(0..*width)).map(|l| l.1)
 }
 
 /// Appends the key of `cell` to `out`: the bytes `spill::put_norm` gives of

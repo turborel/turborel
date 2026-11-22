@@ -14,8 +14,10 @@ use std::sync::{Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockW
 
 use crate::error::{Code, SqlError};
 
+mod alone;
 mod signal;
 
+pub(crate) use alone::Alone;
 pub(crate) use signal::Signal;
 
 /// The error for a lock whose holder panicked.
@@ -57,6 +59,18 @@ pub(crate) fn lock_builtin<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Takes for reading a read-write lock of a built-in engine or index that
+/// runs no plug-in code while holding it, as `lock_builtin` does a mutex.
+pub(crate) fn read_builtin<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Takes for writing a read-write lock of a built-in engine or index that
+/// runs no plug-in code while holding it, as `lock_builtin` does a mutex.
+pub(crate) fn write_builtin<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(PoisonError::into_inner)
+}
+
 // Unit tests: a lock poisoned by a panicking thread is reported, not
 // unwrapped (RULES.md R-ERR-1, R-TEST-2 robustness).
 #[cfg(test)]
@@ -96,7 +110,7 @@ mod tests {
 }
 
 /// Stripes of a `Gate`: threads taking it shared rarely share one.
-const GATE_STRIPES: u64 = 16;
+const GATE_STRIPES: u64 = 64;
 
 /// The stripe the next thread to take a gate is given.
 static NEXT_STRIPE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

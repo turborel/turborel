@@ -174,6 +174,40 @@ fn allocation_is_checked_and_freed_pages_are_zeroed() {
     assert_eq!((read(&pager, page).unwrap(), read(&pager, overflow_page).unwrap()), (vec![], vec![]), "reused, read as new");
 }
 
+/// Whether page `id` is refused as not allocated.
+fn unallocated(pager: &Pager, id: u64) -> bool {
+    read(pager, id).is_err_and(|e| e.msg.contains("is not allocated"))
+}
+
+/// Verifies: [DESIGN] RULES.md D591: the pages a read takes as allocated,
+/// checked with no lock, are those the free list holds in use, as pages
+/// are allocated, freed, taken for its record by `sync`, cut from the end,
+/// and found on open.
+#[test]
+fn pages_in_use_are_those_the_free_list_holds() {
+    let scratch = Scratch::new("pages-in-use");
+    let path = scratch.path("p");
+    let pager = create(&path);
+    let first = pager.allocate(300)[0].start.0;
+    let freed: Vec<Extent> = (0..60).map(|n| one(first + 3 * n + 1)).chain([Extent { start: PageId(first + 250), count: 50 }]).collect();
+    pager.free(&freed).unwrap();
+    let is_freed = |id: u64| freed.iter().any(|e| id >= e.start.0 && id < e.start.0 + e.count);
+    for id in first..first + 310 {
+        assert_eq!(unallocated(&pager, id), is_freed(id) || id >= first + 300, "page {id}");
+    }
+    pager.sync(Durability::Data).unwrap();
+    let after_sync: Vec<bool> = (first..first + 310).map(|id| unallocated(&pager, id)).collect();
+    assert!(after_sync[250..].iter().all(|&u| u), "the run at the end cut");
+    let free_now = after_sync.iter().filter(|&&u| u).count() - 60;
+    assert_eq!(u64::try_from(free_now).unwrap(), pager.free_pages(), "trunk pages taken from the free ones");
+    drop(pager);
+    let (pager, _) = open(&path).unwrap();
+    let reopened: Vec<bool> = (first..first + 310).map(|id| unallocated(&pager, id)).collect();
+    assert_eq!(reopened, after_sync, "as the record says");
+    let again = pager.allocate(70);
+    assert!(again.iter().all(|e| (e.start.0..e.start.0 + e.count).all(|id| !unallocated(&pager, id))));
+}
+
 /// Verifies: [DESIGN] RULES.md D30, persistence: the free list is recorded
 /// by `sync` and found on open; what was allocated or freed after the last
 /// `sync` is, after closing without one, as it was at that `sync`, and pages

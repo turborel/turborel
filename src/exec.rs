@@ -35,6 +35,7 @@ mod nearest;
 mod parallel;
 mod partition;
 mod pattern;
+mod point;
 mod program;
 mod project;
 mod ptf;
@@ -52,12 +53,13 @@ mod window;
 mod work;
 
 pub(crate) use batch::storage_counted;
+pub(crate) use point::{PointRead, point_operations};
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Cond, Expr, SortKey, Truth};
 use crate::physical::Plan;
-use crate::storage::Row;
+use crate::storage::{Row, sized_row};
 use crate::system::SystemRead;
 use crate::txn::TxId;
 use crate::value::Value;
@@ -65,7 +67,7 @@ use crate::value::Value;
 pub use batch::HeldLeaf;
 pub(crate) use batch::{batch_layout, transferable};
 pub use db::{Db, Opening, Slots};
-pub use entries::{Entries, row_entries, table_entries};
+pub use entries::{Entries, is_table_access, row_entries, table_entries};
 pub(crate) use eval::{Escape, like_escape};
 pub use eval::{Heard, eval, eval_cond, quantified, warn};
 pub use held::{HeldIter, HeldRows, Holdable};
@@ -80,6 +82,7 @@ pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIt
     sort::sort(keys, rows, db, tx)
 }
 pub(crate) use program::{Ended, Host, rows, run_program};
+pub(crate) use subquery::slot_type;
 pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, NoSubqueries, Runner, Subqueries, SubqueryRows};
 
 /// The rows a plan produces, each read or computed when it is pulled. The
@@ -126,6 +129,8 @@ fn opened(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         Plan::IndexJoin { .. } => join::indexed,
         Plan::MergeJoin(_) => join::merged,
         Plan::RangeJoin(_) => join::ranged,
+        Plan::SemiJoin(_) => join::semi,
+        Plan::MarkJoin(_) => join::mark,
         // [X3.135-1986 §5.22, §5.8]. Grouping must see every row, so it runs when the cursor opens.
         Plan::Aggregate { .. } => grouped,
         // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
@@ -185,6 +190,8 @@ fn joined_plan(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
@@ -264,9 +271,14 @@ fn grouped(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if batched(db) && batch::aggregable(&plan, db) {
         return batch::aggregated(plan, db, tx);
     }
-    let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return failed(broken("an aggregation is not one")) };
+    let Plan::Aggregate { groups, collations, aggs, seeds, input, streamed, .. } = plan else {
+        return failed(broken("an aggregation is not one"));
+    };
     let rows = execute(*input, db, tx);
-    group::grouping(group::Spec { groups, collations, aggs, seeds }, rows, db, tx)
+    let spec = group::Spec { groups, collations, aggs, seeds };
+    // Its rows in the order of its grouping columns, a group at a time
+    // (`group/streamed.rs`, RULES.md D551).
+    if streamed { group::streamed_grouping(spec, rows, db, tx) } else { group::grouping(spec, rows, db, tx) }
 }
 
 /// [X3.135-1986 §8.3 GR3b] The rows of `input`, sorted by `keys`.
@@ -288,8 +300,9 @@ fn distinct_rows(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if let Some(width) = batched(db).then(|| batch::distinct_groupable(&plan, db)).flatten() {
         return grouped(batch::distinct_grouping(plan, width), db, tx);
     }
-    let Plan::Distinct { input, .. } = plan else { return failed(broken("a duplicate elimination is not one")) };
-    distinct::distinct_of(execute(*input, db, tx), db, tx)
+    let Plan::Distinct { input, streamed, .. } = plan else { return failed(broken("a duplicate elimination is not one")) };
+    let rows = execute(*input, db, tx);
+    if streamed { group::streamed_distinct(rows) } else { distinct::distinct_of(rows, db, tx) }
 }
 
 /// [X3.135-1986 §5.21 GR2] keep the rows for which the condition is true,
@@ -324,10 +337,10 @@ fn projected(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if exprs.iter().any(Expr::draws) {
         return Box::new(input.map(move |r| {
             let drawn = Drawn::new(&runner);
-            r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &drawn)).collect())
+            r.and_then(|row| sized_row(exprs.len(), exprs.iter().map(|e| eval(e, &row, &drawn))))
         }));
     }
-    Box::new(input.map(move |r| r.and_then(|row| exprs.iter().map(|e| eval(e, &row, &runner)).collect())))
+    Box::new(input.map(move |r| r.and_then(|row| sized_row(exprs.len(), exprs.iter().map(|e| eval(e, &row, &runner))))))
 }
 
 /// Whether a query reads its tables a batch at a time where it can, as the
@@ -475,12 +488,12 @@ mod tests {
         }
     }
 
-    /// Verifies: [DESIGN] `row_entries` refuses a plan that is not a table
-    /// access with SQLCODE -910.
+    /// Verifies: [DESIGN] RULES.md D775: `row_entries` refuses a plan that
+    /// is not a table access, whose rows hold no row id, with SQLCODE -910.
     #[test]
     fn row_entries_needs_a_table_access() {
         let st = Arc::new(state());
-        let plan = Plan::Distinct { input: Box::new(one_row(vec![])), est: 0.0_f64 };
+        let plan = Plan::Distinct { input: Box::new(one_row(vec![])), est: 0.0_f64, streamed: false };
         assert_eq!(row_entries(plan, &st, NO_TRANSACTION).err().map(|e| e.code), Some(Code::Api));
     }
 
@@ -500,6 +513,7 @@ mod tests {
             detail: String::new(),
             input: Box::new(one_row(row.clone())),
             est: 0.0_f64,
+            streamed: false,
         };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey::ascending(1)];
@@ -530,7 +544,7 @@ mod tests {
         for run in executors {
             assert_eq!(code(run(other(), &st, NO_TRANSACTION)), Some(Code::Api));
         }
-        let distinct = Plan::Distinct { input: Box::new(other()), est: 0.0_f64 };
+        let distinct = Plan::Distinct { input: Box::new(other()), est: 0.0_f64, streamed: false };
         assert_eq!(code(set::values(distinct, &st, NO_TRANSACTION)), Some(Code::Api));
         assert!(!batch::aggregable(&other(), &st) && batch::distinct_groupable(&other(), &st).is_none());
         assert!(matches!(batch::distinct_grouping(other(), 1_usize), Plan::Values { .. }), "not a DISTINCT: left as it is");

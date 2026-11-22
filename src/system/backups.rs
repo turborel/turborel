@@ -19,7 +19,7 @@ use crate::error::Result;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
 use crate::value::datetime::{Moment, utc_of_unix};
-use crate::value::{DataType, Datetime, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Datetime, Decimal, Spelled, Value};
 
 /// \[DESIGN\] The longest location, id, label or name shown, cut there.
 const TEXT_LENGTH: u32 = 1024;
@@ -33,7 +33,7 @@ const INTERRUPTED: &str = "INTERRUPTED";
 fn count_column(name: &str, nullable: bool) -> ColumnDesc {
     ColumnDesc {
         name: name.to_owned(),
-        data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
+        data_type: DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric },
         not_null: !nullable,
         default: None,
         domain: None,

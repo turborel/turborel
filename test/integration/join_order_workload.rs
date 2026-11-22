@@ -41,3 +41,55 @@ fn every_query_agrees_with_the_greedy_order() {
     }
     assert!(found >= 20, "{found} of 100 queries found rows");
 }
+
+/// The rows of `sql` with OPTIMIZER.SEMI_REDUCTION `word`.
+fn reduced(s: &Session, word: &str, sql: &str) -> Vec<String> {
+    exec(s, &format!("SET OPTIMIZER.SEMI_REDUCTION = '{word}'")).unwrap();
+    sorted(s, sql)
+}
+
+/// Verifies: [DESIGN] RULES.md D542: every query of MIN alone gives the
+/// same rows with the joins of relations nothing above reads made semi
+/// joins as with every join made, planned adaptively and greedily; and
+/// most queries' plans show such semi joins.
+#[test]
+fn every_query_agrees_reduced_to_semi_joins() {
+    let db = imdb::load(TITLES);
+    let s = db.session("IMDB");
+    let mut reduced_some = 0;
+    for (name, sql) in imdb::queries() {
+        for word in ["ADAPTIVE", "GREEDY"] {
+            exec(&s, &format!("SET PLANNER.JOIN_ENUMERATION = '{word}'")).unwrap();
+            let on = reduced(&s, "ON", sql);
+            assert_eq!(reduced(&s, "OFF", sql), on, "{name} {word}");
+        }
+        exec(&s, "SET OPTIMIZER.SEMI_REDUCTION = 'ON'").unwrap();
+        let plan = s.physical_plan(sql, &turborel::params::Params::new()).unwrap();
+        exec(&s, "SET OPTIMIZER.SEMI_REDUCTION = 'OFF'").unwrap();
+        let unreduced = s.physical_plan(sql, &turborel::params::Params::new()).unwrap();
+        assert!(!unreduced.contains("Semi"), "{name}: {unreduced}");
+        reduced_some += usize::from(plan.contains("Semi"));
+    }
+    assert!(reduced_some >= 50, "{reduced_some} of 100 queries reduced");
+}
+
+/// Verifies: [DESIGN] RULES.md D542: the reduction leaves COUNT, SUM, a
+/// set function of DISTINCT and a join whose relations a selected column
+/// reads, and makes semi joins of the joins of relations a MIN does not
+/// read.
+#[test]
+fn only_duplicate_blind_set_functions_are_reduced() {
+    let db = imdb::load(TITLES);
+    let s = db.session("IMDB");
+    let applied = |sql: &str| s.physical_plan(sql, &turborel::params::Params::new()).unwrap().contains("Semi");
+    let from = "FROM title AS t, movie_keyword AS mk, keyword AS k WHERE mk.movie_id = t.id AND mk.keyword_id = k.id";
+    assert!(applied(&format!("SELECT MIN(t.title) {from}")));
+    assert!(applied(&format!("SELECT MIN(t.production_year), MAX(t.title) {from}")));
+    assert!(!applied(&format!("SELECT COUNT(DISTINCT t.id), MAX(t.title) {from}")));
+    assert!(!applied(&format!("SELECT COUNT(*) {from}")));
+    assert!(!applied(&format!("SELECT SUM(t.production_year) {from}")));
+    assert!(!applied(&format!("SELECT MIN(t.title), MIN(k.keyword), MIN(mk.id) {from}")));
+    for sql in [format!("SELECT MIN(t.title) {from}"), format!("SELECT COUNT(DISTINCT k.keyword) {from}")] {
+        assert_eq!(reduced(&s, "ON", &sql), reduced(&s, "OFF", &sql), "{sql}");
+    }
+}

@@ -33,6 +33,8 @@ mod connections;
 mod gather;
 mod held;
 mod inherited;
+mod inserted;
+pub(in crate::db) use inserted::RowsChecked;
 mod keys;
 mod modes;
 mod references;
@@ -506,6 +508,19 @@ impl State {
             *read = Some((table.clone(), id, self.storage_of(table)?.get(tx.id, id)?));
         }
         let Some((_, _, Some(row))) = read.as_ref() else { return Ok(()) };
+        self.check_row_values(tx, (desc, c), row, bound)
+    }
+
+    /// `row`, a row of `desc` as it is now, satisfies its constraint `c`,
+    /// as `check_row` says.
+    fn check_row_values(
+        &self,
+        tx: &Txn,
+        (desc, c): (&TableDesc, &ConstraintDesc),
+        row: &Row,
+        bound: &mut HashMap<QualifiedName, Cond>,
+    ) -> Result<()> {
+        let table = &desc.name;
         match &c.kind {
             ConstraintKind::NotNull(at) => {
                 if row.get(*at).is_some_and(Value::is_null) {

@@ -105,6 +105,12 @@ impl<T> Levels<T> {
         self.levels.contains(&Level::Trigger)
     }
 
+    /// Whether a function or a triggered action is executing, within a
+    /// statement that is still running: a level of one is established.
+    pub(in crate::db) fn in_statement(&self) -> bool {
+        self.levels.iter().any(|l| matches!(l, Level::Function | Level::Trigger))
+    }
+
     /// How many atomic execution contexts establish levels.
     fn atomic(&self) -> usize {
         self.levels.iter().filter(|l| l.atomic()).count()

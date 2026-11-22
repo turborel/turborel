@@ -208,13 +208,13 @@ impl BLinkTree {
     fn unlink_under(&self, leaf: PageId, parent: PageId) -> Result<()> {
         let Some((left, _, _)) = self.around(parent, leaf)? else { return Ok(()) };
         // Bottom to top, left to right, as every writer locks.
-        let (_left_lock, _leaf_lock, _parent_lock) = (self.locks.lock(left)?, self.locks.lock(leaf)?, self.locks.lock(parent)?);
+        let (_left_lock, _leaf_lock, _parent_lock) = (self.lock(left)?, self.lock(leaf)?, self.lock(parent)?);
         let Some((still_left, at, right)) = self.around(parent, leaf)? else { return Ok(()) };
         if still_left != left || !self.linked((left, leaf, right))? {
             return Ok(());
         }
         node::set_right(&mut self.pool.write(self.file, left)?, right)?;
-        *self.pool.write(self.file, leaf)? = node::deleted(right)?;
+        *self.pool.write(self.file, leaf)? = node::deleted(right, self.meta.0)?;
         {
             let mut page = self.pool.write(self.file, parent)?;
             node::set_child(&mut page, at, right)?;

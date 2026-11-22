@@ -37,10 +37,43 @@ pub(crate) fn eventually(mut done: impl FnMut() -> bool) -> bool {
     done()
 }
 
-/// Ports the system has free now, one for each member.
+/// The first port `ports` gives, below the range the system gives a
+/// listener of port 0 from on the three platforms, so no other test's
+/// server takes a member's port between its choosing and its node's start.
+const FIRST_PORT: u16 = 20_000;
+
+/// The ports `ports` gives a process from, apart from another test
+/// process's, as the process number spreads them.
+const PORTS_EACH: u16 = 12_000;
+
+/// The port `ports` tries next, in this process.
+static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+/// The ports `ports` gave and no node listens on yet, each held by a
+/// listener of the test's until its node starts (`start`).
+static HELD: std::sync::Mutex<Vec<TcpListener>> = std::sync::Mutex::new(Vec::new());
+
+/// Ports free now, one for each member: tried in turn from a place of
+/// this process's below the system's own range, each never given twice in
+/// the process, and held until its node starts, so no other test, nor
+/// another test process, takes a member's port before its node listens.
 pub(crate) fn ports(count: usize) -> Vec<u16> {
-    let held: Vec<TcpListener> = (0..count).map(|_| TcpListener::bind("127.0.0.1:0").unwrap()).collect();
-    held.iter().map(|l| l.local_addr().unwrap().port()).collect()
+    let spread = u16::try_from(std::process::id() % 97).unwrap() * 120;
+    let mut found = Vec::new();
+    while found.len() < count {
+        let n = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let port = FIRST_PORT + spread.wrapping_add(n) % PORTS_EACH;
+        if let Ok(held) = TcpListener::bind(("127.0.0.1", port)) {
+            HELD.lock().unwrap().push(held);
+            found.push(port);
+        }
+    }
+    found
+}
+
+/// Lets go of `port`, held since `ports` gave it, for its node to listen.
+fn release(port: u16) {
+    HELD.lock().unwrap().retain(|l| l.local_addr().is_ok_and(|a| a.port() != port));
 }
 
 /// A node of a group, started.
@@ -84,6 +117,7 @@ pub(crate) fn start(
     let prepared = replication::prepare(&db, &dir, new_group).unwrap().unwrap();
     let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
     let holds = db.open_following(&fs, &dir, &OpenOptions::default()).unwrap();
+    release(ports[usize::try_from(me).unwrap() - 1]);
     let node = prepared.start(&db, runtime.handle(), holds).unwrap();
     Node { db, replica: node, kept }
 }
@@ -253,10 +287,11 @@ fn a_member_of_another_authority_is_refused() {
 /// REPLICATION MEMBERS, to four: the statement returns once the group
 /// commits it, told `epoch_entered`; a fourth node started with settings
 /// naming the four joins by recovery, holds every row, and REPLICAS on
-/// every node shows the four members in epoch 1; reconfigured to three
-/// again without the second node, that node is told `removed`, its
-/// database serving nothing (SQLCODE -917, a read too), REPLICAS shows
-/// epoch 2 and three members, and a row committed after reaches the
+/// every node shows the four members at one epoch, 1 or later as an
+/// election under load may raise it; reconfigured to three again without
+/// the second node, that node is told `removed`, its database serving
+/// nothing (SQLCODE -917, a read too), REPLICAS shows three members at
+/// one epoch past that, and a row committed after reaches the
 /// fourth node; a member list malformed is refused (-103), and a backup
 /// refuses the statement (-917).
 #[test]
@@ -270,28 +305,32 @@ fn nodes_are_added_and_removed_by_reconfiguration() {
     let first = primary(&nodes, "X");
     first.db.create_user("OWNER", b"x").unwrap();
     first.db.set_owner("OWNER").unwrap();
-    first.db.schema("CREATE SCHEMA AUTHORIZATION Y CREATE TABLE T (K INTEGER NOT NULL UNIQUE)").unwrap();
-    let s = first.db.session("Y");
-    s.run("INSERT INTO T VALUES (1), (2)").unwrap();
-    s.commit().unwrap();
-    drop(s);
-    let owner = first.db.session("OWNER");
-    assert_eq!(owner.run("ALTER DATABASE REPLICATION MEMBERS '1=localhost'").err().map(|e| e.code), Some(Code::SyntaxRule), "malformed");
-    let backup = nodes.iter().position(|n| !n.serves()).unwrap();
-    let refused = nodes[backup].db.session("OWNER").run(&format!("ALTER DATABASE REPLICATION MEMBERS '{}'", members(&[0, 1, 2, 3])));
-    assert_eq!(refused.err().map(|e| e.code), Some(Code::TransactionState), "a backup takes no change");
-    owner.run(&format!("ALTER DATABASE REPLICATION MEMBERS '{}'", members(&[0, 1, 2, 3]))).unwrap();
-    assert!(eventually(|| first.kept.all().iter().any(|e| e.contains("EpochEntered { epoch: 1"))), "{:?}", first.kept.all());
-    drop(owner);
+    // Under load a backup may miss its primary's heartbeats and another
+    // node serve, so each change goes to whichever node serves as it is
+    // made.
+    on_primary(&nodes, |db| {
+        db.schema("CREATE SCHEMA AUTHORIZATION Y CREATE TABLE T (K INTEGER NOT NULL UNIQUE)").map(drop).map_err(|e| e.code)
+    });
+    on_primary(&nodes, |db| {
+        let s = db.session("Y");
+        s.run("INSERT INTO T VALUES (1), (2)").map_err(|e| e.code)?;
+        s.commit().map_err(|e| e.code)
+    });
+    let malformed = first.db.session("OWNER").run("ALTER DATABASE REPLICATION MEMBERS '1=localhost'");
+    assert_eq!(malformed.err().map(|e| e.code), Some(Code::SyntaxRule), "malformed");
+    let grown = format!("ALTER DATABASE REPLICATION MEMBERS '{}'", members(&[0, 1, 2, 3]));
+    let changed = on_primary(&nodes, |db| db.session("OWNER").run(&grown).map(drop).map_err(|e| e.code));
+    assert!(eventually(|| changed.kept.all().iter().any(|e| e.contains("EpochEntered { epoch: 1"))), "{:?}", changed.kept.all());
     let fourth = start(&scratch, (4, &ports), None, &runtime, false);
     assert!(eventually(|| fourth.rows("SELECT K FROM T ORDER BY K") == Ok(vec!["1".into(), "2".into()])), "{:?}", fourth.kept.all());
     nodes.push(fourth);
     let shown = "SELECT MEMBER, EPOCH FROM INFORMATION_SCHEMA.REPLICAS ORDER BY MEMBER";
-    let four: Vec<String> = (1..=4).map(|m| format!("{m},1")).collect();
+    // An election while the fourth joins may raise the epoch past 1, so
+    // each node is asked for the four members at one epoch of 1 or more.
     for node in &nodes {
         let why = || node.db.session("OWNER").open_cursor(shown).err().map(|e| e.to_string());
         assert!(
-            eventually(|| rows(&node.db.session("OWNER"), shown) == Ok(four.clone())),
+            eventually(|| rows(&node.db.session("OWNER"), shown).is_ok_and(|r| at_one_epoch(&r, &["1", "2", "3", "4"], 1))),
             "{:?} {:?}",
             rows(&node.db.session("OWNER"), shown),
             why()
@@ -317,7 +356,7 @@ fn nodes_are_added_and_removed_by_reconfiguration() {
     // each node is asked for members 1, 3 and 4 at one epoch of 2 or more.
     for node in nodes.iter().filter(|n| n.replica.transport().me() != ReplicaId(2)) {
         let seen = || rows(&node.db.session("OWNER"), shown);
-        assert!(eventually(|| seen().is_ok_and(|r| three_at_one_epoch(&r))), "{:?}", seen());
+        assert!(eventually(|| seen().is_ok_and(|r| at_one_epoch(&r, &["1", "3", "4"], 2))), "{:?}", seen());
     }
     on_primary(&nodes, |db| {
         let s = db.session("Y");
@@ -330,16 +369,22 @@ fn nodes_are_added_and_removed_by_reconfiguration() {
         "{:?}",
         fourth.kept.all()
     );
+    // A backup refuses a change. A node found not serving may serve by the
+    // time it runs the change, which then takes the members it has: so
+    // nodes not serving are asked until one refuses.
+    let backups = nodes.iter().filter(|n| n.replica.transport().me() != ReplicaId(2));
+    let refusing = |n: &Node| !n.serves() && n.db.session("OWNER").run(&change).err().map(|e| e.code) == Some(Code::TransactionState);
+    assert!(eventually(|| backups.clone().any(refusing)), "a backup takes no change");
     for node in nodes {
         node.stop();
     }
 }
 
-/// Whether the rows of REPLICAS name members 1, 3 and 4 alone, all at one
-/// epoch of 2 or more.
-fn three_at_one_epoch(rows: &[String]) -> bool {
+/// Whether the rows of REPLICAS name `named` alone, all at one epoch of
+/// `least` or more.
+fn at_one_epoch(rows: &[String], named: &[&str], least: u64) -> bool {
     let parts: Vec<(&str, u64)> = rows.iter().filter_map(|r| r.split_once(',')).map(|(m, e)| (m, e.parse().unwrap_or(0))).collect();
     let members: Vec<&str> = parts.iter().map(|p| p.0).collect();
     let epoch = parts.first().map_or(0, |p| p.1);
-    members == ["1", "3", "4"] && epoch >= 2 && parts.iter().all(|p| p.1 == epoch)
+    members == named && epoch >= least && parts.iter().all(|p| p.1 == epoch)
 }

@@ -29,6 +29,7 @@ mod outer;
 pub(crate) mod plugged;
 pub(crate) mod prepared;
 mod raising;
+mod reduced;
 mod setops;
 mod transitivity;
 pub(crate) mod unnesting;
@@ -39,10 +40,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::db::State;
-use crate::logical::{Cond, Expr, LogicalPlan, Truth, and_all, cond_columns, map_cond_columns, split_and};
+use crate::logical::{
+    Cond, Expr, LogicalPlan, Truth, and_all, cond_can_raise_typed, cond_columns, map_cond_columns, plan_column_type, split_and,
+};
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
-pub use unnesting::{UNNEST_SUBQUERIES, UnnestSubqueries};
+pub use unnesting::{MARK_JOINS, MarkJoins, SEMI_JOINS, SemiJoins, UNNEST_SUBQUERIES, UnnestSubqueries};
 
 /// The names of the built-in rules, as EXPLAIN shows them and their
 /// settings name them (`switch_name`).
@@ -68,6 +71,7 @@ pub use limits::{PUSH_LIMIT_THROUGH_UNION, PushLimitThroughUnion};
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
 pub(crate) use raising::is_guarded;
 pub use raising::{PUSH_RAISING_FILTER_INTO_PRODUCT, PushRaisingFilterIntoProduct};
+pub use reduced::{SEMI_REDUCTION, SemiReduction};
 pub use setops::{PUSH_FILTER_THROUGH_SET_OPERATION, PushFilterThroughSetOperation};
 pub use transitivity::{PREDICATE_TRANSITIVITY, PredicateTransitivity};
 pub(crate) use views::substitute;
@@ -161,6 +165,10 @@ impl Optimizer {
         let mut o = Optimizer::empty();
         // Before the others, which then move the conditions they make.
         o.add(Box::new(InlineFunctions));
+        // Before unnesting, which would make the same subquery a join.
+        o.add(Box::new(SemiJoins));
+        // After semi joins, which take the conjuncts, before unnesting.
+        o.add(Box::new(MarkJoins));
         o.add(Box::new(UnnestSubqueries));
         o.add(Box::new(ConstantFolding));
         o.add(Box::new(SimplifyConditions));
@@ -180,6 +188,8 @@ impl Optimizer {
         o.add(Box::new(PushFilterThroughWindow));
         o.add(Box::new(PushLimitThroughUnion));
         o.add(Box::new(EliminateJoins));
+        // After the joins that cannot change the rows are gone.
+        o.add(Box::new(SemiReduction));
         o.add(Box::new(PushHavingIntoWhere));
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
@@ -394,13 +404,16 @@ impl Rule for PushFilterIntoProduct {
     fn name(&self) -> &'static str {
         PUSH_FILTER_INTO_PRODUCT
     }
-    fn apply(&self, plan: &LogicalPlan, _ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
+    fn apply(&self, plan: &LogicalPlan, ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
         let LogicalPlan::Filter { cond, input } = plan else { return None };
         let LogicalPlan::Product { left, right } = &**input else { return None };
         // RULES.md D15: after the push each conjunct sees different rows (one
         // side's rows even when the other side is empty; fewer product rows for
         // the conjuncts kept above), so a condition that can raise stays whole.
-        if cond.can_raise() {
+        // It is judged by its columns' declared types, as a bound
+        // `D_NEXT_O_ID - 20` of an INTEGER column raises nothing (D776).
+        let catalog = &*ctx.db.catalog;
+        if cond.can_raise() && cond_can_raise_typed(cond, &|c| plan_column_type(input, c, catalog)) {
             return None;
         }
         let lw = left.width();
@@ -493,6 +506,8 @@ fn base_table(plan: &LogicalPlan) -> Option<&LogicalPlan> {
         LogicalPlan::Filter { input, .. } => base_table(input),
         LogicalPlan::Product { .. }
         | LogicalPlan::OuterJoin { .. }
+        | LogicalPlan::SemiJoin { .. }
+        | LogicalPlan::MarkJoin(_)
         | LogicalPlan::Aggregate { .. }
         | LogicalPlan::Project { .. }
         | LogicalPlan::Distinct { .. }

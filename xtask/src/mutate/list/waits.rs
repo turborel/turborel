@@ -1,19 +1,21 @@
 //! The mutations of a row's second writer waiting (RULES.md R-TEST-9, D28,
 //! D29): the wait, the deadlock refusal, the re-check of the version the
-//! first committed, and the served default; and of signals (D27), a waiter
-//! counted and a notify made while one waits.
+//! first committed, and the served default; a procedure's statement
+//! reading at a snapshot of its own (D454); a row's waiters handed to its
+//! next writer (D743); and of signals (D27), a waiter counted and a notify
+//! made while one waits.
 
 use super::{Mutation, Package};
 
 /// The mutations of row waits and signals, in the order they run.
-pub const WAITS: [Mutation; 9] = [
+pub const WAITS: [Mutation; 17] = [
     Mutation {
         name: "row-wait-skipped",
         package: Package::Core,
         breaks: "a row's second writer is refused at once instead of waiting for the first",
         file: "src/txn/write.rs",
-        original: "                turn = tx.wait_for_row(&format_args!(\"a row of {table}\"), writer)?;",
-        replacement: "                return Err(e);",
+        original: "                    *turn = tx.wait_for_row((table, id), writer)?;",
+        replacement: "                    return Ok(Next::Again);",
         integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
         unit: &[],
     },
@@ -22,9 +24,29 @@ pub const WAITS: [Mutation; 9] = [
         package: Package::Core,
         breaks: "a waiting writer changes a row its search condition no longer holds of",
         file: "src/db/write.rs",
-        original: "        Ok(truth == Truth::True)",
-        replacement: "        Ok(truth == Truth::True || true)",
+        original: "        Ok(eval_cond(cond, row, runner)? == Truth::True)",
+        replacement: "        Ok(eval_cond(cond, row, runner)? == Truth::True || true)",
         integration: &["row_waits::a_waiting_writer_skips_a_row_no_longer_matching_4_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "row-not-read-after-wait",
+        package: Package::Core,
+        breaks: "a READ COMMITTED waiter writes at its old snapshot after each wait, and is refused once enough writers pass it",
+        file: "src/txn/write.rs",
+        original: "writer)?;\n                }\n                next @",
+        replacement: "writer)?;\n                    return Ok(Next::Again);\n                }\n                next @",
+        integration: &["read_committed_waits::many_writers_of_one_row_lose_nothing_and_are_never_refused_4_28"],
+        unit: &[],
+    },
+    Mutation {
+        name: "procedure-snapshot-kept",
+        package: Package::Core,
+        breaks: "a procedure's statement after a row wait reads at the CALL's snapshot, missing what was committed meanwhile",
+        file: "src/db/routines/program/host.rs",
+        original: "        tx.renew_snapshot(|| !self.session.cursors_open())",
+        replacement: "        tx.renew_snapshot(|| false)",
+        integration: &["read_committed_waits::a_procedure_statement_after_a_wait_reads_what_was_committed_4_28"],
         unit: &[],
     },
     Mutation {
@@ -32,8 +54,8 @@ pub const WAITS: [Mutation; 9] = [
         package: Package::Core,
         breaks: "REPEATABLE READ writes a version committed after its snapshot",
         file: "src/txn/write.rs",
-        original: "            let Some(check) = recheck.as_mut().filter(|_| !tx.one_snapshot()) else { return Err(e) };",
-        replacement: "            let Some(check) = recheck.as_mut() else { return Err(e) };",
+        original: "            let check = recheck.as_mut().filter(|_| !tx.one_snapshot());",
+        replacement: "            let check = recheck.as_mut();",
         integration: &["row_waits::one_snapshot_waits_then_is_refused_if_the_first_commits_4_28"],
         unit: &[],
     },
@@ -96,5 +118,65 @@ pub const WAITS: [Mutation; 9] = [
         replacement: "        if self.waiting.load(Ordering::SeqCst) == 0 {\n            self.condvar.notify_all();",
         integration: &[],
         unit: &["sync::signal::tests::a_notify_wakes_each_thread_counted_waiting"],
+    },
+    Mutation {
+        name: "row-handover-moves-none",
+        package: Package::Core,
+        breaks: "a row's waiters stay on the ended writer's end, each waking to find the next writer (D743)",
+        file: "src/txn/row_waits.rs",
+        original: "|seat: &Seat| seat.row.1 == id && ",
+        replacement: "|seat: &Seat| false && seat.row.1 == id && ",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
+    },
+    Mutation {
+        name: "row-handover-moves-other-rows",
+        package: Package::Core,
+        breaks: "a hand-over moves the waiters for other rows of the ended writer too (D743)",
+        file: "src/txn/row_waits.rs",
+        original: "|seat: &Seat| seat.row.1 == id && seat.row.0 == *table && ",
+        replacement: "|seat: &Seat| seat.row.0 == *table && ",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
+    },
+    Mutation {
+        name: "row-handover-moves-other-tables",
+        package: Package::Core,
+        breaks: "a hand-over moves the waiters for the same row id of another table (D743)",
+        file: "src/txn/row_waits.rs",
+        original: "seat.row.1 == id && seat.row.0 == *table && ",
+        replacement: "seat.row.1 == id && ",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_seat_moves_only_for_the_same_row_free_of_deadlock"],
+    },
+    Mutation {
+        name: "row-handover-moves-into-deadlock",
+        package: Package::Core,
+        breaks: "a hand-over moves a waiter the next writer already waits for, a deadlock (D743)",
+        file: "src/txn/row_waits.rs",
+        original: " && !super::locks::would_deadlock(&waits_for, seat.waiter, &[tx.id]);",
+        replacement: ";",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_seat_moves_only_for_the_same_row_free_of_deadlock"],
+    },
+    Mutation {
+        name: "row-handover-out-of-order",
+        package: Package::Core,
+        breaks: "a hand-over seats the moved waiters out of their order (D743)",
+        file: "src/txn/row_waits.rs",
+        original: "        moving.sort_unstable_by_key(|&(t, _)| t);\n",
+        replacement: "",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
+    },
+    Mutation {
+        name: "own-write-validated",
+        package: Package::Core,
+        breaks: "a READ COMMITTED update of a checked column, made after a wait, is refused as it commits",
+        file: "src/engine/rows/mvcc/commit.rs",
+        original: ".filter(|(id, _)| v.writes.contains(id) && !own.contains(id));",
+        replacement: ".filter(|(id, _)| v.writes.contains(id) && own.len() < usize::MAX);",
+        integration: &["read_committed_waits::a_checked_column_written_after_a_wait_commits_4_28"],
+        unit: &[],
     },
 ];

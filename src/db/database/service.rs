@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 use super::super::standby::Opening;
 use super::{Database, State};
 use crate::error::{Code, Result, SqlError};
-use crate::sync::{lock, write};
+use crate::sync::lock;
 
 impl Database {
     /// The service it is in: 0 until it is first opened again in place.
@@ -46,12 +46,12 @@ impl Database {
     /// it was first opened from its files: its files given up, its
     /// transactions in doubt let go, as recovery from its files decides
     /// them, and the sessions of earlier services refused from now on.
-    pub(in crate::db) fn restart_service(&self, state: State) -> Result<()> {
+    pub(in crate::db) fn restart_service(&self, mut state: State) -> Result<()> {
+        state.published();
         let _turn = self.take_turn()?;
         *lock(&self.0.files)? = None;
         lock(&self.0.in_doubt)?.clear();
         self.0.service.fetch_add(1, Ordering::AcqRel);
-        *write(&self.0.current)? = Arc::new(state);
-        Ok(())
+        self.publish(state)
     }
 }

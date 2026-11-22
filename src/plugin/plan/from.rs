@@ -79,7 +79,7 @@ fn kept_op(plan: &LogicalPlan) -> Op {
     match plan {
         LogicalPlan::Scan { .. } => Op::Scan,
         LogicalPlan::Filter { .. } => Op::Filter,
-        LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } => Op::Join,
+        LogicalPlan::Product { .. } | LogicalPlan::OuterJoin { .. } | LogicalPlan::SemiJoin { .. } | LogicalPlan::MarkJoin(_) => Op::Join,
         LogicalPlan::Aggregate { .. } => Op::Aggregate,
         LogicalPlan::Project { .. } => Op::Project,
         LogicalPlan::Distinct { .. } => Op::Distinct,
@@ -164,6 +164,10 @@ impl Making<'_> {
                 };
                 (Op::Join, Body::Join { kind, condition: Some(self.cond(cond, depth)?) })
             }
+            LogicalPlan::SemiJoin { anti, cond, .. } => {
+                let kind = if *anti { JoinKind::Anti } else { JoinKind::Semi };
+                (Op::Join, Body::Join { kind, condition: Some(self.cond(cond, depth)?) })
+            }
             LogicalPlan::Sort { keys, .. } => {
                 let keys = keys.iter().map(|k| Key { column: column(k.column), descending: k.descending, nulls_first: k.nulls_first });
                 (Op::Sort, Body::Sort(keys.collect()))
@@ -173,7 +177,10 @@ impl Making<'_> {
             LogicalPlan::Values { rows, .. } => {
                 (Op::Values, Body::Values(rows.iter().map(|row| self.exprs(row, depth)).collect::<Result<_>>()?))
             }
+            // A mark's three values are no join kind of the form: the node is
+            // kept (RULES.md D641).
             LogicalPlan::Scan { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::SetOp { .. }
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::System { .. }

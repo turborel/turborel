@@ -38,8 +38,8 @@ pub(crate) use any_value::GroupValue;
 mod arrays;
 pub mod builtin;
 pub use arrays::{
-    ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,
-    TRIM_ARRAY, TrimArrayOf,
+    ARRAY, ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf,
+    ElementOf, TRIM_ARRAY, TrimArrayOf,
 };
 mod context;
 mod count;
@@ -67,8 +67,8 @@ mod listagg;
 mod multisets;
 mod numeric;
 pub use multisets::{
-    COLLECT, ELEMENT, ElementOfMultiset, FUSION, Gathering, INTERSECTION, IsASet, MEMBER, MemberOf, MultisetAggregate, MultisetCombination,
-    MultisetOf, SUBMULTISET, SetOf, SubmultisetOf,
+    COLLECT, ELEMENT, ElementOfMultiset, FUSION, Gathering, INTERSECTION, IsASet, MEMBER, MULTISET, MemberOf, MultisetAggregate,
+    MultisetCombination, MultisetOf, SUBMULTISET, SetOf, SubmultisetOf,
 };
 pub use numeric::{
     ABS, ACOS, ASIN, ATAN, CEIL, CEILING, COS, COSH, EXP, FLOOR, LN, LOG, LOG10, MOD, Numeric, POWER, SIN, SINH, SQRT, TAN, TANH, Trig,
@@ -396,7 +396,7 @@ pub trait ScalarFunction: Send + Sync {
     /// [ISO/IEC 9075-2:2023 §8.20] The operator of a `<period predicate>`
     /// of two periods each named by a `<period reference>`, or of one and a
     /// point in time, whose call is false of a null bound and raises
-    /// nothing [GR4], so a join may judge it as the comparisons it is
+    /// nothing \[GR4\], so a join may judge it as the comparisons it is
     /// made of (`physical/range/periods.rs`, RULES.md D581). None, by
     /// default.
     fn period_operator(&self) -> Option<crate::ast::PeriodOperator> {

@@ -5,17 +5,22 @@
 //! predicate is applied to [X3.135-1986 §5.21 GR3, §5.23 GR4]. \[DESIGN\]
 //! Its result depends only on the values of its outer references, so the
 //! `Runner` keeps the rows it gave for each, and runs it once for each
-//! distinct set of values: once in all, for a subquery with none. Each run
+//! distinct set of values: once in all, for a subquery with none. A run
 //! binds the values into the subquery's plan (`Subquery::bound`), so they
 //! are constants, and optimizes and plans it as any query: a correlated
-//! comparison becomes one an index can answer.
+//! comparison becomes one an index can answer. Its plan made with its outer
+//! references as slots is kept once its runs show the values choose no
+//! other, and each later run fills it instead (`subquery/planned.rs`,
+//! RULES.md D675).
 //!
 //! A subquery run EXECUTOR.DECORRELATE_AFTER_RUNS times, for as many sets of values,
 //! is run once more instead without its equalities with outer references,
 //! if it can be (`Subquery::decorrelated`): its rows are kept by those
 //! columns' values (`value::bucket`), and the rows for any outer values
 //! are those whose columns equal them [X3.135-1986 §5.11]. Until then, a
-//! run per set of values, an index probe if it has one, costs less.
+//! run per set of values, an index probe if it has one, costs less. One
+//! whose run is a probe of a unique key waits until its probes cost what
+//! its build would (`subquery/probed.rs`, RULES.md D790).
 //!
 //! \[DESIGN\] RULES.md D38: a subquery's rows outgrowing the work area are
 //! spilled to a run (`exec/join/rescan.rs`), and a decorrelated subquery's
@@ -26,9 +31,12 @@
 //! subquery's with no outer references always, as it is its only run.
 
 mod drawn;
+mod planned;
+mod probed;
 mod quantified;
 
 pub use drawn::Drawn;
+pub(crate) use planned::slot_type;
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::cmp::Ordering;
@@ -136,6 +144,20 @@ pub trait Subqueries {
     /// [ISO/IEC 9075:1992 §3.3.4.1] What hears the warnings the conditions
     /// raise, the statement's, if any does (`error::Warnings`).
     fn warnings(&self) -> Option<&Warnings> {
+        None
+    }
+
+    /// The value of the slot `index` of the kept plan its statement runs
+    /// (`Expr::Dynamic`, RULES.md D610): a runner's, of its `Db`; by
+    /// default none, as a plan with slots is then filled before it runs.
+    fn slot(&self, _index: usize) -> Option<&Value> {
+        None
+    }
+
+    /// The value of the outer reference `index` of the program's leaf it
+    /// evaluates (`Expr::Outer`, RULES.md D610); by default none, as an
+    /// outer reference is then bound to its value before it runs.
+    fn outer(&self, _index: usize) -> Option<&Value> {
         None
     }
 
@@ -275,6 +297,12 @@ enum Decorrelation {
 struct Seen {
     runs: usize,
     decorrelation: Decorrelation,
+    /// Its plan kept across its runs, or how far it is from one (RULES.md
+    /// D675).
+    planned: planned::Planned,
+    /// The rows its decorrelated build would hold, estimated once asked
+    /// (RULES.md D790).
+    built_rows: Option<f64>,
 }
 
 /// \[DESIGN\] Runs subqueries for transaction `tx`, keeping their rows (see
@@ -348,7 +376,11 @@ impl Runner {
         if runs <= self.db.settings.count(crate::settings::DECORRELATE_AFTER_RUNS) {
             return Ok(None);
         }
-        let keyed = match subquery.decorrelated() {
+        let how = subquery.decorrelated();
+        if how.as_ref().is_some_and(|how| self.probes_pay(at, runs, how)) {
+            return Ok(None);
+        }
+        let keyed = match how {
             None => None,
             Some(how) => {
                 // Its key columns follow its own, each equal to an outer slot's value.
@@ -430,12 +462,16 @@ impl Subqueries for Runner {
         }
         let found = match self.keyed(subquery, at)? {
             Some(keyed) => SubqueryRows::of(rows_for(&keyed, outer, (limit, &mut Work::of(&self.db, self.tx)))?, &self.db),
-            None => self.gathered(self.run(subquery.bound(outer)), limit)?,
+            None => self.gathered(self.per_run(subquery, outer), limit)?,
         };
         // Kept while what is kept fits the work area; past that, run again
         // for each set of outer values.
         self.keep(key, outer, &found);
         Ok(found)
+    }
+
+    fn slot(&self, index: usize) -> Option<&Value> {
+        self.db.slots().and_then(|slots| slots.get(index))
     }
 
     fn warnings(&self) -> Option<&Warnings> {

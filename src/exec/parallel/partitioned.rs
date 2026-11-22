@@ -42,13 +42,22 @@ type Parts = Vec<HeldRows<Row>>;
 
 /// [ISO/IEC 9075-2:2023 §7.15] The rows of the window `plan`, over a sort
 /// of a stream by its partitioning, each partition's window functions run
-/// on a thread of up to `degree`.
+/// on a thread of up to `degree`. Where the window runs over batches
+/// (RULES.md D560), its whole partitions are computed on the threads by
+/// it instead, its rows never split one by one.
 ///
 /// # Errors
 ///
 /// As reading the stream fails.
 pub(super) fn windowed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
     let Plan::Window { window, detail, .. } = plan else { return Err(broken("not a window run in parallel")) };
+    if crate::exec::batched(db) && crate::exec::window::admits_batches(window) && crate::exec::batch::reads_by_batch(&window.input, db) {
+        let batches = crate::exec::window::window_batches_on(plan.clone(), (db, tx), degree)?;
+        return Ok(Held::Kept(Box::new(batches.flat_map(|kept| match kept {
+            Ok((batch, _)) => crate::exec::sort::rows_of_batches(&[batch]).into_iter().map(Ok).collect::<Vec<_>>(),
+            Err(e) => vec![Err(e)],
+        }))));
+    }
     let Plan::Sort { keys, input, .. } = &window.input else { return Err(broken("a window run in parallel reads no sort")) };
     let columns = window.partition.clone();
     let key = move |row: &Row| columns.iter().map(|&c| row.get(c).cloned()).collect();
@@ -122,13 +131,13 @@ fn split(
 ) -> Result<Held<(Parts, Option<usize>)>> {
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, db_for) = (Arc::new(pipeline), db.clone());
-    let count = pipeline.count();
+    let (count, seed) = (pipeline.count(), db.functions.seed().clone());
     let work = Box::new(move |m: usize| {
         let mut parts: Vec<Vec<Row>> = (0..PARTS).map(|_| Vec::new()).collect();
         let mut width = None;
         let base = i128::try_from(m).unwrap_or(i128::MAX).checked_shl(PLACE_BITS).unwrap_or(i128::MAX);
         for (place, mut row) in (0_i128..).zip(pipeline.morsel(m, &Runner::new(&db_for, tx))?) {
-            let p = key(&row).map_or(0, |k| part_of(&norm_row(&k)));
+            let p = key(&row).map_or(0, |k| part_of(&norm_row(&k), &seed));
             width = width.or(Some(row.len()));
             if numbered {
                 row.push(Value::Exact(Decimal::new(base.saturating_add(place), 0)));

@@ -4,8 +4,12 @@
 //!
 //! * INFORMATION_SCHEMA.CONNECTIONS: each connection served, by its
 //!   number: its user once authenticated, where it came from, whether it
-//!   is secure, whether it is logging in, idle or running a statement, and
-//!   the application its client named.
+//!   is secure, whether it is logging in, idle or running a statement, the
+//!   application its client named, and what its session does now: the
+//!   statement it runs and when it began, when its transaction began, and
+//!   what it waits on (`shown/activity.rs`, RULES.md D520).
+//!   The database's owner, and a user granted the role MONITOR the owner
+//!   created, see every connection; any other user their own.
 //! * INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES: the attributes each
 //!   connection's client gave in Hello (`shown/attributes.rs`, RULES.md
 //!   D191).
@@ -21,11 +25,12 @@
 //! is cancelled, as a client's cancel does (RULES.md D44), and it is closed
 //! once that has stopped, its session rolled back.
 
+mod activity;
 mod attributes;
 mod requests;
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::watch;
@@ -36,13 +41,25 @@ use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
 use turborel::txn::Stop;
-use turborel::value::{CharUnits, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use turborel::value::{BIGINT_PRECISION, CharUnits, DataType, Decimal, Spelled, Value};
 
 use crate::auth::Peer;
 
 pub(crate) use attributes::ConnectionAttributes;
 use attributes::application;
 pub(crate) use requests::{QueryAttribute, Requests, trace};
+
+/// The states of a connection, as CONNECTIONS names them: logging in,
+/// idle, running a statement; kept as their places here.
+const STATES: [&str; 3] = ["LOGIN", "IDLE", "RUNNING"];
+/// Of `STATES`, the place of idle and of running.
+const IDLE: u8 = 1;
+const RUNNING: u8 = 2;
+
+/// The state at `place` of `STATES`.
+fn state(place: &AtomicU8) -> &'static str {
+    STATES.get(usize::from(place.load(Ordering::Relaxed))).copied().unwrap_or_default()
+}
 
 /// What the server shows: its connections, and its counts.
 #[derive(Default)]
@@ -84,13 +101,19 @@ struct Entry {
     user: Option<String>,
     peer: String,
     secure: bool,
-    state: &'static str,
+    /// Its state, as a place of `STATES`, shared with its `Present`, which
+    /// sets it with no lock as each statement runs and ends (RULES.md
+    /// D815).
+    state: Arc<AtomicU8>,
     /// What tells its connection to end.
     end: Arc<watch::Sender<bool>>,
     /// What cancels its session's statements, once it has one.
     stop: Option<Arc<Stop>>,
     /// The attributes its client gave in Hello (RULES.md D191).
     attributes: Arc<turborel_protocol::Attributes>,
+    /// Whether a request of it waits for a worker, shared with its
+    /// `Present`, which sets it with no lock.
+    queued: Arc<AtomicBool>,
 }
 
 /// \[DESIGN\] A connection's row of CONNECTIONS, while it is served: what
@@ -103,6 +126,10 @@ pub struct Present {
     shown: Arc<Shown>,
     id: u64,
     ended: watch::Receiver<bool>,
+    /// Whether a request of it waits for a worker.
+    queued: Arc<AtomicBool>,
+    /// Its state, as its row's.
+    state: Arc<AtomicU8>,
 }
 
 impl Shown {
@@ -115,13 +142,15 @@ impl Shown {
             user: None,
             peer: peer.name(),
             secure: peer.secure,
-            state: "LOGIN",
+            state: Arc::default(),
             end: Arc::new(end),
             stop: None,
             attributes: Arc::default(),
+            queued: Arc::default(),
         };
+        let (queued, state) = (Arc::clone(&entry.queued), Arc::clone(&entry.state));
         self.locked().insert(id, entry);
-        (Present { shown: Arc::clone(self), id, ended }, Listed { shown: Arc::clone(self), id })
+        (Present { shown: Arc::clone(self), id, ended, queued, state }, Listed { shown: Arc::clone(self), id })
     }
 
     /// Cancels what the connection `id` runs, if it is served.
@@ -162,7 +191,7 @@ impl Present {
     pub fn authenticated(&self, user: &str) {
         if let Some(entry) = self.shown.locked().get_mut(&self.id) {
             entry.user = Some(user.to_owned());
-            entry.state = "IDLE";
+            entry.state.store(IDLE, Ordering::Relaxed);
         }
     }
 
@@ -206,9 +235,14 @@ impl Present {
 
     /// Whether a statement of it runs now.
     pub fn running(&self, running: bool) {
-        if let Some(entry) = self.shown.locked().get_mut(&self.id) {
-            entry.state = if running { "RUNNING" } else { "IDLE" };
-        }
+        self.state.store(if running { RUNNING } else { IDLE }, Ordering::Relaxed);
+        self.queued.store(false, Ordering::Relaxed);
+    }
+
+    /// \[DESIGN\] A request of it waits for a worker (RULES.md D520),
+    /// until it runs.
+    pub fn queued(&self) {
+        self.queued.store(true, Ordering::Relaxed);
     }
 }
 
@@ -280,7 +314,7 @@ pub(crate) fn count(n: u64) -> Value {
 
 /// A column of counts, named `name`.
 pub(crate) fn counted(name: &str) -> ColumnDesc {
-    let data_type = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+    let data_type = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
     ColumnDesc { name: name.to_owned(), data_type, not_null: true, default: None, domain: None, collation: None, generated: None }
 }
 
@@ -312,33 +346,42 @@ impl SystemTable for Connections {
 
     fn columns(&self) -> Vec<ColumnDesc> {
         let application = text("APPLICATION", attributes::value_length(), false);
-        vec![
+        let mut columns = vec![
             counted("ID"),
             text("USER_NAME", 128, false),
             text("PEER", 128, true),
             text("SECURE", 3, true),
             text("STATE", 7, true),
             application,
-        ]
+        ];
+        columns.extend(activity::columns());
+        columns
     }
 
     fn rows(&self, seen: &Seen<'_>) -> Result<Vec<Row>> {
-        if !seen.is_owner() {
-            return Ok(Vec::new());
-        }
+        let every = seen.may_monitor();
         let yes = |is: bool| Value::Char(if is { "YES" } else { "NO" }.to_owned());
         let rows = self.0.locked().clone();
+        let holders = activity::holders(rows.iter().filter_map(|(id, e)| e.stop.as_deref().map(|s| (*id, s))));
         Ok(rows
             .into_iter()
+            .filter(|(_, e)| every || e.user.as_deref() == Some(seen.auth))
             .map(|(id, e)| {
-                vec![
+                let doing = activity::Doing {
+                    stop: e.stop.as_deref(),
+                    running: e.state.load(Ordering::Relaxed) == RUNNING,
+                    queued: e.queued.load(Ordering::Relaxed),
+                };
+                let mut row = vec![
                     count(id),
                     e.user.map_or(Value::Null, Value::Char),
                     Value::Char(e.peer),
                     yes(e.secure),
-                    Value::Char(e.state.to_owned()),
+                    Value::Char(state(&e.state).to_owned()),
                     application(&e.attributes),
-                ]
+                ];
+                row.extend(activity::values(&doing, &holders));
+                row
             })
             .collect())
     }
@@ -391,7 +434,7 @@ mod tests {
     fn a_connection_is_shown_while_it_is_served() {
         let shown = Arc::new(Shown::default());
         let (present, kept) = shown.connected(&Peer::local());
-        let row = |of: &Shown| of.locked().values().next().map(|e| (e.user.clone(), e.peer.clone(), e.secure, e.state));
+        let row = |of: &Shown| of.locked().values().next().map(|e| (e.user.clone(), e.peer.clone(), e.secure, state(&e.state)));
         assert_eq!(row(&shown), Some((None, "local".to_owned(), true, "LOGIN")));
         present.authenticated("ANN");
         assert_eq!(row(&shown).map(|r| (r.0, r.3)), Some((Some("ANN".to_owned()), "IDLE")));

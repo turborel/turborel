@@ -47,8 +47,17 @@ impl Session {
             Some(crate::txn::Held::Retired) => Err(crate::txn::Held::Retired.refusal()),
             Some(crate::txn::Held::Following | crate::txn::Held::Deposed) | None => Ok(st),
         };
-        let published = self.db.refuse_earlier(self.service).and_then(|()| self.db.snapshot()).and_then(retired)?;
+        let published = self.db.refuse_earlier(self.service).and_then(|()| self.own_snapshot()).and_then(retired)?;
         Ok(self.with_injected(self.with_own(self.with_temporaries(self.definitions(published)?))))
+    }
+
+    /// The published snapshot, as its own copy holds it (RULES.md D780).
+    ///
+    /// # Errors
+    ///
+    /// As `Database::snapshot`.
+    pub(super) fn own_snapshot(&self) -> Result<Arc<State>> {
+        self.db.snapshot_for(&mut self.published.borrow_mut())
     }
 
     /// Its current transaction, if one is active.
@@ -66,8 +75,22 @@ impl Session {
     pub(super) fn begun(&self, st: &State) -> Result<Arc<Txn>> {
         let tx = self.ensure_transaction(st);
         self.runs(&tx);
-        tx.begin_statement(|| !self.cursors_open())?;
+        self.begin_in(st, &tx, false)?;
         Ok(tx)
+    }
+
+    /// Begins the statement next of `tx`, of `st` (`Txn::begin_statement`):
+    /// a load under way in it ended as it begins, unless the statement
+    /// `continues` it (RULES.md D532).
+    ///
+    /// # Errors
+    ///
+    /// As `Txn::begin_statement` and `State::end_load`.
+    pub(super) fn begin_in(&self, st: &State, tx: &Txn, continues: bool) -> Result<()> {
+        if tx.begin_statement(|| !self.cursors_open())? && !continues {
+            st.end_load(tx)?;
+        }
+        Ok(())
     }
 
     /// \[DESIGN\] `result`, told once every commit what the statement saw
@@ -107,8 +130,9 @@ impl Drop for Call<'_> {
     fn drop(&mut self) {
         self.session.ran();
         self.session.busy.set(false);
-        if let Some(timed) = self.timed.take() {
-            timed.done(&self.session.db);
+        if let Some(mut timed) = self.timed.take() {
+            timed.rows(u64::try_from(self.session.rows_affected()).unwrap_or(u64::MAX));
+            timed.done(&self.session.db, &self.session.stop);
         }
     }
 }

@@ -2,7 +2,11 @@
 //! executor's workers, shared by every statement of a database, and what a
 //! statement asks of them, its degree, the rows of its morsels and the
 //! least rows it reads in parallel; and whether a hash join filters its
-//! probing rows by its built ones' keys (RULES.md D369).
+//! probing rows by its built ones' keys (RULES.md D369); and whether a
+//! correlated subquery keeps its plan across its runs (RULES.md D675);
+//! and whether a hash join of dense keys finds its rows by their places
+//! (RULES.md D601); and whether a kept point statement runs straight on
+//! its table (RULES.md D752).
 
 use super::builtin::{ON, SWITCHES, at_least, count, defined, text};
 use super::{Definition, Effect, Key, Kind};
@@ -19,6 +23,14 @@ pub const EXECUTOR_PARALLEL_MIN_ROWS: Key = Key(85);
 pub const EXECUTOR_KERNELS: Key = Key(86);
 /// EXECUTOR.RUNTIME_FILTERS.
 pub const EXECUTOR_RUNTIME_FILTERS: Key = Key(87);
+/// EXECUTOR.KEEP_SUBQUERY_PLANS (RULES.md D675).
+pub const KEEP_SUBQUERY_PLANS: Key = Key(89);
+/// EXECUTOR.DENSE_JOINS (RULES.md D601), at its key's place after the
+/// planner's estimate margin.
+pub const EXECUTOR_DENSE_JOINS: Key = Key(92);
+/// EXECUTOR.POINT_OPERATIONS (RULES.md D752), at its key's place after
+/// the escrow of TRANSACTION.ESCROW.
+pub const EXECUTOR_POINT_OPERATIONS: Key = Key(94);
 
 /// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
 const KERNELS_NAME_MAX: usize = 64;
@@ -74,4 +86,32 @@ pub(super) fn definitions() -> [Definition; 6] {
             "Whether a hash join, once it has built its right operand, tells the scan of its left operand the least and greatest of its keys and filters the rows read by a Bloom filter of them: ON; or not, OFF, as to compare the two. Its rows are the same either way.",
         ),
     ]
+}
+
+/// EXECUTOR.KEEP_SUBQUERY_PLANS, at its key's place after the planner's
+/// range joins.
+pub(super) fn kept_subquery_plans() -> Definition {
+    defined(
+        ("EXECUTOR.KEEP_SUBQUERY_PLANS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a correlated subquery, once its first runs show the values of its outer references choose no other plan, keeps its plan made with them as parameters and fills it at each later run: ON; or plans it at each run with its values, OFF, as to compare the two. Its rows are the same either way.",
+    )
+}
+
+/// EXECUTOR.DENSE_JOINS (RULES.md D601).
+pub(super) fn dense_joins() -> Definition {
+    defined(
+        ("EXECUTOR.DENSE_JOINS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a hash join whose one key is of whole numbers dense in their span, at most four times as wide as its built rows, finds a probe's rows at its key's place in the span, no hash made: ON; or hashes every key, OFF, as to compare the two. Its rows are the same either way.",
+    )
+}
+
+/// EXECUTOR.POINT_OPERATIONS (RULES.md D752).
+pub(super) fn point_operations() -> Definition {
+    defined(
+        ("EXECUTOR.POINT_OPERATIONS", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a kept query, UPDATE or DELETE whose plan is one probe of a whole unique key reads its row straight from the table: ON; or through the executor's operators, OFF, as to compare the two. Its rows, errors and diagnostics are the same either way.",
+    )
 }

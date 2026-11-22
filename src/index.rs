@@ -34,6 +34,7 @@ pub mod reachability;
 mod rtree;
 mod sparse;
 mod stats;
+mod uses;
 pub(crate) mod vector;
 pub mod xml;
 
@@ -49,11 +50,12 @@ pub use ivf::{IVF_METHOD, IvfMethod};
 pub use json::{JSON_METHOD, JsonMethod};
 pub use labels::{LABELS_METHOD, LabelsMethod};
 pub use nearest::{Approximation, FilterHint, NearestQuery, NearestSupport, NeighbourEntries, RowFilter, same_metric};
-pub use probe::{ColumnComparison, Predicate, Probe};
+pub use probe::{ColumnComparison, KeyOrder, Predicate, Probe};
 pub use projection::KeyProjection;
 pub use reachability::{REACHABILITY_METHOD, ReachabilityMethod};
 pub use rtree::{Envelopes, KeyPairs, RTreeMethod};
 pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
+pub use uses::{IndexSizes, Used, Uses, Using, part_of, used};
 pub use xml::{XML_PATH_METHOD, XML_PRIMARY_METHOD, XML_PROPERTY_METHOD, XML_VALUE_METHOD, XmlMethod};
 
 use crate::catalog::{IndexDesc, TableDesc};
@@ -70,17 +72,6 @@ pub type Entries = Box<dyn Iterator<Item = Result<(Key, RowId)>> + Send>;
 /// \[DESIGN\] The rows with an entry under one key, read as they are taken
 /// (`Index::key_rows`).
 pub type RowIds = Box<dyn Iterator<Item = Result<RowId>> + Send>;
-
-/// \[DESIGN\] The order an ordered method's search gives its entries in
-/// (`IndexMethod::ordered`); a method that is not ordered gives them in
-/// its own, whichever is asked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyOrder {
-    /// Ascending keys, by the [X3.135-1986 §5.11] comparison rules.
-    Ascending,
-    /// Descending keys.
-    Descending,
-}
 
 /// \[EXTENSION\] A kind of index: creates `Index`es and says which probes they answer.
 ///
@@ -270,9 +261,9 @@ pub trait IndexMethod: Send + Sync {
 /// \[DESIGN\] An index holds entries, (key, id) pairs, counted: the same
 /// pair may be inserted more than once, and each insert is taken back by
 /// one remove. A table whose engine keeps versions of its rows (RULES.md
-/// D29) has an entry for each version, so two versions of a row with the
-/// same key give one pair twice; when a version is removed, its entry is
-/// removed, and the pair stays while another version has it. A search may
+/// D29) has an entry for each run of consecutive versions of a row with one key (RULES.md D443), so two
+/// versions apart with the same key give one pair twice; when the last version of a run is removed, its
+/// entry is removed, and the pair stays while another run has it. A search may
 /// then find an entry of a version a reader does not see: the reader keeps
 /// a row only if the version it sees has the entry's key.
 ///
@@ -435,6 +426,20 @@ pub trait Index: Send + Sync {
         self.insert(key.clone(), row)?;
         Ok(self.rows(&key)?.iter().all(|&r| r == row))
     }
+    /// \[DESIGN\] Whether it holds no entry at all, as a load into its table begins (RULES.md D532): known cheaply, or not said.
+    /// Default: not said.
+    fn holds_none(&self) -> bool {
+        false
+    }
+    /// \[DESIGN\] As `insert_alone` of a copy of `key` if `alone` is asked, else as `insert` of one, saying not alone: a method that
+    /// encodes its keys need make no copy, as rows inserted together keep theirs (RULES.md D531). Default: those, of a clone.
+    ///
+    /// # Errors
+    ///
+    /// As `insert_alone` and `insert`.
+    fn insert_from(&self, key: &Key, row: RowId, alone: bool) -> Result<bool> {
+        if alone { self.insert_alone(key.clone(), row) } else { self.insert(key.clone(), row).map(|()| false) }
+    }
     /// \[DESIGN\] Adds every entry of `entries`, in any order, to the index,
     /// empty, which nothing else reads or writes meanwhile: as `insert`
     /// would, one by one, as the default does; a method may build it whole
@@ -496,19 +501,18 @@ pub trait Index: Send + Sync {
     /// planner's statistics. For `Probe::Predicate`, count all candidates,
     /// including those the full WHERE check will reject (D34).
     fn estimate(&self, probe: &Probe) -> Option<usize>;
-    /// \[DESIGN\] How many distinct keys it holds, near enough, if it knows:
-    /// the planner's estimate of the rows of an equality on all its
-    /// columns, its table's rows over them (RULES.md D35). Asked inside
-    /// planning, so it makes no pass over the index: one that must count
-    /// them first gives none, and makes that work due (`maintenance_due`),
-    /// for the database's maintenance. Default: not known.
+    /// \[DESIGN\] How many distinct keys it holds, near enough, if it knows: the planner's estimate of the rows of an equality on all its
+    /// columns, its table's rows over them (RULES.md D35). Asked inside planning, so it makes no pass over the index: one that must count
+    /// them first gives none, and makes that work due (`maintenance_due`), for the database's maintenance. Default: not known.
     fn distinct_keys(&self) -> Option<f64> {
         None
     }
-    /// \[DESIGN\] Whether work is due that the index leaves to the
-    /// database's maintenance (`maintain`), as a count of its keys asked
-    /// for: asked as planning reads its statistics, so it should be quick.
-    /// Default: none.
+    /// \[DESIGN\] What it knows of its size cheaply, without a pass over it (INDEX_STATISTICS, RULES.md D522). Default: nothing.
+    fn sizes(&self) -> IndexSizes {
+        IndexSizes::default()
+    }
+    /// \[DESIGN\] Whether work is due that the index leaves to the database's maintenance (`maintain`), as a count of its keys asked for:
+    /// asked as planning reads its statistics, so it should be quick. Default: none.
     fn maintenance_due(&self) -> bool {
         false
     }
@@ -522,24 +526,19 @@ pub trait Index: Send + Sync {
     fn maintain(&self) -> Result<bool> {
         Ok(false)
     }
-    /// \[DESIGN\] The pages it reads to find the entries `probe` selects, if
-    /// it knows: the planner weighs each as one level of a descent
-    /// (PLANNER.INDEX_DESCENT_COST). Default: not known, and the planner
-    /// takes the levels of a tree over its table's rows.
+    /// \[DESIGN\] The pages it reads to find the entries `probe` selects, if it knows: the planner weighs each as one level of a descent
+    /// (PLANNER.INDEX_DESCENT_COST). Default: not known, and the planner takes the levels of a tree over its table's rows.
     fn probe_pages(&self, _probe: &Probe) -> Option<f64> {
         None
     }
-    /// \[DESIGN\] The pages of a probe's that the buffer pool misses, of
-    /// those `probe_pages` counts, if it knows: the planner prices each as
-    /// a page its table's fetches miss (`TableStorage::miss_cost`).
-    /// Default: not known, and the planner takes them held.
+    /// \[DESIGN\] The pages of a probe's that the buffer pool misses, of those `probe_pages` counts, if it knows: the planner prices each
+    /// as a page its table's fetches miss (`TableStorage::miss_cost`). Default: not known, and the planner takes them held.
     fn probe_missed(&self) -> Option<f64> {
         None
     }
-    /// The entries the probe selects, each (key, row) pair once, read as
-    /// they are taken: in `order` if the method is ordered. It holds the
-    /// index (`self: Arc<Self>`), so what it gives may outlive the call that
-    /// asked, as a cursor's rows do; an error of its storage is an entry.
+    /// The entries the probe selects, each (key, row) pair once, read as they are taken: in `order` if the method is ordered. It holds the
+    /// index (`self: Arc<Self>`), so what it gives may outlive the call that asked, as a cursor's rows do; an error of its storage is an
+    /// entry.
     fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries;
     /// \[DESIGN\] As `search`, told whether the entries' rows are read, so a
     /// method groups them for their reads only then (RULES.md D85). Default: `search`.
@@ -563,18 +562,15 @@ pub trait Index: Send + Sync {
     /// changed: `on` holds them now (RULES.md D41), as for
     /// `TableStorage::reconfigure`. Default: nothing.
     fn reconfigure(&self, _on: (&TableDesc, &IndexDesc)) {}
-    /// \[EXTENSION\] (RULES.md D106) The rows whose XML value may hold a node `lookup` selects,
-    /// each once, as they are taken: a superset, each row's visible value checked again by the
-    /// caller (`XmlLookup::matches`), as a function lookup's (D34). It holds the index, as
+    /// \[EXTENSION\] (RULES.md D106) The rows whose XML value may hold a node `lookup` selects, each once, as they are taken: a superset,
+    /// each row's visible value checked again by the caller (`XmlLookup::matches`), as a function lookup's (D34). It holds the index, as
     /// `search` does. Default: none, for an index of no XML lookup.
     fn xml_rows(self: Arc<Self>, _lookup: &xml::XmlLookup) -> Option<RowIds> {
         None
     }
-    /// \[EXTENSION\] (RULES.md D106) Of an index that holds a row's nodes,
-    /// the rows `query` holds of, or may, from its entries alone, each
-    /// once: one that may is checked (`XmlQuery::matches`), one not given
-    /// does not hold. It holds the index. Default: none, for an index whose
-    /// rows are each checked.
+    /// \[EXTENSION\] (RULES.md D106) Of an index that holds a row's nodes, the rows `query` holds of, or may, from its entries alone, each
+    /// once: one that may is checked (`XmlQuery::matches`), one not given does not hold. It holds the index. Default: none, for an index
+    /// whose rows are each checked.
     fn xml_answers(self: Arc<Self>, _query: &xml::XmlQuery) -> Option<xml::XmlAnswers> {
         None
     }

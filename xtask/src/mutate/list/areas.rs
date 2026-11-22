@@ -2,10 +2,18 @@
 
 mod altered_tables;
 mod analyze;
+mod analyze_more;
 mod batches;
+mod btree;
 mod budget;
+mod bulk;
+mod checkpoint;
+mod checkpoint_cost;
+mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
+mod commit_path;
+mod cost_model;
 #[path = "count.rs"]
 mod count;
 mod declared_types;
@@ -13,36 +21,55 @@ mod declared_types;
 // more modules.
 #[path = "decode.rs"]
 mod decode;
+mod dirty_frames;
 mod distinct_aggregates;
 mod expr;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
+mod alloc;
 #[path = "estimates.rs"]
 mod estimates;
 mod group_table;
 mod insert_values;
+mod join_estimates;
 mod join_table;
 mod joins;
 mod late;
+mod monitoring;
 mod oltp;
+mod orders;
+mod own_copies;
 mod parallel;
+mod point_ops;
+mod probed_subqueries;
 mod range_joins;
+mod range_path;
 mod rewrites;
+mod row_path;
+mod server_lines;
+mod set_types;
+mod shared_lines;
 mod skipping;
 mod sorts;
 mod statistics;
+mod subquery_plans;
 mod tpcc;
 mod transfer;
 mod txn_layer;
+mod undo_memory;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
+mod mark_joins;
+mod semi_joins;
+mod steady;
 mod unnesting;
 mod uuid;
+mod windows_batched;
 mod xxhash;
 
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 16] {
+pub fn core() -> [&'static [Mutation]; 29] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -60,16 +87,30 @@ pub fn core() -> [&'static [Mutation]; 16] {
         &oltp::OLTP,
         &tpcc::TPCC,
         &txn_layer::TXN_LAYER,
+        &checkpoint::CHECKPOINT,
+        &io_path::IO_PATH,
+        &btree::BTREE,
+        &row_path::ROW_PATH,
+        &monitoring::MONITORING,
+        &bulk::BULK,
+        &steady::STEADY_PLANS,
+        &alloc::ALLOC,
+        &commit_path::COMMIT_PATH,
+        &dirty_frames::DIRTY_FRAMES,
+        &range_path::RANGE_PATH,
+        &point_ops::POINT_OPS,
+        &checkpoint_cost::CHECKPOINT_COST,
     ]
 }
 
-/// Every area's mutations, in order: the first half's, then the second's.
+/// Every area's mutations, in order: the first half's, the second's, then
+/// the planner's newest.
 pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
-    first().into_iter().chain(second())
+    first().into_iter().chain(second()).chain(planner())
 }
 
 /// The first half of the areas, in order.
-fn first() -> [&'static [Mutation]; 25] {
+fn first() -> [&'static [Mutation]; 27] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -85,6 +126,8 @@ fn first() -> [&'static [Mutation]; 25] {
         &super::composite::COMPOSITE,
         &super::distinct::DISTINCT,
         &super::bigint::BIGINT,
+        &super::wide_exact::WIDE_EXACT,
+        &super::call_floor::CALL_FLOOR,
         &super::distinct_predicate::DISTINCT_PREDICATE,
         &super::partitioned_joins::PARTITIONED_JOINS,
         &super::grouping_sets::GROUPING_SETS,
@@ -100,7 +143,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 44] {
+fn second() -> [&'static [Mutation]; 48] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -108,6 +151,7 @@ fn second() -> [&'static [Mutation]; 44] {
         &super::dependencies::DEPENDENCIES,
         &super::limits::LIMITS,
         &super::bounded::BOUNDED_FETCH,
+        &super::set_probes::SET_PROBES,
         &super::patterns::PATTERNS,
         &super::merge::MERGE,
         &super::diagnostics::DIAGNOSTICS,
@@ -138,13 +182,28 @@ fn second() -> [&'static [Mutation]; 44] {
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &rewrites::REWRITES,
         &unnesting::UNNESTING,
+        &subquery_plans::SUBQUERY_PLANS,
         &insert_values::INSERT_VALUES,
+        &set_types::SET_TYPES,
         &expr::EXPR,
         &sorts::SORTS,
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
+        &analyze_more::ANALYZE_MORE,
+        &windows_batched::WINDOWS_BATCHED,
         &statistics::STATISTICS,
+    ]
+}
+
+/// The planner's newest areas, in order: join estimates, range joins, the
+/// cost model, orders and probed subqueries.
+fn planner() -> [&'static [Mutation]; 5] {
+    [
+        &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
+        &cost_model::COST_MODEL,
+        &orders::ORDERS,
+        &probed_subqueries::PROBED_SUBQUERIES,
         &transfer::TRANSFER,
     ]
 }
@@ -191,13 +250,16 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
 }
 
-/// The transport's, parallel queries', the client's step with its
-/// server, the decode kernels', declared types', batches', late
-/// materialization's, the table of groups', the join table's and
-/// XXH3's and skipping's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 11] {
+/// The transport's, connections' homes', parallel queries', the client's
+/// step with its server, the decode kernels', declared types', batches', late
+/// materialization's, the table of groups', the join table's, XXH3's,
+/// semi joins', mark joins', skipping's, the undo store's memory's, the
+/// sessions' own copies', the shared lines' and the server's lines' last,
+/// as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 18] {
     [
         &super::transport::TRANSPORT,
+        &super::homes::HOMES,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
         &decode::DECODE,
@@ -207,7 +269,13 @@ fn closing() -> [&'static [Mutation]; 11] {
         &group_table::GROUP_TABLE,
         &join_table::JOIN_TABLE,
         &xxhash::XXHASH,
+        &semi_joins::SEMI_JOINS,
+        &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
+        &undo_memory::UNDO_MEMORY,
+        &own_copies::OWN_COPIES,
+        &shared_lines::SHARED_LINES,
+        &server_lines::SERVER_LINES,
     ]
 }
 

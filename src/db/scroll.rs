@@ -259,6 +259,8 @@ fn sort_of(plan: Plan) -> std::result::Result<(Vec<SortKey>, Plan), Box<Plan>> {
             | Plan::IndexJoin { .. }
             | Plan::MergeJoin(_)
             | Plan::RangeJoin(_)
+            | Plan::SemiJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::Aggregate { .. }
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }
@@ -303,6 +305,8 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             | Plan::IndexJoin { .. }
             | Plan::MergeJoin(_)
             | Plan::RangeJoin(_)
+            | Plan::SemiJoin(_)
+            | Plan::MarkJoin(_)
             | Plan::Aggregate { .. }
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }

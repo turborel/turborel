@@ -3,9 +3,12 @@
 //! is the index key encoded so that its bytes sort as SQL compares its
 //! values (`engine/key.rs`), then the row id, big-endian: every entry's key
 //! is unique, and a key's entries are adjacent, in row id order. Its value
-//! is the entry's count (`Index`: one for each version holding it), empty
-//! for one, the count's four bytes otherwise, so the usual entry spends
-//! nothing on it.
+//! is the hint, the page of the table's leaf the row was in as the entry
+//! was written (none: 0), then the entry's count (`Index`: one for each
+//! version holding it), left out for one, so the usual entry spends nothing
+//! on it. A read notes each entry's hint, and the table's read of the row
+//! tries that leaf first, so a lookup by key is one descent, this tree's,
+//! and a leaf read (RULES.md D500, `engine/tree/hints.rs`).
 //!
 //! Readers lock nothing and writers at most three nodes, as in the tree, so
 //! threads search and change an index at once. An entry's count is read
@@ -28,16 +31,16 @@
 //! it more of. Counted, a range's entries are found by their places in
 //! each leaf, none copied, unless each key is to be checked.
 
-use std::ops::{Bound, Deref};
+use std::ops::Bound;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::stats::KeyCounts;
-use super::{BTREE_METHOD, Entries, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
+use super::{BTREE_METHOD, Entries, Index, IndexMethod, IndexSizes, Key, KeyOrder, Probe, RowIds};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
-use crate::engine::key::{anchor, decode_key, encode_key, least_present};
+use crate::engine::key::{anchor, encode_key, least_present};
 use crate::engine::tree::{BLinkTree, Direction, LEAST_LOOKUPS, Update, scan_of};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
@@ -51,20 +54,17 @@ use crate::value::{CompOp, DataType, Value};
 
 /// Bytes of a row id at the end of an entry's key.
 const ROW_ID: usize = 8;
-/// \[DESIGN\] The most entries an estimate counts. Fixed, not a setting
-/// (RULES.md D36): what an index method spends on its own estimate, as
-/// it states its costs.
+/// \[DESIGN\] The most entries an estimate counts. Fixed, not a setting (RULES.md D36): what an index method spends on
+/// its own estimate, as it states its costs.
 const MOST_COUNTED: usize = 1_000;
 /// \[DESIGN\] The most entries of a range of unchecked keys an estimate
 /// counts before it takes the range's share of the tree instead: about a
 /// leaf's, so a small range is counted exactly in a page or two.
 const SMALL_COUNT: usize = 128;
 
-/// \[DESIGN\] The built-in ordered index method: B-link trees in one pager
-/// file.
+/// \[DESIGN\] The built-in ordered index method: B-link trees in one pager file.
 pub struct BTreeMethod {
-    /// Where its indexes are; for a method in memory, made when the first
-    /// index is.
+    /// Where its indexes are; for a method in memory, made when the first index is.
     files: Mutex<Option<(Arc<BufferPool>, FileId)>>,
     /// Its pages in memory, for a file made in memory: of a budget of its
     /// own until it is attached to a database's (`attach`).
@@ -160,7 +160,7 @@ impl IndexMethod for BTreeMethod {
 /// dropped, so its pages are freed when it goes.
 struct BLinkIndex {
     tree: BLinkTree,
-    types: Vec<DataType>,
+    types: Arc<[DataType]>,
     discarded: AtomicBool,
     /// Its distinct keys, counted as written, or by maintenance once asked
     /// for (`index/stats.rs`).
@@ -169,7 +169,7 @@ struct BLinkIndex {
 
 impl BLinkIndex {
     fn with(tree: BLinkTree, columns: &[DataType], keys: KeyCounts) -> BLinkIndex {
-        BLinkIndex { tree, types: columns.to_vec(), discarded: AtomicBool::new(false), keys }
+        BLinkIndex { tree, types: Arc::from(columns), discarded: AtomicBool::new(false), keys }
     }
 }
 
@@ -185,21 +185,16 @@ impl Drop for BLinkIndex {
     }
 }
 
+mod entries;
+mod range;
+mod value;
+
+use entries::{Borrowed, Held};
+use range::{Range, after, from_after, within};
+use value::{HINT, count_of, hint_for, hint_of, noted, value_of};
+
 fn corrupt() -> SqlError {
     SqlError::new(Code::Corrupt, "[DESIGN] an index entry is malformed")
-}
-
-/// The count an entry's value holds.
-fn count_of(value: &[u8]) -> Result<u32> {
-    if value.is_empty() {
-        return Ok(1);
-    }
-    <[u8; 4]>::try_from(value).map(u32::from_le_bytes).map_err(|_| corrupt())
-}
-
-/// The value holding `count`.
-fn value_of(count: u32) -> Vec<u8> {
-    if count == 1 { Vec::new() } else { count.to_le_bytes().to_vec() }
 }
 
 /// The least key past every entry's key beginning with `prefix`: no row id
@@ -214,47 +209,6 @@ fn past(prefix: &[u8]) -> Vec<u8> {
 fn split(entry: &[u8]) -> Result<(&[u8], RowId)> {
     let (key, row) = entry.split_at_checked(entry.len().checked_sub(ROW_ID).ok_or_else(corrupt)?).ok_or_else(corrupt)?;
     Ok((key, <[u8; ROW_ID]>::try_from(row).map(RowId::from_be_bytes).map_err(|_| corrupt())?))
-}
-
-/// The least key after every key beginning with `prefix`: its last byte
-/// below 0xFF raised by one, the bytes after it dropped; none if every byte
-/// is 0xFF, when no key comes after.
-fn after(prefix: &[u8]) -> Bound<Vec<u8>> {
-    let Some(at) = prefix.iter().rposition(|&b| b < u8::MAX) else { return Bound::Unbounded };
-    let mut next = prefix.get(..=at).unwrap_or_default().to_vec();
-    if let Some(last) = next.last_mut() {
-        *last = last.saturating_add(1);
-    }
-    Bound::Excluded(next)
-}
-
-/// The keys beginning with `prefix`, each checked if `checked`.
-fn within(prefix: Vec<u8>, checked: bool) -> Range {
-    let upper = after(&prefix);
-    Range { lower: Bound::Included(prefix), upper, checked }
-}
-
-/// As `after`, as a lower bound: the keys from it on.
-fn from_after(prefix: &[u8]) -> Option<Bound<Vec<u8>>> {
-    match after(prefix) {
-        Bound::Excluded(next) => Some(Bound::Included(next)),
-        Bound::Included(_) | Bound::Unbounded => None,
-    }
-}
-
-/// The bounds of the entries' keys a probe reads, and whether each key
-/// read must be checked against the probe: not if the bounds are exact.
-struct Range {
-    lower: Bound<Vec<u8>>,
-    upper: Bound<Vec<u8>>,
-    checked: bool,
-}
-
-impl Range {
-    /// Every entry, each checked if `checked`.
-    fn all(checked: bool) -> Range {
-        Range { lower: Bound::Unbounded, upper: Bound::Unbounded, checked }
-    }
 }
 
 impl BLinkIndex {
@@ -311,7 +265,7 @@ impl BLinkIndex {
             return None;
         }
         let (mut prefix, mut checked) = (Vec::new(), false);
-        for (value, data_type) in equal.iter().zip(&self.types) {
+        for (value, data_type) in equal.iter().zip(self.types.iter()) {
             let Some(at) = anchor(value, data_type) else { return Some(Range::all(true)) };
             checked |= !at.exact;
             // The first anchor's key is the prefix so far, not copied.
@@ -341,54 +295,6 @@ impl BLinkIndex {
         };
         Some(Range { lower, upper, checked: checked || !exact })
     }
-
-    /// The entries `probe` selects, read through `tree`, its own, in
-    /// `direction`: their keys, decoded if `decoded` or checked, and rows.
-    /// What it gives holds `tree` and its own copies of the probe and the
-    /// key's types, so it lives as long as `tree` does.
-    fn entries<T: Deref<Target = BLinkTree>>(
-        &self,
-        tree: T,
-        probe: &Probe,
-        (decoded, direction): (bool, Direction),
-    ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
-        self.entries_within(tree, (probe, self.range(probe)), (decoded, direction))
-    }
-
-    /// The entries of `range` of `tree`, each of `probe` if it is checked,
-    /// decoded if `decoded`, in `direction`.
-    fn entries_within<T: Deref<Target = BLinkTree>>(
-        &self,
-        tree: T,
-        (probe, range): (&Probe, Option<Range>),
-        (decoded, direction): (bool, Direction),
-    ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
-        let checked = range.as_ref().is_some_and(|r| r.checked);
-        let scan = range.map(|r| scan_of(tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), direction));
-        let (probe, types) = (probe.clone(), self.types.clone());
-        scan.into_iter().flatten().filter_map(move |entry| {
-            let found = entry.and_then(|(entry, _)| {
-                let (key, row) = split(&entry)?;
-                let key = (decoded || checked).then(|| decode_key(key, &types).map(Key)).transpose()?;
-                Ok((key, row))
-            });
-            match found {
-                Ok((key, row)) => (!checked || key.as_ref().is_some_and(|k| probe.answers(&k.0))).then_some(Ok((key, row))),
-                Err(e) => Some(Err(e)),
-            }
-        })
-    }
-}
-
-/// An index's tree, reached through the index it holds: what a search
-/// reads, so the index outlives the search.
-struct Held(Arc<BLinkIndex>);
-
-impl Deref for Held {
-    type Target = BLinkTree;
-    fn deref(&self) -> &BLinkTree {
-        &self.0.tree
-    }
 }
 
 impl Index for BLinkIndex {
@@ -400,13 +306,23 @@ impl Index for BLinkIndex {
     /// (`BLinkTree::update_alone`): an entry of another row under the key
     /// is beside it, as entries are in key order, then row id.
     fn insert_alone(&self, key: Key, row: RowId) -> Result<bool> {
-        let entry = self.entry(&key, row)?;
+        self.insert_from(&key, row, true)
+    }
+
+    /// A scan from its first key on finds no entry.
+    fn holds_none(&self) -> bool {
+        self.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).next().is_none()
+    }
+
+    /// Encoded from `key` as it is held; alone or not, its tree finds it.
+    fn insert_from(&self, key: &Key, row: RowId, _alone: bool) -> Result<bool> {
+        let entry = self.entry(key, row)?;
         // The key's bytes are the same for equal keys (`engine/key.rs`).
         let prefix = entry.len().saturating_sub(ROW_ID);
         self.keys.added(entry.get(..prefix).unwrap_or_default());
         self.tree.update_alone(&entry, prefix, |old| {
             let count = old.map_or(Ok(0), count_of)?;
-            Ok(Update::Put(value_of(count.saturating_add(1))))
+            Ok(Update::Put(value_of(count.saturating_add(1), hint_for(row, old)?)))
         })
     }
 
@@ -414,41 +330,59 @@ impl Index for BLinkIndex {
     /// those alike, of versions of one row under one key, made one entry
     /// counting them, and the tree loaded from them in order
     /// (`BLinkTree::load`).
+    /// Each record sorted is the tree's key then the hint the table noted
+    /// as it read the row: no key is a prefix of another (`engine/key.rs`),
+    /// so the hints change no key's order.
     fn load(&self, entries: &mut dyn Iterator<Item = Result<(Key, RowId)>>, (areas, area): (&WorkAreas, Area)) -> Result<()> {
-        let mut encoded = entries.map(|entry| entry.and_then(|(key, row)| self.entry(&key, row)));
+        let mut encoded = entries.map(|entry| {
+            entry.and_then(|(key, row)| {
+                let mut record = self.entry(&key, row)?;
+                record.extend_from_slice(&value_of(1, hint_for(row, None)?));
+                Ok(record)
+            })
+        });
         let mut sorted = sorted_records(areas, area, &mut encoded)?.peekable();
+        let key_of = |record: &[u8]| record.get(..record.len().saturating_sub(HINT)).map(<[u8]>::to_vec).unwrap_or_default();
         let mut counted = std::iter::from_fn(|| {
             let first = match sorted.next()? {
                 Ok(first) => first,
                 Err(e) => return Some(Err(e)),
             };
+            let (key, hint) = (key_of(&first), first.get(first.len().saturating_sub(HINT)..).map_or(Ok(0), hint_of));
             let mut count = 1_u32;
-            while sorted.next_if(|next| next.as_ref().is_ok_and(|n| *n == first)).is_some() {
+            while sorted.next_if(|next| next.as_ref().is_ok_and(|n| key_of(n) == key)).is_some() {
                 count = count.saturating_add(1);
             }
             for _ in 0..count {
-                self.keys.added(first.get(..first.len().saturating_sub(ROW_ID)).unwrap_or_default());
+                self.keys.added(key.get(..key.len().saturating_sub(ROW_ID)).unwrap_or_default());
             }
-            Some(Ok((first, value_of(count))))
+            Some(hint.map(|hint| (key, value_of(count, hint))))
         });
         self.tree.load(&mut counted)
     }
 
     fn remove(&self, key: &Key, row: RowId) -> Result<()> {
-        self.keys.removed();
+        // Counted only if there: a load's entries held back are undone though never inserted (RULES.md D532).
+        let mut found = false;
         self.tree.update(&self.entry(key, row)?, |old| {
-            Ok(match old.map(count_of).transpose()? {
+            found = old.is_some();
+            Ok(match old.map(|v| Ok::<_, SqlError>((count_of(v)?, hint_of(v)?))).transpose()? {
                 None => Update::Keep,
-                Some(0 | 1) => Update::Remove,
-                Some(n) => Update::Put(value_of(n.saturating_sub(1))),
+                Some((0 | 1, _)) => Update::Remove,
+                Some((n, hint)) => Update::Put(value_of(n.saturating_sub(1), hint)),
             })
-        })
+        })?;
+        if found {
+            self.keys.removed();
+        }
+        Ok(())
     }
 
     fn rows(&self, key: &Key) -> Result<Vec<RowId>> {
         let prefix = self.prefix(key)?;
         let end = past(&prefix);
-        self.tree.scan(Bound::Included(&prefix), Bound::Excluded(&end), Direction::Forward).map(|entry| Ok(split(&entry?.0)?.1)).collect()
+        let scan = self.tree.scan(Bound::Included(&prefix), Bound::Excluded(&end), Direction::Forward);
+        scan.map(|entry| entry.and_then(|(found, value)| noted(split(&found)?.1, &value))).collect()
     }
 
     /// The key's entries, adjacent in the tree, read a leaf at a time as
@@ -460,7 +394,7 @@ impl Index for BLinkIndex {
         };
         let end = past(&prefix);
         let scan = scan_of(Held(Arc::clone(&self)), Bound::Included(&prefix), Bound::Excluded(&end), Direction::Forward);
-        Box::new(scan.map(|entry| Ok(split(&entry?.0)?.1)))
+        Box::new(scan.map(|entry| entry.and_then(|(found, value)| noted(split(&found)?.1, &value))))
     }
 
     fn estimate(&self, probe: &Probe) -> Option<usize> {
@@ -478,7 +412,7 @@ impl Index for BLinkIndex {
             return Some(rows_of(entries).max(SMALL_COUNT.saturating_add(1)));
         }
         let mut counted = 0_usize;
-        for entry in self.entries(&self.tree, probe, (false, Direction::Forward)) {
+        for entry in self.entries(Borrowed(&self.tree, &self.types), probe, (false, Direction::Forward)) {
             entry.ok()?;
             counted = counted.saturating_add(1);
             if counted > MOST_COUNTED {
@@ -492,6 +426,10 @@ impl Index for BLinkIndex {
     /// has made its pass (`index/stats.rs`).
     fn distinct_keys(&self) -> Option<f64> {
         self.keys.distinct()
+    }
+    /// Its entries, once counted, and its tree's levels (RULES.md D522).
+    fn sizes(&self) -> IndexSizes {
+        IndexSizes { entries: self.keys.entries(), height: self.tree.height().ok().map(u64::from), bytes: None }
     }
 
     /// A pass over its keys, once asked for.
@@ -541,7 +479,9 @@ impl Index for BLinkIndex {
             KeyOrder::Ascending => Direction::Forward,
             KeyOrder::Descending => Direction::Backward,
         };
-        let found = self.entries(Held(Arc::clone(&self)), probe, (true, direction));
+        // The index moved into what the search holds, its count not moved.
+        let range = self.range(probe);
+        let found = Self::entries_within(Held(self), (probe, range), (true, direction));
         Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
     }
 
@@ -550,28 +490,10 @@ impl Index for BLinkIndex {
     fn ranges(self: Arc<Self>, probe: &Probe, most: usize) -> Option<Vec<Entries>> {
         let parts = self.cut(self.range(probe)?, most).ok()?;
         let each = parts.into_iter().map(|part| -> Entries {
-            let found = self.entries_within(Held(Arc::clone(&self)), (probe, Some(part)), (true, Direction::Forward));
+            let found = Self::entries_within(Held(Arc::clone(&self)), (probe, Some(part)), (true, Direction::Forward));
             Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
         });
         Some(each.collect())
-    }
-}
-
-impl BLinkIndex {
-    /// \[DESIGN\] (RULES.md D297) `range` cut at keys of its tree's inner
-    /// nodes into up to about `most` parts, in order (`engine/tree/cuts.rs`).
-    fn cut(&self, range: Range, most: usize) -> Result<Vec<Range>> {
-        let cuts = self.tree.cuts(range.lower.as_ref().map(Vec::as_slice), range.upper.as_ref().map(Vec::as_slice), most)?;
-        let mut lower = range.lower;
-        let mut parts = Vec::with_capacity(cuts.len().saturating_add(1));
-        for cut in cuts {
-            // A key equal to a cut is of the part below it, as of the
-            // child left of it (`engine/tree/node.rs`).
-            let upper = Bound::Included(cut.clone());
-            parts.push(Range { lower: std::mem::replace(&mut lower, Bound::Excluded(cut)), upper, checked: range.checked });
-        }
-        parts.push(Range { lower, upper: range.upper, checked: range.checked });
-        Ok(parts)
     }
 }
 

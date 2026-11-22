@@ -11,7 +11,7 @@ use crate::ast::{NestedWindow, RowMarker, ValueExpression};
 use crate::error::Result;
 use crate::logical::{Expr, Marker, Nested};
 use crate::params::ParameterType;
-use crate::value::{DataType, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Spelled, Value};
 
 /// \[DESIGN\] The placeholder column of the first nested window function of
 /// a call: far past the columns of any row, and short of the window
@@ -80,7 +80,7 @@ impl Binder<'_> {
     /// columns, a `?` NUMERIC(MP, 0) [§20.7 GR5a xxxiii].
     fn row_marker_offset(&self, offset: &ValueExpression) -> Result<Expr> {
         let none = Scope::Rows("[ISO/IEC 9075-2:2023 §6.11] a <row marker offset> is a <simple value specification>");
-        let numeric = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+        let numeric = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
         let (e, t) = self.typed(offset, ParameterType::Of(numeric), none)?;
         if !matches!(t, DataType::Exact { scale: 0, .. }) {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.11 SR4] a <row marker offset> is exact numeric of scale 0, not {t}")));

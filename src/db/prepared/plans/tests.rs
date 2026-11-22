@@ -3,6 +3,8 @@
 
 use super::*;
 use crate::db::Database;
+use crate::logical::{Expr, Slot};
+use crate::sync::read;
 use crate::value::Decimal;
 
 use super::learning::{LEARNED_RUNS, MOST_LEARNING_RUNS};
@@ -13,7 +15,7 @@ fn int(n: i128) -> Value {
 
 /// What `p` keeps of its physical plan, written.
 fn physical(p: &Prepared) -> String {
-    format!("{:?}", lock(&p.plans.kept).unwrap().as_ref().map(|k| &k.physical))
+    format!("{:?}", read(&p.plans.kept.kept).unwrap().as_ref().map(|k| &k.physical))
 }
 
 fn spatial_table() -> (Database, Session) {
@@ -175,13 +177,14 @@ fn a_query_whose_values_choose_its_paths_stops_learning() {
     assert_eq!(range.plans_made(), 1);
 }
 
-/// Verifies: [DESIGN] RULES.md D45: a plan learned is learned again once
-/// a table it reads gains more rows than its statistics are gathered again
-/// for, the execution that finds it so planned with its values.
+/// Verifies: [DESIGN] RULES.md D45, D613: a plan learned that reads a
+/// table whole is learned again once the table gains more rows than its
+/// statistics are gathered again for, the execution that finds it so
+/// planned with its values.
 #[test]
 fn a_learned_plan_is_learned_again_once_its_table_grows() {
     let (_db, s) = table();
-    let range = s.prepare("SELECT C FROM P WHERE A BETWEEN ? AND ?").unwrap();
+    let range = s.prepare("SELECT C FROM P WHERE C BETWEEN ? AND ?").unwrap();
     for n in 0..=i128::from(LEARNED_RUNS) {
         drop(s.open_prepared(&range, &[int(n + 3), int(n + 4)]).unwrap());
     }
@@ -271,4 +274,124 @@ fn scans_decide_spatial_conjuncts_of_their_entries() {
     assert_eq!(count(&s, sql), "5", "the session's own deletion");
     s.rollback().unwrap();
     assert_eq!(count(&s, sql), "6");
+}
+
+/// ORDER_LINE and STOCK of one warehouse, as TPC-C makes them: 100,000
+/// items in stock and a district of 5,000 orders of ten lines each, their
+/// statistics gathered.
+fn order_lines() -> (Database, Session) {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION T \
+         CREATE TABLE ORDER_LINE (OL_W_ID INTEGER NOT NULL, OL_D_ID SMALLINT NOT NULL, OL_O_ID INTEGER NOT NULL, OL_NUMBER SMALLINT NOT NULL, OL_I_ID INTEGER, CONSTRAINT ORDER_LINE_I1 PRIMARY KEY (OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER)) \
+         CREATE TABLE STOCK (S_W_ID INTEGER NOT NULL, S_I_ID INTEGER NOT NULL, S_QUANTITY SMALLINT, CONSTRAINT STOCK_I1 PRIMARY KEY (S_W_ID, S_I_ID)) \
+         CREATE TABLE DIGIT (D INTEGER NOT NULL) CREATE TABLE N (N INTEGER NOT NULL)",
+    )
+    .unwrap();
+    let s = db.session("T");
+    for sql in [
+        "INSERT INTO DIGIT VALUES (0), (1), (2), (3), (4), (5), (6), (7), (8), (9)",
+        "INSERT INTO N SELECT A.D * 10000 + B.D * 1000 + C.D * 100 + E.D * 10 + F.D + 1 FROM DIGIT A, DIGIT B, DIGIT C, DIGIT E, DIGIT F",
+        "INSERT INTO STOCK SELECT 1, N, MOD(N, 90) + 10 FROM N",
+        "INSERT INTO ORDER_LINE SELECT 1, 1, N, L.D + 1, MOD(N * 7919 + L.D * 104729, 100000) + 1 FROM N, DIGIT AS L WHERE N <= 5000",
+    ] {
+        s.run(sql).unwrap();
+    }
+    s.commit().unwrap();
+    db.maintain().unwrap();
+    (db, s)
+}
+
+/// Verifies: [DESIGN] RULES.md D760: TPC-C's STOCK-LEVEL query as its
+/// procedure runs it, its warehouse one slot, its order a slot bounding
+/// the order's lines by it and by it less 20, is planned with its slots,
+/// to be kept, as an index nested-loop join probing STOCK's key for the
+/// twenty orders' lines, not a hash join reading STOCK whole, the join
+/// costed as in the plan made with its values: the slot less 20 is read
+/// as its value less 20, not as an unknown bound.
+#[test]
+fn the_stock_level_query_with_slots_probes_stock() {
+    let (db, s) = order_lines();
+    let p = s
+        .prepare(
+            "SELECT COUNT(DISTINCT S_I_ID) FROM ORDER_LINE, STOCK WHERE OL_W_ID = ? AND OL_D_ID = ? \
+             AND OL_O_ID < ? AND OL_O_ID >= ? - CAST(20 AS INTEGER) AND S_W_ID = ? AND S_I_ID = OL_I_ID AND S_QUANTITY < ?",
+        )
+        .unwrap();
+    drop(s.open_prepared(&p, &[int(1), int(1), int(5001), int(5001), int(1), int(15)]).unwrap());
+    let Some(KeptPlan::Query(_, bound)) = read(&p.plans.kept.kept).unwrap().as_ref().and_then(|k| k.plan.clone()) else {
+        panic!("a query's plan")
+    };
+    // The procedure's warehouse is one variable, of OL_W_ID and S_W_ID both.
+    let slotted = crate::logical::map_plan_exprs(bound, &mut |e| {
+        let Expr::Dynamic(slot) = e else { return e };
+        Expr::Dynamic(Slot { index: if slot.index == 4 { 0 } else { slot.index }, ..slot })
+    });
+    let values = [int(1), int(1), int(5001), int(5001), int(1), int(15)];
+    let st = db.snapshot().unwrap();
+    let made = super::super::super::compiled::plan(&st, filled(slotted.clone(), &values).unwrap()).2.explain();
+    let plan = super::super::super::compiled::plan_slotted(&st, slotted, &values).explain();
+    assert!(plan.contains("IndexNestedLoop T.STOCK") && !plan.contains("HashJoin"), "{plan}");
+    let join = |text: &str| text.lines().find(|l| l.contains("IndexNestedLoop")).map(str::to_owned);
+    assert_eq!(join(&plan), join(&made), "its join costed as with its values");
+}
+
+/// Verifies: [DESIGN] RULES.md D761: the STOCK-LEVEL query prepared with a
+/// `?` of its own for each warehouse, so no equality of the two tables'
+/// warehouses is known, keeps the plan that probes STOCK's key, its
+/// warehouse fixed by STOCK's own filter and its item by each line; not a
+/// hash join reading STOCK whole.
+#[test]
+fn a_prepared_stock_level_query_keeps_its_probes_by_its_own_warehouse() {
+    let (_db, s) = order_lines();
+    let p = s
+        .prepare(
+            "SELECT COUNT(DISTINCT S_I_ID) FROM ORDER_LINE, STOCK WHERE OL_W_ID = ? AND OL_D_ID = ? \
+             AND OL_O_ID < ? AND OL_O_ID >= ? AND S_W_ID = ? AND S_I_ID = OL_I_ID AND S_QUANTITY < ?",
+        )
+        .unwrap();
+    for n in 0..=i128::from(LEARNED_RUNS) + 1 {
+        let order = 4990 - n;
+        drop(s.open_prepared(&p, &[int(1), int(1), int(order), int(order - 20), int(1), int(15)]).unwrap());
+    }
+    let kept = physical(&p);
+    assert!(kept.starts_with("Some(Fixed") && kept.contains("IndexJoin") && !kept.contains("HashJoin"), "{kept}");
+    assert!(kept.contains("table: QualifiedName { auth: \"T\", ident: \"STOCK\" }"), "{kept}");
+}
+
+/// How many hold the physical plan `p`'s place keeps, if it keeps one.
+fn holders(p: &Prepared) -> Option<usize> {
+    let kept = read(&p.plans.kept.kept).unwrap();
+    match kept.as_ref().map(|k| &k.physical) {
+        Some(Physical::Fixed(plan, reads, _)) => Some(Arc::strong_count(plan).max(Arc::strong_count(reads))),
+        _ => None,
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D781: statements prepared alike in two
+/// sessions share what their place keeps, each through a copy of its own:
+/// their executions take no count of the place's plan, and what one
+/// session keeps is found by the other's next execution, which keeps
+/// nothing again. MC/DC of copying again: the place changed or not.
+#[test]
+fn executions_read_their_own_copy_of_what_the_place_keeps() {
+    let (db, s) = table();
+    let other = db.session("A");
+    let mine = s.prepare("SELECT C FROM P WHERE A = ? AND B = ?").unwrap();
+    let theirs = other.prepare("SELECT C FROM P WHERE A = ? AND B = ?").unwrap();
+    assert!(Arc::ptr_eq(&mine.plans.kept, &theirs.plans.kept), "one place");
+    drop(other.open_prepared(&theirs, &[int(0), int(1)]).unwrap());
+    for _ in 0_i32..2_i32 {
+        drop(s.open_prepared(&mine, &[int(1), int(2)]).unwrap());
+    }
+    assert_eq!(holders(&mine), Some(1), "kept, held by the place alone");
+    let changes = |p: &Prepared| p.plans.kept.changes.load(Ordering::Acquire);
+    let before = changes(&mine);
+    for n in 0..3 {
+        let rows = other.open_prepared(&theirs, &[int(n), int(3)]).unwrap();
+        assert_eq!(holders(&theirs), Some(1), "{n}: a copy's, not the place's");
+        drop(rows);
+    }
+    assert_eq!(changes(&theirs), before, "the plan the other kept found, nothing kept again");
+    assert_eq!([theirs.plans_made(), mine.plans_made()], [1, 0], "bound once, by the first");
 }

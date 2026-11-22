@@ -1,14 +1,16 @@
 //! Whether a plan can raise an error of a General Rule as it runs.
 
 use super::Plan;
-use crate::logical::{Cond, Expr};
+use crate::functions::ColumnarKind;
+use crate::logical::{AggCall, Cond, Expr};
 
 impl Plan {
     /// Whether running it can raise an error of a General Rule (an
     /// overflow, a division by zero, a subquery's cardinality): through a
     /// condition or expression that can, or a set function, which can
     /// overflow. Reading a table can fail too, but that is the storage's
-    /// failure, not the statement's.
+    /// failure, not the statement's. A set function can raise as its
+    /// argument or filter can, or itself (`raises`).
     pub fn can_raise(&self) -> bool {
         match self {
             Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::WorkTable { .. } | Plan::Transition { .. } => false,
@@ -23,7 +25,7 @@ impl Plan {
             Plan::Counted(c) => c.input.can_raise(),
             Plan::Transfer(t) => t.input().is_some_and(Plan::can_raise),
             Plan::Project { exprs, input, .. } => exprs.iter().any(Expr::can_raise) || input.can_raise(),
-            Plan::Aggregate { aggs, input, .. } => !aggs.is_empty() || input.can_raise(),
+            Plan::Aggregate { aggs, input, .. } => aggs.iter().any(raises) || input.can_raise(),
             Plan::Product { left, right, .. }
             | Plan::HashJoin { left, right, .. }
             | Plan::Append { left, right, .. }
@@ -31,6 +33,8 @@ impl Plan {
             Plan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
             Plan::MergeJoin(m) => m.left.can_raise() || m.right.can_raise() || m.cond.as_ref().is_some_and(Cond::can_raise),
             Plan::RangeJoin(r) => r.left.can_raise() || r.right.can_raise() || r.full.can_raise(),
+            Plan::SemiJoin(s) => s.left.can_raise() || s.right.can_raise() || s.cond.as_ref().is_some_and(Cond::can_raise),
+            Plan::MarkJoin(m) => m.left.can_raise() || m.right.can_raise() || m.cond.iter().chain(&m.compared).any(Cond::can_raise),
             Plan::OuterJoin { left, right, cond, own, .. } => {
                 let owned = own.as_deref().is_some_and(|(l, r)| [l, r].iter().any(|c| c.as_ref().is_some_and(Cond::can_raise)));
                 left.can_raise() || right.can_raise() || owned || cond.as_ref().is_some_and(Cond::can_raise)
@@ -55,4 +59,19 @@ impl Plan {
             Plan::Recognize { recognize, .. } => recognize.can_raise(),
         }
     }
+}
+
+/// \[DESIGN\] (RULES.md D552) Whether the set function call `a` can raise
+/// an error as it runs: its argument or filter can, an inverse distribution
+/// function's fraction can, or the function itself can. COUNT, MIN and MAX
+/// cannot: a count past BIGINT would take more rows than any statement
+/// reads, and MIN and MAX only compare their values. SUM and AVG can
+/// overflow, and a function the core does not know may raise anything.
+fn raises(a: &AggCall) -> bool {
+    let own = match a.func.0.columnar().map(|c| c.0) {
+        Some(ColumnarKind::Count) | Some(ColumnarKind::Min) | Some(ColumnarKind::Max) => false,
+        Some(ColumnarKind::Sum) | Some(ColumnarKind::Avg) | None => true,
+    };
+    let parts = a.arg.as_ref().is_some_and(Expr::can_raise) || a.filter.as_ref().is_some_and(Cond::can_raise);
+    own || parts || a.distribution.is_some()
 }

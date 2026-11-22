@@ -1,0 +1,305 @@
+//! \[EXTENSION\] Groups a load writes straight from its rows (RULES.md
+//! D533). A column store table that holds no row past its last group as a
+//! load into it begins, its lock held alone, takes the load's batches as
+//! groups, never through its tree. Such a group is stamped with who made
+//! it: its transaction while open, seen by it alone; its commit timestamp
+//! once committed, seen by each snapshot taken at or after it; and none
+//! once committed before every snapshot, as every other group is. A
+//! directory notes whether any group is stamped, so a reader of one that
+//! holds none takes it as it is, by one comparison; else it takes a view
+//! of the groups it sees. A group is undone with its transaction's other
+//! changes, taken out of the directory (`mvcc.rs`).
+//!
+//! A directory stored names the transaction of each group made by one
+//! open then. Opened again after a crash, the table holds such groups
+//! apart, and recovery, knowing which transactions committed, keeps each
+//! whose rows it neither redoes nor undoes, committed before it, and
+//! drops the others before it redoes and undoes rows; their rows then
+//! come back by redo only if their transaction committed.
+//!
+//! ```text
+//! directory:  count u32, the high bit set if stamps follow; each group's
+//!             stamp u64, its transaction with the high bit set, else 0;
+//!             each group's summary (`group/header.rs`)
+//! ```
+
+use crate::engine::rows::options::LoadTo;
+use std::mem;
+use std::ops::Bound;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use super::freeze::ordered;
+use super::{Directory, Entry};
+use crate::engine::columns::group::Group;
+use crate::engine::rows::mvcc::Reader;
+use crate::engine::rows::version::{Maker, Version};
+use crate::engine::rows::{RowTable, corrupt, key};
+use crate::engine::tree::Direction;
+use crate::error::Result;
+use crate::storage::{Loading, Row, RowId};
+use crate::sync::{lock_builtin, read, write};
+use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
+
+/// The high bit of a stamp: the group's transaction is the rest, open.
+const OPEN: u64 = 1 << 63;
+/// The high bit of a stored directory's count: stamps follow it.
+const STAMPED: u32 = 1 << 31;
+
+/// A table's loads straight to groups.
+#[derive(Default)]
+pub(in crate::engine::rows) struct Loads {
+    /// The transaction whose rows go straight to groups, if any, else
+    /// `NO_TRANSACTION`.
+    direct: AtomicU64,
+    /// Groups stored as made by a transaction open then, held apart until
+    /// recovery settles them.
+    doubtful: std::sync::Mutex<Vec<Arc<Entry>>>,
+}
+
+impl Entry {
+    /// Its stamp: 0 if committed before every snapshot.
+    pub(super) fn stamp(&self) -> u64 {
+        self.made.load(Ordering::Acquire)
+    }
+}
+
+impl Directory {
+    /// A directory of `groups`, noting whether any is stamped.
+    pub(super) fn of(groups: Vec<Arc<Entry>>) -> Directory {
+        let pending = groups.iter().any(|e| e.stamp() != 0);
+        Directory { groups, pending, _whole: None }
+    }
+
+    /// `groups`, a part of `whole`'s that a reader sees, held with it.
+    pub(in crate::engine::rows) fn part(whole: &Arc<Directory>, groups: Vec<Arc<Entry>>) -> Directory {
+        Directory { groups, pending: false, _whole: Some(Arc::clone(whole)) }
+    }
+}
+
+/// The count of a stored `directory`, and the stamps of its groups made
+/// by a transaction open, if any is.
+pub(super) fn count_of(directory: &Directory) -> Result<Vec<u8>> {
+    let count = u32::try_from(directory.groups.len()).ok().filter(|c| c & STAMPED == 0);
+    let count = count.ok_or_else(|| corrupt("it has too many groups"))?;
+    let open: Vec<u64> = directory.groups.iter().map(|e| e.stamp()).map(|s| if s & OPEN == 0 { 0 } else { s }).collect();
+    if open.iter().all(|&s| s == 0) {
+        return Ok(count.to_le_bytes().to_vec());
+    }
+    let mut bytes = (count | STAMPED).to_le_bytes().to_vec();
+    for stamp in open {
+        bytes.extend_from_slice(&stamp.to_le_bytes());
+    }
+    Ok(bytes)
+}
+
+/// The count `count_of` wrote, the stamps if any, and the bytes after.
+pub(super) fn counted(bytes: &[u8]) -> Result<(usize, Vec<u64>, &[u8])> {
+    let (count, mut rest) = bytes.split_first_chunk::<4>().ok_or_else(|| corrupt("its groups' directory is too short"))?;
+    let count = u32::from_le_bytes(*count);
+    let groups = usize::try_from(count & !STAMPED).map_err(|_| corrupt("its groups' directory is too long"))?;
+    let mut stamps = Vec::new();
+    if count & STAMPED != 0 {
+        for _ in 0..groups {
+            let (stamp, after) = rest.split_first_chunk::<8>().ok_or_else(|| corrupt("its groups' stamps are not whole"))?;
+            stamps.push(u64::from_le_bytes(*stamp));
+            rest = after;
+        }
+    }
+    Ok((groups, stamps, rest))
+}
+
+impl RowTable {
+    /// Of `groups`, stored with `stamps`: those made by a transaction open
+    /// then held apart for recovery to settle, the others given.
+    pub(super) fn unstamped(&self, groups: Vec<Arc<Entry>>, stamps: &[u64]) -> Vec<Arc<Entry>> {
+        if stamps.is_empty() {
+            return groups;
+        }
+        let mut doubtful = lock_builtin(&self.frozen.loads.doubtful);
+        let mut kept = Vec::with_capacity(groups.len());
+        for (entry, &stamp) in groups.into_iter().zip(stamps) {
+            entry.made.store(stamp, Ordering::Release);
+            if stamp == 0 { kept.push(entry) } else { doubtful.push(entry) }
+        }
+        kept
+    }
+
+    /// Who made the rows of `entry`: its transaction, looked up in case it
+    /// committed since, or the commit that did.
+    pub(in crate::engine::rows) fn group_maker(&self, entry: &Entry) -> Maker {
+        let stamp = entry.stamp();
+        if stamp & OPEN == 0 {
+            return Maker::Committed(stamp);
+        }
+        self.maker(&Version { maker: Maker::Open(stamp & !OPEN), deleted: false, older: None, record: &[] })
+    }
+
+    /// The groups `reader` sees: the directory itself if none is stamped.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if its lock is poisoned.
+    pub(in crate::engine::rows) fn directory_for(&self, reader: Reader) -> Result<Arc<Directory>> {
+        let directory = self.frozen.directory()?;
+        if !directory.pending {
+            return Ok(directory);
+        }
+        let groups = directory.groups.iter().filter(|e| e.stamp() == 0 || reader.sees(self.group_maker(e))).cloned().collect();
+        Ok(Arc::new(Directory::part(&directory, groups)))
+    }
+
+    /// Row `id`'s frozen values, `columns` of them or all, if a group
+    /// `reader` sees holds it.
+    pub(in crate::engine::rows) fn frozen_seen(&self, id: RowId, columns: Option<&[usize]>, reader: Reader) -> Result<Option<Row>> {
+        let directory = self.frozen.directory()?;
+        let seen = directory.holding(id).is_some_and(|e| e.stamp() == 0 || reader.sees(self.group_maker(e)));
+        if !seen {
+            return Ok(None);
+        }
+        self.frozen_in(&directory, id, columns)
+    }
+
+    /// Stamps the groups `tx` made committed at `at`, its load ended.
+    pub(in crate::engine::rows) fn stamp_groups(&self, tx: TxId, at: Timestamp) {
+        self.end_direct(tx);
+        let Ok(directory) = self.frozen.directory() else { return };
+        if directory.pending {
+            for e in directory.groups.iter().filter(|e| e.stamp() == OPEN | tx) {
+                e.made.store(at, Ordering::Release);
+                // Counted as its rows, its making counted as one change
+                // already, so statistics are gathered as for the tree's.
+                self.gathered.changed(u64::from(e.summary.rows).saturating_sub(1));
+            }
+        }
+    }
+
+    /// Unstamps each group committed at or before `horizon`, so committed
+    /// before every snapshot; once none is stamped, the directory is given
+    /// again noting so.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if its lock is poisoned.
+    pub(in crate::engine::rows) fn settle_groups(&self, horizon: Timestamp) -> Result<()> {
+        let directory = self.frozen.directory()?;
+        if !directory.pending {
+            return Ok(());
+        }
+        let mut left = false;
+        for e in directory.groups.iter().filter(|e| e.stamp() != 0) {
+            let settled = match self.group_maker(e) {
+                Maker::Committed(at) => at <= horizon,
+                Maker::Open(_) => false,
+            };
+            if settled { e.made.store(0, Ordering::Release) } else { left = true }
+        }
+        let mut held = write(&self.frozen.directory)?;
+        if !left && Arc::ptr_eq(&held, &directory) {
+            *held = Arc::new(Directory::of(held.groups.clone()));
+        }
+        Ok(())
+    }
+
+    /// Whether a group is stamped committed, so the maintenance thread
+    /// settles it.
+    pub(in crate::engine::rows) fn groups_pending(&self) -> bool {
+        self.frozen.directory().is_ok_and(|d| d.pending && d.groups.iter().any(|e| e.stamp() != 0 && e.stamp() & OPEN == 0))
+    }
+
+    /// Ends the load of `tx` straight to groups, if one is under way.
+    pub(in crate::engine::rows) fn end_direct(&self, tx: TxId) {
+        let _ = self.frozen.loads.direct.compare_exchange(tx, NO_TRANSACTION, Ordering::AcqRel, Ordering::Acquire);
+    }
+
+    /// Takes the group `tx` made holding row `first` out of the directory,
+    /// as its change is undone.
+    ///
+    /// # Errors
+    ///
+    /// As storing the directory.
+    pub(in crate::engine::rows) fn unpublish_group(&self, tx: TxId, first: RowId) -> Result<()> {
+        let directory = self.frozen.directory()?;
+        let Some(entry) = directory.holding(first).filter(|e| e.stamp() == OPEN | tx) else { return Ok(()) };
+        let rows = usize::try_from(entry.summary.rows).unwrap_or(usize::MAX);
+        self.publish_entry((Some(entry), None), Vec::new())?;
+        self.counted.live.fetch_sub(rows, Ordering::AcqRel);
+        Ok(())
+    }
+
+    /// The group of `rows`, given `ids`, sorted as `columns` says, written.
+    fn group_from(&self, ids: Vec<RowId>, rows: &[Row], columns: &crate::engine::rows::options::Columns) -> Result<Group> {
+        let (order, bloom, sketch) = (columns.order.places(), columns.bloom.places(), columns.sketch.places());
+        let pages = self.group_pages()?;
+        if order.is_empty() {
+            return Group::write(&pages, self.format.types(), (&ids, rows), (&order, &bloom, &sketch));
+        }
+        let (ids, rows) = ordered(&columns.order, ids.into_iter().zip(rows.iter().cloned()).collect());
+        Group::write(&pages, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))
+    }
+}
+
+impl Loading for RowTable {
+    fn begin_load(&self, tx: TxId) -> Result<Option<usize>> {
+        let Some(columns) = (*read(&self.frozen.columns)?).filter(|c| c.load == LoadTo::Groups) else { return Ok(None) };
+        let past = self.frozen.directory()?.last().map(|l| key(l.saturating_add(1)));
+        let lower = past.as_ref().map_or(Bound::Unbounded, |k| Bound::Included(&k[..]));
+        if self.tree.scan(lower, Bound::Unbounded, Direction::Forward).next().is_some() {
+            return Ok(None);
+        }
+        let direct = &self.frozen.loads.direct;
+        let begun = direct.compare_exchange(NO_TRANSACTION, tx, Ordering::AcqRel, Ordering::Acquire);
+        if begun.is_err_and(|by| by != tx) {
+            return Ok(None);
+        }
+        Ok(Some(usize::try_from(columns.group_rows).unwrap_or(usize::MAX)))
+    }
+
+    fn insert_group(&self, tx: TxId, rows: &[Row]) -> Result<Option<Vec<RowId>>> {
+        let direct = self.frozen.loads.direct.load(Ordering::Acquire) == tx;
+        let Some(columns) = (*read(&self.frozen.columns)?).filter(|_| direct && !rows.is_empty()) else { return Ok(None) };
+        let ids = rows.iter().map(|_| self.next_id()).collect::<Result<Vec<_>>>()?;
+        let first = ids.first().copied().unwrap_or_default();
+        let group = self.group_from(ids.clone(), rows, &columns)?;
+        let pages = group.pages();
+        let entry = self.entry_of(group)?;
+        entry.made.store(OPEN | tx, Ordering::Release);
+        // Noted first, so a group published is undone with the rest.
+        if let Err(e) = self.note_group(tx, first) {
+            entry.retire(pages);
+            return Err(e);
+        }
+        self.publish_entry((None, Some((entry, pages))), Vec::new())?;
+        self.counted.live.fetch_add(rows.len(), Ordering::AcqRel);
+        Ok(Some(ids))
+    }
+
+    fn end_load(&self, tx: TxId) {
+        self.end_direct(tx);
+    }
+
+    fn recovered_loads(&self, redone: &dyn Fn(TxId) -> bool) -> Result<()> {
+        let doubtful = mem::take(&mut *lock_builtin(&self.frozen.loads.doubtful));
+        if doubtful.is_empty() {
+            return Ok(());
+        }
+        let mut dropped = Vec::new();
+        for entry in doubtful {
+            if redone(entry.stamp() & !OPEN) {
+                dropped.push(entry);
+                continue;
+            }
+            entry.made.store(0, Ordering::Release);
+            let pages = self.group_of(&entry)?.pages();
+            self.publish_entry((None, Some((entry, pages))), Vec::new())?;
+        }
+        // Stored without them before their pages are freed.
+        self.store_directory(&*self.frozen.directory()?)?;
+        for entry in dropped {
+            let pages = self.group_of(&entry)?.pages();
+            entry.retire(pages);
+        }
+        self.counted.live.store(self.count_newest()?, Ordering::Release);
+        Ok(())
+    }
+}

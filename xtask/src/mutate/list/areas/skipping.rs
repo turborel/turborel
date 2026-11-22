@@ -1,7 +1,8 @@
 //! The mutations of the column store's skipping (RULES.md R-TEST-9,
-//! D510, D511): the shadow bits a write and a group published set, the
+//! D510-D512): the shadow bits a write and a group published set, the
 //! zones of the tree's rows a scan reads the delta by, and imprints, their
-//! masks and the order conjuncts are judged in.
+//! masks and the order conjuncts are judged in, dictionaries in order,
+//! and column sketches (D525).
 
 use super::super::{Mutation, Package};
 
@@ -11,10 +12,17 @@ const DELTA: &str = "engine::rows::frozen::shadowed::delta_zones_skip_the_tree_r
 /// Imprints' unit tests.
 const KEPT: &str = "engine::columns::imprints::tests::imprints_never_leave_out_a_matching_row";
 const MASKS: &str = "engine::columns::imprints::tests::masks_are_of_the_bins_a_condition_may_match";
+/// Dictionaries in order.
+const SORTED: &str = "engine::columns::judged::sorted::tests::dictionaries_in_order_judge_by_codes";
 const ORDERED: &str = "engine::columns::imprints::tests::conjuncts_are_ordered_narrowest_first";
+/// Column sketches' unit tests.
+const CODES: &str = "engine::columns::sketch::tests::codes_order_as_their_values";
+const VERDICTS: &str = "engine::columns::judged::sketched::tests::codes_say_what_their_values_say";
+const SCANS: &str = "engine::columns::judged::sketched::tests::scans_by_sketches_keep_what_values_keep";
+const SPARSE: &str = "engine::columns::judged::sketched::tests::few_rows_asked_for_are_compared_without_the_sketch";
 
 /// Mechanisms whose removal must fail the skipping's requirements.
-pub const SKIPPING: [Mutation; 10] = [
+pub const SKIPPING: [Mutation; 20] = [
     Mutation {
         name: "shadow-bits-writer",
         package: Package::Core,
@@ -114,5 +122,105 @@ pub const SKIPPING: [Mutation; 10] = [
         replacement: "from.saturating_sub(last.1) < 1",
         integration: &[],
         unit: &[MASKS],
+    },
+    Mutation {
+        name: "dictionary-in-order",
+        package: Package::Core,
+        breaks: "a dictionary of texts keeps its entries as first seen",
+        file: "src/engine/columns.rs",
+        original: "(sizer.table(), padding(t).is_some())",
+        replacement: "(sizer.table(), false)",
+        integration: &[],
+        unit: &[SORTED],
+    },
+    Mutation {
+        name: "dictionary-order-unsorted",
+        package: Package::Core,
+        breaks: "a dictionary says its entries are in order and keeps them in reverse",
+        file: "src/engine/columns/encoded/dictionary.rs",
+        original: "compare_strings(x, y).then_with",
+        replacement: "compare_strings(y, x).then_with",
+        integration: &[],
+        unit: &[SORTED],
+    },
+    Mutation {
+        name: "dictionary-spans",
+        package: Package::Core,
+        breaks: "the entries equal to a constant are taken to begin where those above it do",
+        file: "src/engine/columns/judged/sorted.rs",
+        original: "Some(order(e)? != Ordering::Less)",
+        replacement: "Some(order(e)? == Ordering::Greater)",
+        integration: &[],
+        unit: &[SORTED],
+    },
+    Mutation {
+        name: "sketch-point-code",
+        package: Package::Core,
+        breaks: "a value equal to a point is given the code below it, among the values between the edges",
+        file: "src/engine/columns/sketch.rs",
+        original: "below.saturating_add(u8::from(point && equal))",
+        replacement: "below",
+        integration: &[],
+        unit: &[CODES],
+    },
+    Mutation {
+        name: "sketch-bin-edge",
+        package: Package::Core,
+        breaks: "the values up to an edge are taken all below it, though the edge is among them",
+        file: "src/engine/columns/sketch.rs",
+        original: "Ordering::Equal => (equal && !inclusive).then_some(Ordering::Less),",
+        replacement: "Ordering::Equal => equal.then_some(Ordering::Less),",
+        integration: &[],
+        unit: &[CODES, VERDICTS],
+    },
+    Mutation {
+        name: "sketch-boundary",
+        package: Package::Core,
+        breaks: "a code a constant falls within is said to keep or leave all its rows, none compared",
+        file: "src/engine/columns/judged/sketched.rs",
+        original: "        if !mixed.get() {",
+        replacement: "        if mixed.get() || !mixed.get() {",
+        integration: &[],
+        unit: &[VERDICTS, SCANS],
+    },
+    Mutation {
+        name: "sketch-verdict",
+        package: Package::Core,
+        breaks: "a code whose values the conjunct is true of is said to leave them, and one false of them to keep them",
+        file: "src/engine/columns/judged/sketched.rs",
+        original: "out.set(code, if keeps { Verdict::Keep } else { Verdict::Drop });",
+        replacement: "out.set(code, if keeps { Verdict::Drop } else { Verdict::Keep });",
+        integration: &[],
+        unit: &[VERDICTS, SCANS],
+    },
+    Mutation {
+        name: "sketch-null",
+        package: Package::Core,
+        breaks: "a null's code leaves its row, whatever the conjunct is of a null",
+        file: "src/engine/columns/judged/sketched.rs",
+        original: "if pred.of_null { Verdict::Keep } else { Verdict::Drop }",
+        replacement: "Verdict::Drop",
+        integration: &[],
+        unit: &[VERDICTS, SCANS],
+    },
+    Mutation {
+        name: "sketch-kept",
+        package: Package::Core,
+        breaks: "a row its code keeps is left out",
+        file: "src/engine/columns/judged/coded.rs",
+        original: "                Verdict::Keep => {\n                    out.push(r);\n                    continue;\n                }",
+        replacement: "                Verdict::Keep => continue,",
+        integration: &[],
+        unit: &[SCANS],
+    },
+    Mutation {
+        name: "sketch-sparse",
+        package: Package::Core,
+        breaks: "a run of few rows asked for reads the sketch's codes and judges each code of the group",
+        file: "src/engine/columns/judged/coded.rs",
+        original: "if symbols && dense {",
+        replacement: "if symbols {",
+        integration: &[],
+        unit: &[SPARSE],
     },
 ];

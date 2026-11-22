@@ -158,18 +158,16 @@ fn numbers_and_strings_as_vectors_answer_as_row_by_row() {
     assert_eq!(batched, row, "{spilled}");
     assert_eq!(batched, sorted(&a, &spilled.replace(" C ", " R ")), "{spilled}, as the row store");
     exec(&a, "SET MEMORY.WORK_BYTES = DEFAULT").unwrap();
-    // [ISO/IEC 9075:1992 §6.5 GR2b iv] a sum whose total is within 18
-    // digits gives it, of integers as of decimals; one whose total is
-    // past them raises, as does a product past them.
+    // [ISO/IEC 9075:1992 §6.5 GR2b iv] a sum of 18 digits' values gives
+    // its total, of 38 digits (RULES.md D696), of integers as of
+    // decimals; a product past 38 digits raises.
     let within = "SELECT I, SUM(N) FROM {t} WHERE I IN (1, 4, 9) GROUP BY I";
     let (batched, row) = both_ways(&a, &within.replace("{t}", "C"));
     assert_eq!((&batched, &row), (&sorted(&a, &within.replace("{t}", "R")), &batched), "{within}");
     let raising = [
-        "SELECT COUNT(*) FROM {t} WHERE N * 1000 > 0 AND I = 1",
-        "SELECT SUM(N) FROM {t}",
-        "SELECT SUM(N) FROM {t} GROUP BY I",
-        "SELECT SUM(N * 1000) FROM {t}",
-        "SELECT I, MAX(N * 10) FROM {t} GROUP BY I",
+        "SELECT COUNT(*) FROM {t} WHERE N * 100000000000000000000000 > 0 AND I = 1",
+        "SELECT SUM(N * 100000000000000000000000) FROM {t}",
+        "SELECT I, MAX(N * 1000000000000000000000) FROM {t} GROUP BY I",
         // [ISO/IEC 9075:1992 §8.5 GR3a i] an escape not of one character.
         "SELECT COUNT(*) FROM {t} WHERE V LIKE 'v%' ESCAPE V",
     ];

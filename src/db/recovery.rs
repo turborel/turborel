@@ -199,6 +199,16 @@ impl Database {
         self.replay_records(&mut opened, definitions)
     }
 
+    /// Keeps or drops each table's groups of loads open as it was stored
+    /// (`Loading::recovered_loads`), by `analysis`.
+    fn settle_loads(&self, analysis: &Analysis) -> Result<()> {
+        for storage in self.snapshot()?.storage.values() {
+            let durable = storage.durable_through();
+            storage.loading().map_or(Ok(()), |l| l.recovered_loads(&|tx| analysis.redoes(tx, durable)))?;
+        }
+        Ok(())
+    }
+
     /// What opens a log's records: the database's encodings, of sealed
     /// ones (`log/sealed.rs`), and its types.
     pub(super) fn openers(&self) -> Result<(Arc<Encodings>, TypeRegistry)> {
@@ -221,10 +231,12 @@ impl Database {
             let (lsn, record) = read?;
             report.records = report.records.saturating_add(1);
             analysis.note(lsn, &record);
-            if let Some(change) = self.replay_record(lsn, record, &mut replaying, &mut report)? {
+            for change in self.replay_record(lsn, record, &mut replaying, &mut report)? {
                 changes.push(change, &mut encode_change)?;
             }
         }
+        // [EXTENSION] the groups of loads open as a table was stored, kept or dropped first (RULES.md D533).
+        self.settle_loads(&analysis)?;
         changes.visit_newest(&|record| decode_change(record, &types), &mut |change| {
             if !analysis.stands(change) && self.undo(change, &analysis)? {
                 report.undone = report.undone.saturating_add(1);
@@ -251,12 +263,17 @@ impl Database {
 
     /// Replays a definition: one made outside transactions at once, one a
     /// transaction made at its commit record, if `replaying` says so;
-    /// returns a row change, kept for undo and redo.
-    fn replay_record(&self, lsn: Lsn, record: Record, replaying: &mut Replaying, report: &mut RecoveryReport) -> Result<Option<RowChange>> {
+    /// returns its row changes, kept for undo and redo: \[EXTENSION\] of
+    /// rows inserted together, one for each (RULES.md D530).
+    fn replay_record(&self, lsn: Lsn, record: Record, replaying: &mut Replaying, report: &mut RecoveryReport) -> Result<Vec<RowChange>> {
         let tx = record.tx;
-        let change = |table, generation, row, before, after| Some(RowChange { lsn, tx, table, generation, row, before, after });
-        Ok(match record.change {
+        let one = |table, generation, row, before, after| RowChange { lsn, tx, table, generation, row, before, after };
+        let change = |table, generation, row, before, after| Some(one(table, generation, row, before, after));
+        Ok(Vec::from_iter(match record.change {
             Change::Insert { table, generation, row, after } => change(table, generation, row, None, Some(after)),
+            Change::InsertRows { table, generation, rows } => {
+                return Ok(rows.into_iter().map(|(row, after)| one(table.clone(), generation, row, None, Some(after))).collect());
+            }
             Change::Update { table, generation, row, before, after } => change(table, generation, row, Some(before), Some(after)),
             Change::Delete { table, generation, row, before } => change(table, generation, row, Some(before), None),
             definition @ (Change::Schema { .. }
@@ -294,7 +311,7 @@ impl Database {
                 None
             }
             Change::Checkpoint | Change::RestorePoint { .. } => None,
-        })
+        }))
     }
 
     /// [ISO/IEC 9075:1992 §20.1 GR6b ii] The definitions `tx`, committed at
@@ -369,6 +386,7 @@ impl Database {
                     st.apply_change(change, None)?.discard();
                 }
                 Change::Insert { .. }
+                | Change::InsertRows { .. }
                 | Change::Update { .. }
                 | Change::Delete { .. }
                 | Change::Commit { .. }
@@ -519,7 +537,7 @@ impl State {
     }
 
     /// MEMORY.WORK_BYTES in batches of SPILL.BATCH_BYTES, for a load.
-    fn load_area(&self) -> Area {
+    pub(super) fn load_area(&self) -> Area {
         use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, batch_bytes, held_bytes};
         Area::new(held_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)))
     }
@@ -532,6 +550,13 @@ impl State {
         let versions = if crate::catalog::is_global_index(&ix.name) {
             self.global_versions(ix, as_of)?
         } else {
+            // [DESIGN] RULES.md D443: every version it counts shares no
+            // entry; with no snapshot given, the table's writers are kept
+            // out, and every commit given is counted.
+            let through = if as_of == Timestamp::MAX { self.tx.highest() } else { as_of };
+            if let Ok(lock) = self.lock_of(&ix.table) {
+                lock.filled(&ix.name, through);
+            }
             Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.reads())
         };
         Ok(versions.filter_map(move |read| {

@@ -251,8 +251,9 @@ fn lineage_through_each_node() {
 }
 
 /// Verifies: [DESIGN] RULES.md D35, D370: what has no count takes a
-/// default, an UNNEST its input's times the fan-out, and a plan deeper than
-/// the estimator looks a relation of unknown rows.
+/// default, an UNNEST of a collection not known as planned its input's
+/// times the fan-out, and a plan deeper than the estimator looks a
+/// relation of unknown rows.
 #[test]
 fn defaults_of_what_has_no_count() {
     let (_db, s) = database();
@@ -265,7 +266,7 @@ fn defaults_of_what_has_no_count() {
         located: false,
     };
     assert!((est.rows(&missing) - UNKNOWN_ROWS).abs() < f64::EPSILON);
-    let unnested = rows(&s, "SELECT * FROM V, UNNEST(ARRAY[1, 2]) AS A(X)");
+    let unnested = rows(&s, "SELECT * FROM V, UNNEST(CASE WHEN V.K > 0 THEN ARRAY[1] ELSE ARRAY[1, 2] END) AS A(X)");
     assert!(near(unnested, 10.0 * UNNEST_FANOUT), "{unnested}");
     let below = est.card_at(&scan("V", 1), MAX_ESTIMATE_DEPTH.saturating_add(1));
     assert!((below.rows - UNKNOWN_ROWS).abs() < f64::EPSILON, "past the depth looked to");
@@ -314,4 +315,23 @@ fn nested_groupings_are_estimated_once_a_node() {
     }
     let estimated = rows(&s, &sql);
     assert!((1.0_f64..=1_000.0_f64).contains(&estimated), "{estimated}");
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §7.6 SR8f, SR8h]; [DESIGN] RULES.md
+/// D777: an UNNEST of constant collections is its input's rows times the
+/// elements of the longest, an array constructor's its values, of a
+/// column too, and one of a null collection at least one row each.
+#[test]
+fn an_unnest_of_constants_is_estimated_by_their_elements() {
+    let (_db, s) = database();
+    let two = rows(&s, "SELECT * FROM V, UNNEST(ARRAY[1, 2]) AS A(X)");
+    assert!(near(two, 20.0), "{two}");
+    let longest = rows(&s, "SELECT * FROM UNNEST(ARRAY[1, 2, 3, 4], ARRAY[1]) AS A(X, Y)");
+    assert!(near(longest, 4.0), "{longest}");
+    let columns = rows(&s, "SELECT * FROM V, UNNEST(ARRAY[V.K, V.K, 2]) AS A(X)");
+    assert!(near(columns, 30.0), "{columns}");
+    let null = rows(&s, "SELECT * FROM V, UNNEST(CAST(NULL AS INTEGER ARRAY)) AS A(X)");
+    assert!(near(null, 10.0), "{null}");
+    let empty = rows(&s, "SELECT * FROM V, UNNEST(ARRAY[1, 2], CAST(NULL AS INTEGER ARRAY)) AS A(X, Y)");
+    assert!(near(empty, 20.0), "a null collection beside another: {empty}");
 }

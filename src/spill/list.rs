@@ -109,6 +109,14 @@ impl<T: ListItem> SpillList<T> {
         self.held
     }
 
+    /// The last item, if it is held in memory.
+    pub fn last_mut(&mut self) -> Option<&mut T> {
+        match self.segments.last_mut() {
+            Some(Segment::Held(items, _)) => items.last_mut(),
+            Some(Segment::Spilled(..)) | None => None,
+        }
+    }
+
     /// Begins a segment, so the items from here on are apart from those
     /// before; their place.
     pub fn mark(&mut self) -> usize {
@@ -309,6 +317,22 @@ impl<T: ListItem> SpillList<T> {
             match segment {
                 Segment::Held(items, _) => items.iter().try_for_each(&mut *each)?,
                 Segment::Spilled(run, _) => read_back(run, decode)?.iter().try_for_each(&mut *each)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Calls `each` with the items of every segment, in order, the list
+    /// kept: a held segment's as they are held, a run's read back.
+    ///
+    /// # Errors
+    ///
+    /// The run's, `decode`'s, or `each`'s.
+    pub fn visit_slices(&mut self, decode: Decode<'_, T>, each: &mut dyn FnMut(&[T]) -> Result<()>) -> Result<()> {
+        for segment in &mut self.segments {
+            match segment {
+                Segment::Held(items, _) => each(items)?,
+                Segment::Spilled(run, _) => each(&read_back(run, decode)?)?,
             }
         }
         Ok(())

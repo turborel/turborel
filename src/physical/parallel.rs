@@ -5,7 +5,9 @@
 //! projections and hash joins' probes over them, read as one stream; or
 //! one of the operators that end a pipeline, over one: a grouping whose
 //! set functions keep states that merge, DISTINCT, a sort, window
-//! functions of a partitioning, and UNION, EXCEPT and INTERSECT.
+//! functions of a partitioning, and UNION, EXCEPT and INTERSECT. A
+//! grouping or DISTINCT streamed over rows in its keys' order is no such
+//! part, as its order would be lost among the threads (RULES.md D550).
 //!
 //! The degree is of the rows the part's tables held as it was planned: as
 //! many threads as morsels of EXECUTOR.MORSEL_ROWS they hold, up to
@@ -66,14 +68,22 @@ struct Asked<'a> {
 /// The threads the system runs at once, as EXECUTOR.WORKERS of 0 asks.
 pub(crate) fn workers_of(db: &State) -> usize {
     match db.settings.count(EXECUTOR_WORKERS) {
-        0 => *SYSTEM_THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)),
+        0 => system_threads(),
         n => n,
     }
 }
 
-/// \[DESIGN\] The threads the system runs at once, asked of it once
-/// (RULES.md D405): the asking reads files of the system's at each call,
-/// which a statement planned would pay each time.
+/// \[DESIGN\] (RULES.md D405, D682) The threads the system runs at once,
+/// asked of it once, as the first database starts (`Database::over`), by
+/// the thread starting it, and kept: asked as each statement is planned,
+/// it read files of the system's each time, and a thread held to fewer
+/// processors than the process has, as a statement's may be, saw only
+/// those.
+pub(crate) fn system_threads() -> usize {
+    *SYSTEM_THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))
+}
+
+/// The threads the system runs at once, as `system_threads` asked them.
 static SYSTEM_THREADS: OnceLock<usize> = OnceLock::new();
 
 impl<'a> Asked<'a> {
@@ -90,10 +100,11 @@ impl<'a> Asked<'a> {
     /// The degree of the part `plan` reading `rows` rows: 1 to run it
     /// alone, as one a serial scan by batch serves better.
     fn degree(self, plan: &Plan, rows: usize) -> usize {
-        if rows < self.least || (crate::exec::batched(self.db) && by_batch(self.db, plan)) {
+        if crate::exec::batched(self.db) && by_batch(self.db, plan) {
             return 1;
         }
-        self.most.min(rows.div_ceil(self.morsel))
+        // The rule the costs anticipate (`cost/parallel.rs`, RULES.md D652).
+        super::Degrees { most: self.most, morsel: self.morsel, least: self.least }.degree(rows)
     }
 
     /// \[DESIGN\] (RULES.md D355) Whether the part `plan` reading `rows`
@@ -103,6 +114,15 @@ impl<'a> Asked<'a> {
         let degree = self.most.min(rows.div_ceil(self.morsel));
         rows >= self.least && exchange::outweighs(self.db, plan, rows, (self.morsel, degree))
     }
+}
+
+/// \[DESIGN\] Whether `plan`, a grouping or DISTINCT, would be a part
+/// run in parallel as it is: so a streamed one is not chosen in its place
+/// (RULES.md D550).
+pub(super) fn runs_parallel(db: &State, plan: &Plan) -> bool {
+    let asked = Asked::of(db);
+    let Some(rows) = rooted(plan).filter(|_| asked.most > 1) else { return false };
+    !asked.kept_whole(plan, rows) && asked.degree(plan, rows) > 1
 }
 
 /// `plan` with each part worth running in parallel marked so.
@@ -170,10 +190,12 @@ fn filtered(plan: &Plan) -> bool {
 
 /// The rows a part rooted at `plan` reads, if it is one.
 fn rooted(plan: &Plan) -> Option<usize> {
-    if let Plan::Aggregate { aggs, input, .. } = plan {
+    // A streamed grouping or DISTINCT reads its input in order, a group
+    // at a time, which no morsel's table of groups does (RULES.md D550).
+    if let Plan::Aggregate { aggs, input, streamed: false, .. } = plan {
         return mergeable(aggs).then(|| stream(input)).flatten();
     }
-    if let Plan::Distinct { input, .. } = plan {
+    if let Plan::Distinct { input, streamed: false, .. } = plan {
         return stream(input);
     }
     if let Plan::Sort { input, most, .. } = plan {
@@ -278,4 +300,27 @@ fn calm_cond(c: &Cond) -> bool {
     let mut all = c.subqueries().is_empty();
     c.for_each_expr(&mut |e| all = all && calm(e));
     all
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::{Decimal, Value};
+
+    /// Verifies: [DESIGN] RULES.md D405, D682: once a database starts, the
+    /// system's threads are kept, and EXECUTOR.WORKERS of 0 is planned by
+    /// them, however many times and from whichever thread it is asked.
+    #[test]
+    fn workers_of_none_set_are_the_threads_kept_as_a_database_starts() {
+        let db = crate::db::Database::new();
+        let kept = SYSTEM_THREADS.get().copied();
+        assert!(kept.is_some_and(|n| n >= 1), "kept as it started");
+        db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(0, 0))).unwrap();
+        let state = db.snapshot().unwrap();
+        let asked = std::thread::scope(|s| s.spawn(|| workers_of(&state)).join().unwrap());
+        assert_eq!(Some(asked), kept);
+        assert_eq!(Some(workers_of(&state)), kept);
+        db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(3, 0))).unwrap();
+        assert_eq!(workers_of(&db.snapshot().unwrap()), 3, "a setting is what it says");
+    }
 }

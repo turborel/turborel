@@ -17,9 +17,11 @@
 //!   latch, held only while that one node is read (the paper's atomic
 //!   `get`, §2), and move right when the key is past it.
 //! * **Writers** go down the same way, remembering the rightmost node they
-//!   read at each level. They lock the leaf (`engine/locks.rs`), move right if it
-//!   has split, and change it in place if the change fits and starts no
-//!   run (`node.rs`). Otherwise they split it: the right half written to a new page first, then the left
+//!   read at each level. They lock the leaf, owning its frame
+//!   (`disk/buffer/owned.rs`), move right if it has split, and change it
+//!   in place if the change fits, starts no run and the leaf is not one
+//!   writers keep waiting for (`node.rs`, `edge.rs`). Entries past the end
+//!   of the rightmost leaf go there with no descent. Otherwise they split it: the right half written to a new page first, then the left
 //!   half over the old one, which together are one change to the tree
 //!   (§6.2, Lemma 2). Then they lock the remembered parent, move right
 //!   from it as far as the separator needs, release the child, and insert
@@ -42,34 +44,43 @@
 //! how often readers and writers follow links at all.
 //!
 //! One `BLinkTree` value works a tree at a time: it keeps the root's page
-//! number and the node locks. The pages reach the disk as the buffer pool
+//! number and the rightmost leaf. The pages reach the disk as the buffer pool
 //! writes them back; a database kept in a directory keeps its trees in its
 //! data file, shadowed, so after a crash the file is exactly as the last
 //! checkpoint left it, no split half written, and the log redoes what came
 //! after (`disk/shadow.rs`, RULES.md D25).
 
+mod counts;
 mod cuts;
+mod edge;
 mod estimate;
+mod fit;
+pub(crate) mod hints;
+mod inner;
 mod load;
 mod near;
 mod node;
 mod reclaim;
+mod room;
 mod scan;
 mod write;
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use super::locks::{Locks, NodeLock};
-use node::{CHILD, ENTRY_OVERHEAD, HEADER, Node, Shape};
+pub use counts::TreeCounts;
+use counts::{Counters, count};
+pub(crate) use node::Parsed;
+
+use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
 pub(crate) use reclaim::{Entered, Epochs};
-pub use scan::{Direction, Scan, Visit, Visited, scan_of};
-pub use write::Update;
+pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of};
+pub use write::{Descended, Update};
 #[cfg(test)]
 use write::{Mode, Written};
 
-use crate::disk::buffer::{BufferPool, FileId, Tally};
+use crate::disk::buffer::{BufferPool, FileId, Owned as NodeLock, Tally};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 
@@ -85,33 +96,6 @@ fn corrupt(why: &str) -> SqlError {
     SqlError::new(Code::Corrupt, format!("[DESIGN] a B-link tree is malformed: {why}"))
 }
 
-/// The counters of a tree, for the heuristics above it (RULES.md D30).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TreeCounts {
-    /// Nodes split.
-    pub splits: u64,
-    /// Of those, roots: the tree grew a level.
-    pub root_splits: u64,
-    /// Links followed to a right neighbour, by readers and writers: a
-    /// node had split since its parent was read.
-    pub right_moves: u64,
-    /// Leaves emptied and taken out of the tree (`reclaim.rs`).
-    pub unlinked: u64,
-}
-
-#[derive(Default)]
-struct Counters {
-    splits: AtomicU64,
-    root_splits: AtomicU64,
-    right_moves: AtomicU64,
-    unlinked: AtomicU64,
-}
-
-/// Adds 1 to `counter`; it would wrap only after 2^64.
-fn count(counter: &AtomicU64) {
-    counter.fetch_add(1, Ordering::Relaxed);
-}
-
 /// \[DESIGN\] A B-link tree in a pager file of a buffer pool. It may be
 /// shared between threads.
 pub struct BLinkTree {
@@ -123,7 +107,10 @@ pub struct BLinkTree {
     root: AtomicU64,
     /// The most content a node holds in its page.
     capacity: usize,
-    locks: Locks,
+    /// The rightmost leaf, where the last entry written past its end went,
+    /// or 0: the next such entry is written there with no descent
+    /// (`edge.rs`, RULES.md D503).
+    edge: AtomicU64,
     counters: Counters,
     /// Its lookups by key, a `get` or a scan's from a key, and the pages
     /// they read that the pool missed (`BufferPool::read_tallied`), for the
@@ -132,6 +119,10 @@ pub struct BLinkTree {
     /// The operations under way by epoch, and the pages taken out
     /// (`reclaim.rs`).
     epochs: Epochs,
+    /// Whether it is a table's, keyed by row id: it notes the leaf of each
+    /// row it writes or scans, and reads a row from the leaf noted for it
+    /// first (`hints.rs`).
+    rows: AtomicBool,
 }
 
 /// What a descent looks for at each level.
@@ -154,7 +145,7 @@ impl Target<'_> {
         }
     }
 
-    fn child<'n>(self, node: &Node<'n>) -> Result<(PageId, Option<&'n [u8]>)> {
+    fn child<'n>(self, node: &Node<'n>) -> Result<(PageId, Option<KeyRef<'n>>)> {
         match self {
             Target::Key(key) => node.child(key),
             Target::First => Ok((node.first_child(), None)),
@@ -220,16 +211,15 @@ impl BLinkTree {
     /// pool's errors.
     pub fn create(pool: Arc<BufferPool>, file: FileId) -> Result<BLinkTree> {
         let capacity = pool.capacity(file)?;
+        // The meta page first, as every node names it.
+        let (meta, mut meta_page) = pool.new_page(file)?;
         let root = {
             let (root, mut page) = pool.new_page(file)?;
-            *page = node::build(&Shape { level: 0, high: None, right: None, first: PageId(0) }, &[])?;
+            *page = node::build(&Shape { level: 0, high: None, right: None, first: PageId(0), tree: meta.0 }, &[])?;
             root
         };
-        let meta = {
-            let (meta, mut page) = pool.new_page(file)?;
-            *page = meta_content(root);
-            meta
-        };
+        *meta_page = meta_content(root);
+        drop(meta_page);
         Ok(BLinkTree::with(pool, file, meta, root, capacity))
     }
 
@@ -257,11 +247,23 @@ impl BLinkTree {
             meta,
             root: AtomicU64::new(root.0),
             capacity,
-            locks: Locks::new(),
+            edge: AtomicU64::new(0),
             counters: Counters::default(),
             tally: Tally::default(),
             epochs: Epochs::new(),
+            rows: AtomicBool::new(false),
         }
+    }
+
+    /// Makes it a table's, keyed by row id (`hints.rs`).
+    pub fn note_rows(&self) {
+        self.rows.store(true, Ordering::Relaxed);
+    }
+
+    /// The row id of `key`, if it is a table's and `key` is one.
+    fn row_of(&self, key: &[u8]) -> Option<u64> {
+        let row = <[u8; 8]>::try_from(key).ok().map(u64::from_be_bytes)?;
+        self.rows.load(Ordering::Relaxed).then_some(row)
     }
 
     /// Its meta page, by which `open` finds it.
@@ -272,7 +274,8 @@ impl BLinkTree {
     /// The most bytes a key and its value may take together; a value
     /// shorter than 8 bytes counts as 8, the size of a page number, as its
     /// key may become a separator in an inner node. Entries this size keep
-    /// at least four to a node, so a split always leaves halves that fit.
+    /// at least four to a node, so a split always leaves halves that fit,
+    /// whatever prefix they keep.
     pub fn max_entry(&self) -> usize {
         self.capacity.saturating_sub(HEADER.saturating_mul(2)).checked_div(4).unwrap_or_default().saturating_sub(ENTRY_OVERHEAD)
     }
@@ -333,39 +336,6 @@ impl BLinkTree {
     pub fn free_retired(&self) -> Result<()> {
         self.epochs.all_retired().into_iter().try_for_each(|p| self.pool.free(self.file, p))
     }
-
-    /// The pages its lookups by key read that the pool missed, per lookup,
-    /// at most 1, once at least `least` are counted.
-    pub fn missed_share(&self, least: u64) -> Option<f64> {
-        self.tally.missed_share(least)
-    }
-
-    /// The pages its lookups by key read that the pool missed, per lookup,
-    /// once at least `least` are counted.
-    pub fn missed_pages(&self, least: u64) -> Option<f64> {
-        self.tally.missed_per_lookup(least)
-    }
-
-    /// The share of its file's pages in use the pool has no frames for,
-    /// none if it has for all.
-    pub fn unheld_share(&self) -> f64 {
-        let pages = |n: u64| crate::stats::parts::count(n);
-        let used = pages(self.pool.pages_in_use(self.file).unwrap_or(0));
-        let frames = pages(u64::try_from(self.pool.frames()).unwrap_or(u64::MAX));
-        if used > frames { 1.0_f64 - frames / used } else { 0.0_f64 }
-    }
-
-    /// The counters now.
-    pub fn counts(&self) -> TreeCounts {
-        let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
-        let c = &self.counters;
-        TreeCounts {
-            splits: get(&c.splits),
-            root_splits: get(&c.root_splits),
-            right_moves: get(&c.right_moves),
-            unlinked: get(&c.unlinked),
-        }
-    }
 }
 
 /// The pages taken out and not yet freed are freed as the tree goes: no
@@ -396,8 +366,14 @@ impl BLinkTree {
         let tally = path.tallied.then_some(&self.tally);
         tally.inspect(|t| t.lookup());
         loop {
-            let page = self.pool.read_tallied(self.file, id.0, tally)?;
+            // An inner node above the level asked for may be read from the
+            // thread's copy; a root of no known level only for a leaf.
+            let copied = expected.map_or(level == 0, |l| l > level);
+            let page = inner::read(&self.pool, (self.file, id.0), tally, copied)?;
             let node = Node::parse(&page)?;
+            if node.level > 0 {
+                inner::keep(&page, (self.file, id.0));
+            }
             if expected.is_some_and(|l| l != node.level) || node.level < level {
                 return Err(corrupt(&format!("node {} is not at the level its parent says", id.0)));
             }
@@ -445,34 +421,29 @@ impl BLinkTree {
                 }
                 node.right.ok_or_else(|| corrupt("a node with a high key has no right neighbour"))?
             };
-            *held = self.locks.lock(right)?;
+            *held = self.lock(right)?;
             count(&self.counters.right_moves);
         }
     }
 
     /// Makes `slot`'s change to locked node `held`: in place if the node
-    /// then fits its page, else by splitting it. The split, if any.
-    fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Option<Split>> {
+    /// then fits its page, else by splitting it. The splits, if any.
+    fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Vec<Split>> {
         let copy = {
             let mut page = self.pool.write(self.file, held.id)?;
-            let (live, old, new_run) = {
-                let node = Node::parse(&page)?;
-                let old = match slot {
-                    Slot::Insert(_) => 0,
-                    Slot::Replace(at) => node::entry_size(node.key(at)?, node.entry(at)?.1),
-                };
-                (node.live(), old, starts_run(&node, slot)?)
+            let room = self.room(held, &Node::parse(&page)?, (key, value), slot)?;
+            let Some(room) = room else {
+                if let Slot::Replace(at) = slot {
+                    node::overwrite(&mut page, at, value)?;
+                }
+                return Ok(Vec::new());
             };
-            // A value of the same length, as a version stamped committed:
-            // written over in place, nothing moved.
-            if let Slot::Replace(at) = slot
-                && old == node::entry_size(key, value)
-            {
-                node::overwrite(&mut page, at, value)?;
-                return Ok(None);
-            }
-            let added = node::entry_size(key, value);
-            if new_run || live.saturating_sub(old).saturating_add(added) > self.capacity {
+            // Garbage is reclaimed only once it is worth a node built
+            // again (`room.rs`); short of that a node with no room splits.
+            let in_place = room.after <= self.capacity && (room.reclaim || page.len().saturating_add(room.stored) <= self.capacity);
+            let compactable = room.rebuild && !room.run && matches!(slot, Slot::Insert(_));
+            let fits = in_place || (compactable && self.fits_compacted(&mut page, key, node::entry_size(key, value))?);
+            if room.run || !fits {
                 page.clone()
             } else {
                 let at = match slot {
@@ -482,22 +453,23 @@ impl BLinkTree {
                         at
                     }
                 };
-                if page.len().saturating_add(added) > self.capacity {
+                if page.len().saturating_add(room.stored) > self.capacity {
                     *page = node::compact(&page)?;
                 }
                 node::insert(&mut page, at, key, value)?;
-                return Ok(None);
+                return Ok(Vec::new());
             }
         };
-        self.split(held.id, &copy, (key, value), slot).map(Some)
+        self.split(held.id, &copy, (key, value), slot)
     }
 
     /// Splits node `id`, whose content was `copy`, making `slot`'s change
     /// (§4): the right half written to a new page, then the left half over
-    /// the old, linked to it.
-    fn split(&self, id: PageId, copy: &[u8], entry: (&[u8], &[u8]), slot: Slot) -> Result<Split> {
+    /// the old, linked to it; a half past the page split again (`fit.rs`).
+    fn split(&self, id: PageId, copy: &[u8], entry: (&[u8], &[u8]), slot: Slot) -> Result<Vec<Split>> {
         let node = Node::parse(copy)?;
         let mut entries = node.entries()?;
+        let entry = (KeyRef::whole(entry.0), entry.1);
         let run = match slot {
             Slot::Insert(at) => {
                 if at > entries.len() {
@@ -516,7 +488,7 @@ impl BLinkTree {
             }
         };
         let (new, mut page) = self.pool.new_page(self.file)?;
-        let halves = match node::split(&node.shape(), &entries, run, new) {
+        let halves = match node::split(&node.shape(), &entries, run, (new, self.capacity)) {
             Ok(halves) => halves,
             Err(e) => {
                 drop(page);
@@ -525,11 +497,12 @@ impl BLinkTree {
                 return Err(e);
             }
         };
-        *page = halves.right;
+        let mut splits = vec![Split { separator: halves.separator, right: new, level: node.level }];
+        *page = self.fitted(halves.right, &mut splits)?;
         drop(page);
-        *self.pool.write(self.file, id)? = halves.left;
+        *self.pool.write(self.file, id)? = self.fitted(halves.left, &mut splits)?;
         count(&self.counters.splits);
-        Ok(Split { separator: halves.separator, right: new, level: node.level })
+        Ok(splits)
     }
 
     /// Locks the node one level above `split` that takes its separator, and
@@ -541,7 +514,7 @@ impl BLinkTree {
         let level = split.level.checked_add(1).ok_or_else(|| corrupt("it is too tall"))?;
         loop {
             if let Some(parent) = path.stack.pop() {
-                let mut held = self.locks.lock(parent)?;
+                let mut held = self.lock(parent)?;
                 let at =
                     self.move_right(&mut held, &split.separator, |node| match (node.level == level, node.search(&split.separator)?) {
                         (true, Err(at)) => Ok(at),
@@ -562,7 +535,7 @@ impl BLinkTree {
     /// entry the separator, with the right half. Under the meta page's lock,
     /// the highest in the locking order. Whether it did.
     fn grow(&self, split: &Split) -> Result<bool> {
-        let _meta = self.locks.lock(self.meta)?;
+        let _meta = self.lock(self.meta)?;
         let root = PageId(self.root.load(Ordering::Acquire));
         let root_level = Node::parse(&self.pool.read(self.file, root.0)?)?.level;
         if root_level != split.level {
@@ -572,7 +545,7 @@ impl BLinkTree {
         let new_root = {
             let (new_root, mut page) = self.pool.new_page(self.file)?;
             let child = split.right.0.to_le_bytes();
-            *page = node::build(&Shape { level, high: None, right: None, first: root }, &[(&split.separator, &child)])?;
+            *page = node::build(&Shape { level, high: None, right: None, first: root, tree: self.meta.0 }, &[(&split.separator, &child)])?;
             new_root
         };
         *self.pool.write(self.file, self.meta)? = meta_content(new_root);

@@ -9,17 +9,20 @@
 //! widens it once it is made, before it is committed, and nothing else
 //! changes it but the database's maintenance thread
 //! (`TableStorage::maintain`). That narrows a zone an update or a deletion
-//! left wider than its rows, summing it up
-//! again from every version of its rows a reader at or after the horizon
-//! may read, an open transaction's among them; a write meanwhile counts a
-//! change of the zone, and its sum is then thrown away. A zone is never
+//! left wider than its rows, summing it up again from its rows' newest
+//! versions once each is committed at or before the horizon, so no reader
+//! reads an older one: until then the zone stays as wide as the writes
+//! widened it, and no older version is read back. A write meanwhile counts
+//! a change of the zone, and its sum is then thrown away. A zone is never
 //! narrower than its rows, at most wider. A write leaves it stale only if
 //! the version it replaced may have been all that reached a bound, or the
 //! one null: a value it changed or deleted that lay strictly inside the
-//! bounds, or one it kept, leaves every bound reached by a row's newest
-//! version still (`Zones::narrows`). The older versions it reads no
-//! transaction pins for it: a row one of which is released and truncated
-//! as it reads is read again (`RowTable::unpinned`).
+//! bounds, one it kept, or one on a bound changed to a value past it, as
+//! a running total grows past the greatest, leaves every bound reached by
+//! a row's newest version still (`Zones::loosened`, RULES.md D476). It is
+//! stale only in the columns it may be wider in, and a sum up reads those
+//! columns alone, keeping the others' bounds (`zones/loose.rs`, RULES.md
+//! D770).
 //!
 //! A change undone narrows nothing: a version put back widens its zone as
 //! a write does, and a row an insert added, taken out as the insert is
@@ -47,6 +50,9 @@
 //! the zones rest for `REST`, asking for no maintenance, so writes going
 //! on cost a pass over the zones they changed a second, not one a write:
 //! a zone narrows, and is settled, that much later (`zones/summed.rs`).
+//! A zone due again about as soon as it was looked at waits twice as long
+//! each time, to a limit, so a zone written without pause is summed up
+//! once in that long (RULES.md D771).
 //!
 //! Kept in memory, and with the table's pages at each checkpoint
 //! (`zones/saved.rs`), so a table opened knows the zones its last
@@ -106,13 +112,20 @@ struct Zone {
     rows: u32,
     /// Its changes: a sum made over one is thrown away.
     changes: u64,
-    /// Whether it may be wider than its rows, or is not known at all.
-    stale: bool,
+    /// Of each column kept, by its place, whether its bounds or null may
+    /// be wider than its rows, a bit each (`zones/loose.rs`): the zone is
+    /// stale if any is, every one if it is not known at all.
+    loose: u64,
     known: bool,
     /// Whether its rows' visibility is to be settled (`Map::visible`).
     unsettled: bool,
     /// Of a zone summed up, what its rows showed of their visibility.
     seen: Seen,
+    /// When the maintenance thread last looked at it, in nanoseconds
+    /// after the zones were made, and how long after that it is not
+    /// looked at again (`zones/summed.rs`).
+    looked: Option<u64>,
+    wait: u64,
 }
 
 /// The zones of a table, by the first row id of each over `ZONE_ROWS`,
@@ -168,6 +181,8 @@ pub(super) struct Zones {
     /// The zone a sum up looks from, so zones a reader keeps stale do not
     /// keep the others waiting.
     next_sum: AtomicUsize,
+    /// The zones looked at since the zones last rested (`REST`).
+    swept: AtomicUsize,
     /// When the zones were made, and the nanoseconds after it until which
     /// they are not due, 0 for none (`REST`).
     born: Instant,
@@ -237,7 +252,24 @@ impl Zone {
     /// first holds a row, so a zone of none, as those of a column store
     /// table's frozen rows are once summed up, takes no memory for them.
     fn empty(known: bool) -> Zone {
-        Zone { bounds: Vec::new(), nulls: Vec::new(), rows: 0, changes: 0, stale: !known, known, unsettled: !known, seen: Seen::Visible }
+        let loose = if known { 0 } else { ALL };
+        Zone {
+            bounds: Vec::new(),
+            nulls: Vec::new(),
+            rows: 0,
+            changes: 0,
+            loose,
+            known,
+            unsettled: !known,
+            seen: Seen::Visible,
+            looked: None,
+            wait: 0,
+        }
+    }
+
+    /// Whether it may be wider than its rows, or is not known at all.
+    fn stale(&self) -> bool {
+        self.loose != 0
     }
 
     /// Widens it to hold `values`, those of the `columns` kept.
@@ -271,6 +303,7 @@ impl Zones {
             stale: AtomicUsize::new(0),
             unsettled: AtomicUsize::new(0),
             next_sum: AtomicUsize::new(0),
+            swept: AtomicUsize::new(0),
             born: Instant::now(),
             rest_until: AtomicU64::new(0),
             format: RecordFormat::new(&kept_types),
@@ -285,8 +318,8 @@ impl Zones {
     }
 
     /// Widens the zone of row `id` to hold `row`, once it is written, the
-    /// row's version it `replaced` taken out of it: marked stale if that
-    /// may leave it wider than its rows (`Zones::narrows`).
+    /// row's version it `replaced` taken out of it: its columns marked
+    /// loose that this may leave wider than its rows (`Zones::loosened`).
     pub(super) fn widen(&self, id: RowId, row: Option<&Row>, replaced: Replaced<'_>) {
         let at = zone_at(id);
         if let Ok(map) = read(&self.map)
@@ -334,39 +367,14 @@ impl Zones {
         if matches!(replaced, Replaced::Nothing) {
             zone.rows = zone.rows.saturating_add(1);
         }
-        let stales = !zone.stale && self.narrows(zone, row, replaced);
+        let was_stale = zone.stale();
+        zone.loose |= self.loosened(zone, row, replaced);
         if let Some(row) = row {
             zone.hold(self.kept.len(), self.kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
         }
-        if stales {
-            zone.stale = true;
+        if !was_stale && zone.stale() {
             self.stale.fetch_add(1, AtomicOrdering::AcqRel);
         }
-    }
-
-    /// Whether `zone`, not stale, may be left wider than its rows as `row`,
-    /// or a deletion, replaces what was `replaced`: unless, of each column
-    /// kept, the replaced value is the new one, or lies strictly inside
-    /// the zone's bounds, so some other row still reaches each bound and
-    /// the one null, if any, is still there. A zone keeping no column has
-    /// no bound to narrow.
-    fn narrows(&self, zone: &Zone, row: Option<&Row>, replaced: Replaced<'_>) -> bool {
-        let old = match replaced {
-            Replaced::Nothing => return false,
-            Replaced::Unknown | Replaced::Row(_) if self.kept.is_empty() => return false,
-            Replaced::Unknown => return true,
-            Replaced::Row(old) => old,
-        };
-        self.kept.iter().zip(&zone.bounds).any(|(&c, bounds)| {
-            let was = old.get(c).unwrap_or(&Value::Null);
-            let same = row
-                .and_then(|r| r.get(c))
-                .is_some_and(|now| (was.is_null() && now.is_null()) || compare(was, now) == Some(Ordering::Equal));
-            let inside = bounds.as_ref().is_some_and(|(least, greatest)| {
-                compare(least, was) == Some(Ordering::Less) && compare(was, greatest) == Some(Ordering::Less)
-            });
-            !same && !inside
-        })
     }
 
     /// The ranges of row ids a scan told `conditions` reads, in order, each
@@ -530,10 +538,12 @@ impl RowTable {
     }
 }
 
+mod loose;
 mod saved;
 mod summed;
 mod visible;
 
+use loose::ALL;
 pub(super) use saved::Place;
 use saved::SEGMENT_ZONES;
 use visible::Seen;
@@ -545,3 +555,12 @@ use visible::Seen;
 // summed up as the undo store is truncated (RULES.md R-TEST-1, R-TEST-7).
 #[cfg(test)]
 mod tests;
+// Unit tests: the zones rest after a pass (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod rested;
+// Unit tests: a zone is summed up in its loose columns alone, a hot zone
+// waits longer, resting zones are left alone unless asked now, and bounds
+// hold every row under writes summed up meanwhile (RULES.md R-TEST-1,
+// R-TEST-7, R-TEST-8).
+#[cfg(test)]
+mod costs;

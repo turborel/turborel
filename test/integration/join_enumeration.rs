@@ -160,15 +160,17 @@ fn random_chains_agree_with_the_greedy_order() {
 
 /// Verifies: [DESIGN] RULES.md D305: the settings of the enumeration are
 /// read per session; past a budget of one subgraph, the chain is planned
-/// still, by DPccp below 14 relations.
+/// still, by DPccp below 14 relations: B joined first with D, whose 8 keys
+/// keep a fifth of B's rows, not with A as written.
 #[test]
 fn the_budget_and_limits_are_settings() {
     let db = tables();
     let s = db.session("Q");
     exec(&s, "SET PLANNER.DP_BUDGET = 1").unwrap();
     exec(&s, "SET PLANNER.LINEARIZED_RELATIONS = 2").unwrap();
-    let sql = "SELECT A.V FROM A, B, C WHERE A.K = B.K AND B.W = C.K";
-    assert!(s.explain(sql, &Params::new()).unwrap().contains("DPccp"));
+    let sql = "SELECT A.V FROM A, B, D WHERE A.K = B.K AND B.W = D.K";
+    let plan = s.explain(sql, &Params::new()).unwrap();
+    assert!(plan.contains("DPccp"), "{plan}");
     agree(&s, sql);
     assert!(db.set_setting("PLANNER.JOIN_ENUMERATION", &Value::Char("BUSHY".into())).is_err());
 }

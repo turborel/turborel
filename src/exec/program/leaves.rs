@@ -11,10 +11,11 @@
 use std::sync::Arc;
 
 use super::Host;
+use super::framed::Framed;
 use crate::db::{Completion, assign_targets};
 use crate::error::{Code, Result, SqlError, SqlState, fail, fail_with};
 use crate::exec::{Subqueries, eval};
-use crate::logical::{Assign, Expr, Into, Leaf, LogicalPlan, Modified, Target, bound_expr, filled_expr};
+use crate::logical::{Assign, Expr, Into, Leaf, LogicalPlan, Modified, Target};
 use crate::params::Params;
 use crate::storage::Row;
 use crate::value::types::Structured;
@@ -35,14 +36,14 @@ pub(crate) fn rows(subqueries: &dyn Subqueries, leaf: &Leaf, frame: &Params, lim
 
 /// `rows`' work.
 fn evaluated(subqueries: &dyn Subqueries, leaf: &Leaf, frame: &Params, limit: Option<usize>) -> Result<Vec<Row>> {
-    let values = frame.dynamic_values();
-    let outer =
-        leaf.query.outer.iter().map(|e| eval(&filled_expr(e.clone(), values)?, &Vec::new(), subqueries)).collect::<Result<Vec<Value>>>()?;
+    let framed = Framed { inner: subqueries, frame: frame.dynamic_values(), outer: &[] };
+    let outer = leaf.query.outer.iter().map(|e| eval(e, &Vec::new(), &framed)).collect::<Result<Vec<Value>>>()?;
     if let Some(row) = values_row(&leaf.query.plan) {
         // A CALL's arguments, bound with the program, are slots of the frame
-        // themselves (`binder/psm/inline.rs`).
-        let filled = |e: &Expr| filled_expr(bound_expr(e.clone(), &outer), values);
-        let row = row.iter().map(|e| eval(&filled(e)?, &Vec::new(), subqueries)).collect::<Result<Row>>()?;
+        // themselves (`binder/psm/inline.rs`); the rest read the leaf's
+        // outer values where they are (RULES.md D610).
+        let framed = Framed { outer: &outer, ..framed };
+        let row = row.iter().map(|e| eval(e, &Vec::new(), &framed)).collect::<Result<Row>>()?;
         return Ok(vec![row]);
     }
     let found = subqueries.rows(&leaf.query, &outer, limit)?;

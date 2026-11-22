@@ -11,7 +11,7 @@ use crate::catalog::ColumnDesc;
 use crate::error::Result;
 use crate::storage::Row;
 use crate::value::Spelled;
-use crate::value::{DataType, Decimal, MAX_EXACT_PRECISION, Value};
+use crate::value::{BIGINT_PRECISION, DataType, Decimal, Value};
 
 /// \[DESIGN\] The longest description of what holds a reservation shown.
 const OWNER_LENGTH: u32 = 128;
@@ -25,7 +25,7 @@ impl SystemTable for MemoryReservations {
     }
 
     fn columns(&self) -> Vec<ColumnDesc> {
-        let bytes = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+        let bytes = DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric };
         vec![
             text_column(("RESERVED_BY", OWNER_LENGTH), true),
             ColumnDesc {

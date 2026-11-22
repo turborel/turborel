@@ -13,7 +13,7 @@ use crate::functions::{ScalarFunction, ScalarRef};
 use crate::logical::{Cond, Expr};
 use crate::value::datetime::{Datetime, Field, MAX_DISPLACEMENT, MAX_TIME_PRECISION, MIN_DISPLACEMENT, displacement_range};
 use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier, difference, minutes};
-use crate::value::{ArithOp, CompOp, DataType, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{ArithOp, CompOp, DataType, NARROW_EXACT_PRECISION, Spelled, Value};
 
 /// The qualifier of `t`, if an interval type.
 fn qualifier(t: &DataType) -> Option<Qualifier> {
@@ -211,7 +211,7 @@ pub(super) fn assumed(op: ArithOp, other: DataType, first: bool) -> DataType {
         return DataType::Interval(Qualifier::new(start, end, MAX_LEADING_PRECISION, fraction));
     }
     if qualifier(&other).is_some() && !first && matches!(op, ArithOp::Mul | ArithOp::Div) {
-        return DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
+        return DataType::Exact { precision: NARROW_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric };
     }
     other
 }

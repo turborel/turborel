@@ -79,11 +79,11 @@ fn an_undone_change_keeps_its_older_version_for_open_readers() {
     table.update(writer, id, vec![crate::value::Value::Char("new  ".into())]).unwrap();
     let seen = table.tree.get(&key(id)).unwrap().unwrap();
     table.rollback(writer).unwrap();
-    table.gc(9, &mut |_, _| true).unwrap();
+    table.gc(9, &mut |_, _, _| true).unwrap();
     let found = table.visible_from(seen, Reader::At { tx: reader, snapshot: 9 }).unwrap().unwrap();
     assert_eq!(table.decode(id, &found, None).unwrap()[0].to_string(), "old  ");
     table.commit(reader, 9);
-    table.gc(12, &mut |_, _| true).unwrap();
+    table.gc(12, &mut |_, _, _| true).unwrap();
     assert_eq!(files.undo().pinned(), 0, "released once the reader ended");
 }
 
@@ -220,7 +220,7 @@ fn versions_are_those_committed_by_a_time() {
     assert_eq!(versions(9, 11), ["a"], "b is committed after 11, c not at all");
     assert_eq!(versions(9, 12), ["a", "b"]);
     assert_eq!(versions(13, 12), ["a", "b"], "a, no longer read, is collection's to take back");
-    table.gc(13, &mut |_, _| true).unwrap();
+    table.gc(13, &mut |_, _, _| true).unwrap();
     assert_eq!(versions(13, 12), ["b"], "taken back");
 }
 
@@ -481,4 +481,37 @@ fn a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open() {
         }
         assert_eq!(table.get_near(10, id, None, &mut near).err().map(|e| e.code), api, "ended, committed {committed}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D443, D750, D751: collection reads the row
+/// of a version only when the removal needs it: one whose successor kept
+/// the columns asked about is removed unread, one whose successor changed
+/// them is read, of its columns only those the removal asks for, and
+/// given back.
+#[test]
+fn collection_reads_only_the_versions_it_needs() {
+    use crate::storage::{Kept, Needed};
+    use crate::value::Value;
+    let scratch = Scratch::new("unit-needed");
+    let pager =
+        Pager::create(&OsFileSystem, &scratch.path("rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let files = TableFiles::new(Arc::clone(&pool), pool.add_pager(Arc::new(pager)), Arc::new(MemoryLog::new()));
+    let table = RowTable::create(&files, &[DataType::character(5), DataType::character(5)], TableOptions::default()).unwrap();
+    let id = table.insert(NO_TRANSACTION, vec![Value::Char("key  ".into()), Value::Char("v0   ".into())]).unwrap();
+    let mut read = Vec::new();
+    for (tx, (key, kept)) in [(10, ("key  ", 0b01)), (12, ("other", 0))] {
+        table.begin(tx, tx - 1).unwrap();
+        table.update(tx, id, vec![Value::Char(key.into()), Value::Char(format!("v{tx}  "))]).unwrap();
+        assert_eq!(table.keep_entries(tx, id, kept), kept);
+        table.commit(tx, tx + 1);
+        let needs = |of: Kept| of.unchanged & 0b01 == 0;
+        let removed = |_, row: Row, _| {
+            read.push(row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+            true
+        };
+        table.gc(tx + 2, &mut Needed { needs, columns: &|| Some(&[1][..]), removed }).unwrap();
+    }
+    assert_eq!(read, ["NULL,v10  "], "only the version whose key changed after it is read, of the column asked for");
+    assert_eq!(files.undo().pinned(), 0, "every version superseded removed");
 }

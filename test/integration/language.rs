@@ -438,10 +438,10 @@ fn exact_and_approximate_numbers_compare_by_algebraic_value() {
 #[test]
 fn product_scale_is_the_sum_of_the_scales() {
     let db = setup();
-    db.schema("CREATE SCHEMA AUTHORIZATION P CREATE TABLE P (A NUMERIC(18,9), B NUMERIC(18,10))").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION P CREATE TABLE P (A NUMERIC(38,19), B NUMERIC(38,20))").unwrap();
     let s = db.session("P");
-    s.run("INSERT INTO P VALUES (0.000000001, 0)").unwrap();
-    assert_eq!(rows(&s, "SELECT A * A FROM P"), Ok(vec!["0.000000000000000001".to_owned()]));
+    s.run("INSERT INTO P VALUES (0.0000000000000000001, 0)").unwrap();
+    assert_eq!(rows(&s, "SELECT A * A FROM P"), Ok(vec![format!("0.{}1", "0".repeat(37))]));
     assert_eq!(code(&s, "SELECT A * B FROM P"), Code::Unsupported);
     assert_eq!(code(&s, "SELECT B * B FROM P"), Code::Unsupported);
 }

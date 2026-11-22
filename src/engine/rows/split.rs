@@ -46,11 +46,11 @@ impl RowTable {
     /// As the reader, the read's note or the directory fail.
     pub(super) fn split_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>, rows: usize) -> Result<RowSplit> {
         let reader = self.reader(tx)?;
-        self.note_read(tx, || condition.clone().map_or(Read::All, Read::Condition))?;
+        self.note_read(tx, || Read::scan(condition.as_ref(), columns))?;
         let asked = columns.len();
         let mut columns = columns.to_vec();
         columns.extend(condition.iter().flat_map(Conjunction::columns));
-        let directory = self.frozen.directory()?;
+        let directory = self.directory_for(reader)?;
         let reads_groups = self.frozen.columns().is_some() || !directory.groups.is_empty();
         let cuts = self.cuts(&directory, rows.max(1));
         let zones = if reads_groups { Vec::new() } else { self.zones.ranges(condition.as_ref()) };
@@ -133,7 +133,7 @@ impl Split for RowSplit {
         let Some(directory) = &self.directory else { return self.tree_rows(range) };
         let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
         let groups = directory.groups.iter().filter(inside).cloned().collect();
-        let part = Arc::new(Directory { groups });
+        let part = Arc::new(Directory::part(directory, groups));
         let what = (self.columns.clone(), self.condition.clone());
         Box::new(Merged::within(Arc::clone(&self.table), (Merging::Seen(self.reader), part), what, range))
     }
@@ -151,7 +151,7 @@ impl Split for RowSplit {
             return Some(Arc::clone(&self.table).gathered_in((self.reader, Ramp::whole()), &asked, self.zones_within(range)));
         };
         let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
-        let part = Arc::new(Directory { groups: directory.groups.iter().filter(inside).cloned().collect() });
+        let part = Arc::new(Directory::part(directory, directory.groups.iter().filter(inside).cloned().collect()));
         let what = (asked, self.condition.clone());
         Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, range).with_late(late)))
     }

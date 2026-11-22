@@ -31,6 +31,7 @@ mod list;
 mod lobs;
 pub(crate) mod map;
 mod named;
+mod noted;
 pub(crate) mod paged;
 mod sort;
 #[cfg(test)]
@@ -38,7 +39,7 @@ pub(crate) mod testing;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 pub use grant::Grant;
@@ -264,6 +265,8 @@ pub struct WorkAreas {
     /// Whether its operators' grants are held of another's grant, not of
     /// the budget (RULES.md D298).
     covered: bool,
+    /// The bytes its grants hold reserved of the budget (RULES.md D683).
+    granted: Arc<AtomicUsize>,
 }
 
 impl WorkAreas {
@@ -272,7 +275,7 @@ impl WorkAreas {
     pub fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
         let files = MemoryFileSystem::within(Arc::clone(&memory), "a spill file");
         let temp = TempFiles::new(Arc::new(files), Path::new("/tmp"));
-        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))), covered: false }
+        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))), covered: false, granted: Arc::default() }
     }
 
     /// The budget its areas are reserved of, for what is held beside them.
@@ -287,7 +290,12 @@ impl WorkAreas {
     /// SQLCODE -918 if the budget cannot grant it; the provider's errors.
     pub fn area(&self, area: Area) -> Result<Box<dyn SpillArea>> {
         let (spill, temp) = self.place.read().unwrap_or_else(PoisonError::into_inner).clone();
-        spill.area(&self.memory, &temp, area)
+        let made = spill.area(&self.memory, &temp, area)?;
+        // [EXTENSION] of an operator EXPLAIN ANALYZE counts, noted (RULES.md D620).
+        Ok(match crate::noted::noting() {
+            Some(notes) => noted::noted(made, notes),
+            None => made,
+        })
     }
 
     /// What makes its areas.

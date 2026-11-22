@@ -233,10 +233,15 @@ fn main() -> Result<(), turborel::error::SqlError> {
 statement stays valid across transactions. A query, an INSERT, and a
 searched or positioned UPDATE or DELETE keep their plan between
 executions, a query also when SQL text opens it as a dynamic cursor:
-each execution puts its values in the kept plan and chooses indexes by
-them. A query, a searched UPDATE or a searched DELETE that finds one
+each execution reads its values where the kept plan names them, the
+plan itself never copied, and a plan whose paths follow them is chosen
+by them. A query, a searched UPDATE or a searched DELETE that finds one
 row by a unique key, `WHERE K = ?` of a PRIMARY KEY or UNIQUE column K,
-keeps its access path too, so its executions choose nothing. Another query keeps its access paths once
+keeps its access path too, so its executions choose nothing. Such a
+statement reads its row straight from the table, with none of the
+executor's operators made. Its rows, errors and diagnostics are the
+same with EXECUTOR.POINT_OPERATIONS OFF, which runs it through them, as
+to compare the two. Another query keeps its access paths once
 five executions in a row choose the same ones, as `WHERE K BETWEEN ? AND
 ?` does whose ranges are short, and is then planned no more, until a
 table it reads gains or loses a tenth of its rows and 50 more, when it
@@ -248,8 +253,11 @@ among them), when a setting of the database or
 of the session is set, or when the session's schema, authorization
 identifier or time zone changes; a plan that holds the statement's
 instant, of CURRENT_TIMESTAMP in the statement or a view it reads, or of
-a DEFAULT it writes, is made at each execution. `plans_made` counts the plans a statement's
-executions made.
+a DEFAULT it writes, is made at each execution. A statement prepared
+alike in another session of the database, of the same text, collation
+and parameter types, shares what the first keeps, and its executions
+take the kept plan while what it was made with holds for them.
+`plans_made` counts the plans a statement's executions made.
 
 ```rust
 use turborel::db::Database;

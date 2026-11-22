@@ -158,9 +158,31 @@ recovery reads the log only from there. One is due once
 CHECKPOINT.AFTER_CHANGES row changes have been logged, 4,000,000 by
 default, or CHECKPOINT.AFTER_BYTES bytes held by the data file's side file,
 1 GiB; the database's checkpoint thread takes it, so no transaction
-waits for it. Each is told to the diagnostics, `checkpoint_taken`. One
+waits for it. Each is told to the diagnostics, `checkpoint_taken`, with
+how long it took, how long writers waited for it, and the pages it wrote. One
 that fails leaves the changes since the last counted, so the next is due
 as soon as a transaction ends.
+
+A transaction holds its log records in memory until it commits, then
+writes them with its commit record in one write; one that rolls back
+before any was written writes nothing. A checkpoint first writes the
+records every open transaction holds, and a transaction holding more
+than 1 MiB writes them as it goes.
+
+Writers wait for a checkpoint only while it notes which pages changed
+since the last; it copies and writes none of them then. Once writers go
+on, it writes each page as it was when they waited, and a writer about to
+change such a page first copies it, so a checkpoint is never a pause of
+the length of its writes. If a page cannot be written so, the
+checkpoint fails, and none is taken until the database is opened again,
+recovered from the last one and its log.
+
+The checkpoint thread spreads those writes over about three quarters of
+the time since the last checkpoint began, so the work going on loses a
+little of the processor and the drive for longer, rather than more of
+them at once; its `finish_micros` is that span. The first checkpoint after opening,
+one asked for, as a backup takes, and the checkpoint of a close write at
+once, and a close hurries one going on.
 
 The log is kept from the last checkpoint, or from the first change of
 the oldest transaction still open, whichever is earlier. While

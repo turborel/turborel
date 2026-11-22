@@ -22,11 +22,12 @@ use std::sync::{Arc, Mutex};
 
 mod chunks;
 
+use super::prepared::Run;
 use super::{Completion, Database, State};
 use crate::binder::OutColumn;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::exec::{HeldIter, HeldRows, RowIter, execute};
+use crate::exec::{Db, HeldIter, HeldRows, RowIter, Slots, execute};
 use crate::logical::LogicalPlan;
 use crate::physical::Plan;
 use crate::spill::ListSpace;
@@ -63,7 +64,41 @@ impl Stream {
     /// A lock is not granted; as `open`.
     pub(super) fn planned(st: &Arc<State>, tx: &Txn, logical: LogicalPlan) -> Result<Stream> {
         let (optimized, _, physical) = super::plan_heard(st, logical, Some(tx.stop.warnings()));
-        Stream::kept(st, tx, physical, optimized.tables().into())
+        // [DESIGN] RULES.md D452: of the columns it reads, its increments
+        // reserved applied first, others left reserved.
+        for (table, needed) in optimized.columns_read() {
+            st.read_lock_of(tx, (&table, needed))?;
+        }
+        Stream::open(physical, optimized.tables().into(), &Db::of(st), tx.id)
+    }
+
+    /// The rows of `run`, a prepared query's plan kept, which reads
+    /// `reads`, run with the values `slots` for transaction `tx` after
+    /// taking shared locks on them: its point read's row, read now and
+    /// fetched, or its error, as the plan's would be (RULES.md D752); or
+    /// its plan's.
+    ///
+    /// # Errors
+    ///
+    /// A lock is not granted; as `open`.
+    pub(super) fn run(st: &Arc<State>, tx: &Txn, run: Run, (reads, slots): (Arc<[QualifiedName]>, Option<Slots>)) -> Result<Stream> {
+        let (physical, slots) = match run {
+            Run::Plan(physical) => (*physical, slots),
+            Run::Point(kept) => match kept.point(st) {
+                Some(point) => {
+                    for t in reads.iter() {
+                        st.read_lock(tx, t)?;
+                    }
+                    // Its error is fetched, as its plan's would be.
+                    let row = point.read(st, tx.id, slots.as_deref().unwrap_or_default()).transpose();
+                    let rest: RowIter = Box::new(row.into_iter());
+                    return Ok(Stream { ready: None, failure: None, rest: Some(rest), reads, space: st.list_space() });
+                }
+                None => kept.opened(slots, crate::optimizer::prepared::budget(st))?,
+            },
+        };
+        let db = slots.map_or_else(|| Db::of(st), |slots| Db::slotted(st, slots));
+        Stream::kept(&db, tx, physical, reads)
     }
 
     /// The rows of `physical`, a plan made to run, which reads `reads`,
@@ -73,7 +108,7 @@ impl Stream {
     /// # Errors
     ///
     /// A lock is not granted; as `open`.
-    pub(super) fn kept(st: &Arc<State>, tx: &Txn, physical: Plan, reads: Arc<[QualifiedName]>) -> Result<Stream> {
+    pub(super) fn kept(st: &Db, tx: &Txn, physical: Plan, reads: Arc<[QualifiedName]>) -> Result<Stream> {
         for t in reads.iter() {
             st.read_lock(tx, t)?;
         }
@@ -86,7 +121,7 @@ impl Stream {
     /// # Errors
     ///
     /// The plan, read now, raises one, or its rows cannot be held.
-    pub(super) fn open(physical: Plan, reads: Arc<[QualifiedName]>, st: &Arc<State>, tx: TxId) -> Result<Stream> {
+    pub(super) fn open(physical: Plan, reads: Arc<[QualifiedName]>, st: &Db, tx: TxId) -> Result<Stream> {
         let read_now = physical.can_raise();
         let buffered = !read_now && chunks::eligible(&physical);
         let space = st.list_space();
@@ -224,7 +259,9 @@ pub struct Cursor {
 impl Drop for Cursor {
     fn drop(&mut self) {
         if let Some(timed) = self.timed.take() {
-            timed.done(&self.db);
+            // Its rows go first, so what they read is counted in its tally.
+            lock_builtin(&self.rows).take();
+            timed.done(&self.db, &self.stop);
         }
     }
 }
@@ -247,6 +284,7 @@ impl Cursor {
         };
         if let Some(timed) = self.timed.as_mut() {
             timed.paused();
+            timed.rows(u64::from(matches!(next, Ok(Some(_)))));
         }
         let mut next = self.db.noted(next)?;
         if let Some(row) = next.as_mut() {

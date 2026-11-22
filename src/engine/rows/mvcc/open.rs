@@ -26,10 +26,7 @@ impl RowTable {
     }
 
     pub(super) fn open_of(&self, tx: TxId) -> Result<Arc<Mutex<Open>>> {
-        let open = self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        open.get(&tx)
-            .map(Arc::clone)
-            .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] transaction {tx} has not begun in this table")))
+        self.versions.open.get(tx).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] transaction {tx} has not begun in this table")))
     }
 
     /// Records what `tx` read, as `read` gives it, if its reads are
@@ -47,7 +44,7 @@ impl RowTable {
     /// `note_read` records it, both under one lock of its bookkeeping. That
     /// is found from what `near` keeps of the scan's last read while `tx`
     /// is open here, and kept there for the next.
-    pub(in crate::engine::rows) fn read_row(&self, tx: TxId, id: RowId, near: &mut Near) -> Result<Reader> {
+    pub(in crate::engine::rows) fn read_row(&self, tx: TxId, (id, columns): (RowId, u64), near: &mut Near) -> Result<Reader> {
         if tx == NO_TRANSACTION {
             return Ok(Reader::Latest);
         }
@@ -56,18 +53,18 @@ impl RowTable {
         if let Some(open) = kept.and_then(|(_, _, open)| open.downcast_ref::<Mutex<Open>>()) {
             let mut open = lock_builtin(open);
             if !open.ended {
-                return Ok(self.read_by(&mut open, tx, id));
+                return Ok(self.read_by(&mut open, tx, (id, columns)));
             }
         }
         let open = self.open_of(tx)?;
-        let reader = self.read_by(&mut lock_builtin(&open), tx, id);
+        let reader = self.read_by(&mut lock_builtin(&open), tx, (id, columns));
         let held: Arc<dyn Any + Send + Sync> = open;
         near.open = Some((tx, table, held));
         Ok(reader)
     }
 
-    fn read_by(&self, open: &mut Open, tx: TxId, id: RowId) -> Reader {
-        self.record(open, || Read::Row(id));
+    fn read_by(&self, open: &mut Open, tx: TxId, (id, columns): (RowId, u64)) -> Reader {
+        self.record(open, || Read::Row(id, columns));
         Reader::At { tx, snapshot: open.snapshot }
     }
 

@@ -54,6 +54,8 @@ impl PhysicalPlanner<'_> {
             needed: read.needed.to_vec(),
             located: read.located,
             positions: None,
+            bounds: Vec::new(),
+            bounded: Vec::new(),
         };
         Some(Choice { read: probing, probe, total: outer * cost, spatial: false, preserve: Preserve::Inner, paired: None })
     }

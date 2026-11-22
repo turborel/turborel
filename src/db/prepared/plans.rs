@@ -42,71 +42,97 @@
 //! at each execution.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
 use super::super::merge::Inserting;
 use super::super::write::{Target, Written};
 use super::super::{Call, Cursor, Session, State};
 use super::Prepared;
+use super::shared::Place;
 use crate::ast::{CursorSpecification, SqlStatement};
 use crate::binder::{BoundMerge, BoundWrite, Context, OutColumn, bind_cursor};
 use crate::catalog::{Catalog, QualifiedName};
 use crate::error::Result;
+use crate::exec::Slots;
 use crate::logical::{LogicalPlan, filled};
 use crate::params::Params;
-use crate::physical::{Plan, filled_plan, keepable};
+use crate::physical::{Kept as KeptPhysical, keepable, prepared_plan};
 use crate::settings::Own;
-use crate::sync::lock;
+use crate::sync::write;
 use crate::value::Value;
-pub(in crate::db) use learning::{Learned, Learning, moved, rows_of};
+pub(in crate::db) use grown::{Fit, Learnt};
+pub(crate) use learning::{Learned, Learning, MOST_LEARNING_RUNS};
+pub(in crate::db) use point::Run;
 
+mod grown;
 mod learning;
+mod point;
 
 /// What a prepared statement keeps between its executions, shared by its
-/// clones.
+/// clones, and in its place, by the statements prepared alike
+/// (`shared.rs`).
 #[derive(Debug, Default)]
 pub(crate) struct Plans {
-    kept: Mutex<Option<Kept>>,
+    kept: Arc<Place>,
+    /// Its own copy of what its place keeps (`shared.rs`, RULES.md D781).
+    own: super::shared::Own,
     /// The plans its executions made.
     made: AtomicU64,
+    /// Its text, normalized once (RULES.md D521).
+    text: std::sync::OnceLock<Arc<crate::system::Text>>,
 }
 
 impl Plans {
+    /// What keeps its plans in `place`.
+    pub(super) fn in_place(place: Arc<Place>) -> Plans {
+        Plans { kept: place, own: super::shared::Own::default(), made: AtomicU64::default(), text: std::sync::OnceLock::default() }
+    }
+
     /// How many plans its executions made.
     pub(super) fn made(&self) -> u64 {
         self.made.load(Ordering::Relaxed)
+    }
+
+    /// Its text, `sql`, normalized the first time, never at each run
+    /// (RULES.md D521).
+    pub(in crate::db) fn text(&self, sql: &str) -> &Arc<crate::system::Text> {
+        self.text.get_or_init(|| Arc::new(crate::system::Text::of(sql)))
     }
 }
 
 /// What is kept, and what it was made with.
 #[derive(Debug)]
-struct Kept {
-    key: Key,
-    statement: Option<Arc<SqlStatement>>,
+pub(super) struct Kept {
+    pub(super) key: Key,
+    pub(super) statement: Option<Arc<SqlStatement>>,
     /// A query's `<cursor specification>`, parsed.
-    specification: Option<Arc<CursorSpecification>>,
-    plan: Option<KeptPlan>,
+    pub(super) specification: Option<Arc<CursorSpecification>>,
+    pub(super) plan: Option<KeptPlan>,
+    /// Whether its plan reads the statement's instant as the slot past its
+    /// `?`s (`Params::clock_slot`, RULES.md D613).
+    pub(super) clocked: bool,
     /// A query's physical plan, or an UPDATE's or DELETE's of its object
     /// rows, if its paths follow no value of its.
-    physical: Physical,
+    pub(super) physical: Physical,
 }
 
 impl Kept {
     /// Nothing kept yet, with `key`.
     fn empty(key: Key) -> Kept {
-        Kept { key, statement: None, specification: None, plan: None, physical: Physical::Untried }
+        Kept { key, statement: None, specification: None, plan: None, clocked: false, physical: Physical::Untried }
     }
 
     /// Its query's physical plan, kept, or its logical plan to make one
-    /// of, if not tried yet; none of a plan that varies with its values,
-    /// or of no query.
+    /// of, if not tried yet; of a plan that varies with its values, what
+    /// its tables were as it stopped learning, if it did; none of no query.
     fn found(&self) -> Option<Found> {
         let Some(KeptPlan::Query(columns, logical)) = &self.plan else { return None };
         match &self.physical {
             Physical::Untried => Some(Found::Untried(columns.clone(), logical.clone())),
             Physical::Learning(learning) => Some(Found::Learning(columns.clone(), logical.clone(), learning.clone())),
-            Physical::Varies => None,
-            Physical::Fixed(plan, reads, rows) => Some(Found::Fixed(columns.clone(), (**plan).clone(), Arc::clone(reads), rows.clone())),
+            Physical::Varies(None) => None,
+            Physical::Varies(Some(stopped)) => Some(Found::Varies(stopped.clone())),
+            Physical::Fixed(plan, reads, rows) => Some(Found::Fixed(columns.clone(), Arc::clone(plan), Arc::clone(reads), rows.clone())),
         }
     }
 }
@@ -114,29 +140,33 @@ impl Kept {
 /// A query's physical plan, kept if its paths follow no value of its
 /// (`physical/kept.rs`).
 #[derive(Debug)]
-enum Physical {
+pub(super) enum Physical {
     /// Not yet planned with its slots.
     Untried,
-    /// Its paths follow its values: planned at each execution.
-    Varies,
+    /// Its paths follow its values: planned at each execution; with what
+    /// its tables were as it stopped learning, if it did, so it learns
+    /// again once one drifts (`grown.rs`).
+    Varies(Option<Learnt>),
     /// Planned at each execution with its values, which it runs, and with
     /// its slots, until `LEARNED_RUNS` in a row give both one shape.
     Learning(Learning),
-    /// Kept, with the tables it reads and, of a plan learned, their rows
-    /// when it was. Boxed: few statements keep one, and a plan is wide.
-    Fixed(Box<Plan>, Arc<[QualifiedName]>, Option<Arc<[usize]>>),
+    /// Kept, its slots read where they are, its scalar calls prepared
+    /// once (RULES.md D610), shared by its executions; with the tables it
+    /// reads and, of a plan learned, what it is measured from (`grown.rs`).
+    Fixed(Arc<KeptPhysical>, Arc<[QualifiedName]>, Option<Learnt>),
 }
 
 /// What `Keeping::written` finds kept of a write's object rows' plan,
 /// once tried: as `Physical` holds it.
 enum WriteFound {
-    Varies,
+    Varies(Option<Learnt>),
     Learning(Learning),
-    Fixed(Box<Plan>, Arc<[QualifiedName]>, Option<Arc<[usize]>>),
+    Fixed(Arc<KeptPhysical>, Arc<[QualifiedName]>, Option<Learnt>),
 }
 
-/// A query's columns, its physical plan, and the tables it reads.
-pub(in crate::db) type Opened = (Vec<OutColumn>, Plan, Arc<[QualifiedName]>);
+/// A query's columns, its physical plan, the tables it reads, and the
+/// values of its slots, of a plan kept with them (RULES.md D610).
+pub(in crate::db) type Opened = (Vec<OutColumn>, Run, Arc<[QualifiedName]>, Option<Slots>);
 
 /// What `Keeping::physical` finds kept of a query: its columns, and its
 /// physical plan with the tables it reads and their rows if learned, or
@@ -144,7 +174,8 @@ pub(in crate::db) type Opened = (Vec<OutColumn>, Plan, Arc<[QualifiedName]>);
 enum Found {
     Untried(Vec<OutColumn>, LogicalPlan),
     Learning(Vec<OutColumn>, LogicalPlan, Learning),
-    Fixed(Vec<OutColumn>, Plan, Arc<[QualifiedName]>, Option<Arc<[usize]>>),
+    Varies(Learnt),
+    Fixed(Vec<OutColumn>, Arc<KeptPhysical>, Arc<[QualifiedName]>, Option<Learnt>),
 }
 
 /// A statement's plan, bound, its `?`s slots.
@@ -164,7 +195,7 @@ pub(in crate::db) enum KeptPlan {
 
 /// What a plan is made with, besides the statement's text: as the module
 /// says.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::db) struct Key {
     generation: u64,
     catalog: Weak<dyn Catalog>,
@@ -226,8 +257,7 @@ impl Keeping<'_> {
     ///
     /// SQLCODE -910 if a lock is poisoned.
     fn kept<T>(&self, get: impl FnOnce(&Kept) -> Option<T>) -> Result<Option<T>> {
-        let kept = lock(&self.plans.kept)?;
-        Ok(kept.as_ref().filter(|k| self.holds(&k.key)).and_then(get))
+        self.plans.own.read(&self.plans.kept, |kept| kept.filter(|k| self.holds(&k.key)).and_then(get))
     }
 
     /// Keeps what `put` puts, with what holds now: beside what is kept with
@@ -237,9 +267,10 @@ impl Keeping<'_> {
     ///
     /// SQLCODE -910 if a lock is poisoned.
     fn keep(&self, put: impl FnOnce(&mut Kept)) -> Result<()> {
-        let mut kept = lock(&self.plans.kept)?;
+        let mut kept = write(&self.plans.kept.kept)?;
         let holding = kept.take().filter(|k| self.holds(&k.key));
         put(kept.insert(holding.unwrap_or_else(|| Kept::empty(self.key()))));
+        self.plans.kept.changed();
         Ok(())
     }
 
@@ -277,86 +308,152 @@ impl Keeping<'_> {
     ///
     /// SQLCODE -910 if a lock is poisoned.
     pub(in crate::db) fn made(&self, plan: Option<KeptPlan>) -> Result<()> {
-        self.plans.made.fetch_add(1, Ordering::Relaxed);
-        let Some(plan) = plan else { return Ok(()) };
-        self.keep(|k| k.plan = Some(plan))
+        self.made_clocked(plan, false)
     }
 
-    /// A query's columns, its physical plan filled with `values`, and the
-    /// tables it reads, if its plan is kept with what holds now: its plan
-    /// with slots, filled, if its paths follow no value
-    /// (`physical::keepable`) or it learned them, and no table it reads has
-    /// moved since (`moved`); else, while it learns, planned with `values`.
+    /// As `made`, of a plan that reads the statement's instant as a slot if
+    /// `clocked`.
     ///
     /// # Errors
     ///
-    /// As `physical::filled_plan` and `logical::filled`; SQLCODE -910 if a
-    /// lock is poisoned.
-    pub(in crate::db) fn physical(&self, values: &[Value]) -> Result<Option<Opened>> {
+    /// SQLCODE -910 if a lock is poisoned.
+    pub(in crate::db) fn made_clocked(&self, plan: Option<KeptPlan>, clocked: bool) -> Result<()> {
+        self.plans.made.fetch_add(1, Ordering::Relaxed);
+        let Some(plan) = plan else { return Ok(()) };
+        self.keep(|k| {
+            k.plan = Some(plan);
+            k.clocked = clocked;
+        })
+    }
+
+    /// Its plan and whether it reads the statement's instant as a slot, if
+    /// kept with what holds now.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a lock is poisoned.
+    pub(in crate::db) fn plan_clocked(&self) -> Result<Option<(KeptPlan, bool)>> {
+        self.kept(|k| k.plan.clone().map(|p| (p, k.clocked)))
+    }
+
+    /// `slots`, an execution's values of its `?`s, and of a plan that reads
+    /// the statement's instant as a slot, `clocked`, that instant after
+    /// them, as a TIMESTAMP(6) WITH TIME ZONE [ISO/IEC 9075:1992 §6.8 GR3]
+    /// (RULES.md D613).
+    pub(in crate::db) fn slots_of(&self, slots: Slots, clocked: bool) -> Slots {
+        if !clocked {
+            return slots;
+        }
+        let instant = Value::Datetime(self.session.now.get().timestamp());
+        slots.iter().cloned().chain(std::iter::once(instant)).collect()
+    }
+
+    /// A query's columns, its physical plan and the tables it reads, if
+    /// its plan is kept with what holds now: its plan with slots, shared,
+    /// with `params`' values for its slots to read where they are
+    /// (RULES.md D610), if its paths follow no value
+    /// (`physical::keepable`) or it learned them, and no table it reads has
+    /// moved since (`moved`); else, while it learns, planned with its
+    /// values.
+    ///
+    /// # Errors
+    ///
+    /// As `logical::filled`; SQLCODE -910 if a lock is poisoned.
+    pub(in crate::db) fn physical(&self, params: &Params) -> Result<Option<Opened>> {
+        let values = params.dynamic_values();
         match self.kept(Kept::found)? {
             None => Ok(None),
-            Some(Found::Untried(columns, logical)) => self.untried((columns, logical), values).map(Some),
+            Some(Found::Untried(columns, logical)) => self.untried((columns, logical), params).map(Some),
             Some(Found::Learning(columns, logical, learning)) => self.learn((columns, logical), learning, values).map(Some),
-            Some(Found::Fixed(columns, plan, reads, rows)) => {
-                if rows.as_deref().is_some_and(|rows| moved(self.st, &reads, rows)) {
+            Some(Found::Varies(stopped)) => {
+                if matches!(stopped.now(self.st), Fit::Moved) {
+                    self.keep(|k| k.physical = Physical::Learning(Learning::default()))?;
+                }
+                Ok(None)
+            }
+            Some(Found::Fixed(columns, plan, reads, learnt)) => {
+                if !self.fits(learnt.as_ref(), |l| Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), Some(l)))? {
                     self.keep(|k| k.physical = Physical::Learning(Learning::default()))?;
                     return Ok(None);
                 }
-                Ok(Some((columns, filled_plan(plan, values, crate::optimizer::prepared::budget(self.st))?, reads)))
+                let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+                Ok(Some((columns, run, reads, slots)))
             }
+        }
+    }
+
+    /// Whether a plan kept, measured from `learnt` if learned, fits its
+    /// tables still (`grown.rs`): if they grew within it, kept again as
+    /// `kept` makes it of what it is measured from now.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a lock is poisoned.
+    fn fits(&self, learnt: Option<&Learnt>, kept: impl FnOnce(Learnt) -> Physical) -> Result<bool> {
+        match learnt.map(|l| l.now(self.st)) {
+            None | Some(Fit::Still) => Ok(true),
+            Some(Fit::Grown(now)) => self.keep(|k| k.physical = kept(now)).map(|()| true),
+            Some(Fit::Moved) => Ok(false),
         }
     }
 
     /// Of a query not yet planned with its slots: its plan with them, made
-    /// once, kept and filled if its paths follow no value; else it learns.
+    /// once, kept if its paths follow no value; else it learns.
     ///
     /// # Errors
     ///
     /// As `physical`.
-    fn untried(&self, (columns, logical): (Vec<OutColumn>, LogicalPlan), values: &[Value]) -> Result<Opened> {
+    fn untried(&self, (columns, logical): (Vec<OutColumn>, LogicalPlan), params: &Params) -> Result<Opened> {
         let (optimized, _, plan) = super::super::plan(self.st, logical.clone());
         if !keepable(&plan, self.st) {
-            return self.learn((columns, logical), Learning::default(), values);
+            return self.learn((columns, logical), Learning::default(), params.dynamic_values());
         }
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
-        self.keep(|k| k.physical = Physical::Fixed(Box::new(plan.clone()), Arc::clone(&reads), None))?;
-        Ok((columns, filled_plan(plan, values, crate::optimizer::prepared::budget(self.st))?, reads))
+        let plan = Arc::new(prepared_plan(plan, crate::optimizer::prepared::budget(self.st))?);
+        self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;
+        let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+        Ok((columns, run, reads, slots))
     }
 
-    /// `w`, a kept UPDATE or DELETE, filled with `values`: its object rows
-    /// by its physical plan made once with its slots, kept, if its paths
+    /// `w`, a kept UPDATE or DELETE, run with `slots`: its object rows by
+    /// its physical plan made once with its slots, kept, if its paths
     /// follow no value (`physical::keepable`) or it learned them (RULES.md
     /// D422) and no table it reads has moved since; else, while it learns
-    /// or once it stopped, planned with `values` as it runs.
+    /// or once it stopped, planned with its values as it runs.
     ///
     /// # Errors
     ///
-    /// As `Written::filled`; SQLCODE -910 if a lock is poisoned.
-    fn written(&self, w: Arc<BoundWrite>, values: &[Value]) -> Result<Written> {
-        let budget = crate::optimizer::prepared::budget(self.st);
+    /// As `Written::slotted`; SQLCODE -910 if a lock is poisoned.
+    fn written(&self, w: Arc<BoundWrite>, slots: Slots) -> Result<Written> {
         let found = |k: &Kept| match &k.physical {
             Physical::Untried => None,
-            Physical::Fixed(plan, reads, rows) => Some(WriteFound::Fixed(plan.clone(), Arc::clone(reads), rows.clone())),
+            Physical::Fixed(plan, reads, rows) => Some(WriteFound::Fixed(Arc::clone(plan), Arc::clone(reads), rows.clone())),
             Physical::Learning(learning) => Some(WriteFound::Learning(learning.clone())),
-            Physical::Varies => Some(WriteFound::Varies),
+            Physical::Varies(stopped) => Some(WriteFound::Varies(stopped.clone())),
         };
         match self.kept(found)? {
-            Some(WriteFound::Varies) => Written::filled(w, None, values, budget),
-            Some(WriteFound::Learning(learning)) => self.learn_write(w, learning, values),
-            Some(WriteFound::Fixed(plan, reads, rows)) => {
-                if rows.is_some_and(|rows| moved(self.st, &reads, &rows)) {
-                    return self.learn_write(w, Learning::default(), values);
+            Some(WriteFound::Varies(stopped)) => {
+                if stopped.is_some_and(|s| matches!(s.now(self.st), Fit::Moved)) {
+                    return self.learn_write(w, Learning::default(), slots);
                 }
-                Written::filled(w, Some((*plan, reads)), values, budget)
+                Written::slotted(w, None, slots)
+            }
+            Some(WriteFound::Learning(learning)) => self.learn_write(w, learning, slots),
+            Some(WriteFound::Fixed(plan, reads, learnt)) => {
+                if !self.fits(learnt.as_ref(), |l| Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), Some(l)))? {
+                    return self.learn_write(w, Learning::default(), slots);
+                }
+                point::written(self.st, w, (&plan, reads), slots)
             }
             None => {
-                let (_, _, plan) = super::super::plan_rows(self.st, w.rows.clone());
+                let (_, _, plan) = super::super::plan_written(self.st, w.rows.clone());
                 if !keepable(&plan, self.st) {
-                    return self.learn_write(w, Learning::default(), values);
+                    return self.learn_write(w, Learning::default(), slots);
                 }
                 let reads: Arc<[QualifiedName]> = w.rows.tables().into();
-                self.keep(|k| k.physical = Physical::Fixed(Box::new(plan.clone()), Arc::clone(&reads), None))?;
-                Written::filled(w, Some((plan, reads)), values, budget)
+                let plan = Arc::new(prepared_plan(plan, crate::optimizer::prepared::budget(self.st))?);
+                self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;
+                point::written(self.st, w, (&plan, reads), slots)
             }
         }
     }
@@ -368,13 +465,14 @@ impl Keeping<'_> {
     /// # Errors
     ///
     /// As `written`.
-    fn learn_write(&self, w: Arc<BoundWrite>, was: Learning, values: &[Value]) -> Result<Written> {
-        let (_, _, plan) = super::super::plan_rows(self.st, filled(w.rows.clone(), values)?);
+    fn learn_write(&self, w: Arc<BoundWrite>, was: Learning, slots: Slots) -> Result<Written> {
+        let values = &*slots;
+        let (_, _, plan) = super::super::plan_written(self.st, filled(w.rows.clone(), values)?);
         let reads: Arc<[QualifiedName]> = w.rows.tables().into();
-        let learned = was.after(&plan, super::super::plan_rows_slotted(self.st, w.rows.clone(), values));
-        let physical = learned.kept(&reads, rows_of(self.st, &reads));
+        let learned = was.after(&plan, super::super::plan_written_slotted(self.st, w.rows.clone(), values));
+        let physical = learned.kept(&reads, self.st);
         self.keep(|k| k.physical = physical)?;
-        Written::filled(w, Some((plan, reads)), values, crate::optimizer::prepared::budget(self.st))
+        Written::slotted(w, Some((plan, reads)), slots)
     }
 
     /// An execution of a query learning its plan, which `was` says: its
@@ -388,9 +486,9 @@ impl Keeping<'_> {
         let (optimized, _, plan) = super::super::plan(self.st, filled(logical.clone(), values)?);
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
         let learned = was.after(&plan, super::super::plan_slotted(self.st, logical, values));
-        let physical = learned.kept(&reads, rows_of(self.st, &reads));
+        let physical = learned.kept(&reads, self.st);
         self.keep(|k| k.physical = physical)?;
-        Ok((columns, plan, reads))
+        Ok((columns, Run::Plan(Box::new(plan)), reads, None))
     }
 }
 
@@ -415,18 +513,20 @@ impl Session {
         bind: impl FnOnce(Context<'_>) -> Result<BoundWrite>,
     ) -> Result<Written> {
         let Some(k) = keeping else { return self.bound(st, params, bind).map(Written::of) };
-        let values = params.dynamic_values();
-        if let Some(w) = k.kept(|kept| if let Some(KeptPlan::Write(w)) = &kept.plan { Some(Arc::clone(w)) } else { None })? {
-            return k.written(w, values);
+        let slots = params.dynamic_slots().unwrap_or_default();
+        let found = |kept: &Kept| if let Some(KeptPlan::Write(w)) = &kept.plan { Some((Arc::clone(w), kept.clocked)) } else { None };
+        if let Some((w, clocked)) = k.kept(found)? {
+            return k.written(w, k.slots_of(slots, clocked));
         }
-        let binding = params.keeping();
+        let binding = params.keeping_clocked();
         let w = Arc::new(self.bound(st, &binding, bind)?);
+        let slots = k.slots_of(slots, binding.clocked());
         if binding.held() {
             k.made(None)?;
-            return Written::filled(w, None, values, crate::optimizer::prepared::budget(st));
+            return Written::slotted(w, None, slots);
         }
-        k.made(Some(KeptPlan::Write(Arc::clone(&w))))?;
-        k.written(w, values)
+        k.made_clocked(Some(KeptPlan::Write(Arc::clone(&w))), binding.clocked())?;
+        k.written(w, slots)
     }
 
     /// [X3.135-1986 §8.8 GR3a] The `<cursor specification>` `sql`, parsed
@@ -485,7 +585,7 @@ impl Session {
     pub(in crate::db) fn open_kept(&self, call: &Call<'_>, p: &Prepared, params: &Params) -> Result<Cursor> {
         let st = call.state();
         let k = self.keeping(st, &p.plans);
-        let timed = super::super::slow::Timed::of(st, || p.sql.clone(), (&self.auth(), &self.stop));
+        let timed = self.timed(st, || p.sql.clone(), p.plans.text(&p.sql));
         let spec = Self::cursor_specification(st, &p.sql, params, Some(&k))?;
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |snapshot, tx| self.open_rows(snapshot, tx, &spec, (params, Some(&k))))

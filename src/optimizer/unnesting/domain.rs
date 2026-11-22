@@ -175,6 +175,8 @@ impl Domain {
             LogicalPlan::Window(w) => self.window(w),
             LogicalPlan::Scan { .. }
             | LogicalPlan::System { .. }
+            | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Recursive { .. }
             | LogicalPlan::WorkTable { .. }
             | LogicalPlan::Transition { .. }

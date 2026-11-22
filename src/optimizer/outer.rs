@@ -62,6 +62,8 @@ impl Rule for PushFilterIntoOuterJoin {
             LogicalPlan::OuterJoin { kind, cond: on, left, right } => Join { kind: *kind, on, left, right }.on_pushed(),
             LogicalPlan::Scan { .. }
             | LogicalPlan::Product { .. }
+            | LogicalPlan::SemiJoin { .. }
+            | LogicalPlan::MarkJoin(_)
             | LogicalPlan::Aggregate { .. }
             | LogicalPlan::Project { .. }
             | LogicalPlan::Distinct { .. }

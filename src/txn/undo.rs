@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use std::mem;
 
+use super::escrow::Escrow;
 use super::{TxId, Txn, UndoFailure};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
@@ -19,7 +20,10 @@ use crate::index::{Index, Key};
 use crate::memory::Undoing;
 use crate::spill::{ListItem, ListSpace, SpillList, record_row, row_bytes, row_record};
 use crate::storage::{Row, RowId, TableStorage};
+use crate::value::codec::{put_row, row as read_row};
 use crate::value::types::TypeRegistry;
+
+mod loading;
 
 /// A table's storage that has begun a transaction: a participant in its
 /// commit and rollback.
@@ -41,12 +45,64 @@ impl Joined {
 
 /// One change, recorded so that it can be reversed, with the table it was
 /// made to and the storage or index it was made in.
+#[derive(Clone)]
 pub(crate) enum UndoEntry {
-    Inserted { table: QualifiedName, storage: Arc<dyn TableStorage>, id: RowId },
-    Deleted { table: QualifiedName, storage: Arc<dyn TableStorage>, id: RowId, row: Row },
-    Updated { table: QualifiedName, storage: Arc<dyn TableStorage>, id: RowId, old: Row },
-    IndexInserted { table: QualifiedName, index: Arc<dyn Index>, key: Key, id: RowId },
-    IndexRemoved { table: QualifiedName, index: Arc<dyn Index>, key: Key, id: RowId },
+    Inserted {
+        table: QualifiedName,
+        storage: Arc<dyn TableStorage>,
+        id: RowId,
+    },
+    Deleted {
+        table: QualifiedName,
+        storage: Arc<dyn TableStorage>,
+        id: RowId,
+        row: Row,
+    },
+    Updated {
+        table: QualifiedName,
+        storage: Arc<dyn TableStorage>,
+        id: RowId,
+        old: Row,
+    },
+    IndexInserted {
+        table: QualifiedName,
+        index: Arc<dyn Index>,
+        key: Key,
+        id: RowId,
+    },
+    IndexRemoved {
+        table: QualifiedName,
+        index: Arc<dyn Index>,
+        key: Key,
+        id: RowId,
+    },
+    /// \[DESIGN\] The entries of rows inserted together, each as an
+    /// `IndexInserted` of its own, in order: one entry a batch, not one a
+    /// row (RULES.md D531).
+    IndexInsertedRows {
+        table: QualifiedName,
+        index: Arc<dyn Index>,
+        entries: Vec<(Key, RowId)>,
+    },
+    /// \[DESIGN\] An increment reserved on `column` of row `id`, taken
+    /// back (RULES.md D452).
+    Escrowed {
+        table: QualifiedName,
+        escrow: Arc<Escrow>,
+        id: RowId,
+        column: usize,
+    },
+    /// \[DESIGN\] Its reservation of `delta` on `column` of row `id`,
+    /// guarding `guarded`, applied before its transaction commits, as it
+    /// read its own sum: put back (RULES.md D452).
+    Folded {
+        table: QualifiedName,
+        escrow: Arc<Escrow>,
+        id: RowId,
+        column: usize,
+        delta: crate::value::Value,
+        guarded: u64,
+    },
 }
 
 /// [X3.135-1986 §8.9 GR1, §7.3 GR3b i] Reverse `entries`, newest first.
@@ -61,12 +117,27 @@ pub(super) fn apply_undo(tx: TxId, entries: Vec<UndoEntry>) -> Vec<UndoFailure> 
             UndoEntry::Updated { table, storage, id, old } => (table, storage.update(tx, id, old), true),
             UndoEntry::IndexInserted { table, index, key, id } => (table, index.remove(&key, id), false),
             UndoEntry::IndexRemoved { table, index, key, id } => (table, index.insert(key, id), false),
+            UndoEntry::IndexInsertedRows { table, index, entries: made } => (table, removed(&*index, &made), false),
+            UndoEntry::Escrowed { table, escrow, id, column } => {
+                escrow.take_back(tx, id, column);
+                (table, Ok(()), false)
+            }
+            UndoEntry::Folded { table, escrow, id, column, delta, guarded } => {
+                escrow.put_back(id, super::escrow::Reservation { tx, column, delta, guarded });
+                (table, Ok(()), false)
+            }
         };
         if let Err(error) = result {
             failures.push(UndoFailure { table: Some(table), error, rows });
         }
     }
     failures
+}
+
+/// Removes each of `entries` from `index`, newest first, every one tried:
+/// the first failure, if one failed.
+fn removed(index: &dyn Index, entries: &[(Key, RowId)]) -> Result<()> {
+    entries.iter().rev().map(|(key, id)| index.remove(key, *id)).fold(Ok(()), Result::and)
 }
 
 /// \[DESIGN\] Where a transaction's undo entries spill (RULES.md D38): the
@@ -80,12 +151,13 @@ pub(crate) type UndoSpace = ListSpace;
 enum Target {
     Storage(QualifiedName, Arc<dyn TableStorage>),
     Index(QualifiedName, Arc<dyn Index>),
+    Escrow(QualifiedName, Arc<Escrow>),
 }
 
 impl Target {
     fn table(&self) -> &QualifiedName {
         match self {
-            Target::Storage(table, _) | Target::Index(table, _) => table,
+            Target::Storage(table, _) | Target::Index(table, _) | Target::Escrow(table, _) => table,
         }
     }
 
@@ -94,7 +166,10 @@ impl Target {
         match (self, other) {
             (Target::Storage(_, a), Target::Storage(_, b)) => std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b)),
             (Target::Index(_, a), Target::Index(_, b)) => std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b)),
-            (Target::Storage(..), Target::Index(..)) | (Target::Index(..), Target::Storage(..)) => false,
+            (Target::Escrow(_, a), Target::Escrow(_, b)) => Arc::ptr_eq(a, b),
+            (Target::Storage(..), Target::Index(..) | Target::Escrow(..))
+            | (Target::Index(..), Target::Storage(..) | Target::Escrow(..))
+            | (Target::Escrow(..), Target::Storage(..) | Target::Index(..)) => false,
         }
     }
 }
@@ -102,9 +177,13 @@ impl Target {
 impl ListItem for UndoEntry {
     fn bytes(&self) -> usize {
         let values = match self {
-            UndoEntry::Inserted { .. } => 0,
+            UndoEntry::Inserted { .. } | UndoEntry::Escrowed { .. } => 0,
             UndoEntry::Deleted { row, .. } | UndoEntry::Updated { old: row, .. } => row_bytes(row),
+            UndoEntry::Folded { delta, .. } => row_bytes(&vec![delta.clone()]),
             UndoEntry::IndexInserted { key, .. } | UndoEntry::IndexRemoved { key, .. } => row_bytes(&key.0),
+            UndoEntry::IndexInsertedRows { entries, .. } => entries
+                .iter()
+                .fold(0_usize, |sum, (key, _)| sum.saturating_add(row_bytes(&key.0)).saturating_add(size_of::<(Key, RowId)>())),
         };
         size_of::<UndoEntry>().saturating_add(values)
     }
@@ -124,13 +203,15 @@ pub(crate) struct UndoLog {
     targets: Vec<Target>,
     /// The types beyond the standard its entries may hold values of.
     types: TypeRegistry,
+    /// The load under way, whose entries it holds from its mark on.
+    loading: Option<loading::Loading>,
 }
 
 impl UndoLog {
     /// An empty log, spilling in `space`.
     pub(crate) fn new(space: UndoSpace) -> UndoLog {
         let types = space.types.clone();
-        UndoLog { list: SpillList::new(space), targets: Vec::new(), types }
+        UndoLog { list: SpillList::new(space), targets: Vec::new(), types, loading: None }
     }
 
     /// Begins a segment, as a statement begins: its entries' place.
@@ -158,7 +239,11 @@ impl UndoLog {
     pub(crate) fn take_from(&mut self, start: usize) -> Result<UndoLog> {
         let (targets, types) = (&self.targets, &self.types);
         let list = self.list.take_from(start, &|record| entry_of((targets, types), record))?;
-        Ok(UndoLog { list, targets: self.targets.clone(), types: self.types.clone() })
+        // A load begun among the entries taken is undone with them.
+        if self.loading.as_ref().is_some_and(|l| l.mark >= start) {
+            self.loading = None;
+        }
+        Ok(UndoLog { list, targets: self.targets.clone(), types: self.types.clone(), loading: None })
     }
 
     /// [X3.135-1986 §8.9 GR1, §7.3 GR3b i] Reverses its entries, newest
@@ -197,12 +282,65 @@ fn encoded(targets: &mut Vec<Target>, entry: &UndoEntry) -> Vec<u8> {
         UndoEntry::Updated { table, storage, id, old } => (2, Target::Storage(table.clone(), Arc::clone(storage)), *id, Some(old)),
         UndoEntry::IndexInserted { table, index, key, id } => (3, Target::Index(table.clone(), Arc::clone(index)), *id, Some(&key.0)),
         UndoEntry::IndexRemoved { table, index, key, id } => (4, Target::Index(table.clone(), Arc::clone(index)), *id, Some(&key.0)),
+        UndoEntry::IndexInsertedRows { table, index, entries } => {
+            return rows_record(target(targets, Target::Index(table.clone(), Arc::clone(index))), entries);
+        }
+        UndoEntry::Escrowed { table, escrow, id, column } => {
+            let mut out = vec![ESCROWED];
+            out.put_u32(target(targets, Target::Escrow(table.clone(), Arc::clone(escrow))));
+            out.put_u64(*id);
+            out.put_u64(u64::try_from(*column).unwrap_or(u64::MAX));
+            return out;
+        }
+        UndoEntry::Folded { table, escrow, id, column, delta, guarded } => {
+            let mut out = vec![FOLDED];
+            out.put_u32(target(targets, Target::Escrow(table.clone(), Arc::clone(escrow))));
+            out.put_u64(*id);
+            out.put_u64(u64::try_from(*column).unwrap_or(u64::MAX));
+            out.put_u64(*guarded);
+            out.extend(row_record(&vec![delta.clone()]));
+            return out;
+        }
     };
     let mut out = vec![kind];
     out.put_u32(target(targets, named));
     out.put_u64(id);
     out.extend(values.map(row_record).unwrap_or_default());
     out
+}
+
+/// The kind of record of an `IndexInsertedRows`.
+const INSERTED_ROWS: u8 = 5;
+/// The kind of record of an `Escrowed`: its target, its row id, then its
+/// column's place.
+const ESCROWED: u8 = 6;
+/// The kind of record of a `Folded`: its target, its row id, its column's
+/// place, the columns it guards, then its increment as a row of one value.
+const FOLDED: u8 = 7;
+
+/// The record of an `IndexInsertedRows` of `entries`, of the target at
+/// `place`: its kind and target, its entries' count in place of a row id,
+/// then each one's row id and key.
+fn rows_record(place: u32, entries: &[(Key, RowId)]) -> Vec<u8> {
+    let mut out = vec![INSERTED_ROWS];
+    out.put_u32(place);
+    out.put_u64(u64::try_from(entries.len()).unwrap_or(u64::MAX));
+    for (key, id) in entries {
+        out.put_u64(*id);
+        put_row(&mut out, &key.0);
+    }
+    out
+}
+
+/// The entries `rows_record` wrote, `count` of them, from `rest`.
+fn entries_of(rest: &[u8], count: u64, types: &TypeRegistry) -> Result<Vec<(Key, RowId)>> {
+    let mut r = Reader::new(rest, "undo entry").with_types(types);
+    let mut entries = Vec::new();
+    for _ in 0..count {
+        let id = r.u64()?;
+        entries.push((Key(read_row(&mut r)?), id));
+    }
+    Ok(entries)
 }
 
 /// The entry of `record`.
@@ -218,8 +356,25 @@ fn entry_of((targets, types): (&[Target], &TypeRegistry), record: &[u8]) -> Resu
         (2, Target::Storage(table, storage)) => UndoEntry::Updated { table, storage, id, old: values()? },
         (3, Target::Index(table, index)) => UndoEntry::IndexInserted { table, index, key: Key(values()?), id },
         (4, Target::Index(table, index)) => UndoEntry::IndexRemoved { table, index, key: Key(values()?), id },
-        (_, Target::Storage(..) | Target::Index(..)) => return Err(r.corrupt("not an entry of its target")),
+        (INSERTED_ROWS, Target::Index(table, index)) => {
+            UndoEntry::IndexInsertedRows { table, index, entries: entries_of(rest, id, types)? }
+        }
+        (ESCROWED, Target::Escrow(table, escrow)) => {
+            let column = Reader::new(rest, "undo entry").u64()?;
+            UndoEntry::Escrowed { table, escrow, id, column: usize::try_from(column).unwrap_or(usize::MAX) }
+        }
+        (FOLDED, Target::Escrow(table, escrow)) => folded((table, escrow, id), rest, types)?,
+        (_, Target::Storage(..) | Target::Index(..) | Target::Escrow(..)) => return Err(r.corrupt("not an entry of its target")),
     })
+}
+
+/// The `Folded` of the reservation of row `id` of `table`, kept by
+/// `escrow`, whose record ends with `rest`.
+fn folded((table, escrow, id): (QualifiedName, Arc<Escrow>, RowId), rest: &[u8], types: &TypeRegistry) -> Result<UndoEntry> {
+    let mut r = Reader::new(rest, "undo entry");
+    let (column, guarded) = (r.u64()?, r.u64()?);
+    let delta = record_row(r.rest(), types)?.into_iter().next().ok_or_else(|| r.corrupt("no increment"))?;
+    Ok(UndoEntry::Folded { table, escrow, id, column: usize::try_from(column).unwrap_or(usize::MAX), delta, guarded })
 }
 
 impl State {

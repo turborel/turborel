@@ -6,12 +6,14 @@
 use std::path::Path;
 use std::thread;
 
+use super::entries::Decoded;
 use super::*;
 use crate::disk::buffer::Clock;
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::Pager;
 use crate::engine::memory_file;
+use crate::engine::tree::hints;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::index::searched;
 use crate::value::Spelled;
@@ -372,6 +374,71 @@ fn an_index_tells_the_pages_its_probes_miss() {
     }
     let missed = small.probe_missed().unwrap();
     assert!(missed > 0.0_f64 && (missed - unheld).abs() > 1e-9_f64, "as its searches missed: {missed}");
+}
+
+/// Verifies: [DESIGN] RULES.md D500, an entry's hint: an entry takes the
+/// leaf noted for its row as it is written; a second version's entry
+/// counts it and takes the newer leaf, and a removal keeps it; a read
+/// notes each entry's hint for the row's read; a leaf past what a hint
+/// holds is kept as none; and a load gives each entry the leaf noted as
+/// its row was read, its versions counted as one entry.
+#[test]
+fn entries_carry_the_leaf_noted_for_their_row() {
+    let index = index(&[MONEY]);
+    let key = || Key(vec![exact(5, 0)]);
+    let value = |of: &BLinkIndex, row| of.tree.get(&of.entry(&key(), row).unwrap()).unwrap().unwrap();
+    hints::note(41, 1_234);
+    index.insert(key(), 41).unwrap();
+    assert_eq!((hint_of(&value(&index, 41)).unwrap(), count_of(&value(&index, 41)).unwrap()), (1_234, 1));
+    hints::note(41, 99);
+    index.insert(key(), 41).unwrap();
+    assert_eq!((hint_of(&value(&index, 41)).unwrap(), count_of(&value(&index, 41)).unwrap()), (99, 2));
+    index.remove(&key(), 41).unwrap();
+    assert_eq!((hint_of(&value(&index, 41)).unwrap(), count_of(&value(&index, 41)).unwrap()), (99, 1));
+    hints::note(41, 5);
+    assert_eq!(searched(&index, &Probe::All).unwrap().len(), 1);
+    assert_eq!(hints::leaf_of(41), Some(99), "a read notes the entry's hint");
+    hints::note(42, u64::from(u32::MAX) + 1);
+    index.insert(key(), 42).unwrap();
+    assert_eq!(hint_of(&value(&index, 42)).unwrap(), hints::NO_LEAF);
+    let loaded = self::index(&[MONEY]);
+    let mut rows = [3_u64, 1, 2, 2].into_iter().map(|row| {
+        hints::note(row, 500 + row);
+        Ok((key(), row))
+    });
+    let areas = WorkAreas::new(MemoryBudget::new(usize::MAX));
+    loaded.load(&mut rows, (&areas, Area { bytes: 4 << 10_u32, batch: 1 << 10_u32 })).unwrap();
+    let held: Vec<(u64, u32)> =
+        (1..=3).map(|row| (hint_of(&value(&loaded, row)).unwrap(), count_of(&value(&loaded, row)).unwrap())).collect();
+    assert_eq!(held, [(501, 1), (502, 2), (503, 1)]);
+}
+
+/// Verifies: [DESIGN] RULES.md D501, D786: a search decodes a key once
+/// for the entries of one key past its second, and again for each other
+/// key, each decoded whole; a key is kept only once a second entry has its
+/// bytes, so a key whose entry is alone is never copied.
+///
+/// Decisions: the bytes are the last decoded's or not; a key is kept or
+/// not. Each changes the outcome alone: a new key keeps none; its second
+/// entry keeps it; its third takes the one kept; another key drops it.
+#[test]
+fn a_key_is_decoded_once_for_its_entries() {
+    let types = [MONEY, DataType::character(4)];
+    let index = index(&types);
+    let key = |units| Key(vec![exact(units, 2), Value::Char("ab  ".into())]);
+    let mut last = Decoded::default();
+    let (one, two) = (index.prefix(&key(100)).unwrap(), index.prefix(&key(250)).unwrap());
+    assert_eq!(last.of(&one, &types).unwrap(), key(100));
+    assert_eq!((last.bytes.as_deref(), last.key.clone()), (Some(one.as_slice()), None));
+    assert_eq!(last.of(&one, &types).unwrap(), key(100));
+    assert_eq!(last.key, Some(key(100)));
+    assert_eq!(last.of(&one, &types).unwrap(), key(100));
+    assert_eq!(last.of(&two, &types).unwrap(), key(250));
+    assert_eq!((last.bytes.as_deref(), last.key.clone()), (Some(two.as_slice()), None));
+    for row in 1..=5 {
+        index.insert(key(100), row).unwrap();
+    }
+    assert_eq!(found(&index, CompOp::Eq, exact(100, 2)), [1, 2, 3, 4, 5]);
 }
 
 /// Verifies: [DESIGN] RULES.md D381, range estimates: of a tree of

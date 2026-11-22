@@ -18,19 +18,25 @@
 //!   would make a split change a third node, which the paper's proofs do
 //!   not cover (§6.2, Lemma 2).
 //!
+//! \[EXTENSION\] A scan made for an operator EXPLAIN ANALYZE counts notes
+//! each leaf it reads of it (`noted.rs`, RULES.md D621).
+//!
 //! Entries added or removed while a scan runs may or may not be seen, as
 //! the scan reaches their leaf before or after the change; isolation is
 //! the transaction layer's (RULES.md D29).
 
 use std::ops::{Bound, Deref};
+use std::sync::Arc;
 
-use super::node::Node;
+use super::node::{KeyRef, Node};
 use super::reclaim::Entered;
 use super::{BLinkTree, Path, Target, corrupt};
 use crate::disk::buffer::Ahead;
 use crate::disk::pager::PageId;
 use crate::error::Result;
+use crate::noted::{self, Noted, Notes};
 
+mod ready;
 mod visit;
 
 pub use visit::{Visit, Visited};
@@ -58,6 +64,10 @@ enum Next {
 /// An entry: its key and value.
 type Entry = (Vec<u8>, Vec<u8>);
 
+/// An entry lent by `Scan::next_entry`, its key and value, with what the
+/// scan reads the tree through.
+pub type Lent<'s, T> = (&'s T, (&'s [u8], &'s [u8]));
+
 /// \[DESIGN\] A scan of a tree's entries with keys within bounds: an
 /// iterator of keys and values. It reads the tree through `T`: a borrow,
 /// or something that owns the tree, so the scan can outlive the call that
@@ -69,8 +79,8 @@ pub struct Scan<T: Deref<Target = BLinkTree>> {
     /// Keys at or below this. Backward, the key below the last leaf read.
     upper: Bound<Vec<u8>>,
     direction: Direction,
-    /// Entries copied from the last leaf, the next to return last.
-    ready: Vec<Entry>,
+    /// Entries copied from the last leaf, not yet given (`ready.rs`).
+    ready: ready::Ready,
     next: Next,
     /// The leaf it read last, forward: a leaf after it in the file, linked
     /// to, has the pages after it read ahead.
@@ -80,6 +90,8 @@ pub struct Scan<T: Deref<Target = BLinkTree>> {
     /// Its epoch, counted while it lives: it holds a leaf's page number
     /// between reads (`reclaim.rs`).
     entered: Entered,
+    /// The notes of the operator it reads for, if it is counted.
+    notes: Option<Arc<Notes>>,
 }
 
 impl<T: Deref<Target = BLinkTree>> Drop for Scan<T> {
@@ -104,11 +116,12 @@ pub fn scan_of<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<&[u8]>, upper
         lower: lower.map(<[u8]>::to_vec),
         upper: upper.map(<[u8]>::to_vec),
         direction,
-        ready: Vec::new(),
+        ready: ready::Ready::default(),
         next: Next::Descend,
         last: None,
         ahead: Ahead::default(),
         entered,
+        notes: noted::noting(),
     }
 }
 
@@ -122,21 +135,12 @@ fn above(key: &[u8], bound: &Bound<Vec<u8>>) -> bool {
 }
 
 /// Whether `key` is at or below `bound`, an upper bound.
-fn below(key: &[u8], bound: &Bound<Vec<u8>>) -> bool {
+fn below(key: KeyRef<'_>, bound: &Bound<Vec<u8>>) -> bool {
     match bound {
         Bound::Unbounded => true,
-        Bound::Included(b) => key <= b.as_slice(),
-        Bound::Excluded(b) => key < b.as_slice(),
+        Bound::Included(b) => key.cmp_bytes(b) != std::cmp::Ordering::Greater,
+        Bound::Excluded(b) => key.cmp_bytes(b) == std::cmp::Ordering::Less,
     }
-}
-
-/// What a scan takes from a leaf.
-struct Taken {
-    /// Its entries within the bounds, in key order.
-    found: Vec<Entry>,
-    /// Its right neighbour, if keys past its high key may be within the
-    /// upper bound.
-    further: Option<PageId>,
 }
 
 /// The place of `leaf`'s first entry at or above `lower`.
@@ -176,24 +180,25 @@ fn tally(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Res
     Ok((end.saturating_sub(start), further_of(leaf, upper)))
 }
 
-/// Takes what is wanted from `leaf`.
-fn take(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Result<Taken> {
+/// Takes what is wanted from `leaf` into `ready`, cleared first; its right
+/// neighbour, if keys past its high key may be within `upper`.
+fn take(leaf: &Node<'_>, (lower, upper): (&Bound<Vec<u8>>, &Bound<Vec<u8>>), ready: &mut ready::Ready) -> Result<Option<PageId>> {
     if leaf.level != 0 {
         return Err(corrupt("a leaf's neighbour is not a leaf"));
     }
-    // Taken out of the tree: its range is in the node its link leads to.
+    ready.clear();
+    // Taken out of the tree, its range is in the node its link leads to.
     if leaf.deleted {
-        return Ok(Taken { found: Vec::new(), further: leaf.right });
+        return Ok(leaf.right);
     }
-    let mut found = Vec::new();
     for at in start_of(leaf, lower)?..leaf.len() {
         let (key, value) = leaf.entry(at)?;
         if !below(key, upper) {
             break;
         }
-        found.push((key.to_vec(), value.to_vec()));
+        ready.push(key, value);
     }
-    Ok(Taken { found, further: further_of(leaf, upper) })
+    Ok(further_of(leaf, upper))
 }
 
 impl<T: Deref<Target = BLinkTree>> Scan<T> {
@@ -201,7 +206,8 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
     /// decided.
     fn advance(&mut self) -> Result<()> {
         let tree = &*self.tree;
-        let (mut taken, low) = match self.next {
+        let ready = &mut self.ready;
+        let (further, low) = match self.next {
             Next::Done => return Ok(()),
             Next::Leaf(id) => {
                 if self.last.and_then(|last| last.0.checked_add(1)) == Some(id.0) {
@@ -209,7 +215,7 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                 }
                 self.last = Some(id);
                 let page = tree.pool.read(tree.file, id.0)?;
-                (take(&Node::parse(&page)?, &self.lower, &self.upper)?, None)
+                (take(&Node::parse(&page)?, (&self.lower, &self.upper), ready)?, None)
             }
             Next::Descend => {
                 let bound = match self.direction {
@@ -225,19 +231,20 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                 // next ones go on from where it was.
                 let tallied = self.last.is_none() && matches!(target, Target::Key(_));
                 let mut path = Path { track_low: true, tallied, ..Path::default() };
-                let (leaf, taken) = tree.descend(target, 0, &mut path, |leaf| take(leaf, &self.lower, &self.upper))?;
+                let bounds = (&self.lower, &self.upper);
+                let (leaf, further) = tree.descend(target, 0, &mut path, |leaf| take(leaf, bounds, ready))?;
                 self.last = Some(leaf);
-                (taken, path.low)
+                (further, path.low)
             }
         };
         self.next = Next::Done;
+        noted::add(self.notes.as_deref(), Noted::Leaves, 1);
         match self.direction {
             Direction::Forward => {
-                if let Some((key, _)) = taken.found.last() {
-                    self.lower = Bound::Excluded(key.clone());
+                if let Some(key) = self.ready.last_key() {
+                    past(&mut self.lower, key);
                 }
-                taken.found.reverse();
-                self.next = taken.further.map_or(Next::Done, Next::Leaf);
+                self.next = further.map_or(Next::Done, Next::Leaf);
             }
             Direction::Backward => {
                 // The next leaf down holds `low`, if keys that low are
@@ -248,8 +255,20 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                 }
             }
         }
-        self.ready = taken.found;
         Ok(())
+    }
+}
+
+/// Makes `lower` the bound just past `key`, in its own bytes when it has
+/// some, so a forward scan allocates no bound per leaf.
+fn past(lower: &mut Bound<Vec<u8>>, key: &[u8]) {
+    match lower {
+        Bound::Included(bytes) | Bound::Excluded(bytes) => {
+            bytes.clear();
+            bytes.extend_from_slice(key);
+            *lower = Bound::Excluded(std::mem::take(bytes));
+        }
+        Bound::Unbounded => *lower = Bound::Excluded(key.to_vec()),
     }
 }
 
@@ -285,21 +304,39 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
     }
 }
 
-impl<T: Deref<Target = BLinkTree>> Iterator for Scan<T> {
-    type Item = Result<Entry>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(entry) = self.ready.pop() {
-                return Some(Ok(entry));
-            }
+impl<T: Deref<Target = BLinkTree>> Scan<T> {
+    /// The next entry, its key and value borrowed until the scan is used
+    /// again, so a reader done with each before the next copies none
+    /// (RULES.md D809), and what the scan reads the tree through.
+    ///
+    /// # Errors
+    ///
+    /// As reading a leaf's; the scan then ends.
+    pub fn next_entry(&mut self) -> Option<Result<Lent<'_, T>>> {
+        while self.ready.is_empty() {
             if matches!(self.next, Next::Done) {
                 return None;
             }
             if let Err(e) = self.advance() {
                 self.next = Next::Done;
+                self.ready.clear();
                 return Some(Err(e));
             }
         }
+        let (key, value) = self.ready.give(self.direction)?;
+        // A table's row has the leaf it was read from noted for its index
+        // entries (`hints.rs`).
+        if let (Some(row), Some(leaf)) = (self.tree.row_of(key), self.last) {
+            super::hints::note(row, leaf.0);
+        }
+        Some(Ok((&self.tree, (key, value))))
+    }
+}
+
+impl<T: Deref<Target = BLinkTree>> Iterator for Scan<T> {
+    type Item = Result<Entry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.next_entry()?.map(|(_, (key, value))| (key.to_vec(), value.to_vec())))
     }
 }

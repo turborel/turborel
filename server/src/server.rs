@@ -26,7 +26,6 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use tokio::sync::watch;
 use tokio::task::JoinSet;
 use turborel::db::Database;
 use turborel::diagnostics::Event;
@@ -40,6 +39,9 @@ pub use crate::limit::Permit;
 pub(crate) use closed::{IDLE_WAITING, hurrying, went_past};
 
 mod closed;
+mod stage;
+
+use stage::Stage;
 
 use crate::auth::{Authenticator, Peer};
 use crate::cancels::Cancels;
@@ -49,10 +51,9 @@ use crate::logins::Logins;
 use crate::password::Pbkdf2;
 use crate::settings::{
     IDLE_IN_TRANSACTION_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOGIN_TIMEOUT_MS, MAX_CONNECTIONS, MAX_REFUSALS, MAX_WORKERS, SHUTDOWN_TIMEOUT_MS,
-    WORKERS,
 };
 use crate::settings::{count, declare, millis};
-use crate::shown::{self, Counted, Operator, Present, Shown};
+use crate::shown::{self, Operator, Present, Shown};
 use crate::tls::{Handshaken, Secured, Tls};
 use crate::told::{Throttle, Told};
 use crate::transport::{Listener, Transport};
@@ -66,18 +67,6 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 /// \[DESIGN\] How often a server hurrying cancels its sessions' statements
 /// again, so one begun as it hurried is cancelled too.
 const RECANCEL: Duration = Duration::from_millis(100);
-
-/// How far a server has come to stopping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    /// Taking connections.
-    Serving,
-    /// Told to stop: each connection finishes its statement.
-    Stopping,
-    /// Past SERVER.SHUTDOWN_TIMEOUT_MS, or told again: statements cancelled,
-    /// waits on clients ended.
-    Hurried,
-}
 
 /// A connection's place: under SERVER.MAX_CONNECTIONS, served; or among
 /// the refusals in flight, refused.
@@ -155,7 +144,7 @@ struct Shared {
     /// as many as MAX_WORKERS at most, the blocking pool's threads beside
     /// those running statements (`native/lent.rs`, `runtime.rs`).
     hot: Arc<Limit>,
-    stop: watch::Receiver<Stage>,
+    stop: stage::Heard,
     /// What cancels each connection's statements, by its key (RULES.md D45).
     cancels: Arc<Cancels>,
     /// What it shows of itself (`shown.rs`).
@@ -206,18 +195,22 @@ impl Services {
     /// As `spawn`, `work` given its permit, to give up while it waits on
     /// its client and take again (`Permit`).
     pub async fn spawn_with<T: Send + 'static>(&self, work: impl FnOnce(Permit) -> T + Send + 'static) -> tokio::task::JoinHandle<T> {
-        let waiting = Counted::of(&self.0.shown, |s| &s.waiting);
-        let held = self.0.workers.take(|| count(&self.0.db, WORKERS)).await;
-        drop(waiting);
-        let permit = Permit::new(&self.0.workers, &self.0.shown, &self.0.db, held);
+        let permit = self.permit().await;
         tokio::task::spawn_blocking(move || work(permit))
     }
 
-    /// A connection's place among those keeping a worker waiting for their
-    /// next request, if fewer than MAX_WORKERS do, so the blocking pool
+    /// A worker's permit, for work a connection's own thread runs
+    /// (`native/home.rs`): taken as `spawn` takes it.
+    pub(crate) async fn permit(&self) -> Permit {
+        Permit::taken(&self.0.workers, &self.0.shown, &self.0.db).await
+    }
+
+    /// A connection's place among those keeping a thread of the blocking
+    /// pool, a worker waiting for their next request or a home of their
+    /// own (`native/home.rs`), if fewer than MAX_WORKERS do, so the pool
     /// has a thread for each beside the statements running; held while it
-    /// is. A waiting worker holds no permit, so a statement waiting for one
-    /// is not kept waiting by it.
+    /// is. Neither holds a permit while it waits, so a statement waiting
+    /// for one is not kept waiting by it.
     pub(crate) fn hot(&self) -> Option<Held> {
         self.0.hot.try_take(MAX_WORKERS)
     }
@@ -268,7 +261,7 @@ impl Services {
     /// Whether the server hurries, for a worker that waits on its client
     /// itself, as `bounded` would end its wait (`native/lent.rs`).
     pub(crate) fn is_hurried(&self) -> bool {
-        *self.0.stop.borrow() == Stage::Hurried
+        self.0.stop.is(Stage::Hurried)
     }
 
     /// `work`, if it is done within SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS
@@ -286,19 +279,19 @@ impl Services {
 
     /// Whether the server still takes statements.
     pub fn is_serving(&self) -> bool {
-        *self.0.stop.borrow() == Stage::Serving
+        self.0.stop.is(Stage::Serving)
     }
 
     /// Done once the server stops.
     pub async fn stopping(&self) {
-        let mut stop = self.0.stop.clone();
+        let mut stop = self.0.stop.watch();
         // An error means the server is gone: stopped, too.
         let _ = stop.wait_for(|stage| *stage != Stage::Serving).await;
     }
 
     /// Done once the server hurries.
     async fn hurried(&self) {
-        let mut stop = self.0.stop.clone();
+        let mut stop = self.0.stop.watch();
         let _ = stop.wait_for(|stage| *stage == Stage::Hurried).await;
     }
 
@@ -418,7 +411,7 @@ impl Server {
     /// threads should be as many as SERVER.WORKERS may say
     /// (`settings::MAX_WORKERS`).
     pub async fn serve_until(self, endpoints: Vec<Endpoint>, stop: impl Future<Output = ()>, hurry: impl Future<Output = ()>) {
-        let (announce, heard) = watch::channel(Stage::Serving);
+        let (announce, heard) = stage::channel();
         let limits = (Arc::new(Limit::default()), Arc::new(Limit::default()));
         let (cancels, throttles) = (Arc::default(), (Throttle::default(), Throttle::default()));
         let (db, authenticators, shown, logins) = (self.db, self.authenticators, self.shown, Logins::default());
@@ -431,8 +424,7 @@ impl Server {
         }
         services.database().tell(&Event::Listening { addresses });
         stop.await;
-        // Nothing can fail to hear it: every receiver is in `services`.
-        let _ = announce.send(Stage::Stopping);
+        announce.send(Stage::Stopping);
         services.database().tell(&Event::Stopping { connections: u64::try_from(limits.0.held()).unwrap_or(u64::MAX) });
         let deadline = async {
             match millis(services.database(), SHUTDOWN_TIMEOUT_MS) {
@@ -445,7 +437,7 @@ impl Server {
             () = deadline => {}
             () = hurry => {}
         }
-        let _ = announce.send(Stage::Hurried);
+        announce.send(Stage::Hurried);
         services.database().tell(&Event::StopHurried { sessions: services.0.cancels.cancel_all() });
         loop {
             tokio::select! {

@@ -32,6 +32,7 @@
 
 mod common;
 
+mod activity;
 mod agents;
 mod authentication;
 mod certificates;
@@ -43,6 +44,7 @@ mod copying;
 mod declared;
 mod diagnostics;
 mod ending;
+mod homes;
 mod host_plugins;
 mod imported;
 mod imports;
@@ -50,6 +52,7 @@ mod json;
 mod lobs;
 mod logins;
 mod negotiated;
+mod numbers;
 mod passwords;
 mod prepared;
 mod replication;

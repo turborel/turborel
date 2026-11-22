@@ -10,7 +10,7 @@ use super::{Concatenation, Substring, beside, counted, integer, named, no_units,
 use crate::error::{Code, Result, fail};
 use crate::functions::ScalarFunction;
 use crate::params::ParameterType;
-use crate::value::{CharUnits, DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{BIGINT_PRECISION, CharUnits, DataType, Decimal, Spelled, Value};
 
 /// [ISO/IEC 9075-2:2023 §6.33] OVERLAY's name, no key word of SQL-92.
 pub const OVERLAY: &str = "OVERLAY";
@@ -96,7 +96,7 @@ impl ScalarFunction for Overlay {
     /// beside the other as `||`'s operand.
     fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
         if position > 1 {
-            return Some(ParameterType::Of(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric }));
+            return Some(ParameterType::Of(DataType::Exact { precision: BIGINT_PRECISION, scale: 0, spelled: Spelled::Numeric }));
         }
         beside(position, args)
     }

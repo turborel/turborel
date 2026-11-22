@@ -1,7 +1,7 @@
 //! \[EXTENSION\] The batches of an operator EXPLAIN ANALYZE counts (RULES.md
 //! D376, D378): its input's, each batch pulled timed and its rows kept
 //! counted at once, so counting costs a batch what it costs a row on the
-//! row path (`exec/counted.rs`).
+//! row path (`exec/counted.rs`), and the batches noted (RULES.md D621).
 
 use super::late::Deferred;
 use super::stream::{self, Batches, Kept};
@@ -53,7 +53,7 @@ impl Iterator for CountedBatches {
         let pulled = self.tally.timed(|| inner.next());
         if let Some(Ok((batch, kept))) = &pulled {
             let rows = kept.as_ref().map_or(batch.rows, Sel::len);
-            self.tally.rows(u64::try_from(rows).unwrap_or(u64::MAX));
+            self.tally.batch(u64::try_from(rows).unwrap_or(u64::MAX));
         }
         pulled
     }

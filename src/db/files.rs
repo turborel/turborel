@@ -530,11 +530,13 @@ impl Database {
         let sizes = (place.layout.pool_bytes, pager.page_size());
         let made =
             BufferPool::in_budget_evicting(&st.memory, sizes, "the buffer pool of the data file", &|n| st.extension_host.eviction.make(n));
-        let pool = Arc::new(made?);
+        let pool = Arc::new(made?.standing());
         st.ahead.serve(&pool);
         let file = pool.add_pager(Arc::new(pager));
         let _ = place.data.set((Arc::clone(&pool), file));
-        let undo = UndoStore::batched(undo_log(place)?, place.options.undo_batch);
+        // Its batches written kept in memory within a share of the budget
+        // (RULES.md D746).
+        let undo = UndoStore::batched(undo_log(place)?, place.options.undo_batch).in_budget(&st.memory)?;
         let files = TableFiles::over(Arc::clone(&pool), file, undo).shadowed(Arc::clone(&place.shadows));
         // The column store's tables in the row store's files, which its
         // checkpoints keep (RULES.md D31).

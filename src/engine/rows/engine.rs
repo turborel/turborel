@@ -5,9 +5,11 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::meta::parse_locator;
-use super::{COLUMN_STORE, RowStore, RowTable, corrupt, options};
+use super::{COLUMN_STORE, RowStore, RowTable, TableFiles, corrupt, options};
 use crate::catalog::TableDesc;
+use crate::disk::buffer::Capture;
 use crate::disk::io::Durability;
+use crate::disk::shadow::ShadowFileSystem;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::memory::Host;
@@ -67,8 +69,8 @@ impl StorageEngine for RowStore {
     /// Saves its tables' zone maps and counts of rows
     /// (`rows/zones/saved.rs`, `rows/counted.rs`); writes back every page and the pager's free list; a file shadowed
     /// (`TableFiles::shadowed`) holds them in memory and seals that batch,
-    /// its commit left to `checkpoint_finish`; one not shadowed is synced
-    /// now.
+    /// the pages it may capture later owed to it (RULES.md D590), its
+    /// commit left to `checkpoint_finish`; one not shadowed is synced now.
     fn checkpoint(&self, at: Lsn) -> Result<()> {
         if !self.checkpoints {
             return Ok(());
@@ -77,14 +79,7 @@ impl StorageEngine for RowStore {
         // No table's rows half frozen (`rows/frozen.rs`).
         let _frozen = write(&files.freezes)?;
         if let Some(shadows) = &files.shadows {
-            // What is written now is kept in memory: no I/O with writers held.
-            shadows.hold()?;
-            let captured =
-                files.save_zones().and_then(|()| files.save_counts()).and_then(|()| files.pool.sync(files.file, Durability::Full));
-            if let Err(e) = captured.and_then(|()| shadows.seal()) {
-                let _ = shadows.release();
-                return Err(e);
-            }
+            captured(&files, shadows)?;
             files.sealed.store(at.0, Ordering::Release);
             return Ok(());
         }
@@ -103,9 +98,64 @@ impl StorageEngine for RowStore {
         }
         let files = self.files()?;
         if let Some(shadows) = &files.shadows {
+            let capture = lock_builtin(&files.capture).take();
+            capture.map_or(Ok(()), |capture| ended(&files, capture))?;
             shadows.commit_sealed()?;
             files.durable.fetch_max(files.sealed.load(Ordering::Acquire), Ordering::AcqRel);
         }
         Ok(())
     }
+}
+
+/// \[DESIGN\] A checkpoint's capture of the shadowed `files`, writers held
+/// (RULES.md D590): what is written now kept in memory, so no I/O; its
+/// pages copied, encoded and written only where they cannot be captured
+/// later, the rest owed (`BufferPool::capture`); the batch sealed. A
+/// capture an earlier checkpoint left, one that failed after its writers
+/// went on, is ended and its batch committed first, so the one sealed now
+/// is the only one. Given up if a step fails, what was held let go to the
+/// side file.
+fn captured(files: &TableFiles, shadows: &ShadowFileSystem) -> Result<()> {
+    if let Some(why) = lock_builtin(&files.spoiled).clone() {
+        return Err(why);
+    }
+    let earlier = lock_builtin(&files.capture).take();
+    earlier.map_or(Ok(()), |capture| ended(files, capture))?;
+    shadows.commit_sealed()?;
+    shadows.hold()?;
+    let capture = match files.save_zones().and_then(|()| files.save_counts()).and_then(|()| files.pool.capture(files.file)) {
+        Ok(capture) => capture,
+        Err(e) => {
+            let _ = shadows.release();
+            return Err(e);
+        }
+    };
+    let synced = files.pool.sync(files.file, Durability::Full);
+    let sealed = synced.and_then(|()| if capture.is_empty() { shadows.seal() } else { shadows.seal_capturing() });
+    if let Err(e) = sealed {
+        files.pool.abandon(capture);
+        // Given up: what was held goes to the side file, newer than the
+        // file; a failure here leaves it in memory, read as written.
+        let _ = shadows.release();
+        return Err(e);
+    }
+    *lock_builtin(&files.capture) = Some(capture);
+    Ok(())
+}
+
+/// Ends `capture`, writers going on: every page it owes in the sealed
+/// batch. A failure leaves the batch lacking a page: it is never
+/// committed, and no checkpoint is taken until the database is opened
+/// again, recovered from its last checkpoint and its log.
+fn ended(files: &TableFiles, capture: Capture) -> Result<()> {
+    files.pool.capture_rest(capture).map_err(|e| {
+        let why = SqlError::new(
+            Code::Io,
+            format!(
+                "[DESIGN] RULES.md D590: a checkpoint could not capture a page ({}): none is taken until the database is opened again",
+                e.described()
+            ),
+        );
+        lock_builtin(&files.spoiled).get_or_insert(why).clone()
+    })
 }

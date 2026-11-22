@@ -23,6 +23,7 @@ use turborel::error::{Result, SqlError};
 use turborel_protocol::{Reply, broken};
 
 use super::requests::{Held, Outgoing, Work};
+use super::seen::UserSeen;
 use super::wire::{Arrived, Wire};
 use crate::server::{IDLE_WAITING, Permit, Services};
 use crate::settings;
@@ -106,14 +107,19 @@ impl Lent {
         if pipelined.held() {
             return Ok(());
         }
-        running.flush(wire)
+        let sent = running.flush(wire);
+        // [DESIGN] RULES.md D450: the garbage of a transaction it ended,
+        // collected once its reply is on its way.
+        held.session.collect();
+        sent
     }
 
     /// The client's next request, if it has come whole, or else, waited
     /// for `WAITED` apart from the runtime, if the client is fast and the
     /// wire can be read so (`MayWait`) and the connection may keep a worker
-    /// (`Services::hot`); `permit` given up meanwhile, and taken again once
-    /// a request to run came. The replies queued are sent before it waits,
+    /// (`Services::hot`); `permit` lent meanwhile, given up if another
+    /// waits for one (`Permit::lend`, RULES.md D815), and taken again once
+    /// a request to run came, else given up. The replies queued are sent before it waits,
     /// and before it gives the client back to the connection's task. None,
     /// the client slow from now, if none came in time; none, too, for a
     /// request the connection's task is to read: one that is no work, or
@@ -126,11 +132,14 @@ impl Lent {
         if !self.wire.has_whole() {
             running.flush(&mut self.wire)?;
         }
-        permit.release();
+        permit.lend();
         let next = self.arrived_or_waited(running)?;
-        match next {
-            Some(_) => permit.retake(&running.handle),
-            None => running.flush(&mut self.wire)?,
+        if next.is_some() {
+            running.present.queued();
+            permit.retake(&running.handle);
+        } else {
+            permit.release();
+            running.flush(&mut self.wire)?;
         }
         Ok(next)
     }
@@ -151,7 +160,13 @@ impl Lent {
         if !may.allowed() {
             return Ok(None);
         }
-        let Some(kept) = running.services.hot() else { return Ok(None) };
+        // A home waits on its own thread, which holds a place already.
+        let kept = if running.homed {
+            None
+        } else {
+            let Some(place) = running.services.hot() else { return Ok(None) };
+            Some(place)
+        };
         let began = Instant::now();
         let next = loop {
             let left = WAITED.saturating_sub(began.elapsed());
@@ -290,6 +305,10 @@ pub(super) struct Running {
     ended: watch::Receiver<bool>,
     /// The user whose session it is, if a user's (RULES.md D43).
     user: Option<String>,
+    /// Whether its worker is the connection's home (`native/home.rs`).
+    homed: bool,
+    /// Whether its user was a user, as last asked (`native/seen.rs`).
+    user_seen: Arc<UserSeen>,
 }
 
 impl Running {
@@ -297,7 +316,13 @@ impl Running {
     /// runtime of the task calling this.
     pub(super) fn new(services: &Services, present: &Present, user: Option<&str>) -> Running {
         let (services, present, ended, user) = (services.clone(), present.clone(), present.watching(), user.map(str::to_owned));
-        Running { services, handle: Handle::current(), present, ended, user }
+        Running { services, handle: Handle::current(), present, ended, user, homed: false, user_seen: Arc::default() }
+    }
+
+    /// Its worker the connection's home if `homed`, else a thread of the
+    /// pool's taken for this request alone.
+    pub(super) fn at_home(&mut self, homed: bool) {
+        self.homed = homed;
     }
 
     /// Whether the connection is still served, as the task asks before
@@ -309,7 +334,9 @@ impl Running {
         // The watch's guard is dropped before the database is asked, so an
         // operator ending the connection never waits on that call (R-ERR-4).
         let ended = *self.ended.borrow();
-        self.services.is_serving() && !ended && self.user.as_deref().is_none_or(|name| db.is_user(name).unwrap_or(false))
+        self.services.is_serving()
+            && !ended
+            && self.user.as_deref().is_none_or(|name| self.user_seen.is(db.publications(), || db.is_user(name).unwrap_or(false)))
     }
 
     /// Sends the replies queued in `wire`: apart from the runtime, waiting

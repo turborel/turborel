@@ -142,7 +142,7 @@ fn ran(phase: Phase, (db, tx): (&Db, TxId)) -> Result<(Plan, Work)> {
         stopped.extend(from.judged.iter().filter(|(_, t)| !t.filter.judging()).map(|(of, _)| (*of, step.from.0)));
         let to = slots.get_mut(step.to.0).ok_or_else(|| broken("a step to a leaf the chain lacks"))?;
         if let Some(filter) = filter {
-            to.waiting.push((step.from.0, Told { filter, column: step.to.1 }));
+            to.waiting.push((step.from.0, Told::of(filter, step.to.1)));
         }
     }
     let mut back: Vec<Option<Plan>> = slots.into_iter().map(|s| s.finished(db).map(Some)).collect::<Result<_>>()?;
@@ -274,7 +274,7 @@ fn filter_of(kept: &[Kept], (at, nulls): (usize, bool), db: &State) -> Result<Op
         .collect();
     let keys = if parts.is_empty() { Batch::empty(1) } else { Batch::joined(parts) };
     let seed = db.functions.seed().clone();
-    let how = Hashing { seed: &seed, keyed: false };
+    let how = Hashing { seed: &seed, keyed: false, direct: false };
     let mut hashes = KeyHashes::default();
     hashes.of_batch((&keys, None), (&[0], &[nulls]), how)?;
     Ok(RuntimeFilter::of_built(&keys, (0, nulls), &hashes, how).map(Arc::new))

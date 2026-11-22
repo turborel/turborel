@@ -37,7 +37,7 @@ const CARDINALITY_PROBE_ROWS: usize = 2;
 mod ordered;
 mod updatability;
 
-use updatability::{Wanted, check_object_columns, open_updatable, wanted};
+use updatability::{Wanted, check_object_columns, nameless_read_only, open_updatable, wanted};
 pub(super) use updatability::{declared_updatable, movement};
 
 impl Session {
@@ -139,8 +139,8 @@ impl Session {
             let (columns, logical) = self.cursor_bound(st, spec, params, None)?;
             return Ok((columns, Stream::planned(st, tx, logical)?.read_now()?));
         }
-        if let Some((columns, physical, reads)) = keeping.map(|k| k.physical(params.dynamic_values())).transpose()?.flatten() {
-            return Ok((columns, Stream::kept(st, tx, physical, reads)?));
+        if let Some((columns, run, reads, slots)) = keeping.map(|k| k.physical(params)).transpose()?.flatten() {
+            return Ok((columns, Stream::run(st, tx, run, (reads, slots))?));
         }
         let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
         Ok((columns, Stream::planned(st, tx, logical)?))
@@ -227,18 +227,21 @@ impl Session {
         if dynamic {
             return self.open_dynamic(cx, name, None, params);
         }
-        self.open_text(cx, name, (&text, flags, None), params)
+        self.open_text(cx, name, (&text, flags, None, false), params)
     }
 
     /// OPEN of the cursor `name`, of the `<cursor specification>` `text`,
     /// INSENSITIVE and SCROLL as `flags` say, with the parameters `params`:
     /// of a prepared statement's, a dynamic cursor's, from the
-    /// specification and plan it keeps (`keeping`, RULES.md D45).
+    /// specification and plan it keeps (`keeping`, RULES.md D45). A cursor
+    /// no statement can name and through which no change can be seen,
+    /// `nameless`, is read only unless its text says FOR UPDATE
+    /// (`nameless_read_only`).
     pub(super) fn open_text(
         &self,
         cx: StatementContext<'_>,
         name: &Name,
-        (text, flags, keeping): (&str, (bool, bool), Option<&Keeping<'_>>),
+        (text, flags, keeping, nameless): (&str, (bool, bool), Option<&Keeping<'_>>, bool),
         params: &Params,
     ) -> Result<Completion> {
         let StatementContext { st, tx } = cx;
@@ -247,7 +250,7 @@ impl Session {
         }
         // [X3.135-1986 §8.8 GR3a] a copy of S with each parameter replaced by its value.
         let spec = Self::cursor_specification(st, text, params, keeping)?;
-        let wanted = wanted(&spec, flags)?;
+        let wanted = nameless_read_only(wanted(&spec, flags)?, nameless);
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {
                 self.updatable_plan(st, &spec, params, keeping)?.map(|updating| (named, updating))
@@ -352,24 +355,26 @@ impl Session {
         self.inner.borrow().dynamic.positioned.clone().filter(|k| k.name == name).unwrap_or_else(|| Name::plain(name))
     }
 
-    /// [X3.135-1986 §8.10] SELECT ... INTO
+    /// [X3.135-1986 §8.10] SELECT ... INTO; of a statement of a program
+    /// kept, its delta table's statement by the plans `keeping` keeps of
+    /// it (RULES.md D792).
     pub(super) fn select_into(
         &self,
         cx: StatementContext<'_>,
-        query: &QuerySpecification,
-        targets: &[ParameterSpecification],
+        (query, targets): (&QuerySpecification, &[ParameterSpecification]),
         params: &mut Params,
+        keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         // [ISO/IEC 9075-2:2023 §7.6 GR5] a delta table's statement run
         // first (RULES.md D174).
         if let [crate::ast::TableReference::Delta(d)] = query.table_expression.from.as_slice() {
-            self.run_delta_table(cx.st, cx.tx, d, params)?;
+            self.run_delta_table(cx.st, cx.tx, d, (params, keeping))?;
         }
         let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
         check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
         let (optimized, _, physical) = plan_heard(cx.st, bound.plan, Some(cx.tx.stop.warnings()));
-        for t in optimized.tables() {
-            cx.st.read_lock(cx.tx, &t)?;
+        for (t, needed) in optimized.columns_read() {
+            cx.st.read_lock_of(cx.tx, (&t, needed))?;
         }
         let rows: Vec<Row> = execute(physical, cx.st, cx.tx.id).take(CARDINALITY_PROBE_ROWS).collect::<Result<_>>()?;
         match rows.as_slice() {
@@ -394,7 +399,7 @@ impl Session {
         for t in w.bound.set_tables() {
             st.read_lock(tx, &t)?;
         }
-        let runner = Hosted::new(Some(self), cx);
+        let runner = Hosted::in_db(Some(self), cx, &w.db(cx.st));
         let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.9 GR9", &runner))?;
         let mut effects = self.effects(st);
         // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.

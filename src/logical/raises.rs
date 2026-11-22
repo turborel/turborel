@@ -8,18 +8,17 @@
 //! after [X3.135-1986 §5.9 SR4b], a product `p1 + p2` digits in all
 //! [SR4c], and an exact result raises only past those digits [GR6a]. A
 //! quotient by a constant not zero, at least 1 in magnitude, keeps the
-//! dividend's digits before the point and needs no digit past
-//! `MAX_EXACT_PRECISION` after it while the constant's digits before the
-//! point and the dividend's scale sum to no more [GR6b]. A CAST that widens
+//! dividend's digits before the point, and its scale leaves room for
+//! them (RULES.md D697) [GR6b]. A CAST that widens
 //! cannot raise either: to an exact type of no fewer digits before the
 //! point [ISO/IEC 9075:1992 §6.10 GR3a ii], or to a character string type
 //! at least as long as the longest literal of its operand's values [GR5a
 //! iv, GR5b iii 4]. Anything else is judged as `Expr::can_raise` judges it,
 //! and a column of no known type as of no exact type.
 
-use super::{Cond, Expr, LogicalPlan};
+use super::{Cond, Expr, LogicalPlan, Slot};
 use crate::catalog::Catalog;
-use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, constant_prefix};
+use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, bound_of, constant_prefix};
 
 /// The declared type of a column of the rows an expression is over, if
 /// known.
@@ -104,13 +103,13 @@ fn expr_raises(e: &Expr, types: Types<'_>, depth: usize) -> bool {
     match e {
         Expr::Arith(a, op, b) => parts || !arith_safe((a, *op, b), types, deeper),
         Expr::Cast(x, to) => parts || !widens(x, to, types, deeper),
-        Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) => true,
+        // A `?` cut by its cast warns as it is evaluated (RULES.md D391), as
+        // `Expr::can_raise` says.
+        Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) | Expr::Warned(..) => true,
         Expr::Call(f, _) => parts || (!f.0.raise_free() && (!f.0.index_predicate() || !f.0.deterministic())),
         Expr::Truth(c) => cond_raises(c, types, deeper),
         Expr::Case(whens, _) => parts || whens.iter().any(|(c, _)| cond_raises(c, types, deeper)),
-        Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::SortKey(..) | Expr::Warned(..) => {
-            parts
-        }
+        Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::SortKey(..) => parts,
     }
 }
 
@@ -119,29 +118,24 @@ fn arith_safe((a, op, b): (&Expr, ArithOp, &Expr), types: Types<'_>, depth: usiz
     match op {
         ArithOp::Add | ArithOp::Sub | ArithOp::Mul => arith_shape((a, op, b), types, depth).is_some(),
         ArithOp::Div => {
-            let (Some((_, scale)), Expr::Const(Value::Exact(divisor))) = (exact_shape(a, types, depth), b) else { return false };
-            quotient_fits(scale, *divisor)
+            let (Some(_), Expr::Const(Value::Exact(divisor))) = (exact_shape(a, types, depth), b) else { return false };
+            quotient_fits(*divisor)
         }
     }
 }
 
-/// Whether a quotient of an exact dividend of scale `scale` by the constant
-/// `divisor` always fits, as the module says.
-fn quotient_fits(scale: u32, divisor: Decimal) -> bool {
-    let whole = whole_digits(divisor);
-    let at_least_one = divisor.units.unsigned_abs() >= magnitude(divisor.scale);
-    at_least_one && whole.saturating_add(scale) <= MAX_EXACT_PRECISION
+/// Whether a quotient of an exact dividend by the constant `divisor`
+/// always fits, as the module says: of a divisor at least 1 in magnitude
+/// its integer digits are at most the dividend's, and its scale is as
+/// many fewer as they need (`Decimal::checked_div`).
+fn quotient_fits(divisor: Decimal) -> bool {
+    divisor.units.unsigned_abs() >= magnitude(divisor.scale)
 }
 
 /// 10 to the power `n`, as the magnitude of `Decimal::units`, or the
 /// largest it holds.
 fn magnitude(n: u32) -> u128 {
     10_u128.checked_pow(n).unwrap_or(u128::MAX)
-}
-
-/// The digits of `d` before its point.
-fn whole_digits(d: Decimal) -> u32 {
-    d.digits().saturating_sub(d.scale)
 }
 
 /// Whether a CAST of `x` to `to` widens, as the module says.
@@ -180,7 +174,10 @@ fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
         }
         Expr::Const(Value::Exact(d)) => Some((d.digits().max(d.scale), d.scale)),
         Expr::Neg(x) => exact_shape(x, types, deeper),
-        Expr::Cast(_, DataType::Exact { precision, scale, .. }) => Some((*precision, *scale)),
+        // A slot's value is of its type, cast to it as it is filled or
+        // assigned (RULES.md D613).
+        Expr::Cast(_, DataType::Exact { precision, scale, .. })
+        | Expr::Dynamic(Slot { data_type: DataType::Exact { precision, scale, .. }, .. }) => Some((*precision, *scale)),
         Expr::Arith(a, op, b) => arith_shape((a, *op, b), types, deeper),
         Expr::Const(_)
         | Expr::Cast(..)
@@ -202,15 +199,7 @@ fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
 /// `MAX_EXACT_PRECISION` digits: of a sum or difference, or a product.
 fn arith_shape((a, op, b): (&Expr, ArithOp, &Expr), types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
     let ((pa, sa), (pb, sb)) = (exact_shape(a, types, depth)?, exact_shape(b, types, depth)?);
-    let (precision, scale) = match op {
-        ArithOp::Add | ArithOp::Sub => {
-            let scale = sa.max(sb);
-            let whole = pa.saturating_sub(sa).max(pb.saturating_sub(sb)).saturating_add(1);
-            (whole.saturating_add(scale), scale)
-        }
-        ArithOp::Mul => (pa.saturating_add(pb), sa.saturating_add(sb)),
-        ArithOp::Div => return None,
-    };
+    let (precision, scale) = bound_of(op, (pa, sa), (pb, sb))?;
     (precision <= MAX_EXACT_PRECISION).then_some((precision, scale))
 }
 
@@ -229,7 +218,11 @@ fn column_type(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: 
     let deeper = depth.saturating_add(1);
     match plan {
         LogicalPlan::Scan { table, .. } => catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),
-        LogicalPlan::Filter { input, .. } => column_type(input, column, catalog, deeper),
+        LogicalPlan::Filter { input, .. } | LogicalPlan::SemiJoin { left: input, .. } => column_type(input, column, catalog, deeper),
+        LogicalPlan::MarkJoin(m) => match column.checked_sub(m.left.width()) {
+            Some(_) => Some(DataType::Boolean),
+            None => column_type(&m.left, column, catalog, deeper),
+        },
         LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
             Some(at) => column_type(right, at, catalog, deeper),
             None => column_type(left, column, catalog, deeper),
@@ -253,6 +246,14 @@ fn column_type(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: 
         | LogicalPlan::Recognize(..)
         | LogicalPlan::Polymorphic(..) => None,
     }
+}
+
+/// Whether a CAST of `x` to `to` can raise an exception or completion
+/// condition: of a constant, if casting it does [ISO/IEC 9075:1992 §6.10
+/// GR2-GR5]; of any other value, as its value is not known, it can.
+pub(super) fn cast_raises(x: &Expr, to: &DataType) -> bool {
+    let Expr::Const(v) = x else { return true };
+    !matches!(crate::value::cast_warned(v.clone(), to), Ok((_, None)))
 }
 
 #[cfg(test)]

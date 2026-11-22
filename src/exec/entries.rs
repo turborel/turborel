@@ -12,9 +12,10 @@ use crate::catalog::{KeyShape, QualifiedName};
 use crate::error::Result;
 use crate::index::{Key, KeyProjection, Probe};
 use crate::logical::{Truth, pushed_conjuncts};
+use crate::noted::{self, Noted, Notes};
 use crate::physical::{Decided, Plan};
-use crate::storage::{Near, Row, RowId, TableStorage};
-use crate::txn::{TxId, checked};
+use crate::storage::{Conjunction, Near, Row, RowId, TableStorage, row_id_of};
+use crate::txn::{TxId, checked, counted};
 use crate::value::Value;
 
 /// What the fetches of one scan of an index share: the columns they read,
@@ -23,9 +24,41 @@ pub(in crate::exec) struct Reading {
     columns: Option<Vec<usize>>,
     near: Near,
     projection: Option<Arc<dyn KeyProjection>>,
+    /// \[EXTENSION\] The notes of the operator it reads for, if it is
+    /// counted, and the entries, fetches and rechecks it adds to them as it
+    /// is dropped (RULES.md D621).
+    notes: Option<Arc<Notes>>,
+    counts: [usize; 3],
+}
+
+impl Drop for Reading {
+    fn drop(&mut self) {
+        let [entries, fetched, rechecked] = self.counts;
+        let notes = self.notes.as_deref();
+        noted::add(notes, Noted::Entries, entries);
+        noted::add(notes, Noted::Fetched, fetched);
+        noted::add(notes, Noted::Rechecked, rechecked);
+    }
 }
 
 impl Reading {
+    /// Counts an entry read without its row.
+    pub(in crate::exec) fn entry(&mut self) {
+        self.count(0);
+    }
+
+    /// Counts a row's condition judged again.
+    pub(in crate::exec) fn rechecked(&mut self) {
+        self.count(2);
+    }
+
+    /// Counts one more of its count `at`.
+    fn count(&mut self, at: usize) {
+        if let Some(n) = self.counts.get_mut(at) {
+            *n = n.saturating_add(1);
+        }
+    }
+
     /// Independent projected probes can change from sparse to clustered
     /// row ids. Renew the leaf trial without dropping the transaction's
     /// cached bookkeeping or the row-byte allocation.
@@ -45,7 +78,7 @@ impl Reading {
             read.dedup();
             read
         });
-        Reading { columns, near: Near::default(), projection }
+        Reading { columns, near: Near::default(), projection, notes: noted::noting(), counts: [0; 3] }
     }
 }
 
@@ -60,8 +93,15 @@ pub(in crate::exec) fn fetch(
     (tx, id): (TxId, RowId),
     key: &Key,
 ) -> Result<Option<(RowId, Row)>> {
-    let Reading { columns, near, projection } = reading;
+    reading.entry();
+    let Reading { columns, near, projection, counts, .. } = reading;
     let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
+    counts[1] = counts[1].saturating_add(1);
+    // \[DESIGN\] (RULES.md D501) A key of the row's own values is checked
+    // in place, with no key made of the row.
+    if projection.is_none() && !ix.is_collated() && !ix.has_expressions() {
+        return Ok(key.is_of(&row, &ix.columns).then_some((id, row)));
+    }
     let Some(mut seen) = ix.key_of(&row) else { return Ok(None) };
     if let Some(project) = projection {
         seen = project.project(&seen)?;
@@ -85,6 +125,7 @@ pub(super) fn entry_row(
     if let Some(width) = width.filter(|_| reading.projection.is_none())
         && storage.visible_to_all(id)
     {
+        reading.entry();
         let mut row = vec![Value::Null; width];
         for (&column, value) in ix.columns.iter().zip(key.0) {
             if let Some(slot) = row.get_mut(column) {
@@ -103,31 +144,42 @@ pub type Entries = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 /// scan or the index scans of an OR's ranges appended, possibly filtered, possibly under a projection (which is ignored),
 /// each read when it is pulled, and only while the statement is not
 /// cancelled (RULES.md D44). UPDATE, DELETE and updatable cursors need the
-/// ids to change the rows.
+/// ids to change the rows. Of any other plan, its object table's scan
+/// located, each row's id is its last column (RULES.md D775).
 ///
 /// # Errors
 ///
-/// `plan` is not a table access or names a table or index that does not
-/// exist (SQLCODE -910); reading the rows, as they are pulled, as
-/// `row_entries` says.
+/// `plan` names a table or index that does not exist (SQLCODE -910);
+/// reading the rows, as they are pulled, as `row_entries` says, and a row
+/// of a plan not a table access with no id (SQLCODE -910).
 pub fn table_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Result<Entries> {
-    entries_in(plan, &db.opening(), tx)
+    object_entries(plan, &db.opening(), tx)
 }
 
-/// `table_entries`' work, in `db`.
+/// `table_entries`' work, in `db`: of a table access, its entries; of any
+/// other plan, its rows, each id taken off its row (RULES.md D775).
+fn object_entries(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
+    if !is_table_access(&plan) {
+        return Ok(located_entries(plan, db, tx));
+    }
+    entries_in(plan, db, tx)
+}
+
+/// The entries of `plan`, a table access, in `db`.
 fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
     match plan {
         Plan::Project { input, .. } => entries_in(*input, db, tx),
         Plan::SeqScan { table, columns, .. } => {
-            Ok(Box::new(checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx))))
+            Ok(Box::new(counted(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx), |_| 1)))
         }
-        Plan::IndexScan { table, index, probe, reverse, decided, .. } => index_entries((&table, &index, probe, reverse), decided, db, tx),
+        Plan::IndexScan { table, index, probe, slots, reverse, decided, .. } => {
+            let probe = super::scan::slotted(probe, &slots, db)?;
+            index_entries((&table, &index, probe, reverse), decided, db, tx)
+        }
         Plan::Filter { cond, input, .. } => {
-            let rows: Entries = match (*input, pushed_conjuncts(&cond)) {
-                (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
-                    Box::new(checked(Arc::clone(db.storage_of(&table)?).scan_where(tx, &columns, &condition), db.tx.stop_of(tx)))
-                }
-                (input, _) => table_entries(input, db, tx)?,
+            let rows = match pushed_conjuncts(&cond) {
+                Some(condition) => told_entries(*input, &condition, db, tx)?,
+                None => table_entries(*input, db, tx)?,
             };
             let runner = Runner::new(db, tx);
             Ok(Box::new(rows.filter_map(move |read| match read.and_then(|(id, row)| Ok((eval_cond(&cond, &row, &runner)?, id, row))) {
@@ -139,6 +191,8 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         // The index scans of an OR's ranges, none overlapping
         // (`physical/access.rs`): each row once.
         Plan::Append { left, right, .. } => Ok(Box::new(table_entries(*left, db, tx)?.chain(table_entries(*right, db, tx)?))),
+        // [EXTENSION] of a data change EXPLAIN ANALYZE runs (RULES.md D622).
+        Plan::Counted(c) => super::counted::entries_through(*c, db, |input| table_entries(input, db, tx)),
         other @ (Plan::Product { .. }
         | Plan::Nearest(_)
         | Plan::HashJoin { .. }
@@ -146,6 +200,8 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
@@ -162,9 +218,74 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
-        | Plan::Transfer(_)
-        | Plan::Counted(_)) => Err(broken(&format!("not a table access: {other:?}"))),
+        | Plan::Transfer(_)) => Err(broken(&format!("not a table access: {other:?}"))),
     }
+}
+
+/// Whether `plan` is a table access whose entries `table_entries` reads
+/// with their ids: a scan, an index scan or an OR's index scans appended,
+/// filtered or projected, counted or not. Any other plan of a table's rows
+/// gives each row's id after its columns (RULES.md D775).
+pub fn is_table_access(plan: &Plan) -> bool {
+    match plan {
+        Plan::SeqScan { .. } | Plan::IndexScan { .. } => true,
+        Plan::Project { input, .. } | Plan::Filter { input, .. } => is_table_access(input),
+        Plan::Append { left, right, .. } => is_table_access(left) && is_table_access(right),
+        Plan::Counted(c) => is_table_access(&c.input),
+        Plan::Product { .. }
+        | Plan::Nearest(_)
+        | Plan::HashJoin { .. }
+        | Plan::OuterJoin { .. }
+        | Plan::IndexJoin { .. }
+        | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
+        | Plan::Aggregate { .. }
+        | Plan::Distinct { .. }
+        | Plan::SetOp { .. }
+        | Plan::Values { .. }
+        | Plan::System { .. }
+        | Plan::Sort { .. }
+        | Plan::MergeAppend { .. }
+        | Plan::Limit { .. }
+        | Plan::Recursive { .. }
+        | Plan::Unnest(..)
+        | Plan::Window { .. }
+        | Plan::Polymorphic(..)
+        | Plan::Recognize { .. }
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. }
+        | Plan::Parallel(..)
+        | Plan::Transfer(_) => false,
+    }
+}
+
+/// \[DESIGN\] The rows of `plan`, whose table's scan is located, with
+/// their ids, each row's id its last column, taken off it (RULES.md D775).
+/// Each row pulled fails as the plan's rows do, or with SQLCODE -910 if
+/// it has no row id.
+fn located_entries(plan: Plan, db: &Db, tx: TxId) -> Entries {
+    Box::new(super::opened(plan, db, tx).map(|read| {
+        let mut row = read?;
+        let id = row.pop().as_ref().map(row_id_of).transpose()?.flatten();
+        Ok((id.ok_or_else(|| broken("[DESIGN] an object row has no row id"))?, row))
+    }))
+}
+
+/// The rows with their ids of `input`, a filter's input, the scan of a
+/// table told the simple conjuncts `condition` of the filter, through a
+/// counted scan too (RULES.md D378).
+///
+/// # Errors
+///
+/// As `table_entries`.
+fn told_entries(input: Plan, condition: &Conjunction, db: &Db, tx: TxId) -> Result<Entries> {
+    if let Plan::Counted(c) = input {
+        return super::counted::entries_through(*c, db, |scan| told_entries(scan, condition, db, tx));
+    }
+    let Plan::SeqScan { table, columns, .. } = &input else { return table_entries(input, db, tx) };
+    Ok(Box::new(counted(Arc::clone(db.storage_of(table)?).scan_where(tx, columns, condition), db.tx.stop_of(tx), |_| 1)))
 }
 
 /// The rows, with their ids, the probe `probe` of index `index` of `table`
@@ -191,13 +312,14 @@ fn index_entries(
     read.record(&*storage, tx)?;
     let mut reading = Reading::of(&ix, None, projection);
     let runner = Runner::new(db, tx);
-    let judge = move |(id, row): (RowId, Row)| -> Result<Option<(RowId, Row)>> {
+    let judge = move |(id, row): (RowId, Row), judged: &mut Reading| -> Result<Option<(RowId, Row)>> {
         let Some(decided) = &decided else { return Ok(Some((id, row))) };
+        judged.rechecked();
         Ok((eval_cond(&decided.cond, &row, &runner)? == Truth::True).then_some((id, row)))
     };
-    let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+    let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
         let fetched = entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key));
-        fetched.and_then(|found| found.map_or(Ok(None), &judge)).transpose()
+        fetched.and_then(|found| found.map_or(Ok(None), |row| judge(row, &mut reading))).transpose()
     });
     Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
 }
@@ -210,13 +332,14 @@ fn index_entries(
 /// # Errors
 ///
 /// A row's search condition fails, the statement is cancelled or runs past
-/// STATEMENT.TIMEOUT_MS (SQLCODE -920), `plan` is not a table access or names
-/// a table or index that does not exist (SQLCODE -910), or the rows cannot
-/// be spilled (SQLCODE -918 if the area cannot be reserved).
+/// STATEMENT.TIMEOUT_MS (SQLCODE -920), `plan` names a table or index that
+/// does not exist or a row of a plan not a table access has no id (SQLCODE
+/// -910), or the rows cannot be spilled (SQLCODE -918 if the area cannot
+/// be reserved).
 pub fn row_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Result<HeldRows<(RowId, Row)>> {
     let db = db.opening();
     let mut held = HeldRows::new(db.list_space());
-    for entry in entries_in(plan, &db, tx)? {
+    for entry in object_entries(plan, &db, tx)? {
         held.push(entry?)?;
     }
     Ok(held)

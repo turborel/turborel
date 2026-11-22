@@ -2,14 +2,17 @@
 //! planned, to run or to be shown, as EXPLAIN shows it; and, of one its
 //! text makes updatable, the one table it reads [X3.135-1986 §8.3 SR4b].
 
+mod located;
+
 use super::prepared::Keeping;
 use super::{Session, State};
 use crate::ast::CursorSpecification;
 use crate::binder::{DescribedKey, OutColumn, described_key, family_in, member_plan};
 use crate::catalog::QualifiedName;
 use crate::error::{Result, Warnings};
+use crate::exec::is_table_access;
 use crate::logical::LogicalPlan;
-use crate::optimizer::{INLINE_FUNCTIONS, UNNEST_SUBQUERIES, plugged};
+use crate::optimizer::{INLINE_FUNCTIONS, MARK_JOINS, SEMI_JOINS, UNNEST_SUBQUERIES, plugged};
 use crate::params::Params;
 use crate::physical::{PhysicalPlanner, Plan};
 use crate::value::Value;
@@ -41,16 +44,48 @@ pub(super) fn plan_rows(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&
     (optimized, trace, physical)
 }
 
-/// As `plan_rows`, its paths chosen by `values` and its `?`s left slots,
-/// as `plan_slotted` plans a query (RULES.md D422).
-pub(super) fn plan_rows_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
-    let (optimized, _) = plugged::optimize(st, logical, (None, ROW_ACCESS_OFF));
-    PhysicalPlanner::slotted(st, values).plan(&optimized)
+/// As `plan_rows`, of the object rows of a searched UPDATE or DELETE:
+/// a subquery of existence, or a compared one of one row at most, may
+/// be a semi join, whose rows are the table's alone, each once, so the
+/// table's index is probed from a few values (RULES.md D775). A plan that
+/// is no table access is planned again of the table's scan located, so
+/// each row is followed by its id (`compiled/located.rs`); one that cannot
+/// be, as `plan_rows` plans it.
+pub(super) fn plan_written(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
+    let (optimized, trace) = plugged::optimize(st, logical.clone(), (None, WRITTEN_ACCESS_OFF));
+    let physical = PhysicalPlanner::new(st).plan(&optimized);
+    if is_table_access(&physical) {
+        return (optimized, trace, physical);
+    }
+    match located::located(optimized) {
+        Some(found) => {
+            let planned = PhysicalPlanner::new(st).plan(&found);
+            (found, trace, planned)
+        }
+        None => plan_rows(st, logical),
+    }
+}
+
+/// As `plan_written`, its paths chosen by `values` and its `?`s left
+/// slots, as `plan_slotted` plans a query (RULES.md D422).
+pub(super) fn plan_written_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
+    let (optimized, _) = plugged::optimize(st, logical.clone(), (None, WRITTEN_ACCESS_OFF));
+    let physical = PhysicalPlanner::slotted(st, values).plan(&optimized);
+    if is_table_access(&physical) {
+        return physical;
+    }
+    let found = located::located(optimized).unwrap_or_else(|| plugged::optimize(st, logical, (None, ROW_ACCESS_OFF)).0);
+    PhysicalPlanner::slotted(st, values).plan(&found)
 }
 
 /// The rules a plan of a table's rows read with their ids is optimized
 /// without, which would join other tables' rows with them.
-const ROW_ACCESS_OFF: &[&str] = &[UNNEST_SUBQUERIES, INLINE_FUNCTIONS];
+const ROW_ACCESS_OFF: &[&str] = &[SEMI_JOINS, MARK_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS];
+
+/// The rules the object rows of a searched UPDATE or DELETE are planned
+/// without: those of `ROW_ACCESS_OFF` but the semi joins, which keep the
+/// table's rows alone.
+const WRITTEN_ACCESS_OFF: &[&str] = &[MARK_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS];
 
 /// As `plan`, an extension's optimizer rule skipped raising its warning
 /// to `heard` (RULES.md D277).

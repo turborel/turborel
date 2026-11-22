@@ -135,6 +135,16 @@ impl LogicalPlan {
             LogicalPlan::OuterJoin { kind, cond, .. } => {
                 writeln!(out, "{pad}{kind:?} outer join on {}", render_cond(cond, &self.names()))
             }
+            LogicalPlan::SemiJoin { anti, cond, left, right } => {
+                let both: Vec<String> = left.names().into_iter().chain(right.names()).collect();
+                let kind = if *anti { "Anti" } else { "Semi" };
+                writeln!(out, "{pad}{kind} join on {}", render_cond(cond, &both))
+            }
+            LogicalPlan::MarkJoin(m) => {
+                let both: Vec<String> = m.left.names().into_iter().chain(m.right.names()).collect();
+                let rendered: Vec<String> = m.conds().map(|c| render_cond(c, &both)).collect();
+                writeln!(out, "{pad}Mark join on {}", rendered.join(" marking "))
+            }
             LogicalPlan::Aggregate { groups, aggs, input, .. } => {
                 let n = inner(input);
                 let g: Vec<String> = groups.iter().map(|&i| column_name(&n, i)).collect();

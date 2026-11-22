@@ -59,6 +59,10 @@ const PREFIX: usize = 16;
 /// Bits in a byte of the null bitmap.
 const BITS: usize = 8;
 
+/// Of each column of a row, the bytes of its value of varying width, as
+/// its kind encodes them, if it has one: measured, then written.
+type Encoded = Vec<Option<Vec<u8>>>;
+
 /// Where a column is in a record.
 #[derive(Debug, Clone, Copy)]
 enum Place {
@@ -169,7 +173,7 @@ impl RecordFormat {
     /// SQLCODE -910 if `row` does not have a value of its column's type, or
     /// NULL, for every column.
     pub fn encode(&self, row: &Row, out: &mut Vec<u8>) -> Result<()> {
-        self.encode_as(row, &[], out, &mut |column, _| not_fetched(Reference { column, at: 0, length: 0 }).map(|_| 0))
+        self.encode_as((row, Vec::new()), &[], out, &mut |column, _| not_fetched(Reference { column, at: 0, length: 0 }).map(|_| 0))
     }
 
     /// Appends the record of `row` to `out`, the values `spill` says kept
@@ -187,8 +191,8 @@ impl RecordFormat {
         out: &mut Vec<u8>,
         mut store: impl FnMut(usize, &[u8]) -> Result<u64>,
     ) -> Result<()> {
-        let outside = self.choose(row, spill)?;
-        self.encode_as(row, &outside, out, &mut store)
+        let (outside, encoded) = self.choose(row, spill)?;
+        self.encode_as((row, encoded), &outside, out, &mut store)
     }
 
     fn check_len(&self, row: &Row) -> Result<()> {
@@ -201,17 +205,18 @@ impl RecordFormat {
     /// Which columns of `row` go out of line: those longer than the
     /// threshold, then the longest others until the record fits; each
     /// value of varying width measured by the bytes its record holds, as
-    /// its type writes them.
-    fn choose(&self, row: &Row, spill: Spill) -> Result<Vec<bool>> {
+    /// its type writes them. Those bytes too, kept for the record, so no
+    /// value is encoded twice.
+    fn choose(&self, row: &Row, spill: Spill) -> Result<(Vec<bool>, Encoded)> {
         self.check_len(row)?;
-        let lengths = row
-            .iter()
-            .zip(self.types.iter().zip(&self.places))
-            .map(|(value, (data_type, place))| match (place, value.is_null()) {
-                (Place::Variable(_), false) => encode_value(value, data_type).map(|bytes| Some(bytes.len())),
-                (Place::Variable(_), true) | (Place::Fixed(..), _) => Ok(None),
-            })
-            .collect::<Result<Vec<Option<usize>>>>()?;
+        let mut encoded = Vec::with_capacity(row.len());
+        for (value, (data_type, place)) in row.iter().zip(self.types.iter().zip(&self.places)) {
+            encoded.push(match (place, value.is_null()) {
+                (Place::Variable(_), false) => Some(encode_value(value, data_type)?),
+                (Place::Variable(_), true) | (Place::Fixed(..), _) => None,
+            });
+        }
+        let lengths: Vec<Option<usize>> = encoded.iter().map(|bytes| bytes.as_ref().map(Vec::len)).collect();
         let mut outside: Vec<bool> = lengths.iter().map(|l| l.is_some_and(|l| l > spill.threshold)).collect();
         let size = |marks: &[bool]| {
             lengths.iter().zip(marks).fold(self.variable_at(), |n, (length, &out)| {
@@ -240,47 +245,84 @@ impl RecordFormat {
             };
             *slot = true;
         }
-        Ok(outside)
+        Ok((outside, encoded))
     }
 
     /// Appends the record of `row`, the columns `outside` marks kept by
-    /// `store`.
-    fn encode_as(&self, row: &Row, outside: &[bool], out: &mut Vec<u8>, store: &mut impl FnMut(usize, &[u8]) -> Result<u64>) -> Result<()> {
+    /// `store`; of its values of varying width, those `encoded` holds
+    /// taken as encoded already (`choose`). Written into `out` in place,
+    /// the fixed part sized at once and the values of varying width after
+    /// it, not built apart and copied; on failure `out` is as it was.
+    fn encode_as(
+        &self,
+        (row, mut encoded): (&Row, Encoded),
+        outside: &[bool],
+        out: &mut Vec<u8>,
+        store: &mut impl FnMut(usize, &[u8]) -> Result<u64>,
+    ) -> Result<()> {
         self.check_len(row)?;
-        let mut record = vec![0; self.variable_at()];
-        if let Some(header) = record.first_mut() {
+        let base = out.len();
+        // Room for the whole record at once: its values of varying width
+        // measured, if they were, so `out` does not grow as they are written.
+        let measured = encoded.iter().flatten().fold(0_usize, |sum, bytes| sum.saturating_add(bytes.len()));
+        out.reserve(self.variable_at().saturating_add(measured));
+        out.resize(base.saturating_add(self.variable_at()), 0);
+        if let Some(header) = out.get_mut(base) {
             *header = HEADER;
         }
-        let mut variable: Vec<u8> = Vec::new();
+        let mut written = Ok(());
         for (i, (value, (data_type, &place))) in row.iter().zip(self.types.iter().zip(&self.places)).enumerate() {
-            let mut flag = 0;
-            if value.is_null() {
-                let (at, mask) = null_bit(i);
-                if let Some(byte) = record.get_mut(at) {
-                    *byte |= mask;
-                }
-            } else {
-                let bytes = encode_value(value, data_type)?;
-                match (place, outside.get(i).copied().unwrap_or_default()) {
-                    (Place::Fixed(at, _), _) => put(&mut record, self.fixed_at().saturating_add(at), &bytes),
-                    (Place::Variable(_), false) => variable.extend_from_slice(&bytes),
-                    (Place::Variable(_), true) => {
-                        variable.extend_from_slice(&store(i, &bytes)?.to_le_bytes());
-                        variable.extend_from_slice(&u32::try_from(bytes.len()).unwrap_or(u32::MAX).to_le_bytes());
-                        variable.extend_from_slice(prefix(&bytes));
-                        flag = OUTSIDE;
-                    }
-                }
-            }
-            if let Place::Variable(n) = place {
-                let end = u32::try_from(variable.len()).ok().filter(|&e| e < OUTSIDE).ok_or_else(|| {
-                    SqlError::new(Code::Unsupported, "[DESIGN] a row's values of varying width take 2 GiB or more".to_owned())
-                })?;
-                put(&mut record, self.ends_at().saturating_add(n.saturating_mul(END_BYTES)), &(end | flag).to_le_bytes());
+            let bytes = match encoded.get_mut(i).and_then(Option::take) {
+                Some(bytes) => Ok(Some(bytes)),
+                None => (!value.is_null()).then(|| encode_value(value, data_type)).transpose(),
+            };
+            let column = (i, place, outside.get(i).copied().unwrap_or_default());
+            written = bytes.and_then(|bytes| self.put_column(column, bytes.as_deref(), (out, base), store));
+            if written.is_err() {
+                out.truncate(base);
+                break;
             }
         }
-        out.extend_from_slice(&record);
-        out.extend_from_slice(&variable);
+        written
+    }
+
+    /// Writes column `i`'s `bytes`, its value's, at `place` of the record
+    /// that begins at `base` of `out`, or its null bit for none; kept out
+    /// of line by `store` if `outside`.
+    fn put_column(
+        &self,
+        (i, place, outside): (usize, Place, bool),
+        bytes: Option<&[u8]>,
+        (out, base): (&mut Vec<u8>, usize),
+        store: &mut impl FnMut(usize, &[u8]) -> Result<u64>,
+    ) -> Result<()> {
+        let mut flag = 0;
+        match (bytes, place, outside) {
+            (None, ..) => {
+                let (at, mask) = null_bit(i);
+                if let Some(byte) = out.get_mut(base.saturating_add(at)) {
+                    *byte |= mask;
+                }
+            }
+            (Some(bytes), Place::Fixed(at, _), _) => {
+                put(out.get_mut(base..).unwrap_or_default(), self.fixed_at().saturating_add(at), bytes);
+            }
+            (Some(bytes), Place::Variable(_), false) => out.extend_from_slice(bytes),
+            (Some(bytes), Place::Variable(_), true) => {
+                out.extend_from_slice(&store(i, bytes)?.to_le_bytes());
+                out.extend_from_slice(&u32::try_from(bytes.len()).unwrap_or(u32::MAX).to_le_bytes());
+                out.extend_from_slice(prefix(bytes));
+                flag = OUTSIDE;
+            }
+        }
+        if let Place::Variable(n) = place {
+            let variable = out.len().saturating_sub(base.saturating_add(self.variable_at()));
+            let end = u32::try_from(variable).ok().filter(|&e| e < OUTSIDE).ok_or_else(|| {
+                SqlError::new(Code::Unsupported, "[DESIGN] a row's values of varying width take 2 GiB or more".to_owned())
+            })?;
+            let at = self.ends_at().saturating_add(n.saturating_mul(END_BYTES));
+            put(out.get_mut(base..).unwrap_or_default(), at, &(end | flag).to_le_bytes());
+        }
         Ok(())
     }
 
@@ -301,7 +343,7 @@ impl RecordFormat {
     /// SQLCODE -916 if `bytes` are not a record of this format, or a value
     /// fetched is not as long as its reference says; `fetch`'s errors.
     pub fn decode_with(&self, bytes: &[u8], fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>) -> Result<Row> {
-        (0..self.types.len()).map(|i| self.column_with(bytes, i, fetch)).collect()
+        self.decode_some(bytes, None, fetch)
     }
 
     /// The row a record holds, with only `columns` decoded: the others NULL,
@@ -326,7 +368,31 @@ impl RecordFormat {
         columns: &[usize],
         fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>,
     ) -> Result<Row> {
-        (0..self.types.len()).map(|i| if columns.contains(&i) { self.column_with(bytes, i, fetch) } else { Ok(Value::Null) }).collect()
+        self.decode_some(bytes, Some(columns), fetch)
+    }
+
+    /// The row a record holds, `columns` decoded, or all, the others NULL:
+    /// sized once, as a row is decoded for every one read, and a vector
+    /// collected through `Result` would grow from a few values by doubling.
+    /// Each column of `columns` is decoded once, where it is named, and one
+    /// that is not a column of the record is passed over (RULES.md D751).
+    fn decode_some(&self, bytes: &[u8], columns: Option<&[usize]>, fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>) -> Result<Row> {
+        let Some(columns) = columns else {
+            let mut row = Vec::with_capacity(self.types.len());
+            for i in 0..self.types.len() {
+                row.push(self.column_with(bytes, i, fetch)?);
+            }
+            return Ok(row);
+        };
+        let mut row = vec![Value::Null; self.types.len()];
+        for &i in columns {
+            // Named again, a column already decoded is not; a null one is
+            // found null again at once.
+            if let Some(slot) = row.get_mut(i).filter(|slot| slot.is_null()) {
+                *slot = self.column_with(bytes, i, fetch)?;
+            }
+        }
+        Ok(row)
     }
 
     /// Column `i` of a record, decoding nothing else.

@@ -7,6 +7,7 @@ mod assertions;
 mod backup;
 mod bigint;
 mod bounded;
+mod call_floor;
 mod check_rebind;
 mod cli;
 mod client;
@@ -39,6 +40,7 @@ mod graph_table;
 mod grouping_sets;
 mod guarded;
 mod hash;
+mod homes;
 mod hypothetical;
 mod information;
 mod json;
@@ -82,6 +84,7 @@ mod savepoints;
 mod search_cycle;
 mod sequences;
 mod server;
+mod set_probes;
 mod shadow;
 mod short_names;
 mod simple_features;
@@ -118,6 +121,7 @@ mod vector_indexes;
 mod view_defaults;
 mod vr;
 mod waits;
+mod wide_exact;
 mod width_bucket;
 mod window_distinct;
 mod window_nested;
@@ -210,8 +214,8 @@ pub const MUTATIONS: [Mutation; 13] = [
         package: Package::Core,
         breaks: "the log's sync at commit: COMMIT returns before its record is durable",
         file: "src/txn/logging.rs",
-        original: "        self.shared.sync(&**log, lsn).map_err(|e| {",
-        replacement: "        self.shared.taking_changes().map_err(|e| {",
+        original: "        let synced = self.shared.sync_in_group(log, lsn, at);",
+        replacement: "        let synced = self.shared.taking_changes().map(|()| self.shared.clock.end_syncs(std::iter::once(at)));",
         integration: &["durability::a_commit_is_its_record_made_durable", "durability::a_failed_sync_stops_the_database_taking_changes"],
         unit: &[],
     },

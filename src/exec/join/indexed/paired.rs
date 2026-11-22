@@ -25,10 +25,10 @@ use super::{IndexJoin, Probed, Step, preserved::Ids};
 use crate::catalog::IndexDesc;
 use crate::error::Result;
 use crate::exec::Db;
-use crate::index::{Key, KeyPairs, Probe};
+use crate::index::{Key, KeyPairs, Probe, Using};
 use crate::logical::{Cond, Truth};
 use crate::physical::{Paired, Plan};
-use crate::storage::{Condition, Region, Row, RowId};
+use crate::storage::{Condition, Region, Row, RowId, sized_row};
 use crate::txn::checked;
 
 /// The join of `paired`'s table with `join`'s by their trees, or, if
@@ -76,7 +76,7 @@ impl Traversal {
         let stop = join.table.stop.clone();
         let pairs: KeyPairs = Box::new(checked(outer_tree.pairs(&inner_tree, &db.memory)?, stop.clone()));
         let reading = Reading::of(&ix, Some(&columns), found.key_projection());
-        let outer = Probed { storage, index: Arc::clone(found), ix, reading, tx, stop, located, routes: None };
+        let outer = Probed { storage, index: Arc::clone(found), ix, reading, tx, stop, located, routes: None, using: Using::default() };
         let kept = if join.nulls.is_none() { None } else { Some(Ids::new(db)?) };
         Ok(Some(Traversal { outer, filter, through, pairs, kept, columns }))
     }
@@ -100,7 +100,7 @@ impl Traversal {
         }
         let Some(through) = &self.through else { return Ok(Some(row)) };
         let taken = through.iter().map(|&c| row.get(c).cloned().ok_or_else(|| broken("a traversal's outer column is missing")));
-        taken.collect::<Result<Row>>().map(Some)
+        sized_row(through.len(), taken).map(Some)
     }
 }
 

@@ -70,7 +70,7 @@ struct Writer {
 /// For every kind of record, a statement that writes it. Records that are
 /// not synced as written (an abort record) are followed by a commit, whose
 /// sync makes them durable.
-const WRITERS: [Writer; 24] = [
+const WRITERS: [Writer; 25] = [
     Writer { kind: 1, run: |db| committed(db, &["INSERT INTO T VALUES (100, 'new')"]) },
     Writer { kind: 2, run: |db| committed(db, &["UPDATE T SET V = 'changed' WHERE K = 1"]) },
     Writer { kind: 3, run: |db| committed(db, &["DELETE FROM T WHERE K = 2"]) },
@@ -80,6 +80,8 @@ const WRITERS: [Writer; 24] = [
         run: |db| {
             let s = db.session("APP");
             s.run("INSERT INTO T VALUES (102, 'gone')").unwrap();
+            // Written, so its rollback is logged (RULES.md D470).
+            db.write_held().unwrap();
             s.rollback().unwrap();
             committed(db, &["INSERT INTO T VALUES (103, 'after')"]);
         },
@@ -96,7 +98,12 @@ const WRITERS: [Writer; 24] = [
         run: |db| {
             let s = db.session("APP");
             s.run("INSERT INTO T VALUES (104, 'kept')").unwrap();
-            assert!(s.run("INSERT INTO T VALUES (3, 'duplicate')").is_err(), "UNIQUE: the statement undone");
+            // Changes rolled back to a savepoint, written first, are logged
+            // undone (RULES.md D470).
+            s.run("SAVEPOINT P").unwrap();
+            s.run("INSERT INTO T VALUES (105, 'undone')").unwrap();
+            db.write_held().unwrap();
+            s.run("ROLLBACK TO SAVEPOINT P").unwrap();
             s.commit().unwrap();
         },
     },
@@ -166,6 +173,17 @@ const WRITERS: [Writer; 24] = [
         },
     },
     Writer { kind: 25, run: |db| db.create_restore_point("BEFORE").map(|_| ()).unwrap() },
+    Writer {
+        kind: 26,
+        run: |db| {
+            let rows = [
+                "CREATE TABLE BULK (K INTEGER, V CHAR(10))",
+                "INSERT INTO BULK VALUES (1, 'a'), (2, 'b')",
+                "INSERT INTO BULK SELECT K + 2, V FROM BULK",
+            ];
+            committed(db, &rows);
+        },
+    },
 ];
 
 /// Table `name` of a CLOB, its row one of 300000 characters, more than a

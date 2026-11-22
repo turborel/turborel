@@ -236,8 +236,10 @@ pub(super) fn builtin() -> Vec<Definition> {
 
 /// The settings of the features after the others, each at its key's
 /// place: the vector settings, XQuery's static typing, the graph threads, GRAPH_TABLE's search
-/// limits, GQL's session, the graph's later ones, the host's, the
-/// parallel queries' and predicate transfer's.
+/// limits, GQL's session, the graph's later ones, the host's and the
+/// parallel queries', the range joins', the kept subquery plans', the
+/// streamed groupings', the estimate's margin, the dense joins', escrow's,
+/// the point operations' and predicate transfer's.
 fn last() -> impl Iterator<Item = Definition> {
     let graph = super::graph::definitions().into_iter().chain(super::graph::gql_session()).chain(super::graph::later());
     let (backup, plugins) = (super::backup::definitions(), super::plugins::definitions());
@@ -250,7 +252,10 @@ fn last() -> impl Iterator<Item = Definition> {
         .chain(super::hosted::definitions())
         .chain(super::joins::definitions())
         .chain(super::executor::definitions())
-        .chain([super::joins::range_joins(), super::joins::predicate_transfer()])
+        .chain([super::joins::range_joins(), super::executor::kept_subquery_plans()])
+        .chain(super::joins::streamed())
+        .chain([super::joins::margin(), super::executor::dense_joins(), super::escrow::escrow(), super::executor::point_operations()])
+        .chain([super::joins::predicate_transfer()])
 }
 
 /// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the

@@ -39,7 +39,9 @@ fn candidates_are_rechecked_against_the_whole_condition() {
         for (sql, expected) in queries.iter().zip(scanned) {
             assert_eq!(rows(&s, sql).unwrap(), expected, "{sql}");
             let shown = plan(&s, sql);
-            assert!(shown.contains("IndexScan") && shown.contains("Filter NEXT_TO"), "{shown}");
+            // The filter rechecks NEXT_TO, its conjuncts in the order their ranks give (RULES.md D650).
+            let rechecks = shown.lines().any(|line| line.trim_start().starts_with("Filter") && line.contains("NEXT_TO"));
+            assert!(shown.contains("IndexScan") && rechecks, "{shown}");
             assert!(!shown.contains("IndexOnlyScan"), "{shown}");
         }
         assert!(seen.lock().unwrap().iter().any(|(_, argument, _)| *argument == 1));
@@ -66,7 +68,7 @@ fn raising_predicates_and_conjuncts_keep_their_errors() {
     let db = database(Method::default(), Function::default());
     indexed(&db, &["K"]);
     let s = session(&db);
-    for sql in ["SELECT N FROM T WHERE NEXT_TO(K, 40) AND 1 / N = 1", "SELECT N FROM T WHERE NEXT_TO(K, 1 / N)"] {
+    for sql in ["SELECT N FROM T WHERE NEXT_TO(K, 40) AND 1 / N = 1", "SELECT N FROM T WHERE NEXT_TO(K, CAST(1 / N AS INTEGER))"] {
         assert!(plan(&s, sql).contains("SeqScan"));
         assert_eq!(fetched(&s, sql).unwrap_err().sqlcode(), -301);
         s.rollback().unwrap();
@@ -115,7 +117,7 @@ fn learned_predicates_fill_each_executions_argument() {
 #[test]
 fn only_declared_safe_supported_calls_are_probed() {
     for (safe, deterministic, argument, uses_index) in
-        [(true, true, "40", true), (false, true, "40", false), (true, false, "40", false), (true, true, "N / N", false)]
+        [(true, true, "40", true), (false, true, "40", false), (true, false, "40", false), (true, true, "CAST(N / N AS INTEGER)", false)]
     {
         let db = database(Method::default(), Function { safe, deterministic, ..Function::default() });
         indexed(&db, &["K"]);

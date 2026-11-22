@@ -72,29 +72,32 @@
 //! waits for every commit before it to end, whatever tables they touch.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread::ThreadId;
-use std::time::{Duration, Instant};
 
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlError};
-use crate::log::{Log, Lsn};
-use crate::sync::{Gate, lock, lock_builtin};
+use crate::log::Log;
+use crate::sync::{Alone, Gate, lock, lock_builtin};
 
 mod access;
 mod capabilities;
 mod clock;
 mod durable;
 mod end;
+pub(crate) mod escrow;
 mod followed;
+mod group;
+mod kept;
 mod lobs;
 mod locks;
 mod logging;
 mod marks;
 mod owed;
+mod pending;
 mod reading;
+mod release;
 mod row_waits;
 mod savepoints;
 mod stop;
@@ -106,16 +109,18 @@ use clock::Clock;
 pub(crate) use durable::Committing;
 pub(crate) use end::remove_entries;
 pub(crate) use followed::{Followed, FollowedRecords, Following};
+pub(crate) use kept::Sharing;
 pub use locks::Damage;
 pub(crate) use locks::TableLock;
 use locks::WaitsFor;
 pub(crate) use logging::Held;
 pub(crate) use marks::Mark;
+use pending::{First, LogPos, Pending};
 pub use reading::{ReadMode, Reading};
 use stop::Stops;
 pub(crate) use stop::Window;
-pub(crate) use stop::checked;
-pub use stop::{MAX_NOTES, Served, Stop};
+pub use stop::{Activity, MAX_NOTES, Now, Served, Stop, Tallied, Tallies, Tally, Waiting};
+pub(crate) use stop::{checked, counted};
 use undo::UndoLog;
 
 /// How a transaction begins: whether it waits for locks, how it reads, and
@@ -195,17 +200,19 @@ pub(crate) struct TxState {
     statement_savepoints: Vec<(Joined, u64)>,
     /// The table locks it holds, released when it ends.
     held: Vec<Arc<TableLock>>,
+    /// The escrows of the tables it reserved increments in (RULES.md D452).
+    escrowed: Vec<Arc<escrow::Escrow>>,
     /// Whether it wrote a change to the log, so its end must be logged too.
     logged: bool,
     /// The snapshots it read at before its current one that it keeps
     /// counted open until it ends, as a locator holds a value read at one
     /// (`Txn::pin_snapshot`, RULES.md D79).
     pinned: Vec<Timestamp>,
-    /// The position of the current statement's first change in the log.
-    statement_from: Option<Lsn>,
+    /// The place of the current statement's first change in the log.
+    statement_from: Option<LogPos>,
     /// Of each mark open within the current statement, innermost last, the
-    /// position of its first change in the log (`marks.rs`).
-    marks_from: Vec<Option<Lsn>>,
+    /// place of its first change in the log (`marks.rs`).
+    marks_from: Vec<Option<LogPos>>,
     /// Its savepoints (`txn/savepoints.rs`).
     savepoints: savepoints::Savepoints,
     /// Whether it has written a table: one that has not commits at its
@@ -223,10 +230,15 @@ pub(crate) struct TxState {
     /// engine, once it wrote one: a write of the other kind mixes them
     /// (`txn/logging.rs`).
     first_write_external: Option<bool>,
+    /// Whether it wrote a table of an engine that makes its own writes
+    /// durable (`Persistence::Forced`): its records are then written as
+    /// made, before the engine's writes can be (`txn/pending.rs`).
+    forced: bool,
     /// The rows whose entry in a unique index, named, was the key's only
     /// one as it was last inserted (`Index::insert_alone`): no other row
-    /// to look for at a statement's end (`db/assignment.rs`).
-    alone: HashSet<(String, crate::storage::RowId)>,
+    /// to look for at a statement's end (`db/assignment.rs`); by index, so
+    /// a row is looked up by the index's name as it is held.
+    alone: HashMap<String, HashSet<crate::storage::RowId>>,
     /// Of each table of an assertion's kept totals and form, the row it
     /// wrote of its change, each statement's added to it
     /// (`db/assertions/kept.rs`).
@@ -239,7 +251,7 @@ pub(crate) struct TxState {
 /// whom.
 pub(crate) struct Transactions {
     clock: Clock,
-    active: AtomicUsize,
+    active: Alone<AtomicUsize>,
     /// For each waiting transaction, the transactions it waits for.
     waits_for: Mutex<WaitsFor>,
     /// Taken by every change a checkpoint writes (`db/checkpoint.rs`).
@@ -248,7 +260,9 @@ pub(crate) struct Transactions {
     /// position, where recovery from a checkpoint begins reading.
     firsts: Mutex<BTreeMap<TxId, First>>,
     /// Row changes logged since the database was opened.
-    pub(crate) logged: AtomicU64,
+    pub(crate) logged: Alone<AtomicU64>,
+    /// The records open transactions hold (`txn/pending.rs`).
+    pending: Pending,
     /// Of those, the ones the last checkpoint taken holds: those after it
     /// count toward the next (CHECKPOINT.AFTER_CHANGES).
     checkpointed: AtomicU64,
@@ -260,14 +274,14 @@ pub(crate) struct Transactions {
     /// The failed sync of the log that stopped the database's changes, if
     /// one did (`txn/logging.rs`), and whether one did.
     stopped: Mutex<Option<SqlError>>,
-    stopping: AtomicBool,
+    stopping: Alone<AtomicBool>,
     /// The commits written to the log but not yet synced, under
     /// LOG.COMMIT_SYNC OFF, if any (`txn/logging.rs`).
     unsynced: Mutex<Option<logging::Unsynced>>,
     /// What holds the database's changes beside a failed sync, if anything
     /// does (`txn/logging.rs`, RULES.md D57), and whether something does.
     held: Mutex<Option<Held>>,
-    holding: AtomicBool,
+    holding: Alone<AtomicBool>,
     /// Following a log, the records of each of its transactions not yet
     /// ended, held until it ends (`db/standby.rs`), spilled past a work
     /// area's bytes (`txn/followed.rs`).
@@ -282,7 +296,10 @@ pub(crate) struct Transactions {
     uncollected: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `uncollected` names any table, as it was last changed: so a
     /// transaction that wrote nothing looks at it without its lock.
-    awaiting: AtomicBool,
+    awaiting: Alone<AtomicBool>,
+    /// Whether the end of a transaction that wrote nothing is collecting
+    /// `uncollected`: another such end passes it by (RULES.md D453).
+    read_collecting: AtomicBool,
     /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
     maintenance: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `maintenance` names any table.
@@ -300,6 +317,8 @@ pub(crate) struct Transactions {
     /// or grants or revokes privileges on (`db/definitions.rs`): the
     /// table's own once it is published, so the two are one.
     names: Mutex<HashMap<QualifiedName, std::sync::Weak<TableLock>>>,
+    /// The commits waiting for a sync of the log (`txn/group.rs`).
+    group: group::Group,
 }
 
 impl Transactions {
@@ -321,42 +340,37 @@ impl Transactions {
     }
 }
 
-/// The first record an open transaction logged: its position, the row
-/// changes logged before it, and when.
-struct First {
-    at: Lsn,
-    logged: u64,
-    when: Instant,
-}
-
 impl Default for Transactions {
     fn default() -> Self {
         Transactions {
             clock: Clock::new(FIRST_TRANSACTION),
-            active: AtomicUsize::new(0),
+            active: Alone(AtomicUsize::new(0)),
             waits_for: Mutex::new(HashMap::new()),
             gate: Gate::default(),
             firsts: Mutex::new(BTreeMap::new()),
-            logged: AtomicU64::new(0),
+            logged: Alone(AtomicU64::new(0)),
+            pending: Pending::default(),
             checkpointed: AtomicU64::new(0),
             builds: Mutex::new(0),
             built: Condvar::new(),
             stopped: Mutex::new(None),
-            stopping: AtomicBool::new(false),
+            stopping: Alone(AtomicBool::new(false)),
             unsynced: Mutex::new(None),
             held: Mutex::new(None),
-            holding: AtomicBool::new(false),
+            holding: Alone(AtomicBool::new(false)),
             followed: Mutex::new(BTreeMap::new()),
             following: Mutex::new(Following::default()),
             replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
-            awaiting: AtomicBool::new(false),
+            awaiting: Alone(AtomicBool::new(false)),
+            read_collecting: AtomicBool::new(false),
             maintenance: Mutex::new(BTreeSet::new()),
             noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),
             stops: Stops::default(),
             ends: row_waits::Ends::default(),
             names: Mutex::new(HashMap::new()),
+            group: group::Group::default(),
         }
     }
 }
@@ -386,6 +400,7 @@ impl Transactions {
             running: Arc::new(Mutex::new(None)),
             stop,
             stamp: OnceLock::new(),
+            pending: OnceLock::new(),
             depends: AtomicU64::new(0),
         }
     }
@@ -408,18 +423,6 @@ impl Transactions {
         self.clock.highest()
     }
 
-    /// The position of the first record of the oldest open transaction
-    /// that logged one, if any.
-    pub(crate) fn oldest_logged(&self) -> Option<Lsn> {
-        lock_builtin(&self.firsts).values().map(|first| first.at).min()
-    }
-
-    /// Notes that `tx` logged its first record at `at`.
-    pub(crate) fn first_logged(&self, tx: TxId, at: Lsn) {
-        let logged = self.logged.load(Ordering::Relaxed);
-        lock_builtin(&self.firsts).entry(tx).or_insert(First { at, logged, when: Instant::now() });
-    }
-
     /// Row changes logged since the last checkpoint taken.
     pub(crate) fn since_checkpoint(&self) -> u64 {
         self.logged.load(Ordering::Relaxed).saturating_sub(self.checkpointed.load(Ordering::Relaxed))
@@ -428,15 +431,6 @@ impl Transactions {
     /// Notes a checkpoint taken, holding the first `logged` row changes.
     pub(crate) fn checkpointed(&self, logged: u64) {
         self.checkpointed.fetch_max(logged, Ordering::Relaxed);
-    }
-
-    /// Of the oldest open transaction that logged a record, from whose
-    /// first the log is kept: the row changes logged since, its own among
-    /// them, and how long ago it logged it.
-    pub(crate) fn pinned(&self) -> Option<(u64, Duration)> {
-        let firsts = lock_builtin(&self.firsts);
-        let oldest = firsts.values().min_by_key(|first| first.at)?;
-        Some((self.logged.load(Ordering::Relaxed).saturating_sub(oldest.logged), oldest.when.elapsed()))
     }
 
     /// How many transactions are open.
@@ -480,6 +474,8 @@ pub(crate) struct Txn {
     /// [ISO/IEC 9075-2:2023 §4.44] Its transaction timestamp, in
     /// microseconds of UTC, once its first change set it (`Txn::stamp`).
     stamp: OnceLock<i64>,
+    /// The records it holds, once it holds one (`txn/pending.rs`).
+    pending: OnceLock<Arc<pending::TxLog>>,
     /// The latest commit not yet durable it read past its snapshot
     /// (`txn/durable.rs`), 0 for none.
     depends: AtomicU64,
@@ -503,7 +499,7 @@ impl Txn {
     }
 
     /// Records `entry`, which undoes a change it made.
-    fn log(&self, entry: UndoEntry) -> Result<()> {
+    pub(crate) fn log(&self, entry: UndoEntry) -> Result<()> {
         self.state()?.undo.push(entry)
     }
 
@@ -518,19 +514,36 @@ impl Txn {
     /// for each statement, it takes a new one if `fresh` says so: when its
     /// session has no cursor open, which reads at the one it has.
     ///
+    /// Whether a load is under way in it (RULES.md D532), which a statement
+    /// that is no part of it ends first.
+    ///
     /// # Errors
     ///
     /// SQLCODE -910 if its lock is poisoned; a participant's, told of the
     /// new snapshot.
-    pub(crate) fn begin_statement(&self, fresh: impl FnOnce() -> bool) -> Result<()> {
+    pub(crate) fn begin_statement(&self, fresh: impl FnOnce() -> bool) -> Result<bool> {
         self.check_definitions()?;
-        {
+        let loads = {
             let mut st = self.state()?;
             st.statement_start = st.undo.mark();
             st.statement_savepoints.clear();
             st.statement_from = None;
             st.clear_marks();
-        }
+            self.settle_places(&mut st);
+            st.undo.loads()
+        };
+        self.renew_snapshot(fresh)?;
+        Ok(loads)
+    }
+
+    /// Reading at a snapshot for each statement, takes a new one if
+    /// `fresh` says so: as a statement begins, and as each statement of a
+    /// procedure's body does (RULES.md D454).
+    ///
+    /// # Errors
+    ///
+    /// A participant's, told of the new snapshot.
+    pub(crate) fn renew_snapshot(&self, fresh: impl FnOnce() -> bool) -> Result<()> {
         if self.reading == Reading::Statement && self.open.load(Ordering::Acquire) && fresh() {
             self.snapshot.store(self.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);
             self.tell_participants()?;
@@ -542,34 +555,17 @@ impl Txn {
     pub(crate) fn runs_on(&self, thread: Option<ThreadId>) {
         *lock_builtin(&self.running) = thread;
     }
-
-    /// Releases every table lock it holds and wakes the transactions waiting
-    /// for them, and forgets its snapshot. Called when it ends, and again
-    /// when it is dropped, which finds nothing left to release.
-    fn release(&self) {
-        let held = mem::take(&mut lock_builtin(&self.state).held);
-        for table in held {
-            table.release(self.id);
-        }
-        // [DESIGN] RULES.md D442: the waiters for its rows go on, in turn.
-        self.shared.ends.end(self.id);
-        let pinned = mem::take(&mut lock_builtin(&self.state).pinned);
-        if self.open.swap(false, Ordering::AcqRel) {
-            self.shared.clock.end(self.id, self.snapshot());
-            for at in pinned {
-                self.shared.clock.end(self.id, at);
-            }
-        }
-    }
 }
 
 impl Drop for Txn {
     fn drop(&mut self) {
         self.release();
-        // Only one that logged a record has a first to forget.
-        if self.state.get_mut().map_or(true, |st| st.logged) {
+        // Only one whose records were written before its end has a first
+        // to forget.
+        if self.pinned_log() {
             lock_builtin(&self.shared.firsts).remove(&self.id);
         }
+        self.forget_held();
         self.shared.stops.remove(self.id);
         self.shared.active.fetch_sub(1, Ordering::SeqCst);
     }

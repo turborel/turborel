@@ -1,6 +1,8 @@
 //! A row's change by a transaction through the row store's trait methods
 //! (`TableStorage::update`, `delete`, `write_newest`): its version written,
-//! its zone widened, and its counts kept.
+//! its zone widened, and its counts kept; and the columns it kept, whose
+//! index entries its version shares with the one it replaced (RULES.md
+//! D443).
 
 use std::sync::atomic::Ordering;
 
@@ -9,7 +11,8 @@ use crate::engine::rows::RowTable;
 use crate::engine::rows::version::Version;
 use crate::error::Result;
 use crate::storage::{Row, RowId};
-use crate::txn::TxId;
+use crate::sync::lock_builtin;
+use crate::txn::{NO_TRANSACTION, TxId};
 
 impl RowTable {
     /// Row `id` made `row` by `tx`, or deleted with none, its newest
@@ -29,6 +32,22 @@ impl RowTable {
         self.widen_over(id, Some(&row), replaced.as_deref());
         self.counted_change(tx);
         self.replaced(id, replaced.as_deref())
+    }
+
+    /// Notes `unchanged` on `tx`'s last change, if it replaced a version of
+    /// row `id`; the columns noted: none for a change already spilled, or
+    /// another's, whose entries are then each version's own
+    /// (`TableStorage::keep_entries`).
+    pub(in crate::engine::rows) fn keep_columns(&self, tx: TxId, id: RowId, unchanged: u64) -> u64 {
+        if tx == NO_TRANSACTION || unchanged == 0 {
+            return 0;
+        }
+        let Ok(open) = self.open_of(tx) else { return 0 };
+        let mut open = lock_builtin(&open);
+        let replaced = |c: &&mut super::Change| c.id == id && !c.made && (c.before.is_some() || c.appended.is_some());
+        let Some(change) = open.changes.last_mut().filter(replaced) else { return 0 };
+        change.unchanged = unchanged;
+        unchanged
     }
 
     /// The row of `replaced`, the version of row `id` a write replaced, if

@@ -200,12 +200,14 @@ pub(super) struct Outgoing<'a> {
     /// Whether a locator was sent (`native/lobs.rs`).
     located: bool,
     pub(super) gathered: Vec<Reply>,
+    /// How many times what was gathered was sent ahead.
+    sends: usize,
 }
 
 impl<'a> Outgoing<'a> {
     /// None gathered yet, batches of `batch` bytes sent through `sink`.
     pub(super) fn new(sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>, batch: usize) -> Outgoing<'a> {
-        Outgoing { sink, batch, inline: DEFAULT_LOB_INLINE_BYTES, located: false, gathered: Vec::new() }
+        Outgoing { sink, batch, inline: DEFAULT_LOB_INLINE_BYTES, located: false, gathered: Vec::new(), sends: 0 }
     }
 
     /// As it is, large objects of at most `bytes` octets sent whole.
@@ -222,6 +224,7 @@ impl<'a> Outgoing<'a> {
 
     /// Sends what is gathered, ahead of the rest.
     fn send(&mut self) -> std::result::Result<(), Cut> {
+        self.sends = self.sends.saturating_add(1);
         (self.sink)(mem::take(&mut self.gathered)).map_err(Cut::Gone)
     }
 
@@ -236,6 +239,9 @@ impl<'a> Outgoing<'a> {
 impl Held {
     /// What `session` holds, as it begins, its client granted `granted`.
     pub(super) fn new(session: Session, serves: Serves, granted: Capabilities) -> Held {
+        // [DESIGN] RULES.md D450: its transactions' garbage collected once
+        // their reply is sent (`Lent::answer`).
+        session.collect_after_reply(true);
         let (statements, cursors, status) = (HashMap::new(), HashMap::new(), Status::default());
         Held { session, statements, cursors, copy: None, granted, status, serves, arrived: None, clock: None, carried: Timing::default() }
     }
@@ -256,6 +262,7 @@ impl Held {
         self.cursors.clear();
         self.statements.clear();
         (self.copy, self.status, self.carried) = (None, Status::default(), Timing::default());
+        session.collect_after_reply(true);
         mem::replace(&mut self.session, session)
     }
 
@@ -293,6 +300,7 @@ impl Held {
         let running = requests.running(attributes.as_ref());
         let served = Arc::clone(&self.session.canceller());
         served.served().set_trace(crate::shown::trace(attributes.as_deref()));
+        let mark = out.mark();
         let done = self.done(work, out, max_statements);
         served.served().set_trace(None);
         drop(running);
@@ -303,7 +311,10 @@ impl Held {
                 return Ok(false);
             }
             Err(Cut::Gone(e)) => return Err(e),
-            Err(Cut::Failed(e)) => Reply::Error(Failure::from(&e)),
+            Err(Cut::Failed(e)) => {
+                out.unanswered(mark);
+                Reply::Error(Failure::from(&e))
+            }
         };
         // Counted before the transaction ends, as the statement left them.
         let last = self.counted(last, counted);

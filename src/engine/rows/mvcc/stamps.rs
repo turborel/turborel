@@ -62,7 +62,7 @@ impl RowTable {
     /// superseded made garbage for when `at` is past the horizon, a segment
     /// of its changes at a time; the rows it wrote first are left to stamp.
     pub(in crate::engine::rows) fn commit_open(&self, tx: TxId, at: Timestamp) {
-        let removed = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
+        let removed = self.versions.open.remove(tx);
         let Some(open) = removed else { return };
         let (changes, adopted) = {
             let mut open = lock_builtin(&open);
@@ -70,6 +70,10 @@ impl RowTable {
             (mem::take(&mut open.changes), mem::take(&mut open.adopted))
         };
         let count = u64::try_from(changes.len()).unwrap_or(u64::MAX);
+        if count == 0 {
+            // It changed nothing here: no list, nor the work areas (RULES.md D783).
+            return self.versions.statuses.commit(tx, at, false);
+        }
         let (mut stamps, mut lost) = (SpillList::new(self.versions.space()), false);
         for segment in changes.into_segments(false, &decode_change) {
             let Ok(segment) = segment else {
@@ -77,7 +81,8 @@ impl RowTable {
                 continue;
             };
             let mut dead = Vec::new();
-            for change in segment {
+            // A group's making is stamped with its groups (`frozen/stamped.rs`).
+            for change in segment.into_iter().filter(|c| !c.group) {
                 // A row's first change by it replaced a committed version or
                 // none; its later ones replaced its own.
                 if !change.made && change.before.is_none() {
@@ -117,11 +122,11 @@ impl RowTable {
         match (change.before, change.appended) {
             (Some(own), _) => {
                 self.zones.superseded(change.id, true);
-                dead.push(Dead::Own(change.id, own));
+                dead.push(Dead::Own(change.id, own, change.unchanged));
             }
             (None, Some(appended)) => {
                 self.zones.superseded(change.id, true);
-                dead.push(Dead::Older(change.id, appended));
+                dead.push(Dead::Older(change.id, appended, change.unchanged));
             }
             (None, None) => {}
         }

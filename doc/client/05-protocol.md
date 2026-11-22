@@ -667,6 +667,15 @@ savepoint cannot be taken. One whose `ends` is 1 is committed once it
 succeeds and rolled back otherwise. A Terminate during a copy undoes the
 copy before the session ends.
 
+A copy into a table with an empty index, other than a unique one, takes
+the table's lock alone, so other transactions wait to write the table
+until the copy's transaction ends; reading it, they do not wait. Each
+such index is built whole from the copy's rows as CopyEnd ends it, which
+is faster than adding its entries one row at a time. A copy into a
+table of the column store that holds no row yet to be frozen, and sets
+COLUMNSTORE.LOAD to GROUPS, takes the lock as well, and writes the rows it inserts straight into frozen
+groups, which other transactions see once it commits.
+
 ## Replies
 
 ### Challenge 'C'

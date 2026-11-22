@@ -57,6 +57,8 @@ fn table(rows: i128) -> (Arc<RowTable>, Vec<RowId>) {
         bloom: Places::default(),
         pax: false,
         imprints: true,
+        sketch: Places::default(),
+        load: crate::engine::rows::options::LoadTo::Tree,
     };
     let table = Arc::new(RowTable::create(&files, &types(), TableOptions { columns: Some(columns), ..TableOptions::default() }).unwrap());
     let ids = (0..rows).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
@@ -93,7 +95,7 @@ fn batched_where(table: &Arc<RowTable>, condition: Option<&Conjunction>) -> Vec<
 #[test]
 fn shadowed_rows_are_read_past_at_their_positions() {
     let (table, ids) = table(5000);
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     while table.maintain(1, true).unwrap() {}
     assert_eq!(table.tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).count(), 5000 - 4096, "two groups frozen");
     let changed: Vec<RowId> = ids.iter().copied().step_by(3).chain(ids[1000..1800].iter().copied()).collect();
@@ -151,7 +153,7 @@ fn shadow_bits_mark_writes_and_keep_scans_the_same() {
     for n in 1000..5000 {
         table.insert(NO_TRANSACTION, row(n)).unwrap();
     }
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     while table.maintain(1, true).unwrap() {}
     let directory = table.frozen.directory().unwrap();
     assert_eq!(directory.groups.len(), 2, "two groups frozen");
@@ -177,7 +179,7 @@ fn shadow_bits_mark_writes_and_keep_scans_the_same() {
 #[test]
 fn delta_zones_skip_the_tree_rows_no_condition_matches() {
     let (table, ids) = table(5000);
-    table.gc(1, &mut |_, _| true).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     while table.maintain(1, true).unwrap() {}
     let condition = below(10);
     let before = batched_where(&table, Some(&condition));
@@ -192,4 +194,38 @@ fn delta_zones_skip_the_tree_rows_no_condition_matches() {
     let matching = given.iter().filter(|r| r.split(',').next().unwrap().parse::<i64>().unwrap() < 10).count();
     assert_eq!(matching, 11, "rows 0 to 9 and the one updated");
     assert_eq!(given.len(), 11, "the tree's other zones not read");
+}
+
+/// Verifies: [DESIGN] RULES.md D473, a sampled pass decodes its sample
+/// alone: the frozen rows given are those kept and not shadowed, each
+/// once and whole, and the spans decoded cover the rows kept only, in
+/// runs of at most a vector. MC/DC of the filter: kept and not shadowed
+/// (given) against not kept, and against shadowed.
+#[test]
+fn frozen_rows_are_decoded_only_when_kept() {
+    let (table, ids) = table(5000);
+    table.gc(1, &mut |_, _, _| true).unwrap();
+    while table.maintain(1, true).unwrap() {}
+    table.begin(10, 9).unwrap();
+    table.update(10, ids[256], row(-1)).unwrap();
+    table.validate(10, 10).unwrap();
+    table.commit(10, 10);
+    let keep = |id: RowId| id.checked_div(128).is_some_and(|run| run.is_multiple_of(2));
+    let directory = table.frozen.directory().unwrap();
+    let mut given = Vec::new();
+    table
+        .each_unshadowed(&directory, keep, |id, row| {
+            assert_eq!(row.len(), 5, "whole");
+            given.push(id);
+            Ok(())
+        })
+        .unwrap();
+    let expected: Vec<RowId> = ids[..4096].iter().copied().filter(|&id| keep(id) && id != ids[256]).collect();
+    given.sort_unstable();
+    assert_eq!(given, expected);
+    let spans = super::kept_runs(&ids, &keep);
+    assert!(spans.iter().all(|&(from, to)| to - from <= 2048 && ids[from..to].iter().all(|&id| keep(id))));
+    assert_eq!(spans.iter().map(|&(from, to)| to - from).sum::<usize>(), ids.iter().filter(|&&id| keep(id)).count());
+    let every = super::kept_runs(&ids, &|_| true);
+    assert_eq!(every.first(), Some(&(0, 2048)), "a vector at most");
 }

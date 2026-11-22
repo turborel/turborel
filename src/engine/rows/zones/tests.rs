@@ -20,18 +20,18 @@ use crate::txn::NO_TRANSACTION;
 use crate::value::{CompOp, DataType, Decimal, Spelled, Value};
 
 /// A number kept, a long text not.
-const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(100)];
+pub(super) const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(100)];
 
 fn int(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))
 }
 
-fn row(n: i128) -> Row {
+pub(super) fn row(n: i128) -> Row {
     vec![int(n), Value::Char(format!("text {n}"))]
 }
 
 /// The tables' files, in memory.
-fn files() -> TableFiles {
+pub(super) fn files() -> TableFiles {
     paged().1
 }
 
@@ -177,7 +177,7 @@ fn zones_summed_up_meanwhile_hold_every_row_written() {
                 for _ in 0..round.checked_rem(64).unwrap_or(0).saturating_mul(16) {
                     std::hint::spin_loop();
                 }
-                while table.sum_zones(u64::MAX).unwrap() {}
+                while table.sum_zones(u64::MAX, true).unwrap() {}
                 done.store(round, Ordering::Release);
             }
         })
@@ -380,42 +380,46 @@ fn zones_a_failed_save_left_are_saved_by_the_next() {
     assert_eq!(found(&opened, NO_TRANSACTION, &equal(0, 2)), ["2"]);
 }
 
-/// Verifies: [DESIGN] RULES.md D31, D29, zone maps summed up as a
-/// rollback's release truncates the undo store: the maintenance thread,
-/// having read a row's entry of a transaction open, goes back to the
-/// older version it names as the transaction rolls back and the store is
-/// truncated, no other transaction of the table open; finding it gone, it
-/// reads the row's entry again, the version put back; the store's space
-/// is taken back at once, no pass keeping it.
+/// Verifies: [DESIGN] RULES.md D31, D29, D770, zone maps summed up with
+/// no older version read back: a zone a transaction still open left
+/// stale is left as the write widened it, holding the old value and the
+/// new; rolled back, it is narrowed to the version put back; a commit
+/// after the horizon leaves it as it is until the horizon passes it. The
+/// undo store is never read.
 ///
-/// Regression test (R-TEST-7): nothing held the version for the pass, so
-/// it was gone (SQLCODE -916) and that round of maintenance failed; and,
-/// as first fixed, a pass holding the undo store kept a collection from
-/// truncating it until the pass ended, after the commit had returned.
+/// Regression test (R-TEST-7): a sum up went back through every version
+/// of its rows a reader might read, reading the undo store for each, so
+/// the maintenance thread made a share of all its reads under writes.
 #[test]
-fn a_zone_summed_up_as_a_rollback_truncates_reads_the_older_version() {
+fn a_zone_is_summed_up_with_no_older_version_read() {
     let log = Arc::new(Hooked::default());
     let files = paged_over(shared(&log)).1;
     let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
-    let id = table.insert(NO_TRANSACTION, row(1)).unwrap();
-    let tx = 10_u64;
-    table.begin(tx, 1).unwrap();
-    table.update(tx, id, row(2)).unwrap();
-    assert_eq!(log.records(), 1, "the older version appended");
-    let (meddler, kept) = (Arc::clone(&table), Arc::clone(&log));
-    // As the pass reads the older version: the rollback, and the
-    // collection after it, which truncates at once, the pass still reading.
-    *lock_builtin(&log.on_read) = Some(Box::new(move || {
-        meddler.rollback(tx).unwrap();
-        meddler.gc(1, &mut |_, _| true).unwrap();
-        assert_eq!(kept.records(), 0, "taken back as the pass reads");
-    }));
-    assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(false), "read again; its sum thrown away, a change meanwhile");
-    assert!(lock_builtin(&log.on_read).is_none(), "the rollback fell where the race would");
-    assert_eq!(log.records(), 0, "truncated by the rollback's collection");
+    let id = table.insert(NO_TRANSACTION, row(10)).unwrap();
+    let ids: Vec<RowId> = (0..9).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    let undo_reads = || log.reads.load(std::sync::atomic::Ordering::Relaxed);
+    table.begin(10, 1).unwrap();
+    table.update(10, id, row(20)).unwrap();
+    assert!(!stale(&table), "the greatest grown past");
+    table.delete(10, ids[0]).unwrap();
+    assert!(stale(&table), "the least deleted");
+    assert_eq!(table.sum_zones(1, true).map_err(|e| e.code), Ok(false), "a transaction open: left stale");
+    assert_eq!(undo_reads(), 0, "the undo store not read");
+    assert!(stale(&table) && reads(&table, &equal(0, 10), id) && reads(&table, &equal(0, 20), id), "both held");
+    table.rollback(10).unwrap();
+    table.gc(1, &mut |_, _, _| true).unwrap();
     summed(&table, 1);
-    assert!(!reads(&table, &equal(0, 2), id), "narrowed to the version put back");
-    assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 1)), ["1"]);
+    assert!(!stale(&table) && !reads(&table, &equal(0, 20), id), "narrowed to the versions put back");
+    table.begin(11, 1).unwrap();
+    table.update(11, id, row(7)).unwrap();
+    table.validate(11, 2).unwrap();
+    table.commit(11, 2);
+    let committed = undo_reads();
+    assert_eq!(table.sum_zones(1, true).map_err(|e| e.code), Ok(false), "a commit after the horizon");
+    assert!(stale(&table) && reads(&table, &equal(0, 10), ids[0]));
+    while table.sum_zones(2, true).unwrap() {}
+    assert!(!stale(&table) && !reads(&table, &equal(0, 10), ids[0]), "narrowed once the horizon passed it");
+    assert_eq!(undo_reads(), committed, "the undo store not read");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D29, zone maps summed up at a horizon
@@ -438,43 +442,10 @@ fn a_zone_summed_up_at_a_horizon_before_a_collection_reads_at_the_collection() {
     table.validate(tx, 2).unwrap();
     table.commit(tx, 2);
     // The horizon was read as 1; the collection at 2 comes first.
-    table.gc(2, &mut |_, _| true).unwrap();
-    assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(true), "summed up, up to date");
+    table.gc(2, &mut |_, _, _| true).unwrap();
+    assert_eq!(table.sum_zones(1, true).map_err(|e| e.code), Ok(true), "summed up, up to date");
     assert!(!reads(&table, &equal(0, 1), id), "narrowed to the commit's version");
     assert_eq!(found(&table, NO_TRANSACTION, &equal(0, 2)), ["2"]);
-}
-
-/// Verifies: [DESIGN] RULES.md D31, zone maps summed up as older versions
-/// go: a row whose older version is gone as the maintenance thread reads
-/// it, and whose entry is then gone too, is left out of the sum; one whose
-/// older version is gone, its entry and the latest collection the same,
-/// is a real loss, and the round fails (SQLCODE -916), to be tried again.
-#[test]
-fn a_zone_summed_up_as_versions_go_leaves_out_rows_gone_and_fails_on_a_loss() {
-    let log = Arc::new(Hooked::default());
-    let files = paged_over(shared(&log)).1;
-    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
-    let id = table.insert(NO_TRANSACTION, row(1)).unwrap();
-    table.begin(10, 1).unwrap();
-    table.update(10, id, row(2)).unwrap();
-    let meddler = Arc::clone(&table);
-    // The row rolled back, then deleted outside any transaction: its entry
-    // goes, and its older version with the collection.
-    *lock_builtin(&log.on_read) = Some(Box::new(move || {
-        meddler.rollback(10).unwrap();
-        meddler.delete(NO_TRANSACTION, id).unwrap();
-        meddler.gc(1, &mut |_, _| true).unwrap();
-    }));
-    assert_eq!(table.sum_zones(1).map_err(|e| e.code), Ok(false), "the row left out");
-    assert!(lock_builtin(&log.on_read).is_none());
-
-    let other = table.insert(NO_TRANSACTION, row(3)).unwrap();
-    table.begin(11, 1).unwrap();
-    table.update(11, other, row(4)).unwrap();
-    let lost = Arc::clone(&log);
-    // The older version lost, nothing else changed.
-    *lock_builtin(&log.on_read) = Some(Box::new(move || lost.truncate_before(lost.end()).unwrap()));
-    assert_eq!(table.sum_zones(1).map_err(|e| e.code), Err(Code::Corrupt), "a real loss");
 }
 
 /// Whether a zone of `table` is stale.
@@ -490,7 +461,7 @@ fn zone_rows(table: &RowTable, id: RowId) -> u32 {
 
 /// Verifies: [DESIGN] RULES.md D31, zone maps: a write stales its zone
 /// only if the version it replaced may leave the zone wider than its
-/// rows. MC/DC of `Zones::narrows`, stale unless the replaced value is
+/// rows. MC/DC of `Zones::loosened`, stale unless the replaced value is
 /// the new one or lies strictly inside the bounds: the replaced value
 /// kept, on the least bound (not stale), against one changed on the
 /// greatest (stale), shows the first; one changed strictly inside (not
@@ -520,6 +491,40 @@ fn a_write_inside_its_zones_bounds_stales_nothing() {
     assert!(stale(&table), "the least value deleted");
 }
 
+/// Verifies: [DESIGN] RULES.md D476, zone maps: a value on the greatest
+/// grown past it, or on the least fallen past it, stales nothing, the zone
+/// widened; one on the greatest shrunk, or on the least grown, stales it; a
+/// bound kept, or a value inside made null, stales nothing; a bound made
+/// null, or a null a value, stales it. MC/DC of `reached`, of each bound:
+/// moved past (reached) against inside (not), a value against a null.
+#[test]
+fn a_value_growing_past_its_zones_bound_stales_nothing() {
+    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let ids: Vec<RowId> = (0..100).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    let null = || vec![Value::Null, Value::Char("null".into())];
+    // Ends transaction `tx`, its zones summed up, and begins the next.
+    let next = |tx: u64| {
+        table.validate(tx, tx).unwrap();
+        table.commit(tx, tx);
+        summed(&table, tx + 1);
+        assert!(!stale(&table) && table.begin(tx + 1, tx + 1).is_ok(), "summed up");
+    };
+    summed(&table, 1);
+    table.begin(10, 1).unwrap();
+    assert!(table.update(10, ids[99], row(150)).is_ok() && table.update(10, ids[0], row(-5)).is_ok());
+    assert!(!stale(&table), "the greatest grown past, the least fallen past");
+    assert!(reads(&table, &equal(0, 150), ids[99]) && reads(&table, &equal(0, -5), ids[0]), "widened");
+    assert!(table.update(10, ids[0], row(-3)).is_ok() && stale(&table), "the least grown");
+    next(10);
+    assert!(table.update(11, ids[99], row(140)).is_ok() && stale(&table), "the greatest shrunk");
+    next(11);
+    assert!(table.update(12, ids[99], row(140)).is_ok() && table.update(12, ids[50], null()).is_ok());
+    assert!(!stale(&table), "a bound kept, a value inside changed to null");
+    assert!(table.update(12, ids[0], null()).is_ok() && stale(&table), "the least changed to null");
+    next(12);
+    assert!(table.update(13, ids[50], row(50)).is_ok() && stale(&table), "a null changed to a value");
+}
+
 /// Verifies: [DESIGN] RULES.md D31, D34, zone maps: a zone a write left
 /// unsettled but not stale is settled from its rows' newest versions, its
 /// bounds kept, its rows counted again: a deletion inside the bounds
@@ -542,24 +547,4 @@ fn a_zone_unsettled_alone_is_settled_with_its_bounds_kept() {
     assert_eq!(zone_rows(&table, ids[0]), 99, "the deletion counted");
     assert!(!table.zones.visible(ids[0]), "a deletion is seen by no reader alone");
     assert!(reads(&table, &equal(0, 40), ids[40]), "the bounds kept");
-}
-
-/// Verifies: [DESIGN] RULES.md D31, zone maps: once a pass of the
-/// maintenance thread has looked at every zone due, the zones rest, so a
-/// write meanwhile leaves work due but asks for no maintenance until the
-/// rest is over. MC/DC of the pass's end: a pass looking at fewer zones
-/// than one call sums up rests them; one of as many, more due, does not.
-#[test]
-fn zones_rest_after_a_pass_over_every_zone_due() {
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
-    let rows = u64::try_from(super::MOST_SUMMED + 1).unwrap() * ZONE_ROWS;
-    let ids: Vec<RowId> = (0..rows).map(|n| table.insert(NO_TRANSACTION, row(i128::from(n))).unwrap()).collect();
-    assert!(table.sum_zones(u64::MAX).unwrap());
-    assert!(table.zones.wanted(), "more zones due than one call sums up: no rest");
-    assert!(table.sum_zones(u64::MAX).unwrap());
-    assert!(!table.zones.due() && !table.zones.wanted(), "every zone looked at");
-    table.update(NO_TRANSACTION, ids[0], row(-1)).unwrap();
-    assert!(table.zones.due() && !table.zones.wanted(), "due, but resting");
-    table.zones.rest_until.store(0, std::sync::atomic::Ordering::Release);
-    assert!(table.zones.wanted(), "the rest over");
 }

@@ -82,7 +82,7 @@ fn equalities_are_hash_joins() {
         ("SELECT A.N, B.N FROM A, B WHERE A.K = B.K", "SELECT A.N, B.N FROM A, B WHERE A.K + 0E0 = B.K", 5),
         ("SELECT A.N, B.N FROM A, B WHERE B.K = A.K", "SELECT A.N, B.N FROM A, B WHERE B.K + 0E0 = A.K", 5),
         ("SELECT A.N, E.N FROM A, E WHERE A.K = E.K", "SELECT A.N, E.N FROM A, E WHERE A.K + 0E0 = E.K", 3),
-        ("SELECT C.N, D.N FROM C, D WHERE C.S = D.S", "SELECT C.N, D.N FROM C, D WHERE C.S = D.S AND C.N + D.N > 0", 3),
+        ("SELECT C.N, D.N FROM C, D WHERE C.S = D.S", "SELECT C.N, D.N FROM C, D WHERE C.S = D.S AND C.N + D.N + 0E0 > 0", 3),
         (
             "SELECT A.N, B.N FROM A, B WHERE A.K = B.K AND (A.N = 1 OR B.N = 50)",
             "SELECT A.N, B.N FROM A, B WHERE A.K + 0E0 = B.K AND (A.N = 1 OR B.N = 50)",

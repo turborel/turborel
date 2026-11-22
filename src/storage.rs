@@ -15,6 +15,8 @@ mod batch;
 mod condition;
 mod cost;
 mod engine;
+mod kept;
+mod loading;
 mod newest;
 mod options;
 mod region;
@@ -28,11 +30,13 @@ pub use batch::{
 pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
+pub use kept::{COLUMN_BITS, Garbage, Kept, Needed, Removal, Removed, column_bit, same, unchanged};
+pub use loading::Loading;
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
+pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of, sized_row};
 pub use split::Split;
 
 use std::sync::Arc;
@@ -74,6 +78,20 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine cannot store the row; the statement fails.
     fn insert(&self, tx: TxId, row: Row) -> Result<RowId>;
+
+    /// \[EXTENSION\] Its side of a load, if it writes a load's rows straight as frozen groups (RULES.md D533).
+    fn loading(&self) -> Option<&dyn Loading> {
+        None
+    }
+    /// \[DESIGN\] As `insert` of a copy of `row`, which an engine storing rows encoded need not make: rows inserted together are
+    /// still held by their statement (RULES.md D531). Default: `insert` of a clone.
+    ///
+    /// # Errors
+    ///
+    /// As `insert`.
+    fn insert_from(&self, tx: TxId, row: &Row) -> Result<RowId> {
+        self.insert(tx, row.clone())
+    }
     /// Replaces the live row `id` with `row`.
     ///
     /// # Errors
@@ -109,17 +127,14 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine cannot read the row.
     fn get(&self, tx: TxId, id: RowId) -> Result<Option<Row>>;
-    /// \[DESIGN\] As `get`, of a statement that reads only `columns` of the
-    /// row: a row of the table's degree, those columns' values in their
-    /// places, the others' whatever the engine has at hand, nulls if it
-    /// read none. An engine that keeps columns apart reads only theirs.
-    /// Default: `get`.
+    /// \[DESIGN\] As `get`, of a statement that reads only `columns` of the row: a row of the table's degree, those columns' values in
+    /// their places, the others' whatever the engine has at hand, nulls if it read none. An engine that keeps columns apart reads only
+    /// theirs. Default: `get`.
     ///
     /// # Errors
     ///
     /// As `get`.
-    fn get_columns(&self, tx: TxId, id: RowId, columns: &[usize]) -> Result<Option<Row>> {
-        let _ = columns;
+    fn get_columns(&self, tx: TxId, id: RowId, _columns: &[usize]) -> Result<Option<Row>> {
         self.get(tx, id)
     }
     /// \[DESIGN\] As `get`, or `get_columns` of `columns` if named, `near`
@@ -128,65 +143,45 @@ pub trait TableStorage: Send + Sync {
     /// # Errors
     ///
     /// As `get`.
-    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
-        let _ = near;
+    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, _near: &mut Near) -> Result<Option<Row>> {
         columns.map_or_else(|| self.get(tx, id), |columns| self.get_columns(tx, id, columns))
     }
-    /// Every live row, once each, with its id. The rows have every column
-    /// at its position, but only those in `columns` need hold their value:
-    /// the others may hold anything (a column layout leaves them NULL), and
-    /// callers do not read them (RULES.md D31). A row the engine cannot read
-    /// is an error item, after which the scan may end. The scan holds what
-    /// it reads (`self`), so it can outlive the call that started it: a
-    /// cursor reads its rows as it is fetched from.
+    /// Every live row, once each, with its id. The rows have every column at its position, but only those in `columns` need hold their
+    /// value: the others may hold anything (a column layout leaves them NULL), and callers do not read them (RULES.md D31). A row the
+    /// engine cannot read is an error item, after which the scan may end. The scan holds what it reads (`self`), so it can outlive the call
+    /// that started it: a cursor reads its rows as it is fetched from.
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows;
-    /// As `scan`, for a statement that keeps only rows `conditions` all
-    /// match, and checks every row itself: an engine may leave out rows that
-    /// do not match, and, checking serializability, count only those that
-    /// do as read. Default: `scan`.
+    /// As `scan`, for a statement that keeps only rows `conditions` all match, and checks every row itself: an engine may leave
+    /// out rows that do not match, and, checking serializability, count only those that do as read. Default: `scan`.
     fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], _conditions: &Conjunction) -> Rows {
         self.scan(tx, columns)
     }
-    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
-    /// `conditions`, in no particular order, a batch of up to `BATCH_ROWS` of
-    /// them at a time: the values of `columns`, a vector for each, in the
-    /// order asked (RULES.md D31), of `_late` late if it can (D361). Default:
-    /// `scan_where`'s rows, gathered, none late.
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, in no particular order, a batch of up to `BATCH_ROWS` of
+    /// them at a time: the values of `columns`, a vector for each, in the order asked (RULES.md D31), of `_late` late if it can (D361).
+    /// Default: `scan_where`'s rows, gathered, none late.
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, _late: &[usize]) -> Batches {
-        let rows = match conditions {
-            Some(c) => self.scan_where(tx, columns, c),
-            None => self.scan(tx, columns),
-        };
-        batches_of(rows, columns)
+        batch::scanned(self, tx, columns, conditions)
     }
-    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
-    /// `conditions`, split into morsels of about `rows` rows each, for
-    /// workers to read at once (RULES.md D290); none if it cannot split
-    /// them, or failed to, its scan then raising what failed. Default: none.
-    fn split(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, rows: usize) -> Option<Arc<dyn Split>> {
-        let _ = (tx, columns, conditions, rows);
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, split into morsels of about `rows` rows each, for workers to
+    /// read at once (RULES.md D290); none if it cannot split them, or failed to, its scan then raising what failed. Default: none.
+    fn split(self: Arc<Self>, _tx: TxId, _columns: &[usize], _conditions: Option<&Conjunction>, _rows: usize) -> Option<Arc<dyn Split>> {
         None
     }
-    /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered`
-    /// gives its rows, any first of them (RULES.md D31). Default: none.
+    /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered` gives its rows, any first of them (RULES.md D31). Default: none.
     fn ordered_by(&self) -> Vec<usize> {
         Vec::new()
     }
-    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
-    /// `conditions`, in the order of the columns `keys`, the first of
-    /// `ordered_by`, each ascending as ORDER BY sorts it [X3.135-1986 §8.3
-    /// GR3b], or each descending if `backward`, nulls as it puts them, ties
-    /// in no particular order; none if it cannot give them so. Of `most`,
-    /// no more than the first `most` rows are read, so it may leave out any
-    /// after them, as FETCH FIRST asks (`exec/limit.rs`). Default: none.
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, in the order of the columns `keys`, the first of
+    /// `ordered_by`, each ascending as ORDER BY sorts it [X3.135-1986 §8.3 GR3b], or each descending if `backward`, nulls as it puts them,
+    /// ties in no particular order; none if it cannot give them so. Of `most`, no more than the first `most` rows are read, so it may leave
+    /// out any after them, as FETCH FIRST asks (`exec/limit.rs`). Default: none.
     fn scan_ordered(
         self: Arc<Self>,
-        tx: TxId,
-        columns: &[usize],
-        (keys, backward, most): ScanOrder<'_>,
-        conditions: Option<&Conjunction>,
+        _tx: TxId,
+        _columns: &[usize],
+        _order: ScanOrder<'_>,
+        _conditions: Option<&Conjunction>,
     ) -> Option<Rows> {
-        let _ = (tx, columns, keys, backward, most, conditions);
         None
     }
     /// \[DESIGN\] The rows `scan_ordered` gives, by batch, of `columns`;
@@ -200,16 +195,13 @@ pub trait TableStorage: Send + Sync {
     ) -> Option<Batches> {
         self.scan_ordered(tx, columns, order, conditions).map(|rows| batches_of(rows, columns))
     }
-    /// \[DESIGN\] Whether `scan_batches` gives its rows without making each,
-    /// so a statement given rows a few at a time, a cursor's, reads them by
-    /// batch too, a batch read ahead of what it is given. Default: false,
-    /// its batches being its rows gathered, read ahead for nothing.
+    /// \[DESIGN\] Whether `scan_batches` gives its rows without making each, so a statement given rows a few at a time, a cursor's,
+    /// reads them by batch too, a batch read ahead of what it is given. Default: false, its batches being its rows gathered.
     fn reads_by_batch(&self) -> bool {
         false
     }
-    /// \[DESIGN\] (RULES.md D351) Counts that sum to the rows `scan_batches`
-    /// gives `tx` with no conditions, read once asked for, the read noted as
-    /// the scan's. None if it cannot count faster. Default none.
+    /// \[DESIGN\] (RULES.md D351) Counts that sum to the rows `scan_batches` gives `tx` with no conditions, read once asked for,
+    /// the read noted as the scan's. None if it cannot count faster. Default none.
     fn count(self: Arc<Self>, _tx: TxId) -> Option<Counts> {
         None
     }
@@ -220,6 +212,11 @@ pub trait TableStorage: Send + Sync {
     }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
+    /// \[DESIGN\] The bytes it takes, without a pass over its rows
+    /// (TABLE_STATISTICS, RULES.md D522). Default: not known.
+    fn sizes(&self) -> Option<TableSizes> {
+        None
+    }
     /// `tx` is about to read, by `get`, the rows an index chose by
     /// `condition`: its result depends on every row the condition matches,
     /// which an engine checking serializability must count as read, rows
@@ -254,27 +251,33 @@ pub trait TableStorage: Send + Sync {
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
         Ok(Newest::of(self.get(tx, id)?))
     }
+    /// \[DESIGN\] Of `newest`, the writer and the stamp alone, read with no older version (RULES.md D747). Default: `newest`'s.
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    fn newest_writer(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        self.newest(tx, id).map(|newest| (newest.writer, newest.stamp))
+    }
 
     /// \[EXTENSION\] As `update` with `row`, or `delete` with none, of the
-    /// newest committed version of row `id`, whose stamp `newest` gave as
-    /// `seen`, though it committed after `tx`'s snapshot: how a statement
-    /// reading at a snapshot of its own [ISO/IEC 9075:1992 §4.28] changes a
-    /// row another transaction changed meanwhile, its search condition
-    /// checked by the caller against that version (RULES.md D29). Default:
-    /// `update` or `delete`, for an engine whose isolation is the
-    /// coordinator's, where no version is newer than the transaction sees;
-    /// an engine declaring `Concurrency::Engine` implements it.
+    /// newest committed version of row `id`, whose stamp `newest` gave as `seen`, though it committed after `tx`'s snapshot: how a
+    /// statement reading at a snapshot of its own [ISO/IEC 9075:1992 §4.28] changes a row another transaction changed meanwhile, its
+    /// search condition checked by the caller against that version (RULES.md D29). Default: `update` or `delete`, for an engine whose
+    /// isolation is the coordinator's, where no version is newer than the transaction sees; an engine declaring `Concurrency::Engine`
+    /// implements it.
     ///
     /// # Errors
     ///
     /// SQLCODE -911 if another open transaction changed the row, or its
     /// newest committed version's stamp is not `seen`; as `update`.
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
-        let _ = seen;
-        match row {
-            Some(row) => self.update(tx, id, row),
-            None => self.delete(tx, id),
-        }
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, _seen: Timestamp) -> Result<()> {
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row))
+    }
+    /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` replaced shares the entries of
+    /// each index whose key reads only columns of `unchanged`: those columns, which `gc` gives back. Default: none.
+    fn keep_entries(&self, _tx: TxId, _id: RowId, _unchanged: u64) -> u64 {
+        0
     }
 
     // ----- Cost model. Units: 1.0 = reading one whole row in sequence. -----
@@ -284,7 +287,6 @@ pub trait TableStorage: Send + Sync {
     fn scan_cost(&self, _columns: &[usize]) -> f64 {
         cost_of(self.row_count())
     }
-
     /// \[DESIGN\] The share of its rows a scan told `conditions`
     /// (`scan_where`) reads, from what the engine keeps of them, such as
     /// the least and greatest values of blocks of rows (RULES.md D31); the
@@ -293,25 +295,21 @@ pub trait TableStorage: Send + Sync {
     fn scan_share(&self, _conditions: &Conjunction) -> f64 {
         1.0_f64
     }
-
     /// Cost of one `get` by row id. Default: a random read in a row store.
     fn fetch_cost(&self) -> f64 {
         DEFAULT_FETCH_COST
     }
-
     /// Cost more of a page the buffer pool missed than of one it holds, of
     /// each an index's probe misses (`Index::probe_missed`). Default: none.
     fn miss_cost(&self) -> f64 {
         0.0_f64
     }
-
     /// What the engine knows of its rows, for the planner's estimates
     /// (`stats.rs`): each engine answers what its layout tells it. Default:
     /// nothing, and the planner assumes its defaults.
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         None
     }
-
     /// Gathers the statistics `statistics` gives anew, now. Default:
     /// nothing to gather.
     ///
@@ -448,17 +446,15 @@ pub trait TableStorage: Send + Sync {
     fn durable_through(&self) -> Lsn {
         Lsn(0)
     }
-    /// The rows of the versions superseded by commits at or before `as_of`
-    /// but not yet collected, whose index entries collection (`gc`) would
-    /// take back, with their ids, read as they are pulled: what a checkpoint
-    /// logs, so recovery takes them back if the crash lost the collection
-    /// (`db/checkpoint.rs`). Collection of the table is held back while
-    /// they are read. Default: none, for an engine keeping no versions.
+    /// The rows of the versions superseded by commits at or before `as_of` not yet collected, whose index entries
+    /// `gc` would take back, with their ids and what their successors kept (RULES.md D443), read as pulled: what a
+    /// checkpoint logs, so recovery takes them back if a crash lost the collection (`db/checkpoint.rs`); the
+    /// table's collection held back meanwhile. Default: none, for an engine keeping no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read a version; the checkpoint fails.
-    fn garbage(self: Arc<Self>, _as_of: Timestamp) -> Rows {
+    fn garbage(self: Arc<Self>, _as_of: Timestamp) -> Garbage {
         Box::new(std::iter::empty())
     }
     /// What finds this table again when the database is opened
@@ -491,33 +487,34 @@ pub trait TableStorage: Send + Sync {
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
         rows::applied(self, id, row)
     }
-    /// Garbage collection of versions: removes the versions of rows that no
-    /// transaction reading at or after `horizon` can read, and gives each
-    /// removed version's row, with its id, to `removed` as it goes, so
-    /// their index entries are removed too (one each: `Index`), none held
-    /// all together. `removed` says whether every entry was: of a row
-    /// whose entries are not, `visible_to_all` is false until each is
-    /// (`taken_back`).
-    /// Called after a transaction that joined the table ends. Default:
-    /// nothing, for an engine that keeps no versions.
+    /// Garbage collection of versions: removes the versions of rows that no transaction reading at or after
+    /// `horizon` can read, and gives each removed version's row, with its id and what its successor kept, to
+    /// `removed` as it goes, so their index entries are removed too (one each: `Index`), none held all together.
+    /// `removed` says whether every entry was: of a row whose entries are not, `visible_to_all` is false until
+    /// each is (`taken_back`). Called after a transaction that joined the table ends. Default: nothing, for an
+    /// engine that keeps no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read or remove them; they stay for a later call.
-    fn gc(&self, _horizon: Timestamp, _removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
+    fn gc(&self, _horizon: Timestamp, _removed: Removed<'_>) -> Result<()> {
         Ok(())
     }
-    /// Whether versions of it await collection (`gc`), so it is collected
-    /// as any transaction ends, though none touches it. Default: none, for
-    /// an engine that keeps no versions.
+    /// \[DESIGN\] Whether a transaction's end collects it at `horizon` now, or leaves it for later (RULES.md D451).
+    fn collection_due(&self, _horizon: Timestamp) -> bool {
+        true
+    }
+    /// Whether versions of it await collection (`gc`), so it is collected as any transaction ends. Default: none.
     fn uncollected(&self) -> bool {
         false
     }
-    /// \[DESIGN\] Whether work is due that the engine leaves to the
-    /// database's maintenance thread (`maintain`), so no transaction's end
-    /// waits for it: asked after each `gc`, so it should be quick. Default:
-    /// none.
+    /// \[DESIGN\] Whether work is due that the engine leaves to the database's maintenance thread (`maintain`), so no
+    /// transaction's end waits for it: asked after each `gc`, so it should be quick. Default: none.
     fn maintenance_due(&self) -> bool {
+        false
+    }
+    /// Whether its statistics are due and a plan read them since their last pass (RULES.md D473). Default: no.
+    fn statistics_wanted(&self) -> bool {
         false
     }
     /// \[DESIGN\] Does some of the work due (`maintenance_due`), of rows

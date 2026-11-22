@@ -6,10 +6,12 @@
 //!
 //! What is written goes to a side file beside it (its name and `.shadow0`
 //! or `.shadow1`), a block file of checksummed blocks (`disk/block.rs`),
-//! never to the file itself: each write puts, for every granule of
-//! `GRANULE` bytes it touches, the granule's new content over its block
-//! there, or appends one if it has none, and reads see the newest, so a
-//! side file holds a granule once however often it is written. A side
+//! never to the file itself. A write puts the whole granules of `GRANULE`
+//! bytes it covers, a page written back, as one block, its run, over the
+//! run's block if it has one, and each granule it touches in part as a
+//! block of its own; reads see the newest, taken from a block with one
+//! read and no checksum, as the file's own bytes are (RULES.md D471), so
+//! a side file holds a page once however often it is written. A side
 //! file is made at the first block appended to it. Nothing about it needs
 //! syncing until its commit, as what is not committed is thrown away.
 //!
@@ -19,7 +21,13 @@
 //! * **Seal** (`ShadowFileSystem::seal`): the side file written to, with
 //!   what is held in memory, becomes the batch to commit, and writes go to
 //!   the other side file from then on. Quick: it writes nothing. A file
-//!   with nothing to commit seals nothing.
+//!   with nothing to commit seals nothing, but for a checkpoint's capture
+//!   (`seal_capturing`).
+//! * **Capture** (`DiskFile::write_captured_at`): pages a checkpoint owes
+//!   as they were when it was taken, written into the sealed batch after
+//!   the seal as writers go on (RULES.md D590): granules held in memory,
+//!   newer than the batch's blocks and older than anything written since,
+//!   so a read finds them only where nothing newer was written.
 //! * **Commit** (`commit_sealed`): the granules the sealed batch held in
 //!   memory, its limit and its size appended to its side file, which is
 //!   synced; a commit block appended, and synced; then the file, made if
@@ -52,7 +60,7 @@
 //!
 //! ```text
 //! block:  kind u8, then
-//!   0 granule:  number u64, content (GRANULE bytes)
+//!   0 granules: first number u64, content (whole GRANULEs, at least one)
 //!   1 size:     size u64
 //!   2 commit:   (nothing)
 //!   3 limit:    size u64
@@ -61,14 +69,18 @@
 //! ```
 
 mod file;
+mod flight;
+mod pace;
 mod side;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use self::file::{Shadow, ShadowFile};
+use self::pace::{Pace, Spreading};
 use self::side::{At, SIDES, base_of, side_path};
 use super::io::{DiskFile, FileLock, FileSystem, OpenMode, walk};
 use crate::error::{Code, Result, SqlError};
@@ -89,12 +101,20 @@ pub struct ShadowFileSystem {
     files: Mutex<HashMap<PathBuf, Arc<Shadow>>>,
     /// Whether writes are held, files opened meanwhile too.
     holding: AtomicBool,
+    /// The span commits are spread over (RULES.md D812).
+    spreading: Spreading,
 }
 
 impl ShadowFileSystem {
     /// Shadows the files of `inner`, side files checksummed with `hash`.
     pub fn new(inner: Arc<dyn FileSystem>, hash: Arc<dyn HashFunction>) -> ShadowFileSystem {
-        ShadowFileSystem { inner, hash: Mutex::new(hash), files: Mutex::new(HashMap::new()), holding: AtomicBool::new(false) }
+        ShadowFileSystem {
+            inner,
+            hash: Mutex::new(hash),
+            files: Mutex::new(HashMap::new()),
+            holding: AtomicBool::new(false),
+            spreading: Spreading::default(),
+        }
     }
 
     /// Side files made from now on are checksummed with `hash` (RULES.md
@@ -177,7 +197,19 @@ impl ShadowFileSystem {
     /// SQLCODE -915 if a batch sealed before cannot be committed.
     pub fn seal(&self) -> Result<()> {
         self.holding.store(false, Ordering::Release);
-        self.known().iter().try_for_each(|s| s.seal())
+        self.known().iter().try_for_each(|s| s.seal(false))
+    }
+
+    /// Seals as `seal` does, a file there with nothing written since its
+    /// last commit sealed too: a checkpoint's capture writes into the
+    /// sealed batch after (`DiskFile::write_captured_at`, RULES.md D590).
+    ///
+    /// # Errors
+    ///
+    /// As `seal`.
+    pub fn seal_capturing(&self) -> Result<()> {
+        self.holding.store(false, Ordering::Release);
+        self.known().iter().try_for_each(|s| s.seal(true))
     }
 
     /// Commits the batch every file known sealed, each at once; then
@@ -189,9 +221,20 @@ impl ShadowFileSystem {
     /// a file whose commit block was made durable is committed when opened,
     /// one whose was not by the next commit.
     pub fn commit_sealed(&self) -> Result<()> {
-        self.known().iter().try_for_each(|s| s.commit_sealed())?;
+        let known = self.known();
+        let mut pace = Pace::new(&self.spreading, known.iter().map(|s| s.sealed_bytes()).sum());
+        known.iter().try_for_each(|s| s.commit_sealed(&mut pace))?;
+        // Each known kept no longer, so a file with no handle is forgotten.
+        drop(known);
         lock_builtin(&self.files).retain(|_, s| Arc::strong_count(s) > 1 || !s.clean());
         Ok(())
+    }
+
+    /// \[DESIGN\] Spreads the writes of the commits from now on over about
+    /// `over` each, or, `None`, makes them at once, as they are by default
+    /// (RULES.md D812). A commit going on hurries as it is told `None`.
+    pub fn spread_commits(&self, over: Option<Duration>) {
+        self.spreading.set(over);
     }
 
     /// Seals and commits what every file known has written.

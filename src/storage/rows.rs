@@ -4,6 +4,8 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::disk::buffer::Stamp;
+use crate::engine::tree::Parsed;
 use crate::error::{Code, Result, SqlError};
 use crate::txn::{NO_TRANSACTION, TxId};
 use crate::value::{Decimal, Value};
@@ -19,6 +21,22 @@ pub type Row = Vec<Value>;
 /// position is past the end of the row.
 pub fn project(row: &[Value], columns: &[usize]) -> Option<Row> {
     columns.iter().map(|&c| row.get(c).cloned()).collect()
+}
+
+/// \[DESIGN\] The row of `values`, of `len` values at most, made once per
+/// row read or computed: sized once, as a vector collected through
+/// `Result` does not know its length and grows from a few values by
+/// doubling, each growth a copy and an allocation.
+///
+/// # Errors
+///
+/// The first of `values`' errors.
+pub fn sized_row(len: usize, values: impl Iterator<Item = Result<Value>>) -> Result<Row> {
+    let mut row = Vec::with_capacity(len);
+    for value in values {
+        row.push(value?);
+    }
+    Ok(row)
 }
 
 /// Identifies a row within its table, for as long as the table exists.
@@ -69,6 +87,13 @@ pub struct Near {
     pub(crate) at: Option<usize>,
     /// The value read, kept so each read does not allocate one.
     pub(crate) bytes: Vec<u8>,
+    /// A copy of the page of the last read, taken once it answered two
+    /// reads in a row, and the page and its frame's stamp then. Later
+    /// reads of it take the copy while the stamp holds (`tree/near.rs`).
+    pub(crate) page: Vec<u8>,
+    pub(crate) kept: Option<(u64, Stamp)>,
+    /// The copy's header as parsed once, so a read of it parses nothing.
+    pub(crate) parsed: Option<Parsed>,
     /// The reading transaction, the table and its bookkeeping there, found
     /// by the last read (`rows/mvcc/open.rs`).
     pub(crate) open: Option<(TxId, usize, Arc<dyn Any + Send + Sync>)>,
@@ -104,3 +129,14 @@ pub(super) fn applied<T: super::TableStorage + ?Sized>(table: &T, id: RowId, row
 /// first rows asked for, if FETCH FIRST asks only those
 /// (`TableStorage::scan_ordered`).
 pub type ScanOrder<'a> = (&'a [usize], bool, Option<usize>);
+
+/// \[DESIGN\] The bytes a table takes (`TableStorage::sizes`, RULES.md
+/// D522), counted, or, if `estimated`, of some rows their number times
+/// their mean width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableSizes {
+    /// The bytes.
+    pub bytes: u64,
+    /// Whether some of them are estimated.
+    pub estimated: bool,
+}

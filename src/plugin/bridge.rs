@@ -107,7 +107,7 @@ impl Installed {
         let objects = manifest
             .objects
             .iter()
-            .map(|d| Ok((d.clone(), bridge(d, &pool, resolve).map_err(|e| declared_wrongly(d, &e))?)))
+            .map(|d| Ok((d.clone(), bridge(d, (&pool, host.owner()), resolve).map_err(|e| declared_wrongly(d, &e))?)))
             .collect::<Result<Vec<_>>>()?;
         Ok(Installed { manifest, directory, pool, objects, signer: None })
     }

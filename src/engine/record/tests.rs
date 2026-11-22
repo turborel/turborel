@@ -215,3 +215,47 @@ fn malformed_records_are_refused() {
     assert_eq!(corrupt(&long), Some(Code::Corrupt), "three characters in a column of two");
     assert_eq!(format.column(&bytes, 2).err().map(|e| e.code), Some(Code::Corrupt));
 }
+
+/// Verifies: [DESIGN] RULES.md D751: of the columns asked for, each is
+/// decoded once however often it is named, its value out of line fetched
+/// once; one named that is not a column of the record is passed over; the
+/// others are NULL.
+#[test]
+fn columns_asked_for_are_decoded_once() {
+    let format = RecordFormat::new(&[DataType::character(100), DataType::character(3)]);
+    let long = "x".repeat(40);
+    let row = vec![Value::Char(format!("{long:<100}")), Value::Char("ab ".into())];
+    let mut store = Vec::new();
+    let bytes = spill(&format, &row, Spill { threshold: 5, most: 1000 }, &mut store).unwrap();
+    let mut fetched = 0_u32;
+    let mut fetch = |r: Reference| {
+        fetched += 1_u32;
+        Ok(store[usize::try_from(r.at).unwrap()].1.clone())
+    };
+    let read = format.decode_columns_with(&bytes, &[0_usize, 0, 7, 0], &mut fetch).unwrap();
+    assert_eq!(fetched, 1_u32, "fetched once");
+    assert_eq!(shown(&read), shown(&vec![row[0].clone(), Value::Null]));
+    assert_eq!(shown(&format.decode_columns(&bytes, &[1, 1]).unwrap()), shown(&vec![Value::Null, row[1].clone()]));
+}
+
+/// Verifies: [DESIGN] RULES.md D31, record format: a record is written
+/// into the buffer given, after what it holds, so records follow one
+/// another, each read back alone; a row whose value is not of its
+/// column's type, past columns already written, is refused (SQLCODE
+/// -910) and leaves the buffer as it was.
+#[test]
+fn records_are_appended_and_a_failed_one_leaves_none() {
+    let format = RecordFormat::new(&types());
+    let mut out = vec![7_u8];
+    format.encode(&row(), &mut out).unwrap();
+    let first = out.len();
+    format.encode(&row(), &mut out).unwrap();
+    assert_eq!(out.first(), Some(&7_u8));
+    assert_eq!(shown(&format.decode(&out[1..first]).unwrap()), shown(&row()));
+    assert_eq!(shown(&format.decode(&out[first..]).unwrap()), shown(&row()));
+    let mut wrong = row();
+    wrong[9] = Value::Approx(1.0);
+    let before = out.clone();
+    assert_eq!(format.encode(&wrong, &mut out).err().map(|e| e.code), Some(Code::Api));
+    assert_eq!(out, before, "nothing of the refused record left");
+}

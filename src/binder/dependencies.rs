@@ -264,6 +264,11 @@ fn of_node(w: &Walk<'_>, plan: &LogicalPlan) -> Known {
         // them holds [NOTE 71].
         LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } | LogicalPlan::Limit { input, .. } => known(w, input),
         LogicalPlan::OuterJoin { kind, cond, left, right } => conditions::outer_joined(*kind, cond, (known(w, left), known(w, right))),
+        // Some of the rows of its left operand, of which all that holds of
+        // them holds.
+        LogicalPlan::SemiJoin { left, .. } => known(w, left),
+        // Rows of its left operand, each with its mark.
+        LogicalPlan::MarkJoin(m) => known(w, &m.left).widened(w, plan.width()),
         LogicalPlan::SetOp { op, left, right, .. } => set_operation(w, *op, (left, right), plan.width()),
         LogicalPlan::Values { rows, types } => values(w, rows.len(), types.len()),
         LogicalPlan::Unnest(u) => unnested(w, u),

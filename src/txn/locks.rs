@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
-use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
@@ -97,6 +97,13 @@ impl Txn {
         self.check_definitions()
     }
 
+    /// Records in each table it wrote that it committed at `at`.
+    pub(crate) fn stamp_written(&self, at: i64) {
+        if let Ok(st) = self.state() {
+            st.written.iter().for_each(|(_, lock, _)| lock.stamp(at, false));
+        }
+    }
+
     /// The tables it wrote, in the order it first wrote each.
     pub(crate) fn written_tables(&self) -> Vec<QualifiedName> {
         self.state().map(|st| st.written.iter().map(|(t, ..)| t.clone()).collect()).unwrap_or_default()
@@ -159,10 +166,20 @@ struct Holder {
     running: Arc<Mutex<Option<ThreadId>>>,
 }
 
+/// A table's collection under way (`TableLock::try_collect`), until dropped.
+pub(crate) struct Collecting<'l>(&'l TableLock);
+
+impl Drop for Collecting<'_> {
+    fn drop(&mut self) {
+        self.0.collecting.store(false, Ordering::Release);
+    }
+}
+
 /// \[DESIGN\] What the transactions share about one table: who holds its
 /// lock, the signal that a holder released it, whether a failed undo damaged
-/// it (RULES.md D19), and the snapshot that last changed its definitions
-/// (RULES.md D27). Every snapshot that knows the table shares it.
+/// it (RULES.md D19), the snapshot that last changed its definitions
+/// (RULES.md D27), and when its rows were last changed and compacted
+/// (RULES.md D522). Every snapshot that knows the table shares it.
 #[derive(Default)]
 pub(crate) struct TableLock {
     holders: Mutex<Vec<Holder>>,
@@ -191,9 +208,36 @@ pub(crate) struct TableLock {
     /// The index entries collection could not take back, tried again by
     /// its next (`txn/owed.rs`).
     pub(crate) owed: OwedRemovals,
+    /// Of each index of it filled from its versions, by name, the latest
+    /// commit the fill may have counted (`txn/kept.rs`).
+    filled: Mutex<Vec<(String, Timestamp)>>,
+    /// Whether a transaction's end is collecting its garbage now.
+    collecting: AtomicBool,
+    /// Whether it is in the set of tables awaiting collection, kept with
+    /// the set under its lock, so an end that would leave it so changes
+    /// nothing shared (RULES.md D795).
+    noted: AtomicBool,
+    /// When a transaction that wrote it last committed, and when its
+    /// engine's maintenance last did some work, as a timestamp's instant;
+    /// 0 for never (TABLE_STATISTICS, RULES.md D522).
+    changed: AtomicI64,
+    compacted: AtomicI64,
+    /// The increments reserved on its rows (RULES.md D452).
+    pub(crate) escrow: Arc<super::escrow::Escrow>,
 }
 
 impl TableLock {
+    /// Whether it is in the set of tables awaiting collection.
+    pub(crate) fn noted(&self) -> bool {
+        self.noted.load(Ordering::Acquire)
+    }
+
+    /// Notes whether it is in the set of tables awaiting collection, under
+    /// the set's lock.
+    pub(crate) fn set_noted(&self, noted: bool) {
+        self.noted.store(noted, Ordering::Release);
+    }
+
     /// Whether a failed undo damaged the table.
     pub(crate) fn is_damaged(&self) -> bool {
         self.damage().is_some()
@@ -212,6 +256,24 @@ impl TableLock {
     /// indexes alone; damage to the rows stays so.
     pub(super) fn damaged(&self, rows: bool) {
         self.damaged.fetch_max(if rows { 2 } else { 1 }, Ordering::SeqCst);
+    }
+
+    /// Records that a transaction that wrote it committed at `at`, or that
+    /// its engine's maintenance did some work at `at` if `compacted`: a
+    /// relaxed store, as the last one stored is near enough the latest,
+    /// made only when the instant moves (RULES.md D795).
+    pub(crate) fn stamp(&self, at: i64, compacted: bool) {
+        let stamped = if compacted { &self.compacted } else { &self.changed };
+        if stamped.load(Ordering::Relaxed) != at {
+            stamped.store(at, Ordering::Relaxed);
+        }
+    }
+
+    /// When a transaction that wrote it last committed, and when its
+    /// maintenance last did some work, each if it ever did.
+    pub(crate) fn stamps(&self) -> (Option<i64>, Option<i64>) {
+        let at = |a: &AtomicI64| Some(a.load(Ordering::Relaxed)).filter(|&t| t != 0);
+        (at(&self.changed), at(&self.compacted))
     }
 
     /// Marks the table repaired (`Database::repair_table`).
@@ -262,6 +324,36 @@ impl TableLock {
     /// Whether collection of its garbage is held back.
     pub(crate) fn collection_held(&self) -> bool {
         self.holds.load(Ordering::SeqCst) > 0
+    }
+
+    /// Notes that the index `name` is filled from the table's versions
+    /// committed through `through` (RULES.md D443): it counts each of
+    /// those, so none superseded by then shares an entry with its successor.
+    pub(crate) fn filled(&self, name: &str, through: Timestamp) {
+        let mut filled = lock_builtin(&self.filled);
+        filled.retain(|(n, _)| n != name);
+        filled.push((name.to_owned(), through));
+    }
+
+    /// The latest commit a fill of the index `name` may have counted, or 0
+    /// for an index not filled from versions while the table had any.
+    pub(crate) fn filled_through(&self, name: &str) -> Timestamp {
+        lock_builtin(&self.filled).iter().find(|(n, _)| n == name).map_or(0, |&(_, at)| at)
+    }
+
+    /// The table's collection, for one transaction's end at a time
+    /// (RULES.md D445): none while another's is under way, or, if `wait`,
+    /// once it is done.
+    pub(crate) fn try_collect(&self, wait: bool) -> Option<Collecting<'_>> {
+        loop {
+            if !self.collecting.swap(true, Ordering::AcqRel) {
+                return Some(Collecting(self));
+            }
+            if !wait {
+                return None;
+            }
+            thread::yield_now();
+        }
     }
 
     /// Holds collection of its garbage back, until `release_collection`.
@@ -444,6 +536,10 @@ fn wait_on<'l>(
         if let Some(most) = tx.stop.lock_timeout().filter(|&most| began.elapsed() >= most) {
             break Err(refused(&format!("{what} stayed locked by another transaction past LOCKS.TIMEOUT_MS, {} ms", most.as_millis())));
         }
+        if !waited {
+            // [DESIGN] RULES.md D520: shown waiting, and for whom.
+            tx.stop.activity().waits_for_lock(what.to_string(), ids.first().copied().unwrap_or(0));
+        }
         waits_for.insert(tx.id, ids);
         drop(waits_for);
         waited = true;
@@ -452,6 +548,7 @@ fn wait_on<'l>(
         holders = lk.released.wait_timeout(holders, STOP_POLL).map_err(|_| poisoned_wait())?.0;
     };
     if waited {
+        tx.stop.activity().woke();
         lock(&tx.shared.waits_for)?.remove(&tx.id);
         // [DESIGN] RULES.md D240: the time waited, for the client.
         tx.stop.served().waited(began.elapsed());

@@ -564,7 +564,7 @@ database goes on.
 | the program's | It answered ERROR of a class a routine may raise: 22, 23, 38, 39, 42 or 2F |
 | 38000 | It answered ERROR of another class |
 | 38T01 | Its process ended, crashed or closed a pipe; the next call starts another |
-| 38T02 | The call ran past PLUGINS.CALL_TIMEOUT_MS; its process is stopped |
+| 38T02 | The call ran past PLUGINS.CALL_TIMEOUT_MS, or a starting program gave no WELCOME in time; its process is stopped |
 | 38T03 | It broke protocol 1; its process is stopped |
 | 38T04 | It sent more than PLUGINS.MAX_MESSAGE_BYTES in a message, or PLUGINS.MAX_CALL_BYTES in a call |
 | 38T05 | It cannot be started: its directory is under none of PLUGINS.DIRECTORIES, or its program is missing |
