@@ -8,6 +8,7 @@ mod btree;
 mod budget;
 mod bulk;
 mod checkpoint;
+mod checkpoint_cost;
 mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
@@ -38,8 +39,10 @@ mod oltp;
 mod orders;
 mod own_copies;
 mod parallel;
+mod point_ops;
 mod probed_subqueries;
 mod range_joins;
+mod range_path;
 mod rewrites;
 mod row_path;
 mod server_lines;
@@ -65,7 +68,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 26] {
+pub fn core() -> [&'static [Mutation]; 29] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -93,6 +96,9 @@ pub fn core() -> [&'static [Mutation]; 26] {
         &alloc::ALLOC,
         &commit_path::COMMIT_PATH,
         &dirty_frames::DIRTY_FRAMES,
+        &range_path::RANGE_PATH,
+        &point_ops::POINT_OPS,
+        &checkpoint_cost::CHECKPOINT_COST,
     ]
 }
 
@@ -136,7 +142,7 @@ fn first() -> [&'static [Mutation]; 27] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 46] {
+fn second() -> [&'static [Mutation]; 47] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -144,6 +150,7 @@ fn second() -> [&'static [Mutation]; 46] {
         &super::dependencies::DEPENDENCIES,
         &super::limits::LIMITS,
         &super::bounded::BOUNDED_FETCH,
+        &super::set_probes::SET_PROBES,
         &super::patterns::PATTERNS,
         &super::merge::MERGE,
         &super::diagnostics::DIAGNOSTICS,

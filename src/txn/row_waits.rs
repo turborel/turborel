@@ -18,7 +18,6 @@
 
 mod claims;
 
-use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Instant;
 
@@ -26,8 +25,9 @@ use self::claims::{Claim, Claims};
 use super::{LockWait, TxId, Txn};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
+use crate::hash::xxhash::Xxh3Map;
 use crate::storage::RowId;
-use crate::sync::{lock, lock_builtin};
+use crate::sync::{Alone, lock, lock_builtin};
 
 /// Shards of the registry of ends.
 const SHARDS: u64 = 64;
@@ -202,22 +202,27 @@ impl Turn {
     }
 }
 
-/// The ends of open transactions, by id, in shards.
+/// The ends of open transactions, by id, in shards, each alone on its
+/// cache lines, so a transaction's shard shares no line with another's
+/// (RULES.md D782).
 pub(super) struct Ends {
-    shards: Vec<Mutex<HashMap<TxId, Arc<Ending>>>>,
+    shards: Box<[EndShard]>,
     /// The claims of rows waited for (RULES.md D456).
     claims: Arc<Claims>,
 }
 
+/// One shard of the ends of open transactions.
+type EndShard = Alone<Mutex<Xxh3Map<TxId, Arc<Ending>>>>;
+
 impl Default for Ends {
     fn default() -> Ends {
-        Ends { shards: (0..SHARDS).map(|_| Mutex::new(HashMap::new())).collect(), claims: Arc::default() }
+        Ends { shards: (0..SHARDS).map(|_| Alone::default()).collect(), claims: Arc::default() }
     }
 }
 
 impl Ends {
-    fn shard(&self, tx: TxId) -> Option<&Mutex<HashMap<TxId, Arc<Ending>>>> {
-        usize::try_from(tx % SHARDS).ok().and_then(|at| self.shards.get(at))
+    fn shard(&self, tx: TxId) -> Option<&Mutex<Xxh3Map<TxId, Arc<Ending>>>> {
+        usize::try_from(tx % SHARDS).ok().and_then(|at| self.shards.get(at)).map(|shard| &shard.0)
     }
 
     /// `tx` began: its end, for its waiters.

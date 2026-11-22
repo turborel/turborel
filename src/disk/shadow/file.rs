@@ -7,6 +7,7 @@ use std::sync::{Arc, RwLock, RwLockWriteGuard};
 
 use super::GRANULE;
 use super::flight::Flight;
+use super::pace::Pace;
 use super::side::{At, Op, Side, encode, granule_of, offset, recover, side_path};
 use crate::disk::block::BlockFile;
 use crate::disk::io::{DiskFile, Durability, OpenMode};
@@ -308,7 +309,7 @@ impl Shadow {
     /// file is there.
     pub(super) fn seal(&self, always: bool) -> Result<()> {
         if read(&self.pending)?.sealed.is_some() {
-            self.commit_sealed()?;
+            self.commit_sealed(&mut Pace::none())?;
         }
         let mut pending = self.settled()?;
         pending.holding = false;
@@ -323,15 +324,22 @@ impl Shadow {
         Ok(())
     }
 
-    /// Commits the sealed batch, durably, then forgets it and removes its
-    /// side file. Writers go on meanwhile.
-    pub(super) fn commit_sealed(&self) -> Result<()> {
+    /// The bytes a commit of the sealed batch writes: those it holds, to
+    /// the side file, and each granule of it, to the file; none if none is
+    /// sealed. A granule both in the side file and held counts twice.
+    pub(super) fn sealed_bytes(&self) -> u64 {
+        read(&self.pending).ok().and_then(|p| p.sealed.as_ref().map(|sealed| sealed.side.commit_bytes())).unwrap_or_default()
+    }
+
+    /// Commits the sealed batch, durably, as `pace` spreads it, then
+    /// forgets it and removes its side file. Writers go on meanwhile.
+    pub(super) fn commit_sealed(&self, pace: &mut Pace<'_>) -> Result<()> {
         let Some(sealed) = read(&self.pending)?.sealed.clone() else { return Ok(()) };
         let committed = if sealed.removed {
-            self.commit_removal(&sealed)?;
+            self.commit_removal(&sealed, pace)?;
             None
         } else {
-            self.commit_content(&sealed)?;
+            self.commit_content(&sealed, pace)?;
             Some(sealed.size)
         };
         let which = sealed.side.which;
@@ -351,8 +359,8 @@ impl Shadow {
     /// Ends the side file of `sealed` with `last`, synced, then a commit
     /// block, synced: from then on the batch is the file's, after a crash
     /// too. Synced first, a commit block found says every block before it
-    /// is whole, whichever were written over.
-    pub(super) fn end_side(&self, sealed: &Sealed, last: &[Op]) -> Result<()> {
+    /// is whole, whichever were written over. Each op appended is paced.
+    pub(super) fn end_side(&self, sealed: &Sealed, last: &[Op], pace: &mut Pace<'_>) -> Result<()> {
         let side = &sealed.side;
         let made: BlockFile;
         let blocks = if let Some(blocks) = &side.blocks {
@@ -362,7 +370,9 @@ impl Shadow {
             &made
         };
         for op in last {
-            blocks.append(&encode(op))?;
+            let encoded = encode(op);
+            blocks.append(&encoded)?;
+            pace.wrote(encoded.len());
         }
         blocks.sync(Durability::Full)?;
         blocks.append(&encode(&Op::Commit))?;
@@ -372,19 +382,15 @@ impl Shadow {
     /// Commits a batch of content: its side file ended, then the file,
     /// made if it is not there, cut to the limit, every granule copied
     /// into it, its size set, synced.
-    fn commit_content(&self, sealed: &Sealed) -> Result<()> {
+    fn commit_content(&self, sealed: &Sealed, pace: &mut Pace<'_>) -> Result<()> {
         let side = &sealed.side;
-        self.end_side(sealed, &closing_ops(sealed))?;
+        self.end_side(sealed, &closing_ops(sealed), pace)?;
         let (base, made) = self.base_to_write()?;
         base.set_size(side.limit.min(base.size()?))?;
         let mut numbers: Vec<u64> = side.granules.keys().chain(side.held.keys()).copied().collect();
         numbers.sort_unstable();
         numbers.dedup();
-        for number in numbers {
-            if let Some(content) = side.held(number)? {
-                base.write_all_at(&content, offset(number))?;
-            }
-        }
+        write_runs(side, &numbers, &*base, pace)?;
         base.set_size(sealed.size)?;
         base.sync(Durability::Full)?;
         if made { self.at.sync_dir() } else { Ok(()) }
@@ -402,8 +408,8 @@ impl Shadow {
 
     /// Commits a removal: its side file ended, then the file removed, in
     /// its directory durably.
-    fn commit_removal(&self, sealed: &Sealed) -> Result<()> {
-        self.end_side(sealed, &[Op::Remove])?;
+    fn commit_removal(&self, sealed: &Sealed, pace: &mut Pace<'_>) -> Result<()> {
+        self.end_side(sealed, &[Op::Remove], pace)?;
         drop(write(&self.base)?.take());
         if self.at.fs.exists(&self.at.path)? {
             self.at.fs.remove(&self.at.path)?;
@@ -517,15 +523,66 @@ fn patched(mut content: Vec<u8>, within: usize, from: &[u8]) -> Vec<u8> {
     content
 }
 
+/// \[DESIGN\] The most bytes of granules one op closing a side file, and
+/// one write of a commit, carries (RULES.md D811): granules next to each
+/// other go as one run, not one op, one frame and one write each. 64 KiB
+/// by a sweep of 64 KiB to 64 MiB on a drive with power-loss protection
+/// and one without: the shortest commits on both, by a little; past 4 MiB
+/// they lengthen again.
+pub(super) const RUN_BYTES: usize = 1 << 16;
+
 /// What ends a batch's side file before its commit block: the granules a
-/// cut made stale, then those held, newer than either, the limit and the
-/// size.
+/// cut made stale, then those held, newer than either, in runs, the limit
+/// and the size.
 pub(super) fn closing_ops(sealed: &Sealed) -> Vec<Op> {
     let side = &sealed.side;
     let mut last: Vec<Op> = side.stale.iter().map(|number| Op::Stale(*number)).collect();
     let mut kept: Vec<(&u64, &Vec<u8>)> = side.held.iter().collect();
     kept.sort_unstable_by_key(|(number, _)| **number);
-    last.extend(kept.into_iter().map(|(number, content)| Op::Granule(*number, content.clone())));
+    let mut run: Option<(u64, Vec<u8>)> = None;
+    for (&number, content) in kept {
+        if let Some((first, bytes)) = run.as_mut()
+            && extends(*first, bytes, number)
+        {
+            bytes.extend_from_slice(content);
+            continue;
+        }
+        last.extend(run.take().map(|(first, bytes)| Op::Granule(first, bytes)));
+        run = Some((number, content.clone()));
+    }
+    last.extend(run.map(|(first, bytes)| Op::Granule(first, bytes)));
     last.extend([Op::Limit(side.limit), Op::Size(sealed.size)]);
     last
+}
+
+/// \[DESIGN\] Whether granule `number` extends the run of `bytes` from
+/// granule `first` (RULES.md D811): it is the next one, and the run is
+/// still short of `RUN_BYTES`.
+fn extends(first: u64, bytes: &[u8], number: u64) -> bool {
+    let next = u64::try_from(bytes.len().checked_div(GRANULE).unwrap_or_default()).ok().and_then(|count| first.checked_add(count));
+    next == Some(number) && bytes.len() < RUN_BYTES
+}
+
+/// Writes into `base` the granules numbered `numbers`, in order, that
+/// `side` holds, each run of them next to each other as one write of at
+/// most `RUN_BYTES` (RULES.md D811), each paced.
+fn write_runs(side: &Side, numbers: &[u64], base: &dyn DiskFile, pace: &mut Pace<'_>) -> Result<()> {
+    let mut run: Vec<u8> = Vec::new();
+    let mut first = 0_u64;
+    for &number in numbers {
+        if !run.is_empty() && !extends(first, &run, number) {
+            base.write_all_at(&run, offset(first))?;
+            pace.wrote(run.len());
+            run.clear();
+        }
+        let at = run.len();
+        run.resize(at.saturating_add(GRANULE), 0);
+        let found = side.copy_held(number, 0, run.get_mut(at..).unwrap_or_default())?;
+        if !found {
+            run.truncate(at);
+        } else if at == 0 {
+            first = number;
+        }
+    }
+    if run.is_empty() { Ok(()) } else { base.write_all_at(&run, offset(first)) }
 }

@@ -17,6 +17,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use super::prepared::Keeping;
 use super::{Session, State, StatementContext};
 use crate::ast::{
     CheckLevels, CursorSpecification, DeltaResult, DeltaTable, InsertSource, MatchedAction, MergeWhen, SqlStatement, TableReference,
@@ -163,7 +164,7 @@ impl Session {
     pub(super) fn run_delta(&self, st: &Arc<State>, tx: &Txn, spec: &CursorSpecification, params: &Params) -> Result<bool> {
         let deltas = spec.query.deltas();
         for d in &deltas {
-            self.run_delta_table(st, tx, d, params)?;
+            self.run_delta_table(st, tx, d, (params, None))?;
         }
         Ok(!deltas.is_empty())
     }
@@ -188,18 +189,25 @@ impl Session {
             deltas.push(d);
         }
         for d in &deltas {
-            self.run_delta_table(st, tx, d, params)?;
+            self.run_delta_table(st, tx, d, (params, None))?;
         }
         Ok(!deltas.is_empty())
     }
 
     /// Runs the statement of the delta table `d` in the statement of `tx`,
-    /// giving `d` its rows.
+    /// giving `d` its rows: of a statement of a program kept, by the plans
+    /// `keeping` keeps of it (RULES.md D792).
     ///
     /// # Errors
     ///
     /// As `run_delta`.
-    pub(super) fn run_delta_table(&self, st: &Arc<State>, tx: &Txn, d: &DeltaTable, params: &Params) -> Result<()> {
+    pub(super) fn run_delta_table(
+        &self,
+        st: &Arc<State>,
+        tx: &Txn,
+        d: &DeltaTable,
+        (params, keeping): (&Params, Option<&Keeping<'_>>),
+    ) -> Result<()> {
         check_shape(d)?;
         let subject = d.subject().ok_or_else(|| refused("Format", "a <data change delta table> has a subject table"))?;
         let name = qualify(subject, &self.default_schema());
@@ -212,7 +220,7 @@ impl Session {
         // A delta table of the statement of another's keeps the other's
         // collector, given back once it ran.
         let outer = self.inner.borrow_mut().delta.replace(collector.clone());
-        let ran = self.run_statement(StatementContext { st, tx }, &d.statement, &mut params.clone(), None);
+        let ran = self.run_statement(StatementContext { st, tx }, &d.statement, &mut params.clone(), keeping);
         self.inner.borrow_mut().delta = outer;
         ran?;
         let held = std::mem::replace(&mut *lock_builtin(&collector.0.rows), HeldRows::new(st.list_space()));

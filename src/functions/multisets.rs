@@ -26,7 +26,7 @@ pub const MEMBER: &str = "MEMBER";
 pub const SUBMULTISET: &str = "SUBMULTISET";
 
 /// The names the calls of the functions here show.
-const MULTISET: &str = "MULTISET";
+pub const MULTISET: &str = "MULTISET";
 const SET: &str = "SET";
 const SET_PREDICATE: &str = "IS A SET";
 

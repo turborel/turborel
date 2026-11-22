@@ -1,7 +1,8 @@
 //! \[DESIGN\] A procedure's body kept between the CALLs a session makes
 //! of it (RULES.md D406): its text read once while it stays the same, its
 //! program bound once and kept with what it was bound with, and each
-//! INSERT, searched UPDATE and searched DELETE in it keeping its plan.
+//! INSERT, searched UPDATE and searched DELETE in it keeping its plan,
+//! as does the one a SELECT ... INTO reads as its delta table (D792).
 
 use turborel::db::{Database, Session};
 use turborel::value::{Decimal, Value};
@@ -360,4 +361,29 @@ fn a_for_cursor_reads_its_rows_whether_its_body_writes_them_or_not() {
     read.sort();
     assert_eq!(read, ["1000", "1000", "1000", "1000", "1049"], "BUMPS read each row as it was as its cursor opened");
     assert_eq!(rows(&a, "SELECT SUM(Q) FROM S WHERE W = 1"), ["1049"], "every row past the first bumped once");
+}
+
+/// Verifies: [DESIGN] RULES.md D792, a SELECT ... INTO of the final table
+/// of a searched UPDATE in a kept body keeps the UPDATE's plan, and each
+/// CALL changes and reads the row its own values name, a key no row has
+/// reading none and changing none.
+#[test]
+fn a_kept_body_reads_each_calls_final_table() {
+    let (_db, a) = defined();
+    a.run(
+        "CREATE PROCEDURE TAKE (IN WH INTEGER, IN ITEM INTEGER, IN N INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE LEFT_OVER INTEGER DEFAULT -1;
+           SELECT Q INTO LEFT_OVER FROM FINAL TABLE (UPDATE S SET Q = Q - N WHERE W = WH AND I = ITEM);
+           INSERT INTO L VALUES (WH * 100 + ITEM, LEFT_OVER);
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    for (w, i, n) in [(1, 3, 5), (2, 9, 1), (1, 3, 2), (1, 99, 4), (2, 9, 10)] {
+        a.run(&format!("CALL TAKE({w}, {i}, {n})")).unwrap();
+    }
+    a.commit().unwrap();
+    assert_eq!(rows(&a, "SELECT W, LOW FROM L ORDER BY W, LOW"), ["103,13", "103,15", "199,-1", "209,9", "209,19"]);
+    assert_eq!(rows(&a, "SELECT W, I, Q FROM S WHERE Q <> 20 ORDER BY W, I"), ["1,3,13", "2,9,9"]);
 }

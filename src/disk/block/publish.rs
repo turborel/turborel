@@ -1,5 +1,6 @@
-//! Unit tests: blocks published in order, each waiting appender woken
-//! alone as its turn comes (RULES.md D741, R-TEST-1).
+//! Unit tests: blocks published in order, the appender that publishes up
+//! to the blocks written after it publishing them too (RULES.md D741,
+//! D796, R-TEST-1).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -26,29 +27,28 @@ fn parked(blocks: &BlockFile) -> Vec<u64> {
     lock_builtin(&blocks.parking).keys().copied().collect()
 }
 
-/// Verifies: [DESIGN] RULES.md D741: an appender publishing its block
-/// wakes only the appender parked under the offset its block ends at, the
-/// next in line; the one after stays parked until that one publishes.
+/// Verifies: [DESIGN] RULES.md D796: an appender publishing its block
+/// publishes the blocks filed after it that follow on from it, all at
+/// once, and leaves one filed after a gap until the gap is published.
 #[test]
-fn a_publish_wakes_only_the_next_appender() {
+fn a_publish_publishes_the_filed_blocks_that_follow_it() {
     let blocks = blocks();
-    let ranges: Vec<(u64, u64)> = (0_u8..3).map(|_| blocks.reserve(8).map(|s| (s, s + 8)).unwrap()).collect();
-    for &(start, _) in &ranges[1..] {
-        lock_builtin(&blocks.parking).insert(start, thread::current());
+    let ranges: Vec<(u64, u64)> = (0_u8..4).map(|_| blocks.reserve(8).map(|s| (s, s + 8)).unwrap()).collect();
+    let [(a, a_end), (b, b_end), (c, c_end), (d, d_end)] = ranges[..] else { panic!("four ranges") };
+    for (start, end) in [(b, b_end), (d, d_end)] {
+        lock_builtin(&blocks.parking).insert(start, (end, thread::current()));
         blocks.parked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
-    let [(a, a_end), (b, b_end), (c, c_end)] = ranges[..] else { panic!("three ranges") };
     blocks.publish(a, a_end, Ok(())).unwrap();
-    assert_eq!(parked(&blocks), [c], "the second woken alone");
-    blocks.publish(b, b_end, Ok(())).unwrap();
-    assert_eq!(parked(&blocks), Vec::<u64>::new(), "then the third");
+    assert_eq!((blocks.end().0, parked(&blocks)), (b_end, vec![d]), "the second with it, the fourth after a gap");
     blocks.publish(c, c_end, Ok(())).unwrap();
-    assert_eq!((blocks.end().0, blocks.parked.load(std::sync::atomic::Ordering::SeqCst)), (c_end, 0));
+    assert_eq!((blocks.end().0, parked(&blocks)), (d_end, vec![]), "then the fourth");
+    assert_eq!(blocks.parked.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
-/// Verifies: [DESIGN] RULES.md D30, D741: appenders whose writes finish
-/// in the reverse of their order each wait for those before, parked, and
-/// all are published, the end reaching the last.
+/// Verifies: [DESIGN] RULES.md D30, D796: appenders whose writes finish
+/// in the reverse of their order each file their block and wait, and the
+/// first's publish publishes them all, the end reaching the last.
 #[test]
 fn appenders_finishing_out_of_order_are_all_published() {
     let blocks = blocks();

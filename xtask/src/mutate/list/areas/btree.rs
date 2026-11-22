@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 23] = [
+pub const BTREE: [Mutation; 26] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -79,8 +79,8 @@ pub const BTREE: [Mutation; 23] = [
         name: "btree-decoded-key-kept",
         package: Package::Core,
         breaks: "a search gives the key it last decoded for an entry of other bytes",
-        file: "src/index/blink.rs",
-        original: "        if let Some(key) = self.key.as_ref().filter(|_| self.bytes == bytes) {",
+        file: "src/index/blink/entries.rs",
+        original: "        if let Some(key) = self.key.as_ref().filter(|_| again) {",
         replacement: "        if let Some(key) = self.key.as_ref() {",
         integration: &[],
         unit: &["index::blink::tests::a_key_is_decoded_once_for_its_entries"],
@@ -100,8 +100,8 @@ pub const BTREE: [Mutation; 23] = [
         package: Package::Core,
         breaks: "a descent reads an inner node from a copy whatever its frame's version",
         file: "src/engine/tree/inner.rs",
-        original: "c.file == file && c.id == id && pool.unchanged(file, id, c.stamp)",
-        replacement: "c.file == file && c.id == id",
+        original: ".filter(|c| pool.unchanged(file, id, c.stamp))?;",
+        replacement: ".filter(|c| c.id == id)?;",
         integration: &[],
         unit: &["engine::tree::tests::hinted::descents_read_inner_nodes_from_current_copies"],
     },
@@ -234,5 +234,35 @@ pub const BTREE: [Mutation; 23] = [
         replacement: "                if leaf == first && false {",
         integration: &[],
         unit: &["engine::tree::tests::finger::a_run_of_keys_of_one_leaf_is_read_from_its_copy"],
+    },
+    Mutation {
+        name: "btree-copies-no-clock-bit",
+        package: Package::Core,
+        breaks: "a copy read is not marked used, so the clock gives way the copies descents read most",
+        file: "src/engine/tree/inner.rs",
+        original: "        copy.used = true;",
+        replacement: "        copy.used = copy.used;",
+        integration: &[],
+        unit: &["engine::tree::tests::copies::copies_read_since_the_hand_passed_are_kept"],
+    },
+    Mutation {
+        name: "btree-finger-step-wrong-slot",
+        package: Package::Core,
+        breaks: "a read of a kept leaf that steps to the next slot leaves its place at the last one, so later reads step from the wrong slot",
+        file: "src/engine/tree/near.rs",
+        original: "        *at = Some(slot);",
+        replacement: "        *at = at.and_then(|at| at.checked_sub(1));",
+        integration: &[],
+        unit: &["engine::tree::tests::finger::a_copy_parsed_once_reads_as_one_parsed_again"],
+    },
+    Mutation {
+        name: "btree-ready-backward-from-front",
+        package: Package::Core,
+        breaks: "a scan backward gives a leaf's entries in key order, not in reverse",
+        file: "src/engine/tree/scan/ready.rs",
+        original: "                self.back = self.back.checked_sub(1)?;\n                self.back",
+        replacement: "                self.back = self.back.checked_sub(1)?;\n                self.front = self.front.checked_add(1)?;\n                self.front.checked_sub(1)?",
+        integration: &[],
+        unit: &["engine::tree::scan::ready::tests::entries_are_given_in_order_from_one_buffer"],
     },
 ];

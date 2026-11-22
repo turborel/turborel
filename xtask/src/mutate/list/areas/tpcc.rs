@@ -9,12 +9,13 @@
 //! generator's next value evaluated as one that reads nothing; a short
 //! fixed-length string cast without its padding; a deferrable row
 //! constraint checked at once; a kept write keeping the plan one run
-//! made with its values.
+//! made with its values; a SELECT ... INTO's delta table change planned
+//! anew at each run (D792).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 13] = [
+pub const TPCC: [Mutation; 14] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -143,9 +144,19 @@ pub const TPCC: [Mutation; 13] = [
         package: Package::Core,
         breaks: "a kept write keeps the plan one run made with its values, not the one with its slots",
         file: "src/db/prepared/plans.rs",
-        original: "let learned = was.after(&plan, super::super::plan_rows_slotted(self.st, w.rows.clone(), values));",
+        original: "let learned = was.after(&plan, super::super::plan_written_slotted(self.st, w.rows.clone(), values));",
         replacement: "let learned = was.after(&plan, plan.clone());",
         integration: &["kept_routines::a_kept_write_learns_its_plan_and_changes_each_calls_rows"],
         unit: &[],
+    },
+    Mutation {
+        name: "tpcc-final-table-planned-each-run",
+        package: Package::Core,
+        breaks: "a kept body's SELECT ... INTO of a change's delta table binds and plans the change at each run",
+        file: "src/db/routines/program/host.rs",
+        original: "        return changes_kept(&d.statement);\n",
+        replacement: "        return false;\n",
+        integration: &[],
+        unit: &["db::routines::program::host::tests::a_select_into_keeps_the_plan_of_its_delta_tables_change"],
     },
 ];

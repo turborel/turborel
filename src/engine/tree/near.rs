@@ -93,6 +93,7 @@ impl BLinkTree {
                     near.page.clear();
                     near.page.extend_from_slice(&page);
                     near.kept = Some((leaf, version));
+                    near.parsed = Some(node.parsed());
                 }
                 return copied(&node, key, (&mut near.bytes, &mut near.at)).map(Some);
             }
@@ -103,22 +104,36 @@ impl BLinkTree {
     }
 
     /// Whether `key` is in the tree, if `near` keeps a copy of leaf `leaf`
-    /// that is still the leaf's content and answers for it: no page read,
-    /// no latch and no shared word written (RULES.md D806).
+    /// that is still the leaf's content and answers for it. Such a read
+    /// reads no page, takes no latch and writes no shared word (RULES.md
+    /// D806). The copy is not parsed again, and a key at the slot after
+    /// the last one found is taken with one comparison (D808).
     fn in_copy(&self, key: &[u8], leaf: u64, near: &mut Near) -> Result<Option<bool>> {
         let Some((_, version)) = near.kept.filter(|&(kept, _)| kept == leaf) else { return Ok(None) };
         if !self.pool.unchanged(self.file, leaf, version) {
             near.kept = None;
             return Ok(None);
         }
-        let Near { page, bytes, at, misses, .. } = near;
-        let node = Node::parse(page)?;
-        if !answers(&node, key)? {
+        let Near { page, bytes, at, misses, parsed, .. } = near;
+        let node = match parsed.as_ref().and_then(|parsed| Node::parsed_again(page, parsed)) {
+            Some(node) => node,
+            None => Node::parse(page)?,
+        };
+        let next = at.and_then(|at| at.checked_add(1)).filter(|&next| next < node.len());
+        let stepped = match next {
+            Some(next) => node.key(next)?.is(key).then_some(next),
+            None => None,
+        };
+        if stepped.is_none() && !answers(&node, key)? {
             return Ok(None);
         }
         self.tally.lookup();
         *misses = 0;
-        copied(&node, key, (bytes, at)).map(Some)
+        let Some(slot) = stepped else { return copied(&node, key, (bytes, at)).map(Some) };
+        bytes.clear();
+        bytes.extend_from_slice(node.entry(slot)?.1);
+        *at = Some(slot);
+        Ok(Some(true))
     }
 }
 
