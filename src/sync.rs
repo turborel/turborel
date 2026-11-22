@@ -14,8 +14,10 @@ use std::sync::{Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockW
 
 use crate::error::{Code, SqlError};
 
+mod alone;
 mod signal;
 
+pub(crate) use alone::Alone;
 pub(crate) use signal::Signal;
 
 /// The error for a lock whose holder panicked.

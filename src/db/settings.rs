@@ -510,7 +510,7 @@ impl Session {
     ///
     /// SQLCODE -910 if there is no such setting.
     pub fn setting(&self, name: &str) -> Result<Value> {
-        let st = self.db.snapshot()?;
+        let st = self.own_snapshot()?;
         let key = st.settings.known(name)?;
         Ok(st.settings.effective(key, &self.own.borrow()).0.clone())
     }
