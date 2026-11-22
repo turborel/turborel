@@ -111,8 +111,12 @@ fn an_indexs_searches_and_entries_are_counted() {
     assert_eq!(rows(&x, "SELECT V FROM T WHERE K = 5").unwrap(), ["v5"]);
     assert_eq!(rows(&x, "SELECT COUNT(*) FROM T WHERE K BETWEEN 10 AND 19").unwrap(), ["10"]);
     assert_eq!(uses(&db), ["2,11,1000,2,NULL"], "two scans, eleven entries");
+    // A range read of its rows' columns, its keys compared as the index
+    // holds them (D821), counts as any scan.
+    assert_eq!(rows(&x, "SELECT V FROM T WHERE K BETWEEN 20 AND 21").unwrap(), ["v20", "v21"]);
+    assert_eq!(uses(&db), ["3,13,1000,2,NULL"], "three scans, thirteen entries");
     assert_eq!(rows(&x, "SELECT COUNT(*) FROM U JOIN T ON T.K = U.K").unwrap(), ["10"]);
-    assert_eq!(uses(&db), ["12,21,1000,2,NULL"], "a probe of each of U's ten rows");
+    assert_eq!(uses(&db), ["13,23,1000,2,NULL"], "a probe of each of U's ten rows");
     x.commit().unwrap();
     x.run("DROP INDEX T_K").unwrap();
     x.run("CREATE INDEX T_K ON T (K)").unwrap();

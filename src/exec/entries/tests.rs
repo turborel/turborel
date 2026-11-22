@@ -35,6 +35,7 @@ fn projected_probes_renew_locality_without_dropping_read_state() {
             projection,
             notes: None,
             counts: [0; 3],
+            key: Vec::new(),
         };
         let allocation = reading.near.bytes.as_ptr();
         reading.next_probe();

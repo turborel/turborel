@@ -440,6 +440,31 @@ fn a_key_is_decoded_once_for_its_entries() {
     assert_eq!(found(&index, CompOp::Eq, exact(100, 2)), [1, 2, 3, 4, 5]);
 }
 
+/// Verifies: [DESIGN] RULES.md D821: an encoded search gives each entry
+/// `search` gives, in key order and reversed, its key the bytes of its
+/// values over the index's types; a probe each key of which is checked,
+/// by a value of a finer scale than its column's, is not searched so.
+#[test]
+fn an_encoded_search_gives_the_keys_search_finds() {
+    let index = index(&[MONEY]);
+    for (row, units) in (1..).zip([-1_000, 1_055, 1_056, 1_060, 9_999]) {
+        index.insert(Key(vec![exact(units, 2)]), row).unwrap();
+    }
+    let (low, high) = (Box::new((CompOp::Ge, exact(1_055, 2))), Box::new((CompOp::Lt, exact(9_999, 2))));
+    let probes = [Probe::All, Probe::Compare { op: CompOp::Eq, value: exact(1_056, 2) }, Probe::Range { equal: Vec::new(), low, high }];
+    for probe in probes {
+        for order in [KeyOrder::Ascending, KeyOrder::Descending] {
+            let Encoded { entries, types } = Arc::clone(&index).search_encoded(&probe, order).unwrap();
+            let decoded = |(bytes, row): (Vec<u8>, RowId)| Ok((Key(decode_key(&bytes, &types)?), row));
+            let encoded: Vec<(Key, RowId)> = entries.map(|e| e.and_then(decoded)).collect::<Result<_>>().unwrap();
+            let keyed: Vec<(Key, RowId)> = Arc::clone(&index).search(&probe, order).collect::<Result<_>>().unwrap();
+            assert!(!keyed.is_empty() && encoded == keyed, "{probe:?} {order:?}");
+        }
+    }
+    let finer = Probe::Compare { op: CompOp::Eq, value: exact(10_555, 3) };
+    assert!(Arc::clone(&index).search_encoded(&finer, KeyOrder::Ascending).is_none());
+}
+
 /// Verifies: [DESIGN] RULES.md D381, range estimates: of a tree of
 /// 100,000 entries inserted in key order and in an order shuffled from a
 /// fixed seed, a range of any size past 128 entries is estimated by its
