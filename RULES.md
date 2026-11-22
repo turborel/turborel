@@ -14159,8 +14159,9 @@ a cache line is 64 bytes, and an adjacent-line prefetcher fetches lines
 in aligned pairs, so a write to either line of a pair takes both. The
 clock's counters of ids and commits, its stable and durable timestamps,
 the count of active transactions, each shard of what cancels the
-statements of open transactions, and each shard of the transactions
-holding log records are alone. Their shards are found by an XXH3 map of
+statements of open transactions, each shard of the transactions
+holding log records, and each shard of the ends of open transactions,
+which row waits wait on, are alone. Their shards are found by an XXH3 map of
 their own, not SipHash.
 Nothing changes in what they hold or when, only where they lie.
 
