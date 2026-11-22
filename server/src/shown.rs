@@ -226,6 +226,13 @@ impl Present {
         self.ended.clone()
     }
 
+    /// Whether an operator ended the connection (`Operator::end`), as it
+    /// stands now. It is read with no wait, so the runtime defers nothing
+    /// of it.
+    pub fn is_ended(&self) -> bool {
+        *self.ended.borrow()
+    }
+
     /// Done once an operator ends the connection (`Operator::end`).
     pub async fn ended(&self) {
         let mut ended = self.ended.clone();

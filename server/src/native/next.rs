@@ -13,6 +13,7 @@ use turborel_protocol::{Attributes, Capabilities, Reply, Request, broken};
 
 use super::lent::{self, Lent};
 use super::requests::Work;
+use super::wire::Wire;
 use crate::server::Services;
 use crate::shown::Present;
 
@@ -104,6 +105,29 @@ pub(super) fn work_of(request: Request, granted: Capabilities) -> Option<Work> {
     }
 }
 
+/// The client's next request on `wire`, unless its operator ends the
+/// connection (`present`) or the server stops (`stopping`) first. The end
+/// is looked at again once a request is read. Within one poll it may land
+/// after its wait is polled and before the read, and the request its
+/// client sent after it is then refused all the same. Once `Operator::end`
+/// returns, the connection runs no request more (RULES.md D42).
+///
+/// # Errors
+///
+/// The connection ended, or the server stopping; the read's.
+pub(super) async fn received(wire: &mut Wire, present: &Present, stopping: impl Future<Output = ()>) -> Result<Request> {
+    let request = tokio::select! {
+        biased;
+        () = present.ended() => Err(super::ended()),
+        () = stopping => Err(broken("[DESIGN] the server is stopping")),
+        request = wire.receive() => request,
+    };
+    if present.is_ended() {
+        return Err(super::ended());
+    }
+    request
+}
+
 /// What the client asks next, each Ping answered meanwhile: waited for
 /// SERVER.IDLE_TIMEOUT_MS, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too
 /// while the session's transaction is active; the client fast if it came
@@ -134,7 +158,87 @@ pub(super) async fn next_work(lent: &mut Lent, (services, present): (&Services, 
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::task::{Context, Poll};
+
+    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf};
+    use turborel::value::types::TypeRegistry;
+
     use super::*;
+    use crate::auth::Peer;
+    use crate::shown::{Operator, Shown};
+    use crate::transport::Transport;
+
+    /// A pipe's end that, as it is next read once `armed` holds a
+    /// connection's ID, has `operator` end that connection first, so the
+    /// end lands after its wait was polled, as the read begins.
+    struct EndedAsRead {
+        pipe: DuplexStream,
+        operator: Operator,
+        armed: Arc<AtomicU64>,
+    }
+
+    impl AsyncRead for EndedAsRead {
+        fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+            let this = self.get_mut();
+            let id = this.armed.swap(0, Ordering::Relaxed);
+            if id != 0 {
+                assert!(this.operator.end(id));
+            }
+            Pin::new(&mut this.pipe).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for EndedAsRead {
+        fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+            Pin::new(&mut self.get_mut().pipe).poll_write(cx, buf)
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.get_mut().pipe).poll_flush(cx)
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.get_mut().pipe).poll_shutdown(cx)
+        }
+    }
+
+    impl Transport for EndedAsRead {}
+
+    /// Verifies: [DESIGN] RULES.md D42: a request read once its operator
+    /// ended the connection is refused (SQLSTATE 08006), though the end
+    /// came only after its wait was polled, as the read began; one read
+    /// before any end is taken.
+    ///
+    /// Regression test (R-TEST-7): the end was heard only through its
+    /// wait, polled before the read, so an end landing between the two let
+    /// the request its client sent after it run.
+    #[test]
+    fn a_request_read_once_the_connection_is_ended_is_refused() {
+        let shown = Arc::new(Shown::default());
+        let operator = Operator::of(&shown);
+        let (present, _row) = shown.connected(&Peer::local());
+        let id = operator.connections().first().map(|(id, _)| *id).unwrap();
+        let (near, mut far) = tokio::io::duplex(1024);
+        let armed = Arc::new(AtomicU64::new(0));
+        let ending = EndedAsRead { pipe: near, operator, armed: Arc::clone(&armed) };
+        let mut wire = Wire::new(Box::new(ending), 1024, TypeRegistry::default());
+        let mut query = Vec::new();
+        Request::Query { sql: "VALUES 1".into(), ends: false, attributes: Vec::new(), multi: false }.encode(&mut query);
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(async {
+            far.write_all(&query).await.unwrap();
+            let taken = received(&mut wire, &present, std::future::pending()).await;
+            assert!(matches!(taken, Ok(Request::Query { .. })), "not ended: {taken:?}");
+            armed.store(id, Ordering::Relaxed);
+            far.write_all(&query).await.unwrap();
+            let refused = received(&mut wire, &present, std::future::pending()).await.unwrap_err();
+            assert_eq!(refused.sqlstate(), turborel::error::SqlState::CONNECTION_FAILURE, "{refused:?}");
+            assert!(refused.msg.contains("operator ended the connection"), "{}", refused.msg);
+        });
+    }
 
     /// Verifies: [DESIGN] RULES.md D185: a request of a capability not
     /// granted fails the connection; granted, it is taken; Ping is the

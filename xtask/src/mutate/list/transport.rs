@@ -2,12 +2,13 @@
 //! request's last replies held for the next pipelined request's only
 //! within a batch, the reply buffer begun anew once sent, a stream TLS
 //! secures read by its worker itself and failed by a socket closed without
-//! close_notify, and a request pipelined behind a stop not run.
+//! close_notify, a request pipelined behind a stop not run, and a request
+//! read once its operator ended the connection refused.
 
 use super::{Mutation, Package};
 
 /// The transport's mutations, in the order they run.
-pub const TRANSPORT: [Mutation; 5] = [
+pub const TRANSPORT: [Mutation; 6] = [
     Mutation {
         name: "pipelined-replies-past-a-batch",
         package: Package::Server,
@@ -57,5 +58,15 @@ pub const TRANSPORT: [Mutation; 5] = [
         replacement: "super::next::work_of(request, granted))",
         integration: &["transport::a_server_stopping_sends_the_replies_in_flight"],
         unit: &[],
+    },
+    Mutation {
+        name: "request-run-once-ended",
+        package: Package::Server,
+        breaks: "a request read once its operator ended the connection is run, the end landing as the read began",
+        file: "server/src/native/next.rs",
+        original: "    if present.is_ended() {\n        return Err(super::ended());",
+        replacement: "    if false {\n        return Err(super::ended());",
+        integration: &[],
+        unit: &["native::next::tests::a_request_read_once_the_connection_is_ended_is_refused"],
     },
 ];
