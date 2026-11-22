@@ -1,8 +1,9 @@
 //! Unit tests of sparse leaves merged into their right neighbour (RULES.md
 //! D814, `merge.rs`): a leaf thinned beside a thin neighbour merges, one
 //! beside a full neighbour stays, a copy of a leaf merged since is not
-//! read, and scans and reads running while threads delete see every key
-//! that stays, in order, none twice.
+//! read, a count and a backward scan across a merge take its keys once,
+//! and scans and reads running while threads delete see every key that
+//! stays, in order, none twice.
 
 use std::sync::Barrier;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -81,6 +82,46 @@ fn a_copy_of_a_leaf_merged_since_is_not_read() {
     for &k in &left {
         assert_eq!(tree.get_near(&key(k), &mut near).unwrap(), k.is_multiple_of(4), "key {k}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D814: a count of a range across a leaf
+/// merged into the next after it was counted counts its keys once, as the
+/// count goes on past the leaf's high key.
+#[test]
+fn a_count_across_a_leaf_merged_since_counts_its_keys_once() {
+    let (tree, _scratch) = tree("merge-count");
+    fill(&tree, 400);
+    let left = in_leaf(&tree, 400, 200);
+    let last = *left.last().unwrap();
+    let right = in_leaf(&tree, 400, last.checked_add(1).unwrap());
+    thin(&tree, &right);
+    let mut scan = tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward);
+    let mut counted = 0_usize;
+    let through = usize::try_from(last).unwrap();
+    while counted < through {
+        counted = counted.checked_add(scan.count_leaf().unwrap().unwrap()).unwrap();
+    }
+    assert_eq!(counted, through, "counted through the leaf");
+    thin(&tree, &left);
+    assert_eq!(tree.counts().merged, 1, "merged into the leaf counted next");
+    while let Some(found) = scan.count_leaf().unwrap() {
+        counted = counted.checked_add(found).unwrap();
+    }
+    let thinned = right.iter().filter(|k| !k.is_multiple_of(4)).count();
+    assert_eq!(counted, 400_usize.checked_sub(thinned).unwrap(), "the leaf's keys counted once, as they were");
+}
+
+/// Verifies: [DESIGN] RULES.md D814: a backward scan's next bound is the
+/// low of its leaf's range, unless it took keys that low or lower, from a
+/// leaf merged into it since its parent was read: then just below the
+/// lowest it took, so none is taken twice.
+#[test]
+fn a_backward_scan_goes_below_keys_merged_in() {
+    let low = key(200).to_vec();
+    assert_eq!(scan::below_taken(Some(&key(201)), low.clone()), Bound::Included(low.clone()), "the leaf's own keys");
+    assert_eq!(scan::below_taken(None, low.clone()), Bound::Included(low.clone()), "none taken");
+    assert_eq!(scan::below_taken(Some(&key(150)), low.clone()), Bound::Excluded(key(150).to_vec()), "keys merged in");
+    assert_eq!(scan::below_taken(Some(&key(200)), low), Bound::Excluded(key(200).to_vec()), "the low key itself");
 }
 
 /// Keys of the concurrent test, and those of them never deleted.

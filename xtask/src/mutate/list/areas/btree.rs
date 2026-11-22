@@ -9,7 +9,7 @@ const MERGE: &str = "src/engine/tree/merge.rs";
 const SPARSE: &str = "engine::tree::tests::merge::a_sparse_leaf_merges_into_a_sparse_right_neighbour";
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 30] = [
+pub const BTREE: [Mutation; 31] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -305,9 +305,19 @@ pub const BTREE: [Mutation; 30] = [
         package: Package::Core,
         breaks: "a backward scan reading a leaf merged into since its parent was read returns the merged keys twice",
         file: "src/engine/tree/scan.rs",
-        original: "                        Some(first) if first <= low.as_slice() => Bound::Excluded(first.to_vec()),",
-        replacement: "                        Some(first) if first < first => Bound::Excluded(first.to_vec()),",
-        integration: &["trees::threads_read_and_write_at_once"],
-        unit: &["engine::tree::tests::merge::scans_and_reads_across_merges_miss_nothing_and_repeat_nothing"],
+        original: "        Some(first) if first <= low.as_slice() => Bound::Excluded(first.to_vec()),",
+        replacement: "        Some(first) if first < first => Bound::Excluded(first.to_vec()),",
+        integration: &[],
+        unit: &["engine::tree::tests::merge::a_backward_scan_goes_below_keys_merged_in"],
+    },
+    Mutation {
+        name: "btree-count-merged-twice",
+        package: Package::Core,
+        breaks: "a count across a leaf merged into the next after it was counted counts its keys twice",
+        file: "src/engine/tree/scan.rs",
+        original: "            self.lower = Bound::Excluded(high);",
+        replacement: "            drop(high);",
+        integration: &[],
+        unit: &["engine::tree::tests::merge::a_count_across_a_leaf_merged_since_counts_its_keys_once"],
     },
 ];

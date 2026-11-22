@@ -256,15 +256,23 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                 // that one's keys too, all taken: the next read takes
                 // those below the lowest (`merge.rs`).
                 if let Some(low) = low.filter(|low| above(low, &self.lower)) {
-                    self.upper = match self.ready.first_key() {
-                        Some(first) if first <= low.as_slice() => Bound::Excluded(first.to_vec()),
-                        _ => Bound::Included(low),
-                    };
+                    self.upper = below_taken(self.ready.first_key(), low);
                     self.next = Next::Descend;
                 }
             }
         }
         Ok(())
+    }
+}
+
+/// A backward scan's next upper bound, after a leaf whose lowest key
+/// taken is `first`, and whose range was known to begin above `low`: at
+/// or below `low`, unless keys that low were taken, from a leaf merged
+/// into it since its parent was read (`merge.rs`); then below the lowest.
+pub(super) fn below_taken(first: Option<&[u8]>, low: Vec<u8>) -> Bound<Vec<u8>> {
+    match first {
+        Some(first) if first <= low.as_slice() => Bound::Excluded(first.to_vec()),
+        _ => Bound::Included(low),
     }
 }
 
@@ -290,31 +298,38 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
     /// As reading a leaf's.
     pub fn counted(mut self, most: usize) -> Result<Option<usize>> {
         let mut counted = 0_usize;
-        loop {
-            let tree = &*self.tree;
-            let (found, further, high) = match self.next {
-                Next::Done => return Ok(Some(counted)),
-                Next::Leaf(id) => tally(&Node::parse(&tree.pool.read(tree.file, id.0)?)?, &self.lower, &self.upper)?,
-                Next::Descend => {
-                    let target = match &self.lower {
-                        Bound::Included(key) | Bound::Excluded(key) => Target::Key(key),
-                        Bound::Unbounded => Target::First,
-                    };
-                    let mut path = Path { tallied: matches!(target, Target::Key(_)), ..Path::default() };
-                    tree.descend(target, 0, &mut path, |leaf| tally(leaf, &self.lower, &self.upper))?.1
-                }
-            };
+        while let Some(found) = self.count_leaf()? {
             counted = counted.saturating_add(found);
             if counted > most {
                 return Ok(None);
             }
-            // Keys of a leaf merged into the next since it was counted are
-            // at or below its high key (`merge.rs`): counted once.
-            if let Some(high) = high {
-                self.lower = Bound::Excluded(high);
-            }
-            self.next = further.map_or(Next::Done, Next::Leaf);
         }
+        Ok(Some(counted))
+    }
+
+    /// `counted`'s step: the entries of the next leaf within the bounds,
+    /// none once the scan is done, and where to count next decided.
+    pub(super) fn count_leaf(&mut self) -> Result<Option<usize>> {
+        let tree = &*self.tree;
+        let (found, further, high) = match self.next {
+            Next::Done => return Ok(None),
+            Next::Leaf(id) => tally(&Node::parse(&tree.pool.read(tree.file, id.0)?)?, &self.lower, &self.upper)?,
+            Next::Descend => {
+                let target = match &self.lower {
+                    Bound::Included(key) | Bound::Excluded(key) => Target::Key(key),
+                    Bound::Unbounded => Target::First,
+                };
+                let mut path = Path { tallied: matches!(target, Target::Key(_)), ..Path::default() };
+                tree.descend(target, 0, &mut path, |leaf| tally(leaf, &self.lower, &self.upper))?.1
+            }
+        };
+        // Keys of a leaf merged into the next since it was counted are at
+        // or below its high key (`merge.rs`): counted once.
+        if let Some(high) = high {
+            self.lower = Bound::Excluded(high);
+        }
+        self.next = further.map_or(Next::Done, Next::Leaf);
+        Ok(Some(found))
     }
 }
 
