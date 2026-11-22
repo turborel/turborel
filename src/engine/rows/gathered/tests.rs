@@ -102,3 +102,31 @@ fn malformed_fields_are_refused() {
     assert_eq!(texts.push((&short, &bad), &mut fetch, None).err().map(|e| e.code), Some(Code::Corrupt));
     assert_eq!(short.column(&bad, 0).err().map(|e| e.code), Some(Code::Corrupt), "as decoded");
 }
+
+/// Verifies: [DESIGN] RULES.md D822, a batch's vectors have room for the
+/// rows asked for before they are gathered, counted from those it holds:
+/// each column's of every kind asked for, a batch taken leaving them room
+/// again for the next.
+#[test]
+fn a_batch_has_room_for_its_rows_at_once() {
+    let mut gathering = Gathering::new(&types(), &[0, 1, 2, 3]);
+    let room = |g: &Gathering| {
+        g.columns
+            .iter()
+            .map(|(_, v)| match v {
+                Gathered::Ints { units, .. } => units.capacity(),
+                Gathered::Texts { ends, .. } => ends.capacity(),
+                Gathered::Datetimes(held, _) => held.1.utc.capacity(),
+                Gathered::Bools(..) => usize::MAX,
+                Gathered::Values(values) => values.capacity(),
+            })
+            .min()
+            .unwrap_or(0)
+    };
+    gathering.reserve(16);
+    assert!(room(&gathering) >= 16, "{}", room(&gathering));
+    drop(gathering.take());
+    assert_eq!(room(&gathering), 0, "handed on with the batch");
+    gathering.reserve(32);
+    assert!(room(&gathering) >= 32, "{}", room(&gathering));
+}
