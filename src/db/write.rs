@@ -448,6 +448,8 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         return Ok(None);
     }
     let columns = set_columns(&w);
+    // [DESIGN] RULES.md D452: increments reserved, the rows left unwritten.
+    let escrow = super::escrow::escrow_of(st, tx, &w, effects);
     let hosted = Hosted::in_db(effects.host, cx, &w.db(st));
     let runner = hosted.runner();
     let mut leftovers = portion::Leftovers::of(st, &w)?;
@@ -457,7 +459,13 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     // A row another transaction changed is written in the version it
     // committed, if it is still one to change, its values computed from it.
     let mut again: HashMap<RowId, Option<Row>> = HashMap::new();
-    changes.visit(&mut |(id, _, new)| {
+    changes.visit(&mut |(id, seen, new)| {
+        if let Some(guarded) = escrow
+            && let Some(deltas) = super::escrow::deltas(&w, (seen, new), &hosted)?
+            && st.reserve_row(tx, (&w.bound.table, *id), (seen, &deltas, guarded))?
+        {
+            return Ok(());
+        }
         // [EXTENSION] a row its key moves to another partition (RULES.md D155).
         if st.moves((&w.bound.named, &w.bound.table), new) {
             return super::partitions::move_row(cx, (&w, runner), (*id, new), (effects, &mut again));
@@ -485,15 +493,28 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         }
         Ok(())
     })?;
-    if !w.bound.checks.is_empty() {
-        let checked = |row: &Row| check_option(&w.bound.checks, [row], ("X3.135-1986 §8.12 GR4", runner));
-        changes.visit(&mut |(id, _, new)| match again.get(id) {
-            Some(None) => Ok(()),
-            Some(Some(row)) => checked(row),
-            None => checked(new),
-        })?;
-    }
+    checked_again(&w, &mut changes, &again, runner)?;
     leftovers.insert(cx, &w, effects).map(|()| Some(changes.len().saturating_sub(again.values().filter(|r| r.is_none()).count())))
+}
+
+/// [X3.135-1986 §8.12 GR4] Of the UPDATE `w` through a view WITH CHECK
+/// OPTION, that each row of `changes` it wrote, as `again` holds it if
+/// written over another's commit, is one of the view's.
+fn checked_again(
+    w: &Written,
+    changes: &mut HeldRows<(RowId, Row, Row)>,
+    again: &HashMap<RowId, Option<Row>>,
+    runner: &Runner,
+) -> Result<()> {
+    if w.bound.checks.is_empty() {
+        return Ok(());
+    }
+    let checked = |row: &Row| check_option(&w.bound.checks, [row], ("X3.135-1986 §8.12 GR4", runner));
+    changes.visit(&mut |(id, _, new)| match again.get(id) {
+        Some(None) => Ok(()),
+        Some(Some(row)) => checked(row),
+        None => checked(new),
+    })
 }
 
 /// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it

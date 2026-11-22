@@ -58,7 +58,7 @@ use crate::logical::{LogicalPlan, filled};
 use crate::params::Params;
 use crate::physical::{Kept as KeptPhysical, keepable, prepared_plan};
 use crate::settings::Own;
-use crate::sync::{read, write};
+use crate::sync::write;
 use crate::value::Value;
 pub(in crate::db) use grown::{Fit, Learnt};
 pub(crate) use learning::{Learned, Learning, MOST_LEARNING_RUNS};
@@ -74,6 +74,8 @@ mod point;
 #[derive(Debug, Default)]
 pub(crate) struct Plans {
     kept: Arc<Place>,
+    /// Its own copy of what its place keeps (`shared.rs`, RULES.md D781).
+    own: super::shared::Own,
     /// The plans its executions made.
     made: AtomicU64,
     /// Its text, normalized once (RULES.md D521).
@@ -83,7 +85,7 @@ pub(crate) struct Plans {
 impl Plans {
     /// What keeps its plans in `place`.
     pub(super) fn in_place(place: Arc<Place>) -> Plans {
-        Plans { kept: place, made: AtomicU64::default(), text: std::sync::OnceLock::default() }
+        Plans { kept: place, own: super::shared::Own::default(), made: AtomicU64::default(), text: std::sync::OnceLock::default() }
     }
 
     /// How many plans its executions made.
@@ -101,17 +103,17 @@ impl Plans {
 /// What is kept, and what it was made with.
 #[derive(Debug)]
 pub(super) struct Kept {
-    key: Key,
-    statement: Option<Arc<SqlStatement>>,
+    pub(super) key: Key,
+    pub(super) statement: Option<Arc<SqlStatement>>,
     /// A query's `<cursor specification>`, parsed.
-    specification: Option<Arc<CursorSpecification>>,
-    plan: Option<KeptPlan>,
+    pub(super) specification: Option<Arc<CursorSpecification>>,
+    pub(super) plan: Option<KeptPlan>,
     /// Whether its plan reads the statement's instant as the slot past its
     /// `?`s (`Params::clock_slot`, RULES.md D613).
-    clocked: bool,
+    pub(super) clocked: bool,
     /// A query's physical plan, or an UPDATE's or DELETE's of its object
     /// rows, if its paths follow no value of its.
-    physical: Physical,
+    pub(super) physical: Physical,
 }
 
 impl Kept {
@@ -138,7 +140,7 @@ impl Kept {
 /// A query's physical plan, kept if its paths follow no value of its
 /// (`physical/kept.rs`).
 #[derive(Debug)]
-enum Physical {
+pub(super) enum Physical {
     /// Not yet planned with its slots.
     Untried,
     /// Its paths follow its values: planned at each execution; with what
@@ -193,7 +195,7 @@ pub(in crate::db) enum KeptPlan {
 
 /// What a plan is made with, besides the statement's text: as the module
 /// says.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::db) struct Key {
     generation: u64,
     catalog: Weak<dyn Catalog>,
@@ -255,8 +257,7 @@ impl Keeping<'_> {
     ///
     /// SQLCODE -910 if a lock is poisoned.
     fn kept<T>(&self, get: impl FnOnce(&Kept) -> Option<T>) -> Result<Option<T>> {
-        let kept = read(&self.plans.kept.kept)?;
-        Ok(kept.as_ref().filter(|k| self.holds(&k.key)).and_then(get))
+        self.plans.own.read(&self.plans.kept, |kept| kept.filter(|k| self.holds(&k.key)).and_then(get))
     }
 
     /// Keeps what `put` puts, with what holds now: beside what is kept with
@@ -269,6 +270,7 @@ impl Keeping<'_> {
         let mut kept = write(&self.plans.kept.kept)?;
         let holding = kept.take().filter(|k| self.holds(&k.key));
         put(kept.insert(holding.unwrap_or_else(|| Kept::empty(self.key()))));
+        self.plans.kept.changed();
         Ok(())
     }
 

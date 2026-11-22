@@ -140,7 +140,7 @@ impl RowTable {
         horizon.checked_sub(due).is_some_and(|past| past >= COLLECT_AFTER)
             || self.versions.garbage_items.load(Ordering::Relaxed) >= COLLECT_ITEMS
             || self.versions.undone_waiting.load(Ordering::Relaxed)
-            || self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()
+            || self.versions.open.is_empty()
     }
 
     /// Whether anything awaits collection: garbage, versions undone changes
@@ -180,8 +180,7 @@ impl RowTable {
         // Under the lock collection reads the transactions open by, so it
         // never releases by what was open before this is added.
         let mut undone = lock_builtin(&self.versions.undone);
-        let newest =
-            self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).keys().filter(|&&by| by != tx).max().copied();
+        let newest = self.versions.open.newest_but(tx);
         let list = undone.entry(newest.unwrap_or(NO_TRANSACTION)).or_insert_with(|| SpillList::new(space));
         // An item that cannot be written is held all the same.
         list.push(Dead::Undone(appended), &mut encode_dead).unwrap_or_default();
@@ -197,7 +196,7 @@ impl RowTable {
             if undone.is_empty() {
                 return;
             }
-            let oldest = self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).keys().min().copied();
+            let oldest = self.versions.open.oldest();
             let later = oldest.map(|tx| undone.split_off(&tx)).unwrap_or_default();
             self.versions.undone_waiting.store(!later.is_empty(), Ordering::Relaxed);
             mem::replace(&mut *undone, later)
@@ -280,7 +279,14 @@ impl RowTable {
         if version.deleted {
             return Ok(true);
         }
-        let gone = removed(id, self.decode(id, version.record, None)?, kept);
+        // One whose every entry its successor shares is not read (RULES.md
+        // D750); of one that is, only the columns its entries read (D751).
+        let gone = if removed.needs(kept) {
+            let row = self.decode(id, version.record, removed.columns())?;
+            removed.removed(id, row, kept)
+        } else {
+            true
+        };
         self.free_values(id, version.record);
         Ok(gone)
     }

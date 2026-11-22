@@ -143,3 +143,24 @@ fn a_global_index_is_recovered() {
         db.checkpoint().unwrap();
     }
 }
+
+/// Verifies: [EXTENSION] RULES.md D157, D750: updates that keep the key of
+/// a global index still give it an entry each, and collection, which
+/// reads the row of every version superseded in a partition under a
+/// global index, takes each back: one entry a row once they are collected.
+#[test]
+fn collection_takes_back_the_global_entries_of_kept_keys() {
+    let (db, s) = sales();
+    exec(&s, "INSERT INTO SALES VALUES (1, DATE '2025-03-01', 10), (2, DATE '2026-03-01', 20)").unwrap();
+    exec(&s, "ALTER TABLE SALES ADD CONSTRAINT ONE_ID UNIQUE (ID)").unwrap();
+    exec(&s, "COMMIT").unwrap();
+    for amount in 11..15 {
+        exec(&s, &format!("UPDATE SALES SET AMOUNT = {amount} WHERE ID = 1")).unwrap();
+        exec(&s, "COMMIT").unwrap();
+    }
+    exec(&s, "UPDATE SALES SET AMOUNT = 21 WHERE ID = 2").unwrap();
+    exec(&s, "COMMIT").unwrap();
+    assert_eq!(sorted(&s, "SELECT AMOUNT FROM SALES WHERE ID = 1"), ["14.00"]);
+    exec(&s, "COMMIT").unwrap();
+    assert_eq!(db.index_entries(ONE_ID).unwrap(), 2);
+}

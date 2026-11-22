@@ -22,12 +22,11 @@
 //! undo (`Undoing`) is not refused then but waits for a frame, a bounded
 //! while too (`all_held`).
 
-use std::sync::PoisonError;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{Claim, Latch, try_latch};
+use super::{Claim, Latch};
 use crate::disk::buffer::{BufferPool, Key, UNDO_WAITS, all_held, count};
 use crate::error::Result;
 use crate::hash::xxhash::{Xxh3Map, Xxh3Set};
@@ -195,7 +194,7 @@ impl BufferPool {
         // An empty frame's latch is held only by a read that found it holds
         // no page, and lets go at once.
         let frame = self.frame(index)?;
-        let latch = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+        let latch = frame.latched();
         self.take(&mut map, (index, latch), key, None).map(Attempt::Taken)
     }
 
@@ -213,7 +212,7 @@ impl BufferPool {
         if frame.key() != Some(old) || frame.pins.load(Ordering::Acquire) > 0 {
             return Ok(Attempt::Held);
         }
-        let Some(latch) = try_latch(frame) else { return Ok(Attempt::Latched) };
+        let Some(latch) = frame.try_latched() else { return Ok(Attempt::Latched) };
         count(&self.counters.evictions);
         let claim = self.take(&mut map, (index, latch), key, Some(old))?;
         // A dirty page stays mapped until written back (`fill`).

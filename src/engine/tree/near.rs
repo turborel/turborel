@@ -72,24 +72,53 @@ impl BLinkTree {
     }
 
     /// Whether `key` is in the tree, if the leaf `near` remembers answers,
-    /// or the one right of it, for a key past its range.
+    /// or the one right of it, for a key past its range. A leaf that
+    /// answers twice in a row is copied into `near`, and later reads of it
+    /// take the copy while its frame's version holds (`in_copy`).
     fn in_leaf(&self, key: &[u8], stamp: u64, near: &mut Near) -> Result<Option<bool>> {
         let Some((first, _)) = near.leaf.filter(|&(_, at)| at == stamp && near.misses < MOST_MISSES) else { return Ok(None) };
+        if let Some(found) = self.in_copy(key, first, near)? {
+            return Ok(Some(found));
+        }
         let mut next = Some(first);
         for _ in 0..LEAVES_TRIED {
             let Some(leaf) = next else { break };
-            let page = self.pool.read_tallied(self.file, leaf, Some(&self.tally))?;
+            let (page, version) = self.pool.read_stamped(self.file, leaf, Some(&self.tally))?;
             let node = Node::parse(&page)?;
             if answers(&node, key)? {
                 self.tally.lookup();
                 near.misses = 0;
                 near.leaf = Some((leaf, stamp));
+                if leaf == first {
+                    near.page.clear();
+                    near.page.extend_from_slice(&page);
+                    near.kept = Some((leaf, version));
+                }
                 return copied(&node, key, (&mut near.bytes, &mut near.at)).map(Some);
             }
             next = node.right.filter(|_| node.level == 0 && !node.deleted && !node.covers(key)).map(|right| right.0);
         }
         near.misses = near.misses.saturating_add(1);
         Ok(None)
+    }
+
+    /// Whether `key` is in the tree, if `near` keeps a copy of leaf `leaf`
+    /// that is still the leaf's content and answers for it: no page read,
+    /// no latch and no shared word written (RULES.md D806).
+    fn in_copy(&self, key: &[u8], leaf: u64, near: &mut Near) -> Result<Option<bool>> {
+        let Some((_, version)) = near.kept.filter(|&(kept, _)| kept == leaf) else { return Ok(None) };
+        if !self.pool.unchanged(self.file, leaf, version) {
+            near.kept = None;
+            return Ok(None);
+        }
+        let Near { page, bytes, at, misses, .. } = near;
+        let node = Node::parse(page)?;
+        if !answers(&node, key)? {
+            return Ok(None);
+        }
+        self.tally.lookup();
+        *misses = 0;
+        copied(&node, key, (bytes, at)).map(Some)
     }
 }
 
@@ -108,7 +137,7 @@ impl BLinkTree {
                 }
                 if answers(&node, key)? {
                     self.tally.lookup();
-                    super::count(&self.counters.hinted);
+                    self.counters.hinted.add();
                     near.misses = 0;
                     near.leaf = Some((id, stamp));
                     return copied(&node, key, (&mut near.bytes, &mut near.at)).map(Some);
@@ -128,7 +157,7 @@ impl BLinkTree {
 /// Whether `node`, a page noted, may be trusted as a leaf of the tree
 /// whose meta page is `tree`, for `key`: one not deleted, its first key at
 /// or below `key`.
-fn trusted(node: &Node<'_>, tree: u64, key: &[u8]) -> Result<bool> {
+pub(super) fn trusted(node: &Node<'_>, tree: u64, key: &[u8]) -> Result<bool> {
     if node.tree != tree || node.level != 0 || node.deleted || node.len() == 0 {
         return Ok(false);
     }

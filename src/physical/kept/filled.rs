@@ -222,7 +222,7 @@ impl Filling<'_> {
 /// execution reads its slots where they are; or, if a scalar call takes a
 /// slot, which a value would prepare, it is filled and prepared again at
 /// each execution, as the values come.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Kept {
     plan: Plan,
     fills: bool,

@@ -219,9 +219,24 @@ fn error(code: Code, pos: usize, msg: impl Into<String>) -> SqlError {
 /// number of hexits, a token not followed by a separator or delimiter, or an
 /// `<identifier>` too long.
 pub fn lex(src: &str) -> Result<Vec<Token>> {
+    lex_head(src, usize::MAX)
+}
+
+/// \[DESIGN\] As `lex`, of the first `most` tokens of `src` alone, ended
+/// with `Tok::End` only if `src` has no more: what tells a statement apart
+/// by how it begins, its whole text lexed once, as it is parsed
+/// (`Session::direct`).
+///
+/// # Errors
+///
+/// As `lex`, of those tokens.
+pub fn lex_head(src: &str, most: usize) -> Result<Vec<Token>> {
     let mut s = Scanner { c: src.chars().collect(), at: 0, matched: false };
     let mut toks = Vec::new();
     while let Some(first) = s.peek(0) {
+        if toks.len() == most {
+            return Ok(toks);
+        }
         let skipped = s.skip_separator()?;
         if skipped {
             continue;

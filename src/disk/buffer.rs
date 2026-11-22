@@ -29,21 +29,26 @@
 mod ahead;
 mod eviction;
 mod hits;
+mod owned;
 mod policy;
 mod pool;
+mod sources;
 mod tally;
+mod versions;
 
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 pub use ahead::{Ahead, AheadReader};
 pub use eviction::{Clock, Eviction};
+pub use owned::Owned;
 pub use policy::{DEFAULT_SAMPLE, EVICTED_KEPT, NEUTRAL, Policy, RANGES, Range, Report, Sampled, Table, Weighted};
 pub use policy::{EvictionSlot, MakeEviction};
 pub use pool::{Capture, READ_AHEAD_PAGES};
 pub use tally::Tally;
+pub use versions::Stamp;
 
 use super::block::BlockFile;
 use super::encoding::Pipeline;
@@ -182,6 +187,16 @@ struct Frame {
     waiting: Mutex<()>,
     changed: Signal,
     content: RwLock<Vec<u8>>,
+    /// Moved on each time its latch is taken exclusively, before what
+    /// holds it changes the content or the page: a copy taken under the
+    /// latch is current while it reads the same (`versions.rs`, RULES.md
+    /// D502).
+    version: AtomicU64,
+    /// Whether a writer owns its page, and how many wait to, and have
+    /// waited since the count was cleared (`owned.rs`, RULES.md D503).
+    owned: AtomicBool,
+    owners_waiting: AtomicU32,
+    contended: AtomicU32,
 }
 
 impl Frame {
@@ -198,7 +213,18 @@ impl Frame {
             waiting: Mutex::new(()),
             changed: Signal::default(),
             content: RwLock::new(Vec::new()),
+            version: AtomicU64::new(0),
+            owned: AtomicBool::new(false),
+            owners_waiting: AtomicU32::new(0),
+            contended: AtomicU32::new(0),
         }
+    }
+
+    /// Its content, latched exclusively, its version moved on.
+    fn latched(&self) -> RwLockWriteGuard<'_, Vec<u8>> {
+        let latch = self.content.write().unwrap_or_else(PoisonError::into_inner);
+        self.version.fetch_add(1, Ordering::SeqCst);
+        latch
     }
 
     /// Marks the frame filled or emptied, and wakes those waiting for it.
@@ -241,7 +267,7 @@ pub struct BufferPool {
     shards: Vec<Shard>,
     /// Frames holding no page. Taken after a shard's lock, never before.
     empty: Mutex<Vec<usize>>,
-    sources: RwLock<Vec<Source>>,
+    sources: sources::Sources,
     eviction: Box<dyn Eviction>,
     counters: Counters,
     /// Where each page's frame was last found, by the page's hash
@@ -249,6 +275,8 @@ pub struct BufferPool {
     hints: hits::Hints,
     /// The pages it reads ahead at once (`pool/ahead.rs`).
     read_ahead_pages: AtomicUsize,
+    /// Its number, its own among the process's pools (`versions.rs`).
+    number: u64,
     /// The pages its scans asked to be read ahead, not yet read, and what
     /// reads them (`ahead.rs`).
     queued: pool::Queued,
@@ -276,6 +304,8 @@ impl Drop for Pin<'_> {
 /// while latched.
 pub struct PageRef<'a> {
     content: RwLockReadGuard<'a, Vec<u8>>,
+    /// The frame (`versions.rs`).
+    frame: &'a Frame,
     /// None for a page found by its hint: the latch keeps the frame.
     _pin: Option<Pin<'a>>,
 }

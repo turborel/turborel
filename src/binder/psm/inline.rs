@@ -35,8 +35,8 @@ impl ProgramBinder<'_> {
         let desc = bound.desc;
         let parameters = desc.parameters.iter().map(|p| (p.name.clone(), p.mode, p.data_type.clone())).collect();
         let called = Called {
-            name: desc.name,
-            specific: desc.specific,
+            name: desc.name.clone(),
+            specific: desc.specific.clone(),
             parameters,
             inputs,
             program,

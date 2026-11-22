@@ -144,6 +144,7 @@ mod embedding_sources;
 mod encodings;
 mod engine_settings;
 mod equated_joins;
+mod escrow;
 mod explain_analyze;
 mod expression_indexes;
 mod expressions;

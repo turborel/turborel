@@ -43,8 +43,8 @@ use crate::value::{Value, assign};
 
 /// [ISO/IEC 9075-2:2023 §16.1] A CALL, bound.
 pub(crate) struct BoundCall {
-    /// The subject routine.
-    pub(crate) desc: SqlRoutineDesc,
+    /// The subject routine, as the catalog holds it.
+    pub(crate) desc: Arc<SqlRoutineDesc>,
     /// The value each parameter is given, in order: its argument's, else
     /// the null value.
     pub(crate) inputs: Vec<Expr>,

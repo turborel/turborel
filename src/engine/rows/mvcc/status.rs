@@ -26,6 +26,7 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crate::hash::xxhash::Xxh3Map;
+use crate::sync::Alone;
 use crate::txn::{Timestamp, TxId};
 
 /// Slots of the array: transactions writing at once before one waits on
@@ -66,9 +67,11 @@ pub(in crate::engine::rows) struct Statuses {
     /// How many the map holds, so an empty one is not locked.
     overflowing: AtomicUsize,
     /// The latest snapshot a transaction joined a table of the store at.
-    snapshots: AtomicU64,
+    /// Alone on its lines, as the horizon is, so raising either moves no
+    /// line a commit reads the slots by (RULES.md D783).
+    snapshots: Alone<AtomicU64>,
     /// The latest horizon a table of the store was collected at.
-    horizon: AtomicU64,
+    horizon: Alone<AtomicU64>,
 }
 
 impl Default for Statuses {
@@ -77,8 +80,8 @@ impl Default for Statuses {
             slots: (0..SLOTS).map(|_| Slot::default()).collect(),
             overflow: RwLock::default(),
             overflowing: AtomicUsize::new(0),
-            snapshots: AtomicU64::new(0),
-            horizon: AtomicU64::new(0),
+            snapshots: Alone(AtomicU64::new(0)),
+            horizon: Alone(AtomicU64::new(0)),
         }
     }
 }
@@ -188,16 +191,21 @@ impl Statuses {
     /// `tx` committed at `at` in a table, its versions there left to stamp
     /// if `rows`: the one store that makes them committed. A table with
     /// none left to stamp counts as stamped.
+    /// A transaction that claimed no status, one that wrote nothing,
+    /// writes nothing here (RULES.md D783).
     pub(in crate::engine::rows) fn commit(&self, tx: TxId, at: Timestamp, rows: bool) {
-        let mark = self.snapshots.load(Ordering::SeqCst).max(at);
+        let mark = || self.snapshots.load(Ordering::SeqCst).max(at);
         if let Some(slot) = self.held(tx) {
             if rows {
                 slot.pending.fetch_add(1, Ordering::SeqCst);
                 slot.mark.store(0, Ordering::SeqCst);
             } else {
-                slot.mark.fetch_max(mark, Ordering::SeqCst);
+                slot.mark.fetch_max(mark(), Ordering::SeqCst);
             }
             slot.at.store(at, Ordering::SeqCst);
+            return;
+        }
+        if self.overflowing.load(Ordering::SeqCst) == 0 {
             return;
         }
         if let Some(status) = self.overflow().get_mut(&tx) {
@@ -206,7 +214,7 @@ impl Statuses {
                 status.pending = status.pending.saturating_add(1);
                 status.mark = 0;
             } else {
-                status.mark = status.mark.max(mark);
+                status.mark = status.mark.max(mark());
             }
         }
     }

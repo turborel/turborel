@@ -1,7 +1,7 @@
 //! \[DESIGN\] `MemoryCatalog`, the built-in catalog, held in memory.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use super::{
     CastDesc, Catalog, CollationDesc, Constrained, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc,
@@ -47,7 +47,7 @@ pub struct MemoryCatalog {
     assertions: HashMap<QualifiedName, ConstraintDesc>,
     triggers: HashMap<QualifiedName, TriggerDesc>,
     /// Each SQL-invoked routine, by its specific name.
-    routines: HashMap<QualifiedName, SqlRoutineDesc>,
+    routines: HashMap<QualifiedName, Arc<SqlRoutineDesc>>,
     /// Each SQL-server module, by its name.
     modules: HashMap<QualifiedName, ModuleDesc>,
     /// Each property graph, by its name.
@@ -378,16 +378,19 @@ impl Catalog for MemoryCatalog {
         self.triggers.remove(name);
     }
     fn put_routine(&mut self, routine: SqlRoutineDesc) {
-        self.routines.insert(routine.specific.clone(), routine);
+        self.routines.insert(routine.specific.clone(), Arc::new(routine));
     }
     fn routine(&self, specific: &QualifiedName) -> Option<&SqlRoutineDesc> {
-        self.routines.get(specific)
+        self.routines.get(specific).map(Arc::as_ref)
+    }
+    fn routine_shared(&self, specific: &QualifiedName) -> Option<Arc<SqlRoutineDesc>> {
+        self.routines.get(specific).map(Arc::clone)
     }
     fn any_routines(&self) -> bool {
         !self.routines.is_empty()
     }
     fn routines(&self) -> Vec<&SqlRoutineDesc> {
-        let mut routines: Vec<&SqlRoutineDesc> = self.routines.values().collect();
+        let mut routines: Vec<&SqlRoutineDesc> = self.routines.values().map(Arc::as_ref).collect();
         routines.sort_by_key(|r| r.created);
         routines
     }
@@ -396,7 +399,7 @@ impl Catalog for MemoryCatalog {
         if self.routines.is_empty() {
             return Vec::new();
         }
-        let mut routines: Vec<&SqlRoutineDesc> = self.routines.values().filter(|r| r.name == *name).collect();
+        let mut routines: Vec<&SqlRoutineDesc> = self.routines.values().map(Arc::as_ref).filter(|r| r.name == *name).collect();
         routines.sort_by_key(|r| r.created);
         routines
     }

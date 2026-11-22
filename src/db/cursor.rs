@@ -355,24 +355,26 @@ impl Session {
         self.inner.borrow().dynamic.positioned.clone().filter(|k| k.name == name).unwrap_or_else(|| Name::plain(name))
     }
 
-    /// [X3.135-1986 §8.10] SELECT ... INTO
+    /// [X3.135-1986 §8.10] SELECT ... INTO; of a statement of a program
+    /// kept, its delta table's statement by the plans `keeping` keeps of
+    /// it (RULES.md D792).
     pub(super) fn select_into(
         &self,
         cx: StatementContext<'_>,
-        query: &QuerySpecification,
-        targets: &[ParameterSpecification],
+        (query, targets): (&QuerySpecification, &[ParameterSpecification]),
         params: &mut Params,
+        keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         // [ISO/IEC 9075-2:2023 §7.6 GR5] a delta table's statement run
         // first (RULES.md D174).
         if let [crate::ast::TableReference::Delta(d)] = query.table_expression.from.as_slice() {
-            self.run_delta_table(cx.st, cx.tx, d, params)?;
+            self.run_delta_table(cx.st, cx.tx, d, (params, keeping))?;
         }
         let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
         check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
         let (optimized, _, physical) = plan_heard(cx.st, bound.plan, Some(cx.tx.stop.warnings()));
-        for t in optimized.tables() {
-            cx.st.read_lock(cx.tx, &t)?;
+        for (t, needed) in optimized.columns_read() {
+            cx.st.read_lock_of(cx.tx, (&t, needed))?;
         }
         let rows: Vec<Row> = execute(physical, cx.st, cx.tx.id).take(CARDINALITY_PROBE_ROWS).collect::<Result<_>>()?;
         match rows.as_slice() {

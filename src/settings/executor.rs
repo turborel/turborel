@@ -29,8 +29,8 @@ pub const KEEP_SUBQUERY_PLANS: Key = Key(89);
 /// planner's estimate margin.
 pub const EXECUTOR_DENSE_JOINS: Key = Key(92);
 /// EXECUTOR.POINT_OPERATIONS (RULES.md D752), at its key's place after
-/// the dense joins.
-pub const EXECUTOR_POINT_OPERATIONS: Key = Key(93);
+/// the escrow of TRANSACTION.ESCROW.
+pub const EXECUTOR_POINT_OPERATIONS: Key = Key(94);
 
 /// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
 const KERNELS_NAME_MAX: usize = 64;
