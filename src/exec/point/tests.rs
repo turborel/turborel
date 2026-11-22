@@ -1,6 +1,6 @@
-//! Unit tests of point reads: a plan of one probe of a whole unique key,
-//! alone or under a projection of its columns, is one, and reads the row
-//! the plan gives; any other plan is none (RULES.md R-TEST-1).
+//! Unit tests of point reads. A plan of one probe of a whole unique key,
+//! alone or under a projection of its columns, is one and reads the row
+//! the plan gives, and any other plan is none (RULES.md R-TEST-1).
 
 use std::sync::Arc;
 

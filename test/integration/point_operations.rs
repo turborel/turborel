@@ -1,4 +1,4 @@
-//! \[DESIGN\] Point operations (RULES.md D752): a kept query that probes a
+//! \[DESIGN\] Point operations (RULES.md D752). A kept query that probes a
 //! whole unique key, prepared or a kept body's, reads its row straight
 //! from the table, and gives the rows, errors and diagnostics it gives
 //! with EXECUTOR.POINT_OPERATIONS OFF, through the executor.
@@ -39,8 +39,9 @@ fn number(n: i64) -> Value {
     Value::Exact(Decimal::new(i128::from(n), 0))
 }
 
-/// What `query`, prepared in `s`, gives for each of `args`: its rows, each
-/// its values as text joined by commas, or its error, at open or fetch.
+/// What `query`, prepared in `s`, gives for each of `args`. That is its
+/// rows, each its values as text joined by commas, or its error at open
+/// or fetch.
 fn prepared(s: &Session, query: &str, args: &[Value]) -> Vec<String> {
     let p = s.prepare(query).unwrap();
     let mut out = Vec::new();
@@ -59,11 +60,11 @@ fn prepared(s: &Session, query: &str, args: &[Value]) -> Vec<String> {
     out
 }
 
-/// What a session of `db` reads with EXECUTOR.POINT_OPERATIONS `how`: the
-/// rows of prepared point queries of found, missing and null keys, of a
-/// value of the wrong type, the rows it changed itself and not those
-/// another session changed and did not commit; and the values READ_ONE
-/// reads into L.
+/// What a session of `db` reads with EXECUTOR.POINT_OPERATIONS `how`. It
+/// reads the rows of prepared point queries of found, missing and null
+/// keys and of a value of the wrong type, the rows it changed itself and
+/// not those another session changed and did not commit, and the values
+/// READ_ONE reads into L.
 fn read(db: &Database, how: &str) -> Vec<String> {
     let a = db.session("A");
     a.run(&format!("SET EXECUTOR.POINT_OPERATIONS = '{how}'")).unwrap();
@@ -84,9 +85,10 @@ fn read(db: &Database, how: &str) -> Vec<String> {
     out
 }
 
-/// What prepared point UPDATEs and DELETEs of `s` do: each completion or
-/// error, of a key found, a key missing, a value that breaks the
-/// primary key and one of the wrong type, and the rows left; undone after.
+/// What prepared point UPDATEs and DELETEs of `s` do, undone after. That
+/// is each completion or error, of a key found, a key missing, a value
+/// that breaks the primary key and one of the wrong type, and the rows
+/// left.
 fn written(s: &Session) -> Vec<String> {
     let update = s.prepare("UPDATE T SET A = A + ?, C = 'n' WHERE K = ?").unwrap();
     let moved = s.prepare("UPDATE T SET K = ? WHERE K = ?").unwrap();
@@ -115,7 +117,7 @@ fn written(s: &Session) -> Vec<String> {
 
 /// Verifies: [DESIGN] RULES.md D752: prepared point queries and a kept
 /// body's read of a row by its whole key give the same rows and errors
-/// with point operations on as with them off: a key found, one of a row
+/// with point operations on as with them off. The cases are a key found, one of a row
 /// with a null, one missing, a null key, columns in another order and one
 /// twice, a value of another type refused, a row the session changed seen
 /// changed and one another session changed seen as committed.

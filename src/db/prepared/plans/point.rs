@@ -1,6 +1,6 @@
 //! \[DESIGN\] A prepared query's plan kept, run as a point read where it
-//! is one (RULES.md D752): its probe placed with the execution's values
-//! and its row read without the executor's operators
+//! is one (RULES.md D752). Its probe is placed with the execution's
+//! values and its row read without the executor's operators
 //! (`exec/point.rs`).
 
 use std::sync::Arc;
@@ -21,9 +21,9 @@ pub(in crate::db) enum Run {
     Point(Arc<Kept>),
 }
 
-/// How an execution with the values `slots` runs `plan`, a plan kept: as
-/// its point read, if it is one, with the values; else as `Kept::opened`
-/// opens it, with the values it reads where its slots are, if it does.
+/// How an execution with the values `slots` runs `plan`, a plan kept. It
+/// runs as its point read with the values, if it is one, or else as
+/// `Kept::opened` opens it, with the values it reads where its slots are.
 ///
 /// # Errors
 ///
@@ -37,8 +37,8 @@ pub(in crate::db) fn run(st: &State, plan: &Arc<Kept>, slots: Option<Slots>) -> 
 }
 
 /// `w`, a kept UPDATE or DELETE whose plan kept is `plan`, run with
-/// `slots`: its object row found by the plan's point read, if it is one;
-/// else by the plan as `Kept::opened` opens it.
+/// `slots`. Its object row is found by the plan's point read, if it is
+/// one, or else by the plan as `Kept::opened` opens it.
 ///
 /// # Errors
 ///

@@ -245,10 +245,12 @@ impl Kept {
     }
 
     /// The point read its plan is, run without the executor's operators,
-    /// if it is one and `st` runs point operations (RULES.md D752): none
-    /// of a plan filled at each execution.
+    /// if it is one and `st` runs point operations (RULES.md D752). A
+    /// point read gives its columns as they are and places its probe's
+    /// values with no call, so its plan is never one filled at each
+    /// execution (`fills`), and is kept as made.
     pub(crate) fn point(&self, st: &State) -> Option<&PointRead> {
-        if self.fills || !crate::exec::point_operations(st) {
+        if !crate::exec::point_operations(st) {
             return None;
         }
         self.point.get_or_init(|| PointRead::of(&self.plan, st)).as_ref()
