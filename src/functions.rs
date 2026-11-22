@@ -576,6 +576,13 @@ pub trait AggregateFunction: Send + Sync {
     fn columnar(&self) -> Option<Columnar> {
         None
     }
+    /// \[DESIGN\] (RULES.md D779) Whether its result is the collection of
+    /// its values, an element of each row, as COLLECT's is, so of one row
+    /// at most it has one element at most and raises nothing its argument
+    /// and filter do not. Default: no.
+    fn gathers(&self) -> bool {
+        false
+    }
 }
 
 // Unit tests: what the set functions refuse and how they total (RULES.md

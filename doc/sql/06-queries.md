@@ -299,6 +299,46 @@ UNNEST of arrays is estimated by their elements, so a LEFT JOIN or a
 MERGE from a few array elements probes the key too, and a searched UPDATE
 or DELETE whose condition is one of these finds its rows the same way.
 EXPLAIN shows IndexNestedLoop, its probe's bounds among its conditions.
+Of a table of 3000 orders, a set of keys, one named twice, probes the
+key once for each distinct one.
+
+```sql
+CREATE TABLE NEW_ORDER (W INTEGER, D INTEGER, O INTEGER, PRIMARY KEY (W, D, O));
+INSERT INTO NEW_ORDER WITH RECURSIVE N (I) AS (VALUES (CAST(1 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 3000) SELECT 1, 1, I FROM N;
+SELECT O FROM NEW_ORDER WHERE (W, D, O) IN (VALUES (1, 1, 7), (1, 1, 9), (1, 1, 9));
+EXPLAIN SELECT O FROM NEW_ORDER WHERE (W, D, O) IN (VALUES (1, 1, 7), (1, 1, 9), (1, 1, 9));
+```
+
+```
+OK
+OK
+            O
+--------------
+            7
+            9
+(2 rows)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project NEW_ORDER.O
+   Filter (NEW_ORDER.W, NEW_ORDER.D, NEW_ORDER.O) = ANY (<subquery>)
+     Scan SHOP.NEW_ORDER
+     Subquery
+       Values (1, 1, 7), (1, 1, 9), (1, 1, 9)
+ -- rules: semi_joins
+ -- optimized:
+ Project NEW_ORDER.O
+   Semi join on NEW_ORDER.W = #0 AND NEW_ORDER.D = #1 AND NEW_ORDER.O = #2
+     Scan SHOP.NEW_ORDER
+     Values (1, 1, 7), (1, 1, 9), (1, 1, 9)
+ -- physical:
+ Project NEW_ORDER.O
+   IndexNestedLoop SHOP.NEW_ORDER using SHOP.NEW_ORDER.UNIQUE1 [btree]: #0 = NEW_ORDER.W AND #1 = NEW_ORDER.D AND #2 = NEW_ORDER.O  (est. rows each=1, cost=59.5)
+     Distinct
+       Project #0, #1, #2
+         Values (1, 1, 7), (1, 1, 9), (1, 1, 9)
+(18 rows)
+```
 
 A query whose select list is MIN and MAX alone, with no GROUP BY, needs
 the values of the columns those functions read, not how often a join
@@ -354,6 +394,57 @@ OK
    1 | a
    2 | NULL
 (2 rows)
+```
+
+## Lateral derived tables
+
+A derived table written LATERAL reads the tables before it in the FROM
+clause, as UNNEST does. Its query is computed for each of their rows,
+which give the values of the columns it names of theirs. A LEFT join
+keeps a row whose query gives none, and one of nothing before it is a
+derived table as any other. It has a correlation name, and a RIGHT or
+FULL join has no lateral table that reads its first operand. A lateral
+set function of a key, as the oldest order of each district is, reads
+one entry of the key for each row before it, and an IN of its rows
+probes the key once for each.
+
+```sql
+CREATE TABLE ORDERS (DISTRICT INTEGER, ID INTEGER, AMOUNT DECIMAL(6,2), PRIMARY KEY (DISTRICT, ID));
+INSERT INTO ORDERS VALUES (1, 10, 5.00), (1, 11, 7.50), (1, 12, 2.25), (2, 20, 9.00), (2, 21, 1.00);
+CREATE TABLE DISTRICTS (ID INTEGER PRIMARY KEY);
+INSERT INTO DISTRICTS VALUES (1), (2), (3);
+SELECT D.ID, T.ID, T.AMOUNT FROM DISTRICTS D LEFT JOIN LATERAL (SELECT ID, AMOUNT FROM ORDERS WHERE DISTRICT = D.ID ORDER BY AMOUNT DESC FETCH FIRST 2 ROWS ONLY) AS T ON TRUE ORDER BY D.ID, T.AMOUNT DESC;
+SELECT D.ID, M.OLDEST FROM DISTRICTS D, LATERAL (SELECT MIN(ID) FROM ORDERS WHERE DISTRICT = D.ID) AS M (OLDEST) ORDER BY D.ID;
+DELETE FROM ORDERS WHERE (DISTRICT, ID) IN (SELECT D.ID, M.OLDEST FROM DISTRICTS D, LATERAL (SELECT MIN(ID) FROM ORDERS WHERE DISTRICT = D.ID) AS M (OLDEST));
+SELECT DISTRICT, ID FROM ORDERS ORDER BY DISTRICT, ID;
+```
+
+```
+OK
+OK
+OK
+OK
+           ID |           ID |   AMOUNT
+--------------+--------------+----------
+            1 |           11 |     7.50
+            1 |           10 |     5.00
+            2 |           20 |     9.00
+            2 |           21 |     1.00
+            3 |              |
+(5 rows)
+           ID |       OLDEST
+--------------+--------------
+            1 |           10
+            2 |           20
+            3 |
+(3 rows)
+OK
+     DISTRICT |           ID
+--------------+--------------
+            1 |           11
+            1 |           12
+            2 |           21
+(3 rows)
 ```
 
 ## Polymorphic table functions

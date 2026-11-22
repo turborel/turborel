@@ -507,6 +507,8 @@ verification approach DO-178C expects (§8).
 | D775 | The object rows of a searched UPDATE or DELETE may be a semi join, which keeps the table's rows alone |
 | D776 | An index join bounds the key's column after its equalities by values of the outer row |
 | D777 | An UNNEST is estimated by its collections' elements, when each is a constant, a slot whose value is given or a constructor of its values |
+| D778 | A lateral derived table that reads the rows before it is bound as a collection derived table of the multiset of its query's rows |
+| D779 | An UNNEST of a subquery of one row at most raises only what the subquery's plan raises, so a lateral of a set function may be a semi join's right |
 | D785 | A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area |
 | D786 | A search keeps a decoded key only once a second entry has its bytes |
 | D787 | A projection of columns each named once, in ascending order, is made in the row it is given |
@@ -14123,6 +14125,56 @@ row times the elements of the longest, a null one none [§7.6 SR8f,
 SR8h], and at least one
 (`physical/cardinality/nodes.rs`). A JSON table and GRAPH_TABLE, planned
 as UNNEST is, keep the default.
+
+#### D778. A lateral derived table that reads the rows before it is bound as a collection derived table of the multiset of its query's rows
+
+A `<lateral derived table>`'s query may reference the table references
+before it in its FROM clause [ISO/IEC 9075-2:2023 §7.6 SR5, SR20a], and
+its table is its query's [SR10], so its rows are its query's for each
+row before it. A collection derived table is lateral the same way, and
+is already planned over the rows it reads (`binder/unnest.rs`), after a
+comma or as the second operand of CROSS, INNER and LEFT joins. It reads
+none of a RIGHT or FULL join's first operand [§7.10 SR4].
+
+So a lateral derived table that reads a column before it is bound as one
+(`binder/subquery/lateral.rs`). Its one collection is the multiset of its
+query's rows, each the ROW of its columns, as a `<table value constructor
+by query>` makes it [§6.52 SR1e, GR3], spread into its columns. Unlike
+that constructor's, its query may have an ORDER BY, which orders nothing
+but says which rows OFFSET and FETCH keep. The collection is a subquery
+whose outer references are the columns it reads, so it is computed again
+for each row before it, its plan made once. One that reads nothing
+before it is bound as the derived table it then is, planned as any.
+
+#### D779. An UNNEST of a subquery of one row at most raises only what the subquery's plan raises, so a lateral of a set function may be a semi join's right
+
+A semi join or a decorrelated subquery evaluates its right for bindings
+the original might not have read, so neither is made of a plan that can
+raise an error (D15, D317). Every subquery was taken as raising, as a
+scalar subquery of more than one row raises a cardinality violation
+[ISO/IEC 9075:1992 §7.11 GR1]. So an IN of a lateral derived table's
+rows (D778), the least key of each district, was read row by row of the
+whole table, a filter over a scan.
+
+A collection of an UNNEST that is a subquery of one row at most now
+raises what its outer expressions and its plan raise
+(`optimizer/unnesting/pure.rs`), which the plan's one row says no
+cardinality violation is among. Of that plan, a set function that
+gathers an element of each row, as COLLECT does
+(`AggregateFunction::gathers`), raises nothing of one row at most if its
+argument and filter raise nothing, as one element is within any bound on
+a multiset's elements. ROW of its values raises nothing. So the multiset
+of a lateral's query of one row, as of an ungrouped MIN, raises nothing
+more than MIN does, and the IN is a semi join.
+
+Such a collection is estimated at one element, not `UNNEST_FANOUT`
+(`physical/cardinality/nodes.rs`), so the semi join's right is as many
+rows as the rows before the lateral, and its few rows probe the key
+(D774). A probe takes a value only of a column whose declared type is
+known to be of the key's kind. A lateral's column is a field of the row
+type its UNNEST spreads [ISO/IEC 9075-2:2023 §7.6 SR8n], so its type is
+that field's (`physical/indexed/typed.rs`), of a subquery's column the
+type of its plan's column.
 
 #### D785. A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area
 
