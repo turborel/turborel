@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::{Arg, FLOAT64_TYPE, INTEGER_TYPE, integer_at, text_at, vector_at};
 use crate::error::{Result, SqlState};
+use crate::kernels::Portable;
 use crate::value::types::MAX_ARRAY_CARDINALITY;
 use crate::value::{DataType, Decimal, Value};
 use crate::vector::build::{Entries, Vector};
@@ -159,7 +160,7 @@ fn named_norm(v: VectorRef<'_>, name: Option<&str>) -> Result<f64> {
     let name = name.unwrap_or(NORM2);
     let stored = || (0..v.stored()).map(|i| v.value(i).unwrap_or_default().abs());
     if name.eq_ignore_ascii_case(NORM2) {
-        return Ok(norm(v));
+        return Ok(norm(&Portable, v));
     }
     if name.eq_ignore_ascii_case(NORM1) {
         return Ok(stored().sum());

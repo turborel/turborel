@@ -23,6 +23,10 @@ impl ScalarFunction for RowOf {
     fn call(&self, args: &[Value]) -> Result<Value> {
         Ok(Value::Row(args.into()))
     }
+    /// A row of its values raises nothing (RULES.md D779).
+    fn raise_free(&self) -> bool {
+        true
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §6.16 GR2] `<field reference>`: the field at

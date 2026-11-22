@@ -38,7 +38,7 @@ fn collated_extremes_merge_and_take_vectors() {
         }
         let mut some = f.accumulator(t.clone());
         some.update_many(&values, Some(&[0, 1])).unwrap();
-        some.update_ints(&Ints::new(vec![9], 0, None), None).unwrap();
+        some.update_ints(&Ints::new(vec![9], 0, None), None, &crate::kernels::Portable).unwrap();
         some.update_floats(&Floats::new(vec![9.0_f64], None), None).unwrap();
         assert_eq!(some.finish().unwrap().to_string(), "b");
         assert_eq!(some.merge(&[0xff_u8]).unwrap_err().code, Code::Corrupt);

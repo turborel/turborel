@@ -270,7 +270,13 @@ pub(super) fn bind_from(b: Bounds<'_>, refs: &[TableReference]) -> Result<From> 
 pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, from: &mut From) -> Result<Tree> {
     let item = match r {
         TableReference::Table(t) => from_item(b, t, start).or_at(t.table.at)?,
-        TableReference::Derived(d) => derived(b, d, start).or_at(d.query.at)?,
+        TableReference::Derived(d) => {
+            if d.lateral {
+                super::subquery::lateral_derived(b, d, start, from)?
+            } else {
+                derived(b, d, start).or_at(d.query.at)?
+            }
+        }
         TableReference::Joined(j) => return bind_join(b, j, start, from).or_at(j.at),
         TableReference::Unnest(u) => unnest_item(b, u, start, from).or_at(u.at)?,
         TableReference::Json(j) => super::json::json_table_item(b, j, start, from).or_at(j.at)?,
@@ -440,8 +446,7 @@ fn bind_join(b: Bounds<'_>, j: &JoinedTable, start: usize, from: &mut From) -> R
     from.lateral.truncate(seen);
     let right = right?;
     if matches!(j.kind, JoinKind::Right | JoinKind::Full | JoinKind::Union) {
-        let refused =
-            "[ISO/IEC 9075-2:2023 §7.10 SR4] the second operand of a RIGHT or FULL join references its first in a collection derived table";
+        let refused = "[ISO/IEC 9075-2:2023 §7.10 SR4] the second operand of a RIGHT or FULL join references its first in a lateral table";
         not_lateral(&right, &from.items, start..start.saturating_add(lw), refused)?;
     }
     let rw = width(&right, &from.items);

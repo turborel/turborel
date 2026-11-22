@@ -3,7 +3,7 @@
 use super::extremes::Extreme;
 use super::*;
 use crate::error::Code;
-use crate::storage::{Floats, Ints};
+use crate::storage::{Floats, Ints, Mask};
 use crate::value::{DOUBLE_PRECISION, Decimal, MAX_EXACT_PRECISION, Spelled};
 
 /// Verifies: [X3.135-1986 §5.8 F] MAX and MIN take an argument; asked for
@@ -214,7 +214,7 @@ fn set_functions_fed_runs_total_as_each() {
     let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
     let fed = |function: &dyn AggregateFunction, ints: &Ints, rows: Option<&[u32]>| {
         let mut accumulator = function.accumulator(numbers.clone());
-        format!("{:?}", accumulator.update_ints(ints, rows).and_then(|()| accumulator.finish()))
+        format!("{:?}", accumulator.update_ints(ints, rows, &crate::kernels::Portable).and_then(|()| accumulator.finish()))
     };
     for nulls in [None, Some(vec![true, false, false, true, false, true].into())] {
         let plain = Ints::new(units.clone(), 2, nulls.clone());
@@ -229,4 +229,49 @@ fn set_functions_fed_runs_total_as_each() {
     let huge = |ints: Ints| fed(&Sum, &ints, None);
     let (by_runs, each) = (huge(Ints::new(big.clone(), 0, None).with_runs(vec![4])), huge(Ints::new(big, 0, None)));
     assert_eq!(by_runs, each, "within 128 bits alike");
+}
+
+/// The result, or error's code, of `function` begun at `start` and fed
+/// `ints` by the portable kernels, or as values one by one.
+fn fed_from(function: &dyn AggregateFunction, start: Option<&Value>, ints: &Ints, by_kernels: bool) -> String {
+    let numbers = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 2, spelled: Spelled::Numeric };
+    let mut acc = function.accumulator(numbers);
+    let begun = start.map_or(Ok(()), |v| acc.update(v));
+    let fed = begun.and_then(|()| {
+        if by_kernels { acc.update_ints(ints, None, &crate::kernels::Portable) } else { acc.update_many(ints.values(), None) }
+    });
+    format!("{:?}", fed.and_then(|()| acc.finish()).map_err(|e| e.code))
+}
+
+/// Verifies: [DESIGN] RULES.md D570 [X3.135-1986 §5.8 GR1]: SUM, AVG, MAX
+/// and MIN fed integers summed and compared by the kernels give what they
+/// give fed the same values one by one: nulls left out though their units
+/// are not 0, a total started near the 128-bit bound added in turn, and
+/// its overflow raised alike.
+#[test]
+fn set_functions_fed_by_kernels_total_as_each() {
+    let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
+    // Within 18 digits summed, so a total wrong by a null's unit is not out of range alike.
+    let big = 92_233_720_368_547_758_i64;
+    let units: Vec<i64> = vec![7, -big, 3, big, -12, 40, big, 5];
+    let some_null: Mask = vec![false, true, false, true, false, false, false, true].into();
+    let starts = [None, Some(Value::Exact(Decimal::new(1_i128 << 126, 2))), Some(Value::Exact(Decimal::new(i128::MAX - 3, 2)))];
+    for (start, nulls) in starts.iter().flat_map(|s| [(s, None), (s, Some(some_null.clone()))]) {
+        let ints = Ints::new(units.clone(), 2, nulls);
+        for function in functions {
+            let (by_kernels, each) = (fed_from(function, start.as_ref(), &ints, true), fed_from(function, start.as_ref(), &ints, false));
+            assert_eq!(by_kernels, each, "{} from {start:?}", function.name());
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D570 [ISO/IEC 9075:1992 §6.5 GR2b iv]: a
+/// SUM begun near the 128-bit bound adds integers whose total is small
+/// one by one, as the values are, so a partial sum past the bound raises
+/// as theirs does, not passed over by the kernels' total.
+#[test]
+fn a_sum_near_the_bound_overflows_as_each() {
+    let near = Value::Exact(Decimal::new(i128::MAX - 3, 2));
+    let ints = Ints::new(vec![10, -10], 2, None);
+    assert_eq!(fed_from(&Sum, Some(&near), &ints, true), fed_from(&Sum, Some(&near), &ints, false));
 }

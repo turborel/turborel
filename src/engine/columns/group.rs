@@ -112,6 +112,8 @@ pub struct Pages<'a, S> {
     pub compress: bool,
     /// Whether groups are written in the hybrid layout (`Group::pax`).
     pub pax: bool,
+    /// The kernels its chunks are decoded and judged on (RULES.md D570).
+    pub kernels: &'a dyn crate::kernels::Kernels,
     /// Whether groups are written with imprints of the columns that take
     /// them (`columns/imprints.rs`).
     pub imprints: bool,

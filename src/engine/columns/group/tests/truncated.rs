@@ -20,7 +20,16 @@ fn every_header_prefix_is_refused() {
     // Each header read back is written to pages of its own.
     let (pool, file) = memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES << 7_i32), "headers").unwrap();
     for pax in [false, true] {
-        let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax, imprints: true };
+        let pages = Pages {
+            pool: &pool,
+            file,
+            capacity: 1024,
+            sealing: &Plain,
+            compress: true,
+            pax,
+            imprints: true,
+            kernels: &crate::kernels::Portable,
+        };
         let g = group(&pages);
         let bytes = header::encode(&g, &TYPES).unwrap();
         let read_back = |b: &[u8]| {
@@ -48,7 +57,16 @@ fn every_header_prefix_is_refused() {
 #[test]
 fn every_summary_prefix_is_refused() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 1024, sealing: &Plain, compress: true, pax: false, imprints: true };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 1024,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     let g = group(&pages);
     let mut bytes = Vec::new();
     put_summary(&mut bytes, &Summary::of(&g, g.header[0]), &TYPES).unwrap();

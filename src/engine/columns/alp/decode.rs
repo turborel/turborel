@@ -9,20 +9,11 @@ use super::super::packed::{get, packed_len, unpack_words};
 use super::super::{WORD, corrupt, read_word};
 use super::{EXCEPTION, FIELD, Scale, exact, exceptions_of, scale_of};
 use crate::error::Result;
+use crate::kernels::Kernels;
 
-/// 2^52 + 2^51: of an integer n of magnitude below 2^51, this plus n is
-/// held exactly, of one exponent, its ulp 1.
-const MAGIC: f64 = 6_755_399_441_055_744.0;
-/// The bits of `MAGIC`.
-const MAGIC_BITS: u64 = 0x4338_0000_0000_0000;
-/// The magnitude every n made an `f64` by `MAGIC` is below: 2^51.
+/// The magnitude every n the kernel makes an `f64` by the magic number
+/// is below: 2^51 (`Kernels::alp_decode`).
 const MAGIC_SPAN: i128 = 1 << 51;
-
-/// `n`, of magnitude below 2^51, as an `f64`, exactly: `MAGIC` plus n,
-/// bit for bit, less `MAGIC`.
-fn magic(n: i64) -> f64 {
-    f64::from_bits(MAGIC_BITS.wrapping_add_signed(n)) - MAGIC
-}
 
 /// `v`'s bits, as a signed integer, as a vector of approximate numbers
 /// holds them.
@@ -69,7 +60,7 @@ impl<'a> Alp<'a> {
     }
 
     /// Whether every n of the chunk, its least plus a difference of its
-    /// bits, is of magnitude below 2^51, so made an `f64` by `magic`.
+    /// bits, is of magnitude below 2^51, so made an `f64` by the kernel.
     fn magic_holds(&self) -> bool {
         let greatest = i128::from(self.least).saturating_add(i128::from(super::super::packed::mask(self.bits)));
         -MAGIC_SPAN < i128::from(self.least) && greatest < MAGIC_SPAN
@@ -78,14 +69,12 @@ impl<'a> Alp<'a> {
     /// The values at positions `from` to `to`, each its bits as a signed
     /// integer pushed to `out`: the n unpacked a block at a time, each made
     /// its value, then the exceptions among them put in their places.
-    pub(in crate::engine::columns) fn words(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
+    pub(in crate::engine::columns) fn words(&self, (from, to): (usize, usize), out: &mut Vec<i64>, kernels: &dyn Kernels) -> Option<()> {
         let start = out.len();
         let scale = self.scale;
         let ok = if self.magic_holds() {
             unpack_words(self.deltas, (self.bits, self.least), (from, to), out)?;
-            for w in out.get_mut(start..)? {
-                *w = word_of(scale.of(magic(*w)));
-            }
+            kernels.alp_decode(out.get_mut(start..)?, scale);
             true
         } else {
             // n may be past 2^53, or its sum overflow, in a malformed

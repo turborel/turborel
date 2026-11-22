@@ -221,6 +221,7 @@ mod kernels;
 mod language;
 mod language_collations;
 mod late_columns;
+mod lateral;
 mod length_units;
 mod listagg;
 mod lob_composites;

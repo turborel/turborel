@@ -50,7 +50,7 @@ const HELD_ROW_BYTES: usize = 24;
 /// frame is on the stack while its input is made (RULES.md R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn sort_batches(keys: &[SortKey], input: Batches, db: &State, tx: TxId) -> RowIter {
-    match sorted(keys, input, Held::on(db.functions.kernels_shared()), &mut Work::of(db, tx)) {
+    match sorted(keys, input, Held::on(crate::db::kernels::chosen(db)), &mut Work::of(db, tx)) {
         Ok(rows) => rows,
         Err(e) => failed(e),
     }
@@ -78,7 +78,7 @@ pub(super) fn sorted(keys: &[SortKey], input: Batches, held: Held, work: &mut Wo
 /// The input's, a row of no key column's, a spill's, or a cancel.
 pub(in crate::exec) fn sorted_out(keys: &[SortKey], input: Batches, width: usize, db: &State, tx: TxId) -> Result<Batches> {
     let mut work = Work::of(db, tx);
-    match held_or_runs(keys, input, Held::on(db.functions.kernels_shared()), &mut work)? {
+    match held_or_runs(keys, input, Held::on(crate::db::kernels::chosen(db)), &mut work)? {
         Sorted::Held(held) => {
             work.look()?;
             Ok(held.into_batches(keys, width, work.stop()))

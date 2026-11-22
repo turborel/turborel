@@ -3,6 +3,7 @@
 //! D31), its state written and merged where a grouping spills (D38, D53).
 
 use crate::error::{Code, Result, fail};
+use crate::kernels::Kernels;
 use crate::storage::{Floats, Ints, Texts};
 use crate::value::Value;
 
@@ -37,12 +38,13 @@ pub trait Accumulator {
     }
     /// \[DESIGN\] Called with a vector of exact numbers as integers
     /// (`Ints`, RULES.md D31): of those at `rows`, or all, nulls left out,
-    /// as `update_many` is. Default: `update_many` of their values.
+    /// as `update_many` is, on the vector kernels `kernels` where it runs
+    /// any (RULES.md D570). Default: `update_many` of their values.
     ///
     /// # Errors
     ///
     /// As `update`.
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>, _kernels: &dyn Kernels) -> Result<()> {
         self.update_many(ints.values(), rows)
     }
     /// \[DESIGN\] Called with a vector of approximate numbers (`Floats`,

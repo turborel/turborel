@@ -19,7 +19,7 @@ fn read_back(fields: &[Option<Vec<u8>>], (from, to): (usize, usize)) -> (Vec<Opt
     let alp = Alp::parse(&out, fields.len()).unwrap();
     let one = (0..fields.len()).map(|n| fields[n].as_ref().map(|_| u64::from_le_bytes(alp.field(n).unwrap()))).collect();
     let mut words = Vec::new();
-    alp.words((from, to), &mut words).unwrap();
+    alp.words((from, to), &mut words, &crate::kernels::Portable).unwrap();
     (one, words.into_iter().map(|w| u64::from_le_bytes(w.to_le_bytes())).collect())
 }
 
@@ -162,7 +162,7 @@ fn chunks_before_the_factors_read_by_division() {
     let values: Vec<f64> = (0_usize..3_usize).map(|n| f64::from_bits(u64::from_le_bytes(alp.field(n).unwrap()))).collect();
     assert_eq!(values.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), [-0.3_f64, 0.3_f64, 1.2_f64].map(f64::to_bits));
     let mut words = Vec::new();
-    alp.words((0, 3), &mut words).unwrap();
+    alp.words((0, 3), &mut words, &crate::kernels::Portable).unwrap();
     assert_eq!(
         words.iter().map(|&w| u64::from_le_bytes(w.to_le_bytes())).collect::<Vec<_>>(),
         [-0.3_f64, 0.3_f64, 1.2_f64].map(f64::to_bits)

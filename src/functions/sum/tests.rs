@@ -53,7 +53,7 @@ fn finished(function: &dyn AggregateFunction, result: DataType, values: &[Value]
         .collect();
     if let Some(units) = units {
         let mut ints = function.accumulator(result.clone());
-        ways.push(ints.update_ints(&Ints::new(units, 0, None), None).and_then(|()| ints.finish()));
+        ways.push(ints.update_ints(&Ints::new(units, 0, None), None, &crate::kernels::Portable).and_then(|()| ints.finish()));
     }
     let floats: Option<Vec<f64>> = ordered.iter().map(|v| if let Value::Approx(f) = v { Some(*f) } else { None }).collect();
     if let Some(floats) = floats {
@@ -106,7 +106,7 @@ fn an_average_is_judged_alone() {
 #[test]
 fn a_sum_of_integers_passes_64_bits() {
     let mut sum = Sum.accumulator(WHOLE);
-    sum.update_ints(&Ints::new(vec![i64::MAX, i64::MAX, 2_i64], 0, None), None).unwrap();
+    sum.update_ints(&Ints::new(vec![i64::MAX, i64::MAX, 2_i64], 0, None), None, &crate::kernels::Portable).unwrap();
     assert_eq!(sum.finish().unwrap().to_string(), "18446744073709551616");
 }
 
@@ -121,7 +121,7 @@ fn a_sum_past_128_bits_is_refused() {
     assert_eq!(sum.update(&half).unwrap_err().sqlcode(), -900_i32);
     let mut ints = Sum.accumulator(WHOLE);
     ints.update(&Value::Exact(Decimal::new(i128::MAX - 1_i128, 0))).unwrap();
-    let err = ints.update_ints(&Ints::new(vec![5_i64], 0, None), None).unwrap_err();
+    let err = ints.update_ints(&Ints::new(vec![5_i64], 0, None), None, &crate::kernels::Portable).unwrap_err();
     assert_eq!(err.sqlcode(), -900_i32);
 }
 
@@ -217,10 +217,10 @@ fn other_values_are_summed_by_arith() {
     let q = Qualifier::new(Field::Day, Field::Day, 2, 0);
     let mut mixed = Sum.accumulator(DataType::Interval(q));
     mixed.update(&Value::Interval(Interval { units: 0_i128, qualifier: q })).unwrap();
-    mixed.update_ints(&Ints::new(vec![1_i64], 0, None), None).unwrap();
+    mixed.update_ints(&Ints::new(vec![1_i64], 0, None), None, &crate::kernels::Portable).unwrap();
     mixed.update_floats(&Floats::new(vec![1.0_f64], None), None).unwrap();
     let mut empty = Sum.accumulator(WHOLE);
-    empty.update_ints(&Ints::new(Vec::new(), 0, None), None).unwrap();
+    empty.update_ints(&Ints::new(Vec::new(), 0, None), None, &crate::kernels::Portable).unwrap();
     assert!(empty.finish().unwrap().is_null());
 }
 

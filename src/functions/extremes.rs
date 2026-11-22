@@ -73,8 +73,8 @@ impl Accumulator for ExtremeAcc {
         };
         found.map_or(Ok(()), |v| self.update(v))
     }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
-        ints::extreme(ints, rows, self.max).map_or(Ok(()), |v| self.update(&v))
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<()> {
+        ints::extreme(ints, rows, self.max, kernels).map_or(Ok(()), |v| self.update(&v))
     }
     fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         floats::extreme(floats, rows, self.max).map_or(Ok(()), |v| self.update(&v))
@@ -151,7 +151,7 @@ impl Accumulator for CollatedAcc {
             None => values.iter().try_for_each(|v| self.update(v)),
         }
     }
-    fn update_ints(&mut self, _: &Ints, _: Option<&[u32]>) -> Result<()> {
+    fn update_ints(&mut self, _: &Ints, _: Option<&[u32]>, _: &dyn crate::kernels::Kernels) -> Result<()> {
         Ok(())
     }
     fn update_floats(&mut self, _: &Floats, _: Option<&[u32]>) -> Result<()> {
