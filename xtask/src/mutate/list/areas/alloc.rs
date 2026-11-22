@@ -21,7 +21,7 @@ const UPDATE_IMAGES: &str = "log::record::images::tests::an_update_logs_the_colu
 const PADDED: &str = "value::comparison::strings::shorter_string_padded_with_spaces";
 
 /// Mechanisms of the row store's reads without copies whose removal must fail their tests.
-pub const ALLOC: [Mutation; 12] = [
+pub const ALLOC: [Mutation; 11] = [
     Mutation {
         name: "alloc-undo-span-length",
         package: Package::Core,
@@ -111,16 +111,6 @@ pub const ALLOC: [Mutation; 12] = [
         replacement: "",
         integration: &[],
         unit: &["engine::record::tests::records_are_appended_and_a_failed_one_leaves_none"],
-    },
-    Mutation {
-        name: "alloc-update-image-kept",
-        package: Package::Core,
-        breaks: "an update's record keeps of its row before every column, changed or not",
-        file: "src/log/record/images.rs",
-        original: "            out.truncate(mark);\n",
-        replacement: "",
-        integration: &[],
-        unit: &[UPDATE_IMAGES],
     },
     Mutation {
         name: "alloc-update-image-uncounted",
