@@ -38,6 +38,7 @@ mod oltp;
 mod orders;
 mod parallel;
 mod range_joins;
+mod range_path;
 mod rewrites;
 mod row_path;
 mod set_types;
@@ -61,7 +62,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 26] {
+pub fn core() -> [&'static [Mutation]; 27] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -89,6 +90,7 @@ pub fn core() -> [&'static [Mutation]; 26] {
         &alloc::ALLOC,
         &commit_path::COMMIT_PATH,
         &dirty_frames::DIRTY_FRAMES,
+        &range_path::RANGE_PATH,
     ]
 }
 

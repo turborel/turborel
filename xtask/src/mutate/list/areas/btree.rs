@@ -80,7 +80,7 @@ pub const BTREE: [Mutation; 10] = [
         package: Package::Core,
         breaks: "a search gives the key it last decoded for an entry of other bytes",
         file: "src/index/blink.rs",
-        original: "        if let Some(key) = self.key.as_ref().filter(|_| self.bytes == bytes) {",
+        original: "        if let Some(key) = self.key.as_ref().filter(|_| again) {",
         replacement: "        if let Some(key) = self.key.as_ref() {",
         integration: &[],
         unit: &["index::blink::tests::a_key_is_decoded_once_for_its_entries"],
