@@ -586,3 +586,6 @@ mod shared;
 
 // Room in a node for a change in place (RULES.md D500).
 mod room;
+
+// Reads by key from a copy of the leaf read before (RULES.md D806).
+mod finger;
