@@ -396,6 +396,57 @@ OK
 (2 rows)
 ```
 
+## Lateral derived tables
+
+A derived table written LATERAL reads the tables before it in the FROM
+clause, as UNNEST does. Its query is computed for each of their rows,
+which give the values of the columns it names of theirs. A LEFT join
+keeps a row whose query gives none, and one of nothing before it is a
+derived table as any other. It has a correlation name, and a RIGHT or
+FULL join has no lateral table that reads its first operand. A lateral
+set function of a key, as the oldest order of each district is, reads
+one entry of the key for each row before it, and an IN of its rows
+probes the key once for each.
+
+```sql
+CREATE TABLE ORDERS (DISTRICT INTEGER, ID INTEGER, AMOUNT DECIMAL(6,2), PRIMARY KEY (DISTRICT, ID));
+INSERT INTO ORDERS VALUES (1, 10, 5.00), (1, 11, 7.50), (1, 12, 2.25), (2, 20, 9.00), (2, 21, 1.00);
+CREATE TABLE DISTRICTS (ID INTEGER PRIMARY KEY);
+INSERT INTO DISTRICTS VALUES (1), (2), (3);
+SELECT D.ID, T.ID, T.AMOUNT FROM DISTRICTS D LEFT JOIN LATERAL (SELECT ID, AMOUNT FROM ORDERS WHERE DISTRICT = D.ID ORDER BY AMOUNT DESC FETCH FIRST 2 ROWS ONLY) AS T ON TRUE ORDER BY D.ID, T.AMOUNT DESC;
+SELECT D.ID, M.OLDEST FROM DISTRICTS D, LATERAL (SELECT MIN(ID) FROM ORDERS WHERE DISTRICT = D.ID) AS M (OLDEST) ORDER BY D.ID;
+DELETE FROM ORDERS WHERE (DISTRICT, ID) IN (SELECT D.ID, M.OLDEST FROM DISTRICTS D, LATERAL (SELECT MIN(ID) FROM ORDERS WHERE DISTRICT = D.ID) AS M (OLDEST));
+SELECT DISTRICT, ID FROM ORDERS ORDER BY DISTRICT, ID;
+```
+
+```
+OK
+OK
+OK
+OK
+           ID |           ID |   AMOUNT
+--------------+--------------+----------
+            1 |           11 |     7.50
+            1 |           10 |     5.00
+            2 |           20 |     9.00
+            2 |           21 |     1.00
+            3 |              |
+(5 rows)
+           ID |       OLDEST
+--------------+--------------
+            1 |           10
+            2 |           20
+            3 |
+(3 rows)
+OK
+     DISTRICT |           ID
+--------------+--------------
+            1 |           11
+            1 |           12
+            2 |           21
+(3 rows)
+```
+
 ## Polymorphic table functions
 
 TABLE ( an invocation ) in the FROM clause invokes a polymorphic table

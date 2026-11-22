@@ -549,6 +549,10 @@ pub struct DerivedTable {
     pub correlation: String,
     /// The `<derived column list>`, if written \[SR7\].
     pub columns: Option<Vec<String>>,
+    /// [ISO/IEC 9075-2:2023 §7.6] Written LATERAL, a `<lateral derived
+    /// table>`: its query may reference the table references before it in
+    /// its FROM clause \[SR5, SR20a\].
+    pub lateral: bool,
 }
 
 /// [ISO/IEC 9075-2:2023 §7.6] `<collection derived table>` ::= UNNEST (

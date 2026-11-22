@@ -134,7 +134,7 @@ impl Expansion<'_, '_> {
     /// The `<derived table>` (`query`) `correlation`(`columns`).
     fn derived(&self, query: QueryExpression, correlation: &str, columns: Vec<String>) -> TableReference {
         let query = Box::new(Subquery { query, at: self.at });
-        TableReference::Derived(DerivedTable { query, correlation: correlation.to_owned(), columns: Some(columns) })
+        TableReference::Derived(DerivedTable { query, correlation: correlation.to_owned(), columns: Some(columns), lateral: false })
     }
 
     /// The composite expression `c`.

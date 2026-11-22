@@ -335,3 +335,16 @@ fn an_unnest_of_constants_is_estimated_by_their_elements() {
     let empty = rows(&s, "SELECT * FROM V, UNNEST(ARRAY[1, 2], CAST(NULL AS INTEGER ARRAY)) AS A(X, Y)");
     assert!(near(empty, 20.0), "a null collection beside another: {empty}");
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §7.6 SR5]; [DESIGN] RULES.md D779: a
+/// lateral derived table of an ungrouped set function, the UNNEST of a
+/// subquery gathering one row at most, is a row for each row before it;
+/// one of many rows is the default fanout of each.
+#[test]
+fn a_lateral_of_one_row_is_estimated_at_one_for_each_row_before_it() {
+    let (_db, s) = database();
+    let least = rows(&s, "SELECT * FROM V, LATERAL (SELECT MIN(K) FROM T WHERE T.G = V.K) AS M (L)");
+    assert!(near(least, 10.0_f64), "{least}");
+    let many = rows(&s, "SELECT * FROM V, LATERAL (SELECT K FROM T WHERE T.G = V.K) AS M (L)");
+    assert!(near(many, 10.0_f64 * UNNEST_FANOUT), "{many}");
+}
