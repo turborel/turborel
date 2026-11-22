@@ -405,6 +405,13 @@ impl Transactions {
         }
     }
 
+    /// Whether a transaction that wrote nothing is collecting: for tests
+    /// that hold such a collection under way (RULES.md D453).
+    #[cfg(test)]
+    pub(crate) fn read_collecting(&self) -> &AtomicBool {
+        &self.read_collecting
+    }
+
     /// The oldest snapshot any open transaction reads at, or, with none
     /// open, the stable timestamp: no transaction reads before it.
     pub(crate) fn horizon(&self) -> Timestamp {

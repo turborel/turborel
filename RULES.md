@@ -15419,6 +15419,19 @@ the same tables, and what its horizon does not reach waits for any later
 end, as a table passed over does (D445). A transaction that wrote
 still collects its own tables as before.
 
+A served session's collection after its reply first collects the tables
+its own transactions wrote since it last collected, as their ends would
+have, and only then the set, as such an end does. Before, its
+transactions only noted their tables in the set, and its collection was
+one of these ends, so at many writing sessions one session at a time
+collected every table. That one fell behind the commits, each pass took
+longer for the garbage left meanwhile, and a table's transactions kept
+for validation (D448) grew to thousands. The tables a session wrote are
+kept with its cancel flag, each once, and taken by its collection. Each
+is collected as at a transaction's end, one collector at a time and
+only when due (D445, D451), so sessions writing different tables
+collect them at once.
+
 #### D454. A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own
 
 At READ COMMITTED a statement that would change a row another

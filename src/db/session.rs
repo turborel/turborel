@@ -67,10 +67,17 @@ impl Session {
     }
 
     /// \[DESIGN\] Collects the garbage of the tables awaiting collection,
-    /// as the end of a transaction does (RULES.md D29, D450). Never fails:
-    /// what it cannot collect waits for the next.
+    /// as the end of a transaction does (RULES.md D29, D450): first the
+    /// tables its own transactions wrote since it last collected, as their
+    /// ends would have, then, unless another session's collection is under
+    /// way, every table awaiting it (D453). Never fails: what it cannot
+    /// collect waits for the next.
     pub fn collect(&self) {
         if let Ok(call) = self.enter() {
+            let owed = self.stop.owed();
+            if !owed.is_empty() {
+                call.state().gc_owed(&owed);
+            }
             call.state().gc_read();
         }
     }
