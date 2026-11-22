@@ -494,6 +494,8 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D795 | A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes |
+| D796 | A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once |
 
 ### The project
 
@@ -13823,6 +13825,53 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
+#### D795. A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes
+
+Every writing transaction's end took the lock of the database's set of
+tables awaiting collection twice, copied the set, and stored whether it
+held any. Each also stored the table's last change instant, lowered the
+table's earliest garbage timestamp with an atomic minimum, and asked
+whether a collection was due by taking the read lock of the table's open
+transactions. Each of these wrote a cache line every other writer then
+read. The flags every transaction reads (whether the database takes
+changes, whether tables await collection) sat beside counters every
+transaction writes, so reading them missed as well.
+
+Now a table carries whether it is in the set (`TableLock::noted`), kept
+with the set under its lock. An end that would leave the set as it is,
+a table not yet due left noted or a table gone left out, takes no lock,
+and the set is copied only while it holds any. Whether tables await
+collection, the change instant and the earliest timestamps are stored
+only when they change. A table keeps the count of its open transactions,
+stored under that lock, which `due_at` reads with none. The flags and
+the counters each sit alone on their cache lines (`sync::Alone`). The
+checkpoint's gate has 64 stripes, so threads at once seldom share one.
+
+What is collected, and when, is unchanged. A table passed over is still
+in the set for a later end to collect, and an end that collects it still
+asks under the lock whether garbage came meanwhile (D445).
+
+#### D796. A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once
+
+D741 parked an appender whose block was written before those ahead of
+it under its block's start, and the appender publishing up to it woke it
+alone. That one then published its own block and woke the next. A run of
+blocks written early was published one wake-up after another, each
+appender waiting for the one before to be scheduled. At 32 sessions on
+16 processors, one appender descheduled before its write stalled every
+appender after it, and about one context switch in three of oltp
+update_index was an appender parked there. The server then used fewer
+processors at 32 sessions than at 8, and committed fewer transactions.
+
+An appender whose block is written before those ahead of it now files
+the block, its end and its thread, and waits. The appender that
+publishes up to a filed block publishes it as well, and every filed
+block that follows on from it, under the lock of the filed blocks, and
+then wakes their appenders together. A run of blocks written early costs
+one wake-up's wait. An appender in turn publishes its block with one
+atomic step and takes the lock only when blocks are filed. The order in
+which blocks are published, and what a reader sees, is D30's.
 
 ## 2. Project layout
 

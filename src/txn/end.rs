@@ -198,11 +198,31 @@ impl State {
     /// that collection or the end of any other transaction to collect.
     fn collect_ended<'t>(&self, tx: &Txn, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
         if tx.stop.collects_later() {
+            // [DESIGN] RULES.md D795: a table noted already is left so,
+            // with nothing shared written.
+            let new: Vec<&QualifiedName> = tables.filter(|t| !self.lock_of(t).is_ok_and(|lock| lock.noted())).collect();
+            if new.is_empty() {
+                return;
+            }
             let mut uncollected = lock_builtin(&self.tx.uncollected);
-            uncollected.extend(tables.cloned());
-            self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);
+            for table in new {
+                if let Ok(lock) = self.lock_of(table) {
+                    lock.set_noted(true);
+                }
+                uncollected.insert(table.clone());
+            }
+            self.awaiting(&uncollected);
         } else {
             self.gc(tables);
+        }
+    }
+
+    /// Whether tables await collection, as `uncollected` says: stored only
+    /// when that changes (RULES.md D795).
+    fn awaiting(&self, uncollected: &BTreeSet<QualifiedName>) {
+        let now = !uncollected.is_empty();
+        if self.tx.awaiting.load(Ordering::Relaxed) != now {
+            self.tx.awaiting.store(now, Ordering::Release);
         }
     }
 
@@ -216,9 +236,19 @@ impl State {
     fn gc_with<'t>(&self, tables: impl Iterator<Item = &'t QualifiedName> + Clone, wait: bool) {
         let _gate = self.tx.gate.enter();
         let horizon = self.tx.horizon();
-        let waiting: Vec<QualifiedName> = lock_builtin(&self.tx.uncollected).iter().cloned().collect();
+        // [DESIGN] RULES.md D795: the set is read only while it holds any.
+        let waiting: Vec<QualifiedName> = if self.tx.awaiting.load(Ordering::Acquire) {
+            lock_builtin(&self.tx.uncollected).iter().cloned().collect()
+        } else {
+            Vec::new()
+        };
         let collect = |table: &QualifiedName| {
             let left = self.collect_table(table, horizon, wait);
+            // A table left noted, or gone and not noted, changes nothing.
+            let lock = self.lock_of(table).ok();
+            if matches!((left, lock.map(|lock| lock.noted())), (Some(true), Some(true)) | (None, Some(false))) {
+                return;
+            }
             let mut uncollected = lock_builtin(&self.tx.uncollected);
             // Asked again under the lock: a commit that added garbage while
             // this one collected, and was passed over (RULES.md D445), has
@@ -234,7 +264,10 @@ impl State {
             } else {
                 uncollected.remove(table);
             }
-            self.tx.awaiting.store(!uncollected.is_empty(), Ordering::Release);
+            if let Some(lock) = lock {
+                lock.set_noted(keep);
+            }
+            self.awaiting(&uncollected);
         };
         for table in waiting.iter().filter(|w| !tables.clone().any(|t| t == *w)) {
             collect(table);

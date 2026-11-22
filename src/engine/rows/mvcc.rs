@@ -255,6 +255,9 @@ pub(super) struct Versions {
     garbage_items: AtomicU64,
     /// Whether `undone` holds versions, which make a collection due.
     undone_waiting: AtomicBool,
+    /// How many transactions are open in the table, stored under `open`'s
+    /// lock, so `due_at` reads it with no lock (RULES.md D795).
+    opened: AtomicUsize,
     /// The latest horizon the table was collected at: no reader is before
     /// it, and what commits at or before it superseded may be gone from
     /// the undo store (`RowTable::unpinned`).
@@ -288,6 +291,7 @@ impl Versions {
             validated_due: AtomicU64::default(),
             garbage_items: AtomicU64::default(),
             undone_waiting: AtomicBool::default(),
+            opened: AtomicUsize::default(),
             collected: AtomicU64::default(),
             statuses,
             unstamped: Mutex::default(),
@@ -347,6 +351,15 @@ impl RowTable {
             adopted: Xxh3Set::default(),
         };
         open.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));
+        self.versions.opened.store(open.len(), Ordering::Relaxed);
+    }
+
+    /// `tx` taken out of the transactions open here, if it was.
+    fn close_open(&self, tx: TxId) -> Option<Arc<Mutex<Open>>> {
+        let mut open = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let removed = open.remove(&tx);
+        self.versions.opened.store(open.len(), Ordering::Relaxed);
+        removed
     }
 
     /// From now, `tx` reads as `mode` says.
@@ -467,8 +480,7 @@ impl RowTable {
     /// Ends `tx` without committing it here.
     pub(super) fn end_open(&self, tx: TxId) -> Result<()> {
         let undone = self.undo_changes(tx, 0);
-        let removed = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
-        if let Some(open) = removed {
+        if let Some(open) = self.close_open(tx) {
             lock_builtin(&open).ended = true;
         }
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);

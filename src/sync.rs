@@ -108,7 +108,7 @@ mod tests {
 }
 
 /// Stripes of a `Gate`: threads taking it shared rarely share one.
-const GATE_STRIPES: u64 = 16;
+const GATE_STRIPES: u64 = 64;
 
 /// The stripe the next thread to take a gate is given.
 static NEXT_STRIPE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -119,6 +119,21 @@ std::thread_local! {
     /// This thread's stripe of every gate: given in turn, so threads at
     /// once take different stripes.
     static STRIPE: u64 = NEXT_STRIPE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % GATE_STRIPES;
+}
+
+/// \[DESIGN\] A value alone on its cache lines: one written by every
+/// transaction never shares a line with one every transaction only reads
+/// (RULES.md D795).
+#[repr(align(128))]
+#[derive(Default)]
+pub(crate) struct Alone<T>(pub(crate) T);
+
+impl<T> std::ops::Deref for Alone<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
 }
 
 /// A stripe, alone on its cache line, so taking one never slows a thread

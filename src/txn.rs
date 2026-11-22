@@ -80,7 +80,7 @@ use std::thread::ThreadId;
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlError};
 use crate::log::Log;
-use crate::sync::{Gate, lock, lock_builtin};
+use crate::sync::{Alone, Gate, lock, lock_builtin};
 
 mod access;
 mod capabilities;
@@ -248,7 +248,7 @@ pub(crate) struct TxState {
 /// whom.
 pub(crate) struct Transactions {
     clock: Clock,
-    active: AtomicUsize,
+    active: Alone<AtomicUsize>,
     /// For each waiting transaction, the transactions it waits for.
     waits_for: Mutex<WaitsFor>,
     /// Taken by every change a checkpoint writes (`db/checkpoint.rs`).
@@ -257,7 +257,7 @@ pub(crate) struct Transactions {
     /// position, where recovery from a checkpoint begins reading.
     firsts: Mutex<BTreeMap<TxId, First>>,
     /// Row changes logged since the database was opened.
-    pub(crate) logged: AtomicU64,
+    pub(crate) logged: Alone<AtomicU64>,
     /// The records open transactions hold (`txn/pending.rs`).
     pending: Pending,
     /// Of those, the ones the last checkpoint taken holds: those after it
@@ -271,14 +271,14 @@ pub(crate) struct Transactions {
     /// The failed sync of the log that stopped the database's changes, if
     /// one did (`txn/logging.rs`), and whether one did.
     stopped: Mutex<Option<SqlError>>,
-    stopping: AtomicBool,
+    stopping: Alone<AtomicBool>,
     /// The commits written to the log but not yet synced, under
     /// LOG.COMMIT_SYNC OFF, if any (`txn/logging.rs`).
     unsynced: Mutex<Option<logging::Unsynced>>,
     /// What holds the database's changes beside a failed sync, if anything
     /// does (`txn/logging.rs`, RULES.md D57), and whether something does.
     held: Mutex<Option<Held>>,
-    holding: AtomicBool,
+    holding: Alone<AtomicBool>,
     /// Following a log, the records of each of its transactions not yet
     /// ended, held until it ends (`db/standby.rs`), spilled past a work
     /// area's bytes (`txn/followed.rs`).
@@ -293,7 +293,7 @@ pub(crate) struct Transactions {
     uncollected: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `uncollected` names any table, as it was last changed: so a
     /// transaction that wrote nothing looks at it without its lock.
-    awaiting: AtomicBool,
+    awaiting: Alone<AtomicBool>,
     /// Whether the end of a transaction that wrote nothing is collecting
     /// `uncollected`: another such end passes it by (RULES.md D453).
     read_collecting: AtomicBool,
@@ -341,25 +341,25 @@ impl Default for Transactions {
     fn default() -> Self {
         Transactions {
             clock: Clock::new(FIRST_TRANSACTION),
-            active: AtomicUsize::new(0),
+            active: Alone(AtomicUsize::new(0)),
             waits_for: Mutex::new(HashMap::new()),
             gate: Gate::default(),
             firsts: Mutex::new(BTreeMap::new()),
-            logged: AtomicU64::new(0),
+            logged: Alone(AtomicU64::new(0)),
             pending: Pending::default(),
             checkpointed: AtomicU64::new(0),
             builds: Mutex::new(0),
             built: Condvar::new(),
             stopped: Mutex::new(None),
-            stopping: AtomicBool::new(false),
+            stopping: Alone(AtomicBool::new(false)),
             unsynced: Mutex::new(None),
             held: Mutex::new(None),
-            holding: AtomicBool::new(false),
+            holding: Alone(AtomicBool::new(false)),
             followed: Mutex::new(BTreeMap::new()),
             following: Mutex::new(Following::default()),
             replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
-            awaiting: AtomicBool::new(false),
+            awaiting: Alone(AtomicBool::new(false)),
             read_collecting: AtomicBool::new(false),
             maintenance: Mutex::new(BTreeSet::new()),
             noted: AtomicBool::new(false),

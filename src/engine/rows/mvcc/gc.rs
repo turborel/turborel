@@ -140,7 +140,7 @@ impl RowTable {
         horizon.checked_sub(due).is_some_and(|past| past >= COLLECT_AFTER)
             || self.versions.garbage_items.load(Ordering::Relaxed) >= COLLECT_ITEMS
             || self.versions.undone_waiting.load(Ordering::Relaxed)
-            || self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()
+            || self.versions.opened.load(Ordering::Relaxed) == 0
     }
 
     /// Whether anything awaits collection: garbage, versions undone changes
@@ -163,7 +163,10 @@ impl RowTable {
             // An item that cannot be written is held all the same.
             list.push(item, &mut encode_dead).unwrap_or_default();
         }
-        self.versions.garbage_due.fetch_min(at, Ordering::SeqCst);
+        // [DESIGN] RULES.md D795: written only when it moves back.
+        if at < self.versions.garbage_due.load(Ordering::SeqCst) {
+            self.versions.garbage_due.fetch_min(at, Ordering::SeqCst);
+        }
     }
 
     /// Adds the version a change of `tx` appended, `appended`, the change

@@ -62,8 +62,7 @@ impl RowTable {
     /// superseded made garbage for when `at` is past the horizon, a segment
     /// of its changes at a time; the rows it wrote first are left to stamp.
     pub(in crate::engine::rows) fn commit_open(&self, tx: TxId, at: Timestamp) {
-        let removed = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
-        let Some(open) = removed else { return };
+        let Some(open) = self.close_open(tx) else { return };
         let (changes, adopted) = {
             let mut open = lock_builtin(&open);
             open.ended = true;
