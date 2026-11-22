@@ -32,6 +32,7 @@ mod hits;
 mod owned;
 mod policy;
 mod pool;
+mod sources;
 mod tally;
 mod versions;
 
@@ -266,7 +267,7 @@ pub struct BufferPool {
     shards: Vec<Shard>,
     /// Frames holding no page. Taken after a shard's lock, never before.
     empty: Mutex<Vec<usize>>,
-    sources: RwLock<Vec<Source>>,
+    sources: sources::Sources,
     eviction: Box<dyn Eviction>,
     counters: Counters,
     /// Where each page's frame was last found, by the page's hash

@@ -102,3 +102,30 @@ fn a_procedure_statement_after_a_wait_reads_what_was_committed_4_28() {
     assert_eq!(rows(&first, "SELECT X FROM L").unwrap().concat(), "21");
     assert_eq!(rows(&first, "SELECT V FROM T WHERE K = 1").unwrap().concat(), "101");
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.28] RULES.md D455: a READ
+/// COMMITTED update of a column a CHECK constraint guards, made over the
+/// version another transaction committed while it waited, is not refused
+/// as it commits: the check read the row it wrote itself, which no other
+/// transaction could change before its commit.
+#[test]
+fn a_checked_column_written_after_a_wait_commits_4_28() {
+    let db = database();
+    let (first, second) = (db.session("A"), db.session("A"));
+    first.run("CREATE TABLE C (K INTEGER NOT NULL PRIMARY KEY, V INTEGER NOT NULL CHECK (V >= 0))").unwrap();
+    first.commit().unwrap();
+    first.run("INSERT INTO C VALUES (1, 0)").unwrap();
+    first.commit().unwrap();
+    for s in [&first, &second] {
+        s.run("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap();
+    }
+    first.run("UPDATE C SET V = V + 1 WHERE K = 1").unwrap();
+    let waiting = thread::spawn(move || {
+        second.run("UPDATE C SET V = V + 1 WHERE K = 1").map_err(|e| e.msg)?;
+        second.commit().map_err(|e| e.msg)
+    });
+    thread::sleep(Duration::from_millis(50));
+    first.commit().unwrap();
+    assert_eq!(waiting.join().unwrap(), Ok(()));
+    assert_eq!(rows(&first, "SELECT V FROM C").unwrap(), ["2"]);
+}
