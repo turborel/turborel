@@ -15,8 +15,9 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use super::{FileId, Source};
 
 /// \[DESIGN\] Files in a chunk of slots, made as the first of them is added.
+/// With `CHUNKS` it bounds what a pool holds, 1,048,576 files at most.
 const CHUNK: usize = 1024;
-/// \[DESIGN\] Chunks a pool may have, so files it may register: 1,048,576.
+/// \[DESIGN\] Chunks a pool may have.
 const CHUNKS: usize = 1024;
 
 /// A chunk of slots, each set once.
