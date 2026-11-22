@@ -148,7 +148,14 @@ pub(super) struct Held {
     clock: Option<timed::Clock>,
     /// The time of a cursor's earlier requests, or a copy's.
     carried: Timing,
+    /// THROWAWAY ceiling build: statements answered with a canned reply,
+    /// true for one row.
+    canned: HashMap<u32, bool>,
 }
+
+/// THROWAWAY ceiling build: a sysbench `c` value, 119 characters and a space.
+const CANNED_C: &str =
+    "68487932199-96439406143-93774651418-41631865787-96406072701-20604855487-25459966574-28203206787-41238978918-19503783441 ";
 
 /// Why rows stopped before their end.
 enum Cut {
@@ -245,7 +252,19 @@ impl Held {
         // their reply is sent (`Lent::answer`).
         session.collect_after_reply(true);
         let (statements, cursors, status) = (HashMap::new(), HashMap::new(), Status::default());
-        Held { session, statements, cursors, copy: None, granted, status, serves, arrived: None, clock: None, carried: Timing::default() }
+        Held {
+            session,
+            statements,
+            cursors,
+            copy: None,
+            granted,
+            status,
+            serves,
+            arrived: None,
+            clock: None,
+            carried: Timing::default(),
+            canned: HashMap::new(),
+        }
     }
 
     /// Abandons the copy under way, if one is, everything it did undone:
@@ -294,6 +313,16 @@ impl Held {
     ///
     /// A write of replies failed: the connection is gone.
     pub(super) fn one(&mut self, work: Work, out: &mut Outgoing<'_>, (max_statements, more): (usize, bool)) -> Result<bool> {
+        if let Work::Execute { at, .. } = &work
+            && let Some(&row) = self.canned.get(&at.0)
+        {
+            if row {
+                out.rows(&mut vec![vec![Value::Char(CANNED_C.to_owned())]]);
+            }
+            let rows = if row { Some(1) } else { None };
+            out.gathered.push(Reply::Complete(Completed { rows, active: false, more, ..Completion::Success.into() }));
+            return Ok(false);
+        }
         self.start();
         let ends = self.ends(&work);
         let counted = Counted::of(&work);
@@ -470,6 +499,14 @@ impl Held {
             return Err(SqlError::new(Code::Resources, msg));
         }
         let prepared = self.session.prepare(sql)?;
+        let text = sql.trim_start().to_ascii_uppercase();
+        if text.starts_with("CALL ") {
+            self.canned.insert(n, false);
+        } else if text.starts_with("SELECT C FROM SBTEST") && text.contains("WHERE ID=") {
+            self.canned.insert(n, true);
+        } else {
+            self.canned.remove(&n);
+        }
         let reply = prepared_reply(n, &prepared, self.granted);
         self.statements.insert(n, prepared);
         Ok(reply)
