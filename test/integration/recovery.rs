@@ -254,3 +254,44 @@ fn a_damaged_log_is_refused_and_a_torn_one_reported() {
     assert_eq!(rows(&db.session("A"), "SELECT COUNT(*) FROM T"), Ok(vec!["5".into()]));
     drop((s, crashed));
 }
+
+/// Verifies: [DESIGN] RULES.md D814, D25: a table whose leaves were merged
+/// recovers what was committed. Four rows in five deleted leave every
+/// leaf sparse, so their garbage collected merges them, some before the
+/// last checkpoint and some after it, redone from the log; rows inserted
+/// after are kept. After the crash, the table and its index hold exactly
+/// the rows left, found by key and scanned.
+#[test]
+fn a_table_whose_leaves_merged_recovers_what_was_committed() {
+    let scratch = Scratch::new("recovery-merged");
+    let dir = scratch.path("db");
+    let crashed = Database::new();
+    crashed.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
+    crashed.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V CHARACTER(200))").unwrap();
+    crashed.create_index("T_V", "S.T", &["V"], "btree").unwrap();
+    let s = crashed.session("S");
+    for from in (0..3000).step_by(500) {
+        let values: Vec<String> = (from..from + 500).map(|k| format!("({k}, 'v{k}')")).collect();
+        s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    s.run("DELETE FROM T WHERE MOD(K, 5) <> 0 AND K < 1500").unwrap();
+    s.commit().unwrap();
+    s.collect();
+    crashed.checkpoint().unwrap();
+    s.run("DELETE FROM T WHERE MOD(K, 5) <> 0 AND K >= 1500").unwrap();
+    s.commit().unwrap();
+    s.collect();
+    s.run("INSERT INTO T VALUES (3000, 'v3000'), (3001, 'v3001')").unwrap();
+    s.commit().unwrap();
+    drop((s, crashed));
+    let db = Database::new();
+    let opened = db.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    let s = db.session("S");
+    assert_eq!(rows(&s, "SELECT COUNT(*), SUM(K) FROM T"), Ok(vec!["602,904501".into()]));
+    assert_eq!(rows(&s, "SELECT TRIM(V) FROM T WHERE K = 2995"), Ok(vec!["v2995".into()]));
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE K = 2996"), Ok(vec!["0".into()]));
+    assert_eq!(rows(&s, "SELECT K FROM T WHERE V = 'v1500'"), Ok(vec!["1500".into()]));
+    assert_eq!(db.index_entries("T_V").unwrap(), 602, "one a row");
+}

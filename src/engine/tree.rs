@@ -26,18 +26,19 @@
 //!   (§6.2, Lemma 2). Then they lock the remembered parent, move right
 //!   from it as far as the separator needs, release the child, and insert
 //!   the separator and the new page there, the same way, up the tree.
-//!   At most three nodes are locked at once, always bottom to top and left
-//!   to right, so writers never deadlock (§5, §6.1).
+//!   At most three nodes are locked at once, four by a merge, always
+//!   bottom to top and left to right, so writers never deadlock (§5, §6.1).
 //! * Past the top of the remembered path, the split node's level is the
 //!   root's or the tree has grown since: a new root is made above the old
 //!   one, the leftmost node of its level, under the meta page's lock; or
 //!   the parent is found again from the current root.
 //! * **Deletes** remove an entry from its leaf; a key in an inner node
 //!   stays, as it is only an upper bound (§7), unless the leaf is unlinked.
-//!   A leaf a delete empties is taken out if it has neighbours under the
-//!   same parent, its separator removed, its range given to its right
+//!   A leaf a delete empties, or leaves sparse, is taken out if it has
+//!   neighbours under the same parent, its entries moved into its right
+//!   neighbour if they fit, its separator removed, its range given to the
 //!   neighbour, and its page freed once no operation that may hold its
-//!   number is left. Other empty leaves stay (`reclaim.rs`).
+//!   number is left. Other sparse leaves stay (`reclaim.rs`, `merge.rs`).
 //!
 //! The paper notes a reader may in principle be overtaken forever by
 //! splits ahead of it (livelock, §6.4); `TreeCounts::right_moves` measures
@@ -58,6 +59,7 @@ mod fit;
 pub(crate) mod hints;
 mod inner;
 mod load;
+mod merge;
 mod near;
 mod node;
 mod reclaim;

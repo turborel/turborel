@@ -536,6 +536,7 @@ verification approach DO-178C expects (§8).
 | D811 | A commit closes its side file and writes its file in runs of granules |
 | D812 | Withdrawn: a checkpoint's commits are not spread, as spreading them cost throughput |
 | D813 | A pool's test reading a page fails first if a frame is left latched exclusively |
+| D814 | A leaf a delete leaves sparse merges into its right neighbour when the two fit in three quarters of a page |
 | D822 | An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them |
 | D835 | A write decodes the row it replaced once, for its caller and the zone it widens alike |
 | D665 | A chain of inner hash joins may read its leaves first, each filtered by Bloom filters of the others' keys, before its joins |
@@ -14823,6 +14824,41 @@ fail if any is. The pool itself is unchanged. The hang came from the
 test's own order of holding and reading, not from an order in which the
 pool takes its latches, and the test as it is now on main never held
 and read at once.
+#### D814. A leaf a delete leaves sparse merges into its right neighbour when the two fit in three quarters of a page
+
+A table's rows take new ids at the right edge of its tree, so a row
+deleted and inserted again never returns to its leaf. When only the
+leaves that deletes emptied were taken out, the rest stayed sparse for
+good. Under a steady
+mix of deletes and inserts, the live rows spread over about three times
+the pages, and every checkpoint wrote all of them.
+
+A delete that leaves its leaf at most three eighths full now tries to
+merge it into its right neighbour (`engine/tree/merge.rs`). If the
+entries of both fit in three quarters of a page, the neighbour is
+written with all of them, and the leaf is taken out as an emptied one
+is (D31, `reclaim.rs`), its range given to the neighbour. The leaf on
+its left, the leaf, the neighbour and their parent are locked in that
+order, bottom to top and left to right, as every writer locks, so no
+writer changes either leaf between the neighbour written and the leaf
+marked deleted. Keys move only right, as in a split, so a scan or read
+that reaches the leaf afterwards follows its link to where its keys
+went, and a scan returns no key twice. A leaf first or last under its
+parent stays, as an empty one does.
+
+Three quarters is derived from the node layout, not swept. The longest
+entry takes a quarter of a page less two headers, so a leaf merged to
+three quarters takes any entry next without splitting, and two halves
+of a split together fill more than three quarters, so a split is not
+undone. A larger share could leave a merged leaf to split at the next
+insert, and a smaller one only leaves more pages. A leaf is tried at
+half that share, three eighths, because one fuller can only merge with
+a smaller neighbour, which tries its own right one.
+
+A tree's pages reach the file through the shadowed data file, as a
+split's do (D25), so a merge is in a checkpoint whole or not at all, and
+the log redoes the deletes after it.
+
 #### D822. An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them
 
 An update's log record (D475) wrote each column of the row before into a

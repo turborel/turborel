@@ -19,8 +19,12 @@ pub struct TreeCounts {
     /// Links followed to a right neighbour, by readers and writers: a
     /// node had split since its parent was read.
     pub right_moves: u64,
-    /// Leaves emptied and taken out of the tree (`reclaim.rs`).
+    /// Leaves emptied, or merged into their right neighbour, and taken out
+    /// of the tree (`reclaim.rs`).
     pub unlinked: u64,
+    /// Of those, leaves merged: their entries moved into their right
+    /// neighbour first (`merge.rs`).
+    pub merged: u64,
     /// Reads of a table's row the leaf noted for it answered, with no
     /// descent (`hints.rs`).
     pub hinted: u64,
@@ -36,6 +40,7 @@ pub(super) struct Counters {
     pub(super) root_splits: AtomicU64,
     pub(super) right_moves: AtomicU64,
     pub(super) unlinked: AtomicU64,
+    pub(super) merged: AtomicU64,
     pub(super) hinted: Striped,
     pub(super) edge_writes: Striped,
     pub(super) contention_splits: AtomicU64,
@@ -107,6 +112,7 @@ impl BLinkTree {
             root_splits: get(&c.root_splits),
             right_moves: get(&c.right_moves),
             unlinked: get(&c.unlinked),
+            merged: get(&c.merged),
             hinted: c.hinted.sum(),
             edge_writes: c.edge_writes.sum(),
             contention_splits: get(&c.contention_splits),

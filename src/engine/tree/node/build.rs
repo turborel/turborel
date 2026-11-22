@@ -58,7 +58,7 @@ fn prefix_of(entries: &[(KeyRef<'_>, &[u8])]) -> usize {
 
 /// The bytes a node of `entries` and a high key `high` bytes long takes,
 /// built with its own prefix (`prefix_of`).
-pub(super) fn built_size(high: usize, entries: &[(KeyRef<'_>, &[u8])]) -> usize {
+pub(in crate::engine::tree) fn built_size(high: usize, entries: &[(KeyRef<'_>, &[u8])]) -> usize {
     let prefix = prefix_of(entries);
     entries.iter().fold(HEADER.saturating_add(high).saturating_add(prefix), |n, (k, v)| {
         n.saturating_add(super::entry_size(&[], v)).saturating_add(k.len().saturating_sub(prefix))
@@ -72,7 +72,12 @@ pub(super) fn built_size(high: usize, entries: &[(KeyRef<'_>, &[u8])]) -> usize 
 /// # Errors
 ///
 /// As `build`.
-pub(super) fn built(shape: &Shape<'_>, entries: &[(KeyRef<'_>, &[u8])], last: Option<usize>, prefix: Option<usize>) -> Result<Vec<u8>> {
+pub(in crate::engine::tree) fn built(
+    shape: &Shape<'_>,
+    entries: &[(KeyRef<'_>, &[u8])],
+    last: Option<usize>,
+    prefix: Option<usize>,
+) -> Result<Vec<u8>> {
     let high = shape.high.unwrap_or_default();
     let shared = entries.first().map(|(k, _)| k.to_vec()).unwrap_or_default();
     let prefix = shared.get(..prefix.unwrap_or_else(|| prefix_of(entries)).min(shared.len())).unwrap_or_default();
