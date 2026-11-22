@@ -7,6 +7,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::{Database, Session, State};
+
+mod own;
 use crate::ast::IsolationLevel;
 use crate::binder::Context;
 use crate::diagnostics::{Event, Extension};
@@ -19,6 +21,7 @@ use crate::system::{self, SystemTable};
 use crate::txn::{LockWait, SessionEnd};
 use crate::value::Value;
 use crate::value::datetime::Clocked;
+pub(super) use own::OwnValues;
 
 impl State {
     /// Sets the database's value of the setting `name`, or its default
@@ -507,7 +510,7 @@ impl Session {
     ///
     /// SQLCODE -910 if there is no such setting.
     pub fn setting(&self, name: &str) -> Result<Value> {
-        let st = self.db.snapshot()?;
+        let st = self.own_snapshot()?;
         let key = st.settings.known(name)?;
         Ok(st.settings.effective(key, &self.own.borrow()).0.clone())
     }
@@ -546,19 +549,6 @@ impl Session {
     /// What ends its open transaction when it ends (`SESSION.COMMIT_AT_END`).
     pub(super) fn session_end(&self, st: &State) -> SessionEnd {
         settings::session_end(st.settings.effective(SESSION_COMMIT_AT_END, &self.own.borrow()).0)
-    }
-
-    /// `st`, its settings this session's own over the database's, so its
-    /// statements read them where they read the database's (RULES.md D36):
-    /// a copy, made only if it set one, never published.
-    pub(super) fn with_own(&self, st: Arc<State>) -> Arc<State> {
-        let own = self.own.borrow();
-        if own.is_empty() {
-            return st;
-        }
-        let mut copy = State::clone(&st);
-        copy.settings = st.settings.overlaid(&own);
-        Arc::new(copy)
     }
 
     /// The isolation level of a transaction that names none

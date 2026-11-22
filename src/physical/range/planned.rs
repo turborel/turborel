@@ -111,8 +111,9 @@ impl PhysicalPlanner<'_> {
     /// The cost of the cheapest other plan of the join of `left` and
     /// `right` on `cond`, whose search `ranged` is: the hash join on its
     /// equalities, if it has any and no conjunct can raise as the hash
-    /// join judges it (`physical/join.rs`); the nested loop; or an index
-    /// probed by its comparisons.
+    /// join judges it (`physical/join.rs`); the nested loop; an index
+    /// probed by its comparisons; or one probed by its equalities and
+    /// bounds of the key's next column (RULES.md D776).
     pub(super) fn joined_otherwise(&self, cond: &Cond, (left, right): (&LogicalPlan, &LogicalPlan), ranged: &Ranged) -> f64 {
         let rows = (self.rows_of(left), self.rows_of(right));
         let nested = rows.0 * rows.1;
@@ -122,12 +123,13 @@ impl PhysicalPlanner<'_> {
         let keys = if cond.can_raise() { Vec::new() } else { keys };
         let hashed = and_all(keys).map(|k| HASH_ROW * (rows.0 + rows.1) + self.estimating(|e| e.filter_card(&k, &product)).rows);
         let probed = self.comparison_cost(cond, (left, right));
-        [Some(nested), hashed, probed].into_iter().flatten().fold(f64::INFINITY, f64::min)
+        let bounded = self.bounded_join_cost(cond, (left, right));
+        [Some(nested), hashed, probed, bounded].into_iter().flatten().fold(f64::INFINITY, f64::min)
     }
 
     /// Whether `cond`, over the pairs of `left` and `right`, can raise an
     /// exception condition by its columns' declared types (`logical/raises.rs`).
-    fn cond_raises(&self, cond: &Cond, (left, right): (&LogicalPlan, &LogicalPlan)) -> bool {
+    pub(in crate::physical) fn cond_raises(&self, cond: &Cond, (left, right): (&LogicalPlan, &LogicalPlan)) -> bool {
         let catalog = &*self.db.catalog;
         let width = left.width();
         let types = |i: usize| match i.checked_sub(width) {

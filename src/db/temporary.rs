@@ -39,7 +39,7 @@ use crate::index::Index;
 use crate::settings::{MEMORY_WORK_BYTES, held_bytes};
 use crate::storage::TableStorage;
 use crate::sync::lock_builtin;
-use crate::txn::{TableLock, Timestamp, TxId, remove_entries};
+use crate::txn::{Sharing, TableLock, Timestamp, TxId, remove_entries};
 use pages::Place;
 use storage::{Entries, Rows_};
 
@@ -193,16 +193,18 @@ impl Instance {
     fn collect(&self) {
         let Some(rows) = self.rows.made() else { return };
         let entries = self.rows.all_entries();
-        let indexes: Vec<(&dyn Index, &IndexDesc)> = entries
+        // Each version's entries its own: no write of an instance notes
+        // the columns it kept (RULES.md D443).
+        let indexes: Vec<(&dyn Index, &IndexDesc, Sharing)> = entries
             .iter()
             .map(|entries| {
                 let index: &dyn Index = &**entries;
-                (index, &entries.index)
+                (index, &entries.index, Sharing::NONE)
             })
             .collect();
         // An entry not taken back is left: an instance is read by no
         // index-only scan, so its readers check the rows of its entries.
-        let _ = rows.gc(Timestamp::MAX, &mut |id, row| remove_entries(&indexes, id, &row).is_empty());
+        let _ = rows.gc(Timestamp::MAX, &mut |id, row, kept| remove_entries(&indexes, id, &row, kept).is_empty());
     }
 
     /// An instance of `desc`, its rows and entries made as they are first

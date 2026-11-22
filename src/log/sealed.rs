@@ -29,11 +29,20 @@ const SEALED: u8 = 0xFE;
 ///
 /// An encoding's errors.
 pub fn seal(record: &Record, row: RowId, pipeline: &Pipeline) -> Result<Vec<u8>> {
-    let plain = record.encode();
+    seal_plain(&record.encode(), row, pipeline)
+}
+
+/// As `seal`, of the bytes `plain` of a record already encoded, as
+/// `record::update_record` gives them (RULES.md D750).
+///
+/// # Errors
+///
+/// An encoding's errors.
+pub fn seal_plain(plain: &[u8], row: RowId, pipeline: &Pipeline) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(plain.len().saturating_add(16));
     out.put_u8(SEALED);
     out.put_u64(row);
-    pipeline.seal(row, &plain, &mut out)?;
+    pipeline.seal(row, plain, &mut out)?;
     Ok(out)
 }
 

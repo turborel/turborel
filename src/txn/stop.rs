@@ -28,14 +28,14 @@ mod activity;
 mod changed;
 mod served;
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::TxId;
 use crate::error::{Code, Result, SqlError, Warnings};
-use crate::sync::lock_builtin;
+use crate::hash::xxhash::Xxh3Map;
+use crate::sync::{Alone, lock_builtin};
 
 pub use activity::{Activity, Now, Tallied, Tallies, Tally, Waiting};
 pub(crate) use changed::Changed;
@@ -68,6 +68,9 @@ pub struct Stop {
     warnings: Warnings,
     /// What a server takes of its statements for its client.
     served: Served,
+    /// \[DESIGN\] Whether its transactions leave their garbage to be
+    /// collected once their reply is sent (RULES.md D450).
+    collect_later: AtomicBool,
     /// The plan of a data change EXPLAIN ANALYZE runs.
     changed: Changed,
     /// What the session does now, and what its statements did.
@@ -93,6 +96,7 @@ impl Default for Stop {
             epoch: Instant::now(),
             warnings: Warnings::default(),
             served: Served::default(),
+            collect_later: AtomicBool::new(false),
             changed: Changed::default(),
             activity: Activity::default(),
         }
@@ -131,6 +135,19 @@ impl Stop {
     /// for a lock (LOCKS.TIMEOUT_MS).
     pub(crate) fn set_lock_timeout(&self, millis: u64) {
         self.lock_timeout.store(millis, Ordering::SeqCst);
+    }
+
+    /// \[DESIGN\] Sets whether its transactions leave their garbage to be
+    /// collected once their reply is sent (RULES.md D450).
+    pub(crate) fn set_collect_later(&self, later: bool) {
+        self.collect_later.store(later, Ordering::Relaxed);
+    }
+
+    /// \[DESIGN\] Whether its transactions' ends leave their tables noted
+    /// for collection, which their session runs once its reply is sent
+    /// (RULES.md D450).
+    pub(crate) fn collects_later(&self) -> bool {
+        self.collect_later.load(Ordering::Relaxed)
     }
 
     /// The longest a statement waits for a lock, if there is a limit.
@@ -240,22 +257,26 @@ impl Drop for Window<'_> {
 /// on many threads at once seldom take the same lock.
 const STOP_SHARDS: u64 = 32;
 
+/// One shard of `Stops`.
+type StopShard = Alone<Mutex<Xxh3Map<TxId, Arc<Stop>>>>;
+
 /// \[DESIGN\] What cancels the statements of each open transaction, for a
-/// plan's scans to look at: in `STOP_SHARDS` shards, by transaction id.
+/// plan's scans to look at: in `STOP_SHARDS` shards, by transaction id,
+/// each alone on its cache lines (RULES.md D782).
 pub(crate) struct Stops {
-    shards: Vec<Mutex<HashMap<TxId, Arc<Stop>>>>,
+    shards: Box<[StopShard]>,
 }
 
 impl Default for Stops {
     fn default() -> Self {
-        Stops { shards: (0..STOP_SHARDS).map(|_| Mutex::new(HashMap::new())).collect() }
+        Stops { shards: (0..STOP_SHARDS).map(|_| Alone(Mutex::default())).collect() }
     }
 }
 
 impl Stops {
     /// The shard of `tx`, if there is one.
-    fn shard(&self, tx: TxId) -> Option<&Mutex<HashMap<TxId, Arc<Stop>>>> {
-        usize::try_from(tx % STOP_SHARDS).ok().and_then(|at| self.shards.get(at))
+    fn shard(&self, tx: TxId) -> Option<&Mutex<Xxh3Map<TxId, Arc<Stop>>>> {
+        usize::try_from(tx % STOP_SHARDS).ok().and_then(|at| self.shards.get(at)).map(|shard| &shard.0)
     }
 
     /// Notes `stop` as what cancels `tx`'s statements.

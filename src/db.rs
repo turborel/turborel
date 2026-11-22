@@ -84,6 +84,7 @@ mod direct;
 mod domains;
 mod drop;
 mod embedding;
+mod escrow;
 pub(crate) use embedding::model_named;
 pub(crate) mod dynamic;
 mod execute;
@@ -118,6 +119,7 @@ mod recovery;
 mod rekey;
 mod revoke;
 mod roles;
+mod rollback;
 mod routines;
 mod running;
 pub(crate) mod savepoints;
@@ -152,7 +154,7 @@ pub(crate) mod write;
 
 use assignment::{candidate, check_option, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
-use compiled::{plan, plan_heard, plan_rows, plan_rows_slotted, plan_slotted};
+use compiled::{plan, plan_heard, plan_slotted, plan_written, plan_written_slotted};
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use rekey::FormatsBehind;
@@ -290,10 +292,10 @@ pub struct Session {
     /// The constraint modes of its transaction, and the checks of its
     /// deferred constraints waiting [ISO/IEC 9075:1992 §14.2].
     deferral: RefCell<Deferral>,
-    /// [ISO/IEC 9075-2:2023 §4.48.1, §19.13] Its default transform group
-    /// name and its transform group names for user-defined types.
+    /// Its copy of the last snapshot it took (`database/published.rs`).
+    published: RefCell<database::Own>,
     /// Its own values of the settings a session may set (RULES.md D36).
-    own: RefCell<crate::settings::Own>,
+    own: RefCell<settings::OwnValues>,
     /// The default schema of its unqualified names [ISO/IEC 9075:1992
     /// §4.30, §16.2].
     schema: RefCell<String>,
@@ -302,8 +304,7 @@ pub struct Session {
     /// The collation a prepared statement run now was prepared under, in
     /// place of `collation`, until it ends (`db/prepared.rs`).
     prepared_collation: RefCell<collations::Collating>,
-    /// The modes of its active transaction, and those SET TRANSACTION gave
-    /// the next [§14.1].
+    /// The modes of its active transaction, and those SET TRANSACTION gave the next [§14.1].
     mode: Cell<TransactionMode>,
     next: Cell<Option<TransactionMode>>,
     /// What cancels its statements (RULES.md D44), and hears the warnings
@@ -393,7 +394,7 @@ impl Session {
             inner: RefCell::new(SessionState::default()),
             busy: Cell::new(false),
             deferral: RefCell::new(Deferral::default()),
-            own: RefCell::new(crate::settings::Own::default()),
+            own: RefCell::new(settings::OwnValues::default()),
             schema: RefCell::new(auth.to_owned()),
             collation: RefCell::new(None),
             prepared_collation: RefCell::new(collations::Collating::AsSet),
@@ -408,6 +409,7 @@ impl Session {
             compile: RefCell::new(None),
             locators: RefCell::default(),
             running: RefCell::new(None),
+            published: RefCell::new(None),
         }
     }
 
@@ -489,8 +491,10 @@ impl Session {
 
     fn commit_in(&self, st: &Arc<State>) -> Result<()> {
         let open = self.inner.borrow().tx.clone();
+        // [DESIGN] RULES.md D452: its increments reserved applied first, so
+        // its constraints are checked of the rows it leaves.
         if let Some(tx) = open
-            && let Err(e) = self.check_at_commit(st, &tx)
+            && let Err(e) = st.fold(&tx).and_then(|()| self.check_at_commit(st, &tx))
         {
             // [ISO/IEC 9075:1992 §14.3 GR5a] its changes canceled.
             self.rollback_in(st)?;
@@ -521,59 +525,6 @@ impl Session {
         if wrote {
             self.db.written(&tables);
         }
-        ended
-    }
-
-    /// [X3.135-1986 §8.9] ROLLBACK WORK.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -914 if a change could not be undone; the transaction still ends,
-    /// and the tables concerned are damaged (RULES.md D19). SQLCODE -910 if
-    /// called back from a plug-in.
-    pub fn rollback(&self) -> Result<()> {
-        let call = self.enter()?;
-        self.emptied((commands::ROLLBACK_WORK, commands::UNRECOGNIZED));
-        self.diagnosed(self.db.noted(self.rollback_in(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
-    }
-
-    /// [X3.135-1986 §7.1 GR2, ISO/IEC 9075:1992 §20.1 GR2a] Ends the
-    /// session's transaction after its last statement: committed or rolled
-    /// back as SESSION.COMMIT_AT_END says, and rolled back if a constraint is not
-    /// satisfied; its failure returned, where dropping the session would
-    /// lose it. A server calls it when its client terminates the session,
-    /// which then has no transaction left to end when it is dropped.
-    ///
-    /// # Errors
-    ///
-    /// As `commit`'s, or `rollback`'s, as SESSION.COMMIT_AT_END says.
-    pub fn end(&self) -> Result<()> {
-        let ending = self.session_end(self.enter()?.state());
-        match ending {
-            SessionEnd::Commit => self.commit(),
-            SessionEnd::Rollback => self.rollback(),
-        }
-    }
-
-    fn rollback_in(&self, st: &State) -> Result<()> {
-        // The changes of definitions are forgotten; the published ones have
-        // the storage of every table its changes are undone in.
-        let ending = self.end_transaction();
-        let id = ending.as_ref().map(|tx| tx.id);
-        let ended = match (ending, self.take_staged()) {
-            (Some(tx), None) => st.rollback(&tx),
-            (Some(tx), Some(staged)) => {
-                staged.discard();
-                self.db.snapshot().and_then(|published| published.rollback(&tx))
-            }
-            (None, _) => return Ok(()),
-        };
-        // [X3.135-1986 §8.9] Ended, every change undone or not (RULES.md D19).
-        self.transaction_ended(false);
-        self.locators_ended(false);
-        self.temporaries_ended(st, id);
-        self.db.checkpoint_if_due();
-        self.db.maintain_if_due();
         ended
     }
 }

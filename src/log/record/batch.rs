@@ -1,13 +1,16 @@
 //! \[EXTENSION\] Rows inserted together as one record (RULES.md D530): a
 //! batch of an INSERT or a bulk copy, so its rows cost the log one append,
 //! not one each. Redone as each of its rows would be as an insert record.
+//! Here too the records of one row's insert, update and delete made from
+//! the rows as their statement holds them, none copied for its record
+//! (RULES.md D531, D750).
 //!
 //! ```text
 //! insert rows (26): table | generation u32 | rows (count u32, each: row
 //!              id u64 | after-image row)
 //! ```
 
-use super::kinds::{INSERT, INSERT_ROWS};
+use super::kinds::{DELETE, INSERT, INSERT_ROWS, UPDATE};
 use super::{Change, RECORD_VERSION, put_row_change, put_table, table};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
@@ -72,5 +75,27 @@ pub fn insert_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: R
     out.put_u8(INSERT);
     out.put_u64(tx);
     put_row_change(&mut out, (table, generation, id), &[row]);
+    out
+}
+
+/// \[DESIGN\] As `insert_record`, of a `Change::Update` of row `id` made
+/// `after` from `before` (RULES.md D750).
+pub fn update_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, (before, after): (&Row, &Row)) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.put_u8(RECORD_VERSION);
+    out.put_u8(UPDATE);
+    out.put_u64(tx);
+    super::images::put_update(&mut out, (table, generation, id), before, after);
+    out
+}
+
+/// \[DESIGN\] As `insert_record`, of a `Change::Delete` of row `id`, which
+/// was `before` (RULES.md D750).
+pub fn delete_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, before: &Row) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.put_u8(RECORD_VERSION);
+    out.put_u8(DELETE);
+    out.put_u64(tx);
+    put_row_change(&mut out, (table, generation, id), &[before]);
     out
 }

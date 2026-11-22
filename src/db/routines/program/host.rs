@@ -19,7 +19,7 @@ use super::super::super::savepoints::{Level, none_named};
 use super::super::super::{Completion, Session, State, StatementContext};
 use super::super::kept::{KeptProgram, KeptRuns};
 use super::{Hosted, diagnostics, step_command};
-use crate::ast::{FetchOrientation, SavepointStatement, SqlStatement};
+use crate::ast::{FetchOrientation, SavepointStatement, SqlStatement, TableReference};
 use crate::error::{Result, SqlError};
 use crate::exec::{Host, rows};
 use crate::logical::{Contained, Cursor, Leaf, Step};
@@ -80,6 +80,19 @@ impl<'s, 'c> SessionHost<'s, 'c> {
         }
     }
 
+    /// \[DESIGN\] RULES.md D454: reading at a snapshot for each statement,
+    /// a statement of a procedure's body, or of a control statement run
+    /// directly, reads at one taken as it begins, as a statement the
+    /// session runs does, unless a cursor is open. A function's or a
+    /// triggered action's reads at the snapshot of the statement that runs
+    /// it, which is still reading.
+    fn fresh(&self, tx: &Txn) -> Result<()> {
+        if self.session.nesting.savepoints.borrow().in_statement() {
+            return Ok(());
+        }
+        tx.renew_snapshot(|| !self.session.cursors_open())
+    }
+
     /// Its state taken anew, of an SQL control statement run directly.
     fn refreshed(&mut self) -> Result<()> {
         if let Context::Own { st, .. } = &mut self.context {
@@ -134,8 +147,9 @@ impl Host for SessionHost<'_, '_> {
 
     fn rows(&self, leaf: &Leaf, frame: &Params, limit: Option<usize>) -> Result<Vec<Row>> {
         self.with(|cx| {
-            for t in leaf.query.plan.tables() {
-                cx.st.read_lock(cx.tx, &t)?;
+            self.fresh(cx.tx)?;
+            for (t, needed) in leaf.query.plan.columns_read() {
+                cx.st.read_lock_of(cx.tx, (&t, needed))?;
             }
             // A runner of its own, so no rows kept are read after a
             // statement changed them.
@@ -173,6 +187,7 @@ impl Host for SessionHost<'_, '_> {
         // program kept keeps its plan (RULES.md D406).
         let kept = self.kept.and_then(|k| k.plans_of(c)).filter(|_| keeps_plan(c.statement()));
         let ran = self.with(|cx| {
+            self.fresh(cx.tx)?;
             session.may_run(cx.st, c.statement())?;
             let keeping = kept.map(|plans| session.keeping(cx.st, plans));
             session.run_statement(cx, c.statement(), frame, keeping.as_ref())
@@ -198,6 +213,7 @@ impl Host for SessionHost<'_, '_> {
         let kept = self.kept.and_then(|k| k.cursor_plans(cursor));
         let session = self.session;
         self.with(|cx| {
+            self.fresh(cx.tx)?;
             let keeping = kept.map(|plans| session.keeping(cx.st, plans));
             session.open_local(cx, (key, cursor), frame, keeping.as_ref())
         })
@@ -266,7 +282,23 @@ impl Host for SessionHost<'_, '_> {
 }
 
 /// Whether `stmt`, a statement of a program kept, keeps its plan as a
-/// prepared statement does: an INSERT, a searched UPDATE or DELETE.
+/// prepared statement does: an INSERT, a searched UPDATE or DELETE, or
+/// the one of these a SELECT ... INTO reads as its delta table (RULES.md
+/// D792).
 fn keeps_plan(stmt: &SqlStatement) -> bool {
+    if let SqlStatement::Select { query, .. } = stmt
+        && let [TableReference::Delta(d)] = query.table_expression.from.as_slice()
+    {
+        return changes_kept(&d.statement);
+    }
+    changes_kept(stmt)
+}
+
+/// Whether `stmt` is an INSERT, a searched UPDATE or a searched DELETE,
+/// whose plan a program kept keeps.
+fn changes_kept(stmt: &SqlStatement) -> bool {
     matches!(stmt, SqlStatement::Insert(_) | SqlStatement::UpdateSearched { .. } | SqlStatement::DeleteSearched { .. })
 }
+
+#[cfg(test)]
+mod tests;

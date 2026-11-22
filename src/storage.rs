@@ -15,6 +15,7 @@ mod batch;
 mod condition;
 mod cost;
 mod engine;
+mod kept;
 mod loading;
 mod newest;
 mod options;
@@ -29,6 +30,7 @@ pub use batch::{
 pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
+pub use kept::{COLUMN_BITS, Garbage, Kept, Needed, Removal, Removed, column_bit, same, unchanged};
 pub use loading::Loading;
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
@@ -132,8 +134,7 @@ pub trait TableStorage: Send + Sync {
     /// # Errors
     ///
     /// As `get`.
-    fn get_columns(&self, tx: TxId, id: RowId, columns: &[usize]) -> Result<Option<Row>> {
-        let _ = columns;
+    fn get_columns(&self, tx: TxId, id: RowId, _columns: &[usize]) -> Result<Option<Row>> {
         self.get(tx, id)
     }
     /// \[DESIGN\] As `get`, or `get_columns` of `columns` if named, `near`
@@ -142,8 +143,7 @@ pub trait TableStorage: Send + Sync {
     /// # Errors
     ///
     /// As `get`.
-    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
-        let _ = near;
+    fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, _near: &mut Near) -> Result<Option<Row>> {
         columns.map_or_else(|| self.get(tx, id), |columns| self.get_columns(tx, id, columns))
     }
     /// Every live row, once each, with its id. The rows have every column at its position, but only those in `columns` need hold their
@@ -160,16 +160,11 @@ pub trait TableStorage: Send + Sync {
     /// them at a time: the values of `columns`, a vector for each, in the order asked (RULES.md D31), of `_late` late if it can (D361).
     /// Default: `scan_where`'s rows, gathered, none late.
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, _late: &[usize]) -> Batches {
-        let rows = match conditions {
-            Some(c) => self.scan_where(tx, columns, c),
-            None => self.scan(tx, columns),
-        };
-        batches_of(rows, columns)
+        batch::scanned(self, tx, columns, conditions)
     }
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, split into morsels of about `rows` rows each, for workers to
     /// read at once (RULES.md D290); none if it cannot split them, or failed to, its scan then raising what failed. Default: none.
-    fn split(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, rows: usize) -> Option<Arc<dyn Split>> {
-        let _ = (tx, columns, conditions, rows);
+    fn split(self: Arc<Self>, _tx: TxId, _columns: &[usize], _conditions: Option<&Conjunction>, _rows: usize) -> Option<Arc<dyn Split>> {
         None
     }
     /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered` gives its rows, any first of them (RULES.md D31). Default: none.
@@ -182,12 +177,11 @@ pub trait TableStorage: Send + Sync {
     /// out any after them, as FETCH FIRST asks (`exec/limit.rs`). Default: none.
     fn scan_ordered(
         self: Arc<Self>,
-        tx: TxId,
-        columns: &[usize],
-        (keys, backward, most): ScanOrder<'_>,
-        conditions: Option<&Conjunction>,
+        _tx: TxId,
+        _columns: &[usize],
+        _order: ScanOrder<'_>,
+        _conditions: Option<&Conjunction>,
     ) -> Option<Rows> {
-        let _ = (tx, columns, keys, backward, most, conditions);
         None
     }
     /// \[DESIGN\] The rows `scan_ordered` gives, by batch, of `columns`;
@@ -257,27 +251,33 @@ pub trait TableStorage: Send + Sync {
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
         Ok(Newest::of(self.get(tx, id)?))
     }
+    /// \[DESIGN\] Of `newest`, the writer and the stamp alone, read with no older version (RULES.md D747). Default: `newest`'s.
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    fn newest_writer(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
+        self.newest(tx, id).map(|newest| (newest.writer, newest.stamp))
+    }
 
     /// \[EXTENSION\] As `update` with `row`, or `delete` with none, of the
-    /// newest committed version of row `id`, whose stamp `newest` gave as
-    /// `seen`, though it committed after `tx`'s snapshot: how a statement
-    /// reading at a snapshot of its own [ISO/IEC 9075:1992 §4.28] changes a
-    /// row another transaction changed meanwhile, its search condition
-    /// checked by the caller against that version (RULES.md D29). Default:
-    /// `update` or `delete`, for an engine whose isolation is the
-    /// coordinator's, where no version is newer than the transaction sees;
-    /// an engine declaring `Concurrency::Engine` implements it.
+    /// newest committed version of row `id`, whose stamp `newest` gave as `seen`, though it committed after `tx`'s snapshot: how a
+    /// statement reading at a snapshot of its own [ISO/IEC 9075:1992 §4.28] changes a row another transaction changed meanwhile, its
+    /// search condition checked by the caller against that version (RULES.md D29). Default: `update` or `delete`, for an engine whose
+    /// isolation is the coordinator's, where no version is newer than the transaction sees; an engine declaring `Concurrency::Engine`
+    /// implements it.
     ///
     /// # Errors
     ///
     /// SQLCODE -911 if another open transaction changed the row, or its
     /// newest committed version's stamp is not `seen`; as `update`.
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
-        let _ = seen;
-        match row {
-            Some(row) => self.update(tx, id, row),
-            None => self.delete(tx, id),
-        }
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, _seen: Timestamp) -> Result<()> {
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row))
+    }
+    /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` replaced shares the entries of
+    /// each index whose key reads only columns of `unchanged`: those columns, which `gc` gives back. Default: none.
+    fn keep_entries(&self, _tx: TxId, _id: RowId, _unchanged: u64) -> u64 {
+        0
     }
 
     // ----- Cost model. Units: 1.0 = reading one whole row in sequence. -----
@@ -446,17 +446,15 @@ pub trait TableStorage: Send + Sync {
     fn durable_through(&self) -> Lsn {
         Lsn(0)
     }
-    /// The rows of the versions superseded by commits at or before `as_of`
-    /// but not yet collected, whose index entries collection (`gc`) would
-    /// take back, with their ids, read as they are pulled: what a checkpoint
-    /// logs, so recovery takes them back if the crash lost the collection
-    /// (`db/checkpoint.rs`). Collection of the table is held back while
-    /// they are read. Default: none, for an engine keeping no versions.
+    /// The rows of the versions superseded by commits at or before `as_of` not yet collected, whose index entries
+    /// `gc` would take back, with their ids and what their successors kept (RULES.md D443), read as pulled: what a
+    /// checkpoint logs, so recovery takes them back if a crash lost the collection (`db/checkpoint.rs`); the
+    /// table's collection held back meanwhile. Default: none, for an engine keeping no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read a version; the checkpoint fails.
-    fn garbage(self: Arc<Self>, _as_of: Timestamp) -> Rows {
+    fn garbage(self: Arc<Self>, _as_of: Timestamp) -> Garbage {
         Box::new(std::iter::empty())
     }
     /// What finds this table again when the database is opened
@@ -489,25 +487,24 @@ pub trait TableStorage: Send + Sync {
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
         rows::applied(self, id, row)
     }
-    /// Garbage collection of versions: removes the versions of rows that no
-    /// transaction reading at or after `horizon` can read, and gives each
-    /// removed version's row, with its id, to `removed` as it goes, so
-    /// their index entries are removed too (one each: `Index`), none held
-    /// all together. `removed` says whether every entry was: of a row
-    /// whose entries are not, `visible_to_all` is false until each is
-    /// (`taken_back`).
-    /// Called after a transaction that joined the table ends. Default:
-    /// nothing, for an engine that keeps no versions.
+    /// Garbage collection of versions: removes the versions of rows that no transaction reading at or after
+    /// `horizon` can read, and gives each removed version's row, with its id and what its successor kept, to
+    /// `removed` as it goes, so their index entries are removed too (one each: `Index`), none held all together.
+    /// `removed` says whether every entry was: of a row whose entries are not, `visible_to_all` is false until
+    /// each is (`taken_back`). Called after a transaction that joined the table ends. Default: nothing, for an
+    /// engine that keeps no versions.
     ///
     /// # Errors
     ///
     /// The engine cannot read or remove them; they stay for a later call.
-    fn gc(&self, _horizon: Timestamp, _removed: &mut dyn FnMut(RowId, Row) -> bool) -> Result<()> {
+    fn gc(&self, _horizon: Timestamp, _removed: Removed<'_>) -> Result<()> {
         Ok(())
     }
-    /// Whether versions of it await collection (`gc`), so it is collected
-    /// as any transaction ends, though none touches it. Default: none, for
-    /// an engine that keeps no versions.
+    /// \[DESIGN\] Whether a transaction's end collects it at `horizon` now, or leaves it for later (RULES.md D451).
+    fn collection_due(&self, _horizon: Timestamp) -> bool {
+        true
+    }
+    /// Whether versions of it await collection (`gc`), so it is collected as any transaction ends. Default: none.
     fn uncollected(&self) -> bool {
         false
     }

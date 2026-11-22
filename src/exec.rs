@@ -35,6 +35,7 @@ mod nearest;
 mod parallel;
 mod partition;
 mod pattern;
+mod point;
 mod program;
 mod project;
 mod ptf;
@@ -52,6 +53,7 @@ mod window;
 mod work;
 
 pub(crate) use batch::storage_counted;
+pub(crate) use point::{PointRead, point_operations};
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
@@ -63,7 +65,7 @@ use crate::txn::TxId;
 use crate::value::Value;
 
 pub use db::{Db, Opening, Slots};
-pub use entries::{Entries, row_entries, table_entries};
+pub use entries::{Entries, is_table_access, row_entries, table_entries};
 pub(crate) use eval::{Escape, like_escape};
 pub use eval::{Heard, eval, eval_cond, quantified, warn};
 pub use held::{HeldIter, HeldRows, Holdable};
@@ -78,6 +80,7 @@ pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIt
     sort::sort(keys, rows, db, tx)
 }
 pub(crate) use program::{Ended, Host, rows, run_program};
+pub(crate) use subquery::slot_type;
 pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, NoSubqueries, Runner, Subqueries, SubqueryRows};
 
 /// The rows a plan produces, each read or computed when it is pulled. The
@@ -480,8 +483,8 @@ mod tests {
         }
     }
 
-    /// Verifies: [DESIGN] `row_entries` refuses a plan that is not a table
-    /// access with SQLCODE -910.
+    /// Verifies: [DESIGN] RULES.md D775: `row_entries` refuses a plan that
+    /// is not a table access, whose rows hold no row id, with SQLCODE -910.
     #[test]
     fn row_entries_needs_a_table_access() {
         let st = Arc::new(state());

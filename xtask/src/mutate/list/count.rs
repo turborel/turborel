@@ -42,7 +42,7 @@ pub const COUNT: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a count is not noted as a read of the whole table under SERIALIZABLE",
         file: "src/engine/rows/count.rs",
-        original: "        let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, || Read::All).map(|()| reader)) {",
+        original: "        let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, || Read::All(EVERY_COLUMN)).map(|()| reader)) {",
         replacement: "        let reader = match self.reader(tx) {",
         integration: &[LEVELS],
         unit: &["engine::rows::count::tests::a_count_read_conflicts_with_an_insert_as_a_scan_does"],

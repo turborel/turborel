@@ -114,8 +114,14 @@ pub enum Event {
     Opened(Opened),
     /// A database kept in a directory was closed cleanly.
     Closed,
-    /// A checkpoint was taken: the number taken since the database opened.
-    CheckpointTaken(u64),
+    /// A checkpoint was taken: the number taken since the database opened,
+    /// and what it took (RULES.md D810).
+    CheckpointTaken {
+        /// The checkpoints taken since the database opened.
+        taken: u64,
+        /// How long its steps took, and the pages it wrote.
+        took: CheckpointTook,
+    },
     /// The database's value of a setting was changed: set, or, for none,
     /// back to its default.
     SettingChanged {
@@ -370,6 +376,25 @@ pub enum ReplicaChange {
     },
 }
 
+/// \[DESIGN\] What a checkpoint took (`Event::CheckpointTaken`, RULES.md
+/// D810), in microseconds: whole, and the steps writers feel.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CheckpointTook {
+    /// From asked to taken.
+    pub micros: u64,
+    /// Writers held: from the gate asked shut to opened again, the
+    /// engines' capture inside it (steps 1 and 2).
+    pub shut_micros: u64,
+    /// The checkpoint record logged and synced (step 4).
+    pub sync_micros: u64,
+    /// The captures made durable, the image recorded, the log truncated
+    /// (steps 5 to 7).
+    pub finish_micros: u64,
+    /// Pages written to the tables file while it was taken: written back,
+    /// or captured.
+    pub pages: u64,
+}
+
 /// \[DESIGN\] Why checkpoints let the log grow (`Event::CheckpointOverdue`).
 #[derive(Debug, Clone)]
 pub enum Overdue {
@@ -421,7 +446,7 @@ impl Event {
             },
             Event::Opened(Opened::Created | Opened::Reopened)
             | Event::Closed
-            | Event::CheckpointTaken(_)
+            | Event::CheckpointTaken { .. }
             | Event::FormatsSettled { .. }
             | Event::SettingChanged { .. }
             | Event::UserChanged { .. }

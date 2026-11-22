@@ -61,15 +61,15 @@ enum Physical {
 }
 
 impl LeafPlan {
-    /// Its physical plan of the outer values `outer`, and the values it
-    /// reads as its slots, if it does: its plan kept, as `Kept::opened`
-    /// opens it (RULES.md D610); else, while it learns, planned with them;
-    /// none once it varies.
+    /// How it runs for the outer values `outer`: its plan kept, a point
+    /// read run as it is (RULES.md D752) or as `Kept::opened` opens it
+    /// (D610), with the values it reads as its slots, if it does; else,
+    /// while it learns, planned with them; none once it varies.
     ///
     /// # Errors
     ///
     /// As `logical::filled`; SQLCODE -910 if a lock is poisoned.
-    fn physical(&self, st: &State, outer: &[Value]) -> Result<Option<(Plan, Option<Slots>)>> {
+    fn physical(&self, st: &State, outer: &[Value]) -> Result<Option<Run>> {
         let held = std::mem::replace(&mut *lock(&self.kept)?, Physical::Varies(None));
         let learning = match held {
             Physical::Varies(stopped) => {
@@ -87,14 +87,18 @@ impl LeafPlan {
                     Some(Fit::Moved) => None,
                 };
                 if let Some(still) = kept {
-                    let opened = plan.opened(Some(outer.into()), crate::optimizer::prepared::budget(st));
+                    let run = if plan.point(st).is_some() {
+                        Ok(Run::Point(Arc::clone(&plan)))
+                    } else {
+                        plan.opened(Some(outer.into()), crate::optimizer::prepared::budget(st)).map(|(p, s)| Run::Plan(Box::new(p), s))
+                    };
                     *lock(&self.kept)? = Physical::Fixed(plan, reads, still);
-                    return opened.map(Some);
+                    return run.map(Some);
                 }
                 Learning::default()
             }
         };
-        self.learned(st, outer, learning).map(Some)
+        self.learned(st, outer, learning).map(|(p, s)| Some(Run::Plan(Box::new(p), s)))
     }
 
     /// A learning run of its plan for `outer`, which `learning` says it
@@ -121,6 +125,14 @@ impl LeafPlan {
         *lock(&self.kept)? = physical;
         Ok((custom, None))
     }
+}
+
+/// How a leaf's subquery runs.
+enum Run {
+    /// By its physical plan, and the values it reads as its slots.
+    Plan(Box<Plan>, Option<Slots>),
+    /// As the point read of its plan kept (RULES.md D752).
+    Point(Arc<Kept>),
 }
 
 /// The plans of a program's leaves, by their subqueries' identities.
@@ -163,7 +175,17 @@ impl Subqueries for KeptRuns<'_> {
     fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
         let (st, tx) = self.at;
         let planned = self.plans.get(&subquery.id()).map(|kept| kept.physical(st, outer)).transpose()?.flatten();
-        let Some((physical, slots)) = planned else { return self.runner.rows(subquery, outer, limit) };
+        let (physical, slots) = match planned {
+            None => return self.runner.rows(subquery, outer, limit),
+            Some(Run::Point(kept)) => match kept.point(st) {
+                Some(point) => {
+                    let found = point.read(st, tx, outer)?;
+                    return Ok(SubqueryRows::held(found.into_iter().take(limit.unwrap_or(1)).collect(), st));
+                }
+                None => kept.opened(Some(outer.into()), crate::optimizer::prepared::budget(st))?,
+            },
+            Some(Run::Plan(physical, slots)) => (*physical, slots),
+        };
         let db = slots.map_or_else(|| Db::of(st), |slots| Db::slotted(st, slots));
         let rows = execute(physical, &db, tx);
         let found = match limit {

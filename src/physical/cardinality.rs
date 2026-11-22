@@ -47,7 +47,7 @@ use super::{CostModel, PhysicalPlanner};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::index::Index;
-use crate::logical::{Cond, LogicalPlan, filled_cond};
+use crate::logical::{Cond, LogicalPlan};
 use crate::stats::Statistics;
 use crate::storage::cost_of;
 use crate::value::Value;
@@ -120,6 +120,13 @@ pub(super) fn at_least_one(rows: f64, of: f64) -> f64 {
     rows.max(of.min(1.0_f64)).max(0.0_f64)
 }
 
+/// \[DESIGN\] The rows `plan` is estimated to give, as planning estimates
+/// them: what a subquery's runner weighs a decorrelated build by
+/// (`exec/subquery/probed.rs`, RULES.md D790).
+pub(crate) fn estimated_rows(db: &State, plan: &LogicalPlan) -> f64 {
+    Estimates::over(db, plan, None).card(plan).rows
+}
+
 /// One planning's estimator: the state, the weights read once, and each
 /// table's statistics and rows, asked once.
 pub(super) struct Estimates<'a> {
@@ -164,7 +171,7 @@ impl<'a> Estimates<'a> {
     /// `cond`, each slot its value, if the estimator is given values and
     /// it fills; else itself.
     pub(super) fn valued<'c>(&self, cond: &'c Cond) -> std::borrow::Cow<'c, Cond> {
-        match self.values.and_then(|values| filled_cond(cond.clone(), values).ok()) {
+        match self.values.and_then(|values| super::estimate::estimated(cond, values)) {
             Some(filled) => std::borrow::Cow::Owned(filled),
             None => std::borrow::Cow::Borrowed(cond),
         }

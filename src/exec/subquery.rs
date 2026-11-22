@@ -18,7 +18,9 @@
 //! if it can be (`Subquery::decorrelated`): its rows are kept by those
 //! columns' values (`value::bucket`), and the rows for any outer values
 //! are those whose columns equal them [X3.135-1986 §5.11]. Until then, a
-//! run per set of values, an index probe if it has one, costs less.
+//! run per set of values, an index probe if it has one, costs less. One
+//! whose run is a probe of a unique key waits until its probes cost what
+//! its build would (`subquery/probed.rs`, RULES.md D790).
 //!
 //! \[DESIGN\] RULES.md D38: a subquery's rows outgrowing the work area are
 //! spilled to a run (`exec/join/rescan.rs`), and a decorrelated subquery's
@@ -30,9 +32,11 @@
 
 mod drawn;
 mod planned;
+mod probed;
 mod quantified;
 
 pub use drawn::Drawn;
+pub(crate) use planned::slot_type;
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::cmp::Ordering;
@@ -296,6 +300,9 @@ struct Seen {
     /// Its plan kept across its runs, or how far it is from one (RULES.md
     /// D675).
     planned: planned::Planned,
+    /// The rows its decorrelated build would hold, estimated once asked
+    /// (RULES.md D790).
+    built_rows: Option<f64>,
 }
 
 /// \[DESIGN\] Runs subqueries for transaction `tx`, keeping their rows (see
@@ -369,7 +376,11 @@ impl Runner {
         if runs <= self.db.settings.count(crate::settings::DECORRELATE_AFTER_RUNS) {
             return Ok(None);
         }
-        let keyed = match subquery.decorrelated() {
+        let how = subquery.decorrelated();
+        if how.as_ref().is_some_and(|how| self.probes_pay(at, runs, how)) {
+            return Ok(None);
+        }
+        let keyed = match how {
             None => None,
             Some(how) => {
                 // Its key columns follow its own, each equal to an outer slot's value.

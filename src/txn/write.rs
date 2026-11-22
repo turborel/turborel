@@ -7,15 +7,33 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::UndoEntry;
+use super::kept::key_columns;
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
-use crate::log::record::{Change, insert_record};
-use crate::storage::{Row, RowId};
-use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
+use crate::log::record::{delete_record, insert_record, update_record};
+use crate::log::sealed::seal_plain;
+use crate::storage::{Row, RowId, TableStorage, unchanged};
+use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
+use escrowed::Guarded;
+
+mod escrowed;
+
+/// What a writer refused does next (RULES.md D442, D747).
+enum Next {
+    /// Waits for the open transaction that changed the row.
+    Wait(TxId),
+    /// Tries its write again.
+    Again,
+    /// Is refused: the row changed since its snapshot, and it rechecks nothing.
+    Refused,
+    /// Rechecks its search condition over the row's newest committed
+    /// version, of this stamp, none if deleted.
+    Over(Timestamp, Option<Row>),
+}
 
 impl State {
     /// The indexes `table`'s rows have entries in: its own, each entry of
@@ -69,18 +87,26 @@ impl State {
         self.indexes.get(name).map(Arc::clone).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {name} does not exist")))
     }
 
-    /// Logs the insert of `row` as row `id` of `table`: unless its rows are
-    /// sealed, made from the row as it is held (RULES.md D531).
+    /// Logs the insert of `row` as row `id` of `table`, made from the row
+    /// as it is held (RULES.md D531).
     fn log_insert(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        let generation = self.generation_of(table);
-        if let Some(seal) = self.seal_of(table)? {
-            let change = Change::Insert { table: table.clone(), generation, row: id, after: row.clone() };
-            return tx.log_sealed(change, Some((&*seal, id)));
-        }
+        self.log_row(tx, (table, id), |generation| insert_record(tx.id, (table, generation), id, row))
+    }
+
+    /// Logs the record `record` makes, given the generation of `table`'s
+    /// storage, of a change of its row `id`, sealed if its rows are; none
+    /// made without a log. Made from the images as the statement holds
+    /// them, none copied for it (RULES.md D750).
+    fn log_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), record: impl FnOnce(u32) -> Vec<u8>) -> Result<()> {
+        let seal = self.seal_of(table)?;
         if tx.log.is_none() {
             return Ok(());
         }
-        tx.log_encoded(&insert_record(tx.id, (table, generation), id, row), 1)
+        let plain = record(self.generation_of(table));
+        match seal {
+            Some(pipeline) => tx.log_encoded(&seal_plain(&plain, id, &pipeline)?, 1),
+            None => tx.log_encoded(&plain, 1),
+        }
     }
 
     /// [X3.135-1986 §8.7] Inserts `row`, with its index entries, under its
@@ -139,12 +165,12 @@ impl State {
     /// [X3.135-1986 §8.11, §8.12] Replaces row `id` with `row`, as `insert_row`
     /// inserts, waiting for a transaction changing it to end (RULES.md D28).
     pub(crate) fn update_row(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        self.change_row(tx, (table, id), Write::Update(row.clone()), None).map(|_| ())
+        self.change_row(tx, (table, id), (Write::Update(row.clone()), false), None).map(|_| ())
     }
 
     /// [X3.135-1986 §8.4, §8.5] Deletes row `id`, as `update_row` replaces it.
     pub(crate) fn delete_row(&self, tx: &Txn, table: &QualifiedName, id: RowId) -> Result<()> {
-        self.change_row(tx, (table, id), Write::Delete, None).map(|_| ())
+        self.change_row(tx, (table, id), (Write::Delete, false), None).map(|_| ())
     }
 
     /// As `update_row` with `row`, or `delete_row` with none; of a row
@@ -160,7 +186,15 @@ impl State {
         recheck: Recheck<'_>,
     ) -> Result<Option<Row>> {
         let write = row.map_or(Write::Delete, |row| Write::Update(row.clone()));
-        self.change_row(tx, (table, id), write, Some(recheck))
+        self.change_row(tx, (table, id), (write, false), Some(recheck))
+    }
+
+    /// \[DESIGN\] As `rewrite_row` with `row`, the increments reserved on
+    /// row `id` applied as its transaction commits (RULES.md D452): not
+    /// kept waiting by the reservations of others, whose increments add to
+    /// the same columns as its own and are applied over it.
+    pub(crate) fn fold_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), row: &Row, recheck: Recheck<'_>) -> Result<Option<Row>> {
+        self.change_row(tx, (table, id), (Write::Update(row.clone()), true), Some(recheck))
     }
 
     /// `write` of row `id`, tried again as long as another transaction's
@@ -172,7 +206,7 @@ impl State {
         &self,
         tx: &Txn,
         (table, id): (&QualifiedName, RowId),
-        mut write: Write,
+        (mut write, fold): (Write, bool),
         mut recheck: Option<Recheck<'_>>,
     ) -> Result<Option<Row>> {
         self.check_written(table, &write)?;
@@ -190,62 +224,121 @@ impl State {
             if let Write::Update(row) = &mut write {
                 self.keep_lobs(tx, table, Some(id), row)?;
             }
-            let attempt = {
+            let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
                 self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
+            };
+            // [DESIGN] RULES.md D452: not over the columns another
+            // transaction's increments reserved guard, until it ends.
+            let attempt = match self.unreserved(tx, (table, id), (&write, fold), (&mut turn, write_once))? {
+                Guarded::Written(attempt) => attempt,
+                Guarded::Waited => continue,
             };
             // The turn is kept until the write is made or given up: a
             // write refused once as the waiter's snapshot is past is tried
             // again over the version committed, before the next waiter's.
             let e = match attempt {
                 Ok((old, history)) => {
-                    if let (Some(history), Some(stamp)) = (history, &stamp) {
-                        self.insert_row(tx, &history, &stamp.ended(&old))?;
-                    }
-                    return Ok(Some(old));
+                    // [DESIGN] RULES.md D743: the row's line behind it moves here.
+                    super::row_waits::Turn::hand_over(turn.as_ref(), tx, (table, id));
+                    return self.written(tx, (old, history), stamp.as_ref()).map(Some);
                 }
                 Err(e) => e,
             };
             tries = tries.saturating_add(1);
-            let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
-            if !waits || self.capabilities(table)?.concurrency == Concurrency::Coordinator {
+            if !self.waits(tx, table, &e, tries)? {
                 return Err(self.refused(tx, table, id, e));
             }
-            let newest = self.storage_of(table)?.newest(tx.id, id)?;
-            if let Some(writer) = newest.writer {
-                drop(turn.take());
-                turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
-                seen = None;
-                continue;
+            let check = recheck.as_mut().filter(|_| !tx.one_snapshot());
+            let before = seen.take().map(|(at, _)| at);
+            match self.next_unwritten(tx, (table, id), check.is_some(), &mut turn)? {
+                Next::Wait(_) | Next::Again => {}
+                Next::Refused => return Err(e),
+                Next::Over(_, None) => return Ok(None),
+                Next::Over(committed, Some(row)) => {
+                    let Some(check) = check else { return Err(e) };
+                    write = match check(&row)? {
+                        Again::Update(row) => Write::Update(row),
+                        Again::Delete => Write::Delete,
+                        Again::Skip => return Ok(None),
+                    };
+                    // A recheck of a version newer than the last is no
+                    // failed try (RULES.md D454).
+                    if before != Some(committed) {
+                        tries = 0;
+                    }
+                    seen = Some((committed, row));
+                }
             }
-            // Its writer rolled back as this one looked.
-            if newest.stamp <= tx.snapshot() {
-                seen = None;
-                continue;
-            }
-            // [§4.28] Committed since its one snapshot: what it read changed.
-            // [DESIGN] RULES.md D441: whether rechecked or refused, what it
-            // tells rests on that commit.
-            tx.depend(newest.stamp);
-            let Some(check) = recheck.as_mut().filter(|_| !tx.one_snapshot()) else { return Err(e) };
-            let Some(row) = newest.row else { return Ok(None) };
-            write = match check(&row)? {
-                Again::Update(row) => Write::Update(row),
-                Again::Delete => Write::Delete,
-                Again::Skip => return Ok(None),
-            };
-            seen = Some((newest.stamp, row));
         }
+    }
+
+    /// \[DESIGN\] RULES.md D454: what a writer refused at row `id` of
+    /// `table` does next once no transaction is writing the row, waited
+    /// for in `turn` (`next_after`). The row is looked at again after each
+    /// wait, so a waiter goes from its wait straight to the version
+    /// committed meanwhile.
+    fn next_unwritten(
+        &self,
+        tx: &Txn,
+        (table, id): (&QualifiedName, RowId),
+        rechecks: bool,
+        turn: &mut Option<super::row_waits::Turn>,
+    ) -> Result<Next> {
+        loop {
+            match self.next_after(tx, (table, id), rechecks)? {
+                Next::Wait(writer) => {
+                    drop(turn.take());
+                    *turn = tx.wait_for_row((table, id), writer)?;
+                }
+                next @ (Next::Again | Next::Refused | Next::Over(..)) => return Ok(next),
+            }
+        }
+    }
+
+    /// Whether a writer refused by `e`, after `tries` refusals, waits and
+    /// tries the row of `table` again.
+    fn waits(&self, tx: &Txn, table: &QualifiedName, e: &SqlError, tries: usize) -> Result<bool> {
+        let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
+        Ok(waits && self.capabilities(table)?.concurrency != Concurrency::Coordinator)
+    }
+
+    /// What a writer refused at row `id` of `table` does next, its writer
+    /// and stamp read with no older version (RULES.md D747); the row read
+    /// only if it `rechecks`.
+    fn next_after(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), rechecks: bool) -> Result<Next> {
+        let storage = self.storage_of(table)?;
+        let (writer, committed) = storage.newest_writer(tx.id, id)?;
+        if let Some(writer) = writer {
+            return Ok(Next::Wait(writer));
+        }
+        // Its writer rolled back as this one looked.
+        if committed <= tx.snapshot() {
+            return Ok(Next::Again);
+        }
+        // [§4.28] Committed since its one snapshot: what it read changed.
+        // [DESIGN] RULES.md D441: whether rechecked or refused, what it
+        // tells rests on that commit.
+        tx.depend(committed);
+        if !rechecks {
+            return Ok(Next::Refused);
+        }
+        let newest = storage.newest(tx.id, id)?;
+        // Changed again as this one looked: the write is tried again.
+        if newest.writer.is_some() || newest.stamp != committed {
+            return Ok(Next::Again);
+        }
+        Ok(Next::Over(committed, newest.row))
     }
 
     /// `e`, the refusal of a write of row `id` of `table`: a conflict is
     /// told once the commit it met, if one did, is durable (RULES.md D441).
     fn refused(&self, tx: &Txn, table: &QualifiedName, id: RowId, e: SqlError) -> SqlError {
         if e.code == Code::Conflict
-            && let Ok(newest) = self.storage_of(table).and_then(|storage| storage.newest(tx.id, id))
+            && let Ok((_, stamp)) = self.storage_of(table).and_then(|storage| storage.newest_writer(tx.id, id))
         {
-            tx.depend(newest.stamp);
+            tx.depend(stamp);
         }
         e
     }
@@ -308,23 +401,27 @@ impl State {
             tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(storage), id, old: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            let change = Change::Update {
-                table: table.clone(),
-                generation: self.generation_of(table),
-                row: id,
-                before: old.clone(),
-                after: row.clone(),
-            };
-            tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
+            self.log_row(tx, (table, id), |generation| update_record(tx.id, (table, generation), id, (old, row)))?;
         }
         // An engine keeping versions keeps the old version's entries for
         // the readers that still see it, until the version is removed
-        // (`TableStorage::gc`); the new version gets entries of its own.
+        // (`TableStorage::gc`); the new version gets entries of its own, but
+        // of an index whose key reads only columns it kept, where the two
+        // share one (RULES.md D443).
         let versions = caps.concurrency != Concurrency::Coordinator;
-        for (ix, partition) in self.table_indexes(table) {
+        let own = |(ix, p): (IndexDesc, Option<u64>)| {
+            let columns = if p.is_none() { key_columns(&ix) } else { 0 };
+            (ix, p, columns)
+        };
+        let indexes: Vec<_> = self.table_indexes(table).into_iter().map(own).collect();
+        let kept = if versions { Self::keep_entries((tx, storage), id, (old, row), &indexes) } else { 0 };
+        for (ix, partition, columns) in indexes {
             // RULES.md D92: an entry of one row's one version keeps
             // its key while the columns its expressions read are unchanged.
             if !versions && ix.has_expressions() && ix.unchanged(old, row) {
+                continue;
+            }
+            if columns != 0 && columns & !kept == 0 {
                 continue;
             }
             let entry = Self::entry_id(partition, id)?;
@@ -334,6 +431,22 @@ impl State {
             self.index_add(tx, &ix, row, entry)?;
         }
         Ok(())
+    }
+
+    /// RULES.md D443: of row `id` made `row` from `old` by `tx`, the
+    /// columns both hold alike of those `indexes` read, noted by `storage`
+    /// on the change; those it noted.
+    fn keep_entries(
+        (tx, storage): (&Txn, &Arc<dyn TableStorage>),
+        id: RowId,
+        (old, row): (&Row, &Row),
+        indexes: &[(IndexDesc, Option<u64>, u64)],
+    ) -> u64 {
+        let columns = indexes.iter().fold(0, |all, &(_, _, columns)| all | columns);
+        match unchanged(old, row, columns) {
+            0 => 0,
+            kept => storage.keep_entries(tx.id, id, kept),
+        }
     }
 
     /// Of row `id` of `table`, `old`, deleted, as `updated` says.
@@ -351,8 +464,7 @@ impl State {
             tx.log(UndoEntry::Deleted { table: table.clone(), storage: Arc::clone(storage), id, row: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            let change = Change::Delete { table: table.clone(), generation: self.generation_of(table), row: id, before: old.clone() };
-            tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
+            self.log_row(tx, (table, id), |generation| delete_record(tx.id, (table, generation), id, old))?;
         }
         Ok(())
     }
@@ -379,9 +491,11 @@ pub(crate) enum Again {
 /// committed after its snapshot (`State::rewrite_row`).
 pub(crate) type Recheck<'a> = &'a mut dyn FnMut(&Row) -> Result<Again>;
 
-/// \[DESIGN\] How many times a row's write is refused by another
-/// transaction's change before the statement is, bounding the waits for
-/// an engine whose answers disagree.
+/// \[DESIGN\] How many times in a row a row's write is refused by another
+/// transaction's change with no recheck of a newer version between,
+/// before the statement is: a bound only for
+/// an engine whose answers disagree, never for a row in demand, so READ
+/// COMMITTED waits until its lock timeout or a deadlock (RULES.md D454).
 const MOST_CONFLICTS: usize = 64;
 
 impl Txn {

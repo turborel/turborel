@@ -345,7 +345,8 @@ fn execute_is_required() {
 /// there is no procedure of the name (SQLCODE -103); a function is no
 /// procedure; a CALL of another number of arguments is refused, naming
 /// the numbers the procedures of the name have. The procedure found is
-/// noted among those the statement invokes.
+/// noted among those the statement invokes, and is the catalog's own,
+/// shared, not a copy.
 #[test]
 fn unqualified_name_is_of_the_default_schema() {
     let st = database(vec![procedure("P"), function("F", &[], "1")]);
@@ -353,7 +354,9 @@ fn unqualified_name_is_of_the_default_schema() {
     let name = TableName { auth: None, ident: "P".into(), at: 0 };
     let noted = Invoked::default();
     let cx = Context { schema: "S", invoked: Some(&noted), ..Context::new(&st, "S", &params) };
-    assert_eq!(resolve_procedure(cx, &name, 0).unwrap().specific, qn("S", "P"));
+    let found = resolve_procedure(cx, &name, 0).unwrap();
+    assert_eq!(found.specific, qn("S", "P"));
+    assert!(Arc::ptr_eq(&found, &st.catalog.routine_shared(&qn("S", "P")).unwrap()), "shared");
     assert_eq!(*noted.borrow(), vec![qn("S", "P")]);
     let elsewhere = Context { schema: "R", ..cx };
     let absent = failure(resolve_procedure(elsewhere, &name, 0));

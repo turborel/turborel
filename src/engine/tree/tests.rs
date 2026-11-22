@@ -542,11 +542,53 @@ fn a_visit_gives_back_what_a_scan_copied() {
     assert_eq!(failing.visit(|_| Ok(Visit::Taken)).unwrap(), Visited::Done, "the scan ended");
 }
 
+/// Verifies: [DESIGN] RULES.md D446: a write from where a read's descent
+/// found its key replaces the value it read, though the leaf split since,
+/// and refuses one changed since; one whose leaf was retired since, its
+/// page freed and taken again, descends again.
+#[test]
+fn a_write_starts_where_its_read_found_the_key() {
+    let (tree, _scratch) = tree("found-writes");
+    tree.insert(&key(0), b"zero").unwrap();
+    let (old, found) = tree.get_for_write(&key(0)).unwrap().unwrap();
+    assert_eq!(old, b"zero");
+    fill(&tree, 5_000);
+    assert!(tree.replace_found(&found, &key(0), (b"zero", b"ZERO")).unwrap(), "moved right past the splits");
+    assert_eq!(tree.get(&key(0)).unwrap(), Some(b"ZERO".to_vec()));
+    let (_, six) = tree.get_for_write(&key(6)).unwrap().unwrap();
+    tree.replace(&key(6), b"six").unwrap();
+    assert!(!tree.replace_found(&six, &key(6), (&VALUE, b"SIX")).unwrap(), "changed since it was read");
+    let (_, middle) = tree.get_for_write(&key(2_500)).unwrap().unwrap();
+    for n in 2_000..3_000 {
+        tree.delete(&key(n)).unwrap();
+    }
+    tree.free_retired().unwrap();
+    assert!(tree.insert(&key(2_500), &VALUE).unwrap());
+    for n in 10_000..14_000 {
+        assert!(tree.insert(&key(n), &VALUE).unwrap());
+    }
+    assert!(tree.replace_found(&middle, &key(2_500), (&VALUE, b"middle")).unwrap(), "its leaf freed and taken again: descended");
+    assert_eq!(tree.get(&key(2_500)).unwrap(), Some(b"middle".to_vec()));
+    assert!(tree.get_for_write(&key(4_000_000)).unwrap().is_none());
+}
+
 // Reads from the leaf noted for a row (RULES.md D500).
 mod hinted;
 
 // Threads writing and reading at once, against models.
 mod stress;
 
+// Writers on hot nodes (RULES.md D503).
+mod hot;
+
 // Splits of leaves whose keys share a long prefix (RULES.md D500).
 mod shared;
+
+// Room in a node for a change in place (RULES.md D500).
+mod room;
+
+// Reads by key from a copy of the leaf read before (RULES.md D806).
+mod finger;
+
+// The inner node copies a thread keeps (RULES.md D807).
+mod copies;

@@ -5,10 +5,12 @@
 //! filled too (D418).
 
 use std::cell::Cell;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::filled_scan;
+use crate::db::State;
 use crate::error::{Code, Result, SqlError, fail};
+use crate::exec::PointRead;
 use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Placing, Truth, filled_cond_as, filled_expr_as};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
@@ -48,7 +50,7 @@ pub(crate) fn prepared_plan(plan: Plan, budget: Option<&Arc<MemoryBudget>>) -> R
     // A plan filled at each execution is kept as it was made, to be filled
     // and prepared then, as before it was kept.
     let fills = filling.fills.get();
-    Ok(Kept { plan: if fills { plan } else { prepared }, fills })
+    Ok(Kept { plan: if fills { plan } else { prepared }, fills, point: OnceLock::new() })
 }
 
 struct Filling<'a> {
@@ -126,7 +128,7 @@ impl Filling<'_> {
             table,
             index,
             method,
-            probe: probe @ JoinProbe::Prefix(_),
+            probe: probe @ (JoinProbe::Prefix(_) | JoinProbe::Range(_)),
             cond,
             width,
             columns,
@@ -220,10 +222,12 @@ impl Filling<'_> {
 /// execution reads its slots where they are; or, if a scalar call takes a
 /// slot, which a value would prepare, it is filled and prepared again at
 /// each execution, as the values come.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Kept {
     plan: Plan,
     fills: bool,
+    /// The point read it is, if one, found as first asked (RULES.md D752).
+    point: OnceLock<Option<PointRead>>,
 }
 
 impl Kept {
@@ -238,6 +242,18 @@ impl Kept {
             return Ok((self.plan.clone(), slots));
         }
         Ok((filled_plan(self.plan.clone(), slots.as_deref().unwrap_or_default(), budget)?, None))
+    }
+
+    /// The point read its plan is, run without the executor's operators,
+    /// if it is one and `st` runs point operations (RULES.md D752). A
+    /// point read gives its columns as they are and places its probe's
+    /// values with no call, so its plan is never one filled at each
+    /// execution (`fills`), and is kept as made.
+    pub(crate) fn point(&self, st: &State) -> Option<&PointRead> {
+        if !crate::exec::point_operations(st) {
+            return None;
+        }
+        self.point.get_or_init(|| PointRead::of(&self.plan, st)).as_ref()
     }
 }
 

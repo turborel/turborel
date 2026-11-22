@@ -374,11 +374,23 @@ impl RecordFormat {
     /// The row a record holds, `columns` decoded, or all, the others NULL:
     /// sized once, as a row is decoded for every one read, and a vector
     /// collected through `Result` would grow from a few values by doubling.
+    /// Each column of `columns` is decoded once, where it is named, and one
+    /// that is not a column of the record is passed over (RULES.md D751).
     fn decode_some(&self, bytes: &[u8], columns: Option<&[usize]>, fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>) -> Result<Row> {
-        let mut row = Vec::with_capacity(self.types.len());
-        for i in 0..self.types.len() {
-            let wanted = columns.is_none_or(|columns| columns.contains(&i));
-            row.push(if wanted { self.column_with(bytes, i, fetch)? } else { Value::Null });
+        let Some(columns) = columns else {
+            let mut row = Vec::with_capacity(self.types.len());
+            for i in 0..self.types.len() {
+                row.push(self.column_with(bytes, i, fetch)?);
+            }
+            return Ok(row);
+        };
+        let mut row = vec![Value::Null; self.types.len()];
+        for &i in columns {
+            // Named again, a column already decoded is not; a null one is
+            // found null again at once.
+            if let Some(slot) = row.get_mut(i).filter(|slot| slot.is_null()) {
+                *slot = self.column_with(bytes, i, fetch)?;
+            }
         }
         Ok(row)
     }

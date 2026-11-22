@@ -72,7 +72,6 @@
 //! waits for every commit before it to end, whatever tables they touch.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread::ThreadId;
@@ -80,14 +79,17 @@ use std::thread::ThreadId;
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlError};
 use crate::log::Log;
-use crate::sync::{Gate, lock, lock_builtin};
+use crate::sync::{Alone, Gate, lock, lock_builtin};
 
 mod access;
 mod capabilities;
 mod clock;
 mod durable;
 mod end;
+pub(crate) mod escrow;
 mod followed;
+mod group;
+mod kept;
 mod lobs;
 mod locks;
 mod logging;
@@ -95,6 +97,7 @@ mod marks;
 mod owed;
 mod pending;
 mod reading;
+mod release;
 mod row_waits;
 mod savepoints;
 mod stop;
@@ -106,6 +109,7 @@ use clock::Clock;
 pub(crate) use durable::Committing;
 pub(crate) use end::remove_entries;
 pub(crate) use followed::{Followed, FollowedRecords, Following};
+pub(crate) use kept::Sharing;
 pub use locks::Damage;
 pub(crate) use locks::TableLock;
 use locks::WaitsFor;
@@ -196,6 +200,8 @@ pub(crate) struct TxState {
     statement_savepoints: Vec<(Joined, u64)>,
     /// The table locks it holds, released when it ends.
     held: Vec<Arc<TableLock>>,
+    /// The escrows of the tables it reserved increments in (RULES.md D452).
+    escrowed: Vec<Arc<escrow::Escrow>>,
     /// Whether it wrote a change to the log, so its end must be logged too.
     logged: bool,
     /// The snapshots it read at before its current one that it keeps
@@ -245,7 +251,7 @@ pub(crate) struct TxState {
 /// whom.
 pub(crate) struct Transactions {
     clock: Clock,
-    active: AtomicUsize,
+    active: Alone<AtomicUsize>,
     /// For each waiting transaction, the transactions it waits for.
     waits_for: Mutex<WaitsFor>,
     /// Taken by every change a checkpoint writes (`db/checkpoint.rs`).
@@ -254,7 +260,7 @@ pub(crate) struct Transactions {
     /// position, where recovery from a checkpoint begins reading.
     firsts: Mutex<BTreeMap<TxId, First>>,
     /// Row changes logged since the database was opened.
-    pub(crate) logged: AtomicU64,
+    pub(crate) logged: Alone<AtomicU64>,
     /// The records open transactions hold (`txn/pending.rs`).
     pending: Pending,
     /// Of those, the ones the last checkpoint taken holds: those after it
@@ -268,14 +274,14 @@ pub(crate) struct Transactions {
     /// The failed sync of the log that stopped the database's changes, if
     /// one did (`txn/logging.rs`), and whether one did.
     stopped: Mutex<Option<SqlError>>,
-    stopping: AtomicBool,
+    stopping: Alone<AtomicBool>,
     /// The commits written to the log but not yet synced, under
     /// LOG.COMMIT_SYNC OFF, if any (`txn/logging.rs`).
     unsynced: Mutex<Option<logging::Unsynced>>,
     /// What holds the database's changes beside a failed sync, if anything
     /// does (`txn/logging.rs`, RULES.md D57), and whether something does.
     held: Mutex<Option<Held>>,
-    holding: AtomicBool,
+    holding: Alone<AtomicBool>,
     /// Following a log, the records of each of its transactions not yet
     /// ended, held until it ends (`db/standby.rs`), spilled past a work
     /// area's bytes (`txn/followed.rs`).
@@ -290,7 +296,10 @@ pub(crate) struct Transactions {
     uncollected: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `uncollected` names any table, as it was last changed: so a
     /// transaction that wrote nothing looks at it without its lock.
-    awaiting: AtomicBool,
+    awaiting: Alone<AtomicBool>,
+    /// Whether the end of a transaction that wrote nothing is collecting
+    /// `uncollected`: another such end passes it by (RULES.md D453).
+    read_collecting: AtomicBool,
     /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
     maintenance: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `maintenance` names any table.
@@ -308,6 +317,8 @@ pub(crate) struct Transactions {
     /// or grants or revokes privileges on (`db/definitions.rs`): the
     /// table's own once it is published, so the two are one.
     names: Mutex<HashMap<QualifiedName, std::sync::Weak<TableLock>>>,
+    /// The commits waiting for a sync of the log (`txn/group.rs`).
+    group: group::Group,
 }
 
 impl Transactions {
@@ -333,31 +344,33 @@ impl Default for Transactions {
     fn default() -> Self {
         Transactions {
             clock: Clock::new(FIRST_TRANSACTION),
-            active: AtomicUsize::new(0),
+            active: Alone(AtomicUsize::new(0)),
             waits_for: Mutex::new(HashMap::new()),
             gate: Gate::default(),
             firsts: Mutex::new(BTreeMap::new()),
-            logged: AtomicU64::new(0),
+            logged: Alone(AtomicU64::new(0)),
             pending: Pending::default(),
             checkpointed: AtomicU64::new(0),
             builds: Mutex::new(0),
             built: Condvar::new(),
             stopped: Mutex::new(None),
-            stopping: AtomicBool::new(false),
+            stopping: Alone(AtomicBool::new(false)),
             unsynced: Mutex::new(None),
             held: Mutex::new(None),
-            holding: AtomicBool::new(false),
+            holding: Alone(AtomicBool::new(false)),
             followed: Mutex::new(BTreeMap::new()),
             following: Mutex::new(Following::default()),
             replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
-            awaiting: AtomicBool::new(false),
+            awaiting: Alone(AtomicBool::new(false)),
+            read_collecting: AtomicBool::new(false),
             maintenance: Mutex::new(BTreeSet::new()),
             noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),
             stops: Stops::default(),
             ends: row_waits::Ends::default(),
             names: Mutex::new(HashMap::new()),
+            group: group::Group::default(),
         }
     }
 }
@@ -519,35 +532,28 @@ impl Txn {
             self.settle_places(&mut st);
             st.undo.loads()
         };
+        self.renew_snapshot(fresh)?;
+        Ok(loads)
+    }
+
+    /// Reading at a snapshot for each statement, takes a new one if
+    /// `fresh` says so: as a statement begins, and as each statement of a
+    /// procedure's body does (RULES.md D454).
+    ///
+    /// # Errors
+    ///
+    /// A participant's, told of the new snapshot.
+    pub(crate) fn renew_snapshot(&self, fresh: impl FnOnce() -> bool) -> Result<()> {
         if self.reading == Reading::Statement && self.open.load(Ordering::Acquire) && fresh() {
             self.snapshot.store(self.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);
             self.tell_participants()?;
         }
-        Ok(loads)
+        Ok(())
     }
 
     /// Records the thread its running call is on, or that none runs.
     pub(crate) fn runs_on(&self, thread: Option<ThreadId>) {
         *lock_builtin(&self.running) = thread;
-    }
-
-    /// Releases every table lock it holds and wakes the transactions waiting
-    /// for them, and forgets its snapshot. Called when it ends, and again
-    /// when it is dropped, which finds nothing left to release.
-    fn release(&self) {
-        let held = mem::take(&mut lock_builtin(&self.state).held);
-        for table in held {
-            table.release(self.id);
-        }
-        // [DESIGN] RULES.md D442: the waiters for its rows go on, in turn.
-        self.shared.ends.end(self.id);
-        let pinned = mem::take(&mut lock_builtin(&self.state).pinned);
-        if self.open.swap(false, Ordering::AcqRel) {
-            self.shared.clock.end(self.id, self.snapshot());
-            for at in pinned {
-                self.shared.clock.end(self.id, at);
-            }
-        }
     }
 }
 

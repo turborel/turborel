@@ -33,7 +33,7 @@ impl RowTable {
             let open = self.open_of(tx)?;
             let mut open = lock_builtin(&open);
             open.adopted.extend(named);
-            open.changes.push(Change::of_row(id, None, None, Vec::new()), &mut encode_change)?;
+            open.changes_in(&self.versions).push(Change::of_row(id, None, None, Vec::new()), &mut encode_change)?;
         }
         Ok(true)
     }
@@ -61,7 +61,7 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let snapshot = lock_builtin(&open).snapshot;
         let k = key(id);
-        let Some((newest, thawed)) = self.newest_or_frozen(id)? else { return no_row(id) };
+        let Some((newest, found)) = self.newest_or_frozen(id)? else { return no_row(id) };
         self.versions.statuses.claim(tx);
         let (older, appended) = self.older_of((tx, snapshot), id, &newest, past)?;
         let (dropped, added) = self.owned_change(id, Version::parse(&newest)?.record, record)?;
@@ -72,7 +72,12 @@ impl RowTable {
             return Err(e);
         }
         let new = Version { maker: Maker::Open(tx), deleted: record.is_none(), older, record: record.unwrap_or_default() }.encode();
-        let written = if thawed.is_some() { self.tree.insert(&k, &new)? } else { self.tree.replace_if(&k, &newest, &new)? };
+        // In the tree, written from the leaf the read found it in, with no
+        // second descent (RULES.md D446).
+        let (written, thawed) = match found {
+            Ok(descended) => (self.tree.replace_found(&descended, &k, (&newest, &new))?, None),
+            Err(pages) => (self.tree.insert(&k, &new)?, Some(pages)),
+        };
         if !written {
             if let Some(at) = appended {
                 self.undo.release(at);
@@ -87,7 +92,7 @@ impl RowTable {
         let before = appended.is_none().then(|| newest.clone());
         let mut open = lock_builtin(&open);
         open.adopted.extend(added);
-        open.changes.push(Change::of_row(id, before, appended, dropped), &mut encode_change)?;
+        open.changes_in(&self.versions).push(Change::of_row(id, before, appended, dropped), &mut encode_change)?;
         Ok(Some(newest))
     }
 
@@ -140,10 +145,10 @@ impl RowTable {
     /// entry to be inserted (`rows/frozen.rs`), with the pages of its values
     /// out of line; none if neither.
     fn newest_or_frozen(&self, id: RowId) -> Result<Option<Found>> {
-        if let Some(newest) = self.tree.get(&key(id))? {
-            return Ok(Some((newest, None)));
+        if let Some((newest, descended)) = self.tree.get_for_write(&key(id))? {
+            return Ok(Some((newest, Ok(descended))));
         }
-        Ok(self.frozen_version(id)?.map(|(version, pages)| (version, Some(pages))))
+        Ok(self.frozen_version(id)?.map(|(version, pages)| (version, Err(pages))))
     }
 
     /// Outside any transaction: replaces row `id`'s newest version with
@@ -178,7 +183,7 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let mut open = lock_builtin(&open);
         open.made.insert(id);
-        open.changes.push(Change { id, before: None, appended: None, dropped: Vec::new(), made: true, group: false }, &mut encode_change)
+        open.changes_in(&self.versions).push(Change { made: true, ..Change::of_row(id, None, None, Vec::new()) }, &mut encode_change)
     }
 
     /// Notes the segments `ids`, made by `tx`, as parts of a directory it
