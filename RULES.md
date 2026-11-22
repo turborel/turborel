@@ -506,6 +506,7 @@ verification approach DO-178C expects (§8).
 | D783 | A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there |
 | D784 | A table's open transactions are kept in shards, by id, each alone on its cache lines |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
+| D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
 
 ### The project
 
@@ -14029,6 +14030,25 @@ is the leaf as it is. A copy that is no longer current is dropped and
 the leaf read again from the pool, and copied again if it answers.
 Reads of keys of other leaves copy nothing, so a probe of scattered
 rows costs no page copy.
+
+#### D792. A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads
+
+A kept program's INSERT, searched UPDATE and searched DELETE keep their
+plans (D406). A SELECT ... INTO whose one table reference is the delta
+table of such a change ran that change bound and planned anew at each
+execution (`db/delta.rs`), though the change is the same statement each
+time, its values the frame's slots. That made binding and planning the
+largest cost of a body that reads what it changed, such as a stock or
+district update read back through FINAL TABLE.
+
+So such a SELECT ... INTO keeps its change's plan in the place the
+program keeps its own statements' plans (`routines/program/host.rs`).
+`select_into` passes those plans to the delta table's statement
+(`run_delta_table`), which runs it as the program would run it alone,
+by `Keeping` as a prepared statement's change. The SELECT around the
+delta table is still bound and planned as it runs, as its rows are the
+change's. A MERGE as the delta table's statement, or a SELECT ... INTO
+of other table references besides, keeps nothing, as before.
 
 ## 2. Project layout
 
