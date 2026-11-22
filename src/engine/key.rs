@@ -106,6 +106,27 @@ pub fn encode_key(values: &[Value], types: &[DataType], out: &mut Vec<u8>) -> Re
     Ok(())
 }
 
+/// Appends the key of the columns `columns` of `row`, of columns of
+/// `types`, to `out`: the key `encode_key` makes of their values, read in
+/// place (RULES.md D821).
+///
+/// # Errors
+///
+/// As `encode_key`, and SQLCODE -910 if `row` lacks a column.
+pub fn encode_columns(row: &[Value], columns: &[usize], types: &[DataType], out: &mut Vec<u8>) -> Result<()> {
+    if columns.len() != types.len() {
+        return Err(SqlError::new(
+            Code::Api,
+            format!("[DESIGN] a key of {} columns for an index on {} columns", columns.len(), types.len()),
+        ));
+    }
+    for (&column, data_type) in columns.iter().zip(types) {
+        let value = row.get(column).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] a row has no column {column} of a key")))?;
+        encode_column(value, data_type, out)?;
+    }
+    Ok(())
+}
+
 /// The key of one column: its kind's, after a tag.
 fn encode_column(value: &Value, data_type: &DataType, out: &mut Vec<u8>) -> Result<()> {
     if value.is_null() {

@@ -104,8 +104,10 @@ impl Using {
         self.entries = self.entries.saturating_add(n);
     }
 
-    /// Adds what it counted to the index's counts, and counts on from 0.
-    fn flush(&mut self) {
+    /// Adds what it counted to the index's counts, and counts on from 0:
+    /// as its last entry is taken, not once it is dropped, which may be
+    /// after its statement ends.
+    pub fn flush(&mut self) {
         if let Some(uses) = self.uses.as_deref().filter(|_| self.searches > 0 || self.entries > 0) {
             uses.add(std::mem::take(&mut self.searches), std::mem::take(&mut self.entries));
         }

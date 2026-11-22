@@ -513,6 +513,7 @@ verification approach DO-178C expects (§8).
 | D785 | A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area |
 | D786 | A search keeps a decoded key only once a second entry has its bytes |
 | D787 | A projection of columns each named once, in ascending order, is made in the row it is given |
+| D821 | An index scan compares each row's key with its entry's as the bytes the index holds |
 | D805 | A pool finds its files with no lock and no reference count moved |
 | D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
 | D807 | A thread keeps 256 inner node copies across its trees, the one to give way chosen by a clock bit |
@@ -14223,6 +14224,32 @@ swaps them to the front of the row it is given and cuts the rest off
 earlier than `i`, and no later column is at a place before its own, so no
 swap moves a value still to be taken. Other projections make a row as
 before. A column past the row is refused the same way in both.
+
+#### D821. An index scan compares each row's key with its entry's as the bytes the index holds
+
+An index scan rechecks each row it reads by the key of its entry, since an
+index holds the entries of versions a reader may not see (D34, D501). The
+built-in btree decoded every entry's key into values for that check, one
+allocation and a decode per entry, a few percent of a range read's time.
+
+An index may now hand its entries with their keys as the bytes it holds
+(`Index::search_encoded`, by default none). The btree does so for a range
+none of whose keys must be checked against the probe. Each entry is lent
+from the scan (D809), its row id cut off, and is passed on uncopied and
+undecoded (`index/blink/encoded.rs`).
+A scan that reads each entry's row and checks it in place, by a key of
+its columns as they are, by no sort key and with no projection, takes
+them (`exec/scan/encoded.rs`). It encodes the row's key columns into one
+buffer kept for the scan and compares the two as bytes
+(`entries::fetch_encoded`). Equal bytes are of equal values. Bytes not
+equal are decoded and compared as values, as before, so the scan keeps
+exactly the rows it kept. Covering scans, scans deciding a condition, and
+every other index read take decoded keys as before.
+
+The check stays even for an equality on a whole unique key. A row whose
+key an update moved from 5 to 6 has entries under both, and a reader
+whose snapshot sees 5 finds its row by the entry under 6, which the
+check alone refuses.
 
 #### D805. A pool finds its files with no lock and no reference count moved
 
