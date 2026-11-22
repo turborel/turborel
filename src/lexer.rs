@@ -84,6 +84,7 @@ mod comments;
 pub mod delim;
 mod pseudo;
 mod strings;
+mod words;
 pub use comments::hinted;
 
 /// [ISO/IEC 9075-2:2023 §5.1] `<left bracket trigraph>` and `<right
@@ -222,6 +223,26 @@ pub fn lex(src: &str) -> Result<Vec<Token>> {
     lex_head(src, usize::MAX)
 }
 
+/// A text lexed whole: its tokens, as `lex` gives them, and its
+/// characters, which their offsets count, so what reads the tokens again,
+/// a statement's normalized text and its parser, lexes it no more.
+#[derive(Debug)]
+pub struct Lexed {
+    /// The tokens, ended with `Tok::End`.
+    pub toks: Vec<Token>,
+    /// The text's characters.
+    pub chars: Vec<char>,
+}
+
+/// `src` lexed whole, as `lex` lexes it.
+///
+/// # Errors
+///
+/// As `lex`.
+pub fn lexed(src: &str) -> Result<Lexed> {
+    head(src, usize::MAX).map(|(toks, chars)| Lexed { toks, chars })
+}
+
 /// \[DESIGN\] As `lex`, of the first `most` tokens of `src` alone, ended
 /// with `Tok::End` only if `src` has no more: what tells a statement apart
 /// by how it begins, its whole text lexed once, as it is parsed
@@ -231,11 +252,16 @@ pub fn lex(src: &str) -> Result<Vec<Token>> {
 ///
 /// As `lex`, of those tokens.
 pub fn lex_head(src: &str, most: usize) -> Result<Vec<Token>> {
+    head(src, most).map(|(toks, _)| toks)
+}
+
+/// `lex_head`'s tokens, and the characters of `src`.
+fn head(src: &str, most: usize) -> Result<(Vec<Token>, Vec<char>)> {
     let mut s = Scanner { c: src.chars().collect(), at: 0, matched: false };
     let mut toks = Vec::new();
     while let Some(first) = s.peek(0) {
         if toks.len() == most {
-            return Ok(toks);
+            return Ok((toks, s.c));
         }
         let skipped = s.skip_separator()?;
         if skipped {
@@ -248,7 +274,7 @@ pub fn lex_head(src: &str, most: usize) -> Result<Vec<Token>> {
         toks.push(Token { tok, start, end: s.at });
     }
     toks.push(Token { tok: Tok::End, start: s.at, end: s.at });
-    Ok(toks)
+    Ok((toks, s.c))
 }
 
 /// \[EXTENSION\] [ISO/IEC 9075:1992 §5.4] `<authorization identifier>` ::=
@@ -391,10 +417,11 @@ impl Scanner {
         self.skip_while(is_identifier_part);
         // [SR8] Its <identifier start>s and <identifier part>s, which an
         // <underscore> is not, are counted.
-        let length = self.text(start).chars().filter(|&c| c != '_').count();
-        let word = self.text(start).to_uppercase();
+        let written = self.text(start);
+        let length = written.chars().filter(|&c| c != '_').count();
+        let word = written.to_uppercase();
         // [ISO/IEC 9075:1992 §5.2 SR11] a <regular identifier> is not a <reserved word>.
-        if let Some(kw) = KEY_WORDS.iter().find(|k| **k == word) {
+        if let Some(kw) = words::key_word(&word) {
             return Ok(Tok::KeyWord(kw));
         }
         self.identifier_length(start, length)?;

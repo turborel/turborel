@@ -18,7 +18,7 @@ pub use xml::{MappedSource, mapped_sources};
 
 use crate::ast::{ColumnName, ParameterSpecification, QuerySpecification, SqlStatement, TableName, ValueExpression};
 use crate::error::{Code, Result, SqlError};
-use crate::lexer::{Tok, Token, delim, kw, lex};
+use crate::lexer::{Tok, Token, delim, kw, lexed};
 
 mod backup;
 mod charsets;
@@ -51,6 +51,7 @@ mod hypothetical;
 mod insert;
 mod interval;
 mod json;
+mod lexed;
 mod listagg;
 mod literal;
 mod locators;
@@ -227,32 +228,7 @@ impl Parser {
     ///
     /// As for `new`.
     pub fn for_procedure(src: &str, extensions: bool, params: HashSet<String>) -> Result<Parser> {
-        let toks = lex(src)?;
-        let chars: Vec<char> = src.chars().collect();
-        let end = Token { tok: Tok::End, start: chars.len(), end: chars.len() };
-        Ok(Parser {
-            toks,
-            end,
-            pos: 0,
-            depth: 0,
-            extensions,
-            params,
-            dynamic: None,
-            questions: (0, 0),
-            src: chars,
-            in_domain: false,
-            refused: None,
-            catalogs: Catalogs::Refused,
-            implicit: None,
-            read_values: HashMap::new(),
-            trigger: None,
-            routine: None,
-            blocks: Vec::new(),
-            module: None,
-            graph: 0,
-            compat: Vec::new(),
-            numbers: Vec::new(),
-        })
+        Ok(Self::of_lexed(lexed(src)?, extensions, params))
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6] A parser for a `<preparable

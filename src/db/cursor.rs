@@ -116,7 +116,12 @@ impl Session {
     }
 
     pub(super) fn parse_cursor(st: &State, sql: &str, params: &Params) -> Result<CursorSpecification> {
-        params.parser(sql, st.settings.is_on(FUNCTION_CALLS), &st.catalog_name())?.cursor_specification()
+        Self::parse_lexed_cursor(st, crate::lexer::lexed(sql)?, params)
+    }
+
+    /// As `parse_cursor`, of a text lexed as `lexed`.
+    pub(super) fn parse_lexed_cursor(st: &State, lexed: crate::lexer::Lexed, params: &Params) -> Result<CursorSpecification> {
+        params.parser(lexed, st.settings.is_on(FUNCTION_CALLS), &st.catalog_name()).cursor_specification()
     }
 
     /// The rows of a read-only cursor's specification, after taking

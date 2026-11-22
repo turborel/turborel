@@ -18,8 +18,10 @@ use crate::ast::{
 use crate::binder::{Context, SearchedTarget, WriteKind, bind_member_write, bind_searched_write, bind_write, qualify};
 use crate::catalog::proper_subtables;
 use crate::error::{At, Code, Result, SqlError, SqlState, fail};
+use crate::lexer::{Lexed, lexed};
 use crate::params::{Load, Params};
 use crate::settings::FUNCTION_CALLS;
+use crate::system::Text;
 
 mod command;
 
@@ -56,9 +58,11 @@ impl Session {
     }
 
     /// `call`'s work timed as that of `sql`, whose text `plans` keeps if
-    /// it is prepared, else the session's activity (`db/slow.rs`).
-    fn time_call<'a>(&self, call: &mut Call<'a>, sql: &'a str, plans: Option<&Plans>) {
-        let direct = plans.is_none().then(|| self.stop.activity().text_of(sql));
+    /// it is prepared, else the session's activity, of its tokens `lexed`
+    /// (`db/slow.rs`).
+    fn time_call<'a>(&self, call: &mut Call<'a>, sql: &'a str, (plans, lexed): (Option<&Plans>, Option<&Result<Lexed>>)) {
+        let made = || Text::of_lexed(sql, lexed.and_then(|l| l.as_ref().ok()));
+        let direct = plans.is_none().then(|| self.stop.activity().text_of(sql, made));
         if let Some(statement) = plans.map(|p| p.text(sql)).or(direct.as_ref()) {
             call.timed = self.timed(call.state(), || sql, statement);
         }
@@ -72,9 +76,11 @@ impl Session {
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(Command, &Plans)>) -> Result<Completion> {
         self.wait_if_hinted(sql)?;
         let mut call = self.enter()?;
-        self.time_call(&mut call, sql, prepared.map(|(_, plans)| plans));
+        // Run directly, lexed once, for its text and its parser alike.
+        let lexed = prepared.is_none().then(|| lexed(sql));
+        self.time_call(&mut call, sql, (prepared.map(|(_, plans)| plans), lexed.as_ref()));
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
-        let parsed = Self::parsed(&call, sql, params, keeping.as_ref()).and_then(|s| super::embedding::blob_given(s, params));
+        let parsed = Self::parsed(&call, (sql, lexed), params, keeping.as_ref()).and_then(|s| super::embedding::blob_given(s, params));
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
         // statement before left it, and leaves it so, refused too.
         if let Ok(SqlStatement::GetDiagnostics(get)) = parsed.as_deref() {
@@ -157,15 +163,22 @@ impl Session {
         self.diagnosed(outcome, |done| done.sqlstate())
     }
 
-    /// `sql`, parsed with `params`: of a prepared statement, as it keeps
-    /// it, while what it was parsed with holds (RULES.md D45).
-    fn parsed(call: &Call<'_>, sql: &str, params: &Params, keeping: Option<&Keeping<'_>>) -> Result<Arc<SqlStatement>> {
+    /// `sql`, parsed with `params`, of its tokens if lexed already: of a
+    /// prepared statement, as it keeps it, while what it was parsed with
+    /// holds (RULES.md D45).
+    fn parsed(
+        call: &Call<'_>,
+        (sql, lexed): (&str, Option<Result<Lexed>>),
+        params: &Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<Arc<SqlStatement>> {
         if let Some(kept) = keeping.map(Keeping::statement).transpose()?.flatten() {
             return Ok(kept);
         }
         params.validate()?;
-        let stmt =
-            Arc::new(params.parser(sql, call.state().settings.is_on(FUNCTION_CALLS), &call.state().catalog_name())?.sql_statement()?);
+        let lexed = lexed.unwrap_or_else(|| crate::lexer::lexed(sql))?;
+        let st = call.state();
+        let stmt = Arc::new(params.parser(lexed, st.settings.is_on(FUNCTION_CALLS), &st.catalog_name()).sql_statement()?);
         if let Some(k) = keeping {
             k.keep_statement(Arc::clone(&stmt))?;
         }

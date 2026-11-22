@@ -7,10 +7,11 @@
 //! (`hash/xxhash.rs`). A text the lexer refuses is its words one space
 //! apart. It is made once for a prepared statement, and once for each
 //! text a session runs directly while it keeps it (`Activity::text_of`),
-//! never at each run.
+//! never at each run; of a text run directly, from the tokens its parser
+//! reads, so the text is lexed once (`lexer::Lexed`).
 
 use crate::hash::xxhash::xxh3_64;
-use crate::lexer::{Tok, delim, lex};
+use crate::lexer::{Lexed, Tok, delim, lexed};
 
 /// What a literal is written as in a normalized text.
 const PLACEHOLDER: &str = "?";
@@ -26,7 +27,14 @@ pub struct Text {
 impl Text {
     /// The text `sql`, normalized.
     pub fn of(sql: &str) -> Text {
-        let normalized = normalized(sql);
+        Text::of_lexed(sql, lexed(sql).ok().as_ref())
+    }
+
+    /// The text `sql`, normalized from its tokens, `lexed`, if the lexer
+    /// takes it: a statement run directly is lexed once, for this and its
+    /// parser alike.
+    pub fn of_lexed(sql: &str, lexed: Option<&Lexed>) -> Text {
+        let normalized = lexed.map_or_else(|| sql.split_whitespace().collect::<Vec<_>>().join(" "), |l| normalized(sql, l));
         let key = xxh3_64(normalized.as_bytes());
         Text { raw: sql.to_owned(), normalized, key }
     }
@@ -47,31 +55,49 @@ impl Text {
     }
 }
 
-/// `sql`'s tokens one space apart, each literal a `?`.
-fn normalized(sql: &str) -> String {
-    let Ok(tokens) = lex(sql) else { return sql.split_whitespace().collect::<Vec<_>>().join(" ") };
-    let chars: Vec<char> = sql.chars().collect();
+/// `sql`'s tokens, `lexed`, one space apart, each literal a `?`: each
+/// piece written straight into the text, none copied apart first.
+fn normalized(sql: &str, Lexed { toks, chars }: &Lexed) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut joined = true;
-    for token in &tokens {
-        let written: String = chars.get(token.start..token.end).map(|c| c.iter().collect()).unwrap_or_default();
-        let (piece, glued_before, glued_after) = match &token.tok {
-            Tok::ExactNumeric(_) | Tok::ApproximateNumeric(_) | Tok::CharacterString(_) | Tok::BinaryString(_) => {
-                (PLACEHOLDER.to_owned(), false, false)
-            }
-            Tok::KeyWord(word) => ((*word).to_owned(), false, false),
-            Tok::Identifier(name) => (if written.starts_with('"') { written } else { name.clone() }, false, false),
-            Tok::Introducer(_) | Tok::LargeObjectLength(_) => (written, false, false),
-            Tok::Delimiter(d) => ((*d).to_owned(), glued_left(d), glued_right(d)),
+    for token in toks {
+        let (glued_before, glued_after) = match &token.tok {
+            Tok::Delimiter(d) => (glued_left(d), glued_right(d)),
             Tok::End => break,
+            Tok::ExactNumeric(_)
+            | Tok::ApproximateNumeric(_)
+            | Tok::CharacterString(_)
+            | Tok::BinaryString(_)
+            | Tok::KeyWord(_)
+            | Tok::Identifier(_)
+            | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_) => (false, false),
         };
         if !(joined || glued_before) {
             out.push(' ');
         }
-        out.push_str(&piece);
+        piece(&mut out, &token.tok, chars.get(token.start..token.end).unwrap_or_default());
         joined = glued_after;
     }
     out
+}
+
+/// The token `tok`, written as `written`, as a normalized text has it.
+fn piece(out: &mut String, tok: &Tok, written: &[char]) {
+    match tok {
+        Tok::ExactNumeric(_) | Tok::ApproximateNumeric(_) | Tok::CharacterString(_) | Tok::BinaryString(_) => out.push_str(PLACEHOLDER),
+        Tok::KeyWord(word) => out.push_str(word),
+        Tok::Identifier(name) => {
+            if written.first() == Some(&'"') {
+                out.extend(written);
+            } else {
+                out.push_str(name);
+            }
+        }
+        Tok::Introducer(_) | Tok::LargeObjectLength(_) => out.extend(written),
+        Tok::Delimiter(d) => out.push_str(d),
+        Tok::End => {}
+    }
 }
 
 /// Whether the delimiter `d` is written against what comes before it.
@@ -103,5 +129,18 @@ mod tests {
         assert_eq!(Text::of("VALUES (1.5E3, X'0A')").normalized(), "VALUES (?, ?)");
         assert_ne!(Text::of("SELECT 1 FROM T").key(), Text::of("SELECT 1 FROM U").key());
         assert_eq!(Text::of("SELECT 'open  ").normalized(), "SELECT 'open");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D521: a text normalized from the tokens
+    /// its parser reads keeps its introducers, large object lengths and
+    /// delimited identifiers as written, its literals `?`; of no tokens, as
+    /// of a text the lexer refuses, it is its words.
+    #[test]
+    fn a_text_lexed_once_is_normalized_from_its_tokens() {
+        let normalized = |sql: &str| Text::of_lexed(sql, Some(&lexed(sql).unwrap())).normalized().to_owned();
+        assert_eq!(normalized("insert into \"Mixed\" (k, c) values (1, _latin1'x')"), "INSERT INTO \"Mixed\" (K, C) VALUES (?, _latin1 ?)");
+        assert_eq!(normalized("CREATE TABLE B (L BLOB(64k), K INTEGER)  "), "CREATE TABLE B (L BLOB (64k), K INTEGER)");
+        assert_eq!(normalized("SELECT X.Y FROM X WHERE Y IN (1.5, X'0A', ?);"), "SELECT X.Y FROM X WHERE Y IN (?, ?, ?);");
+        assert_eq!(Text::of_lexed("a  b\nc", None).normalized(), "a b c");
     }
 }

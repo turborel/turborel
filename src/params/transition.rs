@@ -163,6 +163,12 @@ impl Params {
         }
     }
 
+    /// Whether these see every column of every table, as neither a
+    /// triggered action's nor a procedure body's do (`horizon`).
+    pub(crate) fn sees_whole(&self) -> bool {
+        std::ptr::eq(self.horizon(), &raw const WHOLE)
+    }
+
     /// Whether these are a triggered action's or a procedure body's, which
     /// see the columns of `horizon`, not those of the statement's context.
     pub(crate) fn horizoned(&self) -> bool {

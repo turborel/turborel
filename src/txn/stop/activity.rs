@@ -91,8 +91,9 @@ pub struct Activity {
 }
 
 impl Activity {
-    /// The text of `sql`, run directly: made once while it is kept.
-    pub fn text_of(&self, sql: &str) -> Arc<Text> {
+    /// The text of `sql`, run directly: made once while it is kept, by
+    /// `make`, which may normalize it from tokens lexed already.
+    pub fn text_of(&self, sql: &str, make: impl FnOnce() -> Text) -> Arc<Text> {
         let hash = xxh3_64(sql.as_bytes());
         let mut texts = lock_builtin(&self.texts);
         if let Some(text) = texts.get(&hash).filter(|t| t.raw() == sql) {
@@ -101,7 +102,7 @@ impl Activity {
         if texts.len() >= TEXTS_KEPT {
             texts.clear();
         }
-        let text = Arc::new(Text::of(sql));
+        let text = Arc::new(make());
         texts.insert(hash, Arc::clone(&text));
         text
     }

@@ -40,6 +40,7 @@ use std::sync::OnceLock;
 use super::{Seen, SystemTable, catalog_name, identifier};
 use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::Result;
+use crate::hash::xxhash::Xxh3Map;
 use crate::storage::Row;
 
 /// [ISO/IEC 9075:1992 §21.2.2] INFORMATION_SCHEMA_CATALOG_NAME: one row,
@@ -70,7 +71,22 @@ pub struct SystemView {
 
 /// The view `name` of the Information Schema, or of SQL/MM Spatial's.
 pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
-    views().iter().find(|v| super::spatial::name_of(v) == *name)
+    by_name().get(name).copied()
+}
+
+/// \[DESIGN\] The views by their names, each named once: every table a
+/// statement names is looked for among them, so the lookup is one probe,
+/// not a walk of them all naming each.
+fn by_name() -> &'static Xxh3Map<QualifiedName, &'static SystemView> {
+    static ALL: OnceLock<Xxh3Map<QualifiedName, &'static SystemView>> = OnceLock::new();
+    ALL.get_or_init(|| {
+        let mut all = Xxh3Map::default();
+        for v in views() {
+            // The first of a name is the one found, as a walk finds it.
+            all.entry(super::spatial::name_of(v)).or_insert(v);
+        }
+        all
+    })
 }
 
 /// The views of the Information Schema: those of ISO/IEC 9075:1992

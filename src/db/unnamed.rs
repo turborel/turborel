@@ -51,8 +51,11 @@ impl Session {
     /// The cursor of `sql`, with the parameters `params`, in the call
     /// `call`.
     pub(super) fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
-        let timed = self.timed(call.state(), || sql.to_owned(), &self.stop.activity().text_of(sql));
-        let spec = Self::parse_cursor(call.state(), sql, params)?;
+        // Lexed once, for its text and its parser alike.
+        let lexed = crate::lexer::lexed(sql);
+        let text = self.stop.activity().text_of(sql, || crate::system::Text::of_lexed(sql, lexed.as_ref().ok()));
+        let timed = self.timed(call.state(), || sql.to_owned(), &text);
+        let spec = Self::parse_lexed_cursor(call.state(), lexed?, params)?;
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |st, tx| self.open_rows(st, tx, &spec, (params, None)))
     }

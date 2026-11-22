@@ -3071,6 +3071,17 @@ current definitions [§17.6 GR10], so a revoked privilege is missing at the
 next execution. A binding that reads a value, such as CURRENT_DATE, is never
 kept.
 
+An INSERT run directly keeps no plan, but its session keeps the table it
+resolved, found through any updatable view, its object columns and its
+privileges checked (`db/write/targets.rs`). It is kept by the table and
+columns the INSERT names as written, with what a kept plan holds with, and
+resolved again once any of that changes. So INSERTs differing in their
+values alone, as texts with their values written in them do, resolve their
+table once. Each still takes its defaults, checks its override and binds
+what it generates. A table resolved through a view that reads the
+statement's instant is not kept, nor one of a triggered action or a
+procedure's body, which sees a table as it was defined.
+
 A statement keeps the session collation it was prepared under, as §9.15
 applies at PREPARE, so a later SET COLLATION changes no statement prepared
 (D60).
@@ -12505,7 +12516,8 @@ normalized text is the statement's tokens one space apart, each literal a
 The tally sits on every statement's path, so it costs a statement a few
 counts and no shared lock. A text is normalized once, for a prepared
 statement in what it keeps between executions and for a direct one in
-its session's activity. Each session tallies its own runs in a map only
+its session's activity. A direct one is lexed once, its normalized text
+made of the tokens its parser reads (`lexer::Lexed`). Each session tallies its own runs in a map only
 it writes, under a lock only a reader of the table takes besides. A
 statement takes that lock once, as it ends. The user its session runs as
 is kept with the map, so a statement by the same user as the last finds

@@ -217,6 +217,7 @@ mod kept_entries;
 mod kept_plans;
 mod kept_routines;
 mod kept_set_plans;
+mod kept_targets;
 mod kernels;
 mod language;
 mod language_collations;

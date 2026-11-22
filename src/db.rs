@@ -333,6 +333,8 @@ pub struct Session {
     /// [ISO/IEC 9075-2:2023 §4.37.5] Its large object locators
     /// (`db/lobs.rs`).
     locators: RefCell<lobs::Locators>,
+    /// The tables of the INSERTs it ran directly, resolved (`db/write/targets.rs`).
+    targets: RefCell<write::Targets>,
 }
 
 /// One call on a session: the snapshot it runs against, and the session
@@ -408,6 +410,7 @@ impl Session {
             nesting: nested::Nesting::default(),
             compile: RefCell::new(None),
             locators: RefCell::default(),
+            targets: RefCell::default(),
             running: RefCell::new(None),
             published: RefCell::new(None),
         }
