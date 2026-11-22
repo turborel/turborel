@@ -18,6 +18,7 @@ use turborel::engine::tree::{BLinkTree, Direction};
 use turborel::error::Code;
 
 use crate::common::{Scratch, crc32c};
+use crate::faults::{FaultyFs, Op, Rule};
 
 /// A pool of `frames` frames over a new pager file of 4 KiB pages.
 fn setup(scratch: &Scratch, frames: usize) -> (Arc<BufferPool>, FileId, Arc<Pager>) {
@@ -391,4 +392,76 @@ fn leaves_are_taken_out_while_others_read_and_write() {
         .collect();
     let found: Vec<Vec<u8>> = tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward).map(|e| e.unwrap().0).collect();
     assert_eq!(found, expected);
+}
+
+/// Deletes from `tree` the keys of `range` not `kept`, each found.
+fn delete_all(tree: &BLinkTree, range: std::ops::Range<u64>, kept: impl Fn(u64) -> bool) {
+    for i in scattered(range.end).filter(|&i| range.contains(&i) && !kept(i)) {
+        assert_eq!(tree.delete(&key(i)).unwrap(), Some(value(i)), "key {i}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D814, D31: a page taken out by a merge that
+/// its file fails to free is kept to free later, and noted in the tree's
+/// meta page, so a crash before it is freed loses no space. While every
+/// write to the file fails, deletes that merge leaves succeed and free
+/// nothing. Once the file works, the next deletes free the pages kept.
+/// Then more are taken out while it fails again and a scan holds its epoch,
+/// so none can be freed, the tree's pages reach the file and it crashes,
+/// its epochs lost: opened again, it holds exactly the keys left, both
+/// ways, and every page it took out is freed.
+#[test]
+fn a_page_its_file_fails_to_free_is_freed_later() {
+    let scratch = Scratch::new("tree-free-fails");
+    let (fs, faults) = FaultyFs::with_faults();
+    let pager = Arc::new(Pager::create(&*fs, &scratch.path("tree"), crc32c(), Pipeline::none(), 4096).unwrap());
+    let pool = Arc::new(BufferPool::new(256, Box::new(Clock::new(256))).unwrap());
+    let file = pool.add_pager(Arc::clone(&pager));
+    let tree = BLinkTree::create(Arc::clone(&pool), file).unwrap();
+    let n = 3000;
+    for i in 0..n {
+        tree.insert(&key(i), &value(i)).unwrap();
+    }
+    // On file, so freeing a page writes it, zeroed.
+    pool.sync(file, Durability::Full).unwrap();
+    let kept = |i: u64| i.is_multiple_of(5);
+    faults.inject(Rule::fail(Op::Write).on("tree"));
+    delete_all(&tree, 0..1500, kept);
+    let failed = tree.counts().unlinked;
+    assert!(failed > 3 && faults.injected() > 0, "{:?}", tree.counts());
+    assert_eq!(pager.free_pages(), 0, "none freed while the file fails");
+    faults.clear();
+    delete_all(&tree, 1500..1700, kept);
+    assert!(pager.free_pages() >= failed, "those kept freed by the next deletes: {}", pager.free_pages());
+    faults.inject(Rule::fail(Op::Write).on("tree"));
+    let reader = tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward);
+    delete_all(&tree, 1700..n, kept);
+    let taken = tree.counts().unlinked;
+    assert!(taken > failed.saturating_add(3), "{:?}", tree.counts());
+    // The crash: its pages on file, as a checkpoint leaves them, then the
+    // file failing every write as the tree goes, so it frees nothing and
+    // nothing more reaches the file.
+    let meta = tree.meta();
+    faults.clear();
+    let freed = pager.free_pages();
+    pool.sync(file, Durability::Full).unwrap();
+    // The pager records its free list on pages it takes from the list.
+    let trunk = freed.saturating_sub(pager.free_pages());
+    let recorded = pager.free_pages();
+    faults.inject(Rule::fail(Op::Write).on("tree"));
+    drop(reader);
+    drop((tree, pool, pager));
+    faults.clear();
+    let (pager, _) = Pager::open(&OsFileSystem, &scratch.path("tree"), &[crc32c()], &[]).unwrap();
+    let pager = Arc::new(pager);
+    let pool = Arc::new(BufferPool::new(256, Box::new(Clock::new(256))).unwrap());
+    let file = pool.add_pager(Arc::clone(&pager));
+    let tree = BLinkTree::open(Arc::clone(&pool), file, meta).unwrap();
+    let expected: Vec<_> = (0..n).filter(|&i| kept(i)).map(|i| (key(i), value(i))).collect();
+    assert_eq!(all(&tree, Bound::Unbounded, Bound::Unbounded, Direction::Forward), expected, "opened again");
+    assert_eq!(all(&tree, Bound::Unbounded, Bound::Unbounded, Direction::Backward), expected.iter().rev().cloned().collect::<Vec<_>>());
+    assert_eq!(pager.free_pages(), recorded, "those freed before the crash, as recorded");
+    assert!(freed < taken, "not all freed before the crash");
+    tree.free_retired().unwrap();
+    assert_eq!(pager.free_pages().saturating_add(trunk), taken, "every page taken out freed");
 }

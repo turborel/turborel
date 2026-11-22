@@ -9,7 +9,7 @@ const MERGE: &str = "src/engine/tree/merge.rs";
 const SPARSE: &str = "engine::tree::tests::merge::a_sparse_leaf_merges_into_a_sparse_right_neighbour";
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 31] = [
+pub const BTREE: [Mutation; 33] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -319,5 +319,25 @@ pub const BTREE: [Mutation; 31] = [
         replacement: "            drop(high);",
         integration: &[],
         unit: &["engine::tree::tests::merge::a_count_across_a_leaf_merged_since_counts_its_keys_once"],
+    },
+    Mutation {
+        name: "btree-unfreed-page-lost",
+        package: Package::Core,
+        breaks: "a page its file fails to free is dropped, not kept, so it is never freed",
+        file: "src/engine/tree/reclaim.rs",
+        original: "                self.epochs.keep(kept.into_iter());",
+        replacement: "                drop(kept);",
+        integration: &["trees::a_page_its_file_fails_to_free_is_freed_later"],
+        unit: &[],
+    },
+    Mutation {
+        name: "btree-retired-unnoted",
+        package: Package::Core,
+        breaks: "a page taken out is not noted in the meta page, so a crash before it is freed loses its space",
+        file: "src/engine/tree/reclaim.rs",
+        original: "        self.note_retired(&[leaf]).unwrap_or_default();",
+        replacement: "        drop(leaf);",
+        integration: &["trees::a_page_its_file_fails_to_free_is_freed_later"],
+        unit: &[],
     },
 ];
