@@ -508,6 +508,7 @@ verification approach DO-178C expects (§8).
 | D782 | What every transaction writes is alone on its cache lines, apart from what others read |
 | D783 | A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there |
 | D784 | A table's open transactions are kept in shards, by id, each alone on its cache lines |
+| D805 | A pool finds its files with no lock and no reference count moved |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 | D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
 
@@ -13942,6 +13943,7 @@ plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
 before. A probe plan is kept from the first run even when decorrelation
 is due before a plan could be learned, since a unique probe needs no
 learning.
+
 #### D780. A session keeps its own copy of the definitions' snapshot, taken again only once one is published
 
 Each statement took the database's snapshot of its definitions by
@@ -13994,11 +13996,14 @@ reads. So a transaction beginning took the line from every other
 transaction reading the field beside it, though they shared no data.
 
 So each such value is alone on its cache lines (`sync/alone.rs`):
-`Alone` aligns a value to 128 bytes and pads it out, as some processors
-fetch lines in pairs. The clock's counters of ids and commits, its
-stable and durable timestamps, the count of active transactions, and
-each shard of what cancels the statements of open transactions are
-alone. The shards are found by an XXH3 map of their own, not SipHash.
+`Alone` aligns a value to 128 bytes and pads it out. The size is derived:
+a cache line is 64 bytes, and an adjacent-line prefetcher fetches lines
+in aligned pairs, so a write to either line of a pair takes both. The
+clock's counters of ids and commits, its stable and durable timestamps,
+the count of active transactions, each shard of what cancels the
+statements of open transactions, and each shard of the transactions
+holding log records are alone. Their shards are found by an XXH3 map of
+their own, not SipHash.
 Nothing changes in what they hold or when, only where they lie.
 
 #### D783. A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there
@@ -14037,6 +14042,22 @@ looks at each shard in turn. A transaction beginning while it looks did
 not read what it is asked for. Whether any is open, which every
 transaction's end may ask, is read from the counts alone, with no lock.
 
+#### D805. A pool finds its files with no lock and no reference count moved
+
+Each page a pool writes, and each it reads from its file, finds the file
+by number. The files were kept behind one reader-writer lock, and the
+file's `Arc` was cloned out of it, so every such call wrote the lock's
+reader count and the file's reference count. Threads writing pages of
+different tables passed both cache lines between them: a profile of
+contended cache lines at 32 threads put it among the shared lines of
+row updates. Files are only ever added to a pool, so each is now set
+once in a slot never changed again: slots in chunks of 1,024 made as
+files are added, each chunk set once in a fixed table of 1,024
+(`disk/buffer/sources.rs`). A lookup loads two `OnceLock`s and borrows
+the file for as long as the pool lives. A pool registers at most
+1,048,576 files; one added past that is given a number no file has, so
+every use of it is refused.
+
 #### D815. A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock
 
 Between two requests of a fast client, its worker gave up its permit to
@@ -14057,7 +14078,8 @@ or its wait, which is at most `WAITED` away; a worker whose client does
 not come in time gives its permit up. The server's stage is a byte alone
 on its line beside the watch (`server/stage.rs`), written as the stage
 moves. Whether the connection's user is a user is asked of a snapshot
-only once one was published since it last was (`Database::publications`).
+only once one was published since it last was (`native/seen.rs`,
+`Database::publications`).
 A connection's state is an atomic its row shares, set with no lock.
 The session's settings told in Status are read from its own snapshot
 (D780).

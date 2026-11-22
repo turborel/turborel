@@ -1,11 +1,14 @@
 //! \[DESIGN\] A value alone on its cache lines (RULES.md D782), so a
 //! thread writing it never takes the line from a thread reading a field
-//! beside it. 128 bytes, as a processor that fetches lines in pairs moves
-//! two at once.
+//! beside it. Its size is derived, not tuned: a cache line is 64 bytes,
+//! and a processor's adjacent-line prefetcher fetches lines in aligned
+//! pairs, so a write to either line of a pair takes both from another
+//! processor. Two values 128 bytes apart and 128-aligned never share a
+//! pair.
 
 use std::ops::Deref;
 
-/// `T`, aligned to and padded out to 128 bytes.
+/// `T`, aligned to and padded out to a pair of 64-byte cache lines.
 #[repr(align(128))]
 #[derive(Debug, Default)]
 pub(crate) struct Alone<T>(pub(crate) T);

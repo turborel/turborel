@@ -64,7 +64,9 @@ impl Own {
         let changes = place.changes.load(Ordering::Acquire);
         if own.as_ref().is_none_or(|(at, _)| *at != changes) {
             let kept = read(&place.kept)?;
-            *own = Some((place.changes.load(Ordering::Acquire), kept.as_ref().map(copy)));
+            // The count read before what it kept: a keep landing between
+            // the two is copied again at the next read, never missed.
+            *own = Some((changes, kept.as_ref().map(copy)));
         }
         Ok(get(own.as_ref().and_then(|(_, kept)| kept.as_ref())))
     }
