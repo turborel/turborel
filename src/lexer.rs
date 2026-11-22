@@ -84,6 +84,7 @@ mod comments;
 pub mod delim;
 mod pseudo;
 mod strings;
+mod words;
 pub use comments::hinted;
 
 /// [ISO/IEC 9075-2:2023 §5.1] `<left bracket trigraph>` and `<right
@@ -416,10 +417,11 @@ impl Scanner {
         self.skip_while(is_identifier_part);
         // [SR8] Its <identifier start>s and <identifier part>s, which an
         // <underscore> is not, are counted.
-        let length = self.text(start).chars().filter(|&c| c != '_').count();
-        let word = self.text(start).to_uppercase();
+        let written = self.text(start);
+        let length = written.chars().filter(|&c| c != '_').count();
+        let word = written.to_uppercase();
         // [ISO/IEC 9075:1992 §5.2 SR11] a <regular identifier> is not a <reserved word>.
-        if let Some(kw) = KEY_WORDS.iter().find(|k| **k == word) {
+        if let Some(kw) = words::key_word(&word) {
             return Ok(Tok::KeyWord(kw));
         }
         self.identifier_length(start, length)?;

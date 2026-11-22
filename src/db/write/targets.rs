@@ -91,7 +91,8 @@ impl Shape {
 /// with.
 #[derive(Debug, Default)]
 pub(in crate::db) struct Targets {
-    key: Option<Key>,
+    /// Boxed, so a session that runs none keeps a pointer, not a key.
+    key: Option<Box<Key>>,
     by: Xxh3Map<u64, (Shape, Resolved)>,
 }
 
@@ -111,7 +112,7 @@ impl Targets {
     /// Keeps `resolved`, of `stmt`, with what holds now.
     fn keep(&mut self, (st, s): (&State, &Session), hash: u64, (stmt, resolved): (&InsertStatement, Resolved)) {
         if !self.key.as_ref().is_some_and(|k| k.holds(st, s)) {
-            self.key = Some(Key::now(st, s));
+            self.key = Some(Box::new(Key::now(st, s)));
             self.by.clear();
         }
         if self.by.len() >= TARGETS_KEPT {
