@@ -79,7 +79,7 @@ fn a_database_tells_its_sink_of_its_life() {
 /// Verifies: [DESIGN] RULES.md D810: a checkpoint tells what it took: the
 /// pages a table's rows written since the last were written to, and a
 /// whole no shorter than the steps it names; none written by one with
-/// nothing changed since.
+/// nothing changed since, the maintenance due done before.
 #[test]
 fn a_checkpoint_tells_what_it_took() {
     let scratch = Scratch::new("diagnostics-took");
@@ -91,6 +91,9 @@ fn a_checkpoint_tells_what_it_took() {
     let s = db.session("A");
     s.run("INSERT INTO T VALUES (1)").unwrap();
     s.commit().unwrap();
+    // The maintenance the commit asked for done first, or the job may
+    // write a page of it between the two checkpoints.
+    db.maintain().unwrap();
     let took = |kept: &Kept| {
         db.checkpoint().unwrap();
         kept.events().into_iter().find_map(|e| if let Event::CheckpointTaken { took, .. } = e { Some(took) } else { None }).unwrap()
