@@ -430,6 +430,7 @@ verification approach DO-178C expects (§8).
 | D453 | One transaction that wrote nothing collects at a time |
 | D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
 | D455 | A row a transaction wrote is no read of another's change at its validation |
+| D456 | A row waited for is claimed for the first in its line |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
@@ -15169,3 +15170,29 @@ version committed. A read of a row the reader did not write, a scan, a
 condition or a region is checked as before. A transaction that wrote
 more rows than are tracked keeps no rows of its writes, and is checked
 as before.
+
+#### D456. A row waited for is claimed for the first in its line
+
+Row waiters queue on the end of the row's writer in the order they began
+(D442), and a write made after a turn moves the row's line to the new
+writer's end (D743). Between a writer's end and its first waiter's write,
+though, the row had no open writer. A transaction that came later could
+write it straight through, ahead of every waiter, which then queued
+again behind it. On a row in demand that repeated at every commit.
+
+Now a transaction that waits for a row claims it for itself, unless the
+row is claimed already. The claim names the line and its first waiter.
+A write that finds the row claimed by another's line queues in that
+line behind the waiters there before it writes, even once the line's
+writer has ended. In the graph of waits it waits for the line's writer
+alone, as every waiter in a line does. Counting the first waiter as well
+kept that edge once the claim passed on, and two waiters each found the
+other ahead of it, a cycle that was not there. The first waiter's own
+writes, and those of the line's writer, are not held. A write the first waiter makes hands the
+claim to the first waiter moved to its end with the line. One that gives
+up its turn or its place passes the claim to the next waiter for the row
+in the line, and the last leaves the row unclaimed. A claim whose first
+waiter has ended is dropped when found. Increments applied by escrow
+(D452) are not held, as they do not hold the row. While no row is
+claimed a write finds none from one counter, without a look.
+

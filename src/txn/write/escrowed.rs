@@ -21,9 +21,10 @@ pub(super) enum Guarded<T> {
 
 impl State {
     /// \[DESIGN\] `write` of row `id` by `tx`, made by `f`, unless another
-    /// transaction's reservation of the row keeps it from being made: then
-    /// that transaction waited for, its `turn` taken, so it looks again
-    /// (RULES.md D452). A write that applies increments (`fold`) is made at
+    /// transaction's reservation of the row keeps it from being made, or
+    /// another's line claims the row: then that transaction, or the line,
+    /// waited for, its `turn` taken, so it looks again (RULES.md D452,
+    /// D456). A write that applies increments (`fold`) is made at
     /// once. The look and the write exclude a reservation of the row, so a
     /// write never waits for a reservation while it holds the row.
     pub(super) fn unreserved<T, F: FnOnce() -> T>(
@@ -35,6 +36,12 @@ impl State {
     ) -> Result<Guarded<T>> {
         if fold {
             return Ok(Guarded::Written(f()));
+        }
+        // [DESIGN] RULES.md D456: behind the line a row waited for has.
+        if let Some(claim) = tx.claim_of((table, id)) {
+            drop(turn.take());
+            *turn = Some(tx.wait_behind((table, id), &claim)?);
+            return Ok(Guarded::Waited);
         }
         let escrow = std::sync::Arc::clone(&self.lock_of(table)?.escrow);
         let found = escrow.exclusive(id, || -> Result<std::result::Result<T, TxId>> {
