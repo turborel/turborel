@@ -482,7 +482,7 @@ impl Binder<'_> {
         });
         let arms: Vec<(Cond, Expr)> = whens.into_iter().map(|(c, _)| (c, results.next().unwrap_or(Expr::Const(Value::Null)))).collect();
         let last = results.next().unwrap_or(Expr::Const(Value::Null));
-        Ok((Expr::Case(arms, Box::new(last)), t))
+        Ok((Expr::Case(arms.into(), Box::new(last)), t))
     }
 
     /// [ISO/IEC 9075:1992 §6.10] CAST (`operand` AS `target`): NULL, or a

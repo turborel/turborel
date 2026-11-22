@@ -162,7 +162,7 @@ fn widest(q: Qualifier) -> Qualifier {
 
 /// `CASE WHEN when THEN then ELSE otherwise END`.
 fn case(when: Cond, then: Expr, otherwise: Expr) -> Expr {
-    Expr::Case(vec![(when, then)], Box::new(otherwise))
+    Expr::Case(vec![(when, then)].into(), Box::new(otherwise))
 }
 
 /// `a op b`.

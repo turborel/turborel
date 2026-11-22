@@ -224,7 +224,7 @@ fn a_left_joins_condition_determines_the_other_side() {
 
 /// The COALESCE of columns `x` and `y`, as a NATURAL join's.
 fn coalesce(x: usize, y: usize) -> Expr {
-    Expr::Case(vec![(Cond::IsNull(Expr::Column(x), true), Expr::Column(x))], Box::new(Expr::Column(y)))
+    Expr::Case(vec![(Cond::IsNull(Expr::Column(x), true), Expr::Column(x))].into(), Box::new(Expr::Column(y)))
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.26.15, §4.26.7] of a

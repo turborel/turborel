@@ -105,7 +105,7 @@ fn value(state: &mut u64, depth: usize) -> Expr {
             let op = [ArithOp::Add, ArithOp::Sub, ArithOp::Mul, ArithOp::Div][below(state, 4)];
             Expr::Arith(Box::new(value(state, deeper)), op, Box::new(value(state, deeper)))
         }
-        3 => Expr::Case(vec![(cond(state, deeper), value(state, deeper))], Box::new(value(state, deeper))),
+        3 => Expr::Case(vec![(cond(state, deeper), value(state, deeper))].into(), Box::new(value(state, deeper))),
         4 => {
             let to = match below(state, 3) {
                 0 => DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
@@ -115,7 +115,7 @@ fn value(state: &mut u64, depth: usize) -> Expr {
             Expr::Cast(Box::new(value(state, deeper)), to)
         }
         _ => Expr::Case(
-            vec![(cond(state, deeper), value(state, deeper)), (cond(state, deeper), value(state, deeper))],
+            vec![(cond(state, deeper), value(state, deeper)), (cond(state, deeper), value(state, deeper))].into(),
             Box::new(Expr::Const(Value::Null)),
         ),
     }
@@ -278,7 +278,7 @@ fn overflows_give_none_and_untaken_branches_none() {
     let nulled = integers(vec![i64::MAX, 2], Some(Mask::from_bools(&[true, false])));
     assert_eq!(of(arith(column(), ArithOp::Add, int(1)), &nulled), Some(shown(&[Value::Null, exact(3, 0)])), "of a null, no flag");
     let ne = Cond::Compare(column(), CompOp::Ne, int(0));
-    let case = Expr::Case(vec![(ne, arith(int(100), ArithOp::Div, column()))], Box::new(int(-1)));
+    let case = Expr::Case(vec![(ne, arith(int(100), ArithOp::Div, column()))].into(), Box::new(int(-1)));
     let made = of(case, &batch).expect("no row divides by 0");
     let quotient = by_rows(&arith(int(100), ArithOp::Div, int(99)), &batch, None).remove(0).unwrap();
     assert_eq!(made.get(2..), Some(&shown(&[exact(-1, 0), quotient])[..]), "the ELSE of the row of 0");

@@ -1,6 +1,7 @@
 //! Unit tests of a batch's columns (`batch.rs`).
 
 use super::*;
+use crate::storage::RowId;
 
 fn exact(units: i128, scale: u32) -> Value {
     Value::Exact(Decimal::new(units, scale))
@@ -249,4 +250,30 @@ fn batches_joined_keep_their_kinds() {
     let same = Batch::joined(vec![(whole, vec![0_usize, 1_usize])]);
     assert_eq!(kinds_and_values(&same)[3].0, "coded", "as it is");
     assert_eq!(Batch::joined(Vec::new()).rows, 0_usize);
+}
+
+/// Verifies: [DESIGN] RULES.md D31, rows read as batches: full batches of
+/// `BATCH_ROWS` rows, then one of the rows left, the columns asked for in
+/// their order; none of no rows; a row's error given in place of the batch
+/// it falls in, first row or later.
+#[test]
+fn rows_are_read_in_whole_batches_then_the_rest() {
+    let count = BATCH_ROWS.saturating_add(3);
+    let row = |n: usize| -> Result<(RowId, Row)> {
+        let n = i128::try_from(n).unwrap();
+        Ok((0, vec![exact(n, 0), exact(-n, 0)]))
+    };
+    let mut batches = batches_of(Box::new((0..count).map(row)), &[1]);
+    let first = batches.next().unwrap().unwrap();
+    assert_eq!(first.rows, BATCH_ROWS);
+    assert_eq!(shown(&first.values(0)[..2]), ["0", "-1"]);
+    let rest = batches.next().unwrap().unwrap();
+    assert_eq!(shown(rest.values(0)), ["-2048", "-2049", "-2050"]);
+    assert!(batches.next().is_none());
+    assert!(batches_of(Box::new(std::iter::empty()), &[0]).next().is_none(), "no rows, no batch");
+    let lost = || -> Result<(RowId, Row)> { Err(crate::error::SqlError::new(crate::error::Code::Io, "[DESIGN] lost")) };
+    let mut later = batches_of(Box::new([row(1), lost()].into_iter()), &[0]);
+    assert_eq!(later.next().unwrap().err().map(|e| e.code), Some(crate::error::Code::Io), "an error of a later row");
+    let mut first_failed = batches_of(Box::new(std::iter::once(lost())), &[0]);
+    assert!(first_failed.next().unwrap().is_err(), "an error of the first row");
 }

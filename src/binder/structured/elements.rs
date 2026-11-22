@@ -91,6 +91,6 @@ impl Binder<'_> {
             input: Box::new(LogicalPlan::Unnest(Box::new(unnest))),
         };
         let collected = Expr::Subquery(Arc::new(Subquery::new(plan, vec![e.clone()])), 0);
-        Ok(Expr::Case(vec![(Cond::IsNull(e, false), Expr::Const(Value::Null))], Box::new(collected)))
+        Ok(Expr::Case(vec![(Cond::IsNull(e, false), Expr::Const(Value::Null))].into(), Box::new(collected)))
     }
 }

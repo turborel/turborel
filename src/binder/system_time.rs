@@ -131,8 +131,8 @@ fn ordered(symmetric: bool, (pot1, pot2): (Expr, Expr)) -> (Expr, Expr) {
         return (pot1, pot2);
     }
     let later = Cond::Compare(pot1.clone(), CompOp::Gt, pot2.clone());
-    let first = Expr::Case(vec![(later.clone(), pot2.clone())], Box::new(pot1.clone()));
-    let second = Expr::Case(vec![(later, pot1)], Box::new(pot2));
+    let first = Expr::Case(vec![(later.clone(), pot2.clone())].into(), Box::new(pot1.clone()));
+    let second = Expr::Case(vec![(later, pot1)].into(), Box::new(pot2));
     (first, second)
 }
 

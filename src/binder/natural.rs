@@ -95,7 +95,7 @@ fn corresponding(
     let cast = |e: Expr, own| super::case::brought(e, own, common.clone());
     // [SR6d] COALESCE (TA.C, TB.C).
     let coalesced = Expr::Case(
-        vec![(Cond::IsNull(Expr::Column(local1), true), cast(Expr::Column(local1), &c1.data_type.clone()))],
+        vec![(Cond::IsNull(Expr::Column(local1), true), cast(Expr::Column(local1), &c1.data_type.clone()))].into(),
         Box::new(cast(Expr::Column(local2), &c2.data_type.clone())),
     );
     // [SR9] possibly nullable only if an outer join may null it on the side it is.

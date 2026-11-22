@@ -119,8 +119,9 @@ pub enum Expr {
     Dynamic(Slot),
     /// [ISO/IEC 9075:1992 §6.9] A `<case expression>`, NULLIF and COALESCE
     /// among them: the result of the first WHEN whose condition is true,
-    /// else of the ELSE \[GR1, GR2\].
-    Case(Vec<(Cond, Expr)>, Box<Expr>),
+    /// else of the ELSE \[GR1, GR2\]. Its arms are shared, so a plan
+    /// kept and copied for each execution copies none of them.
+    Case(Arc<[(Cond, Expr)]>, Box<Expr>),
     /// [ISO/IEC 9075:1992 §6.10] CAST to a data type.
     Cast(Box<Expr>, DataType),
     /// [ISO/IEC 9075:1992 §6.10 GR13] CAST to a domain: the value CAST to
@@ -239,7 +240,7 @@ impl Expr {
             }
             Expr::Call(func, args) => Expr::Call(func, args.into_iter().map(&mut *f).collect()),
             Expr::Case(whens, otherwise) => {
-                let whens = whens.into_iter().map(|(c, e)| (c.map_exprs(f), f(e))).collect();
+                let whens = whens.iter().map(|(c, e)| (c.clone().map_exprs(f), f(e.clone()))).collect();
                 Expr::Case(whens, Box::new(f(*otherwise)))
             }
             Expr::Cast(x, t) => Expr::Cast(Box::new(f(*x)), t),
@@ -264,7 +265,7 @@ impl Expr {
             }
             Expr::Call(_, args) => args.iter().for_each(f),
             Expr::Case(whens, otherwise) => {
-                for (c, e) in whens {
+                for (c, e) in whens.iter() {
                     c.for_each_expr(f);
                     f(e);
                 }
@@ -569,7 +570,7 @@ mod tests {
         assert!(!Expr::Neg(Box::new(column())).can_raise());
         assert!(quotient().can_raise());
         assert!(Expr::Neg(Box::new(quotient())).can_raise());
-        let case = |c: Cond, e: Expr| Expr::Case(vec![(c, e)], Box::new(column()));
+        let case = |c: Cond, e: Expr| Expr::Case(vec![(c, e)].into(), Box::new(column()));
         assert!(!case(compare(column(), column()), column()).can_raise());
         assert!(case(compare(quotient(), column()), column()).can_raise());
         assert!(case(compare(column(), column()), quotient()).can_raise());
