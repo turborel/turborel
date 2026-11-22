@@ -27,7 +27,8 @@ pub(in crate::engine::tree) struct Halves {
 /// goes on (see `node.rs`). Either way the split moves to the nearest
 /// entry at which both halves fit `capacity`, each built with its own
 /// prefix: a key without the prefix the node's keys share takes it from
-/// the half it joins, whose keys then take their whole length.
+/// the half it joins, whose keys then take their whole length. A run's
+/// split moved left keeps its entry marked in the right half.
 ///
 /// # Errors
 ///
@@ -53,7 +54,10 @@ pub(in crate::engine::tree) fn split(
     let left_entries = entries.get(..left_end).unwrap_or_default();
     let right_entries = entries.get(middle.saturating_add(1)..).unwrap_or_default();
     let left = built(&Shape { high: Some(&separator), right: Some(new), ..*shape }, left_entries, None, None)?;
-    let right = built(&Shape { first: right_first, ..*shape }, right_entries, at_run.map(|_| 0), None)?;
+    // The entry added stays marked where it lands, should the split have
+    // moved left of it to fit.
+    let marked = at_run.and(run).and_then(|at| at.checked_sub(middle.saturating_add(1)));
+    let right = built(&Shape { first: right_first, ..*shape }, right_entries, marked, None)?;
     Ok(Halves { left, right, separator })
 }
 

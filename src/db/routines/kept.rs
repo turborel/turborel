@@ -8,7 +8,8 @@
 //! changed binds the body again. A binding that reads the statement's
 //! instant holds it, and is not kept. Each INSERT, searched UPDATE and
 //! searched DELETE of a program kept keeps its own plan the same way,
-//! its SQL parameters and variables slots each execution fills; each leaf
+//! its SQL parameters and variables slots each execution fills, as does
+//! the one a SELECT ... INTO reads as its delta table (RULES.md D792); each leaf
 //! that is one probe of a unique key keeps its physical plan, and each
 //! other leaf over the frame's slots learns one (`kept/leaves.rs`,
 //! RULES.md D408, D414). Each local cursor keeps its specification and

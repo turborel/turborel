@@ -184,24 +184,25 @@ pub(in crate::engine::tree) fn set_child(content: &mut [u8], at: usize, child: P
     Ok(())
 }
 
-/// Writes `value` over the value of entry `at`, of its length, in place:
-/// no byte moves, and the node keeps its garbage and its last insert.
+/// Writes `value` over the value of entry `at`, no longer than it, in
+/// place: no byte moves, and the node keeps its last insert. The bytes a
+/// shorter value leaves past its end are garbage, counted as a removed
+/// entry's are, until the node is built again.
 ///
 /// # Errors
 ///
 /// SQLCODE -916 if it is not a node, has no entry `at`, or its value is
-/// of another length.
+/// shorter than `value`.
 pub(in crate::engine::tree) fn overwrite(content: &mut [u8], at: usize, value: &[u8]) -> Result<()> {
-    let start = {
+    let (start, garbage) = {
         let node = Node::parse(content)?;
-        if node.value(at)?.len() != value.len() {
-            return Err(corrupt("a value written over is of another length"));
-        }
-        node.value_at(at)?
+        let left = node.value(at)?.len().checked_sub(value.len()).ok_or_else(|| corrupt("a value written over is longer than it"))?;
+        (node.value_at(at)?, node.garbage.saturating_add(left))
     };
     let end = start.checked_add(value.len()).ok_or_else(|| corrupt("a field runs past its end"))?;
     content.get_mut(start..end).ok_or_else(|| corrupt("a field runs past its end"))?.copy_from_slice(value);
-    Ok(())
+    set_u16(content, start.checked_sub(LEN).ok_or_else(|| corrupt("a field runs past its end"))?, value.len())?;
+    set_u16(content, GARBAGE_AT, garbage)
 }
 
 /// The bytes the node `node` grows by, besides the entry, as `key` is
@@ -210,6 +211,27 @@ pub(in crate::engine::tree) fn overwrite(content: &mut [u8], at: usize, value: &
 pub(in crate::engine::tree) fn grown(node: &Node<'_>, key: &[u8]) -> usize {
     let kept = key::common(node.prefix, key);
     node.len().saturating_mul(node.prefix.len().saturating_sub(kept))
+}
+
+/// The bytes an entry of `key` and `value` takes in the node `node`, its
+/// slot included: its key less what it shares of the node's prefix, which
+/// a key without all of it shortens (`grown`).
+pub(in crate::engine::tree) fn stored(node: &Node<'_>, key: &[u8], value: &[u8]) -> usize {
+    super::entry_size(key, value).saturating_sub(key::common(node.prefix, key))
+}
+
+/// Whether the node `node`, built again with `key` added, would keep a
+/// longer prefix than it keeps now: the least of what its first key, its
+/// last and `key` share two by two is what the lowest and highest share.
+///
+/// # Errors
+///
+/// SQLCODE -916 if the node's slots are malformed.
+pub(in crate::engine::tree) fn lengthens(node: &Node<'_>, key: &[u8]) -> Result<bool> {
+    let Some(end) = node.len().checked_sub(1) else { return Ok(false) };
+    let (first, last, added) = (node.key(0)?, node.key(end)?, KeyRef::whole(key));
+    let shared = first.common_with(&last).min(added.common_with(&first)).min(added.common_with(&last));
+    Ok(shared > node.prefix.len())
 }
 
 /// Inserts `(key, value)` as entry `at` of the node `content` holds, in

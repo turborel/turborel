@@ -37,6 +37,7 @@ mod indexed;
 mod join_probe;
 pub use join_probe::{Fields, JoinComparison, JoinProbe, OuterBound, Paired, Preserved, Ranged, Spatial, Supplied, Unmatched};
 mod join;
+pub(crate) use cardinality::estimated_rows;
 pub use join::JoinKey;
 mod kept;
 mod merged;
