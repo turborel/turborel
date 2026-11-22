@@ -103,7 +103,7 @@ impl State {
         for (desc, partition) in self.table_indexes(table) {
             let index = self.indexes.get(&desc.name).map(Arc::clone);
             let index = index.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {} does not exist", desc.name)))?;
-            indexes.push(Indexed { desc, partition, index, held: false });
+            indexes.push(Indexed { desc: desc.into_owned(), partition, index, held: false });
         }
         let storage = Arc::clone(self.storage_of(table)?);
         let logs = Self::logs_changes(caps.persistence);
@@ -163,7 +163,7 @@ impl State {
             if together.logs {
                 let made = ids.get(from..from.saturating_add(taken)).unwrap_or_default();
                 let record = insert_rows_record(tx.id, (table, self.generation_of(table)), made, part);
-                tx.log_encoded(&record, u64::try_from(made.len()).unwrap_or(u64::MAX))?;
+                tx.log_encoded(record, u64::try_from(made.len()).unwrap_or(u64::MAX))?;
             }
             from = from.saturating_add(taken);
         }

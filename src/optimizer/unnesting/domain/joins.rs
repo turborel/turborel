@@ -84,7 +84,7 @@ impl Domain {
                 OuterJoin::Right => Expr::Column(copy.saturating_add(i)),
                 // Of the side the row has, by COALESCE.
                 OuterJoin::Full => Expr::Case(
-                    vec![(Cond::IsNull(Expr::Column(i), false), Expr::Column(copy.saturating_add(i)))],
+                    vec![(Cond::IsNull(Expr::Column(i), false), Expr::Column(copy.saturating_add(i)))].into(),
                     Box::new(Expr::Column(i)),
                 ),
             })

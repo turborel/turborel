@@ -67,7 +67,7 @@ fn marked(at: usize, n: usize) -> Cond {
 /// `e` if `when` is true, else null; or the truth `when` alone, false
 /// where it is not of its copy.
 fn when(guard: Cond, e: Expr, otherwise: Value) -> Expr {
-    Expr::Case(vec![(guard, e)], Box::new(Expr::Const(otherwise)))
+    Expr::Case(vec![(guard, e)].into(), Box::new(Expr::Const(otherwise)))
 }
 
 /// Where each column of the plans between the two groupings is.

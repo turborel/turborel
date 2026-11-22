@@ -230,7 +230,7 @@ impl Known {
     /// is known not null or y is null where x is.
     fn coalesced(&self, e: &Expr) -> Option<usize> {
         let Expr::Case(arms, other) = e else { return None };
-        let [(Cond::IsNull(Expr::Column(tested), true), Expr::Column(x))] = arms.as_slice() else { return None };
+        let [(Cond::IsNull(Expr::Column(tested), true), Expr::Column(x))] = &**arms else { return None };
         let Expr::Column(y) = &**other else { return None };
         let (ax, ay) = (self.attribute_of(*x)?, self.attribute_of(*y)?);
         let alike = tested == x && (self.not_null.contains(&ax) || self.nulled_with.contains(&(ax, ay)));

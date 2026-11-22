@@ -32,7 +32,7 @@ fn op(op: Operator, args: Vec<Expression>) -> Expression {
 /// greater than 1: two expressions the form shows opaque, the first a
 /// condition, the second a value.
 fn plan() -> LogicalPlan {
-    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Column(1))], Box::new(Expr::Column(0)));
+    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Column(1))].into(), Box::new(Expr::Column(0)));
     let one = Expr::Const(Value::Exact(Decimal::new(1, 0)));
     let cond = Cond::And(Box::new(Cond::Distinct(Expr::Column(1), Expr::Column(0))), Box::new(Cond::Compare(case, CompOp::Gt, one)));
     LogicalPlan::Filter { cond, input: Box::new(scan()) }

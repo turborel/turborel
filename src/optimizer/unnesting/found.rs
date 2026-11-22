@@ -238,7 +238,7 @@ fn expr_references(e: &Expr, id: u64, out: &mut Vec<Reference>) {
             }
         }
         Expr::Case(whens, otherwise) => {
-            for (c, result) in whens {
+            for (c, result) in whens.iter() {
                 cond_references(c, (id, false), out);
                 expr_references(result, id, out);
             }

@@ -58,6 +58,10 @@ pub(in crate::db) struct KeptProgram {
     cursors: Arc<[Plans]>,
     /// The plans its leaves keep (`kept/leaves.rs`).
     pub(in crate::db) leaves: Arc<KeptLeaves>,
+    /// The address of each of its statements, with its place among them,
+    /// in the order of the addresses: a statement run is found by its
+    /// address, not by walking the program each time.
+    places: Arc<[(usize, usize)]>,
 }
 
 impl KeptProgram {
@@ -66,7 +70,12 @@ impl KeptProgram {
         let plans = program.contained().iter().map(|_| Plans::default()).collect();
         let queries = program.contained().iter().map(|_| DeltaQuery::default()).collect();
         let cursors = program.cursors.iter().map(|_| Plans::default()).collect();
-        KeptProgram { program: Arc::new(program), plans, queries, cursors, leaves: Arc::default() }
+        let program = Arc::new(program);
+        // The program's statements stay where they are while it is shared.
+        let mut places: Vec<(usize, usize)> =
+            program.contained().iter().enumerate().map(|(at, c)| (std::ptr::from_ref(*c).addr(), at)).collect();
+        places.sort_unstable();
+        KeptProgram { program, plans, queries, cursors, leaves: Arc::default(), places: places.into() }
     }
 
     /// The plans the local cursor `c` of its program keeps, if it is one of
@@ -80,7 +89,9 @@ impl KeptProgram {
     /// its own, and those its query over a delta table keeps, if it has
     /// one (RULES.md D793).
     pub(in crate::db) fn plans_of(&self, c: &Contained) -> Option<(&Plans, &DeltaQuery)> {
-        let at = self.program.contained().iter().position(|own| std::ptr::eq(*own, c))?;
+        let address = std::ptr::from_ref(c).addr();
+        let found = self.places.binary_search_by_key(&address, |&(a, _)| a).ok()?;
+        let &(_, at) = self.places.get(found)?;
         self.plans.get(at).zip(self.queries.get(at))
     }
 }

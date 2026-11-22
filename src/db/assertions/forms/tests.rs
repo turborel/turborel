@@ -146,7 +146,7 @@ fn forms_are_found_of_each_conjunct() {
     );
     let listed = Cond::In(Expr::Column(0), Arc::new(InSet::of(vec![Value::Exact(Decimal::new(1, 0))])));
     let row = Cond::And(Box::new(row), Box::new(listed));
-    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Column(0))], Box::new(number(0)));
+    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Column(0))].into(), Box::new(number(0)));
     let like = Cond::Like(Expr::Column(1), number(1), Some(number(2)));
     let Cond::Compare(s, op, k) = counted(count.clone(), None, scan(), CompOp::Lt) else { panic!("a comparison") };
     let flipped = Cond::Compare(k, op, s);
@@ -233,7 +233,7 @@ fn a_set_functions_argument_is_never_null() {
         Cond::Is(Box::new(compare(n(), CompOp::Eq, number(1))), Truth::False, false),
         Cond::Is(Box::new(compare(n(), CompOp::Eq, number(1))), Truth::True, true),
         compare(Expr::Column(0), CompOp::Gt, number(0)),
-        compare(Expr::Case(vec![(Cond::Const(Truth::True), n())], Box::new(number(0))), CompOp::Gt, number(0)),
+        compare(Expr::Case(vec![(Cond::Const(Truth::True), n())].into(), Box::new(number(0))), CompOp::Gt, number(0)),
     ];
     for (at, cond) in letting.into_iter().enumerate() {
         assert!(!found(n(), filtered(cond)), "letting {at}");
@@ -243,7 +243,7 @@ fn a_set_functions_argument_is_never_null() {
     }
     assert!(!found(null.clone(), scan()), "a null");
     assert!(!found(plus(Expr::Column(0), null), scan()), "arithmetic of a null");
-    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Column(0))], Box::new(number(0)));
+    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Column(0))].into(), Box::new(number(0)));
     assert!(!found(case, scan()), "a CASE");
 }
 

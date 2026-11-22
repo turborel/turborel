@@ -180,7 +180,7 @@ fn never_raises<'e>(e: &'e Expr, desc: &TableDesc) -> std::result::Result<Typed,
         }
         // [ISO/IEC 9075:1992 §6.9 GR2] only through its conditions and results.
         Expr::Case(whens, otherwise) => {
-            for (c, result) in whens {
+            for (c, result) in whens.iter() {
                 if c.can_raise() {
                     return Err(e);
                 }

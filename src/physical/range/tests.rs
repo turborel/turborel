@@ -98,7 +98,7 @@ fn values_computed_once_a_row_alone_are_searched() {
     let constant = Expr::Const(Value::Exact(Decimal::new(3, 0)));
     assert!(shown(vec![cmp(constant, CompOp::Lt, col(2))]).is_none());
     assert!(shown(vec![cmp(Expr::Outer(0, "O.Z".to_owned()), CompOp::Lt, col(2))]).is_none());
-    let case = Expr::Case(vec![(Cond::IsNull(col(0), false), col(1))], Box::new(col(0)));
+    let case = Expr::Case(vec![(Cond::IsNull(col(0), false), col(1))].into(), Box::new(col(0)));
     assert!(shown(vec![cmp(case, CompOp::Lt, col(2))]).is_none());
     assert!(shown(vec![cmp(Expr::Neg(Box::new(col(0))), CompOp::Lt, col(2))]).is_some());
 }

@@ -109,7 +109,8 @@ pub(super) fn changes_of(
     for object in objects {
         let (id, old) = object?;
         if !effects.moved_in(&w.bound.table, id) {
-            changes.push((id, old.clone(), candidate(w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", subqueries))?))?;
+            let new = candidate(w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", subqueries))?;
+            changes.push((id, old, new))?;
         }
     }
     Ok(changes)
@@ -143,7 +144,10 @@ impl Assigned<'_> {
 fn assigned(a: &Assigned<'_>, (old, read): (&Row, &Row), (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
     // [ISO/IEC 9075-2:2023 §4.29.1] the row's draws of one generator are one.
     let subqueries = &Drawn::new(subqueries);
-    let mut new = old.clone();
+    // A column the update sets is not copied from the row before, as its
+    // value is replaced.
+    let mut new: Row =
+        old.iter().enumerate().map(|(i, v)| if a.set.iter().any(|(at, _)| *at == i) { Value::Null } else { v.clone() }).collect();
     let desc = a.desc;
     for (i, value) in a.set {
         let v = match value {
