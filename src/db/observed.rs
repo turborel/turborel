@@ -41,7 +41,7 @@ impl Session {
         if own.is_empty() {
             return Vec::new();
         }
-        let Ok(st) = self.db.snapshot() else { return Vec::new() };
+        let Ok(st) = self.own_snapshot() else { return Vec::new() };
         own.values().filter_map(|(key, value)| Some((st.settings.definition(*key)?.name.clone(), value.clone()))).collect()
     }
 
@@ -50,13 +50,13 @@ impl Session {
     /// following a log another replica writes, deposed or retired. A
     /// database closed takes none.
     pub fn takes_changes(&self) -> bool {
-        self.db.snapshot().is_ok_and(|st| st.tx.held().is_none())
+        self.own_snapshot().is_ok_and(|st| st.tx.held().is_none())
     }
 
     /// \[DESIGN\] Whether its current authorization identifier is its
     /// database's owner (RULES.md D43, D190).
     pub fn is_owner(&self) -> bool {
-        self.db.snapshot().is_ok_and(|st| st.users.owner() == Some(self.auth().as_str()))
+        self.own_snapshot().is_ok_and(|st| st.users.owner() == Some(self.auth().as_str()))
     }
 }
 

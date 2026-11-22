@@ -10,7 +10,12 @@
 //! waits again, and one dropped as it is woken passes the wake on
 //! (`Notify::notify_one`). One taken that leaves room wakes the next, so
 //! a limit raised lets in as many as it allows.
+//!
+//! The ones waiting are counted, alone on their cache line, so a worker
+//! that would give its permit up only to take it again at once keeps it
+//! while none waits (`Permit::lend`, RULES.md D815).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::runtime::Handle;
@@ -25,6 +30,30 @@ use crate::shown::{Counted, Shown};
 pub(crate) struct Limit {
     held: Mutex<usize>,
     freed: Notify,
+    /// How many wait for one (`take`).
+    waiting: Alone,
+}
+
+/// A count alone on its cache lines, so the workers reading it never take
+/// a line another writes.
+#[repr(align(128))]
+#[derive(Default)]
+struct Alone(AtomicUsize);
+
+/// One waiting, counted until it is dropped: taken, or its wait given up.
+struct Waiting<'a>(&'a AtomicUsize);
+
+impl<'a> Waiting<'a> {
+    fn of(waiting: &'a AtomicUsize) -> Waiting<'a> {
+        waiting.fetch_add(1, Ordering::SeqCst);
+        Waiting(waiting)
+    }
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// One held, given back when dropped.
@@ -50,6 +79,7 @@ impl Limit {
     /// One, once fewer than `limit()` are held: read each time one is
     /// given back.
     pub(crate) async fn take(self: &Arc<Self>, limit: impl Fn() -> usize) -> Held {
+        let _waiting = Waiting::of(&self.waiting.0);
         loop {
             // Waiting begins before the count is read, so one given back
             // between the two is not missed.
@@ -61,6 +91,11 @@ impl Limit {
             }
             freed.await;
         }
+    }
+
+    /// Whether one waits for one to be given back.
+    pub(crate) fn wanted(&self) -> bool {
+        self.waiting.0.load(Ordering::SeqCst) > 0
     }
 
     /// How many are held.
@@ -110,6 +145,17 @@ impl Permit {
     /// Gives the permit up, for another statement.
     pub fn release(&mut self) {
         self.held = None;
+    }
+
+    /// Gives the permit up while its worker waits on its client, at most
+    /// `lent::WAITED`, if another waits for one; else keeps it, to run the
+    /// request that comes, so a fast client's request takes nothing every
+    /// worker shares (RULES.md D815). A waiter that comes meanwhile is let
+    /// in once the worker is done with its next request, or with its client.
+    pub fn lend(&mut self) {
+        if self.workers.wanted() {
+            self.release();
+        }
     }
 
     /// Takes a permit again, once fewer statements run than SERVER.WORKERS
@@ -202,5 +248,32 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
         assert_eq!(let_in(&runtime, 1), 1_usize, "no room left");
         assert_eq!(let_in(&runtime, 2), 2_usize, "room left");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D815: a worker lending its permit keeps
+    /// it while none waits for one, taking nothing every worker shares,
+    /// and gives it up once one waits, which lets the waiter in. MC/DC of
+    /// lending: wanted or not.
+    #[test]
+    fn a_permit_lent_is_kept_while_none_waits() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let (workers, shown, db) = (Arc::new(Limit::default()), Arc::new(Shown::default()), Database::new());
+        let mut permit = Permit::new(&workers, &shown, &db, workers.try_take(1).unwrap());
+        assert!(!workers.wanted());
+        permit.lend();
+        assert_eq!(workers.held(), 1, "kept: none waits");
+        runtime.block_on(async {
+            let waiter = tokio::spawn({
+                let workers = Arc::clone(&workers);
+                async move { workers.take(|| 1).await }
+            });
+            tokio::task::yield_now().await;
+            assert!(workers.wanted(), "one waits");
+            permit.lend();
+            let taken = waiter.await.unwrap();
+            assert!(!workers.wanted(), "let in");
+            drop(taken);
+        });
+        assert_eq!(workers.held(), 0);
     }
 }
