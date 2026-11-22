@@ -102,55 +102,80 @@ fn scan_checked(tree: &BLinkTree, direction: Direction) {
     assert_eq!(kept, (1..=KEYS).filter(|&k| pinned(k)).collect::<Vec<_>>(), "{direction:?}: every key kept");
 }
 
-/// Verifies: [DESIGN] RULES.md D814, D31: while threads delete four keys
-/// in five in a fixed scattered order, so leaves merge under them, scans
-/// forward and backward return keys in order and none twice, every key
-/// never deleted among them, and reads find each such key, from a copy of
-/// its leaf or not. At the end the tree holds exactly the keys kept, in
-/// order both ways, and leaves were merged.
-#[test]
-fn scans_and_reads_across_merges_miss_nothing_and_repeat_nothing() {
-    let (tree, _scratch) = tree("merge-concurrent");
-    fill(&tree, KEYS);
-    let (done, finished, start) = (AtomicBool::new(false), AtomicU64::new(0), Barrier::new(4));
+/// Deletes the keys of deleter `t` that are not pinned, scattered: a
+/// stride prime to `KEYS` visits each key once.
+fn delete_own(tree: &BLinkTree, t: u64) {
+    for i in 0..KEYS {
+        let k = i.checked_mul(1_009).unwrap().checked_rem(KEYS).unwrap().checked_add(1).unwrap();
+        if !pinned(k) && k.checked_rem(DELETERS) == Some(t) {
+            assert!(tree.delete(&key(k)).unwrap().is_some(), "key {k}");
+        }
+    }
+}
+
+/// Scanner threads of the concurrent test besides the reader, each
+/// scanning backward and forward, and rounds of deletes they scan through.
+const SCANNERS: usize = 3;
+const ROUNDS: usize = 8;
+
+/// One round of the concurrent test: the deleters' keys deleted while
+/// `SCANNERS` threads scan and this one reads every pinned key, twice at
+/// least and until the deletes are done.
+fn round_of_deletes(tree: &BLinkTree) {
+    let (done, finished, start) = (AtomicBool::new(false), AtomicU64::new(0), Barrier::new(SCANNERS + 3));
     std::thread::scope(|s| {
         for t in 0..DELETERS {
-            let (tree, start, finished) = (&tree, &start, &finished);
+            let (start, finished) = (&start, &finished);
             s.spawn(move || {
                 start.wait();
-                // A stride prime to `KEYS` visits each key once, scattered.
-                for i in 0..KEYS {
-                    let k = i.checked_mul(1_009).unwrap().checked_rem(KEYS).unwrap().checked_add(1).unwrap();
-                    if !pinned(k) && k.checked_rem(DELETERS) == Some(t) {
-                        assert!(tree.delete(&key(k)).unwrap().is_some(), "key {k}");
-                    }
-                }
+                delete_own(tree, t);
                 finished.fetch_add(1, Ordering::SeqCst);
             });
         }
-        let (tree, start, done) = (&tree, &start, &done);
-        s.spawn(move || {
-            start.wait();
-            while !done.load(Ordering::SeqCst) {
-                scan_checked(tree, Direction::Forward);
-                scan_checked(tree, Direction::Backward);
-            }
-        });
+        for _ in 0..SCANNERS {
+            let (start, done) = (&start, &done);
+            s.spawn(move || {
+                start.wait();
+                while !done.load(Ordering::SeqCst) {
+                    scan_checked(tree, Direction::Backward);
+                    scan_checked(tree, Direction::Forward);
+                }
+            });
+        }
         start.wait();
         let mut near = Near::default();
-        let mut rounds = 0_u32;
-        // Reads through the whole of the deletes, and twice at least.
-        while rounds < 2 || finished.load(Ordering::SeqCst) < DELETERS {
+        let mut reads = 0_u32;
+        while reads < 2 || finished.load(Ordering::SeqCst) < DELETERS {
             for k in (5..=KEYS).step_by(5) {
                 assert!(tree.get_near(&key(k), &mut near).unwrap(), "key {k}");
                 assert!(tree.get(&key(k)).unwrap().is_some(), "key {k}");
             }
-            rounds = rounds.saturating_add(1);
+            reads = reads.saturating_add(1);
         }
         done.store(true, Ordering::SeqCst);
     });
+}
+
+/// Verifies: [DESIGN] RULES.md D814, D31: while threads delete four keys
+/// in five in a fixed scattered order, so leaves merge under them, scans
+/// forward and backward return keys in order and none twice, every key
+/// never deleted among them, and reads find each such key, from a copy of
+/// its leaf or not. Each round ends with the tree holding exactly the keys
+/// kept, in order both ways, and leaves merged; the keys deleted are then
+/// inserted again for the next.
+#[test]
+fn scans_and_reads_across_merges_miss_nothing_and_repeat_nothing() {
+    let (tree, _scratch) = tree("merge-concurrent");
+    fill(&tree, KEYS);
     let kept: Vec<Vec<u8>> = (1..=KEYS).filter(|&k| pinned(k)).map(|k| key(k).to_vec()).collect();
-    assert_eq!(keys(&tree, Direction::Forward), kept);
-    assert_eq!(keys(&tree, Direction::Backward), kept.iter().rev().cloned().collect::<Vec<_>>());
-    assert!(tree.counts().merged > 10, "{:?}", tree.counts());
+    for round in 0..ROUNDS {
+        let merged = tree.counts().merged;
+        round_of_deletes(&tree);
+        assert_eq!(keys(&tree, Direction::Forward), kept, "round {round}");
+        assert_eq!(keys(&tree, Direction::Backward), kept.iter().rev().cloned().collect::<Vec<_>>(), "round {round}");
+        assert!(tree.counts().merged > merged.saturating_add(10), "round {round}: {:?}", tree.counts());
+        for k in (1..=KEYS).filter(|&k| !pinned(k)) {
+            assert!(tree.insert(&key(k), &VALUE).unwrap(), "key {k}");
+        }
+    }
 }

@@ -72,7 +72,12 @@ pub(in crate::engine::tree) fn built_size(high: usize, entries: &[(KeyRef<'_>, &
 /// # Errors
 ///
 /// As `build`.
-pub(in crate::engine::tree) fn built(shape: &Shape<'_>, entries: &[(KeyRef<'_>, &[u8])], last: Option<usize>, prefix: Option<usize>) -> Result<Vec<u8>> {
+pub(in crate::engine::tree) fn built(
+    shape: &Shape<'_>,
+    entries: &[(KeyRef<'_>, &[u8])],
+    last: Option<usize>,
+    prefix: Option<usize>,
+) -> Result<Vec<u8>> {
     let high = shape.high.unwrap_or_default();
     let shared = entries.first().map(|(k, _)| k.to_vec()).unwrap_or_default();
     let prefix = shared.get(..prefix.unwrap_or_else(|| prefix_of(entries)).min(shared.len())).unwrap_or_default();

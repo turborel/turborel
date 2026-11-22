@@ -33,8 +33,11 @@ use crate::error::Result;
 
 /// \[DESIGN\] The most of its page a leaf merged into its right neighbour
 /// may fill with the entries of both, as a fraction (RULES.md D814): three
-/// quarters, by a sweep of a half, two thirds, three quarters and seven
-/// eighths on a table whose rows are deleted and inserted again.
+/// quarters, derived from the node layout. The longest entry takes a
+/// quarter of a page less two headers (`BLinkTree::max_entry`), so a leaf
+/// merged to three quarters takes any entry next without splitting. A
+/// larger share may leave it to split again at the next insert, and a
+/// smaller one only leaves more pages.
 pub(super) const MERGED: (usize, usize) = (3, 4);
 
 /// What a merge of a leaf into its right neighbour makes of the neighbour.
