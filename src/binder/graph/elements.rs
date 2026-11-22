@@ -156,7 +156,7 @@ fn query_item(b: Bounds<'_>, e: &ElementTableDesc, q: &str, as_of: Option<&Syste
         return Err(grf("GRF-0005", msg));
     }
     let query = Parser::for_stored(q)?.view_query()?;
-    let d = DerivedTable { query: Box::new(Subquery { query, at: 0 }), correlation: e.alias.clone(), columns: None };
+    let d = DerivedTable { query: Box::new(Subquery { query, at: 0 }), correlation: e.alias.clone(), columns: None, lateral: false };
     derived(b, &d, 0)
 }
 

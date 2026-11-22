@@ -57,5 +57,5 @@ pub(crate) fn derived_of(cx: Context<'_>, g: &GqlTable) -> Result<DerivedTable> 
     let lowered = query_text(&g.text, &graphs)?;
     let query = Parser::gql_lowered(&lowered.sql)?;
     let correlation = g.correlation.clone().unwrap_or_else(|| g.graph.ident.clone());
-    Ok(DerivedTable { query: Box::new(Subquery { query, at: g.at }), correlation, columns: g.columns.clone() })
+    Ok(DerivedTable { query: Box::new(Subquery { query, at: g.at }), correlation, columns: g.columns.clone(), lateral: false })
 }

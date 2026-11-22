@@ -92,6 +92,8 @@ behind it, and each can be replaced or added to.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
+- [Lateral derived tables](doc/sql/06-queries.md#lateral-derived-tables),
+  whose query reads the tables before them in the FROM clause.
 - [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
   for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
   and joins under MIN and MAX reduced to semi joins; mark joins for

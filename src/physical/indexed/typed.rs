@@ -48,11 +48,14 @@ impl PhysicalPlanner<'_> {
 
     /// The type of `e`'s values over `input`'s rows, if known: a column's,
     /// a constant's or a slot's, a CAST's target, a function's result of
-    /// its arguments' types, or of a sum or difference of exact numbers an
-    /// exact number.
+    /// its arguments' types, a subquery's column's of its plan, or of a sum
+    /// or difference of exact numbers an exact number.
     fn expr_type(&self, e: &Expr, input: &LogicalPlan) -> Option<DataType> {
         if let Expr::Column(c) = e {
             return self.column_type(input, *c);
+        }
+        if let Expr::Subquery(s, c) = e {
+            return self.column_type(&s.plan, *c);
         }
         if let Expr::Dynamic(slot) = e {
             return Some(slot.data_type.clone());
@@ -73,8 +76,9 @@ impl PhysicalPlanner<'_> {
     }
 
     /// The type of column `column` of the UNNEST `u`: its input's, or its
-    /// collection's element type, of one that is no row type; none of its
-    /// ordinal, a JSON table's or a GRAPH_TABLE's.
+    /// collection's element type, or a field's of a row type spread over
+    /// columns, as a lateral derived table's rows are (RULES.md D778); none
+    /// of its ordinal, a JSON table's or a GRAPH_TABLE's.
     fn unnested_type(&self, u: &Unnest<LogicalPlan>, column: usize) -> Option<DataType> {
         let Some(mut at) = column.checked_sub(u.input.width()) else { return self.column_type(&u.input, column) };
         if u.json.is_some() || u.graph.is_some() {
@@ -86,12 +90,12 @@ impl PhysicalPlanner<'_> {
                 at = at.saturating_sub(width);
                 continue;
             }
-            let of = self.expr_type(collection, &u.input)?;
-            if let DataType::Array(a) = &of {
-                return spread.is_none().then(|| a.element.clone());
+            let element = element_type(&self.expr_type(collection, &u.input)?)?;
+            if spread.is_none() {
+                return Some(element);
             }
-            let DataType::Multiset(m) = &of else { return None };
-            return spread.is_none().then(|| m.element.clone());
+            let DataType::Row(row) = element else { return None };
+            return row.fields.get(at).map(|f| f.data_type.clone());
         }
         None
     }
@@ -105,4 +109,13 @@ impl PhysicalPlanner<'_> {
         };
         call.func.0.result_type(arg).ok()
     }
+}
+
+/// The element type of a collection type `of`, of an array or a multiset.
+fn element_type(of: &DataType) -> Option<DataType> {
+    if let DataType::Array(a) = of {
+        return Some(a.element.clone());
+    }
+    let DataType::Multiset(m) = of else { return None };
+    Some(m.element.clone())
 }

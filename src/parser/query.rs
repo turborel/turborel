@@ -511,10 +511,10 @@ impl Parser {
             // [ISO/IEC 9075-2:2023 §7.6] or a <row pattern recognition clause and name>.
             let query = Box::new(self.subquery()?);
             let Some(correlation) = self.correlation()? else {
-                return self.unnamed_input(DerivedTable { query, correlation: String::new(), columns: None });
+                return self.unnamed_input(DerivedTable { query, correlation: String::new(), columns: None, lateral: false });
             };
             let columns = self.derived_columns()?;
-            return self.recognized(TableReference::Derived(DerivedTable { query, correlation, columns }));
+            return self.recognized(TableReference::Derived(DerivedTable { query, correlation, columns, lateral: false }));
         }
         if self.accept_delim(delim::LEFT_PAREN) {
             let inner = self.table_reference()?;
