@@ -20,6 +20,8 @@ pub mod diskann;
 mod key;
 pub use key::Key;
 mod counted;
+mod entries;
+pub use entries::{Encoded, EncodedEntries, EncodedEntry, Entries, RowIds};
 pub mod expression;
 pub mod fulltext;
 mod hash;
@@ -64,14 +66,6 @@ use crate::memory::Host;
 use crate::spill::{Area, WorkAreas};
 use crate::storage::{RowId, TableOption};
 use crate::value::{CompOp, DataType};
-
-/// \[DESIGN\] The entries a search finds, (key, row) pairs, read as they
-/// are taken (`Index::search`).
-pub type Entries = Box<dyn Iterator<Item = Result<(Key, RowId)>> + Send>;
-
-/// \[DESIGN\] The rows with an entry under one key, read as they are taken
-/// (`Index::key_rows`).
-pub type RowIds = Box<dyn Iterator<Item = Result<RowId>> + Send>;
 
 /// \[EXTENSION\] A kind of index: creates `Index`es and says which probes they answer.
 ///
@@ -544,6 +538,11 @@ pub trait Index: Send + Sync {
     /// method groups them for their reads only then (RULES.md D85). Default: `search`.
     fn search_for(self: Arc<Self>, probe: &Probe, order: KeyOrder, _reading: bool) -> Entries {
         self.search(probe, order)
+    }
+    /// \[DESIGN\] (RULES.md D821) The entries `search` finds, each key as the bytes the index holds, if it holds them so: for a caller
+    /// that compares a row's key with them as bytes. Default: none, and the caller takes `search_for`'s keys.
+    fn search_encoded(self: Arc<Self>, _probe: &Probe, _order: KeyOrder) -> Option<Encoded> {
+        None
     }
     /// \[DESIGN\] (RULES.md D297) The entries `search` finds in ascending order, cut by keys
     /// into up to `most` ranges searched apart, in order. Default: none, the entries uncut.

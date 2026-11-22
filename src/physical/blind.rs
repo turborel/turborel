@@ -139,6 +139,7 @@ impl PhysicalPlanner<'_> {
             | Plan::Recognize { .. }
             | Plan::Polymorphic(_)
             | Plan::Parallel(_)
+            | Plan::Transfer(_)
             | Plan::Counted(_)) => (other, Gone::default()),
         }
     }

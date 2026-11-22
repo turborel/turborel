@@ -513,6 +513,7 @@ verification approach DO-178C expects (§8).
 | D785 | A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area |
 | D786 | A search keeps a decoded key only once a second entry has its bytes |
 | D787 | A projection of columns each named once, in ascending order, is made in the row it is given |
+| D821 | An index scan compares each row's key with its entry's as the bytes the index holds |
 | D805 | A pool finds its files with no lock and no reference count moved |
 | D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
 | D807 | A thread keeps 256 inner node copies across its trees, the one to give way chosen by a clock bit |
@@ -537,6 +538,11 @@ verification approach DO-178C expects (§8).
 | D814 | A leaf a delete leaves sparse merges into its right neighbour when the two fit in three quarters of a page |
 | D822 | An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them |
 | D835 | A write decodes the row it replaced once, for its caller and the zone it widens alike |
+| D665 | A chain of inner hash joins may read its leaves first, each filtered by Bloom filters of the others' keys, before its joins |
+| D666 | Predicate transfer goes along a maximum spanning tree of the chain's leaves rooted at the largest, up and back |
+| D667 | A transfer step is kept where its keys are at most half the values it judges, and the phase is planned where it pays |
+| D668 | A phase holds its leaves within its work area, reads a leaf past it again with its filters, and stops a filter that keeps most rows |
+| D836 | A routine's variable in a subquery of a change is the subquery's slot, not an outer reference, so the subquery probes a key |
 
 ### The project
 
@@ -14226,6 +14232,32 @@ earlier than `i`, and no later column is at a place before its own, so no
 swap moves a value still to be taken. Other projections make a row as
 before. A column past the row is refused the same way in both.
 
+#### D821. An index scan compares each row's key with its entry's as the bytes the index holds
+
+An index scan rechecks each row it reads by the key of its entry, since an
+index holds the entries of versions a reader may not see (D34, D501). The
+built-in btree decoded every entry's key into values for that check, one
+allocation and a decode per entry, a few percent of a range read's time.
+
+An index may now hand its entries with their keys as the bytes it holds
+(`Index::search_encoded`, by default none). The btree does so for a range
+none of whose keys must be checked against the probe. Each entry is lent
+from the scan (D809), its row id cut off, and is passed on uncopied and
+undecoded (`index/blink/encoded.rs`).
+A scan that reads each entry's row and checks it in place, by a key of
+its columns as they are, by no sort key and with no projection, takes
+them (`exec/scan/encoded.rs`). It encodes the row's key columns into one
+buffer kept for the scan and compares the two as bytes
+(`entries::fetch_encoded`). Equal bytes are of equal values. Bytes not
+equal are decoded and compared as values, as before, so the scan keeps
+exactly the rows it kept. Covering scans, scans deciding a condition, and
+every other index read take decoded keys as before.
+
+The check stays even for an equality on a whole unique key. A row whose
+key an update moved from 5 to 6 has entries under both, and a reader
+whose snapshot sees 5 finds its row by the entry under 6, which the
+check alone refuses.
+
 #### D805. A pool finds its files with no lock and no reference count moved
 
 Each page a pool writes, and each it reads from its file, finds the file
@@ -14591,6 +14623,109 @@ an A/B against commits made at once gave less throughput in all, on a
 drive with power-loss protection and one without. A smoother window
 does not pay for work lost, so commits are made at once again, and
 D811's runs are what shortens them.
+A checkpoint's captures are made durable as writers go on (D590), but
+the commit's copying takes a core and the drive while it runs, and the
+work going on loses the same share of both for the seconds it takes. The
+checkpoint job asks the commits to take about `SPREAD` of the time since
+the last checkpoint began instead: after each write, the commit waits
+until its share of the span is due (`disk/shadow/pace.rs`). The cost is
+the same, spread thin, and the job is done before the next checkpoint
+is due. The first checkpoint has no last to measure from and
+goes at once.
+
+A checkpoint asked for, by `Database::checkpoint`, a backup or a close,
+goes at once, as its caller waits for it. A close tells a spread commit
+going on to hurry, so it waits for no span. `SPREAD` is three quarters,
+by a sweep of none, a quarter, a half and three quarters on a drive with
+power-loss protection and one without. Three quarters gave the flattest
+work going on on both, so the best does not move with the drive and it
+is a constant, not a setting. A quarter of the time is left before the
+next checkpoint is due, and a next one due sooner only starts later.
+#### D665. A chain of inner hash joins may read its leaves first, each filtered by Bloom filters of the others' keys, before its joins
+
+A hash join's runtime filter (D369) goes from its build to its probe
+side, so a selective condition on the table a chain probes never shrinks
+the tables it builds. Predicate transfer, as Yang, Zhao, Yu and Koutris
+(CIDR 2024) define it, reads the chain's tables first, each filtered by
+filters of the keys of the tables read before it, so a condition on any
+table shrinks the others. The planner plans a phase, `Plan::Transfer`,
+over a chain once the rest of the plan is made, and EXPLAIN shows it as
+`PredicateTransfer` above the chain.
+
+- A chain is inner hash joins, LEFT outer joins of no condition of an
+  operand's own, and the filters and projections over them, its leaves
+  the plans below. A LEFT join's key transfers from its left operand to
+  its right alone, as a left row no right row matches is still a row of
+  the join, with nulls [ISO/IEC 9075:1992 §7.5 GR4]. A key on which nulls
+  match transfers in no chain with a LEFT join, as a row it made with
+  nulls would match it. A leaf has the same number for the planner
+  and the executor, its place in a walk of left inputs before right ones,
+  past the operators EXPLAIN ANALYZE counts.
+- A step is a key of a hash join that is a column of a leaf on each side.
+  Its filter holds the keys of the rows one leaf kept and judges the
+  other's column, as a runtime filter does (D369): a range of an exact key
+  and a blocked Bloom filter of the keys' hashes. A row it drops matches
+  no row of the other leaf, so no row of the chain holds it. The joins then
+  run in their planned order over the rows kept, so the chain gives the
+  same rows in the same order.
+- No operator of the chain or of its leaves may raise an error or a
+  warning (`Plan::can_raise`), so no operator raises on fewer rows than it
+  would (D15), and no leaf is the operand of a guard (D373), whose part
+  can raise.
+- The phase reads each leaf whole, so a chain under a limit not of a sort
+  is planned as it was, and so is one inside a part run in parallel,
+  whose morsels the phase is no step of. The chain must give batches,
+  every table it reads read by batch, its rows asked for in no order.
+- A plan with a phase is never kept for a prepared statement's next
+  executions (D422): a phase is of no shape a kept plan compares alike.
+- PLANNER.PREDICATE_TRANSFER, ON by default and of a session's scope,
+  plans phases; OFF plans none, as to compare the two.
+
+#### D666. Predicate transfer goes along a maximum spanning tree of the chain's leaves rooted at the largest, up and back
+
+The steps run along a tree of the chain's leaves, as LargestRoot in Zhao
+et al., Robust Predicate Transfer (SIGMOD 2025), builds it: a maximum
+spanning tree of the leaves joined by keys, each edge weighed by the keys
+its two leaves share, rooted at the leaf of the most estimated rows. Each
+leaf sends to its parent after the leaves below it, then each parent
+sends to its leaves before they send to theirs. For a chain acyclic once
+its equalities are classes, one pass up and one back reduce each leaf to
+the rows some row of the chain holds. A key of a cycle that is no edge of
+the tree transfers nothing; its join still filters as any. A chain whose
+keys leave a leaf unjoined has no tree and no phase.
+
+#### D667. A transfer step is kept where its keys are at most half the values it judges, and the phase is planned where it pays
+
+A step's filter holds at most as many keys as its leaf's rows kept and
+the values of its column, by the leaf's table's statistics. The step is
+kept only where those are at most half the values of the column it
+judges, so it is expected to drop at least half of that leaf's rows, as
+RPT+ (Qiao, Boncz and Zhang, PVLDB 2026) builds a filter only where it is
+expected to drop rows. A leaf's rows are reduced by each step taken
+before, its keys taken as spread alike and independent (Selinger et al.,
+1979). The phase is planned if the rows its steps are expected to drop,
+each worth half a row read, outweigh an insert into and a probe of a Bloom
+filter of each row of each step, a tenth of a row read each, and the
+phase's own cost, a fixed number of rows read (`PHASE_ROWS`). Of the chain's first leaf, only the
+rows dropped past those a filter of the other leaf as planned would drop
+are counted, as its scan is told the runtime filters of the builds joined
+with it already (D369).
+
+#### D668. A phase holds its leaves within its work area, reads a leaf past it again with its filters, and stops a filter that keeps most rows
+
+The executor takes the chain's leaves out of it and takes the steps in
+order. The leaf a step's filter is made of is read, told every filter made
+for it so far as a hash join tells its scan (D369), and its batches held
+with the rows kept, charged to the phase's work area (D38); a leaf held
+already is judged by the filters made for it since. Each leaf then goes
+back into the chain, held, or told its filters, and the chain runs over
+them. A leaf past what is left of the work area is not held: its filter is
+made of its key's vector alone as it is read, and it is read again in the
+chain, told every filter made for it, as Robust Predicate Transfer streams
+its largest relation. A filter that keeps more than nine in ten of the
+rows of its first batches stops judging them (D369), and the step back
+along its edge is not taken, as RPT+ drops a transfer that does not pay.
+None of these changes the rows.
 
 #### D813. A pool's test reading a page fails first if a frame is left latched exclusively
 
@@ -14670,6 +14805,33 @@ not decode, widens the zone as one not known, as before. Decoding the
 whole row reads every column the kept ones are among, so the zone holds
 the same values. A procedure's keyed UPDATE of one row, profiled, spent
 about a twentieth of its time in the second decode.
+
+#### D836. A routine's variable in a subquery of a change is the subquery's slot, not an outer reference, so the subquery probes a key
+
+A routine's SQL variable or parameter is bound as a slot of its frame.
+In a subquery it is bound as an outer reference whose outer expression
+is that slot, as a column of the query around the subquery is. So a
+subquery of a procedure's UPDATE or DELETE that reads a variable, an IN
+of the UNNEST of array variables or a lateral's MIN of a parameter, was
+correlated. The change's plan decorrelated it over every row of the
+object table, a scan of it in place of a probe of its key (D775). A
+CALL whose UPDATE named ten keys of a table of 300000 rows read the
+table twice.
+
+The value of such a reference is the same for every row the subquery
+is applied to. So before a change's object rows are planned
+(`db/compiled.rs`), each outer reference whose outer expression is a
+constant or a slot is replaced by it, at any depth, and a subquery left
+with no outer reference has none (`logical::fixed_outer`). Its plan
+then reads the slot as a `?` there does, the IN is a semi join, and its
+few rows probe the key (D774, D777). A subquery whose identity a kept
+program keeps its plans by is left alone unless a reference is
+replaced.
+
+A collection constant, as a filled array slot is, had no declared type,
+so a probe took no value from its elements (D779). Its type is now the
+collection type of its elements' type, when each element that is not
+null is of one kind (`physical/indexed/typed.rs`).
 
 ## 2. Project layout
 
