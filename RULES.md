@@ -498,6 +498,7 @@ verification approach DO-178C expects (§8).
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
 | D805 | A pool finds its files with no lock and no reference count moved |
 | D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
+| D807 | A thread keeps 256 inner node copies across its trees, the one to give way chosen by a clock bit |
 
 ### The project
 
@@ -13449,12 +13450,13 @@ Each frame of the buffer pool now keeps a version word. Whatever takes
 the frame's latch exclusively moves the version on, as soon as it holds
 the latch and before it changes a byte or gives the frame another page
 (`disk/buffer/versions.rs`). A page read under its latch can be stamped
-with its frame and the version then. Each thread keeps copies of up to
-sixteen inner nodes it read, each with its stamp, and a descent reads an
-inner node from its copy while the frame holds the page at that version
-(`engine/tree/inner.rs`). This follows Leis et al., "The ART of Practical
-Synchronization", 2016, section 3, and Leis et al., "LeanStore", 2018,
-section 4, which validate a version the same way over the node itself.
+with its frame and the version then. Each thread keeps copies of the
+inner nodes it read (D807 says how many), each with its stamp, and a
+descent reads an inner node from its copy while the frame holds the page
+at that version (`engine/tree/inner.rs`). This follows Leis et al., "The
+ART of Practical Synchronization", 2016, section 3, and Leis et al.,
+"LeanStore", 2018, section 4, which validate a version the same way
+over the node itself.
 Safe Rust reads no page while a writer may change it, so the copy stands
 in for the node.
 
@@ -13860,6 +13862,19 @@ is the leaf as it is. A copy that is no longer current is dropped and
 the leaf read again from the pool, and copied again if it answers.
 Reads of keys of other leaves copy nothing, so a probe of scattered
 rows costs no page copy.
+
+#### D807. A thread keeps 256 inner node copies across its trees, the one to give way chosen by a clock bit
+
+The copies of D502 were sixteen per thread, found by a scan and replaced
+in turn. They are shared by every tree a thread reads, so a transaction
+touching several tables, each with a root and a level below it, cycled
+through them and read its inner nodes through their latches again. A
+thread now keeps 256, found by page in a map. Each has a clock bit, set
+when a descent reads it (Corbató, 1968). The copy to give way is the
+first the hand finds with its bit clear, clearing the bits it passes.
+At 8 KiB pages that is at most 2 MiB a thread. A copy taken again of a
+page whose bytes no descent still holds is written into the old copy's
+bytes, so re-reading a changed node allocates nothing.
 
 ## 2. Project layout
 

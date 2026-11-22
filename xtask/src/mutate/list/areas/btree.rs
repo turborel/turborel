@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 23] = [
+pub const BTREE: [Mutation; 24] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -234,5 +234,15 @@ pub const BTREE: [Mutation; 23] = [
         replacement: "                if leaf == first && false {",
         integration: &[],
         unit: &["engine::tree::tests::finger::a_run_of_keys_of_one_leaf_is_read_from_its_copy"],
+    },
+    Mutation {
+        name: "btree-copies-no-clock-bit",
+        package: Package::Core,
+        breaks: "a copy read is not marked used, so the clock gives way the copies descents read most",
+        file: "src/engine/tree/inner.rs",
+        original: "        copy.used = true;",
+        replacement: "        copy.used = copy.used;",
+        integration: &[],
+        unit: &["engine::tree::tests::copies::copies_read_since_the_hand_passed_are_kept"],
     },
 ];
