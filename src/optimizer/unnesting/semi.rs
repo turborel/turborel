@@ -28,7 +28,7 @@
 //! `(x <> y) IS NOT TRUE`.
 
 use super::found::{self, Found, Node};
-use super::{Bound, How, Target, compared, domain, pure, simple, target, typed};
+use super::{Bound, How, Target, compared, domain, pure, scalar, simple, target, typed};
 use crate::logical::{
     Cond, Expr, LogicalPlan, Quantifier, Subquery, Truth, and_all, cond_has_outer, plan_has_outer, render_expr, split_and,
 };
@@ -49,7 +49,8 @@ impl Rule for SemiJoins {
     fn apply(&self, plan: &LogicalPlan, ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
         let LogicalPlan::Filter { cond, .. } = plan else { return None };
         let node = Node::of(plan)?;
-        found::candidates(&node).iter().find_map(|f| semi_joined(&node, cond, f, ctx))
+        // A comparison with a subquery of one row at most (`scalar.rs`).
+        found::candidates(&node).iter().find_map(|f| semi_joined(&node, cond, f, ctx)).or_else(|| scalar::joined(cond, node.input(), ctx))
     }
 }
 

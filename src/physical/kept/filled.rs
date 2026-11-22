@@ -126,7 +126,7 @@ impl Filling<'_> {
             table,
             index,
             method,
-            probe: probe @ JoinProbe::Prefix(_),
+            probe: probe @ (JoinProbe::Prefix(_) | JoinProbe::Range(_)),
             cond,
             width,
             columns,

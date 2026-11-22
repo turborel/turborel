@@ -25,7 +25,7 @@ pub const TRIM_ARRAY: &str = "TRIM_ARRAY";
 pub const ARRAY_AGG: &str = "ARRAY_AGG";
 
 /// The names the calls of the functions here show.
-const ARRAY: &str = "ARRAY";
+pub const ARRAY: &str = "ARRAY";
 const ELEMENT: &str = "ARRAY ELEMENT";
 const ASSIGN_ELEMENT: &str = "ARRAY ELEMENT ASSIGNMENT";
 const ARRAY_CONCATENATION: &str = "ARRAY CONCATENATION";
@@ -63,6 +63,12 @@ impl ScalarFunction for ArrayOf {
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         Ok(Value::Array(args.into()))
+    }
+    /// Its elements are cast as bound and their number checked then
+    /// \[§6.49 SR2\], so a call makes the array of them and raises none
+    /// (RULES.md D774).
+    fn raise_free(&self) -> bool {
+        true
     }
 }
 

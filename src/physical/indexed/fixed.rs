@@ -14,11 +14,14 @@
 //!
 //! A column is so fixed only where it makes a prefix of an index with the
 //! join's keys: each column of the prefix fixed or keyed, at least one of
-//! each. A column the left already gives as a constant or slot of its own
-//! is not fixed again, so the plan made so is not rewritten twice.
+//! each, or fixed alone where the join bounds the index's next column by
+//! the left's values, as STOCK-LEVEL's lines are bounded by the district's
+//! next order (RULES.md D776). A column the left already gives as a
+//! constant or slot of its own is not fixed again, so the plan made so is
+//! not rewritten twice.
 
 use super::read_table;
-use crate::logical::{Cond, Expr, LogicalPlan, and_all, map_cond_columns, split_and};
+use crate::logical::{Cond, Expr, LogicalPlan, and_all, expr_columns, map_cond_columns, split_and};
 use crate::physical::PhysicalPlanner;
 use crate::physical::join::equated;
 use crate::value::CompOp;
@@ -41,6 +44,23 @@ fn fixing(c: &Cond) -> Option<(usize, Expr)> {
     matches!(value, Expr::Const(_) | Expr::Dynamic(_)).then(|| (*column, value.clone()))
 }
 
+/// The right's columns a join equates, those of them the left gives as
+/// constants or slots, and those it compares by order with the left's
+/// values.
+type Columns<'a> = (&'a [usize], &'a [usize], &'a [usize]);
+
+/// Of `c`, a comparison by order of a column of the right, past the
+/// left's `width`, with a value of the left's columns alone, the right's
+/// column.
+fn ordered_with(c: &Cond, width: usize) -> Option<usize> {
+    let Cond::Compare(a, op, b) = c else { return None };
+    let ((Expr::Column(r), value) | (value, Expr::Column(r))) = (a, b) else { return None };
+    let mut read = Vec::new();
+    expr_columns(value, &mut read);
+    let of_left = !read.is_empty() && read.iter().all(|&l| l < width);
+    (of_left && *r >= width && !matches!(op, CompOp::Eq | CompOp::Ne)).then(|| r.saturating_sub(width))
+}
+
 /// Whether column `l` of `left` is a constant or slot its projection gives.
 fn given(left: &LogicalPlan, l: usize) -> bool {
     let LogicalPlan::Project { exprs, .. } = left else { return false };
@@ -50,8 +70,9 @@ fn given(left: &LogicalPlan, l: usize) -> bool {
 /// Of `ix_columns`, an index's, the fixes among `fixes` that make its
 /// prefix with the right columns `keyed` the join equates, each column of
 /// the prefix one or the other, `given` ones as keyed; none unless at
-/// least one of each.
-fn prefix_fixes(ix_columns: &[usize], fixes: &[(usize, Expr)], (keyed, given): (&[usize], &[usize])) -> Option<Vec<(usize, Expr)>> {
+/// least one of each, or the column after the prefix is one of `ordered`,
+/// those the join compares by order with the left's values.
+fn prefix_fixes(ix_columns: &[usize], fixes: &[(usize, Expr)], (keyed, given, ordered): Columns<'_>) -> Option<Vec<(usize, Expr)>> {
     let (mut used, mut by_key) = (Vec::new(), false);
     for column in ix_columns {
         if given.contains(column) {
@@ -61,6 +82,7 @@ fn prefix_fixes(ix_columns: &[usize], fixes: &[(usize, Expr)], (keyed, given): (
         } else if keyed.contains(column) {
             by_key = true;
         } else {
+            by_key = by_key || ordered.contains(column);
             break;
         }
     }
@@ -82,9 +104,10 @@ impl PhysicalPlanner<'_> {
         let keys: Vec<_> = conjuncts.iter().filter_map(|c| equated(c, width)).filter(|k| !k.nulls).collect();
         let keyed: Vec<usize> = keys.iter().map(|k| k.right).collect();
         let given: Vec<usize> = keys.iter().filter(|k| given(left, k.left)).map(|k| k.right).collect();
+        let ordered: Vec<usize> = conjuncts.iter().filter_map(|c| ordered_with(c, width)).collect();
         let building = |name: &_| self.db.building.contains(name);
         let mut indexes = self.db.catalog.indexes(read.table).into_iter().filter(|ix| !building(&ix.name));
-        let used = indexes.find_map(|ix| prefix_fixes(&ix.columns, &fixes, (&keyed, &given)))?;
+        let used = indexes.find_map(|ix| prefix_fixes(&ix.columns, &fixes, (&keyed, &given, &ordered)))?;
         fixed(conjuncts, (left, right.width()), used)
     }
 }

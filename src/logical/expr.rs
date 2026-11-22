@@ -313,11 +313,13 @@ impl Expr {
     /// however far it is fetched (RULES.md D15). Arithmetic on slots and
     /// constants alone is judged by their types (`can_raise_typed`), so a
     /// sum of a `?` and a constant whose digits fit raises nothing, as the
-    /// constant it folds to with a value does not (RULES.md D613).
+    /// constant it folds to with a value does not (RULES.md D613). A CAST
+    /// of a constant raises only what casting it raises (RULES.md D774).
     pub fn can_raise(&self) -> bool {
         match self {
             Expr::Arith(..) => super::can_raise_typed(self, &|_| None),
-            Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) | Expr::Warned(..) => true,
+            Expr::Cast(x, to) => super::raises::cast_raises(x, to),
+            Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) | Expr::Warned(..) => true,
             // D34: the function's promise does not cover argument expressions.
             Expr::Call(f, args) => {
                 (!f.0.raise_free() && (!f.0.index_predicate() || !f.0.deterministic())) || args.iter().any(Expr::can_raise)
