@@ -76,6 +76,31 @@ fn a_database_tells_its_sink_of_its_life() {
     assert_eq!(reopened.last(), Some(&info("Opened(Reopened)")), "{reopened:?}");
 }
 
+/// Verifies: [DESIGN] RULES.md D810: a checkpoint tells what it took: the
+/// pages a table's rows written since the last were written to, and a
+/// whole no shorter than the steps it names; none written by one with
+/// nothing changed since.
+#[test]
+fn a_checkpoint_tells_what_it_took() {
+    let scratch = Scratch::new("diagnostics-took");
+    let kept = Kept::default();
+    let db = Database::new();
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
+    db.open_files(&os(), &scratch.path("db"), &OpenOptions::default()).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL UNIQUE)").unwrap();
+    let s = db.session("A");
+    s.run("INSERT INTO T VALUES (1)").unwrap();
+    s.commit().unwrap();
+    let took = |kept: &Kept| {
+        db.checkpoint().unwrap();
+        kept.events().into_iter().find_map(|e| if let Event::CheckpointTaken { took, .. } = e { Some(took) } else { None }).unwrap()
+    };
+    let first = took(&kept);
+    assert!(first.pages > 0, "{first:?}");
+    assert!(first.micros >= first.shut_micros + first.sync_micros + first.finish_micros, "{first:?}");
+    assert_eq!(took(&kept).pages, 0, "nothing changed since");
+}
+
 /// `event` with what a checkpoint took left out, which varies run to run
 /// (RULES.md D810).
 fn untimed((level, event): (Level, String)) -> (Level, String) {

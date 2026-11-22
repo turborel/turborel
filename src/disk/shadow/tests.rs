@@ -3,6 +3,7 @@
 //! side file damaged at its end is cut, and files are made and removed at
 //! commits (RULES.md R-TEST-1, R-TEST-2, R-TEST-7).
 
+use super::file::RUN_BYTES;
 use super::side::{KIND_SIZE, Op, decode, encode};
 use super::*;
 use crate::disk::memory::MemoryFileSystem;
@@ -419,19 +420,30 @@ fn a_read_takes_the_files_runs_around_what_was_written() {
 }
 
 /// Verifies: [DESIGN] RULES.md D811: the granules held for a commit close
-/// its side file as runs, those next to each other one op, not one each;
-/// a crash after the commit block, which copies the side file, and the
-/// commit itself, which writes the runs, both leave the file as written.
+/// its side file as runs, those next to each other one op up to
+/// `RUN_BYTES`, not one each; a crash after the commit block, which copies
+/// the side file, and the commit itself, which writes the runs, both leave
+/// the file as written. MC/DC of `extends`, next and short: granule 1
+/// after 0 extends (both true); granule 10 after the run ending at 3 does
+/// not (next false, short true); the granule after a full run of
+/// `RUN_BYTES` does not (next true, short false). Of the write's
+/// `!run.is_empty() && !extends`: the first granule starts a run (empty),
+/// granule 10 ends one (neither empty nor extending).
 #[test]
 fn held_granules_close_the_side_file_in_runs() {
+    let granule = u64::try_from(GRANULE).unwrap();
+    let full = u64::try_from(RUN_BYTES.checked_div(GRANULE).unwrap()).unwrap();
     let written = |shadows: &ShadowFileSystem| {
         shadows.hold().unwrap();
         let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
         file.write_all_at(&[5_u8; 3 * GRANULE], 0).unwrap();
-        file.write_all_at(&[6_u8; GRANULE], 10 * GRANULE as u64).unwrap();
+        file.write_all_at(&[6_u8; GRANULE], 10 * granule).unwrap();
+        file.write_all_at(&vec![7_u8; RUN_BYTES + GRANULE], 20 * granule).unwrap();
         shadows.seal().unwrap();
     };
-    let expected = [vec![5_u8; 3 * GRANULE], vec![0_u8; 7 * GRANULE], vec![6_u8; GRANULE]].concat();
+    let expected =
+        [vec![5_u8; 3 * GRANULE], vec![0_u8; 7 * GRANULE], vec![6_u8; GRANULE], vec![0_u8; 9 * GRANULE], vec![7_u8; RUN_BYTES + GRANULE]]
+            .concat();
     let committed = disk();
     let shadows = ShadowFileSystem::new(Arc::clone(&committed), hash());
     written(&shadows);
@@ -441,14 +453,15 @@ fn held_granules_close_the_side_file_in_runs() {
         .iter()
         .filter_map(|op| if let Op::Granule(first, content) = op { Some((*first, content.len())) } else { None })
         .collect();
-    assert_eq!(runs, [(0, 3 * GRANULE), (10, GRANULE)]);
+    let after = 20 + full;
+    assert_eq!(runs, [(0, 3 * GRANULE), (10, GRANULE), (20, RUN_BYTES), (after, GRANULE)]);
     shadows.commit_sealed().unwrap();
     assert_eq!(content(&*committed), expected, "committed");
     let crashed = disk();
-    let shadows = ShadowFileSystem::new(Arc::clone(&crashed), hash());
-    written(&shadows);
-    crash_after_commit_block(&shadows, PATH, file::closing_ops);
-    drop(shadows);
+    let crashing = ShadowFileSystem::new(Arc::clone(&crashed), hash());
+    written(&crashing);
+    crash_after_commit_block(&crashing, PATH, file::closing_ops);
+    drop(crashing);
     drop(ShadowFileSystem::new(Arc::clone(&crashed), hash()).open(Path::new(PATH), OpenMode::ReadWrite).unwrap());
     assert_eq!(content(&*crashed), expected, "copied from the side file after a crash");
 }

@@ -516,7 +516,7 @@ fn patched(mut content: Vec<u8>, within: usize, from: &[u8]) -> Vec<u8> {
 /// \[DESIGN\] The most bytes of granules one op closing a side file, and
 /// one write of a commit, carries (RULES.md D811): granules next to each
 /// other go as one run, not one op, one frame and one write each.
-const RUN_BYTES: usize = 1 << 20;
+pub(super) const RUN_BYTES: usize = 1 << 20;
 
 /// What ends a batch's side file before its commit block: the granules a
 /// cut made stale, then those held, newer than either, in runs, the limit
@@ -528,46 +528,45 @@ pub(super) fn closing_ops(sealed: &Sealed) -> Vec<Op> {
     kept.sort_unstable_by_key(|(number, _)| **number);
     let mut run: Option<(u64, Vec<u8>)> = None;
     for (&number, content) in kept {
-        match run.as_mut() {
-            Some((first, bytes)) if next_of(*first, bytes) == Some(number) && bytes.len() < RUN_BYTES => bytes.extend_from_slice(content),
-            _ => {
-                last.extend(run.take().map(|(first, bytes)| Op::Granule(first, bytes)));
-                let mut bytes = Vec::with_capacity(RUN_BYTES);
-                bytes.extend_from_slice(content);
-                run = Some((number, bytes));
-            }
+        if let Some((first, bytes)) = run.as_mut()
+            && extends(*first, bytes, number)
+        {
+            bytes.extend_from_slice(content);
+            continue;
         }
+        last.extend(run.take().map(|(first, bytes)| Op::Granule(first, bytes)));
+        run = Some((number, content.clone()));
     }
     last.extend(run.map(|(first, bytes)| Op::Granule(first, bytes)));
     last.extend([Op::Limit(side.limit), Op::Size(sealed.size)]);
     last
 }
 
-/// The number of the granule after the run of `bytes` from granule
-/// `first`.
-fn next_of(first: u64, bytes: &[u8]) -> Option<u64> {
-    first.checked_add(u64::try_from(bytes.len().checked_div(GRANULE)?).ok()?)
+/// \[DESIGN\] Whether granule `number` extends the run of `bytes` from
+/// granule `first` (RULES.md D811): it is the next one, and the run is
+/// still short of `RUN_BYTES`.
+fn extends(first: u64, bytes: &[u8], number: u64) -> bool {
+    let next = u64::try_from(bytes.len().checked_div(GRANULE).unwrap_or_default()).ok().and_then(|count| first.checked_add(count));
+    next == Some(number) && bytes.len() < RUN_BYTES
 }
 
 /// Writes into `base` the granules numbered `numbers`, in order, that
 /// `side` holds, each run of them next to each other as one write of at
 /// most `RUN_BYTES` (RULES.md D811).
 fn write_runs(side: &Side, numbers: &[u64], base: &dyn DiskFile) -> Result<()> {
-    let mut run: Vec<u8> = Vec::with_capacity(RUN_BYTES);
+    let mut run: Vec<u8> = Vec::new();
     let mut first = 0_u64;
     for &number in numbers {
-        if !run.is_empty() && (next_of(first, &run) != Some(number) || run.len() >= RUN_BYTES) {
+        if !run.is_empty() && !extends(first, &run, number) {
             base.write_all_at(&run, offset(first))?;
             run.clear();
         }
         let at = run.len();
         run.resize(at.saturating_add(GRANULE), 0);
-        let slot = run.get_mut(at..).unwrap_or_default();
-        if !side.copy_held(number, 0, slot)? {
+        let found = side.copy_held(number, 0, run.get_mut(at..).unwrap_or_default())?;
+        if !found {
             run.truncate(at);
-            continue;
-        }
-        if at == 0 {
+        } else if at == 0 {
             first = number;
         }
     }
