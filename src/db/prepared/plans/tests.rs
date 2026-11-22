@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::db::Database;
-use crate::sync::read;
 use crate::logical::{Expr, Slot};
+use crate::sync::read;
 use crate::value::Decimal;
 
 use super::learning::{LEARNED_RUNS, MOST_LEARNING_RUNS};

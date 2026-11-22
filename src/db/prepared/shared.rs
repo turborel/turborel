@@ -99,7 +99,9 @@ impl Shared {
     /// The place of a statement prepared alike in `alike`: found, or made
     /// for it, if none is held.
     pub(in crate::db) fn place(&self, alike: String) -> Arc<Place> {
-        let Ok(mut places) = lock(&self.places) else { return Arc::new(Place { alike, kept: RwLock::default(), changes: AtomicU64::default() }) };
+        let Ok(mut places) = lock(&self.places) else {
+            return Arc::new(Place { alike, kept: RwLock::default(), changes: AtomicU64::default() });
+        };
         let found = places.entry(xxh3_64(alike.as_bytes())).or_default();
         found.retain(|place| place.strong_count() > 0);
         if let Some(place) = found.iter().filter_map(Weak::upgrade).find(|place| place.alike == alike) {
