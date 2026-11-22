@@ -244,9 +244,8 @@ impl State {
         };
         let collect = |table: &QualifiedName| {
             let left = self.collect_table(table, horizon, wait);
-            // A table left noted, or gone and not noted, changes nothing.
             let lock = self.lock_of(table).ok();
-            if matches!((left, lock.map(|lock| lock.noted())), (Some(true), Some(true)) | (None, Some(false))) {
+            if unchanged(left, lock.map(|lock| lock.noted())) {
                 return;
             }
             let mut uncollected = lock_builtin(&self.tx.uncollected);
@@ -442,6 +441,18 @@ type Global = (Arc<dyn Index>, IndexDesc, u64);
 
 /// The entries of `failed`, each the position in `found` of its index and
 /// its key, as owed (`txn/owed.rs`).
+/// \[DESIGN\] RULES.md D795: whether a collection that `left` a table
+/// (garbage left, none left, or not collected as it is gone) changes
+/// nothing shared, its lock `noted` as awaiting already or not. A table
+/// left noted, or gone and not noted, changes nothing.
+///
+/// MC/DC pairs, in `unchanged_tests`: (left, noted) of (garbage, noted)
+/// against (garbage, not noted) and (none left, noted); (gone, not noted)
+/// against (gone, noted) and (none left, not noted).
+fn unchanged(left: Option<bool>, noted: Option<bool>) -> bool {
+    matches!((left, noted), (Some(true), Some(true)) | (None, Some(false)))
+}
+
 fn owed_entries(found: &[Found<'_>], failed: Vec<(usize, Key)>) -> Vec<Entry> {
     let owed =
         |(at, key)| found.get(at).map(|&(name, index, _): &Found<'_>| Entry { name: name.to_owned(), index: Arc::clone(index), key });
@@ -495,5 +506,29 @@ impl Transactions {
     /// The tables noted with rows to fold, forgotten.
     pub(crate) fn take_folds(&self) -> BTreeSet<QualifiedName> {
         mem::take(&mut *lock_builtin(&self.folds))
+    }
+}
+
+#[cfg(test)]
+mod unchanged_tests {
+    use super::unchanged;
+
+    /// Left with garbage and noted: unchanged. Each condition flipped
+    /// alone changes the outcome.
+    #[test]
+    fn a_table_left_noted_changes_nothing() {
+        assert!(unchanged(Some(true), Some(true)));
+        assert!(!unchanged(Some(true), Some(false)));
+        assert!(!unchanged(Some(false), Some(true)));
+    }
+
+    /// Gone and not noted: unchanged. Each condition flipped alone
+    /// changes the outcome.
+    #[test]
+    fn a_table_gone_and_not_noted_changes_nothing() {
+        assert!(unchanged(None, Some(false)));
+        assert!(!unchanged(None, Some(true)));
+        assert!(!unchanged(Some(false), Some(false)));
+        assert!(!unchanged(None, None));
     }
 }

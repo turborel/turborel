@@ -379,7 +379,8 @@ impl BlockFile {
             self.wake_all();
             return Err(e);
         }
-        if self.end.compare_exchange(start, end, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        let in_turn = self.end.compare_exchange(start, end, Ordering::SeqCst, Ordering::SeqCst);
+        if in_turn.is_ok() {
             self.settle();
             return Ok(());
         }
@@ -395,7 +396,8 @@ impl BlockFile {
         let mut spins = 0;
         while self.end.load(Ordering::SeqCst) < end {
             if self.failed.load(Ordering::SeqCst) {
-                if lock_builtin(&self.parking).remove(&start).is_some() {
+                let unfiled = lock_builtin(&self.parking).remove(&start);
+                if unfiled.is_some() {
                     self.parked.fetch_sub(1, Ordering::SeqCst);
                 }
                 return Err(self.broken());
