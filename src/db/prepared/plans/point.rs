@@ -38,7 +38,9 @@ pub(in crate::db) fn run(st: &State, plan: &Arc<Kept>, slots: Option<Slots>) -> 
 
 /// `w`, a kept UPDATE or DELETE whose plan kept is `plan`, run with
 /// `slots`. Its object row is found by the plan's point read, if it is
-/// one, or else by the plan as `Kept::opened` opens it.
+/// one, or else by the plan as `Kept::opened` opens it; by a plan made
+/// with the values, if one of its probes' values raises (`Kept::places`,
+/// RULES.md D793).
 ///
 /// # Errors
 ///
@@ -49,6 +51,9 @@ pub(in crate::db) fn written(
     (plan, reads): (&Arc<Kept>, Arc<[QualifiedName]>),
     slots: Slots,
 ) -> Result<Written> {
+    if !plan.places(&slots) {
+        return Written::slotted(w, None, slots);
+    }
     if plan.point(st).is_some() {
         return Ok(Written::pointed(w, (Arc::clone(plan), reads), slots));
     }

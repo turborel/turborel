@@ -52,6 +52,12 @@ impl TransitionRows {
         Ok(())
     }
 
+    /// Whether it and `other` are one transition table, which a plan kept
+    /// over it reads as refilled (RULES.md D793).
+    pub fn same(&self, other: &TransitionRows) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     /// Its row at `place`, if it has one so far along.
     fn get(&self, place: usize) -> Result<Option<Row>> {
         self.0.lock().map_err(|_| poisoned())?.get(place)

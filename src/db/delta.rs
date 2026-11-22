@@ -25,7 +25,7 @@ use crate::ast::{
 use crate::binder::{qualify, write_target};
 use crate::catalog::{ColumnDesc, QualifiedName, proper_subtables};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::exec::{HeldRows, TransitionRows};
+use crate::exec::HeldRows;
 use crate::params::Params;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
@@ -224,7 +224,8 @@ impl Session {
         self.inner.borrow_mut().delta = outer;
         ran?;
         let held = std::mem::replace(&mut *lock_builtin(&collector.0.rows), HeldRows::new(st.list_space()));
-        d.rows.give((TransitionRows::with(held), name, columns));
+        // A query kept over them reads them where it was bound (RULES.md D793).
+        d.rows.give((Keeping::delta_rows(keeping, held)?, name, columns));
         Ok(())
     }
 

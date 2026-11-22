@@ -3,7 +3,9 @@
 //! the bounds of a LIKE's prefix, and an OR of these of one column, an IN
 //! list among them, as one probe of each of its ranges. A planner given a
 //! prepared statement's values takes a comparison of a column with a `?`
-//! as one with its value, noting the slot (RULES.md D45).
+//! as one with its value, noting the slot (RULES.md D45); of a kept
+//! write's object rows, one with an element of an array a slot holds too
+//! (RULES.md D793).
 
 use std::cmp::Ordering;
 
@@ -73,11 +75,21 @@ type Comparisons = Vec<(CompOp, Value)>;
 /// The comparisons and ORs of them among `conds`: with a `?` too, given
 /// the `values` of an execution.
 pub(super) fn comparisons(conds: &[Cond], known: Known<'_>, values: Option<&[Value]>) -> (Vec<Compared>, Vec<Alternatives>) {
+    comparisons_of(conds, known, (values, false))
+}
+
+/// As `comparisons`, of a `?`'s expression that can raise too if
+/// `raising`, as a kept write's object rows take one (RULES.md D793).
+pub(super) fn comparisons_of(
+    conds: &[Cond],
+    known: Known<'_>,
+    (values, raising): (Option<&[Value]>, bool),
+) -> (Vec<Compared>, Vec<Alternatives>) {
     let (mut compared, mut ors) = (Vec::new(), Vec::new());
     for (at, c) in conds.iter().enumerate() {
         if let Some((column, op, value, collation)) = collated_bound(c) {
             compared.push(Compared { collation: Some(collation), at, exact: true, column, op, value, slot: None, expr: None });
-        } else if let Some(((column, op), (slot, expr), value)) = values.and_then(|v| slot_bound(c, v)) {
+        } else if let Some(((column, op), (slot, expr), value)) = values.and_then(|v| slot_bound(c, (v, raising))) {
             compared.push(Compared { collation: None, at, exact: true, column, op, value, slot: Some(slot), expr });
         } else if let Some((column, exact, each)) = bounds(c) {
             let of = |(op, value)| Compared { collation: None, at, exact, column, op, value, slot: None, expr: None };
@@ -103,13 +115,15 @@ fn collated_bound(c: &Cond) -> Option<(usize, CompOp, Value, CollationRef)> {
     Some((column, op, value.clone(), collation.clone()))
 }
 
-/// `c`, a column compared with a `?`, or with a sum or difference of one
-/// and a constant that raises nothing (`Expr::can_raise`, RULES.md D613):
-/// the column and the operator, the slot and the expression if not the
-/// slot alone, and its value among `values`, cast to the slot's type as
-/// filling casts it and evaluated as folding would; none if it is not one,
-/// or the value does not cast, which filling the plan then reports.
-fn slot_bound(c: &Cond, values: &[Value]) -> Option<SlotBound> {
+/// `c`, a column compared with a `?`, with a sum or difference of one and
+/// a constant, or with an element of an array (`slot_element`), that
+/// raises nothing (`Expr::can_raise`, RULES.md D613) unless `raising`
+/// (D793): the column and the operator, the slot and the expression if
+/// not the slot alone, and its value among `values`, cast to the slot's
+/// type as filling casts it and evaluated as folding would; none if it is
+/// not one, or the value does not cast or raises, which filling the plan
+/// then reports.
+fn slot_bound(c: &Cond, (values, raising): (&[Value], bool)) -> Option<SlotBound> {
     let Cond::Compare(left, op, right) = c else { return None };
     let (column, op, other) = match (left, right) {
         (Expr::Column(column), other) => (*column, *op, other),
@@ -121,9 +135,9 @@ fn slot_bound(c: &Cond, values: &[Value]) -> Option<SlotBound> {
     } else if let Expr::Arith(a, ArithOp::Add | ArithOp::Sub, b) = other {
         (shifted_slot(a, b)?, Some(Box::new(other.clone())))
     } else {
-        return None;
+        (slot_element(other)?, Some(Box::new(other.clone())))
     };
-    if expr.as_ref().is_some_and(|e| e.can_raise()) {
+    if !raising && expr.as_ref().is_some_and(|e| e.can_raise()) {
         return None;
     }
     let shown = expr.as_deref().map_or_else(|| Expr::Dynamic(slot.clone()), Clone::clone);
@@ -134,6 +148,30 @@ fn slot_bound(c: &Cond, values: &[Value]) -> Option<SlotBound> {
 /// A comparison `slot_bound` finds: the column and operator, the slot and
 /// its expression if not the slot alone, and its value.
 type SlotBound = ((usize, CompOp), (Slot, Option<Box<Expr>>), Value);
+
+/// The slot of `e`, an `<array element reference>` of slots and
+/// constants alone, if one is a slot: the first slot, of the element's
+/// type [ISO/IEC 9075-2:2023 §6.25 SR1], the value placed being the
+/// element (RULES.md D793).
+fn slot_element(e: &Expr) -> Option<Slot> {
+    let Expr::Call(function, args) = e else { return None };
+    let only_values = args.iter().all(|a| matches!(a, Expr::Dynamic(_) | Expr::Const(_)));
+    if !only_values || function.0.name() != crate::functions::ARRAY_ELEMENT {
+        return None;
+    }
+    let data_type = function.0.return_type(&[]).ok()?;
+    args.iter().find_map(|a| if let Expr::Dynamic(slot) = a { Some(Slot { data_type: data_type.clone(), ..slot.clone() }) } else { None })
+}
+
+/// Whether `c` compares a column with an `<array element reference>` of
+/// slots and constants alone (`slot_element`, RULES.md D793).
+pub(super) fn element_compared(c: &Cond) -> bool {
+    let Cond::Compare(left, _, right) = c else { return false };
+    match (left, right) {
+        (Expr::Column(_), other) | (other, Expr::Column(_)) => slot_element(other).is_some(),
+        _ => false,
+    }
+}
 
 /// The slot of `a op b`, a sum or difference, if one is a slot and the
 /// other a constant.

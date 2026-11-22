@@ -96,9 +96,13 @@ pub(crate) fn rechecked_lookup(c: &Cond) -> bool {
 /// probe reads only the rows its conjuncts select, so the other conjuncts
 /// would not be evaluated on the rest. When one of them can raise an error
 /// it must see every row, so no index is probed then. A rechecked lookup
-/// raises where the scan would (D87).
-pub(super) fn answerable(conds: &[Cond]) -> &[Cond] {
-    if conds.iter().any(|c| c.can_raise() && !rechecked_lookup(c)) { &[] } else { conds }
+/// raises where the scan would (D87). Of a kept write's plan, made
+/// `raising`, a comparison of a column with an element of a slot's array
+/// raises at no row unless at every one: the plan is run only with values
+/// for which it raises at none (`Kept::places`, RULES.md D793).
+pub(super) fn answerable(conds: &[Cond], raising: bool) -> &[Cond] {
+    let raises = |c: &Cond| c.can_raise() && !rechecked_lookup(c) && !(raising && super::super::probe::element_compared(c));
+    if conds.iter().any(raises) { &[] } else { conds }
 }
 
 /// Returns the table column number, its position in the call and the other

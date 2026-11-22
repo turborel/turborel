@@ -2,6 +2,8 @@
 //! placed among a column's values, `?`s noted, and probes written
 //! (RULES.md R-TEST-1).
 
+use std::sync::Arc;
+
 use super::*;
 use crate::value::Spelled;
 
@@ -157,6 +159,43 @@ fn a_slot_shifted_by_a_constant_is_compared_with_its_value() {
     let product = Cond::Compare(Expr::Column(2), CompOp::Ge, shifted(ArithOp::Mul));
     let (products, _) = comparisons(&[product], known(), Some(&[int(30)]));
     assert!(products.iter().all(|p| p.slot.is_none()), "a product compared with no slot");
+}
+
+/// Verifies: [DESIGN] RULES.md D793: a column compared with an element of
+/// an array a `?` holds, at a place another `?` holds, is compared with
+/// the element, as a kept write's object rows take it, the expression
+/// kept to place again. MC/DC pairs of `slot_bound`: raising allowed and
+/// an element, compared; raising not allowed, not, as an element can
+/// raise; raising allowed and a call that is no element, not; an index
+/// out of the array, which raises, not.
+#[test]
+fn an_element_of_a_slots_array_is_compared_with_its_value() {
+    let array = Slot { index: 0, data_type: DataType::array(exact(0), 15), at: 1 };
+    let place = Slot { index: 1, data_type: exact(0), at: 2 };
+    let element = |f: crate::functions::ScalarRef| Expr::Call(f, vec![Expr::Dynamic(array.clone()), Expr::Dynamic(place.clone())]);
+    let of = |f: Arc<dyn crate::functions::ScalarFunction>| element(crate::functions::ScalarRef(f));
+    let cond = |e: Expr| Cond::Compare(Expr::Column(2), CompOp::Eq, e);
+    let cost = crate::physical::CostModel::default();
+    let known = || Known { stats: None, cost: &cost };
+    let values = [Value::Array(Arc::from(vec![int(7), int(9)])), int(2)];
+    let elements = cond(of(Arc::new(crate::functions::ElementOf(exact(0)))));
+    let (compared, _) = comparisons_of(std::slice::from_ref(&elements), known(), (Some(&values), true));
+    let [c] = compared.as_slice() else { panic!("{} compared", compared.len()) };
+    assert_eq!(
+        (c.column, c.slot.clone().map(|s| (s.index, s.data_type))),
+        (2, Some((0, exact(0)))),
+        "the array's slot, of the element's type"
+    );
+    assert_eq!(compare(&c.value, &int(9)), Some(Ordering::Equal), "the element at the place");
+    assert!(c.expr.is_some(), "the element kept to place again");
+    let (kept_out, _) = comparisons_of(std::slice::from_ref(&elements), known(), (Some(&values), false));
+    assert!(kept_out.iter().all(|p| p.slot.is_none()), "an element, which can raise, not taken unless raising is");
+    let other = cond(of(Arc::new(crate::functions::CardinalityOf(exact(0)))));
+    let (others, _) = comparisons_of(&[other], known(), (Some(&values), true));
+    assert!(others.iter().all(|p| p.slot.is_none()), "another call compared with no slot");
+    let beyond = [values[0].clone(), int(3)];
+    let (raised, _) = comparisons_of(&[elements], known(), (Some(&beyond), true));
+    assert!(raised.iter().all(|p| p.slot.is_none()), "an element out of the array, which raises, compared with no slot");
 }
 
 /// Verifies: [DESIGN] a probe is shown as the comparisons it makes of

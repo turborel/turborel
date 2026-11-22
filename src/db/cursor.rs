@@ -357,7 +357,7 @@ impl Session {
 
     /// [X3.135-1986 §8.10] SELECT ... INTO; of a statement of a program
     /// kept, its delta table's statement by the plans `keeping` keeps of
-    /// it (RULES.md D792).
+    /// it (RULES.md D792), and its query by those it keeps of that (D793).
     pub(super) fn select_into(
         &self,
         cx: StatementContext<'_>,
@@ -370,13 +370,13 @@ impl Session {
         if let [crate::ast::TableReference::Delta(d)] = query.table_expression.from.as_slice() {
             self.run_delta_table(cx.st, cx.tx, d, (params, keeping))?;
         }
-        let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
-        check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
-        let (optimized, _, physical) = plan_heard(cx.st, bound.plan, Some(cx.tx.stop.warnings()));
-        for (t, needed) in optimized.columns_read() {
-            cx.st.read_lock_of(cx.tx, (&t, needed))?;
-        }
-        let rows: Vec<Row> = execute(physical, cx.st, cx.tx.id).take(CARDINALITY_PROBE_ROWS).collect::<Result<_>>()?;
+        let rows = if let Some(k) = keeping.and_then(Keeping::query) {
+            kept_selected(cx, (query, targets), params, &k)?
+        } else {
+            let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
+            check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
+            selected(cx, bound.plan)?
+        };
         match rows.as_slice() {
             // [X3.135-1986 §8.10 GR2] no row; the targets are not assigned.
             [] => Ok(Completion::NoData),
@@ -469,4 +469,49 @@ impl Session {
             .insert(name, DeclaredCursor { specification: d.specification, insensitive, scroll, updatable, open: None, statement });
         Ok(())
     }
+}
+
+/// The rows, `CARDINALITY_PROBE_ROWS` at most, of `plan`, a SELECT ...
+/// INTO's query bound, planned, after taking shared locks on the columns
+/// it reads [X3.135-1986 §8.10 GR1].
+///
+/// # Errors
+///
+/// A lock is not granted; as `execute`.
+fn selected(cx: StatementContext<'_>, plan: crate::logical::LogicalPlan) -> Result<Vec<Row>> {
+    let (optimized, _, physical) = plan_heard(cx.st, plan, Some(cx.tx.stop.warnings()));
+    for (t, needed) in optimized.columns_read() {
+        cx.st.read_lock_of(cx.tx, (&t, needed))?;
+    }
+    execute(physical, cx.st, cx.tx.id).take(CARDINALITY_PROBE_ROWS).collect()
+}
+
+/// The rows, `CARDINALITY_PROBE_ROWS` at most, of the SELECT ... INTO
+/// `query` of a program kept, over a delta table, by what `k` keeps of
+/// it (RULES.md D793): its physical plan, kept or learning; else its
+/// bound plan, kept, planned.
+///
+/// # Errors
+///
+/// As `select_into`.
+fn kept_selected(
+    cx: StatementContext<'_>,
+    (query, targets): (&QuerySpecification, &[ParameterSpecification]),
+    params: &mut Params,
+    k: &Keeping<'_>,
+) -> Result<Vec<Row>> {
+    if let Some((columns, run, reads, slots)) = k.physical(params)? {
+        check_targets(&columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
+        let mut stream = Stream::run(cx.st, cx.tx, run, (reads, slots))?;
+        let mut rows = Vec::with_capacity(CARDINALITY_PROBE_ROWS);
+        while rows.len() < CARDINALITY_PROBE_ROWS
+            && let Some(row) = stream.next()?
+        {
+            rows.push(row);
+        }
+        return Ok(rows);
+    }
+    let (columns, plan) = k.query_bound(params, |b| bind_select(b, query))?;
+    check_targets(&columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
+    selected(cx, plan)
 }

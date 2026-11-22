@@ -2,7 +2,8 @@
 //! of it (RULES.md D406): its text read once while it stays the same, its
 //! program bound once and kept with what it was bound with, and each
 //! INSERT, searched UPDATE and searched DELETE in it keeping its plan,
-//! as does the one a SELECT ... INTO reads as its delta table (D792).
+//! as does the one a SELECT ... INTO reads as its delta table (D792), and
+//! that SELECT ... INTO's query over it (D793).
 
 use turborel::db::{Database, Session};
 use turborel::value::{Decimal, Value};
@@ -386,4 +387,43 @@ fn a_kept_body_reads_each_calls_final_table() {
     a.commit().unwrap();
     assert_eq!(rows(&a, "SELECT W, LOW FROM L ORDER BY W, LOW"), ["103,13", "103,15", "199,-1", "209,9", "209,19"]);
     assert_eq!(rows(&a, "SELECT W, I, Q FROM S WHERE Q <> 20 ORDER BY W, I"), ["1,3,13", "2,9,9"]);
+}
+
+/// Verifies: [DESIGN] RULES.md D793: a body kept reads the delta table of
+/// a searched UPDATE whose rows an element of an array finds, by the
+/// change's plan and the query's, each kept once learned, as each CALL's
+/// rows say. An element past the array's end is placed in no probe. The
+/// statement is then planned with its values, and its search condition is
+/// evaluated for each row of the table [§14.14 GR5], so it raises array
+/// element error [ISO/IEC 9075-2:2023 §6.25 GR2b], 2202E, of a warehouse
+/// with rows or of one with none. MC/DC pair of `Kept::places`: the
+/// element raising, planned with the values; an element in the array,
+/// the plan kept.
+#[test]
+fn a_kept_body_reads_each_elements_final_table() {
+    let (_db, a) = defined();
+    a.run(
+        "CREATE PROCEDURE TAKE_ALL (IN WH INTEGER, IN ITEMS INTEGER ARRAY[5], IN K INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE NTH INTEGER DEFAULT 1;
+           DECLARE LEFT_OVER INTEGER;
+           WHILE NTH <= K DO
+             SELECT Q INTO LEFT_OVER FROM FINAL TABLE (UPDATE S SET Q = Q - 1 WHERE W = WH AND I = ITEMS[NTH]);
+             INSERT INTO L VALUES (ITEMS[NTH], LEFT_OVER);
+             SET NTH = NTH + 1;
+           END WHILE;
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    for call in 1..=8 {
+        a.run(&format!("CALL TAKE_ALL(1, ARRAY[{call}, {}], 2)", call + 20)).unwrap();
+    }
+    a.commit().unwrap();
+    assert_eq!(rows(&a, "SELECT COUNT(*), MIN(LOW), MAX(LOW) FROM L"), ["16,19,19"], "each item's stock, one taken");
+    assert_eq!(rows(&a, "SELECT COUNT(*) FROM S WHERE Q = 19"), ["16"], "the items of the CALLs, of warehouse 1");
+    for wh in [1, 9] {
+        let past = a.run(&format!("CALL TAKE_ALL({wh}, ARRAY[30], 2)")).unwrap_err();
+        assert_eq!(past.sqlstate().as_str(), "2202E", "{past:?}");
+    }
 }

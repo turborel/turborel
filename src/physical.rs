@@ -463,6 +463,10 @@ pub struct PhysicalPlanner<'a> {
     /// Of a plan made with a prepared statement's slots, the values of the
     /// execution its paths are chosen by (`physical/kept.rs`).
     values: Option<&'a [Value]>,
+    /// Of a kept write's object rows planned with its slots, that a probe
+    /// may take a value whose expression can raise, which each execution
+    /// places only if it raises nothing (`Kept::places`, RULES.md D793).
+    raising: bool,
     /// Of the input of a FETCH FIRST, the most of its first rows read, if
     /// known as planned (`Limit::read_rows`): through the nodes that give
     /// their rows as they read them, divided as they lose or make rows, to
@@ -495,20 +499,26 @@ struct TableRead<'a> {
 impl<'a> PhysicalPlanner<'a> {
     /// A planner over the state `db`, of plans to run.
     pub fn new(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: false, values: None, first: None, fetch: None, est: None }
+        PhysicalPlanner { db, shown: false, values: None, raising: false, first: None, fetch: None, est: None }
     }
 
     /// A planner over the state `db`, of plans to run made with a prepared
     /// statement's slots, their paths chosen by `values`, one execution's,
     /// so that another's may fill them (`physical/kept.rs`).
     pub fn slotted(db: &'a State, values: &'a [Value]) -> Self {
-        PhysicalPlanner { db, shown: false, values: Some(values), first: None, fetch: None, est: None }
+        PhysicalPlanner { db, shown: false, values: Some(values), raising: false, first: None, fetch: None, est: None }
+    }
+
+    /// As `slotted`, of a kept write's object rows: a probe may take the
+    /// value of an expression of its slots that can raise (RULES.md D793).
+    pub fn slotted_raising(db: &'a State, values: &'a [Value]) -> Self {
+        PhysicalPlanner { raising: true, ..Self::slotted(db, values) }
     }
 
     /// A planner over the state `db`, of plans to show: each operator
     /// described, as EXPLAIN shows it.
     pub fn describing(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: true, values: None, first: None, fetch: None, est: None }
+        PhysicalPlanner { db, shown: true, values: None, raising: false, first: None, fetch: None, est: None }
     }
 
     /// The physical plan for `logical`, estimated by one estimator for

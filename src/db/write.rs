@@ -29,6 +29,7 @@ use crate::value::{Value, assign};
 mod bulk;
 mod degree;
 mod given;
+mod inserted;
 mod into;
 mod pointed;
 mod portion;
@@ -222,7 +223,7 @@ impl Session {
             // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
             given::given_rows(st, (stmt, &target), given, &Runner::new(st, tx.id))?
         } else if let Some(logical) = query {
-            query_rows((self, cx), &target, (logical, slots))?
+            query_rows((self, cx), &target, (logical, slots, keeping.filter(|_| !clocked).map(|k| (k, params))))?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default, or its generated value.
@@ -367,7 +368,7 @@ impl Session {
 fn query_rows(
     (session, cx): (&Session, StatementContext<'_>),
     target: &Target,
-    (logical, slots): (LogicalPlan, Option<Slots>),
+    (logical, slots, kept): (LogicalPlan, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
 ) -> Result<HeldRows<Row>> {
     let StatementContext { st, tx } = cx;
     let db = slots.as_ref().map_or_else(|| Db::of(st), |slots| Db::slotted(st, Arc::clone(slots)));
@@ -380,8 +381,11 @@ fn query_rows(
         }
         return Ok(rows);
     }
-    // A query other than a row of values is planned with its values, as
-    // its paths follow them.
+    // A query other than a row of values, by its plan kept (RULES.md
+    // D793); else planned with its values, as its paths follow them.
+    if let Some(held) = inserted::kept_rows((session, cx), target, kept)? {
+        return Ok(held);
+    }
     let logical = match &slots {
         Some(slots) => filled(logical, slots)?,
         None => logical,
