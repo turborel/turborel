@@ -8,14 +8,14 @@ use std::sync::Arc;
 
 use super::assignment::{candidate, check_option};
 use super::defaults::default_row;
-use super::generated::{Generating, Inserted, check_override};
+use super::generated::{Generating, Inserted};
 use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::routines::{Hosted, hosted_rows};
 use super::{Session, State, StatementContext, plan, plan_written, rule, set_columns};
 use crate::ast::{InsertSource, InsertStatement, QueryExpression, SelectList, SelectSublist};
-use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, qualify};
-use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
+use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck};
+use crate::catalog::{ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
 use crate::logical::{Expr, LogicalPlan, Truth, filled};
@@ -34,10 +34,12 @@ mod into;
 mod pointed;
 mod portion;
 pub(crate) mod system_time;
+mod targets;
 
 use degree::degree_at;
 pub(super) use given::not_given;
 pub(super) use into::{INSERT_RULES, InsertInto, InsertRules, object_columns};
+pub(super) use targets::{Targets, insert_target_in};
 
 /// The table an INSERT puts rows in, and its object columns [X3.135-1986
 /// §8.7 SR3, SR4].
@@ -273,7 +275,12 @@ impl Session {
         }
         let kept = keeping.map(|_| params.keeping_clocked());
         let binding = kept.as_ref().unwrap_or(params);
-        let target = self.insert_target(st, stmt, (binding.noted(), binding.horizon()))?;
+        // Run directly, its table is resolved once while what it was resolved with holds.
+        let target = if keeping.is_none() && params.sees_whole() {
+            self.insert_target_kept(st, stmt)?
+        } else {
+            self.insert_target(st, stmt, (binding.noted(), binding.horizon()))?
+        };
         let query = match &stmt.source {
             InsertSource::Query(query) => Some(self.insert_query(st, &target, query, binding)?),
             InsertSource::DefaultValues => None,
@@ -560,40 +567,4 @@ pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     }
     leftovers.insert(cx, &w, effects)?;
     Ok(Some(count))
-}
-
-/// The table `into` inserts into, as `Session::insert_target_of` gives
-/// it, of a statement `user`'s, its unqualified names in `schema`, its
-/// defaults those of `now`.
-pub(super) fn insert_target_in(
-    st: &State,
-    into: &InsertInto<'_>,
-    (user, schema, now): (Principal<'_>, &str, Now),
-    noted: Option<&Cell<bool>>,
-) -> Result<Target> {
-    let rules = into.rules;
-    let name = qualify(into.table, schema);
-    let target = binder::write_target(st, &name, (rules.read_only, user), noted).or_at(into.table.at)?;
-    let desc = &target.named;
-    let object: Vec<usize> = match into.columns {
-        // [EXTENSION] (§4.2) but a node or edge table's pseudo-columns.
-        None => (0..into.horizon.width(&name).map_or(desc.columns.len(), |w| w.min(desc.columns.len())))
-            .filter(|&k| desc.columns.get(k).is_some_and(|c| !c.hidden()))
-            .collect(),
-        Some(list) => object_columns(&name, &desc.columns, list, rules)?,
-    };
-    // [ISO/IEC 9075:1992 §13.8 AR1; ISO/IEC 9075-2:2023 §14.12 AR1b
-    // iii] INSERT on each column named, or on each of the table's.
-    let needed = Actions { insert: object.iter().copied().collect(), ..Actions::default() };
-    binder::require(st, user.cell, desc, &needed, rules.privilege).or_at(into.table.at)?;
-    // [X3.135-1986 §8.7 GR1a] the candidate row is one of the base table.
-    let object: Vec<usize> = object.iter().filter_map(|&i| target.map.get(i).copied()).collect();
-    let defaults = default_row(&target.base, user, now)?;
-    // [ISO/IEC 9075-2:2023 §14.11 SR12, SR13, §14.12 SR18f, SR18h] its
-    // identity column and generated columns given values only as its
-    // override says.
-    let draws = check_override(&target.base, &object, into.given).or_at(into.table.at)?;
-    let generating = Generating::of(st, &target.base, draws)?;
-    let table = target.base.name.clone();
-    Ok(Target { name: table, desc: Arc::new(target.base), object, checks: target.checks, defaults, generating })
 }

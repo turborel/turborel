@@ -32,7 +32,7 @@ pub const GRAPH_NATIVE: [Mutation; 20] = [
         name: "native-insert-list-hidden",
         package: Package::Core,
         breaks: "an INSERT of no column list fills the pseudo-columns",
-        file: "src/db/write.rs",
+        file: "src/db/write/targets.rs",
         original: ".filter(|&k| desc.columns.get(k).is_some_and(|c| !c.hidden()))",
         replacement: ".filter(|&k| desc.columns.get(k).is_some())",
         integration: &["graph_native::nodes_and_edges_are_inserted_4_2"],

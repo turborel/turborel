@@ -19,6 +19,7 @@ use std::sync::Arc;
 use super::Params;
 use crate::ast::TableName;
 use crate::error::{Code, Result, SqlError, SqlState};
+use crate::lexer::Lexed;
 use crate::parser::Parser;
 use crate::value::cast_warned;
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
@@ -202,21 +203,17 @@ impl Params {
         self
     }
 
-    /// A parser of `sql`, a statement with these parameters: one being
+    /// A parser of a statement with these parameters, lexed as `lexed`: one being
     /// prepared or executed takes `<dynamic parameter specification>`s
     /// [§6.2 SR2], any other its procedure's `<parameter name>`s; its
     /// names in `catalog` (`Parser::in_catalog`).
-    ///
-    /// # Errors
-    ///
-    /// Those of `Parser::new`.
-    pub(crate) fn parser(&self, sql: &str, extensions: bool, catalog: &str) -> Result<Parser> {
+    pub(crate) fn parser(&self, lexed: Lexed, extensions: bool, catalog: &str) -> Parser {
         let parser = if let Some(dynamic) = &self.dynamic {
-            Parser::for_prepare(sql, extensions)?.implying(dynamic.implicit.clone())
+            Parser::prepare_lexed(lexed, extensions).implying(dynamic.implicit.clone())
         } else {
-            Parser::for_procedure(sql, extensions, self.names())?
+            Parser::of_lexed(lexed, extensions, self.names())
         };
-        Ok(parser.in_catalog(catalog))
+        parser.in_catalog(catalog)
     }
 
     /// The type each dynamic parameter took, in order; none for one not
