@@ -41,6 +41,7 @@ mod parallel;
 mod range_joins;
 mod rewrites;
 mod row_path;
+mod server_lines;
 mod set_types;
 mod shared_lines;
 mod skipping;
@@ -237,9 +238,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
-/// sessions' own copies' and the shared lines' last, as `last` holds no
-/// more.
-fn closing() -> [&'static [Mutation]; 17] {
+/// sessions' own copies', the shared lines' and the server's lines' last,
+/// as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 18] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -258,6 +259,7 @@ fn closing() -> [&'static [Mutation]; 17] {
         &undo_memory::UNDO_MEMORY,
         &own_copies::OWN_COPIES,
         &shared_lines::SHARED_LINES,
+        &server_lines::SERVER_LINES,
     ]
 }
 

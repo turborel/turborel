@@ -499,6 +499,7 @@ verification approach DO-178C expects (§8).
 | D782 | What every transaction writes is alone on its cache lines, apart from what others read |
 | D783 | A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there |
 | D784 | A table's open transactions are kept in shards, by id, each alone on its cache lines |
+| D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 
 ### The project
 
@@ -13923,6 +13924,31 @@ the newest but one or the oldest, for versions undone changes appended,
 looks at each shard in turn. A transaction beginning while it looks did
 not read what it is asked for. Whether any is open, which every
 transaction's end may ask, is read from the counts alone, with no lock.
+
+#### D815. A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock
+
+Between two requests of a fast client, its worker gave up its permit to
+run statements (D42) and took it again, taking the limit's lock twice
+and waking a waiter's notifier. Before each request it asked whether the
+server still serves, through the lock of the server's watch, and whether
+its user still is one, through the database's snapshot. As a statement
+began and ended it set its connection's state in CONNECTIONS under the
+lock of every connection's row. Every worker wrote each of those lines
+at every request.
+
+So the limit counts its waiters, alone on their line (`limit.rs`). A
+worker lends its permit as it waits on its client for at most
+`lent::WAITED` (`Permit::lend`). It gives the permit up only if another
+waits for one, and else keeps it to run the request that comes. A waiter
+that comes meanwhile is let in once some worker ends its next request,
+or its wait, which is at most `WAITED` away; a worker whose client does
+not come in time gives its permit up. The server's stage is a byte alone
+on its line beside the watch (`server/stage.rs`), written as the stage
+moves. Whether the connection's user is a user is asked of a snapshot
+only once one was published since it last was (`Database::publications`).
+A connection's state is an atomic its row shares, set with no lock.
+The session's settings told in Status are read from its own snapshot
+(D780).
 
 ## 2. Project layout
 

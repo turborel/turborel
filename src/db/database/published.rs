@@ -52,6 +52,13 @@ impl Database {
         crate::db::hosted::running(copy)
     }
 
+    /// \[DESIGN\] How many snapshots have been published: moved by every
+    /// change of the definitions, of its users too, so what was read of a
+    /// snapshot taken after the count was this still holds while it is.
+    pub fn publications(&self) -> u64 {
+        self.0.publications.load(Ordering::Acquire)
+    }
+
     /// Publishes `state` as the current snapshot, and counts it.
     pub(in crate::db) fn publish(&self, state: State) -> Result<()> {
         let mut current = write(&self.0.current)?;

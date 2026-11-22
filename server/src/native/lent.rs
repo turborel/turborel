@@ -14,6 +14,7 @@
 //! having panicked or never run, gives it back failed, so the connection
 //! ends rather than waits for it.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -116,8 +117,9 @@ impl Lent {
     /// The client's next request, if it has come whole, or else, waited
     /// for `WAITED` apart from the runtime, if the client is fast and the
     /// wire can be read so (`MayWait`) and the connection may keep a worker
-    /// (`Services::hot`); `permit` given up meanwhile, and taken again once
-    /// a request to run came. The replies queued are sent before it waits,
+    /// (`Services::hot`); `permit` lent meanwhile, given up if another
+    /// waits for one (`Permit::lend`, RULES.md D815), and taken again once
+    /// a request to run came, else given up. The replies queued are sent before it waits,
     /// and before it gives the client back to the connection's task. None,
     /// the client slow from now, if none came in time; none, too, for a
     /// request the connection's task is to read: one that is no work, or
@@ -130,14 +132,14 @@ impl Lent {
         if !self.wire.has_whole() {
             running.flush(&mut self.wire)?;
         }
-        permit.release();
+        permit.lend();
         let next = self.arrived_or_waited(running)?;
-        match next {
-            Some(_) => {
-                running.present.queued();
-                permit.retake(&running.handle);
-            }
-            None => running.flush(&mut self.wire)?,
+        if next.is_some() {
+            running.present.queued();
+            permit.retake(&running.handle);
+        } else {
+            permit.release();
+            running.flush(&mut self.wire)?;
         }
         Ok(next)
     }
@@ -305,6 +307,9 @@ pub(super) struct Running {
     user: Option<String>,
     /// Whether its worker is the connection's home (`native/home.rs`).
     homed: bool,
+    /// Whether its user was a user as the database had published as many
+    /// snapshots as this says, as `user_since` keeps it: 0 if not asked.
+    user_seen: Arc<AtomicU64>,
 }
 
 impl Running {
@@ -312,7 +317,7 @@ impl Running {
     /// runtime of the task calling this.
     pub(super) fn new(services: &Services, present: &Present, user: Option<&str>) -> Running {
         let (services, present, ended, user) = (services.clone(), present.clone(), present.watching(), user.map(str::to_owned));
-        Running { services, handle: Handle::current(), present, ended, user, homed: false }
+        Running { services, handle: Handle::current(), present, ended, user, homed: false, user_seen: Arc::default() }
     }
 
     /// Its worker the connection's home if `homed`, else a thread of the
@@ -330,7 +335,21 @@ impl Running {
         // The watch's guard is dropped before the database is asked, so an
         // operator ending the connection never waits on that call (R-ERR-4).
         let ended = *self.ended.borrow();
-        self.services.is_serving() && !ended && self.user.as_deref().is_none_or(|name| db.is_user(name).unwrap_or(false))
+        self.services.is_serving() && !ended && self.user.as_deref().is_none_or(|name| self.user_since(db, name))
+    }
+
+    /// Whether `name` is a user of `db`: asked of a snapshot only once one
+    /// was published since it was last asked, so a request reads no
+    /// snapshot every worker shares (RULES.md D815).
+    fn user_since(&self, db: &turborel::db::Database, name: &str) -> bool {
+        let count = db.publications();
+        let seen = self.user_seen.load(Ordering::Relaxed);
+        if seen >> 1_u32 == count.saturating_add(1) {
+            return seen & 1 == 1;
+        }
+        let is = db.is_user(name).unwrap_or(false);
+        self.user_seen.store((count.saturating_add(1) << 1_u32) | u64::from(is), Ordering::Relaxed);
+        is
     }
 
     /// Sends the replies queued in `wire`: apart from the runtime, waiting
