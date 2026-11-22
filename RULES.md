@@ -2947,7 +2947,10 @@ reconnecting at the limit isn't refused (`holding.rs`).
 An operator ends a connection with `END CONNECTION id`, or cancels its work
 with `CANCEL CONNECTION id` (owner only, SQLCODE -104). A connection that
 ends with a reply telling why has its row taken out before that reply, since
-its client takes the reply for the close (`native.rs`). The core reaches the
+its client takes the reply for the close (`native.rs`). Once the end is
+given, the connection runs no request more. Each request read is checked
+against the end after the read, since the end can land between the wait
+for it and the read (`native/next.rs`). The core reaches the
 server through the extension point `ServedConnections`. The other extension
 points are `auth::Authenticator`, `transport::Listener` and
 `server::Protocol`.

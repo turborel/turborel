@@ -117,14 +117,9 @@ fn ended() -> SqlError {
 }
 
 /// The client's next request, unless the server stops, or its operator
-/// ends the connection, first.
+/// ends the connection, first (`next::received`).
 async fn next(wire: &mut Wire, services: &Services, present: &Present) -> Result<Request> {
-    tokio::select! {
-        biased;
-        () = present.ended() => Err(ended()),
-        () = services.stopping() => Err(broken("[DESIGN] the server is stopping")),
-        request = wire.receive() => request,
-    }
+    next::received(wire, present, services.stopping()).await
 }
 
 /// What `worked` gives back, once it is done: if the operator ends the
