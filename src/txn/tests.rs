@@ -5,7 +5,7 @@
 use super::*;
 use crate::catalog::MemoryCatalog;
 use crate::db::State;
-use crate::log::Lsn;
+use crate::log::{Log, Lsn};
 use crate::value::Spelled;
 
 /// Verifies: [DESIGN] commit and rollback reach the storage each
@@ -171,7 +171,7 @@ fn the_log_appends_with_no_lock_held() {
     let shared = Arc::new(Transactions::default());
     let log = Arc::new(Watching::default());
     let watched: Arc<dyn Log> = log.clone();
-    let tx = Arc::new(shared.begin(Some(watched), (LockWait::NoWait, Reading::Serializable, Arc::default()), UndoSpace::default()));
+    let tx = Arc::new(shared.begin(Some(&watched), (LockWait::NoWait, Reading::Serializable, Arc::default()), UndoSpace::default()));
     log.tx.set(Arc::downgrade(&tx)).unwrap();
     tx.log_change(crate::log::record::Change::Abort).unwrap();
     assert!(lock_builtin(&log.locked).is_empty(), "held, not written");
@@ -191,18 +191,25 @@ fn the_log_appends_with_no_lock_held() {
 /// one holding them unwritten, or none, holds nothing, and its end leaves
 /// the other's held; what
 /// cancels an open transaction's statements is found by its id, whichever
-/// shard holds it, until it ends.
+/// shard holds it, as of the thread it began on, until it ends.
 #[test]
 fn a_transactions_first_record_and_stop_last_until_it_ends() {
     let shared = Arc::new(Transactions::default());
     let log: Arc<dyn Log> = Arc::new(crate::log::MemoryLog::default());
-    let begin = || shared.begin(Some(Arc::clone(&log)), (LockWait::NoWait, Reading::Serializable, Arc::default()), UndoSpace::default());
+    let origin = Arc::new(Origin::new(&shared, Some(&log), UndoSpace::default()));
+    let begin = || origin.begin((LockWait::NoWait, Reading::Serializable, Arc::default()));
     let (writer, reader) = (begin(), begin());
     writer.log_change(crate::log::record::Change::Abort).unwrap();
     assert!(shared.oldest_logged().is_none(), "held, not written");
     shared.write_held().unwrap();
     assert!(shared.oldest_logged().is_some(), "the writer's first");
-    let more: Vec<Txn> = (0_u32..40_u32).map(|_| begin()).collect();
+    // Begun on threads of their own too, so their ids are on other
+    // threads' stripes, and in other shards (RULES.md D840).
+    let mut more: Vec<Txn> = (0_u32..8_u32).map(|_| begin()).collect();
+    for _ in 0_u32..4_u32 {
+        let on = Arc::clone(&origin);
+        more.push(std::thread::spawn(move || on.begin((LockWait::NoWait, Reading::Serializable, Arc::default()))).join().unwrap());
+    }
     for tx in [&writer, &reader].into_iter().chain(&more) {
         assert!(shared.stop_of(tx.id).is_some(), "open: found in its shard");
     }

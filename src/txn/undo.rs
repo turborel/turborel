@@ -201,17 +201,15 @@ impl ListItem for UndoEntry {
 pub(crate) struct UndoLog {
     list: SpillList<UndoEntry>,
     targets: Vec<Target>,
-    /// The types beyond the standard its entries may hold values of.
-    types: TypeRegistry,
     /// The load under way, whose entries it holds from its mark on.
     loading: Option<loading::Loading>,
 }
 
 impl UndoLog {
-    /// An empty log, spilling in `space`.
-    pub(crate) fn new(space: UndoSpace) -> UndoLog {
-        let types = space.types.clone();
-        UndoLog { list: SpillList::new(space), targets: Vec::new(), types, loading: None }
+    /// An empty log, spilling in `space`, shared; its entries may hold
+    /// values of the types beyond the standard of the space's registry.
+    pub(crate) fn new(space: Arc<UndoSpace>) -> UndoLog {
+        UndoLog { list: SpillList::sharing(space), targets: Vec::new(), loading: None }
     }
 
     /// Begins a segment, as a statement begins: its entries' place.
@@ -237,20 +235,22 @@ impl UndoLog {
     /// The spill area's, reading a run a place not `mark`'s cuts across:
     /// its entries then all kept.
     pub(crate) fn take_from(&mut self, start: usize) -> Result<UndoLog> {
-        let (targets, types) = (&self.targets, &self.types);
-        let list = self.list.take_from(start, &|record| entry_of((targets, types), record))?;
+        let types = self.list.space().types.clone();
+        let targets = &self.targets;
+        let list = self.list.take_from(start, &|record| entry_of((targets, &types), record))?;
         // A load begun among the entries taken is undone with them.
         if self.loading.as_ref().is_some_and(|l| l.mark >= start) {
             self.loading = None;
         }
-        Ok(UndoLog { list, targets: self.targets.clone(), types: self.types.clone(), loading: None })
+        Ok(UndoLog { list, targets: self.targets.clone(), loading: None })
     }
 
     /// [X3.135-1986 §8.9 GR1, §7.3 GR3b i] Reverses its entries, newest
     /// first, as `apply_undo` does; a run that cannot be read back fails
     /// every table it may have changed.
     pub(crate) fn apply(self, tx: TxId) -> Vec<UndoFailure> {
-        let (targets, types, mut failures) = (self.targets, self.types, Vec::new());
+        let (types, mut failures) = (self.list.space().types.clone(), Vec::new());
+        let targets = self.targets;
         for segment in self.list.into_segments(true, &|record| entry_of((&targets, &types), record)) {
             match segment {
                 Ok(entries) => failures.extend(apply_undo(tx, entries)),

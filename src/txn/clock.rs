@@ -34,12 +34,21 @@ use std::thread::{self, Thread};
 use std::time::Duration;
 
 use super::{Timestamp, TxId};
-use crate::sync::{Alone, lock_builtin};
+use crate::sync::{Alone, lock_builtin, thread_stripe};
 
 /// Commits that may be under way at once before one waits.
 const RING: u64 = 4096;
 /// Stripes of the open snapshots.
 const STRIPES: u64 = 32;
+/// \[DESIGN\] RULES.md D840: the gap between the ids of transactions begun
+/// one after another, the last bits of each id its thread's stripe. So a
+/// transaction's stripe here, and its shard of the other registries by id
+/// (`row_waits.rs`, `stop.rs`), whose counts divide this, are its thread's,
+/// and stay on that thread's core, while ids keep the order transactions
+/// begin in. 2^58 transactions cannot run out in practice.
+const ID_STRIDE: u64 = 64;
+/// `ID_STRIDE`, as a count of stripes.
+const ID_STRIPES: usize = 64;
 /// A stripe with no snapshot.
 const NONE: u64 = u64::MAX;
 /// How long a wait for the durable timestamp sleeps before it looks again,
@@ -54,6 +63,10 @@ struct Stripe {
     snapshots: Mutex<BTreeMap<Timestamp, usize>>,
     /// The oldest of them, `NONE` for none, 0 while one is being added.
     oldest: AtomicU64,
+    /// The transactions of the stripe begun and not yet dropped
+    /// (`Transactions::active`): counted here, on a line only the
+    /// stripe's threads write, rather than on one every thread does.
+    active: AtomicUsize,
 }
 
 /// \[DESIGN\] The logical clock.
@@ -86,7 +99,7 @@ impl Clock {
     /// A clock whose first transaction id is `first`.
     pub(super) fn new(first: TxId) -> Clock {
         Clock {
-            next_id: Alone(AtomicU64::new(first)),
+            next_id: Alone(AtomicU64::new(stride_after(first))),
             next_commit: Alone(AtomicU64::new(1)),
             stable: Alone(AtomicU64::new(0)),
             ended: (0..RING).map(|_| AtomicU64::new(0)).collect(),
@@ -95,7 +108,9 @@ impl Clock {
             halted: AtomicBool::new(false),
             waits: Mutex::new(BTreeMap::new()),
             waiting: AtomicUsize::new(0),
-            stripes: (0..STRIPES).map(|_| Stripe { snapshots: Mutex::new(BTreeMap::new()), oldest: AtomicU64::new(NONE) }).collect(),
+            stripes: (0..STRIPES)
+                .map(|_| Stripe { snapshots: Mutex::new(BTreeMap::new()), oldest: AtomicU64::new(NONE), active: AtomicUsize::new(0) })
+                .collect(),
         }
     }
 
@@ -111,10 +126,16 @@ impl Clock {
         usize::try_from(at % RING).ok().and_then(|i| self.synced.get(i))
     }
 
-    /// A new transaction's id and snapshot, counted open.
+    /// A new transaction's id and snapshot, counted open and active: an id
+    /// later than every one given before, on this thread's stripe (RULES.md
+    /// D840).
     pub(super) fn begin(&self) -> (TxId, Timestamp) {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = self
+            .next_id
+            .fetch_add(ID_STRIDE, Ordering::SeqCst)
+            .saturating_add(u64::try_from(thread_stripe(ID_STRIPES)).unwrap_or_default());
         let Some(stripe) = self.stripe(id) else { return (id, self.durable.load(Ordering::SeqCst)) };
+        stripe.active.fetch_add(1, Ordering::SeqCst);
         let mut snapshots = lock_builtin(&stripe.snapshots);
         stripe.oldest.store(0, Ordering::SeqCst);
         let snapshot = self.durable.load(Ordering::SeqCst);
@@ -122,6 +143,18 @@ impl Clock {
         *holders = holders.saturating_add(1);
         stripe.oldest.store(snapshots.first_key_value().map_or(NONE, |(&s, _)| s), Ordering::SeqCst);
         (id, snapshot)
+    }
+
+    /// Transaction `id` is dropped: active no more.
+    pub(super) fn dropped(&self, id: TxId) {
+        if let Some(stripe) = self.stripe(id) {
+            stripe.active.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// How many transactions are active: begun and not yet dropped.
+    pub(super) fn active(&self) -> usize {
+        self.stripes.iter().map(|s| s.active.load(Ordering::SeqCst)).fold(0, usize::saturating_add)
     }
 
     /// Transaction `id`, at snapshot `from`, reads from now at the durable
@@ -295,7 +328,7 @@ impl Clock {
     /// counts as ended.
     pub(super) fn advance_past(&self, highest: u64) {
         let next = highest.saturating_add(1);
-        self.next_id.fetch_max(next, Ordering::SeqCst);
+        self.next_id.fetch_max(stride_after(next), Ordering::SeqCst);
         let commit = self.next_commit.fetch_max(next, Ordering::SeqCst).max(next);
         self.stable.fetch_max(commit.saturating_sub(1), Ordering::SeqCst);
         self.durable.fetch_max(commit.saturating_sub(1), Ordering::SeqCst);
@@ -312,6 +345,13 @@ impl Clock {
     pub(super) fn next_id(&self) -> TxId {
         self.next_id.load(Ordering::SeqCst)
     }
+}
+
+/// The first multiple of `ID_STRIDE` at or after `at`: where the ids of a
+/// clock whose ids begin at `at` begin, each id then its thread's stripe
+/// past one.
+fn stride_after(at: u64) -> u64 {
+    at.div_ceil(ID_STRIDE).saturating_mul(ID_STRIDE)
 }
 
 // Unit tests: the stable and durable timestamps and the horizon (RULES.md
@@ -353,6 +393,36 @@ mod tests {
         clock.advance_past(10 * RING);
         assert_eq!((clock.durable(), clock.take_commit()), (10 * RING, 10 * RING + 1));
         assert!(clock.next_id() > 10 * RING);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D29, D840: ids are given in the order
+    /// transactions begin, whichever thread begins them, each on its
+    /// thread's stripe, the same for every id of one thread, and none 0;
+    /// moved past a highest id, the next is past it and on its stripe
+    /// still. Each thread's transactions are counted active on its stripe,
+    /// summed across them, until dropped.
+    #[test]
+    fn ids_go_on_in_order_each_on_its_threads_stripe() {
+        let clock = std::sync::Arc::new(Clock::new(1));
+        let mut ids = Vec::new();
+        for _ in 0_u8..3 {
+            let on = std::sync::Arc::clone(&clock);
+            let (pair, stripe) = thread::spawn(move || ([on.begin().0, on.begin().0], thread_stripe(ID_STRIPES))).join().unwrap();
+            assert_eq!(pair[0] % ID_STRIDE, u64::try_from(stripe).unwrap(), "on its thread's stripe");
+            ids.push(pair);
+        }
+        let flat: Vec<TxId> = ids.iter().flatten().copied().collect();
+        assert!(flat.windows(2).all(|w| w[0] < w[1]) && flat[0] > 0, "in the order begun: {flat:?}");
+        assert!(ids.iter().all(|[a, b]| a % ID_STRIDE == b % ID_STRIDE), "one stripe per thread: {ids:?}");
+        assert_eq!(clock.active(), 6, "every thread's counted");
+        for &id in &flat {
+            clock.dropped(id);
+        }
+        assert_eq!(clock.active(), 0);
+        let highest = clock.highest();
+        clock.advance_past(highest.saturating_add(100));
+        let (next, _) = clock.begin();
+        assert!(next > highest.saturating_add(100) && next % ID_STRIDE == clock.begin().0 % ID_STRIDE, "{next}");
     }
 
     /// Verifies: [DESIGN] RULES.md D441: a commit ended but not yet synced

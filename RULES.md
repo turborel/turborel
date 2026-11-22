@@ -539,6 +539,7 @@ verification approach DO-178C expects (§8).
 | D814 | A leaf a delete leaves sparse merges into its right neighbour when the two fit in three quarters of a page |
 | D822 | An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them |
 | D835 | A write decodes the row it replaced once, for its caller and the zone it widens alike |
+| D840 | A transaction begins from its session's kept origin, its id on its thread's stripe |
 | D665 | A chain of inner hash joins may read its leaves first, each filtered by Bloom filters of the others' keys, before its joins |
 | D666 | Predicate transfer goes along a maximum spanning tree of the chain's leaves rooted at the largest, up and back |
 | D667 | A transfer step is kept where its keys are at most half the values it judges, and the phase is planned where it pays |
@@ -14933,6 +14934,40 @@ A collection constant, as a filled array slot is, had no declared type,
 so a probe took no value from its elements (D779). Its type is now the
 collection type of its elements' type, when each element that is not
 null is of one kind (`physical/indexed/typed.rs`).
+
+#### D840. A transaction begins from its session's kept origin, its id on its thread's stripe
+
+A transaction's begin wrote lines every core shares. It took a reference
+to the coordinator, the log, the work areas and the type registry, each
+an object every session shares, and dropped them again at its end, so
+each count's line moved between cores at every begin and end. It added
+one to a count of open transactions that every begin wrote. Its id came
+from one counter, and its snapshot's stripe, its end (D442) and its stop
+(D44) were placed by that id, so consecutive transactions of one session
+landed on stripes another core had written last. In point selects and
+deletes on many threads the begin was the largest function of the
+server, its cost in those atomic writes and the cache misses after them.
+
+A session now keeps what its transactions begin from, an `Origin`
+holding the coordinator, the log and the space its undo entries spill
+in (`txn/begin.rs`). A begin takes one reference to the session's own
+origin, whose count only its thread writes. The session keeps it while
+the snapshot it begins against has the same coordinator, log, work
+areas, type registry and work memory, which a look tells without
+taking a reference to any of them. Else it makes a new one, so a
+session that sets MEMORY.WORK_BYTES spills its next transaction's undo
+by its own setting. The undo log holds the origin's space shared, not a
+copy.
+
+An id is still later than every one given before, so ids keep the order
+transactions begin in, but ids are 64 apart, and each id's last six bits
+are its thread's stripe (`sync::thread_stripe`). The stripes of the
+snapshots and the shards of the ends, stops and held records, whose
+counts divide 64, are then its thread's, and stay on its core. The
+count of open transactions is kept in each snapshot stripe and summed
+when read, which only a close and a status ask. An id stride of 64
+leaves 2^58 transactions, which cannot run out in practice. Ids order
+nothing against timestamps, as before.
 
 ## 2. Project layout
 

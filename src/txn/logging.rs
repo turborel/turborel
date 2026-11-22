@@ -216,8 +216,8 @@ impl Txn {
     /// row, if given (`log/sealed.rs`): a row change of a table with
     /// encodings.
     pub(crate) fn log_sealed(&self, change: Change, seal: Option<(&Pipeline, RowId)>) -> Result<()> {
-        let Some(log) = &self.log else { return Ok(()) };
-        self.shared.taking_changes()?;
+        let Some(log) = &self.origin.log else { return Ok(()) };
+        self.origin.shared.taking_changes()?;
         let record = Record { tx: self.id, change };
         let bytes = if let Some((pipeline, row)) = seal { sealed::seal(&record, row, pipeline)? } else { record.encode() };
         self.hold(log, bytes)
@@ -233,10 +233,10 @@ impl Txn {
     ///
     /// As `log_change`.
     pub(crate) fn log_encoded(&self, bytes: &[u8], changes: u64) -> Result<()> {
-        let Some(log) = &self.log else { return Ok(()) };
-        self.shared.taking_changes()?;
+        let Some(log) = &self.origin.log else { return Ok(()) };
+        self.origin.shared.taking_changes()?;
         self.hold(log, bytes.to_vec())?;
-        self.shared.logged.fetch_add(changes.saturating_sub(1), Ordering::Relaxed);
+        self.origin.shared.logged.fetch_add(changes.saturating_sub(1), Ordering::Relaxed);
         Ok(())
     }
 
@@ -260,7 +260,7 @@ impl Txn {
     /// that cannot be, the log would show changes that were cancelled as
     /// made, so the transaction can then only roll back, `why`.
     pub(super) fn undone_from(&self, from: Option<LogPos>, why: &'static str) {
-        let (Some(log), Some(from)) = (&self.log, from) else { return };
+        let (Some(log), Some(from)) = (&self.origin.log, from) else { return };
         let held = match self.drop_held_from(from) {
             Undone::Nothing => Ok(()),
             Undone::From(from) => self.hold_unmarked(log, Record { tx: self.id, change: Change::StatementUndone { from } }.encode()),
@@ -294,10 +294,10 @@ impl Txn {
     /// record could not be written.
     pub(super) fn append_commit(&self, at: Timestamp, wall: i64) -> Result<Option<Lsn>> {
         let logged = self.state()?.logged;
-        let Some(log) = self.log.as_ref().filter(|_| logged) else { return Ok(None) };
+        let Some(log) = self.origin.log.as_ref().filter(|_| logged) else { return Ok(None) };
         let refused =
             |why: String| SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §8.2] {why}, so the transaction was rolled back"));
-        self.shared.taking_changes().map_err(|e| refused(e.described()))?;
+        self.origin.shared.taking_changes().map_err(|e| refused(e.described()))?;
         let record = Record { tx: self.id, change: Change::Commit { at, wall } }.encode();
         // [DESIGN] RULES.md D470: its held records and the commit record, one write.
         let lsn =
@@ -305,7 +305,7 @@ impl Txn {
         // [DESIGN] RULES.md D194: its position, for the client's read-after.
         self.stop.served().committed_at(lsn.0);
         if !self.sync_commit.load(Ordering::Relaxed) {
-            self.shared.note_unsynced(log, lsn);
+            self.origin.shared.note_unsynced(log, lsn);
             return Ok(None);
         }
         Ok(Some(lsn))
@@ -320,13 +320,13 @@ impl Txn {
     ///
     /// SQLCODE -922 if the sync failed: the transaction is then in doubt.
     pub(super) fn sync_commit(&self, lsn: Lsn, at: Timestamp) -> Result<()> {
-        let Some(log) = self.log.as_ref() else {
-            self.shared.clock.end_syncs(std::iter::once(at));
+        let Some(log) = self.origin.log.as_ref() else {
+            self.origin.shared.clock.end_syncs(std::iter::once(at));
             return Ok(());
         };
         // [DESIGN] RULES.md D520: shown waiting for I/O while it syncs.
         self.stop.activity().waits_for_io();
-        let synced = self.shared.sync_in_group(log, lsn, at);
+        let synced = self.origin.shared.sync_in_group(log, lsn, at);
         self.stop.activity().woke();
         synced.map_err(|e| {
             SqlError::new(
@@ -348,10 +348,10 @@ impl Txn {
     /// database's log is its replica's, which may serve again, in a later
     /// view, for the database opened again (RULES.md D57).
     pub(super) fn log_abort(&self) {
-        if self.shared.held().is_some() {
+        if self.origin.shared.held().is_some() {
             return;
         }
-        if let Some(log) = self.log.as_ref().filter(|_| self.reached_log()) {
+        if let Some(log) = self.origin.log.as_ref().filter(|_| self.reached_log()) {
             let _ = log.append(&Record { tx: self.id, change: Change::Abort }.encode());
         }
     }
@@ -384,7 +384,7 @@ impl State {
 impl Txn {
     /// Whether its log keeps records across a crash.
     fn durable_log(&self) -> bool {
-        self.log.as_ref().is_some_and(|log| log.capabilities().durable)
+        self.origin.log.as_ref().is_some_and(|log| log.capabilities().durable)
     }
 }
 

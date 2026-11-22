@@ -54,6 +54,42 @@ fn undo_entries_spill_and_are_read_back() {
     }
 }
 
+/// `s` sets `V` to `v` in every row of `T`, a row a statement, so the
+/// statements hold nothing past their end and only the undo entries stay.
+fn each_row(s: &Session, v: &str) {
+    for k in 0..ROWS {
+        s.run(&format!("UPDATE T SET V = '{v}' WHERE K = {k}")).unwrap();
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D36, D38, D840: a session's transactions
+/// begin from what it keeps while its snapshots give the same, and once it
+/// sets MEMORY.WORK_BYTES, from what its setting gives: its next
+/// transaction's undo entries spill, and set back to the default, they
+/// are held again; another session's are held throughout. Rolled back,
+/// every row is as it was.
+#[test]
+fn a_sessions_work_memory_is_its_next_transactions() {
+    let db = Database::new();
+    filled(&db);
+    let (s, other) = (db.session("S"), db.session("S"));
+    each_row(&s, "first");
+    assert_eq!(spill_bytes(&db), 0, "held, as the database says");
+    s.commit().unwrap();
+    exec(&s, &format!("SET MEMORY.WORK_BYTES = {SMALL}")).unwrap();
+    each_row(&s, "second");
+    assert!(spill_bytes(&db) > 0, "spilled, as the session says");
+    s.rollback().unwrap();
+    each_row(&other, "other");
+    assert_eq!(spill_bytes(&db), 0, "another session's held");
+    other.rollback().unwrap();
+    exec(&s, "SET MEMORY.WORK_BYTES TO DEFAULT").unwrap();
+    each_row(&s, "third");
+    assert_eq!(spill_bytes(&db), 0, "held again");
+    s.rollback().unwrap();
+    assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE V = 'first'"), Ok(vec![ROWS.to_string()]));
+}
+
 /// Two sessions of a database of `T (K, V)`, K unique, of a thousand rows,
 /// tracking `tracked` rows of a transaction's reads or writes.
 fn tracking(tracked: u32) -> (Database, Session, Session) {

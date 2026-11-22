@@ -99,7 +99,7 @@ impl State {
     /// them, none copied for it (RULES.md D750).
     fn log_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), record: impl FnOnce(u32) -> Vec<u8>) -> Result<()> {
         let seal = self.seal_of(table)?;
-        if tx.log.is_none() {
+        if tx.origin.log.is_none() {
             return Ok(());
         }
         let plain = record(self.generation_of(table));

@@ -22,12 +22,12 @@ impl Txn {
             table.release(self.id);
         }
         // [DESIGN] RULES.md D442: the waiters for its rows go on, in turn.
-        self.shared.ends.end(self.id);
+        self.origin.shared.ends.end(self.id);
         let pinned = mem::take(&mut lock_builtin(&self.state).pinned);
         if self.open.swap(false, Ordering::AcqRel) {
-            self.shared.clock.end(self.id, self.snapshot());
+            self.origin.shared.clock.end(self.id, self.snapshot());
             for at in pinned {
-                self.shared.clock.end(self.id, at);
+                self.origin.shared.clock.end(self.id, at);
             }
         }
     }
