@@ -107,8 +107,14 @@ fn a_key_changed_and_back_is_found_by_each_snapshot() {
         r.commit().unwrap();
     }
     settle(&db);
+    // ROWS entries, one a row, and row 7's found under 7, so none is left
+    // under 8000. No row holds 8000 now, so once the maintenance thread
+    // narrows the zones a scan reads no block and costs less than the
+    // index; the plan then depends on when it ran, and 8000 is read by
+    // whichever path is chosen.
     assert_eq!(db.index_entries("T_X").unwrap(), ROWS);
-    assert_eq!((by_x(&s, 7), by_x(&s, 8000).len()), (vec!["5".to_owned()], 0));
+    assert_eq!(by_x(&s, 7), vec!["5".to_owned()]);
+    assert_eq!(count(&s, "SELECT Y FROM T WHERE X = 8000"), 0);
 }
 
 /// Verifies: [DESIGN] RULES.md D443, [X3.135-1986 §8.9 GR1]: an update
