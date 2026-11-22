@@ -396,9 +396,7 @@ fn a_kept_body_reads_each_calls_final_table() {
 /// statement is then planned with its values, and its search condition is
 /// evaluated for each row of the table [§14.14 GR5], so it raises array
 /// element error [ISO/IEC 9075-2:2023 §6.25 GR2b], 2202E, of a warehouse
-/// with rows or of one with none. MC/DC pair of `Kept::places`: the
-/// element raising, planned with the values; an element in the array,
-/// the plan kept.
+/// with rows or of one with none.
 #[test]
 fn a_kept_body_reads_each_elements_final_table() {
     let (_db, a) = defined();
@@ -426,4 +424,38 @@ fn a_kept_body_reads_each_elements_final_table() {
         let past = a.run(&format!("CALL TAKE_ALL({wh}, ARRAY[30], 2)")).unwrap_err();
         assert_eq!(past.sqlstate().as_str(), "2202E", "{past:?}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D793: an element past the array's end,
+/// of a table whose rows were all deleted after its write's plan was
+/// kept, raises nothing. A kept write whose probe is the
+/// element is run only with values for which it raises nowhere
+/// (`Kept::places`); else it is planned with its values, and its search
+/// condition, evaluated for no row [ISO/IEC 9075-2:2023 §14.14 GR5],
+/// raises no array element error [§6.25 GR2b].
+#[test]
+fn an_element_past_the_end_of_a_table_of_no_rows_raises_nothing() {
+    let (_db, a) = defined();
+    a.run("CREATE TABLE E (W INTEGER NOT NULL, I INTEGER NOT NULL, Q INTEGER, PRIMARY KEY (W, I))").unwrap();
+    a.run(
+        "CREATE PROCEDURE TAKE_NONE (IN WH INTEGER, IN ITEMS INTEGER ARRAY[5], IN K INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE NTH INTEGER DEFAULT 1;
+           WHILE NTH <= K DO
+             UPDATE E SET Q = Q - 1 WHERE W = WH AND I = ITEMS[NTH];
+             SET NTH = NTH + 1;
+           END WHILE;
+         END",
+    )
+    .unwrap();
+    let stock: Vec<String> = (1..=50_i64).map(|i| format!("(1, {i}, 20)")).collect();
+    a.run(&format!("INSERT INTO E VALUES {}", stock.join(", "))).unwrap();
+    a.commit().unwrap();
+    for call in 1..=8 {
+        a.run(&format!("CALL TAKE_NONE(1, ARRAY[{call}, {}], 2)", call + 20)).unwrap();
+    }
+    a.run("DELETE FROM E").unwrap();
+    a.commit().unwrap();
+    a.run("CALL TAKE_NONE(1, ARRAY[30], 2)").unwrap();
+    assert_eq!(rows(&a, "SELECT COUNT(*) FROM E"), ["0"]);
 }

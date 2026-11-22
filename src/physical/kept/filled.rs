@@ -153,6 +153,11 @@ impl Filling<'_> {
         Ok(Plan::IndexJoin { outer, spatial: None, left, table, index, method, probe, cond, width, columns, detail, est, cost, located })
     }
 
+    /// Rows of values, each expression filled (RULES.md D793).
+    fn rows(&self, rows: Vec<Vec<Expr>>) -> Result<Vec<Vec<Expr>>> {
+        rows.into_iter().map(|r| r.into_iter().map(|e| self.expr(e)).collect()).collect()
+    }
+
     /// An UNNEST, its collections, its join condition and its input
     /// filled (RULES.md D793).
     fn unnest(&self, u: Unnest<Plan>) -> Result<Plan> {
@@ -160,7 +165,7 @@ impl Filling<'_> {
         u.collections = u.collections.into_iter().map(|e| self.expr(e)).collect::<Result<_>>()?;
         u.outer = u.outer.map(|c| self.cond(c)).transpose()?;
         let input = self.plan(input)?;
-        Ok(Plan::Unnest(Box::new(u.with_input(|_| input))))
+        Ok(Plan::Unnest(Box::new(u.with_input(|&()| input))))
     }
 
     fn plans(&self, plans: Vec<Plan>) -> Result<Vec<Plan>> {
@@ -199,7 +204,8 @@ impl Filling<'_> {
                 Ok(Plan::Filter { cond, detail, est, of_read, input: Box::new(self.plan(*input)?) })
             }
             Plan::IndexScan { .. } => self.scan(plan),
-            Plan::SeqScan { .. } => Ok(plan),
+            // A transition table is read as refilled at each run (RULES.md D793).
+            Plan::SeqScan { .. } | Plan::Transition { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
             Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed } => {
                 let aggs = aggs.into_iter().map(|a| self.agg(a)).collect::<Result<_>>()?;
@@ -229,12 +235,7 @@ impl Filling<'_> {
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
             | Plan::Counted(_) => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
-            // Read as refilled at each run (RULES.md D793).
-            Plan::Transition { .. } => Ok(plan),
-            Plan::Values { rows, detail } => {
-                let rows = rows.into_iter().map(|r| r.into_iter().map(|e| self.expr(e)).collect()).collect::<Result<_>>()?;
-                Ok(Plan::Values { rows, detail })
-            }
+            Plan::Values { rows, detail } => Ok(Plan::Values { rows: self.rows(rows)?, detail }),
             Plan::Unnest(u) => self.unnest(*u),
         }
     }

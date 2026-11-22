@@ -81,11 +81,14 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::Counted(_) => false,
         Plan::Values { .. } => same_values(one, other),
         Plan::Unnest(u) => same_unnest(u, other),
-        Plan::Transition { rows } => {
-            let Plan::Transition { rows: rows2 } = other else { return false };
-            rows.same(rows2)
-        }
+        Plan::Transition { rows } => same_transition(rows, other),
     }
+}
+
+/// Whether `other` reads the transition table `rows` (RULES.md D793).
+fn same_transition(rows: &crate::exec::TransitionRows, other: &Plan) -> bool {
+    let Plan::Transition { rows: rows2 } = other else { return false };
+    rows.same(rows2)
 }
 
 /// Whether `one` and `other` are rows of as many expressions each

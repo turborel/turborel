@@ -14439,7 +14439,9 @@ which leaves the failing element unfolded, as folding leaves any
 failing expression, and scans, raising as the scan does
 (`Kept::places`). The planner takes such a comparison as one a probe
 may answer only for a kept write's plan made with slots
-(`answerable`). Only a write's object rows take such a probe. A query's
+(`answerable`). No test yet tells that guard apart. A table with rows
+raises at the probe as at the scan, and an emptied table is planned
+again as it drifts (D422) before the kept probe could run over it. Only a write's object rows take such a probe. A query's
 kept plan, and each other probe, take none, as before.
 
 A kept INSERT's query keeps its physical plan as a query's is kept, kept

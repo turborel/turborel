@@ -84,8 +84,8 @@ impl Stream {
     pub(super) fn run(st: &Arc<State>, tx: &Txn, run: Run, (reads, slots): (Arc<[QualifiedName]>, Option<Slots>)) -> Result<Stream> {
         let (physical, slots, subqueries) = match run {
             Run::Plan(physical) => (*physical, slots, None),
-            Run::Point(kept) => match kept.point(st) {
-                Some(point) => {
+            Run::Point(kept) => {
+                if let Some(point) = kept.point(st) {
                     for t in reads.iter() {
                         st.read_lock(tx, t)?;
                     }
@@ -94,11 +94,9 @@ impl Stream {
                     let rest: RowIter = Box::new(row.into_iter());
                     return Ok(Stream { ready: None, failure: None, rest: Some(rest), reads, space: st.list_space() });
                 }
-                None => {
-                    let (physical, slots) = kept.opened(slots, crate::optimizer::prepared::budget(st))?;
-                    (physical, slots, Some(Arc::clone(kept.subqueries())))
-                }
-            },
+                let (physical, slots) = kept.opened(slots, crate::optimizer::prepared::budget(st))?;
+                (physical, slots, Some(Arc::clone(kept.subqueries())))
+            }
         };
         let db = slots.map_or_else(|| Db::of(st), |slots| Db::slotted(st, slots));
         // Its subqueries keep what they settled across its executions (RULES.md D793).

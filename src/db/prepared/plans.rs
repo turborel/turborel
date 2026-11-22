@@ -378,7 +378,7 @@ impl Keeping<'_> {
                     self.keep(|k| k.physical = Physical::Learning(Learning::default()))?;
                     return Ok(None);
                 }
-                let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+                let (run, slots) = point::run(&plan, params.dynamic_slots());
                 Ok(Some((columns, run, reads, slots)))
             }
         }
@@ -413,7 +413,7 @@ impl Keeping<'_> {
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
         let plan = Arc::new(prepared_plan(plan, crate::optimizer::prepared::budget(self.st))?);
         self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;
-        let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+        let (run, slots) = point::run(&plan, params.dynamic_slots());
         Ok((columns, run, reads, slots))
     }
 

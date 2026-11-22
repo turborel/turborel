@@ -15,7 +15,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 22] = [
+pub const TPCC: [Mutation; 21] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -180,16 +180,6 @@ pub const TPCC: [Mutation; 22] = [
         unit: &["physical::probe::tests::an_element_of_a_slots_array_is_compared_with_its_value"],
     },
     Mutation {
-        name: "tpcc-raising-element-placed",
-        package: Package::Core,
-        breaks: "a kept write places an element that raises, raising where no row is read",
-        file: "src/db/prepared/plans/point.rs",
-        original: "    if !plan.places(&slots) {\n",
-        replacement: "    if !plan.places(&slots) && false {\n",
-        integration: &["kept_routines::a_kept_body_reads_each_elements_final_table"],
-        unit: &[],
-    },
-    Mutation {
         name: "tpcc-insert-query-planned-each-run",
         package: Package::Core,
         breaks: "a kept INSERT plans its query at each run",
@@ -204,8 +194,8 @@ pub const TPCC: [Mutation; 22] = [
         package: Package::Core,
         breaks: "a kept query over a delta table never learns its plan, read over a transition table",
         file: "src/physical/kept/shape.rs",
-        original: "            rows.same(rows2)\n",
-        replacement: "            !rows.same(rows2)\n",
+        original: "    rows.same(rows2)\n",
+        replacement: "    !rows.same(rows2)\n",
         integration: &["tpcc_plans::tpcc_procedures_plan_nothing_in_steady_state"],
         unit: &[],
     },
