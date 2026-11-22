@@ -535,6 +535,7 @@ verification approach DO-178C expects (§8).
 | D812 | Withdrawn: a checkpoint's commits are not spread, as spreading them cost throughput |
 | D813 | A pool's test reading a page fails first if a frame is left latched exclusively |
 | D822 | An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them |
+| D835 | A write decodes the row it replaced once, for its caller and the zone it widens alike |
 
 ### The project
 
@@ -14620,6 +14621,19 @@ for before it gathers them (`Gathering::reserve`). A batch is at most
 of it leaves only that room unused. In a TPC-C profile at 2 users they
 were among the allocation sites outside planning, with the log's
 update images the largest.
+
+#### D835. A write decodes the row it replaced once, for its caller and the zone it widens alike
+
+The row store's write gives the row it replaced, decoded from the
+version it found (D417), and widens the row's zone over that version's
+values of the columns kept. Each decoded the version on its own,
+so an UPDATE decoded the row it replaced twice. The write now decodes
+it once (`RowTable::replaced`) and widens the zone over that row
+(`RowTable::widen_over`). A deletion's version, or one the write could
+not decode, widens the zone as one not known, as before. Decoding the
+whole row reads every column the kept ones are among, so the zone holds
+the same values. A procedure's keyed UPDATE of one row, profiled, spent
+about a twentieth of its time in the second decode.
 
 ## 2. Project layout
 

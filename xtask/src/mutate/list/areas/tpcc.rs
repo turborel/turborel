@@ -15,7 +15,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 14] = [
+pub const TPCC: [Mutation; 15] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -81,10 +81,20 @@ pub const TPCC: [Mutation; 14] = [
         package: Package::Core,
         breaks: "an update gives the row it wrote as the row it replaced, so undo, triggers and indexes see the new row",
         file: "src/engine/rows/mvcc/write.rs",
-        original: "        self.counted_change(tx);\n        self.replaced(id, replaced.as_deref())\n    }",
-        replacement: "        self.counted_change(tx);\n        Ok(row)\n    }",
+        original: "        self.counted_change(tx);\n        old.map(|old| old.map(|(was, _)| was))\n    }",
+        replacement: "        self.counted_change(tx);\n        Ok(Some(row))\n    }",
         integration: &["replaced_rows::each_write_replaces_the_row_it_found"],
         unit: &[],
+    },
+    Mutation {
+        name: "tpcc-replaced-unknown-to-zone",
+        package: Package::Core,
+        breaks: "an update widens its row's zone as over a version not known, though it decoded the row it replaced (D835)",
+        file: "src/engine/rows/mvcc/write.rs",
+        original: "        self.widen_over(id, Some(&row), live(&old));\n",
+        replacement: "        self.widen_over(id, Some(&row), None);\n",
+        integration: &[],
+        unit: &["engine::rows::zones::tests::a_write_inside_its_zones_bounds_stales_nothing"],
     },
     Mutation {
         name: "tpcc-join-right-unfilled",
