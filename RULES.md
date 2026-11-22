@@ -492,6 +492,7 @@ verification approach DO-178C expects (§8).
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
 | D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
+| D791 | A probe of a unique key is weighed as the rows of a build it costs as much as, measured |
 | D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
 
 ### The project
@@ -13718,6 +13719,24 @@ plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
 before. A probe plan is kept from the first run even when decorrelation
 is due before a plan could be learned, since a unique probe needs no
 learning.
+
+#### D791. A probe of a unique key is weighed as the rows of a build it costs as much as, measured
+
+D790 weighs each probe a subquery made as `PROBE_ROWS` rows of its
+decorrelated build. That weight is measured, not chosen. The `probed`
+sweep of `bench/joins.rs` (`bench/joins/probed.rs`) runs a scalar
+subquery over a table's primary key for 100 outer rows of an UNNEST,
+never decorrelated, and the same subquery over a copy of the table with
+no index, decorrelated at its first run, over tables of 1,000, 10,000
+and 100,000 rows. The probes a second and the build's rows a second
+give the rows that cost one probe. They came to 15.6, 18.8 and 11.3.
+`PROBE_ROWS` is their geometric mean, 14.9, rounded to 15.
+
+The spread moves the break-even point by less than a factor of two,
+and the decision falls well to one side in the cases that matter. An
+order of at most 15 lines probes an item table of 100,000 rows, and its
+runs weighed at any weight from 4 to 64 come to at most 960 rows, far
+fewer than the build would hold.
 
 #### D792. A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads
 

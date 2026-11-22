@@ -5,12 +5,14 @@
 //! LEFT, IN and < ALL over a subquery (`exec/subquery/quantified.rs`), a
 //! correlated EXISTS subquery, decorrelated (`exec/subquery.rs`), and IN
 //! lists of constants of several lengths, judged one after another or by
-//! a set (`logical/sets.rs`); and the 100 queries of a join-order
+//! a set (`logical/sets.rs`); a correlated scalar subquery probed by key
+//! against its build (`joins/probed.rs`); and the 100 queries of a join-order
 //! workload over an IMDB-shaped schema (`bench/joins/imdb.rs`), planned alone and planned and run, their joins
 //! enumerated and ordered greedily (PLANNER.JOIN_ENUMERATION, RULES.md
 //! D308). Run with `cargo xtask bench`, on the harness (RULES.md
 //! R-BENCH-1). Given `estimates` or `true-cardinalities` as an argument, it
-//! reports the workload's q-errors instead (`bench/joins/qerror.rs`).
+//! reports the workload's q-errors instead (`bench/joins/qerror.rs`);
+//! given `probed`, the probe and build sweep alone.
 
 #![allow(
     clippy::unwrap_used,
@@ -26,6 +28,8 @@
 mod harness;
 #[path = "joins/imdb.rs"]
 mod imdb;
+#[path = "joins/probed.rs"]
+mod probed;
 #[path = "joins/qerror.rs"]
 mod qerror;
 
@@ -41,6 +45,11 @@ const TITLES: u64 = 2_000;
 
 fn main() {
     if qerror::run(TITLES) {
+        return;
+    }
+    // Given `probed`, the sweep behind PROBE_ROWS alone (RULES.md D791).
+    if std::env::args().any(|a| a == "probed") {
+        probed::sweep(&Bench::new("joins-probed"));
         return;
     }
     let bench = Bench::new("joins");
@@ -79,6 +88,7 @@ fn main() {
     bench.measure(Case::new("correlated EXISTS, 2,000 x 2,000 rows", "rows"), || {
         joined(&s, "SELECT T.V FROM T WHERE EXISTS (SELECT * FROM U WHERE U.K = T.K AND U.G = 3)")
     });
+    probed::sweep(&bench);
     workload(&bench);
 }
 
