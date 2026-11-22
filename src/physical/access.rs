@@ -19,7 +19,7 @@ use std::sync::Arc;
 use super::estimate::Known;
 use super::expression_index::Keyed;
 use super::kept::point_probe;
-use super::probe::{Alternatives, Compared, comparisons, served_by};
+use super::probe::{Alternatives, Compared, comparisons_of, served_by};
 use super::{Built, CostModel, PhysicalPlanner, ProbeSlot, TableRead};
 use crate::catalog::{ColumnDesc, IndexDesc};
 use crate::engine::key::restores;
@@ -226,8 +226,8 @@ impl PhysicalPlanner<'_> {
         let (desc, scanned, conds) = (&*desc, conds, &*keyed.substituted(conds));
         let (stats, all) = (self.statistics(read.table), cost_of(storage.row_count()));
         let known = Known { stats: stats.as_deref(), cost };
-        let probed = answerable(conds);
-        let (compared, ors) = comparisons(probed, known, self.values);
+        let probed = answerable(conds, self.raising);
+        let (compared, ors) = comparisons_of(probed, known, (self.values, self.raising));
         if let Some(path) = want.is_empty().then(|| self.point_path(read, (probed, &compared), known.cost)).flatten() {
             return path;
         }

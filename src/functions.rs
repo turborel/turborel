@@ -38,8 +38,8 @@ pub(crate) use any_value::GroupValue;
 mod arrays;
 pub mod builtin;
 pub use arrays::{
-    ARRAY, ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf,
-    ElementOf, TRIM_ARRAY, TrimArrayOf,
+    ARRAY, ARRAY_AGG, ARRAY_ELEMENT, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY,
+    CardinalityOf, ElementOf, TRIM_ARRAY, TrimArrayOf,
 };
 mod context;
 mod count;

@@ -83,7 +83,7 @@ pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIt
 }
 pub(crate) use program::{Ended, Host, rows, run_program};
 pub(crate) use subquery::slot_type;
-pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, NoSubqueries, Runner, Subqueries, SubqueryRows};
+pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, KeptSubqueries, NoSubqueries, Runner, Subqueries, SubqueryRows};
 
 /// The rows a plan produces, each read or computed when it is pulled. The
 /// iterator owns what it reads (the state, through an `Arc`, and the

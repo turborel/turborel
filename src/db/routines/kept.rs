@@ -9,7 +9,8 @@
 //! instant holds it, and is not kept. Each INSERT, searched UPDATE and
 //! searched DELETE of a program kept keeps its own plan the same way,
 //! its SQL parameters and variables slots each execution fills, as does
-//! the one a SELECT ... INTO reads as its delta table (RULES.md D792); each leaf
+//! the one a SELECT ... INTO reads as its delta table (RULES.md D792), and
+//! the SELECT ... INTO's query over that table its own (D793); each leaf
 //! that is one probe of a unique key keeps its physical plan, and each
 //! other leaf over the frame's slots learns one (`kept/leaves.rs`,
 //! RULES.md D408, D414). Each local cursor keeps its specification and
@@ -20,7 +21,7 @@ mod leaves;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use super::super::prepared::{Key, Plans};
+use super::super::prepared::{DeltaQuery, Key, Plans};
 use super::super::{Session, State};
 use crate::ast::{RoutineDefinition, SqlStatement};
 use crate::binder::{definition_of, sql_statement};
@@ -50,6 +51,9 @@ pub(in crate::db) struct KeptRoutine {
 pub(in crate::db) struct KeptProgram {
     pub(in crate::db) program: Arc<Program>,
     plans: Arc<[Plans]>,
+    /// The query of each, if a SELECT ... INTO of a delta table, its plans
+    /// and the rows it reads (RULES.md D793).
+    queries: Arc<[DeltaQuery]>,
     /// The plans its local cursors keep, by their number (RULES.md D416).
     cursors: Arc<[Plans]>,
     /// The plans its leaves keep (`kept/leaves.rs`).
@@ -60,8 +64,9 @@ impl KeptProgram {
     /// `program`, its statements keeping no plan yet.
     pub(in crate::db) fn of(program: Program) -> KeptProgram {
         let plans = program.contained().iter().map(|_| Plans::default()).collect();
+        let queries = program.contained().iter().map(|_| DeltaQuery::default()).collect();
         let cursors = program.cursors.iter().map(|_| Plans::default()).collect();
-        KeptProgram { program: Arc::new(program), plans, cursors, leaves: Arc::default() }
+        KeptProgram { program: Arc::new(program), plans, queries, cursors, leaves: Arc::default() }
     }
 
     /// The plans the local cursor `c` of its program keeps, if it is one of
@@ -72,10 +77,11 @@ impl KeptProgram {
     }
 
     /// The plans the statement `c` of its program keeps, if it is one of
-    /// its own.
-    pub(in crate::db) fn plans_of(&self, c: &Contained) -> Option<&Plans> {
+    /// its own, and those its query over a delta table keeps, if it has
+    /// one (RULES.md D793).
+    pub(in crate::db) fn plans_of(&self, c: &Contained) -> Option<(&Plans, &DeltaQuery)> {
         let at = self.program.contained().iter().position(|own| std::ptr::eq(*own, c))?;
-        self.plans.get(at)
+        self.plans.get(at).zip(self.queries.get(at))
     }
 }
 

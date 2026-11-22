@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::db::State;
 use crate::error::Result;
+use crate::exec::KeptSubqueries;
 use crate::index::Probe;
 use crate::physical::{ProbeSlot, placed};
 use crate::value::Value;
@@ -26,24 +27,38 @@ pub type Slots = Arc<[Value]>;
 pub struct Db {
     state: Arc<State>,
     slots: Option<Slots>,
+    /// Of a kept plan, what its correlated subqueries settled (RULES.md D793).
+    subqueries: Option<Arc<KeptSubqueries>>,
 }
 
 impl Db {
     /// `state`, for a plan with no slots.
     pub fn of(state: &Arc<State>) -> Db {
-        Db { state: Arc::clone(state), slots: None }
+        Db { state: Arc::clone(state), slots: None, subqueries: None }
     }
 
     /// `state`, for a kept plan whose slots hold `slots` (RULES.md D610).
     pub fn slotted(state: &Arc<State>, slots: Slots) -> Db {
-        Db { state: Arc::clone(state), slots: Some(slots) }
+        Db { state: Arc::clone(state), slots: Some(slots), subqueries: None }
     }
 
     /// Its statement's slots, executed in `state`, a copy of its own made
     /// for a part of the statement.
     #[must_use]
     pub fn in_state(&self, state: Arc<State>) -> Db {
-        Db { state, slots: self.slots.clone() }
+        Db { state, slots: self.slots.clone(), subqueries: self.subqueries.clone() }
+    }
+
+    /// It, running a kept plan whose correlated subqueries keep what they
+    /// settled in `subqueries` (RULES.md D793).
+    #[must_use]
+    pub fn keeping(self, subqueries: Arc<KeptSubqueries>) -> Db {
+        Db { subqueries: Some(subqueries), ..self }
+    }
+
+    /// What its kept plan's correlated subqueries settled, if it runs one.
+    pub(crate) fn subqueries(&self) -> Option<&KeptSubqueries> {
+        self.subqueries.as_deref()
     }
 
     /// The state it is executed in.
@@ -77,7 +92,7 @@ impl Deref for Db {
 
 impl From<Arc<State>> for Db {
     fn from(state: Arc<State>) -> Db {
-        Db { state, slots: None }
+        Db { state, slots: None, subqueries: None }
     }
 }
 

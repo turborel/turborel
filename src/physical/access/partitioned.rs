@@ -79,7 +79,7 @@ impl PhysicalPlanner<'_> {
         db.catalog.indexes(read.table).into_iter().filter(usable).find_map(|ix| {
             let (kind, found, types) = (db.methods.get(&ix.method)?, db.index_of(&ix.name).ok()?, ix.key_types(desc)?);
             let served = served_by(&compared, ix);
-            let (probe, slots, used) = point_probe(answerable(conds), &served, (&ix.columns, &types))?;
+            let (probe, slots, used) = point_probe(answerable(conds, false), &served, (&ix.columns, &types))?;
             if !supports(&**kind, &probe, (&types, false)) {
                 return None;
             }

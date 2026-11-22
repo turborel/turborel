@@ -1,10 +1,12 @@
 //! \[DESIGN\] The TPC-C transactions, as procedures CALLed through prepared
 //! statements, keep every plan once they have run a while (RULES.md D613):
 //! a CALL in steady state plans nothing, its statements' plans kept as the
-//! tables they read grow (`physical::plannings`).
+//! tables they read grow (`physical::plannings`), its SELECT ... INTO of a
+//! change's delta table among them (D793).
 
 use std::sync::Arc;
 
+use turborel::binder::bindings;
 use turborel::db::{Database, Prepared, Session};
 use turborel::physical::plannings;
 use turborel::threads::JobPolicy;
@@ -148,7 +150,7 @@ impl Calls {
     fn of(s: &Session) -> Calls {
         let p = |sql: &str| s.prepare(sql).unwrap();
         Calls {
-            neword: p("CALL NEWORD(?,?,?,?,?,?,?)"),
+            neword: p("CALL NEWORD(?,?,?,?,?,?,?,?)"),
             payment: p("CALL PAYMENT(?,?,?,?,?,?,?,?)"),
             delivery: p("CALL DELIVERY(?,?)"),
             ostat: p("CALL OSTAT(?,?,?,?,?)"),
@@ -158,7 +160,7 @@ impl Calls {
 
     /// One NEWORD in each district, as the driver runs about ten for each
     /// DELIVERY, and one transaction of each other kind, by name and by id
-    /// alike, each committed; the plannings each kind made.
+    /// alike, each committed; the bindings and plannings each kind made.
     fn round(&self, s: &Session, r: &mut Sequence) -> [u64; 5] {
         let mut made = [0_u64; 5];
         for district in 1..=10 {
@@ -182,7 +184,7 @@ impl Calls {
 }
 
 /// A NEWORD's values, in `district`: a customer, and five to fifteen items
-/// of the one warehouse, each of one unit.
+/// of the one warehouse, all local, each of one unit.
 fn new_order(r: &mut Sequence, district: i64) -> Vec<Value> {
     let count = r.between(5, 15);
     let items: Vec<Value> = (0..count).map(|_| int(r.between(1, ITEMS))).collect();
@@ -192,23 +194,28 @@ fn new_order(r: &mut Sequence, district: i64) -> Vec<Value> {
         int(district),
         int(r.between(1, CUSTOMERS)),
         int(count),
+        int(1),
         array(items),
         array(vec![int(1); usize::try_from(count).unwrap()]),
         array((0..count).map(|_| int(r.between(1, 10))).collect()),
     ]
 }
 
-/// The plannings one CALL of `p` with `values`, committed, made.
+/// The bindings and plannings one CALL of `p` with `values`, committed,
+/// made (RULES.md D793).
 fn planned(s: &Session, p: &Prepared, values: &[Value]) -> u64 {
-    let before = plannings();
+    let before = bindings().wrapping_add(plannings());
     s.execute_prepared(p, values).unwrap();
     s.commit().unwrap();
-    plannings().wrapping_sub(before)
+    bindings().wrapping_add(plannings()).wrapping_sub(before)
 }
 
-/// Verifies: [DESIGN] RULES.md D613, each TPC-C transaction, once it has
-/// run a while, runs every later CALL with plans it kept: no CALL plans
-/// anything while NEW_ORDER, ORDERS, ORDER_LINE and HISTORY grow.
+/// Verifies: [DESIGN] RULES.md D613, D793, each TPC-C transaction, once it
+/// has run a while, runs every later CALL with bindings and plans it kept:
+/// no CALL binds or plans anything while NEW_ORDER, ORDERS, ORDER_LINE and
+/// HISTORY grow, a SELECT ... INTO of a change's delta table neither its
+/// query nor the change's object rows, those found by elements of the
+/// order's arrays too, nor an INSERT.
 #[test]
 fn tpcc_procedures_plan_nothing_in_steady_state() {
     let (_db, s) = loaded();
@@ -224,7 +231,7 @@ fn tpcc_procedures_plan_nothing_in_steady_state() {
             *total = total.saturating_add(n);
         }
     }
-    assert_eq!(made, [0; 5], "plannings of NEWORD, PAYMENT, DELIVERY, OSTAT and SLEV in 80 rounds");
+    assert_eq!(made, [0; 5], "bindings and plannings of NEWORD, PAYMENT, DELIVERY, OSTAT and SLEV in 80 rounds");
 }
 
 /// The plannings `n` executions of `p`, the query of one group's rows,

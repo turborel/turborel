@@ -257,8 +257,19 @@ fn a_kept_plan_is_filled_with_each_executions_values() {
     let Plan::Product { right, .. } = filled_plan(product, &[int(3)]).unwrap() else { panic!("not a product") };
     let Plan::IndexScan { probe: right, .. } = *right else { panic!("not a scan") };
     assert!(same(&right, &Probe::Prefix { equal: vec![int(3)], then: None }), "a product's inputs filled (D418)");
-    let other = Plan::Values { rows: Vec::new(), detail: String::new() };
+    let other = Plan::WorkTable { member: 0, rows: None };
     assert_eq!(filled_plan(other, &[]).unwrap_err().code, Code::Api);
+}
+
+/// Verifies: [DESIGN] RULES.md D793: rows of values in a kept plan are
+/// filled with each execution's values.
+#[test]
+fn a_kept_plans_rows_of_values_are_filled() {
+    let values = Plan::Values { rows: vec![vec![Expr::Dynamic(slot(0))]], detail: String::new() };
+    let Plan::Values { rows, .. } = filled_plan(values, &[int(4)]).unwrap() else { panic!("not values") };
+    let [row] = rows.as_slice() else { panic!("{rows:?}") };
+    let [Expr::Const(v)] = row.as_slice() else { panic!("{row:?}") };
+    assert_eq!(format!("{v:?}"), format!("{:?}", int(4)));
 }
 
 /// Verifies: [DESIGN] A prepared multidimensional probe replaces each

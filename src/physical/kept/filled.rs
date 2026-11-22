@@ -4,14 +4,14 @@
 //! a product, a hash join or an index join by the outer row's columns, is
 //! filled too (D418).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::sync::{Arc, OnceLock};
 
-use super::filled_scan;
+use super::{ProbeSlot, filled_scan, slot_value};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::exec::PointRead;
-use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Placing, Truth, filled_cond_as, filled_expr_as};
+use crate::exec::{KeptSubqueries, PointRead};
+use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Placing, Truth, Unnest, filled_cond_as, filled_expr_as};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
 use crate::physical::{JoinProbe, Plan, Preserved};
@@ -23,7 +23,7 @@ use crate::value::Value;
 ///
 /// As `logical::filled`; SQLCODE -910 for an operator no kept plan holds.
 pub(crate) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
-    Filling { values: Some(values), budget, placing: Placing::Cast, fills: Cell::new(false) }.plan(plan)
+    Filling { values: Some(values), budget, placing: Placing::Cast, fills: Cell::new(false), raising: RefCell::default() }.plan(plan)
 }
 
 /// As `filled_plan`, each value placed as it is, not cast: of a
@@ -34,7 +34,7 @@ pub(crate) fn filled_plan(plan: Plan, values: &[Value], budget: Option<&Arc<Memo
 ///
 /// As `filled_plan`.
 pub(crate) fn filled_plan_as_is(plan: Plan, values: &[Value], budget: Option<&Arc<MemoryBudget>>) -> Result<Plan> {
-    Filling { values: Some(values), budget, placing: Placing::AsIs, fills: Cell::new(false) }.plan(plan)
+    Filling { values: Some(values), budget, placing: Placing::AsIs, fills: Cell::new(false), raising: RefCell::default() }.plan(plan)
 }
 
 /// `plan`, a kept plan whose slots stay for each execution to read where
@@ -45,12 +45,14 @@ pub(crate) fn filled_plan_as_is(plan: Plan, values: &[Value], budget: Option<&Ar
 ///
 /// SQLCODE -910 for an operator no kept plan holds.
 pub(crate) fn prepared_plan(plan: Plan, budget: Option<&Arc<MemoryBudget>>) -> Result<Kept> {
-    let filling = Filling { values: None, budget, placing: Placing::Cast, fills: Cell::new(false) };
+    let filling = Filling { values: None, budget, placing: Placing::Cast, fills: Cell::new(false), raising: RefCell::default() };
     let prepared = filling.plan(plan.clone())?;
     // A plan filled at each execution is kept as it was made, to be filled
     // and prepared then, as before it was kept.
     let fills = filling.fills.get();
-    Ok(Kept { plan: if fills { plan } else { prepared }, fills, point: OnceLock::new() })
+    let raising = filling.raising.take();
+    let subqueries = Arc::default();
+    Ok(Kept { plan: if fills { plan } else { prepared }, fills, raising, point: OnceLock::new(), subqueries })
 }
 
 struct Filling<'a> {
@@ -60,6 +62,8 @@ struct Filling<'a> {
     placing: Placing,
     /// Whether a scalar call it prepares takes a slot (`Kept`).
     fills: Cell<bool>,
+    /// The probe slots it leaves in place whose expressions can raise.
+    raising: RefCell<Vec<ProbeSlot>>,
 }
 
 impl Filling<'_> {
@@ -94,6 +98,10 @@ impl Filling<'_> {
             Some(values) => filled_scan(plan, values, self.placing)?,
             None => plan,
         };
+        if let (None, Plan::IndexScan { slots, .. }) = (self.values, &plan) {
+            let raises = slots.iter().filter(|s| s.expr.as_ref().is_some_and(|e| e.can_raise()));
+            self.raising.borrow_mut().extend(raises.cloned());
+        }
         if let Plan::IndexScan { decided: Some(decided), .. } = &mut plan {
             let cond = std::mem::replace(&mut decided.cond, Cond::Const(Truth::True));
             decided.cond = self.cond(cond)?;
@@ -145,6 +153,21 @@ impl Filling<'_> {
         Ok(Plan::IndexJoin { outer, spatial: None, left, table, index, method, probe, cond, width, columns, detail, est, cost, located })
     }
 
+    /// Rows of values, each expression filled (RULES.md D793).
+    fn rows(&self, rows: Vec<Vec<Expr>>) -> Result<Vec<Vec<Expr>>> {
+        rows.into_iter().map(|r| r.into_iter().map(|e| self.expr(e)).collect()).collect()
+    }
+
+    /// An UNNEST, its collections, its join condition and its input
+    /// filled (RULES.md D793).
+    fn unnest(&self, u: Unnest<Plan>) -> Result<Plan> {
+        let (mut u, input) = u.split();
+        u.collections = u.collections.into_iter().map(|e| self.expr(e)).collect::<Result<_>>()?;
+        u.outer = u.outer.map(|c| self.cond(c)).transpose()?;
+        let input = self.plan(input)?;
+        Ok(Plan::Unnest(Box::new(u.with_input(|&()| input))))
+    }
+
     fn plans(&self, plans: Vec<Plan>) -> Result<Vec<Plan>> {
         plans.into_iter().map(|p| self.plan(p)).collect()
     }
@@ -181,7 +204,8 @@ impl Filling<'_> {
                 Ok(Plan::Filter { cond, detail, est, of_read, input: Box::new(self.plan(*input)?) })
             }
             Plan::IndexScan { .. } => self.scan(plan),
-            Plan::SeqScan { .. } => Ok(plan),
+            // A transition table is read as refilled at each run (RULES.md D793).
+            Plan::SeqScan { .. } | Plan::Transition { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
             Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed } => {
                 let aggs = aggs.into_iter().map(|a| self.agg(a)).collect::<Result<_>>()?;
@@ -205,16 +229,15 @@ impl Filling<'_> {
             | Plan::OuterJoin { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }
-            | Plan::Values { .. }
             | Plan::Recursive { .. }
-            | Plan::Unnest(..)
             | Plan::Window { .. }
             | Plan::Polymorphic(..)
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
-            | Plan::Transition { .. }
             | Plan::Transfer(_)
             | Plan::Counted(_) => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
+            Plan::Values { rows, detail } => Ok(Plan::Values { rows: self.rows(rows)?, detail }),
+            Plan::Unnest(u) => self.unnest(*u),
         }
     }
 }
@@ -227,11 +250,30 @@ impl Filling<'_> {
 pub(crate) struct Kept {
     plan: Plan,
     fills: bool,
+    /// Its probes' slots whose expressions can raise (RULES.md D793).
+    raising: Vec<ProbeSlot>,
     /// The point read it is, if one, found as first asked (RULES.md D752).
     point: OnceLock<Option<PointRead>>,
+    /// What its correlated subqueries settled (RULES.md D793).
+    subqueries: Arc<KeptSubqueries>,
 }
 
 impl Kept {
+    /// Whether an execution with the values `slots` places each of its
+    /// probes' values: none of them raises, as a plan made with the values
+    /// folds each that raises nothing into its probe (RULES.md D793). An
+    /// execution of one that raises is planned with its values, so the
+    /// error is raised where that plan raises it, if anywhere.
+    pub(crate) fn places(&self, slots: &[Value]) -> bool {
+        self.raising.iter().all(|s| slot_value(s, slots, Placing::Cast).is_ok())
+    }
+
+    /// What its correlated subqueries settled, kept across its executions
+    /// (RULES.md D793).
+    pub(crate) fn subqueries(&self) -> &Arc<KeptSubqueries> {
+        &self.subqueries
+    }
+
     /// The plan one execution runs with its slots' values `slots`, and the
     /// values it reads where its slots are, if it does.
     ///
