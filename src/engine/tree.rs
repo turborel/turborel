@@ -63,6 +63,7 @@ mod merge;
 mod near;
 mod node;
 mod reclaim;
+mod retired;
 mod room;
 mod scan;
 mod write;
@@ -232,14 +233,19 @@ impl BLinkTree {
     /// SQLCODE -916 if `meta` is not a tree's meta page; as `create`.
     pub fn open(pool: Arc<BufferPool>, file: FileId, meta: PageId) -> Result<BLinkTree> {
         let capacity = pool.capacity(file)?;
-        let root = {
+        let (root, noted) = {
             let page = pool.read(file, meta.0)?;
-            match <[u8; META_LEN]>::try_from(&*page) {
-                Ok([TREE_FORMAT, root @ ..]) => PageId(u64::from_le_bytes(root)),
-                Ok(_) | Err(_) => return Err(corrupt(&format!("page {} is not a meta page of this format", meta.0))),
+            let header = page.get(..META_LEN).and_then(|header| <[u8; META_LEN]>::try_from(header).ok());
+            match header {
+                Some([TREE_FORMAT, root @ ..]) => (PageId(u64::from_le_bytes(root)), retired::noted(&page)?),
+                Some(_) | None => return Err(corrupt(&format!("page {} is not a meta page of this format", meta.0))),
             }
         };
-        Ok(BLinkTree::with(pool, file, meta, root, capacity))
+        let tree = BLinkTree::with(pool, file, meta, root, capacity);
+        // Taken out in a run before, which a crash may have ended: freed as
+        // this run's are (`retired.rs`).
+        tree.epochs.keep(noted.into_iter());
+        Ok(tree)
     }
 
     fn with(pool: Arc<BufferPool>, file: FileId, meta: PageId, root: PageId, capacity: usize) -> BLinkTree {
@@ -336,7 +342,12 @@ impl BLinkTree {
     ///
     /// The buffer pool's errors.
     pub fn free_retired(&self) -> Result<()> {
-        self.epochs.all_retired().into_iter().try_for_each(|p| self.pool.free(self.file, p))
+        let pages = self.epochs.all_retired();
+        if pages.is_empty() {
+            return Ok(());
+        }
+        self.unnote_retired(&pages)?;
+        pages.into_iter().try_for_each(|p| self.pool.free(self.file, p))
     }
 }
 
@@ -550,7 +561,7 @@ impl BLinkTree {
             *page = node::build(&Shape { level, high: None, right: None, first: root, tree: self.meta.0 }, &[(&split.separator, &child)])?;
             new_root
         };
-        *self.pool.write(self.file, self.meta)? = meta_content(new_root);
+        retired::set_root(&mut self.pool.write(self.file, self.meta)?, new_root)?;
         self.root.store(new_root.0, Ordering::Release);
         count(&self.counters.root_splits);
         Ok(true)

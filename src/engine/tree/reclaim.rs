@@ -152,6 +152,11 @@ impl Epochs {
         free.into_iter().map(|(_, page)| page).collect()
     }
 
+    /// Keeps `pages`, taken from those to free, to free next time.
+    pub(super) fn keep(&self, pages: impl Iterator<Item = PageId>) {
+        lock_builtin(&self.retired).extend(pages.map(|page| (0, page)));
+    }
+
     /// Every page taken out and not yet freed: for a tree no one uses any
     /// more.
     pub(crate) fn all_retired(&self) -> Vec<PageId> {
@@ -164,7 +169,8 @@ impl BLinkTree {
     /// tree, its entries merged into its right neighbour, if its left and
     /// right neighbours have the same parent, `path`'s last, and the
     /// entries fit (`merge.rs`); with no lock held.
-    /// Then frees the pages no operation may hold any more.
+    /// Then frees the pages no operation may hold any more, keeping those
+    /// its file fails to free (`free_freeable`).
     ///
     /// # Errors
     ///
@@ -173,10 +179,36 @@ impl BLinkTree {
         if let Some(&parent) = path.stack.last() {
             self.unlink_under(leaf, parent)?;
         }
-        for page in self.epochs.freeable() {
-            self.pool.free_when_released(self.file, page)?;
-        }
+        self.free_freeable();
         Ok(())
+    }
+
+    /// \[DESIGN\] Frees the pages taken out that no operation may hold any
+    /// more (RULES.md D814). A page its file fails to free now, as a
+    /// failed write zeroing it, is kept with those after it, to free at a
+    /// later unlink: the tree no longer reaches it, so the delete that took
+    /// it out stands, and until then it is only space. Failing the delete
+    /// would fail the undo of an insert, which damages its table.
+    fn free_freeable(&self) {
+        let freeable = self.epochs.freeable();
+        if freeable.is_empty() {
+            return;
+        }
+        // Unnoted first, so no meta page notes a page freed (`retired.rs`).
+        if self.unnote_retired(&freeable).is_err() {
+            self.epochs.keep(freeable.into_iter());
+            return;
+        }
+        let mut pages = freeable.into_iter();
+        while let Some(page) = pages.next() {
+            if self.pool.free_when_released(self.file, page).is_err() {
+                let kept: Vec<PageId> = std::iter::once(page).chain(pages).collect();
+                // Noted again; if that fails too, a crash costs their space.
+                self.note_retired(&kept).unwrap_or_default();
+                self.epochs.keep(kept.into_iter());
+                return;
+            }
+        }
     }
 
     /// The child left of `leaf` under `parent`, and `leaf`'s entry, if
@@ -250,6 +282,9 @@ impl BLinkTree {
             node::remove(&mut page, at.saturating_add(1))?;
         }
         self.epochs.retire(leaf);
+        // Noted once the tree no longer reaches it; if that fails, a crash
+        // costs its space (`retired.rs`).
+        self.note_retired(&[leaf]).unwrap_or_default();
         super::count(&self.counters.unlinked);
         Ok(())
     }

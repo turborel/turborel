@@ -14859,6 +14859,22 @@ A tree's pages reach the file through the shadowed data file, as a
 split's do (D25), so a merge is in a checkpoint whole or not at all, and
 the log redoes the deletes after it.
 
+Freeing a leaf's page is not part of the delete that took it out. Once
+no operation may hold the page, the next unlink frees it, which writes
+it zeroed. If its file fails that write, as a checkpoint's failed sync
+leaves writes failing, the page is kept to free at a later unlink, and
+the delete stands: the tree no longer reaches the page, so until then it
+is only space. Failing the delete would fail the undo of an insert,
+which deletes, and so damage its table.
+
+The pages taken out and not yet freed are noted in the tree's meta page
+too (`engine/tree/retired.rs`), not only in memory, so a crash loses
+none for good. A tree opened takes the pages its meta page notes as its
+own to free, as no operation of the run before can hold them. A page is
+noted after the tree stops reaching it and unnoted before it is freed,
+so a checkpoint's image never notes a page its tree reaches, nor one
+freed and given again; a checkpoint in between costs a page of space.
+
 #### D822. An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them
 
 An update's log record (D475) wrote each column of the row before into a
