@@ -18,7 +18,7 @@ fn morsels_of(table: &Arc<RowTable>, late: &[usize]) -> (Vec<String>, bool) {
         for batch in split.morsel_batches(n, late).unwrap() {
             let mut batch: Batch = batch.unwrap();
             held_late |= matches!(batch.columns.get(1), Some(Column::Late(_)));
-            batch.resolve(None).unwrap();
+            batch.resolve(None, &crate::kernels::Portable).unwrap();
             rows.extend((0..batch.rows).map(|r| format!("{} {}", batch.cell(0, r).to_value(), batch.cell(1, r).to_value())));
         }
     }

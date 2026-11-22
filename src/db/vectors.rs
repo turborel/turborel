@@ -19,6 +19,7 @@ use crate::diagnostics::Extension;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::error::{Code, Result, SqlError};
 use crate::index::IndexMethod;
+use crate::kernels::Kernels;
 use crate::lexer::authorization_identifier;
 use crate::value::CompOp;
 use crate::vector::metric::{Metrics, VectorMetric, metric_named};
@@ -34,6 +35,9 @@ pub(crate) struct SharedVectors {
     extension: Arc<RwLock<Vec<Weak<dyn VectorMetric>>>>,
     /// \[EXTENSION\] The quantizers of extensions, so held (RULES.md D221).
     extension_quantizers: Arc<RwLock<Vec<Weak<dyn Quantizer>>>>,
+    /// \[DESIGN\] The kernels registered, which the built-in metrics sum
+    /// on (RULES.md D571); none, the portable ones.
+    kernels: Arc<RwLock<Option<Arc<dyn Kernels>>>>,
 }
 
 impl SharedVectors {
@@ -41,14 +45,21 @@ impl SharedVectors {
     /// called: what VECTOR_DISTANCE and a vector index read.
     pub(crate) fn metrics(&self) -> Metrics {
         let (shared, extension) = (Arc::clone(&self.metrics), Arc::clone(&self.extension));
-        let builtin = crate::vector::metric::built_in_metrics();
+        let kernels = Arc::clone(&self.kernels);
         Arc::new(move || {
-            let mut all = builtin();
+            let held = kernels.read().unwrap_or_else(PoisonError::into_inner).clone();
+            let mut all = crate::vector::metric::built_in_on(held.as_ref());
             all.extend(shared.read().unwrap_or_else(PoisonError::into_inner).iter().cloned());
             // The newest first, so an extension made again at commit is found as made.
             all.extend(extension.read().unwrap_or_else(PoisonError::into_inner).iter().rev().filter_map(Weak::upgrade));
             all
         })
+    }
+
+    /// \[DESIGN\] Sums the built-in metrics on `kernels`, the database's
+    /// registered set, from their next call (RULES.md D571).
+    pub(crate) fn use_kernels(&self, kernels: Arc<dyn Kernels>) {
+        *self.kernels.write().unwrap_or_else(PoisonError::into_inner) = Some(kernels);
     }
 
     /// \[EXTENSION\] Adds `metric`, an extension's, held weakly: found by

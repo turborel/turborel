@@ -338,9 +338,8 @@ impl Database {
         Ok(Host::new(Arc::clone(&st.memory), Arc::clone(&st.work), Arc::clone(&st.encodings), Arc::clone(&st.plugins)))
     }
 
-    /// \[DESIGN\] Adds or replaces a storage engine, under its name, once
-    /// it has taken what the database provides (`StorageEngine::attach`),
-    /// its settings declared and their values told it (`Configurable`).
+    /// \[DESIGN\] Adds or replaces a storage engine, under its name, once it has taken what the
+    /// database provides (`StorageEngine::attach`) and its kernels, its settings declared and their values told it.
     ///
     /// # Errors
     ///
@@ -349,6 +348,7 @@ impl Database {
     pub fn register_engine(&self, engine: Box<dyn StorageEngine>) -> Result<()> {
         let (name, engine): (_, Arc<dyn StorageEngine>) = (engine.name(), Arc::from(engine));
         engine.attach(&self.host()?)?;
+        engine.use_kernels(self.snapshot()?.functions.kernels_shared());
         let done = self.change(|st| {
             // [EXTENSION] RULES.md D41: a table option is one plug-in's.
             if let Some(o) = engine.table_options().iter().find(|o| st.table_options.iter().any(|(_, p)| p.name == o.name)) {

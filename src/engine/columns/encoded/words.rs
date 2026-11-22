@@ -7,6 +7,7 @@
 
 use super::super::packed::{get, unpack_words};
 use super::{Body, FRAMED, WORD, between, integer};
+use crate::kernels::Kernels;
 
 impl Body<'_> {
     /// \[DESIGN\] The values at positions `from` to `to`, each 8 bytes, an
@@ -15,12 +16,17 @@ impl Body<'_> {
     /// the fields are not of 8 bytes, or texts coded. Of a dictionary, its
     /// entries as integers are `entries` if given (`prepared.rs`), else
     /// read.
-    pub(in crate::engine::columns) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>, entries: Option<&[i64]>) -> Option<()> {
+    pub(in crate::engine::columns) fn ints(
+        &self,
+        (from, to): (usize, usize),
+        out: &mut Vec<i64>,
+        (entries, kernels): (Option<&[i64]>, &dyn Kernels),
+    ) -> Option<()> {
         let count = to.checked_sub(from)?;
         match self {
-            Body::Frame { least, bits, deltas } => unframed(*least, (*bits, deltas), (from, to), out),
+            Body::Frame { least, bits, deltas } => unframed(*least, (*bits, deltas), (from, to), (out, kernels)),
             Body::Runs(runs) => runs.ints((from, to), out),
-            Body::Alp(alp) => alp.words((from, to), out),
+            Body::Alp(alp) => alp.words((from, to), out, kernels),
             Body::Dictionary { bits, codes, .. } => match entries {
                 Some(words) => gathered(words, (*bits, codes), (from, to), out),
                 None => gathered(&self.entry_words()?, (*bits, codes), (from, to), out),
@@ -93,7 +99,12 @@ fn gathered(words: &[i64], (bits, codes): (u32, &[u8]), (from, to): (usize, usiz
 /// whose differences, of `bits` each, are `deltas`, pushed to `out`. A
 /// difference is less than 2^64, and the value it gives was an integer of
 /// 64 bits, so adding it wrapping gives that value.
-fn unframed(least: i64, (bits, deltas): (u32, &[u8]), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
+fn unframed(
+    least: i64,
+    (bits, deltas): (u32, &[u8]),
+    (from, to): (usize, usize),
+    (out, kernels): (&mut Vec<i64>, &dyn Kernels),
+) -> Option<()> {
     let plus = |d: u64| least.wrapping_add(i64::from_le_bytes(d.to_le_bytes()));
     // Of the widths of 1, 2, 4 and 8 whole bytes, read as such, a loop
     // the compiler makes vector code of; of others, a block at a time.
@@ -103,7 +114,7 @@ fn unframed(least: i64, (bits, deltas): (u32, &[u8]), (from, to): (usize, usize)
             return Some(());
         }
         8 | 16 | 32 | 64 => usize::try_from(bits.checked_div(8)?).ok()?,
-        _ => return unpack_words(deltas, (bits, least), (from, to), out),
+        _ => return kernels.unpack(deltas, (bits, least), (from, to), out),
     };
     let given = deltas.get(from.checked_mul(bytes)?..to.checked_mul(bytes)?)?;
     match bytes {

@@ -77,7 +77,8 @@ impl PhysicalPlanner<'_> {
             | Plan::Window { .. }
             | Plan::Recognize { .. }
             | Plan::Polymorphic(_)
-            | Plan::Parallel(_) => alone(None),
+            | Plan::Parallel(_)
+            | Plan::Transfer(_) => alone(None),
         }
     }
 }

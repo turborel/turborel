@@ -65,6 +65,9 @@ mod semi;
 pub use mark::{MarkJoin, MarkMethod};
 pub use semi::{SemiJoin, SemiMethod};
 mod shown;
+mod transfer;
+pub use transfer::{Phase, Step, Transfer};
+pub(crate) use transfer::{leaves_mut, transferred};
 pub(crate) mod spatial;
 mod streamed;
 
@@ -451,6 +454,9 @@ pub enum Plan {
     Parallel(Box<Parallel>),
     /// \[EXTENSION\] An operator EXPLAIN ANALYZE counts, run as its input (RULES.md D376).
     Counted(Box<Counted>),
+    /// \[DESIGN\] Predicate transfer over a chain of joins, or a leaf of
+    /// one it read (`physical/transfer.rs`, RULES.md D665).
+    Transfer(Box<Transfer>),
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's

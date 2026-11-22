@@ -43,6 +43,9 @@ behind it, and each can be replaced or added to.
   groupings to an ordered read.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
+- Vector kernels on SSE2, AVX2, AVX-512 and NEON, chosen by the processor
+  and each bit for bit the portable body: filters, sums, extremes,
+  decimals, grouping hashes, vector distances and CRC-32C.
 - One table of groups with typed keys and columns of set functions'
   states, merged in parallel in waves, of the column store too, its hash
   keyed past long probes; EXCEPT and INTERSECT counted in it.
@@ -85,6 +88,9 @@ behind it, and each can be replaced or added to.
   joins estimated by keys and bounded, index joins chosen robustly.
 - [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
   bands and overlapping periods, one table sorted and searched by the other.
+- [Predicate transfer](doc/sql/06-queries.md#how-joins-are-planned-extension)
+  shrinks a chain's tables by Bloom filters of each other's keys before
+  they are joined, from the smaller tables to the largest and back.
 - [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) runs a
   query or a data change and shows each operator's rows beside its
   estimate, its batches, spills and index reads, and a program may give
@@ -92,6 +98,8 @@ behind it, and each can be replaced or added to.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
+- [Lateral derived tables](doc/sql/06-queries.md#lateral-derived-tables),
+  whose query reads the tables before them in the FROM clause.
 - [Semi joins and antijoins](doc/sql/06-queries.md#correlated-subqueries)
   for EXISTS, NOT EXISTS, IN and NOT IN, ordered with the other joins,
   and joins under MIN and MAX reduced to semi joins; mark joins for

@@ -1,12 +1,15 @@
 //! The mutations of set-shaped access on a key planned as index probes
-//! (RULES.md R-TEST-9, D773 to D777): a subquery of many rows made a semi
+//! (RULES.md R-TEST-9, D773 to D779): a subquery of many rows made a semi
 //! join; two empty grouping sets taken as one row; the right's keys probed
 //! without DISTINCT; a semi join's probes taken whether chosen or not; a
 //! null bound probing the equalities alone; a bound's constant left out;
 //! a bound's range not priced; a null collection taken as elements; the
 //! object rows of UPDATE and DELETE planned without semi joins; a product
 //! taken as one row by its left; a filter over a product judged untyped;
-//! and a range join priced against no probe of fixed columns.
+//! a range join priced against no probe of fixed columns; and a lateral
+//! derived table bound as a derived table, one of nothing before it bound
+//! laterally, its derived column list or its FETCH left out; a lateral's
+//! collection of one row taken as raising, and COLLECT of one row too.
 
 use super::{Mutation, Package};
 
@@ -26,10 +29,22 @@ const NODES: &str = "src/physical/cardinality/nodes.rs";
 const COMPILED: &str = "src/db/compiled.rs";
 /// The file of the optimizer's rules.
 const OPTIMIZER: &str = "src/optimizer.rs";
+/// The file of FROM's table references bound.
+const FROM: &str = "src/binder/from.rs";
+/// The file of a lateral derived table bound.
+const LATERAL: &str = "src/binder/subquery/lateral.rs";
+/// The file of what unnesting asks of the plans it moves.
+const PURE: &str = "src/optimizer/unnesting/pure.rs";
+/// The file of the multiset set functions.
+const MULTISETS: &str = "src/functions/multisets.rs";
+/// The file of the declared types of the columns an index join reads.
+const TYPED: &str = "src/physical/indexed/typed.rs";
 /// The unit test of a plan of one row at most.
 const ONE_ROW: &str = "logical::single::tests::plans_of_one_row_at_most";
 /// The unit test of an UNNEST's estimate.
 const UNNESTED: &str = "physical::cardinality::tests::an_unnest_of_constants_is_estimated_by_their_elements";
+/// The unit test of a lateral of one row estimated.
+const LATERAL_ONE: &str = "physical::cardinality::tests::a_lateral_of_one_row_is_estimated_at_one_for_each_row_before_it";
 /// The test of a key compared with a subquery.
 const COMPARED: &str = "set_probes::a_key_compared_with_a_subquery_of_one_row_is_probed";
 /// The test of a few keys in a set.
@@ -38,9 +53,15 @@ const IN_A_SET: &str = "set_probes::a_few_keys_in_a_set_probe_the_index";
 const RANGE: &str = "set_probes::a_joins_bounds_from_the_outer_row_probe_a_range";
 /// The test of DELETE and UPDATE.
 const CHANGED: &str = "set_probes::deletes_and_updates_of_a_few_keys_probe_them";
+/// The test of a lateral query's rows.
+const EACH_ROW: &str = "lateral::a_lateral_query_is_computed_for_each_row_before_it";
+/// The test of a lateral set function probing the key.
+const ONE_ENTRY: &str = "lateral::a_lateral_set_function_of_a_key_reads_one_entry_for_each_row_before_it";
+/// The test of a lateral of a LEFT JOIN and of nothing before it.
+const OF_NOTHING: &str = "lateral::a_lateral_of_a_left_join_keeps_its_rows_and_one_of_nothing_before_it_is_a_derived_table";
 
 /// See the module doc.
-pub const SET_PROBES: [Mutation; 12] = [
+pub const SET_PROBES: [Mutation; 21] = [
     Mutation {
         name: "scalar-semi-of-many-rows",
         package: Package::Core,
@@ -159,6 +180,96 @@ pub const SET_PROBES: [Mutation; 12] = [
         original: "let fixed = self.fixed_prefix(cond, outer, inner);",
         replacement: "let fixed = None::<super::fixed::Fixed>;",
         integration: &[COMPARED],
+        unit: &[],
+    },
+    Mutation {
+        name: "lateral-as-derived",
+        package: Package::Core,
+        breaks: "a lateral derived table is bound as a derived table, its references to the rows before it refused",
+        file: FROM,
+        original: "super::subquery::lateral_derived(b, d, start, from)?",
+        replacement: "derived(b, d, start).or_at(d.query.at)?",
+        integration: &[EACH_ROW],
+        unit: &[],
+    },
+    Mutation {
+        name: "lateral-of-nothing-unnested",
+        package: Package::Core,
+        breaks: "a lateral derived table that reads nothing before it is planned as an UNNEST, not as its derived table",
+        file: LATERAL,
+        original: "if reads.is_empty() {",
+        replacement: "if reads.is_empty() && reads.len() > 1 {",
+        integration: &[OF_NOTHING],
+        unit: &[],
+    },
+    Mutation {
+        name: "lateral-columns-unrenamed",
+        package: Package::Core,
+        breaks: "a lateral derived table's columns keep its query's names, its derived column list left out",
+        file: LATERAL,
+        original: "if let Some(names) = &d.columns {",
+        replacement: "if let Some(names) = d.columns.as_ref().filter(|_| false) {",
+        integration: &[EACH_ROW],
+        unit: &[],
+    },
+    Mutation {
+        name: "lateral-fetch-dropped",
+        package: Package::Core,
+        breaks: "a lateral query's OFFSET and FETCH are left out, every row of it kept",
+        file: LATERAL,
+        original: ".or_at(s.at)?.limited();",
+        replacement: ".or_at(s.at)?;",
+        integration: &[EACH_ROW],
+        unit: &[],
+    },
+    Mutation {
+        name: "lateral-collection-raises",
+        package: Package::Core,
+        breaks: "an UNNEST of a subquery of one row is taken as raising, so an IN of a lateral's MIN reads the whole table",
+        file: PURE,
+        original: "    if let Expr::Subquery(s, _) = e {",
+        replacement: "    if let Some(s) = None::<&Subquery> {",
+        integration: &[ONE_ENTRY],
+        unit: &[],
+    },
+    Mutation {
+        name: "lateral-collection-of-many",
+        package: Package::Core,
+        breaks: "COLLECT of many rows is taken as raising nothing, so an IN of a lateral of many rows is a semi join",
+        file: PURE,
+        original: "let once = groups.is_empty() && input.one_row_at_most();",
+        replacement: "let once = groups.is_empty();",
+        integration: &[ONE_ENTRY],
+        unit: &[],
+    },
+    Mutation {
+        name: "collect-of-one-raises",
+        package: Package::Core,
+        breaks: "COLLECT of one row is taken as raising, so a lateral's MIN in an IN is no semi join",
+        file: MULTISETS,
+        original: "self.kind == Gathering::Collect",
+        replacement: "self.kind == Gathering::Collect && false",
+        integration: &[ONE_ENTRY],
+        unit: &[],
+    },
+    Mutation {
+        name: "lateral-estimate-unknown",
+        package: Package::Core,
+        breaks: "an UNNEST of a lateral's one row is estimated at the default fanout of rows for each row before it",
+        file: NODES,
+        original: "Expr::Subquery(s, _) => return gathered_once(&s.plan).then_some(1),",
+        replacement: "Expr::Subquery(..) => return None,",
+        integration: &[],
+        unit: &[LATERAL_ONE],
+    },
+    Mutation {
+        name: "lateral-field-untyped",
+        package: Package::Core,
+        breaks: "a lateral's column has no known type, so an IN of its MIN probes no key of the table it compares",
+        file: TYPED,
+        original: "return row.fields.get(at).map(|f| f.data_type.clone());",
+        replacement: "return row.fields.get(at).map(|f| f.data_type.clone()).filter(|_| false);",
+        integration: &[ONE_ENTRY],
         unit: &[],
     },
 ];

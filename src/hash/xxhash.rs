@@ -91,9 +91,9 @@ const PRIME64_4: u64 = 0x85EB_CA77_C2B2_AE63;
 /// `XXH_PRIME64_5`.
 const PRIME64_5: u64 = 0x27D4_EB2F_1656_67C5;
 /// `PRIME_MX1`, of `XXH3_avalanche`.
-const PRIME_MX1: u64 = 0x1656_6791_9E37_79F9;
+pub const PRIME_MX1: u64 = 0x1656_6791_9E37_79F9;
 /// `PRIME_MX2`, of `XXH3_rrmxmx` and the 128-bit 4 to 8 bytes.
-const PRIME_MX2: u64 = 0x9FB2_1C65_1E98_DF25;
+pub const PRIME_MX2: u64 = 0x9FB2_1C65_1E98_DF25;
 
 /// `XXH3_SECRET_SIZE_MIN`: the shortest secret XXH3 takes.
 pub const SECRET_SIZE_MIN: usize = 136;
@@ -318,6 +318,64 @@ impl Words {
     #[inline]
     pub fn pair(&self, first: u64, second: u64) -> u64 {
         short::hash64_9to16_words((first, second), self.pair_flips, 2 * WORD_LEN)
+    }
+
+    /// The 4 to 8 bytes' `bitflip` of its seed, which `hash` takes a word
+    /// turned by half by, before `XXH3_rrmxmx`: for kernels that hash many
+    /// words at once as `hash` hashes one.
+    pub fn bitflip(&self) -> u64 {
+        self.bitflip
+    }
+
+    /// The 9 to 16 bytes' `bitflip1` and `bitflip2` of its seed, which
+    /// `pair` takes its words by: for kernels that join many pairs at once.
+    pub fn pair_flips(&self) -> (u64, u64) {
+        self.pair_flips
+    }
+}
+
+/// \[DESIGN\] XXH3-64 of words and of bytes by one seed (RULES.md D357,
+/// D573), what depends on the seed alone made once: the flips of `Words`,
+/// and the secret of long inputs derived of it, so a long input is hashed
+/// with no secret derived again. Each hash is `xxh3_64_with_seed`'s.
+#[derive(Debug, Clone)]
+pub struct Seeded {
+    seed: u64,
+    words: Words,
+    /// The secret of inputs past 240 bytes, derived of the seed.
+    secret: std::sync::Arc<[u8; SECRET_DEFAULT_SIZE]>,
+}
+
+impl Seeded {
+    /// Words and bytes hashed by `seed`.
+    pub fn new(seed: u64) -> Seeded {
+        Seeded { seed, words: Words::new(seed), secret: std::sync::Arc::new(derive_secret(seed)) }
+    }
+
+    /// Its seed.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Its words' hashes (`Words`).
+    pub fn words(&self) -> &Words {
+        &self.words
+    }
+
+    /// `xxh3_64_with_seed` of `input`.
+    #[inline]
+    pub fn bytes(&self, input: &[u8]) -> u64 {
+        self.bytes_on(&Scalar, input)
+    }
+
+    /// `xxh3_64_with_seed` of `input`, the stripes of a long one by
+    /// `stripes`, as `xxh3_64_on` hashes it.
+    #[inline]
+    pub fn bytes_on<S: Stripes + ?Sized>(&self, stripes: &S, input: &[u8]) -> u64 {
+        if input.len() <= MIDSIZE_MAX || self.seed == 0 {
+            return long::hash64(stripes, input, self.seed, &DEFAULT_SECRET);
+        }
+        long::hash64(stripes, input, self.seed, &self.secret[..])
     }
 }
 

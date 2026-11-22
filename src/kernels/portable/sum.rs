@@ -36,6 +36,7 @@ fn halves(values: impl Iterator<Item = i64> + Clone) -> i128 {
 }
 
 /// The exact sum of `values` at `sel`, or of all.
+#[inline]
 pub fn sum_i64(values: &[i64], sel: Option<&[u32]>) -> i128 {
     match sel {
         None => values.chunks(CHUNK).map(|chunk| halves(chunk.iter().copied())).fold(0_i128, i128::wrapping_add),
@@ -48,6 +49,7 @@ pub fn sum_i64(values: &[i64], sel: Option<&[u32]>) -> i128 {
 
 /// The least and greatest of `values` of `given`, not null; none of no
 /// row.
+#[inline]
 pub fn min_max_i64(values: &[i64], (nulls, sel): Given<'_>) -> Option<(i64, i64)> {
     let held = |n: usize| !nulls.is_some_and(|m| m.get(n));
     let fold = |best: Option<(i64, i64)>, v: i64| Some(best.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))));

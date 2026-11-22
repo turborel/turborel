@@ -21,7 +21,8 @@
 //! * a projection, a sort, a window and a pattern recognition, their
 //!   input's; an UNNEST, its input's times the most elements of its
 //!   collections, if each is a constant or a slot whose value the
-//!   estimator is given (RULES.md D777), else times `UNNEST_FANOUT`;
+//!   estimator is given (RULES.md D777), or a lateral's of one row
+//!   (D779), else times `UNNEST_FANOUT`;
 //! * what has no count, the defaults of `cardinality.rs`.
 
 use super::joins::{columns_of, is_chain};
@@ -221,12 +222,14 @@ impl Estimates<'_> {
     /// The elements of the collection `e`, if a constant array or
     /// multiset, a slot whose value the estimator is given, a constructor
     /// by enumeration, of as many as its values [ISO/IEC 9075-2:2023 §6.49
-    /// GR2, §6.52 GR2], or a CAST of one.
+    /// GR2, §6.52 GR2], or a CAST of one; or one, of a subquery gathering
+    /// one row at most, as a lateral derived table's of MIN is (D779).
     fn elements(&self, e: &Expr) -> Option<usize> {
         let value = match e {
             Expr::Const(v) => v,
             Expr::Dynamic(slot) => self.values?.get(slot.index)?,
             Expr::Cast(inner, _) => return self.elements(inner),
+            Expr::Subquery(s, _) => return gathered_once(&s.plan).then_some(1),
             Expr::Call(f, args) => return [ARRAY, MULTISET].contains(&f.0.name()).then_some(args.len()),
             Expr::Column(_)
             | Expr::Neg(_)
@@ -235,7 +238,6 @@ impl Estimates<'_> {
             | Expr::Case(..)
             | Expr::Domain(..)
             | Expr::SortKey(..)
-            | Expr::Subquery(..)
             | Expr::Truth(_)
             | Expr::NextValue(_)
             | Expr::Invoked(_)
@@ -246,4 +248,13 @@ impl Estimates<'_> {
         }
         value.is_null().then_some(0)
     }
+}
+
+/// Whether `plan` gathers the rows of an input of one row at most into one
+/// collection, as a lateral derived table's of an ungrouped set function
+/// does (RULES.md D778, D779), so the collection has one element at most.
+fn gathered_once(plan: &LogicalPlan) -> bool {
+    let LogicalPlan::Aggregate { groups, aggs, input, .. } = plan else { return false };
+    let [a] = aggs.as_slice() else { return false };
+    groups.is_empty() && a.func.0.gathers() && input.one_row_at_most()
 }

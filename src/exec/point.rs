@@ -177,6 +177,7 @@ fn scan_of(plan: &Plan) -> Option<(Option<Vec<usize>>, &Plan)> {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => return None,
     };
     Some(given)

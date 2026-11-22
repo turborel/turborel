@@ -9,6 +9,7 @@ use super::held::HeldRows;
 use super::scan::{Found, probe_index};
 use super::{Runner, broken, eval_cond};
 use crate::catalog::{KeyShape, QualifiedName};
+use crate::engine::key::{decode_key, encode_columns};
 use crate::error::Result;
 use crate::index::{Key, KeyProjection, Probe};
 use crate::logical::{Truth, pushed_conjuncts};
@@ -16,7 +17,7 @@ use crate::noted::{self, Noted, Notes};
 use crate::physical::{Decided, Plan};
 use crate::storage::{Conjunction, Near, Row, RowId, TableStorage, row_id_of};
 use crate::txn::{TxId, checked, counted};
-use crate::value::Value;
+use crate::value::{DataType, Value};
 
 /// What the fetches of one scan of an index share: the columns they read,
 /// chosen once, and what the table keeps from read to read.
@@ -29,6 +30,9 @@ pub(in crate::exec) struct Reading {
     /// is dropped (RULES.md D621).
     notes: Option<Arc<Notes>>,
     counts: [usize; 3],
+    /// The key of the row last fetched, as an index holds it, made in
+    /// place of each row's (`fetch_encoded`).
+    key: Vec<u8>,
 }
 
 impl Drop for Reading {
@@ -78,7 +82,7 @@ impl Reading {
             read.dedup();
             read
         });
-        Reading { columns, near: Near::default(), projection, notes: noted::noting(), counts: [0; 3] }
+        Reading { columns, near: Near::default(), projection, notes: noted::noting(), counts: [0; 3], key: Vec::new() }
     }
 }
 
@@ -96,7 +100,7 @@ pub(in crate::exec) fn fetch(
     reading.entry();
     let Reading { columns, near, projection, counts, .. } = reading;
     let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
-    counts[1] = counts[1].saturating_add(1);
+    fetched(counts);
     // \[DESIGN\] (RULES.md D501) A key of the row's own values is checked
     // in place, with no key made of the row.
     if projection.is_none() && !ix.is_collated() && !ix.has_expressions() {
@@ -107,6 +111,41 @@ pub(in crate::exec) fn fetch(
         seen = project.project(&seen)?;
     }
     Ok((seen == *key).then_some((id, row)))
+}
+
+/// Counts a row fetched, of `counts` (`Reading`).
+fn fetched(counts: &mut [usize; 3]) {
+    counts[1] = counts[1].saturating_add(1);
+}
+
+/// \[DESIGN\] (RULES.md D821) As `fetch`, of an entry whose key is the
+/// bytes `key` of columns of `types`, of an index `fetch` checks in place:
+/// the row's key columns are encoded as the index made its entry of them,
+/// and the two compared as bytes. Equal bytes are of equal values; bytes
+/// not equal are decoded and compared as `fetch` compares, so it keeps
+/// every row `fetch` keeps, and no other.
+///
+/// # Errors
+///
+/// As `TableStorage::get_near`; as `encode_key` for a row whose key no
+/// index could hold; SQLCODE -916 for an entry whose key is malformed.
+pub(in crate::exec) fn fetch_encoded(
+    storage: &dyn TableStorage,
+    ix: &KeyShape,
+    reading: &mut Reading,
+    (tx, id): (TxId, RowId),
+    (key, types): (&[u8], &[DataType]),
+) -> Result<Option<Row>> {
+    reading.entry();
+    let Reading { columns, near, counts, key: made, .. } = reading;
+    let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
+    fetched(counts);
+    made.clear();
+    encode_columns(&row, &ix.columns, types, made)?;
+    if made.as_slice() == key {
+        return Ok(Some(row));
+    }
+    Ok(Key(decode_key(key, types)?).is_of(&row, &ix.columns).then_some(row))
 }
 
 /// \[DESIGN\] (RULES.md D34) The row of an entry of row `id` under `key`
@@ -217,7 +256,8 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..)) => Err(broken(&format!("not a table access: {other:?}"))),
+        | Plan::Parallel(..)
+        | Plan::Transfer(_)) => Err(broken(&format!("not a table access: {other:?}"))),
     }
 }
 
@@ -255,7 +295,8 @@ pub fn is_table_access(plan: &Plan) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => false,
+        | Plan::Parallel(..)
+        | Plan::Transfer(_) => false,
     }
 }
 

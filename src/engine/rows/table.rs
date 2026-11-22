@@ -140,6 +140,7 @@ impl RowTable {
             durable: Arc::clone(&files.durable),
             discarded: AtomicBool::new(false),
             sealing,
+            kernels: files.kernels(),
             frozen: Frozen::new(options.columns),
             freezes: Arc::clone(&files.freezes),
             zones,

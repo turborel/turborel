@@ -162,6 +162,13 @@ pub trait Subqueries {
         None
     }
 
+    /// The vector kernels its statement's batches run on (RULES.md D570):
+    /// a runner's, as EXECUTOR.KERNELS chose them; by default the portable
+    /// ones.
+    fn vector_kernels(&self) -> &dyn crate::kernels::Kernels {
+        &crate::kernels::Portable
+    }
+
     /// [X3.135-1986 §5.14 GR5] Whether `value` matches `pattern`, `escape`
     /// its escape character if given, of a LIKE whose pattern is not a
     /// constant, as `value::like` says: by default its pattern split each
@@ -455,6 +462,9 @@ fn rows_for(keyed: &Keyed, outer: &[Value], (limit, work): (Option<usize>, &mut 
 }
 
 impl Subqueries for Runner {
+    fn vector_kernels(&self) -> &dyn crate::kernels::Kernels {
+        self.kernels()
+    }
     fn rows(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> Result<SubqueryRows> {
         let at = subquery.id();
         let key = (at, outer.iter().map(exact_norm).collect());

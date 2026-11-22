@@ -234,6 +234,7 @@ impl Filling<'_> {
             | Plan::Polymorphic(..)
             | Plan::Recognize { .. }
             | Plan::WorkTable { .. }
+            | Plan::Transfer(_)
             | Plan::Counted(_) => fail(Code::Api, "[DESIGN] a kept plan holds an operator no kept plan holds"),
             Plan::Values { rows, detail } => Ok(Plan::Values { rows: self.rows(rows)?, detail }),
             Plan::Unnest(u) => self.unnest(*u),

@@ -1193,6 +1193,20 @@ CASE_INSENSITIVE say, that is the one DISTINCT keeps, the first it reads.
 PARTITION, which SQL-92 does not reserve, is read only before BY after an
 operand of a join.
 
+### Lateral derived tables
+
+Feature T491 (LATERAL derived table). `LATERAL (query) AS t [(names)]`
+is a `<table primary>` whose query may reference the table references
+before it in its FROM clause [§7.6 SR5, SR20a]. Its rows are its query's
+for each row before it (RULES.md D778).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Its syntax | §7.6 F | LATERAL then a `<table subquery>`, else SQLCODE -102. Its correlation name is not optional (SQLCODE -102). |
+| Its table | §7.6 SR10 | The table of its query, its columns named as the query names them, else by their place, renamed by a derived column list. An ORDER BY of the query says which rows OFFSET and FETCH keep. |
+| What it reads | §7.6 SR20a, §7.10 SR4 | Every table reference before it, a lateral one's columns too, after a comma or as the second operand of CROSS, INNER and LEFT joins. As the second operand of a RIGHT or FULL join it reads none of the first, and it reads no table reference after it (SQLCODE -103). A set function of its query over an outer reference to them is SQLCODE -103 [§6.9 SR7]. |
+| Its rows | §7.6 SR10, §7.10 GR1d | Its query's rows for each row before it, none of a row its query has none of. Of a LEFT join, a row its rows do not match is kept, its columns null. One that reads nothing before it is a derived table. |
+
 ### Grouping sets
 
 Features T431 (Extended grouping capabilities), T432 (Nested and
@@ -4467,6 +4481,7 @@ parts: `cargo xtask features` writes their rows from it, and
 | T132 | Recursive query in subquery | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
 | T133 | Enhanced cycle mark values | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
 | F403 | Partitioned join tables | [Partitioned joins](#partitioned-joins) |
+| T491 | LATERAL derived table | [Lateral derived tables](#lateral-derived-tables) |
 | T431 | Extended grouping capabilities | [Grouping sets](#grouping-sets) |
 | T432 | Nested and concatenated GROUPING SETS | [Grouping sets](#grouping-sets) |
 | T433 | Multi-argument GROUPING function | [Grouping sets](#grouping-sets) |

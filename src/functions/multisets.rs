@@ -283,6 +283,12 @@ impl AggregateFunction for MultisetAggregate {
     fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {
         Box::new(Gathered { kind: self.kind, by_query: self.by_query, elements: None })
     }
+    /// COLLECT gathers an element of each row, within any bound on a
+    /// multiset's elements of one row; FUSION and INTERSECTION gather the
+    /// elements of their values.
+    fn gathers(&self) -> bool {
+        self.kind == Gathering::Collect
+    }
 }
 
 fn no_argument(kind: Gathering) -> SqlError {

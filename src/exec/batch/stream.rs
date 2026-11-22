@@ -57,6 +57,8 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         Plan::Filter { input, .. } => layout(input, db),
         // [EXTENSION] a counted operator's, its input's (RULES.md D378).
         Plan::Counted(c) => layout(&c.input, db),
+        // A chain's after a phase of predicate transfer, or a leaf's it held (RULES.md D665).
+        Plan::Transfer(t) => super::transfer::layout(t, db),
         Plan::Product { .. } | Plan::HashJoin { .. } | Plan::OuterJoin { .. } | Plan::SemiJoin(_) | Plan::MarkJoin(_) => {
             joined::layout(plan, db)
         }
@@ -175,6 +177,8 @@ pub(super) fn untold(plan: &Plan) -> bool {
         Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => false,
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, .. } | Plan::Limit { input, .. } => untold(input),
         Plan::Counted(c) => untold(&c.input),
+        // A held leaf's batches are its own (RULES.md D668).
+        Plan::Transfer(t) => t.input().is_none_or(untold),
         // A mark join gives its left's batches on, marked (RULES.md D643).
         Plan::MarkJoin(m) => untold(&m.left),
         Plan::Parallel(p) => untold(&p.input),
@@ -219,6 +223,7 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, most: None, .. } => reads(input, db, joined),
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }) && reads(input, db, joined),
         Plan::Counted(c) => reads(&c.input, db, joined),
+        Plan::Transfer(t) => t.input().is_none_or(|input| reads(input, db, joined)),
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads(operand, db, joined)),
         Plan::Product { left, right, .. } | Plan::OuterJoin { left, right, .. } => reads(left, db, joined) && reads(right, db, joined),
         Plan::HashJoin { left, right, .. } => reads(left, db, true) && reads(right, db, true),
@@ -300,7 +305,7 @@ pub(in crate::exec) fn whole_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Ba
 /// As `open`.
 pub(super) fn whole_told(plan: Plan, (db, tx): (&Db, TxId), told: Vec<Told>) -> Result<Batches> {
     let width = layout(&plan, db).map_or(0, |(_, width)| width);
-    Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width).with_told(told))?))
+    Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width).with_told(told))?, crate::db::kernels::chosen(db)))
 }
 
 /// A function giving the batches of a plan of one kind, its columns the
@@ -347,6 +352,7 @@ fn made_of(plan: &Plan) -> Batched {
         Plan::Project { .. } => projected_batches,
         Plan::Append { .. } => appended_batches,
         Plan::Counted(_) => super::counted::batches,
+        Plan::Transfer(_) => super::transfer::batches,
         Plan::Window { .. } => window_batches,
         Plan::IndexScan { .. } => told::index_batches,
         Plan::IndexJoin { .. } => told::index_join_batches,

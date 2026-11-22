@@ -119,7 +119,9 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
         Plan::HashJoin { left, .. } => pipelined(left),
         Plan::Append { left, right, .. } => pipelined(left) && pipelined(right),
         Plan::Counted(c) => pipelined(&c.input),
-        Plan::Nearest(_)
+        // A phase reads its leaves whole before its chain (RULES.md D665).
+        Plan::Transfer(_)
+        | Plan::Nearest(_)
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)

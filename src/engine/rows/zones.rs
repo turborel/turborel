@@ -515,16 +515,11 @@ fn passes(zone: &Zone, tests: &[Test<'_>]) -> bool {
 
 impl RowTable {
     /// Widens the zone of row `id` to hold `row`, or a deletion, written
-    /// over the row's newest version `replaced`, if known (`Zones::widen`).
-    /// Only the columns kept are decoded of it; one that cannot be is
-    /// taken as not known.
-    pub(super) fn widen_over(&self, id: RowId, row: Option<&Row>, replaced: Option<&[u8]>) {
-        let kept = &self.zones.kept;
-        let old = replaced.filter(|_| !kept.is_empty()).and_then(|bytes| {
-            let version = Version::parse(bytes).ok().filter(|v| !v.deleted)?;
-            self.decode(id, version.record, Some(kept)).ok()
-        });
-        self.zones.widen(id, row, old.as_ref().map_or(Replaced::Unknown, Replaced::Row));
+    /// over the row's newest version, holding `replaced`, if known
+    /// (`Zones::widen`): the row the write replaced, decoded once for it
+    /// and the write's caller (RULES.md D835).
+    pub(super) fn widen_over(&self, id: RowId, row: Option<&Row>, replaced: Option<&Row>) {
+        self.zones.widen(id, row, replaced.map_or(Replaced::Unknown, Replaced::Row));
     }
 
     /// Widens the zone of row `id` to hold `version`, a version of it put

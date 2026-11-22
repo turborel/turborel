@@ -86,7 +86,7 @@ impl Late {
     /// # Errors
     ///
     /// As `LateSource::decode`.
-    pub fn resolved(&self, rows: Option<&[u32]>) -> Result<Column> {
+    pub fn resolved(&self, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<Column> {
         if self.picks.is_none() && rows.is_none() {
             return self.source.decode(self.column, &self.positions);
         }
@@ -104,20 +104,20 @@ impl Late {
         }
         wanted.dedup();
         let decoded = self.source.decode(self.column, &wanted)?;
-        let mut picks = vec![None; self.len()];
+        let mut picks = vec![super::NO_ROW; self.len()];
         for &r in rows {
             let at = self.place(index(r)).and_then(|p| self.positions.get(p)).and_then(|q| wanted.binary_search(q).ok());
             if let Some(slot) = picks.get_mut(index(r)) {
-                *slot = at;
+                *slot = at.and_then(|a| u32::try_from(a).ok()).unwrap_or(super::NO_ROW);
             }
         }
-        Ok(decoded.gathered(&picks))
+        Ok(decoded.gathered_by(&super::Picks::new(&picks), kernels))
     }
 
     /// Its values decoded whole, made once: for a reader that did not
     /// resolve it, none if decoding failed.
     pub fn made(&self) -> Option<&Column> {
-        self.made.get_or_init(|| self.resolved(None).ok().map(Box::new)).as_deref()
+        self.made.get_or_init(|| self.resolved(None, &crate::kernels::Portable).ok().map(Box::new)).as_deref()
     }
 
     /// The rows at `picks`, in order, a null for none: still late, its
@@ -151,15 +151,15 @@ impl Late {
 impl Batch {
     /// \[DESIGN\] (RULES.md D361) Decodes each late column of the rows
     /// `rows`, or of all, the others null, so it is read as the scan would
-    /// have given it.
+    /// have given it, its integers gathered by `kernels` (RULES.md D570).
     ///
     /// # Errors
     ///
     /// As `LateSource::decode`.
-    pub fn resolve(&mut self, rows: Option<&[u32]>) -> Result<()> {
+    pub fn resolve(&mut self, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<()> {
         for column in &mut self.columns {
             if let Column::Late(late) = column {
-                *column = late.resolved(rows)?;
+                *column = late.resolved(rows, kernels)?;
             }
         }
         Ok(())

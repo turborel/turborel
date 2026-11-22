@@ -53,10 +53,12 @@ mod sorts;
 mod statistics;
 mod subquery_plans;
 mod tpcc;
+mod transfer;
 mod txn_layer;
 mod undo_memory;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
+mod kernels;
 mod mark_joins;
 mod semi_joins;
 mod steady;
@@ -195,14 +197,15 @@ fn second() -> [&'static [Mutation]; 47] {
 }
 
 /// The planner's newest areas, in order: join estimates, range joins, the
-/// cost model, orders and probed subqueries.
-fn planner() -> [&'static [Mutation]; 5] {
+/// cost model, orders, probed subqueries and predicate transfer.
+fn planner() -> [&'static [Mutation]; 6] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
         &cost_model::COST_MODEL,
         &orders::ORDERS,
         &probed_subqueries::PROBED_SUBQUERIES,
+        &transfer::TRANSFER,
     ]
 }
 
@@ -252,9 +255,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
-/// sessions' own copies', the shared lines' and the server's lines' last,
-/// as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 18] {
+/// sessions' own copies', the shared lines', the server's lines' and the
+/// kernels' last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 19] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -274,6 +277,7 @@ fn closing() -> [&'static [Mutation]; 18] {
         &own_copies::OWN_COPIES,
         &shared_lines::SHARED_LINES,
         &server_lines::SERVER_LINES,
+        &kernels::KERNELS,
     ]
 }
 

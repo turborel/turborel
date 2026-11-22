@@ -99,6 +99,27 @@ impl Gathering {
         self.rows
     }
 
+    /// \[DESIGN\] Room in each column's vector for `rows` rows in all, so
+    /// a batch grows to them at once, not doubling from none as each
+    /// batch's vectors are handed on (RULES.md D822).
+    pub(in crate::engine::rows) fn reserve(&mut self, rows: usize) {
+        let more = rows.saturating_sub(self.rows);
+        for (_, vector) in &mut self.columns {
+            match vector {
+                Gathered::Ints { units, .. } => units.reserve(more),
+                Gathered::Texts { ends, .. } => ends.reserve(more),
+                Gathered::Datetimes(held, _) => {
+                    held.1.utc.reserve(more);
+                    if let Some(zones) = &mut held.1.zones {
+                        zones.reserve(more);
+                    }
+                }
+                Gathered::Bools(..) => {}
+                Gathered::Values(values) => values.reserve(more),
+            }
+        }
+    }
+
     /// Whether it reads any column.
     pub(in crate::engine::rows) fn reads_any(&self) -> bool {
         !self.columns.is_empty()

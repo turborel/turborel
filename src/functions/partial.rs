@@ -87,8 +87,8 @@ impl Accumulator for PartAcc {
     fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         self.0.update_many(values, rows)
     }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
-        self.0.update_ints(ints, rows)
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<()> {
+        self.0.update_ints(ints, rows, kernels)
     }
     fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         self.0.update_floats(floats, rows)

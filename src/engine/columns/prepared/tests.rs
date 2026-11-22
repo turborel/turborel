@@ -51,7 +51,16 @@ fn file() -> (std::sync::Arc<BufferPool>, FileId) {
 
 /// A group of `ROWS` rows, its pages of 2,048 bytes.
 fn group(pool: &BufferPool, file: FileId) -> (Pages<'_, Plain>, Group) {
-    let pages = Pages { pool, file, capacity: 2048, sealing: &Plain, compress: true, pax: false, imprints: true };
+    let pages = Pages {
+        pool,
+        file,
+        capacity: 2048,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+    };
     let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
     let all: Vec<Row> = (0..ROWS).map(row).collect();
     let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[], &[])).unwrap();

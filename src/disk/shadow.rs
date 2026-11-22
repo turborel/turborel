@@ -70,17 +70,14 @@
 
 mod file;
 mod flight;
-mod pace;
 mod side;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use self::file::{Shadow, ShadowFile};
-use self::pace::{Pace, Spreading};
 use self::side::{At, SIDES, base_of, side_path};
 use super::io::{DiskFile, FileLock, FileSystem, OpenMode, walk};
 use crate::error::{Code, Result, SqlError};
@@ -101,20 +98,12 @@ pub struct ShadowFileSystem {
     files: Mutex<HashMap<PathBuf, Arc<Shadow>>>,
     /// Whether writes are held, files opened meanwhile too.
     holding: AtomicBool,
-    /// The span commits are spread over (RULES.md D812).
-    spreading: Spreading,
 }
 
 impl ShadowFileSystem {
     /// Shadows the files of `inner`, side files checksummed with `hash`.
     pub fn new(inner: Arc<dyn FileSystem>, hash: Arc<dyn HashFunction>) -> ShadowFileSystem {
-        ShadowFileSystem {
-            inner,
-            hash: Mutex::new(hash),
-            files: Mutex::new(HashMap::new()),
-            holding: AtomicBool::new(false),
-            spreading: Spreading::default(),
-        }
+        ShadowFileSystem { inner, hash: Mutex::new(hash), files: Mutex::new(HashMap::new()), holding: AtomicBool::new(false) }
     }
 
     /// Side files made from now on are checksummed with `hash` (RULES.md
@@ -221,20 +210,9 @@ impl ShadowFileSystem {
     /// a file whose commit block was made durable is committed when opened,
     /// one whose was not by the next commit.
     pub fn commit_sealed(&self) -> Result<()> {
-        let known = self.known();
-        let mut pace = Pace::new(&self.spreading, known.iter().map(|s| s.sealed_bytes()).sum());
-        known.iter().try_for_each(|s| s.commit_sealed(&mut pace))?;
-        // Each known kept no longer, so a file with no handle is forgotten.
-        drop(known);
+        self.known().iter().try_for_each(|s| s.commit_sealed())?;
         lock_builtin(&self.files).retain(|_, s| Arc::strong_count(s) > 1 || !s.clean());
         Ok(())
-    }
-
-    /// \[DESIGN\] Spreads the writes of the commits from now on over about
-    /// `over` each, or, `None`, makes them at once, as they are by default
-    /// (RULES.md D812). A commit going on hurries as it is told `None`.
-    pub fn spread_commits(&self, over: Option<Duration>) {
-        self.spreading.set(over);
     }
 
     /// Seals and commits what every file known has written.

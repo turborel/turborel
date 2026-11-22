@@ -111,17 +111,23 @@ fn nodes_pure(plan: &LogicalPlan, depth: usize) -> bool {
 /// Whether running `plan` can raise an error, as `Subquery::can_raise`
 /// judges it, but a set function the registry `functions` knows is COUNT,
 /// MAX or MIN, of an argument and filter that cannot, raises none, as no
-/// count reaches its type's limit and an extreme only compares.
+/// count reaches its type's limit and an extreme only compares; nor one
+/// that raises nothing of one row, of an input of one row at most; nor a
+/// collection of an UNNEST that is a subquery of one row at most raising
+/// nothing, as a lateral derived table's is (RULES.md D779).
 pub(super) fn plan_raises(plan: &LogicalPlan, functions: &Registry) -> bool {
     let own = match plan {
         LogicalPlan::Filter { cond, .. } | LogicalPlan::OuterJoin { cond, .. } | LogicalPlan::SemiJoin { cond, .. } => cond.can_raise(),
         LogicalPlan::MarkJoin(m) => m.conds().any(Cond::can_raise),
         LogicalPlan::Project { exprs, .. } => exprs.iter().any(Expr::can_raise),
-        LogicalPlan::Aggregate { aggs, .. } => aggs.iter().any(|a| agg_raises(a, functions)),
+        LogicalPlan::Aggregate { aggs, groups, input, .. } => {
+            let once = groups.is_empty() && input.one_row_at_most();
+            aggs.iter().any(|a| agg_raises(a, functions) && !(once && raise_free_once(a)))
+        }
         LogicalPlan::Values { rows, .. } => rows.iter().flatten().any(Expr::can_raise),
         LogicalPlan::Unnest(u) => {
             let special = u.json.is_some() || u.graph.is_some();
-            special || u.collections.iter().any(Expr::can_raise) || u.outer.as_ref().is_some_and(Cond::can_raise)
+            special || u.collections.iter().any(|c| collection_raises(c, functions)) || u.outer.as_ref().is_some_and(Cond::can_raise)
         }
         LogicalPlan::Window(w) => w.can_raise(),
         LogicalPlan::Limit { limit, .. } => {
@@ -144,8 +150,30 @@ pub(super) fn plan_raises(plan: &LogicalPlan, functions: &Registry) -> bool {
 /// Whether computing `a` can raise an error.
 fn agg_raises(a: &AggCall, functions: &Registry) -> bool {
     let safe = matches!(functions.standard(&a.func), Some(Standard::Count | Standard::Max | Standard::Min));
-    let parts = a.exprs().into_iter().any(Expr::can_raise) || a.filter.as_ref().is_some_and(Cond::can_raise);
-    !safe || parts || a.distribution.is_some()
+    !safe || parts_raise(a)
+}
+
+/// Whether `a`, of one row at most, raises nothing (RULES.md D779).
+fn raise_free_once(a: &AggCall) -> bool {
+    a.func.0.gathers() && !parts_raise(a)
+}
+
+/// Whether computing the argument or filter of `a` can raise an error, or
+/// its distribution, which is taken as raising.
+fn parts_raise(a: &AggCall) -> bool {
+    a.exprs().into_iter().any(Expr::can_raise) || a.filter.as_ref().is_some_and(Cond::can_raise) || a.distribution.is_some()
+}
+
+/// Whether computing the collection `e` of an UNNEST can raise an error. A
+/// subquery of one row at most raises what its outer expressions and plan
+/// raise, as it raises no cardinality violation [ISO/IEC 9075:1992 §7.11
+/// GR1].
+fn collection_raises(e: &Expr, functions: &Registry) -> bool {
+    if let Expr::Subquery(s, _) = e {
+        !s.plan.one_row_at_most() || s.outer.iter().any(Expr::can_raise) || plan_raises(&s.plan, functions)
+    } else {
+        e.can_raise()
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §7.17 GR5] Whether `e` is a row count that raises

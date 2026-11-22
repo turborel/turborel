@@ -58,7 +58,7 @@ fn a_part_is_fed_as_its_function() {
     let count = AggregateRef(Arc::new(Count));
     let mut acc = Partial { func: count.clone(), result: WHOLE }.accumulator(PART_TYPE);
     acc.update_many(&[int(1), Value::Null], None).unwrap();
-    acc.update_ints(&Ints::new(vec![1, 2], 0, None), None).unwrap();
+    acc.update_ints(&Ints::new(vec![1, 2], 0, None), None, &crate::kernels::Portable).unwrap();
     acc.update_floats(&Floats::new(vec![1.0_f64], None), None).unwrap();
     acc.update_texts(&Texts::new("a".to_owned(), vec![1], None), None).unwrap();
     acc.update_rows(2).unwrap();
