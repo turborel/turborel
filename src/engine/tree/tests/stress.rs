@@ -53,11 +53,24 @@ fn value(k: u64, version: u64, len: u64) -> Vec<u8> {
     v
 }
 
+/// A run of thread `t`'s keys from its `i`th, side by side in leaves, read
+/// through `kept` and checked against `model` (D806).
+fn read_run(tree: &BLinkTree, (t, i): (u64, u64), model: &BTreeMap<[u8; 8], Vec<u8>>, kept: &mut Near) {
+    for j in i..i.saturating_add(4).min(KEYS) {
+        let k = owned(t, j);
+        let found = tree.get_near(&k, kept).unwrap();
+        assert_eq!(found.then(|| kept.bytes.clone()), model.get(&k).cloned(), "thread {t} key {j}, kept");
+    }
+}
+
 /// One thread's work: each step a write or a read of one of its keys,
 /// checked against `model`, or a read of another thread's key, or a short
 /// scan checked for order.
 fn work(tree: &BLinkTree, t: u64, model: &mut BTreeMap<[u8; 8], Vec<u8>>) {
     let mut seq = Seq(t.checked_add(1).unwrap());
+    // Kept from read to read, as a scan keeps it: its leaf's copy is read
+    // while other threads split, change and take out leaves (D806).
+    let mut kept = Near::default();
     for step in 0..STEPS {
         let i = seq.next(KEYS);
         let k = owned(t, i);
@@ -74,7 +87,8 @@ fn work(tree: &BLinkTree, t: u64, model: &mut BTreeMap<[u8; 8], Vec<u8>>) {
                 }
             }
             4..=5 => assert_eq!(tree.delete(&k).unwrap(), model.remove(&k)),
-            6..=7 => {
+            6 => read_run(tree, (t, i), model, &mut kept),
+            7 => {
                 // From a leaf noted for another key: often not the key's.
                 let other = owned(seq.next(THREADS), seq.next(KEYS));
                 let noted = tree.descend(Target::Key(&other), 0, &mut Path::default(), |_| Ok(())).unwrap().0;

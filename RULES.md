@@ -496,6 +496,8 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
+| D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
 | D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
 | D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
 | D782 | What every transaction writes is alone on its cache lines, apart from what others read |
@@ -13833,6 +13835,27 @@ request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
 
+#### D790. A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would
+
+A subquery run EXECUTOR.DECORRELATE_AFTER_RUNS times is decorrelated
+(`exec/subquery.rs`). It runs once without its equalities with outer
+references and builds every row it gives into a keyed table. For a
+scalar subquery over a table's key, such as a price read by an item's
+id, that build is the whole table, made again by each statement that
+runs the subquery past those runs. A run whose plan is kept as one probe
+of a whole unique key (D675) costs a single descent instead.
+
+So the runner keeps such a subquery probed past those runs
+(`exec/subquery/probed.rs`). It decorrelates it only once its probes,
+each weighed as `PROBE_ROWS` rows built, reach the rows the build would
+hold, as planning estimates them. The runs so far stand for the runs to
+come. Up to that point the probes cost no more than the build, and past
+it a build is as likely to pay as not. A subquery whose run is any other
+plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
+before. A probe plan is kept from the first run even when decorrelation
+is due before a plan could be learned, since a unique probe needs no
+learning.
+
 #### D780. A session keeps its own copy of the definitions' snapshot, taken again only once one is published
 
 Each statement took the database's snapshot of its definitions by
@@ -13971,6 +13994,23 @@ only once one was published since it last was (`Database::publications`).
 A connection's state is an atomic its row shares, set with no lock.
 The session's settings told in Status are read from its own snapshot
 (D780).
+
+#### D806. A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged
+
+A read by key that keeps its leaf from read to read (`get_near`, D500),
+as a fetch of rows by id from an index's entries does, found the next
+row in the same leaf without a descent, but still read the page from
+the pool and parsed it for each row: the frame's hint looked up, its
+latch's reader count written, the eviction policy told. Once the leaf
+answers two reads in a row, the read now copies it, with the stamp of
+its frame (D502), into what it keeps. Later reads take the copy while
+the frame's version and page are as stamped, which is two loads and no
+write, and the stamp of the tree's retirements as before. Any write of
+the leaf moves the version on before it changes a byte, so a copy read
+is the leaf as it is. A copy that is no longer current is dropped and
+the leaf read again from the pool, and copied again if it answers.
+Reads of keys of other leaves copy nothing, so a probe of scattered
+rows costs no page copy.
 
 ## 2. Project layout
 

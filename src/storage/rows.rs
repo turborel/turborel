@@ -4,6 +4,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::disk::buffer::Stamp;
 use crate::error::{Code, Result, SqlError};
 use crate::txn::{NO_TRANSACTION, TxId};
 use crate::value::{Decimal, Value};
@@ -85,6 +86,11 @@ pub struct Near {
     pub(crate) at: Option<usize>,
     /// The value read, kept so each read does not allocate one.
     pub(crate) bytes: Vec<u8>,
+    /// A copy of the page of the last read, taken once it answered two
+    /// reads in a row, and the page and its frame's stamp then: later
+    /// reads of it take the copy while the stamp holds (`tree/near.rs`).
+    pub(crate) page: Vec<u8>,
+    pub(crate) kept: Option<(u64, Stamp)>,
     /// The reading transaction, the table and its bookkeeping there, found
     /// by the last read (`rows/mvcc/open.rs`).
     pub(crate) open: Option<(TxId, usize, Arc<dyn Any + Send + Sync>)>,
