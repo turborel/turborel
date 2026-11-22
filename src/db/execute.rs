@@ -253,6 +253,14 @@ impl Session {
         self.begin_in(st, &tx, matches!(params.load(), Some(Load::Going | Load::Ending)))?;
         let cx = StatementContext { st, tx: &tx };
         let ran = self.run_statement(cx, stmt, params, keeping);
+        // THROWAWAY lock-release bound: a CALL's reply does not wait here,
+        // holding its rows, for the commits it wrote over to be durable.
+        // Its mark stays, so its commit waits for them after its locks are
+        // released, its own commit later than theirs, and so does the next
+        // reply of its transaction.
+        if matches!(stmt, SqlStatement::Call(_)) {
+            return self.db.noted(settled(cx, stmt, ran));
+        }
         self.db.noted(self.replied(&tx, settled(cx, stmt, ran)))
     }
 
