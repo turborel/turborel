@@ -35,7 +35,7 @@ mod goals;
 mod grouping;
 mod indexed;
 mod join_probe;
-pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spatial, Supplied, Unmatched};
+pub use join_probe::{Fields, JoinComparison, JoinProbe, OuterBound, Paired, Preserved, Ranged, Spatial, Supplied, Unmatched};
 mod join;
 pub use join::JoinKey;
 mod kept;

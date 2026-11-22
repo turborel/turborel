@@ -143,7 +143,7 @@ pub const TPCC: [Mutation; 13] = [
         package: Package::Core,
         breaks: "a kept write keeps the plan one run made with its values, not the one with its slots",
         file: "src/db/prepared/plans.rs",
-        original: "let learned = was.after(&plan, super::super::plan_rows_slotted(self.st, w.rows.clone(), values));",
+        original: "let learned = was.after(&plan, super::super::plan_written_slotted(self.st, w.rows.clone(), values));",
         replacement: "let learned = was.after(&plan, plan.clone());",
         integration: &["kept_routines::a_kept_write_learns_its_plan_and_changes_each_calls_rows"],
         unit: &[],

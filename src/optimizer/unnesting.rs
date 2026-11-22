@@ -46,6 +46,7 @@ mod found;
 mod joined;
 mod marked;
 mod pure;
+mod scalar;
 mod semi;
 mod simple;
 mod typed;

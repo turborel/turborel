@@ -251,7 +251,7 @@ impl PhysicalPlanner<'_> {
 /// `probe_columns`.
 fn probe_columns_known(probe: &JoinProbe) -> bool {
     match probe {
-        JoinProbe::Prefix(_) | JoinProbe::Columns(_) => true,
+        JoinProbe::Prefix(_) | JoinProbe::Columns(_) | JoinProbe::Range(_) => true,
         JoinProbe::Predicate { beside, .. } => beside.is_none(),
     }
 }
@@ -260,6 +260,7 @@ fn probe_columns_known(probe: &JoinProbe) -> bool {
 fn probe_columns(probe: &JoinProbe) -> Vec<usize> {
     match probe {
         JoinProbe::Prefix(cols) => cols.to_vec(),
+        JoinProbe::Range(r) => r.equal.iter().copied().chain(r.bounds.iter().map(|b| b.outer)).collect(),
         JoinProbe::Columns(compared) => compared.iter().map(|c| c.outer).collect(),
         JoinProbe::Predicate { outer, .. } => vec![*outer],
     }
@@ -269,6 +270,13 @@ fn probe_columns(probe: &JoinProbe) -> Vec<usize> {
 fn renumbered_probe(probe: JoinProbe, gone: &Gone) -> JoinProbe {
     match probe {
         JoinProbe::Prefix(cols) => JoinProbe::Prefix(cols.iter().map(|&c| gone.moved(c)).collect()),
+        JoinProbe::Range(mut r) => {
+            for b in &mut r.bounds {
+                b.outer = gone.moved(b.outer);
+            }
+            r.equal = r.equal.iter().map(|&c| gone.moved(c)).collect();
+            JoinProbe::Range(r)
+        }
         JoinProbe::Columns(mut compared) => {
             for c in &mut compared {
                 c.outer = gone.moved(c.outer);

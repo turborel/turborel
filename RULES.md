@@ -491,6 +491,11 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D773 | A comparison with an uncorrelated subquery of one row at most is a semi join with its row |
+| D774 | A semi join of a few right rows probes the left's table from them, by the distinct values its equalities compare |
+| D775 | The object rows of a searched UPDATE or DELETE may be a semi join, which keeps the table's rows alone |
+| D776 | An index join bounds the key's column after its equalities by values of the outer row |
+| D777 | An UNNEST is estimated by its collections' elements, when each is a constant, a slot whose value is given or a constructor of its values |
 
 ### The project
 
@@ -13695,6 +13700,130 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
+#### D773. A comparison with an uncorrelated subquery of one row at most is a semi join with its row
+
+DELIVERY takes the least new order of a district and deletes it, which a
+driver may write as one statement, `NO_O_ID = (SELECT MIN(NO_O_ID)
+...)`. The subquery was run once and its value compared with
+every row of the district's NEW_ORDER rows read whole, as no index probe
+was made of a value not known as planned. A conjunct of WHERE or HAVING
+that compares a value of the row with a column of an uncorrelated scalar
+or row subquery is true of a row exactly when the subquery has a row and
+the comparison with it is true: of no row the value is null and the
+comparison unknown [X3.135-1986 §5.11 GR1, §5.24 GR2]. So, of a subquery
+that gives one row at most by its shape, an ungrouped set function's or
+one fetched first (`LogicalPlan::one_row_at_most`), the node's rows are
+those of the semi join of its input with the subquery's rows on the
+comparisons (`optimizer/unnesting/scalar.rs`). A subquery that could give
+more would raise its cardinality error, which no join raises, so it is
+left. As the other semi joins are (D541), it is made only of a pure
+subquery that cannot raise, and of comparisons that cannot, and the
+subquery may stand nowhere else in the condition. Of several such
+subqueries the right is the product of their rows, itself one row at
+most, so that STOCK-LEVEL's `OL_O_ID < (...) AND OL_O_ID >= (...)`
+bounds one probe from both sides. The planner then probes the input's
+index from the subquery's row (D774), by an equality or as a range of
+keys (D776).
+
+#### D774. A semi join of a few right rows probes the left's table from them, by the distinct values its equalities compare
+
+A semi join probed an index of the right's table from the left's rows
+when those were few (D540), but a set of a few keys, an IN of a
+subquery of UNNEST or of VALUES or an EXISTS equating the key with an
+array's elements, is the right, and the left read its table whole to hash
+it or probe it. A semi join's rows are the left's rows some right row
+matches, each once. Of a right of one row at most, they are the left's
+rows of the inner join of the right with the left on the condition. Of a
+condition whose conjuncts that read the right are each an equality of a
+left column and a right one, they are the left's rows of the inner join
+of the distinct values of the right's columns compared with the left: a
+left row's values make the one row of them it matches. That join is
+planned as any inner join, its index probes priced against the read of
+the left's table they replace (D35, D386), and taken when it probes an
+index of the left's table from each of its rows (`physical/semi/probed.rs`);
+else the semi join is planned as before. An antijoin is not, as the rows
+it keeps are those no probe finds. Its rows come in no order of the left's.
+
+Three judgements kept such a semi join from being made, or its probes
+from being typed. An array constructor by enumeration raises nothing, as
+its elements are cast as bound and their number checked then [ISO/IEC
+9075-2:2023 §6.49 SR2, GR2], so it no longer keeps a subquery nested
+(`functions/arrays.rs`). A CAST of a constant raises only what casting
+that constant raises, judged as it is planned (`logical/raises.rs`).
+And a column of a projection, of an UNNEST or of a grouping has the
+declared type of the expression, the collection's element or the
+aggregate that gives it, where those are known
+(`physical/indexed/typed.rs`), so a probe compares a key with a value of
+its type.
+
+#### D775. The object rows of a searched UPDATE or DELETE may be a semi join, which keeps the table's rows alone
+
+The object rows of a searched UPDATE or DELETE were planned with every
+subquery left nested (D318), so a join would not make the plan other than
+an access to the table changed. An IN of a few keys' subquery, or an
+EXISTS of one, was then run for each row of the table, and the plan read
+the table whole. A semi join's rows are its left's alone, each once, so
+they are the object rows the condition selects. These plans are now
+optimized with the semi joins (D541, D773) made, and the others still
+left (`db/compiled.rs`, `plan_written`), so the table's index is probed
+from the few keys (D774). No access to the table reads the rows such a
+plan keeps, so their ids are not given with them. A plan that is no
+table access is planned again of the object table's scan located, each
+row followed by its id (`storage::located`), which the semi joins,
+filters and projections over it keep last (`db/compiled/located.rs`).
+Its rows are read and the ids taken off them (`exec/entries.rs`). A
+plan whose object scan lies under another node is planned as before. An
+updatable cursor's plan is planned as before.
+
+#### D776. An index join bounds the key's column after its equalities by values of the outer row
+
+STOCK-LEVEL's join of DISTRICT and ORDER_LINE equates the warehouse and
+the district and keeps the lines of `OL_O_ID < D_NEXT_O_ID AND OL_O_ID >=
+D_NEXT_O_ID - 20`, a few orders' lines of the district's many. A
+probe of the equalities alone read every line of the district, each then
+judged by the bounds. Where the index's next column after those its
+equalities give is compared by order with an outer column, or with a sum
+or difference of one and a constant that raises nothing by the declared
+types (D373), the probe reads the keys between the bounds alone
+(`JoinProbe::Range`, `physical/indexed/bounded.rs`). A bound is taken
+only of a column of exact numbers or datetimes, of the outer value's
+kind, whose comparison the index's order answers exactly [X3.135-1986
+§5.11 GR2, GR5], so the conjuncts it answers are judged of no pair again;
+a null bound matches no key, as its comparison is unknown. Each bound
+keeps the default share of a range of the rows the equalities find, and
+the probes are priced so against the read they replace. Two bounds of
+one outer column, as `D_NEXT_O_ID - 20` and `D_NEXT_O_ID`, keep instead
+the share their constants' distance is of the column's distinct values.
+A kept plan may hold such a join (D418).
+
+Four steps bring such a join to the probe. A filter over a product, and
+a join's condition, that raises nothing by its columns' declared types
+is split among the operands and hashed as any (D15, D373), where the
+judgement by expressions alone kept it whole. A column the inner table's
+own filter fixes makes an index's prefix also where the index's next
+column is bounded by the outer row (D761, `physical/indexed/fixed.rs`),
+as the order of a subquery's row bounds it. A join enumerated with no
+equality of two columns stated takes those implied (D387), so the
+bounds' table may still be probed by key (`enumerate/realize.rs`). And a
+range join is priced against the probes too, the columns the inner
+table's filter fixes among their keys, net of the inner table's read
+they replace, as the range join's own price leaves its operands' reads
+out (`physical/range/planned.rs`).
+
+#### D777. An UNNEST is estimated by its collections' elements, when each is a constant, a slot whose value is given or a constructor of its values
+
+An UNNEST was estimated at `UNNEST_FANOUT` rows for each row of its input,
+whatever its collections held, so the probes of a few host arrays' keys
+were weighed at rows the arrays did not have. Of collections that are
+each a constant array or multiset, or a slot whose value the planner is
+given, as a prepared statement's or a kept body's are (D45, D414), or a
+constructor by enumeration, whose elements are as many as its values
+[ISO/IEC 9075-2:2023 §6.49 GR2, §6.52 GR2], the estimate is each input
+row times the elements of the longest, a null one none [§7.6 SR8f,
+SR8h], and at least one
+(`physical/cardinality/nodes.rs`). A JSON table and GRAPH_TABLE, planned
+as UNNEST is, keep the default.
 
 ## 2. Project layout
 

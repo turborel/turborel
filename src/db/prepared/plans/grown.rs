@@ -143,9 +143,10 @@ fn probed(plan: &Plan, st: &State, found: &mut Vec<(QualifiedName, Vec<usize>)>)
             found.push((table.clone(), ix.columns.iter().copied().take(fixed).collect()));
             true
         }
-        Plan::IndexJoin { outer: Preserved::Inner, spatial: None, left, table, index, probe: JoinProbe::Prefix(columns), .. } => {
+        Plan::IndexJoin { outer: Preserved::Inner, spatial: None, left, table, index, probe, .. } => {
             let Some(ix) = st.catalog.index(index) else { return false };
-            found.push((table.clone(), ix.columns.iter().copied().take(columns.len()).collect()));
+            let Some(fixed) = join_fixed(probe) else { return false };
+            found.push((table.clone(), ix.columns.iter().copied().take(fixed).collect()));
             probed(left, st, found)
         }
         Plan::Filter { input, .. }
@@ -178,6 +179,17 @@ fn probed(plan: &Plan, st: &State, found: &mut Vec<(QualifiedName, Vec<usize>)>)
         | Plan::Transition { .. }
         | Plan::Parallel(..)
         | Plan::Counted(_) => false,
+    }
+}
+
+/// How many of an index's first columns an index join's `probe` fixes
+/// equal, if it is a probe of a prefix, or of one and bounds (RULES.md
+/// D776).
+fn join_fixed(probe: &JoinProbe) -> Option<usize> {
+    match probe {
+        JoinProbe::Prefix(columns) => Some(columns.len()),
+        JoinProbe::Range(r) => Some(r.equal.len()),
+        JoinProbe::Columns(_) | JoinProbe::Predicate { .. } => None,
     }
 }
 

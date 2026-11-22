@@ -23,6 +23,7 @@ mod pushed;
 mod raises;
 mod render;
 mod sets;
+mod single;
 mod subqueries;
 mod subquery;
 mod unnest;

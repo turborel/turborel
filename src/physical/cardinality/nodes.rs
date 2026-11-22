@@ -19,12 +19,15 @@
 //!   the smaller operand; EXCEPT, at most the left;
 //! * a limit, its input's past its offset, at most its count;
 //! * a projection, a sort, a window and a pattern recognition, their
-//!   input's; an UNNEST, its input's times `UNNEST_FANOUT`;
+//!   input's; an UNNEST, its input's times the most elements of its
+//!   collections, if each is a constant or a slot whose value the
+//!   estimator is given (RULES.md D777), else times `UNNEST_FANOUT`;
 //! * what has no count, the defaults of `cardinality.rs`.
 
 use super::joins::{columns_of, is_chain};
 use super::lineage::{Over, one_table, origin};
 use super::{Card, Estimates, FUNCTION_ROWS, MAX_ESTIMATE_DEPTH, RECURSIVE_ROWS, UNKNOWN_ROWS, UNNEST_FANOUT, at_least_one};
+use crate::functions::{ARRAY, MULTISET};
 use crate::logical::{Cond, Expr, Limit, LogicalPlan, OuterJoin, SetOp, map_cond_columns, split_and};
 use crate::physical::estimate::{Known, selectivity};
 use crate::storage::cost_of;
@@ -65,7 +68,7 @@ impl Estimates<'_> {
             LogicalPlan::Window(w) => self.card_at(&w.input, next),
             LogicalPlan::Recognize(r) => self.card_at(&r.input, next),
             LogicalPlan::Values { rows, .. } => Card::exact(cost_of(rows.len())),
-            LogicalPlan::Unnest(u) => Card::guess(self.card_at(&u.input, next).rows * UNNEST_FANOUT),
+            LogicalPlan::Unnest(u) => self.unnested((&u.collections, u.json.is_some() || u.graph.is_some()), self.card_at(&u.input, next)),
             LogicalPlan::Recursive { .. } | LogicalPlan::WorkTable { .. } => Card::guess(RECURSIVE_ROWS),
             LogicalPlan::Polymorphic(..) => Card::guess(FUNCTION_ROWS),
             LogicalPlan::System { .. } | LogicalPlan::Transition { .. } => Card::guess(UNKNOWN_ROWS),
@@ -193,5 +196,54 @@ fn limited(limit: &Limit, input: Card) -> Card {
     match limit.most() {
         Some(most) => Card { rows: left.min(cost_of(most)), upper: input.upper.min(cost_of(most)) },
         None => Card { rows: left, upper: input.upper },
+    }
+}
+
+impl Estimates<'_> {
+    /// The card of an UNNEST of `collections` over rows of card `input`:
+    /// of collections each a constant, or a slot whose value is given, as
+    /// a host array is, each input row times the elements of the longest
+    /// of them, a null one none [ISO/IEC 9075-2:2023 §7.6 SR8f, SR8h],
+    /// and at least one (RULES.md D777); else, or of a JSON table or
+    /// GRAPH_TABLE, which `special` says it is, times `UNNEST_FANOUT`.
+    fn unnested(&self, (collections, special): (&[Expr], bool), input: Card) -> Card {
+        let elements: Option<Vec<usize>> = collections.iter().map(|e| self.elements(e)).collect();
+        let elements = elements.filter(|_| !special);
+        match elements.and_then(|each| each.into_iter().max()) {
+            Some(most) => {
+                let each = cost_of(most).max(1.0_f64);
+                Card { rows: input.rows * each, upper: input.upper * each }
+            }
+            None => Card::guess(input.rows * UNNEST_FANOUT),
+        }
+    }
+
+    /// The elements of the collection `e`, if a constant array or
+    /// multiset, a slot whose value the estimator is given, a constructor
+    /// by enumeration, of as many as its values [ISO/IEC 9075-2:2023 §6.49
+    /// GR2, §6.52 GR2], or a CAST of one.
+    fn elements(&self, e: &Expr) -> Option<usize> {
+        let value = match e {
+            Expr::Const(v) => v,
+            Expr::Dynamic(slot) => self.values?.get(slot.index)?,
+            Expr::Cast(inner, _) => return self.elements(inner),
+            Expr::Call(f, args) => return [ARRAY, MULTISET].contains(&f.0.name()).then_some(args.len()),
+            Expr::Column(_)
+            | Expr::Neg(_)
+            | Expr::Arith(..)
+            | Expr::Outer(..)
+            | Expr::Case(..)
+            | Expr::Domain(..)
+            | Expr::SortKey(..)
+            | Expr::Subquery(..)
+            | Expr::Truth(_)
+            | Expr::NextValue(_)
+            | Expr::Invoked(_)
+            | Expr::Warned(..) => return None,
+        };
+        if let Value::Array(each) | Value::Multiset(each) = value {
+            return Some(each.len());
+        }
+        value.is_null().then_some(0)
     }
 }
