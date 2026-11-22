@@ -273,12 +273,6 @@ impl Side {
         self.held.contains_key(&number) || self.granules.contains_key(&number)
     }
 
-    /// The content of granule `number` as it holds it, if it does.
-    pub(super) fn held(&self, number: u64) -> Result<Option<Vec<u8>>> {
-        let mut content = vec![0; GRANULE];
-        Ok(self.copy_held(number, 0, &mut content)?.then_some(content))
-    }
-
     /// Forgets the granules wholly past `size`, of those before granule
     /// `kept` and it, and lowers the limit to `size`.
     pub(super) fn cut(&mut self, kept: u64, size: u64) {
