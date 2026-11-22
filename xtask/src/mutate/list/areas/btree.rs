@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 25] = [
+pub const BTREE: [Mutation; 26] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -254,5 +254,15 @@ pub const BTREE: [Mutation; 25] = [
         replacement: "        *at = at.and_then(|at| at.checked_sub(1));",
         integration: &[],
         unit: &["engine::tree::tests::finger::a_copy_parsed_once_reads_as_one_parsed_again"],
+    },
+    Mutation {
+        name: "btree-ready-backward-from-front",
+        package: Package::Core,
+        breaks: "a scan backward gives a leaf's entries in key order, not in reverse",
+        file: "src/engine/tree/scan/ready.rs",
+        original: "                self.back = self.back.checked_sub(1)?;\n                self.back",
+        replacement: "                self.back = self.back.checked_sub(1)?;\n                self.front = self.front.checked_add(1)?;\n                self.front.checked_sub(1)?",
+        integration: &[],
+        unit: &["engine::tree::scan::ready::tests::entries_are_given_in_order_from_one_buffer"],
     },
 ];

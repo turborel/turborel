@@ -500,6 +500,7 @@ verification approach DO-178C expects (§8).
 | D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
 | D807 | A thread keeps 256 inner node copies across its trees, the one to give way chosen by a clock bit |
 | D808 | A leaf's copy is parsed once, and a read of it steps to the slot after the last found |
+| D809 | A scan keeps the entries it took from a leaf in one buffer, and lends them |
 
 ### The project
 
@@ -13892,6 +13893,28 @@ slot after the last found first. A match is the key's entry in a leaf
 that holds it, so the leaf answers for it and the read takes the value
 with that one comparison. Any other key is checked against the leaf's
 range and searched for as before.
+
+#### D809. A scan keeps the entries it took from a leaf in one buffer, and lends them
+
+A scan copies the entries it wants from a leaf under the leaf's latch,
+so it holds no latch between entries (D31). Each entry was copied into a
+key and a value of its own, two allocations, and a key of a node with a
+shared prefix was put back together into its own. Each leaf of a
+forward scan also gave the scan a new lower bound. An index's range
+reader looks at each entry once and keeps only the row id and, for a
+checked or decoded probe, the key decoded. A scan now copies a leaf's
+entries into one buffer of bytes with each entry's places beside them,
+both reused from leaf to leaf, and writes its lower bound into the bytes
+of the one before (`engine/tree/scan/ready.rs`). `Scan::next_entry`
+lends each entry until the scan is used again, and an index's entries
+are read through it, so a range allocates nothing per entry once the
+buffer has grown to a leaf's. The iterator gives owned entries as
+before, copied from the buffer, for readers that keep them. Each entry
+is lent with what the scan reads the tree through, so an index search
+decodes keys by the types of the index the search holds. It no longer
+clones the types' `Arc`, whose count every search on every thread
+wrote, and a search moves the index it is given into what it holds
+rather than clone it.
 
 ## 2. Project layout
 

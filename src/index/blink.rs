@@ -295,45 +295,49 @@ impl BLinkIndex {
     }
 
     /// The entries `probe` selects, read through `tree`, its own, in
-    /// `direction`: their keys, decoded if `decoded` or checked, and rows.
-    /// What it gives holds `tree` and its own copies of the probe and the
-    /// key's types, so it lives as long as `tree` does.
-    fn entries<T: Deref<Target = BLinkTree>>(
+    /// `direction`. Their keys are decoded if `decoded` or checked, by the
+    /// types `tree` reaches. What it gives holds `tree` and its own copy
+    /// of the probe, so it lives as long as `tree` does.
+    fn entries<T: Keyed>(
         &self,
         tree: T,
         probe: &Probe,
         (decoded, direction): (bool, Direction),
     ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
-        self.entries_within(tree, (probe, self.range(probe)), (decoded, direction))
+        Self::entries_within(tree, (probe, self.range(probe)), (decoded, direction))
     }
 
     /// The entries of `range` of `tree`, each of `probe` if it is checked,
     /// decoded if `decoded`, in `direction`.
-    fn entries_within<T: Deref<Target = BLinkTree>>(
-        &self,
+    fn entries_within<T: Keyed>(
         tree: T,
         (probe, range): (&Probe, Option<Range>),
         (decoded, direction): (bool, Direction),
     ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
         let checked = range.as_ref().is_some_and(|r| r.checked);
-        let scan = range.map(|r| scan_of(tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), direction));
-        // The probe is copied only to check entries by, and the types are
-        // shared, so an exact probe's search copies neither.
-        let (probe, types) = (checked.then(|| probe.clone()), Arc::clone(&self.types));
+        let mut scan = range.map(|r| scan_of(tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), direction));
+        // The probe is copied only to check entries by, so an exact probe's
+        // search copies none. The types are read through the tree the scan
+        // holds, so no reference count every search shares is written.
+        let probe = checked.then(|| probe.clone());
         let mut last = Decoded::default();
-        scan.into_iter().flatten().filter_map(move |entry| {
-            let found = entry.and_then(|(entry, value)| {
-                let (key, row) = split(&entry)?;
-                noted(row, &value)?;
-                let key = (decoded || checked).then(|| last.of(key, &types)).transpose()?;
-                Ok((key, row))
-            });
-            match found {
-                Ok((key, row)) => {
-                    let answers = |p: &Probe| key.as_ref().is_some_and(|k| p.answers(&k.0));
-                    probe.as_ref().is_none_or(answers).then_some(Ok((key, row)))
+        // Each entry borrowed from the scan, none copied (RULES.md D809).
+        std::iter::from_fn(move || {
+            loop {
+                let found = scan.as_mut()?.next_entry()?.and_then(|(held, (entry, value))| {
+                    let (key, row) = split(entry)?;
+                    noted(row, value)?;
+                    let key = (decoded || checked).then(|| last.of(key, held.types())).transpose()?;
+                    Ok((key, row))
+                });
+                let (key, row) = match found {
+                    Ok(found) => found,
+                    Err(e) => return Some(Err(e)),
+                };
+                let answers = |p: &Probe| key.as_ref().is_some_and(|k| p.answers(&k.0));
+                if probe.as_ref().is_none_or(answers) {
+                    return Some(Ok((key, row)));
                 }
-                Err(e) => Some(Err(e)),
             }
         })
     }
@@ -362,6 +366,12 @@ impl Decoded {
     }
 }
 
+/// A tree an index's search reads, and the types of the index's key.
+trait Keyed: Deref<Target = BLinkTree> {
+    /// The types its keys are decoded by.
+    fn types(&self) -> &[DataType];
+}
+
 /// An index's tree, reached through the index it holds: what a search
 /// reads, so the index outlives the search.
 struct Held(Arc<BLinkIndex>);
@@ -370,6 +380,29 @@ impl Deref for Held {
     type Target = BLinkTree;
     fn deref(&self) -> &BLinkTree {
         &self.0.tree
+    }
+}
+
+impl Keyed for Held {
+    fn types(&self) -> &[DataType] {
+        &self.0.types
+    }
+}
+
+/// An index's tree and its key's types, borrowed: what a count of its
+/// entries in place reads.
+struct Borrowed<'a>(&'a BLinkTree, &'a [DataType]);
+
+impl Deref for Borrowed<'_> {
+    type Target = BLinkTree;
+    fn deref(&self) -> &BLinkTree {
+        self.0
+    }
+}
+
+impl Keyed for Borrowed<'_> {
+    fn types(&self) -> &[DataType] {
+        self.1
     }
 }
 
@@ -488,7 +521,7 @@ impl Index for BLinkIndex {
             return Some(rows_of(entries).max(SMALL_COUNT.saturating_add(1)));
         }
         let mut counted = 0_usize;
-        for entry in self.entries(&self.tree, probe, (false, Direction::Forward)) {
+        for entry in self.entries(Borrowed(&self.tree, &self.types), probe, (false, Direction::Forward)) {
             entry.ok()?;
             counted = counted.saturating_add(1);
             if counted > MOST_COUNTED {
@@ -555,7 +588,9 @@ impl Index for BLinkIndex {
             KeyOrder::Ascending => Direction::Forward,
             KeyOrder::Descending => Direction::Backward,
         };
-        let found = self.entries(Held(Arc::clone(&self)), probe, (true, direction));
+        // The index moved into what the search holds, its count not moved.
+        let range = self.range(probe);
+        let found = Self::entries_within(Held(self), (probe, range), (true, direction));
         Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
     }
 
@@ -564,7 +599,7 @@ impl Index for BLinkIndex {
     fn ranges(self: Arc<Self>, probe: &Probe, most: usize) -> Option<Vec<Entries>> {
         let parts = self.cut(self.range(probe)?, most).ok()?;
         let each = parts.into_iter().map(|part| -> Entries {
-            let found = self.entries_within(Held(Arc::clone(&self)), (probe, Some(part)), (true, Direction::Forward));
+            let found = Self::entries_within(Held(Arc::clone(&self)), (probe, Some(part)), (true, Direction::Forward));
             Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
         });
         Some(each.collect())
