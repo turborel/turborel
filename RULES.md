@@ -525,6 +525,7 @@ verification approach DO-178C expects (§8).
 | D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
 | D811 | A commit closes its side file and writes its file in runs of granules |
 | D812 | The checkpoint job spreads its commits over three quarters of the time since the last checkpoint |
+| D835 | A write decodes the row it replaced once, for its caller and the zone it widens alike |
 
 ### The project
 
@@ -14431,6 +14432,19 @@ power-loss protection and one without. Three quarters gave the flattest
 work going on on both, so the best does not move with the drive and it
 is a constant, not a setting. A quarter of the time is left before the
 next checkpoint is due, and a next one due sooner only starts later.
+
+#### D835. A write decodes the row it replaced once, for its caller and the zone it widens alike
+
+The row store's write gives the row it replaced, decoded from the
+version it found (D417), and widens the row's zone over that version's
+values of the columns kept. Each decoded the version on its own,
+so an UPDATE decoded the row it replaced twice. The write now decodes
+it once (`RowTable::replaced`) and widens the zone over that row
+(`RowTable::widen_over`). A deletion's version, or one the write could
+not decode, widens the zone as one not known, as before. Decoding the
+whole row reads every column the kept ones are among, so the zone holds
+the same values. A procedure's keyed UPDATE of one row, profiled, spent
+about a twentieth of its time in the second decode.
 
 ## 2. Project layout
 

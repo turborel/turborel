@@ -22,16 +22,18 @@ impl RowTable {
     pub(in crate::engine::rows) fn write_over(&self, tx: TxId, id: RowId, row: Option<Row>, past: Past) -> Result<Option<Row>> {
         let Some(row) = row else {
             let replaced = self.write_version(tx, id, None, past)?;
-            self.widen_over(id, None, replaced.as_deref());
+            let old = self.replaced(id, replaced.as_deref());
+            self.widen_over(id, None, live(&old));
             self.counted.live.fetch_sub(1, Ordering::AcqRel);
             self.counted_change(tx);
-            return self.replaced(id, replaced.as_deref());
+            return old.map(|old| old.map(|(was, _)| was));
         };
         let (record, pages) = self.encode(id, &row)?;
         let replaced = self.write_version(tx, id, Some(&record), past).inspect_err(|_| self.free(&pages))?;
-        self.widen_over(id, Some(&row), replaced.as_deref());
+        let old = self.replaced(id, replaced.as_deref());
+        self.widen_over(id, Some(&row), live(&old));
         self.counted_change(tx);
-        self.replaced(id, replaced.as_deref())
+        old.map(|old| old.map(|(was, _)| was))
     }
 
     /// Notes `unchanged` on `tx`'s last change, if it replaced a version of
@@ -51,9 +53,22 @@ impl RowTable {
     }
 
     /// The row of `replaced`, the version of row `id` a write replaced, if
-    /// it found one: its values out of line are freed only as the
-    /// transaction ends, so they are still there to read.
-    fn replaced(&self, id: RowId, replaced: Option<&[u8]>) -> Result<Option<Row>> {
-        replaced.map(|bytes| self.decode(id, Version::parse(bytes)?.record, None)).transpose()
+    /// it found one, and whether that version is a deletion: its values
+    /// out of line are freed only as the transaction ends, so they are
+    /// still there to read. It is decoded once, for the write's caller and
+    /// its zone alike (RULES.md D835).
+    fn replaced(&self, id: RowId, replaced: Option<&[u8]>) -> Result<Option<(Row, bool)>> {
+        let decoded = |bytes| {
+            let version = Version::parse(bytes)?;
+            Ok((self.decode(id, version.record, None)?, version.deleted))
+        };
+        replaced.map(decoded).transpose()
     }
+}
+
+/// Of the row a write replaced, as `RowTable::replaced` decoded it, the
+/// values its zone is widened over: none of a deletion, or of a version
+/// not read.
+fn live(old: &Result<Option<(Row, bool)>>) -> Option<&Row> {
+    old.as_ref().ok()?.as_ref().filter(|(_, deleted)| !deleted).map(|(row, _)| row)
 }
