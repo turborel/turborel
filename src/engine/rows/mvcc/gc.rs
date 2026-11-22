@@ -163,7 +163,10 @@ impl RowTable {
             // An item that cannot be written is held all the same.
             list.push(item, &mut encode_dead).unwrap_or_default();
         }
-        self.versions.garbage_due.fetch_min(at, Ordering::SeqCst);
+        // [DESIGN] RULES.md D795: written only when it moves back.
+        if at < self.versions.garbage_due.load(Ordering::SeqCst) {
+            self.versions.garbage_due.fetch_min(at, Ordering::SeqCst);
+        }
     }
 
     /// Adds the version a change of `tx` appended, `appended`, the change

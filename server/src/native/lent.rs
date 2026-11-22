@@ -14,7 +14,6 @@
 //! having panicked or never run, gives it back failed, so the connection
 //! ends rather than waits for it.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -24,6 +23,7 @@ use turborel::error::{Result, SqlError};
 use turborel_protocol::{Reply, broken};
 
 use super::requests::{Held, Outgoing, Work};
+use super::seen::UserSeen;
 use super::wire::{Arrived, Wire};
 use crate::server::{IDLE_WAITING, Permit, Services};
 use crate::settings;
@@ -307,9 +307,8 @@ pub(super) struct Running {
     user: Option<String>,
     /// Whether its worker is the connection's home (`native/home.rs`).
     homed: bool,
-    /// Whether its user was a user as the database had published as many
-    /// snapshots as this says, as `user_since` keeps it: 0 if not asked.
-    user_seen: Arc<AtomicU64>,
+    /// Whether its user was a user, as last asked (`native/seen.rs`).
+    user_seen: Arc<UserSeen>,
 }
 
 impl Running {
@@ -335,21 +334,9 @@ impl Running {
         // The watch's guard is dropped before the database is asked, so an
         // operator ending the connection never waits on that call (R-ERR-4).
         let ended = *self.ended.borrow();
-        self.services.is_serving() && !ended && self.user.as_deref().is_none_or(|name| self.user_since(db, name))
-    }
-
-    /// Whether `name` is a user of `db`: asked of a snapshot only once one
-    /// was published since it was last asked, so a request reads no
-    /// snapshot every worker shares (RULES.md D815).
-    fn user_since(&self, db: &turborel::db::Database, name: &str) -> bool {
-        let count = db.publications();
-        let seen = self.user_seen.load(Ordering::Relaxed);
-        if seen >> 1_u32 == count.saturating_add(1) {
-            return seen & 1 == 1;
-        }
-        let is = db.is_user(name).unwrap_or(false);
-        self.user_seen.store((count.saturating_add(1) << 1_u32) | u64::from(is), Ordering::Relaxed);
-        is
+        self.services.is_serving()
+            && !ended
+            && self.user.as_deref().is_none_or(|name| self.user_seen.is(db.publications(), || db.is_user(name).unwrap_or(false)))
     }
 
     /// Sends the replies queued in `wire`: apart from the runtime, waiting

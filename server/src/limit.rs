@@ -35,7 +35,8 @@ pub(crate) struct Limit {
 }
 
 /// A count alone on its cache lines, so the workers reading it never take
-/// a line another writes.
+/// a line another writes: 128 bytes, a pair of 64-byte lines, as a
+/// processor's adjacent-line prefetcher moves them (RULES.md D782).
 #[repr(align(128))]
 #[derive(Default)]
 struct Alone(AtomicUsize);

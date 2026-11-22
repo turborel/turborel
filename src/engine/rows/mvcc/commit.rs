@@ -57,7 +57,10 @@ impl RowTable {
                 ));
             }
         }
-        self.versions.validated_due.fetch_min(at, Ordering::SeqCst);
+        // [DESIGN] RULES.md D795: written only when it moves back.
+        if at < self.versions.validated_due.load(Ordering::SeqCst) {
+            self.versions.validated_due.fetch_min(at, Ordering::SeqCst);
+        }
         validated.push(me);
         Ok(())
     }
