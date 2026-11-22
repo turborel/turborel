@@ -15,7 +15,7 @@
 
 use std::mem;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 mod ahead;
 mod capture;
@@ -31,7 +31,7 @@ pub(super) use dirty::Dirtied;
 
 use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
 use crate::disk::block::{BlockFile, BlockId};
-use crate::disk::pager::{Extent, PageId, Pager};
+use crate::disk::pager::{Extent, PageId, Pager, PagerCounts};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::xxhash::{Words, Xxh3Map};
 use crate::memory::MemoryBudget;
@@ -42,15 +42,6 @@ type Map<'a> = RwLockWriteGuard<'a, Xxh3Map<Key, usize>>;
 
 /// A frame's content, latched exclusively.
 type Latch<'a> = RwLockWriteGuard<'a, Vec<u8>>;
-
-/// `frame` latched exclusively, if no one holds its latch now.
-fn try_latch(frame: &Frame) -> Option<Latch<'_>> {
-    match frame.content.try_write() {
-        Ok(latch) => Some(latch),
-        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-        Err(TryLockError::WouldBlock) => None,
-    }
-}
 
 /// Locks a shard's map exclusively. The pool holds it over no plug-in
 /// call, so a poisoned one is used as it is.
@@ -67,7 +58,7 @@ const REUSED_BYTES: usize = 64 * 1024;
 
 /// How a claimed frame is filled.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Fill {
+pub(super) enum Fill {
     /// With its page's content, read from its file.
     Read,
     /// With no content: a page just allocated.
@@ -105,11 +96,12 @@ impl BufferPool {
             frames: (0..frames).map(Frame::empty).collect(),
             shards: (0..SHARDS).map(|_| Shard::default()).collect(),
             empty: Mutex::new((0..frames).rev().collect()),
-            sources: RwLock::new(Vec::new()),
+            sources: super::sources::Sources::new(),
             eviction,
             counters: Counters::default(),
             hints: super::hits::Hints::new(frames),
             read_ahead_pages: AtomicUsize::new(READ_AHEAD_PAGES),
+            number: super::versions::next_pool(),
             queued: Queued::default(),
             dirtied: Dirtied::default(),
             owed: Owed::default(),
@@ -167,23 +159,21 @@ impl BufferPool {
         self.add(Source::Blocks(blocks))
     }
 
+    /// A file past the most a pool registers (`sources.rs`) is given a
+    /// number no file has, so every use of it is refused.
     fn add(&self, source: Source) -> FileId {
-        let mut sources = self.sources.write().unwrap_or_else(PoisonError::into_inner);
-        sources.push(source);
-        FileId(u32::try_from(sources.len().saturating_sub(1)).unwrap_or(u32::MAX))
+        self.sources.add(source).unwrap_or(FileId(u32::MAX))
     }
 
-    /// The file registered as `file`.
-    fn source(&self, file: FileId) -> Result<Source> {
-        let sources = self.sources.read().unwrap_or_else(PoisonError::into_inner);
-        sources
-            .get(usize::try_from(file.0).unwrap_or(usize::MAX))
-            .cloned()
+    /// The file registered as `file`, found with no lock (`sources.rs`).
+    fn source(&self, file: FileId) -> Result<&Source> {
+        self.sources
+            .get(file)
             .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no file {} is registered with the buffer pool", file.0)))
     }
 
     /// The pager file registered as `file`.
-    pub(super) fn pager(&self, file: FileId) -> Result<Arc<Pager>> {
+    pub(super) fn pager(&self, file: FileId) -> Result<&Arc<Pager>> {
         match self.source(file)? {
             Source::Pages(pager) => Ok(pager),
             Source::Blocks(_) => {
@@ -200,6 +190,15 @@ impl BufferPool {
     /// SQLCODE -910 if `file` is not a registered pager file.
     pub fn capacity(&self, file: FileId) -> Result<usize> {
         Ok(self.pager(file)?.inline_capacity())
+    }
+
+    /// The counters of pager file `file` (RULES.md D810).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `file` is not a registered pager file.
+    pub fn pager_counts(&self, file: FileId) -> Result<PagerCounts> {
+        Ok(self.pager(file)?.counts())
     }
 
     /// Frames in the pool.
@@ -281,7 +280,7 @@ impl BufferPool {
         }
         let (frame, missed) = self.hold(key, Fill::Read)?;
         let pin = Pin(frame);
-        Ok((PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), _pin: Some(pin) }, missed))
+        Ok((PageRef { content: frame.content.read().unwrap_or_else(PoisonError::into_inner), frame, _pin: Some(pin) }, missed))
     }
 
     /// Holds page `id` of pager file `file` for writing; it is dirty from
@@ -365,7 +364,7 @@ impl BufferPool {
             }
             // Held: pinned, or latched by a read that hit by its hint.
             let pinned = frame.pins.load(Ordering::Acquire) > 0;
-            let latch = if pinned { None } else { try_latch(frame) };
+            let latch = if pinned { None } else { frame.try_latched() };
             let Some(mut content) = latch else {
                 drop(map);
                 if !wait {
@@ -401,7 +400,7 @@ impl BufferPool {
 impl BufferPool {
     /// Pins the frame holding `key`, filling one if none does; the hint of
     /// `key` the frame. Whether it filled one.
-    fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
+    pub(super) fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
         loop {
             if let Some(pinned) = self.pin_mapped(key)? {
                 if let Some(frame) = self.settled_holding(pinned, key)? {
@@ -467,7 +466,7 @@ impl BufferPool {
                 return Err(e);
             }
         }
-        *frame.content.write().unwrap_or_else(PoisonError::into_inner) = content;
+        *frame.latched() = content;
         match fill {
             Fill::Empty => self.made_dirty(frame),
             Fill::Read => frame.dirty.store(false, Ordering::Release),
@@ -484,7 +483,7 @@ impl BufferPool {
     /// the error returned.
     fn emptied(&self, key: Key, claim: Claim) -> Result<Vec<u8>> {
         let frame = self.frame(claim.frame)?;
-        let old_content = mem::take(&mut *frame.content.write().unwrap_or_else(PoisonError::into_inner));
+        let old_content = mem::take(&mut *frame.latched());
         if let Some(old) = claim.write_back {
             let written = if claim.owed { self.owed_now(old, &old_content) } else { self.write_back(old, &old_content) };
             if let Err(e) = written {
@@ -526,7 +525,7 @@ impl BufferPool {
         if let Ok((mut map, mut old_map)) = self.maps(key, old) {
             map.remove(&key);
             old_map.as_mut().unwrap_or(&mut map).insert(old, index);
-            let mut latch = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+            let mut latch = frame.latched();
             frame.set_key(Some(old));
             *latch = content;
         }
@@ -540,7 +539,7 @@ impl BufferPool {
         let Some(frame) = self.frames.get(index) else { return };
         if let Ok(mut map) = self.map(key) {
             map.remove(&key);
-            let _latch = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+            let _latch = frame.latched();
             frame.set_key(None);
             lock_builtin(&self.empty).push(index);
         }

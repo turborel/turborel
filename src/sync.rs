@@ -14,8 +14,10 @@ use std::sync::{Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockW
 
 use crate::error::{Code, SqlError};
 
+mod alone;
 mod signal;
 
+pub(crate) use alone::Alone;
 pub(crate) use signal::Signal;
 
 /// The error for a lock whose holder panicked.
@@ -108,7 +110,7 @@ mod tests {
 }
 
 /// Stripes of a `Gate`: threads taking it shared rarely share one.
-const GATE_STRIPES: u64 = 16;
+const GATE_STRIPES: u64 = 64;
 
 /// The stripe the next thread to take a gate is given.
 static NEXT_STRIPE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

@@ -8,6 +8,7 @@ mod btree;
 mod budget;
 mod bulk;
 mod checkpoint;
+mod checkpoint_cost;
 mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
@@ -36,12 +37,17 @@ mod late;
 mod monitoring;
 mod oltp;
 mod orders;
+mod own_copies;
 mod parallel;
+mod point_ops;
 mod probed_subqueries;
 mod range_joins;
+mod range_path;
 mod rewrites;
 mod row_path;
+mod server_lines;
 mod set_types;
+mod shared_lines;
 mod skipping;
 mod sorts;
 mod statistics;
@@ -62,7 +68,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 26] {
+pub fn core() -> [&'static [Mutation]; 29] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -90,6 +96,9 @@ pub fn core() -> [&'static [Mutation]; 26] {
         &alloc::ALLOC,
         &commit_path::COMMIT_PATH,
         &dirty_frames::DIRTY_FRAMES,
+        &range_path::RANGE_PATH,
+        &point_ops::POINT_OPS,
+        &checkpoint_cost::CHECKPOINT_COST,
     ]
 }
 
@@ -133,7 +142,7 @@ fn first() -> [&'static [Mutation]; 27] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 46] {
+fn second() -> [&'static [Mutation]; 47] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -141,6 +150,7 @@ fn second() -> [&'static [Mutation]; 46] {
         &super::dependencies::DEPENDENCIES,
         &super::limits::LIMITS,
         &super::bounded::BOUNDED_FETCH,
+        &super::set_probes::SET_PROBES,
         &super::patterns::PATTERNS,
         &super::merge::MERGE,
         &super::diagnostics::DIAGNOSTICS,
@@ -241,9 +251,10 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// The transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
-/// semi joins', mark joins', skipping's and the undo store's memory's last,
+/// semi joins', mark joins', skipping's, the undo store's memory's, the
+/// sessions' own copies', the shared lines' and the server's lines' last,
 /// as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 15] {
+fn closing() -> [&'static [Mutation]; 18] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -260,6 +271,9 @@ fn closing() -> [&'static [Mutation]; 15] {
         &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
         &undo_memory::UNDO_MEMORY,
+        &own_copies::OWN_COPIES,
+        &shared_lines::SHARED_LINES,
+        &server_lines::SERVER_LINES,
     ]
 }
 

@@ -18,7 +18,7 @@ use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, 
 use crate::binder::{self, OutColumn, bind_select};
 use crate::catalog::QualifiedName;
 use crate::error::{At, Code, Result, fail};
-use crate::exec::{Db, execute};
+use crate::exec::execute;
 use crate::params::Params;
 use crate::parser::Parser;
 use crate::settings::FUNCTION_CALLS;
@@ -139,9 +139,8 @@ impl Session {
             let (columns, logical) = self.cursor_bound(st, spec, params, None)?;
             return Ok((columns, Stream::planned(st, tx, logical)?.read_now()?));
         }
-        if let Some((columns, physical, reads, slots)) = keeping.map(|k| k.physical(params)).transpose()?.flatten() {
-            let db = slots.map_or_else(|| Db::of(st), |slots| Db::slotted(st, slots));
-            return Ok((columns, Stream::kept(&db, tx, physical, reads)?));
+        if let Some((columns, run, reads, slots)) = keeping.map(|k| k.physical(params)).transpose()?.flatten() {
+            return Ok((columns, Stream::run(st, tx, run, (reads, slots))?));
         }
         let (columns, logical) = self.cursor_bound(st, spec, params, keeping)?;
         Ok((columns, Stream::planned(st, tx, logical)?))
@@ -374,8 +373,8 @@ impl Session {
         let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
         check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
         let (optimized, _, physical) = plan_heard(cx.st, bound.plan, Some(cx.tx.stop.warnings()));
-        for t in optimized.tables() {
-            cx.st.read_lock(cx.tx, &t)?;
+        for (t, needed) in optimized.columns_read() {
+            cx.st.read_lock_of(cx.tx, (&t, needed))?;
         }
         let rows: Vec<Row> = execute(physical, cx.st, cx.tx.id).take(CARDINALITY_PROBE_ROWS).collect::<Result<_>>()?;
         match rows.as_slice() {

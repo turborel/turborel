@@ -75,10 +75,11 @@
 
 mod following;
 mod overdue;
+mod taking;
 
 pub use overdue::OVERDUE;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -107,53 +108,20 @@ impl Database {
     /// file or truncating the log: what the last checkpoint left then
     /// stands.
     pub fn checkpoint(&self) -> Result<()> {
-        let taken = self.noted(self.take_checkpoint());
-        if taken.is_ok() {
-            self.emit(&Event::CheckpointTaken(self.checkpoints_taken()));
+        self.checkpoint_spread(false)
+    }
+
+    /// `checkpoint`, its commits spread if `spread`, as the checkpoint
+    /// job's are (RULES.md D812).
+    fn checkpoint_spread(&self, spread: bool) -> Result<()> {
+        let taken = self.noted(self.take_checkpoint(spread));
+        if let Ok(took) = taken {
+            self.emit(&Event::CheckpointTaken { taken: self.checkpoints_taken(), took });
             // Taken, it may still give up no log: a transaction holds it.
             self.tell_if_overdue();
             self.tell_if_settled();
         }
-        taken
-    }
-
-    /// `checkpoint`'s work.
-    fn take_checkpoint(&self) -> Result<()> {
-        let files = self.files()?.ok_or_else(|| api("[DESIGN] only a database opened from its files takes checkpoints"))?;
-        let _whole = files.checkpointer.whole.take("a checkpoint")?;
-        let turn = files.checkpointer.taking.take("a checkpoint")?;
-        let current = self.snapshot()?;
-        if matches!(current.tx.held(), Some(crate::txn::Held::Following)) {
-            return self.take_following_checkpoint(&files);
-        }
-        // Not while an index is built: a checkpoint records only indexes
-        // ready to be read (`Database::create_index`).
-        let shut = loop {
-            current.tx.wait_for_builds();
-            let shut = current.tx.gate.shut();
-            if !current.tx.building() {
-                break shut;
-            }
-        };
-        // Taken shut: no definition is half published.
-        let st = self.snapshot()?;
-        let (image, counted) = st.capture_checkpoint(false)?;
-        let stale = st.hold_stale();
-        drop(shut);
-        // Writers going on: the entries of what awaited collection as the
-        // pages were captured, logged before the record that syncs them.
-        let logged = st.log_stale(&stale, image.through);
-        drop(stale);
-        // The turn let go while the record is synced (step 4), then taken
-        // again to record the image.
-        let synced = logged.and_then(|()| st.sync_checkpoint_record(turn, &image));
-        let recorded = synced.and_then(|()| {
-            let _turn = files.checkpointer.taking.take("a checkpoint")?;
-            st.record_and_truncate(&files, image)
-        });
-        st.counted_if(recorded, counted)?;
-        files.checkpointer.taken.fetch_add(1, Ordering::Relaxed);
-        Ok(())
+        taken.map(|_| ())
     }
 
     /// \[DESIGN\] The checkpoints taken since the database was opened.
@@ -218,9 +186,11 @@ impl Database {
     /// `close`'s work: its background work's threads stopped first, and
     /// let start again if it fails (RULES.md D55).
     fn close_files(&self) -> Result<()> {
+        self.hurry_checkpoints(true);
         self.background_closing();
         let closed = self.close_closing();
         if closed.is_err() {
+            self.hurry_checkpoints(false);
             self.background_reopened();
         }
         closed
@@ -320,6 +290,11 @@ pub(super) struct Checkpointer {
     failure: Mutex<Option<SqlError>>,
     /// When checkpoints overdue were last told (`overdue.rs`).
     overdue_told: Mutex<Option<Instant>>,
+    /// When the last checkpoint began, for the next to spread its commits
+    /// over a share of the time since (RULES.md D812).
+    began: Mutex<Option<Instant>>,
+    /// Whether the database is closing, so no commit is spread.
+    hurry: AtomicBool,
 }
 
 /// The checkpoint job's work: the checkpoint due, if one still is (one
@@ -330,7 +305,7 @@ pub(super) struct Checkpointer {
 /// The checkpoint's.
 pub(super) fn checkpointed(db: &Database) -> Result<Option<Duration>> {
     if db.checkpoint_due() {
-        let outcome = db.checkpoint();
+        let outcome = db.checkpoint_spread(true);
         if let Ok(Some(files)) = db.files() {
             *lock_builtin(&files.checkpointer.failure) = outcome.as_ref().err().cloned();
         }

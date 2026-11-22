@@ -33,7 +33,7 @@ impl RowTable {
             let open = self.open_of(tx)?;
             let mut open = lock_builtin(&open);
             open.adopted.extend(named);
-            open.changes.push(Change::of_row(id, None, None, Vec::new()), &mut encode_change)?;
+            open.changes_in(&self.versions).push(Change::of_row(id, None, None, Vec::new()), &mut encode_change)?;
         }
         Ok(true)
     }
@@ -92,7 +92,7 @@ impl RowTable {
         let before = appended.is_none().then(|| newest.clone());
         let mut open = lock_builtin(&open);
         open.adopted.extend(added);
-        open.changes.push(Change::of_row(id, before, appended, dropped), &mut encode_change)?;
+        open.changes_in(&self.versions).push(Change::of_row(id, before, appended, dropped), &mut encode_change)?;
         Ok(Some(newest))
     }
 
@@ -183,7 +183,7 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let mut open = lock_builtin(&open);
         open.made.insert(id);
-        open.changes.push(Change { made: true, ..Change::of_row(id, None, None, Vec::new()) }, &mut encode_change)
+        open.changes_in(&self.versions).push(Change { made: true, ..Change::of_row(id, None, None, Vec::new()) }, &mut encode_change)
     }
 
     /// Notes the segments `ids`, made by `tx`, as parts of a directory it

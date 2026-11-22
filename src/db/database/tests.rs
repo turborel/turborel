@@ -23,3 +23,26 @@ fn a_poisoned_snapshot_is_reported() {
         assert!(failed.is_some_and(|e| e.code == Code::Api && e.msg.contains("panicked")), "{attempt}: not refused as busy");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D780: a session's statements take its own
+/// copy of the snapshot, taking no count of the one published, until a
+/// change of definitions is published, which its next statement sees.
+/// MC/DC of keeping its copy, none taken against one taken at this count
+/// (the first statement, the next), and one taken at this count against
+/// one taken before a publication (the next, the one after the change).
+#[test]
+fn a_session_takes_its_own_snapshot_until_one_is_published() {
+    let db = Database::new();
+    let s = db.session("A");
+    let first = s.current_state().unwrap();
+    let published = db.snapshot().unwrap();
+    let holders = Arc::strong_count(&published);
+    let again = s.current_state().unwrap();
+    assert!(Arc::ptr_eq(&first, &again), "none published since: its own copy");
+    assert!(!Arc::ptr_eq(&first, &published), "a copy, not the published snapshot");
+    assert_eq!(Arc::strong_count(&published), holders, "no count of the published snapshot taken");
+    drop((first, again));
+    db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE T (A INTEGER)").unwrap();
+    let after = s.current_state().unwrap();
+    assert!(after.generation > published.generation, "taken again once one is published");
+}

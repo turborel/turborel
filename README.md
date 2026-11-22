@@ -49,6 +49,8 @@ behind it, and each can be replaced or added to.
 - Hash joins probed a batch at a time in one tagged table, shared by
   parallel morsels, telling the left's scan a range and Bloom filter;
   dense keys found by their place, their filter an exact bitmap.
+- Sets of a few keys probed in the index, from IN, EXISTS, a subquery of
+  one row, a LEFT JOIN or MERGE from host arrays, and a join's bounds.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - Window functions over batches, partitions found of the sort's keys by a

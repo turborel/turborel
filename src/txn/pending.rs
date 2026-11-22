@@ -22,7 +22,6 @@
 //! cancelled, as before (`Change::StatementUndone`), for which a write
 //! notes the places of the records the transaction marked (`wanted`).
 
-use std::collections::HashMap;
 use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -30,8 +29,9 @@ use std::time::{Duration, Instant};
 
 use super::{Transactions, TxId, TxState, Txn};
 use crate::error::{Code, Result, SqlError};
+use crate::hash::xxhash::Xxh3Map;
 use crate::log::{Log, Lsn};
-use crate::sync::lock_builtin;
+use crate::sync::{Alone, lock_builtin};
 
 /// \[DESIGN\] The bytes of records a transaction holds before it writes
 /// them as a run of their own: 1 MiB, so a large transaction holds
@@ -161,21 +161,26 @@ impl TxLog {
 }
 
 /// \[DESIGN\] The transactions holding records, for a checkpoint to write
-/// them: in `HELD_SHARDS` shards, by transaction id.
+/// them: in `HELD_SHARDS` shards, by transaction id, each alone on its
+/// cache lines, so a transaction's shard shares no line with another's
+/// (RULES.md D782).
 pub(crate) struct Pending {
-    shards: Vec<Mutex<HashMap<TxId, Arc<TxLog>>>>,
+    shards: Box<[HeldShard]>,
 }
+
+/// One shard of the transactions holding records.
+type HeldShard = Alone<Mutex<Xxh3Map<TxId, Arc<TxLog>>>>;
 
 impl Default for Pending {
     fn default() -> Self {
-        Pending { shards: (0..HELD_SHARDS).map(|_| Mutex::new(HashMap::new())).collect() }
+        Pending { shards: (0..HELD_SHARDS).map(|_| Alone::default()).collect() }
     }
 }
 
 impl Pending {
     /// The shard of `tx`, if there is one.
-    fn shard(&self, tx: TxId) -> Option<&Mutex<HashMap<TxId, Arc<TxLog>>>> {
-        usize::try_from(tx % HELD_SHARDS).ok().and_then(|at| self.shards.get(at))
+    fn shard(&self, tx: TxId) -> Option<&Mutex<Xxh3Map<TxId, Arc<TxLog>>>> {
+        usize::try_from(tx % HELD_SHARDS).ok().and_then(|at| self.shards.get(at)).map(|shard| &shard.0)
     }
 }
 
@@ -190,8 +195,8 @@ impl Transactions {
     /// The log's: the checkpoint then fails, and the transaction whose
     /// records could not be written can only roll back.
     pub(crate) fn write_held(&self) -> Result<()> {
-        for shard in &self.pending.shards {
-            let open: Vec<(TxId, Arc<TxLog>)> = lock_builtin(shard).iter().map(|(&tx, held)| (tx, Arc::clone(held))).collect();
+        for shard in &*self.pending.shards {
+            let open: Vec<(TxId, Arc<TxLog>)> = lock_builtin(&shard.0).iter().map(|(&tx, held)| (tx, Arc::clone(held))).collect();
             for (tx, held) in open {
                 held.write(self, tx, None)?;
             }

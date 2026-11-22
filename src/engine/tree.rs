@@ -17,9 +17,11 @@
 //!   latch, held only while that one node is read (the paper's atomic
 //!   `get`, §2), and move right when the key is past it.
 //! * **Writers** go down the same way, remembering the rightmost node they
-//!   read at each level. They lock the leaf (`engine/locks.rs`), move right if it
-//!   has split, and change it in place if the change fits and starts no
-//!   run (`node.rs`). Otherwise they split it: the right half written to a new page first, then the left
+//!   read at each level. They lock the leaf, owning its frame
+//!   (`disk/buffer/owned.rs`), move right if it has split, and change it
+//!   in place if the change fits, starts no run and the leaf is not one
+//!   writers keep waiting for (`node.rs`, `edge.rs`). Entries past the end
+//!   of the rightmost leaf go there with no descent. Otherwise they split it: the right half written to a new page first, then the left
 //!   half over the old one, which together are one change to the tree
 //!   (§6.2, Lemma 2). Then they lock the remembered parent, move right
 //!   from it as far as the separator needs, release the child, and insert
@@ -42,7 +44,7 @@
 //! how often readers and writers follow links at all.
 //!
 //! One `BLinkTree` value works a tree at a time: it keeps the root's page
-//! number and the node locks. The pages reach the disk as the buffer pool
+//! number and the rightmost leaf. The pages reach the disk as the buffer pool
 //! writes them back; a database kept in a directory keeps its trees in its
 //! data file, shadowed, so after a crash the file is exactly as the last
 //! checkpoint left it, no split half written, and the log redoes what came
@@ -50,13 +52,16 @@
 
 mod counts;
 mod cuts;
+mod edge;
 mod estimate;
 mod fit;
 pub(crate) mod hints;
+mod inner;
 mod load;
 mod near;
 mod node;
 mod reclaim;
+mod room;
 mod scan;
 mod write;
 
@@ -66,16 +71,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 pub use counts::TreeCounts;
 use counts::{Counters, count};
+pub(crate) use node::Parsed;
 
-use super::locks::{Locks, NodeLock};
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
 pub(crate) use reclaim::{Entered, Epochs};
-pub use scan::{Direction, Scan, Visit, Visited, scan_of};
+pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of};
 pub use write::{Descended, Update};
 #[cfg(test)]
 use write::{Mode, Written};
 
-use crate::disk::buffer::{BufferPool, FileId, Tally};
+use crate::disk::buffer::{BufferPool, FileId, Owned as NodeLock, Tally};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 
@@ -102,7 +107,10 @@ pub struct BLinkTree {
     root: AtomicU64,
     /// The most content a node holds in its page.
     capacity: usize,
-    locks: Locks,
+    /// The rightmost leaf, where the last entry written past its end went,
+    /// or 0: the next such entry is written there with no descent
+    /// (`edge.rs`, RULES.md D503).
+    edge: AtomicU64,
     counters: Counters,
     /// Its lookups by key, a `get` or a scan's from a key, and the pages
     /// they read that the pool missed (`BufferPool::read_tallied`), for the
@@ -239,7 +247,7 @@ impl BLinkTree {
             meta,
             root: AtomicU64::new(root.0),
             capacity,
-            locks: Locks::new(),
+            edge: AtomicU64::new(0),
             counters: Counters::default(),
             tally: Tally::default(),
             epochs: Epochs::new(),
@@ -358,8 +366,14 @@ impl BLinkTree {
         let tally = path.tallied.then_some(&self.tally);
         tally.inspect(|t| t.lookup());
         loop {
-            let page = self.pool.read_tallied(self.file, id.0, tally)?;
+            // An inner node above the level asked for may be read from the
+            // thread's copy; a root of no known level only for a leaf.
+            let copied = expected.map_or(level == 0, |l| l > level);
+            let page = inner::read(&self.pool, (self.file, id.0), tally, copied)?;
             let node = Node::parse(&page)?;
+            if node.level > 0 {
+                inner::keep(&page, (self.file, id.0));
+            }
             if expected.is_some_and(|l| l != node.level) || node.level < level {
                 return Err(corrupt(&format!("node {} is not at the level its parent says", id.0)));
             }
@@ -407,7 +421,7 @@ impl BLinkTree {
                 }
                 node.right.ok_or_else(|| corrupt("a node with a high key has no right neighbour"))?
             };
-            *held = self.locks.lock(right)?;
+            *held = self.lock(right)?;
             count(&self.counters.right_moves);
         }
     }
@@ -417,35 +431,19 @@ impl BLinkTree {
     fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Vec<Split>> {
         let copy = {
             let mut page = self.pool.write(self.file, held.id)?;
-            let (live, old, new_run) = {
-                let node = Node::parse(&page)?;
-                let old = match slot {
-                    // What the node's keys grow by, if the key does not
-                    // begin with its prefix.
-                    Slot::Insert(_) => Some(node::grown(&node, key)),
-                    Slot::Replace(at) => {
-                        let (k, v) = node.entry(at)?;
-                        // None of the same length, as a version stamped
-                        // committed: written over in place, nothing moved.
-                        (v.len() != value.len()).then(|| node::entry_size(&[], v).saturating_add(k.len()))
-                    }
-                };
-                (node.live(), old, starts_run(&node, slot)?)
-            };
-            let Some(old) = old else {
+            let room = self.room(held, &Node::parse(&page)?, (key, value), slot)?;
+            let Some(room) = room else {
                 if let Slot::Replace(at) = slot {
                     node::overwrite(&mut page, at, value)?;
                 }
                 return Ok(Vec::new());
             };
-            let added = node::entry_size(key, value);
-            let after = match slot {
-                Slot::Insert(_) => live.saturating_add(old).saturating_add(added),
-                Slot::Replace(_) => live.saturating_sub(old).saturating_add(added),
-            };
-            let fits =
-                after <= self.capacity || (!new_run && matches!(slot, Slot::Insert(_)) && self.fits_compacted(&mut page, key, added)?);
-            if new_run || !fits {
+            // Garbage is reclaimed only once it is worth a node built
+            // again (`room.rs`); short of that a node with no room splits.
+            let in_place = room.after <= self.capacity && (room.reclaim || page.len().saturating_add(room.stored) <= self.capacity);
+            let compactable = room.rebuild && !room.run && matches!(slot, Slot::Insert(_));
+            let fits = in_place || (compactable && self.fits_compacted(&mut page, key, node::entry_size(key, value))?);
+            if room.run || !fits {
                 page.clone()
             } else {
                 let at = match slot {
@@ -455,7 +453,7 @@ impl BLinkTree {
                         at
                     }
                 };
-                if page.len().saturating_add(added) > self.capacity {
+                if page.len().saturating_add(room.stored) > self.capacity {
                     *page = node::compact(&page)?;
                 }
                 node::insert(&mut page, at, key, value)?;
@@ -463,20 +461,6 @@ impl BLinkTree {
             }
         };
         self.split(held.id, &copy, (key, value), slot)
-    }
-
-    /// Whether an entry of `key`, `added` bytes whole, fits the node `page`
-    /// holds once it is built again, its garbage gone and its prefix what
-    /// its first and last keys now share (RULES.md D500); if it does, the
-    /// node is left built again.
-    fn fits_compacted(&self, page: &mut Vec<u8>, key: &[u8], added: usize) -> Result<bool> {
-        let compacted = node::compact(page)?;
-        let grown = node::grown(&Node::parse(&compacted)?, key);
-        let fits = compacted.len().saturating_add(grown).saturating_add(added) <= self.capacity;
-        if fits {
-            *page = compacted;
-        }
-        Ok(fits)
     }
 
     /// Splits node `id`, whose content was `copy`, making `slot`'s change
@@ -530,7 +514,7 @@ impl BLinkTree {
         let level = split.level.checked_add(1).ok_or_else(|| corrupt("it is too tall"))?;
         loop {
             if let Some(parent) = path.stack.pop() {
-                let mut held = self.locks.lock(parent)?;
+                let mut held = self.lock(parent)?;
                 let at =
                     self.move_right(&mut held, &split.separator, |node| match (node.level == level, node.search(&split.separator)?) {
                         (true, Err(at)) => Ok(at),
@@ -551,7 +535,7 @@ impl BLinkTree {
     /// entry the separator, with the right half. Under the meta page's lock,
     /// the highest in the locking order. Whether it did.
     fn grow(&self, split: &Split) -> Result<bool> {
-        let _meta = self.locks.lock(self.meta)?;
+        let _meta = self.lock(self.meta)?;
         let root = PageId(self.root.load(Ordering::Acquire));
         let root_level = Node::parse(&self.pool.read(self.file, root.0)?)?.level;
         if root_level != split.level {

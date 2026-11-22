@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{ColumnComparison, Predicate, Probe};
-use crate::logical::Cond;
+use crate::logical::{Cond, Expr};
 use crate::value::{CompOp, Value};
 
 /// A value a spatial window's probe reads after the outer geometry.
@@ -104,11 +104,62 @@ pub struct JoinComparison {
     pub outer: usize,
 }
 
+/// \[DESIGN\] A bound of the index key's column after an equality prefix
+/// that an outer row gives (RULES.md D776): the key column compares by
+/// `op` with the value of outer column `outer`, or with `shift` of it, an
+/// expression over that value alone as column 0 that raises nothing, as
+/// `D_NEXT_O_ID - 20` is.
+#[derive(Debug, Clone)]
+pub struct OuterBound {
+    /// The operator, the key column on its left: `>`, `>=`, `<` or `<=`.
+    pub op: CompOp,
+    /// Position within the outer row, from zero.
+    pub outer: usize,
+    /// The expression of the value, if not the value alone.
+    pub shift: Option<Box<Expr>>,
+}
+
+impl OuterBound {
+    /// Its operator and the value it bounds the key by of `row`, none if
+    /// null.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the outer column is missing; as `exec::eval` if
+    /// its expression raises, which planning made sure it cannot.
+    fn bound(&self, row: &[Value]) -> Result<Option<(CompOp, Value)>> {
+        let value =
+            row.get(self.outer).cloned().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] an index join's outer column is missing"))?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        let value = match &self.shift {
+            Some(e) => crate::exec::eval(e, &vec![value], &crate::exec::NoSubqueries)?,
+            None => value,
+        };
+        Ok((!value.is_null()).then_some((self.op, value)))
+    }
+}
+
+/// \[DESIGN\] The outer columns of a probe's prefix, and the bounds of the
+/// next key column (RULES.md D776).
+#[derive(Debug, Clone)]
+pub struct Ranged {
+    /// The outer columns of the prefix.
+    pub equal: Box<[usize]>,
+    /// The bounds of the next key column, the lower first, one or two.
+    pub bounds: Box<[OuterBound]>,
+}
+
 /// The values each outer row supplies to an index nested-loop join.
 #[derive(Debug, Clone)]
 pub enum JoinProbe {
     /// Outer columns equated with successive index key columns.
     Prefix(Box<[usize]>),
+    /// \[DESIGN\] Outer columns equated with successive index key columns,
+    /// and the next key column bounded below, above or both by values the
+    /// outer row gives (RULES.md D776), boxed, as a plan is kept small.
+    Range(Box<Ranged>),
     /// Independent comparisons, all of which must hold.
     Columns(Box<[JoinComparison]>),
     /// A supported, NULL-rejecting function predicate, with its other
@@ -146,6 +197,7 @@ impl JoinProbe {
                 };
                 Ok(Some(probe))
             }
+            JoinProbe::Range(r) => ranged(&r.equal, &r.bounds, value, row),
             JoinProbe::Columns(each) => {
                 let each = each.iter().map(|c| Ok(ColumnComparison { column: c.column, op: c.op, value: value(c.outer)? }));
                 let each = each.collect::<Result<Vec<_>>>()?;
@@ -172,6 +224,31 @@ impl JoinProbe {
                 Ok(Some(Probe::Predicate { predicate: predicate.clone(), value }))
             }
         }
+    }
+}
+
+/// The probe of the keys whose first columns equal the outer columns
+/// `equal` of `row` and whose next column lies within `bounds` of it, the
+/// lower first if two, as `value` reads a column; none if a value is null.
+///
+/// # Errors
+///
+/// As `value` and `OuterBound::bound`.
+fn ranged(equal: &[usize], bounds: &[OuterBound], value: impl Fn(usize) -> Result<Value>, row: &[Value]) -> Result<Option<Probe>> {
+    let values = equal.iter().map(|&k| value(k)).collect::<Result<Vec<_>>>()?;
+    if values.iter().any(Value::is_null) {
+        return Ok(None);
+    }
+    let mut found = Vec::new();
+    for b in bounds {
+        let Some(bound) = b.bound(row)? else { return Ok(None) };
+        found.push(bound);
+    }
+    let mut each = found.into_iter();
+    match (each.next(), each.next()) {
+        (Some(low), Some(high)) => Ok(Some(Probe::Range { equal: values, low: Box::new(low), high: Box::new(high) })),
+        (one, None) => Ok(Some(Probe::Prefix { equal: values, then: one })),
+        (None, Some(_)) => Err(SqlError::new(Code::Api, "[DESIGN] an index join's bounds are out of order")),
     }
 }
 

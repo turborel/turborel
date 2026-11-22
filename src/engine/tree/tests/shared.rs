@@ -1,6 +1,7 @@
 //! Unit tests of splits of nodes whose keys share a long prefix (RULES.md
 //! D500, `fit.rs`): a key without it, below or above them, splits the
-//! node into nodes that each fit their page.
+//! node into nodes that each fit their page, the rightmost leaf written
+//! with no descent (D503) as any other.
 
 use super::*;
 use crate::disk::memory::MemoryFileSystem;
@@ -121,4 +122,41 @@ fn a_node_past_its_page_is_split_until_each_part_fits() {
     assert!(parts.len() >= 3, "{parts:?}");
     assert!(parts.iter().all(|&(_, bytes)| bytes <= tree.capacity), "{parts:?}");
     assert_eq!(keys(&tree, Direction::Forward), want);
+}
+
+/// Verifies: [DESIGN] RULES.md D503, D500, `fit.rs`: of 4 KiB and 64 KiB
+/// pages, keys of the longest length that share all but their last 8
+/// bytes, written in order, go to the rightmost leaf with no descent, as
+/// the index of a long character column's values does; keys past them
+/// that share all but 9 of their bytes or none go there with no descent
+/// too, and split it into leaves that each fit the page; every key is
+/// found, and the tree holds them in order.
+#[test]
+fn keys_past_the_end_without_the_shared_prefix_split_the_rightmost_leaf_into_nodes_that_fit() {
+    for page_size in [4_096_u32, 65_536] {
+        let tree = sized(page_size);
+        let len = tree.max_key();
+        let value = [7_u8; 8];
+        let shared = len.saturating_sub(8);
+        let mut want: Vec<Vec<u8>> = (1..=300_u64).map(|n| long(len, shared, b's', n)).collect();
+        for key in &want {
+            assert!(tree.insert(key, &value).unwrap());
+        }
+        let before = tree.counts();
+        assert!(before.edge_writes >= 298, "{page_size}: {before:?}");
+        for key in [late(len, shared, b't'), long(len, 1, b'z', 1), long(len, 1, b'z', 2)] {
+            let edge = tree.counts().edge_writes;
+            assert!(tree.insert(&key, &value).unwrap(), "{page_size}");
+            assert_eq!(tree.counts().edge_writes, edge + 1, "{page_size}: written with no descent");
+            want.push(key);
+        }
+        assert!(tree.counts().splits > before.splits, "{page_size}");
+        for key in &want {
+            assert_eq!(tree.get(key).unwrap(), Some(value.to_vec()), "{page_size}");
+        }
+        for (leaf, bytes) in leaves(&tree) {
+            assert!(bytes <= tree.capacity, "leaf {} of {bytes} bytes, past the page's {}", leaf.0, tree.capacity);
+        }
+        assert_eq!(keys(&tree, Direction::Forward), want, "{page_size}");
+    }
 }

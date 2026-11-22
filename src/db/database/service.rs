@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 use super::super::standby::Opening;
 use super::{Database, State};
 use crate::error::{Code, Result, SqlError};
-use crate::sync::{lock, write};
+use crate::sync::lock;
 
 impl Database {
     /// The service it is in: 0 until it is first opened again in place.
@@ -52,7 +52,6 @@ impl Database {
         *lock(&self.0.files)? = None;
         lock(&self.0.in_doubt)?.clear();
         self.0.service.fetch_add(1, Ordering::AcqRel);
-        *write(&self.0.current)? = Arc::new(state);
-        Ok(())
+        self.publish(state)
     }
 }

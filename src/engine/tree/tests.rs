@@ -578,5 +578,17 @@ mod hinted;
 // Threads writing and reading at once, against models.
 mod stress;
 
+// Writers on hot nodes (RULES.md D503).
+mod hot;
+
 // Splits of leaves whose keys share a long prefix (RULES.md D500).
 mod shared;
+
+// Room in a node for a change in place (RULES.md D500).
+mod room;
+
+// Reads by key from a copy of the leaf read before (RULES.md D806).
+mod finger;
+
+// The inner node copies a thread keeps (RULES.md D807).
+mod copies;

@@ -12,7 +12,7 @@ use super::generated::{Generating, Inserted, check_override};
 use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::routines::{Hosted, hosted_rows};
-use super::{Session, State, StatementContext, plan, plan_rows, rule, set_columns};
+use super::{Session, State, StatementContext, plan, plan_written, rule, set_columns};
 use crate::ast::{InsertSource, InsertStatement, QueryExpression, SelectList, SelectSublist};
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, qualify};
 use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
@@ -20,7 +20,7 @@ use crate::error::{At, Result};
 use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
 use crate::logical::{Expr, LogicalPlan, Truth, filled};
 use crate::params::Params;
-use crate::physical::Plan;
+use crate::physical::{Kept as KeptPhysical, Plan};
 use crate::storage::{Row, RowId};
 use crate::txn::{Again, Txn};
 use crate::value::datetime::Now;
@@ -30,6 +30,7 @@ mod bulk;
 mod degree;
 mod given;
 mod into;
+mod pointed;
 mod portion;
 pub(crate) mod system_time;
 
@@ -144,6 +145,9 @@ enum ObjectRows {
     /// Its kept plan, as this execution runs it (`physical::Kept`), or one
     /// planned for it as a plan is learned; the tables it reads.
     Kept(Plan, Arc<[QualifiedName]>),
+    /// Its kept plan, a point read, its row read without the executor's
+    /// operators (RULES.md D752); the tables it reads.
+    Point(Arc<KeptPhysical>, Arc<[QualifiedName]>),
 }
 
 impl Written {
@@ -165,6 +169,12 @@ impl Written {
             None => ObjectRows::Filled(filled(bound.rows.clone(), &slots)?),
         };
         Ok(Written { bound, rows, slots: Some(slots) })
+    }
+
+    /// `bound`, kept, whose plan kept `kept` is a point read, run with
+    /// `slots` (RULES.md D752).
+    pub(super) fn pointed(bound: Arc<BoundWrite>, (kept, reads): (Arc<KeptPhysical>, Arc<[QualifiedName]>), slots: Slots) -> Written {
+        Written { bound, rows: ObjectRows::Point(kept, reads), slots: Some(slots) }
     }
 
     /// Its SET values: column position and new value (`None` is NULL), in
@@ -398,6 +408,10 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
         ObjectRows::Bound => (Some(bound.rows.clone()), None),
         ObjectRows::Filled(logical) => (Some(logical), None),
         ObjectRows::Kept(plan, reads) => (None, Some((plan, reads))),
+        ObjectRows::Point(kept, reads) => {
+            let entries = pointed::object_row(st, tx, (&bound, &kept, &reads), (&db, slots.as_deref().unwrap_or_default()))?;
+            return Ok((Written { bound, rows: ObjectRows::Bound, slots }, entries));
+        }
     };
     let reads = match (&logical, &kept) {
         (_, Some((_, reads))) => reads.to_vec(),
@@ -414,7 +428,7 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
     let (physical, optimized) = match (kept, logical) {
         (Some((physical, _)), _) => (physical, None),
         (None, logical) => {
-            let (optimized, _, physical) = plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone()));
+            let (optimized, _, physical) = plan_written(st, logical.unwrap_or_else(|| bound.rows.clone()));
             (physical, Some(optimized))
         }
     };
@@ -434,6 +448,8 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         return Ok(None);
     }
     let columns = set_columns(&w);
+    // [DESIGN] RULES.md D452: increments reserved, the rows left unwritten.
+    let escrow = super::escrow::escrow_of(st, tx, &w, effects);
     let hosted = Hosted::in_db(effects.host, cx, &w.db(st));
     let runner = hosted.runner();
     let mut leftovers = portion::Leftovers::of(st, &w)?;
@@ -443,7 +459,13 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     // A row another transaction changed is written in the version it
     // committed, if it is still one to change, its values computed from it.
     let mut again: HashMap<RowId, Option<Row>> = HashMap::new();
-    changes.visit(&mut |(id, _, new)| {
+    changes.visit(&mut |(id, seen, new)| {
+        if let Some(guarded) = escrow
+            && let Some(deltas) = super::escrow::deltas(&w, (seen, new), &hosted)?
+            && st.reserve_row(tx, (&w.bound.table, *id), (seen, &deltas, guarded))?
+        {
+            return Ok(());
+        }
         // [EXTENSION] a row its key moves to another partition (RULES.md D155).
         if st.moves((&w.bound.named, &w.bound.table), new) {
             return super::partitions::move_row(cx, (&w, runner), (*id, new), (effects, &mut again));
@@ -471,15 +493,28 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
         }
         Ok(())
     })?;
-    if !w.bound.checks.is_empty() {
-        let checked = |row: &Row| check_option(&w.bound.checks, [row], ("X3.135-1986 §8.12 GR4", runner));
-        changes.visit(&mut |(id, _, new)| match again.get(id) {
-            Some(None) => Ok(()),
-            Some(Some(row)) => checked(row),
-            None => checked(new),
-        })?;
-    }
+    checked_again(&w, &mut changes, &again, runner)?;
     leftovers.insert(cx, &w, effects).map(|()| Some(changes.len().saturating_sub(again.values().filter(|r| r.is_none()).count())))
+}
+
+/// [X3.135-1986 §8.12 GR4] Of the UPDATE `w` through a view WITH CHECK
+/// OPTION, that each row of `changes` it wrote, as `again` holds it if
+/// written over another's commit, is one of the view's.
+fn checked_again(
+    w: &Written,
+    changes: &mut HeldRows<(RowId, Row, Row)>,
+    again: &HashMap<RowId, Option<Row>>,
+    runner: &Runner,
+) -> Result<()> {
+    if w.bound.checks.is_empty() {
+        return Ok(());
+    }
+    let checked = |row: &Row| check_option(&w.bound.checks, [row], ("X3.135-1986 §8.12 GR4", runner));
+    changes.visit(&mut |(id, _, new)| match again.get(id) {
+        Some(None) => Ok(()),
+        Some(Some(row)) => checked(row),
+        None => checked(new),
+    })
 }
 
 /// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it
