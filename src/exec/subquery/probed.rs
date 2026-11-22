@@ -1,4 +1,4 @@
-//! \[DESIGN\] RULES.md D790: a correlated subquery whose run is one probe
+//! \[DESIGN\] RULES.md D790, D791: a correlated subquery whose run is one probe
 //! of a whole unique key stays probed while its probes cost less than its
 //! decorrelated build.
 //!
@@ -22,8 +22,12 @@ use crate::physical::estimated_rows;
 
 /// \[DESIGN\] The rows built into a keyed table that cost as much as one
 /// probe of a unique key: a descent of the key's index and a fetch of its
-/// row, against a hash and an insert of each row a scan gives.
-pub(super) const PROBE_ROWS: f64 = 16.0;
+/// row, against a scan's row hashed and inserted (RULES.md D791). Measured
+/// by `bench/joins/probed.rs` over inner tables of 1,000, 10,000 and
+/// 100,000 rows, the ratio of the build's rows a second to the probes a
+/// second was 15.6, 18.8 and 11.3; this is their geometric mean, 14.9,
+/// rounded.
+pub(super) const PROBE_ROWS: f64 = 15.0;
 
 impl Runner {
     /// Whether the subquery at `at`, run `runs` times so far, decorrelated
