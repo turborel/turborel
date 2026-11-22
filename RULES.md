@@ -497,6 +497,7 @@ verification approach DO-178C expects (§8).
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
 | D805 | A pool finds its files with no lock and no reference count moved |
+| D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
 
 ### The project
 
@@ -13842,6 +13843,26 @@ files are added, each chunk set once in a fixed table of 1,024
 the file for as long as the pool lives. A pool registers at most
 1,048,576 files; one added past that is given a number no file has, so
 every use of it is refused.
+#### D790. A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would
+
+A subquery run EXECUTOR.DECORRELATE_AFTER_RUNS times is decorrelated
+(`exec/subquery.rs`). It runs once without its equalities with outer
+references and builds every row it gives into a keyed table. For a
+scalar subquery over a table's key, such as a price read by an item's
+id, that build is the whole table, made again by each statement that
+runs the subquery past those runs. A run whose plan is kept as one probe
+of a whole unique key (D675) costs a single descent instead.
+
+So the runner keeps such a subquery probed past those runs
+(`exec/subquery/probed.rs`). It decorrelates it only once its probes,
+each weighed as `PROBE_ROWS` rows built, reach the rows the build would
+hold, as planning estimates them. The runs so far stand for the runs to
+come. Up to that point the probes cost no more than the build, and past
+it a build is as likely to pay as not. A subquery whose run is any other
+plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
+before. A probe plan is kept from the first run even when decorrelation
+is due before a plan could be learned, since a unique probe needs no
+learning.
 
 ## 2. Project layout
 
