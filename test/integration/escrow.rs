@@ -13,7 +13,7 @@ use turborel::db::{Database, Opened, Session};
 use turborel::error::Code;
 use turborel::value::Value;
 
-use crate::common::{Scratch, exec, reopened_after_crash, rows};
+use crate::common::{Scratch, exec, reopened_after_crash, rows, until_waiting};
 
 /// The settings compared: escrow on, then off.
 const BOTH: [&str; 2] = ["ON", "OFF"];
@@ -287,17 +287,20 @@ fn what_could_see_a_reserved_sum_holds_the_row() {
 /// Verifies: [DESIGN] RULES.md D452: New-Order's increment of a
 /// district's next order number, read back at once, holds the row from
 /// then on, and Payment's increment of the district's year to date goes
-/// on meanwhile, applied once the other ends; both sums are kept.
+/// on meanwhile, applied once the other ends; both sums are kept. Its
+/// commit is seen waiting before the other ends, with no lock timeout, so
+/// a slow machine cannot fail it: it once waited 100 ms at most, with the
+/// other ending 50 ms after.
 #[test]
 fn an_increment_read_back_holds_its_row_and_another_column_goes_on() {
     let db = database("ON");
-    let (order, payment) = (db.session("A"), impatient(&db, 100));
+    let (order, payment) = (db.session("A"), db.session("A"));
     order.run("UPDATE T SET N = N + 1 WHERE ID = 4").unwrap();
     assert_eq!(value(&order, "N - 1", 4), "0");
     payment.run("UPDATE T SET X = X + 7.5 WHERE ID = 4").unwrap();
     assert_eq!(value(&payment, "Y", 4), "0");
     let paid = thread::spawn(move || payment.commit());
-    thread::sleep(Duration::from_millis(50));
+    until_waiting(&db, 1);
     order.commit().unwrap();
     paid.join().unwrap().unwrap();
     assert_eq!(table(&order)[3], "4,107.50,0,1");

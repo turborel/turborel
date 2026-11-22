@@ -143,6 +143,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | STORAGE.SYSTEM_CACHE_BYTES | 4294967296 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | TABLES.ENGINE | rowstore | A STORAGE ENGINE | at once |  |
 | TABLES.UNIQUE_INDEX_METHOD | btree | AN INDEX METHOD | at once |  |
+| TRANSACTION.ESCROW | ON | ONE OF ON, OFF | at once | *session* |
 | TRANSACTION.ISOLATION | READ COMMITTED | ONE OF READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE | from the next transaction | *session* |
 | TRANSACTION.STRICT | ON | ONE OF ON, OFF | from the next transaction |  |
 | VECTOR.APPROX_DEFAULT | OFF | ONE OF ON, OFF | at once | *session* |
@@ -266,6 +267,7 @@ Each in a sentence:
 - **STORAGE.SYSTEM_CACHE_BYTES**: The bytes of the data file the planner takes the operating system's cache to hold beyond the buffer pool: a fetch of a page the pool misses is priced as read from that cache by the share of the file past the pool it holds, the rest as read from the disk; 0 prices every such page as read from the disk. Only the planner's costs read it, and not of a database kept in memory; a change holds for statements planned after it.
 - **TABLES.ENGINE**: The storage engine of tables a schema creates.
 - **TABLES.UNIQUE_INDEX_METHOD**: The index method behind the UNIQUE constraints of tables created from now on.
+- **TRANSACTION.ESCROW**: Whether a READ COMMITTED searched UPDATE whose every SET item adds to or subtracts from an exact numeric column, no trigger, constraint, index or generated column depending on it, reserves its increments, applied as its transaction commits, rather than holding its rows until then: ON; or writes its rows as any UPDATE does, OFF, as to compare the two.
 - **TRANSACTION.ISOLATION**: The isolation level of a transaction SET TRANSACTION gives none: READ COMMITTED as PostgreSQL's default is, where ISO/IEC 9075 says SERIALIZABLE [ISO/IEC 9075:1992 §14.1 SR2], so SERIALIZABLE here conforms.
 - **TRANSACTION.STRICT**: ON refuses an engine that falls short of serializable, recoverable transactions [X3.135-1986 §4.16]; OFF allows it.
 - **VECTOR.APPROX_DEFAULT**: Whether a FETCH FIRST of neither APPROX nor EXACT may read an approximate index, as FETCH APPROX does: ON; or is exact, OFF.
