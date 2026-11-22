@@ -115,7 +115,7 @@ pub(in crate::exec::sort) fn top_batches(
     all.append(&mut top.peers);
     all.sort_by(|a, b| top.order(a, b));
     let mut kept = top.batches;
-    resolve_held(&mut kept, &all)?;
+    resolve_held(&mut kept, &all, &*top.kernels)?;
     Ok(Box::new(all.into_iter().filter_map(move |e| kept.get(e.batch)?.as_ref().map(|b| Ok(row_of(b, e.row))))))
 }
 
@@ -125,7 +125,7 @@ pub(in crate::exec::sort) fn top_batches(
 /// # Errors
 ///
 /// As decoding a late column fails.
-fn resolve_held(batches: &mut [Option<Batch>], entries: &[Entry]) -> Result<()> {
+fn resolve_held(batches: &mut [Option<Batch>], entries: &[Entry], kernels: &dyn Kernels) -> Result<()> {
     let mut rows: Vec<Vec<u32>> = vec![Vec::new(); batches.len()];
     for e in entries {
         if let Some(of) = rows.get_mut(e.batch) {
@@ -135,7 +135,7 @@ fn resolve_held(batches: &mut [Option<Batch>], entries: &[Entry]) -> Result<()> 
     for (batch, mut of) in batches.iter_mut().zip(rows) {
         if let Some(batch) = batch.as_mut().filter(|b| b.has_late()) {
             of.sort_unstable();
-            batch.resolve(Some(&of))?;
+            batch.resolve(Some(&of), kernels)?;
         }
     }
     Ok(())
@@ -287,8 +287,10 @@ impl Top<'_> {
             }
             let mut rows: Vec<usize> = self.heap.iter().chain(&self.peers).filter(|e| e.batch == at).map(|e| e.row).collect();
             rows.sort_unstable();
-            let picks: Vec<Option<usize>> = rows.iter().copied().map(Some).collect();
-            let gathered = Batch { columns: batch.columns.iter().map(|c| c.gathered(&picks)).collect(), rows: rows.len() };
+            let numbers: Vec<u32> = rows.iter().map(|&r| u32::try_from(r).unwrap_or(crate::storage::NO_ROW)).collect();
+            let picks = crate::storage::Picks::new(&numbers);
+            let gathered =
+                Batch { columns: batch.columns.iter().map(|c| c.gathered_by(&picks, &*self.kernels)).collect(), rows: rows.len() };
             for e in self.heap.iter_mut().chain(self.peers.iter_mut()).filter(|e| e.batch == at) {
                 e.row = rows.binary_search(&e.row).unwrap_or(0);
             }
@@ -311,17 +313,17 @@ impl Top<'_> {
     fn whole(mut self, (last, rows): (usize, Vec<usize>), input: Batches, work: &mut Work) -> Result<RowIter> {
         let mut held = self.held_in_order(last)?;
         if let Some(Some(mut batch)) = self.batches.get_mut(last).map(Option::take) {
-            resolve_at(&mut batch, &rows)?;
+            resolve_at(&mut batch, &rows, &*self.kernels)?;
             held.add(batch, rows);
         }
-        sorted(self.keys, resolved(input), held, work)
+        sorted(self.keys, resolved(input, Arc::clone(&self.kernels)), held, work)
     }
 
     /// The rows held, in the order they came, then the rest of `input`,
     /// sorted as a whole sort sorts them.
     fn whole_held(mut self, input: Batches, work: &mut Work) -> Result<RowIter> {
         let held = self.held_in_order(self.batches.len())?;
-        sorted(self.keys, resolved(input), held, work)
+        sorted(self.keys, resolved(input, Arc::clone(&self.kernels)), held, work)
     }
 
     /// The rows held of the batches before `end`, in the order they came,
@@ -337,7 +339,7 @@ impl Top<'_> {
         for (at, batch) in self.batches.iter_mut().enumerate().take(end) {
             let rows: Vec<usize> = entries.iter().filter(|e| e.batch == at).map(|e| e.row).collect();
             if let Some(mut batch) = batch.take().filter(|_| !rows.is_empty()) {
-                resolve_at(&mut batch, &rows)?;
+                resolve_at(&mut batch, &rows, &*self.kernels)?;
                 held.add(batch, rows);
             }
         }
@@ -351,13 +353,13 @@ impl Top<'_> {
 /// # Errors
 ///
 /// As decoding a late column fails.
-fn resolve_at(batch: &mut Batch, rows: &[usize]) -> Result<()> {
+fn resolve_at(batch: &mut Batch, rows: &[usize], kernels: &dyn Kernels) -> Result<()> {
     if !batch.has_late() {
         return Ok(());
     }
     let mut at: Vec<u32> = rows.iter().map(|&r| u32::try_from(r).unwrap_or(u32::MAX)).collect();
     at.sort_unstable();
-    batch.resolve(Some(&at))
+    batch.resolve(Some(&at), kernels)
 }
 
 /// Moves `heap`'s entry at `at` up to its place in the heap whose

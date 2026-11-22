@@ -39,6 +39,9 @@ pub struct RowStore {
     pub(super) tables: Mutex<HashMap<QualifiedName, TableOptions>>,
     /// The database's work areas, once attached, shared with its tables.
     pub(super) work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
+    /// The kernels its tables decode and judge on, once told (RULES.md
+    /// D570): its files', shared.
+    pub(super) kernels: super::files::Kernels,
     /// The database's encodings, once attached: those its tables' option
     /// ENCODINGS names.
     pub(super) encodings: Mutex<Arc<Encodings>>,
@@ -62,6 +65,7 @@ impl RowStore {
     /// unless `configure` says otherwise.
     pub fn new(files: TableFiles, defaults: TableOptions) -> RowStore {
         let work = Arc::clone(&files.work);
+        let kernels = Arc::clone(&files.kernels);
         let headers: Arc<HeaderCache> = Arc::default();
         let system_cache = Some(Arc::clone(&files.system_cache));
         RowStore {
@@ -71,6 +75,7 @@ impl RowStore {
             defaults,
             tables: Mutex::new(HashMap::new()),
             work,
+            kernels,
             encodings: Mutex::default(),
             name: ROW_STORE,
             checkpoints: true,
@@ -105,6 +110,7 @@ impl RowStore {
             defaults,
             tables: Mutex::new(HashMap::new()),
             work: Arc::default(),
+            kernels: Arc::default(),
             encodings: Mutex::default(),
             name: ROW_STORE,
             checkpoints: true,
@@ -147,6 +153,7 @@ impl RowStore {
         let (pool, file) = self.memory.file("the pool in memory of the built-in engine and index methods")?;
         let made = TableFiles {
             work: Arc::clone(&self.work),
+            kernels: Arc::clone(&self.kernels),
             headers: Arc::clone(&self.headers),
             ..TableFiles::new(pool, file, Arc::new(MemoryLog::new()))
         };

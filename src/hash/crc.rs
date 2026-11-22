@@ -185,7 +185,7 @@ pub struct Crc {
 }
 
 /// \[DESIGN\] The CRCs a database checksums its files with, built in: of
-/// 32 bits or more, CRC-32/ISCSI first, its default (STORAGE.CHECKSUM).
+/// 32 bits or more, CRC-32/ISCSI first. STORAGE.CHECKSUM defaults to XXH3-64 (RULES.md D460).
 /// Their tables are made once, and shared.
 pub fn builtin() -> Vec<Arc<dyn HashFunction>> {
     static BUILT: OnceLock<Vec<Arc<dyn HashFunction>>> = OnceLock::new();

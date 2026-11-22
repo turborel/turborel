@@ -58,7 +58,7 @@ fn within(node: &Node, places: &[u32], cx: &Cx<'_>) -> Option<Vector<'static>> {
     if places.len() == cx.count {
         return evaluated(node, cx).map(owned);
     }
-    let gathered: Vec<Column> = cx.inputs.iter().map(|c| gather(c, places)).collect();
+    let gathered: Vec<Column> = cx.inputs.iter().map(|c| gather(c, places, cx.statement.vector_kernels())).collect();
     let sub = Cx { inputs: gathered.iter().collect(), count: places.len(), statement: cx.statement };
     evaluated(node, &sub).map(owned)
 }

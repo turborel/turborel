@@ -1,13 +1,16 @@
 //! \[EXTENSION\] The sums distances are made of, for two vectors of one
-//! element format: dense pairs through the kernels (`kernels.rs`), and a
+//! element format: dense pairs through the database's kernels (FLOAT32,
+//! FLOAT16 and INT8, RULES.md D571) or the vector module's (`kernels.rs`,
+//! FLOAT64 and BINARY), and a
 //! sparse vector beside a dense or a sparse one by merging their indexes
 //! in `O(stored_a + stored_b)` (design document R4.2, R6.4), in `f64`.
 
 use std::cmp::Ordering;
 
 use super::float::wide;
-use super::kernels::{self, Half, Lane, Single};
+use super::kernels;
 use super::{Element, VectorRef};
+use crate::kernels::{DistanceTerm, Kernels, Packed};
 
 /// A sum over the pairs of elements.
 #[derive(Debug, Clone, Copy)]
@@ -22,12 +25,31 @@ pub(crate) enum Term {
     Differ,
 }
 
-fn floats<L: Lane>(term: Term, a: &[u8], b: &[u8]) -> f64 {
-    match term {
-        Term::Dot => f64::from(kernels::fold::<L>(a, b, kernels::product)),
-        Term::Square => f64::from(kernels::fold::<L>(a, b, kernels::square)),
-        Term::Gap => f64::from(kernels::fold::<L>(a, b, kernels::gap)),
-        Term::Differ => wide(i64::try_from(kernels::differing(a, b, L::WIDTH)).unwrap_or(i64::MAX)),
+impl Term {
+    /// The kernels' term of a sum they take, of all but `Differ`.
+    fn summed(self) -> Option<DistanceTerm> {
+        match self {
+            Term::Dot => Some(DistanceTerm::Dot),
+            Term::Square => Some(DistanceTerm::Square),
+            Term::Gap => Some(DistanceTerm::Gap),
+            Term::Differ => None,
+        }
+    }
+}
+
+/// The bytes of a FLOAT32 element.
+const SINGLE_BYTES: usize = 4;
+/// The bytes of a FLOAT16 element.
+const HALF_BYTES: usize = 2;
+
+fn floats(kernels: &dyn Kernels, (format, term): (Packed, Term), a: &[u8], b: &[u8]) -> f64 {
+    let width = match format {
+        Packed::Single => SINGLE_BYTES,
+        Packed::Half => HALF_BYTES,
+    };
+    match term.summed() {
+        Some(t) => f64::from(kernels.distance_packed(a, b, (format, t))),
+        None => wide(i64::try_from(kernels::differing(a, b, width)).unwrap_or(i64::MAX)),
     }
 }
 
@@ -40,12 +62,10 @@ fn doubles(term: Term, a: &[u8], b: &[u8]) -> f64 {
     }
 }
 
-fn bytes(term: Term, a: &[u8], b: &[u8]) -> f64 {
-    match term {
-        Term::Dot => wide(kernels::fold_i8(a, b, kernels::i8_product)),
-        Term::Square => wide(kernels::fold_i8(a, b, kernels::i8_square)),
-        Term::Gap => wide(kernels::fold_i8(a, b, kernels::i8_gap)),
-        Term::Differ => count(kernels::differing(a, b, 1)),
+fn bytes(kernels: &dyn Kernels, term: Term, a: &[u8], b: &[u8]) -> f64 {
+    match term.summed() {
+        Some(t) => wide(kernels.distance_i8(a, b, t)),
+        None => count(kernels::differing(a, b, 1)),
     }
 }
 
@@ -62,16 +82,16 @@ fn count(n: u64) -> f64 {
 }
 
 /// `term` summed over `a` and `b`, of one element format and dimension
-/// count.
-pub(crate) fn sum(term: Term, a: VectorRef<'_>, b: VectorRef<'_>) -> f64 {
+/// count, on `kernels`.
+pub(crate) fn sum(kernels: &dyn Kernels, term: Term, a: VectorRef<'_>, b: VectorRef<'_>) -> f64 {
     if a.indices.is_some() || b.indices.is_some() {
         return merged(term, a, b);
     }
     match a.element {
-        Element::Float32 => floats::<Single>(term, a.bytes, b.bytes),
-        Element::Float16 => floats::<Half>(term, a.bytes, b.bytes),
+        Element::Float32 => floats(kernels, (Packed::Single, term), a.bytes, b.bytes),
+        Element::Float16 => floats(kernels, (Packed::Half, term), a.bytes, b.bytes),
         Element::Float64 => doubles(term, a.bytes, b.bytes),
-        Element::Int8 => bytes(term, a.bytes, b.bytes),
+        Element::Int8 => bytes(kernels, term, a.bytes, b.bytes),
         Element::Binary => bits(term, a.bytes, b.bytes),
     }
 }
@@ -126,10 +146,10 @@ fn merged(term: Term, a: VectorRef<'_>, b: VectorRef<'_>) -> f64 {
 }
 
 /// The L2 norm of `v`: the image's, but for FLOAT64, whose norm the
-/// image holds only to `f32` precision.
-pub(crate) fn norm(v: VectorRef<'_>) -> f64 {
+/// image holds only to `f32` precision; summed on `kernels`.
+pub(crate) fn norm(kernels: &dyn Kernels, v: VectorRef<'_>) -> f64 {
     match (v.element, v.norm) {
-        (Element::Float64, _) | (_, None) => sum(Term::Dot, v, v).sqrt(),
+        (Element::Float64, _) | (_, None) => sum(kernels, Term::Dot, v, v).sqrt(),
         (Element::Float32 | Element::Float16 | Element::Int8 | Element::Binary, Some(n)) => f64::from(n),
     }
 }

@@ -3,8 +3,11 @@
 //! instruction of one machine's named, each the default of its
 //! `Kernels` method and the reference its contract tests compare with.
 
+pub mod alp;
 pub mod bloom;
 pub mod boundaries;
+pub mod crc;
+pub mod distance;
 pub mod gather;
 pub mod hash;
 pub mod normal;

@@ -44,6 +44,9 @@ pub enum Package {
     Cli,
     /// The plug-in SDK, `turborel-plugin`: its unit tests alone.
     Plugin,
+    /// The vector kernels, `turborel-simd`: its unit tests alone, the
+    /// differential tests at every level the processor has (RULES.md D570).
+    Simd,
 }
 
 /// \[TOOL\] The client's features its unit tests are built with: every
@@ -60,13 +63,15 @@ impl Package {
             Package::Client => "turborel-client",
             Package::Cli => "turborel-cli",
             Package::Plugin => "turborel-plugin",
+            Package::Simd => "turborel-simd",
         }
     }
 
     /// Its integration test binary.
     fn integration(self) -> &'static str {
         match self {
-            Package::Core => "integration",
+            // The kernels' mutations name unit tests alone.
+            Package::Core | Package::Simd => "integration",
             Package::Replication => "replication",
             Package::Server | Package::Client | Package::Plugin => "server",
             Package::Cli => "cli",
@@ -117,7 +122,7 @@ impl Target {
             Target::Integration => vec!["--test", package.integration()],
             Target::Unit => match package {
                 Package::Client => vec!["--lib", "--features", CLIENT_FEATURES],
-                Package::Core | Package::Replication | Package::Server | Package::Cli | Package::Plugin => vec!["--lib"],
+                Package::Core | Package::Replication | Package::Server | Package::Cli | Package::Plugin | Package::Simd => vec!["--lib"],
             },
         }
     }
@@ -186,7 +191,7 @@ fn apply(source: &str, m: &Mutation) -> Result<String> {
 /// is not there.
 fn unmutated_problems(root: &Path, chosen: &[&Mutation]) -> Result<Vec<String>> {
     let mut problems = Vec::new();
-    for package in [Package::Core, Package::Replication, Package::Server, Package::Client, Package::Cli, Package::Plugin] {
+    for package in [Package::Core, Package::Replication, Package::Server, Package::Client, Package::Cli, Package::Plugin, Package::Simd] {
         for target in [Target::Integration, Target::Unit] {
             let mut names: Vec<&str> = chosen.iter().filter(|m| m.package == package).flat_map(|m| m.tests(target)).copied().collect();
             names.sort_unstable();

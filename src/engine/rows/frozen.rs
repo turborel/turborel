@@ -278,7 +278,7 @@ impl RowTable {
         let compress = self.frozen.columns().is_none_or(|c| c.compress);
         let pax = self.frozen.columns().is_some_and(|c| c.pax);
         let imprints = self.frozen.columns().is_some_and(|c| c.imprints);
-        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress, pax, imprints })
+        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress, pax, imprints, kernels: &*self.kernels })
     }
 
     /// The group of `entry`: its header as held, else read and held.

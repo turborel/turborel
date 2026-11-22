@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::kernels::Portable;
-use crate::storage::{Cell, Column, Floats, Ints, Mask, Texts};
+use crate::storage::{Cell, Coded, Column, Floats, Ints, Mask, Texts};
 use crate::value::{Decimal, Value};
 
 /// The exact number of `units` at `scale`.
@@ -49,6 +49,35 @@ fn keys_hash_alike_in_any_vector() {
     let mut none = Vec::new();
     hash_rows(&batch, (&[], None), (&seed, &Portable), &mut none);
     assert_eq!(none, vec![hash_values(&seed, &[]); 4]);
+}
+
+/// Verifies: [DESIGN] (RULES.md D573) a key's hash is XXH3-64 by the
+/// seed: a word's of its 8 bytes, a text's of its bytes less its trailing
+/// spaces, a key of two columns that of the 16 bytes of their hashes; and
+/// texts coded by a dictionary hash as their entries, nulls as null,
+/// of fewer rows than entries and of more.
+#[test]
+fn keys_hash_by_xxh3_in_any_vector() {
+    use crate::hash::xxhash::xxh3_64_with_seed;
+    let seed = Seed::fixed(0x00C0_FFEE);
+    let word = xxh3_64_with_seed(&(-5_i64).to_le_bytes(), 0x00C0_FFEE);
+    assert_eq!(hash_values(&seed, &[exact(-5, 0)]), word);
+    let long = "z".repeat(300);
+    let text = xxh3_64_with_seed(long.as_bytes(), 0x00C0_FFEE);
+    assert_eq!(hash_values(&seed, &[Value::Char(format!("{long}   "))]), text);
+    let both: Vec<u8> = word.to_le_bytes().into_iter().chain(text.to_le_bytes()).collect();
+    assert_eq!(hash_values(&seed, &[exact(-5, 0), Value::Char(long.clone())]), xxh3_64_with_seed(&both, 0x00C0_FFEE));
+    let entries = std::sync::Arc::new(Texts::new(format!("ab{long}c  "), vec![2, 302, 305], None));
+    let nulls = Mask::from_bools(&[false, true, false, false, false]);
+    let coded = Texts::coded(Coded { codes: vec![1, 0, 2, 0, 1], entries }, Some(nulls));
+    let batch = Batch { columns: vec![Column::Texts(coded)], rows: 5 };
+    for rows in [None, Some(&[4_u32, 1][..]), Some(&[2_u32][..])] {
+        let mut hashes = Vec::new();
+        hash_rows(&batch, (&[0], rows), (&seed, &Portable), &mut hashes);
+        let given: Vec<usize> = rows.map_or_else(|| (0..5).collect(), |r| r.iter().map(|&n| usize::try_from(n).unwrap()).collect());
+        let want: Vec<u64> = given.iter().map(|&r| hash_values(&seed, &[batch.cell(0, r).to_value()])).collect();
+        assert_eq!(hashes, want, "rows {rows:?}");
+    }
 }
 
 /// Verifies: [DESIGN] (RULES.md D356) groups are found as their keys'

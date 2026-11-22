@@ -6,13 +6,14 @@
 //! distances to every centroid are tabulated once; a code's distance is
 //! then `m` lookups.
 
-use super::kernels::{fold_f32, gap, product, square};
 use super::quantizer::{
     CODEBOOK_VERSION, CodeDistance, Codebook, Decoding, Measure, PQ, Quantizer, bad_codebook, collect, finish, floats, measure, packed,
     training, word_at,
 };
 use super::random::Random;
 use crate::error::Result;
+use crate::kernels::DistanceTerm;
+use crate::kernels::portable::distance::distance_f32;
 use crate::vector::metric::VectorMetric;
 
 /// Centroids a subspace has at most: a byte's values.
@@ -53,7 +54,7 @@ fn norms_of(spans: &[(usize, usize)], centroids: &[Vec<f32>], k: usize) -> Vec<f
     for (span, cents) in spans.iter().zip(centroids) {
         norms.extend((0..k).map(|c| {
             let cent = centroid(cents, span.1, c);
-            fold_f32(cent, cent, product)
+            distance_f32(cent, cent, DistanceTerm::Dot)
         }));
     }
     norms
@@ -123,7 +124,7 @@ fn centroid(all: &[f32], width: usize, c: usize) -> &[f32] {
 fn nearest(centroids: &[f32], width: usize, point: &[f32]) -> usize {
     let mut best = (0_usize, f32::INFINITY);
     for (c, cent) in centroids.chunks_exact(width.max(1)).enumerate() {
-        let d = fold_f32(point, cent, square);
+        let d = distance_f32(point, cent, DistanceTerm::Square);
         if d < best.1 {
             best = (c, d);
         }
@@ -284,14 +285,17 @@ impl Codebook for ProductCodebook {
     fn table<'a>(&'a self, query: &[f32], metric: &'a dyn VectorMetric) -> Box<dyn CodeDistance + 'a> {
         let Some(m) = measure(metric) else { return Box::new(Decoding { book: self, query: packed(query), metric }) };
         let term = match m {
-            Measure::Square | Measure::Euclidean => square,
-            Measure::Dot | Measure::Cosine => product,
-            Measure::Gap => gap,
+            Measure::Square | Measure::Euclidean => DistanceTerm::Square,
+            Measure::Dot | Measure::Cosine => DistanceTerm::Dot,
+            Measure::Gap => DistanceTerm::Gap,
         };
+        // The query's terms with every centroid, on the kernels the metric
+        // sums on, the database's (RULES.md D571).
+        let kernels = metric.kernels();
         let mut terms = Vec::with_capacity(self.norms.len());
         for (span, cents) in self.spans.iter().zip(&self.centroids) {
             let q = part(query, *span);
-            terms.extend((0..self.k).map(|c| fold_f32(q, centroid(cents, span.1, c), term)));
+            terms.extend((0..self.k).map(|c| kernels.distance_f32(q, centroid(cents, span.1, c), term)));
         }
         Box::new(Table { measure: m, k: self.k, terms, norms: &self.norms, query_norm: super::quantizer::norm_of(query) })
     }

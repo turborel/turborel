@@ -1,21 +1,13 @@
 //! \[DESIGN\] RULES.md D31: the built-in set functions of exact numbers
 //! given as integers (`storage::Ints`), a vector at a time, no value made
 //! of each: how many are not null, their sum, and the greatest or least,
-//! each of the rows given or all, nulls left out [X3.135-1986 §5.8 GR1].
+//! each of the rows given or all, nulls left out [X3.135-1986 §5.8 GR1];
+//! sums of all and extremes on the vector kernels (RULES.md D570).
 
+use crate::kernels::Kernels;
 use crate::storage::Ints;
 use crate::storage::mask::index;
 use crate::value::{Decimal, Value};
-
-/// The units of `ints` of the rows `rows`, or all, not null.
-fn units<'i>(ints: &'i Ints, rows: Option<&'i [u32]>) -> Box<dyn Iterator<Item = i64> + 'i> {
-    let held = move |n: usize| (!ints.is_null(n)).then(|| ints.units.get(n).copied()).flatten();
-    match rows {
-        Some(rows) => Box::new(rows.iter().filter_map(move |&n| held(index(n)))),
-        None if ints.nulls.is_none() => Box::new(ints.units.iter().copied()),
-        None => Box::new((0..ints.units.len()).filter_map(held)),
-    }
-}
 
 /// How many of the rows `rows` of `ints`, or all, are not null.
 pub(super) fn count(ints: &Ints, rows: Option<&[u32]>) -> usize {
@@ -31,8 +23,14 @@ pub(super) fn count(ints: &Ints, rows: Option<&[u32]>) -> usize {
 /// adding them one by one as decimals would find (`Decimal::wide_add`).
 /// No sum so far is judged against `MAX_EXACT_PRECISION`: the total
 /// alone is [ISO/IEC 9075:1992 §6.5 GR2b iv].
-pub(super) fn sum_from(start: i128, ints: &Ints, rows: Option<&[u32]>) -> Option<(i128, bool)> {
-    if let Some(runs) = run_counts(ints, rows) {
+pub(super) fn sum_from(start: i128, ints: &Ints, rows: Option<&[u32]>, kernels: &dyn Kernels) -> Option<(i128, bool)> {
+    let runs = run_counts(ints, rows);
+    if let (None, None) = (rows, &runs)
+        && let Some(summed) = summed(start, ints, kernels)
+    {
+        return Some(summed);
+    }
+    if let Some(runs) = runs {
         return runs.into_iter().try_fold((start, false), |(total, any), (u, n)| {
             let n = i128::try_from(n).ok()?;
             Some((total.checked_add(i128::from(u).checked_mul(n)?)?, any || n > 0))
@@ -61,6 +59,47 @@ pub(super) fn sum_from(start: i128, ints: &Ints, rows: Option<&[u32]>) -> Option
     }
 }
 
+/// \[DESIGN\] Bits of a bound on a sum's magnitude below which none
+/// passes 128 bits: of `start` below 2^126 and fewer than 2^62 values,
+/// each below 2^63, every partial sum is below 2^127 (RULES.md D570).
+const SAFE_BITS: u32 = 126;
+
+/// Bits of a bound on the values summed at once, so that their sum and
+/// a start below 2^`SAFE_BITS` stay within 128 bits.
+const FEW_BITS: u32 = 62;
+
+/// `start` plus every unit of `ints` not null, and whether one was, summed
+/// by `kernels`: of all the units, less those of the nulls, which `Ints`
+/// does not promise are 0. None where a partial sum could pass 128 bits,
+/// so the total is what adding the values in turn makes, or its overflow
+/// raised by that.
+fn summed(start: i128, ints: &Ints, kernels: &dyn Kernels) -> Option<(i128, bool)> {
+    let few = u64::try_from(ints.units.len()).is_ok_and(|n| n >> FEW_BITS == 0);
+    if start.unsigned_abs() >> SAFE_BITS != 0 || !few {
+        return None;
+    }
+    let all = kernels.sum_i64(&ints.units, None);
+    let nulled = match &ints.nulls {
+        Some(nulls) => nulled_sum(&ints.units, nulls.words()),
+        None => 0,
+    };
+    Some((start.checked_add(all)?.checked_sub(nulled)?, ints.held(None) > 0))
+}
+
+/// The sum of the units at the bits set of `words`, each a null's.
+fn nulled_sum(units: &[i64], words: &[u64]) -> i128 {
+    let mut sum = 0_i128;
+    for (w, &word) in words.iter().enumerate() {
+        let mut bits = word;
+        while bits != 0 {
+            let at = w.checked_mul(64).and_then(|base| base.checked_add(usize::try_from(bits.trailing_zeros()).ok()?));
+            sum = sum.saturating_add(i128::from(at.and_then(|n| units.get(n)).copied().unwrap_or(0)));
+            bits &= bits.wrapping_sub(1);
+        }
+    }
+    sum
+}
+
 /// \[DESIGN\] (RULES.md D31) Of `ints` known as runs (`Ints::runs_of`),
 /// each run's unit and how many of the rows `rows`, or all, are in it and
 /// not null, so
@@ -76,14 +115,14 @@ fn run_counts(ints: &Ints, rows: Option<&[u32]>) -> Option<Vec<(i64, usize)>> {
 
 /// The greatest, if `max`, or least of the rows `rows` of `ints`, or all,
 /// not null, as an exact number of their scale: none if every one is null.
-pub(super) fn extreme(ints: &Ints, rows: Option<&[u32]>, max: bool) -> Option<Value> {
+/// Of no runs, found by `kernels`.
+pub(super) fn extreme(ints: &Ints, rows: Option<&[u32]>, max: bool, kernels: &dyn Kernels) -> Option<Value> {
     let best = match run_counts(ints, rows) {
         Some(runs) => {
             let held = runs.into_iter().filter(|&(_, n)| n > 0).map(|(u, _)| u);
             if max { held.max() } else { held.min() }
         }
-        None if max => units(ints, rows).max(),
-        None => units(ints, rows).min(),
+        None => kernels.min_max_i64(&ints.units, (ints.nulls.as_ref(), rows)).map(|(least, most)| if max { most } else { least }),
     };
     best.map(|u| Value::Exact(Decimal::new(i128::from(u), ints.scale)))
 }

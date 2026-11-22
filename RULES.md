@@ -460,6 +460,10 @@ verification approach DO-178C expects (§8).
 | D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
 | D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
 | D560 | Window functions run over batches, partitions and peers found by a kernel over the sort's keys, giving way to the rows' form for errors and the work area |
+| D570 | Each kernel has a body for every vector set, chosen once by the set detected; the column store decodes and judges on the registered set |
+| D571 | A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply |
+| D572 | CRC-32/ISCSI checksums by the kernels' CRC-32C, the processor's instruction where it has one |
+| D573 | A grouping's keys hash by XXH3-64 of the database's seed, a word as 8 bytes, a text trimmed, columns joined as 16 bytes, on the kernels |
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
@@ -12854,6 +12858,87 @@ held, so the window gives way as on one thread. A window run in
 parallel a row at a time splits its rows into partitions by the seeded
 XXH3 of their partitioning's normal bytes (D357, D460).
 
+#### D570. Each kernel has a body for every vector set, chosen once by the set detected; the column store decodes and judges on the registered set
+
+`turborel-simd` holds an instruction set (`arch::Isa`) that only a
+detection makes: SSE2, AVX2 with the rest of x86-64-v3 (BMI1, BMI2,
+POPCNT, LZCNT, FMA, F16C, SSE4.2), AVX-512 F, BW, DQ, VL and CD, NEON. A
+kernel matches the set once a call and runs its body: selections compare
+a vector at a time into words of truth bits, then write the places of the
+bits set eight a byte from a table of each byte's places (AVX2, NEON) or
+sixteen at once compressed (AVX-512); sums add each value's two 32-bit
+halves unsigned and count the negatives, exactly the portable sum;
+decimals are made by
+the portable body's operations in its order, with no fused multiply. A
+kernel no instruction of a set speeds, or the selection-given form of a
+selection, runs its portable body. A sum or extremes of a selection that
+picks at least a quarter of the rows it spans runs the loop of all rows
+over them, the rows not picked masked off as nulls are; of fewer, the
+portable body, whose loads are each a picked row's. A gathering runs the
+portable body at every set: the vector gathers measured slower than its
+loads a row at a time at every size. So does a selection of dictionary
+codes on x86, whose code-by-code lookups the portable body runs faster
+than truth words of the same lookups.
+Every body gives the portable body's result bit for bit, which the
+differential tests (`support/src/differential.rs`) hold it to, on random
+inputs of every length and alignment at every set the processor has.
+
+The column store runs its kernels too: a store is told the database's
+kernels as they are registered (`StorageEngine::use_kernels`), and a
+table takes them as it opens, decoding its chunks (unpacking, decimals)
+and judging its scans' conjuncts on them. EXECUTOR.KERNELS chooses the
+kernels of a statement's executor, its filters over batches, groupings
+and sorts; a table's storage keeps the set registered, whatever the
+setting, since a table is opened once for many statements.
+
+
+#### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
+
+The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
+INT8 vectors sum their terms by the kernels `distance_f32`,
+`cosine_f32`, `distance_packed` and `distance_i8`. The portable body
+keeps 16 lanes, each the terms at its place modulo 16 added in order,
+then adds the lanes and the tail in a fixed order (`finish_*` in
+`kernels/portable/distance.rs`); a vector set's body fills the same 16
+lanes, two registers of 8 (AVX2, F16C for FLOAT16), one of 16
+(AVX-512) or four of 4 (NEON), with no fused multiply, and leaves the
+finish to the portable code, so a distance is the same bits at every
+level and an index built on one machine searches alike on another. The
+database's metrics, and the DiskANN, HNSW and IVF indexes and the
+product quantizer's query tables that measure by them, take the set
+registered (`SharedVectors`); a sum of codes looked up by a quantizer
+adds in element order and stays portable.
+
+#### D572. CRC-32/ISCSI checksums by the kernels' CRC-32C, the processor's instruction where it has one
+
+The kernel `crc32c` computes CRC-32C (CRC-32/ISCSI): portably by the
+table code of `hash/crc.rs`; at the AVX2 and AVX-512 levels by SSE4.2's
+`crc32`, three streams of a long input joined by shift tables; on
+AArch64 by the CRC extension, an instruction set (`Isa::NeonCrc`) made
+only where it is detected. A database registering kernels replaces the
+CRC-32/ISCSI hash function by one of the same id, name and digest that
+runs the kernel, so a file checksummed either way reads either way. It
+runs only where STORAGE.CHECKSUM names CRC-32/ISCSI; the default is
+XXH3-64 (D460).
+
+#### D573. A grouping's keys hash by XXH3-64 of the database's seed, a word as 8 bytes, a text trimmed, columns joined as 16 bytes, on the kernels
+
+A grouping, a set operation, a parallel grouping's morsels and a spilled
+partition find a key's group by one hash, the database's `Seed`
+(`exec/table/hash.rs`): a word, an integer of scale 0 or a value's
+normalized form, is XXH3-64 of its 8 bytes little-endian; a text,
+trailing spaces trimmed, XXH3-64 of its bytes; and a key of several
+columns joins each column's hash to the hash so far as XXH3-64 of the 16
+bytes of the two. Each is XXH3 by the seed, as `hash/xxhash.rs` ports it,
+so the row path and the batch path hash a key alike. A batch's
+integers, texts and joins are hashed by the kernels `hash_i64`,
+`hash_texts` and `combine_i64`, whose bodies in `turborel-simd` multiply
+eight words at once (AVX-512) or four of them by 32-bit halves (AVX2),
+a block of rows at a time; a dictionary's texts are hashed once an
+entry when there are no more entries than rows. NEON runs the portable
+integer bodies, its 64-bit multiplies each one instruction. The keyed
+fallback to SipHash (D357) is unchanged, and no hash is written to a
+file that outlives the process.
 #### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
 
 A join whose condition compares a value of each operand by `<`, `<=`,

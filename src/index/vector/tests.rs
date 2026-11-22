@@ -257,9 +257,10 @@ fn diskann_rerank_gives_the_whole_list_or_the_rows_asked() {
 /// COSINE of `a` and `b` summed by three separate folds, as the engines
 /// measured it before they kept norms.
 fn folded_cosine(a: &[f32], b: &[f32]) -> f32 {
-    use crate::vector::kernels::{fold_f32, product};
-    let scale = (fold_f32(a, a, product) * fold_f32(b, b, product)).sqrt();
-    if scale > 0.0 { 1.0 - fold_f32(a, b, product) / scale } else { 1.0 }
+    use crate::kernels::DistanceTerm::Dot;
+    use crate::kernels::portable::distance::distance_f32;
+    let scale = (distance_f32(a, a, Dot) * distance_f32(b, b, Dot)).sqrt();
+    if scale > 0.0 { 1.0 - distance_f32(a, b, Dot) / scale } else { 1.0 }
 }
 
 /// Verifies: [DESIGN] RULES.md D95: each method measures COSINE by the

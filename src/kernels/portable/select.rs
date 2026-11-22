@@ -97,6 +97,7 @@ impl Holds<f64> for Ge {
 
 /// The rows of `given`, or of all `values`, not null, whose value `v`
 /// satisfies `v op c`, appended to `out`, ascending.
+#[inline]
 pub fn select_i64(values: &[i64], (op, c): (CompOp, i64), given: Given<'_>, out: &mut Vec<u32>) {
     match op {
         CompOp::Eq => selected::<i64, Eq>(values, c, given, out),
@@ -109,6 +110,7 @@ pub fn select_i64(values: &[i64], (op, c): (CompOp, i64), given: Given<'_>, out:
 }
 
 /// As `select_i64`, of approximate numbers.
+#[inline]
 pub fn select_f64(values: &[f64], (op, c): (CompOp, f64), given: Given<'_>, out: &mut Vec<u32>) {
     match op {
         CompOp::Eq => selected::<f64, Eq>(values, c, given, out),
@@ -163,6 +165,7 @@ fn compacted(rows: impl Iterator<Item = (u32, bool)>, count: usize, out: &mut Ve
 }
 
 /// The rows of `given`, not null, whose bit is set in `bits`.
+#[inline]
 pub fn select_mask(bits: &[u64], (nulls, sel): Given<'_>, out: &mut Vec<u32>) {
     let bit = |r: u32| {
         let n = index(r);
@@ -178,6 +181,7 @@ pub fn select_mask(bits: &[u64], (nulls, sel): Given<'_>, out: &mut Vec<u32>) {
 
 /// The rows of `given`, or of all `codes`, not null, whose code's bit is
 /// set in `keep`.
+#[inline]
 pub fn select_codes(codes: &[u32], keep: &[u64], (nulls, sel): Given<'_>, out: &mut Vec<u32>) {
     let kept = |code: u32| {
         let n = index(code);
