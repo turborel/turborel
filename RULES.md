@@ -13832,7 +13832,7 @@ handed back, and runs on a new home or on any free thread.
 #### D785. A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area
 
 A grouping by no column has one group, even of no rows [X3.135-1986
-§5.22 GR1, §5.23 GR1]. It was made as any grouping: each row was keyed,
+§5.23 GR1, §5.25 GR1]. It was made as any grouping. Each row was keyed,
 the key hashed and looked up in the pass's map, and the pass took a work
 area. A `SELECT SUM(k) ... WHERE id BETWEEN ? AND ?` paid that for each of
 its rows, though every row is of the one group.

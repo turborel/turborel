@@ -15,7 +15,8 @@ use crate::value::Value;
 pub(super) struct Columns {
     taken: Vec<(usize, bool)>,
     identity: bool,
-    /// Each column named once, in ascending order: taken in place.
+    /// Whether each column is named once, in ascending order, so the row
+    /// is taken in place.
     ascending: bool,
 }
 
@@ -74,7 +75,13 @@ fn in_place(columns: &[(usize, bool)], mut row: Row) -> Result<Row> {
         return Err(super::broken(&format!("column {last} is not in a row of {} columns", row.len())));
     }
     for (place, &(at, _)) in columns.iter().enumerate() {
-        row.swap(place, at);
+        // `at` is never before `place`, so its value heads the half that
+        // begins there; where the two are one place, nothing moves.
+        if let Some((front, back)) = row.split_at_mut_checked(at)
+            && let (Some(to), Some(from)) = (front.get_mut(place), back.first_mut())
+        {
+            std::mem::swap(to, from);
+        }
     }
     row.truncate(columns.len());
     Ok(row)

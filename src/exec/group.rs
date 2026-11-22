@@ -430,9 +430,9 @@ mod tests {
         assert_eq!(grouped(vec![vec![int(5)]]), [format!("{nine},{:?}", int(0)), format!("{five},{:?}", int(1))]);
     }
 
-    /// Verifies: [X3.135-1986 §5.22 GR1, §5.23 GR1] RULES.md D785: a
+    /// Verifies: [X3.135-1986 §5.23 GR1, §5.25 GR1] RULES.md D785: a
     /// grouping by no column, made before no row, of set functions none
-    /// DISTINCT, is its one group, made whole: of no rows too, its set
+    /// DISTINCT, is its one group, made whole. Of no rows too, its set
     /// functions fed nothing; any grouping column, seed or DISTINCT set
     /// function makes it by key.
     ///

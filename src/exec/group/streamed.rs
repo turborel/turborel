@@ -10,10 +10,10 @@
 //! any row, one by a collation, and one of set functions DISTINCT or of an
 //! inverse distribution, is made hashed (`grouping`): the planner never
 //! streams them. (RULES.md D785) A grouping by no column, of set functions
-//! neither DISTINCT nor of an inverse distribution, is its one group
-//! [X3.135-1986 §5.22 GR1]: fed every row as it comes and finished at the
-//! end, even of no rows [X3.135-1986 §5.23 GR1], with no key, hash or work
-//! area, whichever way the planner asked it made (`whole`).
+//! neither DISTINCT nor of an inverse distribution, is its one group, even
+//! of no rows [X3.135-1986 §5.23 GR1, §5.25 GR1]. It is fed every row as it
+//! comes and finished at the end, with no key, hash or work area, whichever
+//! way the planner asked it made (`whole`).
 
 use super::{Argument, Spec, argument, fresh, grouping};
 use crate::error::Result;
@@ -40,7 +40,7 @@ pub(in crate::exec) fn streamed_grouping(spec: Spec, input: RowIter, db: &Db, tx
 
 /// The one row of `spec`'s grouping of `input`, if it is a grouping by
 /// no column, made before no row, of set functions none DISTINCT or of an
-/// inverse distribution (RULES.md D785): each set function fed each row
+/// inverse distribution (RULES.md D785), each set function fed each row
 /// [X3.135-1986 §5.8 GR1], made and finished within the one ask for its
 /// row, as a streamed group is (RULES.md D551); else `spec` and `input`
 /// given back, to be grouped by key.
@@ -62,7 +62,9 @@ pub(in crate::exec) fn whole(spec: Spec, input: RowIter, db: &Db, tx: TxId) -> W
 /// A grouping's rows made whole (`whole`), or what it groups, to be
 /// grouped by key.
 pub(in crate::exec) enum Whole {
+    /// The one row of the grouping, made as it is asked for.
     Made(RowIter),
+    /// The grouping and its rows, given back to be grouped by key.
     Keyed(Spec, RowIter),
 }
 
