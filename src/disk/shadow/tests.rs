@@ -3,6 +3,7 @@
 //! side file damaged at its end is cut, and files are made and removed at
 //! commits (RULES.md R-TEST-1, R-TEST-2, R-TEST-7).
 
+use super::file::RUN_BYTES;
 use super::side::{KIND_SIZE, Op, decode, encode};
 use super::*;
 use crate::disk::memory::MemoryFileSystem;
@@ -42,7 +43,7 @@ fn content(fs: &dyn FileSystem) -> Vec<u8> {
 fn crash_after_commit_block(shadows: &ShadowFileSystem, path: &str, last: impl Fn(&file::Sealed) -> Vec<Op>) {
     let shadow = Arc::clone(lock_builtin(&shadows.files).get(Path::new(path)).unwrap());
     let sealed = read(&shadow.pending).unwrap().sealed.clone().unwrap();
-    shadow.end_side(&sealed, &last(&sealed)).unwrap();
+    shadow.end_side(&sealed, &last(&sealed), &mut Pace::none()).unwrap();
 }
 
 /// Verifies: [DESIGN] RULES.md D30, shadow files: writes across granules,
@@ -416,4 +417,84 @@ fn a_read_takes_the_files_runs_around_what_was_written() {
     let mut part = vec![0_u8; 3 * GRANULE];
     file.read_exact_at(&mut part, 1_000).unwrap();
     assert_eq!(part, expected[1_000..1_000 + 3 * GRANULE], "unaligned");
+}
+
+/// Verifies: [DESIGN] RULES.md D811: the granules held for a commit close
+/// its side file as runs, those next to each other one op up to
+/// `RUN_BYTES`, not one each; a crash after the commit block, which copies
+/// the side file, and the commit itself, which writes the runs, both leave
+/// the file as written. MC/DC of `extends`, next and short: granule 1
+/// after 0 extends (both true); granule 10 after the run ending at 3 does
+/// not (next false, short true); the granule after a full run of
+/// `RUN_BYTES` does not (next true, short false). Of the write's
+/// `!run.is_empty() && !extends`: the first granule starts a run (empty),
+/// granule 1 joins one (not empty, extending), granule 10 ends one
+/// (neither empty nor extending). Of the closing's `run.as_mut()` and
+/// `extends`, the same three: no run, a run extended, a run not.
+#[test]
+fn held_granules_close_the_side_file_in_runs() {
+    let granule = u64::try_from(GRANULE).unwrap();
+    let full = u64::try_from(RUN_BYTES.checked_div(GRANULE).unwrap()).unwrap();
+    let written = |shadows: &ShadowFileSystem| {
+        shadows.hold().unwrap();
+        let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+        file.write_all_at(&[5_u8; 3 * GRANULE], 0).unwrap();
+        file.write_all_at(&[6_u8; GRANULE], 10 * granule).unwrap();
+        file.write_all_at(&vec![7_u8; RUN_BYTES + GRANULE], 20 * granule).unwrap();
+        shadows.seal().unwrap();
+    };
+    let expected =
+        [vec![5_u8; 3 * GRANULE], vec![0_u8; 7 * GRANULE], vec![6_u8; GRANULE], vec![0_u8; 9 * GRANULE], vec![7_u8; RUN_BYTES + GRANULE]]
+            .concat();
+    let committed = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&committed), hash());
+    written(&shadows);
+    let shadow = Arc::clone(lock_builtin(&shadows.files).get(Path::new(PATH)).unwrap());
+    let sealed = read(&shadow.pending).unwrap().sealed.clone().unwrap();
+    let runs: Vec<(u64, usize)> = file::closing_ops(&sealed)
+        .iter()
+        .filter_map(|op| if let Op::Granule(first, content) = op { Some((*first, content.len())) } else { None })
+        .collect();
+    let after = 20 + full;
+    assert_eq!(runs, [(0, 3 * GRANULE), (10, GRANULE), (20, RUN_BYTES), (after, GRANULE)]);
+    shadows.commit_sealed().unwrap();
+    assert_eq!(content(&*committed), expected, "committed");
+    let crashed = disk();
+    let crashing = ShadowFileSystem::new(Arc::clone(&crashed), hash());
+    written(&crashing);
+    crash_after_commit_block(&crashing, PATH, file::closing_ops);
+    drop(crashing);
+    drop(ShadowFileSystem::new(Arc::clone(&crashed), hash()).open(Path::new(PATH), OpenMode::ReadWrite).unwrap());
+    assert_eq!(content(&*crashed), expected, "copied from the side file after a crash");
+}
+
+/// Verifies: [DESIGN] RULES.md D812: a commit spread over a span is due its
+/// share of it as it writes, none before it writes, the whole span once
+/// done, and never more, a total counted short included; a commit of
+/// nothing counted is due at once.
+#[test]
+fn a_spread_commit_is_due_its_share_of_the_span() {
+    let over = Duration::from_millis(800);
+    assert_eq!(pace::due(0, 4, over), Duration::ZERO);
+    assert_eq!(pace::due(1, 4, over), Duration::from_millis(200));
+    assert_eq!(pace::due(4, 4, over), over);
+    assert_eq!(pace::due(6, 4, over), over, "counted short");
+    assert_eq!(pace::due(6, 0, over), Duration::ZERO, "nothing counted");
+}
+
+/// Verifies: [DESIGN] RULES.md D812: commits spread over a span leave the
+/// file as written, and one told to make them at once again does.
+#[test]
+fn spread_commits_leave_the_file_as_written() {
+    let committed = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&committed), hash());
+    shadows.spread_commits(Some(Duration::from_micros(1)));
+    let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+    file.write_all_at(&[5_u8; 3 * GRANULE], 0).unwrap();
+    shadows.commit().unwrap();
+    assert_eq!(content(&*committed), [5_u8; 3 * GRANULE], "spread");
+    shadows.spread_commits(None);
+    file.write_all_at(&[6_u8; GRANULE], 0).unwrap();
+    shadows.commit().unwrap();
+    assert_eq!(content(&*committed), [[6_u8; GRANULE], [5_u8; GRANULE], [5_u8; GRANULE]].concat(), "at once");
 }

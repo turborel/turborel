@@ -184,7 +184,7 @@ fn a_reader_waits_for_its_granule_in_flight() {
             flight.wait_for(5);
             read.store(true, Ordering::SeqCst);
         });
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(50));
         assert!(!read.load(Ordering::SeqCst), "waiting while it flies");
         flight.land(4..6);
     });

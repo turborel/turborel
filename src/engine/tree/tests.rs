@@ -589,3 +589,6 @@ mod room;
 
 // Reads by key from a copy of the leaf read before (RULES.md D806).
 mod finger;
+
+// The inner node copies a thread keeps (RULES.md D807).
+mod copies;

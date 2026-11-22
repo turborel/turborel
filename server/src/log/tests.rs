@@ -5,7 +5,7 @@ use std::io::Write;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
-use turborel::diagnostics::{Diagnostics, Event};
+use turborel::diagnostics::{CheckpointTook, Diagnostics, Event};
 
 use super::{Lines, Target};
 
@@ -35,6 +35,11 @@ impl Write for Gate {
     }
 }
 
+/// The event of checkpoint `n` taken, in no time.
+fn taken(n: u64) -> Event {
+    Event::CheckpointTaken { taken: n, took: CheckpointTook::default() }
+}
+
 /// Whether `done` comes true within ten seconds, the sink's thread
 /// writing meanwhile.
 fn eventually(done: impl Fn() -> bool) -> bool {
@@ -56,7 +61,7 @@ fn a_sink_appends_its_lines() {
     let registry = Arc::new(turborel::files::Registry::default());
     let sink = Lines::appending(&path).unwrap().noting(registry.note(&path, true));
     sink.event(&Event::Closed);
-    sink.event(&Event::CheckpointTaken(1));
+    sink.event(&taken(1));
     // Written by the sink's thread, in its time.
     let counted = || registry.infos().iter().map(|f| (f.noted, f.open, f.writes)).collect::<Vec<_>>();
     assert!(eventually(|| counted() == [(true, true, 2)]), "{:?}", counted());
@@ -65,7 +70,7 @@ fn a_sink_appends_its_lines() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 3, "{text}");
     assert_eq!(lines[0], "kept");
-    assert!(lines[1].ends_with(r#""event":"closed"}"#) && lines[2].contains(r#""taken":1"#), "{text}");
+    assert!(lines[1].ends_with(r#""event":"closed"}"#) && lines[2].contains(r#""taken":1,"#), "{text}");
     assert!(Lines::appending(&scratch.path("no/such/dir/log")).is_err());
 }
 
@@ -80,21 +85,21 @@ fn a_blocked_stream_holds_up_no_event() {
     let gate = Gate { kept: Arc::default(), entered, open: Arc::new(Mutex::new(Some(open))) };
     let kept = Arc::clone(&gate.kept);
     let sink = Lines::started(Target::Stream(Box::new(gate)), 4).unwrap();
-    sink.event(&Event::CheckpointTaken(0));
+    sink.event(&taken(0));
     waiting.recv().unwrap();
     // The writer holds the first; four wait; three are dropped.
     for n in 1..=7_u64 {
-        sink.event(&Event::CheckpointTaken(n));
+        sink.event(&taken(n));
     }
     release.send(()).unwrap();
     drop(sink);
     let text = String::from_utf8(kept.lock().unwrap().clone()).unwrap();
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 6, "{text}");
-    assert!(lines[0].ends_with(r#""taken":0}"#), "{text}");
+    assert!(lines[0].contains(r#""taken":0,"#), "{text}");
     assert!(lines[1].ends_with(r#""level":"warning","event":"lines_dropped","lines":3}"#), "{text}");
     for (n, line) in (1_u64..).zip(lines.iter().skip(2)) {
-        assert!(line.ends_with(&format!(r#""taken":{n}}}"#)), "{text}");
+        assert!(line.contains(&format!(r#""taken":{n},"#)), "{text}");
     }
 }
 
@@ -111,28 +116,28 @@ fn a_log_rotated_is_opened_again() {
     let path = scratch.path("d/log");
     let sink = Lines::appending(&path).unwrap();
     let reopener = sink.reopener();
-    sink.event(&Event::CheckpointTaken(1));
+    sink.event(&taken(1));
     std::fs::rename(&path, scratch.path("d/log.1")).unwrap();
     reopener.reopen();
-    sink.event(&Event::CheckpointTaken(2));
+    sink.event(&taken(2));
     // Written by the sink's thread, in its time, before the file is moved.
-    assert!(eventually(|| std::fs::read_to_string(&path).is_ok_and(|text| text.contains(r#""taken":2"#))));
+    assert!(eventually(|| std::fs::read_to_string(&path).is_ok_and(|text| text.contains(r#""taken":2,"#))));
     // The file moved while open, as a rotation moves it (which Windows
     // allows, where a directory holding an open file is not moved), and a
     // directory put in its place, which cannot be opened for appending.
     std::fs::rename(&path, scratch.path("d/log.2")).unwrap();
     std::fs::create_dir(&path).unwrap();
     reopener.reopen();
-    sink.event(&Event::CheckpointTaken(3));
+    sink.event(&taken(3));
     drop(sink);
     let rotated = std::fs::read_to_string(scratch.path("d/log.1")).unwrap();
-    assert!(rotated.contains(r#""taken":1"#) && !rotated.contains(r#""taken":2"#), "{rotated}");
+    assert!(rotated.contains(r#""taken":1,"#) && !rotated.contains(r#""taken":2,"#), "{rotated}");
     let moved = std::fs::read_to_string(scratch.path("d/log.2")).unwrap();
     let lines: Vec<&str> = moved.lines().collect();
     assert_eq!(lines.len(), 3, "{moved}");
-    assert!(lines[0].contains(r#""taken":2"#), "{moved}");
+    assert!(lines[0].contains(r#""taken":2,"#), "{moved}");
     assert!(lines[1].contains(r#""level":"error","event":"log_not_reopened","path":""#), "{moved}");
-    assert!(lines[2].contains(r#""taken":3"#), "{moved}");
+    assert!(lines[2].contains(r#""taken":3,"#), "{moved}");
     let stream = Lines::new(Box::new(std::io::sink())).unwrap();
     stream.reopener().reopen();
     stream.event(&Event::Closed);
