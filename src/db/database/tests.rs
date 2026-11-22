@@ -27,7 +27,9 @@ fn a_poisoned_snapshot_is_reported() {
 /// Verifies: [DESIGN] RULES.md D780: a session's statements take its own
 /// copy of the snapshot, taking no count of the one published, until a
 /// change of definitions is published, which its next statement sees.
-/// MC/DC of taking it again: a snapshot published since or not.
+/// MC/DC of keeping its copy, none taken against one taken at this count
+/// (the first statement, the next), and one taken at this count against
+/// one taken before a publication (the next, the one after the change).
 #[test]
 fn a_session_takes_its_own_snapshot_until_one_is_published() {
     let db = Database::new();

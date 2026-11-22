@@ -13885,11 +13885,14 @@ reads. So a transaction beginning took the line from every other
 transaction reading the field beside it, though they shared no data.
 
 So each such value is alone on its cache lines (`sync/alone.rs`):
-`Alone` aligns a value to 128 bytes and pads it out, as some processors
-fetch lines in pairs. The clock's counters of ids and commits, its
-stable and durable timestamps, the count of active transactions, and
-each shard of what cancels the statements of open transactions are
-alone. The shards are found by an XXH3 map of their own, not SipHash.
+`Alone` aligns a value to 128 bytes and pads it out. The size is derived:
+a cache line is 64 bytes, and an adjacent-line prefetcher fetches lines
+in aligned pairs, so a write to either line of a pair takes both. The
+clock's counters of ids and commits, its stable and durable timestamps,
+the count of active transactions, each shard of what cancels the
+statements of open transactions, and each shard of the transactions
+holding log records are alone. Their shards are found by an XXH3 map of
+their own, not SipHash.
 Nothing changes in what they hold or when, only where they lie.
 
 #### D783. A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there
