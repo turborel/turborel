@@ -235,7 +235,9 @@ pub(super) fn plan(
     // unmatched row is extended with is its partition's.
     let filled = |column: usize, mark: usize, parts: &[usize], part: &dyn Fn(usize) -> usize| match parts.iter().position(|&p| p == column)
     {
-        Some(n) => Expr::Case(vec![(Cond::IsNull(Expr::Column(mark), false), Expr::Column(part(n)))], Box::new(Expr::Column(column))),
+        Some(n) => {
+            Expr::Case(vec![(Cond::IsNull(Expr::Column(mark), false), Expr::Column(part(n)))].into(), Box::new(Expr::Column(column)))
+        }
         None => Expr::Column(column),
     };
     let lefts = (0..layout.left).map(|c| filled(c, layout.left_mark(), &left_at, &|n| layout.left_part(n)));

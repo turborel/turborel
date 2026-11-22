@@ -331,6 +331,28 @@ fn composite_kinds_compare_bucket_and_refuse_keys() {
     assert_eq!(code(ARRAY.params(&mut Reader::new(&[0, 0, 0, 0], "parameters"))), Some(Code::Corrupt), "cardinality 0");
 }
 
+/// Verifies: [ISO/IEC 9075-2:2023 §6.13 GR5c] an array cast to another
+/// array type has each element cast; one held by no other value is cast
+/// where it is, one shared is copied, the value sharing it left as it
+/// was; a multiset cast to an array has its elements cast too; an
+/// element that cannot be cast fails the cast.
+#[test]
+fn arrays_cast_each_element_shared_or_not() {
+    let n = |u: i128| Value::Exact(Decimal::new(u, 0));
+    let texts = |all: &[&str]| Value::Array(all.iter().map(|t| Value::Char((*t).into())).collect::<Vec<_>>().into()).to_literal();
+    let varying = DataType::array(DataType::varying(2), 3);
+    let owned = Value::Array(vec![n(1), n(22)].into());
+    assert_eq!(ARRAY.cast(owned, &varying).unwrap().to_literal(), texts(&["1", "22"]));
+    let shared = Value::Array(vec![n(3), n(4)].into());
+    let cast_shared = ARRAY.cast(shared.clone(), &varying).unwrap();
+    assert_eq!(cast_shared.to_literal(), texts(&["3", "4"]));
+    assert_eq!(shared.to_literal(), Value::Array(vec![n(3), n(4)].into()).to_literal(), "the shared array kept");
+    let bag = Value::Multiset(vec![n(5)].into());
+    assert_eq!(ARRAY.cast(bag, &varying).unwrap().to_literal(), texts(&["5"]));
+    let wide = Value::Array(vec![n(1), n(123)].into());
+    assert!(ARRAY.cast(wide, &varying).is_err(), "123 is no VARCHAR(2)");
+}
+
 /// Verifies: [ISO/IEC 9075-2:2023 §6.1] a binary large object type, a
 /// decimal floating-point type and a time type without time zone read
 /// back as written; a tag that names no type is SQLCODE -916.

@@ -206,8 +206,10 @@ pub(super) struct Outgoing<'a> {
 
 impl<'a> Outgoing<'a> {
     /// None gathered yet, batches of `batch` bytes sent through `sink`.
+    /// Room is made for one reply, a request's last, which most requests
+    /// gather alone: a vector grown from none took room for four.
     pub(super) fn new(sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>, batch: usize) -> Outgoing<'a> {
-        Outgoing { sink, batch, inline: DEFAULT_LOB_INLINE_BYTES, located: false, gathered: Vec::new(), sends: 0 }
+        Outgoing { sink, batch, inline: DEFAULT_LOB_INLINE_BYTES, located: false, gathered: Vec::with_capacity(1), sends: 0 }
     }
 
     /// As it is, large objects of at most `bytes` octets sent whole.

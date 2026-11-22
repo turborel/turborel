@@ -60,6 +60,19 @@ fn elements(v: &Value) -> Option<&[Value]> {
     if let Value::Array(e) = v { Some(e) } else { None }
 }
 
+/// An array of the elements `given`, each cast to `element`.
+///
+/// # Errors
+///
+/// As `cast` of an element.
+fn cast_each(given: &[Value], element: &DataType) -> Result<Value> {
+    let mut cast_to = Vec::with_capacity(given.len());
+    for e in given {
+        cast_to.push(cast(e.clone(), element)?);
+    }
+    Ok(Value::Array(cast_to.into()))
+}
+
 /// The maximum cardinality `max` as a count of elements.
 fn bound(max: u32) -> usize {
     usize::try_from(max).unwrap_or(usize::MAX)
@@ -183,8 +196,20 @@ impl SqlType for ArrayKind {
         if given.len() > bound(a.max) {
             return truncated(if of_multiset { "§6.13 GR6b i" } else { "§6.13 GR5c i" }, given.len(), a.max);
         }
-        let cast = given.iter().map(|e| cast(e.clone(), &a.element)).collect::<Result<Vec<_>>>()?;
-        Ok(Value::Array(cast.into()))
+        let element = &a.element;
+        // An array no other value shares is cast where it is, its elements
+        // replaced each by its cast, with no copy made; one shared, or a
+        // multiset, into an array of its cardinality.
+        if let Value::Array(mut held) = v {
+            if let Some(each) = Arc::get_mut(&mut held) {
+                for e in each.iter_mut() {
+                    *e = cast(std::mem::replace(e, Value::Null), element)?;
+                }
+                return Ok(Value::Array(held));
+            }
+            return cast_each(&held, element);
+        }
+        cast_each(given, element)
     }
 
     /// [ISO/IEC 9075-2:2023 §6.49] `<array value constructor by

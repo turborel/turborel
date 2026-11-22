@@ -196,7 +196,7 @@ impl<'a> Replacing<'a> {
                 Expr::Subquery(s.map_outer(&mut |x| self.expr(x)), at)
             }
             Expr::Case(whens, otherwise) => {
-                let whens = whens.into_iter().map(|(c, r)| (self.cond(c), self.expr(r))).collect();
+                let whens = whens.iter().map(|(c, r)| (self.cond(c.clone()), self.expr(r.clone()))).collect();
                 Expr::Case(whens, Box::new(self.expr(*otherwise)))
             }
             Expr::Truth(c) => Expr::Truth(Box::new(self.cond(*c))),
@@ -235,7 +235,7 @@ impl<'a> Replacing<'a> {
         let column = Expr::Column(self.base.saturating_add(1).saturating_add(at));
         let one = if self.unique { column } else { Expr::Call(ScalarRef(Arc::new(Single(rule))), vec![count.clone(), column]) };
         match self.defaults.and_then(|d| d.get(at)) {
-            Some(empty) => Expr::Case(vec![(Cond::IsNull(count, false), empty.clone())], Box::new(one)),
+            Some(empty) => Expr::Case(vec![(Cond::IsNull(count, false), empty.clone())].into(), Box::new(one)),
             None => one,
         }
     }
@@ -257,7 +257,7 @@ impl<'a> Replacing<'a> {
                     (some(self.base), Expr::Const(Value::Bool(decided))),
                     (some(self.base.saturating_add(1)), Expr::Const(Value::Null)),
                 ];
-                Some(Cond::Value(Expr::Case(whens, Box::new(Expr::Const(Value::Bool(otherwise))))))
+                Some(Cond::Value(Expr::Case(whens.into(), Box::new(Expr::Const(Value::Bool(otherwise))))))
             }
         }
     }

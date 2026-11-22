@@ -560,7 +560,14 @@ pub fn batches_of(rows: Rows, columns: &[usize]) -> Batches {
     let columns = columns.to_vec();
     let mut rows = rows;
     Box::new(std::iter::from_fn(move || {
+        // A batch is made once a row is there for it: the call past the
+        // last row allocates none.
+        let first = match rows.next()? {
+            Ok((_, row)) => row,
+            Err(e) => return Some(Err(e)),
+        };
         let mut batch = Batch::empty(columns.len());
+        batch.push(&first, &columns);
         while batch.rows < BATCH_ROWS {
             match rows.next() {
                 Some(Ok((_, row))) => batch.push(&row, &columns),

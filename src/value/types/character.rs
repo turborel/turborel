@@ -247,6 +247,11 @@ impl SqlType for Character {
         Ok(string(v).ok_or_else(|| mismatch(v, t))?.trim_end_matches(' ').as_bytes().to_vec())
     }
 
+    fn encode_record_into(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(string(v).ok_or_else(|| mismatch(v, t))?.trim_end_matches(' ').as_bytes());
+        Ok(())
+    }
+
     /// Padded again to the length.
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
         let s = std::str::from_utf8(field).ok()?;

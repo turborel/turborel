@@ -262,6 +262,11 @@ impl SqlType for Varying {
         Ok(string(v).ok_or_else(|| mismatch(v, t))?.as_bytes().to_vec())
     }
 
+    fn encode_record_into(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(string(v).ok_or_else(|| mismatch(v, t))?.as_bytes());
+        Ok(())
+    }
+
     fn decode_record(&self, field: &[u8], _: &DataType) -> Option<Value> {
         std::str::from_utf8(field).ok().map(|s| Value::Char(s.to_owned()))
     }

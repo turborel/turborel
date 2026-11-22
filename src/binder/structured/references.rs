@@ -188,7 +188,7 @@ impl<'a> Binder<'a> {
             // A row is of one table alone: the first found, or this one.
             found = Some(match found {
                 None => instance,
-                Some(before) => Expr::Case(vec![(Cond::IsNull(before.clone(), true), before)], Box::new(instance)),
+                Some(before) => Expr::Case(vec![(Cond::IsNull(before.clone(), true), before)].into(), Box::new(instance)),
             });
         }
         let e = found.ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §6.24] scope table {} is no typed table", r.table)))?;
@@ -316,7 +316,7 @@ impl<'a> Binder<'a> {
 fn any_of(found: Vec<Expr>) -> Expr {
     let mut all = found.into_iter();
     let first = all.next().unwrap_or(Expr::Const(crate::value::Value::Null));
-    all.fold(first, |before, next| Expr::Case(vec![(Cond::IsNull(before.clone(), true), before)], Box::new(next)))
+    all.fold(first, |before, next| Expr::Case(vec![(Cond::IsNull(before.clone(), true), before)].into(), Box::new(next)))
 }
 
 /// The column `column` of the table whose correlation name is `table`.

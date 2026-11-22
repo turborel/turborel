@@ -45,6 +45,8 @@ use crate::error::{Code, Result, SqlError};
 use crate::storage::Row;
 use crate::value::{DataType, Value};
 
+mod inline;
+
 /// The record's header byte as this code writes it.
 const HEADER: u8 = 0;
 /// Bytes of the header, and of an end.
@@ -173,7 +175,7 @@ impl RecordFormat {
     /// SQLCODE -910 if `row` does not have a value of its column's type, or
     /// NULL, for every column.
     pub fn encode(&self, row: &Row, out: &mut Vec<u8>) -> Result<()> {
-        self.encode_as((row, Vec::new()), &[], out, &mut |column, _| not_fetched(Reference { column, at: 0, length: 0 }).map(|_| 0))
+        self.encode_in_line(row, None, out).map(|_| ())
     }
 
     /// Appends the record of `row` to `out`, the values `spill` says kept
@@ -191,6 +193,9 @@ impl RecordFormat {
         out: &mut Vec<u8>,
         mut store: impl FnMut(usize, &[u8]) -> Result<u64>,
     ) -> Result<()> {
+        if self.encode_in_line(row, Some(spill), out)? {
+            return Ok(());
+        }
         let (outside, encoded) = self.choose(row, spill)?;
         self.encode_as((row, encoded), &outside, out, &mut store)
     }
@@ -316,13 +321,22 @@ impl RecordFormat {
             }
         }
         if let Place::Variable(n) = place {
-            let variable = out.len().saturating_sub(base.saturating_add(self.variable_at()));
-            let end = u32::try_from(variable).ok().filter(|&e| e < OUTSIDE).ok_or_else(|| {
-                SqlError::new(Code::Unsupported, "[DESIGN] a row's values of varying width take 2 GiB or more".to_owned())
-            })?;
-            let at = self.ends_at().saturating_add(n.saturating_mul(END_BYTES));
-            put(out.get_mut(base..).unwrap_or_default(), at, &(end | flag).to_le_bytes());
+            self.put_end((out, base), n, flag)?;
         }
+        Ok(())
+    }
+
+    /// Writes the end of the `n`-th column of varying width, whose bytes
+    /// were just written, of the record that begins at `base` of `out`,
+    /// marked with `flag`.
+    fn put_end(&self, (out, base): (&mut Vec<u8>, usize), n: usize, flag: u32) -> Result<()> {
+        let variable = out.len().saturating_sub(base.saturating_add(self.variable_at()));
+        let end = u32::try_from(variable)
+            .ok()
+            .filter(|&e| e < OUTSIDE)
+            .ok_or_else(|| SqlError::new(Code::Unsupported, "[DESIGN] a row's values of varying width take 2 GiB or more".to_owned()))?;
+        let at = self.ends_at().saturating_add(n.saturating_mul(END_BYTES));
+        put(out.get_mut(base..).unwrap_or_default(), at, &(end | flag).to_le_bytes());
         Ok(())
     }
 

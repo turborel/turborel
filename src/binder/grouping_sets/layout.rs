@@ -165,11 +165,12 @@ fn sets_of(r: &Resolved, at: &Places, distinct: bool) -> Sets {
     // [SR17 m iii 1 A II] a column's value, null in a set leaving it out.
     for (k, c) in r.columns.iter().enumerate() {
         let kept = Cond::Compare(Expr::Column(at.bit(k)), CompOp::Eq, Expr::Const(integer(0)));
-        appended.push(Expr::Case(vec![(kept, Expr::Column(c.pos))], Box::new(Expr::Const(Value::Null))));
+        appended.push(Expr::Case(vec![(kept, Expr::Column(c.pos))].into(), Box::new(Expr::Const(Value::Null))));
     }
     for (i, &j) in at.split.iter().enumerate() {
         let pos = r.references.get(j).map_or(0, |g| g.pos);
-        appended.push(Expr::Case(vec![(Cond::Value(Expr::Column(at.flag(i))), Expr::Column(pos))], Box::new(Expr::Const(Value::Null))));
+        appended
+            .push(Expr::Case(vec![(Cond::Value(Expr::Column(at.flag(i))), Expr::Column(pos))].into(), Box::new(Expr::Const(Value::Null))));
     }
     let seeds = r.members.iter().enumerate().filter(|(_, s)| s.is_empty()).map(|(n, _)| seed(n, refs, at)).collect();
     let masked = r.columns.iter().enumerate().map(|(k, c)| (c.pos, at.value(k))).collect();

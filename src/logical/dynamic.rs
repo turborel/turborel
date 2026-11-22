@@ -152,7 +152,7 @@ impl Filling<'_> {
             // conditions, with theirs.
             Expr::Subquery(s, column) => Expr::Subquery(self.subquery(&s), column),
             Expr::Case(whens, otherwise) => {
-                let whens = whens.into_iter().map(|(c, result)| (self.cond(c), self.expr(result))).collect();
+                let whens = whens.iter().map(|(c, result)| (self.cond(c.clone()), self.expr(result.clone()))).collect();
                 Expr::Case(whens, Box::new(self.expr(*otherwise)))
             }
             Expr::Truth(c) => Expr::Truth(Box::new(self.cond(*c))),
@@ -361,7 +361,7 @@ mod tests {
             Cond::Const(Truth::True),
         ];
         let cond = conds.into_iter().reduce(|a, b| Cond::And(Box::new(a), Box::new(b))).unwrap();
-        let case = Expr::Case(vec![(compare(slot(0)), slot(1))], Box::new(Expr::Subquery(subquery(), 0)));
+        let case = Expr::Case(vec![(compare(slot(0)), slot(1))].into(), Box::new(Expr::Subquery(subquery(), 0)));
         let joined = LogicalPlan::OuterJoin {
             kind: OuterJoin::Left,
             cond: compare(slot(1)),

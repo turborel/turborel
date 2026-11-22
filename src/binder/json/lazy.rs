@@ -84,11 +84,11 @@ impl Binder<'_> {
         let value = Expr::Call(ScalarRef(Arc::new(call(none_taken))), operands.to_vec());
         let empty = empty.map(|(raw, cast)| on_empty_branch(raw, cast, (returning, *on_error), error.clone()));
         let otherwise = match (empty, error) {
-            (Some(empty), Some(error)) => Expr::Case(vec![(is(&taken, TAKEN_EMPTY), empty)], Box::new(error)),
+            (Some(empty), Some(error)) => Expr::Case(vec![(is(&taken, TAKEN_EMPTY), empty)].into(), Box::new(error)),
             (Some(only), None) | (None, Some(only)) => only,
             (None, None) => return Ok(None),
         };
-        Ok(Some(Expr::Case(vec![(is(&taken, TAKEN_VALUE), value)], Box::new(otherwise))))
+        Ok(Some(Expr::Case(vec![(is(&taken, TAKEN_VALUE), value)].into(), Box::new(otherwise))))
     }
 }
 
@@ -116,7 +116,7 @@ fn on_empty_branch(raw: Expr, cast: Expr, (to, on_error): (&DataType, ValueSlot)
         ValueSlot::Default => error.unwrap_or(Expr::Const(Value::Null)),
     };
     let fails = Expr::Call(ScalarRef(Arc::new(JsonCastFails::new(to.clone()))), vec![raw]);
-    Expr::Case(vec![(Cond::Value(fails), replaced)], Box::new(cast))
+    Expr::Case(vec![(Cond::Value(fails), replaced)].into(), Box::new(cast))
 }
 
 #[cfg(test)]

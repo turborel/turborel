@@ -25,7 +25,7 @@ pub fn render_expr(e: &Expr, names: &[String]) -> String {
         }
         Expr::Case(whens, otherwise) => {
             let mut text = String::from("CASE");
-            for (c, result) in whens {
+            for (c, result) in whens.iter() {
                 // Writing to a String cannot fail.
                 let _ = write!(text, " WHEN {} THEN {}", render_cond(c, names), render_expr(result, names));
             }
