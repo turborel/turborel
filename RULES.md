@@ -525,6 +525,7 @@ verification approach DO-178C expects (§8).
 | D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
 | D811 | A commit closes its side file and writes its file in runs of granules |
 | D812 | The checkpoint job spreads its commits over three quarters of the time since the last checkpoint |
+| D813 | A pool's test reading a page fails first if a frame is left latched exclusively |
 
 ### The project
 
@@ -14431,6 +14432,19 @@ power-loss protection and one without. Three quarters gave the flattest
 work going on on both, so the best does not move with the drive and it
 is a constant, not a setting. A quarter of the time is left before the
 next checkpoint is due, and a next one due sooner only starts later.
+
+#### D813. A pool's test reading a page fails first if a frame is left latched exclusively
+
+A read waits for its frame's latch, and a thread that still holds the
+page for writing holds that latch, so it would wait for ever. A test of
+the pool's stamps that took one while it held a page for writing hung
+for a day instead of failing. The thread was the only one left, and its
+own write guard held the latch. The stamps' tests now count the frames
+latched exclusively, with a try that never waits, before each read, and
+fail if any is. The pool itself is unchanged. The hang came from the
+test's own order of holding and reading, not from an order in which the
+pool takes its latches, and the test as it is now on main never held
+and read at once.
 
 ## 2. Project layout
 
