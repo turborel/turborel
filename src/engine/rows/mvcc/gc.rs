@@ -67,7 +67,7 @@ impl RowTable {
         self.versions.garbage_items.fetch_sub(taken, Ordering::Relaxed);
         {
             let mut validated = lock_builtin(&self.versions.validated);
-            validated.retain(|v| v.at > horizon);
+            validated.drop_through(horizon);
             self.versions.validated_due.store(validated.earliest().unwrap_or(u64::MAX), Ordering::SeqCst);
         }
         self.undo.truncate()?;

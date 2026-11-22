@@ -15293,6 +15293,15 @@ The check also skips the scan of the transactions kept for it when the
 transaction validated read nothing and no kept transaction read
 anything. A count of those that read, under the same lock, says so.
 
+The transactions kept for the check are held in the order of their
+commits, and a validation walks only those committed after its snapshot.
+Either order it could miss needs the other's commit after that snapshot,
+so the rest can be passed over unread. A transaction validated after one
+that commits later, as two commits at once may be, takes its place among
+them. A collection drops those at or before its horizon from the front.
+The walk then costs what commits meanwhile, however far a long reader or
+a collection not yet due leaves the horizon behind.
+
 #### D449. A row's turn passed wakes only the waiter whose turn it is
 
 D442 queued a row's waiters on the writer's end in ticket order, all
