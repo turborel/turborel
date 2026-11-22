@@ -426,8 +426,10 @@ verification approach DO-178C expects (§8).
 | D449 | A row's turn passed wakes only the waiter whose turn it is |
 | D450 | A served session's transactions are collected once their reply is sent |
 | D451 | A busy table is collected a batch of commits at a time |
+| D452 | A READ COMMITTED UPDATE that only adds to a column reserves its increments, applied as its transaction commits |
 | D453 | One transaction that wrote nothing collects at a time |
 | D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
+| D455 | A row a transaction wrote is no read of another's change at its validation |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
@@ -499,6 +501,7 @@ verification approach DO-178C expects (§8).
 | D782 | What every transaction writes is alone on its cache lines, apart from what others read |
 | D783 | A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there |
 | D784 | A table's open transactions are kept in shards, by id, each alone on its cache lines |
+| D805 | A pool finds its files with no lock and no reference count moved |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 
 ### The project
@@ -13925,6 +13928,22 @@ looks at each shard in turn. A transaction beginning while it looks did
 not read what it is asked for. Whether any is open, which every
 transaction's end may ask, is read from the counts alone, with no lock.
 
+#### D805. A pool finds its files with no lock and no reference count moved
+
+Each page a pool writes, and each it reads from its file, finds the file
+by number. The files were kept behind one reader-writer lock, and the
+file's `Arc` was cloned out of it, so every such call wrote the lock's
+reader count and the file's reference count. Threads writing pages of
+different tables passed both cache lines between them: a profile of
+contended cache lines at 32 threads put it among the shared lines of
+row updates. Files are only ever added to a pool, so each is now set
+once in a slot never changed again: slots in chunks of 1,024 made as
+files are added, each chunk set once in a fixed table of 1,024
+(`disk/buffer/sources.rs`). A lookup loads two `OnceLock`s and borrows
+the file for as long as the pool lives. A pool registers at most
+1,048,576 files; one added past that is given a number no file has, so
+every use of it is refused.
+
 #### D815. A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock
 
 Between two requests of a fast client, its worker gave up its permit to
@@ -14368,6 +14387,49 @@ whose collection reads the version to take its index entries back.
 Releasing it at write would move that index work onto the writer, before
 its reply, the work D450 moved after it.
 
+#### D452. A READ COMMITTED UPDATE that only adds to a column reserves its increments, applied as its transaction commits
+
+A searched UPDATE such as `SET YTD = YTD + ?` held its row from the
+statement to its transaction's end, so every other transaction adding
+to that row waited the whole of it.
+
+Such an UPDATE now reserves its increment instead (`db/escrow.rs`,
+`txn/escrow.rs`), where TRANSACTION.ESCROW is ON, as it is by default.
+Its transaction applies its reservations as it commits, before its
+commit record, each row's as one ordinary write of the row over its
+newest version. A crash before then loses only what was never
+committed, and recovery replays the application as any other write.
+
+It applies only where nothing could see a sum before it is applied.
+
+- The transaction reads at READ COMMITTED and waits for locks.
+- Every SET item adds to or subtracts from an exact numeric column a
+  value that reads no row, table, routine or sequence.
+- The condition reads no table and none of those columns.
+- The table's engine keeps versions. It is not typed or partitioned and
+  has no trigger, delta table, view check, portion, generated column,
+  CHECK or assertion.
+- No key, index or domain names the column.
+
+The increment is reserved only while the column's value plus every
+increment reserved on it, the positive ones together and the negative
+ones together, stays within the column's type. Otherwise the row is
+written as any other, after the reservations, so an overflow raises at
+its own statement.
+
+A reservation guards its column and those its condition reads. Another
+transaction's write that changes one of them, or deletes the row, waits
+for the reserver as for a held row. A write of other columns goes on.
+The write looks for reservations and is made while no reservation of
+the row is being taken, and a reservation is taken and the row looked
+at again while no write of it is being made. Each then finds the
+other, and no write waits for a reserver while it holds the row, which
+the reserver's application would wait for in turn. A
+transaction reads its own sums. Before one of its statements reads a
+column it reserved on, it applies its reservations on that table, and
+undoing the statement puts them back. A rollback or a rollback to a
+savepoint takes back the reservations made since.
+
 #### D453. One transaction that wrote nothing collects at a time
 
 The end of a transaction that wrote nothing collects the tables awaiting
@@ -14411,3 +14473,23 @@ older versions back to the CALL's snapshot. A function's or a triggered
 action's statements keep the snapshot of the statement that runs them,
 which is still reading. No statement takes a new snapshot while a
 cursor of the session is open, as with any other statement.
+
+#### D455. A row a transaction wrote is no read of another's change at its validation
+
+The end of every statement checks its constraints with its reads
+checked, so a CHECK or NOT NULL check of a row the statement wrote reads
+that row. At commit a transaction is refused when another committed a
+change to a row it read after its snapshot. A READ COMMITTED update that
+waited for a row's writer and wrote the version it committed (D454) was
+therefore refused as it committed, with SQLSTATE 40001, whenever the
+column it set had a check. Every keyed update of a row in demand with a
+checked column hit it.
+
+Validation now leaves out a row the reader wrote itself, either way. The
+reader held that row from its write to its commit, so the other changed
+it before the write, and the write judged that change already. Under one
+snapshot it refused the write. At READ COMMITTED it wrote over the
+version committed. A read of a row the reader did not write, a scan, a
+condition or a region is checked as before. A transaction that wrote
+more rows than are tracked keeps no rows of its writes, and is checked
+as before.

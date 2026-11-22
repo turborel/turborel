@@ -462,6 +462,40 @@ impl LogicalPlan {
         out
     }
 
+    /// \[DESIGN\] Of every base table this plan reads, the columns it reads,
+    /// a bit a column as `txn::escrow::bit` gives, every bit for a table
+    /// read whole as a GRAPH_TABLE's element (RULES.md D452).
+    pub fn columns_read(&self) -> Vec<(QualifiedName, u64)> {
+        let mut out = Vec::new();
+        self.collect_columns(&mut out);
+        out
+    }
+
+    fn collect_columns(&self, out: &mut Vec<(QualifiedName, u64)>) {
+        let mut add = |table: &QualifiedName, mask: u64| match out.iter_mut().find(|(t, _)| t == table) {
+            Some((_, m)) => *m |= mask,
+            None => out.push((table.clone(), mask)),
+        };
+        if let LogicalPlan::Scan { table, needed, .. } = self {
+            add(table, needed.iter().fold(0, |m, &c| m | crate::txn::escrow::bit(c)));
+        }
+        if let LogicalPlan::Unnest(u) = self
+            && let Some(g) = &u.graph
+        {
+            let mut read = Vec::new();
+            g.tables.iter().for_each(|t| t.collect_tables(&mut read));
+            for t in &read {
+                add(t, u64::MAX);
+            }
+        }
+        for input in self.inputs() {
+            input.collect_columns(out);
+        }
+        for s in self.subqueries_of(true) {
+            s.plan.collect_columns(out);
+        }
+    }
+
     fn collect_tables(&self, out: &mut Vec<QualifiedName>) {
         if let LogicalPlan::Scan { table, .. } = self
             && !out.contains(table)

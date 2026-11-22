@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 20] = [
+pub const BTREE: [Mutation; 21] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -204,5 +204,15 @@ pub const BTREE: [Mutation; 20] = [
         replacement: "near.leaf.filter(|_| false)",
         integration: &[],
         unit: &["engine::tree::tests::hinted::a_replace_starts_at_the_leaf_a_read_left"],
+    },
+    Mutation {
+        name: "pool-source-slot-misread",
+        package: Package::Core,
+        breaks: "a pool's file is looked up in the first slot of its chunk, so a later file of the chunk finds the wrong one",
+        file: "src/disk/buffer/sources.rs",
+        original: "self.chunks.get(n.checked_div(CHUNK)?)?.get()?.get(n.checked_rem(CHUNK)?)?.get()",
+        replacement: "self.chunks.get(n.checked_div(CHUNK)?)?.get()?.first()?.get()",
+        integration: &[],
+        unit: &["disk::buffer::sources::tests::files_are_found_by_the_number_they_were_added_as"],
     },
 ];

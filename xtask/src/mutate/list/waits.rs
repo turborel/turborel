@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of row waits and signals, in the order they run.
-pub const WAITS: [Mutation; 11] = [
+pub const WAITS: [Mutation; 12] = [
     Mutation {
         name: "row-wait-skipped",
         package: Package::Core,
@@ -117,5 +117,15 @@ pub const WAITS: [Mutation; 11] = [
         replacement: "        if self.waiting.load(Ordering::SeqCst) == 0 {\n            self.condvar.notify_all();",
         integration: &[],
         unit: &["sync::signal::tests::a_notify_wakes_each_thread_counted_waiting"],
+    },
+    Mutation {
+        name: "own-write-validated",
+        package: Package::Core,
+        breaks: "a READ COMMITTED update of a checked column, made after a wait, is refused as it commits",
+        file: "src/engine/rows/mvcc/commit.rs",
+        original: ".filter(|(id, _)| v.writes.contains(id) && !own.contains(id));",
+        replacement: ".filter(|(id, _)| v.writes.contains(id) && own.len() < usize::MAX);",
+        integration: &["read_committed_waits::a_checked_column_written_after_a_wait_commits_4_28"],
+        unit: &[],
     },
 ];

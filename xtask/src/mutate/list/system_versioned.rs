@@ -15,7 +15,7 @@ pub const SYSTEM_VERSIONED: [Mutation; 34] = [
         name: "history-not-kept",
         package: Package::Core,
         breaks: "a row updated or deleted is kept as no historical row [§15.14 GR10a iii 1 C I]",
-        file: "src/txn/write.rs",
+        file: "src/txn/write/escrowed.rs",
         original: "self.insert_row(tx, &history, &stamp.ended(&old))?;",
         replacement: "let _ = (&history, stamp.ended(&old));",
         integration: &[],
