@@ -299,6 +299,46 @@ UNNEST of arrays is estimated by their elements, so a LEFT JOIN or a
 MERGE from a few array elements probes the key too, and a searched UPDATE
 or DELETE whose condition is one of these finds its rows the same way.
 EXPLAIN shows IndexNestedLoop, its probe's bounds among its conditions.
+Of a table of 3000 orders, a set of keys, one named twice, probes the
+key once for each distinct one.
+
+```sql
+CREATE TABLE NEW_ORDER (W INTEGER, D INTEGER, O INTEGER, PRIMARY KEY (W, D, O));
+INSERT INTO NEW_ORDER WITH RECURSIVE N (I) AS (VALUES (CAST(1 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 3000) SELECT 1, 1, I FROM N;
+SELECT O FROM NEW_ORDER WHERE (W, D, O) IN (VALUES (1, 1, 7), (1, 1, 9), (1, 1, 9));
+EXPLAIN SELECT O FROM NEW_ORDER WHERE (W, D, O) IN (VALUES (1, 1, 7), (1, 1, 9), (1, 1, 9));
+```
+
+```
+OK
+OK
+            O
+--------------
+            7
+            9
+(2 rows)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project NEW_ORDER.O
+   Filter (NEW_ORDER.W, NEW_ORDER.D, NEW_ORDER.O) = ANY (<subquery>)
+     Scan SHOP.NEW_ORDER
+     Subquery
+       Values (1, 1, 7), (1, 1, 9), (1, 1, 9)
+ -- rules: semi_joins
+ -- optimized:
+ Project NEW_ORDER.O
+   Semi join on NEW_ORDER.W = #0 AND NEW_ORDER.D = #1 AND NEW_ORDER.O = #2
+     Scan SHOP.NEW_ORDER
+     Values (1, 1, 7), (1, 1, 9), (1, 1, 9)
+ -- physical:
+ Project NEW_ORDER.O
+   IndexNestedLoop SHOP.NEW_ORDER using SHOP.NEW_ORDER.UNIQUE1 [btree]: #0 = NEW_ORDER.W AND #1 = NEW_ORDER.D AND #2 = NEW_ORDER.O  (est. rows each=1, cost=59.5)
+     Distinct
+       Project #0, #1, #2
+         Values (1, 1, 7), (1, 1, 9), (1, 1, 9)
+(18 rows)
+```
 
 A query whose select list is MIN and MAX alone, with no GROUP BY, needs
 the values of the columns those functions read, not how often a join
