@@ -146,15 +146,16 @@ impl Drop for Turn {
 }
 
 impl Turn {
-    /// \[DESIGN\] RULES.md D743: `row`, written by `tx` in this turn,
-    /// has `tx` its writer, so the waiters behind for the same row queue
-    /// on `tx`'s end, in their order and unwoken, as each would on waking
-    /// to find it. One whose wait on `tx` would deadlock stays, to wake
-    /// and find that itself.
-    pub(crate) fn hand_over(&self, tx: &Txn, (table, id): (&QualifiedName, RowId)) {
+    /// \[DESIGN\] RULES.md D743: `row`, written by `tx` in `turn`, if it
+    /// had one, has `tx` its writer, so the waiters behind for the same row
+    /// queue on `tx`'s end, in their order and unwoken, as each would on
+    /// waking to find it. One whose wait on `tx` would deadlock stays, to
+    /// wake and find that itself.
+    pub(crate) fn hand_over(turn: Option<&Turn>, tx: &Txn, (table, id): (&QualifiedName, RowId)) {
+        let Some(turn) = turn else { return };
         let Some(next) = tx.shared.ends.of(tx.id) else { return };
         let Ok(mut waits_for) = lock(&tx.shared.waits_for) else { return };
-        let mut from = lock_builtin(&self.0.queue);
+        let mut from = lock_builtin(&turn.0.queue);
         let mut to = lock_builtin(&next.queue);
         if to.ended {
             return;

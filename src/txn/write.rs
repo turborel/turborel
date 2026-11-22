@@ -223,11 +223,8 @@ impl State {
             // again over the version committed, before the next waiter's.
             let e = match attempt {
                 Ok((old, history)) => {
-                    // [DESIGN] RULES.md D743: the row's line behind it
-                    // queues on this transaction, unwoken.
-                    if let Some(turn) = &turn {
-                        turn.hand_over(tx, (table, id));
-                    }
+                    // [DESIGN] RULES.md D743: the row's line behind it moves here.
+                    super::row_waits::Turn::hand_over(turn.as_ref(), tx, (table, id));
                     if let (Some(history), Some(stamp)) = (history, &stamp) {
                         self.insert_row(tx, &history, &stamp.ended(&old))?;
                     }
