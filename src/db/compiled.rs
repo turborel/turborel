@@ -11,7 +11,7 @@ use crate::binder::{DescribedKey, OutColumn, described_key, family_in, member_pl
 use crate::catalog::QualifiedName;
 use crate::error::{Result, Warnings};
 use crate::exec::is_table_access;
-use crate::logical::LogicalPlan;
+use crate::logical::{LogicalPlan, fixed_outer};
 use crate::optimizer::{INLINE_FUNCTIONS, MARK_JOINS, SEMI_JOINS, UNNEST_SUBQUERIES, plugged};
 use crate::params::Params;
 use crate::physical::{PhysicalPlanner, Plan};
@@ -50,8 +50,10 @@ pub(super) fn plan_rows(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&
 /// table's index is probed from a few values (RULES.md D775). A plan that
 /// is no table access is planned again of the table's scan located, so
 /// each row is followed by its id (`compiled/located.rs`); one that cannot
-/// be, as `plan_rows` plans it.
+/// be, as `plan_rows` plans it. A subquery's outer references to a
+/// routine's variables are replaced by their slots first (`fixed_outer`).
 pub(super) fn plan_written(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
+    let logical = fixed_outer(logical);
     let (optimized, trace) = plugged::optimize(st, logical.clone(), (None, WRITTEN_ACCESS_OFF));
     let physical = PhysicalPlanner::new(st).plan(&optimized);
     if is_table_access(&physical) {
@@ -69,6 +71,7 @@ pub(super) fn plan_written(st: &State, logical: LogicalPlan) -> (LogicalPlan, Ve
 /// As `plan_written`, its paths chosen by `values` and its `?`s left
 /// slots, as `plan_slotted` plans a query (RULES.md D422).
 pub(super) fn plan_written_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
+    let logical = fixed_outer(logical);
     let (optimized, _) = plugged::optimize(st, logical.clone(), (None, WRITTEN_ACCESS_OFF));
     let physical = PhysicalPlanner::slotted(st, values).plan(&optimized);
     if is_table_access(&physical) {

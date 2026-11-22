@@ -541,6 +541,7 @@ verification approach DO-178C expects (§8).
 | D666 | Predicate transfer goes along a maximum spanning tree of the chain's leaves rooted at the largest, up and back |
 | D667 | A transfer step is kept where its keys are at most half the values it judges, and the phase is planned where it pays |
 | D668 | A phase holds its leaves within its work area, reads a leaf past it again with its filters, and stops a filter that keeps most rows |
+| D836 | A routine's variable in a subquery of a change is the subquery's slot, not an outer reference, so the subquery probes a key |
 
 ### The project
 
@@ -14768,6 +14769,33 @@ not decode, widens the zone as one not known, as before. Decoding the
 whole row reads every column the kept ones are among, so the zone holds
 the same values. A procedure's keyed UPDATE of one row, profiled, spent
 about a twentieth of its time in the second decode.
+
+#### D836. A routine's variable in a subquery of a change is the subquery's slot, not an outer reference, so the subquery probes a key
+
+A routine's SQL variable or parameter is bound as a slot of its frame.
+In a subquery it is bound as an outer reference whose outer expression
+is that slot, as a column of the query around the subquery is. So a
+subquery of a procedure's UPDATE or DELETE that reads a variable, an IN
+of the UNNEST of array variables or a lateral's MIN of a parameter, was
+correlated. The change's plan decorrelated it over every row of the
+object table, a scan of it in place of a probe of its key (D775). A
+CALL whose UPDATE named ten keys of a table of 300000 rows read the
+table twice.
+
+The value of such a reference is the same for every row the subquery
+is applied to. So before a change's object rows are planned
+(`db/compiled.rs`), each outer reference whose outer expression is a
+constant or a slot is replaced by it, at any depth, and a subquery left
+with no outer reference has none (`logical::fixed_outer`). Its plan
+then reads the slot as a `?` there does, the IN is a semi join, and its
+few rows probe the key (D774, D777). A subquery whose identity a kept
+program keeps its plans by is left alone unless a reference is
+replaced.
+
+A collection constant, as a filled array slot is, had no declared type,
+so a probe took no value from its elements (D779). Its type is now the
+collection type of its elements' type, when each element that is not
+null is of one kind (`physical/indexed/typed.rs`).
 
 ## 2. Project layout
 

@@ -39,6 +39,8 @@ const PURE: &str = "src/optimizer/unnesting/pure.rs";
 const MULTISETS: &str = "src/functions/multisets.rs";
 /// The file of the declared types of the columns an index join reads.
 const TYPED: &str = "src/physical/indexed/typed.rs";
+/// The file of a plan's slots filled and its outer references fixed.
+const DYNAMIC: &str = "src/logical/dynamic.rs";
 /// The unit test of a plan of one row at most.
 const ONE_ROW: &str = "logical::single::tests::plans_of_one_row_at_most";
 /// The unit test of an UNNEST's estimate.
@@ -59,9 +61,11 @@ const EACH_ROW: &str = "lateral::a_lateral_query_is_computed_for_each_row_before
 const ONE_ENTRY: &str = "lateral::a_lateral_set_function_of_a_key_reads_one_entry_for_each_row_before_it";
 /// The test of a lateral of a LEFT JOIN and of nothing before it.
 const OF_NOTHING: &str = "lateral::a_lateral_of_a_left_join_keeps_its_rows_and_one_of_nothing_before_it_is_a_derived_table";
+/// The test of a procedure's variables in the subqueries of its changes.
+const PROCEDURES: &str = "set_probes::a_procedures_arrays_and_parameters_probe_the_key_of_its_changes";
 
 /// See the module doc.
-pub const SET_PROBES: [Mutation; 21] = [
+pub const SET_PROBES: [Mutation; 25] = [
     Mutation {
         name: "scalar-semi-of-many-rows",
         package: Package::Core,
@@ -270,6 +274,46 @@ pub const SET_PROBES: [Mutation; 21] = [
         original: "return row.fields.get(at).map(|f| f.data_type.clone());",
         replacement: "return row.fields.get(at).map(|f| f.data_type.clone()).filter(|_| false);",
         integration: &[ONE_ENTRY],
+        unit: &[],
+    },
+    Mutation {
+        name: "written-outer-unfixed",
+        package: Package::Core,
+        breaks: "a change's subqueries keep their outer references to a routine's variables, so they are decorrelated over the object table",
+        file: COMPILED,
+        original: "let logical = fixed_outer(logical);\n    let (optimized, trace) =",
+        replacement: "let (optimized, trace) =",
+        integration: &[PROCEDURES],
+        unit: &[],
+    },
+    Mutation {
+        name: "fixed-outer-kept",
+        package: Package::Core,
+        breaks: "a subquery whose outer references were all replaced keeps its outer expressions, so it is still taken as correlated",
+        file: DYNAMIC,
+        original: "if left { outer } else { Vec::new() }",
+        replacement: "outer",
+        integration: &[PROCEDURES],
+        unit: &[],
+    },
+    Mutation {
+        name: "fixed-outer-unreplaced",
+        package: Package::Core,
+        breaks: "an outer reference to a slot is left in the subquery's plan while its outer expression is dropped",
+        file: DYNAMIC,
+        original: "return fixed.get(i).cloned().flatten().unwrap_or(Expr::Outer(i, name));",
+        replacement: "return Expr::Outer(i, name);",
+        integration: &[PROCEDURES],
+        unit: &[],
+    },
+    Mutation {
+        name: "collection-constant-untyped",
+        package: Package::Core,
+        breaks: "a filled array has no declared type, so an IN of its UNNEST probes no key",
+        file: TYPED,
+        original: "return constant_type(value);",
+        replacement: "return crate::exec::slot_type(value);",
+        integration: &[PROCEDURES],
         unit: &[],
     },
 ];
