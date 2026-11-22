@@ -13,7 +13,7 @@ use turborel::error::{Code, SqlError};
 use turborel::txn::LockWait;
 use turborel::value::Value;
 
-use crate::common::rows;
+use crate::common::{rows, until_waiting};
 
 /// A database of `T (K, V)` holding (1, 10) and (2, 20), committed, whose
 /// sessions wait.
@@ -171,15 +171,6 @@ fn a_row_wait_past_its_timeout_is_refused() {
     waiter.run("SET LOCKS.WAIT = 'OFF'").unwrap();
     waiter.rollback().unwrap();
     assert_eq!(waiter.run("UPDATE T SET V = 12 WHERE K = 1").map_err(|e| e.code), Err(Code::Conflict), "no wait");
-}
-
-/// Waits until `n` statements of `db` wait, for ten seconds at most.
-fn until_waiting(db: &Database, n: usize) {
-    let began = std::time::Instant::now();
-    while db.waiting_statements().unwrap() < n {
-        assert!(began.elapsed().as_secs() < 10, "{n} statements never waited");
-        thread::yield_now();
-    }
 }
 
 /// Verifies: [DESIGN] RULES.md D28, D442: writers waiting for one row go on
