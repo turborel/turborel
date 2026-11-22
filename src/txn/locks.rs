@@ -213,6 +213,10 @@ pub(crate) struct TableLock {
     filled: Mutex<Vec<(String, Timestamp)>>,
     /// Whether a transaction's end is collecting its garbage now.
     collecting: AtomicBool,
+    /// Whether it is in the set of tables awaiting collection, kept with
+    /// the set under its lock, so an end that would leave it so changes
+    /// nothing shared (RULES.md D795).
+    noted: AtomicBool,
     /// When a transaction that wrote it last committed, and when its
     /// engine's maintenance last did some work, as a timestamp's instant;
     /// 0 for never (TABLE_STATISTICS, RULES.md D522).
@@ -223,6 +227,17 @@ pub(crate) struct TableLock {
 }
 
 impl TableLock {
+    /// Whether it is in the set of tables awaiting collection.
+    pub(crate) fn noted(&self) -> bool {
+        self.noted.load(Ordering::Acquire)
+    }
+
+    /// Notes whether it is in the set of tables awaiting collection, under
+    /// the set's lock.
+    pub(crate) fn set_noted(&self, noted: bool) {
+        self.noted.store(noted, Ordering::Release);
+    }
+
     /// Whether a failed undo damaged the table.
     pub(crate) fn is_damaged(&self) -> bool {
         self.damage().is_some()
@@ -244,10 +259,14 @@ impl TableLock {
     }
 
     /// Records that a transaction that wrote it committed at `at`, or that
-    /// its engine's maintenance did some work at `at` if `compacted`: one
-    /// relaxed store, as the last one stored is near enough the latest.
+    /// its engine's maintenance did some work at `at` if `compacted`: a
+    /// relaxed store, as the last one stored is near enough the latest,
+    /// made only when the instant moves (RULES.md D795).
     pub(crate) fn stamp(&self, at: i64, compacted: bool) {
-        if compacted { &self.compacted } else { &self.changed }.store(at, Ordering::Relaxed);
+        let stamped = if compacted { &self.compacted } else { &self.changed };
+        if stamped.load(Ordering::Relaxed) != at {
+            stamped.store(at, Ordering::Relaxed);
+        }
     }
 
     /// When a transaction that wrote it last committed, and when its
