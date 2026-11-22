@@ -7,7 +7,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the range path whose removal must fail their tests.
-pub const RANGE_PATH: [Mutation; 7] = [
+pub const RANGE_PATH: [Mutation; 8] = [
     Mutation {
         name: "range-path-grouped-made-whole",
         package: Package::Core,
@@ -76,6 +76,19 @@ pub const RANGE_PATH: [Mutation; 7] = [
         original: "        using.gave(1);",
         replacement: "        using.gave(0);",
         integration: &["table_statistics::an_indexs_searches_and_entries_are_counted"],
+        unit: &[],
+    },
+    Mutation {
+        name: "range-path-whole-made-at-open",
+        package: Package::Core,
+        breaks: "the one group is made as its row is pulled, so a null it eliminates warns in the next statement",
+        file: "src/exec/group/streamed.rs",
+        original: "    Whole::Made(Box::new(std::iter::once(made(&spec, input, &Runner::new(db, tx)))))",
+        replacement: "    let runner = Runner::new(db, tx);\n    Whole::Made(Box::new(std::iter::once_with(move || made(&spec, input, &runner))))",
+        integration: &[
+            "warnings::a_set_function_that_eliminates_a_null_warns_6_5",
+            "rewrites::extremes::extremes_are_read_from_the_first_row",
+        ],
         unit: &[],
     },
 ];

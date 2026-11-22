@@ -513,6 +513,7 @@ verification approach DO-178C expects (§8).
 | D808 | A leaf's copy is parsed once, and a read of it steps to the slot after the last found |
 | D809 | A scan keeps the entries it took from a leaf in one buffer, and lends them |
 | D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
+| D791 | A probe of a unique key is weighed as the rows of a build it costs as much as, measured |
 | D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
 | D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
 | D782 | What every transaction writes is alone on its cache lines, apart from what others read |
@@ -526,6 +527,7 @@ verification approach DO-178C expects (§8).
 | D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
 | D811 | A commit closes its side file and writes its file in runs of granules |
 | D812 | The checkpoint job spreads its commits over three quarters of the time since the last checkpoint |
+| D813 | A pool's test reading a page fails first if a frame is left latched exclusively |
 
 ### The project
 
@@ -3142,6 +3144,14 @@ jemalloc was measured too but is not offered, since its build refuses
 Windows' MSVC target. `cargo xtask verify` builds the program once per
 feature, so CI shows each one building on Linux, macOS and Windows and none
 is found broken only when an operator picks it.
+
+In a first round of TPC-C at 8 users, with the log's commit sync off so the
+drive's flushes did not hide the allocator, mimalloc, snmalloc and jemalloc
+each served clearly more transactions than the system's allocator. mimalloc
+and jemalloc also ended the run holding much less resident memory, and
+snmalloc more. rpmalloc's run did not complete, so it is offered unranked.
+The rounds that would rank them were cut short, so none is recommended over
+the others.
 
 An allocator only makes allocation cheaper. The core cuts its own
 allocations independently, in the paths that make them, and that work is
@@ -14038,10 +14048,12 @@ area. A `SELECT SUM(k) ... WHERE id BETWEEN ? AND ?` paid that for each of
 its rows, though every row is of the one group.
 
 Such a grouping is now made whole (`exec/group/streamed.rs`, `whole`).
-Its set functions are fed each row as it comes, as a streamed group's are
-(D551), and finished at the end, of no rows too. Nothing is keyed, hashed
-or held. This holds whichever way the planner asked for the grouping,
-hashed or streamed.
+Its set functions are fed every row and finished, of no rows too, as the
+grouping is opened, as a grouping by key makes its groups. A row made
+only once it was pulled raised the warning of a null it eliminated after
+its statement's diagnostics were taken, so that statement lacked it and
+the next one had it. Nothing is keyed, hashed or held. This holds
+whichever way the planner asked for the grouping, hashed or streamed.
 
 - A grouping with seeds (made before any row), or with a set function
   that is DISTINCT or an inverse distribution, is still made by key. Those
@@ -14137,6 +14149,24 @@ plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
 before. A probe plan is kept from the first run even when decorrelation
 is due before a plan could be learned, since a unique probe needs no
 learning.
+
+#### D791. A probe of a unique key is weighed as the rows of a build it costs as much as, measured
+
+D790 weighs each probe a subquery made as `PROBE_ROWS` rows of its
+decorrelated build. That weight is measured, not chosen. The `probed`
+sweep of `bench/joins.rs` (`bench/joins/probed.rs`) runs a scalar
+subquery over a table's primary key for 100 outer rows of an UNNEST,
+never decorrelated, and the same subquery over a copy of the table with
+no index, decorrelated at its first run, over tables of 1,000, 10,000
+and 100,000 rows. The probes a second and the build's rows a second
+give the rows that cost one probe. They came to 15.6, 18.8 and 11.3.
+`PROBE_ROWS` is their geometric mean, 14.9, rounded to 15.
+
+The spread moves the break-even point by less than a factor of two,
+and the decision falls well to one side in the cases that matter. An
+order of at most 15 lines probes an item table of 100,000 rows, and its
+runs weighed at any weight from 4 to 64 come to at most 960 rows, far
+fewer than the build would hold.
 
 #### D780. A session keeps its own copy of the definitions' snapshot, taken again only once one is published
 
@@ -14458,6 +14488,19 @@ power-loss protection and one without. Three quarters gave the flattest
 work going on on both, so the best does not move with the drive and it
 is a constant, not a setting. A quarter of the time is left before the
 next checkpoint is due, and a next one due sooner only starts later.
+
+#### D813. A pool's test reading a page fails first if a frame is left latched exclusively
+
+A read waits for its frame's latch, and a thread that still holds the
+page for writing holds that latch, so it would wait for ever. A test of
+the pool's stamps that took one while it held a page for writing hung
+for a day instead of failing. The thread was the only one left, and its
+own write guard held the latch. The stamps' tests now count the frames
+latched exclusively, with a try that never waits, before each read, and
+fail if any is. The pool itself is unchanged. The hang came from the
+test's own order of holding and reading, not from an order in which the
+pool takes its latches, and the test as it is now on main never held
+and read at once.
 
 ## 2. Project layout
 
