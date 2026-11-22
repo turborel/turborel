@@ -21,6 +21,8 @@
 //! and of those only until one matches, so the optimizer makes semi joins
 //! only of conditions that cannot raise (D15).
 
+mod probed;
+
 use super::built::Built;
 use super::indexed::{EquiKind, Equijoin, Probing, index_join};
 use super::join::{JoinKey, equated, keys_detail};
@@ -135,6 +137,10 @@ impl PhysicalPlanner<'_> {
             let kind = if anti { EquiKind::Anti } else { EquiKind::Semi };
             let join = Equijoin { width, keys: &pairs, rest, outer: kind };
             return Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered };
+        }
+        // The right's few rows probing the left's table (`semi/probed.rs`).
+        if let Some(built) = (!anti).then(|| self.probed_from_right(cond, (left, right))).flatten() {
+            return built;
         }
         // Either way its rows come in the left's order.
         let build_left = self.rows_of(left) < self.rows_of(right);

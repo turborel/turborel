@@ -15,7 +15,7 @@
 use crate::functions::ScalarRef;
 use crate::index::Probe;
 use crate::logical::Limit;
-use crate::physical::{JoinProbe, Plan, Preserved};
+use crate::physical::{JoinProbe, OuterBound, Plan, Preserved};
 use std::sync::Arc;
 
 /// Whether `one` and `other`, groupings, group by the same columns of
@@ -105,11 +105,11 @@ fn same_hash_join(one: &Plan, other: &Plan) -> bool {
 }
 
 /// Whether `one` and `other` are inner index joins of one table, by one
-/// index, probed by the same columns of outer inputs of one shape, both
-/// with a condition or neither (RULES.md D418).
+/// index, probed by the same columns of outer inputs of one shape, and
+/// the same bounds of them if any (RULES.md D776), both with a condition
+/// or neither (RULES.md D418).
 fn same_index_join(one: &Plan, other: &Plan) -> bool {
-    let Plan::IndexJoin { outer: Preserved::Inner, spatial: None, left, table, index, probe: JoinProbe::Prefix(columns), cond, .. } = one
-    else {
+    let Plan::IndexJoin { outer: Preserved::Inner, spatial: None, left, table, index, probe, cond, .. } = one else {
         return false;
     };
     let Plan::IndexJoin {
@@ -118,15 +118,26 @@ fn same_index_join(one: &Plan, other: &Plan) -> bool {
         left: left2,
         table: table2,
         index: index2,
-        probe: JoinProbe::Prefix(columns2),
+        probe: probe2,
         cond: cond2,
         ..
     } = other
     else {
         return false;
     };
-    let read = table == table2 && index == index2 && columns == columns2;
+    let read = table == table2 && index == index2 && same_join_probe(probe, probe2);
     read && cond.is_some() == cond2.is_some() && same_shape(left, left2)
+}
+
+/// Whether `one` and `other` probe by the same outer columns, and of a
+/// range by the same bounds; none but these is kept.
+fn same_join_probe(one: &JoinProbe, other: &JoinProbe) -> bool {
+    let written = |b: &OuterBound| (b.op, b.outer, b.shift.as_ref().map(|e| format!("{e:?}")));
+    match (one, other) {
+        (JoinProbe::Prefix(a), JoinProbe::Prefix(b)) => a == b,
+        (JoinProbe::Range(a), JoinProbe::Range(b)) => a.equal == b.equal && a.bounds.iter().map(written).eq(b.bounds.iter().map(written)),
+        _ => false,
+    }
 }
 
 /// Whether `one` and `other` are limits alike, of inputs of one shape.

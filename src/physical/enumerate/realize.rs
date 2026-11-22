@@ -107,9 +107,9 @@ impl Context<'_> {
     }
 
     /// The conjuncts a join of `sets` judges: its operator's condition's,
-    /// or the inner joins' conjuncts that read both, or, if none does, the
-    /// equalities their keys imply of a column of each
-    /// (`Model::implied_keys`, RULES.md D387).
+    /// or the inner joins' conjuncts that read both, and, if none of them
+    /// is an equality of columns, the equalities their keys imply of a
+    /// column of each (`Model::implied_keys`, RULES.md D387, D776).
     fn conds(&self, op: Option<usize>, (l, r): (Set, Set)) -> Vec<Cond> {
         if let Some(cond) = op.and_then(|o| self.query.preds.get(o)).and_then(Option::as_ref) {
             let mut out = Vec::new();
@@ -118,12 +118,16 @@ impl Context<'_> {
         }
         let s = l | r;
         let straddles = |reads: Set| reads & !s == 0 && reads & !l != 0 && reads & !r != 0;
-        let stated: Vec<Cond> =
+        let mut stated: Vec<Cond> =
             self.query.conjuncts.iter().filter(|(_, c)| straddles(self.query.reads(c))).map(|(_, c)| c.clone()).collect();
-        if !stated.is_empty() {
+        // Of stated conjuncts with no equality of columns, as bounds by
+        // order alone, the implied ones are keys too (RULES.md D776).
+        if stated.iter().any(|c| matches!(c, Cond::Compare(Expr::Column(_), CompOp::Eq, Expr::Column(_)))) {
             return stated;
         }
-        self.model.implied_keys((l, r)).into_iter().map(|(a, b)| Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b))).collect()
+        let implied = self.model.implied_keys((l, r)).into_iter().map(|(a, b)| Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)));
+        stated.extend(implied);
+        stated
     }
 }
 
@@ -309,7 +313,10 @@ impl PhysicalPlanner<'_> {
         let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
         let rest = rest.iter().map(|c| cx.mapped(c, &layout)).collect();
         let names = cx.names(&layout, self.shown);
-        let join = Equijoin { width: cx.width(&l.layout), keys: &pairs, rest, outer: equi_kind(kind) };
+        let width = cx.width(&l.layout);
+        // The key's next column bounded by outer values (`indexed/bounded.rs`).
+        let (probing, rest) = self.bounded(probing, rest, (width, &type_at));
+        let join = Equijoin { width, keys: &pairs, rest, outer: equi_kind(kind) };
         let plan = index_join(probing, join, (l.plan.clone(), rows), Shown::of(names.as_deref()));
         // A semi join's columns are its left's alone.
         let layout = if join_alone(kind) { l.layout.clone() } else { layout };

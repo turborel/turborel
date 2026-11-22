@@ -71,11 +71,13 @@
 
 mod build;
 mod key;
+mod parsed;
 mod split;
 
 pub(super) use build::{Shape, build, compact, deleted, grown, insert, lengthens, overwrite, remove, set_child, set_right, stored};
 pub(super) use key::KeyRef;
 use key::head_of;
+pub(crate) use parsed::Parsed;
 pub(super) use split::{shortest_between, split};
 
 use crate::disk::pager::PageId;

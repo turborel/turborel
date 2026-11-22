@@ -22,18 +22,25 @@ pub(super) enum Stage {
     Hurried,
 }
 
+/// The bytes of the stages, in the order a server comes to them.
+const SERVING: u8 = 0;
+const STOPPING: u8 = 1;
+const HURRIED: u8 = 2;
+
 impl Stage {
     /// Its byte.
     fn byte(self) -> u8 {
         match self {
-            Stage::Serving => 0,
-            Stage::Stopping => 1,
-            Stage::Hurried => 2,
+            Stage::Serving => SERVING,
+            Stage::Stopping => STOPPING,
+            Stage::Hurried => HURRIED,
         }
     }
 }
 
-/// The stage now, as a byte alone on its cache lines.
+/// The stage now, as a byte alone on its cache lines: 128 bytes, a pair of
+/// 64-byte lines, as a processor's adjacent-line prefetcher moves them
+/// (RULES.md D782).
 #[repr(align(128))]
 #[derive(Default)]
 struct Now(AtomicU8);
