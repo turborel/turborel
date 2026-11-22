@@ -37,6 +37,7 @@ mod monitoring;
 mod oltp;
 mod orders;
 mod parallel;
+mod probed_subqueries;
 mod range_joins;
 mod range_path;
 mod rewrites;
@@ -186,9 +187,15 @@ fn second() -> [&'static [Mutation]; 46] {
 }
 
 /// The planner's newest areas, in order: join estimates, range joins, the
-/// cost model and orders.
-fn planner() -> [&'static [Mutation]; 4] {
-    [&join_estimates::JOIN_ESTIMATES, &range_joins::RANGE_JOINS, &cost_model::COST_MODEL, &orders::ORDERS]
+/// cost model, orders and probed subqueries.
+fn planner() -> [&'static [Mutation]; 5] {
+    [
+        &join_estimates::JOIN_ESTIMATES,
+        &range_joins::RANGE_JOINS,
+        &cost_model::COST_MODEL,
+        &orders::ORDERS,
+        &probed_subqueries::PROBED_SUBQUERIES,
+    ]
 }
 
 /// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's, the decode kernels' and late materialization's.
