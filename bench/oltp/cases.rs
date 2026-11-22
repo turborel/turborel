@@ -50,7 +50,7 @@ pub fn run(bench: &Bench, settings: &Settings, serve: &impl Serve) {
             for &threads in &settings.threads {
                 let dir = bench.path(&format!("tpcc-{set}-{threads}"));
                 let db = built(settings, &dir, |db| tpcc_run::build(db, set));
-                tpcc_run::measure(bench, &serve.serve(db), (set, threads), settings.secs);
+                tpcc_run::measure(bench, &serve.serve(db), (set, threads, &settings.store.label()), settings.secs);
                 let _ = std::fs::remove_dir_all(&dir);
             }
         }
@@ -59,7 +59,8 @@ pub fn run(bench: &Bench, settings: &Settings, serve: &impl Serve) {
         for &threads in &settings.threads {
             let dir = bench.path(&format!("{}-{threads}", script.name));
             let db = built(settings, &dir, |db| sysbench_run::build(db, settings.table_size));
-            sysbench_run::measure(bench, &serve.serve(db), (script, threads, settings.table_size), settings.secs);
+            let case = (script, threads, settings.table_size, &*settings.store.label());
+            sysbench_run::measure(bench, &serve.serve(db), case, settings.secs);
             let _ = std::fs::remove_dir_all(&dir);
         }
     }

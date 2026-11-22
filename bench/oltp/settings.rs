@@ -13,6 +13,9 @@
 //! - `TURBOREL_OLTP_TABLE_SIZE`, the rows of each sysbench-style table;
 //!   100,000 if unset.
 //! - `TURBOREL_OLTP_POOL_MB`, the buffer pool's mebibytes; 4,096 if unset.
+//! - `TURBOREL_OLTP_CORES`, the cores the terminals may keep busy, for the
+//!   time a transaction takes, where the processor's parallelism is not
+//!   what the process may use (`oltp/measure.rs`).
 //! - `TURBOREL_OLTP_MODE`, `embedded` or `protocol`, where the protocol
 //!   mode's example is built; embedded if unset.
 

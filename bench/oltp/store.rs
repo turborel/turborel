@@ -31,6 +31,11 @@ fn word(w: &str) -> Value {
 }
 
 impl Store {
+    /// The settings, as a case's name shows them.
+    pub fn label(&self) -> String {
+        format!("sync={} pool={}M", if self.sync { "on" } else { "off" }, self.pool_bytes >> 20)
+    }
+
     /// A new database in `dir`.
     pub fn open(&self, dir: &Path) -> Database {
         let _ = std::fs::remove_dir_all(dir);
