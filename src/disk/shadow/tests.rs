@@ -43,7 +43,7 @@ fn content(fs: &dyn FileSystem) -> Vec<u8> {
 fn crash_after_commit_block(shadows: &ShadowFileSystem, path: &str, last: impl Fn(&file::Sealed) -> Vec<Op>) {
     let shadow = Arc::clone(lock_builtin(&shadows.files).get(Path::new(path)).unwrap());
     let sealed = read(&shadow.pending).unwrap().sealed.clone().unwrap();
-    shadow.end_side(&sealed, &last(&sealed), &mut Pace::none()).unwrap();
+    shadow.end_side(&sealed, &last(&sealed)).unwrap();
 }
 
 /// Verifies: [DESIGN] RULES.md D30, shadow files: writes across granules,
@@ -466,35 +466,4 @@ fn held_granules_close_the_side_file_in_runs() {
     drop(crashing);
     drop(ShadowFileSystem::new(Arc::clone(&crashed), hash()).open(Path::new(PATH), OpenMode::ReadWrite).unwrap());
     assert_eq!(content(&*crashed), expected, "copied from the side file after a crash");
-}
-
-/// Verifies: [DESIGN] RULES.md D812: a commit spread over a span is due its
-/// share of it as it writes, none before it writes, the whole span once
-/// done, and never more, a total counted short included; a commit of
-/// nothing counted is due at once.
-#[test]
-fn a_spread_commit_is_due_its_share_of_the_span() {
-    let over = Duration::from_millis(800);
-    assert_eq!(pace::due(0, 4, over), Duration::ZERO);
-    assert_eq!(pace::due(1, 4, over), Duration::from_millis(200));
-    assert_eq!(pace::due(4, 4, over), over);
-    assert_eq!(pace::due(6, 4, over), over, "counted short");
-    assert_eq!(pace::due(6, 0, over), Duration::ZERO, "nothing counted");
-}
-
-/// Verifies: [DESIGN] RULES.md D812: commits spread over a span leave the
-/// file as written, and one told to make them at once again does.
-#[test]
-fn spread_commits_leave_the_file_as_written() {
-    let committed = disk();
-    let shadows = ShadowFileSystem::new(Arc::clone(&committed), hash());
-    shadows.spread_commits(Some(Duration::from_micros(1)));
-    let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
-    file.write_all_at(&[5_u8; 3 * GRANULE], 0).unwrap();
-    shadows.commit().unwrap();
-    assert_eq!(content(&*committed), [5_u8; 3 * GRANULE], "spread");
-    shadows.spread_commits(None);
-    file.write_all_at(&[6_u8; GRANULE], 0).unwrap();
-    shadows.commit().unwrap();
-    assert_eq!(content(&*committed), [[6_u8; GRANULE], [5_u8; GRANULE], [5_u8; GRANULE]].concat(), "at once");
 }

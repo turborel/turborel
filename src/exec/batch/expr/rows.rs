@@ -42,6 +42,9 @@ impl Subqueries for Quiet<'_> {
     fn warnings(&self) -> Option<&Warnings> {
         Some(&self.heard)
     }
+    fn vector_kernels(&self) -> &dyn crate::kernels::Kernels {
+        self.statement.vector_kernels()
+    }
 
     fn like(&self, value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
         self.statement.like(value, pattern, escape)

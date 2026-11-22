@@ -143,6 +143,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | STORAGE.SYSTEM_CACHE_BYTES | 4294967296 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | TABLES.ENGINE | rowstore | A STORAGE ENGINE | at once |  |
 | TABLES.UNIQUE_INDEX_METHOD | btree | AN INDEX METHOD | at once |  |
+| TRANSACTION.ESCROW | ON | ONE OF ON, OFF | at once | *session* |
 | TRANSACTION.ISOLATION | READ COMMITTED | ONE OF READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE | from the next transaction | *session* |
 | TRANSACTION.STRICT | ON | ONE OF ON, OFF | from the next transaction |  |
 | VECTOR.APPROX_DEFAULT | OFF | ONE OF ON, OFF | at once | *session* |
@@ -175,7 +176,7 @@ Each in a sentence:
 - **EXECUTOR.DENSE_JOINS**: Whether a hash join whose one key is of whole numbers dense in their span, at most four times as wide as its built rows, finds a probe's rows at its key's place in the span, no hash made: ON; or hashes every key, OFF, as to compare the two. Its rows are the same either way.
 - **EXECUTOR.GRAPH_THREADS**: The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.
 - **EXECUTOR.KEEP_SUBQUERY_PLANS**: Whether a correlated subquery, once its first runs show the values of its outer references choose no other plan, keeps its plan made with them as parameters and fills it at each later run: ON; or plans it at each run with its values, OFF, as to compare the two. Its rows are the same either way.
-- **EXECUTOR.KERNELS**: The kernels a statement's batches run on: PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD.
+- **EXECUTOR.KERNELS**: The kernels a statement's batches run on in the executor (filters, groupings, sorts): PORTABLE for the built-in ones, as to diagnose others; empty, the default, or the registered set's name, for the set registered, such as SIMD. A column store table decodes and judges its scans on the set registered, which it takes as it opens; the setting does not change it.
 - **EXECUTOR.MAX_ITERATIONS**: The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.
 - **EXECUTOR.MORSEL_ROWS**: The rows of a table, about, that a worker of a parallel query reads at a time, a morsel.
 - **EXECUTOR.PARALLEL_MIN_ROWS**: The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.
@@ -266,6 +267,7 @@ Each in a sentence:
 - **STORAGE.SYSTEM_CACHE_BYTES**: The bytes of the data file the planner takes the operating system's cache to hold beyond the buffer pool: a fetch of a page the pool misses is priced as read from that cache by the share of the file past the pool it holds, the rest as read from the disk; 0 prices every such page as read from the disk. Only the planner's costs read it, and not of a database kept in memory; a change holds for statements planned after it.
 - **TABLES.ENGINE**: The storage engine of tables a schema creates.
 - **TABLES.UNIQUE_INDEX_METHOD**: The index method behind the UNIQUE constraints of tables created from now on.
+- **TRANSACTION.ESCROW**: Whether a READ COMMITTED searched UPDATE whose every SET item adds to or subtracts from an exact numeric column, no trigger, constraint, index or generated column depending on it, reserves its increments, applied as its transaction commits, rather than holding its rows until then: ON; or writes its rows as any UPDATE does, OFF, as to compare the two.
 - **TRANSACTION.ISOLATION**: The isolation level of a transaction SET TRANSACTION gives none: READ COMMITTED as PostgreSQL's default is, where ISO/IEC 9075 says SERIALIZABLE [ISO/IEC 9075:1992 §14.1 SR2], so SERIALIZABLE here conforms.
 - **TRANSACTION.STRICT**: ON refuses an engine that falls short of serializable, recoverable transactions [X3.135-1986 §4.16]; OFF allows it.
 - **VECTOR.APPROX_DEFAULT**: Whether a FETCH FIRST of neither APPROX nor EXACT may read an approximate index, as FETCH APPROX does: ON; or is exact, OFF.

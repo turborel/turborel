@@ -22,7 +22,7 @@
 //! and another key (RULES.md D369), as a text may be made to collide
 //! under the hash of words whatever the seed.
 
-use super::super::hash::{Seed, canonical, joined};
+use super::super::hash::{Seed, canonical};
 use crate::error::Result;
 use crate::storage::{Batch, Column, Ints, Texts};
 use crate::value::{Bucket, Datetime, Decimal, Value, key_bucket};
@@ -94,7 +94,7 @@ impl KeyHashes {
             let column = batch.columns.get(at).ok_or_else(|| crate::exec::broken("a join key its batch lacks"))?;
             hash_column((column, rows, count), matches_null, how, (target, &mut self.misses))?;
             if n > 0 {
-                self.hashes.iter_mut().zip(&self.column).for_each(|(h, &next)| *h = joined(*h, next));
+                self.hashes.iter_mut().zip(&self.column).for_each(|(h, &next)| *h = how.seed.joined(*h, next));
             }
         }
         Ok(())
@@ -281,7 +281,7 @@ pub(in crate::exec) fn values_hash<'v>(values: impl Iterator<Item = &'v Value>, 
     let mut hash = None;
     for (v, &matches_null) in values.zip(nulls) {
         let Some(h) = value_hash(v, matches_null, how)? else { return Ok(None) };
-        hash = Some(hash.map_or(h, |so_far| joined(so_far, h)));
+        hash = Some(hash.map_or(h, |so_far| how.seed.joined(so_far, h)));
     }
     Ok(hash)
 }

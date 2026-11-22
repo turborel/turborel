@@ -430,6 +430,7 @@ verification approach DO-178C expects (§8).
 | D453 | One transaction that wrote nothing collects at a time |
 | D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
 | D455 | A row a transaction wrote is no read of another's change at its validation |
+| D456 | A row waited for is claimed for the first in its line |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
@@ -460,6 +461,10 @@ verification approach DO-178C expects (§8).
 | D551 | A streamed grouping makes one group at a time and keeps no set function's state between two asks for rows |
 | D552 | A FETCH FIRST's row goal passes through filters, projections, joins that keep their left order, UNION ALL and streamed groupings to an ordered read |
 | D560 | Window functions run over batches, partitions and peers found by a kernel over the sort's keys, giving way to the rows' form for errors and the work area |
+| D570 | Each kernel has a body for every vector set, chosen once by the set detected; the column store decodes and judges on the registered set |
+| D571 | A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply |
+| D572 | CRC-32/ISCSI checksums by the kernels' CRC-32C, the processor's instruction where it has one |
+| D573 | A grouping's keys hash by XXH3-64 of the database's seed, a word as 8 bytes, a text trimmed, columns joined as 16 bytes, on the kernels |
 | D580 | A join on comparisons by order is a range join, one operand sorted and searched by each row of the other |
 | D581 | A period predicate of two period references is the comparisons of its bounds |
 | D582 | PLANNER.RANGE_JOINS turns range joins on and off |
@@ -503,6 +508,8 @@ verification approach DO-178C expects (§8).
 | D775 | The object rows of a searched UPDATE or DELETE may be a semi join, which keeps the table's rows alone |
 | D776 | An index join bounds the key's column after its equalities by values of the outer row |
 | D777 | An UNNEST is estimated by its collections' elements, when each is a constant, a slot whose value is given or a constructor of its values |
+| D778 | A lateral derived table that reads the rows before it is bound as a collection derived table of the multiset of its query's rows |
+| D779 | An UNNEST of a subquery of one row at most raises only what the subquery's plan raises, so a lateral of a set function may be a semi join's right |
 | D785 | A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area |
 | D786 | A search keeps a decoded key only once a second entry has its bytes |
 | D787 | A projection of columns each named once, in ascending order, is made in the row it is given |
@@ -512,6 +519,7 @@ verification approach DO-178C expects (§8).
 | D808 | A leaf's copy is parsed once, and a read of it steps to the slot after the last found |
 | D809 | A scan keeps the entries it took from a leaf in one buffer, and lends them |
 | D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
+| D791 | A probe of a unique key is weighed as the rows of a build it costs as much as, measured |
 | D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
 | D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
 | D782 | What every transaction writes is alone on its cache lines, apart from what others read |
@@ -524,7 +532,10 @@ verification approach DO-178C expects (§8).
 | D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
 | D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
 | D811 | A commit closes its side file and writes its file in runs of granules |
-| D812 | The checkpoint job spreads its commits over three quarters of the time since the last checkpoint |
+| D812 | Withdrawn: a checkpoint's commits are not spread, as spreading them cost throughput |
+| D813 | A pool's test reading a page fails first if a frame is left latched exclusively |
+| D822 | An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them |
+| D835 | A write decodes the row it replaced once, for its caller and the zone it widens alike |
 
 ### The project
 
@@ -3141,6 +3152,14 @@ jemalloc was measured too but is not offered, since its build refuses
 Windows' MSVC target. `cargo xtask verify` builds the program once per
 feature, so CI shows each one building on Linux, macOS and Windows and none
 is found broken only when an operator picks it.
+
+In a first round of TPC-C at 8 users, with the log's commit sync off so the
+drive's flushes did not hide the allocator, mimalloc, snmalloc and jemalloc
+each served clearly more transactions than the system's allocator. mimalloc
+and jemalloc also ended the run holding much less resident memory, and
+snmalloc more. rpmalloc's run did not complete, so it is offered unranked.
+The rounds that would rank them were cut short, so none is recommended over
+the others.
 
 An allocator only makes allocation cheaper. The core cuts its own
 allocations independently, in the paths that make them, and that work is
@@ -12854,6 +12873,87 @@ held, so the window gives way as on one thread. A window run in
 parallel a row at a time splits its rows into partitions by the seeded
 XXH3 of their partitioning's normal bytes (D357, D460).
 
+#### D570. Each kernel has a body for every vector set, chosen once by the set detected; the column store decodes and judges on the registered set
+
+`turborel-simd` holds an instruction set (`arch::Isa`) that only a
+detection makes: SSE2, AVX2 with the rest of x86-64-v3 (BMI1, BMI2,
+POPCNT, LZCNT, FMA, F16C, SSE4.2), AVX-512 F, BW, DQ, VL and CD, NEON. A
+kernel matches the set once a call and runs its body: selections compare
+a vector at a time into words of truth bits, then write the places of the
+bits set eight a byte from a table of each byte's places (AVX2, NEON) or
+sixteen at once compressed (AVX-512); sums add each value's two 32-bit
+halves unsigned and count the negatives, exactly the portable sum;
+decimals are made by
+the portable body's operations in its order, with no fused multiply. A
+kernel no instruction of a set speeds, or the selection-given form of a
+selection, runs its portable body. A sum or extremes of a selection that
+picks at least a quarter of the rows it spans runs the loop of all rows
+over them, the rows not picked masked off as nulls are; of fewer, the
+portable body, whose loads are each a picked row's. A gathering runs the
+portable body at every set: the vector gathers measured slower than its
+loads a row at a time at every size. So does a selection of dictionary
+codes on x86, whose code-by-code lookups the portable body runs faster
+than truth words of the same lookups.
+Every body gives the portable body's result bit for bit, which the
+differential tests (`support/src/differential.rs`) hold it to, on random
+inputs of every length and alignment at every set the processor has.
+
+The column store runs its kernels too: a store is told the database's
+kernels as they are registered (`StorageEngine::use_kernels`), and a
+table takes them as it opens, decoding its chunks (unpacking, decimals)
+and judging its scans' conjuncts on them. EXECUTOR.KERNELS chooses the
+kernels of a statement's executor, its filters over batches, groupings
+and sorts; a table's storage keeps the set registered, whatever the
+setting, since a table is opened once for many statements.
+
+
+#### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
+
+The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
+INT8 vectors sum their terms by the kernels `distance_f32`,
+`cosine_f32`, `distance_packed` and `distance_i8`. The portable body
+keeps 16 lanes, each the terms at its place modulo 16 added in order,
+then adds the lanes and the tail in a fixed order (`finish_*` in
+`kernels/portable/distance.rs`); a vector set's body fills the same 16
+lanes, two registers of 8 (AVX2, F16C for FLOAT16), one of 16
+(AVX-512) or four of 4 (NEON), with no fused multiply, and leaves the
+finish to the portable code, so a distance is the same bits at every
+level and an index built on one machine searches alike on another. The
+database's metrics, and the DiskANN, HNSW and IVF indexes and the
+product quantizer's query tables that measure by them, take the set
+registered (`SharedVectors`); a sum of codes looked up by a quantizer
+adds in element order and stays portable.
+
+#### D572. CRC-32/ISCSI checksums by the kernels' CRC-32C, the processor's instruction where it has one
+
+The kernel `crc32c` computes CRC-32C (CRC-32/ISCSI): portably by the
+table code of `hash/crc.rs`; at the AVX2 and AVX-512 levels by SSE4.2's
+`crc32`, three streams of a long input joined by shift tables; on
+AArch64 by the CRC extension, an instruction set (`Isa::NeonCrc`) made
+only where it is detected. A database registering kernels replaces the
+CRC-32/ISCSI hash function by one of the same id, name and digest that
+runs the kernel, so a file checksummed either way reads either way. It
+runs only where STORAGE.CHECKSUM names CRC-32/ISCSI; the default is
+XXH3-64 (D460).
+
+#### D573. A grouping's keys hash by XXH3-64 of the database's seed, a word as 8 bytes, a text trimmed, columns joined as 16 bytes, on the kernels
+
+A grouping, a set operation, a parallel grouping's morsels and a spilled
+partition find a key's group by one hash, the database's `Seed`
+(`exec/table/hash.rs`): a word, an integer of scale 0 or a value's
+normalized form, is XXH3-64 of its 8 bytes little-endian; a text,
+trailing spaces trimmed, XXH3-64 of its bytes; and a key of several
+columns joins each column's hash to the hash so far as XXH3-64 of the 16
+bytes of the two. Each is XXH3 by the seed, as `hash/xxhash.rs` ports it,
+so the row path and the batch path hash a key alike. A batch's
+integers, texts and joins are hashed by the kernels `hash_i64`,
+`hash_texts` and `combine_i64`, whose bodies in `turborel-simd` multiply
+eight words at once (AVX-512) or four of them by 32-bit halves (AVX2),
+a block of rows at a time; a dictionary's texts are hashed once an
+entry when there are no more entries than rows. NEON runs the portable
+integer bodies, its 64-bit multiplies each one instruction. The keyed
+fallback to SipHash (D357) is unchanged, and no hash is written to a
+file that outlives the process.
 #### D580. A join on comparisons by order is a range join, one operand sorted and searched by each row of the other
 
 A join whose condition compares a value of each operand by `<`, `<=`,
@@ -14028,6 +14128,56 @@ SR8h], and at least one
 (`physical/cardinality/nodes.rs`). A JSON table and GRAPH_TABLE, planned
 as UNNEST is, keep the default.
 
+#### D778. A lateral derived table that reads the rows before it is bound as a collection derived table of the multiset of its query's rows
+
+A `<lateral derived table>`'s query may reference the table references
+before it in its FROM clause [ISO/IEC 9075-2:2023 §7.6 SR5, SR20a], and
+its table is its query's [SR10], so its rows are its query's for each
+row before it. A collection derived table is lateral the same way, and
+is already planned over the rows it reads (`binder/unnest.rs`), after a
+comma or as the second operand of CROSS, INNER and LEFT joins. It reads
+none of a RIGHT or FULL join's first operand [§7.10 SR4].
+
+So a lateral derived table that reads a column before it is bound as one
+(`binder/subquery/lateral.rs`). Its one collection is the multiset of its
+query's rows, each the ROW of its columns, as a `<table value constructor
+by query>` makes it [§6.52 SR1e, GR3], spread into its columns. Unlike
+that constructor's, its query may have an ORDER BY, which orders nothing
+but says which rows OFFSET and FETCH keep. The collection is a subquery
+whose outer references are the columns it reads, so it is computed again
+for each row before it, its plan made once. One that reads nothing
+before it is bound as the derived table it then is, planned as any.
+
+#### D779. An UNNEST of a subquery of one row at most raises only what the subquery's plan raises, so a lateral of a set function may be a semi join's right
+
+A semi join or a decorrelated subquery evaluates its right for bindings
+the original might not have read, so neither is made of a plan that can
+raise an error (D15, D317). Every subquery was taken as raising, as a
+scalar subquery of more than one row raises a cardinality violation
+[ISO/IEC 9075:1992 §7.11 GR1]. So an IN of a lateral derived table's
+rows (D778), the least key of each district, was read row by row of the
+whole table, a filter over a scan.
+
+A collection of an UNNEST that is a subquery of one row at most now
+raises what its outer expressions and its plan raise
+(`optimizer/unnesting/pure.rs`), which the plan's one row says no
+cardinality violation is among. Of that plan, a set function that
+gathers an element of each row, as COLLECT does
+(`AggregateFunction::gathers`), raises nothing of one row at most if its
+argument and filter raise nothing, as one element is within any bound on
+a multiset's elements. ROW of its values raises nothing. So the multiset
+of a lateral's query of one row, as of an ungrouped MIN, raises nothing
+more than MIN does, and the IN is a semi join.
+
+Such a collection is estimated at one element, not `UNNEST_FANOUT`
+(`physical/cardinality/nodes.rs`), so the semi join's right is as many
+rows as the rows before the lateral, and its few rows probe the key
+(D774). A probe takes a value only of a column whose declared type is
+known to be of the key's kind. A lateral's column is a field of the row
+type its UNNEST spreads [ISO/IEC 9075-2:2023 §7.6 SR8n], so its type is
+that field's (`physical/indexed/typed.rs`), of a subquery's column the
+type of its plan's column.
+
 #### D785. A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area
 
 A grouping by no column has one group, even of no rows [X3.135-1986
@@ -14037,10 +14187,12 @@ area. A `SELECT SUM(k) ... WHERE id BETWEEN ? AND ?` paid that for each of
 its rows, though every row is of the one group.
 
 Such a grouping is now made whole (`exec/group/streamed.rs`, `whole`).
-Its set functions are fed each row as it comes, as a streamed group's are
-(D551), and finished at the end, of no rows too. Nothing is keyed, hashed
-or held. This holds whichever way the planner asked for the grouping,
-hashed or streamed.
+Its set functions are fed every row and finished, of no rows too, as the
+grouping is opened, as a grouping by key makes its groups. A row made
+only once it was pulled raised the warning of a null it eliminated after
+its statement's diagnostics were taken, so that statement lacked it and
+the next one had it. Nothing is keyed, hashed or held. This holds
+whichever way the planner asked for the grouping, hashed or streamed.
 
 - A grouping with seeds (made before any row), or with a set function
   that is DISTINCT or an inverse distribution, is still made by key. Those
@@ -14110,6 +14262,24 @@ plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
 before. A probe plan is kept from the first run even when decorrelation
 is due before a plan could be learned, since a unique probe needs no
 learning.
+
+#### D791. A probe of a unique key is weighed as the rows of a build it costs as much as, measured
+
+D790 weighs each probe a subquery made as `PROBE_ROWS` rows of its
+decorrelated build. That weight is measured, not chosen. The `probed`
+sweep of `bench/joins.rs` (`bench/joins/probed.rs`) runs a scalar
+subquery over a table's primary key for 100 outer rows of an UNNEST,
+never decorrelated, and the same subquery over a copy of the table with
+no index, decorrelated at its first run, over tables of 1,000, 10,000
+and 100,000 rows. The probes a second and the build's rows a second
+give the rows that cost one probe. They came to 15.6, 18.8 and 11.3.
+`PROBE_ROWS` is their geometric mean, 14.9, rounded to 15.
+
+The spread moves the break-even point by less than a factor of two,
+and the decision falls well to one side in the cases that matter. An
+order of at most 15 lines probes an item table of 100,000 rows, and its
+runs weighed at any weight from 4 to 64 come to at most 960 rows, far
+fewer than the build would hold.
 
 #### D780. A session keeps its own copy of the definitions' snapshot, taken again only once one is published
 
@@ -14411,26 +14581,59 @@ without. It gave the shortest commits on both, by a little, and past
 4 MiB they lengthen again, so the best does not move with the drive and
 it is a constant, not a setting.
 
-#### D812. The checkpoint job spreads its commits over three quarters of the time since the last checkpoint
+#### D812. Withdrawn: a checkpoint's commits are not spread, as spreading them cost throughput
 
-A checkpoint's captures are made durable as writers go on (D590), but
-the commit's copying takes a core and the drive while it runs, and the
-work going on loses the same share of both for the seconds it takes. The
-checkpoint job asks the commits to take about `SPREAD` of the time since
-the last checkpoint began instead: after each write, the commit waits
-until its share of the span is due (`disk/shadow/pace.rs`). The cost is
-the same, spread thin, and the job is done before the next checkpoint
-is due. The first checkpoint has no last to measure from and
-goes at once.
+The checkpoint job once spread its commits over three quarters of the
+time since the last checkpoint began, waiting after each write for its
+share of the span. It flattened the work going on through a commit, but
+an A/B against commits made at once gave less throughput in all, on a
+drive with power-loss protection and one without. A smoother window
+does not pay for work lost, so commits are made at once again, and
+D811's runs are what shortens them.
 
-A checkpoint asked for, by `Database::checkpoint`, a backup or a close,
-goes at once, as its caller waits for it. A close tells a spread commit
-going on to hurry, so it waits for no span. `SPREAD` is three quarters,
-by a sweep of none, a quarter, a half and three quarters on a drive with
-power-loss protection and one without. Three quarters gave the flattest
-work going on on both, so the best does not move with the drive and it
-is a constant, not a setting. A quarter of the time is left before the
-next checkpoint is due, and a next one due sooner only starts later.
+#### D813. A pool's test reading a page fails first if a frame is left latched exclusively
+
+A read waits for its frame's latch, and a thread that still holds the
+page for writing holds that latch, so it would wait for ever. A test of
+the pool's stamps that took one while it held a page for writing hung
+for a day instead of failing. The thread was the only one left, and its
+own write guard held the latch. The stamps' tests now count the frames
+latched exclusively, with a try that never waits, before each read, and
+fail if any is. The pool itself is unchanged. The hang came from the
+test's own order of holding and reading, not from an order in which the
+pool takes its latches, and the test as it is now on main never held
+and read at once.
+#### D822. An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them
+
+An update's log record (D475) wrote each column of the row before into a
+vector of its own to compare it with the row after, and the columns that
+changed into a second vector, copied into the record at its end. A scan's
+batch gathered from records in place (D31) began each batch's vectors
+empty, as the last batch took them, and grew them by doubling to the
+rows asked for.
+
+So the row before's columns are written straight into the record after
+the count, each taken back again if its bytes are those it has after,
+and the count is written last into its place (`log/record/images.rs`).
+A batch reserves room in each column's vector for the rows it is asked
+for before it gathers them (`Gathering::reserve`). A batch is at most
+`BATCH_ROWS` rows, so the room is bounded, and a scan that stops short
+of it leaves only that room unused. In a TPC-C profile at 2 users they
+were among the allocation sites outside planning, with the log's
+update images the largest.
+
+#### D835. A write decodes the row it replaced once, for its caller and the zone it widens alike
+
+The row store's write gives the row it replaced, decoded from the
+version it found (D417), and widens the row's zone over that version's
+values of the columns kept. Each decoded the version on its own,
+so an UPDATE decoded the row it replaced twice. The write now decodes
+it once (`RowTable::replaced`) and widens the zone over that row
+(`RowTable::widen_over`). A deletion's version, or one the write could
+not decode, widens the zone as one not known, as before. Decoding the
+whole row reads every column the kept ones are among, so the zone holds
+the same values. A procedure's keyed UPDATE of one row, profiled, spent
+about a twentieth of its time in the second decode.
 
 ## 2. Project layout
 
@@ -14956,3 +15159,29 @@ version committed. A read of a row the reader did not write, a scan, a
 condition or a region is checked as before. A transaction that wrote
 more rows than are tracked keeps no rows of its writes, and is checked
 as before.
+
+#### D456. A row waited for is claimed for the first in its line
+
+Row waiters queue on the end of the row's writer in the order they began
+(D442), and a write made after a turn moves the row's line to the new
+writer's end (D743). Between a writer's end and its first waiter's write,
+though, the row had no open writer. A transaction that came later could
+write it straight through, ahead of every waiter, which then queued
+again behind it. On a row in demand that repeated at every commit.
+
+Now a transaction that waits for a row claims it for itself, unless the
+row is claimed already. The claim names the line and its first waiter.
+A write that finds the row claimed by another's line queues in that
+line behind the waiters there before it writes, even once the line's
+writer has ended. In the graph of waits it waits for the line's writer
+alone, as every waiter in a line does. Counting the first waiter as well
+kept that edge once the claim passed on, and two waiters each found the
+other ahead of it, a cycle that was not there. The first waiter's own
+writes, and those of the line's writer, are not held. A write the first waiter makes hands the
+claim to the first waiter moved to its end with the line. One that gives
+up its turn or its place passes the claim to the next waiter for the row
+in the line, and the last leaves the row unclaimed. A claim whose first
+waiter has ended is dropped when found. Increments applied by escrow
+(D452) are not held, as they do not hold the row. While no row is
+claimed a write finds none from one counter, without a look.
+

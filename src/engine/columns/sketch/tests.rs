@@ -138,7 +138,16 @@ fn group(pages: &Pages<'_, Plain>, named: &[usize]) -> Group {
 #[test]
 fn groups_keep_sketches_of_texts_coded_by_symbols() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 8192, sealing: &Plain, compress: true, pax: false, imprints: false };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 8192,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: false,
+        kernels: &crate::kernels::Portable,
+    };
     let sketched = group(&pages, &[0, 1, 2, 3]);
     let has: Vec<bool> = sketched.sketches.iter().map(|e| !e.is_empty()).collect();
     assert_eq!(has, [false, true, false, false]);

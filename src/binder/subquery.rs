@@ -6,7 +6,10 @@
 //! `Expr::Outer`, and the subquery keeps the expression over the enclosing
 //! query's rows (or groups) that fills it (`logical/subquery.rs`).
 
+mod lateral;
 mod union;
+
+pub(super) use lateral::lateral_derived;
 
 use std::cell::RefCell;
 use std::sync::Arc;

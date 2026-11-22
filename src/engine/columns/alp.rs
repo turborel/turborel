@@ -62,24 +62,9 @@ pub(super) struct Factors {
     pub(super) f: u8,
 }
 
-/// How a chunk's n are made its values.
-#[derive(Debug, Clone, Copy)]
-pub(super) enum Scale {
-    /// Multiplied by 10^f, then by 10^-e, as of a chunk with `FACTORED`.
-    Factored(f64, f64),
-    /// Divided by 10^e, as of a chunk written before the factors were.
-    Divided(f64),
-}
-
-impl Scale {
-    /// The value of `n`, an integer held exactly.
-    pub(super) fn of(self, n: f64) -> f64 {
-        match self {
-            Scale::Factored(power, fraction) => n * power * fraction,
-            Scale::Divided(power) => n / power,
-        }
-    }
-}
+/// How a chunk's n are made its values: the kernels' scale
+/// (`Kernels::alp_decode`).
+pub(super) use crate::kernels::AlpScale as Scale;
 
 impl Factors {
     /// Their scale; none if either is above `MOST_E`.

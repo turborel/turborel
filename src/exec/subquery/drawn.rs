@@ -43,6 +43,9 @@ impl Subqueries for Drawn<'_> {
     fn warnings(&self) -> Option<&Warnings> {
         self.inner.warnings()
     }
+    fn vector_kernels(&self) -> &dyn crate::kernels::Kernels {
+        self.inner.vector_kernels()
+    }
 
     fn like(&self, value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
         self.inner.like(value, pattern, escape)

@@ -10,8 +10,8 @@ use super::super::{Mutation, Package};
 const BLOCKS_FILE: &str = "src/engine/columns/packed/blocks.rs";
 /// ALP's encoder.
 const ALP_FILE: &str = "src/engine/columns/alp.rs";
-/// ALP's decoder.
-const ALP_DECODE_FILE: &str = "src/engine/columns/alp/decode.rs";
+/// ALP's decoding kernel's portable body.
+const ALP_DECODE_FILE: &str = "src/kernels/portable/alp.rs";
 /// The chunks a scan opens once.
 const PREPARED_FILE: &str = "src/engine/columns/prepared.rs";
 /// The unit test of every width's blocks.
@@ -58,8 +58,8 @@ pub const DECODE: [Mutation; 6] = [
         package: Package::Core,
         breaks: "an n made an f64 by the magic number is one ulp off",
         file: ALP_DECODE_FILE,
-        original: "f64::from_bits(MAGIC_BITS.wrapping_add_signed(n)) - MAGIC",
-        replacement: "f64::from_bits(MAGIC_BITS.wrapping_add_signed(n).wrapping_add(1)) - MAGIC",
+        original: "f64::from_bits(MAGIC_BITS.wrapping_add_signed(*w)) - MAGIC",
+        replacement: "f64::from_bits(MAGIC_BITS.wrapping_add_signed(*w).wrapping_add(1)) - MAGIC",
         integration: &[],
         unit: &[DECIMALS],
     },

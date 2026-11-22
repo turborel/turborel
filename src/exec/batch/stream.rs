@@ -300,7 +300,7 @@ pub(in crate::exec) fn whole_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Ba
 /// As `open`.
 pub(super) fn whole_told(plan: Plan, (db, tx): (&Db, TxId), told: Vec<Told>) -> Result<Batches> {
     let width = layout(&plan, db).map_or(0, |(_, width)| width);
-    Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width).with_told(told))?))
+    Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width).with_told(told))?, crate::db::kernels::chosen(db)))
 }
 
 /// A function giving the batches of a plan of one kind, its columns the

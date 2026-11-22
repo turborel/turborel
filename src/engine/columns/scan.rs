@@ -375,7 +375,7 @@ fn words<S: Seal>(
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         let base = units.len();
         let held = prepared.with(pages, (column, zone, t), |chunk, made| {
-            let held = chunk.ints_made((at(first), at(end)), (&mut units, &mut nulls), made);
+            let held = chunk.ints_made((at(first), at(end)), (&mut units, &mut nulls), (made, pages.kernels));
             if let Some(ends) = &mut runs
                 && chunk.run_ends((at(first), at(end)), base, ends).is_none()
             {

@@ -153,7 +153,16 @@ fn kept(group: &Group, pages: &Pages<'_, Plain>, conjunct: &Conjunct) -> Vec<Vec
 #[test]
 fn scans_by_sketches_keep_what_values_keep() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 8192, sealing: &Plain, compress: true, pax: false, imprints: false };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 8192,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: false,
+        kernels: &crate::kernels::Portable,
+    };
     let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
     let rows: Vec<Row> = (0..ROWS).map(|n| vec![Value::Exact(Decimal::new(i128::from(n), 0)), url(n)]).collect();
     let sketched = Group::write(&pages, &TYPES, (&ids, &rows), (&[], &[], &[1])).unwrap();
@@ -183,7 +192,16 @@ fn scans_by_sketches_keep_what_values_keep() {
 #[test]
 fn few_rows_asked_for_are_compared_without_the_sketch() {
     let (pool, file) = file();
-    let pages = Pages { pool: &pool, file, capacity: 8192, sealing: &Plain, compress: true, pax: false, imprints: false };
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 8192,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: false,
+        kernels: &crate::kernels::Portable,
+    };
     let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
     let rows: Vec<Row> = (0..ROWS).map(|n| vec![Value::Exact(Decimal::new(i128::from(n), 0)), url(n)]).collect();
     let group = Group::write(&pages, &TYPES, (&ids, &rows), (&[], &[], &[1])).unwrap();

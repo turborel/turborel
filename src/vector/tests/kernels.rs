@@ -208,7 +208,10 @@ fn lower_bounds_stay_below() {
 /// and with tails, so an index's distances did not change.
 #[test]
 fn cosine_terms_are_the_folds_bit_for_bit() {
-    use crate::vector::kernels::{cosine_terms, fold_f32, product};
+    use crate::kernels::DistanceTerm::Dot;
+    use crate::kernels::portable::distance::{cosine_f32 as cosine_terms, distance_f32};
+    let fold_f32 = |a: &[f32], b: &[f32], term| distance_f32(a, b, term);
+    let product = Dot;
     let mut random = Random::new(41);
     for dims in DIMS.into_iter().chain([0, 31, 32, 48]) {
         let a: Vec<f32> = noise(&mut random, dims).into_iter().map(single).collect();
