@@ -46,10 +46,10 @@ impl RowTable {
         for other in others.iter_mut().filter(|v| v.tx != tx) {
             // It committed between this one's snapshot and its commit, and
             // wrote what this one read: this one missed it.
-            let missed_other = me.snapshot < other.at && other.at < at && self.wrote_any(other, &me.reads)?;
+            let missed_other = me.snapshot < other.at && other.at < at && self.wrote_any(other, (&me.reads, &me.writes))?;
             // It commits after this one but read before it, what this one
             // writes: it missed this one.
-            let missed_me = other.snapshot < at && at < other.at && self.wrote_any(&mut me, &other.reads)?;
+            let missed_me = other.snapshot < at && at < other.at && self.wrote_any(&mut me, (&other.reads, &other.writes))?;
             if missed_other || missed_me {
                 return Err(SqlError::new(
                     Code::Conflict,
@@ -72,14 +72,20 @@ impl RowTable {
     /// only when the columns read do not answer (RULES.md D444, D448): its
     /// versions are still there, as the reader, open with a snapshot
     /// before its commit, holds the horizon before it.
-    fn wrote_any(&self, v: &mut Validated, reads: &Reads) -> Result<bool> {
+    ///
+    /// A row the reader wrote itself, `own`, is no read of `v`'s change
+    /// (RULES.md D455): the reader held it from its write to its commit,
+    /// so `v` changed it before that write, which the write judged. At
+    /// one snapshot it was refused; at READ COMMITTED it was made over
+    /// `v`'s version, as the reader's own end-of-statement checks read it.
+    fn wrote_any(&self, v: &mut Validated, (reads, own): (&Reads, &Xxh3Set<RowId>)) -> Result<bool> {
         if v.wrote_many {
             return Ok(reads.any());
         }
         if v.writes.is_empty() || !reads.any() {
             return Ok(false);
         }
-        let mut by_id = reads.rows.iter().filter(|(id, _)| v.writes.contains(id));
+        let mut by_id = reads.rows.iter().filter(|(id, _)| v.writes.contains(id) && !own.contains(id));
         if reads.all == Some(EVERY_COLUMN) || by_id.clone().any(|(_, &columns)| columns == EVERY_COLUMN) {
             return Ok(true);
         }

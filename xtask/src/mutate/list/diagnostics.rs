@@ -155,7 +155,7 @@ pub const DIAGNOSTICS: [Mutation; 19] = [
         name: "diagnostics-rollback-uncounted",
         package: Package::Core,
         breaks: "a transaction rolled back is not counted",
-        file: "src/db.rs",
+        file: "src/db/rollback.rs",
         original: "        self.transaction_ended(false);",
         replacement: "        {}",
         integration: COUNTS,

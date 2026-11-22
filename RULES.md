@@ -426,8 +426,10 @@ verification approach DO-178C expects (§8).
 | D449 | A row's turn passed wakes only the waiter whose turn it is |
 | D450 | A served session's transactions are collected once their reply is sent |
 | D451 | A busy table is collected a batch of commits at a time |
+| D452 | A READ COMMITTED UPDATE that only adds to a column reserves its increments, applied as its transaction commits |
 | D453 | One transaction that wrote nothing collects at a time |
 | D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
+| D455 | A row a transaction wrote is no read of another's change at its validation |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
@@ -494,6 +496,9 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D805 | A pool finds its files with no lock and no reference count moved |
+| D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
+| D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
 | D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
 | D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
 | D782 | What every transaction writes is alone on its cache lines, apart from what others read |
@@ -13832,6 +13837,41 @@ request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
 
+#### D805. A pool finds its files with no lock and no reference count moved
+
+Each page a pool writes, and each it reads from its file, finds the file
+by number. The files were kept behind one reader-writer lock, and the
+file's `Arc` was cloned out of it, so every such call wrote the lock's
+reader count and the file's reference count. Threads writing pages of
+different tables passed both cache lines between them: a profile of
+contended cache lines at 32 threads put it among the shared lines of
+row updates. Files are only ever added to a pool, so each is now set
+once in a slot never changed again: slots in chunks of 1,024 made as
+files are added, each chunk set once in a fixed table of 1,024
+(`disk/buffer/sources.rs`). A lookup loads two `OnceLock`s and borrows
+the file for as long as the pool lives. A pool registers at most
+1,048,576 files; one added past that is given a number no file has, so
+every use of it is refused.
+#### D790. A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would
+
+A subquery run EXECUTOR.DECORRELATE_AFTER_RUNS times is decorrelated
+(`exec/subquery.rs`). It runs once without its equalities with outer
+references and builds every row it gives into a keyed table. For a
+scalar subquery over a table's key, such as a price read by an item's
+id, that build is the whole table, made again by each statement that
+runs the subquery past those runs. A run whose plan is kept as one probe
+of a whole unique key (D675) costs a single descent instead.
+
+So the runner keeps such a subquery probed past those runs
+(`exec/subquery/probed.rs`). It decorrelates it only once its probes,
+each weighed as `PROBE_ROWS` rows built, reach the rows the build would
+hold, as planning estimates them. The runs so far stand for the runs to
+come. Up to that point the probes cost no more than the build, and past
+it a build is as likely to pay as not. A subquery whose run is any other
+plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
+before. A probe plan is kept from the first run even when decorrelation
+is due before a plan could be learned, since a unique probe needs no
+learning.
 #### D780. A session keeps its own copy of the definitions' snapshot, taken again only once one is published
 
 Each statement took the database's snapshot of its definitions by
@@ -14000,6 +14040,24 @@ then wakes their appenders together. A run of blocks written early costs
 one wake-up's wait. An appender in turn publishes its block with one
 atomic step and takes the lock only when blocks are filed. The order in
 which blocks are published, and what a reader sees, is D30's.
+
+#### D806. A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged
+
+A read by key that keeps its leaf from read to read (`get_near`, D500),
+as a fetch of rows by id from an index's entries does, found the next
+row in the same leaf without a descent, but still read the page from
+the pool and parsed it for each row: the frame's hint looked up, its
+latch's reader count written, the eviction policy told. Once the leaf
+answers two reads in a row, the read now copies it, with the stamp of
+its frame (D502), into what it keeps. Later reads take the copy while
+the frame's version and page are as stamped, which is two loads and no
+write, and the stamp of the tree's retirements as before. Any write of
+the leaf moves the version on before it changes a byte, so a copy read
+is the leaf as it is. A copy that is no longer current is dropped and
+the leaf read again from the pool, and copied again if it answers.
+Reads of keys of other leaves copy nothing, so a probe of scattered
+rows costs no page copy.
+
 ## 2. Project layout
 
 ```
@@ -14418,6 +14476,49 @@ whose collection reads the version to take its index entries back.
 Releasing it at write would move that index work onto the writer, before
 its reply, the work D450 moved after it.
 
+#### D452. A READ COMMITTED UPDATE that only adds to a column reserves its increments, applied as its transaction commits
+
+A searched UPDATE such as `SET YTD = YTD + ?` held its row from the
+statement to its transaction's end, so every other transaction adding
+to that row waited the whole of it.
+
+Such an UPDATE now reserves its increment instead (`db/escrow.rs`,
+`txn/escrow.rs`), where TRANSACTION.ESCROW is ON, as it is by default.
+Its transaction applies its reservations as it commits, before its
+commit record, each row's as one ordinary write of the row over its
+newest version. A crash before then loses only what was never
+committed, and recovery replays the application as any other write.
+
+It applies only where nothing could see a sum before it is applied.
+
+- The transaction reads at READ COMMITTED and waits for locks.
+- Every SET item adds to or subtracts from an exact numeric column a
+  value that reads no row, table, routine or sequence.
+- The condition reads no table and none of those columns.
+- The table's engine keeps versions. It is not typed or partitioned and
+  has no trigger, delta table, view check, portion, generated column,
+  CHECK or assertion.
+- No key, index or domain names the column.
+
+The increment is reserved only while the column's value plus every
+increment reserved on it, the positive ones together and the negative
+ones together, stays within the column's type. Otherwise the row is
+written as any other, after the reservations, so an overflow raises at
+its own statement.
+
+A reservation guards its column and those its condition reads. Another
+transaction's write that changes one of them, or deletes the row, waits
+for the reserver as for a held row. A write of other columns goes on.
+The write looks for reservations and is made while no reservation of
+the row is being taken, and a reservation is taken and the row looked
+at again while no write of it is being made. Each then finds the
+other, and no write waits for a reserver while it holds the row, which
+the reserver's application would wait for in turn. A
+transaction reads its own sums. Before one of its statements reads a
+column it reserved on, it applies its reservations on that table, and
+undoing the statement puts them back. A rollback or a rollback to a
+savepoint takes back the reservations made since.
+
 #### D453. One transaction that wrote nothing collects at a time
 
 The end of a transaction that wrote nothing collects the tables awaiting
@@ -14461,3 +14562,23 @@ older versions back to the CALL's snapshot. A function's or a triggered
 action's statements keep the snapshot of the statement that runs them,
 which is still reading. No statement takes a new snapshot while a
 cursor of the session is open, as with any other statement.
+
+#### D455. A row a transaction wrote is no read of another's change at its validation
+
+The end of every statement checks its constraints with its reads
+checked, so a CHECK or NOT NULL check of a row the statement wrote reads
+that row. At commit a transaction is refused when another committed a
+change to a row it read after its snapshot. A READ COMMITTED update that
+waited for a row's writer and wrote the version it committed (D454) was
+therefore refused as it committed, with SQLSTATE 40001, whenever the
+column it set had a check. Every keyed update of a row in demand with a
+checked column hit it.
+
+Validation now leaves out a row the reader wrote itself, either way. The
+reader held that row from its write to its commit, so the other changed
+it before the write, and the write judged that change already. Under one
+snapshot it refused the write. At READ COMMITTED it wrote over the
+version committed. A read of a row the reader did not write, a scan, a
+condition or a region is checked as before. A transaction that wrote
+more rows than are tracked keeps no rows of its writes, and is checked
+as before.

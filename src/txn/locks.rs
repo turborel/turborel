@@ -222,6 +222,8 @@ pub(crate) struct TableLock {
     /// 0 for never (TABLE_STATISTICS, RULES.md D522).
     changed: AtomicI64,
     compacted: AtomicI64,
+    /// The increments reserved on its rows (RULES.md D452).
+    pub(crate) escrow: Arc<super::escrow::Escrow>,
 }
 
 impl TableLock {
