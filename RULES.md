@@ -497,6 +497,7 @@ verification approach DO-178C expects (§8).
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
 | D805 | A pool finds its files with no lock and no reference count moved |
+| D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
 | D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
 | D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
 | D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
@@ -13988,6 +13989,23 @@ only once one was published since it last was (`Database::publications`).
 A connection's state is an atomic its row shares, set with no lock.
 The session's settings told in Status are read from its own snapshot
 (D780).
+
+#### D806. A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged
+
+A read by key that keeps its leaf from read to read (`get_near`, D500),
+as a fetch of rows by id from an index's entries does, found the next
+row in the same leaf without a descent, but still read the page from
+the pool and parsed it for each row: the frame's hint looked up, its
+latch's reader count written, the eviction policy told. Once the leaf
+answers two reads in a row, the read now copies it, with the stamp of
+its frame (D502), into what it keeps. Later reads take the copy while
+the frame's version and page are as stamped, which is two loads and no
+write, and the stamp of the tree's retirements as before. Any write of
+the leaf moves the version on before it changes a byte, so a copy read
+is the leaf as it is. A copy that is no longer current is dropped and
+the leaf read again from the pool, and copied again if it answers.
+Reads of keys of other leaves copy nothing, so a probe of scattered
+rows costs no page copy.
 
 ## 2. Project layout
 

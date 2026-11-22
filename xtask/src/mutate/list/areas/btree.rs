@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 21] = [
+pub const BTREE: [Mutation; 23] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -214,5 +214,25 @@ pub const BTREE: [Mutation; 21] = [
         replacement: "self.chunks.get(n.checked_div(CHUNK)?)?.get()?.first()?.get()",
         integration: &[],
         unit: &["disk::buffer::sources::tests::files_are_found_by_the_number_they_were_added_as"],
+    },
+    Mutation {
+        name: "btree-finger-unvalidated",
+        package: Package::Core,
+        breaks: "a kept copy of a leaf is read after the leaf changed, so a read finds an old value",
+        file: "src/engine/tree/near.rs",
+        original: "        if !self.pool.unchanged(self.file, leaf, version) {",
+        replacement: "        if version == version && false {",
+        integration: &[],
+        unit: &["engine::tree::tests::finger::a_run_of_keys_of_one_leaf_is_read_from_its_copy"],
+    },
+    Mutation {
+        name: "btree-finger-never-kept",
+        package: Package::Core,
+        breaks: "a leaf answering read after read is never copied, so each read reads its page from the pool",
+        file: "src/engine/tree/near.rs",
+        original: "                if leaf == first {",
+        replacement: "                if leaf == first && false {",
+        integration: &[],
+        unit: &["engine::tree::tests::finger::a_run_of_keys_of_one_leaf_is_read_from_its_copy"],
     },
 ];
