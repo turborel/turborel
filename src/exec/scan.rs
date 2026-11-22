@@ -6,6 +6,7 @@
 //! while the statement is not cancelled (RULES.md D44).
 
 mod decided;
+mod encoded;
 
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::exec::Db;
-use crate::index::{Entries as IndexEntries, KeyOrder, KeyProjection, Probe, Used, used};
+use crate::index::{Entries as IndexEntries, Index, KeyOrder, KeyProjection, Probe, Used, Uses, used};
 use crate::logical::{Cond, Most, SortKey, pushed_conjuncts};
 use crate::physical::{Plan, ProbeSlot};
 use crate::storage::{self, Condition, Conjunction, Row, RowId, ScanOrder, TableStorage};
@@ -138,26 +139,32 @@ pub(super) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     // A scan deciding its entries, reading no column, reads few rows.
     let reads_rows = !(decided.is_some() && needed.is_empty());
     let deciding = decided.map(|decided| decided::Deciding::new(*decided, db, tx, &table, (needed.is_empty(), located)));
-    match probe_index(db, &table, &index, &probe, (reverse, reads_rows)) {
-        Ok(Found { storage, ix, entries, projection, read }) => match read.record(&*storage, tx) {
-            Ok(()) => {
-                let mut reading = Reading::of(&ix, Some(&needed), projection);
-                let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
-                    let row = |(key, id)| {
-                        let row = match &deciding {
-                            Some(deciding) => deciding.row((&*storage, &ix), &mut reading, (tx, id), &key)?,
-                            None => entry_row(&*storage, (&ix, width), &mut reading, (tx, id), key)?,
-                        };
-                        Ok(row.map(|row| read_row(located, (id, row))))
-                    };
-                    entry.and_then(row).transpose()
-                });
-                Box::new(checked(rows, db.tx.stop_of(tx)))
-            }
-            Err(e) => failed(e),
-        },
-        Err(e) => failed(e),
+    let opened = match probed(db, &table, &index, &probe) {
+        Ok(opened) => opened,
+        Err(e) => return failed(e),
+    };
+    // [DESIGN] (RULES.md D821) A scan that reads each entry's row and
+    // checks it in place compares the keys as the index holds them.
+    let in_place = deciding.is_none() && width.is_none() && opened.plain();
+    if let Some(found) = in_place.then(|| Arc::clone(&opened.index).search_encoded(&probe, order_of(reverse))).flatten() {
+        return encoded::rows(opened, found, (&needed, located), db, tx);
     }
+    let Found { storage, ix, entries, projection, read } = opened.searched(&probe, (reverse, reads_rows));
+    if let Err(e) = read.record(&*storage, tx) {
+        return failed(e);
+    }
+    let mut reading = Reading::of(&ix, Some(&needed), projection);
+    let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
+        let row = |(key, id)| {
+            let row = match &deciding {
+                Some(deciding) => deciding.row((&*storage, &ix), &mut reading, (tx, id), &key)?,
+                None => entry_row(&*storage, (&ix, width), &mut reading, (tx, id), key)?,
+            };
+            Ok(row.map(|row| read_row(located, (id, row))))
+        };
+        entry.and_then(row).transpose()
+    });
+    Box::new(checked(rows, db.tx.stop_of(tx)))
 }
 
 /// `probe`, its slots placed with their values in `db` (RULES.md D610).
@@ -215,8 +222,30 @@ pub(super) fn probe_index(
     probe: &Probe,
     (reverse, reading): (bool, bool),
 ) -> Result<Found> {
-    // [EXTENSION] a global index's rows, each read from its partition
-    // (RULES.md D157).
+    Ok(probed(db, table, index, probe)?.searched(probe, (reverse, reading)))
+}
+
+/// The order of a search, reversed or not.
+fn order_of(reverse: bool) -> KeyOrder {
+    if reverse { KeyOrder::Descending } else { KeyOrder::Ascending }
+}
+
+/// An index a probe reads, found but not yet searched, and how to read
+/// its rows.
+pub(super) struct Probed {
+    storage: Arc<dyn TableStorage>,
+    /// The index's key.
+    ix: KeyShape,
+    index: Arc<dyn Index>,
+    uses: Option<Arc<Uses>>,
+    /// What the probe reads, which callers record before taking an entry.
+    read: Asked,
+}
+
+/// The index `index` of `table` that `probe` reads, and its table's
+/// storage: [EXTENSION] of a global index, its partitions' rows, each
+/// read from its partition (RULES.md D157).
+fn probed(db: &State, table: &QualifiedName, index: &str, probe: &Probe) -> Result<Probed> {
     let storage: Arc<dyn TableStorage> = if crate::catalog::is_global_index(index) {
         Arc::new(crate::db::partitions::dispatch::Dispatched::of(db, table))
     } else {
@@ -224,13 +253,28 @@ pub(super) fn probe_index(
     };
     let ix =
         db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
-    let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };
     let uses = db.uses_of(index);
-    let index = db.index_of(index)?;
-    let projection = index.key_projection();
-    let read = Asked::of(&**index, &ix, probe);
-    let entries = used(Arc::clone(index).search_for(probe, order, reading), uses);
-    Ok(Found { storage, ix, entries, projection, read })
+    let index = Arc::clone(db.index_of(index)?);
+    let read = Asked::of(&*index, &ix, probe);
+    Ok(Probed { storage, ix, index, uses, read })
+}
+
+impl Probed {
+    /// Whether its rows are checked in place by their key's values
+    /// (`entries::fetch`): of a key of the columns as they are, by no
+    /// sort key, whose entries hold the keys themselves.
+    fn plain(&self) -> bool {
+        !self.ix.is_collated() && !self.ix.has_expressions() && self.index.key_projection().is_none()
+    }
+
+    /// Its entries for `probe`, in index order or reversed, the index told
+    /// whether their rows are read.
+    fn searched(self, probe: &Probe, (reverse, reading): (bool, bool)) -> Found {
+        let Probed { storage, ix, index, uses, read } = self;
+        let projection = index.key_projection();
+        let entries = used(index.search_for(probe, order_of(reverse), reading), uses);
+        Found { storage, ix, entries, projection, read }
+    }
 }
 
 // Unit tests: located reads (RULES.md R-TEST-1).

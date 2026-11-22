@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::stats::KeyCounts;
-use super::{BTREE_METHOD, Entries, Index, IndexMethod, IndexSizes, Key, KeyOrder, Probe, RowIds};
+use super::{BTREE_METHOD, Encoded, Entries, Index, IndexMethod, IndexSizes, Key, KeyOrder, Probe, RowIds};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
@@ -185,6 +185,7 @@ impl Drop for BLinkIndex {
     }
 }
 
+mod encoded;
 mod entries;
 mod range;
 mod value;
@@ -483,6 +484,12 @@ impl Index for BLinkIndex {
         let range = self.range(probe);
         let found = Self::entries_within(Held(self), (probe, range), (true, direction));
         Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
+    }
+
+    /// Its keys as its tree holds them, of a range no key of which is
+    /// checked (`encoded.rs`).
+    fn search_encoded(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Option<Encoded> {
+        encoded::searched(self, probe, order)
     }
 
     /// Its range's parts, cut at its tree's keys, each read as `search`
