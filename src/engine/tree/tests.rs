@@ -592,3 +592,6 @@ mod finger;
 
 // The inner node copies a thread keeps (RULES.md D807).
 mod copies;
+
+// Sparse leaves merged into their right neighbour (RULES.md D814).
+mod merge;

@@ -74,7 +74,9 @@ mod key;
 mod parsed;
 mod split;
 
-pub(super) use build::{Shape, build, compact, deleted, grown, insert, lengthens, overwrite, remove, set_child, set_right, stored};
+pub(super) use build::{
+    Shape, build, built, built_size, compact, deleted, grown, insert, lengthens, overwrite, remove, set_child, set_right, stored,
+};
 pub(super) use key::KeyRef;
 use key::head_of;
 pub(crate) use parsed::Parsed;
@@ -163,7 +165,8 @@ pub(super) struct Node<'a> {
     /// Its right neighbour, at the same level; of a node deleted, the one
     /// that took its range.
     pub(super) right: Option<PageId>,
-    /// Whether it was taken out of its level, emptied (`reclaim.rs`).
+    /// Whether it was taken out of its level, emptied or merged
+    /// (`reclaim.rs`, `merge.rs`).
     pub(super) deleted: bool,
     /// The meta page of the tree it was made in.
     pub(super) tree: u64,

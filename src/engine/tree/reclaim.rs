@@ -1,18 +1,21 @@
-//! \[DESIGN\] Empty leaves taken out of a B-link tree, and their pages freed
-//! once no reader can hold them (RULES.md D31), after Lanin and Shasha, "A
-//! Symmetric Concurrent B-Tree Algorithm", FJCC 1986: a leaf emptied by a
-//! delete gives its range to a neighbour, and keeps a link to it, so a
+//! \[DESIGN\] Empty and sparse leaves taken out of a B-link tree, and their
+//! pages freed once no reader can hold them (RULES.md D31, D814), after
+//! Lanin and Shasha, "A Symmetric Concurrent B-Tree Algorithm", FJCC 1986:
+//! a leaf emptied by a delete, or left sparse and merged (`merge.rs`),
+//! gives its range to its right neighbour, and keeps a link to it, so a
 //! reader or writer that reaches it goes where its range went.
 //!
 //! **Unlinking** a leaf L whose neighbours P, left, and R, right, have
-//! its parent: P, L and the parent are locked in that order, bottom to top
-//! and left to right, as every writer locks; then, each check made again
-//! under the locks, P's right link is made R, L is marked deleted with its
-//! link to R, and the parent sends L's range to R: L's entry's child made
-//! R, and R's own entry taken out. A node is bounded only by its high key,
-//! so R holds L's range without changing, and nothing grows. Whoever
-//! reaches L, by a parent or a link read before, moves right to R, as past
-//! any split. A leaf first or last under its parent stays, empty.
+//! its parent: P, L, R and the parent are locked in that order, bottom to
+//! top and left to right, as every writer locks; then, each check made
+//! again under the locks, R is written with L's entries and its own, if L
+//! has any, P's right link is made R, L is marked deleted with its link to
+//! R, and the parent sends L's range to R: L's entry's child made R, and
+//! R's own entry taken out. A node is bounded only by its high key, so R
+//! holds L's range with its high key and link unchanged, and nothing above
+//! grows. Whoever reaches L, by a parent or a link read before, moves
+//! right to R, as past any split. A leaf first or last under its parent
+//! stays.
 //!
 //! **Epochs.** A page freed may be given to another node, so L's page is
 //! freed only once no reader may still hold its number. Every operation on
@@ -32,6 +35,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::merge::Merging;
 use super::node::{self, Node};
 use super::{BLinkTree, Path};
 use crate::disk::pager::PageId;
@@ -156,8 +160,10 @@ impl Epochs {
 }
 
 impl BLinkTree {
-    /// Takes leaf `leaf`, emptied by a delete, out of the tree, if its left
-    /// neighbour has the same parent, `path`'s last; with no lock held.
+    /// Takes leaf `leaf`, emptied or left sparse by a delete, out of the
+    /// tree, its entries merged into its right neighbour, if its left and
+    /// right neighbours have the same parent, `path`'s last, and the
+    /// entries fit (`merge.rs`); with no lock held.
     /// Then frees the pages no operation may hold any more.
     ///
     /// # Errors
@@ -197,21 +203,44 @@ impl BLinkTree {
     }
 
     /// Whether `left`, `leaf` and `right` are neighbours in that order,
-    /// `leaf` empty, none taken out.
+    /// none taken out.
     fn linked(&self, (left, leaf, right): (PageId, PageId, PageId)) -> Result<bool> {
         let (leaf_page, left_page) = (self.pool.read(self.file, leaf.0)?, self.pool.read(self.file, left.0)?);
         let (l, p) = (Node::parse(&leaf_page)?, Node::parse(&left_page)?);
-        Ok(l.len() == 0 && l.level == 0 && !l.deleted && !p.deleted && p.right == Some(leaf) && l.right == Some(right))
+        Ok(l.level == 0 && !l.deleted && !p.deleted && p.right == Some(leaf) && l.right == Some(right))
     }
 
-    /// `unlink`'s work under `parent`: nothing if a check fails.
+    /// What merging `leaf` into `right` makes of `right` now; if `locked`
+    /// is not, only whether it may be tried (`merge.rs`).
+    fn merging(&self, leaf: PageId, right: PageId, locked: bool) -> Result<Merging> {
+        let (leaf_page, right_page) = (self.pool.read(self.file, leaf.0)?, self.pool.read(self.file, right.0)?);
+        let (l, r) = (Node::parse(&leaf_page)?, Node::parse(&right_page)?);
+        if r.deleted || r.level != 0 || !self.may_merge(&l, &r) {
+            return Ok(Merging::Full);
+        }
+        if locked { self.merged(&l, &r) } else { Ok(Merging::Range) }
+    }
+
+    /// `unlink`'s work under `parent`: nothing if a check fails. The leaf's
+    /// entries, if it has any left, go to its right neighbour first.
     fn unlink_under(&self, leaf: PageId, parent: PageId) -> Result<()> {
-        let Some((left, _, _)) = self.around(parent, leaf)? else { return Ok(()) };
-        // Bottom to top, left to right, as every writer locks.
-        let (_left_lock, _leaf_lock, _parent_lock) = (self.lock(left)?, self.lock(leaf)?, self.lock(parent)?);
-        let Some((still_left, at, right)) = self.around(parent, leaf)? else { return Ok(()) };
-        if still_left != left || !self.linked((left, leaf, right))? {
+        let Some((left, _, right)) = self.around(parent, leaf)? else { return Ok(()) };
+        if matches!(self.merging(leaf, right, false)?, Merging::Full) {
             return Ok(());
+        }
+        // Bottom to top, left to right, as every writer locks.
+        let _locks = (self.lock(left)?, self.lock(leaf)?, self.lock(right)?, self.lock(parent)?);
+        let Some((still_left, at, still_right)) = self.around(parent, leaf)? else { return Ok(()) };
+        if still_left != left || still_right != right || !self.linked((left, leaf, right))? {
+            return Ok(());
+        }
+        match self.merging(leaf, right, true)? {
+            Merging::Full => return Ok(()),
+            Merging::Range => {}
+            Merging::Content(content) => {
+                *self.pool.write(self.file, right)? = content;
+                super::count(&self.counters.merged);
+            }
         }
         node::set_right(&mut self.pool.write(self.file, left)?, right)?;
         *self.pool.write(self.file, leaf)? = node::deleted(right, self.meta.0)?;
