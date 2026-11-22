@@ -62,13 +62,18 @@ impl RowTable {
     /// superseded made garbage for when `at` is past the horizon, a segment
     /// of its changes at a time; the rows it wrote first are left to stamp.
     pub(in crate::engine::rows) fn commit_open(&self, tx: TxId, at: Timestamp) {
-        let Some(open) = self.close_open(tx) else { return };
+        let removed = self.versions.open.remove(tx);
+        let Some(open) = removed else { return };
         let (changes, adopted) = {
             let mut open = lock_builtin(&open);
             open.ended = true;
             (mem::take(&mut open.changes), mem::take(&mut open.adopted))
         };
         let count = u64::try_from(changes.len()).unwrap_or(u64::MAX);
+        if count == 0 {
+            // It changed nothing here: no list, nor the work areas (RULES.md D783).
+            return self.versions.statuses.commit(tx, at, false);
+        }
         let (mut stamps, mut lost) = (SpillList::new(self.versions.space()), false);
         for segment in changes.into_segments(false, &decode_change) {
             let Ok(segment) = segment else {

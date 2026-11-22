@@ -26,10 +26,7 @@ impl RowTable {
     }
 
     pub(super) fn open_of(&self, tx: TxId) -> Result<Arc<Mutex<Open>>> {
-        let open = self.versions.open.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        open.get(&tx)
-            .map(Arc::clone)
-            .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] transaction {tx} has not begun in this table")))
+        self.versions.open.get(tx).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] transaction {tx} has not begun in this table")))
     }
 
     /// Records what `tx` read, as `read` gives it, if its reads are

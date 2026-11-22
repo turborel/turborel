@@ -67,6 +67,7 @@ mod commit;
 mod gc;
 mod lists;
 mod open;
+mod opens;
 mod pending;
 mod reads;
 mod stamps;
@@ -89,7 +90,7 @@ use crate::catalog::TableDesc;
 use crate::disk::pager::PageId;
 use crate::engine::tree::Descended;
 use crate::error::{Code, Result, SqlError};
-use crate::hash::xxhash::{Xxh3Map, Xxh3Set};
+use crate::hash::xxhash::Xxh3Set;
 use crate::log::Lsn;
 use crate::spill::{DEFAULT_SPILL_BATCH, ListSpace, SpillList, WorkAreas};
 use crate::storage::{Newest, Row, RowId};
@@ -178,7 +179,11 @@ impl Change {
 /// A transaction's bookkeeping in a table.
 struct Open {
     snapshot: Timestamp,
+    /// Its changes: given the work areas to spill to only at its first,
+    /// so a transaction that reads alone takes nothing the store's
+    /// transactions share (RULES.md D783).
     changes: SpillList<Change>,
+    spilling: Spilling,
     reads: Reads,
     /// Whether what it reads is recorded, to be checked at commit.
     checked: bool,
@@ -194,6 +199,26 @@ struct Open {
     /// (`rows/lobs/owned.rs`).
     made: Xxh3Set<u64>,
     adopted: Xxh3Set<u64>,
+}
+
+/// Where a transaction's list of changes spills.
+enum Spilling {
+    /// Nowhere: it holds none yet.
+    Held,
+    /// To the store's work areas, from its first change on.
+    ToAreas,
+}
+
+impl Open {
+    /// Its changes, to push one to: from the first, a list that spills to
+    /// `versions`' work areas.
+    fn changes_in(&mut self, versions: &Versions) -> &mut SpillList<Change> {
+        if matches!(self.spilling, Spilling::Held) {
+            self.changes = SpillList::new(versions.space());
+            self.spilling = Spilling::ToAreas;
+        }
+        &mut self.changes
+    }
 }
 
 /// A transaction validated in the table: kept while one could still be
@@ -236,7 +261,7 @@ enum Dead {
 
 /// \[DESIGN\] The versions bookkeeping of a table.
 pub(super) struct Versions {
-    open: RwLock<Xxh3Map<TxId, Arc<Mutex<Open>>>>,
+    open: opens::Opens,
     validated: Mutex<Certified>,
     /// By commit timestamp, each a list that spills.
     garbage: Mutex<BTreeMap<Timestamp, SpillList<Dead>>>,
@@ -255,9 +280,6 @@ pub(super) struct Versions {
     garbage_items: AtomicU64,
     /// Whether `undone` holds versions, which make a collection due.
     undone_waiting: AtomicBool,
-    /// How many transactions are open in the table, stored under `open`'s
-    /// lock, so `due_at` reads it with no lock (RULES.md D795).
-    opened: AtomicUsize,
     /// The latest horizon the table was collected at: no reader is before
     /// it, and what commits at or before it superseded may be gone from
     /// the undo store (`RowTable::unpinned`).
@@ -283,7 +305,7 @@ impl Versions {
     pub(super) fn bounded(bounds: Bounds, work: Arc<RwLock<Option<Arc<WorkAreas>>>>, statuses: Arc<Statuses>) -> Versions {
         let (tracked, held) = (AtomicUsize::new(bounds.tracked), AtomicUsize::new(bounds.held));
         Versions {
-            open: RwLock::default(),
+            open: opens::Opens::default(),
             validated: Mutex::default(),
             garbage: Mutex::default(),
             undone: Mutex::default(),
@@ -291,7 +313,6 @@ impl Versions {
             validated_due: AtomicU64::default(),
             garbage_items: AtomicU64::default(),
             undone_waiting: AtomicBool::default(),
-            opened: AtomicUsize::default(),
             collected: AtomicU64::default(),
             statuses,
             unstamped: Mutex::default(),
@@ -337,11 +358,10 @@ impl RowTable {
 
     pub(super) fn begin_open(&self, tx: TxId, snapshot: Timestamp) {
         self.seen(snapshot);
-        let mut open = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let changes = SpillList::new(self.versions.space());
         let made = || Open {
             snapshot,
-            changes,
+            changes: SpillList::new(ListSpace::default()),
+            spilling: Spilling::Held,
             reads: Reads::default(),
             checked: true,
             reads_since: None,
@@ -350,16 +370,7 @@ impl RowTable {
             made: Xxh3Set::default(),
             adopted: Xxh3Set::default(),
         };
-        open.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));
-        self.versions.opened.store(open.len(), Ordering::Relaxed);
-    }
-
-    /// `tx` taken out of the transactions open here, if it was.
-    fn close_open(&self, tx: TxId) -> Option<Arc<Mutex<Open>>> {
-        let mut open = self.versions.open.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let removed = open.remove(&tx);
-        self.versions.opened.store(open.len(), Ordering::Relaxed);
-        removed
+        self.versions.open.begin(tx, made);
     }
 
     /// From now, `tx` reads as `mode` says.
@@ -480,7 +491,8 @@ impl RowTable {
     /// Ends `tx` without committing it here.
     pub(super) fn end_open(&self, tx: TxId) -> Result<()> {
         let undone = self.undo_changes(tx, 0);
-        if let Some(open) = self.close_open(tx) {
+        let removed = self.versions.open.remove(tx);
+        if let Some(open) = removed {
             lock_builtin(&open).ended = true;
         }
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
@@ -493,7 +505,7 @@ impl RowTable {
     pub(super) fn note_group(&self, tx: TxId, first: RowId) -> Result<()> {
         let open = self.open_of(tx)?;
         let change = Change { group: true, ..Change::of_row(first, None, None, Vec::new()) };
-        lock_builtin(&open).changes.push(change, &mut encode_change).map(drop)
+        lock_builtin(&open).changes_in(&self.versions).push(change, &mut encode_change).map(drop)
     }
 
     /// How many changes `tx` has made, those from now on begun apart: its

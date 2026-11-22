@@ -47,8 +47,17 @@ impl Session {
             Some(crate::txn::Held::Retired) => Err(crate::txn::Held::Retired.refusal()),
             Some(crate::txn::Held::Following | crate::txn::Held::Deposed) | None => Ok(st),
         };
-        let published = self.db.refuse_earlier(self.service).and_then(|()| self.db.snapshot()).and_then(retired)?;
+        let published = self.db.refuse_earlier(self.service).and_then(|()| self.own_snapshot()).and_then(retired)?;
         Ok(self.with_injected(self.with_own(self.with_temporaries(self.definitions(published)?))))
+    }
+
+    /// The published snapshot, as its own copy holds it (RULES.md D780).
+    ///
+    /// # Errors
+    ///
+    /// As `Database::snapshot`.
+    pub(super) fn own_snapshot(&self) -> Result<Arc<State>> {
+        self.db.snapshot_for(&mut self.published.borrow_mut())
     }
 
     /// Its current transaction, if one is active.

@@ -290,8 +290,8 @@ pub struct Session {
     /// The constraint modes of its transaction, and the checks of its
     /// deferred constraints waiting [ISO/IEC 9075:1992 §14.2].
     deferral: RefCell<Deferral>,
-    /// [ISO/IEC 9075-2:2023 §4.48.1, §19.13] Its default transform group
-    /// name and its transform group names for user-defined types.
+    /// Its copy of the last snapshot it took (`database/published.rs`).
+    published: RefCell<database::Own>,
     /// Its own values of the settings a session may set (RULES.md D36).
     own: RefCell<settings::OwnValues>,
     /// The default schema of its unqualified names [ISO/IEC 9075:1992
@@ -302,8 +302,7 @@ pub struct Session {
     /// The collation a prepared statement run now was prepared under, in
     /// place of `collation`, until it ends (`db/prepared.rs`).
     prepared_collation: RefCell<collations::Collating>,
-    /// The modes of its active transaction, and those SET TRANSACTION gave
-    /// the next [§14.1].
+    /// The modes of its active transaction, and those SET TRANSACTION gave the next [§14.1].
     mode: Cell<TransactionMode>,
     next: Cell<Option<TransactionMode>>,
     /// What cancels its statements (RULES.md D44), and hears the warnings
@@ -408,6 +407,7 @@ impl Session {
             compile: RefCell::new(None),
             locators: RefCell::default(),
             running: RefCell::new(None),
+            published: RefCell::new(None),
         }
     }
 

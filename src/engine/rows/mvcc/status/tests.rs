@@ -97,3 +97,25 @@ fn the_map_keeps_statuses_as_slots_do() {
     assert_eq!(statuses.overflowing.load(Ordering::SeqCst), 0);
     assert_eq!(statuses.committed(2 + SLOTS), None);
 }
+
+/// Verifies: [DESIGN] RULES.md D783: the commit of a transaction that
+/// claimed no status, a reader's, takes no lock of the map while none
+/// overflows: it returns though another holds the map. MC/DC of looking
+/// in the map: overflowing or not.
+#[test]
+fn a_readers_commit_takes_no_lock() {
+    let statuses = std::sync::Arc::new(Statuses::default());
+    let held = statuses.overflow();
+    let (done, finished) = std::sync::mpsc::channel();
+    let committing = std::sync::Arc::clone(&statuses);
+    std::thread::spawn(move || {
+        committing.commit(12, 4, false);
+        done.send(()).unwrap();
+    });
+    let returned = finished.recv_timeout(std::time::Duration::from_secs(5));
+    drop(held);
+    assert!(returned.is_ok(), "the reader's commit waited on the map");
+    statuses.overflowing.store(1, Ordering::SeqCst);
+    statuses.commit(13, 5, false);
+    assert_eq!(statuses.committed(13), None, "looked for in the map, not there");
+}

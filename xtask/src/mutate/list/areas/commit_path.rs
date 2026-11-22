@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the commit path's requirements.
-pub const COMMIT_PATH: [Mutation; 8] = [
+pub const COMMIT_PATH: [Mutation; 7] = [
     Mutation {
         name: "commit-path-group-claims-past-its-sync",
         package: Package::Core,
@@ -65,16 +65,6 @@ pub const COMMIT_PATH: [Mutation; 8] = [
         original: "(Some(true), Some(true)) | (None, Some(false))",
         replacement: "(Some(true), _) | (None, Some(false))",
         integration: &["collection::a_busy_table_is_collected_a_batch_of_commits_at_a_time"],
-        unit: &[],
-    },
-    Mutation {
-        name: "commit-path-open-count-unread",
-        package: Package::Core,
-        breaks: "a table with no transaction open is not found so, and its garbage waits for a batch of commits (D795)",
-        file: "src/engine/rows/mvcc/gc.rs",
-        original: "            || self.versions.opened.load(Ordering::Relaxed) == 0",
-        replacement: "            || self.versions.opened.load(Ordering::Relaxed) == usize::MAX",
-        integration: &["collection::a_session_collects_once_its_reply_is_sent"],
         unit: &[],
     },
     Mutation {

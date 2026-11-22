@@ -494,8 +494,14 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
+| D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
+| D782 | What every transaction writes is alone on its cache lines, apart from what others read |
+| D783 | A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there |
+| D784 | A table's open transactions are kept in shards, by id, each alone on its cache lines |
 | D795 | A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes |
 | D796 | A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once |
+| D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 
 ### The project
 
@@ -13826,6 +13832,126 @@ request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
 
+#### D780. A session keeps its own copy of the definitions' snapshot, taken again only once one is published
+
+Each statement took the database's snapshot of its definitions by
+reading the lock it is published under and copying its `Arc`. Both write
+a line every session shares, the lock's count of readers and the
+snapshot's count of references, twice a statement. At eight threads of
+point queries each statement waited on those lines moving between
+processors, and the cost of a query grew with the threads running.
+
+So the database counts each snapshot it publishes, moving the count
+after the snapshot is in place (`database/published.rs`). A session
+keeps a copy of its own of the last snapshot it took, the `State` cloned
+with its count. A statement reads the count, one word written only as
+definitions change, and takes its session's copy while the count is the
+same. Only once a change was published does the session read the lock
+and copy the snapshot again. The count is read before the lock, so a
+copy is never counted newer than it is. A statement of a session then
+writes to no line another session's statement writes. A copy costs one
+clone of the `State` per session per change of definitions, and its
+shared parts stay shared. `Database::snapshot` keeps reading the lock for
+the work that is not a session's statement.
+
+#### D781. A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes
+
+Statements prepared alike in many sessions share the place their plans
+are kept in (D610). Every execution read the place's lock and copied the
+`Arc`s of the kept plan and the tables it reads, so the lock's count of
+readers and those counts of references were written by every session's
+executions.
+
+So a place counts the changes of what it keeps, under its lock
+(`prepared/shared.rs`), and each prepared statement keeps a copy of its
+own, with the count it was copied at. An execution reads the count and,
+while it is the same, takes what it needs from its copy. The copy holds
+its own `Arc`s of the parsed statement, the cursor specification, the
+physical plan and its tables, so taking them changes no count another
+session changes. A plan kept is still kept in the place, under its lock,
+and found by the other sessions at their next execution, which copies it
+then. A place shared keeps its point: a plan is bound, planned and
+learned once for all the sessions. The copy is behind a lock of the
+statement's own, which no other session takes.
+
+#### D782. What every transaction writes is alone on its cache lines, apart from what others read
+
+A counter every transaction writes shared its cache line with fields
+every transaction reads. The count of active transactions sat beside the
+clock and the table of what cancels each transaction's statements. The
+clock's counter of ids sat beside the durable timestamp every snapshot
+reads. So a transaction beginning took the line from every other
+transaction reading the field beside it, though they shared no data.
+
+So each such value is alone on its cache lines (`sync/alone.rs`):
+`Alone` aligns a value to 128 bytes and pads it out, as some processors
+fetch lines in pairs. The clock's counters of ids and commits, its
+stable and durable timestamps, the count of active transactions, and
+each shard of what cancels the statements of open transactions are
+alone. The shards are found by an XXH3 map of their own, not SipHash.
+Nothing changes in what they hold or when, only where they lie.
+
+#### D783. A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there
+
+A transaction joining a table made the list its changes spill to at
+once, reading the store's work areas under their lock and copying their
+`Arc`. Committing there, it made another list for the rows to stamp,
+and stored its status. A transaction that claimed no status, a reader,
+took the lock of the statuses' map for writing to find it was not there.
+A reader thus wrote the work areas' lock and count, and the map's lock,
+at each transaction, for nothing it kept.
+
+So a transaction's list of changes is given the work areas only as its
+first change is pushed (`mvcc.rs`, `Open::changes_in`). A commit in a
+table where it changed nothing stores its status alone, with no list. A
+status claimed in no slot is looked for in the map only when the map
+holds one (`mvcc/status.rs`). The latest snapshot and the horizon the
+statuses keep are each alone on their lines, so raising one moves no
+line a commit reads the slots by.
+
+#### D784. A table's open transactions are kept in shards, by id, each alone on its cache lines
+
+A table kept the bookkeeping of the transactions open in it in one map
+under one lock. Every transaction took it for writing to begin and to
+end there, and every read of a row took it to find its bookkeeping. So
+every reader of a table wrote the lock's count of readers at each row
+it read, and waited behind every begin and end.
+
+So the map is in shards (`mvcc/opens.rs`), 32, chosen by the
+transaction's id, each under its own lock, alone on its lines with a
+count of what it holds. Transactions running at once fall in different
+shards, as ids are given in turn, so one's begin, reads and end take no
+line another's do. What asks of every transaction open in the table,
+the newest but one or the oldest, for versions undone changes appended,
+looks at each shard in turn. A transaction beginning while it looks did
+not read what it is asked for. Whether any is open, which every
+transaction's end may ask, is read from the counts alone, with no lock.
+
+#### D815. A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock
+
+Between two requests of a fast client, its worker gave up its permit to
+run statements (D42) and took it again, taking the limit's lock twice
+and waking a waiter's notifier. Before each request it asked whether the
+server still serves, through the lock of the server's watch, and whether
+its user still is one, through the database's snapshot. As a statement
+began and ended it set its connection's state in CONNECTIONS under the
+lock of every connection's row. Every worker wrote each of those lines
+at every request.
+
+So the limit counts its waiters, alone on their line (`limit.rs`). A
+worker lends its permit as it waits on its client for at most
+`lent::WAITED` (`Permit::lend`). It gives the permit up only if another
+waits for one, and else keeps it to run the request that comes. A waiter
+that comes meanwhile is let in once some worker ends its next request,
+or its wait, which is at most `WAITED` away; a worker whose client does
+not come in time gives its permit up. The server's stage is a byte alone
+on its line beside the watch (`server/stage.rs`), written as the stage
+moves. Whether the connection's user is a user is asked of a snapshot
+only once one was published since it last was (`Database::publications`).
+A connection's state is an atomic its row shares, set with no lock.
+The session's settings told in Status are read from its own snapshot
+(D780).
+
 #### D795. A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes
 
 Every writing transaction's end took the lock of the database's set of
@@ -13843,9 +13969,11 @@ with the set under its lock. An end that would leave the set as it is,
 a table not yet due left noted or a table gone left out, takes no lock,
 and the set is copied only while it holds any. Whether tables await
 collection, the change instant and the earliest timestamps are stored
-only when they change. A table keeps the count of its open transactions,
-stored under that lock, which `due_at` reads with none. The flags and
-the counters each sit alone on their cache lines (`sync::Alone`). The
+only when they change, and `due_at` asks whether a transaction is open
+in the table from D784's shard counts, with no lock. The database's
+flags every change reads (whether it takes changes, whether it is held,
+whether tables await collection) and the count of changes logged, which
+every commit raises, each sit alone on their cache lines (D782). The
 checkpoint's gate has 64 stripes, so threads at once seldom share one.
 
 What is collected, and when, is unchanged. A table passed over is still
@@ -13872,7 +14000,6 @@ then wakes their appenders together. A run of blocks written early costs
 one wake-up's wait. An appender in turn publishes its block with one
 atomic step and takes the lock only when blocks are filed. The order in
 which blocks are published, and what a reader sees, is D30's.
-
 ## 2. Project layout
 
 ```
