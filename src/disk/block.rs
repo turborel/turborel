@@ -135,8 +135,13 @@ pub type ReadWith<'a> = (&'a [Arc<dyn HashFunction>], &'a [Arc<dyn Encoding>]);
 const FIRST_READ: usize = 4096 + 128;
 
 /// \[DESIGN\] Times an appender checks whether its filed block is published
-/// before it parks: most are within a few checks, and parking costs a
-/// wake-up.
+/// before it parks (RULES.md D796), derived. Waiting is worth a spin while
+/// the spins cost less than parking and being woken, a sleep and a wake-up
+/// of about ten thousand cycles. A check's spin hint takes up to about 140
+/// cycles on recent x86 processors, so the spins stay within one park's
+/// cost at this many, the largest power of two that does. The block ahead
+/// is most often published within that, as its write is a copy into the
+/// file's pages.
 const SPINS_BEFORE_PARKING: u32 = 64;
 /// \[DESIGN\] How long a parked appender sleeps before it looks again,
 /// should a wake-up be missed: none is, as it is counted before it looks,

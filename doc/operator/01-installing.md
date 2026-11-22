@@ -56,7 +56,9 @@ every check a change must pass.
 `turboreld` allocates memory through the system's allocator. An operator
 may build it on another instead, with at most one of the features
 `mimalloc`, `snmalloc` or `rpmalloc`, which need a C compiler (C++ for
-`snmalloc`) and change nothing else the server does:
+`snmalloc`) and change nothing else the server does. In a first
+measurement mimalloc gave more throughput than the system's allocator under
+many sessions, in less memory:
 
 ```
 cargo build --release -p turboreld --features mimalloc

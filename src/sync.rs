@@ -109,7 +109,14 @@ mod tests {
     }
 }
 
-/// Stripes of a `Gate`: threads taking it shared rarely share one.
+/// \[DESIGN\] Stripes of a `Gate` (RULES.md D795), derived. Stripes are
+/// given to threads in turn, so any run of this many threads made one
+/// after another takes as many stripes, none shared. That covers twice
+/// the 32 sessions of the benchmark runs, as each session's thread is made
+/// as it connects. The cost is on the exclusive side alone, one lock taken
+/// for each stripe by a checkpoint or an index build as it publishes,
+/// which is rare next to the commits taking one. A local sweep from 8 to
+/// 256 could not rank them above its noise (the commit's message).
 const GATE_STRIPES: u64 = 64;
 
 /// The stripe the next thread to take a gate is given.

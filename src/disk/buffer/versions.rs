@@ -89,9 +89,36 @@ mod tests {
         (pool, file)
     }
 
-    /// The stamp page `id` of `file` is read with.
+    /// The frames of `pool` latched exclusively now.
+    fn latched(pool: &BufferPool) -> usize {
+        pool.frames.iter().filter(|frame| frame.content.try_read().is_err()).count()
+    }
+
+    /// The stamp page `id` of `file` is read with. A frame left latched
+    /// exclusively, by a page held for writing still, fails the test
+    /// first: the read would wait for the latch for ever, as the thread
+    /// waiting holds it (RULES.md D813).
     fn stamp(pool: &BufferPool, file: FileId, id: u64) -> Stamp {
+        assert_eq!(latched(pool), 0, "a frame is latched exclusively: reading its page would wait for ever");
         pool.read_stamped(file, id, None).unwrap().1
+    }
+
+    /// Verifies: [DESIGN] RULES.md D813: a page held for writing leaves its
+    /// frame latched exclusively, which `stamp` refuses before it reads,
+    /// and none once the page is let go. A regression test: a test that
+    /// stamped a page while it held it for writing hung for a day in a
+    /// read of its own latch; it fails at once now.
+    #[test]
+    fn a_page_held_for_writing_is_seen_latched_before_a_read() {
+        let (pool, file) = pool(2);
+        let (id, held) = pool.new_page(file).unwrap();
+        assert_eq!(latched(&pool), 1, "held for writing");
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| stamp(&pool, file, id.0)));
+        assert!(refused.is_err(), "refused, not waited for");
+        drop(held);
+        assert_eq!(latched(&pool), 0, "let go");
+        let first = stamp(&pool, file, id.0);
+        assert!(pool.unchanged(file, id.0, first));
     }
 
     /// Verifies: [DESIGN] RULES.md D502: a page read is stamped, and is
