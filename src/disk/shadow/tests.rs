@@ -417,3 +417,38 @@ fn a_read_takes_the_files_runs_around_what_was_written() {
     file.read_exact_at(&mut part, 1_000).unwrap();
     assert_eq!(part, expected[1_000..1_000 + 3 * GRANULE], "unaligned");
 }
+
+/// Verifies: [DESIGN] RULES.md D811: the granules held for a commit close
+/// its side file as runs, those next to each other one op, not one each;
+/// a crash after the commit block, which copies the side file, and the
+/// commit itself, which writes the runs, both leave the file as written.
+#[test]
+fn held_granules_close_the_side_file_in_runs() {
+    let written = |shadows: &ShadowFileSystem| {
+        shadows.hold().unwrap();
+        let file = shadows.open(Path::new(PATH), OpenMode::CreateNew).unwrap();
+        file.write_all_at(&[5_u8; 3 * GRANULE], 0).unwrap();
+        file.write_all_at(&[6_u8; GRANULE], 10 * GRANULE as u64).unwrap();
+        shadows.seal().unwrap();
+    };
+    let expected = [vec![5_u8; 3 * GRANULE], vec![0_u8; 7 * GRANULE], vec![6_u8; GRANULE]].concat();
+    let committed = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&committed), hash());
+    written(&shadows);
+    let shadow = Arc::clone(lock_builtin(&shadows.files).get(Path::new(PATH)).unwrap());
+    let sealed = read(&shadow.pending).unwrap().sealed.clone().unwrap();
+    let runs: Vec<(u64, usize)> = file::closing_ops(&sealed)
+        .iter()
+        .filter_map(|op| if let Op::Granule(first, content) = op { Some((*first, content.len())) } else { None })
+        .collect();
+    assert_eq!(runs, [(0, 3 * GRANULE), (10, GRANULE)]);
+    shadows.commit_sealed().unwrap();
+    assert_eq!(content(&*committed), expected, "committed");
+    let crashed = disk();
+    let shadows = ShadowFileSystem::new(Arc::clone(&crashed), hash());
+    written(&shadows);
+    crash_after_commit_block(&shadows, PATH, file::closing_ops);
+    drop(shadows);
+    drop(ShadowFileSystem::new(Arc::clone(&crashed), hash()).open(Path::new(PATH), OpenMode::ReadWrite).unwrap());
+    assert_eq!(content(&*crashed), expected, "copied from the side file after a crash");
+}
