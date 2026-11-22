@@ -18,11 +18,40 @@ fn seated(ending: &Ending) -> Vec<TxId> {
     seats.into_iter().map(|(_, waiter)| waiter).collect()
 }
 
-/// Waits until `ending` has `count` seated.
+/// How many times `until_seated` looks, a millisecond apart, before it
+/// fails: ten seconds. A waiter seats once its thread runs and takes three
+/// locks, which a loaded machine delays by its scheduling periods, tens of
+/// milliseconds at most; so a waiter not seated by then never will be, as
+/// when its wait was refused at once, and the test fails instead of
+/// spinning forever.
+const SEAT_LOOKS: u32 = 10_000;
+
+/// Waits until `ending` has `count` seated, failing once `SEAT_LOOKS`
+/// looks found fewer.
 fn until_seated(ending: &Ending, count: usize) {
-    while seated(ending).len() < count {
-        thread::yield_now();
+    seated_within(ending, count, SEAT_LOOKS);
+}
+
+/// Waits until `ending` has `count` seated, failing once `looks` looks
+/// found fewer.
+fn seated_within(ending: &Ending, count: usize, looks: u32) {
+    for _ in 0..looks {
+        if seated(ending).len() >= count {
+            return;
+        }
+        thread::sleep(std::time::Duration::from_millis(1));
     }
+    panic!("{count} waiters never seated: {:?} are", seated(ending));
+}
+
+/// Verifies: [DESIGN] R-TEST-5, R-TEST-7: a wait for waiters to seat that
+/// never comes fails, rather than spinning forever. Regression test: two
+/// runs hung for hours when the waiters' transactions were no-wait, so
+/// each wait was refused at once and never seated.
+#[test]
+#[should_panic(expected = "never seated")]
+fn a_wait_for_seats_that_never_come_fails() {
+    seated_within(&Ending::default(), 1, 1);
 }
 
 /// A transaction of `st` that waits for locks.
@@ -267,7 +296,7 @@ fn a_claim_passes_only_from_its_first_in_its_line() {
     let [a, b, c] = [(20, 1, 0), (21, 1, 1), (22, 2, 2)].map(|(w, id, t)| seat(w, (&table, id), (&line, t)));
     lock_builtin(&line.queue).seated.extend([(1, Arc::clone(&b)), (2, Arc::clone(&c))]);
     claims.claim((&table, 1), super::Claim { owner: 10, line: Arc::clone(&line), first: 20 });
-    let first = |claims: &super::Claims| claims.of((&table, 1), 30, |_| true).map(|c| c.first);
+    let first = |of: &super::Claims| of.of((&table, 1), 30, |_| true).map(|claim| claim.first);
     claims.pass_on(&b, (&line, &lock_builtin(&line.queue)));
     assert_eq!(first(&claims), Some(20), "not its first");
     claims.pass_on(&a, (&other, &lock_builtin(&other.queue)));

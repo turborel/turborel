@@ -255,7 +255,7 @@ impl Txn {
     /// past `LOCKS.TIMEOUT_MS`; SQLCODE -920 if its statement is cancelled.
     pub(crate) fn wait_for_row(&self, row: (&QualifiedName, RowId), writer: TxId) -> Result<Option<Turn>> {
         let Some(ending) = self.shared.ends.of(writer) else { return Ok(None) };
-        self.wait_in_line(row, (ending, writer, writer)).map(Some)
+        self.wait_in_line(row, (ending, writer)).map(Some)
     }
 
     /// \[DESIGN\] RULES.md D456: the claim of row `id` of `table` by
@@ -273,14 +273,16 @@ impl Txn {
     ///
     /// As `wait_for_row`'s.
     pub(crate) fn wait_behind(&self, row: (&QualifiedName, RowId), claim: &Claim) -> Result<Turn> {
-        self.wait_in_line(row, (Arc::clone(&claim.line), claim.owner, claim.first))
+        self.wait_in_line(row, (Arc::clone(&claim.line), claim.owner))
     }
 
     /// Waits in `ending`'s line, that of transaction `writer`, for row `id`
-    /// of `table`, behind `first`, its first waiter for the row, if another:
-    /// the row claimed for this one if no line claims it (RULES.md D456).
-    fn wait_in_line(&self, (table, id): (&QualifiedName, RowId), (ending, writer, first): (Arc<Ending>, TxId, TxId)) -> Result<Turn> {
-        let waits = if first == writer { vec![writer] } else { vec![writer, first] };
+    /// of `table`: the row claimed for this one if no line claims it
+    /// (RULES.md D456). It waits for `writer` alone in the graph, as every
+    /// waiter in a line does, the turns before its own not counted: one
+    /// counting the first waiter would keep that edge once the claim
+    /// passed on, and find a cycle that is not there.
+    fn wait_in_line(&self, (table, id): (&QualifiedName, RowId), (ending, writer): (Arc<Ending>, TxId)) -> Result<Turn> {
         let refused = |why: String| {
             SqlError::new(Code::Conflict, format!("[DESIGN] {why}, so the statement is rejected and undone [X3.135-1986 §7.3 GR3b]"))
         };
@@ -292,14 +294,14 @@ impl Txn {
         let ticket = lock_builtin(&ending.queue).ticket();
         {
             let mut waits_for = lock(&self.shared.waits_for).inspect_err(|_| ending.leave(ticket))?;
-            if super::locks::would_deadlock(&waits_for, self.id, &waits) {
+            if super::locks::would_deadlock(&waits_for, self.id, &[writer]) {
                 drop(waits_for);
                 ending.leave(ticket);
                 return Err(refused(format!(
                     "waiting for a row of {table} would deadlock with another transaction (roll back to release this transaction's locks)"
                 )));
             }
-            waits_for.insert(self.id, waits);
+            waits_for.insert(self.id, vec![writer]);
         }
         let claim = Claim { owner: writer, line: Arc::clone(&ending), first: self.id };
         self.shared.ends.claims.claim((table, id), claim);

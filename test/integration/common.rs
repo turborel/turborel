@@ -405,3 +405,22 @@ pub fn refused(s: &Session, sql: &str) -> (i32, String, Option<String>) {
 pub fn broke(code: i32, state: &str, cited: &str) -> (i32, String, Option<String>) {
     (code, state.to_owned(), Some(format!("ISO/IEC 9075-2:2023 {cited}")))
 }
+
+/// How many times `until_waiting` looks, a millisecond apart, before it
+/// fails: ten seconds. A statement waits once its thread runs and reaches
+/// its wait, which a loaded machine delays by its scheduling periods, tens
+/// of milliseconds at most; so one not waiting by then never will be, and
+/// the test fails instead of spinning forever.
+const WAIT_LOOKS: u32 = 10_000;
+
+/// Waits until `n` statements of `db` wait for a lock or a row, failing
+/// once `WAIT_LOOKS` looks found fewer.
+pub fn until_waiting(db: &Database, n: usize) {
+    for _ in 0..WAIT_LOOKS {
+        if db.waiting_statements().unwrap() >= n {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    panic!("{n} statements never waited");
+}

@@ -14569,8 +14569,11 @@ Now a transaction that waits for a row claims it for itself, unless the
 row is claimed already. The claim names the line and its first waiter.
 A write that finds the row claimed by another's line queues in that
 line behind the waiters there before it writes, even once the line's
-writer has ended. The first waiter's own writes, and those of the
-line's writer, are not held. A write the first waiter makes hands the
+writer has ended. In the graph of waits it waits for the line's writer
+alone, as every waiter in a line does. Counting the first waiter as well
+kept that edge once the claim passed on, and two waiters each found the
+other ahead of it, a cycle that was not there. The first waiter's own
+writes, and those of the line's writer, are not held. A write the first waiter makes hands the
 claim to the first waiter moved to its end with the line. One that gives
 up its turn or its place passes the claim to the next waiter for the row
 in the line, and the last leaves the row unclaimed. A claim whose first

@@ -27,13 +27,16 @@ pub(crate) struct Claim {
     pub(crate) first: TxId,
 }
 
+/// The claims of one shard's rows, by row id, each by its table.
+type Shard = Xxh3Map<RowId, Vec<(QualifiedName, Claim)>>;
+
 /// The claims of rows in demand, by row id, in as many shards as the ends
 /// of open transactions have, as a row is claimed only while one of them
 /// is waited for; how many there are, so a write finds none without
 /// looking while no row is waited for.
 pub(super) struct Claims {
     count: AtomicUsize,
-    shards: Vec<Mutex<Xxh3Map<RowId, Vec<(QualifiedName, Claim)>>>>,
+    shards: Vec<Mutex<Shard>>,
 }
 
 impl Default for Claims {
@@ -46,8 +49,8 @@ impl Claims {
     /// Runs `f` on the claim of row `id` of `table`, which it may set,
     /// replace or remove.
     fn with<T>(&self, (table, id): (&QualifiedName, RowId), f: impl FnOnce(&mut Option<Claim>) -> T) -> Option<T> {
-        let at = usize::try_from(xxh3_64(&id.to_le_bytes()) % SHARDS).ok()?;
-        let mut shard = lock_builtin(self.shards.get(at)?);
+        let of_shard = usize::try_from(xxh3_64(&id.to_le_bytes()) % SHARDS).ok()?;
+        let mut shard = lock_builtin(self.shards.get(of_shard)?);
         let of_row = shard.entry(id).or_default();
         let held = of_row.iter().position(|(t, _)| t == table);
         let mut claim = held.map(|at| of_row.swap_remove(at).1);
