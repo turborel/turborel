@@ -71,7 +71,7 @@ impl HeldLeaf {
             Rows::Held(kept) => Ok(Box::new(kept.into_iter().map(Ok))),
             Rows::Told(plan, told) => {
                 let width = self.0.width;
-                Ok(resolved(stream::batches_with(*plan, (db, tx), &Deferred::all(width).with_told(told))?))
+                Ok(resolved(stream::batches_with(*plan, (db, tx), &Deferred::all(width).with_told(told))?, crate::db::kernels::chosen(db)))
             }
         }
     }

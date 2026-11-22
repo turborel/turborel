@@ -176,7 +176,10 @@ impl Slot {
         }
         let all: Vec<Told> = self.judged.iter().map(|(_, t)| t.clone()).collect();
         let width = self.layout.1;
-        let read = resolved(stream::batches_with(self.plan.clone(), (db, tx), &Deferred::all(width).with_told(all))?);
+        let read = resolved(
+            stream::batches_with(self.plan.clone(), (db, tx), &Deferred::all(width).with_told(all))?,
+            crate::db::kernels::chosen(db),
+        );
         let (kept, whole) = held(read, at, room)?;
         let filter = filter_of(&kept, (if whole { at } else { 0 }, nulls), db)?;
         if whole {
