@@ -492,6 +492,7 @@ verification approach DO-178C expects (§8).
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
 | D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
+| D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
 
 ### The project
 
@@ -13717,6 +13718,25 @@ plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
 before. A probe plan is kept from the first run even when decorrelation
 is due before a plan could be learned, since a unique probe needs no
 learning.
+
+#### D792. A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads
+
+A kept program's INSERT, searched UPDATE and searched DELETE keep their
+plans (D406). A SELECT ... INTO whose one table reference is the delta
+table of such a change ran that change bound and planned anew at each
+execution (`db/delta.rs`), though the change is the same statement each
+time, its values the frame's slots. That made binding and planning the
+largest cost of a body that reads what it changed, such as a stock or
+district update read back through FINAL TABLE.
+
+So such a SELECT ... INTO keeps its change's plan in the place the
+program keeps its own statements' plans (`routines/program/host.rs`).
+`select_into` passes those plans to the delta table's statement
+(`run_delta_table`), which runs it as the program would run it alone,
+by `Keeping` as a prepared statement's change. The SELECT around the
+delta table is still bound and planned as it runs, as its rows are the
+change's. A MERGE as the delta table's statement, or a SELECT ... INTO
+of other table references besides, keeps nothing, as before.
 
 ## 2. Project layout
 

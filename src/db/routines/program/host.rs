@@ -19,7 +19,7 @@ use super::super::super::savepoints::{Level, none_named};
 use super::super::super::{Completion, Session, State, StatementContext};
 use super::super::kept::{KeptProgram, KeptRuns};
 use super::{Hosted, diagnostics, step_command};
-use crate::ast::{FetchOrientation, SavepointStatement, SqlStatement};
+use crate::ast::{FetchOrientation, SavepointStatement, SqlStatement, TableReference};
 use crate::error::{Result, SqlError};
 use crate::exec::{Host, rows};
 use crate::logical::{Contained, Cursor, Leaf, Step};
@@ -282,7 +282,23 @@ impl Host for SessionHost<'_, '_> {
 }
 
 /// Whether `stmt`, a statement of a program kept, keeps its plan as a
-/// prepared statement does: an INSERT, a searched UPDATE or DELETE.
+/// prepared statement does: an INSERT, a searched UPDATE or DELETE, or
+/// the one of these a SELECT ... INTO reads as its delta table (RULES.md
+/// D792).
 fn keeps_plan(stmt: &SqlStatement) -> bool {
+    if let SqlStatement::Select { query, .. } = stmt
+        && let [TableReference::Delta(d)] = query.table_expression.from.as_slice()
+    {
+        return changes_kept(&d.statement);
+    }
+    changes_kept(stmt)
+}
+
+/// Whether `stmt` is an INSERT, a searched UPDATE or a searched DELETE,
+/// whose plan a program kept keeps.
+fn changes_kept(stmt: &SqlStatement) -> bool {
     matches!(stmt, SqlStatement::Insert(_) | SqlStatement::UpdateSearched { .. } | SqlStatement::DeleteSearched { .. })
 }
+
+#[cfg(test)]
+mod tests;
