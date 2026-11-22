@@ -96,7 +96,7 @@ impl BufferPool {
             frames: (0..frames).map(Frame::empty).collect(),
             shards: (0..SHARDS).map(|_| Shard::default()).collect(),
             empty: Mutex::new((0..frames).rev().collect()),
-            sources: RwLock::new(Vec::new()),
+            sources: super::sources::Sources::new(),
             eviction,
             counters: Counters::default(),
             hints: super::hits::Hints::new(frames),
@@ -159,23 +159,21 @@ impl BufferPool {
         self.add(Source::Blocks(blocks))
     }
 
+    /// A file past the most a pool registers (`sources.rs`) is given a
+    /// number no file has, so every use of it is refused.
     fn add(&self, source: Source) -> FileId {
-        let mut sources = self.sources.write().unwrap_or_else(PoisonError::into_inner);
-        sources.push(source);
-        FileId(u32::try_from(sources.len().saturating_sub(1)).unwrap_or(u32::MAX))
+        self.sources.add(source).unwrap_or(FileId(u32::MAX))
     }
 
-    /// The file registered as `file`.
-    fn source(&self, file: FileId) -> Result<Source> {
-        let sources = self.sources.read().unwrap_or_else(PoisonError::into_inner);
-        sources
-            .get(usize::try_from(file.0).unwrap_or(usize::MAX))
-            .cloned()
+    /// The file registered as `file`, found with no lock (`sources.rs`).
+    fn source(&self, file: FileId) -> Result<&Source> {
+        self.sources
+            .get(file)
             .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no file {} is registered with the buffer pool", file.0)))
     }
 
     /// The pager file registered as `file`.
-    pub(super) fn pager(&self, file: FileId) -> Result<Arc<Pager>> {
+    pub(super) fn pager(&self, file: FileId) -> Result<&Arc<Pager>> {
         match self.source(file)? {
             Source::Pages(pager) => Ok(pager),
             Source::Blocks(_) => {

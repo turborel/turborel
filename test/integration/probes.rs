@@ -297,7 +297,8 @@ fn few_rows_probe_an_index_of_the_other_table() {
 /// its kind; an index on two columns by both, or by its first if the
 /// second is NOT NULL or the index holds keys with a null (D403); not a
 /// hash index by its first column alone, nor an index by values of
-/// another kind of number. A view's expression probes nothing; an outer
+/// another kind of number. A view's sum of a column and a constant probes
+/// by its type, the column's (D776); an outer
 /// join's rows, estimated as every relation's are (D370), probe as a
 /// table's do.
 #[test]
@@ -315,7 +316,7 @@ fn few_rows_probe_indexes_of_every_kind_they_can() {
         ("SELECT E.K, I.K FROM E, I WHERE E.D = I.D", 3, true),
         ("SELECT E.K, I.K FROM E, I WHERE E.B = I.B", 4, true),
         ("SELECT E.K, I.K FROM E, I WHERE E.K = I.X", 1, false),
-        ("SELECT V.K, I.N FROM V, I WHERE V.K = I.K", 3, false),
+        ("SELECT V.K, I.N FROM V, I WHERE V.K = I.K", 3, true),
         ("SELECT E.K, I.N FROM (E LEFT JOIN S AS L ON E.K = L.K) JOIN I ON L.K = I.K", 3, true),
     ] {
         let plan = joined(&s, query, least);

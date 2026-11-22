@@ -56,15 +56,17 @@ use crate::error::Result;
 use crate::exec::Slots;
 use crate::logical::{LogicalPlan, filled};
 use crate::params::Params;
-use crate::physical::{Kept as KeptPhysical, Plan, keepable, prepared_plan};
+use crate::physical::{Kept as KeptPhysical, keepable, prepared_plan};
 use crate::settings::Own;
-use crate::sync::{read, write};
+use crate::sync::write;
 use crate::value::Value;
 pub(in crate::db) use grown::{Fit, Learnt};
 pub(crate) use learning::{Learned, Learning, MOST_LEARNING_RUNS};
+pub(in crate::db) use point::Run;
 
 mod grown;
 mod learning;
+mod point;
 
 /// What a prepared statement keeps between its executions, shared by its
 /// clones, and in its place, by the statements prepared alike
@@ -72,6 +74,8 @@ mod learning;
 #[derive(Debug, Default)]
 pub(crate) struct Plans {
     kept: Arc<Place>,
+    /// Its own copy of what its place keeps (`shared.rs`, RULES.md D781).
+    own: super::shared::Own,
     /// The plans its executions made.
     made: AtomicU64,
     /// Its text, normalized once (RULES.md D521).
@@ -81,7 +85,7 @@ pub(crate) struct Plans {
 impl Plans {
     /// What keeps its plans in `place`.
     pub(super) fn in_place(place: Arc<Place>) -> Plans {
-        Plans { kept: place, made: AtomicU64::default(), text: std::sync::OnceLock::default() }
+        Plans { kept: place, own: super::shared::Own::default(), made: AtomicU64::default(), text: std::sync::OnceLock::default() }
     }
 
     /// How many plans its executions made.
@@ -99,17 +103,17 @@ impl Plans {
 /// What is kept, and what it was made with.
 #[derive(Debug)]
 pub(super) struct Kept {
-    key: Key,
-    statement: Option<Arc<SqlStatement>>,
+    pub(super) key: Key,
+    pub(super) statement: Option<Arc<SqlStatement>>,
     /// A query's `<cursor specification>`, parsed.
-    specification: Option<Arc<CursorSpecification>>,
-    plan: Option<KeptPlan>,
+    pub(super) specification: Option<Arc<CursorSpecification>>,
+    pub(super) plan: Option<KeptPlan>,
     /// Whether its plan reads the statement's instant as the slot past its
     /// `?`s (`Params::clock_slot`, RULES.md D613).
-    clocked: bool,
+    pub(super) clocked: bool,
     /// A query's physical plan, or an UPDATE's or DELETE's of its object
     /// rows, if its paths follow no value of its.
-    physical: Physical,
+    pub(super) physical: Physical,
 }
 
 impl Kept {
@@ -136,7 +140,7 @@ impl Kept {
 /// A query's physical plan, kept if its paths follow no value of its
 /// (`physical/kept.rs`).
 #[derive(Debug)]
-enum Physical {
+pub(super) enum Physical {
     /// Not yet planned with its slots.
     Untried,
     /// Its paths follow its values: planned at each execution; with what
@@ -162,7 +166,7 @@ enum WriteFound {
 
 /// A query's columns, its physical plan, the tables it reads, and the
 /// values of its slots, of a plan kept with them (RULES.md D610).
-pub(in crate::db) type Opened = (Vec<OutColumn>, Plan, Arc<[QualifiedName]>, Option<Slots>);
+pub(in crate::db) type Opened = (Vec<OutColumn>, Run, Arc<[QualifiedName]>, Option<Slots>);
 
 /// What `Keeping::physical` finds kept of a query: its columns, and its
 /// physical plan with the tables it reads and their rows if learned, or
@@ -191,7 +195,7 @@ pub(in crate::db) enum KeptPlan {
 
 /// What a plan is made with, besides the statement's text: as the module
 /// says.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::db) struct Key {
     generation: u64,
     catalog: Weak<dyn Catalog>,
@@ -253,8 +257,7 @@ impl Keeping<'_> {
     ///
     /// SQLCODE -910 if a lock is poisoned.
     fn kept<T>(&self, get: impl FnOnce(&Kept) -> Option<T>) -> Result<Option<T>> {
-        let kept = read(&self.plans.kept.kept)?;
-        Ok(kept.as_ref().filter(|k| self.holds(&k.key)).and_then(get))
+        self.plans.own.read(&self.plans.kept, |kept| kept.filter(|k| self.holds(&k.key)).and_then(get))
     }
 
     /// Keeps what `put` puts, with what holds now: beside what is kept with
@@ -267,6 +270,7 @@ impl Keeping<'_> {
         let mut kept = write(&self.plans.kept.kept)?;
         let holding = kept.take().filter(|k| self.holds(&k.key));
         put(kept.insert(holding.unwrap_or_else(|| Kept::empty(self.key()))));
+        self.plans.kept.changed();
         Ok(())
     }
 
@@ -372,8 +376,8 @@ impl Keeping<'_> {
                     self.keep(|k| k.physical = Physical::Learning(Learning::default()))?;
                     return Ok(None);
                 }
-                let (plan, slots) = plan.opened(params.dynamic_slots(), crate::optimizer::prepared::budget(self.st))?;
-                Ok(Some((columns, plan, reads, slots)))
+                let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+                Ok(Some((columns, run, reads, slots)))
             }
         }
     }
@@ -407,8 +411,8 @@ impl Keeping<'_> {
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
         let plan = Arc::new(prepared_plan(plan, crate::optimizer::prepared::budget(self.st))?);
         self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;
-        let (plan, slots) = plan.opened(params.dynamic_slots(), crate::optimizer::prepared::budget(self.st))?;
-        Ok((columns, plan, reads, slots))
+        let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+        Ok((columns, run, reads, slots))
     }
 
     /// `w`, a kept UPDATE or DELETE, run with `slots`: its object rows by
@@ -439,19 +443,17 @@ impl Keeping<'_> {
                 if !self.fits(learnt.as_ref(), |l| Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), Some(l)))? {
                     return self.learn_write(w, Learning::default(), slots);
                 }
-                let (plan, _) = plan.opened(Some(Arc::clone(&slots)), crate::optimizer::prepared::budget(self.st))?;
-                Written::slotted(w, Some((plan, reads)), slots)
+                point::written(self.st, w, (&plan, reads), slots)
             }
             None => {
-                let (_, _, plan) = super::super::plan_rows(self.st, w.rows.clone());
+                let (_, _, plan) = super::super::plan_written(self.st, w.rows.clone());
                 if !keepable(&plan, self.st) {
                     return self.learn_write(w, Learning::default(), slots);
                 }
                 let reads: Arc<[QualifiedName]> = w.rows.tables().into();
                 let plan = Arc::new(prepared_plan(plan, crate::optimizer::prepared::budget(self.st))?);
                 self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;
-                let (plan, _) = plan.opened(Some(Arc::clone(&slots)), crate::optimizer::prepared::budget(self.st))?;
-                Written::slotted(w, Some((plan, reads)), slots)
+                point::written(self.st, w, (&plan, reads), slots)
             }
         }
     }
@@ -465,9 +467,9 @@ impl Keeping<'_> {
     /// As `written`.
     fn learn_write(&self, w: Arc<BoundWrite>, was: Learning, slots: Slots) -> Result<Written> {
         let values = &*slots;
-        let (_, _, plan) = super::super::plan_rows(self.st, filled(w.rows.clone(), values)?);
+        let (_, _, plan) = super::super::plan_written(self.st, filled(w.rows.clone(), values)?);
         let reads: Arc<[QualifiedName]> = w.rows.tables().into();
-        let learned = was.after(&plan, super::super::plan_rows_slotted(self.st, w.rows.clone(), values));
+        let learned = was.after(&plan, super::super::plan_written_slotted(self.st, w.rows.clone(), values));
         let physical = learned.kept(&reads, self.st);
         self.keep(|k| k.physical = physical)?;
         Written::slotted(w, Some((plan, reads)), slots)
@@ -486,7 +488,7 @@ impl Keeping<'_> {
         let learned = was.after(&plan, super::super::plan_slotted(self.st, logical, values));
         let physical = learned.kept(&reads, self.st);
         self.keep(|k| k.physical = physical)?;
-        Ok((columns, plan, reads, None))
+        Ok((columns, Run::Plan(Box::new(plan)), reads, None))
     }
 }
 

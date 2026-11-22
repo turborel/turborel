@@ -65,7 +65,9 @@ impl PhysicalPlanner<'_> {
     /// even though the scalar function can raise on unconstrained values.
     pub(super) fn hash_join(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Option<Built> {
         let LogicalPlan::Product { left, right } = input else { return None };
-        if cond.can_raise() {
+        // A conjunct raises nothing by its columns' declared types, as a
+        // bound `D_NEXT_O_ID - 20` of an INTEGER column (RULES.md D776).
+        if cond.can_raise() && self.cond_raises(cond, (left, right)) {
             return self.whole().spatial_join(cond, (left, right), want);
         }
         if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
@@ -105,7 +107,7 @@ impl PhysicalPlanner<'_> {
         let ordered = !want_left.is_empty() && l.ordered;
         // A few left rows each probing an index of the right's table.
         if let Some(pairs) = plain(&keys)
-            && let Some((probing, rows)) = self.probed_instead((left, right), &pairs, &r.plan)
+            && let Some((probing, rows, rest)) = self.probed_bounded((left, right), (&pairs, rest.clone()), &r.plan)
         {
             let join = Equijoin { width, keys: &pairs, rest, outer: EquiKind::Inner };
             return Some(Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered });

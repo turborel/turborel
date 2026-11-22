@@ -418,7 +418,7 @@ impl Session {
             SqlStatement::Truncate { table, only, restart } => self.truncate_table(cx, (table, *only, *restart), params),
             SqlStatement::Open(_) | SqlStatement::Fetch { .. } | SqlStatement::Close(_) => self.cursor_statement(cx, stmt, params),
             SqlStatement::Dynamic(d) => self.run_dynamic(cx, d, params),
-            SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
+            SqlStatement::Select { query, targets } => self.select_into(cx, (query, targets), params, keeping),
             SqlStatement::Drop { object, behavior } => self.drop_object(cx.st, cx.tx, object, *behavior),
             SqlStatement::AlterTable { table, action, text } => self.alter_table(cx.st, cx.tx, (table, action, text)),
             SqlStatement::Schema { statement, text } => self.schema_statement_in(cx, (statement, text), params),

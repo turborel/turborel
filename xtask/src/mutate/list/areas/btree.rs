@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 20] = [
+pub const BTREE: [Mutation; 23] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -80,7 +80,7 @@ pub const BTREE: [Mutation; 20] = [
         package: Package::Core,
         breaks: "a search gives the key it last decoded for an entry of other bytes",
         file: "src/index/blink.rs",
-        original: "        if let Some(key) = self.key.as_ref().filter(|_| self.bytes == bytes) {",
+        original: "        if let Some(key) = self.key.as_ref().filter(|_| again) {",
         replacement: "        if let Some(key) = self.key.as_ref() {",
         integration: &[],
         unit: &["index::blink::tests::a_key_is_decoded_once_for_its_entries"],
@@ -204,5 +204,35 @@ pub const BTREE: [Mutation; 20] = [
         replacement: "near.leaf.filter(|_| false)",
         integration: &[],
         unit: &["engine::tree::tests::hinted::a_replace_starts_at_the_leaf_a_read_left"],
+    },
+    Mutation {
+        name: "pool-source-slot-misread",
+        package: Package::Core,
+        breaks: "a pool's file is looked up in the first slot of its chunk, so a later file of the chunk finds the wrong one",
+        file: "src/disk/buffer/sources.rs",
+        original: "self.chunks.get(n.checked_div(CHUNK)?)?.get()?.get(n.checked_rem(CHUNK)?)?.get()",
+        replacement: "self.chunks.get(n.checked_div(CHUNK)?)?.get()?.first()?.get()",
+        integration: &[],
+        unit: &["disk::buffer::sources::tests::files_are_found_by_the_number_they_were_added_as"],
+    },
+    Mutation {
+        name: "btree-finger-unvalidated",
+        package: Package::Core,
+        breaks: "a kept copy of a leaf is read after the leaf changed, so a read finds an old value",
+        file: "src/engine/tree/near.rs",
+        original: "        if !self.pool.unchanged(self.file, leaf, version) {",
+        replacement: "        if version == version && false {",
+        integration: &[],
+        unit: &["engine::tree::tests::finger::a_run_of_keys_of_one_leaf_is_read_from_its_copy"],
+    },
+    Mutation {
+        name: "btree-finger-never-kept",
+        package: Package::Core,
+        breaks: "a leaf answering read after read is never copied, so each read reads its page from the pool",
+        file: "src/engine/tree/near.rs",
+        original: "                if leaf == first {",
+        replacement: "                if leaf == first && false {",
+        integration: &[],
+        unit: &["engine::tree::tests::finger::a_run_of_keys_of_one_leaf_is_read_from_its_copy"],
     },
 ];

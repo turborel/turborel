@@ -248,5 +248,13 @@ fn column_type(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: 
     }
 }
 
+/// Whether a CAST of `x` to `to` can raise an exception or completion
+/// condition: of a constant, if casting it does [ISO/IEC 9075:1992 §6.10
+/// GR2-GR5]; of any other value, as its value is not known, it can.
+pub(super) fn cast_raises(x: &Expr, to: &DataType) -> bool {
+    let Expr::Const(v) = x else { return true };
+    !matches!(crate::value::cast_warned(v.clone(), to), Ok((_, None)))
+}
+
 #[cfg(test)]
 mod tests;

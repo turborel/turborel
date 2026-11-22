@@ -14,7 +14,7 @@ use crate::index::{Key, KeyProjection, Probe};
 use crate::logical::{Truth, pushed_conjuncts};
 use crate::noted::{self, Noted, Notes};
 use crate::physical::{Decided, Plan};
-use crate::storage::{Conjunction, Near, Row, RowId, TableStorage};
+use crate::storage::{Conjunction, Near, Row, RowId, TableStorage, row_id_of};
 use crate::txn::{TxId, checked, counted};
 use crate::value::Value;
 
@@ -144,18 +144,28 @@ pub type Entries = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 /// scan or the index scans of an OR's ranges appended, possibly filtered, possibly under a projection (which is ignored),
 /// each read when it is pulled, and only while the statement is not
 /// cancelled (RULES.md D44). UPDATE, DELETE and updatable cursors need the
-/// ids to change the rows.
+/// ids to change the rows. Of any other plan, its object table's scan
+/// located, each row's id is its last column (RULES.md D775).
 ///
 /// # Errors
 ///
-/// `plan` is not a table access or names a table or index that does not
-/// exist (SQLCODE -910); reading the rows, as they are pulled, as
-/// `row_entries` says.
+/// `plan` names a table or index that does not exist (SQLCODE -910);
+/// reading the rows, as they are pulled, as `row_entries` says, and a row
+/// of a plan not a table access with no id (SQLCODE -910).
 pub fn table_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Result<Entries> {
-    entries_in(plan, &db.opening(), tx)
+    object_entries(plan, &db.opening(), tx)
 }
 
-/// `table_entries`' work, in `db`.
+/// `table_entries`' work, in `db`: of a table access, its entries; of any
+/// other plan, its rows, each id taken off its row (RULES.md D775).
+fn object_entries(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
+    if !is_table_access(&plan) {
+        return Ok(located_entries(plan, db, tx));
+    }
+    entries_in(plan, db, tx)
+}
+
+/// The entries of `plan`, a table access, in `db`.
 fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
     match plan {
         Plan::Project { input, .. } => entries_in(*input, db, tx),
@@ -209,6 +219,56 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         | Plan::Transition { .. }
         | Plan::Parallel(..)) => Err(broken(&format!("not a table access: {other:?}"))),
     }
+}
+
+/// Whether `plan` is a table access whose entries `table_entries` reads
+/// with their ids: a scan, an index scan or an OR's index scans appended,
+/// filtered or projected, counted or not. Any other plan of a table's rows
+/// gives each row's id after its columns (RULES.md D775).
+pub fn is_table_access(plan: &Plan) -> bool {
+    match plan {
+        Plan::SeqScan { .. } | Plan::IndexScan { .. } => true,
+        Plan::Project { input, .. } | Plan::Filter { input, .. } => is_table_access(input),
+        Plan::Append { left, right, .. } => is_table_access(left) && is_table_access(right),
+        Plan::Counted(c) => is_table_access(&c.input),
+        Plan::Product { .. }
+        | Plan::Nearest(_)
+        | Plan::HashJoin { .. }
+        | Plan::OuterJoin { .. }
+        | Plan::IndexJoin { .. }
+        | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
+        | Plan::SemiJoin(_)
+        | Plan::MarkJoin(_)
+        | Plan::Aggregate { .. }
+        | Plan::Distinct { .. }
+        | Plan::SetOp { .. }
+        | Plan::Values { .. }
+        | Plan::System { .. }
+        | Plan::Sort { .. }
+        | Plan::MergeAppend { .. }
+        | Plan::Limit { .. }
+        | Plan::Recursive { .. }
+        | Plan::Unnest(..)
+        | Plan::Window { .. }
+        | Plan::Polymorphic(..)
+        | Plan::Recognize { .. }
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => false,
+    }
+}
+
+/// \[DESIGN\] The rows of `plan`, whose table's scan is located, with
+/// their ids, each row's id its last column, taken off it (RULES.md D775).
+/// Each row pulled fails as the plan's rows do, or with SQLCODE -910 if
+/// it has no row id.
+fn located_entries(plan: Plan, db: &Db, tx: TxId) -> Entries {
+    Box::new(super::opened(plan, db, tx).map(|read| {
+        let mut row = read?;
+        let id = row.pop().as_ref().map(row_id_of).transpose()?.flatten();
+        Ok((id.ok_or_else(|| broken("[DESIGN] an object row has no row id"))?, row))
+    }))
 }
 
 /// The rows with their ids of `input`, a filter's input, the scan of a
@@ -270,13 +330,14 @@ fn index_entries(
 /// # Errors
 ///
 /// A row's search condition fails, the statement is cancelled or runs past
-/// STATEMENT.TIMEOUT_MS (SQLCODE -920), `plan` is not a table access or names
-/// a table or index that does not exist (SQLCODE -910), or the rows cannot
-/// be spilled (SQLCODE -918 if the area cannot be reserved).
+/// STATEMENT.TIMEOUT_MS (SQLCODE -920), `plan` names a table or index that
+/// does not exist or a row of a plan not a table access has no id (SQLCODE
+/// -910), or the rows cannot be spilled (SQLCODE -918 if the area cannot
+/// be reserved).
 pub fn row_entries(plan: Plan, db: &(impl Opening + ?Sized), tx: TxId) -> Result<HeldRows<(RowId, Row)>> {
     let db = db.opening();
     let mut held = HeldRows::new(db.list_space());
-    for entry in entries_in(plan, &db, tx)? {
+    for entry in object_entries(plan, &db, tx)? {
         held.push(entry?)?;
     }
     Ok(held)
