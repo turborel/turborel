@@ -48,7 +48,7 @@ impl State {
             Err(by) => by,
         };
         drop(turn.take());
-        *turn = tx.wait_for_row(&format_args!("a row of {table}"), by)?;
+        *turn = tx.wait_for_row((table, id), by)?;
         Ok(Guarded::Waited)
     }
 
