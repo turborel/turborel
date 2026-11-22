@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of row waits and signals, in the order they run.
-pub const WAITS: [Mutation; 15] = [
+pub const WAITS: [Mutation; 17] = [
     Mutation {
         name: "row-wait-skipped",
         package: Package::Core,
@@ -124,8 +124,8 @@ pub const WAITS: [Mutation; 15] = [
         package: Package::Core,
         breaks: "a row's waiters stay on the ended writer's end, each waking to find the next writer (D743)",
         file: "src/txn/row_waits.rs",
-        original: "            let moves = seat.row.1 == id && ",
-        replacement: "            let moves = false && seat.row.1 == id && ",
+        original: "|seat: &Seat| seat.row.1 == id && ",
+        replacement: "|seat: &Seat| false && seat.row.1 == id && ",
         integration: &[],
         unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
     },
@@ -134,10 +134,30 @@ pub const WAITS: [Mutation; 15] = [
         package: Package::Core,
         breaks: "a hand-over moves the waiters for other rows of the ended writer too (D743)",
         file: "src/txn/row_waits.rs",
-        original: "            let moves = seat.row.1 == id && seat.row.0 == *table && ",
-        replacement: "            let moves = ",
+        original: "|seat: &Seat| seat.row.1 == id && seat.row.0 == *table && ",
+        replacement: "|seat: &Seat| seat.row.0 == *table && ",
         integration: &[],
         unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
+    },
+    Mutation {
+        name: "row-handover-moves-other-tables",
+        package: Package::Core,
+        breaks: "a hand-over moves the waiters for the same row id of another table (D743)",
+        file: "src/txn/row_waits.rs",
+        original: "seat.row.1 == id && seat.row.0 == *table && ",
+        replacement: "seat.row.1 == id && ",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_seat_moves_only_for_the_same_row_free_of_deadlock"],
+    },
+    Mutation {
+        name: "row-handover-moves-into-deadlock",
+        package: Package::Core,
+        breaks: "a hand-over moves a waiter the next writer already waits for, a deadlock (D743)",
+        file: "src/txn/row_waits.rs",
+        original: " && !super::locks::would_deadlock(&waits_for, seat.waiter, &[tx.id]);",
+        replacement: ";",
+        integration: &[],
+        unit: &["txn::row_waits::tests::a_seat_moves_only_for_the_same_row_free_of_deadlock"],
     },
     Mutation {
         name: "row-handover-out-of-order",
