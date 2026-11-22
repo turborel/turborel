@@ -66,6 +66,8 @@ pub struct Terminal<C: Client> {
     random: Random,
     w_id: i64,
     stock_level_d_id: i64,
+    /// Of the `native` procedure set, its procedures.
+    native: Option<crate::tpcc_native::Native>,
 }
 
 fn array(values: Vec<i64>) -> Value {
@@ -78,12 +80,13 @@ fn name(last: String) -> Value {
 
 impl<C: Client> Terminal<C> {
     /// The terminal of `client`, its draws seeded by `seed`.
-    pub fn new(mut client: C, seed: u64) -> Terminal<C> {
+    pub fn new(mut client: C, seed: u64, native: bool) -> Terminal<C> {
         let calls = CALLS.iter().map(|sql| client.prepare(sql).unwrap()).collect();
         let mut random = Random::new(seed);
         let w_id = random.number(1, WAREHOUSES);
         let stock_level_d_id = random.number(1, DISTRICTS);
-        Terminal { client, calls, random, w_id, stock_level_d_id }
+        let native = native.then(crate::tpcc_native::Native::new);
+        Terminal { client, calls, random, w_id, stock_level_d_id, native }
     }
 
     /// Runs transactions until `until`, tallied.
@@ -100,7 +103,10 @@ impl<C: Client> Terminal<C> {
             };
             let values = self.arguments(t);
             let started = Instant::now();
-            let outcome = self.client.execute(&self.calls[t], &values, true);
+            let outcome = match &mut self.native {
+                Some(native) => native.run(self.client.session().unwrap(), t, &values).map(|()| 0).map_err(Failed::from),
+                None => self.client.execute(&self.calls[t], &values, true),
+            };
             tally.time[t] += started.elapsed();
             tally.done[t] += 1;
             if let Err(failed) = outcome {

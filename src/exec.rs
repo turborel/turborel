@@ -32,6 +32,7 @@ mod json_table;
 mod limit;
 mod merged;
 mod nearest;
+pub(crate) mod native;
 mod parallel;
 mod partition;
 mod pattern;
