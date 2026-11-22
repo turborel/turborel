@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::TxId;
+use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError, Warnings};
 use crate::hash::xxhash::Xxh3Map;
 use crate::sync::{Alone, lock_builtin};
@@ -71,6 +72,10 @@ pub struct Stop {
     /// \[DESIGN\] Whether its transactions leave their garbage to be
     /// collected once their reply is sent (RULES.md D450).
     collect_later: AtomicBool,
+    /// \[DESIGN\] The tables its transactions wrote since its last
+    /// collection, each once, which that collection collects itself
+    /// (RULES.md D453).
+    owed: Mutex<Vec<Arc<QualifiedName>>>,
     /// The plan of a data change EXPLAIN ANALYZE runs.
     changed: Changed,
     /// What the session does now, and what its statements did.
@@ -97,6 +102,7 @@ impl Default for Stop {
             warnings: Warnings::default(),
             served: Served::default(),
             collect_later: AtomicBool::new(false),
+            owed: Mutex::default(),
             changed: Changed::default(),
             activity: Activity::default(),
         }
@@ -148,6 +154,22 @@ impl Stop {
     /// (RULES.md D450).
     pub(crate) fn collects_later(&self) -> bool {
         self.collect_later.load(Ordering::Relaxed)
+    }
+
+    /// \[DESIGN\] Notes `tables`, written by a transaction whose garbage
+    /// waits for the session's collection (RULES.md D450, D453).
+    pub(crate) fn owe(&self, tables: impl Iterator<Item = Arc<QualifiedName>>) {
+        let mut owed = lock_builtin(&self.owed);
+        for table in tables {
+            if !owed.contains(&table) {
+                owed.push(table);
+            }
+        }
+    }
+
+    /// \[DESIGN\] The tables noted by `owe` since this was last asked.
+    pub(crate) fn owed(&self) -> Vec<Arc<QualifiedName>> {
+        std::mem::take(&mut *lock_builtin(&self.owed))
     }
 
     /// The longest a statement waits for a lock, if there is a limit.

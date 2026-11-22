@@ -106,7 +106,7 @@ impl State {
                 }
                 drop(gate);
                 let durable = self.durable(tx, lsn, at);
-                self.collect_ended(tx, joined.iter().map(|j| &*j.table));
+                self.collect_ended(tx, &joined);
                 durable.and(published)
             }
             Err(e) => {
@@ -193,11 +193,14 @@ impl State {
         self.gc_with(tables, false);
     }
 
-    /// \[DESIGN\] As `gc`, after `tx` ended; unless its session collects
-    /// once its reply is sent (RULES.md D450): then `tables` are noted, for
-    /// that collection or the end of any other transaction to collect.
-    fn collect_ended<'t>(&self, tx: &Txn, tables: impl Iterator<Item = &'t QualifiedName> + Clone) {
+    /// \[DESIGN\] As `gc`, of the tables of `joined`, after `tx` ended;
+    /// unless its session collects once its reply is sent (RULES.md D450):
+    /// then they are noted, for that collection, which collects them itself
+    /// (D453), or the end of any other transaction to collect.
+    fn collect_ended(&self, tx: &Txn, joined: &[Joined]) {
+        let tables = joined.iter().map(|j| &*j.table);
         if tx.stop.collects_later() {
+            tx.stop.owe(joined.iter().map(|j| Arc::clone(&j.table)));
             // [DESIGN] RULES.md D795: a table noted already is left so,
             // with nothing shared written.
             let new: Vec<&QualifiedName> = tables.filter(|t| !self.lock_of(t).is_ok_and(|lock| lock.noted())).collect();
@@ -242,38 +245,54 @@ impl State {
         } else {
             Vec::new()
         };
-        let collect = |table: &QualifiedName| {
-            let left = self.collect_table(table, horizon, wait);
-            let lock = self.lock_of(table).ok();
-            if unchanged(left, lock.map(|lock| lock.noted())) {
-                return;
-            }
-            let mut uncollected = lock_builtin(&self.tx.uncollected);
-            // Asked again under the lock: a commit that added garbage while
-            // this one collected, and was passed over (RULES.md D445), has
-            // noted the table, and its note must not be taken out.
-            let still = || self.storage_of(table).is_ok_and(|s| s.uncollected());
-            let keep = match left {
-                Some(true) => true,
-                Some(false) => still(),
-                None => false,
-            };
-            if keep {
-                uncollected.insert(table.clone());
-            } else {
-                uncollected.remove(table);
-            }
-            if let Some(lock) = lock {
-                lock.set_noted(keep);
-            }
-            self.awaiting(&uncollected);
-        };
         for table in waiting.iter().filter(|w| !tables.clone().any(|t| t == *w)) {
-            collect(table);
+            self.collect_noting(table, horizon, wait);
         }
         for table in tables {
-            collect(table);
+            self.collect_noting(table, horizon, wait);
         }
+    }
+
+    /// \[DESIGN\] Collects `tables`, those a served session's transactions
+    /// wrote since its last collection, as their own ends would have
+    /// (RULES.md D450, D453): only those, so the set of tables awaiting
+    /// collection is not read, and each at once, as the session's other
+    /// collection, of that set, may be under way in another session.
+    pub(crate) fn gc_owed(&self, tables: &[Arc<QualifiedName>]) {
+        let _gate = self.tx.gate.enter();
+        let horizon = self.tx.horizon();
+        for table in tables {
+            self.collect_noting(table, horizon, false);
+        }
+    }
+
+    /// Collects `table` at `horizon` (`collect_table`), and notes in the
+    /// set of tables awaiting collection whether it still does.
+    fn collect_noting(&self, table: &QualifiedName, horizon: Timestamp, wait: bool) {
+        let left = self.collect_table(table, horizon, wait);
+        let lock = self.lock_of(table).ok();
+        if unchanged(left, lock.map(|lock| lock.noted())) {
+            return;
+        }
+        let mut uncollected = lock_builtin(&self.tx.uncollected);
+        // Asked again under the lock: a commit that added garbage while
+        // this one collected, and was passed over (RULES.md D445), has
+        // noted the table, and its note must not be taken out.
+        let still = || self.storage_of(table).is_ok_and(|s| s.uncollected());
+        let keep = match left {
+            Some(true) => true,
+            Some(false) => still(),
+            None => false,
+        };
+        if keep {
+            uncollected.insert(table.clone());
+        } else {
+            uncollected.remove(table);
+        }
+        if let Some(lock) = lock {
+            lock.set_noted(keep);
+        }
+        self.awaiting(&uncollected);
     }
 
     /// \[DESIGN\] After a transaction that wrote nothing ends, garbage
@@ -407,7 +426,7 @@ impl State {
         tx.log_abort();
         drop(gate);
         tx.release();
-        self.collect_ended(tx, joined.iter().map(|j| &*j.table));
+        self.collect_ended(tx, &joined);
         damage
     }
 }

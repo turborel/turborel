@@ -15293,6 +15293,15 @@ The check also skips the scan of the transactions kept for it when the
 transaction validated read nothing and no kept transaction read
 anything. A count of those that read, under the same lock, says so.
 
+The transactions kept for the check are held in the order of their
+commits, and a validation walks only those committed after its snapshot.
+Either order it could miss needs the other's commit after that snapshot,
+so the rest can be passed over unread. A transaction validated after one
+that commits later, as two commits at once may be, takes its place among
+them. A collection drops those at or before its horizon from the front.
+The walk then costs what commits meanwhile, however far a long reader or
+a collection not yet due leaves the horizon behind.
+
 #### D449. A row's turn passed wakes only the waiter whose turn it is
 
 D442 queued a row's waiters on the writer's end in ticket order, all
@@ -15409,6 +15418,19 @@ One that finds another under way passes by. The one collecting collects
 the same tables, and what its horizon does not reach waits for any later
 end, as a table passed over does (D445). A transaction that wrote
 still collects its own tables as before.
+
+A served session's collection after its reply first collects the tables
+its own transactions wrote since it last collected, as their ends would
+have, and only then the set, as such an end does. Before, its
+transactions only noted their tables in the set, and its collection was
+one of these ends, so at many writing sessions one session at a time
+collected every table. That one fell behind the commits, each pass took
+longer for the garbage left meanwhile, and a table's transactions kept
+for validation (D448) grew to thousands. The tables a session wrote are
+kept with its cancel flag, each once, and taken by its collection. Each
+is collected as at a transaction's end, one collector at a time and
+only when due (D445, D451), so sessions writing different tables
+collect them at once.
 
 #### D454. A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own
 

@@ -3,12 +3,14 @@
 //! stamped appended stamped, snapshots at the durable timestamp, a reply
 //! held for what it read past its snapshot, and an exclusive request
 //! waiting for the shared holds in stripes; and index entries a version
-//! shares with its successor, kept by collection, a checkpoint and a fill.
+//! shares with its successor, kept by collection, a checkpoint and a fill;
+//! the validated kept in the order of their commits; and a served
+//! session collecting the tables it wrote itself.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 9] = [
+pub const TXN_LAYER: [Mutation; 11] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -101,5 +103,25 @@ pub const TXN_LAYER: [Mutation; 9] = [
         replacement: "        if sharing.shares(kept) && false {",
         integration: &["kept_entries::a_crash_keeps_shared_entries"],
         unit: &[],
+    },
+    Mutation {
+        name: "txn-validated-unordered",
+        package: Package::Core,
+        breaks: "a transaction validated after one that commits later is kept after it, so a reader walking those committed after its snapshot passes it over",
+        file: "src/engine/rows/mvcc/commit.rs",
+        original: "        let place = self.entries.partition_point(|kept| kept.at <= v.at);\n        self.entries.insert(place, v);",
+        replacement: "        self.entries.push(v);",
+        integration: &[],
+        unit: &["engine::rows::tests::a_validation_out_of_commit_order_is_still_checked"],
+    },
+    Mutation {
+        name: "txn-owed-not-collected",
+        package: Package::Core,
+        breaks: "a served session's collection passes by the tables it wrote while another session collects, so one collects every table at many sessions",
+        file: "src/db/session.rs",
+        original: "            if !owed.is_empty() {",
+        replacement: "            if owed.is_empty() {",
+        integration: &[],
+        unit: &["db::tests::a_served_session_collects_the_tables_it_wrote"],
     },
 ];

@@ -41,8 +41,9 @@ impl RowTable {
         };
         let mut validated = lock_builtin(&self.versions.validated);
         // RULES.md D448: with no reads here nor in any kept, no order is
-        // missed either way.
-        let others: &mut [Validated] = if me.reads.any() || validated.readers > 0 { validated.entries.as_mut_slice() } else { &mut [] };
+        // missed either way. Either order missed needs the other's commit
+        // after this one's snapshot, so only those are walked.
+        let others: &mut [Validated] = if me.reads.any() || validated.readers > 0 { validated.after(me.snapshot) } else { &mut [] };
         for other in others.iter_mut().filter(|v| v.tx != tx) {
             // It committed between this one's snapshot and its commit, and
             // wrote what this one read: this one missed it.
@@ -157,25 +158,44 @@ impl RowTable {
 }
 
 /// \[DESIGN\] The transactions validated in a table that one could still
-/// be ordered against, and how many of them read anything: while none
-/// did, one that read nothing is checked against none (RULES.md D448).
+/// be ordered against, in the order of their commits, and how many of them
+/// read anything: while none did, one that read nothing is checked against
+/// none (RULES.md D448). Kept in that order, a validation walks only those
+/// committed after its snapshot, and a collection drops those at or before
+/// its horizon from the front, however many a lagging horizon keeps.
 #[derive(Default)]
 pub(super) struct Certified {
-    pub(super) entries: Vec<Validated>,
+    entries: Vec<Validated>,
     pub(super) readers: usize,
 }
 
 impl Certified {
-    /// Adds `v`.
+    /// Adds `v` in its commit's place: after every one kept committed
+    /// before it, which a validation out of commit order may follow.
     pub(super) fn push(&mut self, v: Validated) {
         self.readers = self.readers.saturating_add(usize::from(v.reads.any()));
-        self.entries.push(v);
+        let place = self.entries.partition_point(|kept| kept.at <= v.at);
+        self.entries.insert(place, v);
+    }
+
+    /// Those committed after `snapshot`.
+    pub(super) fn after(&mut self, snapshot: Timestamp) -> &mut [Validated] {
+        let from = self.entries.partition_point(|kept| kept.at <= snapshot);
+        self.entries.get_mut(from..).unwrap_or_default()
     }
 
     /// Keeps those `keep` says.
     pub(super) fn retain(&mut self, keep: impl FnMut(&Validated) -> bool) {
         self.entries.retain(keep);
         self.readers = self.entries.iter().filter(|v| v.reads.any()).count();
+    }
+
+    /// Drops those committed at or before `horizon`: no transaction open
+    /// or to come has a snapshot before them.
+    pub(super) fn drop_through(&mut self, horizon: Timestamp) {
+        let upto = self.entries.partition_point(|kept| kept.at <= horizon);
+        let dropped = self.entries.drain(..upto).filter(|v| v.reads.any()).count();
+        self.readers = self.readers.saturating_sub(dropped);
     }
 
     /// Whether none is kept.
@@ -185,6 +205,6 @@ impl Certified {
 
     /// The earliest commit of one kept.
     pub(super) fn earliest(&self) -> Option<Timestamp> {
-        self.entries.iter().map(|v| v.at).min()
+        self.entries.first().map(|v| v.at)
     }
 }

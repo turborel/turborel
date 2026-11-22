@@ -4,8 +4,9 @@
 //! versions and the garbage read as of a time, a dropped table's pages
 //! freed, a fetch priced by what its table reads and by the system's
 //! cache, the pages its pool reads ahead as the settings say, writes
-//! that keep what every snapshot reads failing no reader, and a scan
-//! keeping a transaction's bookkeeping only while it is open (RULES.md
+//! that keep what every snapshot reads failing no reader, a validation
+//! out of commit order still checked, and a scan keeping a transaction's
+//! bookkeeping only while it is open (RULES.md
 //! R-TEST-1, R-TEST-2, R-TEST-7).
 
 use turborel_test_support::Scratch;
@@ -188,6 +189,36 @@ fn preserving_writes_fail_no_reader() {
         table.commit(21, 2);
         let reader = table.validate(20, 3).err().map(|e| e.code);
         assert_eq!(reader, if preserving { None } else { Some(Code::Conflict) }, "preserving {preserving}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D29, D448, the validated kept in the order
+/// of their commits: a transaction validated after another that commits
+/// later, as two commits at once may be, is still found by a reader whose
+/// snapshot is before its commit, which a reader walking only those
+/// committed after its snapshot must not pass over. The writer of row `a`
+/// commits at 11 and validates first; one of row `b` commits at 5 and
+/// validates next. A reader of `a` at snapshot 8, committing at 13, missed
+/// the change of `a` and is refused, and one at snapshot 11 is not.
+#[test]
+fn a_validation_out_of_commit_order_is_still_checked() {
+    for (snapshot, refused) in [(8, true), (11, false)] {
+        let table = RowTable::create(&small_pool(), &[DataType::character(5)], TableOptions::default()).unwrap();
+        let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}"))];
+        let (a, b) = (table.insert(NO_TRANSACTION, row("a")).unwrap(), table.insert(NO_TRANSACTION, row("b")).unwrap());
+        for (tx, id) in [(30, a), (31, b)] {
+            table.begin(tx, 1).unwrap();
+            table.update(tx, id, row("new")).unwrap();
+        }
+        table.validate(30, 11).unwrap();
+        table.validate(31, 5).unwrap();
+        table.commit(30, 11);
+        table.commit(31, 5);
+        table.begin(40, snapshot).unwrap();
+        assert!(table.get(40, a).unwrap().is_some());
+        table.insert(40, row("r")).unwrap();
+        let reader = table.validate(40, 13).err().map(|e| e.code);
+        assert_eq!(reader, refused.then_some(Code::Conflict), "snapshot {snapshot}");
     }
 }
 
