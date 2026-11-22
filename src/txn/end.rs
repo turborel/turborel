@@ -513,8 +513,8 @@ impl Transactions {
 mod unchanged_tests {
     use super::unchanged;
 
-    /// Left with garbage and noted: unchanged. Each condition flipped
-    /// alone changes the outcome.
+    /// Verifies: [DESIGN] RULES.md D795, a table left with garbage and
+    /// noted is unchanged; each condition flipped alone changes the outcome.
     #[test]
     fn a_table_left_noted_changes_nothing() {
         assert!(unchanged(Some(true), Some(true)));
@@ -522,8 +522,8 @@ mod unchanged_tests {
         assert!(!unchanged(Some(false), Some(true)));
     }
 
-    /// Gone and not noted: unchanged. Each condition flipped alone
-    /// changes the outcome.
+    /// Verifies: [DESIGN] RULES.md D795, a table gone and not noted is
+    /// unchanged; each condition flipped alone changes the outcome.
     #[test]
     fn a_table_gone_and_not_noted_changes_nothing() {
         assert!(unchanged(None, Some(false)));
