@@ -428,6 +428,7 @@ verification approach DO-178C expects (§8).
 | D451 | A busy table is collected a batch of commits at a time |
 | D453 | One transaction that wrote nothing collects at a time |
 | D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
+| D455 | A row a transaction wrote is no read of another's change at its validation |
 | D460 | Every hash is xxHash's XXH3 or XXH64, ported bit for bit, its loops vectorized in `turborel-simd`; XXH3-64 is the default checksum |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
 | D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
@@ -14302,3 +14303,23 @@ older versions back to the CALL's snapshot. A function's or a triggered
 action's statements keep the snapshot of the statement that runs them,
 which is still reading. No statement takes a new snapshot while a
 cursor of the session is open, as with any other statement.
+
+#### D455. A row a transaction wrote is no read of another's change at its validation
+
+The end of every statement checks its constraints with its reads
+checked, so a CHECK or NOT NULL check of a row the statement wrote reads
+that row. At commit a transaction is refused when another committed a
+change to a row it read after its snapshot. A READ COMMITTED update that
+waited for a row's writer and wrote the version it committed (D454) was
+therefore refused as it committed, with SQLSTATE 40001, whenever the
+column it set had a check. Every keyed update of a row in demand with a
+checked column hit it.
+
+Validation now leaves out a row the reader wrote itself, either way. The
+reader held that row from its write to its commit, so the other changed
+it before the write, and the write judged that change already. Under one
+snapshot it refused the write. At READ COMMITTED it wrote over the
+version committed. A read of a row the reader did not write, a scan, a
+condition or a region is checked as before. A transaction that wrote
+more rows than are tracked keeps no rows of its writes, and is checked
+as before.
