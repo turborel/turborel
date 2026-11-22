@@ -45,21 +45,28 @@ pub(super) fn put_update(out: &mut Vec<u8>, (name, generation, id): (&QualifiedN
         put_row(out, before);
         return;
     }
-    let mut changed = Vec::new();
+    // [DESIGN] RULES.md D822: each column of the row before written in
+    // place after the count, and taken back if its bytes are those it
+    // has after.
+    out.put_u8(CHANGED);
+    let count_at = out.len();
+    out.put_u32(0);
     let mut count = 0_u32;
-    let mut was = Vec::new();
     for (at, (v, span)) in before.iter().zip(spans).enumerate() {
-        was.clear();
-        put_value(&mut was, v);
-        if out.get(span).is_none_or(|now| *now != *was) {
-            changed.put_u32(u32::try_from(at).unwrap_or(u32::MAX));
-            changed.extend_from_slice(&was);
+        let mark = out.len();
+        out.put_u32(u32::try_from(at).unwrap_or(u32::MAX));
+        let value_at = out.len();
+        put_value(out, v);
+        let (written, was) = out.split_at(value_at);
+        if written.get(span).is_some_and(|now| now == was) {
+            out.truncate(mark);
+        } else {
             count = count.saturating_add(1);
         }
     }
-    out.put_u8(CHANGED);
-    out.put_u32(count);
-    out.extend_from_slice(&changed);
+    if let Some(place) = out.get_mut(count_at..count_at.saturating_add(4)) {
+        place.copy_from_slice(&count.to_le_bytes());
+    }
 }
 
 /// Reads an update's body written by `put_update`.
@@ -114,7 +121,7 @@ mod tests {
         row
     }
 
-    /// Verifies: [DESIGN] RULES.md D475, an update logs of its row before
+    /// Verifies: [DESIGN] RULES.md D475, D822, an update logs of its row before
     /// only the columns changed: read back, both images are as written,
     /// value for value, the bytes of each; values that compare equal but
     /// are written apart (a decimal of another scale, zero and negative
