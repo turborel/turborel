@@ -509,6 +509,8 @@ verification approach DO-178C expects (§8).
 | D783 | A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there |
 | D784 | A table's open transactions are kept in shards, by id, each alone on its cache lines |
 | D805 | A pool finds its files with no lock and no reference count moved |
+| D795 | A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes |
+| D796 | A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 | D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
 
@@ -14083,6 +14085,55 @@ only once one was published since it last was (`native/seen.rs`,
 A connection's state is an atomic its row shares, set with no lock.
 The session's settings told in Status are read from its own snapshot
 (D780).
+
+#### D795. A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes
+
+Every writing transaction's end took the lock of the database's set of
+tables awaiting collection twice, copied the set, and stored whether it
+held any. Each also stored the table's last change instant, lowered the
+table's earliest garbage timestamp with an atomic minimum, and asked
+whether a collection was due by taking the read lock of the table's open
+transactions. Each of these wrote a cache line every other writer then
+read. The flags every transaction reads (whether the database takes
+changes, whether tables await collection) sat beside counters every
+transaction writes, so reading them missed as well.
+
+Now a table carries whether it is in the set (`TableLock::noted`), kept
+with the set under its lock. An end that would leave the set as it is,
+a table not yet due left noted or a table gone left out, takes no lock,
+and the set is copied only while it holds any. Whether tables await
+collection, the change instant and the earliest timestamps are stored
+only when they change, and `due_at` asks whether a transaction is open
+in the table from D784's shard counts, with no lock. The database's
+flags every change reads (whether it takes changes, whether it is held,
+whether tables await collection) and the count of changes logged, which
+every commit raises, each sit alone on their cache lines (D782). The
+checkpoint's gate has 64 stripes, so threads at once seldom share one.
+
+What is collected, and when, is unchanged. A table passed over is still
+in the set for a later end to collect, and an end that collects it still
+asks under the lock whether garbage came meanwhile (D445).
+
+#### D796. A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once
+
+D741 parked an appender whose block was written before those ahead of
+it under its block's start, and the appender publishing up to it woke it
+alone. That one then published its own block and woke the next. A run of
+blocks written early was published one wake-up after another, each
+appender waiting for the one before to be scheduled. At 32 sessions on
+16 processors, one appender descheduled before its write stalled every
+appender after it, and about one context switch in three of oltp
+update_index was an appender parked there. The server then used fewer
+processors at 32 sessions than at 8, and committed fewer transactions.
+
+An appender whose block is written before those ahead of it now files
+the block, its end and its thread, and waits. The appender that
+publishes up to a filed block publishes it as well, and every filed
+block that follows on from it, under the lock of the filed blocks, and
+then wakes their appenders together. A run of blocks written early costs
+one wake-up's wait. An appender in turn publishes its block with one
+atomic step and takes the lock only when blocks are filed. The order in
+which blocks are published, and what a reader sees, is D30's.
 
 #### D806. A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged
 
