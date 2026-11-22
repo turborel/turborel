@@ -193,6 +193,12 @@ pub(super) struct StatementContext<'a> {
     pub(super) tx: &'a Txn,
 }
 
+/// Throwaway pointbound experiment: the point statements run directly so far.
+#[must_use]
+pub fn pointbound_hits() -> u64 {
+    write::pointbound::HITS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn api(msg: impl Into<String>) -> SqlError {
     SqlError::new(Code::Api, msg)
 }

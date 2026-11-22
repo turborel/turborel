@@ -32,6 +32,7 @@ mod given;
 mod inserted;
 mod into;
 mod pointed;
+pub(in crate::db) mod pointbound;
 mod portion;
 pub(crate) mod system_time;
 

@@ -187,6 +187,19 @@ impl Host for SessionHost<'_, '_> {
         // program kept keeps its plan (RULES.md D406); a SELECT ... INTO's
         // query over a delta table its own (D793).
         let kept = self.kept.and_then(|k| k.plans_of(c)).filter(|_| keeps_plan(c.statement()));
+        // Throwaway pointbound experiment: point statements run directly.
+        if super::super::super::write::pointbound::on()
+            && let Some(plans) = kept
+        {
+            let key = std::ptr::from_ref(c).addr();
+            let hit = self.with(|cx| {
+                self.fresh(cx.tx)?;
+                super::super::super::write::pointbound::run(session, cx, c.statement(), key, frame, plans)
+            })?;
+            if let Some(done) = hit {
+                return Ok(done);
+            }
+        }
         let ran = self.with(|cx| {
             self.fresh(cx.tx)?;
             session.may_run(cx.st, c.statement())?;

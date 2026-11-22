@@ -459,3 +459,72 @@ fn an_element_past_the_end_of_a_table_of_no_rows_raises_nothing() {
     a.run("CALL TAKE_NONE(1, ARRAY[30], 2)").unwrap();
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM E"), ["0"]);
 }
+
+/// Throwaway pointbound experiment: a NEWORD-like body, its FINAL TABLE
+/// UPDATEs by whole keys, a plain UPDATE by key and INSERTs of values,
+/// gives the rows the general path gives, with TURBOREL_POINTBOUND=1 set
+/// for the process or not.
+#[test]
+fn pointbound_neword_like_body() {
+    let (_db, a) = defined();
+    a.run("CREATE TABLE D (W INTEGER NOT NULL, NEXT_O INTEGER, TAX DECIMAL(4,4), YTD DECIMAL(12,2), PRIMARY KEY (W))").unwrap();
+    a.run("CREATE TABLE O (W INTEGER NOT NULL, ID INTEGER NOT NULL, N INTEGER, TS TIMESTAMP(0), NOTE VARCHAR(40), PRIMARY KEY (W, ID))")
+        .unwrap();
+    a.run("INSERT INTO D VALUES (1, 3001, 0.1250, 0), (2, 3001, 0.0500, 0)").unwrap();
+    let more: Vec<String> = (3..=400_i64).map(|w| format!("({w}, 1, 0, 0)")).collect();
+    a.run(&format!("INSERT INTO D VALUES {}", more.join(", "))).unwrap();
+    a.run(
+        "CREATE PROCEDURE NEWO (IN WH INTEGER, IN ITEMS INTEGER ARRAY[5], IN K INTEGER, IN AMT DECIMAL(6,2)) MODIFIES SQL DATA
+         BEGIN
+           DECLARE OID INTEGER;
+           DECLARE DTAX DECIMAL(4,4);
+           DECLARE NTH INTEGER DEFAULT 1;
+           DECLARE LEFT_OVER INTEGER;
+           DECLARE SEEN INTEGER DEFAULT 0;
+           SELECT NEXT_O - 1, TAX INTO OID, DTAX FROM FINAL TABLE (UPDATE D SET NEXT_O = NEXT_O + 1 WHERE W = WH);
+           UPDATE D SET YTD = YTD + AMT WHERE W = WH;
+           INSERT INTO O (W, ID, N, TS, NOTE) VALUES (WH, OID, K, CAST(CURRENT_TIMESTAMP(0) AS TIMESTAMP(0)),
+               CAST(OID AS VARCHAR(10)) || ' ' || CAST(DTAX AS VARCHAR(10)));
+           WHILE NTH <= K DO
+             SET LEFT_OVER = NULL;
+             SELECT CASE WHEN Q < 15 THEN Q + 100 ELSE Q END INTO LEFT_OVER
+               FROM FINAL TABLE (UPDATE S SET Q = CASE WHEN Q < 12 THEN Q + 91 ELSE Q END - 1 WHERE W = WH AND I = ITEMS[NTH]);
+             IF LEFT_OVER IS NOT NULL THEN SET SEEN = SEEN + LEFT_OVER; END IF;
+             SET NTH = NTH + 1;
+           END WHILE;
+           INSERT INTO L VALUES (WH * 10000 + OID, SEEN);
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    let before = turborel::db::pointbound_hits();
+    for n in 0..12 {
+        let w = 1 + n % 2;
+        a.run(&format!("CALL NEWO({w}, ARRAY[1, 2, {}, 99, 3], {}, 10.50)", 3 + n % 4, 3 + n % 3)).unwrap();
+        if n % 5 == 4 {
+            a.commit().unwrap();
+        }
+    }
+    a.commit().unwrap();
+    let hits = turborel::db::pointbound_hits() - before;
+    let on = std::env::var("TURBOREL_POINTBOUND").is_ok_and(|v| v == "1");
+    eprintln!("pointbound on {on}, hits {hits}");
+    if on {
+        assert!(hits > 30, "the point statements ran directly: {hits}");
+    }
+    assert_eq!(rows(&a, "SELECT W, NEXT_O, YTD FROM D WHERE W < 3 ORDER BY W"), ["1,3007,63.00", "2,3007,63.00"]);
+    assert_eq!(rows(&a, "SELECT COUNT(*), MIN(ID), MAX(ID) FROM O"), ["12,3001,3006"]);
+    assert_eq!(rows(&a, "SELECT N, NOTE FROM O WHERE W = 2 AND ID = 3003"), ["5,3003 0.0500"]);
+    assert_eq!(rows(&a, "SELECT COUNT(*) FROM O WHERE TS IS NULL"), ["0"]);
+    assert_eq!(
+        rows(&a, "SELECT W, LOW FROM L ORDER BY W"),
+        [
+            "13001,57", "13002,73", "13003,51", "13004,50", "13005,61", "13006,245", "23001,57", "23002,55", "23003,71", "23004,50",
+            "23005,47", "23006,263"
+        ]
+    );
+    assert_eq!(
+        rows(&a, "SELECT W, I, Q FROM S WHERE Q <> 20 ORDER BY W, I"),
+        ["1,1,14", "1,2,14", "1,3,15", "1,5,17", "2,1,14", "2,2,14", "2,3,18", "2,4,17", "2,6,17"]
+    );
+}

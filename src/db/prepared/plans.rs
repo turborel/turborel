@@ -243,6 +243,14 @@ impl Key {
 }
 
 impl Keeping<'_> {
+    /// \[DESIGN\] Throwaway pointbound experiment: the fixed physical plan kept, if one.
+    pub(in crate::db) fn pointbound_fixed(&self) -> Result<Option<(Arc<KeptPhysical>, Arc<[QualifiedName]>)>> {
+        self.kept(|k| match &k.physical {
+            Physical::Fixed(p, r, _) => Some((Arc::clone(p), Arc::clone(r))),
+            _ => None,
+        })
+    }
+
     /// Whether what is kept with `key` holds now.
     fn holds(&self, key: &Key) -> bool {
         key.holds(self.st, self.session)
