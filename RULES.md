@@ -3142,6 +3142,14 @@ Windows' MSVC target. `cargo xtask verify` builds the program once per
 feature, so CI shows each one building on Linux, macOS and Windows and none
 is found broken only when an operator picks it.
 
+In a first round of TPC-C at 8 users, with the log's commit sync off so the
+drive's flushes did not hide the allocator, mimalloc, snmalloc and jemalloc
+each served clearly more transactions than the system's allocator. mimalloc
+and jemalloc also ended the run holding much less resident memory, and
+snmalloc more. rpmalloc's run did not complete, so it is offered unranked.
+The rounds that would rank them were cut short, so none is recommended over
+the others.
+
 An allocator only makes allocation cheaper. The core cuts its own
 allocations independently, in the paths that make them, and that work is
 what the shipped build gains from.
