@@ -35,6 +35,7 @@ mod joins;
 mod late;
 mod monitoring;
 mod oltp;
+mod own_copies;
 mod orders;
 mod parallel;
 mod range_joins;
@@ -234,9 +235,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// The transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
-/// semi joins', mark joins', skipping's and the undo store's memory's last,
-/// as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 15] {
+/// semi joins', mark joins', skipping's, the undo store's memory's and the
+/// sessions' own copies' last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 16] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -253,6 +254,7 @@ fn closing() -> [&'static [Mutation]; 15] {
         &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
         &undo_memory::UNDO_MEMORY,
+        &own_copies::OWN_COPIES,
     ]
 }
 

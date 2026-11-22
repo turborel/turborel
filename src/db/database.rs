@@ -8,11 +8,13 @@ use std::thread::{self, ThreadId};
 
 pub(super) mod ended;
 mod handles;
+mod published;
 mod service;
 mod turn;
 
 pub use ended::{EndedCounts, TransactionsEnded};
 use handles::Program;
+pub(super) use published::Own;
 pub(crate) use handles::WeakDatabase;
 use turn::Turn;
 
@@ -33,7 +35,7 @@ use crate::physical::CostModel;
 use crate::settings;
 use crate::spill::Spill;
 use crate::storage::StorageEngine;
-use crate::sync::{lock, read, write};
+use crate::sync::{lock, read};
 use crate::txn::{Damage, LockMode, Policy, SessionEnd, Txn};
 use crate::value::Value;
 
@@ -63,6 +65,9 @@ struct Shared {
     /// The current snapshot of the definitions. Held only to copy the `Arc`
     /// or to replace it, never while a statement runs.
     current: RwLock<Arc<State>>,
+    /// The snapshots published, as sessions' own copies are checked
+    /// against (`database/published.rs`).
+    publications: AtomicU64,
     /// The thread changing the definitions, if one is; changes take turns.
     changing: Mutex<Option<ThreadId>>,
     /// Signalled when a change ends, for a thread waiting its turn.
@@ -127,6 +132,7 @@ impl Database {
         let background = Background::over(Arc::clone(&state.jobs), backups);
         let db = Program::over(|program| Shared {
             current: RwLock::new(Arc::new(state)),
+            publications: AtomicU64::new(0),
             changing: Mutex::new(None),
             turn_ended: Condvar::new(),
             files: Mutex::new(None),
@@ -161,21 +167,6 @@ impl Database {
         st.attach_catalog_objects()?;
         st.attach_extensions()?;
         Ok(Database::over(st))
-    }
-
-    /// The current snapshot of the definitions, for one statement or
-    /// cursor: SQLCODE -910 if the database is closed or a thread panicked
-    /// publishing one, SQLSTATE 38T11 if a host plug-in stopped the node.
-    pub(crate) fn snapshot(&self) -> Result<Arc<State>> {
-        super::hosted::running(self.snapshot_unstopped()?)
-    }
-
-    /// `snapshot`, whether or not a host plug-in stopped the node.
-    pub(crate) fn snapshot_unstopped(&self) -> Result<Arc<State>> {
-        if self.0.closed.load(Ordering::Acquire) {
-            return fail(Code::Api, "[DESIGN] the database is closed");
-        }
-        Ok(Arc::clone(&*read(&self.0.current)?))
     }
 
     /// The files it was opened from, if any.
@@ -222,7 +213,7 @@ impl Database {
         next.generation = next.generation.saturating_add(1);
         let out = change(&mut next)?;
         next.published();
-        *write(&self.0.current)? = Arc::new(next);
+        self.publish(next)?;
         Ok(out)
     }
 

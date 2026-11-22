@@ -494,6 +494,8 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
+| D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
 
 ### The project
 
@@ -13823,6 +13825,48 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
+#### D780. A session keeps its own copy of the definitions' snapshot, taken again only once one is published
+
+Each statement took the database's snapshot of its definitions by
+reading the lock it is published under and copying its `Arc`. Both write
+a line every session shares, the lock's count of readers and the
+snapshot's count of references, twice a statement. At eight threads of
+point queries each statement waited on those lines moving between
+processors, and the cost of a query grew with the threads running.
+
+So the database counts each snapshot it publishes, moving the count
+after the snapshot is in place (`database/published.rs`). A session
+keeps a copy of its own of the last snapshot it took, the `State` cloned
+with its count. A statement reads the count, one word written only as
+definitions change, and takes its session's copy while the count is the
+same. Only once a change was published does the session read the lock
+and copy the snapshot again. The count is read before the lock, so a
+copy is never counted newer than it is. A statement of a session then
+writes to no line another session's statement writes. A copy costs one
+clone of the `State` per session per change of definitions, and its
+shared parts stay shared. `Database::snapshot` keeps reading the lock for
+the work that is not a session's statement.
+
+#### D781. A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes
+
+Statements prepared alike in many sessions share the place their plans
+are kept in (D610). Every execution read the place's lock and copied the
+`Arc`s of the kept plan and the tables it reads, so the lock's count of
+readers and those counts of references were written by every session's
+executions.
+
+So a place counts the changes of what it keeps, under its lock
+(`prepared/shared.rs`), and each prepared statement keeps a copy of its
+own, with the count it was copied at. An execution reads the count and,
+while it is the same, takes what it needs from its copy. The copy holds
+its own `Arc`s of the parsed statement, the cursor specification, the
+physical plan and its tables, so taking them changes no count another
+session changes. A plan kept is still kept in the place, under its lock,
+and found by the other sessions at their next execution, which copies it
+then. A place shared keeps its point: a plan is bound, planned and
+learned once for all the sessions. The copy is behind a lock of the
+statement's own, which no other session takes.
 
 ## 2. Project layout
 

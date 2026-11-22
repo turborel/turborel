@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::db::Database;
+use crate::sync::read;
 use crate::logical::{Expr, Slot};
 use crate::value::Decimal;
 
@@ -356,4 +357,41 @@ fn a_prepared_stock_level_query_keeps_its_probes_by_its_own_warehouse() {
     let kept = physical(&p);
     assert!(kept.starts_with("Some(Fixed") && kept.contains("IndexJoin") && !kept.contains("HashJoin"), "{kept}");
     assert!(kept.contains("table: QualifiedName { auth: \"T\", ident: \"STOCK\" }"), "{kept}");
+}
+
+/// How many hold the physical plan `p`'s place keeps, if it keeps one.
+fn holders(p: &Prepared) -> Option<usize> {
+    let kept = read(&p.plans.kept.kept).unwrap();
+    match kept.as_ref().map(|k| &k.physical) {
+        Some(Physical::Fixed(plan, reads, _)) => Some(Arc::strong_count(plan).max(Arc::strong_count(reads))),
+        _ => None,
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D781: statements prepared alike in two
+/// sessions share what their place keeps, each through a copy of its own:
+/// their executions take no count of the place's plan, and what one
+/// session keeps is found by the other's next execution, which keeps
+/// nothing again. MC/DC of copying again: the place changed or not.
+#[test]
+fn executions_read_their_own_copy_of_what_the_place_keeps() {
+    let (db, s) = table();
+    let other = db.session("A");
+    let mine = s.prepare("SELECT C FROM P WHERE A = ? AND B = ?").unwrap();
+    let theirs = other.prepare("SELECT C FROM P WHERE A = ? AND B = ?").unwrap();
+    assert!(Arc::ptr_eq(&mine.plans.kept, &theirs.plans.kept), "one place");
+    drop(other.open_prepared(&theirs, &[int(0), int(1)]).unwrap());
+    for _ in 0_i32..2_i32 {
+        drop(s.open_prepared(&mine, &[int(1), int(2)]).unwrap());
+    }
+    assert_eq!(holders(&mine), Some(1), "kept, held by the place alone");
+    let changes = |p: &Prepared| p.plans.kept.changes.load(Ordering::Acquire);
+    let before = changes(&mine);
+    for n in 0..3 {
+        let rows = other.open_prepared(&theirs, &[int(n), int(3)]).unwrap();
+        assert_eq!(holders(&theirs), Some(1), "{n}: a copy's, not the place's");
+        drop(rows);
+    }
+    assert_eq!(changes(&theirs), before, "the plan the other kept found, nothing kept again");
+    assert_eq!([theirs.plans_made(), mine.plans_made()], [1, 0], "bound once, by the first");
 }
