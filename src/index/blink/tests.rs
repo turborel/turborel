@@ -6,15 +6,17 @@
 use std::path::Path;
 use std::thread;
 
+use super::entries::Decoded;
 use super::*;
 use crate::disk::buffer::Clock;
 use crate::disk::encoding::Pipeline;
 use crate::disk::memory::MemoryFileSystem;
 use crate::disk::pager::Pager;
+use crate::engine::key::decode_key;
 use crate::engine::memory_file;
 use crate::engine::tree::hints;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
-use crate::index::searched;
+use crate::index::{EncodedEntry, searched};
 use crate::value::Spelled;
 use crate::value::{Decimal, Value, compare};
 
@@ -454,9 +456,12 @@ fn an_encoded_search_gives_the_keys_search_finds() {
     let probes = [Probe::All, Probe::Compare { op: CompOp::Eq, value: exact(1_056, 2) }, Probe::Range { equal: Vec::new(), low, high }];
     for probe in probes {
         for order in [KeyOrder::Ascending, KeyOrder::Descending] {
-            let Encoded { entries, types } = Arc::clone(&index).search_encoded(&probe, order).unwrap();
-            let decoded = |(bytes, row): (Vec<u8>, RowId)| Ok((Key(decode_key(&bytes, &types)?), row));
-            let encoded: Vec<(Key, RowId)> = entries.map(|e| e.and_then(decoded)).collect::<Result<_>>().unwrap();
+            let mut entries = Arc::clone(&index).search_encoded(&probe, order).unwrap();
+            let mut encoded: Vec<(Key, RowId)> = Vec::new();
+            while let Some(entry) = entries.next_encoded() {
+                let EncodedEntry { key, row, types } = entry.unwrap();
+                encoded.push((Key(decode_key(key, types).unwrap()), row));
+            }
             let keyed: Vec<(Key, RowId)> = Arc::clone(&index).search(&probe, order).collect::<Result<_>>().unwrap();
             assert!(!keyed.is_empty() && encoded == keyed, "{probe:?} {order:?}");
         }

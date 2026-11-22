@@ -8,6 +8,10 @@
 //! A copy read is exactly the node's content now, as the version moves on
 //! before any change, so a descent from it goes where one through the
 //! latch would. Leaves are never copied: a read of one takes its latch.
+//!
+//! A thread keeps 256 copies, found by their page, across all the trees it
+//! reads; the one to give way is chosen by a clock bit set as a descent
+//! reads it (RULES.md D807).
 
 use std::cell::RefCell;
 use std::ops::Deref;
@@ -15,24 +19,74 @@ use std::rc::Rc;
 
 use crate::disk::buffer::{BufferPool, FileId, PageRef, Stamp, Tally};
 use crate::error::Result;
+use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Map};
 
-/// The copies a thread keeps: the root and the levels just below it of the
-/// trees it reads most.
-const KEPT: usize = 16;
+/// \[DESIGN\] The copies a thread keeps, across every tree it reads (RULES.md
+/// D807): the roots and the levels below them of the tables a transaction
+/// mix reads together, at most 2 MiB of 8 KiB pages.
+pub(super) const KEPT: usize = 256;
 
-/// A copy of page `id` of `file`, read with `stamp`.
+/// A copy of page `id` of `file`, read with `stamp`, and its clock bit,
+/// set when a descent reads it and cleared as the hand passes.
 struct Copy {
     file: FileId,
     id: u64,
     stamp: Stamp,
     bytes: Rc<[u8]>,
+    used: bool,
 }
 
-/// A thread's copies, and the next one to give way.
-#[derive(Default)]
+/// A thread's copies, where each is by its page, and the clock's hand.
 struct Copies {
     kept: Vec<Copy>,
-    next: usize,
+    at: Xxh3Map<(FileId, u64), usize>,
+    hand: usize,
+}
+
+impl Default for Copies {
+    fn default() -> Copies {
+        Copies { kept: Vec::new(), at: Xxh3Map::with_hasher(Xxh3BuildHasher::with_seed(0)), hand: 0 }
+    }
+}
+
+impl Copies {
+    /// The place of a copy to give way, by CLOCK (Corbató, 1968). It is the
+    /// first the hand finds unused, and the hand clears the bits it passes.
+    fn victim(&mut self) -> usize {
+        loop {
+            let at = self.hand;
+            self.hand = at.checked_add(1).and_then(|n| n.checked_rem(self.kept.len())).unwrap_or(0);
+            let Some(copy) = self.kept.get_mut(at) else { return 0 };
+            if !copy.used {
+                return at;
+            }
+            copy.used = false;
+        }
+    }
+
+    /// Keeps `bytes`, page `id` of `file` read with `stamp`, at the page's
+    /// place, or a free one, or the victim's; into the bytes of the copy
+    /// it replaces when no descent holds them, so a page read again
+    /// allocates nothing.
+    fn put(&mut self, (file, id, stamp): (FileId, u64, Stamp), bytes: &[u8]) {
+        let found = self.at.get(&(file, id)).copied();
+        if found.is_none() && self.kept.len() < KEPT {
+            self.at.insert((file, id), self.kept.len());
+            self.kept.push(Copy { file, id, stamp, bytes: Rc::from(bytes), used: true });
+            return;
+        }
+        let at = found.unwrap_or_else(|| self.victim());
+        let Some(old) = self.kept.get_mut(at) else { return };
+        if (old.file, old.id) != (file, id) {
+            self.at.remove(&(old.file, old.id));
+            self.at.insert((file, id), at);
+        }
+        match Rc::get_mut(&mut old.bytes).filter(|b| b.len() == bytes.len()) {
+            Some(kept) => kept.copy_from_slice(bytes),
+            None => old.bytes = Rc::from(bytes),
+        }
+        (old.file, old.id, old.stamp, old.used) = (file, id, stamp, true);
+    }
 }
 
 thread_local! {
@@ -65,30 +119,32 @@ pub(super) fn read<'p>(pool: &'p BufferPool, (file, id): (FileId, u64), tally: O
     Ok(Read::Held(page, stamp))
 }
 
-/// The thread's copy of page `id` of `file`, if it is still current.
+/// The thread's copy of page `id` of `file`, if it is still current; its
+/// clock bit set.
 fn current(pool: &BufferPool, file: FileId, id: u64) -> Option<Rc<[u8]>> {
     COPIES.with(|copies| {
-        let copies = copies.try_borrow().ok()?;
-        let copy = copies.kept.iter().find(|c| c.file == file && c.id == id && pool.unchanged(file, id, c.stamp))?;
+        let mut copies = copies.try_borrow_mut().ok()?;
+        let Copies { kept, at, .. } = &mut *copies;
+        let copy = kept.get_mut(*at.get(&(file, id))?).filter(|c| pool.unchanged(file, id, c.stamp))?;
+        copy.used = true;
         Some(Rc::clone(&copy.bytes))
     })
 }
 
 /// Keeps a copy of `read`, page `id` of `file`, an inner node read
-/// latched; one kept already of the page gives way to it.
+/// latched; one kept already of the page gives way to it, else the one
+/// the clock finds unused (D807).
 pub(super) fn keep(read: &Read<'_>, (file, id): (FileId, u64)) {
     let Read::Held(page, stamp) = read else { return };
-    let copy = Copy { file, id, stamp: *stamp, bytes: Rc::from(&page[..]) };
     COPIES.with(|copies| {
-        let Ok(mut held) = copies.try_borrow_mut() else { return };
-        let Copies { kept, next } = &mut *held;
-        if let Some(old) = kept.iter_mut().find(|c| c.file == file && c.id == id) {
-            *old = copy;
-        } else if kept.len() < KEPT {
-            kept.push(copy);
-        } else if let Some(old) = kept.get_mut(*next) {
-            *old = copy;
-            *next = next.checked_add(1).map_or(0, |n| n.checked_rem(KEPT).unwrap_or(0));
+        if let Ok(mut copies) = copies.try_borrow_mut() {
+            copies.put((file, id, *stamp), page);
         }
     });
+}
+
+/// The pages of the copies the thread keeps, for tests.
+#[cfg(test)]
+pub(super) fn kept() -> Vec<(FileId, u64)> {
+    COPIES.with(|copies| copies.borrow().kept.iter().map(|c| (c.file, c.id)).collect())
 }

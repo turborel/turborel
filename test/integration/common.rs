@@ -212,6 +212,11 @@ impl Kept {
     pub fn taken(&self) -> Vec<(Level, String)> {
         self.0.lock().unwrap().drain(..).map(|(l, e)| (l, format!("{e:?}"))).collect()
     }
+
+    /// The events kept since the last call, as they were told.
+    pub fn events(&self) -> Vec<Event> {
+        self.0.lock().unwrap().drain(..).map(|(_, e)| e).collect()
+    }
 }
 
 /// A table's gate: once armed, the first scan to reach its second row says

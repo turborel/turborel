@@ -1,15 +1,18 @@
 //! \[DESIGN\] (RULES.md D821) A search whose entries keep their keys as
-//! the tree holds them. Each entry's bytes, read of its leaf, lose their
-//! row id in place and are handed on as they are, none decoded: the
-//! caller compares a row's key with them as bytes. A range whose keys are
-//! each checked against the probe decodes them to check them, so it is
-//! searched as `search` searches.
+//! the tree holds them. Each entry is lent from the scan, none copied
+//! (RULES.md D809), its row id cut off and its key handed on as it is,
+//! none decoded: the caller compares a row's key with it as bytes. A range
+//! whose keys are each checked against the probe decodes them to check
+//! them, so it is searched as `search` searches.
 
 use std::sync::Arc;
 
-use super::{BLinkIndex, Held, noted, split};
-use crate::engine::tree::{Direction, scan_of};
-use crate::index::{Encoded, KeyOrder, Probe};
+use super::entries::{Held, Keyed};
+use super::value::noted;
+use super::{BLinkIndex, split};
+use crate::engine::tree::{Direction, Scan, scan_of};
+use crate::error::Result;
+use crate::index::{Encoded, EncodedEntries, EncodedEntry, KeyOrder, Probe};
 
 /// The entries `probe` selects of `index`, in `order`, their keys as the
 /// tree holds them; none if a key read must be checked.
@@ -19,16 +22,18 @@ pub(super) fn searched(index: Arc<BLinkIndex>, probe: &Probe, order: KeyOrder) -
         KeyOrder::Ascending => Direction::Forward,
         KeyOrder::Descending => Direction::Backward,
     };
-    let types = Arc::clone(&index.types);
-    let scan = scan_of(Held(index), range.lower.as_ref().map(Vec::as_slice), range.upper.as_ref().map(Vec::as_slice), direction);
-    let entries = scan.map(|entry| {
-        entry.and_then(|(mut entry, value)| {
-            let (key, row) = split(&entry)?;
-            noted(row, &value)?;
-            let length = key.len();
-            entry.truncate(length);
-            Ok((entry, row))
-        })
-    });
-    Some(Encoded { entries: Box::new(entries), types })
+    Some(Box::new(Lent(scan_of(Held(index), range.lower.as_ref().map(Vec::as_slice), range.upper.as_ref().map(Vec::as_slice), direction))))
+}
+
+/// The scan of a search, its entries lent.
+struct Lent(Scan<Held>);
+
+impl EncodedEntries for Lent {
+    fn next_encoded(&mut self) -> Option<Result<EncodedEntry<'_>>> {
+        Some(self.0.next_entry()?.and_then(|(held, (entry, value))| {
+            let (key, row) = split(entry)?;
+            noted(row, value)?;
+            Ok(EncodedEntry { key, row, types: held.types() })
+        }))
+    }
 }

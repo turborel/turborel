@@ -21,7 +21,7 @@ mod key;
 pub use key::Key;
 mod counted;
 mod entries;
-pub use entries::{Encoded, Entries, RowIds};
+pub use entries::{Encoded, EncodedEntries, EncodedEntry, Entries, RowIds};
 pub mod expression;
 pub mod fulltext;
 mod hash;

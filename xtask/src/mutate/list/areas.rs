@@ -8,6 +8,7 @@ mod btree;
 mod budget;
 mod bulk;
 mod checkpoint;
+mod checkpoint_cost;
 mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
@@ -67,7 +68,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 28] {
+pub fn core() -> [&'static [Mutation]; 29] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -97,6 +98,7 @@ pub fn core() -> [&'static [Mutation]; 28] {
         &dirty_frames::DIRTY_FRAMES,
         &range_path::RANGE_PATH,
         &point_ops::POINT_OPS,
+        &checkpoint_cost::CHECKPOINT_COST,
     ]
 }
 

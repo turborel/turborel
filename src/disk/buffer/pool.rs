@@ -31,7 +31,7 @@ pub(super) use dirty::Dirtied;
 
 use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
 use crate::disk::block::{BlockFile, BlockId};
-use crate::disk::pager::{Extent, PageId, Pager};
+use crate::disk::pager::{Extent, PageId, Pager, PagerCounts};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::xxhash::{Words, Xxh3Map};
 use crate::memory::MemoryBudget;
@@ -190,6 +190,15 @@ impl BufferPool {
     /// SQLCODE -910 if `file` is not a registered pager file.
     pub fn capacity(&self, file: FileId) -> Result<usize> {
         Ok(self.pager(file)?.inline_capacity())
+    }
+
+    /// The counters of pager file `file` (RULES.md D810).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if `file` is not a registered pager file.
+    pub fn pager_counts(&self, file: FileId) -> Result<PagerCounts> {
+        Ok(self.pager(file)?.counts())
     }
 
     /// Frames in the pool.

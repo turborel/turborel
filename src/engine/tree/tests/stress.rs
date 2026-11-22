@@ -68,8 +68,8 @@ fn read_run(tree: &BLinkTree, (t, i): (u64, u64), model: &BTreeMap<[u8; 8], Vec<
 /// scan checked for order.
 fn work(tree: &BLinkTree, t: u64, model: &mut BTreeMap<[u8; 8], Vec<u8>>) {
     let mut seq = Seq(t.checked_add(1).unwrap());
-    // Kept from read to read, as a scan keeps it: its leaf's copy is read
-    // while other threads split, change and take out leaves (D806).
+    // Kept from read to read, as a scan keeps it, so its leaf's copy is
+    // read while other threads split, change and take out leaves (D806).
     let mut kept = Near::default();
     for step in 0..STEPS {
         let i = seq.next(KEYS);

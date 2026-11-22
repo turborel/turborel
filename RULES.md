@@ -509,6 +509,9 @@ verification approach DO-178C expects (§8).
 | D821 | An index scan compares each row's key with its entry's as the bytes the index holds |
 | D805 | A pool finds its files with no lock and no reference count moved |
 | D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
+| D807 | A thread keeps 256 inner node copies across its trees, the one to give way chosen by a clock bit |
+| D808 | A leaf's copy is parsed once, and a read of it steps to the slot after the last found |
+| D809 | A scan keeps the entries it took from a leaf in one buffer, and lends them |
 | D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
 | D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
 | D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
@@ -520,6 +523,9 @@ verification approach DO-178C expects (§8).
 | D796 | A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 | D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
+| D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
+| D811 | A commit closes its side file and writes its file in runs of granules |
+| D812 | The checkpoint job spreads its commits over three quarters of the time since the last checkpoint |
 
 ### The project
 
@@ -13471,12 +13477,13 @@ Each frame of the buffer pool now keeps a version word. Whatever takes
 the frame's latch exclusively moves the version on, as soon as it holds
 the latch and before it changes a byte or gives the frame another page
 (`disk/buffer/versions.rs`). A page read under its latch can be stamped
-with its frame and the version then. Each thread keeps copies of up to
-sixteen inner nodes it read, each with its stamp, and a descent reads an
-inner node from its copy while the frame holds the page at that version
-(`engine/tree/inner.rs`). This follows Leis et al., "The ART of Practical
-Synchronization", 2016, section 3, and Leis et al., "LeanStore", 2018,
-section 4, which validate a version the same way over the node itself.
+with its frame and the version then. Each thread keeps copies of the
+inner nodes it read (D807 says how many), each with its stamp, and a
+descent reads an inner node from its copy while the frame holds the page
+at that version (`engine/tree/inner.rs`). This follows Leis et al., "The
+ART of Practical Synchronization", 2016, section 3, and Leis et al.,
+"LeanStore", 2018, section 4, which validate a version the same way
+over the node itself.
 Safe Rust reads no page while a writer may change it, so the copy stands
 in for the node.
 
@@ -14076,8 +14083,9 @@ allocation and a decode per entry, a few percent of a range read's time.
 
 An index may now hand its entries with their keys as the bytes it holds
 (`Index::search_encoded`, by default none). The btree does so for a range
-none of whose keys must be checked against the probe; each entry loses
-its row id in place and is passed on undecoded (`index/blink/encoded.rs`).
+none of whose keys must be checked against the probe. Each entry is lent
+from the scan (D809), its row id cut off, and is passed on uncopied and
+undecoded (`index/blink/encoded.rs`).
 A scan that reads each entry's row and checks it in place, by a key of
 its columns as they are, by no sort key and with no projection, takes
 them (`exec/scan/encoded.rs`). It encodes the row's key columns into one
@@ -14098,15 +14106,17 @@ Each page a pool writes, and each it reads from its file, finds the file
 by number. The files were kept behind one reader-writer lock, and the
 file's `Arc` was cloned out of it, so every such call wrote the lock's
 reader count and the file's reference count. Threads writing pages of
-different tables passed both cache lines between them: a profile of
-contended cache lines at 32 threads put it among the shared lines of
+different tables passed both cache lines between them, and a profile
+of contended cache lines at 32 threads put it among the shared lines of
 row updates. Files are only ever added to a pool, so each is now set
-once in a slot never changed again: slots in chunks of 1,024 made as
-files are added, each chunk set once in a fixed table of 1,024
+once in a slot never changed again. Slots come in chunks made as files
+are added, and each chunk is set once in a fixed table
 (`disk/buffer/sources.rs`). A lookup loads two `OnceLock`s and borrows
-the file for as long as the pool lives. A pool registers at most
-1,048,576 files; one added past that is given a number no file has, so
-every use of it is refused.
+the file for as long as the pool lives. The chunk and table sizes are a
+capacity bound, not a tuning. A pool registers at most 1,048,576 files,
+and one added past that is given a number no file has, so every use of
+it is refused.
+
 #### D790. A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would
 
 A subquery run EXECUTOR.DECORRELATE_AFTER_RUNS times is decorrelated
@@ -14185,8 +14195,9 @@ a cache line is 64 bytes, and an adjacent-line prefetcher fetches lines
 in aligned pairs, so a write to either line of a pair takes both. The
 clock's counters of ids and commits, its stable and durable timestamps,
 the count of active transactions, each shard of what cancels the
-statements of open transactions, and each shard of the transactions
-holding log records are alone. Their shards are found by an XXH3 map of
+statements of open transactions, each shard of the transactions
+holding log records, and each shard of the ends of open transactions,
+which row waits wait on, are alone. Their shards are found by an XXH3 map of
 their own, not SipHash.
 Nothing changes in what they hold or when, only where they lie.
 
@@ -14322,8 +14333,9 @@ which blocks are published, and what a reader sees, is D30's.
 A read by key that keeps its leaf from read to read (`get_near`, D500),
 as a fetch of rows by id from an index's entries does, found the next
 row in the same leaf without a descent, but still read the page from
-the pool and parsed it for each row: the frame's hint looked up, its
-latch's reader count written, the eviction policy told. Once the leaf
+the pool and parsed it for each row. Each such read looked up the
+frame's hint, wrote its latch's reader count and told the eviction
+policy. Once the leaf
 answers two reads in a row, the read now copies it, with the stamp of
 its frame (D502), into what it keeps. Later reads take the copy while
 the frame's version and page are as stamped, which is two loads and no
@@ -14333,6 +14345,55 @@ is the leaf as it is. A copy that is no longer current is dropped and
 the leaf read again from the pool, and copied again if it answers.
 Reads of keys of other leaves copy nothing, so a probe of scattered
 rows costs no page copy.
+
+#### D807. A thread keeps 256 inner node copies across its trees, the one to give way chosen by a clock bit
+
+The copies of D502 were sixteen per thread, found by a scan and replaced
+in turn. They are shared by every tree a thread reads, so a transaction
+touching several tables, each with a root and a level below it, cycled
+through them and read its inner nodes through their latches again. A
+thread now keeps 256, found by page in a map. Each has a clock bit, set
+when a descent reads it (Corbató, 1968). The copy to give way is the
+first the hand finds with its bit clear, clearing the bits it passes.
+At 8 KiB pages that is at most 2 MiB a thread. A copy taken again of a
+page whose bytes no descent still holds is written into the old copy's
+bytes, so re-reading a changed node allocates nothing.
+
+#### D808. A leaf's copy is parsed once, and a read of it steps to the slot after the last found
+
+A read from the copy of D806 parsed the copy's header again and checked
+that the leaf answers for the key, a comparison with its first key and
+its high key, before it looked at the slot after the last one found.
+The copy does not change while it is kept, so its header is now parsed
+once, as the copy is taken, and kept beside it. Each later read rebuilds
+the node from those fields with no header read and no check made again
+(`engine/tree/node/parsed.rs`). It compares the key with the one at the
+slot after the last found first. A match is the key's entry in a leaf
+that holds it, so the leaf answers for it and the read takes the value
+with that one comparison. Any other key is checked against the leaf's
+range and searched for as before.
+
+#### D809. A scan keeps the entries it took from a leaf in one buffer, and lends them
+
+A scan copies the entries it wants from a leaf under the leaf's latch,
+so it holds no latch between entries (D31). Each entry was copied into a
+key and a value of its own, two allocations, and a key of a node with a
+shared prefix was put back together into its own. Each leaf of a
+forward scan also gave the scan a new lower bound. An index's range
+reader looks at each entry once and keeps only the row id and, for a
+checked or decoded probe, the key decoded. A scan now copies a leaf's
+entries into one buffer of bytes with each entry's places beside them,
+both reused from leaf to leaf, and writes its lower bound into the bytes
+of the one before (`engine/tree/scan/ready.rs`). `Scan::next_entry`
+lends each entry until the scan is used again, and an index's entries
+are read through it, so a range allocates nothing per entry once the
+buffer has grown to a leaf's. The iterator gives owned entries as
+before, copied from the buffer, for readers that keep them. Each entry
+is lent with what the scan reads the tree through, so an index search
+decodes keys by the types of the index the search holds. It no longer
+clones the types' `Arc`, whose count every search on every thread
+wrote, and a search moves the index it is given into what it holds
+rather than clone it.
 
 #### D792. A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads
 
@@ -14352,6 +14413,51 @@ by `Keeping` as a prepared statement's change. The SELECT around the
 delta table is still bound and planned as it runs, as its rows are the
 change's. A MERGE as the delta table's statement, or a SELECT ... INTO
 of other table references besides, keeps nothing, as before.
+#### D810. A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote
+
+The `checkpoint_taken` event carries what the checkpoint took, in
+microseconds. `micros` is the whole. `shut_micros` runs from the gate
+asked shut to opened again, the engines' capture inside it, which is how
+long writers waited. `sync_micros` is the checkpoint record's sync, and
+`finish_micros` the captures made durable, the image recorded and the log
+truncated. `pages` counts the pages written to the tables file
+meanwhile, written back or captured, so a writer's own evictions count
+too. An operator sees what a checkpoint costs the work going on without a
+profiler, and a change that spreads that cost is measured by it.
+
+#### D811. A commit closes its side file and writes its file in runs of granules
+
+A commit wrote each held granule to the side file as an op of its own,
+and copied each granule into the file with a write of its own: for a
+checkpoint of a gigabyte, a quarter of a million ops, frames and system
+calls each way. Now granules next to each other go as one run, up to
+`RUN_BYTES`: one op closing the side file, which recovery already reads
+as a run, and one write into the file. `RUN_BYTES` is 64 KiB, by a sweep
+from 64 KiB to 64 MiB on a drive with power-loss protection and one
+without. It gave the shortest commits on both, by a little, and past
+4 MiB they lengthen again, so the best does not move with the drive and
+it is a constant, not a setting.
+
+#### D812. The checkpoint job spreads its commits over three quarters of the time since the last checkpoint
+
+A checkpoint's captures are made durable as writers go on (D590), but
+the commit's copying takes a core and the drive while it runs, and the
+work going on loses the same share of both for the seconds it takes. The
+checkpoint job asks the commits to take about `SPREAD` of the time since
+the last checkpoint began instead: after each write, the commit waits
+until its share of the span is due (`disk/shadow/pace.rs`). The cost is
+the same, spread thin, and the job is done before the next checkpoint
+is due. The first checkpoint has no last to measure from and
+goes at once.
+
+A checkpoint asked for, by `Database::checkpoint`, a backup or a close,
+goes at once, as its caller waits for it. A close tells a spread commit
+going on to hurry, so it waits for no span. `SPREAD` is three quarters,
+by a sweep of none, a quarter, a half and three quarters on a drive with
+power-loss protection and one without. Three quarters gave the flattest
+work going on on both, so the best does not move with the drive and it
+is a constant, not a setting. A quarter of the time is left before the
+next checkpoint is due, and a next one due sooner only starts later.
 
 ## 2. Project layout
 

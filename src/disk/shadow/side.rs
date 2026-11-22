@@ -203,6 +203,14 @@ impl Side {
         self.granules.is_empty() && self.held.is_empty()
     }
 
+    /// The bytes its commit writes (`Shadow::sealed_bytes`): those held,
+    /// then a granule for each it has.
+    pub(super) fn commit_bytes(&self) -> u64 {
+        let held: usize = self.held.values().map(Vec::len).sum();
+        let each = self.granules.len().saturating_add(self.held.len()).saturating_mul(GRANULE);
+        u64::try_from(held.saturating_add(each)).unwrap_or(u64::MAX)
+    }
+
     /// The bytes of its blocks.
     pub(super) fn bytes(&self) -> u64 {
         self.blocks.as_ref().map_or(0, |b| b.end().0.saturating_sub(b.first().0))
@@ -271,12 +279,6 @@ impl Side {
     /// Whether it holds granule `number`'s content.
     pub(super) fn holds(&self, number: u64) -> bool {
         self.held.contains_key(&number) || self.granules.contains_key(&number)
-    }
-
-    /// The content of granule `number` as it holds it, if it does.
-    pub(super) fn held(&self, number: u64) -> Result<Option<Vec<u8>>> {
-        let mut content = vec![0; GRANULE];
-        Ok(self.copy_held(number, 0, &mut content)?.then_some(content))
     }
 
     /// Forgets the granules wholly past `size`, of those before granule
