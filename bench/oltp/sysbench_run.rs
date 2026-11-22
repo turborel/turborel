@@ -12,7 +12,7 @@ use turborel::db::Database;
 
 use crate::client::{Connect, Failed};
 use crate::harness::{Bench, Case, note};
-use crate::measure::{Totals, on_threads, statement_rows};
+use crate::measure::{Totals, on_threads, statement_rows, statements};
 use crate::sysbench::{Script, Terminal};
 use crate::sysbench_load;
 
@@ -26,11 +26,14 @@ pub fn build(db: &Database, rows: i64) {
 }
 
 /// Measures `script` on `threads` terminals of `connect`, on tables of
-/// `rows` rows, for `secs` each run.
-pub fn measure<K: Connect>(bench: &Bench, connect: &K, (script, threads, rows): (&Script, usize, i64), secs: Duration) {
+/// `rows` rows, for `secs` each run, the case named with the store's
+/// settings `store`.
+pub fn measure<K: Connect>(bench: &Bench, connect: &K, (script, threads, rows, store): (&Script, usize, i64, &str), secs: Duration) {
     let totals = RefCell::new(Totals::default());
     let failed = RefCell::new(BTreeMap::<Failed, u64>::new());
-    bench.measure(Case::new(format!("sysbench-style {}", script.name), "transactions").threads(threads), || {
+    let before = statements(&mut connect.connect(USER), TABLES);
+    let label = format!("sb {} {rows} rows {store} {}s", script.name, secs.as_secs_f64());
+    bench.measure(Case::new(label, "transactions").threads(threads), || {
         let run = totals.borrow().runs as u64;
         let (tallies, wall) =
             on_threads(threads, secs, |t, until| Terminal::new(connect.connect(USER), script, rows, run * 1_000 + t as u64 + 1).run(until));
@@ -48,5 +51,9 @@ pub fn measure<K: Connect>(bench: &Bench, connect: &K, (script, threads, rows): 
         let each: Vec<String> = failed.iter().map(|(code, n)| format!("SQLCODE {} x{n}", code.0)).collect();
         note(&format!("failed: {}", each.join(", ")));
     }
-    statement_rows(&mut connect.connect(USER), "%SBTEST%");
+    let after = statements(&mut connect.connect(USER), TABLES);
+    statement_rows("rows a statement, every run counted:", &before, &after);
 }
+
+/// The statements whose statistics are reported: those on the tables.
+const TABLES: &str = "%SBTEST%";

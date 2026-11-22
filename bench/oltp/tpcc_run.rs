@@ -12,7 +12,7 @@ use turborel::db::Database;
 
 use crate::client::Connect;
 use crate::harness::{Bench, Case, note};
-use crate::measure::{Totals, on_threads, statement_rows};
+use crate::measure::{Statements, Totals, index_rows, index_use, on_threads, statement_rows, statements};
 use crate::tpcc::{TYPES, Tally, Terminal, orders_taken};
 use crate::{tpcc_load, tpcc_procs, tpcc_procs_new};
 
@@ -40,13 +40,19 @@ struct Figures {
     totals: Totals,
     tally: Tally,
     orders: i64,
+    /// The CALLs' statistics before the first run and after each.
+    seen: Vec<Statements>,
+    /// The indexes' use after the untimed run and after the last.
+    indexes: Vec<Statements>,
 }
 
 /// Measures the TPROC-C-style workload on `threads` terminals of `connect`,
-/// for `secs` each run, its procedure set named `set`.
-pub fn measure<K: Connect>(bench: &Bench, connect: &K, (set, threads): (&str, usize), secs: std::time::Duration) {
+/// for `secs` each run, its procedure set named `set`, the case named with
+/// the store's settings `store`.
+pub fn measure<K: Connect>(bench: &Bench, connect: &K, (set, threads, store): (&str, usize, &str), secs: std::time::Duration) {
     let figures = RefCell::new(Figures::default());
-    let label = format!("TPROC-C-style, {set} procedures");
+    figures.borrow_mut().seen.push(statements(&mut connect.connect(USER), CALLS));
+    let label = format!("tpcc {set} {store} {}s", secs.as_secs_f64());
     bench.measure(Case::new(label, "transactions").threads(threads), || {
         let mut admin = connect.connect(USER);
         let before = orders_taken(&mut admin);
@@ -61,6 +67,12 @@ pub fn measure<K: Connect>(bench: &Bench, connect: &K, (set, threads): (&str, us
         }
         let orders = orders_taken(&mut admin) - before;
         let mut f = figures.borrow_mut();
+        f.seen.push(statements(&mut admin, CALLS));
+        if f.indexes.len() < 2 {
+            f.indexes.push(index_use(&mut admin));
+        } else {
+            f.indexes[1] = index_use(&mut admin);
+        }
         if f.totals.count(wall, tally.total()) {
             f.tally.add(&tally);
             f.orders += orders;
@@ -69,8 +81,17 @@ pub fn measure<K: Connect>(bench: &Bench, connect: &K, (set, threads): (&str, us
     });
     let f = figures.into_inner();
     report(&f, threads);
-    statement_rows(&mut connect.connect(USER), "CALL%");
+    let (first, last) = (f.seen.len().min(2), f.seen.len());
+    statement_rows("rows a CALL in the first, untimed, run:", &f.seen[0], &f.seen[first - 1]);
+    statement_rows("rows a CALL in the last run:", &f.seen[last.saturating_sub(2)], &f.seen[last - 1]);
+    statement_rows("rows a CALL in the timed runs:", &f.seen[first - 1], &f.seen[last - 1]);
+    if let [untimed, timed] = &f.indexes[..] {
+        index_rows(untimed, timed, f.totals.transactions);
+    }
 }
+
+/// The statements whose statistics are reported.
+const CALLS: &str = "CALL%";
 
 fn report(f: &Figures, threads: usize) {
     let minutes = f.totals.wall.as_secs_f64() / 60.0_f64;
