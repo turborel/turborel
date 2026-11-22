@@ -14,7 +14,7 @@
 
 use crate::functions::ScalarRef;
 use crate::index::Probe;
-use crate::logical::Limit;
+use crate::logical::{Limit, Unnest};
 use crate::physical::{JoinProbe, OuterBound, Plan, Preserved};
 use std::sync::Arc;
 
@@ -73,17 +73,40 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::OuterJoin { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
-        | Plan::Values { .. }
         | Plan::Recursive { .. }
-        | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
         | Plan::Transfer(_)
         | Plan::Counted(_) => false,
+        Plan::Values { .. } => same_values(one, other),
+        Plan::Unnest(u) => same_unnest(u, other),
+        Plan::Transition { rows } => same_transition(rows, other),
     }
+}
+
+/// Whether `other` reads the transition table `rows` (RULES.md D793).
+fn same_transition(rows: &crate::exec::TransitionRows, other: &Plan) -> bool {
+    let Plan::Transition { rows: rows2 } = other else { return false };
+    rows.same(rows2)
+}
+
+/// Whether `one` and `other` are rows of as many expressions each
+/// (RULES.md D793).
+fn same_values(one: &Plan, other: &Plan) -> bool {
+    let (Plan::Values { rows, .. }, Plan::Values { rows: rows2, .. }) = (one, other) else { return false };
+    rows.len() == rows2.len() && rows.iter().zip(rows2).all(|(a, b)| a.len() == b.len())
+}
+
+/// Whether `other` unnests as many collections as `u`, alike, over an
+/// input of one shape, neither a `<JSON table>` nor a graph table
+/// (RULES.md D793).
+fn same_unnest(u: &Unnest<Plan>, other: &Plan) -> bool {
+    let Plan::Unnest(u2) = other else { return false };
+    let plain = u.json.is_none() && u.graph.is_none() && u2.json.is_none() && u2.graph.is_none();
+    let alike = u.collections.len() == u2.collections.len() && u.spread == u2.spread && u.ordinality == u2.ordinality;
+    plain && alike && u.outer.is_some() == u2.outer.is_some() && same_shape(&u.input, &u2.input)
 }
 
 /// Whether `one` and `other` are products of inputs of one shape each

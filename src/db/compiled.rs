@@ -69,16 +69,17 @@ pub(super) fn plan_written(st: &State, logical: LogicalPlan) -> (LogicalPlan, Ve
 }
 
 /// As `plan_written`, its paths chosen by `values` and its `?`s left
-/// slots, as `plan_slotted` plans a query (RULES.md D422).
+/// slots, as `plan_slotted` plans a query (RULES.md D422), a probe taking
+/// an expression of them that can raise too (D793).
 pub(super) fn plan_written_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
     let logical = fixed_outer(logical);
     let (optimized, _) = plugged::optimize(st, logical.clone(), (None, WRITTEN_ACCESS_OFF));
-    let physical = PhysicalPlanner::slotted(st, values).plan(&optimized);
+    let physical = PhysicalPlanner::slotted_raising(st, values).plan(&optimized);
     if is_table_access(&physical) {
         return physical;
     }
     let found = located::located(optimized).unwrap_or_else(|| plugged::optimize(st, logical, (None, ROW_ACCESS_OFF)).0);
-    PhysicalPlanner::slotted(st, values).plan(&found)
+    PhysicalPlanner::slotted_raising(st, values).plan(&found)
 }
 
 /// The rules a plan of a table's rows read with their ids is optimized

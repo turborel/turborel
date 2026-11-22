@@ -531,10 +531,12 @@ verification approach DO-178C expects (§8).
 | D796 | A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 | D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
+| D793 | A kept SELECT ... INTO keeps its query over a delta table, a kept INSERT its query's plan, and a kept write probes by an array's element |
 | D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
 | D811 | A commit closes its side file and writes its file in runs of granules |
 | D812 | Withdrawn: a checkpoint's commits are not spread, as spreading them cost throughput |
 | D813 | A pool's test reading a page fails first if a frame is left latched exclusively |
+| D814 | A leaf a delete leaves sparse merges into its right neighbour when the two fit in three quarters of a page |
 | D822 | An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them |
 | D835 | A write decodes the row it replaced once, for its caller and the zone it widens alike |
 | D665 | A chain of inner hash joins may read its leaves first, each filtered by Bloom filters of the others' keys, before its joins |
@@ -14588,6 +14590,90 @@ by `Keeping` as a prepared statement's change. The SELECT around the
 delta table is still bound and planned as it runs, as its rows are the
 change's. A MERGE as the delta table's statement, or a SELECT ... INTO
 of other table references besides, keeps nothing, as before.
+
+#### D793. A kept SELECT ... INTO keeps its query over a delta table, a kept INSERT its query's plan, and a kept write probes by an array's element
+
+A profile of order entry at two clients, on a build with D792, still
+found three plannings at each run of a kept body, about a sixth of the
+server's cycles; at eight clients, binding and planning were more than a
+quarter. The SELECT around a delta table was bound and
+planned at each execution (`select_into`). A searched UPDATE found by
+an element of an array, as an order's stock update is
+(`S_I_ID = NO_ITEMS[LOOP_COUNTER]`), planned its object rows at each
+execution. Its kept binding held the element as a call of two slots,
+which no probe took, so its plan made with slots was a scan. Its plan
+made with values had the element folded into a probe, so the two never
+had one shape, and it stopped learning (D613). An INSERT's query, the
+order lines' over the arrays, was planned at each execution too, as the
+query of a kept INSERT always was.
+
+A SELECT ... INTO of a kept program over a delta table now keeps its
+query as a prepared query is kept (`prepared/plans/delta.rs`). The
+program keeps, beside each statement's plans, the plans of that query
+and a transition table of its own. Each run refills that table with the
+rows the change gives, in place, so the query bound once over it reads
+each run's rows. Its physical plan is kept or learned as a prepared
+query's (D45, D422). A run of the same statement that keeps nothing
+gives its rows a table of their own, as before, so a plan kept never
+reads another run's rows.
+
+A probe of a kept write's object rows takes a column compared with an
+`<array element reference>` of slots and constants
+[ISO/IEC 9075-2:2023 §6.25], the element's value placed as each
+execution places a slot's (`physical/probe.rs`). Such an element can
+raise array element error [§6.25 GR2b], which a probe kept from D613
+never takes. The search condition is evaluated for each row of the
+table [§14.14 GR5], and the element is the same at every row, so it
+raises at every row or at none. A probe by it reads the rows a scan
+would find, as long as it raises nowhere. An execution whose element
+raises therefore places nothing. It runs a plan made with its values,
+which leaves the failing element unfolded, as folding leaves any
+failing expression, and scans, raising as the scan does
+(`Kept::places`). The planner takes such a comparison as one a probe
+may answer only for a kept write's plan made with slots
+(`answerable`). No test yet tells that guard apart. A table with rows
+raises at the probe as at the scan, and an emptied table is planned
+again as it drifts (D422) before the kept probe could run over it. Only a write's object rows take such a probe. A query's
+kept plan, and each other probe, take none, as before.
+
+A kept INSERT's query keeps its physical plan as a query's is kept, kept
+at once if it is one probe of a unique key, else learned
+(`db/write/inserted.rs`). One that reads the statement's instant is still
+planned at each execution, as that instant is no slot its plan reads.
+Nor is one kept whose statement EXPLAIN ANALYZE runs, which counts the
+plan it makes.
+
+Those plans read leaves no kept plan held before. A transition table is
+one shape with itself, so a plan over the delta query's own table
+learns, and a filled plan reads it as refilled. Rows of values are one
+shape when they have as many rows of as many expressions, and an UNNEST
+when its collections are alike over an input of one shape
+(`physical/kept/shape.rs`). Each is filled as its expressions are
+(`physical/kept/filled.rs`).
+
+A correlated subquery of such a plan, the price of each order line's
+item, learned its plan anew at each execution, since each execution's
+runner is its own (D675). A kept plan now keeps what its subqueries
+settled, kept or planned at each run, beside it (`KeptSubqueries`,
+`exec/subquery/planned.rs`). Each execution's runner starts from that,
+and a run whose values do not fit the slots is planned alone, as before.
+What it keeps goes with the plan, so it is made again whenever the plan
+is.
+
+A prepared CALL keeps its binding as a prepared INSERT does
+(`routines/call.rs`). It is bound once with its `?`s as slots, unless the
+binding holds a value, and each execution fills its arguments' slots
+with its values before they are evaluated [§9.18 GR3]. The binding was
+made with the definitions of then, so a change of the procedure or of
+a privilege binds it again (D45).
+
+`binder::bindings()` counts the bindings a thread made, as
+`physical::plannings()` counts its plannings. `tpcc_plans.rs` now runs the
+driver's procedures, FINAL TABLE reads and order arrays included, and
+asserts that no CALL binds or plans anything in a steady state. The
+procedures it ran before had neither, so it passed while each run bound
+and planned these statements.
+
 #### D810. A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote
 
 The `checkpoint_taken` event carries what the checkpoint took, in
@@ -14738,6 +14824,41 @@ fail if any is. The pool itself is unchanged. The hang came from the
 test's own order of holding and reading, not from an order in which the
 pool takes its latches, and the test as it is now on main never held
 and read at once.
+#### D814. A leaf a delete leaves sparse merges into its right neighbour when the two fit in three quarters of a page
+
+A table's rows take new ids at the right edge of its tree, so a row
+deleted and inserted again never returns to its leaf. When only the
+leaves that deletes emptied were taken out, the rest stayed sparse for
+good. Under a steady
+mix of deletes and inserts, the live rows spread over about three times
+the pages, and every checkpoint wrote all of them.
+
+A delete that leaves its leaf at most three eighths full now tries to
+merge it into its right neighbour (`engine/tree/merge.rs`). If the
+entries of both fit in three quarters of a page, the neighbour is
+written with all of them, and the leaf is taken out as an emptied one
+is (D31, `reclaim.rs`), its range given to the neighbour. The leaf on
+its left, the leaf, the neighbour and their parent are locked in that
+order, bottom to top and left to right, as every writer locks, so no
+writer changes either leaf between the neighbour written and the leaf
+marked deleted. Keys move only right, as in a split, so a scan or read
+that reaches the leaf afterwards follows its link to where its keys
+went, and a scan returns no key twice. A leaf first or last under its
+parent stays, as an empty one does.
+
+Three quarters is derived from the node layout, not swept. The longest
+entry takes a quarter of a page less two headers, so a leaf merged to
+three quarters takes any entry next without splitting, and two halves
+of a split together fill more than three quarters, so a split is not
+undone. A larger share could leave a merged leaf to split at the next
+insert, and a smaller one only leaves more pages. A leaf is tried at
+half that share, three eighths, because one fuller can only merge with
+a smaller neighbour, which tries its own right one.
+
+A tree's pages reach the file through the shadowed data file, as a
+split's do (D25), so a merge is in a checkpoint whole or not at all, and
+the log redoes the deletes after it.
+
 #### D822. An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them
 
 An update's log record (D475) wrote each column of the row before into a

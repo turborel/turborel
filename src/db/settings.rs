@@ -535,6 +535,7 @@ impl Session {
     ///
     /// Those of `bind`.
     pub(super) fn bound<T>(&self, st: &State, params: &Params, bind: impl FnOnce(Context<'_>) -> Result<T>) -> Result<T> {
+        crate::binder::binding_counted();
         let (own, schema) = (self.own.borrow(), self.schema.borrow());
         let now = Clocked::new(self.now.get(), params.noted());
         let collation = self.session_collation(st)?;

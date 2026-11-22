@@ -1,10 +1,15 @@
-//! The mutations of the B-link tree's node layout and leaf hints (RULES.md
-//! R-TEST-9, D500).
+//! The mutations of the B-link tree's node layout, leaf hints and merges
+//! (RULES.md R-TEST-9, D500, D814).
 
 use super::super::{Mutation, Package};
 
+/// The file of the merges of sparse leaves.
+const MERGE: &str = "src/engine/tree/merge.rs";
+/// The unit test of a sparse leaf merged.
+const SPARSE: &str = "engine::tree::tests::merge::a_sparse_leaf_merges_into_a_sparse_right_neighbour";
+
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 26] = [
+pub const BTREE: [Mutation; 31] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -264,5 +269,55 @@ pub const BTREE: [Mutation; 26] = [
         replacement: "                self.back = self.back.checked_sub(1)?;\n                self.front = self.front.checked_add(1)?;\n                self.front.checked_sub(1)?",
         integration: &[],
         unit: &["engine::tree::scan::ready::tests::entries_are_given_in_order_from_one_buffer"],
+    },
+    Mutation {
+        name: "btree-sparse-never-merged",
+        package: Package::Core,
+        breaks: "a leaf left sparse by a delete is never merged, only an empty one taken out",
+        file: MERGE,
+        original: "        node.len() == 0 || node.live().saturating_mul(2)",
+        replacement: "        node.len() == 0 && node.live().saturating_mul(2)",
+        integration: &[],
+        unit: &[SPARSE],
+    },
+    Mutation {
+        name: "btree-merge-overfills",
+        package: Package::Core,
+        breaks: "a leaf merges into a neighbour whatever the two fill, so full leaves are merged and split again",
+        file: MERGE,
+        original: "        bytes.saturating_mul(MERGED.1) > self.capacity.saturating_mul(MERGED.0)",
+        replacement: "        bytes.saturating_mul(MERGED.1) > usize::MAX",
+        integration: &[],
+        unit: &[SPARSE],
+    },
+    Mutation {
+        name: "btree-merged-entries-dropped",
+        package: Package::Core,
+        breaks: "a leaf merged gives its range to its neighbour but not its entries, which are lost",
+        file: "src/engine/tree/reclaim.rs",
+        original: "                *self.pool.write(self.file, right)? = content;",
+        replacement: "                drop(content);",
+        integration: &[],
+        unit: &[SPARSE],
+    },
+    Mutation {
+        name: "btree-backward-merged-twice",
+        package: Package::Core,
+        breaks: "a backward scan reading a leaf merged into since its parent was read returns the merged keys twice",
+        file: "src/engine/tree/scan.rs",
+        original: "        Some(first) if first <= low.as_slice() => Bound::Excluded(first.to_vec()),",
+        replacement: "        Some(first) if first < first => Bound::Excluded(first.to_vec()),",
+        integration: &[],
+        unit: &["engine::tree::tests::merge::a_backward_scan_goes_below_keys_merged_in"],
+    },
+    Mutation {
+        name: "btree-count-merged-twice",
+        package: Package::Core,
+        breaks: "a count across a leaf merged into the next after it was counted counts its keys twice",
+        file: "src/engine/tree/scan.rs",
+        original: "            self.lower = Bound::Excluded(high);",
+        replacement: "            drop(high);",
+        integration: &[],
+        unit: &["engine::tree::tests::merge::a_count_across_a_leaf_merged_since_counts_its_keys_once"],
     },
 ];

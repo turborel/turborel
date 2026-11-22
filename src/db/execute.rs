@@ -422,7 +422,7 @@ impl Session {
             SqlStatement::Drop { object, behavior } => self.drop_object(cx.st, cx.tx, object, *behavior),
             SqlStatement::AlterTable { table, action, text } => self.alter_table(cx.st, cx.tx, (table, action, text)),
             SqlStatement::Schema { statement, text } => self.schema_statement_in(cx, (statement, text), params),
-            SqlStatement::Call(call) => self.call_statement(cx, call, params),
+            SqlStatement::Call(call) => self.call_statement(cx, call, params, keeping),
             SqlStatement::Control(_) | SqlStatement::Signal(_) => self.control_statement(cx, stmt, params),
             SqlStatement::Return(r) => super::routines::return_statement(r),
             SqlStatement::Locator { hold, references } => self.locator_statement(cx.st, *hold, references, params),

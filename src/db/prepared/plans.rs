@@ -1,26 +1,24 @@
 //! \[EXTENSION\] Plans kept between executions of a prepared statement
 //! (RULES.md D45).
 //!
-//! A query, an INSERT, and a searched or positioned UPDATE or DELETE keep
-//! their text parsed and their plan bound, each `?` a slot
-//! (`Expr::Dynamic`): each execution fills the slots with its values
-//! (`logical/dynamic.rs`), then rewrites and plans the plan, so the access
-//! paths are chosen by its values and by the statistics of then, as a plan
-//! bound with the values as constants would be. A query, a searched
-//! UPDATE or a searched DELETE whose physical plan, of its rows or its
-//! object rows, is one probe fixing a whole unique key, which no value
-//! changes, keeps that plan too, made once with its slots, and fills it
-//! at each execution instead (`physical/kept.rs`). Any other query learns its
-//! plan: each of its first executions also plans it with its slots, its
-//! paths chosen by its values; once `LEARNED_RUNS` in a row make the two
-//! plans one shape (`physical/kept/shape.rs`), it keeps the one with its
-//! slots and fills it at each execution. One whose plans keep changing stops learning
-//! after `MOST_LEARNING_RUNS`, and is planned at each execution. A table
-//! it reads that gains or loses rows as its statistics would be gathered
-//! again for has it learn again. A query keeps its `<cursor
-//! specification>` parsed, whether opened as an unnamed cursor or as a
-//! dynamic cursor [§17.14]. Another statement keeps its text parsed
-//! alone.
+//! A query, an INSERT, a CALL, and a searched or positioned UPDATE or DELETE keep
+//! their text parsed and their plan bound, each `?` a slot (`Expr::Dynamic`): each
+//! execution fills the slots with its values (`logical/dynamic.rs`), then
+//! rewrites and plans the plan, so the access paths are chosen by its values and
+//! by the statistics of then, as a plan bound with the values as constants would
+//! be. A query, a searched UPDATE or a searched DELETE whose physical plan, of
+//! its rows or its object rows, is one probe fixing a whole unique key, which no
+//! value changes, keeps that plan too, made once with its slots, filled at each
+//! execution instead (`physical/kept.rs`). Any other query learns its plan: each
+//! of its first executions also plans it with its slots, its paths chosen by its
+//! values; once `LEARNED_RUNS` in a row make the two plans one shape
+//! (`physical/kept/shape.rs`), it keeps the one with its slots and fills it at
+//! each execution. One whose plans keep changing stops learning after
+//! `MOST_LEARNING_RUNS`, and is planned at each execution. A table it reads that
+//! gains or loses rows as its statistics would be gathered again for has it learn
+//! again. A query keeps its `<cursor specification>` parsed, whether opened as an
+//! unnamed cursor or as a dynamic cursor [§17.14]. Another statement keeps its
+//! text parsed alone.
 //!
 //! What is kept was made with the definitions and the session as they
 //! were (`Key`): the snapshot's generation, which every published change
@@ -63,7 +61,8 @@ use crate::value::Value;
 pub(in crate::db) use grown::{Fit, Learnt};
 pub(crate) use learning::{Learned, Learning, MOST_LEARNING_RUNS};
 pub(in crate::db) use point::Run;
-
+mod delta;
+pub(in crate::db) use delta::DeltaQuery;
 mod grown;
 mod learning;
 mod point;
@@ -126,13 +125,13 @@ impl Kept {
     /// of, if not tried yet; of a plan that varies with its values, what
     /// its tables were as it stopped learning, if it did; none of no query.
     fn found(&self) -> Option<Found> {
-        let Some(KeptPlan::Query(columns, logical)) = &self.plan else { return None };
+        let (columns, logical) = self.plan.as_ref()?.query()?;
         match &self.physical {
-            Physical::Untried => Some(Found::Untried(columns.clone(), logical.clone())),
-            Physical::Learning(learning) => Some(Found::Learning(columns.clone(), logical.clone(), learning.clone())),
+            Physical::Untried => Some(Found::Untried(columns, logical.clone())),
+            Physical::Learning(learning) => Some(Found::Learning(columns, logical.clone(), learning.clone())),
             Physical::Varies(None) => None,
             Physical::Varies(Some(stopped)) => Some(Found::Varies(stopped.clone())),
-            Physical::Fixed(plan, reads, rows) => Some(Found::Fixed(columns.clone(), Arc::clone(plan), Arc::clone(reads), rows.clone())),
+            Physical::Fixed(plan, reads, rows) => Some(Found::Fixed(columns, Arc::clone(plan), Arc::clone(reads), rows.clone())),
         }
     }
 }
@@ -191,10 +190,11 @@ pub(in crate::db) enum KeptPlan {
     /// A MERGE, bound, and where each of its WHEN NOT MATCHED clauses
     /// inserts, in order.
     Merge(Arc<BoundMerge>, Arc<[Inserting]>),
+    /// A CALL, bound, its arguments filled at each execution (RULES.md D793).
+    Call(Arc<crate::db::routines::BoundCall>),
 }
 
-/// What a plan is made with, besides the statement's text: as the module
-/// says.
+/// What a plan is made with, besides the statement's text, as the module says.
 #[derive(Debug, Clone)]
 pub(in crate::db) struct Key {
     generation: u64,
@@ -214,6 +214,8 @@ pub(in crate::db) struct Keeping<'a> {
     plans: &'a Plans,
     st: &'a State,
     session: &'a Session,
+    /// Of a SELECT ... INTO of a kept program, its query over its delta table (`delta.rs`).
+    query: Option<&'a DeltaQuery>,
 }
 
 impl Key {
@@ -376,7 +378,7 @@ impl Keeping<'_> {
                     self.keep(|k| k.physical = Physical::Learning(Learning::default()))?;
                     return Ok(None);
                 }
-                let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+                let (run, slots) = point::run(&plan, params.dynamic_slots());
                 Ok(Some((columns, run, reads, slots)))
             }
         }
@@ -411,7 +413,7 @@ impl Keeping<'_> {
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
         let plan = Arc::new(prepared_plan(plan, crate::optimizer::prepared::budget(self.st))?);
         self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;
-        let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+        let (run, slots) = point::run(&plan, params.dynamic_slots());
         Ok((columns, run, reads, slots))
     }
 
@@ -495,7 +497,7 @@ impl Keeping<'_> {
 impl Session {
     /// `plans`, as an execution in the snapshot `st` sees them.
     pub(in crate::db) fn keeping<'a>(&'a self, st: &'a State, plans: &'a Plans) -> Keeping<'a> {
-        Keeping { plans, st, session: self }
+        Keeping { plans, st, session: self, query: None }
     }
 
     /// An UPDATE or DELETE, searched or positioned, as `bind` binds it with

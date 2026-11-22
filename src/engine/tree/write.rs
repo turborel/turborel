@@ -163,7 +163,8 @@ impl BLinkTree {
     }
 
     /// Removes `key`; its value, read under the leaf's lock: none if it was
-    /// not in the tree. A leaf it empties is taken out (`reclaim.rs`).
+    /// not in the tree. A leaf it empties, or leaves sparse, is taken out
+    /// (`reclaim.rs`, `merge.rs`).
     ///
     /// # Errors
     ///
@@ -189,16 +190,17 @@ impl BLinkTree {
     }
 
     /// Removes entry `at` of the leaf `held`, reached by `path`; takes the
-    /// leaf out if that empties it, once its lock is released.
+    /// leaf out, its entries merged into its right neighbour, if that
+    /// leaves it empty or sparse (`merge.rs`), once its lock is released.
     fn remove_at(&self, path: &Path, held: NodeLock<'_>, at: usize) -> Result<()> {
         let leaf = held.id;
-        let emptied = {
+        let sparse = {
             let mut page = self.pool.write(self.file, leaf)?;
             node::remove(&mut page, at)?;
-            Node::parse(&page)?.len() == 0
+            self.underfull(&Node::parse(&page)?)
         };
         drop(held);
-        if emptied { self.unlink(leaf, path) } else { Ok(()) }
+        if sparse { self.unlink(leaf, path) } else { Ok(()) }
     }
 
     /// Changes `key`'s entry as `change` says, given its value, or none if

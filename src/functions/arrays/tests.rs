@@ -22,7 +22,7 @@ fn each_function_reports_its_bound_type() {
     let array = DataType::array(int(), 10);
     let functions: [(&dyn ScalarFunction, &str, &DataType); 6] = [
         (&ArrayOf(array.clone()), ARRAY, &array),
-        (&ElementOf(int()), ELEMENT, &int()),
+        (&ElementOf(int()), ARRAY_ELEMENT, &int()),
         (&CardinalityOf(int()), CARDINALITY, &int()),
         (&TrimArrayOf(array.clone()), TRIM_ARRAY, &array),
         (&ArrayConcatenation(array.clone()), ARRAY_CONCATENATION, &array),

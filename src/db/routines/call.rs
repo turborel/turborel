@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use super::super::assignment::{assign_targets, check_targets};
 use super::super::compiled::plan;
+use super::super::prepared::{Keeping, KeptPlan};
 use super::super::savepoints::Level;
 use super::super::{Completion, Session, State, StatementContext, rule};
 use super::program::{Hosted, hosted_rows};
@@ -36,12 +37,13 @@ use crate::binder::{Context, OutColumn, bind_argument, qualify, resolve_procedur
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of, routine_path};
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::execute;
-use crate::logical::{Expr, LogicalPlan};
+use crate::logical::{Expr, LogicalPlan, filled};
 use crate::params::{ParameterType, Params, RoutineScope};
 use crate::storage::Row;
 use crate::value::{Value, assign};
 
 /// [ISO/IEC 9075-2:2023 §16.1] A CALL, bound.
+#[derive(Debug)]
 pub(crate) struct BoundCall {
     /// The subject routine, as the catalog holds it.
     pub(crate) desc: Arc<SqlRoutineDesc>,
@@ -279,12 +281,18 @@ impl Session {
     /// As `bind_call`; an argument's, or its store assignment's [GR4c i];
     /// SQLCODE -900 past `MAX_NESTING` contexts; the body's; an output
     /// parameter's, assigned to its target [GR10b].
-    pub(in crate::db) fn call_statement(&self, cx: StatementContext<'_>, call: &CallStatement, params: &mut Params) -> Result<Completion> {
+    pub(in crate::db) fn call_statement(
+        &self,
+        cx: StatementContext<'_>,
+        call: &CallStatement,
+        params: &mut Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<Completion> {
         if let Some(p) = Session::rust_procedure(cx.st, call) {
             return self.rust_call(cx, &*p, call, params);
         }
-        let bound = self.bound(cx.st, params, |b| State::bind_call(b, call))?;
-        let values = call_values((self, cx), &bound)?;
+        let (bound, kept) = self.call_bound(cx.st, call, params, keeping)?;
+        let values = call_values((self, cx), &bound, kept.then(|| params.dynamic_values()))?;
         let desc = &bound.desc;
         let scope = RoutineScope::of(desc, routine_path(&*cx.st.catalog, desc));
         let mut inner = Params::of_routine(values, Arc::new(scope));
@@ -316,6 +324,33 @@ impl Session {
     }
 }
 
+impl Session {
+    /// `call` bound with `params`; of a prepared statement, as it keeps it,
+    /// bound once with its `?`s slots unless the binding holds a value
+    /// (RULES.md D793), and then whether its arguments' slots are to be
+    /// filled.
+    ///
+    /// # Errors
+    ///
+    /// As `bind_call`; SQLCODE -910 if a lock is poisoned.
+    fn call_bound(
+        &self,
+        st: &State,
+        call: &CallStatement,
+        params: &Params,
+        keeping: Option<&Keeping<'_>>,
+    ) -> Result<(Arc<BoundCall>, bool)> {
+        if let Some(KeptPlan::Call(bound)) = keeping.map(Keeping::plan).transpose()?.flatten() {
+            return Ok((bound, true));
+        }
+        let Some(k) = keeping else { return Ok((Arc::new(self.bound(st, params, |b| State::bind_call(b, call))?), false)) };
+        let binding = params.keeping();
+        let bound = Arc::new(self.bound(st, &binding, |b| State::bind_call(b, call))?);
+        k.made((!binding.held()).then(|| KeptPlan::Call(Arc::clone(&bound))))?;
+        Ok((bound, true))
+    }
+}
+
 /// [ISO/IEC 9075-2:2023 §9.18 GR3, GR4] The values of `bound`'s
 /// parameters: each argument's, evaluated as a row of no table is, so its
 /// subqueries run, and assigned to its parameter's type.
@@ -323,10 +358,14 @@ impl Session {
 /// # Errors
 ///
 /// An argument's; its store assignment's, of the parameter [§23.1 GR4q].
-fn call_values((session, cx): (&Session, StatementContext<'_>), bound: &BoundCall) -> Result<Row> {
+fn call_values((session, cx): (&Session, StatementContext<'_>), bound: &BoundCall, slots: Option<&[Value]>) -> Result<Row> {
     let desc = &bound.desc;
     let types = desc.parameter_types();
     let logical = LogicalPlan::Values { rows: vec![bound.inputs.clone()], types: types.clone() };
+    let logical = match slots {
+        Some(values) => filled(logical, values)?,
+        None => logical,
+    };
     // [ISO/IEC 9075-4:2006 draft §11.2] an argument that invokes a function
     // that possibly modifies SQL-data evaluated by the session.
     let row = if let Some(found) = hosted_rows(&logical, &Hosted::new(Some(session), cx)) {

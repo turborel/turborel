@@ -47,6 +47,12 @@ impl Ready {
         self.front >= self.back
     }
 
+    /// The key of the first entry taken, the lowest.
+    pub(super) fn first_key(&self) -> Option<&[u8]> {
+        let &(start, at, _) = self.spans.first()?;
+        self.bytes.get(start..at)
+    }
+
     /// The key of the last entry taken, the highest.
     pub(super) fn last_key(&self) -> Option<&[u8]> {
         let &(start, at, _) = self.spans.last()?;

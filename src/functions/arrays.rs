@@ -26,7 +26,8 @@ pub const ARRAY_AGG: &str = "ARRAY_AGG";
 
 /// The names the calls of the functions here show.
 pub const ARRAY: &str = "ARRAY";
-const ELEMENT: &str = "ARRAY ELEMENT";
+/// The name an `<array element reference>` shows [ISO/IEC 9075-2:2023 §6.25].
+pub const ARRAY_ELEMENT: &str = "ARRAY ELEMENT";
 const ASSIGN_ELEMENT: &str = "ARRAY ELEMENT ASSIGNMENT";
 const ARRAY_CONCATENATION: &str = "ARRAY CONCATENATION";
 
@@ -79,13 +80,13 @@ pub struct ElementOf(pub DataType);
 
 impl ScalarFunction for ElementOf {
     fn name(&self) -> &str {
-        ELEMENT
+        ARRAY_ELEMENT
     }
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
         Ok(self.0.clone())
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
-        let (Some(array), Some(i)) = (elements(args.first(), ELEMENT)?, whole(args.get(1))?) else { return Ok(Value::Null) };
+        let (Some(array), Some(i)) = (elements(args.first(), ARRAY_ELEMENT)?, whole(args.get(1))?) else { return Ok(Value::Null) };
         let at = usize::try_from(i).ok().and_then(|i| i.checked_sub(1));
         match at.and_then(|at| array.get(at)) {
             Some(e) => Ok(e.clone()),

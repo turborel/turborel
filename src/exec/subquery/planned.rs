@@ -23,7 +23,10 @@
 //! (EXECUTOR.DECORRELATE_AFTER_RUNS) is planned at each run until then, as
 //! its learning would cost more runs than it saves.
 
+use std::collections::HashMap;
+use std::fmt;
 use std::mem::discriminant;
+use std::sync::Mutex;
 
 use super::super::{RowIter, execute};
 use super::Runner;
@@ -53,8 +56,47 @@ pub(super) enum Planned {
     Varies,
 }
 
+impl Planned {
+    /// A copy of it, once it is kept or planned at each run.
+    fn settled(&self) -> Option<Planned> {
+        match self {
+            Planned::Kept(slotted, plan) => Some(Planned::Kept(slotted.clone(), plan.clone())),
+            Planned::Varies => Some(Planned::Varies),
+            Planned::Untried | Planned::Learning(..) => None,
+        }
+    }
+}
+
+/// \[DESIGN\] What a kept plan's correlated subqueries settled, by their
+/// identities, kept across its executions (RULES.md D793): each
+/// execution's runner is its own, so one would otherwise plan each
+/// subquery again at its first run.
+#[derive(Default)]
+pub struct KeptSubqueries(Mutex<HashMap<u64, Planned>>);
+
+impl fmt::Debug for KeptSubqueries {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("KeptSubqueries")
+    }
+}
+
+impl KeptSubqueries {
+    /// What the subquery `at` settled, if it did.
+    fn get(&self, at: u64) -> Option<Planned> {
+        self.0.lock().ok()?.get(&at).and_then(Planned::settled)
+    }
+
+    /// `planned` kept as the subquery `at`'s, once it is settled.
+    fn put(&self, at: u64, planned: &Planned) {
+        if let (Some(settled), Ok(mut kept)) = (planned.settled(), self.0.lock()) {
+            kept.insert(at, settled);
+        }
+    }
+}
+
 /// A subquery's plan, each outer reference a slot, optimized: the slots'
 /// types, of its first outer values none of which was null.
+#[derive(Clone)]
 pub(super) struct Slotted {
     types: Vec<DataType>,
     plan: LogicalPlan,
@@ -132,8 +174,17 @@ impl Runner {
             return self.run(subquery.bound(outer));
         }
         let at = subquery.id();
-        let was = self.seen.borrow_mut().get_mut(&at).map(|s| std::mem::take(&mut s.planned)).unwrap_or_default();
+        let mut was = self.seen.borrow_mut().get_mut(&at).map(|s| std::mem::take(&mut s.planned)).unwrap_or_default();
+        // Of a kept plan, as its earlier executions settled it (RULES.md D793).
+        let kept = self.db.subqueries();
+        if let (Planned::Untried, Some(settled)) = (&was, kept.and_then(|k| k.get(at))) {
+            was = settled;
+        }
+        let fresh = matches!(was, Planned::Untried | Planned::Learning(..));
         let (plan, now) = self.planned(subquery, outer, was);
+        if let (true, Some(k)) = (fresh, kept) {
+            k.put(at, &now);
+        }
         self.seen.borrow_mut().entry(at).or_default().planned = now;
         execute(plan, &self.db, self.tx)
     }
