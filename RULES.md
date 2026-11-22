@@ -13990,7 +13990,8 @@ or its wait, which is at most `WAITED` away; a worker whose client does
 not come in time gives its permit up. The server's stage is a byte alone
 on its line beside the watch (`server/stage.rs`), written as the stage
 moves. Whether the connection's user is a user is asked of a snapshot
-only once one was published since it last was (`Database::publications`).
+only once one was published since it last was (`native/seen.rs`,
+`Database::publications`).
 A connection's state is an atomic its row shares, set with no lock.
 The session's settings told in Status are read from its own snapshot
 (D780).
