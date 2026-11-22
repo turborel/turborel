@@ -146,6 +146,9 @@ fn a_filter_reaches_both_operands_of_a_join_below() {
     exec(&a, "INSERT INTO FX SELECT K, G FROM F").unwrap();
     exec(&a, "INSERT INTO RX SELECT K, G FROM R").unwrap();
     a.commit().unwrap();
+    // The runtime filters alone are measured: a phase of predicate
+    // transfer (D665) would keep the scans to their matches before the joins.
+    exec(&a, "SET PLANNER.PREDICATE_TRANSFER = 'OFF'").unwrap();
     let sql = "SELECT FX.K, D.TAG FROM FX JOIN RX ON FX.K = RX.K JOIN D ON RX.G = D.K WHERE D.TAG = 3";
     let (f_on, r_on) = (scanned(&a, sql, "FX"), scanned(&a, sql, "RX"));
     exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
