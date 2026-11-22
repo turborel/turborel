@@ -44,6 +44,7 @@ mod notices;
 mod position;
 mod renew;
 mod requests;
+mod seen;
 mod served;
 mod status;
 mod wire;
