@@ -519,6 +519,9 @@ verification approach DO-178C expects (§8).
 | D796 | A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 | D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
+| D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
+| D811 | A commit closes its side file and writes its file in runs of granules |
+| D812 | The checkpoint job spreads its commits over three quarters of the time since the last checkpoint |
 
 ### The project
 
@@ -14327,6 +14330,51 @@ by `Keeping` as a prepared statement's change. The SELECT around the
 delta table is still bound and planned as it runs, as its rows are the
 change's. A MERGE as the delta table's statement, or a SELECT ... INTO
 of other table references besides, keeps nothing, as before.
+#### D810. A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote
+
+The `checkpoint_taken` event carries what the checkpoint took, in
+microseconds. `micros` is the whole. `shut_micros` runs from the gate
+asked shut to opened again, the engines' capture inside it, which is how
+long writers waited. `sync_micros` is the checkpoint record's sync, and
+`finish_micros` the captures made durable, the image recorded and the log
+truncated. `pages` counts the pages written to the tables file
+meanwhile, written back or captured, so a writer's own evictions count
+too. An operator sees what a checkpoint costs the work going on without a
+profiler, and a change that spreads that cost is measured by it.
+
+#### D811. A commit closes its side file and writes its file in runs of granules
+
+A commit wrote each held granule to the side file as an op of its own,
+and copied each granule into the file with a write of its own: for a
+checkpoint of a gigabyte, a quarter of a million ops, frames and system
+calls each way. Now granules next to each other go as one run, up to
+`RUN_BYTES`: one op closing the side file, which recovery already reads
+as a run, and one write into the file. `RUN_BYTES` is 64 KiB, by a sweep
+from 64 KiB to 64 MiB on a drive with power-loss protection and one
+without. It gave the shortest commits on both, by a little, and past
+4 MiB they lengthen again, so the best does not move with the drive and
+it is a constant, not a setting.
+
+#### D812. The checkpoint job spreads its commits over three quarters of the time since the last checkpoint
+
+A checkpoint's captures are made durable as writers go on (D590), but
+the commit's copying takes a core and the drive while it runs, and the
+work going on loses the same share of both for the seconds it takes. The
+checkpoint job asks the commits to take about `SPREAD` of the time since
+the last checkpoint began instead: after each write, the commit waits
+until its share of the span is due (`disk/shadow/pace.rs`). The cost is
+the same, spread thin, and the job is done before the next checkpoint
+is due. The first checkpoint has no last to measure from and
+goes at once.
+
+A checkpoint asked for, by `Database::checkpoint`, a backup or a close,
+goes at once, as its caller waits for it. A close tells a spread commit
+going on to hurry, so it waits for no span. `SPREAD` is three quarters,
+by a sweep of none, a quarter, a half and three quarters on a drive with
+power-loss protection and one without. Three quarters gave the flattest
+work going on on both, so the best does not move with the drive and it
+is a constant, not a setting. A quarter of the time is left before the
+next checkpoint is due, and a next one due sooner only starts later.
 
 ## 2. Project layout
 
