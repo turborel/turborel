@@ -143,7 +143,7 @@ fn first() -> [&'static [Mutation]; 27] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 48] {
+fn second() -> [&'static [Mutation]; 47] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -196,8 +196,8 @@ fn second() -> [&'static [Mutation]; 48] {
 }
 
 /// The planner's newest areas, in order: join estimates, range joins, the
-/// cost model, orders and probed subqueries.
-fn planner() -> [&'static [Mutation]; 5] {
+/// cost model, orders, probed subqueries and predicate transfer.
+fn planner() -> [&'static [Mutation]; 6] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,

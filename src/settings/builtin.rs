@@ -234,12 +234,11 @@ pub(super) fn builtin() -> Vec<Definition> {
     all
 }
 
-/// The settings of the features after the others, each at its key's
-/// place: the vector settings, XQuery's static typing, the graph threads, GRAPH_TABLE's search
-/// limits, GQL's session, the graph's later ones, the host's and the
-/// parallel queries', the range joins', the kept subquery plans', the
-/// streamed groupings', the estimate's margin, the dense joins', escrow's,
-/// the point operations' and predicate transfer's.
+/// The settings of the features after the others, each at its key's place: the vector
+/// settings, XQuery's static typing, the graph threads, GRAPH_TABLE's search limits, GQL's
+/// session, the graph's later ones, the host's and the parallel queries', the range joins', the
+/// kept subquery plans', the streamed groupings', the estimate's margin, the dense joins',
+/// escrow's, the point operations' and predicate transfer's.
 fn last() -> impl Iterator<Item = Definition> {
     let graph = super::graph::definitions().into_iter().chain(super::graph::gql_session()).chain(super::graph::later());
     let (backup, plugins) = (super::backup::definitions(), super::plugins::definitions());
