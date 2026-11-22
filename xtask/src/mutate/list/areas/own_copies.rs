@@ -27,7 +27,7 @@ pub const OWN_COPIES: [Mutation; 4] = [
         package: Package::Core,
         breaks: "a session's statements take a count of the published snapshot each, a line every session writes",
         file: PUBLISHED,
-        original: "        let copy = Arc::new(State::clone(&read(&self.0.current)?));",
+        original: "        let copy = Arc::new(State::clone(&**read(&self.0.current)?));",
         replacement: "        let copy = Arc::clone(&*read(&self.0.current)?);",
         integration: &[],
         unit: &["db::database::tests::a_session_takes_its_own_snapshot_until_one_is_published"],
