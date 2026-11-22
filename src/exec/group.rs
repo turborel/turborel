@@ -453,7 +453,8 @@ mod tests {
             label: "COUNT".into(),
         };
         let int = |n: i128| Value::Exact(Decimal::new(n, 0));
-        let spec = |groups: Vec<usize>, seeds: Vec<Row>, distinct| Spec { groups, collations: Vec::new(), aggs: vec![agg(distinct)], seeds };
+        let spec =
+            |groups: Vec<usize>, seeds: Vec<Row>, distinct| Spec { groups, collations: Vec::new(), aggs: vec![agg(distinct)], seeds };
         let rows = |n: i128| -> RowIter { Box::new((0..n).map(move |i| Ok(vec![int(i.rem_euclid(2))]))) };
         let shown = |given: RowIter| given.map(|r| format!("{:?}", r.unwrap())).collect::<Vec<_>>();
         let made = |s: Spec, n| match streamed::whole(s, rows(n), &Db::of(&db), NO_TRANSACTION) {
