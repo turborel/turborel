@@ -177,6 +177,13 @@ the length of its writes. If a page cannot be written so, the
 checkpoint fails, and none is taken until the database is opened again,
 recovered from the last one and its log.
 
+The checkpoint thread spreads those writes over about three quarters of
+the time since the last checkpoint began, so the work going on loses a
+little of the processor and the drive for longer, rather than more of
+them at once; its `finish_micros` is that span. The first checkpoint after opening,
+one asked for, as a backup takes, and the checkpoint of a close write at
+once, and a close hurries one going on.
+
 The log is kept from the last checkpoint, or from the first change of
 the oldest transaction still open, whichever is earlier. While
 checkpoints are refused (a table damaged, a failed sync of the log),

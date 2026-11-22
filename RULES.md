@@ -495,6 +495,8 @@ verification approach DO-178C expects (§8).
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
 | D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
+| D811 | A commit closes its side file and writes its file in runs of granules |
+| D812 | The checkpoint job spreads its commits over three quarters of the time since the last checkpoint |
 
 ### The project
 
@@ -13836,6 +13838,40 @@ truncated. `pages` counts the pages written to the tables file
 meanwhile, written back or captured, so a writer's own evictions count
 too. An operator sees what a checkpoint costs the work going on without a
 profiler, and a change that spreads that cost is measured by it.
+
+#### D811. A commit closes its side file and writes its file in runs of granules
+
+A commit wrote each held granule to the side file as an op of its own,
+and copied each granule into the file with a write of its own: for a
+checkpoint of a gigabyte, a quarter of a million ops, frames and system
+calls each way. Now granules next to each other go as one run, up to
+`RUN_BYTES`: one op closing the side file, which recovery already reads
+as a run, and one write into the file. `RUN_BYTES` is 64 KiB, by a sweep
+from 64 KiB to 64 MiB on a drive with power-loss protection and one
+without. It gave the shortest commits on both, by a little, and past
+4 MiB they lengthen again, so the best does not move with the drive and
+it is a constant, not a setting.
+
+#### D812. The checkpoint job spreads its commits over three quarters of the time since the last checkpoint
+
+A checkpoint's captures are made durable as writers go on (D590), but
+the commit's copying takes a core and the drive while it runs, and the
+work going on loses the same share of both for the seconds it takes. The
+checkpoint job asks the commits to take about `SPREAD` of the time since
+the last checkpoint began instead: after each write, the commit waits
+until its share of the span is due (`disk/shadow/pace.rs`). The cost is
+the same, spread thin, and the job is done before the next checkpoint
+is due. The first checkpoint has no last to measure from and
+goes at once.
+
+A checkpoint asked for, by `Database::checkpoint`, a backup or a close,
+goes at once, as its caller waits for it. A close tells a spread commit
+going on to hurry, so it waits for no span. `SPREAD` is three quarters,
+by a sweep of none, a quarter, a half and three quarters on a drive with
+power-loss protection and one without. Three quarters gave the flattest
+work going on on both, so the best does not move with the drive and it
+is a constant, not a setting. A quarter of the time is left before the
+next checkpoint is due, and a next one due sooner only starts later.
 
 ## 2. Project layout
 

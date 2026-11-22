@@ -79,7 +79,7 @@ mod taking;
 
 pub use overdue::OVERDUE;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -108,7 +108,13 @@ impl Database {
     /// file or truncating the log: what the last checkpoint left then
     /// stands.
     pub fn checkpoint(&self) -> Result<()> {
-        let taken = self.noted(self.take_checkpoint());
+        self.checkpoint_spread(false)
+    }
+
+    /// `checkpoint`, its commits spread if `spread`, as the checkpoint
+    /// job's are (RULES.md D812).
+    fn checkpoint_spread(&self, spread: bool) -> Result<()> {
+        let taken = self.noted(self.take_checkpoint(spread));
         if let Ok(took) = taken {
             self.emit(&Event::CheckpointTaken { taken: self.checkpoints_taken(), took });
             // Taken, it may still give up no log: a transaction holds it.
@@ -180,9 +186,11 @@ impl Database {
     /// `close`'s work: its background work's threads stopped first, and
     /// let start again if it fails (RULES.md D55).
     fn close_files(&self) -> Result<()> {
+        self.hurry_checkpoints(true);
         self.background_closing();
         let closed = self.close_closing();
         if closed.is_err() {
+            self.hurry_checkpoints(false);
             self.background_reopened();
         }
         closed
@@ -282,6 +290,11 @@ pub(super) struct Checkpointer {
     failure: Mutex<Option<SqlError>>,
     /// When checkpoints overdue were last told (`overdue.rs`).
     overdue_told: Mutex<Option<Instant>>,
+    /// When the last checkpoint began, for the next to spread its commits
+    /// over a share of the time since (RULES.md D812).
+    began: Mutex<Option<Instant>>,
+    /// Whether the database is closing, so no commit is spread.
+    hurry: AtomicBool,
 }
 
 /// The checkpoint job's work: the checkpoint due, if one still is (one
@@ -292,7 +305,7 @@ pub(super) struct Checkpointer {
 /// The checkpoint's.
 pub(super) fn checkpointed(db: &Database) -> Result<Option<Duration>> {
     if db.checkpoint_due() {
-        let outcome = db.checkpoint();
+        let outcome = db.checkpoint_spread(true);
         if let Ok(Some(files)) = db.files() {
             *lock_builtin(&files.checkpointer.failure) = outcome.as_ref().err().cloned();
         }
