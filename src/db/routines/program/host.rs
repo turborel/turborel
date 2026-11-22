@@ -184,12 +184,14 @@ impl Host for SessionHost<'_, '_> {
         frame.set_routine(Arc::clone(&c.scope));
         let session = self.session;
         // [DESIGN] An INSERT, searched UPDATE or searched DELETE of a
-        // program kept keeps its plan (RULES.md D406).
+        // program kept keeps its plan (RULES.md D406); a SELECT ... INTO's
+        // query over a delta table its own (D793).
         let kept = self.kept.and_then(|k| k.plans_of(c)).filter(|_| keeps_plan(c.statement()));
         let ran = self.with(|cx| {
             self.fresh(cx.tx)?;
             session.may_run(cx.st, c.statement())?;
-            let keeping = kept.map(|plans| session.keeping(cx.st, plans));
+            let querying = |query| delta_change(c.statement()).map(|_| query);
+            let keeping = kept.map(|(plans, query)| session.keeping(cx.st, plans).querying(querying(query)));
             session.run_statement(cx, c.statement(), frame, keeping.as_ref())
         });
         if defines(c.statement()) {
@@ -286,12 +288,18 @@ impl Host for SessionHost<'_, '_> {
 /// the one of these a SELECT ... INTO reads as its delta table (RULES.md
 /// D792).
 fn keeps_plan(stmt: &SqlStatement) -> bool {
+    changes_kept(delta_change(stmt).unwrap_or(stmt))
+}
+
+/// The statement whose delta table `stmt`, a SELECT ... INTO, reads as
+/// its one table reference, if it is one.
+fn delta_change(stmt: &SqlStatement) -> Option<&SqlStatement> {
     if let SqlStatement::Select { query, .. } = stmt
         && let [TableReference::Delta(d)] = query.table_expression.from.as_slice()
     {
-        return changes_kept(&d.statement);
+        return Some(&d.statement);
     }
-    changes_kept(stmt)
+    None
 }
 
 /// Whether `stmt` is an INSERT, a searched UPDATE or a searched DELETE,

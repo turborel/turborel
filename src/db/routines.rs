@@ -7,7 +7,7 @@
 mod body;
 mod builtin;
 pub(super) use builtin::rust_arguments;
-pub(super) use call::out_column;
+pub(super) use call::{BoundCall, out_column};
 mod call;
 mod define;
 mod dependents;

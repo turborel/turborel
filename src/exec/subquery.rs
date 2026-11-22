@@ -36,6 +36,7 @@ mod probed;
 mod quantified;
 
 pub use drawn::Drawn;
+pub use planned::KeptSubqueries;
 pub(crate) use planned::slot_type;
 
 use std::cell::{Cell, OnceCell, RefCell};

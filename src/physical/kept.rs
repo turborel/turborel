@@ -33,7 +33,9 @@ pub(crate) use shape::same_shape;
 
 /// A `?` of a probe: the slot, and the place among the probe's values its
 /// value takes; or a sum or difference of it and a constant, which raises
-/// nothing (`Expr::can_raise`), evaluated as it is placed (RULES.md D613).
+/// nothing (`Expr::can_raise`), evaluated as it is placed (RULES.md D613);
+/// or, of a kept write's object rows, an element of an array, which may
+/// raise, so is placed only if it does not (`Kept::places`, D793).
 #[derive(Debug, Clone)]
 pub struct ProbeSlot {
     /// The place among the probe's values.
@@ -237,27 +239,28 @@ fn filled_scan(mut plan: Plan, values: &[Value], placing: Placing) -> Result<Pla
 ///
 /// As `logical::filled`; SQLCODE -910 if the slot is not filled by a
 /// constant.
-fn slot_value(s: &ProbeSlot, values: &[Value], placing: Placing) -> Result<Value> {
+pub(super) fn slot_value(s: &ProbeSlot, values: &[Value], placing: Placing) -> Result<Value> {
     let expr = s.expr.as_deref().map_or_else(|| Expr::Dynamic(s.slot.clone()), Clone::clone);
     evaluated(expr, values, placing)
 }
 
-/// The value of `expr`, a slot or a sum or difference of one and a
-/// constant, its slot filled from `values` as `placing` says and then
-/// evaluated, as a plan made with the values folds it.
+/// The value of `expr`, a slot, a sum or difference of one and a constant
+/// or an element of an array (RULES.md D793), its slots filled from
+/// `values` as `placing` says and then evaluated, as a plan made with the
+/// values folds it.
 ///
 /// # Errors
 ///
 /// As `logical::filled` and `exec::eval`; SQLCODE -910 if it is no
 /// constant once filled and evaluated.
 pub(super) fn evaluated(expr: Expr, values: &[Value], placing: Placing) -> Result<Value> {
-    Ok(match filled_expr_as(expr, values, placing)? {
-        Expr::Const(value) => value,
-        e @ Expr::Arith(..) => crate::exec::eval(&e, &Vec::new(), &crate::exec::NoSubqueries)?,
+    let filled = filled_expr_as(expr, values, placing)?;
+    Ok(match &filled {
+        Expr::Const(value) => value.clone(),
+        Expr::Arith(..) | Expr::Call(..) => crate::exec::eval(&filled, &Vec::new(), &crate::exec::NoSubqueries)?,
         Expr::Column(_)
         | Expr::Dynamic(_)
         | Expr::Neg(_)
-        | Expr::Call(..)
         | Expr::Outer(..)
         | Expr::Cast(..)
         | Expr::Case(..)
