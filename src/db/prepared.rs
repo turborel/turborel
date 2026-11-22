@@ -23,7 +23,7 @@ mod shared;
 use std::sync::Arc;
 
 use outputs::Outputs;
-pub(super) use plans::{Fit, Keeping, KeptPlan, Key, Learnt, Plans};
+pub(super) use plans::{Fit, Keeping, KeptPlan, Key, Learnt, Plans, Run};
 pub(crate) use plans::{Learned, Learning, MOST_LEARNING_RUNS};
 pub(crate) use shared::Shared;
 

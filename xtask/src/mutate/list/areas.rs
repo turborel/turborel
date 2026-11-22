@@ -38,6 +38,7 @@ mod oltp;
 mod orders;
 mod own_copies;
 mod parallel;
+mod point_ops;
 mod probed_subqueries;
 mod range_joins;
 mod range_path;
@@ -95,6 +96,7 @@ pub fn core() -> [&'static [Mutation]; 27] {
         &commit_path::COMMIT_PATH,
         &dirty_frames::DIRTY_FRAMES,
         &range_path::RANGE_PATH,
+        &point_ops::POINT_OPS,
     ]
 }
 

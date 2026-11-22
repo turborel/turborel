@@ -35,6 +35,7 @@ mod nearest;
 mod parallel;
 mod partition;
 mod pattern;
+mod point;
 mod program;
 mod project;
 mod ptf;
@@ -52,6 +53,7 @@ mod window;
 mod work;
 
 pub(crate) use batch::storage_counted;
+pub(crate) use point::{PointRead, point_operations};
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};

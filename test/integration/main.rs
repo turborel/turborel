@@ -273,6 +273,7 @@ mod plugin_plan_forms;
 mod plugin_planner;
 mod plugin_settings;
 mod plugins;
+mod point_operations;
 mod point_plans;
 mod portions;
 mod positions;

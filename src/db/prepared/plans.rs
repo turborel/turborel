@@ -56,15 +56,17 @@ use crate::error::Result;
 use crate::exec::Slots;
 use crate::logical::{LogicalPlan, filled};
 use crate::params::Params;
-use crate::physical::{Kept as KeptPhysical, Plan, keepable, prepared_plan};
+use crate::physical::{Kept as KeptPhysical, keepable, prepared_plan};
 use crate::settings::Own;
 use crate::sync::write;
 use crate::value::Value;
 pub(in crate::db) use grown::{Fit, Learnt};
 pub(crate) use learning::{Learned, Learning, MOST_LEARNING_RUNS};
+pub(in crate::db) use point::Run;
 
 mod grown;
 mod learning;
+mod point;
 
 /// What a prepared statement keeps between its executions, shared by its
 /// clones, and in its place, by the statements prepared alike
@@ -164,7 +166,7 @@ enum WriteFound {
 
 /// A query's columns, its physical plan, the tables it reads, and the
 /// values of its slots, of a plan kept with them (RULES.md D610).
-pub(in crate::db) type Opened = (Vec<OutColumn>, Plan, Arc<[QualifiedName]>, Option<Slots>);
+pub(in crate::db) type Opened = (Vec<OutColumn>, Run, Arc<[QualifiedName]>, Option<Slots>);
 
 /// What `Keeping::physical` finds kept of a query: its columns, and its
 /// physical plan with the tables it reads and their rows if learned, or
@@ -374,8 +376,8 @@ impl Keeping<'_> {
                     self.keep(|k| k.physical = Physical::Learning(Learning::default()))?;
                     return Ok(None);
                 }
-                let (plan, slots) = plan.opened(params.dynamic_slots(), crate::optimizer::prepared::budget(self.st))?;
-                Ok(Some((columns, plan, reads, slots)))
+                let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+                Ok(Some((columns, run, reads, slots)))
             }
         }
     }
@@ -409,8 +411,8 @@ impl Keeping<'_> {
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
         let plan = Arc::new(prepared_plan(plan, crate::optimizer::prepared::budget(self.st))?);
         self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;
-        let (plan, slots) = plan.opened(params.dynamic_slots(), crate::optimizer::prepared::budget(self.st))?;
-        Ok((columns, plan, reads, slots))
+        let (run, slots) = point::run(self.st, &plan, params.dynamic_slots())?;
+        Ok((columns, run, reads, slots))
     }
 
     /// `w`, a kept UPDATE or DELETE, run with `slots`: its object rows by
@@ -441,8 +443,7 @@ impl Keeping<'_> {
                 if !self.fits(learnt.as_ref(), |l| Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), Some(l)))? {
                     return self.learn_write(w, Learning::default(), slots);
                 }
-                let (plan, _) = plan.opened(Some(Arc::clone(&slots)), crate::optimizer::prepared::budget(self.st))?;
-                Written::slotted(w, Some((plan, reads)), slots)
+                point::written(self.st, w, (&plan, reads), slots)
             }
             None => {
                 let (_, _, plan) = super::super::plan_rows(self.st, w.rows.clone());
@@ -452,8 +453,7 @@ impl Keeping<'_> {
                 let reads: Arc<[QualifiedName]> = w.rows.tables().into();
                 let plan = Arc::new(prepared_plan(plan, crate::optimizer::prepared::budget(self.st))?);
                 self.keep(|k| k.physical = Physical::Fixed(Arc::clone(&plan), Arc::clone(&reads), None))?;
-                let (plan, _) = plan.opened(Some(Arc::clone(&slots)), crate::optimizer::prepared::budget(self.st))?;
-                Written::slotted(w, Some((plan, reads)), slots)
+                point::written(self.st, w, (&plan, reads), slots)
             }
         }
     }
@@ -488,7 +488,7 @@ impl Keeping<'_> {
         let learned = was.after(&plan, super::super::plan_slotted(self.st, logical, values));
         let physical = learned.kept(&reads, self.st);
         self.keep(|k| k.physical = physical)?;
-        Ok((columns, plan, reads, None))
+        Ok((columns, Run::Plan(Box::new(plan)), reads, None))
     }
 }
 

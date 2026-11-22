@@ -492,6 +492,7 @@ verification approach DO-178C expects (§8).
 | D747 | A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it |
 | D750 | A row change is logged from its images as the statement holds them, and collection reads no version whose every entry its successor shares |
 | D751 | A record decodes only the columns asked for, each once, and collection reads only the columns its entries' keys read |
+| D752 | A kept plan that probes a whole unique key runs as one read of its table, with no operators of the executor |
 | D760 | A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values |
 | D761 | A join probes the inner table's index by the columns its own filter fixes, made columns of the left, with the join's keys |
 | D767 | A connection's requests run on one thread of its own, its home |
@@ -13769,6 +13770,32 @@ Collection decoded the whole row of each version it removed, to make the
 keys of its index entries. It now reads only the columns those keys read,
 of the table's indexes and the global indexes over a partition
 (`storage::Removal::columns`), found once per collection.
+
+#### D752. A kept plan that probes a whole unique key runs as one read of its table, with no operators of the executor
+
+A kept plan that is one probe of a whole unique key (D45, D408) still ran
+as the executor's operators at each run. The plan was opened, its probe
+filled, an iterator made of the index scan and another of the projection
+over it, and the one row it found was moved through each. A prepared
+point query and the reads by key of an order entry's body made these
+for one row. Such a plan, of an index scan alone or under a projection of
+its columns, now runs as a point read (`exec/point.rs`). Its probe is
+placed with the run's values and its index read. The row of the one entry
+the transaction sees is read of the columns the statement uses alone
+(D751), and the columns given are moved out of it. The read is recorded,
+its entries counted and the statement's cancel looked to as the index
+scan does, so its rows, errors and conflicts are the plan's. A prepared
+query's cursor (`Stream::run`), which fetches the row or the error of
+its read as it would the plan's, a kept body's leaf
+(`routines/kept/leaves.rs`) and a kept UPDATE's or DELETE's object row
+(`db/write/pointed.rs`) run so. The object row is then changed as before,
+its triggers, constraints and actions all checked. A plan filled at each
+run, a filter, a limit, a join or a probe that decides a condition of its
+own still runs as the executor's operators. An INSERT of a row of values
+already runs with none (D419).
+EXECUTOR.POINT_OPERATIONS OFF runs every plan through them, so the two
+can be compared. Its rows, errors and diagnostics are the same either
+way.
 
 #### D760. A plan made with slots reads a slot less a constant as its value less the constant, so its estimates are those of the plan made with its values
 
