@@ -499,6 +499,7 @@ verification approach DO-178C expects (§8).
 | D805 | A pool finds its files with no lock and no reference count moved |
 | D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
 | D807 | A thread keeps 256 inner node copies across its trees, the one to give way chosen by a clock bit |
+| D808 | A leaf's copy is parsed once, and a read of it steps to the slot after the last found |
 
 ### The project
 
@@ -13836,23 +13837,25 @@ Each page a pool writes, and each it reads from its file, finds the file
 by number. The files were kept behind one reader-writer lock, and the
 file's `Arc` was cloned out of it, so every such call wrote the lock's
 reader count and the file's reference count. Threads writing pages of
-different tables passed both cache lines between them: a profile of
-contended cache lines at 32 threads put it among the shared lines of
+different tables passed both cache lines between them, and a profile
+of contended cache lines at 32 threads put it among the shared lines of
 row updates. Files are only ever added to a pool, so each is now set
-once in a slot never changed again: slots in chunks of 1,024 made as
-files are added, each chunk set once in a fixed table of 1,024
+once in a slot never changed again. Slots come in chunks made as files
+are added, and each chunk is set once in a fixed table
 (`disk/buffer/sources.rs`). A lookup loads two `OnceLock`s and borrows
-the file for as long as the pool lives. A pool registers at most
-1,048,576 files; one added past that is given a number no file has, so
-every use of it is refused.
+the file for as long as the pool lives. The chunk and table sizes are a
+capacity bound, not a tuning. A pool registers at most 1,048,576 files,
+and one added past that is given a number no file has, so every use of
+it is refused.
 
 #### D806. A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged
 
 A read by key that keeps its leaf from read to read (`get_near`, D500),
 as a fetch of rows by id from an index's entries does, found the next
 row in the same leaf without a descent, but still read the page from
-the pool and parsed it for each row: the frame's hint looked up, its
-latch's reader count written, the eviction policy told. Once the leaf
+the pool and parsed it for each row. Each such read looked up the
+frame's hint, wrote its latch's reader count and told the eviction
+policy. Once the leaf
 answers two reads in a row, the read now copies it, with the stamp of
 its frame (D502), into what it keeps. Later reads take the copy while
 the frame's version and page are as stamped, which is two loads and no
@@ -13875,6 +13878,20 @@ first the hand finds with its bit clear, clearing the bits it passes.
 At 8 KiB pages that is at most 2 MiB a thread. A copy taken again of a
 page whose bytes no descent still holds is written into the old copy's
 bytes, so re-reading a changed node allocates nothing.
+
+#### D808. A leaf's copy is parsed once, and a read of it steps to the slot after the last found
+
+A read from the copy of D806 parsed the copy's header again and checked
+that the leaf answers for the key, a comparison with its first key and
+its high key, before it looked at the slot after the last one found.
+The copy does not change while it is kept, so its header is now parsed
+once, as the copy is taken, and kept beside it. Each later read rebuilds
+the node from those fields with no header read and no check made again
+(`engine/tree/node/parsed.rs`). It compares the key with the one at the
+slot after the last found first. A match is the key's entry in a leaf
+that holds it, so the leaf answers for it and the read takes the value
+with that one comparison. Any other key is checked against the leaf's
+range and searched for as before.
 
 ## 2. Project layout
 

@@ -26,8 +26,8 @@ use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Map};
 /// mix reads together, at most 2 MiB of 8 KiB pages.
 pub(super) const KEPT: usize = 256;
 
-/// A copy of page `id` of `file`, read with `stamp`, and its clock bit:
-/// set when a descent reads it, cleared as the hand passes.
+/// A copy of page `id` of `file`, read with `stamp`, and its clock bit,
+/// set when a descent reads it and cleared as the hand passes.
 struct Copy {
     file: FileId,
     id: u64,
@@ -50,8 +50,8 @@ impl Default for Copies {
 }
 
 impl Copies {
-    /// The place of a copy to give way, by CLOCK (Corbató, 1968): the
-    /// first the hand finds unused, clearing the bits of those it passes.
+    /// The place of a copy to give way, by CLOCK (Corbató, 1968). It is the
+    /// first the hand finds unused, and the hand clears the bits it passes.
     fn victim(&mut self) -> usize {
         loop {
             let at = self.hand;

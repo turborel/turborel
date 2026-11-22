@@ -4,7 +4,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 24] = [
+pub const BTREE: [Mutation; 25] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -244,5 +244,15 @@ pub const BTREE: [Mutation; 24] = [
         replacement: "        copy.used = copy.used;",
         integration: &[],
         unit: &["engine::tree::tests::copies::copies_read_since_the_hand_passed_are_kept"],
+    },
+    Mutation {
+        name: "btree-finger-step-wrong-slot",
+        package: Package::Core,
+        breaks: "a read of a kept leaf that steps to the next slot leaves its place at the last one, so later reads step from the wrong slot",
+        file: "src/engine/tree/near.rs",
+        original: "        *at = Some(slot);",
+        replacement: "        *at = at.and_then(|at| at.checked_sub(1));",
+        integration: &[],
+        unit: &["engine::tree::tests::finger::a_copy_parsed_once_reads_as_one_parsed_again"],
     },
 ];

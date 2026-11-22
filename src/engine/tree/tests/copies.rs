@@ -18,7 +18,9 @@ fn leaves(tree: &BLinkTree, n: u64) -> Vec<u64> {
 /// Verifies: [DESIGN] RULES.md D807, D502: a thread keeps 256 copies, not
 /// fewer; when one must give way, those read since the hand last passed
 /// are kept and the first unread one goes, where taking each in turn
-/// would drop the ones read.
+/// would drop the ones read. A copy found is put in its place whether
+/// the copies are full or not; one not found is added while they are not
+/// full (MC/DC of `Copies::put`, found or not, full or not).
 #[test]
 fn copies_read_since_the_hand_passed_are_kept() {
     let (tree, _scratch) = tree("copies-clock");
@@ -33,7 +35,7 @@ fn copies_read_since_the_hand_passed_are_kept() {
                 inner::keep(&read(i), page(i));
             }
             assert_eq!(inner::kept().len(), inner::KEPT, "all kept");
-            // Every bit set: the hand clears them all and takes the first.
+            // Every bit is set, so the hand clears them all and takes the first.
             inner::keep(&read(inner::KEPT), page(inner::KEPT));
             assert!(!inner::kept().contains(&page(0)), "the first gave way");
             for i in 1..10 {
@@ -45,6 +47,10 @@ fn copies_read_since_the_hand_passed_are_kept() {
             assert!((1..10).all(|i| kept.contains(&page(i))), "the copies read are kept");
             assert!(!kept.contains(&page(10)), "the first unread one gave way");
             assert!(kept.contains(&page(next)) && kept.len() == inner::KEPT);
+            // A page kept already, read through its latch, takes its own
+            // place, so nothing gives way.
+            inner::keep(&inner::read(&tree.pool, page(5), None, false).unwrap(), page(5));
+            assert_eq!(inner::kept(), kept, "kept in place");
         });
     });
 }

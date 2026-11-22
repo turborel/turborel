@@ -71,6 +71,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 pub use counts::TreeCounts;
 use counts::{Counters, count};
+pub(crate) use node::Parsed;
 
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
 pub(crate) use reclaim::{Entered, Epochs};

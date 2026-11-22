@@ -1,7 +1,7 @@
 //! Unit tests of reads by key from a copy of the leaf the reads before
-//! found (RULES.md D806, `near.rs`): a run of keys of one leaf read from
-//! the copy with no page read, a change to the leaf ending the copy, and
-//! a split moving keys right out of it.
+//! found (RULES.md D806, `near.rs`). A run of keys of one leaf is read
+//! from the copy with no page read, a change to the leaf ends the copy,
+//! and a split moves keys right out of it.
 
 use super::*;
 
@@ -47,7 +47,7 @@ fn a_run_of_keys_of_one_leaf_is_read_from_its_copy() {
 }
 
 /// Verifies: [DESIGN] RULES.md D806, Lehman and Yao §5: a copy kept of a
-/// leaf that splits since is not read: keys that moved right are found
+/// leaf that splits since is not read. Keys that moved right are found
 /// in the right half, and keys inserted are found.
 #[test]
 fn a_copy_of_a_leaf_split_since_is_not_read() {
@@ -70,4 +70,41 @@ fn a_copy_of_a_leaf_split_since_is_not_read() {
         assert!(tree.get_near(&key(k), &mut near).unwrap(), "key {k}");
     }
     assert!(!tree.get_near(&key(end.checked_add(1).unwrap()), &mut near).unwrap(), "odd keys past it are not in");
+}
+
+/// Verifies: [DESIGN] RULES.md D808: a copy's header parsed once and
+/// rebuilt gives the node parsing gives, field for field; keys read in
+/// order, backwards and skipping through the copy are each found, and a
+/// key not in the leaf is not. For MC/DC of `in_copy`'s decision, a key at
+/// the next slot is taken with the leaf's range unchecked; one elsewhere
+/// is taken if the leaf answers for it, and read past the copy if not.
+#[test]
+fn a_copy_parsed_once_reads_as_one_parsed_again() {
+    let (tree, _scratch) = tree("finger-parsed");
+    for k in (2..=600).step_by(2) {
+        assert!(tree.insert(&key(k), &VALUE).unwrap());
+    }
+    let run: Vec<u64> = first_leaf(&tree, 600).into_iter().filter(|k| k.is_multiple_of(2)).collect();
+    let mut near = Near::default();
+    for &k in run.iter().take(3) {
+        assert!(tree.get_near(&key(k), &mut near).unwrap());
+    }
+    let (page, parsed) = (near.page.clone(), near.parsed.unwrap());
+    let again = Node::parsed_again(&page, &parsed).unwrap();
+    assert_eq!(again.parsed(), Node::parse(&page).unwrap().parsed());
+    assert_eq!((again.len(), again.high, again.right), {
+        let node = Node::parse(&page).unwrap();
+        (node.len(), node.high, node.right)
+    });
+    let hits = tree.pool.counts().hits;
+    let order = run.iter().skip(3).chain(run.iter().rev()).chain(run.iter().step_by(3));
+    for &k in order {
+        assert!(tree.get_near(&key(k), &mut near).unwrap(), "key {k}");
+        assert_eq!(near.at.map(|at| again.key(at).unwrap().is(&key(k))), Some(true), "key {k} at its slot");
+    }
+    assert!(!tree.get_near(&key(3), &mut near).unwrap(), "an odd key is not in the leaf");
+    assert_eq!(tree.pool.counts().hits, hits, "all from the copy");
+    let past = run.last().unwrap().checked_add(2).unwrap();
+    assert!(tree.get_near(&key(past), &mut near).unwrap(), "the next leaf's first key");
+    assert!(tree.pool.counts().hits > hits, "read from the pool, not the copy");
 }
