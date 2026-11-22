@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of row waits and signals, in the order they run.
-pub const WAITS: [Mutation; 15] = [
+pub const WAITS: [Mutation; 17] = [
     Mutation {
         name: "row-wait-skipped",
         package: Package::Core,
@@ -158,5 +158,31 @@ pub const WAITS: [Mutation; 15] = [
         replacement: ".filter(|(id, _)| v.writes.contains(id) && own.len() < usize::MAX);",
         integration: &["read_committed_waits::a_checked_column_written_after_a_wait_commits_4_28"],
         unit: &[],
+    },
+    Mutation {
+        name: "row-claim-ignored",
+        package: Package::Core,
+        breaks: "a newcomer writes a row in demand ahead of its waiters once its writer ends",
+        file: "src/txn/row_waits/claims.rs",
+        original: "Some(claim).filter(|c| c.owner != tx && c.first != tx)",
+        replacement: "Some(claim).filter(|c| c.owner != tx && c.first != tx && tx == 0)",
+        integration: &[],
+        unit: &[
+            "txn::row_waits::tests::a_claim_holds_back_only_others",
+            "txn::row_waits::tests::a_newcomer_never_overtakes_a_rows_first_waiter",
+        ],
+    },
+    Mutation {
+        name: "row-claim-not-passed",
+        package: Package::Core,
+        breaks: "a first waiter giving up its turn leaves its row unclaimed, so a newcomer overtakes the next",
+        file: "src/txn/row_waits/claims.rs",
+        original: "*held = next.map(|first| Claim { owner: claim.owner, line: Arc::clone(line), first });",
+        replacement: "*held = next.filter(|_| false).map(|first| Claim { owner: claim.owner, line: Arc::clone(line), first });",
+        integration: &[],
+        unit: &[
+            "txn::row_waits::tests::a_claim_passes_only_from_its_first_in_its_line",
+            "txn::row_waits::tests::a_claim_passes_to_the_next_waiter_and_ends_with_the_last",
+        ],
     },
 ];
