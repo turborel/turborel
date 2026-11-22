@@ -134,6 +134,7 @@ impl Plan {
             Plan::Polymorphic(p) => writeln!(out, "{pad}Polymorphic table function {}", p.function()),
             Plan::Parallel(p) => writeln!(out, "{pad}Parallel  (degree={})", p.degree),
             Plan::Counted(c) => return write_counted(c, out, depth),
+            Plan::Transfer(t) => writeln!(out, "{pad}{}", t.line()),
         };
         self.write_inputs(out, depth.saturating_add(1));
     }
@@ -164,6 +165,7 @@ impl Plan {
                 right.write(out, depth);
             }
             Plan::Parallel(p) => p.input.write(out, depth),
+            Plan::Transfer(t) => t.input().into_iter().for_each(|input| input.write(out, depth)),
             Plan::Filter { input, .. }
             | Plan::Aggregate { input, .. }
             | Plan::Project { input, .. }

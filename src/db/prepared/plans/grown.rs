@@ -178,6 +178,7 @@ fn probed(plan: &Plan, st: &State, found: &mut Vec<(QualifiedName, Vec<usize>)>)
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
         | Plan::Parallel(..)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => false,
     }
 }

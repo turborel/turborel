@@ -217,7 +217,8 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..)) => Err(broken(&format!("not a table access: {other:?}"))),
+        | Plan::Parallel(..)
+        | Plan::Transfer(_)) => Err(broken(&format!("not a table access: {other:?}"))),
     }
 }
 
@@ -255,7 +256,8 @@ pub fn is_table_access(plan: &Plan) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => false,
+        | Plan::Parallel(..)
+        | Plan::Transfer(_) => false,
     }
 }
 
