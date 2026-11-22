@@ -47,13 +47,33 @@ impl State {
     /// Before reading a table: a shared lock, so that the execution is
     /// serializable [X3.135-1986 §4.16].
     pub(crate) fn read_lock(&self, tx: &Txn, table: &QualifiedName) -> Result<()> {
+        self.read_lock_of(tx, (table, u64::MAX))
+    }
+
+    /// As `read_lock`, of a reader of the columns of `needed` alone, a bit a
+    /// column (`LogicalPlan::columns_read`): the increments it reserved on
+    /// them applied first, as of any reader of the table (RULES.md D452).
+    pub(crate) fn read_lock_of(&self, tx: &Txn, (table, needed): (&QualifiedName, u64)) -> Result<()> {
+        self.reserved_read(tx, table, needed)?;
         self.lock_to_read(tx, table, LockMode::Shared)
     }
 
     /// Before reading a table to write the rows read: an update lock
     /// (`LockMode::Update`).
     pub(crate) fn update_lock(&self, tx: &Txn, table: &QualifiedName) -> Result<()> {
+        self.reserved_read(tx, table, u64::MAX)?;
         self.lock_to_read(tx, table, LockMode::Update)
+    }
+
+    /// \[DESIGN\] Before `tx` reads the columns of `needed` of `table`: the
+    /// increments it reserved on any of them applied, so it reads its own
+    /// sums (RULES.md D452).
+    fn reserved_read(&self, tx: &Txn, table: &QualifiedName, needed: u64) -> Result<()> {
+        let Ok(lock) = self.lock_of(table) else { return Ok(()) };
+        if lock.escrow.any() && lock.escrow.unfolded(tx.id, needed) {
+            return self.materialize(tx, table);
+        }
+        Ok(())
     }
 
     /// Before reading a table, a lock in `mode` if its engine leaves

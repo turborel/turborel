@@ -63,7 +63,12 @@ impl Stream {
     /// A lock is not granted; as `open`.
     pub(super) fn planned(st: &Arc<State>, tx: &Txn, logical: LogicalPlan) -> Result<Stream> {
         let (optimized, _, physical) = super::plan_heard(st, logical, Some(tx.stop.warnings()));
-        Stream::kept(&Db::of(st), tx, physical, optimized.tables().into())
+        // [DESIGN] RULES.md D452: of the columns it reads, its increments
+        // reserved applied first, others left reserved.
+        for (table, needed) in optimized.columns_read() {
+            st.read_lock_of(tx, (&table, needed))?;
+        }
+        Stream::open(physical, optimized.tables().into(), &Db::of(st), tx.id)
     }
 
     /// The rows of `physical`, a plan made to run, which reads `reads`,
