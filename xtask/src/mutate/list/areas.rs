@@ -53,6 +53,7 @@ mod sorts;
 mod statistics;
 mod subquery_plans;
 mod tpcc;
+mod tpcc_allocs;
 mod transfer;
 mod txn_layer;
 mod undo_memory;
@@ -70,7 +71,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 29] {
+pub fn core() -> [&'static [Mutation]; 30] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -96,6 +97,7 @@ pub fn core() -> [&'static [Mutation]; 29] {
         &bulk::BULK,
         &steady::STEADY_PLANS,
         &alloc::ALLOC,
+        &tpcc_allocs::TPCC_ALLOCS,
         &commit_path::COMMIT_PATH,
         &dirty_frames::DIRTY_FRAMES,
         &range_path::RANGE_PATH,

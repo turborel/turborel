@@ -88,7 +88,7 @@ fn alike_calls_casts_and_outer_references_7_17() {
     let cast = |t: &DataType| Expr::Cast(Box::new(a.clone()), t.clone());
     assert!(alike(&cast(&integer), &cast(&integer)));
     assert!(!alike(&cast(&integer), &cast(&smallint)));
-    let chosen = Expr::Case(Vec::new(), Box::new(a.clone()));
+    let chosen = Expr::Case(Vec::new().into(), Box::new(a.clone()));
     assert!(!alike(&chosen, &chosen), "a CASE is not told of");
     assert!(alike(&Expr::Outer(2, "X".to_owned()), &Expr::Outer(2, "Y".to_owned())));
     assert!(!alike(&Expr::Outer(2, "X".to_owned()), &Expr::Outer(3, "X".to_owned())));

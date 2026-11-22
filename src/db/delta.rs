@@ -231,7 +231,7 @@ impl Session {
 
     /// The base table whose rows a delta table's statement of the subject
     /// table `name` changes, the column of it each of the subject's is,
-    /// and the subject's columns. Of a base table it is itself, of a view the
+    /// and the subject's columns, none of a base table's own. Of a base table it is itself, of a view the
     /// base table under it [ISO/IEC 9075-2:2023 §7.6 SR11b].
     ///
     /// # Errors
@@ -243,9 +243,11 @@ impl Session {
         st: &Arc<State>,
         name: &QualifiedName,
         params: &Params,
-    ) -> Result<(QualifiedName, Vec<usize>, Vec<ColumnDesc>)> {
+    ) -> Result<(QualifiedName, Vec<usize>, Option<Vec<ColumnDesc>>)> {
+        // A base table's columns are left for the binder to read from the
+        // catalog, as a kept query reads none of them (`Given`).
         if let Some(t) = st.catalog.table(name) {
-            return Ok((name.clone(), (0..t.columns.len()).collect(), t.columns.clone()));
+            return Ok((name.clone(), (0..t.columns.len()).collect(), None));
         }
         // A view with CHECK OPTION has no INSTEAD OF trigger, nor does any
         // view under it [§11.49 SR4c, SR4d], so none is trigger updatable
@@ -255,7 +257,7 @@ impl Session {
         }
         let rule = "ISO/IEC 9075-2:2023 §7.6 SR11";
         let target = self.bound(st, params, |b| write_target(b.db, name, (rule, b.user), None))?;
-        Ok((target.base.name.clone(), target.map, target.named.columns))
+        Ok((target.base.name.clone(), target.map, Some(target.named.columns)))
     }
 
     /// The collector of the statement whose effects are made now, if one

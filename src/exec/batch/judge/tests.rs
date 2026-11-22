@@ -345,7 +345,7 @@ fn likes_of_patterns_not_constant_are_judged_over_vectors() {
         ),
         "{judged:?}"
     );
-    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Const(text("a%")))], Box::new(Expr::Const(Value::Null)));
+    let case = Expr::Case(vec![(Cond::Const(Truth::True), Expr::Const(text("a%")))].into(), Box::new(Expr::Const(Value::Null)));
     assert!(matches!(split(&like(case, None), &[1]).0.as_slice(), [Judged::Truth(..)]), "of another expression: a program");
 }
 

@@ -114,7 +114,7 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
         // [ISO/IEC 9075:1992 §6.9 GR2] the first WHEN true gives the result,
         // the others not evaluated; else the ELSE.
         Expr::Case(whens, otherwise) => {
-            for (cond, result) in whens {
+            for (cond, result) in whens.iter() {
                 if eval_cond(cond, row, subqueries)? == Truth::True {
                     return eval(result, row, subqueries);
                 }

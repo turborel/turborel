@@ -105,7 +105,8 @@ fn what_cannot_be_taken_is_left() {
     let chain = || product(operand(2), operand(1));
     let both = greater(arith(Expr::Column(0), ArithOp::Div, Expr::Column(2)), one());
     assert!(filtered(both, chain()).is_none(), "of two operands");
-    let case = Expr::Case(vec![(greater(Expr::Column(2), one()), arith(Expr::Column(0), ArithOp::Div, Expr::Column(1)))], Box::new(one()));
+    let case =
+        Expr::Case(vec![(greater(Expr::Column(2), one()), arith(Expr::Column(0), ArithOp::Div, Expr::Column(1)))].into(), Box::new(one()));
     assert!(filtered(greater(case, Expr::Column(2)), chain()).is_none(), "a CASE's result");
     let alone = greater(arith(Expr::Column(0), ArithOp::Div, Expr::Column(1)), one());
     assert!(filtered(alone, chain()).is_none(), "of one operand, which the raising rule moves");

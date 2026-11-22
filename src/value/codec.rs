@@ -166,6 +166,54 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
     kind.value(reader)
 }
 
+/// The bytes of a tag.
+const TAG_LEN: usize = size_of::<u8>();
+/// The bytes of a length before a string's or a row's bytes (`Put::put_bytes`).
+const LENGTH_LEN: usize = size_of::<u32>();
+/// The bytes of an exact number of a word: its tag, its units, its scale.
+const EXACT_WORD_LEN: usize = TAG_LEN + size_of::<u64>() + size_of::<u8>();
+/// The bytes of any other exact number: its tag, its units, its scale.
+const EXACT_LEN: usize = TAG_LEN + size_of::<i128>() + size_of::<u32>();
+
+/// \[DESIGN\] The bytes `put_value` writes of `value`: exactly, of a null,
+/// an exact number, a character or binary string and a truth value, the
+/// kinds most rows hold; of any other, its tag alone, fewer than it
+/// writes. A record reserves this much, so it is written into one
+/// allocation, not grown value by value.
+pub(crate) fn value_len(value: &Value) -> usize {
+    match value {
+        Value::Exact(d) => {
+            if i64::try_from(d.units).is_ok() && u8::try_from(d.scale).is_ok() {
+                EXACT_WORD_LEN
+            } else {
+                EXACT_LEN
+            }
+        }
+        Value::Char(s) => TAG_LEN.saturating_add(LENGTH_LEN).saturating_add(s.len()),
+        Value::Binary(b) => TAG_LEN.saturating_add(LENGTH_LEN).saturating_add(b.bytes().len()),
+        Value::Bool(_) => TAG_LEN.saturating_add(TAG_LEN),
+        Value::Null
+        | Value::Approx(_)
+        | Value::DecFloat(_)
+        | Value::Lob(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Array(_)
+        | Value::Multiset(_)
+        | Value::Row(_)
+        | Value::Structured(_)
+        | Value::Reference(_)
+        | Value::Json(_)
+        | Value::Xml(_)
+        | Value::Extension(_) => TAG_LEN,
+    }
+}
+
+/// The bytes `put_row` writes of `row`, as `value_len` counts its values.
+pub(crate) fn row_len(row: &Row) -> usize {
+    row.iter().fold(LENGTH_LEN, |n, v| n.saturating_add(value_len(v)))
+}
+
 /// Appends `row` to `out`.
 pub(crate) fn put_row(out: &mut Vec<u8>, row: &Row) {
     out.put_u32(u32::try_from(row.len()).unwrap_or(u32::MAX));
@@ -220,5 +268,29 @@ mod tests {
         let mut out = Vec::new();
         put_row(&mut out, &row);
         assert_eq!(format!("{:?}", super::row(&mut Reader::new(&out, "a test")).unwrap()), format!("{row:?}"));
+    }
+
+    /// Verifies: [DESIGN] the bytes counted of a value are those written of
+    /// a null, an exact number of either form, a character string, a
+    /// binary string and a truth value, and never more than written of
+    /// another kind; a row's are its count's and its values'.
+    #[test]
+    fn value_lengths_are_the_bytes_written() {
+        let exact = [Value::Null, Value::Exact(Decimal::new(5, 2)), Value::Exact(Decimal::new(i128::MAX, 0))];
+        let strings = [Value::Char("abc".into()), Value::Binary(crate::value::Binary::new(vec![1, 2])), Value::Bool(true)];
+        let written = |v: &Value| {
+            let mut out = Vec::new();
+            put_value(&mut out, v);
+            out.len()
+        };
+        for v in exact.iter().chain(&strings) {
+            assert_eq!(value_len(v), written(v), "{v:?}");
+        }
+        let other = Value::Approx(1.5);
+        assert!(value_len(&other) <= written(&other));
+        let row: Row = exact.into_iter().chain(strings).collect();
+        let mut rows = Vec::new();
+        put_row(&mut rows, &row);
+        assert_eq!(row_len(&row), rows.len());
     }
 }

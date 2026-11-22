@@ -35,6 +35,10 @@ impl Ready {
     /// Takes an entry, after those taken.
     pub(super) fn push(&mut self, key: KeyRef<'_>, value: &[u8]) {
         let start = self.bytes.len();
+        // The whole entry reserved at once: put piece by piece, a buffer
+        // still growing was reallocated for its key's prefix, its tail and
+        // its value in turn, three times for a scan's one entry.
+        self.bytes.reserve(key.len().saturating_add(value.len()));
         key.put(&mut self.bytes);
         let at = self.bytes.len();
         self.bytes.extend_from_slice(value);

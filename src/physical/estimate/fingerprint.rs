@@ -103,7 +103,7 @@ fn expr(e: &Expr, h: &mut Xxh3Hasher) {
             }
         }
         Expr::Case(arms, otherwise) => {
-            for (when, then) in arms {
+            for (when, then) in arms.iter() {
                 cond(when, h);
                 expr(then, h);
             }

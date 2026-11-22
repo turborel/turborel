@@ -23,10 +23,10 @@ fn the_on_empty_branch_replaces_a_failed_cast_as_on_error_says() {
     let Expr::Case(whens, otherwise) = on_empty_branch(raw.clone(), cast.clone(), (&integer(), ValueSlot::Null), None) else {
         panic!("a CASE")
     };
-    assert!(matches!(whens.as_slice(), [(Cond::Value(Expr::Call(..)), Expr::Const(Value::Null))]));
+    assert!(matches!(&*whens, [(Cond::Value(Expr::Call(..)), Expr::Const(Value::Null))]));
     assert!(matches!(*otherwise, Expr::Cast(..)));
     let Expr::Case(defaulted, _) = on_empty_branch(raw, cast, (&integer(), ValueSlot::Default), Some(error)) else { panic!("a CASE") };
-    let [(_, Expr::Const(Value::Exact(d)))] = defaulted.as_slice() else { panic!("one WHEN of ON ERROR's value") };
+    let [(_, Expr::Const(Value::Exact(d)))] = &*defaulted else { panic!("one WHEN of ON ERROR's value") };
     assert_eq!(d.units, 7);
 }
 
