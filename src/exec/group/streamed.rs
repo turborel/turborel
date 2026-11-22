@@ -7,9 +7,13 @@
 //! values are of one group here exactly when they are hashed together
 //! there. Groups come in the order of their first rows, as hashed ones
 //! do, and that is their keys' order. A grouping that makes groups before
-//! any row, one by no column or by a collation, and one of set functions
-//! DISTINCT or of an inverse distribution, is made hashed (`grouping`):
-//! the planner never streams them.
+//! any row, one by a collation, and one of set functions DISTINCT or of an
+//! inverse distribution, is made hashed (`grouping`): the planner never
+//! streams them. (RULES.md D785) A grouping by no column, of set functions
+//! neither DISTINCT nor of an inverse distribution, is its one group, even
+//! of no rows [X3.135-1986 §5.23 GR1, §5.25 GR1]. It is fed every row as it
+//! comes and finished at the end, with no key, hash or work area, whichever
+//! way the planner asked it made (`whole`).
 
 use super::{Argument, Spec, argument, fresh, grouping};
 use crate::error::Result;
@@ -32,6 +36,36 @@ pub(in crate::exec) fn streamed_grouping(spec: Spec, input: RowIter, db: &Db, tx
         return grouping(spec, input, db, tx);
     }
     Box::new(Streamed { spec, input, runner: Runner::new(db, tx), pending: None, key: Vec::new(), next: Vec::new() })
+}
+
+/// The one row of `spec`'s grouping of `input`, if it is a grouping by
+/// no column, made before no row, of set functions none DISTINCT or of an
+/// inverse distribution (RULES.md D785), each set function fed each row
+/// [X3.135-1986 §5.8 GR1], made and finished within the one ask for its
+/// row, as a streamed group is (RULES.md D551); else `spec` and `input`
+/// given back, to be grouped by key.
+pub(in crate::exec) fn whole(spec: Spec, input: RowIter, db: &Db, tx: TxId) -> Whole {
+    let alone = spec.aggs.iter().any(|a| a.distinct || a.distribution.is_some());
+    if !spec.groups.is_empty() || !spec.seeds.is_empty() || alone {
+        return Whole::Keyed(spec, input);
+    }
+    let runner = Runner::new(db, tx);
+    Whole::Made(Box::new(std::iter::once_with(move || {
+        let mut states = fresh(&spec);
+        for read in input {
+            fed(&spec.aggs, &mut states, &read?, &runner)?;
+        }
+        states.into_iter().map(|state| state.finish()).collect()
+    })))
+}
+
+/// A grouping's rows made whole (`whole`), or what it groups, to be
+/// grouped by key.
+pub(in crate::exec) enum Whole {
+    /// The one row of the grouping, made as it is asked for.
+    Made(RowIter),
+    /// The grouping and its rows, given back to be grouped by key.
+    Keyed(Spec, RowIter),
 }
 
 /// The rows of `input`, in the order of every column, DISTINCT: each the

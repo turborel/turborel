@@ -496,6 +496,9 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D785 | A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area |
+| D786 | A search keeps a decoded key only once a second entry has its bytes |
+| D787 | A projection of columns each named once, in ascending order, is made in the row it is given |
 | D805 | A pool finds its files with no lock and no reference count moved |
 | D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
 
@@ -13827,6 +13830,51 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
+#### D785. A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area
+
+A grouping by no column has one group, even of no rows [X3.135-1986
+§5.23 GR1, §5.25 GR1]. It was made as any grouping. Each row was keyed,
+the key hashed and looked up in the pass's map, and the pass took a work
+area. A `SELECT SUM(k) ... WHERE id BETWEEN ? AND ?` paid that for each of
+its rows, though every row is of the one group.
+
+Such a grouping is now made whole (`exec/group/streamed.rs`, `whole`).
+Its set functions are fed each row as it comes, as a streamed group's are
+(D551), and finished at the end, of no rows too. Nothing is keyed, hashed
+or held. This holds whichever way the planner asked for the grouping,
+hashed or streamed.
+
+- A grouping with seeds (made before any row), or with a set function
+  that is DISTINCT or an inverse distribution, is still made by key. Those
+  need the key, the bag of values taken, or the sort of values.
+- The one row is made as it is first asked for, within that one ask, so
+  no set function's state outlives it (D551).
+
+#### D786. A search keeps a decoded key only once a second entry has its bytes
+
+A search kept the last key it decoded, and its bytes, so the entries of
+one key are decoded once (D501). It copied each key it decoded to keep it,
+though in a range of a unique key no second entry ever takes the copy.
+
+A search now keeps the bytes of the last key it decoded, and the key only
+once a second entry has those bytes (`index/blink.rs`, `Decoded`). The
+entries of a unique key are decoded and never copied. Entries of a key not
+unique are decoded twice, for the first two, and take the kept key after.
+What each entry is given is the same key as before.
+
+#### D787. A projection of columns each named once, in ascending order, is made in the row it is given
+
+A projection of columns alone took its values out of the row it was given
+into a new row (D31). Each row of an index range read for a few of its
+columns paid a second allocation and a free for that.
+
+A projection whose columns are each named once, in ascending order, now
+swaps them to the front of the row it is given and cuts the rest off
+(`exec/project.rs`, `in_place`). The column named `i`-th is at a place no
+earlier than `i`, and no later column is at a place before its own, so no
+swap moves a value still to be taken. Other projections make a row as
+before. A column past the row is refused the same way in both.
 
 #### D805. A pool finds its files with no lock and no reference count moved
 
