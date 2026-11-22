@@ -239,7 +239,11 @@ impl State {
             // write refused once as the waiter's snapshot is past is tried
             // again over the version committed, before the next waiter's.
             let e = match attempt {
-                Ok((old, history)) => return self.written(tx, (old, history), stamp.as_ref()).map(Some),
+                Ok((old, history)) => {
+                    // [DESIGN] RULES.md D743: the row's line behind it moves here.
+                    super::row_waits::Turn::hand_over(turn.as_ref(), tx, (table, id));
+                    return self.written(tx, (old, history), stamp.as_ref()).map(Some);
+                }
                 Err(e) => e,
             };
             tries = tries.saturating_add(1);
@@ -286,7 +290,7 @@ impl State {
             match self.next_after(tx, (table, id), rechecks)? {
                 Next::Wait(writer) => {
                     drop(turn.take());
-                    *turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
+                    *turn = tx.wait_for_row((table, id), writer)?;
                 }
                 next @ (Next::Again | Next::Refused | Next::Over(..)) => return Ok(next),
             }

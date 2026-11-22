@@ -79,7 +79,7 @@ use std::thread::ThreadId;
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlError};
 use crate::log::Log;
-use crate::sync::{Gate, lock, lock_builtin};
+use crate::sync::{Alone, Gate, lock, lock_builtin};
 
 mod access;
 mod capabilities;
@@ -251,7 +251,7 @@ pub(crate) struct TxState {
 /// whom.
 pub(crate) struct Transactions {
     clock: Clock,
-    active: AtomicUsize,
+    active: Alone<AtomicUsize>,
     /// For each waiting transaction, the transactions it waits for.
     waits_for: Mutex<WaitsFor>,
     /// Taken by every change a checkpoint writes (`db/checkpoint.rs`).
@@ -344,7 +344,7 @@ impl Default for Transactions {
     fn default() -> Self {
         Transactions {
             clock: Clock::new(FIRST_TRANSACTION),
-            active: AtomicUsize::new(0),
+            active: Alone(AtomicUsize::new(0)),
             waits_for: Mutex::new(HashMap::new()),
             gate: Gate::default(),
             firsts: Mutex::new(BTreeMap::new()),

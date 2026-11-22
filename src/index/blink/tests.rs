@@ -412,8 +412,14 @@ fn entries_carry_the_leaf_noted_for_their_row() {
     assert_eq!(held, [(501, 1), (502, 2), (503, 1)]);
 }
 
-/// Verifies: [DESIGN] RULES.md D501: a search decodes a key once for the
-/// entries of one key and again for each other key, each decoded whole.
+/// Verifies: [DESIGN] RULES.md D501, D786: a search decodes a key once
+/// for the entries of one key past its second, and again for each other
+/// key, each decoded whole; a key is kept only once a second entry has its
+/// bytes, so a key whose entry is alone is never copied.
+///
+/// Decisions: the bytes are the last decoded's or not; a key is kept or
+/// not. Each changes the outcome alone: a new key keeps none; its second
+/// entry keeps it; its third takes the one kept; another key drops it.
 #[test]
 fn a_key_is_decoded_once_for_its_entries() {
     let types = [MONEY, DataType::character(4)];
@@ -422,10 +428,12 @@ fn a_key_is_decoded_once_for_its_entries() {
     let mut last = Decoded::default();
     let (one, two) = (index.prefix(&key(100)).unwrap(), index.prefix(&key(250)).unwrap());
     assert_eq!(last.of(&one, &types).unwrap(), key(100));
-    assert_eq!((last.bytes.as_slice(), last.key.clone()), (one.as_slice(), Some(key(100))));
+    assert_eq!((last.bytes.as_deref(), last.key.clone()), (Some(one.as_slice()), None));
+    assert_eq!(last.of(&one, &types).unwrap(), key(100));
+    assert_eq!(last.key, Some(key(100)));
     assert_eq!(last.of(&one, &types).unwrap(), key(100));
     assert_eq!(last.of(&two, &types).unwrap(), key(250));
-    assert_eq!(last.key, Some(key(250)));
+    assert_eq!((last.bytes.as_deref(), last.key.clone()), (Some(two.as_slice()), None));
     for row in 1..=5 {
         index.insert(key(100), row).unwrap();
     }

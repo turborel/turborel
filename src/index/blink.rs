@@ -345,23 +345,33 @@ impl BLinkIndex {
 
 /// The last key a search decoded, by its bytes: entries of one key, as an
 /// equality probe of a key not unique finds, are decoded once
-/// (RULES.md D501).
+/// (RULES.md D501). A key is kept only once a second entry has its bytes,
+/// so the entries of a unique key, each its own, are decoded and never
+/// copied (RULES.md D786).
 #[derive(Default)]
 struct Decoded {
-    bytes: Vec<u8>,
+    /// The bytes of the last key decoded, once one is.
+    bytes: Option<Vec<u8>>,
+    /// That key, once a second entry had its bytes.
     key: Option<Key>,
 }
 
 impl Decoded {
     /// The key whose encoding is `bytes`, of columns of `types`.
     fn of(&mut self, bytes: &[u8], types: &[DataType]) -> Result<Key> {
-        if let Some(key) = self.key.as_ref().filter(|_| self.bytes == bytes) {
+        let again = self.bytes.as_deref() == Some(bytes);
+        if let Some(key) = self.key.as_ref().filter(|_| again) {
             return Ok(key.clone());
         }
         let key = Key(decode_key(bytes, types)?);
-        self.bytes.clear();
-        self.bytes.extend_from_slice(bytes);
-        self.key = Some(key.clone());
+        if again {
+            self.key = Some(key.clone());
+            return Ok(key);
+        }
+        self.key = None;
+        let kept = self.bytes.get_or_insert_with(Vec::new);
+        kept.clear();
+        kept.extend_from_slice(bytes);
         Ok(key)
     }
 }
