@@ -15,7 +15,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 22] = [
+pub const TPCC: [Mutation; 24] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -31,9 +31,29 @@ pub const TPCC: [Mutation; 22] = [
         package: Package::Core,
         breaks: "MIN and MAX of a column that may hold a null are read from the first row, losing the warning of its nulls eliminated",
         file: "src/optimizer/extremes.rs",
-        original: "        if !ctx.db.catalog.table(table)?.columns.get(column)?.not_null {",
-        replacement: "        if ctx.db.catalog.table(table)?.columns.get(column)?.data_type == DataType::Boolean {",
+        original: "        if !columns.get(column)?.not_null && !cond.is_some_and(|c| rejects_null_of(c, column, columns.len())) {",
+        replacement: "        if columns.get(column)?.data_type == DataType::Boolean {",
         integration: &["rewrites::extremes::extremes_are_read_from_the_first_row"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-extreme-nulls-never-rejected",
+        package: Package::Core,
+        breaks: "MIN and MAX of a column that may hold a null are left though the filter rejects its nulls, so every row is read",
+        file: "src/optimizer/extremes.rs",
+        original: " && !cond.is_some_and(|c| rejects_null_of(c, column, columns.len())) {",
+        replacement: " {",
+        integration: &["rewrites::extremes::extremes_of_a_column_whose_nulls_the_filter_rejects"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-extreme-nulls-rejected-with-another",
+        package: Package::Core,
+        breaks: "a conjunct over the column and another is taken to reject the column's nulls, so a null eliminated loses its warning",
+        file: "src/optimizer/extremes.rs",
+        original: "        let alone = !used.is_empty() && used.iter().all(|&u| u == column);",
+        replacement: "        let alone = !used.is_empty();",
+        integration: &["rewrites::extremes::extremes_of_a_column_whose_nulls_the_filter_rejects"],
         unit: &[],
     },
     Mutation {

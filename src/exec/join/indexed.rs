@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use super::super::entries::{Reading, fetch};
+use super::super::entries::{Pruning, Reading, fetch};
 use super::super::project::Columns;
 use super::super::read::Asked;
 use super::super::{Db, RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
@@ -82,11 +82,13 @@ fn projected_over(plan: Plan, (output, read): (Option<Columns>, Reads), db: &Db,
         .and_then(|(storage, found, ix, routes)| Ok((storage, found, ix, routes, Matched::of(outer, &needed, db)?)));
     match opened {
         Ok((storage, found, ix, routes, matched)) => {
+            // A routed index's rows are its partitions' (RULES.md D837).
+            let pruning = routes.is_none().then(|| Pruning::of(&found, &db.tx));
             let joined = IndexJoin {
                 left: Box::new(std::iter::empty()),
                 table: Probed {
                     storage,
-                    reading: Reading::of(&ix, Some(&needed), found.key_projection()),
+                    reading: Reading::of(&ix, Some(&needed), found.key_projection()).pruned(pruning),
                     index: found,
                     ix,
                     tx,

@@ -10,7 +10,7 @@ mod encoded;
 
 use std::sync::Arc;
 
-use super::entries::{Reading, entry_row};
+use super::entries::{Pruning, Reading, entry_row};
 use super::read::Asked;
 use super::{RowIter, broken, execute, failed, sort};
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
@@ -149,11 +149,11 @@ pub(super) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if let Some(found) = in_place.then(|| Arc::clone(&opened.index).search_encoded(&probe, order_of(reverse))).flatten() {
         return encoded::rows(opened, found, (&needed, located), db, tx);
     }
-    let Found { storage, ix, entries, projection, read } = opened.searched(&probe, (reverse, reads_rows));
+    let Found { storage, ix, entries, projection, read, pruning } = opened.searched(&probe, (reverse, reads_rows));
     if let Err(e) = read.record(&*storage, tx) {
         return failed(e);
     }
-    let mut reading = Reading::of(&ix, Some(&needed), projection);
+    let mut reading = Reading::of(&ix, Some(&needed), projection).pruned(pruning);
     let rows = counted(entries, db.tx.stop_of(tx), |_| 1).filter_map(move |entry| {
         let row = |(key, id)| {
             let row = match &deciding {
@@ -191,6 +191,10 @@ pub(super) struct Found {
     pub(super) projection: Option<Arc<dyn KeyProjection>>,
     /// What the probe read, which callers record before taking an entry.
     pub(super) read: Asked,
+    /// What takes back the entries of rows gone for every reader it meets
+    /// (RULES.md D837): none of a global index, whose rows are its
+    /// partitions'.
+    pub(super) pruning: Option<Pruning>,
 }
 
 /// What an engine is told a probe of `ix` reads, but for a region an index
@@ -240,23 +244,24 @@ pub(super) struct Probed {
     uses: Option<Arc<Uses>>,
     /// What the probe reads, which callers record before taking an entry.
     read: Asked,
+    /// As `Found`'s.
+    pruning: Option<Pruning>,
 }
 
 /// The index `index` of `table` that `probe` reads, and its table's
 /// storage: [EXTENSION] of a global index, its partitions' rows, each
 /// read from its partition (RULES.md D157).
 fn probed(db: &State, table: &QualifiedName, index: &str, probe: &Probe) -> Result<Probed> {
-    let storage: Arc<dyn TableStorage> = if crate::catalog::is_global_index(index) {
-        Arc::new(crate::db::partitions::dispatch::Dispatched::of(db, table))
-    } else {
-        Arc::clone(db.storage_of(table)?)
-    };
+    let global = crate::catalog::is_global_index(index);
+    let storage: Arc<dyn TableStorage> =
+        if global { Arc::new(crate::db::partitions::dispatch::Dispatched::of(db, table)) } else { Arc::clone(db.storage_of(table)?) };
     let ix =
         db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
     let uses = db.uses_of(index);
     let index = Arc::clone(db.index_of(index)?);
     let read = Asked::of(&*index, &ix, probe);
-    Ok(Probed { storage, ix, index, uses, read })
+    let pruning = (!global).then(|| Pruning::of(&index, &db.tx));
+    Ok(Probed { storage, ix, index, uses, read, pruning })
 }
 
 impl Probed {
@@ -270,10 +275,10 @@ impl Probed {
     /// Its entries for `probe`, in index order or reversed, the index told
     /// whether their rows are read.
     fn searched(self, probe: &Probe, (reverse, reading): (bool, bool)) -> Found {
-        let Probed { storage, ix, index, uses, read } = self;
+        let Probed { storage, ix, index, uses, read, pruning } = self;
         let projection = index.key_projection();
         let entries = used(index.search_for(probe, order_of(reverse), reading), uses);
-        Found { storage, ix, entries, projection, read }
+        Found { storage, ix, entries, projection, read, pruning }
     }
 }
 

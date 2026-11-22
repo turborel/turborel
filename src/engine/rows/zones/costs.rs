@@ -11,12 +11,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::loose::{ALL, bit};
 use super::summed::{HOT, MOST_WAIT, REST, nanos};
 use super::tests::{TYPES, files, row};
-use super::{ZONE_ROWS, Zone, zone_at};
+use super::{Replaced, SAMPLED, ZONE_ROWS, Zone, Zones, zone_at};
 use crate::engine::rows::{RowTable, TableOptions};
-use crate::storage::{Row, RowId, TableStorage};
+use crate::index::Probe;
+use crate::storage::{Condition, Conjunction, Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::NO_TRANSACTION;
-use crate::value::{DataType, Decimal, Spelled, Value, compare};
+use crate::value::{CompOp, DataType, Decimal, Spelled, Value, compare};
 
 /// Two numbers, both kept.
 const PAIRS: [DataType; 2] = [
@@ -251,4 +252,36 @@ fn zones_hold_every_row_under_writes_summed_up_meanwhile() {
 /// The bounds of column `place` of the zone of row `id`.
 fn bounds_of(table: &RowTable, id: RowId, place: usize) -> Option<(Value, Value)> {
     with_zone(table, id, |zone| zone.bounds[place].clone())
+}
+
+/// Zones of one row each, the row of zone `k` holding `k`, `count` of them.
+fn one_a_zone(count: usize) -> Zones {
+    let zones = Zones::new(&TYPES, true, None);
+    for k in 0..count {
+        let n = i128::try_from(k).unwrap();
+        zones.widen(u64::try_from(k).unwrap().checked_mul(ZONE_ROWS).unwrap(), Some(&row(n)), Replaced::Nothing);
+    }
+    zones
+}
+
+/// The share of the rows a scan for the first column equal to `n` reads.
+fn share_of(zones: &Zones, n: i128) -> f64 {
+    let probe = Probe::Compare { op: CompOp::Eq, value: Value::Exact(Decimal::new(n, 0)) };
+    zones.share(&Conjunction::of(Condition { columns: vec![0], probe }))
+}
+
+/// Verifies: [DESIGN] RULES.md D838: a scan's share of a sample of the
+/// zones is never less than one zone of the sample, as the zones passed
+/// over may hold the rows asked for: of a value in a zone the sample
+/// passes over, as of one in a zone it reads. Of every zone looked at, a
+/// value no zone may hold is read in none.
+#[test]
+fn a_sampled_share_is_never_less_than_one_zone_of_it() {
+    let zones = one_a_zone(SAMPLED + 44);
+    let sampled = f64::from(u32::try_from((SAMPLED + 44).div_ceil(2)).unwrap());
+    assert!((share_of(&zones, 1) - 1.0_f64 / sampled).abs() < 1e-9_f64, "passed over: {}", share_of(&zones, 1));
+    assert!((share_of(&zones, 0) - 1.0_f64 / sampled).abs() < 1e-9_f64, "read: {}", share_of(&zones, 0));
+    let every = one_a_zone(SAMPLED);
+    assert!(share_of(&every, -5).abs() < 1e-12_f64, "every zone looked at");
+    assert!((share_of(&every, 7) - 1.0_f64 / f64::from(u32::try_from(SAMPLED).unwrap())).abs() < 1e-9_f64);
 }

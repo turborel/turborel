@@ -17,11 +17,11 @@ use crate::txn::{TxId, checked, counted};
 /// and counted as the index's (RULES.md D522) and as a read that a cancel
 /// stops (D44).
 pub(super) fn rows(probed: Probed, mut found: Encoded, (needed, located): (&[usize], bool), db: &Db, tx: TxId) -> RowIter {
-    let Probed { storage, ix, uses, read, .. } = probed;
+    let Probed { storage, ix, uses, read, pruning, .. } = probed;
     if let Err(e) = read.record(&*storage, tx) {
         return failed(e);
     }
-    let mut reading = Reading::of(&ix, Some(needed), None);
+    let mut reading = Reading::of(&ix, Some(needed), None).pruned(pruning);
     let mut using = Using::of(uses);
     using.searched();
     let entries = std::iter::from_fn(move || {

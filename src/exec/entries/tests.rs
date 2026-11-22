@@ -32,11 +32,13 @@ fn projected_probes_renew_locality_without_dropping_read_state() {
                 kept: None,
                 parsed: None,
                 open: Some((NO_TRANSACTION, 4, Arc::clone(&bookkeeping))),
+                gone: None,
             },
             projection,
             notes: None,
             counts: [0; 3],
             key: Vec::new(),
+            pruning: None,
         };
         let allocation = reading.near.bytes.as_ptr();
         reading.next_probe();

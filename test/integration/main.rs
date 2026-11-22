@@ -104,6 +104,7 @@ mod cursors;
 mod damage;
 mod datetimes;
 mod ddl;
+mod dead_entries;
 mod decfloat;
 mod decoded;
 mod decorrelation;

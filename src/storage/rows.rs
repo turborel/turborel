@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::disk::buffer::Stamp;
 use crate::engine::tree::Parsed;
 use crate::error::{Code, Result, SqlError};
-use crate::txn::{NO_TRANSACTION, TxId};
+use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 use crate::value::{Decimal, Value};
 
 /// \[DESIGN\] What keeps and logs a table's large object's object
@@ -97,6 +97,11 @@ pub struct Near {
     /// The reading transaction, the table and its bookkeeping there, found
     /// by the last read (`rows/mvcc/open.rs`).
     pub(crate) open: Option<(TxId, usize, Arc<dyn Any + Send + Sync>)>,
+    /// \[DESIGN\] Of a read that found no row, the commit of the deletion
+    /// its newest version is, if it is one: once no snapshot is before
+    /// it, the row is gone for every reader, and so are its index entries
+    /// (RULES.md D837). None of a row found, or of none in the tree.
+    pub(crate) gone: Option<Timestamp>,
 }
 
 /// \[DESIGN\] Rows a table gives, with their ids, read as they are pulled.

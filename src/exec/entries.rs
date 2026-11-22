@@ -5,6 +5,10 @@
 use crate::exec::{Db, Opening};
 use std::sync::Arc;
 
+mod pruning;
+
+pub(in crate::exec) use pruning::Pruning;
+
 use super::held::HeldRows;
 use super::scan::{Found, probe_index};
 use super::{Runner, broken, eval_cond};
@@ -33,6 +37,9 @@ pub(in crate::exec) struct Reading {
     /// The key of the row last fetched, as an index holds it, made in
     /// place of each row's (`fetch_encoded`).
     key: Vec<u8>,
+    /// What takes back the entries of rows gone for every reader, if the
+    /// scan takes them back (RULES.md D837).
+    pruning: Option<Pruning>,
 }
 
 impl Drop for Reading {
@@ -82,7 +89,15 @@ impl Reading {
             read.dedup();
             read
         });
-        Reading { columns, near: Near::default(), projection, notes: noted::noting(), counts: [0; 3], key: Vec::new() }
+        Reading { columns, near: Near::default(), projection, notes: noted::noting(), counts: [0; 3], key: Vec::new(), pruning: None }
+    }
+
+    /// It, taking back the entries of rows gone for every reader by
+    /// `pruning` (RULES.md D837): none of an index whose entries are
+    /// projections of the keys, which its rows' keys are not.
+    pub(in crate::exec) fn pruned(mut self, pruning: Option<Pruning>) -> Reading {
+        self.pruning = pruning.filter(|_| self.projection.is_none());
+        self
     }
 }
 
@@ -98,8 +113,13 @@ pub(in crate::exec) fn fetch(
     key: &Key,
 ) -> Result<Option<(RowId, Row)>> {
     reading.entry();
-    let Reading { columns, near, projection, counts, .. } = reading;
-    let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
+    let Reading { columns, near, projection, counts, pruning, .. } = reading;
+    let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else {
+        if let Some(pruning) = pruning {
+            pruning.prune(near.gone.take(), key, id);
+        }
+        return Ok(None);
+    };
     fetched(counts);
     // \[DESIGN\] (RULES.md D501) A key of the row's own values is checked
     // in place, with no key made of the row.
@@ -137,8 +157,13 @@ pub(in crate::exec) fn fetch_encoded(
     (key, types): (&[u8], &[DataType]),
 ) -> Result<Option<Row>> {
     reading.entry();
-    let Reading { columns, near, counts, key: made, .. } = reading;
-    let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else { return Ok(None) };
+    let Reading { columns, near, counts, key: made, pruning, .. } = reading;
+    let Some(row) = storage.get_near(tx, id, columns.as_deref(), near)? else {
+        if let Some(pruning) = pruning {
+            pruning.prune_encoded(near.gone.take(), (key, types), id);
+        }
+        return Ok(None);
+    };
     fetched(counts);
     made.clear();
     encode_columns(&row, &ix.columns, types, made)?;
@@ -347,9 +372,9 @@ fn index_entries(
     {
         return super::answered::answered_entries(db, tx, (table, index, asked), None);
     }
-    let Found { storage, ix, entries, projection, read } = probe_index(db, table, index, &probe, (reverse, true))?;
+    let Found { storage, ix, entries, projection, read, pruning } = probe_index(db, table, index, &probe, (reverse, true))?;
     read.record(&*storage, tx)?;
-    let mut reading = Reading::of(&ix, None, projection);
+    let mut reading = Reading::of(&ix, None, projection).pruned(pruning);
     let runner = Runner::new(db, tx);
     let judge = move |(id, row): (RowId, Row), judged: &mut Reading| -> Result<Option<(RowId, Row)>> {
         let Some(decided) = &decided else { return Ok(Some((id, row))) };
