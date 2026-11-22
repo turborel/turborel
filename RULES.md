@@ -14037,10 +14037,12 @@ area. A `SELECT SUM(k) ... WHERE id BETWEEN ? AND ?` paid that for each of
 its rows, though every row is of the one group.
 
 Such a grouping is now made whole (`exec/group/streamed.rs`, `whole`).
-Its set functions are fed each row as it comes, as a streamed group's are
-(D551), and finished at the end, of no rows too. Nothing is keyed, hashed
-or held. This holds whichever way the planner asked for the grouping,
-hashed or streamed.
+Its set functions are fed every row and finished, of no rows too, as the
+grouping is opened, as a grouping by key makes its groups. A row made
+only once it was pulled raised the warning of a null it eliminated after
+its statement's diagnostics were taken, so that statement lacked it and
+the next one had it. Nothing is keyed, hashed or held. This holds
+whichever way the planner asked for the grouping, hashed or streamed.
 
 - A grouping with seeds (made before any row), or with a set function
   that is DISTINCT or an inverse distribution, is still made by key. Those

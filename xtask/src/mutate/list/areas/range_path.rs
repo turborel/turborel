@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the range path whose removal must fail their tests.
-pub const RANGE_PATH: [Mutation; 3] = [
+pub const RANGE_PATH: [Mutation; 4] = [
     Mutation {
         name: "range-path-grouped-made-whole",
         package: Package::Core,
@@ -36,5 +36,15 @@ pub const RANGE_PATH: [Mutation; 3] = [
         replacement: "w.first().map(|c| c.0) <= w.get(1).map(|c| c.0)",
         integration: &[],
         unit: &["exec::project::tests::ascending_projections_keep_their_row"],
+    },
+    Mutation {
+        name: "range-path-whole-made-at-open",
+        package: Package::Core,
+        breaks: "the one group is made as its row is pulled, so a null it eliminates warns in the next statement",
+        file: "src/exec/group/streamed.rs",
+        original: "    Whole::Made(Box::new(std::iter::once(made(&spec, input, &Runner::new(db, tx)))))",
+        replacement: "    let runner = Runner::new(db, tx);\n    Whole::Made(Box::new(std::iter::once_with(move || made(&spec, input, &runner))))",
+        integration: &["warnings::a_set_function_that_eliminates_a_null_warns_6_5", "rewrites::extremes::extremes_are_read_from_the_first_row"],
+        unit: &[],
     },
 ];
