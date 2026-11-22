@@ -133,14 +133,14 @@ impl BufferPool {
         let pager = self.pager(file)?;
         let mut first: Result<()> = Ok(());
         for (index, key) in capture.pages {
-            let walked = self.walked(&pager, (index, key), &capturing);
-            let copied = self.copied(&pager, key, &capturing);
+            let walked = self.walked(pager, (index, key), &capturing);
+            let copied = self.copied(pager, key, &capturing);
             first = first.and(walked).and(copied);
         }
         self.landed();
         let left: Vec<Key> = lock_builtin(&self.owed.copies).keys().copied().collect();
         for key in left {
-            first = first.and(self.copied(&pager, key, &capturing));
+            first = first.and(self.copied(pager, key, &capturing));
         }
         *self.owed.plan.write().unwrap_or_else(PoisonError::into_inner) = None;
         let failed = lock_builtin(&self.owed.failure).take();
@@ -197,7 +197,7 @@ impl BufferPool {
     /// capture owes it (`capture.rs`).
     pub(super) fn held_for_writing<'a>(&self, frame: &'a Frame) -> PageMut<'a> {
         let pin = Pin(frame);
-        let content = frame.content.write().unwrap_or_else(PoisonError::into_inner);
+        let content = frame.latched();
         if frame.owed.load(Ordering::Acquire) {
             self.owed_copy(frame, &content);
         }

@@ -18,6 +18,9 @@ use crate::log::sealed::seal_plain;
 use crate::storage::{Row, RowId, TableStorage, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
+use escrowed::Guarded;
+
+mod escrowed;
 
 /// What a writer refused does next (RULES.md D442, D747).
 enum Next {
@@ -162,12 +165,12 @@ impl State {
     /// [X3.135-1986 §8.11, §8.12] Replaces row `id` with `row`, as `insert_row`
     /// inserts, waiting for a transaction changing it to end (RULES.md D28).
     pub(crate) fn update_row(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        self.change_row(tx, (table, id), Write::Update(row.clone()), None).map(|_| ())
+        self.change_row(tx, (table, id), (Write::Update(row.clone()), false), None).map(|_| ())
     }
 
     /// [X3.135-1986 §8.4, §8.5] Deletes row `id`, as `update_row` replaces it.
     pub(crate) fn delete_row(&self, tx: &Txn, table: &QualifiedName, id: RowId) -> Result<()> {
-        self.change_row(tx, (table, id), Write::Delete, None).map(|_| ())
+        self.change_row(tx, (table, id), (Write::Delete, false), None).map(|_| ())
     }
 
     /// As `update_row` with `row`, or `delete_row` with none; of a row
@@ -183,7 +186,15 @@ impl State {
         recheck: Recheck<'_>,
     ) -> Result<Option<Row>> {
         let write = row.map_or(Write::Delete, |row| Write::Update(row.clone()));
-        self.change_row(tx, (table, id), write, Some(recheck))
+        self.change_row(tx, (table, id), (write, false), Some(recheck))
+    }
+
+    /// \[DESIGN\] As `rewrite_row` with `row`, the increments reserved on
+    /// row `id` applied as its transaction commits (RULES.md D452): not
+    /// kept waiting by the reservations of others, whose increments add to
+    /// the same columns as its own and are applied over it.
+    pub(crate) fn fold_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), row: &Row, recheck: Recheck<'_>) -> Result<Option<Row>> {
+        self.change_row(tx, (table, id), (Write::Update(row.clone()), true), Some(recheck))
     }
 
     /// `write` of row `id`, tried again as long as another transaction's
@@ -195,7 +206,7 @@ impl State {
         &self,
         tx: &Txn,
         (table, id): (&QualifiedName, RowId),
-        mut write: Write,
+        (mut write, fold): (Write, bool),
         mut recheck: Option<Recheck<'_>>,
     ) -> Result<Option<Row>> {
         self.check_written(table, &write)?;
@@ -213,10 +224,16 @@ impl State {
             if let Write::Update(row) = &mut write {
                 self.keep_lobs(tx, table, Some(id), row)?;
             }
-            let attempt = {
+            let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
                 self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
+            };
+            // [DESIGN] RULES.md D452: not over the columns another
+            // transaction's increments reserved guard, until it ends.
+            let attempt = match self.unreserved(tx, (table, id), (&write, fold), (&mut turn, write_once))? {
+                Guarded::Written(attempt) => attempt,
+                Guarded::Waited => continue,
             };
             // The turn is kept until the write is made or given up: a
             // write refused once as the waiter's snapshot is past is tried
@@ -225,10 +242,7 @@ impl State {
                 Ok((old, history)) => {
                     // [DESIGN] RULES.md D743: the row's line behind it moves here.
                     super::row_waits::Turn::hand_over(turn.as_ref(), tx, (table, id));
-                    if let (Some(history), Some(stamp)) = (history, &stamp) {
-                        self.insert_row(tx, &history, &stamp.ended(&old))?;
-                    }
-                    return Ok(Some(old));
+                    return self.written(tx, (old, history), stamp.as_ref()).map(Some);
                 }
                 Err(e) => e,
             };

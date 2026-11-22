@@ -226,26 +226,20 @@ fn assert_narrow(table: &RowTable, rows: &[(RowId, Row)]) {
 #[test]
 fn zones_hold_every_row_under_writes_summed_up_meanwhile() {
     let (table, _) = pairs(0..0);
-    let stop = Arc::new(AtomicBool::new(false));
-    let summing = {
-        let (table, stop) = (Arc::clone(&table), Arc::clone(&stop));
-        std::thread::spawn(move || {
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
             while !stop.load(Ordering::Acquire) {
                 table.sum_zones(u64::MAX, true).unwrap();
             }
-        })
-    };
-    let writers: Vec<_> = (0..2_i128)
-        .map(|writer| {
-            let table = Arc::clone(&table);
-            std::thread::spawn(move || write(&table, writer))
-        })
-        .collect();
-    for writer in writers {
-        writer.join().unwrap();
-    }
-    stop.store(true, Ordering::Release);
-    summing.join().unwrap();
+        });
+        let shared = &table;
+        let writers: Vec<_> = (0..2_i128).map(|writer| scope.spawn(move || write(shared, writer))).collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        stop.store(true, Ordering::Release);
+    });
     let rows: Vec<(RowId, Row)> = Arc::clone(&table).scan(NO_TRANSACTION, &[0, 1]).map(Result::unwrap).collect();
     assert_eq!(rows.len(), 3000);
     let held = |(id, row): &(RowId, Row)| within(&table, (*id, 0), &row[0]) && within(&table, (*id, 1), &row[1]);
