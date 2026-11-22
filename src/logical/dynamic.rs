@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use super::{AggCall, Cond, Distribution, Expr, LogicalPlan, Slot, Subquery};
+use super::{AggCall, Cond, Distribution, Expr, LogicalPlan, Slot, Subquery, map_plan_exprs};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::params::conformed;
 use crate::value::Value;
@@ -35,9 +35,22 @@ pub fn warned(value: Value, warning: Option<SqlState>) -> Expr {
 /// CAST's, of a value its slot's type takes none of [§17.9 GR5f]: the
 /// first met; SQLCODE -910 for a slot `values` has none for.
 pub fn filled(plan: LogicalPlan, values: &[Value]) -> Result<LogicalPlan> {
-    let mut filling = Filling { values, failed: None, filled: 0, placing: Placing::Cast };
+    let mut filling = Filling { values, failed: None, filled: 0, placing: Placing::Cast, fixing: false };
     let plan = filling.plan(plan);
     filling.failed.map_or(Ok(plan), Err)
+}
+
+/// \[DESIGN\] `plan`, its slots left, each outer reference of a subquery
+/// whose outer expression is a constant or a slot replaced by it, at any
+/// depth (RULES.md D836). A routine's SQL variable or parameter in a
+/// subquery is bound as an outer reference whose outer expression is its
+/// slot, as a column of the query around it is, so the subquery read as
+/// correlated, decorrelated over every row of that query's table; with
+/// the reference replaced it reads nothing of that query, as a `?` there
+/// does, and an IN of it is a semi join probing a key. The value of the
+/// reference is the same for every row the subquery is applied to.
+pub fn fixed_outer(plan: LogicalPlan) -> LogicalPlan {
+    Filling { values: &[], failed: None, filled: 0, placing: Placing::AsIs, fixing: true }.plan(plan)
 }
 
 /// `e`, each slot filled as `filled` fills a plan's.
@@ -55,7 +68,7 @@ pub fn filled_expr(e: Expr, values: &[Value]) -> Result<Expr> {
 ///
 /// As `filled`.
 pub fn filled_expr_as(e: Expr, values: &[Value], placing: Placing) -> Result<Expr> {
-    let mut filling = Filling { values, failed: None, filled: 0, placing };
+    let mut filling = Filling { values, failed: None, filled: 0, placing, fixing: false };
     let e = filling.expr(e);
     filling.failed.map_or(Ok(e), Err)
 }
@@ -75,7 +88,7 @@ pub fn filled_cond(c: Cond, values: &[Value]) -> Result<Cond> {
 ///
 /// As `filled`.
 pub fn filled_cond_as(c: Cond, values: &[Value], placing: Placing) -> Result<Cond> {
-    let mut filling = Filling { values, failed: None, filled: 0, placing };
+    let mut filling = Filling { values, failed: None, filled: 0, placing, fixing: false };
     let c = filling.cond(c);
     filling.failed.map_or(Ok(c), Err)
 }
@@ -97,6 +110,9 @@ struct Filling<'a> {
     /// The slots filled so far.
     filled: usize,
     placing: Placing,
+    /// Whether its slots are left as they are and each subquery's outer
+    /// references to a constant or a slot are replaced by it (`fixed_outer`).
+    fixing: bool,
 }
 
 impl Filling<'_> {
@@ -105,8 +121,12 @@ impl Filling<'_> {
         self.failed.get_or_insert(e);
     }
 
-    /// The constant `slot` is filled with; the slot itself if that fails.
+    /// The constant `slot` is filled with; the slot itself if that fails,
+    /// or while fixing outer references.
     fn value(&mut self, slot: Slot) -> Expr {
+        if self.fixing {
+            return Expr::Dynamic(slot);
+        }
         self.filled = self.filled.saturating_add(1);
         let Some(value) = self.values.get(slot.index).cloned() else {
             let missing = format!("[DESIGN] no value is given for <dynamic parameter specification> {}", slot.index.saturating_add(1));
@@ -155,6 +175,9 @@ impl Filling<'_> {
     /// of its own, its plan the same, so a runner keeps its rows and a
     /// kept program its plan (RULES.md D408).
     fn subquery(&mut self, s: &Subquery) -> Arc<Subquery> {
+        if self.fixing {
+            return self.fixed(s);
+        }
         let before = self.filled;
         let plan = self.plan(s.plan.clone());
         if self.filled == before {
@@ -162,6 +185,20 @@ impl Filling<'_> {
         }
         let outer = s.outer.iter().cloned().map(|e| self.expr(e)).collect();
         Arc::new(Subquery::new(plan, outer))
+    }
+
+    /// `s`, each outer reference whose outer expression is a constant or
+    /// a slot replaced by it, of an identity of its own, and of no outer
+    /// expression if none is left; else itself, its identity kept.
+    fn fixed(&mut self, s: &Subquery) -> Arc<Subquery> {
+        let outer: Vec<Expr> = s.outer.iter().cloned().map(|e| self.expr(e)).collect();
+        let fixed: Vec<Option<Expr>> = outer.iter().map(|e| matches!(e, Expr::Const(_) | Expr::Dynamic(_)).then(|| e.clone())).collect();
+        if fixed.iter().all(Option::is_none) {
+            return s.map_outer(&mut |e| self.expr(e));
+        }
+        let plan = self.plan(map_plan_exprs(s.plan.clone(), &mut |e| replaced(e, &fixed)));
+        let left = fixed.iter().any(Option::is_none);
+        Arc::new(Subquery::new(plan, if left { outer } else { Vec::new() }))
     }
 
     fn exprs(&mut self, exprs: Vec<Expr>) -> Vec<Expr> {
@@ -257,6 +294,15 @@ impl Filling<'_> {
         };
         node.map_inputs(|p| self.plan(p))
     }
+}
+
+/// `e`, each outer reference whose place `fixed` gives an expression of
+/// replaced by it.
+fn replaced(e: Expr, fixed: &[Option<Expr>]) -> Expr {
+    if let Expr::Outer(i, name) = e {
+        return fixed.get(i).cloned().flatten().unwrap_or(Expr::Outer(i, name));
+    }
+    e.map_children(&mut |child| replaced(child, fixed))
 }
 
 // Unit tests: every expression and condition a slot can stand in, and the

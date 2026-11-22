@@ -212,3 +212,48 @@ fn deletes_and_updates_of_a_few_keys_probe_them() {
     assert_eq!(sorted(&s, "SELECT O, V FROM I"), sorted(&s, "SELECT O, V FROM S"));
     assert_eq!(sorted(&s, "SELECT O, N, Q FROM L WHERE Q = -1"), sorted(&s, "SELECT O, N, Q FROM M WHERE Q = -1"));
 }
+
+/// Verifies: [ISO/IEC 9075-4:2006 draft §4.5]; [DESIGN] RULES.md D777,
+/// D836: an IN of the UNNEST of a procedure's array variables, a
+/// lateral's set function of its parameter, and a comparison with a
+/// subquery of one row of its parameter probe the key in the procedure's
+/// UPDATE and DELETE as they do of constants, each reading a few rows, not
+/// the table.
+#[test]
+fn a_procedures_arrays_and_parameters_probe_the_key_of_its_changes() {
+    let db = orders();
+    let s = db.session("P");
+    s.run(
+        "CREATE PROCEDURE LINES (IN DS INTEGER ARRAY[10], IN OS INTEGER ARRAY[10]) MODIFIES SQL DATA BEGIN
+           UPDATE L SET Q = -1 WHERE W = 1 AND (D, O) IN (SELECT D, O FROM UNNEST(DS, OS) AS X (D, O));
+         END",
+    )
+    .unwrap();
+    s.run(
+        "CREATE PROCEDURE OLDEST (IN W0 INTEGER) MODIFIES SQL DATA BEGIN
+           DELETE FROM I WHERE W = W0 AND (D, O) IN (SELECT X.D, M.O FROM UNNEST(ARRAY[1, 2]) AS X (D),
+             LATERAL (SELECT MIN(O) FROM I WHERE W = W0 AND I.D = X.D) AS M (O));
+         END",
+    )
+    .unwrap();
+    s.run(
+        "CREATE PROCEDURE NEWEST (IN W0 INTEGER) MODIFIES SQL DATA BEGIN
+           UPDATE L SET Q = -2 WHERE W = 1 AND D = 1 AND O = (SELECT MAX(O) FROM I WHERE W = W0 AND D = 1);
+         END",
+    )
+    .unwrap();
+    s.commit().unwrap();
+    s.run("CALL LINES(ARRAY[1, 1], ARRAY[50, 51])").unwrap();
+    s.run("CALL OLDEST(1)").unwrap();
+    s.run("CALL NEWEST(1)").unwrap();
+    assert_eq!(sorted(&s, "SELECT O, N FROM L WHERE Q = -2 AND N = 1"), ["3000,1"]);
+    assert_eq!(sorted(&s, "SELECT O, N FROM L WHERE Q = -1 AND N = 1"), ["50,1", "51,1"]);
+    assert_eq!(sorted(&s, "SELECT D, MIN(O) FROM I WHERE D < 3 GROUP BY D"), ["1,2", "2,2"]);
+    s.commit().unwrap();
+    for call in ["LINES", "OLDEST", "NEWEST"] {
+        let read =
+            sorted(&s, &format!("SELECT ROWS_READ FROM INFORMATION_SCHEMA.STATEMENT_STATISTICS WHERE STATEMENT_TEXT LIKE 'CALL {call}%'"));
+        let read: u64 = read.first().unwrap().trim().parse().unwrap();
+        assert!(read < 100, "{call}: {read}");
+    }
+}

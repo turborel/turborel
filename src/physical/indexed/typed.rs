@@ -7,7 +7,7 @@
 
 use crate::logical::{AggCall, Expr, LogicalPlan, Unnest};
 use crate::physical::PhysicalPlanner;
-use crate::value::{ArithOp, DataType};
+use crate::value::{ArithOp, DataType, Value};
 
 impl PhysicalPlanner<'_> {
     /// The type of `plan`'s column `column`, if it is a table's column.
@@ -47,7 +47,7 @@ impl PhysicalPlanner<'_> {
     }
 
     /// The type of `e`'s values over `input`'s rows, if known: a column's,
-    /// a constant's or a slot's, a CAST's target, a function's result of
+    /// a constant's (`constant_type`) or a slot's, a CAST's target, a function's result of
     /// its arguments' types, a subquery's column's of its plan, or of a sum
     /// or difference of exact numbers an exact number.
     fn expr_type(&self, e: &Expr, input: &LogicalPlan) -> Option<DataType> {
@@ -61,7 +61,7 @@ impl PhysicalPlanner<'_> {
             return Some(slot.data_type.clone());
         }
         if let Expr::Const(value) = e {
-            return crate::exec::slot_type(value);
+            return constant_type(value);
         }
         if let Expr::Cast(_, t) = e {
             return Some(t.clone());
@@ -118,4 +118,26 @@ fn element_type(of: &DataType) -> Option<DataType> {
     }
     let DataType::Multiset(m) = of else { return None };
     Some(m.element.clone())
+}
+
+/// The type of the constant `value`, if known: of a collection, as an
+/// SQL variable or a host array is once its slot is filled (RULES.md
+/// D836), the collection type of its elements' type, if each element not
+/// null is of one kind; else a value's own (`exec::slot_type`).
+fn constant_type(value: &Value) -> Option<DataType> {
+    if let Value::Array(each) = value {
+        return Some(DataType::array(elements_type(each)?, u32::try_from(each.len()).ok()?));
+    }
+    if let Value::Multiset(each) = value {
+        return Some(DataType::multiset(elements_type(each)?));
+    }
+    crate::exec::slot_type(value)
+}
+
+/// The type of `each`'s elements not null, if there is one and each is of
+/// its kind (`alike`).
+fn elements_type(each: &[Value]) -> Option<DataType> {
+    let mut types = each.iter().filter(|v| !v.is_null()).map(crate::exec::slot_type);
+    let first = types.next()??;
+    types.all(|t| t.is_some_and(|t| super::alike(&t, &first))).then_some(first)
 }
