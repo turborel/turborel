@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use super::{Element, Layout, VectorRef, mismatch, out_of_range};
 use crate::error::{Code, Result, SqlError};
+use crate::kernels::{Kernels, Portable};
 
 /// COSINE: `1 - a·b / (|a| |b|)`.
 pub const COSINE: &str = "COSINE";
@@ -92,6 +93,12 @@ pub trait VectorMetric: Send + Sync {
     fn batches(&self) -> bool {
         false
     }
+    /// \[DESIGN\] The kernels it sums on. A built-in metric of a database
+    /// sums on the database's (RULES.md D571), and so do the vector indexes
+    /// and quantizers that measure by it. Default: the portable ones.
+    fn kernels(&self) -> &dyn Kernels {
+        &Portable
+    }
 }
 
 /// The metrics a database knows, given fresh on each call: the built-in
@@ -101,6 +108,12 @@ pub type Metrics = Arc<dyn Fn() -> Vec<Arc<dyn VectorMetric>> + Send + Sync>;
 /// The built-in metrics alone.
 pub fn built_in_metrics() -> Metrics {
     Arc::new(super::builtin::metrics)
+}
+
+/// The built-in metrics, summing on `kernels`, a database's registered
+/// set, or on the portable ones if none is given.
+pub(crate) fn built_in_on(kernels: Option<&Arc<dyn Kernels>>) -> Vec<Arc<dyn VectorMetric>> {
+    super::builtin::metrics_on(kernels)
 }
 
 /// Metrics of a fixed list: the built-in ones, then `extra`.

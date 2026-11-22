@@ -156,7 +156,7 @@ impl Program {
         let inputs = match rows {
             None => columns,
             Some(rows) => {
-                made = columns.iter().map(|c| gather(c, rows)).collect();
+                made = columns.iter().map(|c| gather(c, rows, statement.vector_kernels())).collect();
                 made.iter().collect()
             }
         };

@@ -9,6 +9,7 @@ use crate::storage::mask::index;
 /// distance above `base` as `bytes` big-endian bytes, every one inverted
 /// if `invert`. None if a value is below `base` or past `bytes`, a row past
 /// the end, or a field past a key; `keys` are then partly written.
+#[inline]
 pub fn normalize_i64(
     (values, rows): (&[i64], &[u32]),
     (base, bytes, invert): (i64, usize, bool),

@@ -148,13 +148,13 @@ impl Accumulator for SumAcc {
     }
     /// The integers added to the sum as integers, of one scale; else, or
     /// if 128 bits cannot hold the sum, as decimals, which raise of it.
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<()> {
         let start = match &self.total {
             Total::Empty => Some(0),
             Total::Exact(d) => (d.scale == ints.scale).then_some(d.units),
             Total::Approx(_) | Total::Interval(_) | Total::DecFloat(_) | Total::Other(_) => None,
         };
-        match start.and_then(|s| ints::sum_from(s, ints, rows)) {
+        match start.and_then(|s| ints::sum_from(s, ints, rows, kernels)) {
             Some((total, true)) => self.total = Total::Exact(Decimal::new(total, ints.scale)),
             Some((_, false)) => {}
             None => self.update_many(ints.values(), rows)?,
@@ -294,9 +294,9 @@ impl Accumulator for AvgAcc {
         self.count = self.count.saturating_add(i128::try_from(counted).unwrap_or(i128::MAX));
         self.sum.update_many(values, rows)
     }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<()> {
         self.count = self.count.saturating_add(i128::try_from(ints::count(ints, rows)).unwrap_or(i128::MAX));
-        self.sum.update_ints(ints, rows)
+        self.sum.update_ints(ints, rows, kernels)
     }
     fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         self.count = self.count.saturating_add(i128::try_from(floats::count(floats, rows)).unwrap_or(i128::MAX));

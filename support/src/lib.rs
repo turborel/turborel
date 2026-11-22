@@ -62,6 +62,8 @@ impl Drop for Scratch {
 #[cfg(feature = "database")]
 pub mod database;
 #[cfg(feature = "database")]
+pub mod differential;
+#[cfg(feature = "database")]
 pub mod kernels;
 #[cfg(feature = "database")]
 pub mod logs;

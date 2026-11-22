@@ -50,14 +50,15 @@ fn product_of((left, width, ordered): (Batches, usize, bool), right: Plan, db: &
     let mut work = Work::of(db, tx);
     let rows = match held::read(right, (&[], &[], Vec::new()), work.limit(), (db, tx))? {
         Read::Held(held) => {
-            let (out, vectors) = (Out::over(width, Arc::clone(&held.batch)), Right::Vectors(held.batch.rows));
+            let (out, vectors) =
+                (Out::over(width, Arc::clone(&held.batch), crate::db::kernels::chosen(db)), Right::Vectors(held.batch.rows));
             return Ok(Box::new(Product { left, right: vectors, by_batch: false, current: None, out, ended: false, _work: work }));
         }
         Read::Rest(rest) => rest.rows(),
     };
     let (rescanned, _) = Rescanned::of(rows, &mut work)?;
     let by_batch = matches!(rescanned, Rescanned::Spilled(..)) && !ordered;
-    let out = Out::new(width, right_columns);
+    let out = Out::new(width, right_columns, crate::db::kernels::chosen(db));
     Ok(Box::new(Product { left, right: Right::Rows(rescanned), by_batch, current: None, out, ended: false, _work: work }))
 }
 

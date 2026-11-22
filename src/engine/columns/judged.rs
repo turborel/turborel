@@ -31,7 +31,7 @@ use super::group::{Group, Seal};
 use super::scan::{Reading, column_of_run};
 use crate::error::Result;
 use crate::index::Probe;
-use crate::kernels::{Kernels, Portable};
+use crate::kernels::Kernels;
 use crate::storage::bound::{Bound, holds, rescaled_bound};
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
@@ -131,7 +131,7 @@ impl Judgment {
                 decoded.push((pred.column, column_of_run(group, (pages, &mut *prepared), (pred.column, t), (from, to))?));
             }
             let at = decoded.iter().position(|(c, _)| *c == pred.column).unwrap_or(0);
-            if let Some(rows) = decoded.get(at).and_then(|(_, column)| pred.kept(column, kept.as_deref())) {
+            if let Some(rows) = decoded.get(at).and_then(|(_, column)| pred.kept(column, kept.as_deref(), pages.kernels)) {
                 kept = Some(rows);
             }
         }
@@ -197,17 +197,17 @@ fn judged_type(t: &DataType) -> bool {
 impl Pred {
     /// The rows of `given`, or of all, of `column` it keeps; none if the
     /// column is not a vector it judges.
-    fn kept(&self, column: &Column, given: Option<&[u32]>) -> Option<Vec<u32>> {
+    fn kept(&self, column: &Column, given: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {
         if let Conjunct::Null { not, .. } = self.conjunct {
             let (len, nulls) = shape(column)?;
             return Some(rows(len, given).into_iter().filter(|&r| nulls.is_some_and(|n| n.get(index(r))) != not).collect());
         }
         match column {
-            Column::Ints(ints) => Some(self.ints(ints, given)),
-            Column::Floats(floats) => Some(self.floats(floats, given)),
-            Column::Datetimes(datetimes) => Some(self.datetimes(datetimes, given)),
+            Column::Ints(ints) => Some(self.ints(ints, given, kernels)),
+            Column::Floats(floats) => Some(self.floats(floats, given, kernels)),
+            Column::Datetimes(datetimes) => Some(self.datetimes(datetimes, given, kernels)),
             Column::Bools(bools) => Some(self.by_values(bools.len(), given, |r| bools.get(r).map(Value::Bool))),
-            Column::Texts(texts) => self.texts(texts, given),
+            Column::Texts(texts) => self.texts(texts, given, kernels),
             Column::Values(_) | Column::Nulls(_) | Column::Late(_) => None,
         }
     }
@@ -236,7 +236,7 @@ impl Pred {
     /// Of integers: a comparison by the kernel, its constant folded to
     /// their scale once; of integers kept as runs, none null, judged once a
     /// run (a run's first row may be a null, whose unit is not the run's).
-    fn ints(&self, ints: &Ints, given: Option<&[u32]>) -> Vec<u32> {
+    fn ints(&self, ints: &Ints, given: Option<&[u32]>, kernels: &dyn Kernels) -> Vec<u32> {
         let bound = self.compared().and_then(|(op, c)| rescaled_bound(ints.scale, op, c));
         let value = |u: i64| Value::Exact(Decimal::new(i128::from(u), ints.scale));
         let keeps = |u: i64| bound.map_or_else(|| self.conjunct.matches_key(&[&value(u)]), |b| b.holds(u));
@@ -248,7 +248,7 @@ impl Pred {
         }
         let mut out = Vec::new();
         match bound {
-            Some(Bound::Of(op, c)) => Portable.select_i64(&ints.units, (op, c), (ints.nulls.as_ref(), given), &mut out),
+            Some(Bound::Of(op, c)) => kernels.select_i64(&ints.units, (op, c), (ints.nulls.as_ref(), given), &mut out),
             Some(Bound::All) => out.extend(rows(ints.units.len(), given).into_iter().filter(|&r| !ints.is_null(index(r)))),
             Some(Bound::None) => {}
             None => {
@@ -261,10 +261,10 @@ impl Pred {
 
     /// Of approximate numbers: a comparison with an approximate constant
     /// by the kernel, as two numbers compare by algebraic value.
-    fn floats(&self, floats: &Floats, given: Option<&[u32]>) -> Vec<u32> {
+    fn floats(&self, floats: &Floats, given: Option<&[u32]>, kernels: &dyn Kernels) -> Vec<u32> {
         if let Some((op, Value::Approx(c))) = self.compared() {
             let mut out = Vec::new();
-            Portable.select_f64(&floats.numbers, (op, *c), (floats.nulls.as_ref(), given), &mut out);
+            kernels.select_f64(&floats.numbers, (op, *c), (floats.nulls.as_ref(), given), &mut out);
             return out;
         }
         self.by_values(floats.numbers.len(), given, |r| floats.get(r).map(Value::Approx))
@@ -272,14 +272,14 @@ impl Pred {
 
     /// Of datetimes of no time zone: a comparison with a datetime of their
     /// fields and of none by the kernel, by their instants.
-    fn datetimes(&self, datetimes: &Datetimes, given: Option<&[u32]>) -> Vec<u32> {
+    fn datetimes(&self, datetimes: &Datetimes, given: Option<&[u32]>, kernels: &dyn Kernels) -> Vec<u32> {
         if let Some((op, Value::Datetime(c))) = self.compared()
             && c.moment == datetimes.moment
             && !c.zoned
             && !datetimes.zoned
         {
             let mut out = Vec::new();
-            Portable.select_i64(&datetimes.utc, (op, c.utc), (datetimes.nulls.as_ref(), given), &mut out);
+            kernels.select_i64(&datetimes.utc, (op, c.utc), (datetimes.nulls.as_ref(), given), &mut out);
             return out;
         }
         self.by_values(datetimes.len(), given, |r| datetimes.get(r).map(Value::Datetime))
@@ -288,7 +288,7 @@ impl Pred {
     /// Of texts, if every constant is a string or a null: of a store's
     /// dictionaries, each entry once, the rows then by the kernel
     /// `select_codes`; else each text in place.
-    fn texts(&self, texts: &Texts, given: Option<&[u32]>) -> Option<Vec<u32>> {
+    fn texts(&self, texts: &Texts, given: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {
         text_keeps(&self.conjunct, &|_| Some(Ordering::Equal))?;
         let keeps = |s: &str| text_keeps(&self.conjunct, &|c| Some(compare_strings(s, c))) == Some(true);
         if let Some(coded) = texts.coded.as_ref().filter(|_| !self.of_null) {
@@ -297,7 +297,7 @@ impl Pred {
                 entries.set(e);
             }
             let mut out = Vec::new();
-            Portable.select_codes(&coded.codes, entries.words(), (texts.nulls.as_ref(), given), &mut out);
+            kernels.select_codes(&coded.codes, entries.words(), (texts.nulls.as_ref(), given), &mut out);
             return Some(out);
         }
         Some(rows(texts.len(), given).into_iter().filter(|&r| texts.get(index(r)).map_or(self.of_null, keeps)).collect())

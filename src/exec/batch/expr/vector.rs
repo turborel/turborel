@@ -129,10 +129,12 @@ pub(super) fn datetimes_of(made: &[Option<Datetime>], like: &Datetime) -> Dateti
 }
 
 /// The rows `rows` of `column`, in order, a vector of the same kind: of
-/// integers known as runs, known as the runs of those rows.
-pub(in crate::exec::batch) fn gather(column: &Column, rows: &[u32]) -> Column {
+/// integers known as runs, known as the runs of those rows; integers
+/// gathered by `kernels` (RULES.md D570).
+pub(in crate::exec::batch) fn gather(column: &Column, rows: &[u32], kernels: &dyn crate::kernels::Kernels) -> Column {
     if let Column::Ints(ints) = column {
-        let units = rows.iter().map(|&r| ints.units.get(index(r)).copied().unwrap_or(0)).collect();
+        let mut units = Vec::with_capacity(rows.len());
+        kernels.gather_i64(&ints.units, rows, &mut units);
         let nulls = ints.nulls.as_ref().and_then(|n| n.gathered(rows));
         let gathered = Ints::new(units, ints.scale, nulls);
         return Column::Ints(match ints.runs_of(rows) {

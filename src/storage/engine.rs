@@ -60,6 +60,11 @@ pub trait StorageEngine: Send + Sync {
     fn attach(&self, _host: &Host) -> Result<()> {
         Ok(())
     }
+    /// \[DESIGN\] Takes the kernels the database runs on (RULES.md D354,
+    /// D570), for its tables opened after to decode and judge their
+    /// vectors on: told as it is registered, and again as kernels are.
+    /// Default: nothing, for an engine that runs no kernel.
+    fn use_kernels(&self, _kernels: std::sync::Arc<dyn crate::kernels::Kernels>) {}
     /// \[DESIGN\] Itself as it declares settings and is told them
     /// (`Configurable`, RULES.md D36), if it has any. Default: none.
     fn configurable(&self) -> Option<&dyn Configurable> {

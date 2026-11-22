@@ -8,54 +8,43 @@
 //! vector of integers and of values, and the tables of a grouping's
 //! morsels agree on every key's partition.
 //!
-//! A word is mixed by MurmurHash3's finalizer (`hash::murmur::fmix64`)
-//! after the database's seed is added, a text 8 bytes at a time; keys of
-//! several columns join each column's hash in order. The seed is drawn at
-//! random as the database opens, so no client knows it. A key of bytes
-//! may still be made to collide whatever the seed, so a table whose probe
-//! grows long hashes its keys anew by SipHash-1-3 keyed by the seed
-//! (`keyed`), which no key collides under unknown.
+//! Every hash is XXH3-64 by the database's seed (RULES.md D573): a word's
+//! of its 8 bytes, little-endian, a text's of its bytes; keys of several
+//! columns join each column's hash in order, as XXH3-64 of the 16 bytes
+//! of the hash so far and the next. The kernels hash a vector of
+//! integers, one of texts, and join a column's hashes, each exactly as
+//! these hash one. The seed is drawn at random as the database opens, so
+//! no client knows it. A key of bytes may still be made to collide
+//! whatever the seed, so a table whose probe grows long hashes its keys
+//! anew by SipHash-1-3 keyed by the seed (`keyed`), which no key collides
+//! under unknown.
 
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 
-use crate::hash::murmur::fmix64;
+use crate::hash::xxhash::Seeded;
 use crate::kernels::Kernels;
-use crate::storage::{Batch, Cell, Column};
+use crate::storage::{Batch, Cell, Column, Texts};
 use crate::value::{Decimal, Value};
 
 /// \[DESIGN\] The word a null's hash is of: the bits of the golden ratio,
 /// as hash tables commonly take a constant of no structure.
 const NULL_WORD: u64 = 0x9e37_79b9_7f4a_7c15;
 
-/// \[DESIGN\] What a text's hash starts from beside its length, and
-/// multiplies each word by: MurmurHash3's first multiplier.
-const TEXT_MULTIPLIER: u64 = 0x87c3_7b91_1142_53d5;
-
-/// \[DESIGN\] How far a text's hash turns after each word: MurmurHash3's
-/// turn of its first lane.
-const TEXT_TURN: u32 = 31;
-
-/// \[DESIGN\] How far a key's hash so far turns before the next column's
-/// joins it, so (a, b) and (b, a) hash apart.
-const JOIN_TURN: u32 = 23;
-
-/// Bytes of a word.
-const WORD: usize = 8;
-
 /// \[DESIGN\] (RULES.md D357) A database's seed of its groupings' hashes,
-/// drawn at random as it opens: a word for the hash of words, and the keys
-/// of SipHash-1-3 for a table whose probe grew long.
+/// drawn at random as it opens: XXH3's seed, with what depends on it
+/// alone made once, and the keys of SipHash-1-3 for a table whose probe
+/// grew long.
 #[derive(Clone, Debug)]
 pub(crate) struct Seed {
-    word: u64,
+    seeded: Seeded,
     keyed: RandomState,
 }
 
 impl Default for Seed {
     fn default() -> Seed {
         let keyed = RandomState::new();
-        Seed { word: keyed.hash_one(NULL_WORD), keyed }
+        Seed { seeded: Seeded::new(keyed.hash_one(NULL_WORD)), keyed }
     }
 }
 
@@ -63,12 +52,12 @@ impl Seed {
     /// A seed of the word `word`, for tests whose hashes are known.
     #[cfg(test)]
     pub(crate) fn fixed(word: u64) -> Seed {
-        Seed { word, keyed: RandomState::new() }
+        Seed { seeded: Seeded::new(word), keyed: RandomState::new() }
     }
 
-    /// The hash of a word `w`.
+    /// The hash of a word `w`: XXH3-64 of its 8 bytes, little-endian.
     pub(super) fn word(&self, w: u64) -> u64 {
-        fmix64(self.word ^ w)
+        self.seeded.words().hash(w)
     }
 
     /// The hash of a null.
@@ -76,10 +65,10 @@ impl Seed {
         self.word(NULL_WORD)
     }
 
-    /// The XXH3 of `bytes`, seeded by the seed's word (RULES.md D357), as
-    /// a parallel grouping parts its rows' keys.
+    /// The XXH3 of `bytes`, seeded by the seed (RULES.md D357), as a
+    /// parallel grouping parts its rows' keys.
     pub(crate) fn xxh3(&self, bytes: &[u8]) -> u64 {
-        crate::hash::xxhash::xxh3_64_with_seed(bytes, self.word)
+        self.seeded.bytes(bytes)
     }
 
     /// The SipHash-1-3 of `bytes`, keyed by the seed (RULES.md D357).
@@ -87,15 +76,9 @@ impl Seed {
         self.keyed.hash_one(bytes)
     }
 
-    /// The hash of the bytes `bytes`, 8 at a time.
+    /// The hash of the bytes `bytes`: their XXH3-64.
     pub(super) fn bytes(&self, bytes: &[u8]) -> u64 {
-        let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        let mut h = self.word ^ length.wrapping_mul(TEXT_MULTIPLIER);
-        let (words, rest) = bytes.as_chunks::<WORD>();
-        for w in words {
-            h = (h ^ u64::from_le_bytes(*w)).wrapping_mul(TEXT_MULTIPLIER).rotate_left(TEXT_TURN);
-        }
-        fmix64(h ^ word_of(rest))
+        self.seeded.bytes(bytes)
     }
 
     /// The hash of a character string's text `text`, its trailing spaces
@@ -113,7 +96,14 @@ impl Seed {
         }
         let bits = units.cast_unsigned();
         let (low, high) = (u64::try_from(bits & u128::from(u64::MAX)).unwrap_or(0), u64::try_from(bits >> 64_u32).unwrap_or(0));
-        joined(joined(self.word(low), self.word(high)), self.word(u64::from(scale)))
+        self.joined(self.joined(self.word(low), self.word(high)), self.word(u64::from(scale)))
+    }
+
+    /// A key's hash `so_far` with the next column's, `next`, joined: XXH3-64
+    /// of their 16 bytes, little-endian, the hash so far first, so (a, b)
+    /// and (b, a) hash apart.
+    pub(super) fn joined(&self, so_far: u64, next: u64) -> u64 {
+        self.seeded.words().pair(so_far, next)
     }
 
     /// The hash of the approximate number `f`, -0 as 0, as they compare.
@@ -168,30 +158,18 @@ pub(super) fn canonical(f: f64) -> u64 {
     if f == 0.0_f64 { 0.0_f64.to_bits() } else { f.to_bits() }
 }
 
-/// The little-endian word of up to 8 `bytes`, the missing high bytes zero.
-fn word_of(bytes: &[u8]) -> u64 {
-    let mut le = [0_u8; WORD];
-    le.iter_mut().zip(bytes).for_each(|(to, from)| *to = *from);
-    u64::from_le_bytes(le)
-}
-
-/// A key's hash `so_far` with the next column's, `next`, joined.
-pub(super) fn joined(so_far: u64, next: u64) -> u64 {
-    fmix64(so_far.rotate_left(JOIN_TURN) ^ next)
-}
-
 /// The hash of a key of `values`, by `seed`, as of the same values in a
 /// batch's vectors.
 pub(in crate::exec) fn hash_values(seed: &Seed, values: &[Value]) -> u64 {
     let mut hashes = values.iter().map(|v| seed.value(v));
     let first = hashes.next().unwrap_or_else(|| seed.null());
-    hashes.fold(first, joined)
+    hashes.fold(first, |so_far, next| seed.joined(so_far, next))
 }
 
 /// Writes to `out` the hash of each row given of `batch`, `rows` or all,
 /// of its key of the columns at `at`, by `seed`, each column's hashed a
-/// vector at a time, a vector of integers by `kernels`; of a key of no
-/// column, as `hash_values` hashes one.
+/// vector at a time, a vector of integers or texts by `kernels`, and
+/// joined by them; of a key of no column, as `hash_values` hashes one.
 pub(in crate::exec) fn hash_rows(
     batch: &Batch,
     (at, rows): (&[usize], Option<&[u32]>),
@@ -207,14 +185,14 @@ pub(in crate::exec) fn hash_rows(
         let target = if place == 0 { &mut *out } else { &mut column_hashes };
         hash_column((batch, c, rows), (seed, kernels), target);
         if place > 0 {
-            out.iter_mut().zip(&column_hashes).for_each(|(h, &next)| *h = joined(*h, next));
+            kernels.combine_i64(out, &column_hashes, seed.seeded.seed());
         }
     }
 }
 
 /// Writes to `out`, emptied first, the hash of each row given, `rows` or
-/// all, of the column at `c` of `batch`: an integer's of scale 0 by the
-/// kernel, every other's as its cell's.
+/// all, of the column at `c` of `batch`: an integer's of scale 0 and a
+/// text's by the kernels, every other's as its cell's.
 fn hash_column((batch, c, rows): (&Batch, usize, Option<&[u32]>), (seed, kernels): (&Seed, &dyn Kernels), out: &mut Vec<u64>) {
     out.clear();
     let given = rows.map_or(batch.rows, <[u32]>::len);
@@ -222,11 +200,41 @@ fn hash_column((batch, c, rows): (&Batch, usize, Option<&[u32]>), (seed, kernels
     if let Some(Column::Ints(ints)) = batch.columns.get(c)
         && ints.scale == 0
     {
-        kernels.hash_i64(&ints.units, seed.word, rows, out);
+        kernels.hash_i64(&ints.units, seed.seeded.seed(), rows, out);
         if let Some(nulls) = &ints.nulls {
             out.iter_mut().zip(places()).filter(|&(_, r)| nulls.get(r)).for_each(|(h, _)| *h = seed.null());
         }
         return;
     }
+    if let Some(Column::Texts(texts)) = batch.columns.get(c) {
+        return hash_texts((texts, rows), (seed, kernels), out);
+    }
     out.extend(places().map(|r| seed.cell(batch.cell(c, r))));
+}
+
+/// Writes to `out` the hash of each text given of `texts`, `rows` or all,
+/// as `Seed::text` hashes one, by the kernel: of texts coded by a store's
+/// dictionaries, each entry hashed once and each row's taken by its code;
+/// a null's the null's hash.
+fn hash_texts((texts, rows): (&Texts, Option<&[u32]>), (seed, kernels): (&Seed, &dyn Kernels), out: &mut Vec<u64>) {
+    let given = rows.map_or(texts.len(), <[u32]>::len);
+    let places = || (0..given).map(|n| crate::storage::sel::nth(rows, n));
+    match &texts.coded {
+        Some(coded) => {
+            // Each entry hashed once, if they are no more than the rows;
+            // else each row's entry alone.
+            let entry = |r: usize| coded.codes.get(r).and_then(|&e| usize::try_from(e).ok());
+            if coded.entries.len() <= given {
+                let mut entries = Vec::new();
+                kernels.hash_texts((coded.entries.text.as_bytes(), &coded.entries.ends), &seed.seeded, None, &mut entries);
+                out.extend(places().map(|r| entry(r).and_then(|e| entries.get(e)).copied().unwrap_or(0)));
+            } else {
+                out.extend(places().map(|r| seed.text(entry(r).and_then(|e| coded.entries.get(e)).unwrap_or(""))));
+            }
+        }
+        None => kernels.hash_texts((texts.text.as_bytes(), &texts.ends), &seed.seeded, rows, out),
+    }
+    if let Some(nulls) = &texts.nulls {
+        out.iter_mut().zip(places()).filter(|&(_, r)| nulls.get(r)).for_each(|(h, _)| *h = seed.null());
+    }
 }

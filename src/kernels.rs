@@ -17,7 +17,7 @@
 
 pub mod portable;
 
-use crate::hash::xxhash::{self, Stripes as _};
+use crate::hash::xxhash::{self, Seeded, Stripes as _};
 use crate::storage::Mask;
 use crate::value::CompOp;
 
@@ -76,10 +76,29 @@ pub trait Kernels: Send + Sync {
     }
 
     /// Appends to `out` the hash of each of `values` at `sel`, or of all,
-    /// by `seed`, as a grouping's table hashes a word (RULES.md D356):
-    /// MurmurHash3's finalizer of the value's bits after the seed is added.
+    /// by `seed`, as a grouping's table hashes a word (RULES.md D356,
+    /// D573): XXH3-64 of its 8 bytes, little-endian
+    /// (`hash::xxhash::Words::hash`); that of 0 for a row past the end.
     fn hash_i64(&self, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
         portable::hash::hash_i64(values, seed, sel, out);
+    }
+
+    /// Joins to each of `hashes`, a key's hash so far, the next column's of
+    /// its row in `next`, by `seed`, as a grouping's table joins a key's
+    /// columns (RULES.md D573): XXH3-64 of the 16 bytes of the two,
+    /// little-endian, the hash so far first (`hash::xxhash::Words::pair`).
+    /// Of `hashes` past `next`, none changes.
+    fn combine_i64(&self, hashes: &mut [u64], next: &[u64], seed: u64) {
+        portable::hash::combine_i64(hashes, next, seed);
+    }
+
+    /// Appends to `out` the hash of each text at `sel`, or of all, of the
+    /// texts of `text` ending at `ends`, by `seeded`, as a grouping's
+    /// table hashes a character string (RULES.md D573): XXH3-64 of its
+    /// bytes less its trailing spaces (`hash::xxhash::Seeded::bytes`); of
+    /// a text past the end, that of no byte.
+    fn hash_texts(&self, (text, ends): (&[u8], &[usize]), seeded: &Seeded, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        portable::hash::hash_texts((text, ends), seeded, sel, out);
     }
 
     /// Appends to `out` the place of each of `hashes` a blocked Bloom
@@ -98,6 +117,16 @@ pub trait Kernels: Send + Sync {
     fn unpack(&self, bytes: &[u8], (bits, least): (u32, i64), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         portable::unpack::unpack(bytes, (bits, least), (from, to), out)
     }
+    /// Makes each of `words`, an n of a chunk of decimals of magnitude
+    /// below 2^51, the bits, as a signed integer, of its approximate
+    /// number by `scale` (RULES.md D353): n made an `f64` exactly by the
+    /// magic number 2^52 + 2^51, then multiplied by the factors or divided
+    /// by the power. An n of 2^51 or more gives what the same bit
+    /// operations give of it, of no use.
+    fn alp_decode(&self, words: &mut [i64], scale: AlpScale) {
+        portable::alp::alp_decode(words, scale);
+    }
+
     /// XXH3's accumulation of `stripes` into `acc`, the `n`th keyed by the
     /// 64 bytes of `secret` at `8 n` (`hash::xxhash::Stripes::accumulate`,
     /// RULES.md D460): the loop of a long input's hash that wider
@@ -137,6 +166,63 @@ pub trait Kernels: Send + Sync {
     fn boundaries(&self, keys: &[u8], width: usize, span: (usize, usize), out: &mut Vec<u64>) {
         portable::boundaries::boundaries(keys, width, span, out);
     }
+
+    /// The sum over each pair of `f32`s of `a` and `b` of `term`, in
+    /// sixteen lanes over whole chunks, each lane summed alone, then the
+    /// lanes in order and the rest one pair at a time (RULES.md D571). A
+    /// dense vector index measures by it, the same at every instruction set.
+    fn distance_f32(&self, a: &[f32], b: &[f32], term: DistanceTerm) -> f32 {
+        portable::distance::distance_f32(a, b, term)
+    }
+    /// `a·a`, `b·b` and `a·b` of `f32`s in one pass, each as
+    /// `distance_f32` sums a dot product: COSINE's three sums.
+    fn cosine_f32(&self, a: &[f32], b: &[f32]) -> (f32, f32, f32) {
+        portable::distance::cosine_f32(a, b)
+    }
+    /// As `distance_f32`, of two vectors of FLOAT32 or FLOAT16 elements
+    /// packed little-endian, each read as an `f32`.
+    fn distance_packed(&self, a: &[u8], b: &[u8], shape: (Packed, DistanceTerm)) -> f32 {
+        portable::distance::distance_packed(a, b, shape)
+    }
+    /// As `distance_f32`, of two vectors of INT8 elements, in `i32` lanes
+    /// added in an `i64`.
+    fn distance_i8(&self, a: &[u8], b: &[u8], term: DistanceTerm) -> i64 {
+        portable::distance::distance_i8(a, b, term)
+    }
+
+    /// CRC-32C's register after `data`, from `register`: CRC-32/ISCSI's,
+    /// reflected, its starting value and final exclusive or left to the
+    /// caller (RULES.md D572).
+    fn crc32c(&self, register: u32, data: &[u8]) -> u32 {
+        portable::crc::crc32c(register, data)
+    }
+}
+
+/// \[DESIGN\] The term a distance kernel sums over each pair of elements
+/// (RULES.md D571).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistanceTerm {
+    /// `p * q`.
+    Dot,
+    /// `(p - q)^2`.
+    Square,
+    /// `|p - q|`.
+    Gap,
+}
+
+impl DistanceTerm {
+    /// Every term.
+    pub const ALL: [DistanceTerm; 3] = [DistanceTerm::Dot, DistanceTerm::Square, DistanceTerm::Gap];
+}
+
+/// \[DESIGN\] A floating element format a distance kernel reads packed
+/// little-endian.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Packed {
+    /// FLOAT32.
+    Single,
+    /// FLOAT16.
+    Half,
 }
 
 /// A database's kernels run XXH3's long inputs' loops: XXH3 of a vector's
@@ -147,6 +233,28 @@ impl xxhash::Stripes for dyn Kernels + '_ {
     }
     fn scramble(&self, acc: &mut [u64; xxhash::ACC_NB], key: &xxhash::Stripe) {
         self.xxh3_scramble(acc, key);
+    }
+}
+
+/// \[DESIGN\] How a chunk of decimals' n are made its approximate numbers
+/// (RULES.md D353): multiplied by 10^f, then by 10^-e, or divided by
+/// 10^e, as of a chunk written before the factors were.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AlpScale {
+    /// Multiplied by the first, then by the second.
+    Factored(f64, f64),
+    /// Divided by it.
+    Divided(f64),
+}
+
+impl AlpScale {
+    /// The value of `n`, an integer held exactly.
+    #[inline]
+    pub fn of(self, n: f64) -> f64 {
+        match self {
+            AlpScale::Factored(power, fraction) => n * power * fraction,
+            AlpScale::Divided(power) => n / power,
+        }
     }
 }
 

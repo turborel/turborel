@@ -202,7 +202,9 @@ machine, so a file hashed on one reads on any other. XXH3's loops over
 long inputs are kernels too: `turboreld` registers those of the crate
 `turborel-simd`, which run them on SSE2, AVX2, AVX-512 or NEON,
 whichever the processor has, to the same values. EXECUTOR.KERNELS =
-'PORTABLE' sets them aside for a session:
+'PORTABLE' sets them aside for a session's statements in the executor;
+a column store table keeps the kernels registered, which it takes as it
+opens:
 
 ```sql
 SET EXECUTOR.KERNELS = 'PORTABLE';
