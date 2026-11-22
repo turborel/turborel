@@ -525,6 +525,7 @@ verification approach DO-178C expects (§8).
 | D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
 | D811 | A commit closes its side file and writes its file in runs of granules |
 | D812 | Withdrawn: a checkpoint's commits are not spread, as spreading them cost throughput |
+| D813 | A pool's test reading a page fails first if a frame is left latched exclusively |
 
 ### The project
 
@@ -3141,6 +3142,14 @@ jemalloc was measured too but is not offered, since its build refuses
 Windows' MSVC target. `cargo xtask verify` builds the program once per
 feature, so CI shows each one building on Linux, macOS and Windows and none
 is found broken only when an operator picks it.
+
+In a first round of TPC-C at 8 users, with the log's commit sync off so the
+drive's flushes did not hide the allocator, mimalloc, snmalloc and jemalloc
+each served clearly more transactions than the system's allocator. mimalloc
+and jemalloc also ended the run holding much less resident memory, and
+snmalloc more. rpmalloc's run did not complete, so it is offered unranked.
+The rounds that would rank them were cut short, so none is recommended over
+the others.
 
 An allocator only makes allocation cheaper. The core cuts its own
 allocations independently, in the paths that make them, and that work is
@@ -14037,10 +14046,12 @@ area. A `SELECT SUM(k) ... WHERE id BETWEEN ? AND ?` paid that for each of
 its rows, though every row is of the one group.
 
 Such a grouping is now made whole (`exec/group/streamed.rs`, `whole`).
-Its set functions are fed each row as it comes, as a streamed group's are
-(D551), and finished at the end, of no rows too. Nothing is keyed, hashed
-or held. This holds whichever way the planner asked for the grouping,
-hashed or streamed.
+Its set functions are fed every row and finished, of no rows too, as the
+grouping is opened, as a grouping by key makes its groups. A row made
+only once it was pulled raised the warning of a null it eliminated after
+its statement's diagnostics were taken, so that statement lacked it and
+the next one had it. Nothing is keyed, hashed or held. This holds
+whichever way the planner asked for the grouping, hashed or streamed.
 
 - A grouping with seeds (made before any row), or with a set function
   that is DISTINCT or an inverse distribution, is still made by key. Those
@@ -14420,6 +14431,19 @@ an A/B against commits made at once gave less throughput in all, on a
 drive with power-loss protection and one without. A smoother window
 does not pay for work lost, so commits are made at once again, and
 D811's runs are what shortens them.
+
+#### D813. A pool's test reading a page fails first if a frame is left latched exclusively
+
+A read waits for its frame's latch, and a thread that still holds the
+page for writing holds that latch, so it would wait for ever. A test of
+the pool's stamps that took one while it held a page for writing hung
+for a day instead of failing. The thread was the only one left, and its
+own write guard held the latch. The stamps' tests now count the frames
+latched exclusively, with a try that never waits, before each read, and
+fail if any is. The pool itself is unchanged. The hang came from the
+test's own order of holding and reading, not from an order in which the
+pool takes its latches, and the test as it is now on main never held
+and read at once.
 
 ## 2. Project layout
 
