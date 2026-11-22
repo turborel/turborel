@@ -257,7 +257,12 @@ the top join gives the order chosen, the offers of the suppliers in Oslo
 joined first, and the algorithm that chose it. Their parts are then
 hashed rather than probed by the index of their key: the offers could
 be many times more than estimated, and so many probes would cost more
-than reading the parts once (PLANNER.ESTIMATE_MARGIN):
+than reading the parts once (PLANNER.ESTIMATE_MARGIN). Above the joins,
+a phase of predicate transfer reads the three tables first, the
+suppliers in Oslo filtering the offers by a Bloom filter of their keys
+and those offers the parts, so each join is given only the rows that
+can match (PLANNER.PREDICATE_TRANSFER). Its line tells the chain's
+tables and the filters it makes:
 
 ```sql
 CREATE TABLE SUPPLIERS (ID INTEGER PRIMARY KEY, CITY VARCHAR(20));
@@ -300,14 +305,15 @@ OK
        Filter SUPPLIERS.CITY = 'Oslo'
          Scan ANN.SUPPLIERS
  -- physical:
- Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
-   HashJoin PARTS.ID = OFFERS.PART  (join order by DPccp: (PARTS (OFFERS SUPPLIERS)))
-     SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
-     HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
-       SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
-       Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
-         SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
-(27 rows)
+ PredicateTransfer of 3 leaves, 2 steps
+   Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
+     HashJoin PARTS.ID = OFFERS.PART  (join order by DPccp: (PARTS (OFFERS SUPPLIERS)))
+       SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
+       HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
+         SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
+         Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
+           SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
+(28 rows)
 ```
 
 A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
