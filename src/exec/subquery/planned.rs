@@ -169,11 +169,10 @@ impl Runner {
     /// `outer` holds no null and its slots are typed; else what it keeps,
     /// planned alone this run: untried while a value is null, at each run
     /// once a value is of a kind no slot takes or its plan holds slots of
-    /// its own, or once it is decorrelated before learning could pay.
+    /// its own, or once it is decorrelated before learning could pay. A
+    /// plan with slots that is one probe of a whole unique key is kept even
+    /// so, as its probes may cost less than a build (`probed.rs`).
     fn untried(&self, subquery: &Subquery, outer: &[Value]) -> Result<(Plan, Planned), Planned> {
-        if self.decorrelated_soon(subquery) {
-            return Err(Planned::Varies);
-        }
         if outer.iter().any(Value::is_null) {
             return Err(Planned::Untried);
         }
@@ -187,6 +186,9 @@ impl Runner {
         let custom = PhysicalPlanner::new(&self.db).plan(&self.optimized(subquery.bound(outer)));
         if keepable(&with_slots, &self.db) {
             return Ok((custom, Planned::Kept(slotted, Box::new(with_slots))));
+        }
+        if self.decorrelated_soon(subquery) {
+            return Ok((custom, Planned::Varies));
         }
         let learning = Learning::default().after(&custom, with_slots);
         Ok((custom, learned(slotted, learning)))

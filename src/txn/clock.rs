@@ -34,7 +34,7 @@ use std::thread::{self, Thread};
 use std::time::Duration;
 
 use super::{Timestamp, TxId};
-use crate::sync::lock_builtin;
+use crate::sync::{Alone, lock_builtin};
 
 /// Commits that may be under way at once before one waits.
 const RING: u64 = 4096;
@@ -57,15 +57,20 @@ struct Stripe {
 }
 
 /// \[DESIGN\] The logical clock.
+///
+/// The counters each written by every transaction or commit, and the
+/// timestamps every snapshot reads, are each alone on their cache lines
+/// (RULES.md D782): a transaction taking an id moves no line a snapshot
+/// reads.
 pub(super) struct Clock {
-    next_id: AtomicU64,
-    next_commit: AtomicU64,
-    stable: AtomicU64,
+    next_id: Alone<AtomicU64>,
+    next_commit: Alone<AtomicU64>,
+    stable: Alone<AtomicU64>,
     /// For each commit timestamp modulo `RING`, the last one that ended.
     ended: Box<[AtomicU64]>,
     /// The timestamp below which every commit is also durable, and for
     /// each modulo `RING` the last one made so.
-    durable: AtomicU64,
+    durable: Alone<AtomicU64>,
     synced: Box<[AtomicU64]>,
     /// Whether a sync failed: the durable timestamp moves no more.
     halted: AtomicBool,
@@ -81,11 +86,11 @@ impl Clock {
     /// A clock whose first transaction id is `first`.
     pub(super) fn new(first: TxId) -> Clock {
         Clock {
-            next_id: AtomicU64::new(first),
-            next_commit: AtomicU64::new(1),
-            stable: AtomicU64::new(0),
+            next_id: Alone(AtomicU64::new(first)),
+            next_commit: Alone(AtomicU64::new(1)),
+            stable: Alone(AtomicU64::new(0)),
             ended: (0..RING).map(|_| AtomicU64::new(0)).collect(),
-            durable: AtomicU64::new(0),
+            durable: Alone(AtomicU64::new(0)),
             synced: (0..RING).map(|_| AtomicU64::new(0)).collect(),
             halted: AtomicBool::new(false),
             waits: Mutex::new(BTreeMap::new()),

@@ -33,7 +33,7 @@ fn set() -> (Database, Session) {
 }
 
 /// Verifies: [DESIGN] RULES.md D36: a session of no setting of its own
-/// runs against the published state itself; one that set one, against a
+/// runs against its copy of the published state (D780); one that set one, against a
 /// copy made once and kept for its next statements, its value read
 /// there; a new SET makes the copy anew, of the new value.
 #[test]
@@ -42,10 +42,13 @@ fn the_overlaid_state_is_kept_until_a_set() {
     db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER)").unwrap();
     let s = db.session("APP");
     let published = db.snapshot().unwrap();
-    assert!(Arc::ptr_eq(&s.current_state().unwrap(), &published), "no setting of its own, no copy");
+    let plain = s.current_state().unwrap();
+    // Its own copy of the published state (RULES.md D780), no overlay.
+    assert!(Arc::ptr_eq(&s.current_state().unwrap(), &plain), "no setting of its own, no copy made again");
+    assert_eq!(plain.generation, published.generation);
     s.run("SET MEMORY.WORK_BYTES = 131072").unwrap();
     let first = s.current_state().unwrap();
-    assert!(!Arc::ptr_eq(&first, &published));
+    assert!(!Arc::ptr_eq(&first, &plain));
     assert!(Arc::ptr_eq(&s.current_state().unwrap(), &first), "kept for the next statement");
     assert_eq!(work(&first), bytes(131_072));
     s.run("SET MEMORY.WORK_BYTES = 262144").unwrap();
