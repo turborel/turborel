@@ -28,14 +28,14 @@ mod activity;
 mod changed;
 mod served;
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::TxId;
 use crate::error::{Code, Result, SqlError, Warnings};
-use crate::sync::lock_builtin;
+use crate::hash::xxhash::Xxh3Map;
+use crate::sync::{Alone, lock_builtin};
 
 pub use activity::{Activity, Now, Tallied, Tallies, Tally, Waiting};
 pub(crate) use changed::Changed;
@@ -257,22 +257,26 @@ impl Drop for Window<'_> {
 /// on many threads at once seldom take the same lock.
 const STOP_SHARDS: u64 = 32;
 
+/// One shard of `Stops`.
+type StopShard = Alone<Mutex<Xxh3Map<TxId, Arc<Stop>>>>;
+
 /// \[DESIGN\] What cancels the statements of each open transaction, for a
-/// plan's scans to look at: in `STOP_SHARDS` shards, by transaction id.
+/// plan's scans to look at: in `STOP_SHARDS` shards, by transaction id,
+/// each alone on its cache lines (RULES.md D782).
 pub(crate) struct Stops {
-    shards: Vec<Mutex<HashMap<TxId, Arc<Stop>>>>,
+    shards: Box<[StopShard]>,
 }
 
 impl Default for Stops {
     fn default() -> Self {
-        Stops { shards: (0..STOP_SHARDS).map(|_| Mutex::new(HashMap::new())).collect() }
+        Stops { shards: (0..STOP_SHARDS).map(|_| Alone(Mutex::default())).collect() }
     }
 }
 
 impl Stops {
     /// The shard of `tx`, if there is one.
-    fn shard(&self, tx: TxId) -> Option<&Mutex<HashMap<TxId, Arc<Stop>>>> {
-        usize::try_from(tx % STOP_SHARDS).ok().and_then(|at| self.shards.get(at))
+    fn shard(&self, tx: TxId) -> Option<&Mutex<Xxh3Map<TxId, Arc<Stop>>>> {
+        usize::try_from(tx % STOP_SHARDS).ok().and_then(|at| self.shards.get(at)).map(|shard| &shard.0)
     }
 
     /// Notes `stop` as what cancels `tx`'s statements.

@@ -496,6 +496,9 @@ verification approach DO-178C expects (§8).
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
 | D780 | A session keeps its own copy of the definitions' snapshot, taken again only once one is published |
 | D781 | A prepared statement keeps its own copy of what its place keeps, copied again only once the place changes |
+| D782 | What every transaction writes is alone on its cache lines, apart from what others read |
+| D783 | A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there |
+| D784 | A table's open transactions are kept in shards, by id, each alone on its cache lines |
 
 ### The project
 
@@ -13867,6 +13870,59 @@ and found by the other sessions at their next execution, which copies it
 then. A place shared keeps its point: a plan is bound, planned and
 learned once for all the sessions. The copy is behind a lock of the
 statement's own, which no other session takes.
+
+#### D782. What every transaction writes is alone on its cache lines, apart from what others read
+
+A counter every transaction writes shared its cache line with fields
+every transaction reads. The count of active transactions sat beside the
+clock and the table of what cancels each transaction's statements. The
+clock's counter of ids sat beside the durable timestamp every snapshot
+reads. So a transaction beginning took the line from every other
+transaction reading the field beside it, though they shared no data.
+
+So each such value is alone on its cache lines (`sync/alone.rs`):
+`Alone` aligns a value to 128 bytes and pads it out, as some processors
+fetch lines in pairs. The clock's counters of ids and commits, its
+stable and durable timestamps, the count of active transactions, and
+each shard of what cancels the statements of open transactions are
+alone. The shards are found by an XXH3 map of their own, not SipHash.
+Nothing changes in what they hold or when, only where they lie.
+
+#### D783. A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there
+
+A transaction joining a table made the list its changes spill to at
+once, reading the store's work areas under their lock and copying their
+`Arc`. Committing there, it made another list for the rows to stamp,
+and stored its status. A transaction that claimed no status, a reader,
+took the lock of the statuses' map for writing to find it was not there.
+A reader thus wrote the work areas' lock and count, and the map's lock,
+at each transaction, for nothing it kept.
+
+So a transaction's list of changes is given the work areas only as its
+first change is pushed (`mvcc.rs`, `Open::changes_in`). A commit in a
+table where it changed nothing stores its status alone, with no list. A
+status claimed in no slot is looked for in the map only when the map
+holds one (`mvcc/status.rs`). The latest snapshot and the horizon the
+statuses keep are each alone on their lines, so raising one moves no
+line a commit reads the slots by.
+
+#### D784. A table's open transactions are kept in shards, by id, each alone on its cache lines
+
+A table kept the bookkeeping of the transactions open in it in one map
+under one lock. Every transaction took it for writing to begin and to
+end there, and every read of a row took it to find its bookkeeping. So
+every reader of a table wrote the lock's count of readers at each row
+it read, and waited behind every begin and end.
+
+So the map is in shards (`mvcc/opens.rs`), 32, chosen by the
+transaction's id, each under its own lock, alone on its lines with a
+count of what it holds. Transactions running at once fall in different
+shards, as ids are given in turn, so one's begin, reads and end take no
+line another's do. What asks of every transaction open in the table,
+the newest but one or the oldest, for versions undone changes appended,
+looks at each shard in turn. A transaction beginning while it looks did
+not read what it is asked for. Whether any is open, which every
+transaction's end may ask, is read from the counts alone, with no lock.
 
 ## 2. Project layout
 
