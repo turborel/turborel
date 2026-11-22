@@ -108,7 +108,8 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Parallel(..)
+        | Plan::Transfer(_) => None,
         // An analyzed plan's count of an operator's rows passes them on.
         Plan::Counted(_) => Some((column, false)),
     }
@@ -159,6 +160,7 @@ fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::Parallel(..)
         | Plan::SemiJoin(_)
         | Plan::MarkJoin(_)
+        | Plan::Transfer(_)
         | Plan::Counted(_) => None,
     }
 }
@@ -307,7 +309,8 @@ fn below(plan: &Plan) -> Option<&Plan> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..) => None,
+        | Plan::Parallel(..)
+        | Plan::Transfer(_) => None,
     }
 }
 

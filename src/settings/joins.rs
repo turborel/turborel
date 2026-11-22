@@ -4,7 +4,9 @@
 //! of each operand by order may be a range join (`physical/range.rs`,
 //! RULES.md D582); whether a grouping may be streamed (D550,
 //! `physical/streamed.rs`); and how far an estimate is distrusted as a
-//! join's method is chosen (`physical/robust.rs`).
+//! join's method is chosen (`physical/robust.rs`); and whether a chain's
+//! leaves may be read first, each filtered by Bloom filters of the keys
+//! of the others, before its joins (`physical/transfer.rs`, D665).
 
 use super::builtin::{SESSION, count, defined, text};
 use super::{Definition, Key, Kind, ON, SWITCHES};
@@ -24,6 +26,8 @@ pub const STREAMED_GROUPING: Key = Key(90);
 /// PLANNER.ESTIMATE_MARGIN, at its key's place after the streamed groupings'
 /// setting (RULES.md D386).
 pub const ESTIMATE_MARGIN: Key = Key(91);
+/// PLANNER.PREDICATE_TRANSFER.
+pub const PREDICATE_TRANSFER: Key = Key(95);
 
 /// The most connected subgraphs the budget may be: a million, past which
 /// exact DP's table outgrows a planner's memory for one statement.
@@ -78,5 +82,14 @@ pub(super) fn margin() -> Definition {
         ("PLANNER.ESTIMATE_MARGIN", Kind::Number { min: 1.0_f64, max: MOST_ESTIMATE_MARGIN }, Value::Approx(DEFAULT_ESTIMATE_MARGIN)),
         SESSION,
         "How many times its estimated rows the planner takes a join's operand to give at worst, at most the bound its statistics prove, as it weighs probing an index for each of them against hashing: it takes the method whose cost is nearest the cheapest at both. 1 trusts the estimate alone.",
+    )
+}
+
+/// PLANNER.PREDICATE_TRANSFER, at its key's place after the others.
+pub(super) fn predicate_transfer() -> Definition {
+    defined(
+        ("PLANNER.PREDICATE_TRANSFER", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether a chain of inner hash joins and LEFT joins may first read its tables in turn, each filtered by Bloom filters of the join keys of the tables read before it, from the smaller tables to the largest and back, so a selective condition on any table shrinks the others before they are joined. OFF joins them as planned, as to compare the two.",
     )
 }

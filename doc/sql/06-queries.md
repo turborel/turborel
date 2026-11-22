@@ -273,6 +273,24 @@ and only ORDER BY sets their order. A
 condition that could raise an error keeps the nested loop. SET
 PLANNER.RANGE_JOINS = 'OFF' turns range joins off.
 
+A hash join tells the table it probes with which keys its built rows
+have, so the probing table's rows no key matches are dropped as they are
+read. Predicate transfer sends such filters the other way too. Before
+the joins of a chain of hash joins and LEFT joins run, its tables are read in turn,
+from the smaller ones to the largest and back, along the joins between
+them, each read filtered by the keys of the tables read before it. A
+selective condition on the largest table then shrinks the tables it is
+joined with before they are built, and so does one two joins away. The
+planner reads a chain so only where each filter is expected to drop at
+least half the rows of the table it filters, and the rows dropped are
+worth more than the filters cost. A LEFT join's preserved table is
+never filtered by the table that supplies its nulls. The rows read are held within
+MEMORY.WORK_BYTES, a table past it read again with its filters. The
+rows, and their order, are the same either way. A chain of a condition
+that could raise an error, one under FETCH FIRST without ORDER BY, and
+one run in parallel are joined as planned. SET
+PLANNER.PREDICATE_TRANSFER = 'OFF' turns it off.
+
 An equality repeated in each operand of an OR joins its tables as if
 written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =
 'B2')` is a join on `P.K = L.K`, not a product filtered afterward. Each
