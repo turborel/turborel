@@ -3,8 +3,9 @@
 //! its record holds them, the batches read kept, a version narrowed to its
 //! record, a record's columns decoded as asked and written in place, a
 //! file log's record taken out of its reader, character strings compared
-//! byte by byte, padded, and zones kept due resting after a pass over
-//! every zone.
+//! byte by byte, padded, zones kept due resting after a pass over every
+//! zone, an update's log record written in place, and a scan's batch
+//! given room for its rows at once.
 
 use super::super::{Mutation, Package};
 
@@ -14,11 +15,13 @@ const UNDO_FILE: &str = "src/engine/rows/undo.rs";
 const COMPARISON_FILE: &str = "src/value/comparison.rs";
 /// The unit test of batches read back.
 const READ_BACK: &str = "engine::rows::undo::tests::batched_versions_read_back_as_appended";
+/// The test of an update's images in its log record.
+const UPDATE_IMAGES: &str = "log::record::images::tests::an_update_logs_the_columns_it_changed";
 /// The unit test of padded comparison.
 const PADDED: &str = "value::comparison::strings::shorter_string_padded_with_spaces";
 
 /// Mechanisms of the row store's reads without copies whose removal must fail their tests.
-pub const ALLOC: [Mutation; 9] = [
+pub const ALLOC: [Mutation; 12] = [
     Mutation {
         name: "alloc-undo-span-length",
         package: Package::Core,
@@ -108,5 +111,35 @@ pub const ALLOC: [Mutation; 9] = [
         replacement: "",
         integration: &[],
         unit: &["engine::record::tests::records_are_appended_and_a_failed_one_leaves_none"],
+    },
+    Mutation {
+        name: "alloc-update-image-kept",
+        package: Package::Core,
+        breaks: "an update's record keeps of its row before every column, changed or not",
+        file: "src/log/record/images.rs",
+        original: "            out.truncate(mark);\n",
+        replacement: "",
+        integration: &[],
+        unit: &[UPDATE_IMAGES],
+    },
+    Mutation {
+        name: "alloc-update-image-uncounted",
+        package: Package::Core,
+        breaks: "an update's record tells none of the columns of its row before it wrote",
+        file: "src/log/record/images.rs",
+        original: "        place.copy_from_slice(&count.to_le_bytes());",
+        replacement: "        place.copy_from_slice(&0_u32.to_le_bytes());",
+        integration: &[],
+        unit: &[UPDATE_IMAGES],
+    },
+    Mutation {
+        name: "alloc-batch-unreserved",
+        package: Package::Core,
+        breaks: "a scan's batch grows its integers from none by doubling as it gathers them",
+        file: "src/engine/rows/gathered.rs",
+        original: "                Gathered::Ints { units, .. } => units.reserve(more),",
+        replacement: "                Gathered::Ints { .. } => {}",
+        integration: &[],
+        unit: &["engine::rows::gathered::tests::a_batch_has_room_for_its_rows_at_once"],
     },
 ];

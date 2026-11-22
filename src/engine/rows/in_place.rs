@@ -54,6 +54,7 @@ impl RowTable {
     /// Gathers into `gathering` the rows `reader` sees of `entries`, until
     /// it holds `rows` or none is left.
     fn fill(&self, entries: &mut Ranged, reader: Reader, (gathering, rows): (&mut Gathering, usize)) -> Result<()> {
+        gathering.reserve(rows);
         while gathering.rows() < rows {
             let visited = entries.visit(|newest| self.in_place(newest, reader, (gathering, rows)))?;
             match visited {

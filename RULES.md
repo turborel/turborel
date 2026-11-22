@@ -525,6 +525,7 @@ verification approach DO-178C expects (§8).
 | D810 | A checkpoint tells how long it took, how long writers waited for it, and the pages it wrote |
 | D811 | A commit closes its side file and writes its file in runs of granules |
 | D812 | The checkpoint job spreads its commits over three quarters of the time since the last checkpoint |
+| D822 | An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them |
 
 ### The project
 
@@ -14431,6 +14432,25 @@ power-loss protection and one without. Three quarters gave the flattest
 work going on on both, so the best does not move with the drive and it
 is a constant, not a setting. A quarter of the time is left before the
 next checkpoint is due, and a next one due sooner only starts later.
+
+#### D822. An update's log record writes the columns it changed in place, and a scan's batch has room for its rows before it gathers them
+
+An update's log record (D475) wrote each column of the row before into a
+vector of its own to compare it with the row after, and the columns that
+changed into a second vector, copied into the record at its end. A scan's
+batch gathered from records in place (D31) began each batch's vectors
+empty, as the last batch took them, and grew them by doubling to the
+rows asked for.
+
+So the row before's columns are written straight into the record after
+the count, each taken back again if its bytes are those it has after,
+and the count is written last into its place (`log/record/images.rs`).
+A batch reserves room in each column's vector for the rows it is asked
+for before it gathers them (`Gathering::reserve`). A batch is at most
+`BATCH_ROWS` rows, so the room is bounded, and a scan that stops short
+of it leaves only that room unused. In a TPC-C profile at 2 users they
+were among the allocation sites outside planning, with the log's
+update images the largest.
 
 ## 2. Project layout
 
