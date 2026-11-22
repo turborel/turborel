@@ -65,7 +65,7 @@ use crate::txn::TxId;
 use crate::value::Value;
 
 pub use db::{Db, Opening, Slots};
-pub use entries::{Entries, row_entries, table_entries};
+pub use entries::{Entries, is_table_access, row_entries, table_entries};
 pub(crate) use eval::{Escape, like_escape};
 pub use eval::{Heard, eval, eval_cond, quantified, warn};
 pub use held::{HeldIter, HeldRows, Holdable};
@@ -483,8 +483,8 @@ mod tests {
         }
     }
 
-    /// Verifies: [DESIGN] `row_entries` refuses a plan that is not a table
-    /// access with SQLCODE -910.
+    /// Verifies: [DESIGN] RULES.md D775: `row_entries` refuses a plan that
+    /// is not a table access, whose rows hold no row id, with SQLCODE -910.
     #[test]
     fn row_entries_needs_a_table_access() {
         let st = Arc::new(state());

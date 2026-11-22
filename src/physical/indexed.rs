@@ -28,8 +28,9 @@ use super::estimate::Known;
 use super::join::Flip;
 use super::robust::{Linear, choose, pessimistic};
 use super::shown::Shown;
-use super::{JoinComparison, JoinProbe, PhysicalPlanner, Plan, Preserved};
+use super::{JoinComparison, JoinProbe, OuterBound, PhysicalPlanner, Plan, Preserved, Ranged};
 
+mod bounded;
 mod coordinates;
 mod expand;
 mod fan_out;
@@ -38,9 +39,11 @@ pub(super) use fixed::Fixed;
 mod probed;
 mod routed;
 mod spatial;
+mod typed;
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
 use crate::index::IndexMethod;
 use crate::logical::{Cond, Expr, LogicalPlan, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr};
+use crate::storage::TableStorage;
 use crate::value::datetime::{Datetime, Moment};
 use crate::value::interval::Interval;
 use crate::value::{Binary, CompOp, DataType, Decimal, Value};
@@ -71,6 +74,11 @@ pub(super) struct Probing {
     /// Of a probe of other columns than the key's first, each used key's
     /// place in the index's key (`indexed/expand.rs`).
     positions: Option<Vec<usize>>,
+    /// The bounds of the key column after those the equalities give that
+    /// the outer row gives, if any, and the conjuncts they answer, over the
+    /// join's columns (`indexed/bounded.rs`).
+    bounds: Vec<OuterBound>,
+    bounded: Vec<Cond>,
 }
 
 /// Whether values of a left column are of the kind of an indexed column's
@@ -132,6 +140,8 @@ pub(super) fn index_join(mut probing: Probing, join: Equijoin<'_>, (left, rows):
     let of_table = |c: usize| c.checked_sub(width).map_or(Some(c), |at| columns.get(at).map(|&t| t.saturating_add(width)));
     let keys: Vec<(usize, usize)> = join.keys.iter().map(|&(l, r)| (l, columns.get(r).copied().unwrap_or(r))).collect();
     let rest = join.rest.into_iter().map(|c| map_cond_columns(c, &|i| of_table(i).unwrap_or(i))).collect();
+    probing.bounded =
+        std::mem::take(&mut probing.bounded).into_iter().map(|c| map_cond_columns(c, &|i| of_table(i).unwrap_or(i))).collect();
     let joined_names = shown.names().map(|names| {
         let mut joined: Vec<String> = names.iter().take(width).cloned().collect();
         joined.extend(table_names);
@@ -177,7 +187,7 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
     let unused = join.keys.iter().enumerate().filter(|(k, _)| !probing.used.contains(k)).map(|(_, key)| equal(key));
     let filter = probing.filter.map(|c| map_cond_columns(c, &|i| i.saturating_add(width)));
     let cond = and_all(join.rest.into_iter().chain(unused).chain(filter).collect()).map(judged_by_sets);
-    let probed = probing.used.iter().filter_map(|&k| join.keys.get(k)).map(equal);
+    let probed = probing.used.iter().filter_map(|&k| join.keys.get(k)).map(equal).chain(probing.bounded);
     let detail = shown.text(|names| and_all(probed.chain(cond.clone()).collect()).map(|c| render_cond(&c, names)).unwrap_or_default());
     Plan::IndexJoin {
         outer: join.outer.preserved(),
@@ -186,11 +196,14 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
         table: probing.table,
         index: probing.index.into(),
         method: probing.method.into(),
-        probe: match probing.positions {
-            Some(at) => {
+        probe: match (probing.positions, probing.bounds.is_empty()) {
+            (Some(at), _) => {
                 JoinProbe::Columns(keys.iter().zip(at).map(|(&outer, column)| JoinComparison { column, op: CompOp::Eq, outer }).collect())
             }
-            None => JoinProbe::Prefix(keys.into_boxed_slice()),
+            (None, true) => JoinProbe::Prefix(keys.into_boxed_slice()),
+            (None, false) => {
+                JoinProbe::Range(Box::new(Ranged { equal: keys.into_boxed_slice(), bounds: probing.bounds.into_boxed_slice() }))
+            }
         },
         cond,
         width: probing.width,
@@ -217,14 +230,28 @@ impl PhysicalPlanner<'_> {
         keys: &[(usize, usize)],
         read: &Plan,
     ) -> Option<(Probing, f64)> {
+        self.probed_bounded((left, right), (keys, Vec::new()), read).map(|(probing, rows, _)| (probing, rows))
+    }
+
+    /// As `probed_instead`, the key's column after those `keys` probe
+    /// bounded by the conjuncts of `rest`, over the join's columns, that
+    /// compare it with an outer value (`indexed/bounded.rs`); and the
+    /// conjuncts of `rest` left to judge of the pairs.
+    pub(super) fn probed_bounded(
+        &self,
+        (left, right): (&LogicalPlan, &LogicalPlan),
+        (keys, rest): (&[(usize, usize)], Vec<Cond>),
+        read: &Plan,
+    ) -> Option<(Probing, f64, Vec<Cond>)> {
         let of_kind = |l: usize, t: &DataType| self.column_type(left, l).is_some_and(|lt| alike(&lt, t));
-        let probing = self.probing(right, keys, &of_kind)?;
+        let type_at = |l: usize| self.column_type(left, l);
+        let (probing, rest) = self.bounded(self.probing(right, keys, &of_kind)?, rest, (left.width(), &type_at));
         let card = self.card(left);
         let hash = self.hash_linear((left, right), (read, access_cost(read)?));
         let index = Linear { fixed: 0.0_f64, per_row: probing.cost };
         let worst = pessimistic(card.rows, card.upper, self.weights().estimate_margin);
         let probes = choose(&[(false, hash), (true, index)], (card.rows, worst)).unwrap_or(false);
-        probes.then_some((probing, card.rows))
+        probes.then_some((probing, card.rows, rest))
     }
 
     /// The cheapest index of the table `right` reads, filtered by a
@@ -241,11 +268,7 @@ impl PhysicalPlanner<'_> {
         let desc = self.db.catalog.table(table)?;
         // [EXTENSION] a partitioned table's are its partitions' and its
         // global ones (`indexed/routed.rs`, RULES.md D156).
-        let (storage, candidates) = if self.db.catalog.partitioning().is_partitioned(table) {
-            self.routed_candidates(table).filter(|_| !located)?
-        } else {
-            (Arc::clone(self.db.storage_of(table).ok()?), self.own_candidates(table))
-        };
+        let (storage, candidates) = self.candidates(table, located)?;
         let (model, stats) = (self.weights(), self.statistics(table));
         let known = Known { stats: stats.as_deref(), cost: &model };
         let (rows, columns) = (self.table_rows(table)?, expand::kept(&desc.columns, filter));
@@ -283,6 +306,8 @@ impl PhysicalPlanner<'_> {
                     needed: needed.to_vec(),
                     located,
                     positions: reverse.then(|| at.clone()),
+                    bounds: Vec::new(),
+                    bounded: Vec::new(),
                 });
             }
         }
@@ -291,6 +316,16 @@ impl PhysicalPlanner<'_> {
 
     /// The indexes of `table`, not partitioned, a probe may read: those
     /// not being built.
+    /// The storage of `table` and the indexes a probe of it may read: of a
+    /// partitioned table, its partitions' and its global ones, unless each
+    /// row found is followed by its id, as `located` says.
+    fn candidates(&self, table: &QualifiedName, located: bool) -> Option<(Arc<dyn TableStorage>, Vec<Candidate>)> {
+        if self.db.catalog.partitioning().is_partitioned(table) {
+            return self.routed_candidates(table).filter(|_| !located);
+        }
+        Some((Arc::clone(self.db.storage_of(table).ok()?), self.own_candidates(table)))
+    }
+
     fn own_candidates(&self, table: &QualifiedName) -> Vec<Candidate> {
         let usable = self.db.catalog.indexes(table).into_iter().filter(|ix| !self.db.building.contains(&ix.name));
         usable
@@ -309,49 +344,6 @@ impl PhysicalPlanner<'_> {
     /// count them, else its table's rows, as if a key.
     pub(super) fn distinct_of(&self, plan: &LogicalPlan, column: usize) -> f64 {
         self.estimating(|e| e.distinct(plan, column))
-    }
-
-    /// The type of `plan`'s column `column`, if it is a table's column.
-    pub(super) fn column_type(&self, plan: &LogicalPlan, column: usize) -> Option<DataType> {
-        match plan {
-            LogicalPlan::Scan { table, .. } => self.db.catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),
-            LogicalPlan::Filter { input, .. }
-            | LogicalPlan::Distinct { input }
-            | LogicalPlan::Sort { input, .. }
-            | LogicalPlan::Limit { input, .. }
-            | LogicalPlan::SemiJoin { left: input, .. } => self.column_type(input, column),
-            LogicalPlan::MarkJoin(m) => match column.checked_sub(m.left.width()) {
-                Some(_) => Some(DataType::Boolean),
-                None => self.column_type(&m.left, column),
-            },
-            LogicalPlan::Product { left, right } | LogicalPlan::OuterJoin { left, right, .. } => match column.checked_sub(left.width()) {
-                Some(of_right) => self.column_type(right, of_right),
-                None => self.column_type(left, column),
-            },
-            LogicalPlan::Project { exprs, input } => {
-                // A constant or slot a filter fixes, made a column (`indexed/fixed.rs`).
-                let e = exprs.get(column)?;
-                if let Expr::Dynamic(slot) = e {
-                    return Some(slot.data_type.clone());
-                }
-                if let Expr::Const(value) = e {
-                    return crate::exec::slot_type(value);
-                }
-                let Expr::Column(c) = e else { return None };
-                self.column_type(input, *c)
-            }
-            LogicalPlan::Values { types, .. } => types.get(column).cloned(),
-            LogicalPlan::Aggregate { .. }
-            | LogicalPlan::SetOp { .. }
-            | LogicalPlan::System { .. }
-            | LogicalPlan::Recursive { .. }
-            | LogicalPlan::Unnest(..)
-            | LogicalPlan::Window(..)
-            | LogicalPlan::Recognize(..)
-            | LogicalPlan::Polymorphic(..)
-            | LogicalPlan::WorkTable { .. }
-            | LogicalPlan::Transition { .. } => None,
-        }
     }
 }
 

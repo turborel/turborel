@@ -84,6 +84,7 @@ mod savepoints;
 mod search_cycle;
 mod sequences;
 mod server;
+mod set_probes;
 mod shadow;
 mod short_names;
 mod simple_features;

@@ -498,6 +498,11 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D773 | A comparison with an uncorrelated subquery of one row at most is a semi join with its row |
+| D774 | A semi join of a few right rows probes the left's table from them, by the distinct values its equalities compare |
+| D775 | The object rows of a searched UPDATE or DELETE may be a semi join, which keeps the table's rows alone |
+| D776 | An index join bounds the key's column after its equalities by values of the outer row |
+| D777 | An UNNEST is estimated by its collections' elements, when each is a constant, a slot whose value is given or a constructor of its values |
 | D785 | A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area |
 | D786 | A search keeps a decoded key only once a second entry has its bytes |
 | D787 | A projection of columns each named once, in ascending order, is made in the row it is given |
@@ -509,6 +514,9 @@ verification approach DO-178C expects (§8).
 | D782 | What every transaction writes is alone on its cache lines, apart from what others read |
 | D783 | A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there |
 | D784 | A table's open transactions are kept in shards, by id, each alone on its cache lines |
+| D805 | A pool finds its files with no lock and no reference count moved |
+| D795 | A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes |
+| D796 | A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
 | D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
 
@@ -13889,6 +13897,130 @@ request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
 
+#### D773. A comparison with an uncorrelated subquery of one row at most is a semi join with its row
+
+DELIVERY takes the least new order of a district and deletes it, which a
+driver may write as one statement, `NO_O_ID = (SELECT MIN(NO_O_ID)
+...)`. The subquery was run once and its value compared with
+every row of the district's NEW_ORDER rows read whole, as no index probe
+was made of a value not known as planned. A conjunct of WHERE or HAVING
+that compares a value of the row with a column of an uncorrelated scalar
+or row subquery is true of a row exactly when the subquery has a row and
+the comparison with it is true: of no row the value is null and the
+comparison unknown [X3.135-1986 §5.11 GR1, §5.24 GR2]. So, of a subquery
+that gives one row at most by its shape, an ungrouped set function's or
+one fetched first (`LogicalPlan::one_row_at_most`), the node's rows are
+those of the semi join of its input with the subquery's rows on the
+comparisons (`optimizer/unnesting/scalar.rs`). A subquery that could give
+more would raise its cardinality error, which no join raises, so it is
+left. As the other semi joins are (D541), it is made only of a pure
+subquery that cannot raise, and of comparisons that cannot, and the
+subquery may stand nowhere else in the condition. Of several such
+subqueries the right is the product of their rows, itself one row at
+most, so that STOCK-LEVEL's `OL_O_ID < (...) AND OL_O_ID >= (...)`
+bounds one probe from both sides. The planner then probes the input's
+index from the subquery's row (D774), by an equality or as a range of
+keys (D776).
+
+#### D774. A semi join of a few right rows probes the left's table from them, by the distinct values its equalities compare
+
+A semi join probed an index of the right's table from the left's rows
+when those were few (D540), but a set of a few keys, an IN of a
+subquery of UNNEST or of VALUES or an EXISTS equating the key with an
+array's elements, is the right, and the left read its table whole to hash
+it or probe it. A semi join's rows are the left's rows some right row
+matches, each once. Of a right of one row at most, they are the left's
+rows of the inner join of the right with the left on the condition. Of a
+condition whose conjuncts that read the right are each an equality of a
+left column and a right one, they are the left's rows of the inner join
+of the distinct values of the right's columns compared with the left: a
+left row's values make the one row of them it matches. That join is
+planned as any inner join, its index probes priced against the read of
+the left's table they replace (D35, D386), and taken when it probes an
+index of the left's table from each of its rows (`physical/semi/probed.rs`);
+else the semi join is planned as before. An antijoin is not, as the rows
+it keeps are those no probe finds. Its rows come in no order of the left's.
+
+Three judgements kept such a semi join from being made, or its probes
+from being typed. An array constructor by enumeration raises nothing, as
+its elements are cast as bound and their number checked then [ISO/IEC
+9075-2:2023 §6.49 SR2, GR2], so it no longer keeps a subquery nested
+(`functions/arrays.rs`). A CAST of a constant raises only what casting
+that constant raises, judged as it is planned (`logical/raises.rs`).
+And a column of a projection, of an UNNEST or of a grouping has the
+declared type of the expression, the collection's element or the
+aggregate that gives it, where those are known
+(`physical/indexed/typed.rs`), so a probe compares a key with a value of
+its type.
+
+#### D775. The object rows of a searched UPDATE or DELETE may be a semi join, which keeps the table's rows alone
+
+The object rows of a searched UPDATE or DELETE were planned with every
+subquery left nested (D318), so a join would not make the plan other than
+an access to the table changed. An IN of a few keys' subquery, or an
+EXISTS of one, was then run for each row of the table, and the plan read
+the table whole. A semi join's rows are its left's alone, each once, so
+they are the object rows the condition selects. These plans are now
+optimized with the semi joins (D541, D773) made, and the others still
+left (`db/compiled.rs`, `plan_written`), so the table's index is probed
+from the few keys (D774). No access to the table reads the rows such a
+plan keeps, so their ids are not given with them. A plan that is no
+table access is planned again of the object table's scan located, each
+row followed by its id (`storage::located`), which the semi joins,
+filters and projections over it keep last (`db/compiled/located.rs`).
+Its rows are read and the ids taken off them (`exec/entries.rs`). A
+plan whose object scan lies under another node is planned as before. An
+updatable cursor's plan is planned as before.
+
+#### D776. An index join bounds the key's column after its equalities by values of the outer row
+
+STOCK-LEVEL's join of DISTRICT and ORDER_LINE equates the warehouse and
+the district and keeps the lines of `OL_O_ID < D_NEXT_O_ID AND OL_O_ID >=
+D_NEXT_O_ID - 20`, a few orders' lines of the district's many. A
+probe of the equalities alone read every line of the district, each then
+judged by the bounds. Where the index's next column after those its
+equalities give is compared by order with an outer column, or with a sum
+or difference of one and a constant that raises nothing by the declared
+types (D373), the probe reads the keys between the bounds alone
+(`JoinProbe::Range`, `physical/indexed/bounded.rs`). A bound is taken
+only of a column of exact numbers or datetimes, of the outer value's
+kind, whose comparison the index's order answers exactly [X3.135-1986
+§5.11 GR2, GR5], so the conjuncts it answers are judged of no pair again;
+a null bound matches no key, as its comparison is unknown. Each bound
+keeps the default share of a range of the rows the equalities find, and
+the probes are priced so against the read they replace. Two bounds of
+one outer column, as `D_NEXT_O_ID - 20` and `D_NEXT_O_ID`, keep instead
+the share their constants' distance is of the column's distinct values.
+A kept plan may hold such a join (D418).
+
+Four steps bring such a join to the probe. A filter over a product, and
+a join's condition, that raises nothing by its columns' declared types
+is split among the operands and hashed as any (D15, D373), where the
+judgement by expressions alone kept it whole. A column the inner table's
+own filter fixes makes an index's prefix also where the index's next
+column is bounded by the outer row (D761, `physical/indexed/fixed.rs`),
+as the order of a subquery's row bounds it. A join enumerated with no
+equality of two columns stated takes those implied (D387), so the
+bounds' table may still be probed by key (`enumerate/realize.rs`). And a
+range join is priced against the probes too, the columns the inner
+table's filter fixes among their keys, net of the inner table's read
+they replace, as the range join's own price leaves its operands' reads
+out (`physical/range/planned.rs`).
+
+#### D777. An UNNEST is estimated by its collections' elements, when each is a constant, a slot whose value is given or a constructor of its values
+
+An UNNEST was estimated at `UNNEST_FANOUT` rows for each row of its input,
+whatever its collections held, so the probes of a few host arrays' keys
+were weighed at rows the arrays did not have. Of collections that are
+each a constant array or multiset, or a slot whose value the planner is
+given, as a prepared statement's or a kept body's are (D45, D414), or a
+constructor by enumeration, whose elements are as many as its values
+[ISO/IEC 9075-2:2023 §6.49 GR2, §6.52 GR2], the estimate is each input
+row times the elements of the longest, a null one none [§7.6 SR8f,
+SR8h], and at least one
+(`physical/cardinality/nodes.rs`). A JSON table and GRAPH_TABLE, planned
+as UNNEST is, keep the default.
+
 #### D785. A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area
 
 A grouping by no column has one group, even of no rows [X3.135-1986
@@ -13969,6 +14101,7 @@ plan is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, as
 before. A probe plan is kept from the first run even when decorrelation
 is due before a plan could be learned, since a unique probe needs no
 learning.
+
 #### D780. A session keeps its own copy of the definitions' snapshot, taken again only once one is published
 
 Each statement took the database's snapshot of its definitions by
@@ -14021,11 +14154,14 @@ reads. So a transaction beginning took the line from every other
 transaction reading the field beside it, though they shared no data.
 
 So each such value is alone on its cache lines (`sync/alone.rs`):
-`Alone` aligns a value to 128 bytes and pads it out, as some processors
-fetch lines in pairs. The clock's counters of ids and commits, its
-stable and durable timestamps, the count of active transactions, and
-each shard of what cancels the statements of open transactions are
-alone. The shards are found by an XXH3 map of their own, not SipHash.
+`Alone` aligns a value to 128 bytes and pads it out. The size is derived:
+a cache line is 64 bytes, and an adjacent-line prefetcher fetches lines
+in aligned pairs, so a write to either line of a pair takes both. The
+clock's counters of ids and commits, its stable and durable timestamps,
+the count of active transactions, each shard of what cancels the
+statements of open transactions, and each shard of the transactions
+holding log records are alone. Their shards are found by an XXH3 map of
+their own, not SipHash.
 Nothing changes in what they hold or when, only where they lie.
 
 #### D783. A transaction that changed nothing in a table takes nothing its store's transactions share as it begins or commits there
@@ -14064,6 +14200,22 @@ looks at each shard in turn. A transaction beginning while it looks did
 not read what it is asked for. Whether any is open, which every
 transaction's end may ask, is read from the counts alone, with no lock.
 
+#### D805. A pool finds its files with no lock and no reference count moved
+
+Each page a pool writes, and each it reads from its file, finds the file
+by number. The files were kept behind one reader-writer lock, and the
+file's `Arc` was cloned out of it, so every such call wrote the lock's
+reader count and the file's reference count. Threads writing pages of
+different tables passed both cache lines between them: a profile of
+contended cache lines at 32 threads put it among the shared lines of
+row updates. Files are only ever added to a pool, so each is now set
+once in a slot never changed again: slots in chunks of 1,024 made as
+files are added, each chunk set once in a fixed table of 1,024
+(`disk/buffer/sources.rs`). A lookup loads two `OnceLock`s and borrows
+the file for as long as the pool lives. A pool registers at most
+1,048,576 files; one added past that is given a number no file has, so
+every use of it is refused.
+
 #### D815. A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock
 
 Between two requests of a fast client, its worker gave up its permit to
@@ -14084,10 +14236,60 @@ or its wait, which is at most `WAITED` away; a worker whose client does
 not come in time gives its permit up. The server's stage is a byte alone
 on its line beside the watch (`server/stage.rs`), written as the stage
 moves. Whether the connection's user is a user is asked of a snapshot
-only once one was published since it last was (`Database::publications`).
+only once one was published since it last was (`native/seen.rs`,
+`Database::publications`).
 A connection's state is an atomic its row shares, set with no lock.
 The session's settings told in Status are read from its own snapshot
 (D780).
+
+#### D795. A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes
+
+Every writing transaction's end took the lock of the database's set of
+tables awaiting collection twice, copied the set, and stored whether it
+held any. Each also stored the table's last change instant, lowered the
+table's earliest garbage timestamp with an atomic minimum, and asked
+whether a collection was due by taking the read lock of the table's open
+transactions. Each of these wrote a cache line every other writer then
+read. The flags every transaction reads (whether the database takes
+changes, whether tables await collection) sat beside counters every
+transaction writes, so reading them missed as well.
+
+Now a table carries whether it is in the set (`TableLock::noted`), kept
+with the set under its lock. An end that would leave the set as it is,
+a table not yet due left noted or a table gone left out, takes no lock,
+and the set is copied only while it holds any. Whether tables await
+collection, the change instant and the earliest timestamps are stored
+only when they change, and `due_at` asks whether a transaction is open
+in the table from D784's shard counts, with no lock. The database's
+flags every change reads (whether it takes changes, whether it is held,
+whether tables await collection) and the count of changes logged, which
+every commit raises, each sit alone on their cache lines (D782). The
+checkpoint's gate has 64 stripes, so threads at once seldom share one.
+
+What is collected, and when, is unchanged. A table passed over is still
+in the set for a later end to collect, and an end that collects it still
+asks under the lock whether garbage came meanwhile (D445).
+
+#### D796. A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once
+
+D741 parked an appender whose block was written before those ahead of
+it under its block's start, and the appender publishing up to it woke it
+alone. That one then published its own block and woke the next. A run of
+blocks written early was published one wake-up after another, each
+appender waiting for the one before to be scheduled. At 32 sessions on
+16 processors, one appender descheduled before its write stalled every
+appender after it, and about one context switch in three of oltp
+update_index was an appender parked there. The server then used fewer
+processors at 32 sessions than at 8, and committed fewer transactions.
+
+An appender whose block is written before those ahead of it now files
+the block, its end and its thread, and waits. The appender that
+publishes up to a filed block publishes it as well, and every filed
+block that follows on from it, under the lock of the filed blocks, and
+then wakes their appenders together. A run of blocks written early costs
+one wake-up's wait. An appender in turn publishes its block with one
+atomic step and takes the lock only when blocks are filed. The order in
+which blocks are published, and what a reader sees, is D30's.
 
 #### D806. A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged
 

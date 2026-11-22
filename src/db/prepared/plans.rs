@@ -446,7 +446,7 @@ impl Keeping<'_> {
                 point::written(self.st, w, (&plan, reads), slots)
             }
             None => {
-                let (_, _, plan) = super::super::plan_rows(self.st, w.rows.clone());
+                let (_, _, plan) = super::super::plan_written(self.st, w.rows.clone());
                 if !keepable(&plan, self.st) {
                     return self.learn_write(w, Learning::default(), slots);
                 }
@@ -467,9 +467,9 @@ impl Keeping<'_> {
     /// As `written`.
     fn learn_write(&self, w: Arc<BoundWrite>, was: Learning, slots: Slots) -> Result<Written> {
         let values = &*slots;
-        let (_, _, plan) = super::super::plan_rows(self.st, filled(w.rows.clone(), values)?);
+        let (_, _, plan) = super::super::plan_written(self.st, filled(w.rows.clone(), values)?);
         let reads: Arc<[QualifiedName]> = w.rows.tables().into();
-        let learned = was.after(&plan, super::super::plan_rows_slotted(self.st, w.rows.clone(), values));
+        let learned = was.after(&plan, super::super::plan_written_slotted(self.st, w.rows.clone(), values));
         let physical = learned.kept(&reads, self.st);
         self.keep(|k| k.physical = physical)?;
         Written::slotted(w, Some((plan, reads)), slots)

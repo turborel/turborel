@@ -346,6 +346,7 @@ mod select_into;
 mod sequences;
 mod serializable_stress;
 mod served;
+mod set_probes;
 mod set_statements;
 mod set_tables;
 mod settings;

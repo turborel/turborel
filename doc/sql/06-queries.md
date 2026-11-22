@@ -285,6 +285,21 @@ most as many as the statistics allow, since an estimate too low makes
 its probes far dearer than one hash join. PLANNER.ESTIMATE_MARGIN sets
 how many times; 1 trusts the estimate.
 
+A few keys given as a set probe the table's index once each, where the
+probes cost less than reading the table. An IN of a subquery, of a row
+value or of VALUES, and an EXISTS whose subquery equates the key with its
+own columns, probe once for each distinct key of the subquery's rows. A
+key compared with a subquery that gives one row at most, an ungrouped
+MIN or MAX or one fetched first, probes from that row, so `O = (SELECT
+MIN(O) ...)` reads one key, and `O >= (SELECT MAX(O) - 4 ...)` the keys
+from that bound on. A join whose condition bounds the key's next column
+after its equalities by the other table's values, as `L.O < C.NEXT AND
+L.O >= C.NEXT - 20` does, probes the keys between the bounds alone. An
+UNNEST of arrays is estimated by their elements, so a LEFT JOIN or a
+MERGE from a few array elements probes the key too, and a searched UPDATE
+or DELETE whose condition is one of these finds its rows the same way.
+EXPLAIN shows IndexNestedLoop, its probe's bounds among its conditions.
+
 A query whose select list is MIN and MAX alone, with no GROUP BY, needs
 the values of the columns those functions read, not how often a join
 repeats them. Once its joins are ordered, each join of a table nothing

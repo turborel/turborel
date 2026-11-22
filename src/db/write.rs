@@ -12,7 +12,7 @@ use super::generated::{Generating, Inserted, check_override};
 use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
 use super::routines::{Hosted, hosted_rows};
-use super::{Session, State, StatementContext, plan, plan_rows, rule, set_columns};
+use super::{Session, State, StatementContext, plan, plan_written, rule, set_columns};
 use crate::ast::{InsertSource, InsertStatement, QueryExpression, SelectList, SelectSublist};
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck, qualify};
 use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
@@ -428,7 +428,7 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
     let (physical, optimized) = match (kept, logical) {
         (Some((physical, _)), _) => (physical, None),
         (None, logical) => {
-            let (optimized, _, physical) = plan_rows(st, logical.unwrap_or_else(|| bound.rows.clone()));
+            let (optimized, _, physical) = plan_written(st, logical.unwrap_or_else(|| bound.rows.clone()));
             (physical, Some(optimized))
         }
     };
