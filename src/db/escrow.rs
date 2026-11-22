@@ -143,7 +143,7 @@ impl State {
             return Ok(Settled::Row(row, newest.stamp));
         }
         if let Some(writer) = newest.writer.filter(|_| wait) {
-            drop(tx.wait_for_row(&format_args!("a row of {table}"), writer)?);
+            drop(tx.wait_for_row((table, id), writer)?);
         }
         Ok(Settled::Again)
     }
