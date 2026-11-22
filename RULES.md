@@ -486,6 +486,7 @@ verification approach DO-178C expects (§8).
 | D699 | A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128 |
 | D740 | Commits waiting for a sync form a group whose leader syncs once for all, marks them durable in one pass and wakes each alone |
 | D741 | A log appender waiting for the blocks before its own to be published is woken alone, by the one that publishes up to it |
+| D743 | A row's waiters move, unwoken, to the end of the waiter that writes it next |
 | D745 | The undo store's batches in memory are found through shards locked for reading, with no lock all readers share |
 | D746 | Batches of older versions stay in memory once written, within a share of the budget, until no snapshot needs them |
 | D747 | A writer refused learns the row's writer and stamp with no older version read, and reads the row only to recheck it |
@@ -496,6 +497,9 @@ verification approach DO-178C expects (§8).
 | D767 | A connection's requests run on one thread of its own, its home |
 | D768 | Homes share the places of waiting workers, and retire once idle as long as the pool keeps a thread |
 | D769 | A request is handed to a home under one lock, which decides its retirement too |
+| D785 | A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area |
+| D786 | A search keeps a decoded key only once a second entry has its bytes |
+| D787 | A projection of columns each named once, in ascending order, is made in the row it is given |
 | D805 | A pool finds its files with no lock and no reference count moved |
 | D806 | A read by key that keeps its leaf reads a copy of it while the leaf's frame is unchanged |
 | D790 | A correlated subquery probed by a unique key is decorrelated only once its probes cost what its build would |
@@ -507,6 +511,7 @@ verification approach DO-178C expects (§8).
 | D795 | A transaction's end writes the shared collection state only when it changes, and what every transaction reads never shares a line with what every one writes |
 | D796 | A log appender whose block is written before those ahead of it files it, and whoever publishes up to it publishes every filed block that follows and wakes their appenders at once |
 | D815 | A fast client's request takes nothing every worker shares: the permit kept while none waits, the stage and the user read with no lock |
+| D792 | A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads |
 
 ### The project
 
@@ -13668,6 +13673,28 @@ fail too. The order of publication, and what a reader or a sync sees, are
 D30's as before. An appender is counted before it looks at the published
 end, under the lock a waker takes, so a publish after its look wakes it.
 
+#### D743. A row's waiters move, unwoken, to the end of the waiter that writes it next
+
+D442 and D449 queued a row's waiters on its writer's end and woke them
+one at a time once it ended. The first wrote the row and became its
+writer. Each waiter behind it then still woke in its turn, tried its
+write, found the first the row's new writer and queued again on its end.
+On a hot row, every writer's end woke every waiter in the line once,
+each only to sleep again.
+
+A waiter now sits in a seat of its own, which holds the row it would
+change and where it stands, an end and a ticket there. A waiter whose
+turn's write is made hands the seats behind it for the same row to its
+own end, in their order, without waking them (`Turn::hand_over`). Each
+then waits for it in the graph, as it would after waking to find it.
+Seats for other rows stay and go on as before. A seat whose wait on the
+new writer would deadlock stays too, to wake and find that itself. A
+waiter that gives up leaves the line its seat is in, wherever a
+hand-over moved it.
+
+This does not stop a transaction that never waited from writing the
+row first, between its writer's end and its first waiter's write.
+
 #### D745. The undo store's batches in memory are found through shards locked for reading, with no lock all readers share
 
 One lock guarded the undo store's batches (D31), the batch being gathered,
@@ -13836,6 +13863,51 @@ stops before it ran, retires as its thread's guard is dropped, dropping any
 request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
+
+#### D785. A grouping by no column, of set functions none DISTINCT, is made as its one group, with no key, hash or work area
+
+A grouping by no column has one group, even of no rows [X3.135-1986
+§5.23 GR1, §5.25 GR1]. It was made as any grouping. Each row was keyed,
+the key hashed and looked up in the pass's map, and the pass took a work
+area. A `SELECT SUM(k) ... WHERE id BETWEEN ? AND ?` paid that for each of
+its rows, though every row is of the one group.
+
+Such a grouping is now made whole (`exec/group/streamed.rs`, `whole`).
+Its set functions are fed each row as it comes, as a streamed group's are
+(D551), and finished at the end, of no rows too. Nothing is keyed, hashed
+or held. This holds whichever way the planner asked for the grouping,
+hashed or streamed.
+
+- A grouping with seeds (made before any row), or with a set function
+  that is DISTINCT or an inverse distribution, is still made by key. Those
+  need the key, the bag of values taken, or the sort of values.
+- The one row is made as it is first asked for, within that one ask, so
+  no set function's state outlives it (D551).
+
+#### D786. A search keeps a decoded key only once a second entry has its bytes
+
+A search kept the last key it decoded, and its bytes, so the entries of
+one key are decoded once (D501). It copied each key it decoded to keep it,
+though in a range of a unique key no second entry ever takes the copy.
+
+A search now keeps the bytes of the last key it decoded, and the key only
+once a second entry has those bytes (`index/blink.rs`, `Decoded`). The
+entries of a unique key are decoded and never copied. Entries of a key not
+unique are decoded twice, for the first two, and take the kept key after.
+What each entry is given is the same key as before.
+
+#### D787. A projection of columns each named once, in ascending order, is made in the row it is given
+
+A projection of columns alone took its values out of the row it was given
+into a new row (D31). Each row of an index range read for a few of its
+columns paid a second allocation and a free for that.
+
+A projection whose columns are each named once, in ascending order, now
+swaps them to the front of the row it is given and cuts the rest off
+(`exec/project.rs`, `in_place`). The column named `i`-th is at a place no
+earlier than `i`, and no later column is at a place before its own, so no
+swap moves a value still to be taken. Other projections make a row as
+before. A column past the row is refused the same way in both.
 
 #### D805. A pool finds its files with no lock and no reference count moved
 
@@ -14057,6 +14129,25 @@ is the leaf as it is. A copy that is no longer current is dropped and
 the leaf read again from the pool, and copied again if it answers.
 Reads of keys of other leaves copy nothing, so a probe of scattered
 rows costs no page copy.
+
+#### D792. A SELECT ... INTO of a kept program keeps the plan of the change its delta table reads
+
+A kept program's INSERT, searched UPDATE and searched DELETE keep their
+plans (D406). A SELECT ... INTO whose one table reference is the delta
+table of such a change ran that change bound and planned anew at each
+execution (`db/delta.rs`), though the change is the same statement each
+time, its values the frame's slots. That made binding and planning the
+largest cost of a body that reads what it changed, such as a stock or
+district update read back through FINAL TABLE.
+
+So such a SELECT ... INTO keeps its change's plan in the place the
+program keeps its own statements' plans (`routines/program/host.rs`).
+`select_into` passes those plans to the delta table's statement
+(`run_delta_table`), which runs it as the program would run it alone,
+by `Keeping` as a prepared statement's change. The SELECT around the
+delta table is still bound and planned as it runs, as its rows are the
+change's. A MERGE as the delta table's statement, or a SELECT ... INTO
+of other table references besides, keeps nothing, as before.
 
 ## 2. Project layout
 
