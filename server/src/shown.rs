@@ -30,7 +30,7 @@ mod attributes;
 mod requests;
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::watch;
@@ -49,8 +49,17 @@ pub(crate) use attributes::ConnectionAttributes;
 use attributes::application;
 pub(crate) use requests::{QueryAttribute, Requests, trace};
 
-/// The state of a connection whose statement runs.
-const RUNNING: &str = "RUNNING";
+/// The states of a connection, as CONNECTIONS names them: logging in,
+/// idle, running a statement; kept as their places here.
+const STATES: [&str; 3] = ["LOGIN", "IDLE", "RUNNING"];
+/// Of `STATES`, the place of idle and of running.
+const IDLE: u8 = 1;
+const RUNNING: u8 = 2;
+
+/// The state at `place` of `STATES`.
+fn state(place: &AtomicU8) -> &'static str {
+    STATES.get(usize::from(place.load(Ordering::Relaxed))).copied().unwrap_or_default()
+}
 
 /// What the server shows: its connections, and its counts.
 #[derive(Default)]
@@ -92,7 +101,10 @@ struct Entry {
     user: Option<String>,
     peer: String,
     secure: bool,
-    state: &'static str,
+    /// Its state, as a place of `STATES`, shared with its `Present`, which
+    /// sets it with no lock as each statement runs and ends (RULES.md
+    /// D815).
+    state: Arc<AtomicU8>,
     /// What tells its connection to end.
     end: Arc<watch::Sender<bool>>,
     /// What cancels its session's statements, once it has one.
@@ -116,6 +128,8 @@ pub struct Present {
     ended: watch::Receiver<bool>,
     /// Whether a request of it waits for a worker.
     queued: Arc<AtomicBool>,
+    /// Its state, as its row's.
+    state: Arc<AtomicU8>,
 }
 
 impl Shown {
@@ -128,15 +142,15 @@ impl Shown {
             user: None,
             peer: peer.name(),
             secure: peer.secure,
-            state: "LOGIN",
+            state: Arc::default(),
             end: Arc::new(end),
             stop: None,
             attributes: Arc::default(),
             queued: Arc::default(),
         };
-        let queued = Arc::clone(&entry.queued);
+        let (queued, state) = (Arc::clone(&entry.queued), Arc::clone(&entry.state));
         self.locked().insert(id, entry);
-        (Present { shown: Arc::clone(self), id, ended, queued }, Listed { shown: Arc::clone(self), id })
+        (Present { shown: Arc::clone(self), id, ended, queued, state }, Listed { shown: Arc::clone(self), id })
     }
 
     /// Cancels what the connection `id` runs, if it is served.
@@ -177,7 +191,7 @@ impl Present {
     pub fn authenticated(&self, user: &str) {
         if let Some(entry) = self.shown.locked().get_mut(&self.id) {
             entry.user = Some(user.to_owned());
-            entry.state = "IDLE";
+            entry.state.store(IDLE, Ordering::Relaxed);
         }
     }
 
@@ -221,9 +235,7 @@ impl Present {
 
     /// Whether a statement of it runs now.
     pub fn running(&self, running: bool) {
-        if let Some(entry) = self.shown.locked().get_mut(&self.id) {
-            entry.state = if running { RUNNING } else { "IDLE" };
-        }
+        self.state.store(if running { RUNNING } else { IDLE }, Ordering::Relaxed);
         self.queued.store(false, Ordering::Relaxed);
     }
 
@@ -355,14 +367,17 @@ impl SystemTable for Connections {
             .into_iter()
             .filter(|(_, e)| every || e.user.as_deref() == Some(seen.auth))
             .map(|(id, e)| {
-                let doing =
-                    activity::Doing { stop: e.stop.as_deref(), running: e.state == RUNNING, queued: e.queued.load(Ordering::Relaxed) };
+                let doing = activity::Doing {
+                    stop: e.stop.as_deref(),
+                    running: e.state.load(Ordering::Relaxed) == RUNNING,
+                    queued: e.queued.load(Ordering::Relaxed),
+                };
                 let mut row = vec![
                     count(id),
                     e.user.map_or(Value::Null, Value::Char),
                     Value::Char(e.peer),
                     yes(e.secure),
-                    Value::Char(e.state.to_owned()),
+                    Value::Char(state(&e.state).to_owned()),
                     application(&e.attributes),
                 ];
                 row.extend(activity::values(&doing, &holders));
@@ -419,7 +434,7 @@ mod tests {
     fn a_connection_is_shown_while_it_is_served() {
         let shown = Arc::new(Shown::default());
         let (present, kept) = shown.connected(&Peer::local());
-        let row = |of: &Shown| of.locked().values().next().map(|e| (e.user.clone(), e.peer.clone(), e.secure, e.state));
+        let row = |of: &Shown| of.locked().values().next().map(|e| (e.user.clone(), e.peer.clone(), e.secure, state(&e.state)));
         assert_eq!(row(&shown), Some((None, "local".to_owned(), true, "LOGIN")));
         present.authenticated("ANN");
         assert_eq!(row(&shown).map(|r| (r.0, r.3)), Some((Some("ANN".to_owned()), "IDLE")));

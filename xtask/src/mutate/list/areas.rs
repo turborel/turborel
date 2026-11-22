@@ -36,11 +36,15 @@ mod late;
 mod monitoring;
 mod oltp;
 mod orders;
+mod own_copies;
 mod parallel;
+mod probed_subqueries;
 mod range_joins;
 mod rewrites;
 mod row_path;
+mod server_lines;
 mod set_types;
+mod shared_lines;
 mod skipping;
 mod sorts;
 mod statistics;
@@ -184,9 +188,15 @@ fn second() -> [&'static [Mutation]; 46] {
 }
 
 /// The planner's newest areas, in order: join estimates, range joins, the
-/// cost model and orders.
-fn planner() -> [&'static [Mutation]; 4] {
-    [&join_estimates::JOIN_ESTIMATES, &range_joins::RANGE_JOINS, &cost_model::COST_MODEL, &orders::ORDERS]
+/// cost model, orders and probed subqueries.
+fn planner() -> [&'static [Mutation]; 5] {
+    [
+        &join_estimates::JOIN_ESTIMATES,
+        &range_joins::RANGE_JOINS,
+        &cost_model::COST_MODEL,
+        &orders::ORDERS,
+        &probed_subqueries::PROBED_SUBQUERIES,
+    ]
 }
 
 /// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's, the decode kernels' and late materialization's.
@@ -234,9 +244,10 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// The transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
-/// semi joins', mark joins', skipping's and the undo store's memory's last,
+/// semi joins', mark joins', skipping's, the undo store's memory's, the
+/// sessions' own copies', the shared lines' and the server's lines' last,
 /// as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 15] {
+fn closing() -> [&'static [Mutation]; 18] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -253,6 +264,9 @@ fn closing() -> [&'static [Mutation]; 15] {
         &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
         &undo_memory::UNDO_MEMORY,
+        &own_copies::OWN_COPIES,
+        &shared_lines::SHARED_LINES,
+        &server_lines::SERVER_LINES,
     ]
 }
 
