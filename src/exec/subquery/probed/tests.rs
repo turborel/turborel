@@ -62,8 +62,8 @@ fn runs_until_built(runner: &Runner, sq: &Subquery, most: i128) -> (i128, bool) 
 /// Verifies: [DESIGN] RULES.md D790: a subquery whose run is one probe of
 /// a whole unique key is probed past EXECUTOR.DECORRELATE_AFTER_RUNS, and
 /// decorrelated only once its probes, `PROBE_ROWS` rows each, reach the
-/// rows its build would hold: of 200 rows, at its 13th run, each run till
-/// then giving its row. MC/DC pairs of staying probed: a unique key's
+/// rows its build would hold: of 200 rows, at the first run whose probes
+/// reach them, each run till then giving its row. MC/DC pairs of staying probed: a unique key's
 /// probe, kept; one of a key that is not unique, decorrelated after 8
 /// runs, as before.
 #[test]
@@ -71,7 +71,9 @@ fn a_unique_probe_is_decorrelated_once_its_probes_cost_a_build() {
     let unique = state(true);
     let (runs, built) = runs_until_built(&Runner::new(&unique, NO_TRANSACTION), &subquery(), 100);
     assert!(built, "decorrelated in the end");
-    assert_eq!(runs, 13, "200 rows over {PROBE_ROWS} a probe");
+    // The first run whose probes, PROBE_ROWS rows each, reach the 200 rows.
+    let first = (1..=200_i128).find(|r| f64::from(i32::try_from(*r).unwrap()) * PROBE_ROWS >= 200.0_f64).unwrap();
+    assert_eq!(runs, first, "200 rows over {PROBE_ROWS} a probe");
     let shared = state(false);
     let (runner, sq) = (Runner::new(&shared, NO_TRANSACTION), subquery());
     for n in 0..9 {
