@@ -236,6 +236,34 @@ fn the_free_list_is_that_of_the_last_sync() {
     assert_eq!(pager.allocate(2), vec![Extent { start: PageId(2), count: 2 }]);
 }
 
+/// Verifies: [DESIGN] RULES.md D30, persistence: when the only free pages
+/// end the file, `sync` takes its trunk from them before the rest is cut,
+/// never from past them, so the cut leaves the trunk the record names, and
+/// the file opens with the free list recorded.
+#[test]
+fn a_trunk_taken_where_the_file_is_cut_survives_the_cut() {
+    let scratch = Scratch::new("pages-trunk-cut");
+    let path = scratch.path("p");
+    let pager = create(&path);
+    pager.allocate(10);
+    for id in 0..10 {
+        pager.write(PageId(id), &[u8::try_from(id).unwrap()]).unwrap();
+    }
+    // The record takes page 5, the only free one, for its trunk.
+    pager.free(&[one(5)]).unwrap();
+    pager.sync(Durability::Full).unwrap();
+    // Then the free pages end the file, and the old trunk is to be listed.
+    pager.free(&[one(8), one(9)]).unwrap();
+    pager.sync(Durability::Full).unwrap();
+    assert_eq!((pager.page_count(), pager.free_pages()), (9, 1), "8 the trunk, 9 cut, 5 free");
+    drop(pager);
+    assert_eq!(file_len(&path), offset(9), "cut after page 8");
+    let (pager, recovery) = open(&path).unwrap();
+    assert_eq!(recovery, PagerRecovery { pages: 9, free: 1, cut: 0 });
+    assert_eq!(pager.allocate(1), vec![one(5)]);
+    assert_eq!(read(&pager, 7).unwrap(), [7]);
+}
+
 /// Verifies: [DESIGN] RULES.md D30, persistence: `sync` records the free
 /// list only when it changed since its last record; otherwise, and after a
 /// record whose old trunk pages it already listed as free, it only syncs

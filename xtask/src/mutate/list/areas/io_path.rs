@@ -9,7 +9,7 @@ use super::super::{Mutation, Package};
 const IN_USE: &str = "pages::pages_in_use_are_those_the_free_list_holds";
 
 /// Mechanisms of the I/O path whose removal must fail their tests.
-pub const IO_PATH: [Mutation; 3] = [
+pub const IO_PATH: [Mutation; 4] = [
     Mutation {
         name: "io-freed-still-in-use",
         package: Package::Core,
@@ -38,6 +38,16 @@ pub const IO_PATH: [Mutation; 3] = [
         original: "        pager.in_use.mark(&[Extent { start: PageId(0), count: meta.pages }], true);\n",
         replacement: "",
         integration: &[IN_USE],
+        unit: &[],
+    },
+    Mutation {
+        name: "io-trunk-past-the-cut",
+        package: Package::Core,
+        breaks: "the run ending the file is set aside before the trunk is taken, so a trunk the file grows for is cut off",
+        file: "src/disk/pager/sync.rs",
+        original: "            let trunk: Vec<Extent> = free.allocate(needed);\n            self.in_use.mark(&trunk, true);\n            // Set aside after the trunk is taken, so the cut never takes it.\n            let trailing = free.take_trailing();\n",
+        replacement: "            let trailing = free.take_trailing();\n            let trunk: Vec<Extent> = free.allocate(needed);\n            self.in_use.mark(&trunk, true);\n",
+        integration: &["pages::a_trunk_taken_where_the_file_is_cut_survives_the_cut"],
         unit: &[],
     },
 ];

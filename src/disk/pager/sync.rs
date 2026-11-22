@@ -59,10 +59,11 @@ impl Pager {
     /// Syncs the pages written and, if the free list changed since it was
     /// last recorded, writes it and the meta slot after `sequence`: the meta
     /// written and the new trunk pages, or `None` if nothing changed. The
-    /// free run that ends the file is set aside first, recorded as cut, and
-    /// cut once the record is durable. The new trunk pages come from the
-    /// other free runs, so recording never grows the file, and the record
-    /// lists `old_trunk` as free, so freeing it afterwards changes nothing.
+    /// new trunk pages come from the free runs, the file grown only if none
+    /// is free; then the free run that ends the file is set aside, recorded
+    /// as cut, and cut once the record is durable, so the cut never takes a
+    /// trunk page. The record lists `old_trunk` as free, so freeing it
+    /// afterwards changes nothing.
     fn record(&self, sequence: u64, old_trunk: &[Extent], durability: Durability) -> Result<Option<(Meta, Vec<Extent>)>> {
         let per_trunk = self.body_size().saturating_sub(format::LIST_HEADER).checked_div(format::ENTRY).unwrap_or(1).max(1);
         let (trailing, pages, trunk, runs) = {
@@ -74,10 +75,11 @@ impl Pager {
                 self.file.sync(durability)?;
                 return Ok(None);
             }
-            let trailing = free.take_trailing();
-            let needed = u64::try_from(free.runs().len().saturating_add(old_trunk.len()).div_ceil(per_trunk)).unwrap_or(u64::MAX);
+            let needed = u64::try_from(free.runs_recorded().saturating_add(old_trunk.len()).div_ceil(per_trunk)).unwrap_or(u64::MAX);
             let trunk: Vec<Extent> = free.allocate(needed);
             self.in_use.mark(&trunk, true);
+            // Set aside after the trunk is taken, so the cut never takes it.
+            let trailing = free.take_trailing();
             let mut planned = free.clone();
             // Taken from no list, so they cannot overlap a free page.
             let _ = planned.free(old_trunk);

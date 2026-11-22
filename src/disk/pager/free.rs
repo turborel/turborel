@@ -44,6 +44,13 @@ impl FreeList {
         self.runs.iter().map(|(&start, &count)| Extent { start: PageId(start), count }).collect()
     }
 
+    /// The free runs a record lists: all but the one that ends the file,
+    /// which `sync` cuts instead.
+    pub(super) fn runs_recorded(&self) -> usize {
+        let ends = self.runs.iter().next_back().is_some_and(|(&start, &count)| start.saturating_add(count) == self.pages);
+        self.runs.len().saturating_sub(usize::from(ends))
+    }
+
     /// Whether page `id` is free: of the tests, as the pager checks a page
     /// by its bit (`in_use.rs`).
     #[cfg(test)]
