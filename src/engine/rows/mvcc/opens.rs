@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::Open;
 use crate::hash::xxhash::Xxh3Map;
-use crate::sync::Alone;
+use crate::sync::{Alone, lock_builtin};
 use crate::txn::TxId;
 
 /// Shards of the map.
@@ -33,6 +33,17 @@ impl Opened {
     /// Whether its transaction has ended in the table.
     pub(super) fn ended(&self) -> bool {
         self.ended.load(Ordering::Acquire)
+    }
+
+    /// \[DESIGN\] Lets go of the changes a transaction undone left it
+    /// holding, emptied but with the spill area they were written to, as
+    /// its transaction ends in the table (RULES.md D871): a thread may keep
+    /// the bookkeeping until it next keeps one (`found.rs`), and the area
+    /// with it, which a database at rest keeps none of. The list is
+    /// dropped once the lock is let go.
+    pub(super) fn let_go(&self) {
+        let changes = std::mem::take(&mut lock_builtin(&self.open).changes);
+        drop(changes);
     }
 }
 

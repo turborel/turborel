@@ -15897,7 +15897,13 @@ same one. Whether a transaction has ended in a table is a flag beside
 the bookkeeping's lock (`opens.rs`, `Opened`), set as the map lets it go
 and read with no lock by whatever still holds it, a thread or a `Near`.
 Bookkeeping of ended transactions goes from the thread as it next keeps
-one. The storage trait is unchanged. A handle the coordinator passes
+one. Until then the thread holds it, so a transaction's end leaves it
+holding nothing a database at rest must not keep. A commit takes its
+list of changes out to file them. A rollback undoes them and then lets
+the emptied list go (`Opened::let_go`), since the list keeps the spill
+area its changes were written to for as long as it lives, and the area
+would otherwise stay in the work areas after the rollback. The storage
+trait is unchanged. A handle the coordinator passes
 down would avoid the thread's list, and needs every engine's methods to
 take it.
 

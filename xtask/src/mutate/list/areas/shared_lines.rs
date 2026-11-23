@@ -19,7 +19,7 @@ const FOUND: &str = "src/engine/rows/mvcc/found.rs";
 const KEPT_OF: &str = "engine::rows::mvcc::found::tests::bookkeeping_kept_is_of_its_transaction_and_table_while_open";
 
 /// The shared lines' mutations, in the order they run.
-pub const SHARED_LINES: [Mutation; 12] = [
+pub const SHARED_LINES: [Mutation; 13] = [
     Mutation {
         name: "alone-unaligned",
         package: Package::Core,
@@ -139,5 +139,15 @@ pub const SHARED_LINES: [Mutation; 12] = [
         replacement: "f.tx == tx",
         integration: &[],
         unit: &[KEPT_OF],
+    },
+    Mutation {
+        name: "found-ended-keeps-its-area",
+        package: Package::Core,
+        breaks: "a transaction rolled back leaves its list of changes, and its spill area, with the thread that keeps its bookkeeping (D871)",
+        file: "src/engine/rows/mvcc.rs",
+        original: "            ended.let_go();",
+        replacement: "            drop(ended);",
+        integration: &["transaction_memory::a_rollbacks_garbage_is_collected_at_once"],
+        unit: &[],
     },
 ];
