@@ -64,6 +64,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 mod commit;
+mod found;
 mod gc;
 mod lists;
 mod open;
@@ -195,8 +196,6 @@ struct Open {
     /// (`TableStorage::preserving`): then no commit is checked against it,
     /// nor it against any.
     preserving: bool,
-    /// Whether it has ended here, so a scan keeping it finds it again.
-    ended: bool,
     /// The large objects it made, and those a version it wrote names
     /// (`rows/lobs/owned.rs`).
     made: Xxh3Set<u64>,
@@ -380,7 +379,6 @@ impl RowTable {
             checked: true,
             reads_since: None,
             preserving: false,
-            ended: false,
             made: Xxh3Set::default(),
             adopted: Xxh3Set::default(),
         };
@@ -505,10 +503,7 @@ impl RowTable {
     /// Ends `tx` without committing it here.
     pub(super) fn end_open(&self, tx: TxId) -> Result<()> {
         let undone = self.undo_changes(tx, 0);
-        let removed = self.versions.open.remove(tx);
-        if let Some(open) = removed {
-            lock_builtin(&open).ended = true;
-        }
+        self.versions.open.remove(tx);
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
         self.versions.statuses.abort(tx);
         undone

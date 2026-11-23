@@ -13,7 +13,6 @@ fn open() -> Open {
         checked: true,
         reads_since: None,
         preserving: false,
-        ended: false,
         made: crate::hash::xxhash::Xxh3Set::default(),
         adopted: crate::hash::xxhash::Xxh3Set::default(),
     }

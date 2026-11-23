@@ -1,13 +1,15 @@
 //! A transaction's bookkeeping in a table as its reads find it (RULES.md
 //! D29): who it is as a reader, and what it read, if its reads are
 //! checked. A scan of rows by id keeps the bookkeeping it found in its
-//! `Near`, so a read after the first finds it without the table's map of
+//! `Near`, and the thread keeps what it last found (`found.rs`, D871), so
+//! a read or a write after the first finds it without the table's map of
 //! open transactions, which every reader of the table shares.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use super::{Open, Read, Reader};
+use super::opens::Opened;
+use super::{Open, Read, Reader, found};
 use crate::engine::rows::RowTable;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::{Near, RowId};
@@ -25,8 +27,18 @@ impl RowTable {
         Ok(Reader::At { tx, snapshot })
     }
 
-    pub(super) fn open_of(&self, tx: TxId) -> Result<Arc<Mutex<Open>>> {
-        self.versions.open.get(tx).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] transaction {tx} has not begun in this table")))
+    /// The bookkeeping of `tx` here, open. What this thread last found of
+    /// it is given with no lock taken, else it is looked up in the table's
+    /// map and kept for the thread's next call (RULES.md D871).
+    pub(super) fn open_of(&self, tx: TxId) -> Result<Arc<Opened>> {
+        let table = self.versions.open.token();
+        if let Some(kept) = found::kept(tx, table) {
+            return Ok(kept);
+        }
+        let begun = || SqlError::new(Code::Api, format!("[DESIGN] transaction {tx} has not begun in this table"));
+        let opened = self.versions.open.get(tx).ok_or_else(begun)?;
+        found::keep(tx, table, &opened);
+        Ok(opened)
     }
 
     /// Records what `tx` read, as `read` gives it, if its reads are
@@ -50,11 +62,8 @@ impl RowTable {
         }
         let table = std::ptr::from_ref(self).addr();
         let kept = near.open.as_ref().filter(|&&(by, of, _)| by == tx && of == table);
-        if let Some(open) = kept.and_then(|(_, _, open)| open.downcast_ref::<Mutex<Open>>()) {
-            let mut open = lock_builtin(open);
-            if !open.ended {
-                return Ok(self.read_by(&mut open, tx, (id, columns)));
-            }
+        if let Some(opened) = kept.and_then(|(_, _, open)| open.downcast_ref::<Opened>()).filter(|opened| !opened.ended()) {
+            return Ok(self.read_by(&mut lock_builtin(opened), tx, (id, columns)));
         }
         let open = self.open_of(tx)?;
         let reader = self.read_by(&mut lock_builtin(&open), tx, (id, columns));

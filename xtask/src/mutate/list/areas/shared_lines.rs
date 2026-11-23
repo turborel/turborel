@@ -3,7 +3,8 @@
 //! commit taking no lock of the statuses' map, and a table's open
 //! transactions in shards; a transaction's id on its thread's stripe, and
 //! its session's kept origin replaced as its setting changes (D844); and a
-//! commit taking a table's shared lists only for what it left there (D870).
+//! commit taking a table's shared lists only for what it left there (D870);
+//! and a thread keeping the bookkeeping it found (D871).
 
 use super::super::{Mutation, Package};
 
@@ -13,8 +14,12 @@ const OPENS: &str = "src/engine/rows/mvcc/opens.rs";
 /// The test of a transaction that left nothing in a table.
 const NOTHING_LEFT: &str = "engine::rows::mvcc::stamps::tests::a_transaction_that_left_nothing_takes_no_lock_of_the_table";
 
+/// The file of what a thread keeps, and the test of whose it is.
+const FOUND: &str = "src/engine/rows/mvcc/found.rs";
+const KEPT_OF: &str = "engine::rows::mvcc::found::tests::bookkeeping_kept_is_of_its_transaction_and_table_while_open";
+
 /// The shared lines' mutations, in the order they run.
-pub const SHARED_LINES: [Mutation; 9] = [
+pub const SHARED_LINES: [Mutation; 12] = [
     Mutation {
         name: "alone-unaligned",
         package: Package::Core,
@@ -50,8 +55,8 @@ pub const SHARED_LINES: [Mutation; 9] = [
         package: Package::Core,
         breaks: "a table counted with no transaction open while one is, its versions undone released under a reader",
         file: OPENS,
-        original: "        map.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));\n        shard.len.store(map.len(), Ordering::SeqCst);",
-        replacement: "        map.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));",
+        original: "        map.entry(tx).or_insert_with(|| Arc::new(Opened { ended: AtomicBool::new(false), open: Mutex::new(made()) }));\n        shard.len.store(map.len(), Ordering::SeqCst);",
+        replacement: "        map.entry(tx).or_insert_with(|| Arc::new(Opened { ended: AtomicBool::new(false), open: Mutex::new(made()) }));",
         integration: &[],
         unit: &["engine::rows::mvcc::opens::tests::open_transactions_are_kept_in_shards_of_their_own"],
     },
@@ -104,5 +109,35 @@ pub const SHARED_LINES: [Mutation; 9] = [
         replacement: "if bytes < self.held().min(0) { ListSpace::default() } else { self.space() }",
         integration: &[],
         unit: &["engine::rows::mvcc::stamps::tests::a_commit_within_the_bytes_held_takes_no_work_areas"],
+    },
+    Mutation {
+        name: "found-never-kept",
+        package: Package::Core,
+        breaks: "a thread finds a transaction's bookkeeping in the table's map at every read and write (D871)",
+        file: FOUND,
+        original: "(!mine.opened.ended()).then(",
+        replacement: "(!mine.opened.ended() && tx == 0).then(",
+        integration: &[],
+        unit: &["engine::rows::mvcc::found::tests::bookkeeping_is_found_again_without_the_tables_map"],
+    },
+    Mutation {
+        name: "found-kept-past-its-end",
+        package: Package::Core,
+        breaks: "a thread gives the bookkeeping of a transaction ended in the table, so a write after its end is taken (D871)",
+        file: FOUND,
+        original: "(!mine.opened.ended()).then(",
+        replacement: "(tx != 0).then(",
+        integration: &[],
+        unit: &[KEPT_OF],
+    },
+    Mutation {
+        name: "found-of-any-table",
+        package: Package::Core,
+        breaks: "a thread gives a transaction's bookkeeping of one table for another (D871)",
+        file: FOUND,
+        original: "f.tx == tx && Arc::ptr_eq(&f.table, table)",
+        replacement: "f.tx == tx",
+        integration: &[],
+        unit: &[KEPT_OF],
     },
 ];

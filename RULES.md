@@ -559,6 +559,7 @@ verification approach DO-178C expects (§8).
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
+| D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 
 ### The project
 
@@ -15478,6 +15479,31 @@ the rows to stamp, the rows a stamp leaves, and the garbage of a commit
 together with the deletions its stamping may file. A commit's garbage is filed
 once, or each time it passes the bytes held, not once a statement. A
 list that may pass the bytes held is made as before.
+
+#### D871. A thread keeps the bookkeeping it last found of a transaction in a table
+
+A table keeps each open transaction's bookkeeping in a map of shards
+(D784). A scan by row id kept what it found in its `Near`, but every
+write, every read with no `Near` of its own, and every savepoint looked
+the transaction up again. An update of one row took a shard's lock and
+hashed the id twice, and a third time for its statement's savepoint.
+
+A transaction runs on its session's thread. So each thread keeps the
+bookkeeping it last found, of up to 16 tables, and a lookup finds it
+there with no lock and no hash (`mvcc/found.rs`). One not kept is found
+in the map as before, and kept from then on, so a transaction that moves
+to another thread loses nothing but one lookup.
+
+What is kept must never be given for another table, nor after its
+transaction has ended. A table is named by a token, an allocation of its
+own that the thread holds as well, so no table made later can have the
+same one. Whether a transaction has ended in a table is a flag beside
+the bookkeeping's lock (`opens.rs`, `Opened`), set as the map lets it go
+and read with no lock by whatever still holds it, a thread or a `Near`.
+Bookkeeping of ended transactions goes from the thread as it next keeps
+one. The storage trait is unchanged. A handle the coordinator passes
+down would avoid the thread's list, and needs every engine's methods to
+take it.
 
 ## 2. Project layout
 

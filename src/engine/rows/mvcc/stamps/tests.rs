@@ -17,7 +17,7 @@ use super::super::{Maker, Version};
 
 /// A table of one `CHAR(5)` column, in files of its own, holding one row
 /// committed before every snapshot.
-fn table(scratch: &Scratch) -> (TableFiles, RowTable, RowId) {
+pub(in crate::engine::rows::mvcc) fn table(scratch: &Scratch) -> (TableFiles, RowTable, RowId) {
     let pager =
         Pager::create(&OsFileSystem, &scratch.path("rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
     let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());

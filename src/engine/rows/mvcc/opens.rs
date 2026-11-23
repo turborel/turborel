@@ -8,7 +8,8 @@
 //! newest or the oldest open and whether any is, looks at each shard in
 //! turn, and reads only the counts to tell whether any is.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::ops::Deref;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::Open;
@@ -19,8 +20,32 @@ use crate::txn::TxId;
 /// Shards of the map.
 const SHARDS: u64 = 32;
 
+/// \[DESIGN\] A transaction's bookkeeping in a table, under its lock, and
+/// whether the transaction has ended there, read without it (RULES.md
+/// D871). What still holds the bookkeeping once the transaction has ended,
+/// a scan's `Near` or a thread (`found.rs`), finds so before it uses it.
+pub(super) struct Opened {
+    ended: AtomicBool,
+    open: Mutex<Open>,
+}
+
+impl Opened {
+    /// Whether its transaction has ended in the table.
+    pub(super) fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
+    }
+}
+
+impl Deref for Opened {
+    type Target = Mutex<Open>;
+
+    fn deref(&self) -> &Mutex<Open> {
+        &self.open
+    }
+}
+
 /// The bookkeeping of the transactions of one shard.
-type Map = Xxh3Map<TxId, Arc<Mutex<Open>>>;
+pub(super) type Map = Xxh3Map<TxId, Arc<Opened>>;
 
 /// One shard, and how many it holds, read without its lock.
 #[derive(Default)]
@@ -32,11 +57,14 @@ struct Shard {
 /// The transactions open in a table.
 pub(super) struct Opens {
     shards: Box<[Alone<Shard>]>,
+    /// What names the table to a thread keeping bookkeeping of it
+    /// (`found.rs`), an allocation of the table's own.
+    token: Arc<()>,
 }
 
 impl Default for Opens {
     fn default() -> Opens {
-        Opens { shards: (0..SHARDS).map(|_| Alone::default()).collect() }
+        Opens { shards: (0..SHARDS).map(|_| Alone::default()).collect(), token: Arc::new(()) }
     }
 }
 
@@ -53,8 +81,13 @@ impl Opens {
         shard.map.write().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// What names the table (`found.rs`).
+    pub(super) fn token(&self) -> &Arc<()> {
+        &self.token
+    }
+
     /// The bookkeeping of `tx`, if it is open here.
-    pub(super) fn get(&self, tx: TxId) -> Option<Arc<Mutex<Open>>> {
+    pub(super) fn get(&self, tx: TxId) -> Option<Arc<Opened>> {
         self.shard(tx).and_then(|shard| Self::read(shard).get(&tx).map(Arc::clone))
     }
 
@@ -62,17 +95,27 @@ impl Opens {
     pub(super) fn begin(&self, tx: TxId, made: impl FnOnce() -> Open) {
         let Some(shard) = self.shard(tx) else { return };
         let mut map = Self::write(shard);
-        map.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));
+        map.entry(tx).or_insert_with(|| Arc::new(Opened { ended: AtomicBool::new(false), open: Mutex::new(made()) }));
         shard.len.store(map.len(), Ordering::SeqCst);
     }
 
-    /// Ends `tx` here: its bookkeeping, if it was open.
-    pub(super) fn remove(&self, tx: TxId) -> Option<Arc<Mutex<Open>>> {
+    /// Ends `tx` here: its bookkeeping, if it was open, marked ended.
+    pub(super) fn remove(&self, tx: TxId) -> Option<Arc<Opened>> {
         let shard = self.shard(tx)?;
         let mut map = Self::write(shard);
         let removed = map.remove(&tx);
+        if let Some(opened) = &removed {
+            opened.ended.store(true, Ordering::Release);
+        }
         shard.len.store(map.len(), Ordering::SeqCst);
         removed
+    }
+
+    /// Every shard's map, held for writing: for tests that a call takes
+    /// none.
+    #[cfg(test)]
+    pub(super) fn held(&self) -> Vec<RwLockWriteGuard<'_, Map>> {
+        self.shards.iter().map(|shard| Self::write(shard)).collect()
     }
 
     /// Whether no transaction is open here.
