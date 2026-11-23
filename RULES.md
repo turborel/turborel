@@ -576,6 +576,7 @@ verification approach DO-178C expects (§8).
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 | D872 | A statement's writes of a table resolve it once |
 | D873 | The undo store gathers a batch a stripe of threads, and counts its pins by batch |
+| D874 | A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
 | D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
@@ -16102,6 +16103,27 @@ is left to them, so a plan made with fresh statistics estimates as
 before. The index's estimate costs a count of at most a leaf's entries,
 or the share of its tree a larger range takes, once for each estimate
 of the table's conjuncts.
+
+#### D874. A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps
+
+A transaction's bookkeeping is under a lock only its session takes, so
+each take is cheap, but a commit took it eight times and a row written
+about five. Some takes followed one another with nothing between.
+
+- A commit asked whether its definitions had changed and whether it was
+  doomed, a take each. It asks once (`Txn::check_committable`).
+- Its release took the reservations, the table locks and the pinned
+  snapshots apart. It takes the three together, and gives them up in the
+  order it did.
+- An entry inserted in a unique index noted whether it was alone, and
+  then recorded what undoes it. Both are one take (`Txn::log_alone`).
+
+An update read the version it replaces into a new buffer each time. The
+thread now keeps the buffer its last write read into, given back once
+that write has decoded what it needs of it (`mvcc/versions.rs`,
+`give_back`), and the tree reads the next version into it (D865). A
+buffer past 64 KiB is let go, so one long row does not stay held by
+every thread that wrote it.
 
 ## 2. Project layout
 
