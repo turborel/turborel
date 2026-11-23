@@ -31,7 +31,10 @@ impl RowTable {
     fn encode_after(&self, id: RowId, row: &Row, room: usize) -> Result<(Vec<u8>, Vec<PageId>)> {
         self.check_lobs(row)?;
         let mut pages = Vec::new();
-        let mut record = vec![0; room];
+        // Sized for the record written in line, as most are, so the room
+        // and the record are one allocation, not one grown into another.
+        let mut record = Vec::with_capacity(room.saturating_add(self.format.in_line_room(row)));
+        record.resize(room, 0);
         // A record sealed takes more: room is kept for it.
         let spill = Spill { most: self.spill.most.saturating_sub(self.sealing.overhead()), ..self.spill };
         let encoded = self.format.encode_spilling(row, spill, &mut record, |column, bytes| {

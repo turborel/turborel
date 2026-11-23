@@ -26,8 +26,7 @@ impl RecordFormat {
         let base = out.len();
         // Room for the whole record, its strings' bytes counted, so it is
         // not grown as its values are written.
-        let strings = row.iter().fold(0_usize, |n, v| n.saturating_add(string_len(v)));
-        out.reserve(self.variable_at().saturating_add(strings));
+        out.reserve(self.in_line_room(row));
         if let Err(e) = self.put_in_line(row, (out, base)) {
             out.truncate(base);
             return Err(e);
@@ -37,6 +36,14 @@ impl RecordFormat {
         }
         out.truncate(base);
         Ok(false)
+    }
+
+    /// The bytes the record of `row` takes at most with every value in
+    /// line, its strings' bytes counted: the room a buffer is made with
+    /// so it is not grown as the record is written into it.
+    pub(in crate::engine) fn in_line_room(&self, row: &Row) -> usize {
+        let strings = row.iter().fold(0_usize, |n, v| n.saturating_add(string_len(v)));
+        self.variable_at().saturating_add(strings)
     }
 
     /// Writes the record of `row`, of as many values as its format's
