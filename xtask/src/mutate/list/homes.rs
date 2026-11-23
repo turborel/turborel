@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The homes' mutations, in the order they run.
-pub const HOMES: [Mutation; 8] = [
+pub const HOMES: [Mutation; 9] = [
     Mutation {
         name: "home-never-opened",
         package: Package::Server,
@@ -73,10 +73,20 @@ pub const HOMES: [Mutation; 8] = [
         package: Package::Server,
         breaks: "a home waiting on a slow client keeps its permit, a statement of another connection waiting on it",
         file: "server/src/native/waiting.rs",
-        original: "        self.began.elapsed() >= WAITED",
-        replacement: "        self.began.elapsed() >= WAITED.saturating_mul(1000)",
+        original: "        self.eager || !self.quick()",
+        replacement: "        false",
         integration: &[],
         unit: &["native::waiting::tests::a_wait_is_slow_once_waited_has_passed"],
+    },
+    Mutation {
+        name: "home-of-a-slow-client-waits-a-millisecond-first",
+        package: Package::Server,
+        breaks: "a home's wait on a client that was slow woken after a millisecond in vain at every request",
+        file: "server/src/native/waiting.rs",
+        original: "        Waiting { eager: self.homed, ..self }",
+        replacement: "        self",
+        integration: &[],
+        unit: &["native::waiting::tests::a_home_of_a_slow_client_waits_in_slices_from_the_first"],
     },
     Mutation {
         name: "idle-counted-anew-from-the-hand-back",
