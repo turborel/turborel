@@ -39,7 +39,7 @@ pub(crate) fn database(compiled: bool) -> (Database, Session) {
 }
 
 /// What a statement gave: its completion, or its error whole.
-fn outcome<T: std::fmt::Debug>(r: turborel::error::Result<T>) -> String {
+pub(crate) fn outcome<T: std::fmt::Debug>(r: turborel::error::Result<T>) -> String {
     match r {
         Ok(done) => format!("ok {done:?}"),
         Err(e) => format!("error {} {} {e:?}", e.sqlstate().as_str(), e.sqlcode()),
@@ -48,7 +48,7 @@ fn outcome<T: std::fmt::Debug>(r: turborel::error::Result<T>) -> String {
 
 /// The rows of `query` in `s`, each its values as text joined by commas;
 /// or its error.
-fn rows(s: &Session, query: &str) -> Vec<String> {
+pub(crate) fn rows(s: &Session, query: &str) -> Vec<String> {
     let mut c = match s.open_cursor(query) {
         Ok(c) => c,
         Err(e) => return vec![outcome::<()>(Err(e))],
@@ -68,7 +68,7 @@ fn rows(s: &Session, query: &str) -> Vec<String> {
 
 /// What `sql` gave: a CALL with `?`s for its outputs prepared and
 /// executed, its outputs with its completion; any other statement run.
-fn called(s: &Session, sql: &str) -> String {
+pub(crate) fn called(s: &Session, sql: &str) -> String {
     if !sql.contains('?') {
         return outcome(s.run(sql));
     }

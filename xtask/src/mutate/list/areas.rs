@@ -118,7 +118,7 @@ pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// The first half of the areas, in order.
-fn first() -> [&'static [Mutation]; 27] {
+fn first() -> [&'static [Mutation]; 28] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -136,6 +136,7 @@ fn first() -> [&'static [Mutation]; 27] {
         &super::bigint::BIGINT,
         &super::wide_exact::WIDE_EXACT,
         &super::call_floor::CALL_FLOOR,
+        &super::compiled_points::COMPILED_POINTS,
         &super::distinct_predicate::DISTINCT_PREDICATE,
         &super::partitioned_joins::PARTITIONED_JOINS,
         &super::grouping_sets::GROUPING_SETS,

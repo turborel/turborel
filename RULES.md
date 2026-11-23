@@ -588,6 +588,11 @@ verification approach DO-178C expects (§8).
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 | D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
 | D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
+| D910 | A value that is one of a type already is read, cast and assigned as it is, an array with no element copied |
+| D911 | A point change places its probe once, each value read over the slots where they are |
+| D912 | A point change makes its candidate row of the row it read |
+| D913 | A compiled program's row of values is evaluated over the frame's slots where they hold values of their types |
+| D914 | A compiled program appends in place where it assigns an array its own concatenation with one element |
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
@@ -16371,6 +16376,127 @@ subquery is decorrelated follows from the subquery alone, so it is found
 once and kept with its plan kept (`KeptRun::decorrelated`), where each
 run past EXECUTOR.DECORRELATE_AFTER_RUNS that stayed probed made it
 again.
+#### D910. A value that is one of a type already is read, cast and assigned as it is, an array with no element copied
+
+A slot of a kept plan is read cast to its type (D610), since a `?`'s
+value comes as the caller gave it. An SQL parameter or variable is a
+slot too (D406), and holds a value of its declared type already, as
+store assignment put it there. Each read of one cast it again. Of an
+array that made a new array, each element cast and copied, to take one
+element of it. A procedure that walks three array parameters in a loop
+made three arrays at every turn.
+
+`value::held` says whether a value is one of a type already, so that
+CAST to the type [ISO/IEC 9075-2:2023 §6.13] and store assignment to it
+[§9.2] both give the value itself and raise neither an exception nor a
+warning. It answers for the null value, an exact number of the type's
+scale within its precision, a character string of a fixed type's length
+or within a varying type's, a truth value, and an array within the
+maximum cardinality whose elements are each so. Of any other value it
+says no, and the value is cast or assigned as before. A unit test holds
+it to what `cast_warned` and `assign` give.
+
+Where it says yes, the cast is not made. An array is cast and assigned
+as it is where each element is held (`ArrayKind::cast`, `assign`), with
+no element copied. A slot read gives its value with no cast
+(`exec/eval.rs`). An operand of an operator, a comparison or a call
+that is a slot holding such a value, or an outer reference, is borrowed
+where the statement holds it (`eval/called.rs`), so `A[i]` of an array
+in a slot reads one element. The check reads each element of an array
+and allocates nothing.
+
+#### D911. A point change places its probe once, each value read over the slots where they are
+
+A kept UPDATE or DELETE whose plan is a point read (D752) learned
+whether its values place its probe (`Kept::places`, D793) by evaluating
+each probe value that may raise, and threw the values away. The point
+read then placed the probe and evaluated them all again. Each
+evaluation copied the value's expression, replaced its slots by
+constants cast to their types, and evaluated the copy.
+
+A probe value is now read over the slots where they are
+(`physical/kept.rs`, `read`). A slot alone is its value, cast unless
+held of its type (D910). A sum, a difference or an element of an array
+is evaluated as it stands, its slots read as an execution reads them.
+If that raises anything, or the slot's own cast warns, the value is
+found as before by filling a copy, which raises what it raised. So a
+value that places gives the same value by less work, and one that does
+not takes the old path whole.
+
+The plan of a point change places its probe once
+(`prepared/plans/point.rs`). Placed, every value raised nothing, so the
+values place it, and the change carries the probe to its read
+(`PointRead::entry_under`), which looks under it and places nothing. A
+probe that does not place is judged as before. If a value that may
+raise raised, the change runs the plan made with its values. If
+another did, the read places the probe again and raises the error where
+it raised it before.
+
+#### D912. A point change makes its candidate row of the row it read
+
+The candidate row of an UPDATE is a copy of the object row with each
+SET value [X3.135-1986 §8.12 GR2, GR3]. A point change (D841) read its
+row, copied every value the update leaves into a new row, and dropped
+the row it read. A row of many strings was copied whole to change one
+number.
+
+`assignment::candidate_of` takes the row itself. It computes every SET
+value from the row and assigns each to its column's type, in the order
+written, before any takes its place, so each is computed from the
+object row before any value of it is updated, and raises what
+`candidate` raises in the same order. Then each value takes its
+column's place, and the generated columns are computed of the row so
+made [ISO/IEC 9075-2:2023 §15.14 GR9]. A row another transaction
+changed first is still recomputed from the version it committed by
+`candidate`, which copies.
+
+#### D913. A compiled program's row of values is evaluated over the frame's slots where they hold values of their types
+
+A leaf of a program that is one row of values reads its variables and
+parameters as outer references, each bound to the frame's slot (D841).
+Each evaluation read every outer value out of the frame into a list,
+then evaluated the row over the list, then wrapped the row in a list of
+rows to give its first value. A WHILE condition over two integers
+allocated three times at each test.
+
+As it is compiled, such a row is also written over the slots
+themselves, each outer reference replaced by the slot it names
+(`compiled/valued.rs`, `Direct`). At each evaluation, if every slot it
+reads holds a value of its type (D910), the row so written is evaluated
+over the frame. Each slot read then gives what the outer value was, as
+its cast gives it as it is and raises nothing, so the row has the same
+values and raises the same. If any slot holds another value, the row is
+evaluated as bound, its outer values read first and cast once each. A
+row of one value read so is given with no row made of it.
+
+#### D914. A compiled program appends in place where it assigns an array its own concatenation with one element
+
+`SET A = A || ARRAY[x]` read `A`, made an array of its elements and
+`x` [ISO/IEC 9075-2:2023 §6.47 GR2], and assigned it to `A` element by
+element [§9.2 GR3b xxii]. Each step copied every element, so a loop
+that gathers a value at each turn copied what it had gathered twice a
+turn.
+
+The compiled program recognises the assignment as it is compiled
+(`compiled/append.rs`). Its one target is an SQL variable or parameter
+of an array type as a whole. Its source is the concatenation of that
+same variable, as it is or cast to an array type of its element type
+and no smaller maximum cardinality, with an array constructor of one
+element, of the element type or cast to an array of it. A function says
+which of these operations it is (`ScalarFunction::array_operation`), so
+no name is matched.
+
+At each run, if `A` holds an array of its type with room for one
+element more, the assignment as bound would leave its elements as they
+are and put `x` after them, cast and assigned to the element type. So
+`x` alone is evaluated, cast as the constructor's array is cast, and
+assigned by the rule that assigns the array, raising what each raises
+at the place the assignment raises it. The array is taken out of the
+frame (`Params::take_slot`), so nothing else holds it, and gives its
+elements to the longer array, moved. An array that is null, full or
+not of its type is assigned as bound. That keeps the null result, the
+null element dropped past the maximum cardinality, and the error of any
+other element there [§9.2 GR3b xxii 2].
 #### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
 
 A prepared CALL kept its binding (D793), its procedure's text was read

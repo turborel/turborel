@@ -40,6 +40,7 @@ mod collection;
 mod commit_restore;
 mod commit_visibility;
 mod common;
+mod compiled_points;
 mod compiled_procedures;
 mod compiled_tpcc;
 mod compiled_writes;

@@ -19,6 +19,7 @@ use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck};
 use crate::catalog::{ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
+use crate::index::Probe;
 use crate::logical::{Expr, LogicalPlan, Truth, filled};
 use crate::params::Params;
 use crate::physical::{Kept as KeptPhysical, Plan};
@@ -29,6 +30,7 @@ use crate::value::{Value, assign};
 
 mod bulk;
 mod degree;
+mod deleted;
 mod direct;
 mod given;
 mod inserted;
@@ -39,6 +41,7 @@ pub(crate) mod system_time;
 mod targets;
 
 use degree::degree_at;
+pub(super) use deleted::{delete_rows, delete_searched};
 pub(super) use direct::{Pointed, point_change};
 pub(super) use given::not_given;
 pub(super) use into::{INSERT_RULES, InsertInto, InsertRules, object_columns};
@@ -153,7 +156,9 @@ enum ObjectRows {
     Kept(Plan, Arc<[QualifiedName]>),
     /// Its kept plan, a point read, its row read without the executor's
     /// operators (RULES.md D752); the tables it reads.
-    Point(Arc<KeptPhysical>, Arc<[QualifiedName]>),
+    /// And its probe, placed with this execution's values, if it placed
+    /// it already (RULES.md D911).
+    Point(Arc<KeptPhysical>, Arc<[QualifiedName]>, Option<Probe>),
 }
 
 impl Written {
@@ -180,7 +185,17 @@ impl Written {
     /// `bound`, kept, whose plan kept `kept` is a point read, run with
     /// `slots` (RULES.md D752).
     pub(super) fn pointed(bound: Arc<BoundWrite>, (kept, reads): (Arc<KeptPhysical>, Arc<[QualifiedName]>), slots: Slots) -> Written {
-        Written { bound, rows: ObjectRows::Point(kept, reads), slots: Some(slots) }
+        Written { bound, rows: ObjectRows::Point(kept, reads, None), slots: Some(slots) }
+    }
+
+    /// It, whose plan is a point read, with that read's probe `probe`,
+    /// placed with its slots' values already (RULES.md D911).
+    #[must_use]
+    pub(super) fn probing(mut self, probe: Probe) -> Written {
+        if let ObjectRows::Point(_, _, placed) = &mut self.rows {
+            *placed = Some(probe);
+        }
+        self
     }
 
     /// Its SET values: column position and new value (`None` is NULL), in
@@ -438,7 +453,7 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
         ObjectRows::Bound => (Some(bound.rows.clone()), None),
         ObjectRows::Filled(logical) => (Some(logical), None),
         ObjectRows::Kept(plan, reads) => (None, Some((plan, reads))),
-        ObjectRows::Point(kept, reads) => {
+        ObjectRows::Point(kept, reads, _) => {
             let entries = pointed::object_row(st, tx, (&bound, &kept, &reads), (&db, slots.as_deref().unwrap_or_default()))?;
             return Ok((Written { bound, rows: ObjectRows::Bound, slots }, entries));
         }
@@ -549,47 +564,4 @@ fn checked_again(
         Some(Some(row)) => checked(row),
         None => checked(new),
     })
-}
-
-/// [X3.135-1986 §8.5] the searched DELETE bound as `w`: the rows it
-/// deleted [ISO/IEC 9075:1992 §18.1 GR1e], none for no data [X3.135-1986
-/// §7.3 GR3a iv].
-pub(super) fn delete_searched(cx: StatementContext<'_>, w: Written, mut effects: Effects<'_>) -> Result<usize> {
-    match delete_rows(cx, w, &mut effects)? {
-        Some(n) => {
-            cx.st.end_statement(cx.tx, effects)?;
-            Ok(n)
-        }
-        None => Ok(0),
-    }
-}
-
-/// `delete_searched`'s rows deleted, as `update_rows` updates them, the
-/// statement not yet ended.
-pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Effects<'_>) -> Result<Option<usize>> {
-    let StatementContext { st, tx } = cx;
-    let (w, mut objects) = object_rows(st, tx, w)?;
-    if objects.is_empty() && effects.triggered.is_none() {
-        return Ok(None);
-    }
-    // [ISO/IEC 9075-2:2023 §15.8 GR2] its BEFORE triggers first.
-    effects.before_delete(cx, &w.bound.table, &mut objects)?;
-    let runner = Runner::new(&w.db(st), tx.id);
-    let mut leftovers = portion::Leftovers::of(st, &w)?;
-    let mut count = 0_usize;
-    // What its writes need of its table, found once (RULES.md D872).
-    let writing = st.writing(&w.bound.table)?;
-    for object in objects {
-        let (id, _) = object?;
-        // A row another transaction changed is deleted in the version it
-        // committed, if it is still one to delete.
-        let mut recheck = |newest: &Row| Ok(if w.holds_of(newest, &runner)? { Again::Delete } else { Again::Skip });
-        if let Some(old) = st.rewrite_row_in(tx, (&writing, id), None, &mut recheck)? {
-            leftovers.keep(st, &w, &old, &runner)?;
-            effects.deleted(&w.bound.table, id, old)?;
-            count = count.saturating_add(1);
-        }
-    }
-    leftovers.insert(cx, &w, effects)?;
-    Ok(Some(count))
 }

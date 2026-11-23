@@ -4,7 +4,7 @@
 //! with EXECUTOR.POINT_OPERATIONS OFF, through the executor. So does a
 //! correlated subquery that probes one (RULES.md D900).
 
-use turborel::db::{Database, Session};
+use turborel::db::{Database, Prepared, Session};
 use turborel::value::{Decimal, Value};
 
 /// Schema A: T (K, A, B, C), K its primary key, of 1500 rows, enough that a
@@ -44,10 +44,15 @@ fn number(n: i64) -> Value {
 /// rows, each its values as text joined by commas, or its error at open
 /// or fetch.
 fn prepared(s: &Session, query: &str, args: &[Value]) -> Vec<String> {
-    let p = s.prepare(query).unwrap();
+    executed(s, &s.prepare(query).unwrap(), args)
+}
+
+/// As `prepared`, of the statement `p` its caller holds, so its plan is
+/// kept from one call to the next and read as a point read.
+fn executed(s: &Session, p: &Prepared, args: &[Value]) -> Vec<String> {
     let mut out = Vec::new();
     for arg in args {
-        match s.open_prepared(&p, std::slice::from_ref(arg)) {
+        match s.open_prepared(p, std::slice::from_ref(arg)) {
             Ok(mut c) => loop {
                 match c.fetch() {
                     Ok(Some(row)) => out.push(row.iter().map(|v| v.to_string().trim_end().to_owned()).collect::<Vec<_>>().join(",")),
@@ -174,8 +179,13 @@ fn once(s: &Session, query: &str, arg: i64) -> Vec<String> {
 fn a_point_read_passes_over_an_entry_of_a_key_its_row_left() {
     let (db, a) = defined();
     let query = "SELECT K, A FROM T WHERE K = ?";
+    // Each held, so its plan is kept: the row as read, and its columns
+    // given in another order, read alone.
+    let (whole, listed) = (a.prepare(query).unwrap(), a.prepare("SELECT A, K FROM T WHERE K = ?").unwrap());
+    let read = |p: &Prepared, key: i64| executed(&a, p, &[number(key)]);
     for _ in 0..4 {
-        assert_eq!(once(&a, query, 7), ["7,70", "end"]);
+        assert_eq!(read(&whole, 7), ["7,70", "end"]);
+        assert_eq!(read(&listed, 7), ["70,7", "end"]);
     }
     a.commit().unwrap();
     // A snapshot from before the change, so the old version is kept.
@@ -184,8 +194,10 @@ fn a_point_read_passes_over_an_entry_of_a_key_its_row_left() {
     assert_eq!(once(&earlier, query, 7), ["7,70", "end"]);
     a.run("UPDATE T SET K = 2007 WHERE K = 7").unwrap();
     a.commit().unwrap();
-    assert_eq!(once(&a, query, 7), ["end"], "the entry of the key it left finds no row");
-    assert_eq!(once(&a, query, 2007), ["2007,70", "end"]);
+    assert_eq!(read(&whole, 7), ["end"], "the entry of the key it left finds no row");
+    assert_eq!(read(&listed, 7), ["end"], "nor a row of the columns it gives alone");
+    assert_eq!(read(&whole, 2007), ["2007,70", "end"]);
+    assert_eq!(read(&listed, 2007), ["70,2007", "end"]);
     // A point UPDATE reads its object row whole, by the same entry.
     let update = a.prepare("UPDATE T SET A = A + 1 WHERE K = ?").unwrap();
     let changed = |key: i64| format!("{:?}", a.execute_prepared(&update, &[number(key)]));
@@ -208,13 +220,14 @@ fn a_point_read_passes_over_an_entry_of_a_key_its_row_left() {
 fn a_point_read_is_recorded_where_reads_are_checked() {
     let outcome = |level: &str, key: i64| {
         let (db, a) = defined();
-        let query = "SELECT K, A FROM T WHERE K = ?";
+        // Held, so its plan is kept and its read is a point read.
+        let query = a.prepare("SELECT K, A FROM T WHERE K = ?").unwrap();
         for _ in 0..4 {
-            assert_eq!(once(&a, query, 3), ["3,30", "end"]);
+            assert_eq!(executed(&a, &query, &[number(3)]), ["3,30", "end"]);
         }
         a.commit().unwrap();
         a.run(&format!("SET TRANSACTION ISOLATION LEVEL {level}")).unwrap();
-        assert_eq!(once(&a, query, key), ["end"]);
+        assert_eq!(executed(&a, &query, &[number(key)]), ["end"]);
         a.run(&format!("INSERT INTO L VALUES ({key}, 0)")).unwrap();
         let other = db.session("A");
         other.run(&format!("INSERT INTO T VALUES ({key}, 1, 'b', 'c')")).unwrap();
