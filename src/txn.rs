@@ -401,6 +401,12 @@ impl Transactions {
         self.clock.highest()
     }
 
+    /// The latest commit timestamp given: a timestamp, never an id, which
+    /// are given 64 apart and so run ahead of commits (RULES.md D844).
+    pub(crate) fn latest_commit(&self) -> Timestamp {
+        self.clock.latest_commit()
+    }
+
     /// Row changes logged since the last checkpoint taken.
     pub(crate) fn since_checkpoint(&self) -> u64 {
         self.logged.load(Ordering::Relaxed).saturating_sub(self.checkpointed.load(Ordering::Relaxed))

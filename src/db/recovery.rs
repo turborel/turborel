@@ -552,8 +552,10 @@ impl State {
         } else {
             // [DESIGN] RULES.md D443: every version it counts shares no
             // entry; with no snapshot given, the table's writers are kept
-            // out, and every commit given is counted.
-            let through = if as_of == Timestamp::MAX { self.tx.highest() } else { as_of };
+            // out, and every commit given is counted: through the latest
+            // commit timestamp, which a later commit's is compared with,
+            // never an id, which runs ahead of them (D844).
+            let through = if as_of == Timestamp::MAX { self.tx.latest_commit() } else { as_of };
             if let Ok(lock) = self.lock_of(&ix.table) {
                 lock.filled(&ix.name, through);
             }

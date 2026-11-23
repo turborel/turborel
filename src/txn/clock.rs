@@ -340,6 +340,11 @@ impl Clock {
         self.next_id.load(Ordering::SeqCst).max(self.next_commit.load(Ordering::SeqCst)).saturating_sub(1)
     }
 
+    /// The latest commit timestamp given, 0 for none.
+    pub(super) fn latest_commit(&self) -> Timestamp {
+        self.next_commit.load(Ordering::SeqCst).saturating_sub(1)
+    }
+
     /// The next transaction id: for tests.
     #[cfg(test)]
     pub(super) fn next_id(&self) -> TxId {

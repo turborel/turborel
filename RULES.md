@@ -552,6 +552,9 @@ verification approach DO-178C expects (§8).
 | D842 | A home waits on its client for a second, its permit given up after a millisecond |
 | D843 | A commit stamps each row in place from the leaf its write left it in, with no descent |
 | D844 | A transaction begins from its session's kept origin, its id on its thread's stripe |
+| D846 | A row's version is framed in the buffer its record is encoded in |
+| D847 | A node takes an entry in place in one move of its slots, and a search finds its hints' bounds by binary search |
+| D848 | A log's truncation syncs its directory only for a removal not yet synced |
 | D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
@@ -15308,7 +15311,63 @@ counts divide 64, are then its thread's, and stay on its core. The
 count of open transactions is kept in each snapshot stripe and summed
 when read, which only a close and a status ask. An id stride of 64
 leaves 2^58 transactions, which cannot run out in practice. Ids order
-nothing against timestamps, as before.
+nothing against timestamps, as before. So nothing compared with a commit
+timestamp may be taken from an id: an index filled with the table's
+writers kept out is filled through the latest commit timestamp
+(`Transactions::latest_commit`), not the highest id or timestamp a
+checkpoint keeps, which ids, given 64 apart, run ahead of. Filled through
+an id, every later commit looked older than the fill, so collection took
+back the entries its versions shared with the ones they replaced (D443),
+and after a recovery the rows were no longer found by their keys.
+
+#### D846. A row's version is framed in the buffer its record is encoded in
+
+An insert or an update encoded the row's record into one buffer, then
+built its version in a second (D843), copying the record behind the
+version's header. Every row written was copied once more than needed.
+
+The record is now encoded behind 17 bytes kept for the header, the
+longest one, with an older version (`version::FRAMED`). The version is
+written over the bytes in front of the record (`version::frame`). One
+with no older version begins a word in, so the bytes the tree gets are
+those the version encoded as before, and the format is unchanged. A
+sealed record keeps the room in front of the bytes it seals. A
+deletion's version is its header alone and is built as before.
+
+#### D847. A node takes an entry in place in one move of its slots, and a search finds its hints' bounds by binary search
+
+An entry inserted into a leaf in place (D31) was put together in a
+vector of its own, and its slot in another. Each was then spliced into
+the node, which moved the bytes behind it twice. The node was parsed
+twice as well. In a profile of TPROC-C and oltp_read_write at one thread,
+the splices were 1.6% of the time and the tree's changes 5.5%.
+
+The node is now parsed once, unless a key without its prefix makes it be
+built again. It grows once. The slots from the new one on move past the
+entry and the new slot, those before it past the entry alone, and the
+entry and its slot are written into the gaps left.
+
+A search narrowed its slots by the hints with a walk that stopped at the
+first hint above the key's head. A key past the last hint, as a table's
+newest rows are, read all sixteen. The hints are in key order, so the
+two bounds are now found by binary search over them, four steps each.
+The bounds are the same.
+
+#### D848. A log's truncation syncs its directory only for a removal not yet synced
+
+A file log's truncation removed the sealed segments before the position
+given, then synced the log's directory, whether it had removed any or
+not (D25). A row store's undo store truncates its log after each
+collection that released a version (D29), and most remove no segment.
+At LOG.DURABILITY DATA or FULL, each such collection on the commit path
+synced a directory that had not changed.
+
+The log now notes a removal until its directory is synced. A truncation
+syncs only while one is noted. The note is taken before the sync, so a
+removal made meanwhile is synced by this sync or by the next. A sync
+that fails puts the note back, and the next truncation syncs again,
+though it removes nothing. Under NONE nothing is synced, and the note
+stays for the first truncation after the durability is raised.
 
 #### D849. An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows
 

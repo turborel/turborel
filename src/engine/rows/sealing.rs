@@ -86,20 +86,23 @@ impl Sealing {
         ids.saturating_add(1).saturating_add(pipeline.overhead())
     }
 
-    /// `record`, row `id`'s, as it is stored.
+    /// `record`, row `id`'s, as it is stored. Only the record past the
+    /// first `room` bytes of `record` is sealed; those are kept as they
+    /// are, in front of it.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if the encodings named are not registered; an
     /// encoding's errors.
-    pub(super) fn record(&self, id: RowId, record: Vec<u8>) -> Result<Vec<u8>> {
+    pub(super) fn record_after(&self, id: RowId, record: Vec<u8>, room: usize) -> Result<Vec<u8>> {
         let pipeline = self.pipeline()?;
         if pipeline.is_empty() {
             return Ok(record);
         }
         let mut out = Vec::with_capacity(record.len().saturating_add(1));
+        out.extend_from_slice(record.get(..room).unwrap_or_default());
         out.push(SEALED);
-        pipeline.seal(id, &record, &mut out)?;
+        pipeline.seal(id, record.get(room..).unwrap_or_default(), &mut out)?;
         Ok(out)
     }
 

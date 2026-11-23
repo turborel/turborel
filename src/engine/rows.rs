@@ -176,8 +176,8 @@ impl TableStorage for RowTable {
         // Past the groups of a load, so its rows go to the tree from now on.
         self.end_direct(tx);
         let id = self.next_id()?;
-        let (record, pages) = self.encode(id, row)?;
-        match self.insert_version(tx, id, &record) {
+        let (mut framed, pages) = self.encode_framed(id, row)?;
+        match self.insert_version(tx, id, &mut framed) {
             Ok(true) => {
                 // Widened once written, so a zone summed meanwhile either
                 // read the row or is summed again (`rows/zones.rs`).
@@ -228,13 +228,13 @@ impl TableStorage for RowTable {
         // A thread's block may hold the id: blocks are taken past it now.
         self.blocks.clear();
         self.reserve_past(id)?;
-        let (record, pages) = self.encode(id, &row)?;
-        let restored = match self.insert_version(tx, id, &record) {
+        let (mut framed, pages) = self.encode_framed(id, &row)?;
+        let restored = match self.insert_version(tx, id, &mut framed) {
             Ok(true) => {
                 self.counted.live.fetch_add(1, Ordering::AcqRel);
                 Ok(())
             }
-            Ok(false) => self.write_version(tx, id, Some(&record), Past::Snapshot).map(|_| ()),
+            Ok(false) => self.write_version(tx, id, Some(&mut framed), Past::Snapshot).map(|_| ()),
             Err(e) => Err(e),
         };
         restored.inspect_err(|_| self.free(&pages))?;
