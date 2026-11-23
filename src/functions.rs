@@ -38,8 +38,8 @@ pub(crate) use any_value::GroupValue;
 mod arrays;
 pub mod builtin;
 pub use arrays::{
-    ARRAY, ARRAY_AGG, ARRAY_ELEMENT, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY,
-    CardinalityOf, ElementOf, TRIM_ARRAY, TrimArrayOf,
+    ARRAY, ARRAY_AGG, ARRAY_ELEMENT, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, ArrayOperation, AssignElement,
+    CARDINALITY, CardinalityOf, ElementOf, TRIM_ARRAY, TrimArrayOf,
 };
 mod context;
 mod count;
@@ -400,6 +400,11 @@ pub trait ScalarFunction: Send + Sync {
     /// made of (`physical/range/periods.rs`, RULES.md D581). None, by
     /// default.
     fn period_operator(&self) -> Option<crate::ast::PeriodOperator> {
+        None
+    }
+    /// \[DESIGN\] The operation on arrays it is, if a compiled program may
+    /// run one in place (`arrays::ArrayOperation`, RULES.md D914). None, by default.
+    fn array_operation(&self) -> Option<ArrayOperation> {
         None
     }
     /// \[EXTENSION\] Whether "`f(args) op value`" holds, of a call of two
