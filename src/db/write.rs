@@ -492,7 +492,9 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
             && let Some(deltas) = super::escrow::deltas(&w, (seen, new), &hosted)?
             && st.reserve_row(tx, (&w.bound.table, *id), (seen, &deltas, guarded))?
         {
-            return Ok(());
+            // [DESIGN] RULES.md D849: its delta table's row, which shows
+            // none of the columns added to.
+            return effects.reserved(&w.bound.table, new);
         }
         // [EXTENSION] a row its key moves to another partition (RULES.md D155).
         if st.moves((&w.bound.named, &w.bound.table), new) {

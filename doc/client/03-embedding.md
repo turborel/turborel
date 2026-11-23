@@ -74,6 +74,17 @@ only once the database is opened again; it is not to be run again
 before then, as it may have committed. A session dropped ends its transaction as the setting
 SESSION.COMMIT_AT_END says: committed, by default.
 
+A statement that changed a row another transaction had just committed
+returns only once that commit is durable, so nothing it tells rests on a
+commit a crash could lose, and its row locks are held meanwhile. A
+program that tells nothing of a statement until it has ended the
+transaction says so with `tell_at_end(true)`. Each statement then
+returns at once, but one that opens a cursor, and the `commit` or
+`rollback` after it waits instead, once the transaction's locks are
+released. A program that tells such a completion before the transaction
+ends calls `settle_told` first. The server does this for a request that
+commits with its statement.
+
 A session is used by one thread at a time; it may move to another
 between calls. Each thread of a program has its own sessions.
 

@@ -552,6 +552,12 @@ verification approach DO-178C expects (§8).
 | D842 | A home waits on its client for a second, its permit given up after a millisecond |
 | D843 | A commit stamps each row in place from the leaf its write left it in, with no descent |
 | D844 | A transaction begins from its session's kept origin, its id on its thread's stripe |
+| D846 | A row's version is framed in the buffer its record is encoded in |
+| D847 | A node takes an entry in place in one move of its slots, and a search finds its hints' bounds by binary search |
+| D848 | A log's truncation syncs its directory only for a removal not yet synced |
+| D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
+| D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
+| D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
 
 ### The project
 
@@ -12002,6 +12008,9 @@ The semantics hold for these reasons.
 - A checkpoint's image holds the commits the gate let finish, stamped.
   The checkpoint syncs its own record, and every commit record before it
   with it, so its image claims nothing the log could lose.
+- A statement whose completion its caller tells only as the
+  transaction ends does not wait for what it rests on, as its
+  transaction's end waits for it, after its locks are released (D850).
 - A commit with LOG.COMMIT_SYNC OFF, a commit that logged nothing and a
   refused commit count as durable as they end, as they did when they
   returned.
@@ -15302,7 +15311,143 @@ counts divide 64, are then its thread's, and stay on its core. The
 count of open transactions is kept in each snapshot stripe and summed
 when read, which only a close and a status ask. An id stride of 64
 leaves 2^58 transactions, which cannot run out in practice. Ids order
-nothing against timestamps, as before.
+nothing against timestamps, as before. So nothing compared with a commit
+timestamp may be taken from an id: an index filled with the table's
+writers kept out is filled through the latest commit timestamp
+(`Transactions::latest_commit`), not the highest id or timestamp a
+checkpoint keeps, which ids, given 64 apart, run ahead of. Filled through
+an id, every later commit looked older than the fill, so collection took
+back the entries its versions shared with the ones they replaced (D443),
+and after a recovery the rows were no longer found by their keys.
+
+#### D846. A row's version is framed in the buffer its record is encoded in
+
+An insert or an update encoded the row's record into one buffer, then
+built its version in a second (D843), copying the record behind the
+version's header. Every row written was copied once more than needed.
+
+The record is now encoded behind 17 bytes kept for the header, the
+longest one, with an older version (`version::FRAMED`). The version is
+written over the bytes in front of the record (`version::frame`). One
+with no older version begins a word in, so the bytes the tree gets are
+those the version encoded as before, and the format is unchanged. A
+sealed record keeps the room in front of the bytes it seals. A
+deletion's version is its header alone and is built as before.
+
+#### D847. A node takes an entry in place in one move of its slots, and a search finds its hints' bounds by binary search
+
+An entry inserted into a leaf in place (D31) was put together in a
+vector of its own, and its slot in another. Each was then spliced into
+the node, which moved the bytes behind it twice. The node was parsed
+twice as well. In a profile of TPROC-C and oltp_read_write at one thread,
+the splices were 1.6% of the time and the tree's changes 5.5%.
+
+The node is now parsed once, unless a key without its prefix makes it be
+built again. It grows once. The slots from the new one on move past the
+entry and the new slot, those before it past the entry alone, and the
+entry and its slot are written into the gaps left.
+
+A search narrowed its slots by the hints with a walk that stopped at the
+first hint above the key's head. A key past the last hint, as a table's
+newest rows are, read all sixteen. The hints are in key order, so the
+two bounds are now found by binary search over them, four steps each.
+The bounds are the same.
+
+#### D848. A log's truncation syncs its directory only for a removal not yet synced
+
+A file log's truncation removed the sealed segments before the position
+given, then synced the log's directory, whether it had removed any or
+not (D25). A row store's undo store truncates its log after each
+collection that released a version (D29), and most remove no segment.
+At LOG.DURABILITY DATA or FULL, each such collection on the commit path
+synced a directory that had not changed.
+
+The log now notes a removal until its directory is synced. A truncation
+syncs only while one is noted. The note is taken before the sync, so a
+removal made meanwhile is synced by this sync or by the next. A sync
+that fails puts the note back, and the next truncation syncs again,
+though it removes nothing. Under NONE nothing is synced, and the note
+stays for the first truncation after the durability is raised.
+
+#### D849. An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows
+
+A procedure's `SELECT ... INTO ... FROM FINAL TABLE (UPDATE T SET YTD =
+YTD + ?)` that shows other columns of the row, as TPROC-C's Payment
+shows the warehouse's and the district's address, always held its row.
+The compiled change handed it to the general path, since its increment
+could be reserved (D452). The general path refused to reserve it, since
+its statement had a delta table. Every Payment of one warehouse then
+waited for the one before it, which held the row through the rest of
+its procedure. On the in-repo TPROC-C nearly every Payment waited for
+the warehouse row, and the row was never free.
+
+Such an increment is now reserved where the delta table's reader is
+known to show none of the columns it adds to. A compiled change knows
+its select list, and so the columns of the delta table's row it reads
+(`compiled/change.rs`). The collector of its delta table carries them
+(`db/delta.rs`), of NEW or FINAL rows of the base table itself. The
+rules of D452 apply otherwise, and the select list's columns are
+guarded as well as those added to and those the condition reads
+(`db/escrow.rs`). Another transaction's change of a column the list
+shows waits for the reserver as for a held row, and a reservation finds
+a change of one pending or made since its statement read the row and
+writes the row instead. So what the list shows stays as it was read
+until the transaction ends, as it would of a row held. The delta table
+is given the row read with the increments added, which the reader
+cannot tell from the row written since it reads none of their columns.
+A select list that shows a column added to, as New Order's next order
+number, makes the row written and held, as does a delta table of the
+general path, whose reader it does not know.
+
+#### D850. A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on
+
+A statement that wrote over a commit not yet durable held its reply
+until that commit's sync (D441), and held its row locks meanwhile. A
+row many transactions write in turn then took one writer per sync,
+though its commits released it before their own. With the log synced,
+Payment held the warehouse row several times as long as without, for
+that wait.
+
+A caller that tells a statement's completion only once the transaction
+has ended says so (`Session::tell_at_end`), as the server does for a
+request that ends its transaction with its statement (`ends`), and the
+in-repo OLTP bench does for each terminal's procedure call. Such a
+completion returns at once, and its transaction goes on to its end with
+nothing told. Its commit returns once its own commit is durable, and so
+once every commit before it is. A commit refused, and a rollback, wait
+for what the transaction rests on before they return. So no result
+reaches the client before what it rests on is durable, as D441 has it,
+but the wait comes after the transaction's locks are released. A
+failure is told as before, after the wait, since the caller tells it at
+once. A cursor's rows are told as they are fetched, before the end, so
+a statement that opens one waits as before. A server whose request
+keeps the transaction after all, as when a locator was sent, waits for
+the statement's dependencies before it replies (`Session::settle_told`).
+
+#### D851. A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already
+
+The claim of D456 kept a row whose writer had ended for its first
+waiter until that waiter woke and wrote it. Waking took a few
+microseconds when a core was free. When none was, it took a scheduling
+period or more, and the row stood idle meanwhile, every transaction
+coming to it queued behind a thread that was not running. On the
+in-repo TPROC-C with more terminals than cores, the warehouse row spent
+almost as long passing from writer to writer as held.
+
+Now a claim holds back a newcomer only while the line's writer is open,
+when the newcomer would wait for that writer anyway (`txn/row_waits.rs`).
+Once the writer ends, a transaction that is running and comes to the
+row writes it at once. The first waiter, waking to find it written by
+another, is overtaken (`row_waits/overtaken.rs`). It queues first in
+the new writer's line, the waiters behind it for the row moved there
+with it in their order and unwoken, and claims the row firmly. A firm
+claim holds back every newcomer once the line's writer has ended too,
+as D456's claim did. A claim passed or handed on is firm only if its
+new first waiter is one overtaken already. So a waiter is overtaken at most once
+for a row, and its wait is bounded as before but for that one write.
+A waiter does not spin. The waits measured were long where no core was
+free, and a spinning waiter would take a core from the thread it waits
+for.
 
 ## 2. Project layout
 
@@ -15774,6 +15919,9 @@ column it reserved on, it applies its reservations on that table, and
 undoing the statement puts them back. A rollback or a rollback to a
 savepoint takes back the reservations made since.
 
+A procedure's increment through a delta table that shows none of the
+columns it adds to is reserved too (D849).
+
 #### D453. One transaction that wrote nothing collects at a time
 
 The end of a transaction that wrote nothing collects the tables awaiting
@@ -15875,4 +16023,7 @@ in the line, and the last leaves the row unclaimed. A claim whose first
 waiter has ended is dropped when found. Increments applied by escrow
 (D452) are not held, as they do not hold the row. While no row is
 claimed a write finds none from one counter, without a look.
+
+A claim holds back a newcomer once the line's writer has ended only if
+its first waiter was overtaken once already (D851).
 

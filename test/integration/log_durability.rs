@@ -233,3 +233,29 @@ fn a_log_plug_in_is_told_the_durability() {
     }
     assert!(!memory.capabilities().durable);
 }
+
+/// Verifies: [DESIGN] RULES.md D848: a truncation of a durable file log
+/// syncs its directory only for a removal not yet synced: one whose sync
+/// failed is synced by the next truncation, though it removes nothing,
+/// and once synced a truncation that removes nothing syncs nothing.
+#[test]
+fn a_truncation_syncs_the_directory_only_for_removals_not_yet_synced() {
+    let scratch = Scratch::new("log-truncation-syncs");
+    let dir = scratch.path("log");
+    let (fs, faults) = FaultyFs::with_faults();
+    let log = FileLog::create(Arc::clone(&fs), &dir, crc32c(), small_segments()).unwrap();
+    let last = appended(&log, 0, 60);
+    log.sync(last).unwrap();
+    let before = segments(&*fs, &dir).len();
+    faults.inject(Rule::fail(Op::SyncDir));
+    assert!(log.truncate_before(last).is_err(), "the sync of its removals failed");
+    assert!(segments(&*fs, &dir).len() < before, "segments removed");
+    assert_eq!(faults.injected(), 1);
+    assert!(log.truncate_before(last).is_err(), "nothing removed, the removals before still unsynced");
+    assert_eq!(faults.injected(), 2);
+    faults.clear();
+    log.truncate_before(last).unwrap();
+    faults.inject(Rule::fail(Op::SyncDir));
+    log.truncate_before(last).unwrap();
+    assert_eq!(faults.injected(), 2, "nothing removed nor unsynced: no sync");
+}

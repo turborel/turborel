@@ -4,6 +4,7 @@
 //! row; and a record decoded, all its columns or those asked for.
 
 use super::gathered::Gathering;
+use super::version::FRAMED;
 use super::{KEY, OWNER, RowTable, corrupt};
 use crate::disk::pager::PageId;
 use crate::engine::record::{Reference, Spill};
@@ -16,9 +17,21 @@ impl RowTable {
     /// The record of row `id`, holding `row`, and the pages of its values
     /// out of line; on failure, none is left allocated.
     pub(in crate::engine::rows) fn encode(&self, id: RowId, row: &Row) -> Result<(Vec<u8>, Vec<PageId>)> {
+        self.encode_after(id, row, 0)
+    }
+
+    /// As `encode`, the record behind `FRAMED` bytes kept for its version's
+    /// header, so the version is written in the same buffer (RULES.md
+    /// D846).
+    pub(in crate::engine::rows) fn encode_framed(&self, id: RowId, row: &Row) -> Result<(Vec<u8>, Vec<PageId>)> {
+        self.encode_after(id, row, FRAMED)
+    }
+
+    /// As `encode`, the record behind `room` bytes.
+    fn encode_after(&self, id: RowId, row: &Row, room: usize) -> Result<(Vec<u8>, Vec<PageId>)> {
         self.check_lobs(row)?;
         let mut pages = Vec::new();
-        let mut record = Vec::new();
+        let mut record = vec![0; room];
         // A record sealed takes more: room is kept for it.
         let spill = Spill { most: self.spill.most.saturating_sub(self.sealing.overhead()), ..self.spill };
         let encoded = self.format.encode_spilling(row, spill, &mut record, |column, bytes| {
@@ -26,7 +39,7 @@ impl RowTable {
             pages.push(page);
             Ok(page.0)
         });
-        match encoded.and_then(|()| self.sealing.record(id, record)) {
+        match encoded.and_then(|()| self.sealing.record_after(id, record, room)) {
             Ok(stored) => Ok((stored, pages)),
             Err(e) => {
                 self.free(&pages);

@@ -28,8 +28,8 @@ impl RowTable {
             self.counted_change(tx);
             return old.map(|old| old.map(|(was, _)| was));
         };
-        let (record, pages) = self.encode(id, row)?;
-        let replaced = self.write_version(tx, id, Some(&record), past).inspect_err(|_| self.free(&pages))?;
+        let (mut framed, pages) = self.encode_framed(id, row)?;
+        let replaced = self.write_version(tx, id, Some(&mut framed), past).inspect_err(|_| self.free(&pages))?;
         let old = self.replaced(id, replaced.as_deref());
         self.widen_over(id, Some(row), live(&old));
         self.counted_change(tx);

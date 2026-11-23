@@ -13,6 +13,6 @@ pub(super) fn escrow() -> Definition {
     defined(
         ("TRANSACTION.ESCROW", Kind::Choice(SWITCHES), text(ON)),
         SESSION,
-        "Whether a READ COMMITTED searched UPDATE whose every SET item adds to or subtracts from an exact numeric column, no trigger, constraint, index or generated column depending on it, reserves its increments, applied as its transaction commits, rather than holding its rows until then: ON; or writes its rows as any UPDATE does, OFF, as to compare the two.",
+        "Whether a READ COMMITTED searched UPDATE whose every SET item adds to or subtracts from an exact numeric column, no trigger, constraint, index or generated column depending on it, reserves its increments, applied as its transaction commits, rather than holding its rows until then, as does such an UPDATE of a compiled procedure's FINAL or NEW TABLE whose select list shows none of the columns it adds to: ON; or writes its rows as any UPDATE does, OFF, as to compare the two.",
     )
 }

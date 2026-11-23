@@ -31,8 +31,9 @@ use crate::ast::{DeltaResult, InsertSource, InsertStatement, QueryExpression, Sq
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, fail};
 use crate::exec::{Framed, Host, eval};
-use crate::logical::{Contained, Expr, LogicalPlan};
+use crate::logical::{Contained, Expr, LogicalPlan, expr_columns};
 use crate::storage::Row;
+use crate::txn::escrow::bit;
 use crate::value::Value;
 
 /// \[DESIGN\] How many runs of the general path a change waits for its
@@ -78,6 +79,10 @@ struct Searched {
     /// The constraints its statement checks of the row it writes, if they
     /// are all it checks, so it may write that row straight.
     straight: Option<Straight>,
+    /// The columns of the delta table's row its select list reads, a bit
+    /// a column, 0 of none: an increment of a column it does not read may
+    /// be reserved (RULES.md D849).
+    shown: u64,
 }
 
 /// An INSERT of one row of values, its kept target and query.
@@ -199,13 +204,25 @@ fn direct_of(exec: &Exec<'_>, contained: &Contained, shape: Shape) -> Result<Opt
         return Ok(None);
     }
     let (table, straight) = (bound.table.clone(), st.straight(&bound, delete));
-    let Some(result) = delta else { return Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: None, straight })))) };
+    let Some(result) = delta else {
+        return Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: None, straight, shown: 0 }))));
+    };
     let Some(KeptPlan::Query(_, plan)) = keeping.querying(Some(delta_query)).query().map(|q| q.plan()).transpose()?.flatten() else {
         return Ok(None);
     };
     let (Some(outputs), SqlStatement::Select { targets, .. }) = (outputs_of(&plan), contained.statement()) else { return Ok(None) };
     let stores = Stores::of_specs(targets, &contained.scope);
-    Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: Some((result, outputs, stores)), straight }))))
+    let shown = shown_of(&outputs);
+    Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: Some((result, outputs, stores)), straight, shown }))))
+}
+
+/// The columns of the delta table's row `outputs` read, a bit a column.
+fn shown_of(outputs: &[Expr]) -> u64 {
+    let mut read = Vec::new();
+    for e in outputs {
+        expr_columns(e, &mut read);
+    }
+    read.into_iter().fold(0, |mask, c| mask | bit(c))
 }
 
 /// Whether the INSERT `contained` names a view, whose INSTEAD OF trigger
@@ -281,7 +298,7 @@ fn searched(exec: &mut Exec<'_>, contained: &Contained, s: &Searched) -> Result<
         let ran = {
             let _compiling = session.compiling(cx.st, cx.tx.id);
             session.settle_cursors(cx.st, &s.table);
-            point_change((session, cx), (w, straight, s.delete))?
+            point_change((session, cx), (w, straight, s.delete, s.shown))?
         };
         match ran {
             Ok(pointed) => return pointed_done(exec, contained, s, pointed).map(Some),
@@ -295,7 +312,7 @@ fn searched(exec: &mut Exec<'_>, contained: &Contained, s: &Searched) -> Result<
 /// write functions, its delta table's rows collected as they write them.
 fn collected(exec: &mut Exec<'_>, contained: &Contained, s: &Searched, w: Written) -> Result<Completion> {
     let (session, cx) = (exec.session, exec.cx);
-    let collector = s.delta.as_ref().map(|(result, _, _)| Collector::of_base(cx.st, &s.table, *result));
+    let collector = s.delta.as_ref().map(|(result, _, _)| Collector::of_base(cx.st, &s.table, (*result, Some(s.shown))));
     let outer = collector.clone().map(|c| session.delta_replaced(Some(c)));
     let ran = (|| {
         let _compiling = session.compiling(cx.st, cx.tx.id);

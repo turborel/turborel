@@ -193,39 +193,72 @@ fn a_seat_moves_only_for_the_same_row_free_of_deadlock() {
     assert!(all_went);
 }
 
-/// Verifies: [DESIGN] RULES.md D456: once a row's writer ends, a newcomer
-/// finds the row claimed by its first waiter, which has its turn but has not
-/// written yet, and queues behind it rather than writing first; the first's
-/// write hands the newcomer to its end, where it waits until the first
-/// ends.
+/// Verifies: [DESIGN] RULES.md D456, D851: while a row's writer is open, a
+/// newcomer finds the row claimed for its first waiter and queues behind
+/// it; once the writer ends, the claim holds back no one, so a newcomer
+/// running writes the row while the first waiter, which has its turn, has
+/// not written yet.
 #[test]
-fn a_newcomer_never_overtakes_a_rows_first_waiter() {
+fn a_newcomer_takes_a_row_its_first_waiter_has_not_written() {
     let st = State::with_builtins(Box::new(MemoryCatalog::default()));
     let table = QualifiedName { auth: "A".into(), ident: "T".into() };
     let [holder, first, newcomer] = std::array::from_fn(|_| waiting(&st));
     let held = end_of(&holder);
-    let (claim, own, behind, early, went) = thread::scope(|s| {
+    let (open, own, ended) = thread::scope(|s| {
         let a = s.spawn(|| first.wait_for_row((&table, 1), holder.id));
         until_seated(&held, 1);
+        let open = newcomer.claim_of((&table, 1)).map(|c| (c.owner, c.first, c.firm));
+        let own = first.claim_of((&table, 1)).is_none();
         st.rollback(&holder).unwrap();
         let firsts = a.join().unwrap().unwrap().unwrap();
-        let claim = newcomer.claim_of((&table, 1)).map(|c| (c.owner, c.first));
-        let own = first.claim_of((&table, 1)).is_none();
-        let b = s.spawn(|| newcomer.claim_of((&table, 1)).map(|c| newcomer.wait_behind((&table, 1), &c).is_ok()));
-        until_seated(&held, 1);
-        super::Turn::hand_over(Some(&firsts), &first, (&table, 1));
+        let ended = newcomer.claim_of((&table, 1)).is_none();
         drop(firsts);
-        let behind = seated(&end_of(&first));
-        let early = b.is_finished();
-        st.rollback(&first).unwrap();
-        (claim, own, behind, early, b.join().unwrap())
+        (open, own, ended)
     });
-    st.rollback(&newcomer).unwrap();
-    assert_eq!(claim, Some((holder.id, first.id)), "claimed for the first waiter");
+    for tx in [&first, &newcomer] {
+        st.rollback(tx).unwrap();
+    }
+    assert_eq!(open, Some((holder.id, first.id, false)), "claimed for the first waiter while its writer is open");
     assert!(own, "the first waiter is not held by its own claim");
-    assert_eq!(behind, [newcomer.id], "handed to the first's end");
-    assert!(!early, "the newcomer waits until the first ends");
-    assert_eq!(went, Some(true));
+    assert!(ended, "once the writer ends, the newcomer goes on");
+}
+
+/// Verifies: [DESIGN] RULES.md D851: a first waiter overtaken at its turn
+/// queues first in the overtaker's line, the waiter behind it moved there
+/// unwoken after it, and claims the row firmly: a later newcomer queues
+/// behind it even once the overtaker has ended, and the overtaken goes
+/// first.
+#[test]
+fn a_waiter_overtaken_once_is_never_overtaken_again() {
+    let st = State::with_builtins(Box::new(MemoryCatalog::default()));
+    let table = QualifiedName { auth: "A".into(), ident: "T".into() };
+    let [holder, first, second, overtaker, late] = std::array::from_fn(|_| waiting(&st));
+    let held = end_of(&holder);
+    let (line, firm, held_back, went) = thread::scope(|s| {
+        let a = s.spawn(|| first.wait_for_row((&table, 1), holder.id));
+        until_seated(&held, 1);
+        let b = s.spawn(|| second.wait_for_row((&table, 1), holder.id).map(|turn| turn.is_some()));
+        until_seated(&held, 2);
+        st.rollback(&holder).unwrap();
+        let firsts = a.join().unwrap().unwrap().unwrap();
+        let ahead = end_of(&overtaker);
+        let c = s.spawn(|| first.overtaken(firsts, (&table, 1), overtaker.id));
+        until_seated(&ahead, 2);
+        let line = seated(&ahead);
+        let firm = late.claim_of((&table, 1)).map(|claim| (claim.first, claim.firm));
+        st.rollback(&overtaker).unwrap();
+        let held_back = late.claim_of((&table, 1)).map(|claim| claim.first);
+        let went = c.join().unwrap().unwrap().is_some();
+        st.rollback(&first).unwrap();
+        (line, firm, held_back, went && b.join().unwrap().unwrap())
+    });
+    for tx in [&second, &late] {
+        st.rollback(tx).unwrap();
+    }
+    assert_eq!(line, [first.id, second.id], "first in the overtaker's line, the next behind it");
+    assert_eq!(firm, Some((first.id, true)), "claimed firmly");
+    assert_eq!(held_back, Some(first.id), "held back once the overtaker ended");
+    assert!(went);
 }
 
 /// Verifies: [DESIGN] RULES.md D456: a first waiter that gives up its turn
@@ -244,9 +277,12 @@ fn a_claim_passes_to_the_next_waiter_and_ends_with_the_last() {
         until_seated(&held, 2);
         st.rollback(&holder).unwrap();
         drop(a.join().unwrap().unwrap());
-        let passed = newcomer.claim_of((&table, 1)).map(|c| c.first);
+        // The claims themselves: once the writer ended, a newcomer passes
+        // an unfirm claim by (RULES.md D851).
+        let claims = &newcomer.origin.shared.ends.claims;
+        let passed = claims.of((&table, 1), newcomer.id, |_| true).map(|c| c.first);
         drop(b.join().unwrap().unwrap());
-        (passed, newcomer.claim_of((&table, 1)).is_none())
+        (passed, claims.of((&table, 1), newcomer.id, |_| true).is_none())
     });
     for tx in [&first, &second, &newcomer] {
         st.rollback(tx).unwrap();
@@ -258,7 +294,7 @@ fn a_claim_passes_to_the_next_waiter_and_ends_with_the_last() {
 /// A seat of `waiter` for row `id` of `table` in `ending`'s line, with
 /// `ticket`.
 fn seat(waiter: TxId, (table, id): (&QualifiedName, u64), (ending, ticket): (&Arc<Ending>, u64)) -> Arc<super::Seat> {
-    let place = super::Place { ending: Arc::clone(ending), ticket, turn: false };
+    let place = super::Place { ending: Arc::clone(ending), ticket, turn: false, lost: false };
     Arc::new(super::Seat { waiter, row: (table.clone(), id), place: std::sync::Mutex::new(place), signal: std::sync::Condvar::new() })
 }
 
@@ -273,8 +309,8 @@ fn a_claim_holds_back_only_others() {
     let table = QualifiedName { auth: "A".into(), ident: "T".into() };
     let line = Arc::new(Ending::default());
     assert!(claims.of((&table, 1), 30, |_| true).is_none(), "none claimed");
-    claims.claim((&table, 1), super::Claim { owner: 10, line: Arc::clone(&line), first: 20 });
-    claims.claim((&table, 1), super::Claim { owner: 11, line: Arc::clone(&line), first: 21 });
+    claims.claim((&table, 1), super::Claim { owner: 10, line: Arc::clone(&line), first: 20, firm: false });
+    claims.claim((&table, 1), super::Claim { owner: 11, line: Arc::clone(&line), first: 21, firm: false });
     assert_eq!(claims.of((&table, 1), 30, |_| true).map(|c| (c.owner, c.first)), Some((10, 20)), "the first claim kept");
     assert!(claims.of((&table, 1), 10, |_| true).is_none(), "the line's writer");
     assert!(claims.of((&table, 1), 20, |_| true).is_none(), "the first waiter");
@@ -295,7 +331,7 @@ fn a_claim_passes_only_from_its_first_in_its_line() {
     let (line, other) = (Arc::new(Ending::default()), Arc::new(Ending::default()));
     let [a, b, c] = [(20, 1, 0), (21, 1, 1), (22, 2, 2)].map(|(w, id, t)| seat(w, (&table, id), (&line, t)));
     lock_builtin(&line.queue).seated.extend([(1, Arc::clone(&b)), (2, Arc::clone(&c))]);
-    claims.claim((&table, 1), super::Claim { owner: 10, line: Arc::clone(&line), first: 20 });
+    claims.claim((&table, 1), super::Claim { owner: 10, line: Arc::clone(&line), first: 20, firm: false });
     let first = |of: &super::Claims| of.of((&table, 1), 30, |_| true).map(|claim| claim.first);
     claims.pass_on(&b, (&line, &lock_builtin(&line.queue)));
     assert_eq!(first(&claims), Some(20), "not its first");

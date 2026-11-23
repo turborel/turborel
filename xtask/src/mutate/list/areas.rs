@@ -19,6 +19,7 @@ mod cost_model;
 #[path = "count.rs"]
 mod count;
 mod declared_types;
+mod write_costs;
 // The decode kernels' mutations, beside the areas as `list.rs` holds no
 // more modules.
 #[path = "decode.rs"]
@@ -31,6 +32,7 @@ mod alloc;
 #[path = "estimates.rs"]
 mod estimates;
 mod group_table;
+mod hot_rows;
 mod insert_values;
 mod join_estimates;
 mod join_table;
@@ -204,8 +206,8 @@ fn second() -> [&'static [Mutation]; 47] {
 /// The planner's newest areas, in order: join estimates, range joins, the
 /// cost model, orders, probed subqueries, predicate transfer, dead entries
 /// taken back by a scan and scans priced by sampled zones, key plans, a
-/// B-link tree probe's path, and a commit's stamps in place.
-fn planner() -> [&'static [Mutation]; 10] {
+/// B-link tree probe's path, a commit's stamps in place, and the fixed costs cut from a write.
+fn planner() -> [&'static [Mutation]; 11] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
@@ -217,6 +219,7 @@ fn planner() -> [&'static [Mutation]; 10] {
         &super::key_plans::KEY_PLANS,
         &tree_path::TREE_PATH,
         &commit_stamps::COMMIT_STAMPS,
+        &write_costs::WRITE_COSTS,
     ]
 }
 
@@ -267,8 +270,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
-/// kernels' and compiled procedures' last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 20] {
+/// kernels', compiled procedures' and rows in demand's last, as `last`
+/// holds no more.
+fn closing() -> [&'static [Mutation]; 21] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -290,6 +294,7 @@ fn closing() -> [&'static [Mutation]; 20] {
         &server_lines::SERVER_LINES,
         &kernels::KERNELS,
         &compiled::COMPILED,
+        &hot_rows::HOT_ROWS,
     ]
 }
 

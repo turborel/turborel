@@ -16,7 +16,7 @@
 
 use super::{ObjectRows, Written};
 use crate::db::assignment::candidate;
-use crate::db::escrow::escrowed;
+use crate::db::escrow::reserving;
 use crate::db::integrity::Straight;
 use crate::db::prepared::Keeping;
 use crate::db::routines::Hosted;
@@ -37,20 +37,21 @@ pub(in crate::db) enum Pointed {
 }
 
 /// `w`, an UPDATE, or DELETE if `delete`, of `session`, run straight on
-/// its table, its statement ended with the checks of `straight`: what it
-/// did; or `w` again, if it is to run the general path.
+/// its table, its statement ended with the checks of `straight`, its delta
+/// table's reader, if any, showing the columns of `shown`: what it did; or
+/// `w` again, if it is to run the general path.
 ///
 /// # Errors
 ///
 /// As `update_rows` and `delete_rows`, and the statement's end.
 pub(in crate::db) fn point_change(
     (session, cx): (&Session, StatementContext<'_>),
-    (w, straight, delete): (Written, &Straight, bool),
+    (w, straight, delete, shown): (Written, &Straight, bool, u64),
 ) -> Result<std::result::Result<Pointed, Written>> {
     let StatementContext { st, tx } = cx;
     let ObjectRows::Point(kept, reads) = &w.rows else { return Ok(Err(w)) };
     let Some(point) = kept.point(st) else { return Ok(Err(w)) };
-    if !delete && escrowed(st, tx, &w, true).is_some() {
+    if !delete && reserving(st, tx, &w, shown).is_some() {
         return Ok(Err(w));
     }
     // T, to be written, and the tables its condition and SET values read.
