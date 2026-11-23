@@ -50,17 +50,21 @@ impl BufferPool {
     /// As `read_tallied`.
     pub fn read_stamped(&self, file: FileId, id: u64, tally: Option<&Tally>) -> Result<(PageRef<'_>, Stamp)> {
         let page = self.read_tallied(file, id, tally)?;
-        // The page is latched in its frame, so the frame's version stays
-        // as it is read here.
-        let frame = page.frame;
-        let stamp = Stamp { pool: self.number, frame: frame.index, version: frame.version.load(Ordering::SeqCst) };
+        let stamp = self.stamp_of(&page);
         Ok((page, stamp))
+    }
+
+    /// The stamp of `page`, held for reading in this pool: of the frame
+    /// that holds it, whose version stays while the page is latched.
+    pub fn stamp_of(&self, page: &PageRef<'_>) -> Stamp {
+        Stamp { pool: self.number, frame: page.frame.index, version: page.frame.version.load(Ordering::SeqCst) }
     }
 
     /// Whether page `id` of `file`, read with `stamp`, is as it was then:
     /// its frame not latched exclusively since, so neither changed nor
     /// given another page. A write under way when the stamp was taken
     /// moved the version on as it took the latch, before it changed a byte.
+    #[inline]
     pub fn unchanged(&self, file: FileId, id: u64, stamp: Stamp) -> bool {
         let Some(frame) = self.frames.get(stamp.frame).filter(|_| stamp.pool == self.number) else { return false };
         frame.version.load(Ordering::SeqCst) == stamp.version && frame.key() == Some(Key { file, id })

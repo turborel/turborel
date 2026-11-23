@@ -558,6 +558,32 @@ verification approach DO-178C expects (§8).
 | D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
+| D852 | A writer searches and changes its leaf under one latch, comparing the value found where it lies |
+| D853 | A row read for a write starts at the leaf noted for it, with no descent |
+| D854 | A page held for writing is pinned through its hint under its frame's latch, with no shard locked |
+| D855 | A forward scan copies one entry at its first read, a few at its second, and whole leaves after |
+| D856 | An update of an entry and a delete search, show and change their leaf under one latch |
+| D857 | A thread pins a tree for a statement and is counted in its epoch once, its operations counting nothing meanwhile |
+| D858 | A thread keeps version-checked copies of the leaves it reads often and finds unchanged, and reads them with no latch |
+| D859 | A probe from a key borrows its key and shows the entries from it where they lie, allocating nothing |
+| D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
+| D861 | A table's count of rows is kept by stripe, a thread moving its own |
+| D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
+| D863 | A read by key shows its value to its caller where it lies, with the notes of a read that copies |
+| D864 | A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed |
+| D865 | A value read for a write and a value put by a change go through buffers their callers and threads keep |
+| D866 | A write is shown the value it replaces where it lies and gives the bytes to put, under one hold of the leaf |
+| D868 | A table's zones are kept cold until a scan or a read asks them |
+| D869 | A read by row id decodes the row where it lies in its leaf |
+| D870 | A commit takes a table's shared lists and the work areas only for what it left there |
+| D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
+| D872 | A statement's writes of a table resolve it once |
+| D873 | The undo store gathers a batch a stripe of threads, and counts its pins by batch |
+| D874 | A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps |
+| D875 | An update reads of the row it replaces the columns its statement uses, and compares the key columns it sets alone |
+| D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
+| D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
+| D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 | D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
@@ -14439,6 +14465,8 @@ holds one (`mvcc/status.rs`). The latest snapshot and the horizon the
 statuses keep are each alone on their lines, so raising one moves no
 line a commit reads the slots by.
 
+D870 does the same for the lists a commit makes in a table it wrote.
+
 #### D784. A table's open transactions are kept in shards, by id, each alone on its cache lines
 
 A table kept the bookkeeping of the transactions open in it in one map
@@ -15451,6 +15479,758 @@ for a row, and its wait is bounded as before but for that one write.
 A waiter does not spin. The waits measured were long where no core was
 free, and a spinning waiter would take a core from the thread it waits
 for.
+
+#### D852. A writer searches and changes its leaf under one latch, comparing the value found where it lies
+
+A writer of one key owns its leaf (D503), read it under its latch held
+shared, let the latch go, and took it again exclusively to change it
+(D840). The read copied the value found into a vector, a row's whole
+version, only to compare it with the one expected. The node was parsed
+under each latch.
+
+No other writer changes a leaf owned, so the two latches guarded one
+change. The leaf is now latched once, exclusively
+(`engine/tree/here.rs`). Under it the node is parsed, the key searched,
+the value found compared where it lies, and the change made in place if
+it fits, or the node copied to split, as before. Only a write that gives
+the old value back copies it (`BLinkTree::replace`). A leaf that no
+longer covers the key is left as it is, and the writer moves right from
+it (Lehman and Yao 1981, §5) and writes the leaf it reaches the same
+way. A commit's stamp in place (D843) latches its leaf once too.
+
+A write refused, its key absent or its value not the one expected, has
+latched the leaf exclusively and changed nothing. The page is then
+written back once more than it needed, which a refused write is too
+rare to count.
+
+#### D853. A row read for a write starts at the leaf noted for it, with no descent
+
+An update of a row read its newest version by a descent of the table's
+tree (D446), though the read of the row just before it, through an
+index, had noted the row's leaf on the thread (D500).
+
+`BLinkTree::get_for_write` now tries the leaf noted for the row first
+(`engine/tree/near.rs`), trusted as a read's is: a frame holds it, it is
+a leaf of this tree, not deleted, and its first key is at or below the
+key. It follows the right links a few leaves past a split, as a read
+does. The write then starts from the leaf found, with no path, so a
+split of it finds its parent again from the root, as a write from a
+remembered leaf does. With no leaf noted, or one that cannot answer, the
+read descends as before. The stamp terms of D446 are unchanged: the
+tree's stamp is loaded inside the read's epoch, before the leaf is
+looked at.
+
+#### D854. A page held for writing is pinned through its hint under its frame's latch, with no shard locked
+
+A read that hits finds its frame by a hint and takes only the frame's
+latch (D30). A page held to be written or owned went the locked way
+every time: its shard hashed and locked shared, the shard's map
+searched, the pin taken, the shard hashed again for a count, and the
+hint written again though it had not changed. Every write of a row took
+that path once, and the shards' lock words and the hints' cache lines
+moved between the threads writing.
+
+A hold now tries the hint first (`BufferPool::pin_hinted`,
+`disk/buffer/hits.rs`). The frame is latched shared without waiting,
+seen to hold the page and not be filling, pinned, and the latch let go.
+A hint stale, or a frame latched exclusively, sends the hold the locked
+way.
+
+A pin taken under a shard's lock is safe as an eviction locks the shard
+exclusively. A pin taken under the latch is safe by the latch. What
+takes a frame from its page, an eviction or a free, latches the frame
+exclusively and then looks at its pins again under that latch
+(`Frame::taken`). A pin taken before the latch was is seen, and none is
+taken while it is held, as the pin needs the latch shared. A frame is
+marked loading and given its new page under the same latch, so a hold
+that finds the frame through an old hint afterwards sees another page
+or a frame loading, and goes the locked way.
+
+A hint is written only when it changes (`Hints::note`), and the shard is
+hashed for the count of waits only when a hold waited.
+
+#### D855. A forward scan copies one entry at its first read, a few at its second, and whole leaves after
+
+A scan copies the entries it wants from a leaf under the leaf's latch
+and gives them once the latch is let go (D31, D809). It copied every
+entry of the leaf from its lower bound to its upper. A probe of a
+unique key is a scan that takes one entry, and a scan of the lowest key
+of a range, a queue's next, takes one too, yet each copied the rest of
+its leaf within its bounds first.
+
+A forward scan now takes one entry at its first read, sixteen at its
+second, and whole leaves from then on (`engine/tree/scan.rs`). A leaf
+not taken whole is read again from past the last key taken, exactly as
+a scan goes on past the last key it returned, so a leaf that split or
+lost entries in between gives each key it still holds once (Lehman and
+Yao 1981, §4). A scan that reads on reads its first leaf three times
+at most. The counts are the one entry a probe wants and the rows of a
+short range, an order's lines. They bound only what is copied, and any
+other counts give the same entries. A leaf read again is noted once for
+EXPLAIN ANALYZE (D621).
+
+A backward scan takes whole leaves, as it finds each leaf by a descent
+and a leaf read again would cost one.
+
+#### D856. An update of an entry and a delete search, show and change their leaf under one latch
+
+A write of one key latches its leaf once (D852). A change that asks its
+caller what to do with the value found (`BLinkTree::update_alone`), which
+every index entry written or removed makes, and a delete still read the
+leaf under its latch held shared, copied the value found, and latched
+the leaf again to change it.
+
+Both now latch the leaf once, exclusively (`engine/tree/write.rs`,
+`BLinkTree::latched_covering`). The caller's change is shown the value
+where it lies, under the latch, and no copy of it is made. A delete
+compares the value expected in place and copies the one it gives back.
+The change is a few instructions that may not use the tree, as before,
+so readers of the leaf wait no longer than for the write itself. A
+change that keeps the entry, or a delete that finds none, has latched
+the leaf exclusively and changed nothing, as a write refused has (D852).
+
+#### D857. A thread pins a tree for a statement and is counted in its epoch once, its operations counting nothing meanwhile
+
+Every operation on a B-link tree is counted in the tree's epoch as it
+begins and uncounted as it ends (D814), so a page taken out is freed
+only once no operation that may hold its number is left. The two counts
+are writes of a counter in one total order, and a statement makes many
+operations on each tree it uses, a transaction of order entry over a
+hundred.
+
+A thread may now pin a tree (`BLinkTree::pin`, `engine/tree/pin.rs`). The
+pin is the count an operation takes, held until it is dropped, and the
+thread notes it in one of sixteen places it alone reads. An operation
+looks there first and, finding its tree pinned by its own thread, counts
+nothing. What holds of an operation under way holds of everything the
+thread does while pinned, as the pin's count is in an epoch no later
+than any of them would have taken. So pages taken out meanwhile stay
+unfreed, and the stamps by which a leaf remembered is trusted (D446,
+D843) are read inside the pin's epoch as they were inside an
+operation's.
+
+A pin cannot be sent to another thread, so the note is true of the
+thread that reads it. A second pin of a tree is counted but not noted,
+so whichever is dropped first the note stays with the first. A thread
+with every place taken pins unnoted, and its operations count
+themselves. A scan counts itself as before, as it may move to another
+thread with its cursor.
+
+A pin delays the freeing of pages taken out, as a long scan does. It is
+for a statement or a step of a transaction, and is not held while the
+thread waits for a client.
+
+#### D858. A thread keeps version-checked copies of the leaves it reads often and finds unchanged, and reads them with no latch
+
+A descent reads inner nodes from the thread's copies (D502) and a scan
+of rows side by side keeps a copy of its leaf (D806), but every other
+read of a leaf took its frame's latch. That is two writes of a word
+every reader of the leaf shares. The leaves all threads read and few
+write, a small table's, an index's of rows never changed, a catalogue
+of items, moved one cache line between every thread at every read.
+
+A thread now keeps copies of such leaves (`engine/tree/leaves.rs`). A
+copy is read exactly as an inner node's is. It was taken under the
+leaf's latch held shared, with the stamp of its frame, and it is read
+only while the frame holds the page at that version
+(`BufferPool::unchanged`). The version moves on as the latch is taken
+exclusively, before a byte changes or the frame is given another page.
+So a copy whose version holds was read whole between two writes, and no
+write has begun since, and a read from it is a read under the latch let
+go at that moment. Every check a reader makes of a leaf latched, its
+tree, its level, its range, whether it is deleted, it makes of the copy.
+
+Which leaves are copied is a rule of counts, and no count can make a
+read wrong. A leaf is copied at the third latched read in a row that
+finds its stamp as the read before left it. A read that finds it
+changed counts a strike, at most six, and each strike doubles the reads
+in a row then needed. So a leaf written as often as it is read is never
+copied, and one written now and then costs a copy only after reads that
+would each have used it. A thread tracks at most 128 leaves, each in the
+place its page's hash gives, found with one hash and no map, at most
+1 MiB of copies of 8 KiB pages. A leaf new to a place takes it, but a
+copy read since the place was last asked for is spared once.
+
+The copies serve a descent's read of its leaf and a read from the leaf
+noted for a row (D500). A scan's reads of the leaves after its first,
+and a read from the leaf a scan remembered, latch as before, as a scan
+passes each leaf once.
+
+#### D859. A probe from a key borrows its key and shows the entries from it where they lie, allocating nothing
+
+A probe of a unique key was a scan (D31). A scan keeps its bounds as
+bytes of its own, as it may outlive the call that began it, so each
+probe allocated two keys, and copied the entry it took (D809, D855).
+
+`BLinkTree::first_from` shows a caller the entries at or after a key, in
+key order, until the caller has seen enough (`engine/tree/probe.rs`). The
+key is borrowed. Each entry is shown under its leaf's latch, or from the
+thread's copy of the leaf (D858), its value where it lies and its key
+put together from the node's prefix in a buffer the thread keeps from
+probe to probe. A probe that ends in the leaf it began in, as one of a
+unique key does, allocates nothing once that buffer has grown to a key.
+
+Past a leaf the probe moves right as a scan does (Lehman and Yao 1981,
+§4). It shows of each leaf only the entries past the last key it showed,
+which the buffer holds, so a leaf merged into the next in between shows
+none twice (D814). It is counted as a scan from a key is, a lookup in the
+tree's tally and each leaf read noted for EXPLAIN ANALYZE (D621). The
+caller's function runs under a latch, so it may not use the tree nor
+wait, as a scan's visitor may not (D350).
+
+#### D860. A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing
+
+A table's zones (D31) were vectors behind one lock shared by readers,
+taken to be written only as zones were added. Every row written took it
+to find its zone, every commit took it once for each version it
+superseded, and every entry an index-only scan read took it to read its
+zone's flag (D34). A lock shared by readers still writes its own word
+as each reader comes and goes, so every session using a table passed
+that one cache line to the next. A write also took the lock of the
+table's sealing twice and counted its pipeline, and a commit took the
+locks of how the table freezes rows and of its directory of groups,
+though the table sealed nothing and froze nothing. Each write set its
+zone's flag of visibility and its segment's flag of change whether or
+not they were set already.
+
+The zones are now a sequence that only grows, in chunks each twice as
+long as the one before, so no zone moves and one is found by loads alone
+(`rows/zones/grown.rs`). A zone is still locked alone to be changed.
+Zones are added by one thread at a time, and a zone is given only once
+it is filled. A scan takes the number of zones once, and reads the rows
+of any zone added after as it reads those past the last. A table's
+zones are read from its pages once, as it opens.
+
+A table that passes its rows through no encoding says so in a flag set
+with its pipeline, and one that has never frozen rows nor held a group
+in a flag that is never set again once clear. A write and a commit read
+those flags and take no lock. A flag of a zone or a segment is written
+only if it is to change. A save clears a segment's flag before it reads
+the segment's zones, so a change it did not read finds the flag clear.
+
+A write over a row's newest version compares each value it keeps with
+the one replaced, to know which columns it may leave loose (D770). A
+zone known holds its rows' newest versions, so a column the write keeps
+is not compared with the zone's bounds again. A table that has frozen
+rows or held a group is left out, as its zones are of its tree's rows
+alone and the version replaced may have been read from a group.
+
+#### D861. A table's count of rows is kept by stripe, a thread moving its own
+
+A table's count of rows (D31) was one word, added to by every insert and
+taken from by every deletion, so sessions inserting into one table at
+once passed its cache line from one to the next for each row.
+
+The count is now kept by stripe (`rows/counted.rs`), 16 of them, each on
+cache lines of its own, as a structure's tally of its reads is (D35). A
+thread moves the stripe it is given (`sync::thread_stripe`), up or down,
+so a stripe may be below zero while the sum is not. The count is the
+stripes' sum, read by the planner, the statistics and a checkpoint. A
+checkpoint reads it with writers held, so the count it saves is exact
+as before. A sum read while rows are written counts each of them or not,
+as a single word read then did.
+
+#### D862. A read by row id gives the columns listed alone, in their order, into a row its caller keeps
+
+A read of some columns of a row (`TableStorage::get_columns`, D31) gives
+a row of the table's degree, the other columns null (D751). Of a table
+of twenty columns read for two, it makes a vector of twenty values for
+each row, and the caller then picks its two out.
+
+`RowTable::get_listed` appends the values of the columns listed, in the
+order listed, to a row the caller holds, and nothing else
+(`record/listed.rs`). With the `Near` of `get_near`, which holds the
+bytes read, given beside that row, a caller reading row after row allocates only what the
+values themselves own. A column the record lacks is null, as D751 has
+it. A column listed twice is given twice. The read is noted as
+`get_columns` notes it.
+
+A record is checked once as it is decoded, whole or in part, not once
+for each column. Each column is found from the format alone, as before:
+a column of fixed width at its offset, one of varying width between two
+ends.
+
+#### D863. A read by key shows its value to its caller where it lies, with the notes of a read that copies
+
+A read of a row by its id copied the entry's value into the bytes its
+`Near` keeps (D31), and the row store then judged the version and
+decoded the row from the copy. For a version visible as it stands that
+copy was the whole row, moved once for nothing.
+
+`BLinkTree::get_near_with` shows the value to a function of its caller
+where it lies (`engine/tree/near.rs`): under the leaf's latch, or over a
+copy of the leaf, the scan's own (D806) or the thread's (D858). It looks
+where `get_near` looks, in the same order, the leaf remembered and its
+copy, the leaf noted for the row (D500), then a descent, and leaves the
+same notes for the next read, the leaf, the place in it and the misses.
+`get_near` is now that read with a function that copies. The function is
+called at most once, not at all for a key absent, and may not use the
+tree nor wait, as a scan's visitor may not (D350).
+
+#### D864. A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed
+
+Three costs of a node changed in place (D31, D847) were found by
+reading the write path.
+
+A node built again, the halves of a split, a node compacted, one whose
+prefix a key shortened, was allocated at its own size, so the first
+entry inserted into it grew the buffer and moved the whole node. Such a
+node is now built in a buffer of its page's size (`node::built_in`), and
+one built again for its prefix keeps the room its buffer had.
+
+A value replaced by a longer one was removed and inserted again. That
+took its slot out and put it back, parsed the node twice and sampled the
+hints twice. With room in the node it is now written in place
+(`node::lengthen`): the entry is written again at the end of the heap
+with its key's tail, the slots move past it once, and its slot is led to
+it. The node is byte for byte what removing and inserting left, the old
+bytes garbage and the entry marked as inserted last, so nothing that
+reads a node can tell the two apart.
+
+The hints (D500) were sampled again after every insert and remove. They
+are the heads of the slots at sixteen even steps of the count over
+seventeen. So they cannot have changed while the step is the same and
+the slot put in or taken out lies past the last one sampled, which is
+so of sixteen in seventeen entries appended to a node, as a table's rows
+are. Then they are left (`build.rs`, `hint_after`), and otherwise sampled
+again as before. The bytes are those sampling again would write, so the
+format and a search are unchanged.
+
+#### D865. A value read for a write and a value put by a change go through buffers their callers and threads keep
+
+Two calls of the write path returned or took a value in a vector made
+for the one call. `get_for_write` returned the row's newest version in a
+new vector at every update, and `update_alone` took the value its
+caller's change put in one, at every index entry written.
+
+`get_for_write_into` leaves the value in a buffer of its caller's, and
+`update_alone_into` hands the change a buffer to write its value into,
+which the thread keeps from one change to the next
+(`engine/tree/write.rs`). The older calls are now those with a buffer of
+their own. A delete of a value expected (`delete_if`) no longer copies
+the value it removes, which its caller has.
+
+What is left allocated on the write path is allocated by a split alone:
+the node's copy, its entries, its halves and the separator. A change
+with no split builds an empty list of splits, which allocates nothing,
+and the path of a descent and the place of a write are kept in place
+(D840, D843).
+
+#### D866. A write is shown the value it replaces where it lies and gives the bytes to put, under one hold of the leaf
+
+A row's write read its newest version (D446), appended it to the undo
+store, and replaced it only if it was still the version read (D852). So
+the version was copied out of the leaf for the compare, and a writer
+that had changed the row in between sent the write round again.
+
+`BLinkTree::replace_found_with` holds the leaf the read reached once,
+exclusively, and shows the value there to a function of its caller
+(`engine/tree/placed.rs`). The function may copy it elsewhere, into the
+undo batch, and gives the bytes to put, or none to leave the entry. What
+it is shown is the value the write replaces, as no writer comes between
+under the leaf's lock, so nothing is compared and nothing is copied for
+a compare. The entry is found as `replace_found` finds it: from the leaf
+the read reached while the tree's stamp is the read's, moving right past
+a split, else by a descent. A key no longer in the tree shows nothing
+and is told as none, for the caller to read again. The function runs
+under a latch and may not use the tree nor wait.
+
+#### D868. A table's zones are kept cold until a scan or a read asks them
+
+Every write to a table kept its zone (D31): it found the zone, locked
+it, compared the values it changed with the zone's bounds, and widened
+them. A table written and read by key alone paid that for zones nothing
+read. An order entry's tables are of that kind.
+
+A table of the row store now keeps no zone until one is asked for
+(`rows/zones/cold.rs`). While it is cold a write makes no zone, takes no
+lock of one, and decodes nothing for one. A cold table has no zone, so a
+scan reads every block of its row ids and no row of it counts as
+visible to every reader (D34): an index-only scan reads the row, which
+is always right. No zone is narrower than its rows, as none is there.
+
+The first scan told a condition of a column kept, the first plan that
+weighs an index-only read of the table (`visible_share`), the first read
+that asks whether a row is visible to all, and the first count of its
+rows warm the table. Warming makes a zone not known for every block of row ids
+given so far, and the maintenance thread sums them up as it does a
+table's opened (D770, D771). Until a zone is summed up it prunes
+nothing. From the warming on, every write keeps its zone as before, and
+a zone made for row ids given after it is known from its first row. A
+table stays warm while it is open. The planner's question of the share
+a scan reads (`scan_share`) does not warm a table, and is answered all:
+it is asked of every table a condition is planned for, an order entry's
+read by key among them. So a scan is priced by its zones only once one
+has run, and an index-only read is chosen only once the table was asked
+and its zones settled.
+
+A write that found the table cold had its row in the tree, and its id
+given, before it looked. Warming sets the table warm and then reads the
+ids given, under the lock zones are added under, each in one order with
+the writes' reads of them. So that row's zone is one not known, and is
+summed up from the tree.
+
+A commit counts the versions it supersedes for their zones, so no zone
+is settled visible while one is left with its index entries (D34). A
+cold table has no zone to count them, so they are counted for the table,
+by stripe. Once it is warm no zone is settled visible until that count
+is none. A version collected is taken from its zone's count if that has
+one, else from the table's, so the two together are the versions left.
+
+A table opened is warm if its last checkpoint saved zones, which only a
+warm table has: they are read, and recovery widens them (D31). Any other
+table opens cold, with no zone to sum up, so opening a database no
+longer has every table's zones summed up behind it. Opening cold a
+table whose zones were saved would leave zones on its pages that no
+write keeps, for a later opening to trust. A table of the column store
+is warm from its first row, as its scans read its tree by zone.
+
+#### D869. A read by row id decodes the row where it lies in its leaf
+
+A read by row id copied the row's newest version out of its leaf into
+the bytes its caller keeps (`Near`), then checked the version and decoded
+the copy. Every row read by key was copied once before a value of it was
+made.
+
+The tree now shows the version to the read where it lies (D863), and
+the read decodes it there (`rows/scan.rs`), whole, by its columns, or
+its columns listed (D862). It does so for a version the reader sees as
+it is stamped, that is no deletion, whose record is not sealed and
+keeps no value asked for out of line. That is the common row. Any other
+is copied out and read as before, after the leaf is let go, as a scan by
+batch does (D350): a version whose maker is looked up or whose older
+versions are in the undo store, a record its encodings open, and a
+value on a page of its own. Nothing is decided differently, only where
+the bytes are read. A row whose newest version is a deletion takes the
+copy too, so the commit of the deletion is told as before (D837).
+
+#### D870. A commit takes a table's shared lists and the work areas only for what it left there
+
+A transaction validated, committed and settled in every table it had
+joined, whatever it did there. In a table it only read below
+SERIALIZABLE it still took the lock of the table's validated
+transactions and was kept among them, though with no change and no read
+recorded nothing can be ordered against it (D448), and it took the lock
+of the queue of commits to stamp, which it copied into two new lists to
+find it had none. A table every transaction reads, as a catalogue of
+items is, had every commit queue on those two locks. In a table it
+wrote, it took the store's work areas three more times (D783 covers the
+first): for the list of rows to stamp, for the garbage of each segment
+of its changes, one a statement, and for the rows a stamp left. Each is
+a read of the store's lock and a copy of an `Arc` every session shares.
+
+So a transaction with no change and no recorded read in a table is not
+validated there (`mvcc/commit.rs`). The queue of commits to stamp is
+counted under its lock, and a settle that finds the count at zero takes
+no lock; one that takes it moves its own commits out and allocates
+nothing for the rest (`mvcc/stamps.rs`). A list whose every item is
+known to fit the bytes held (TRANSACTIONS.HELD_BYTES) is made with no
+work areas, as it never spills (`Versions::space_within`). Those are
+the rows to stamp, the rows a stamp leaves, and the garbage of a commit
+together with the deletions its stamping may file. A commit's garbage is filed
+once, or each time it passes the bytes held, not once a statement. A
+list that may pass the bytes held is made as before.
+
+#### D871. A thread keeps the bookkeeping it last found of a transaction in a table
+
+A table keeps each open transaction's bookkeeping in a map of shards
+(D784). A scan by row id kept what it found in its `Near`, but every
+write, every read with no `Near` of its own, and every savepoint looked
+the transaction up again. An update of one row took a shard's lock and
+hashed the id twice, and a third time for its statement's savepoint.
+
+A transaction runs on its session's thread. So each thread keeps the
+bookkeeping it last found, of up to 16 tables, and a lookup finds it
+there with no lock and no hash (`mvcc/found.rs`). One not kept is found
+in the map as before, and kept from then on, so a transaction that moves
+to another thread loses nothing but one lookup.
+
+What is kept must never be given for another table, nor after its
+transaction has ended. A table is named by a token, an allocation of its
+own that the thread holds as well, so no table made later can have the
+same one. Whether a transaction has ended in a table is a flag beside
+the bookkeeping's lock (`opens.rs`, `Opened`), set as the map lets it go
+and read with no lock by whatever still holds it, a thread or a `Near`.
+Bookkeeping of ended transactions goes from the thread as it next keeps
+one. Until then the thread holds it, so a transaction's end leaves it
+holding nothing a database at rest must not keep. A commit takes its
+list of changes out to file them. A rollback undoes them and then lets
+the emptied list go (`Opened::let_go`), since the list keeps the spill
+area its changes were written to for as long as it lives, and the area
+would otherwise stay in the work areas after the rollback. The storage
+trait is unchanged. A handle the coordinator passes
+down would avoid the thread's list, and needs every engine's methods to
+take it.
+
+#### D872. A statement's writes of a table resolve it once
+
+The coordinator's row writes took a table's name. For every row an
+update looked the name up about eighteen times, in the map of storages,
+the map of locks and the catalog, for its capabilities, its lock, its
+generation, its seal and its indexes, whose key columns it worked out
+again each time. It then took the transaction's own lock five times to
+find its first-time work already done.
+
+A `Writing` (`txn/writing.rs`) holds what those lookups gave, found once
+in the definitions a statement reads, which it borrows, so it cannot
+outlive them. `State::writing` makes one, and `insert_row_in`,
+`update_row_in`, `delete_row_in`, `rewrite_row_in` and `index_add_in`
+take it. The entry points that take a name make one for their row, so
+their callers are unchanged and a caller writing many rows of a table
+holds one for all of them.
+
+What a write does in its transaction the first time is the policy's
+check of its persistence, the table's lock, the joining of the engine
+and the statement's savepoint there. A write through a `Writing` asks
+the transaction whether all of that is done (`Txn::prepared`), read from
+the transaction's own bookkeeping under its lock taken once. Nothing is
+remembered in the `Writing` or beside the bookkeeping. A statement's
+end, a mark undone and a savepoint gone back to each take savepoints out
+of the bookkeeping, and a flag kept apart would have to be cleared by
+every one of them. The checks that only the lock and the engine's
+capabilities decide, damage, the table's generation and a change of its
+definitions, are made at every write as before. A table whose changes
+the log does not hold is prepared in full at every write, as the
+policy's refusals of it depend on the setting as it stands.
+
+#### D873. The undo store gathers a batch a stripe of threads, and counts its pins by batch
+
+Every first change of a row by a transaction appends the version it
+replaces to the undo store, which every table of a row store shares
+(D31). The store gathered one batch at a time. An append took the one
+lock of its batches, and then the one lock of its pins, to add the
+version's position to a map of every position still needed. A release
+took the pins' lock again. Every writer of every table met on those two
+locks at every row.
+
+Now each of 16 stripes of threads gathers a batch of its own, under a
+lock only its threads take (`undo/gathered.rs`). A batch takes its
+number from the store as it begins, so a position is still a batch's
+number and a place in it, and readers find a version as before. A
+version is pinned by being counted in its batch, which the append does
+anyway, so pinning takes no lock. A release marks the version released
+in its batch, a bit a version, so a position released twice counts once,
+as taking it out of the map did. Only the beginning and the end of a
+batch, a release, and a truncation take a lock the store shares, and a
+release takes the pins' alone.
+
+The log is truncated before the oldest batch holding a pinned version,
+written or still gathered. A truncation holds every stripe while it
+finds that batch and reads the log's end, so no version is pinned and no
+batch taken to be written meanwhile, which is what the one lock gave.
+It is asked for only when a batch's last pinned version is released, not
+at every release. A batch still gathered whose every version is
+released is given up there, never written, and its stripe begins
+another. So a stripe no thread appends through holds nothing back, and a
+transaction collected at once, as each is while no other is open, writes
+none of its versions to the undo log.
+
+A store of no batches, over a log in memory, keeps its map of pinned
+positions.
+
+#### D874. A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps
+
+A transaction's bookkeeping is under a lock only its session takes, so
+each take is cheap, but a commit took it eight times and a row written
+about five. Some takes followed one another with nothing between.
+
+- A commit asked whether its definitions had changed and whether it was
+  doomed, a take each. It asks once (`Txn::check_committable`).
+- Its release took the reservations, the table locks and the pinned
+  snapshots apart. It takes the three together, and gives them up in the
+  order it did.
+- An entry inserted in a unique index noted whether it was alone, and
+  then recorded what undoes it. Both are one take (`Txn::log_alone`).
+
+An update read the version it replaces into a new buffer each time. The
+thread now keeps the buffer its last write read into, given back once
+that write has decoded what it needs of it (`mvcc/versions.rs`,
+`give_back`), and the tree reads the next version into it (D865). A
+buffer past 64 KiB is let go, so one long row does not stay held by
+every thread that wrote it.
+
+#### D875. An update reads of the row it replaces the columns its statement uses, and compares the key columns it sets alone
+
+A row's update decoded the whole row it replaced, for the log's before
+image, to find which index entries the new version shares (D443), and
+for its caller. It then compared every column an index key reads, set or
+not. An update of a balance in a row of twenty columns paid for all
+twenty, twice.
+
+A statement knows the columns it may change. It tells its `Writing` so
+(`Writing::setting`, a bit a column), answering for every column a
+trigger, a generated column or a period's stamp changes too. The key
+columns it does not set are then kept with no value compared, and only
+those it sets are compared (`Writing::kept_columns`). The row store
+gives the row replaced with only the columns asked for decoded, the
+others null (`RowTable::write_over_reading`), and its zone reads the
+columns it keeps from the replaced version's bytes itself (D835). A
+statement that says nothing is treated as setting every column, as
+before.
+
+The coordinator's write of such a statement (`State::rewrite_row_set`)
+asks its table for the row replaced by columns
+(`TableStorage::replace_set`). It reads the columns set, and every
+column of each index key that reads one of them, so the key the row had
+in an index it touches can be made of what was read (`Writing::setting`).
+An index whose key reads no column set is passed over with no value
+compared, its columns noted as kept on the change (D443). The update's
+log record is made of the columns set (`record::put_update_of`). It
+holds the row after whole and, of the row before, the columns set that
+changed, which are the bytes a record of the two rows whole holds (D475),
+so whatever reads the log reads it as any update's.
+
+The row replaced comes back with the columns read and null in every
+other. Such a row never goes where a column outside the set is read. An
+engine the coordinator undoes by its log keeps the whole row to put
+back, and an engine whose index entries the coordinator removes makes
+each old key of it, so a table of either is given the row whole
+(`Writing::sparse`). A storage that does not override `replace_set`
+gives the row whole too. A write made over a version another
+transaction committed since the statement's snapshot holds that version
+whole, and its record is still made of the columns set.
+
+Only a compiled program's point UPDATE written straight says what it
+sets (D841, `Straight::set`). Nothing of such a statement reads the row
+before. It has no trigger, no foreign key referencing a column it sets
+and no OLD TABLE, and it checks its constraints of the row after. It
+says nothing of a table with a system-time period, whose history keeps
+the row before and whose stamp changes columns the statement does not
+name, nor of a column past the last bit of the mask. The general path
+(`update_rows`) keeps the whole row before, which its triggers, its
+delta tables and its end-of-statement checks may read. Telling it the
+columns set would need each of those readers to say which columns it
+reads.
+
+The same UPDATEs written both ways leave the same rows, the same index
+entries and the same log, byte for byte, and recovery replays the
+records of the columns set to the same rows
+(`test/integration/sparse_updates.rs`).
+
+#### D880. A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads
+
+A point change written straight (D841) ended its statement as the
+general path does. Each row constraint read the row back from its table
+by its id, a descent and a decode of a row the statement held a moment
+before. Each UNIQUE constraint built its whole check, with its table's
+indexes, its family and its names, and only then found that the row's
+entry had been inserted alone (`Txn::alone`), which settles it. And
+below SERIALIZABLE the transaction told every table it had joined to
+check its reads, and told each again to stop, around checks that often
+read nothing.
+
+Now `State::end_straight` is given the one row written as its statement
+holds it (`integrity/straight.rs`). A row constraint is checked of that
+row. The row held is the row stored unless the table has a system-time
+period, whose rows are stamped as they are written, or the row holds a
+value its table keeps apart, a large object or one inside another value.
+Of those the row is read back as before. A UNIQUE constraint keeps, from
+when the program is learned, the unique indexes of exactly its key, and
+a row whose entry in one was inserted alone is passed over before any
+check is built. This holds where `KeyCheck::row` would pass it over. That
+is a constraint with no period, of a table that is no subtable and no
+partition. Any other is checked whole.
+
+The participants are told to check reads only where a check reads a
+table. That is a row constraint other than NOT NULL, a row read back, or
+a UNIQUE check not settled. A participant already reads as the
+transaction does, told as it joined and at each new snapshot, so telling
+it to check and then not to, with no read between, changed nothing. The
+last call, which ends checked reads, is made as before.
+
+#### D881. A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied
+
+A point read (D752) ran its one probe as any search runs. It found its
+table, its index and the index's counts by name and took a reference to
+each, which wrote counts every session shares. It rebuilt the key's
+shape from the catalog. It copied its probe to say what it read, and the
+row store copied it again where reads are checked. The index built a
+range of two bounds from a vector for each value, and gave a boxed
+iterator that decoded each entry's key into values.
+
+Now an index may say it finds a whole key's entries by their first
+bytes (`Index::key_probe`, which gives a `KeyProbe`). `whole_key` gives
+those bytes for a value of each key column, if it places each exactly.
+`entries_of` then lends each entry beginning with them to a callback,
+in the search's order, until the callback wants no more. The default is
+none, and the B-link index answers. It anchors each value into one buffer (`key::anchor_into`),
+which becomes the scan's lower bound, and reads through its tree
+borrowed.
+
+`PointRead` keeps, from when its plan is kept, what it needs of its
+index's definition (`exec/point/keyed.rs`). It is read so only for an
+equality on the key's first columns, on an index of its table's own
+rows, keyed by the columns as they are, with no sort key, expression or
+projection. A plan is kept for one generation of the definitions, so
+what it keeps of them stays true. Each read borrows the table, the index
+and the counts from the snapshot and holds none. An entry found by an
+exact key has that key, so the row is checked against the probe's values
+in place of the entry's key decoded. A covering read of a row every
+reader sees still decodes the key, as its values are the row given. A
+read that gives columns of its row, is not covering and gives no row id
+reads the values of the columns it reads alone
+(`TableStorage::get_listed`, D862) into a row kept with its plan, with
+no row of the table's width made. What its table keeps from read to
+read (`storage::Near`) is kept with the plan too, taken by one
+execution at a time. A
+row gone for every reader has its entry taken back as before (D837),
+its key decoded only then.
+
+The read is told to the table as before, by the condition of the
+key's columns and the probe (`TableStorage::read_by_condition`). The
+probe placed for the read is moved into that condition, where it was
+copied, and the key's values are then read from it. So a read at READ
+COMMITTED copies no probe, and one at SERIALIZABLE records what it
+recorded before, the row store copying the condition it keeps. A
+cancel is looked for before the probe, as each entry comes and after
+the last, and the entries are counted for the statement, the operator
+and the index as a search counts them.
+
+Any other index, probe or key is searched as before. A value not of its
+column's type has no exact anchor, and a null has none.
+
+The key's bytes are written into a buffer kept with the plan, and the
+B-link index reads their entries by a probe from the key borrowed
+(`BLinkTree::first_from`, D859), so a probe of a unique key allocates
+nothing. That probe shows each entry under its leaf's latch, where the
+tree is not to be used, so the index takes each entry's row and hint
+there, eight at most, and gives them once the latch is let go, noting
+each row's hint for the table's read as a search does (D500). A key of
+more entries has the rest read by a scan past the last given.
+
+#### D882. A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there
+
+A transaction held each row change's record in a vector of its own
+until its commit (D470), so a transaction of twenty changes allocated
+and freed twenty-one vectors and the list of them. At the commit the
+block file framed them into a buffer it allocated for the run.
+
+Now the records are held end to end in one buffer, with where each ends
+in a second (`txn/pending.rs`). A row change is encoded where it is
+kept (`Txn::log_written`, `record::put_insert_record` and its kin), and
+so is the commit record. A record of a table with encodings is sealed
+in a buffer of its own first, as the sealing reads it whole. A place
+undone to cuts the buffer at the end of the record before it. As a
+transaction ends, its two buffers go to its thread, emptied, for the
+next transaction begun there, unless they grew past twice what a
+transaction holds before it writes. A checkpoint that writes a
+transaction's records takes its buffers for the write and gives them
+back if it holds none by then.
+
+`Log::append_run` takes the buffer and the ends. Its default appends a
+copy of each record by `append_all`, so a log that knows neither is
+given what it was given before. The file log frames each record from the
+buffer (`BlockFile::append_each`) into a buffer of frames its thread
+keeps, up to a megabyte. The bytes written are those `append_all` wrote.
+The record and block formats are unchanged.
+
+The records are still copied once into their frames. A frame is its
+payload's length, its digest, the payload and the length again, of the
+segment's hash, and through the segment's encodings, both of which may
+change at a rotation between a record's encoding and its write. Framing
+in place would have the transaction lay its records out for one
+segment's format before it knows the segment. The copy of a commit's
+few kilobytes was judged not worth that coupling.
 
 #### D890. A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more
 

@@ -7,7 +7,7 @@
 //! sends it there has a case, each called several times as the kept plans
 //! settle, and then so that its check fails.
 
-use crate::compiled_procedures::same;
+use crate::compiled_procedures::{database, same};
 
 /// The tables of these cases: P, referenced by C's PK; C, with a NOT NULL
 /// column, a UNIQUE one, a foreign key and a CHECK; E, with a deferrable
@@ -125,4 +125,70 @@ fn a_point_change_alongside_triggers_and_escrow() {
     script.push("UPDATE S SET Q = Q WHERE W = 1 AND I = 1".to_owned());
     let gave = alike(&setup, &script);
     assert!(gave.iter().any(|l| l == "SELECT K, V FROM P ORDER BY K: [\"1,0\", \"2,303\", \"3,0\", \"4,0\", \"99,99\"]"), "{gave:?}");
+}
+
+/// What a point UPDATE of C's foreign key gives once another session
+/// deletes the row of P it then references, before it commits: its
+/// commit's outcome, compiled or interpreted.
+fn reference_deleted_under(compiled: bool) -> String {
+    let (db, a) = database(compiled);
+    for sql in SETUP.iter().chain(&PROCEDURES[2..3]) {
+        a.run(sql).unwrap();
+    }
+    a.commit().unwrap();
+    for to in [2, 3, 2, 3, 1] {
+        a.run(&format!("CALL SETPK(1, {to})")).unwrap();
+        a.commit().unwrap();
+    }
+    a.run("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap();
+    a.run("CALL SETPK(1, 4)").unwrap();
+    let b = db.session("A");
+    b.run("DELETE FROM P WHERE K = 4").unwrap();
+    b.commit().unwrap();
+    match a.commit() {
+        Ok(()) => "committed".to_owned(),
+        Err(e) => format!("error {}", e.sqlstate().as_str()),
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D841, D880, [ISO/IEC 9075:1992 §4.28] a
+/// point change's foreign key check reads serializably below
+/// SERIALIZABLE, straight as on the general path: the row it referenced
+/// deleted by another transaction before it commits, its commit is
+/// refused (SQLSTATE 40001), so no row is left referencing none.
+#[test]
+fn a_point_change_checks_its_reference_serializably() {
+    assert_eq!(reference_deleted_under(false), "error 40001");
+    assert_eq!(reference_deleted_under(true), "error 40001");
+}
+
+/// Verifies: [DESIGN] RULES.md D841, [ISO/IEC 9075:1992 §11.5 GR2] an
+/// INSERT of a compiled program gives a column whose default is
+/// CURRENT_TIMESTAMP the instant of each execution, not that of the
+/// execution its target was kept at, compiled as interpreted: of five
+/// rows inserted, the last a day after the others, it alone has the
+/// latest instant; a column of a constant default has it in each.
+#[test]
+fn an_insert_takes_its_defaults_at_each_execution() {
+    const DAY: i64 = 86_400_000_000;
+    for compiled in [false, true] {
+        let (db, a) = database(compiled);
+        let clock = std::sync::Arc::new(turborel::clock::FixedClock::at(DAY));
+        db.set_clock(std::sync::Arc::clone(&clock) as std::sync::Arc<dyn turborel::clock::Clock>).unwrap();
+        a.run("CREATE TABLE W (K INTEGER PRIMARY KEY, MADE TIMESTAMP DEFAULT CURRENT_TIMESTAMP, NOTE VARCHAR(5) DEFAULT 'x')").unwrap();
+        a.run("CREATE PROCEDURE ADDW (IN KK INTEGER) MODIFIES SQL DATA BEGIN INSERT INTO W (K) VALUES (KK); END").unwrap();
+        a.commit().unwrap();
+        for k in 1..=5 {
+            if k == 5 {
+                clock.set(2 * DAY);
+            }
+            a.run(&format!("CALL ADDW({k})")).unwrap();
+            a.commit().unwrap();
+        }
+        let latest = a.open_cursor("SELECT K, NOTE FROM W WHERE MADE = (SELECT MAX(MADE) FROM W)").unwrap().fetch().unwrap().unwrap();
+        let shown: Vec<String> = latest.iter().map(|v| v.to_string().trim_end().to_owned()).collect();
+        assert_eq!(shown, ["5", "x"], "compiled: {compiled}");
+        let mut all = a.open_cursor("SELECT COUNT(*) FROM W WHERE MADE < (SELECT MAX(MADE) FROM W) AND NOTE = 'x'").unwrap();
+        assert_eq!(all.fetch().unwrap().unwrap()[0].to_string(), "4", "compiled: {compiled}");
+    }
 }

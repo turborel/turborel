@@ -60,12 +60,12 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::IndexMethod, "inverted"),
             registered(Extension::IndexMethod, "hybrid"),
             registered(Extension::IndexMethod, "fulltext"),
+            // No maintenance thread: a table nothing prunes on keeps no
+            // zone to settle (RULES.md D868), so its one row asks for none.
             info("Opened(Created)"),
-            info("Thread { label: \"turborel-maintenance\", change: Started }"),
             info("CheckpointTaken { taken: 1 }"),
             info("SettingChanged { name: \"LOCKS.WAIT\", value: Some(Char(\"ON\")) }"),
             registered(Extension::IndexMethod, "btree"),
-            info("Thread { label: \"turborel-maintenance\", change: Stopped }"),
             info("Closed"),
         ]
     );

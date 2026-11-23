@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 26] = [
+pub const OLTP: [Mutation; 29] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -182,8 +182,8 @@ pub const OLTP: [Mutation; 26] = [
         package: Package::Core,
         breaks: "a transaction writing a table of an engine that makes its own writes durable holds its records, so a crash leaves those writes with no record to undo them",
         file: "src/txn/pending.rs",
-        original: "            held.bytes > HELD_BYTES || st.forced",
-        replacement: "            held.bytes > HELD_BYTES",
+        original: "            end > HELD_BYTES || st.forced",
+        replacement: "            end > HELD_BYTES",
         integration: &["recovery::a_forced_engine_has_uncommitted_changes_undone"],
         unit: &[],
     },
@@ -265,9 +265,39 @@ pub const OLTP: [Mutation; 26] = [
         package: Package::Core,
         breaks: "an update's log record holds every column of the row before, changed or not, so an update of one column of a wide row logs the row twice",
         file: "src/log/record/images.rs",
-        original: "        if written.get(span).is_some_and(|now| now == was) {",
+        original: "        if written.get(span.clone()).is_some_and(|now| now == was) {",
         replacement: "        if false {",
         integration: &[],
         unit: &["log::record::images::tests::an_update_logs_the_columns_it_changed"],
+    },
+    Mutation {
+        name: "oltp-run-records-from-the-start",
+        package: Package::Core,
+        breaks: "each record of a run laid end to end begins at the run's start, so every record after the first holds those before it (D882)",
+        file: "src/log.rs",
+        original: "        let start = at.checked_sub(1).and_then(|before| ends.get(before)).copied().unwrap_or(0);",
+        replacement: "        let start = at.saturating_sub(at);",
+        integration: &["log::the_file_log_keeps_the_contract", "log::the_memory_log_keeps_the_contract"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-held-undone-bytes-kept",
+        package: Package::Core,
+        breaks: "a statement undone while its records are held leaves their bytes in the buffer, which the next record held is then written with (D882)",
+        file: "src/txn/pending.rs",
+        original: "        self.bytes.truncate(end);",
+        replacement: "",
+        integration: &["held_records::a_checkpoint_mid_transaction_recovers_what_committed"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-update-of-set-reads-every-column",
+        package: Package::Core,
+        breaks: "an update's record made of the columns set compares every column of the row before, so one holding only those set logs the others as changed (D875)",
+        file: "src/log/record/images.rs",
+        original: "        if wanted.as_mut().is_none_or(|left| left.next_if_eq(&at).is_some()) {",
+        replacement: "        if wanted.as_mut().is_none_or(|left| left.next_if_eq(&at).is_some() || at > 0) {",
+        integration: &[],
+        unit: &["log::record::images::tests::an_update_of_the_columns_set_writes_the_same_bytes"],
     },
 ];

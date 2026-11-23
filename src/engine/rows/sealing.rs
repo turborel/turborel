@@ -17,6 +17,7 @@
 //! writes, not the table's opening.
 
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use crate::disk::encoding::{Encodings, Pipeline};
@@ -41,19 +42,30 @@ pub(super) struct Sealing {
     /// The pipeline new rows pass through; or, if the encodings named are
     /// not all registered, why new rows are refused.
     current: RwLock<std::result::Result<Arc<Pipeline>, String>>,
+    /// Whether `current` is a pipeline of no encoding, set under its lock:
+    /// a record written then is stored as it is, so a write of a table
+    /// that names none reads this alone, taking no lock and no count of
+    /// the pipeline, words every writer of the table would share.
+    unsealed: AtomicBool,
+}
+
+/// Whether new rows pass through no encoding, as `current` resolves.
+fn passes_none(current: &std::result::Result<Arc<Pipeline>, String>) -> bool {
+    current.as_ref().is_ok_and(|pipeline| pipeline.is_empty())
 }
 
 impl Sealing {
     /// Rows passed through no encoding.
     pub(super) fn plain() -> Sealing {
-        Sealing { encodings: Arc::default(), current: RwLock::new(Ok(Arc::new(Pipeline::none()))) }
+        Sealing { encodings: Arc::default(), current: RwLock::new(Ok(Arc::new(Pipeline::none()))), unsealed: AtomicBool::new(true) }
     }
 
     /// Rows passed through the encodings `names` names, by commas, of
     /// `encodings`.
     pub(super) fn named(encodings: Arc<Encodings>, names: &str) -> Sealing {
-        let current = RwLock::new(Self::resolved(&encodings, names));
-        Sealing { encodings, current }
+        let resolved = Self::resolved(&encodings, names);
+        let unsealed = AtomicBool::new(passes_none(&resolved));
+        Sealing { encodings, current: RwLock::new(resolved), unsealed }
     }
 
     fn resolved(encodings: &Encodings, names: &str) -> std::result::Result<Arc<Pipeline>, String> {
@@ -64,6 +76,7 @@ impl Sealing {
     pub(super) fn rename(&self, names: &str) {
         let resolved = Self::resolved(&self.encodings, names);
         if let Ok(mut current) = write(&self.current) {
+            self.unsealed.store(passes_none(&resolved), Ordering::Release);
             *current = resolved;
         }
     }
@@ -76,6 +89,9 @@ impl Sealing {
     /// The most bytes a record takes more once stored: its mark, the
     /// pipeline's ids, and what its encodings add (`Pipeline::overhead`).
     pub(super) fn overhead(&self) -> usize {
+        if self.unsealed.load(Ordering::Acquire) {
+            return 0;
+        }
         let Ok(current) = read(&self.current) else { return 0 };
         let Ok(pipeline) = current.as_ref() else { return 0 };
         if pipeline.is_empty() {
@@ -95,6 +111,9 @@ impl Sealing {
     /// SQLCODE -910 if the encodings named are not registered; an
     /// encoding's errors.
     pub(super) fn record_after(&self, id: RowId, record: Vec<u8>, room: usize) -> Result<Vec<u8>> {
+        if self.unsealed.load(Ordering::Acquire) {
+            return Ok(record);
+        }
         let pipeline = self.pipeline()?;
         if pipeline.is_empty() {
             return Ok(record);

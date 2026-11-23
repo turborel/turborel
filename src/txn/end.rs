@@ -69,24 +69,21 @@ impl State {
         let gate = self.tx.gate.enter();
         // Under the gate: an index published shut is either seen here, or
         // published after this commit, which it then counts.
-        let validated =
-            tx.check_definitions().and_then(|()| tx.check_undone()).and_then(|()| self.validate_participants(tx, &joined)).and_then(
-                |(participants, mut committing)| {
-                    let now = self.clock.now();
-                    let lsn = tx.append_commit(committing.at, now)?;
-                    if lsn.is_some() {
-                        committing.syncs();
-                    }
-                    Ok((participants, committing, (lsn, now)))
-                },
-            );
+        let validated = tx.check_committable().and_then(|()| self.validate_participants(tx, &joined)).and_then(|mut committing| {
+            let now = self.clock.now();
+            let lsn = tx.append_commit(committing.at, now)?;
+            if lsn.is_some() {
+                committing.syncs();
+            }
+            Ok((committing, (lsn, now)))
+        });
         match validated {
-            Ok((participants, committing, (lsn, now))) => {
+            Ok((committing, (lsn, now))) => {
                 // Phase 2 uses storages already found, so it cannot fail part
                 // way. Each engine makes the changes committed at once, as
                 // the row store does with one store (RULES.md D440).
-                for storage in &participants {
-                    storage.commit(tx.id, committing.at);
+                for participant in &joined {
+                    participant.storage.commit(tx.id, committing.at);
                 }
                 // When each table it wrote last changed (RULES.md D522).
                 tx.stamp_written(now);
@@ -101,8 +98,8 @@ impl State {
                 // [DESIGN] RULES.md D440: written in place once its locks
                 // are released, and before the gate lets a checkpoint
                 // capture the pages, whose record syncs this one's.
-                for storage in participants {
-                    storage.settle(tx.id);
+                for participant in &joined {
+                    participant.storage.settle(tx.id);
                 }
                 drop(gate);
                 let durable = self.durable(tx, lsn, at);
@@ -154,7 +151,7 @@ impl State {
 
     /// Phase 1: takes the commit timestamp, and asks every participant in
     /// `joined` to validate at it. Nothing has committed if this fails.
-    fn validate_participants<'j>(&self, tx: &Txn, joined: &'j [Joined]) -> Result<(Vec<&'j dyn TableStorage>, Committing<'_>)> {
+    fn validate_participants(&self, tx: &Txn, joined: &[Joined]) -> Result<Committing<'_>> {
         let committing = self.tx.commit_timestamp();
         let at = committing.at;
         for Joined { table, storage } in joined {
@@ -176,7 +173,7 @@ impl State {
                 ));
             }
         }
-        Ok((joined.iter().map(|j| &*j.storage).collect(), committing))
+        Ok(committing)
     }
 
     /// After a transaction ends, garbage collection: each of `tables`, and
@@ -269,8 +266,9 @@ impl State {
     /// Collects `table` at `horizon` (`collect_table`), and notes in the
     /// set of tables awaiting collection whether it still does.
     fn collect_noting(&self, table: &QualifiedName, horizon: Timestamp, wait: bool) {
-        let left = self.collect_table(table, horizon, wait);
-        let lock = self.lock_of(table).ok();
+        // Its lock and its storage, found once for its collection.
+        let (lock, storage) = (self.lock_of(table).ok(), self.storage_of(table).ok());
+        let left = self.collect_table(table, (lock, storage), horizon, wait);
         if unchanged(left, lock.map(|lock| lock.noted())) {
             return;
         }
@@ -278,7 +276,7 @@ impl State {
         // Asked again under the lock: a commit that added garbage while
         // this one collected, and was passed over (RULES.md D445), has
         // noted the table, and its note must not be taken out.
-        let still = || self.storage_of(table).is_ok_and(|s| s.uncollected());
+        let still = || storage.is_some_and(|s| s.uncollected());
         let keep = match left {
             Some(true) => true,
             Some(false) => still(),
@@ -319,7 +317,7 @@ impl State {
     /// temporary table: an instance of one is collected by its session as
     /// its transactions end (`db/temporary.rs`), the definition's storage
     /// holding nothing.
-    fn collect_table(&self, table: &QualifiedName, horizon: Timestamp, wait: bool) -> Option<bool> {
+    fn collect_table(&self, table: &QualifiedName, found: Resolved<'_>, horizon: Timestamp, wait: bool) -> Option<bool> {
         if self.catalog.table(table).is_none_or(|t| t.temporary.is_some()) {
             return None;
         }
@@ -327,8 +325,7 @@ impl State {
         // finds; nor with definitions older than its indexes, whose entries
         // for the versions removed would stay. A later transaction collects
         // them.
-        let lock = self.lock_of(table).ok()?;
-        let storage = self.storage_of(table).ok()?;
+        let (lock, storage) = (found.0?, found.1?);
         if lock.collection_held() || lock.changed_after(self.generation) {
             return Some(true);
         }
@@ -454,6 +451,10 @@ pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc, Sharing)], id: 
     failed
 }
 
+/// A table's lock and its storage, each if the definitions hold it, found
+/// once for its collection.
+type Resolved<'a> = (Option<&'a Arc<TableLock>>, Option<&'a Arc<dyn TableStorage>>);
+
 /// An index of a table collected: its name, the index and its description.
 type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
 
@@ -461,8 +462,6 @@ type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
 /// its description, and the partition's id its entries carry.
 type Global = (Arc<dyn Index>, IndexDesc, u64);
 
-/// The entries of `failed`, each the position in `found` of its index and
-/// its key, as owed (`txn/owed.rs`).
 /// \[DESIGN\] RULES.md D795: whether a collection that `left` a table
 /// (garbage left, none left, or not collected as it is gone) changes
 /// nothing shared, its lock `noted` as awaiting already or not. A table
@@ -475,6 +474,8 @@ fn unchanged(left: Option<bool>, noted: Option<bool>) -> bool {
     matches!((left, noted), (Some(true), Some(true)) | (None, Some(false)))
 }
 
+/// The entries of `failed`, each the position in `found` of its index and
+/// its key, as owed (`txn/owed.rs`).
 fn owed_entries(found: &[Found<'_>], failed: Vec<(usize, Key)>) -> Vec<Entry> {
     let owed =
         |(at, key)| found.get(at).map(|&(name, index, _): &Found<'_>| Entry { name: name.to_owned(), index: Arc::clone(index), key });

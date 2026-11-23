@@ -342,7 +342,9 @@ fn spill_files(dir: &std::path::Path) -> usize {
 /// other transaction is open in the table, so a database at rest keeps no
 /// spill area; so too that of a statement undone before it. Regression
 /// test (R-TEST-7): it was kept past the rolled-back transaction's own
-/// snapshot, its area in `tmp/` until a later commit.
+/// snapshot, its area in `tmp/` until a later commit; and again by the
+/// thread that kept the transaction's bookkeeping past its end, its list
+/// of changes undone still holding its area (RULES.md D871).
 #[test]
 fn a_rollbacks_garbage_is_collected_at_once() {
     let scratch = Scratch::new("rollback-garbage");

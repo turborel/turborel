@@ -112,8 +112,9 @@ struct Counters {
 /// stay in a thread's cache (`bench/buffer.rs` compares them).
 const SHARDS: usize = 256;
 
-/// One shard of the page table, with its own hit counters, alone on its
-/// cache lines so shards used by different threads never share one.
+/// One shard of the page table, with its count of the holds that waited
+/// for a frame, alone on its cache lines so shards used by different
+/// threads never share one. Hits are counted by thread (`hits.rs`).
 #[repr(align(128))]
 #[derive(Default)]
 struct Shard {
@@ -247,6 +248,7 @@ impl Frame {
     }
 
     /// The key of the page it holds.
+    #[inline]
     fn key(&self) -> Option<Key> {
         let file = self.key_file.load(Ordering::Acquire).checked_sub(1)?;
         Some(Key { file: FileId(u32::try_from(file).ok()?), id: self.key_id.load(Ordering::Acquire) })
@@ -262,8 +264,9 @@ impl Frame {
 /// \[DESIGN\] A buffer pool. It may be shared between threads.
 pub struct BufferPool {
     frames: Vec<Frame>,
-    /// The page table, by shard; a frame is pinned, and evicted, only under
-    /// the shard of the page it holds.
+    /// The page table, by shard; a frame is evicted only under the shard
+    /// of the page it holds, and pinned under it, or under its own latch
+    /// when its hint finds it (`hits.rs`).
     shards: Vec<Shard>,
     /// Frames holding no page. Taken after a shard's lock, never before.
     empty: Mutex<Vec<usize>>,

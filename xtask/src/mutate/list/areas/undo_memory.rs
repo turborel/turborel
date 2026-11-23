@@ -2,7 +2,8 @@
 //! R-TEST-9, D745, D746): a batch written kept, the bound of the budget's
 //! share, the budget's refusal, a batch gone past the bound let go, a
 //! truncation forgetting what memory holds, and a refused writer told the
-//! row's writer with no older version read (D747).
+//! row's writer with no older version read (D747); and batches gathered by
+//! stripe, their pins counted by batch (D873).
 
 use super::super::{Mutation, Package};
 
@@ -12,7 +13,7 @@ const UNDO: &str = "src/engine/rows/undo.rs";
 const KEPT: &str = "src/engine/rows/undo/kept.rs";
 
 /// Mechanisms whose removal must fail the requirements of batches kept.
-pub const UNDO_MEMORY: [Mutation; 6] = [
+pub const UNDO_MEMORY: [Mutation; 9] = [
     Mutation {
         name: "undo-kept-none",
         package: Package::Core,
@@ -58,8 +59,8 @@ pub const UNDO_MEMORY: [Mutation; 6] = [
         package: Package::Core,
         breaks: "a truncation leaves the batches it forgets in memory",
         file: UNDO,
-        original: "(batches.first..needed).filter_map(|n| self.resident.remove(n)).collect()",
-        replacement: "(batches.first..needed).filter_map(|_| None).collect()",
+        original: "gone.extend((batches.first..needed).filter_map(|n| self.resident.remove(n)));",
+        replacement: "gone.extend((batches.first..needed).filter_map(|_| None::<Batch>));",
         integration: &[],
         unit: &[
             "engine::rows::undo::tests::batches_written_are_kept_until_truncated",
@@ -75,5 +76,35 @@ pub const UNDO_MEMORY: [Mutation; 6] = [
         replacement: "Maker::Open(_) => (None, 0),",
         integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
         unit: &[],
+    },
+    Mutation {
+        name: "undo-append-locks-the-store",
+        package: Package::Core,
+        breaks: "every version appended takes the lock of the store's batches, which every writer of every table shares (D873)",
+        file: UNDO,
+        original: "            stripe.count_one(version.len());\n",
+        replacement: "            stripe.count_one(version.len());\n            drop(lock_builtin(&self.batches));\n",
+        integration: &[],
+        unit: &["engine::rows::undo::tests::an_append_to_a_batch_begun_takes_no_lock_of_the_store"],
+    },
+    Mutation {
+        name: "undo-release-counted-twice",
+        package: Package::Core,
+        breaks: "a position released twice counts twice, so its batch goes while a version of it is pinned (D873)",
+        file: "src/engine/rows/undo/gathered.rs",
+        original: ".filter(|slot| **slot & mask == 0)",
+        replacement: ".filter(|slot| **slot & mask == 0 || mask != 0)",
+        integration: &[],
+        unit: &["engine::rows::undo::tests::a_batch_goes_with_its_last_version_released_once"],
+    },
+    Mutation {
+        name: "undo-idle-stripe-holds-the-log",
+        package: Package::Core,
+        breaks: "a batch a stripe gathers and never fills is kept with every version released, and holds back every batch written after it (D873)",
+        file: UNDO,
+        original: "            if self.pins.live(number, stripe.count) > 0 {",
+        replacement: "            if self.pins.live(number, stripe.count) < usize::MAX {",
+        integration: &[],
+        unit: &["engine::rows::undo::tests::a_batch_a_stripe_gathers_holds_the_log_only_while_it_is_pinned"],
     },
 ];

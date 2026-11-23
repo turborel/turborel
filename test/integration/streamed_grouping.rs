@@ -37,6 +37,9 @@ fn tables() -> (Database, Session) {
         }
         a.commit().unwrap();
     }
+    // A table of the row store keeps zones from the first plan that weighs
+    // an index-only read of it (RULES.md D868): asked, then settled.
+    assert_ne!(plan(&a, "SELECT K, COUNT(*) FROM T GROUP BY K"), "");
     db.maintain().unwrap();
     (db, a)
 }

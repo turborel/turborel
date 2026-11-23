@@ -64,6 +64,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 mod commit;
+mod found;
 mod gc;
 mod lists;
 mod open;
@@ -195,8 +196,6 @@ struct Open {
     /// (`TableStorage::preserving`): then no commit is checked against it,
     /// nor it against any.
     preserving: bool,
-    /// Whether it has ended here, so a scan keeping it finds it again.
-    ended: bool,
     /// The large objects it made, and those a version it wrote names
     /// (`rows/lobs/owned.rs`).
     made: Xxh3Set<u64>,
@@ -290,6 +289,9 @@ pub(super) struct Versions {
     statuses: Arc<Statuses>,
     /// Commits whose versions here are not all stamped yet (`stamps.rs`).
     unstamped: Mutex<Vec<Unstamped>>,
+    /// How many `unstamped` holds, stored under its lock: a settle of a
+    /// table with none queued takes no lock (RULES.md D870).
+    queued: AtomicUsize,
     /// The most rows of a transaction's reads, or writes, tracked one by
     /// one (TRANSACTIONS.TRACKED_ROWS), and the bytes of its changes held
     /// (TRANSACTIONS.HELD_BYTES); and the store's defaults of them.
@@ -318,6 +320,7 @@ impl Versions {
             collected: AtomicU64::default(),
             statuses,
             unstamped: Mutex::default(),
+            queued: AtomicUsize::default(),
             tracked,
             held,
             base: bounds,
@@ -346,6 +349,14 @@ impl Versions {
         // Its lists hold row ids and timestamps, no values.
         ListSpace { limit: self.held(), batch: DEFAULT_SPILL_BATCH, areas, types: TypeRegistry::default() }
     }
+
+    /// Where a list that will never hold more than `bytes` spills: nowhere
+    /// while they are within the bytes held, as it never would, so the
+    /// work areas, which every session shares, are not taken (RULES.md
+    /// D870); else as `space`.
+    fn space_within(&self, bytes: usize) -> ListSpace {
+        if bytes <= self.held() { ListSpace::default() } else { self.space() }
+    }
 }
 
 impl RowTable {
@@ -368,7 +379,6 @@ impl RowTable {
             checked: true,
             reads_since: None,
             preserving: false,
-            ended: false,
             made: Xxh3Set::default(),
             adopted: Xxh3Set::default(),
         };
@@ -493,9 +503,9 @@ impl RowTable {
     /// Ends `tx` without committing it here.
     pub(super) fn end_open(&self, tx: TxId) -> Result<()> {
         let undone = self.undo_changes(tx, 0);
-        let removed = self.versions.open.remove(tx);
-        if let Some(open) = removed {
-            lock_builtin(&open).ended = true;
+        // Its list's spill area goes with it, though a thread keeps it (D871).
+        if let Some(ended) = self.versions.open.remove(tx) {
+            ended.let_go();
         }
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
         self.versions.statuses.abort(tx);

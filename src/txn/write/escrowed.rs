@@ -8,6 +8,7 @@ use crate::db::State;
 use crate::db::write::system_time::Stamp;
 use crate::error::Result;
 use crate::storage::{Row, RowId};
+use crate::txn::writing::Writing;
 use crate::txn::{TxId, Txn};
 
 /// \[DESIGN\] A write as it finds the reservations of its row (RULES.md
@@ -28,24 +29,24 @@ impl State {
     /// once. The look and the write exclude a reservation of the row, so a
     /// write never waits for a reservation while it holds the row.
     pub(super) fn unreserved<T, F: FnOnce() -> T>(
-        &self,
         tx: &Txn,
-        (table, id): (&QualifiedName, RowId),
-        (write, fold): (&Write, bool),
+        (writing, id): (&Writing<'_>, RowId),
+        (write, fold): (&Write<'_>, bool),
         (turn, f): (&mut Option<crate::txn::row_waits::Turn>, F),
     ) -> Result<Guarded<T>> {
         if fold {
             return Ok(Guarded::Written(f()));
         }
+        let table = writing.table();
         // [DESIGN] RULES.md D456: behind the line a row waited for has.
         if let Some(claim) = tx.claim_of((table, id)) {
             drop(turn.take());
             *turn = Some(tx.wait_behind((table, id), &claim)?);
             return Ok(Guarded::Waited);
         }
-        let escrow = std::sync::Arc::clone(&self.lock_of(table)?.escrow);
+        let escrow = std::sync::Arc::clone(&writing.lock.escrow);
         let found = escrow.exclusive(id, || -> Result<std::result::Result<T, TxId>> {
-            Ok(match self.reserved_by(tx, (table, id), write)? {
+            Ok(match Self::reserved_by(tx, (writing, id), write)? {
                 Some(by) => Err(by),
                 None => Ok(f()),
             })
@@ -72,15 +73,15 @@ impl State {
     /// \[DESIGN\] Another transaction whose increments reserved on row `id`
     /// `write` by `tx` must wait for (RULES.md D452): one guarding a column
     /// the write changes, or any, for a delete.
-    fn reserved_by(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), write: &Write) -> Result<Option<TxId>> {
-        let lock = self.lock_of(table)?;
+    fn reserved_by(tx: &Txn, (writing, id): (&Writing<'_>, RowId), write: &Write<'_>) -> Result<Option<TxId>> {
+        let lock = writing.lock;
         if !lock.escrow.any() {
             return Ok(None);
         }
         let changed = match write {
             Write::Delete => None,
             Write::Update(row) => {
-                let newest = self.storage_of(table)?.newest(tx.id, id)?;
+                let newest = writing.storage.newest(tx.id, id)?;
                 Some(newest.row.map_or(u64::MAX, |old| crate::txn::escrow::changed(&old, row)))
             }
         };

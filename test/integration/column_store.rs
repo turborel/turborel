@@ -21,8 +21,7 @@ const ROWS: i64 = 5000;
 /// The tables R, of the row store, and C, of the column store in
 /// groups of 2048 rows, of schema A, each with `ROWS` rows, C's frozen;
 /// the database's background work done only when a test asks
-/// (JOBS.POLICY MANUAL, RULES.md D55), so what it reads is the same
-/// each run.
+/// (JOBS.POLICY MANUAL, RULES.md D55), so what it reads is the same each run.
 fn both(db: &Database) -> Session {
     db.set_job_policy(JobPolicy::Manual).unwrap();
     let a = written(db);
@@ -250,6 +249,9 @@ fn a_column_table_is_scanned_where_a_row_table_is_probed() {
     for (index, table, column) in indexed {
         db.create_index(index, table, &[column], "btree").unwrap();
     }
+    // A table of the row store keeps zones from the first plan that weighs
+    // an index-only read of it (RULES.md D868): asked, then summed up.
+    assert_ne!(physical(&a, "SELECT COUNT(*) FROM R WHERE G = 3"), "");
     db.maintain().unwrap();
     let physical = |sql: &str| physical(&a, sql);
     let some = "SELECT COUNT(*) FROM {t} WHERE G = 3";
@@ -339,8 +341,7 @@ fn rows_changed_as_they_are_frozen_stay_changed() {
 }
 
 /// Whether `got`, a count and a sum of K, is of the rows of K from 0 on,
-/// a multiple of 1000 of them: a state the writer of
-/// `rows_read_as_they_are_frozen_are_read_once` commits.
+/// a multiple of 1000 of them: a state the writer of `rows_read_as_they_are_frozen_are_read_once` commits.
 fn first_thousands(got: &[String]) -> bool {
     let Some((count, sum)) = got.first().and_then(|r| r.split_once(',')) else { return false };
     let Ok(count) = count.parse::<i64>() else { return false };
@@ -549,10 +550,9 @@ fn in_order(s: &Session, sql: &str) -> (Vec<String>, Vec<String>) {
 /// in that order, nulls where ORDER BY puts them, with rows changed,
 /// deleted and not yet frozen among them, of a filter too; of them all
 /// descending, read backward, no sort planned either; by batch and a row
-/// at a time alike; of some descending
-/// and some not, or of other columns, sorted; groups sorted otherwise,
-/// once the option names others, each sorted as it is read, then written
-/// again.
+/// at a time alike; of some descending and some not, or of other columns,
+/// sorted; groups sorted otherwise, once the option names others, each
+/// sorted as it is read, then written again.
 #[test]
 fn groups_read_in_their_order_answer_alike() {
     let db = Database::new();

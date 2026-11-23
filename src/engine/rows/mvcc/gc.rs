@@ -13,7 +13,7 @@ use crate::engine::rows::undo::Held;
 use crate::engine::rows::{RowTable, key};
 use crate::error::{Result, SqlError};
 use crate::log::Lsn;
-use crate::spill::SpillList;
+use crate::spill::{ListItem, SpillList};
 use crate::storage::{Kept, Removed, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
@@ -133,7 +133,7 @@ impl RowTable {
         for item in items {
             if let Err(e) = self.remove_dead(&item, at, &mut *removed) {
                 failure.get_or_insert(e);
-                self.add_garbage(at, vec![item]);
+                self.add_garbage(at, vec![item], usize::MAX);
             }
         }
     }
@@ -165,9 +165,13 @@ impl RowTable {
             || self.stamps_left()
     }
 
-    /// Adds `dead`, garbage once the horizon reaches `at`.
-    pub(super) fn add_garbage(&self, at: Timestamp, dead: Vec<Dead>) {
-        let space = self.versions.space();
+    /// Adds `dead`, garbage once the horizon reaches `at`. A list begun
+    /// for it that `dead` and the `later` bytes still to be filed under
+    /// `at` keep within the bytes held never spills, and takes no work
+    /// areas (RULES.md D870).
+    pub(super) fn add_garbage(&self, at: Timestamp, dead: Vec<Dead>, later: usize) {
+        let bytes = dead.iter().map(ListItem::bytes).fold(later, usize::saturating_add);
+        let space = self.versions.space_within(bytes);
         let mut garbage = lock_builtin(&self.versions.garbage);
         let list = garbage.entry(at).or_insert_with(|| SpillList::new(space));
         self.versions.garbage_items.fetch_add(u64::try_from(dead.len()).unwrap_or(u64::MAX), Ordering::Relaxed);

@@ -16,6 +16,7 @@
 //! of a table it may write is on, of a view, of a typed or partitioned
 //! table, or of XML options in scope, runs the general path always.
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -94,6 +95,9 @@ struct Inserted {
     /// The constraints its statement checks of its row, if it may write
     /// that row straight.
     straight: Option<Straight>,
+    /// Whether its target's defaults are those of every execution
+    /// (`Target::fixed_defaults`), so each takes the target as kept.
+    fixed: bool,
 }
 
 impl Change {
@@ -196,8 +200,8 @@ fn direct_of(exec: &Exec<'_>, contained: &Contained, shape: Shape) -> Result<Opt
         if !one_row(&query) || !plain_table(st, target.name()) || named_view(exec, contained) {
             return Ok(None);
         }
-        let straight = target.straight(st);
-        return Ok(Some(Direct::Insert(Box::new(Inserted { target, query, clocked, straight }))));
+        let (straight, fixed) = (target.straight(st), target.fixed_defaults());
+        return Ok(Some(Direct::Insert(Box::new(Inserted { target, query, clocked, straight, fixed }))));
     };
     let Some(bound) = keeping.kept_write()? else { return Ok(None) };
     if bound.named != bound.table || !plain_table(st, &bound.table) {
@@ -408,15 +412,21 @@ fn inserted(exec: &mut Exec<'_>, contained: &Contained, i: &Inserted) -> Result<
     exec.host.fresh(cx.tx)?;
     session.may_run(cx.st, contained.statement())?;
     let authorization = session.authorization();
-    let target = Target::clone(&i.target).refreshed(authorization.of(cx.st.catalog.roles()), session.now.get())?;
+    // Its defaults taken again only where one reads the user or the
+    // instant: else the target is as kept, not copied.
+    let target = if i.fixed {
+        Cow::Borrowed(&*i.target)
+    } else {
+        Cow::Owned(Target::clone(&i.target).refreshed(authorization.of(cx.st.catalog.roles()), session.now.get())?)
+    };
     let keeping = session.keeping(cx.st, plans);
     let slots = exec.frame.dynamic_slots().map(|s| keeping.slots_of(s, i.clocked));
     let _compiling = session.compiling(cx.st, cx.tx.id);
     let kept = (!i.clocked).then_some((&keeping, &*exec.frame));
     let n = if let (Some(straight), false) = (&i.straight, session.delta_open()) {
-        session.insert_straight(cx, (&target, straight), (i.query.clone(), slots, kept))?
+        session.insert_straight(cx, (&*target, straight), (&i.query, slots, kept))?
     } else {
-        session.insert_rows(cx, (stmt, &target), (Some(i.query.clone()), slots, kept), exec.frame)?
+        session.insert_rows(cx, (stmt, &*target), (Some(i.query.clone()), slots, kept), exec.frame)?
     };
     Ok(Some(session.affected(n)))
 }

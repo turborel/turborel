@@ -43,6 +43,7 @@ mod counted;
 mod discard;
 mod engine;
 mod files;
+mod framed;
 mod frozen;
 mod gathered;
 mod ids;
@@ -124,7 +125,7 @@ pub struct RowTable {
     format: RecordFormat,
     spill: Spill,
     /// The first row id of the next block to give (`rows/ids.rs`).
-    next: AtomicU64,
+    next: Arc<AtomicU64>,
     /// The threads' blocks of row ids.
     blocks: IdBlocks,
     /// Row ids below this may have been given, as the meta page records.
@@ -197,12 +198,17 @@ impl TableStorage for RowTable {
         }
     }
 
+    /// Its tree's (`BLinkTree::pin`).
+    fn pin(&self) -> Option<crate::engine::tree::Pinned<'_>> {
+        Some(self.tree.pin())
+    }
+
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.write_over(tx, id, Some(&row), Past::Snapshot).map(drop)
+        self.write_unread(tx, id, Some(&row), Past::Snapshot)
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.write_over(tx, id, None, Past::Snapshot).map(drop)
+        self.write_unread(tx, id, None, Past::Snapshot)
     }
 
     fn replace(&self, tx: TxId, id: RowId, row: Option<&Row>) -> Result<Row> {
@@ -213,8 +219,13 @@ impl TableStorage for RowTable {
         self.write_over(tx, id, row, Past::Snapshot)?.map_or_else(|| no_row(id), Ok)
     }
 
+    /// The row replaced with its columns `read` alone decoded (`replace_reading`, RULES.md D875).
+    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, read: &[usize]) -> Result<Row> {
+        self.replace_reading(tx, id, row, read)
+    }
+
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<&Row>, seen: Timestamp) -> Result<()> {
-        self.write_over(tx, id, row, Past::Stamp(seen)).map(drop)
+        self.write_unread(tx, id, row, Past::Stamp(seen))
     }
 
     fn keep_entries(&self, tx: TxId, id: RowId, unchanged: u64) -> u64 {
@@ -224,7 +235,7 @@ impl TableStorage for RowTable {
     /// Puts row `id` back, or replaces it if it is there; ids given from
     /// now on are past it.
     fn restore(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.next.fetch_max(id.saturating_add(1), Ordering::AcqRel);
+        self.next.fetch_max(id.saturating_add(1), Ordering::SeqCst);
         // A thread's block may hold the id: blocks are taken past it now.
         self.blocks.clear();
         self.reserve_past(id)?;
@@ -254,6 +265,11 @@ impl TableStorage for RowTable {
     /// Reads the row from the leaf of the last read of `near`, if it can.
     fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
         self.get_of(tx, id, columns, near)
+    }
+
+    /// Only `columns` decoded, into the row held (`rows/scan.rs`).
+    fn get_listed(&self, tx: TxId, id: RowId, columns: &[usize], held: (&mut Near, &mut Row)) -> Result<bool> {
+        RowTable::get_listed(self, tx, id, columns, held)
     }
 
     /// Only `columns` are decoded, and only their values out of line read.
@@ -383,7 +399,7 @@ impl TableStorage for RowTable {
 
     /// Writes the row's newest version outright (`rows/recovery.rs`).
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
-        self.apply_newest(id, row.clone())?;
+        self.apply_newest(id, row.as_ref())?;
         self.zones.widen(id, row.as_ref(), Replaced::Unknown);
         Ok(())
     }
@@ -407,6 +423,10 @@ impl TableStorage for RowTable {
     }
     fn reconfigure(&self, desc: &TableDesc) {
         self.frozen.reconfigure(options::columns_of(desc, self.frozen.columns()));
+        // Of the column store from now on, it reads by zone (`zones/cold.rs`).
+        if self.frozen.columns().is_some() {
+            self.zones.warm();
+        }
         self.sealing.rename(&options::encodings_of(desc));
         self.gathered.reconfigure(desc);
         self.versions.reconfigure(desc);

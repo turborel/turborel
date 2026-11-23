@@ -10,11 +10,19 @@
 //!
 //! A hint is only a guess, written as the locked way finds or fills a page:
 //! one stale, or a frame latched exclusively, sends the read the locked way.
+//!
+//! A page held to be written or owned is pinned the same way (RULES.md
+//! D854): its frame found by its hint and latched shared without waiting,
+//! the pin taken under that latch once the frame is seen to hold the page,
+//! and the latch let go. No shard is locked and no map searched. What
+//! takes a frame from its page latches it exclusively first and then looks
+//! at its pins (`Frame::taken`), so it sees a pin taken under the latch,
+//! and none is taken while it holds the latch.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{PoisonError, TryLockError};
+use std::sync::{PoisonError, RwLockWriteGuard, TryLockError};
 
-use super::{BufferPool, FileId, Key, PageRef, Pin, count};
+use super::{BufferPool, FileId, Frame, Key, PageRef, Pin, count};
 use crate::error::Result;
 use crate::sync::thread_stripe;
 
@@ -47,26 +55,34 @@ impl Hints {
     }
 
     /// The slot of `key`.
+    #[inline]
     fn slot(&self, key: Key) -> Option<&AtomicU64> {
         // The top bits of XXH3-64 of the page (RULES.md D460), as its shard's.
         let hash = crate::hash::xxhash::Words::new(0).pair(u64::from(key.file.0), key.id);
         self.slots.get(usize::try_from(hash.checked_shr(self.shift).unwrap_or_default()).unwrap_or_default())
     }
 
-    /// Notes `key` found in frame `index`.
+    /// Notes `key` found in frame `index`. The slot is written only when
+    /// it says otherwise: a page held again and again, as every write
+    /// holds its page, is found where it was, and a store of the same
+    /// frame would still take the slot's cache line from the threads
+    /// reading the hints beside it.
     pub(super) fn note(&self, key: Key, index: usize) {
-        if let Some(slot) = self.slot(key) {
-            slot.store(u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1), Ordering::Relaxed);
+        let noted = u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1);
+        if let Some(slot) = self.slot(key).filter(|slot| slot.load(Ordering::Relaxed) != noted) {
+            slot.store(noted, Ordering::Relaxed);
         }
     }
 
     /// The frame `key` was last found in, if any.
+    #[inline]
     pub(super) fn frame_of(&self, key: Key) -> Option<usize> {
         let hinted = self.slot(key)?.load(Ordering::Relaxed);
         usize::try_from(hinted.checked_sub(1)?).ok()
     }
 
     /// Counts a hit, on the thread's stripe.
+    #[inline]
     pub(super) fn hit(&self) {
         if let Some(stripe) = self.stripes.get(thread_stripe(STRIPES)) {
             count(&stripe.0);
@@ -79,7 +95,53 @@ impl Hints {
     }
 }
 
+/// Why a frame was not taken from its page.
+pub(super) enum Kept {
+    /// Its latch is held, for as long as one read of its page takes.
+    Latched,
+    /// It is pinned, for as long as its holder likes.
+    Pinned,
+}
+
+impl Frame {
+    /// Its content latched exclusively, its version moved on, to take the
+    /// frame from the page it holds: only if no one holds its latch and,
+    /// seen under the latch, no one pins it. A pin taken through a hint is
+    /// taken under the latch held shared (`BufferPool::pin_hinted`), so it
+    /// is seen here, and none is taken while this latch is held.
+    pub(super) fn taken(&self) -> std::result::Result<RwLockWriteGuard<'_, Vec<u8>>, Kept> {
+        let latch = self.try_latched().ok_or(Kept::Latched)?;
+        if self.pins.load(Ordering::Acquire) > 0 {
+            return Err(Kept::Pinned);
+        }
+        Ok(latch)
+    }
+}
+
 impl BufferPool {
+    /// The frame holding page `key`, pinned, if its hint finds it at once,
+    /// holding the page and not filling: the pin taken under its latch
+    /// held shared, which is then let go (RULES.md D854). The eviction
+    /// policy is told once the latch is let go, no lock held (R-ERR-4).
+    pub(super) fn pin_hinted(&self, key: Key) -> Option<&Frame> {
+        let index = self.hints.frame_of(key)?;
+        let frame = self.frames.get(index)?;
+        {
+            let _latch = match frame.content.try_read() {
+                Ok(latch) => latch,
+                Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => return None,
+            };
+            if frame.loading.load(Ordering::Acquire) || frame.key() != Some(key) {
+                return None;
+            }
+            frame.pins.fetch_add(1, Ordering::AcqRel);
+        }
+        self.hints.hit();
+        self.eviction.accessed(index);
+        Some(frame)
+    }
+
     /// Page or block `key`, held for reading if its hint finds it at once:
     /// its frame latched shared, holding it, not filling. The eviction
     /// policy is told of the use of the frame hinted before the latch is
@@ -125,8 +187,101 @@ impl BufferPool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
     use super::*;
-    use crate::disk::buffer::FileId;
+    use crate::disk::buffer::{Clock, FileId};
+    use crate::disk::encoding::Pipeline;
+    use crate::disk::memory::MemoryFileSystem;
+    use crate::disk::pager::Pager;
+    use crate::error::Code;
+    use crate::hash::HashFunction;
+    use crate::hash::crc::{CRC32_ISCSI, Crc};
+
+    /// Verifies: [DESIGN] RULES.md D854: a page held is pinned through its
+    /// hint, and its frame then cannot be taken from it, seen pinned under
+    /// its latch, so a pool of one frame refuses another page (SQLCODE
+    /// -918) until the pin is let go; a hint gone stale, its frame holding
+    /// another page, pins nothing; and a frame latched is not taken.
+    #[test]
+    fn a_page_pinned_through_its_hint_keeps_its_frame() {
+        let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+        let pager = Pager::create(&MemoryFileSystem::new(), Path::new("/h"), hash, Pipeline::none(), 4096).unwrap();
+        let pool = BufferPool::new(1, Box::new(Clock::new(1))).unwrap();
+        let file = pool.add_pager(Arc::new(pager));
+        let a = pool.new_page(file).map(|(id, _)| id).unwrap();
+        let key = Key { file, id: a.0 };
+        let frame = pool.pin_hinted(key).unwrap();
+        assert_eq!(frame.pins.load(Ordering::Acquire), 1, "pinned, and nothing else holds it");
+        assert!(matches!(frame.taken(), Err(Kept::Pinned)), "seen pinned under its latch");
+        assert_eq!(pool.new_page(file).err().map(|e| e.code), Some(Code::Resources), "its frame kept");
+        let held = frame.content.read().unwrap();
+        assert!(matches!(frame.taken(), Err(Kept::Latched)));
+        drop(held);
+        drop(Pin(frame));
+        assert!(frame.taken().is_ok(), "let go");
+        let b = pool.new_page(file).map(|(id, _)| id).unwrap();
+        assert_eq!(pool.hints.frame_of(key), Some(0), "the hint of the page evicted still names the frame");
+        assert!(pool.pin_hinted(key).is_none(), "which holds another page now");
+        let again = pool.pin_hinted(Key { file, id: b.0 }).unwrap();
+        assert_eq!(again.index, 0);
+        drop(Pin(again));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D854: writers that own pages, pinned
+    /// through their hints, keep their frames while readers of other
+    /// pages evict through a pool far smaller than the file, and while
+    /// pages are made and freed beside them. Each page names itself and
+    /// counts its writes; a frame taken from an owner would show another
+    /// page's name under the owner's hands, or lose a count.
+    #[test]
+    fn owners_pinned_through_hints_keep_their_frames_under_evictions_and_frees() {
+        const PAGES: u64 = 48;
+        const ROUNDS: u64 = 400;
+        let hash: Arc<dyn HashFunction> = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+        let pager = Pager::create(&MemoryFileSystem::new(), Path::new("/c"), hash, Pipeline::none(), 4096).unwrap();
+        let pool = BufferPool::new(12, Box::new(Clock::new(12))).unwrap();
+        let file = pool.add_pager(Arc::new(pager));
+        let ids: Vec<_> = (0..PAGES).map(|_| pool.new_page(file).map(|(id, _)| id).unwrap()).collect();
+        for id in &ids {
+            *pool.write(file, *id).unwrap() = [id.0.to_le_bytes(), 0_u64.to_le_bytes()].concat();
+        }
+        let word = |page: &[u8], at: usize| u64::from_le_bytes(page[at..at + 8].try_into().unwrap());
+        let writer = |n: u64| {
+            for round in 0..ROUNDS {
+                let id = ids[usize::try_from((n * 7 + round * 5) % PAGES).unwrap()];
+                let owned = pool.own(file, id).unwrap();
+                let before = word(&owned.read(), 8);
+                std::thread::yield_now();
+                let mut page = pool.write_owned(&owned).unwrap();
+                assert_eq!((word(&page, 0), word(&page, 8)), (id.0, before), "the frame owned holds its page as read");
+                page[8..16].copy_from_slice(&(before + 1).to_le_bytes());
+            }
+        };
+        let reader = |n: u64| {
+            for round in 0..ROUNDS * 4 {
+                let id = ids[usize::try_from((n + round * 11) % PAGES).unwrap()];
+                assert_eq!(word(&pool.read(file, id.0).unwrap(), 0), id.0);
+            }
+        };
+        let churn = || {
+            for _ in 0..ROUNDS {
+                let made = pool.new_page(file).map(|(id, _)| id);
+                // Refused while every frame is held, which costs a round.
+                if let Ok(id) = made {
+                    pool.free_when_released(file, id).unwrap();
+                }
+            }
+        };
+        std::thread::scope(|threads| {
+            (0..4).for_each(|n| drop(threads.spawn(move || writer(n))));
+            (0..3).for_each(|n| drop(threads.spawn(move || reader(n))));
+            threads.spawn(churn);
+        });
+        let written: u64 = ids.iter().map(|id| word(&pool.read(file, id.0).unwrap(), 8)).sum();
+        assert_eq!(written, 4 * ROUNDS, "no write lost");
+    }
 
     /// Verifies: [DESIGN] RULES.md D30: a hint gives the frame last noted
     /// for its page, none before; hits counted on stripes add up.

@@ -15,6 +15,7 @@
 //! end checks the constraints of that row alone, as its end would.
 
 use super::{ObjectRows, Written};
+use crate::catalog::ColumnDefault;
 use crate::db::assignment::candidate;
 use crate::db::escrow::reserving;
 use crate::db::integrity::Straight;
@@ -27,6 +28,7 @@ use crate::logical::LogicalPlan;
 use crate::params::Params;
 use crate::storage::{Row, RowId};
 use crate::txn::Again;
+use crate::txn::writing::Writing;
 
 /// What a point change did: no row found [X3.135-1986 §7.3 GR3a iv]; or
 /// the row it found written, as it was before and is now, none of a row
@@ -63,25 +65,39 @@ pub(in crate::db) fn point_change(
         // Of a catalog with triggers, its statement ends with no row
         // changed, as `update_rows` ends it.
         if st.catalog.any_triggers() {
-            st.end_straight(tx, (&w.bound.table, straight), &[])?;
+            st.end_straight(tx, (&w.bound.table, straight), &[], None)?;
         }
         return Ok(Ok(Pointed::Unfound));
     };
     let db = w.db(st);
     let hosted = Hosted::in_db(Some(session), cx, &db);
-    let rows = if delete { deleted(cx, (&w, &hosted), id)? } else { updated(cx, (&w, &hosted), (id, &seen))? };
+    // What its write needs of its table, found once (RULES.md D872).
+    let writing = st.writing(&w.bound.table)?;
+    // An UPDATE tells its write the columns it sets (RULES.md D875).
+    let writing = match straight.set().filter(|_| !delete) {
+        Some(set) => writing.setting(set),
+        None => writing,
+    };
+    let at = (&writing, id);
+    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, &seen), straight.set())? };
     let wrote = rows.as_ref().map(|_| id);
-    st.end_straight(tx, (&w.bound.table, straight), wrote.as_slice())?;
+    // The row an UPDATE wrote, as it holds it (RULES.md D880).
+    let held = rows.as_ref().and_then(|(_, new)| new.as_ref());
+    st.end_straight(tx, (&w.bound.table, straight), wrote.as_slice(), held)?;
     Ok(Ok(Pointed::Wrote(rows)))
 }
 
 /// Row `id` deleted by `w`, its condition read by `hosted`: the row it
 /// was, none if another transaction deleted it first.
-fn deleted(cx: StatementContext<'_>, (w, hosted): (&Written, &Hosted<'_>), id: RowId) -> Result<Option<(Row, Option<Row>)>> {
+fn deleted(
+    cx: StatementContext<'_>,
+    (w, hosted): (&Written, &Hosted<'_>),
+    at: (&Writing<'_>, RowId),
+) -> Result<Option<(Row, Option<Row>)>> {
     // A row another transaction changed is deleted in the version it
     // committed, if it is still one to delete.
     let mut recheck = |newest: &Row| Ok(if w.holds_of(newest, hosted.runner())? { Again::Delete } else { Again::Skip });
-    Ok(cx.st.rewrite_row(cx.tx, (&w.bound.table, id), None, &mut recheck)?.map(|gone| (gone, None)))
+    Ok(cx.st.rewrite_row_in(cx.tx, at, None, &mut recheck)?.map(|gone| (gone, None)))
 }
 
 /// Row `id`, seen as `seen`, updated by `w`, its values computed by
@@ -90,7 +106,8 @@ fn deleted(cx: StatementContext<'_>, (w, hosted): (&Written, &Hosted<'_>), id: R
 fn updated(
     cx: StatementContext<'_>,
     (w, hosted): (&Written, &Hosted<'_>),
-    (id, seen): (RowId, &Row),
+    (at, seen): ((&Writing<'_>, RowId), &Row),
+    set: Option<u64>,
 ) -> Result<Option<(Row, Option<Row>)>> {
     let new = candidate(w, seen, ("ISO/IEC 9075:1992 §13.10 GR8", hosted))?;
     // A row another transaction changed is written in the version it
@@ -104,11 +121,31 @@ fn updated(
         recomputed = Some(row.clone());
         Ok(Again::Update(row))
     };
-    let written = cx.st.rewrite_row(cx.tx, (&w.bound.table, id), Some(&new), &mut recheck)?;
+    // [DESIGN] RULES.md D875: the one write told the columns set, where
+    // its statement reads nothing of the row before (`Straight::set`).
+    // The row before it gives holds the columns its write read alone.
+    let written = match set {
+        Some(_) => cx.st.rewrite_row_set(cx.tx, at, &new, &mut recheck)?,
+        None => cx.st.rewrite_row_in(cx.tx, at, Some(&new), &mut recheck)?,
+    };
     Ok(written.map(|before| (before, Some(recomputed.unwrap_or(new)))))
 }
 
 impl super::Target {
+    /// Whether each column's default is the same for every user at every
+    /// instant: a value, or none. Its defaults as it was kept are then
+    /// those of any statement (`Target::refreshed`), and an execution
+    /// takes it as it is, with no copy.
+    pub(in crate::db) fn fixed_defaults(&self) -> bool {
+        self.desc.columns.iter().all(|c| {
+            let of_domain = c.domain.as_ref().and_then(|d| d.default.as_ref());
+            match c.default.as_ref().or(of_domain).filter(|_| c.generated.is_none()) {
+                Some(ColumnDefault::Value(_)) | None => true,
+                Some(ColumnDefault::User(_) | ColumnDefault::Datetime(..)) => false,
+            }
+        })
+    }
+
     /// Of an INSERT of one row into it, the constraints its statement
     /// checks of that row, if it may write it straight: none through a
     /// view WITH CHECK OPTION, or if its end would check more.
@@ -133,21 +170,28 @@ impl Session {
         &self,
         cx: StatementContext<'_>,
         (target, straight): (&super::Target, &Straight),
-        (query, slots, kept): (LogicalPlan, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
+        (query, slots, kept): (&LogicalPlan, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
-        let mut rows = super::query_rows((self, cx), target, (query, slots, kept))?;
+        let mut rows = super::query_rows((self, cx), target, (std::borrow::Cow::Borrowed(query), slots, kept))?;
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
         if rows.is_empty() && !st.catalog.any_triggers() {
             return Ok(0);
         }
         self.settle_cursors(st, &target.name);
         let mut ids = Vec::with_capacity(1);
+        // Its table is not partitioned (`compiled/change.rs`), so each
+        // row is its own, written by what its writes need of it (D872).
+        let writing = st.writing(&target.name)?;
         rows.visit(&mut |row| {
-            ids.push(st.insert_routed(tx, &target.name, row)?.1);
+            ids.push(st.insert_row_in(tx, &writing, row)?);
             Ok(())
         })?;
-        st.end_straight(tx, (&target.name, straight), &ids)?;
+        // Of one row inserted, its checks are of the row held (RULES.md D880).
+        match ids.as_slice() {
+            [_] => rows.visit(&mut |row| st.end_straight(tx, (&target.name, straight), &ids, Some(row)))?,
+            [] | [_, _, ..] => st.end_straight(tx, (&target.name, straight), &ids, None)?,
+        }
         self.note_drawn(target.generating.drawn_identity(), &mut rows)?;
         self.note_generated(target.generating.identity_column(), &mut rows)?;
         Ok(rows.len())

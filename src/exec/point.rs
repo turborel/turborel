@@ -9,6 +9,8 @@
 
 use std::mem;
 
+mod keyed;
+
 use super::entries::{Reading, entry_row, fetch};
 use super::scan::{Found, probe_index, read_row};
 use crate::catalog::QualifiedName;
@@ -47,6 +49,8 @@ pub(crate) struct PointRead {
     outputs: Option<Vec<usize>>,
     /// Whether no column is given twice, so each is moved out of the row.
     distinct: bool,
+    /// What probes its index by a whole key, if it is read so (`keyed.rs`).
+    keyed: Option<keyed::Keyed>,
 }
 
 impl PointRead {
@@ -70,7 +74,10 @@ impl PointRead {
             return None;
         }
         let distinct = outputs.as_ref().is_none_or(|o| o.iter().enumerate().all(|(i, c)| !o.get(..i).unwrap_or_default().contains(c)));
+        let given = outputs.as_deref().filter(|_| !*located).map(|o| (o, distinct));
+        let keyed = keyed::Keyed::of(st, (table, index), probe, (columns, *covering), given);
         Some(PointRead {
+            keyed,
             table: table.clone(),
             index: index.clone(),
             probe: probe.clone(),
@@ -92,7 +99,11 @@ impl PointRead {
     /// no index, the engine's refusal of the read (SQLCODE -911) or a
     /// failed read.
     pub(crate) fn read(&self, st: &State, tx: TxId, values: &[Value]) -> Result<Option<Row>> {
-        let probe = placed(&self.probe, &self.slots, values)?;
+        let probe = match self.keyed(st, tx, placed(&self.probe, &self.slots, values)?, false)? {
+            keyed::Probed::Read(found) => return Ok(found.map(|found| self.given(read_row(self.located, found)))),
+            keyed::Probed::Given(row) => return Ok(row),
+            keyed::Probed::Unread(probe) => probe,
+        };
         let Found { storage, ix, entries, projection, read, pruning } = probe_index(st, &self.table, &self.index, &probe, (false, true))?;
         read.record(&*storage, tx)?;
         let width = self.covering.then(|| st.catalog.table(&self.table).map(|t| t.columns.len())).flatten();
@@ -118,7 +129,12 @@ impl PointRead {
     ///
     /// As `read`.
     pub(crate) fn entry(&self, st: &State, tx: TxId, values: &[Value]) -> Result<Option<(RowId, Row)>> {
-        let probe = placed(&self.probe, &self.slots, values)?;
+        let probe = match self.keyed(st, tx, placed(&self.probe, &self.slots, values)?, true)? {
+            keyed::Probed::Read(found) => return Ok(found),
+            // A read of the whole row is never of some columns alone.
+            keyed::Probed::Given(_) => return Ok(None),
+            keyed::Probed::Unread(probe) => probe,
+        };
         let Found { storage, ix, entries, projection, read, pruning } = probe_index(st, &self.table, &self.index, &probe, (false, true))?;
         read.record(&*storage, tx)?;
         let mut reading = Reading::of(&ix, None, projection).pruned(pruning);

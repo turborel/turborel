@@ -39,12 +39,12 @@ impl RowTable {
     /// Makes row `id` hold `row`, or be absent, as a version committed
     /// before every snapshot, whatever version is there; ids given from now
     /// on are past it.
-    pub(super) fn apply_newest(&self, id: RowId, row: Option<Row>) -> Result<()> {
-        self.next.fetch_max(id.saturating_add(1), Ordering::AcqRel);
+    pub(super) fn apply_newest(&self, id: RowId, row: Option<&Row>) -> Result<()> {
+        self.next.fetch_max(id.saturating_add(1), Ordering::SeqCst);
         self.blocks.clear();
         self.reserve_past(id)?;
         let old = match row {
-            Some(row) => self.put_newest(id, &row)?,
+            Some(row) => self.put_newest(id, row)?,
             None => self.remove_newest(id)?,
         };
         if let Some(old) = old {

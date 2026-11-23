@@ -30,6 +30,13 @@ pub(super) fn row(n: i128) -> Row {
     vec![int(n), Value::Char(format!("text {n}"))]
 }
 
+/// `table`, its zones kept from its first row, as those of a table a scan
+/// told conditions has read are (`zones/cold.rs`).
+pub(super) fn warmed(table: RowTable) -> RowTable {
+    table.zones.begin_warm();
+    table
+}
+
 /// The tables' files, in memory.
 pub(super) fn files() -> TableFiles {
     paged().1
@@ -83,7 +90,7 @@ fn summed(table: &RowTable, horizon: u64) {
 #[test]
 fn zones_skip_what_no_reader_can_match() {
     let files = files();
-    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap()));
     let ids: Vec<RowId> = (0..5000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
     let far = ids[4999];
     assert!(far >= ZONE_ROWS.checked_mul(2).unwrap(), "rows of several zones");
@@ -132,13 +139,16 @@ fn an_opened_tables_zones_are_known_once_summed() {
     let files = files();
     let ids: Vec<RowId>;
     let meta = {
-        let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+        let table = warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
         ids = (0..3000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
         table.meta()
     };
     let table = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
-    assert!(table.maintenance_due());
+    // No zone was saved, so it opens cold, with none to sum up (RULES.md
+    // D868), until a scan told a condition asks.
+    assert!(table.zones.cold() && !table.maintenance_due());
     assert!(reads(&table, &equal(0, 10), ids[2999]), "not known: read");
+    assert!(table.maintenance_due());
     assert!((table.scan_share(&equal(0, 10)) - 1.0_f64).abs() < 1e-9_f64, "not known: every row");
     summed(&table, 1);
     assert!(!reads(&table, &equal(0, 10), ids[2999]), "known: skipped");
@@ -156,7 +166,7 @@ fn an_opened_tables_zones_are_known_once_summed() {
 fn zones_summed_up_meanwhile_hold_every_row_written() {
     use std::sync::atomic::{AtomicU64, Ordering};
     let files = files();
-    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap()));
     let first = table.insert(NO_TRANSACTION, row(0)).unwrap();
     // Rounds asked for, and done, by the thread summing up; 0 asks it to end.
     let (asked, done) = (Arc::new(AtomicU64::new(1)), Arc::new(AtomicU64::new(1)));
@@ -213,7 +223,7 @@ fn zones_summed_up_meanwhile_hold_every_row_written() {
 #[test]
 fn a_version_put_back_is_held_by_its_zone() {
     let files = files();
-    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap()));
     let tx = 10_u64;
     table.begin(tx, 1).unwrap();
     let id = table.insert(tx, row(77)).unwrap();
@@ -235,7 +245,7 @@ fn a_version_put_back_is_held_by_its_zone() {
 /// never narrowed it, and every scan told the value read the zone.
 #[test]
 fn an_undone_inserts_zone_is_narrowed() {
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap()));
     let first = table.insert(NO_TRANSACTION, row(0)).unwrap();
     let tx = 10_u64;
     table.begin(tx, 1).unwrap();
@@ -266,7 +276,7 @@ fn an_undone_inserts_zone_is_narrowed() {
 fn a_tables_zones_saved_are_known_once_opened() {
     let files = files();
     let (ids, meta) = {
-        let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+        let table = warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
         let ids: Vec<RowId> = (0..3000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
         table.update(NO_TRANSACTION, ids[0], row(500)).unwrap();
         files.save_zones().unwrap();
@@ -303,7 +313,7 @@ fn a_dropped_tables_saved_zones_are_freed() {
     let (pager, files) = paged();
     let in_use = || pager.page_count() - pager.free_pages();
     let before = in_use();
-    let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+    let table = warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
     for n in 0..5000 {
         table.insert(NO_TRANSACTION, row(n)).unwrap();
     }
@@ -323,7 +333,7 @@ fn a_dropped_tables_saved_zones_are_freed() {
 #[test]
 fn zones_unsealable_or_malformed_are_not_known() {
     let files = files();
-    let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+    let table = warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
     for n in 0..2000 {
         table.insert(NO_TRANSACTION, row(n)).unwrap();
     }
@@ -362,7 +372,7 @@ fn zones_a_failed_save_left_are_saved_by_the_next() {
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(Arc::clone(&pool), file, Arc::new(MemoryLog::new()));
     let others: Vec<u64> = (0..frames).map(|_| pool.new_page(file).unwrap().0.0).collect();
-    let table = RowTable::create(&files, &TYPES, TableOptions::default()).unwrap();
+    let table = warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
     let first = table.insert(NO_TRANSACTION, row(1)).unwrap();
     let segment_rows = u64::try_from(SEGMENT_ZONES).unwrap().checked_mul(ZONE_ROWS).unwrap();
     let far = first.checked_add(segment_rows).unwrap();
@@ -394,7 +404,7 @@ fn zones_a_failed_save_left_are_saved_by_the_next() {
 fn a_zone_is_summed_up_with_no_older_version_read() {
     let log = Arc::new(Hooked::default());
     let files = paged_over(shared(&log)).1;
-    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap()));
     let id = table.insert(NO_TRANSACTION, row(10)).unwrap();
     let ids: Vec<RowId> = (0..9).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
     let undo_reads = || log.reads.load(std::sync::atomic::Ordering::Relaxed);
@@ -434,7 +444,7 @@ fn a_zone_is_summed_up_with_no_older_version_read() {
 #[test]
 fn a_zone_summed_up_at_a_horizon_before_a_collection_reads_at_the_collection() {
     let files = files();
-    let table = Arc::new(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap()));
     let id = table.insert(NO_TRANSACTION, row(1)).unwrap();
     let tx = 10_u64;
     table.begin(tx, 1).unwrap();
@@ -455,8 +465,7 @@ fn stale(table: &RowTable) -> bool {
 
 /// The rows the zone of row `id` of `table` counts.
 fn zone_rows(table: &RowTable, id: RowId) -> u32 {
-    let map = table.zones.map.read().unwrap();
-    lock_builtin(&map.zones[super::zone_at(id)]).rows
+    lock_builtin(&table.zones.slots.get(super::zone_at(id)).unwrap().zone).rows
 }
 
 /// Verifies: [DESIGN] RULES.md D31, zone maps: a write stales its zone
@@ -469,7 +478,7 @@ fn zone_rows(table: &RowTable, id: RowId) -> u32 {
 /// A deletion inside stales nothing, one of a bound does.
 #[test]
 fn a_write_inside_its_zones_bounds_stales_nothing() {
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap()));
     let ids: Vec<RowId> = (0..100).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
     summed(&table, 1);
     assert!(!stale(&table));
@@ -499,7 +508,7 @@ fn a_write_inside_its_zones_bounds_stales_nothing() {
 /// moved past (reached) against inside (not), a value against a null.
 #[test]
 fn a_value_growing_past_its_zones_bound_stales_nothing() {
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap()));
     let ids: Vec<RowId> = (0..100).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
     let null = || vec![Value::Null, Value::Char("null".into())];
     // Ends transaction `tx`, its zones summed up, and begins the next.
@@ -532,7 +541,7 @@ fn a_value_growing_past_its_zones_bound_stales_nothing() {
 /// and narrows nothing.
 #[test]
 fn a_zone_unsettled_alone_is_settled_with_its_bounds_kept() {
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap()));
     let ids: Vec<RowId> = (0..100).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
     summed(&table, 1);
     assert_eq!(zone_rows(&table, ids[0]), 100);

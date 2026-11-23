@@ -28,6 +28,12 @@ impl RowTable {
             if open.preserving {
                 return Ok(());
             }
+            // RULES.md D448: with no change and no read recorded here it is
+            // ordered against none, so it is not kept, nor the lock every
+            // commit of the table takes taken.
+            if open.changes.is_empty() && !open.reads.any() {
+                return Ok(());
+            }
             let wrote_many = open.changes.len() > self.versions.tracked();
             let mut writes = Xxh3Set::default();
             if !wrote_many {

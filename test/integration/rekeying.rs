@@ -281,7 +281,9 @@ fn the_sweep_runs_in_its_own_time() {
     db.run_due().unwrap();
     let behind = |db: &Database| file_formats(db)[1].trim_start_matches("DATA|NO|").parse::<u64>().unwrap();
     let pages = behind(&db);
-    assert!(pages > 8, "paused, every page behind: {:?}", file_formats(&db));
+    // Its rows' pages and its trees': no page of zones, which a table
+    // nothing prunes on does not keep (RULES.md D868).
+    assert!(pages >= 8, "paused, every page behind: {:?}", file_formats(&db));
     // A page a run, each asked for again (as a change of the pace asks
     // while the file is behind): four runs, then the key changes under
     // the walk.

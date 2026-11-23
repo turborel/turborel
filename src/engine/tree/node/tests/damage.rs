@@ -25,7 +25,7 @@ fn exercise(content: &[u8], at: usize) {
     corrupt_or_ok(node.last_insert(), at);
     corrupt_or_ok(node.entries(), at);
     let _ = (node.live(), node.covers(b"c"), node.first_child(), node.shape());
-    corrupt_or_ok(compact(content), at);
+    corrupt_or_ok(compact_in(content, 0), at);
     let mut changed = content.to_vec();
     corrupt_or_ok(set_child(&mut changed, 0, PageId(4)), at);
     corrupt_or_ok(overwrite(&mut changed, 0, b"9"), at);

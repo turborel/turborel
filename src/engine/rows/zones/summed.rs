@@ -17,7 +17,7 @@ use super::visible::Seen;
 use super::{MOST_SUMMED, ZONE_ROWS, Zone, Zones};
 use crate::engine::tree::Direction;
 use crate::error::Result;
-use crate::sync::{lock_builtin, read};
+use crate::sync::lock_builtin;
 use crate::txn::Timestamp;
 
 /// \[DESIGN\] How long a table's zones, each summed up or settled, are
@@ -86,21 +86,21 @@ impl Zones {
     /// the zones were made, if given: each with its changes, and its loose
     /// columns. The zones rest if those are all, or once every zone has
     /// been looked at since they last rested (`swept`).
-    fn due_zones(&self, clock: Option<u64>) -> Result<Vec<(usize, u64, u64)>> {
-        let map = read(&self.map)?;
-        let from = self.next_sum.load(AtomicOrdering::Acquire).min(map.zones.len());
+    fn due_zones(&self, clock: Option<u64>) -> Vec<(usize, u64, u64)> {
+        let zones = self.slots.len();
+        let from = self.next_sum.load(AtomicOrdering::Acquire).min(zones);
         let mut looked = 0_usize;
-        let order = (from..map.zones.len()).chain(0..from).inspect(|_| looked = looked.saturating_add(1));
+        let order = (from..zones).chain(0..from).inspect(|_| looked = looked.saturating_add(1));
         let stale = order.filter_map(|at| {
-            let zone = lock_builtin(map.zones.get(at)?);
+            let zone = lock_builtin(&self.slots.get(at)?.zone);
             let ready = clock.is_none_or(|clock| zone.ready(clock));
             ((zone.stale() || zone.unsettled) && ready).then(|| (at, zone.changes, zone.loose))
         });
         let due: Vec<(usize, u64, u64)> = stale.take(MOST_SUMMED).collect();
-        if self.swept(looked, map.zones.len()) || due.len() < MOST_SUMMED {
+        if self.swept(looked, zones) || due.len() < MOST_SUMMED {
             self.rest();
         }
-        Ok(due)
+        due
     }
 
     /// Rests the zones for `REST`, a pass over every zone due done.
@@ -129,7 +129,7 @@ impl RowTable {
     /// `sum_zones` at `clock` nanoseconds after the zones were made, the
     /// zones still waiting then passed over; every zone due, if not given.
     pub(in crate::engine::rows) fn sum_zones_at(&self, horizon: Timestamp, clock: Option<u64>) -> Result<bool> {
-        let due = self.zones.due_zones(clock)?;
+        let due = self.zones.due_zones(clock);
         let looked = clock.unwrap_or_else(|| self.zones.elapsed());
         let mut done = false;
         for &(at, changes, loose) in &due {
@@ -139,9 +139,8 @@ impl RowTable {
                 Some(None) => (Seen::Recent, 0),
                 None => self.settled_of(at, horizon)?,
             };
-            let map = read(&self.zones.map)?;
-            let Some(slot) = map.zones.get(at) else { continue };
-            let mut zone = lock_builtin(slot);
+            let Some(slot) = self.zones.slots.get(at) else { continue };
+            let mut zone = lock_builtin(&slot.zone);
             zone.looked_at(looked);
             // A write meanwhile: summed again later. None, a zone not stale
             // is not stale still.
@@ -154,12 +153,12 @@ impl RowTable {
                 Some(None) => {}
                 None => zone.rows = rows,
             }
-            map.changed(at);
+            self.zones.changed(at);
             if was_stale && !zone.stale() {
                 self.zones.stale.fetch_sub(1, AtomicOrdering::AcqRel);
                 done = true;
             }
-            if unsettled && self.settle((&map, at), &mut zone, seen) {
+            if unsettled && self.settle(slot, &mut zone, seen) {
                 done = true;
             }
         }

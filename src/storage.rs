@@ -92,6 +92,12 @@ pub trait TableStorage: Send + Sync {
     fn insert_from(&self, tx: TxId, row: &Row) -> Result<RowId> {
         self.insert(tx, row.clone())
     }
+    /// \[DESIGN\] Pins the table for the calling thread until the pin is dropped, so its reads and writes of the table meanwhile
+    /// enter no epoch of their own (`BLinkTree::pin`, RULES.md D857): for a statement, never held while the thread waits for a
+    /// client, and never sent to another thread. Default: none, of an engine with nothing to pin.
+    fn pin(&self) -> Option<crate::engine::tree::Pinned<'_>> {
+        None
+    }
     /// Replaces the live row `id` with `row`.
     ///
     /// # Errors
@@ -107,6 +113,15 @@ pub trait TableStorage: Send + Sync {
     fn replace(&self, tx: TxId, id: RowId, row: Option<&Row>) -> Result<Row> {
         let old = self.get(tx, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id}")))?;
         row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row.clone())).map(|()| old)
+    }
+    /// \[DESIGN\] As `replace`, of a caller that reads only the columns `read` of the row replaced: those hold their values, the
+    /// others null (RULES.md D875). Default: `replace`, every column read.
+    ///
+    /// # Errors
+    ///
+    /// As `replace`.
+    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, _read: &[usize]) -> Result<Row> {
+        self.replace(tx, id, row)
     }
     /// Removes the live row `id`.
     ///
@@ -145,6 +160,15 @@ pub trait TableStorage: Send + Sync {
     /// As `get`.
     fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, _near: &mut Near) -> Result<Option<Row>> {
         columns.map_or_else(|| self.get(tx, id), |columns| self.get_columns(tx, id, columns))
+    }
+    /// \[DESIGN\] As `get_near` of `columns`, their values alone, in their order, appended to the row held beside `near`: whether
+    /// the row is there, the row held as it was if not (RULES.md D862). Default: `get_near`'s row, its columns picked out.
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    fn get_listed(&self, tx: TxId, id: RowId, columns: &[usize], (near, out): (&mut Near, &mut Row)) -> Result<bool> {
+        Ok(rows::listed(self.get_near(tx, id, Some(columns), near)?, columns, out))
     }
     /// Every live row, once each, with its id. The rows have every column at its position, but only those in `columns` need hold their
     /// value: the others may hold anything (a column layout leaves them NULL), and callers do not read them (RULES.md D31). A row the
@@ -341,15 +365,11 @@ pub trait TableStorage: Send + Sync {
     fn begin(&self, _tx: TxId, _snapshot: Timestamp) -> Result<()> {
         Ok(())
     }
-    /// \[EXTENSION\] How `tx` reads from now, at a level below SERIALIZABLE
-    /// [ISO/IEC 9075:1992 §4.28] (RULES.md D29): as of `mode.snapshot`,
-    /// later than or the same as the one before, and, unless `mode.checked`,
-    /// with what it reads not checked at `validate`; a write to a row
-    /// committed after the snapshot is refused still, so no update is lost.
-    /// Told once `tx` has begun here, and whenever the mode changes. Default:
-    /// nothing, for an engine that reads at the snapshot `tx` began at and
-    /// checks every read, as SERIALIZABLE, which shows none of the
-    /// phenomena a weaker level would [§14.1 GR5].
+    /// \[EXTENSION\] How `tx` reads from now, at a level below SERIALIZABLE [ISO/IEC 9075:1992 §4.28] (RULES.md D29): as of
+    /// `mode.snapshot`, later than or the same as the one before, and, unless `mode.checked`, with what it reads not checked at `validate`;
+    /// a write to a row committed after the snapshot is refused still, so no update is lost. Told once `tx` has begun here, and whenever
+    /// the mode changes. Default: nothing, for an engine that reads at the snapshot `tx` began at and checks every read, as SERIALIZABLE,
+    /// which shows none of the phenomena a weaker level would [§14.1 GR5].
     ///
     /// # Errors
     ///
@@ -357,16 +377,11 @@ pub trait TableStorage: Send + Sync {
     fn read_mode(&self, _tx: TxId, _mode: ReadMode) -> Result<()> {
         Ok(())
     }
-    /// \[DESIGN\] (RULES.md D34) Whether every reader sees row `id`'s one
-    /// version, whose index entries are then all there are of it: an
-    /// index-only scan takes the row's indexed values from an entry of it
-    /// without reading the row. True only once nothing a reader may still
-    /// see of the row differs, and false from before a write of it is made,
-    /// and before its index entries are, so a reader that finds an entry of
-    /// a version it may not see finds it false. No read of the row is
-    /// noted: the scan's of its condition (`read_by_condition`), which
-    /// every entry it finds matches, covers it. Default: false, every row
-    /// read.
+    /// \[DESIGN\] (RULES.md D34) Whether every reader sees row `id`'s one version, whose index entries are then all there are of it: an
+    /// index-only scan takes the row's indexed values from an entry of it without reading the row. True only once nothing a reader may
+    /// still see of the row differs, and false from before a write of it is made, and before its index entries are, so a reader that finds
+    /// an entry of a version it may not see finds it false. No read of the row is noted: the scan's of its condition (`read_by_condition`),
+    /// which every entry it finds matches, covers it. Default: false, every row read.
     fn visible_to_all(&self, _id: RowId) -> bool {
         false
     }
@@ -409,18 +424,12 @@ pub trait TableStorage: Send + Sync {
     fn rollback_to(&self, _tx: TxId, _savepoint: u64) -> Result<()> {
         Ok(())
     }
-    /// Commit, phase 1: `tx` is to commit at timestamp `at`, later than every
-    /// timestamp given out before it. The engine checks what its isolation
-    /// needs (RULES.md D29): that `tx` committing at `at` keeps what its
-    /// concurrency control promises. That is all a `Persistence::Logged`
-    /// or `None` engine promises here: its changes are as durable as the
-    /// log's commit record, written after this (RULES.md D25), and its
-    /// `commit` has nothing left that could fail. An engine that keeps its
-    /// own durability (`Forced`, `External`) promises too that its `commit`
-    /// will succeed, as a participant of a two-phase commit prepares. Until
-    /// `commit` or `rollback`, the changes of `tx` are committing at `at`: a
-    /// transaction that started after `at` must not read past them as if
-    /// they were not there.
+    /// Commit, phase 1: `tx` is to commit at timestamp `at`, later than every timestamp given out before it. The engine checks what its
+    /// isolation needs (RULES.md D29): that `tx` committing at `at` keeps what its concurrency control promises. That is all a
+    /// `Persistence::Logged` or `None` engine promises here: its changes are as durable as the log's commit record, written after this
+    /// (RULES.md D25), and its `commit` has nothing left that could fail. An engine that keeps its own durability (`Forced`, `External`)
+    /// promises too that its `commit` will succeed, as a participant of a two-phase commit prepares. Until `commit` or `rollback`, the
+    /// changes of `tx` are committing at `at`: a transaction that started after `at` must not read past them as if they were not there.
     ///
     /// # Errors
     ///
@@ -517,10 +526,8 @@ pub trait TableStorage: Send + Sync {
     fn statistics_wanted(&self) -> bool {
         false
     }
-    /// \[DESIGN\] Does some of the work due (`maintenance_due`), of rows
-    /// committed at or before `horizon`, before every snapshot; on the
-    /// database's maintenance thread, or, `now`, when it is asked to
-    /// (`Database::maintain`), work it spaces in time done at once; never two
+    /// \[DESIGN\] Does some of the work due (`maintenance_due`), of rows committed at or before `horizon`, before every snapshot; on the
+    /// database's maintenance thread, or, `now`, when it is asked to (`Database::maintain`), work it spaces in time done at once; never two
     /// calls at once: whether it did any, for it to be called again.
     ///
     /// # Errors
@@ -529,23 +536,16 @@ pub trait TableStorage: Send + Sync {
     fn maintain(&self, _horizon: Timestamp, _now: bool) -> Result<bool> {
         Ok(false)
     }
-    /// Every version a new index needs an entry for, with its row id,
-    /// `columns` holding its values as for `scan`, among those made by
-    /// transactions committed at or before `as_of`: each committed version
-    /// a transaction reading at or after `horizon` may still read, and each
-    /// version `gc` will report removed that none can. An index holds one
-    /// entry per version, which `gc` takes back (`Index`), so it must have
-    /// been given one. Default: the rows as read outside any transaction,
-    /// for an engine that keeps no versions.
+    /// Every version a new index needs an entry for, with its row id, `columns` holding its values as for `scan`, among those made by
+    /// transactions committed at or before `as_of`: each committed version a transaction reading at or after `horizon` may still read, and
+    /// each version `gc` will report removed that none can. An index holds one entry per version, which `gc` takes back (`Index`), so it
+    /// must have been given one. Default: the rows as read outside any transaction, for an engine that keeps no versions.
     fn versions(self: Arc<Self>, _horizon: Timestamp, _as_of: Timestamp, columns: &[usize]) -> Rows {
         self.scan(NO_TRANSACTION, columns)
     }
-    /// \[DESIGN\] Makes each large object of `row`, about to be inserted
-    /// by `tx`, or to replace row `replacing`, one the table keeps for it
-    /// (RULES.md D79): by default, as it is. An engine keeping large objects
-    /// copies one it does not keep for that row into objects of its own,
-    /// handing `log` each object's id and body with what keeps it, a chunk
-    /// at a time, to keep and log at once.
+    /// \[DESIGN\] Makes each large object of `row`, about to be inserted by `tx`, or to replace row `replacing`, one the table keeps for it
+    /// (RULES.md D79): by default, as it is. An engine keeping large objects copies one it does not keep for that row into objects of its
+    /// own, handing `log` each object's id and body with what keeps it, a chunk at a time, to keep and log at once.
     ///
     /// # Errors
     ///
@@ -563,11 +563,9 @@ pub trait TableStorage: Send + Sync {
     fn apply_lob(&self, id: u64, _body: &[u8]) -> Result<()> {
         Err(SqlError::new(Code::Api, format!("[DESIGN] the table keeps no large object, and is given object {id} of the log")))
     }
-    /// \[DESIGN\] Notes the objects `ids` as awaiting collection when the
-    /// checkpoint recovery began from was taken (`stale_lobs`).
+    /// \[DESIGN\] Notes the objects `ids` as awaiting collection when the checkpoint recovery began from was taken (`stale_lobs`).
     fn note_stale_lobs(&self, _ids: &[u64]) {}
-    /// \[DESIGN\] Ends recovery: frees the large objects it left that no
-    /// row's newest version names (RULES.md D79).
+    /// \[DESIGN\] Ends recovery: frees the large objects it left that no row's newest version names (RULES.md D79).
     ///
     /// # Errors
     ///
@@ -575,8 +573,7 @@ pub trait TableStorage: Send + Sync {
     fn recovered(&self) -> Result<()> {
         Ok(())
     }
-    /// \[DESIGN\] The large objects awaiting collection, which a crash
-    /// would leave kept: a checkpoint logs them, for recovery from it to
+    /// \[DESIGN\] The large objects awaiting collection, which a crash would leave kept: a checkpoint logs them, for recovery from it to
     /// free (RULES.md D79).
     ///
     /// # Errors
@@ -585,8 +582,7 @@ pub trait TableStorage: Send + Sync {
     fn stale_lobs(&self) -> Result<Vec<u64>> {
         Ok(Vec::new())
     }
-    /// Undo every change `tx` made that the engine keeps itself, and forget
-    /// the transaction. Also called after a failed `validate`.
+    /// Undo every change `tx` made that the engine keeps itself, and forget the transaction. Also called after a failed `validate`.
     ///
     /// # Errors
     ///

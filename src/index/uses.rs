@@ -63,7 +63,7 @@ impl Default for Uses {
 impl Uses {
     /// Adds `searches` searches, which gave `entries` entries, to this
     /// thread's stripe.
-    fn add(&self, searches: u64, entries: u64) {
+    pub(crate) fn add(&self, searches: u64, entries: u64) {
         if let Some(stripe) = STRIPE.with(|&at| self.stripes.get(at)) {
             stripe.searches.fetch_add(searches, Ordering::Relaxed);
             stripe.entries.fetch_add(entries, Ordering::Relaxed);

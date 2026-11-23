@@ -18,8 +18,13 @@ impl Key {
     /// Whether the values of `row` at `columns` are this key, compared as
     /// two keys are, with no key made of them (RULES.md D501).
     pub fn is_of(&self, row: &[Value], columns: &[usize]) -> bool {
+        Key::values_are_of(&self.0, row, columns)
+    }
+
+    /// As `is_of`, of the key whose values are `key`, with no key made.
+    pub fn values_are_of(key: &[Value], row: &[Value], columns: &[usize]) -> bool {
         let same = |(&column, value): (&usize, &Value)| row.get(column).is_some_and(|v| total_cmp(v, value) == Ordering::Equal);
-        columns.len() == self.0.len() && columns.iter().zip(&self.0).all(same)
+        columns.len() == key.len() && columns.iter().zip(key).all(same)
     }
 }
 

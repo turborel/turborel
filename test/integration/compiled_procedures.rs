@@ -24,7 +24,7 @@ const TABLES: &str = "CREATE SCHEMA AUTHORIZATION A
 
 /// A database with `TABLES` and some rows, and A's session in it, compiled
 /// procedures ON or OFF.
-fn database(compiled: bool) -> (Database, Session) {
+pub(crate) fn database(compiled: bool) -> (Database, Session) {
     let db = Database::new();
     db.schema(TABLES).unwrap();
     db.schema("CREATE SCHEMA B AUTHORIZATION A CREATE TABLE S (W INTEGER NOT NULL, I INTEGER NOT NULL, Q INTEGER, PRIMARY KEY (W, I))")

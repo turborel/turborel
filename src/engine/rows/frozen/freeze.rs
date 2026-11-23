@@ -229,7 +229,7 @@ impl RowTable {
             }
             let end = next.groups.last().map_or(0, |e| e.summary.last.saturating_add(1));
             let before = mem::replace(&mut *held, next);
-            self.frozen.groups_end.store(end, Ordering::SeqCst);
+            self.frozen.end_groups(end);
             before
         };
         // After it is in the directory: a writer that did not find it wrote

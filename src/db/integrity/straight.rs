@@ -19,14 +19,16 @@
 use std::sync::Arc;
 
 use super::gather::{assigned, of_row};
-use super::{Check, Checking};
+use super::{Check, Checking, broken};
 use crate::binder::BoundWrite;
-use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName};
+use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::db::assignment::set_columns_of;
+use crate::db::write::system_time::system_time;
 use crate::error::Result;
-use crate::storage::RowId;
+use crate::storage::{Row, RowId, column_bit};
 use crate::txn::Txn;
+use crate::value::Value;
 
 /// The constraints a point change checks of the row it writes, each
 /// immediate and not deferrable: its row constraints, then its UNIQUE
@@ -34,14 +36,38 @@ use crate::txn::Txn;
 #[derive(Debug)]
 pub(in crate::db) struct Straight {
     row: Vec<ConstraintDesc>,
-    unique: Vec<QualifiedName>,
+    /// Each UNIQUE constraint, with the unique indexes of exactly its key
+    /// whose note of a row's entry inserted alone settles its check of
+    /// that row (`Txn::alone`, RULES.md D880): none where its check looks
+    /// further.
+    unique: Vec<(QualifiedName, Vec<String>)>,
     set_tables: Vec<QualifiedName>,
+    /// Whether a row constraint is checked of the row its statement holds
+    /// (RULES.md D880): not of a table with a system-time period, whose
+    /// rows are stamped as they are written.
+    in_hand: bool,
+    /// Whether a row constraint may read a table: any but NOT NULL.
+    reads: bool,
+    /// \[DESIGN\] (RULES.md D875) Of an UPDATE whose row before nothing
+    /// of its statement reads, the columns it sets, a bit a column: its
+    /// write may then be told them, and read no other of the row it
+    /// replaces. None of a DELETE or an INSERT, of a table with a
+    /// system-time period, whose history keeps the row before, or of a
+    /// column past the last bit. A statement written straight has no
+    /// trigger, no foreign key referencing a column it sets and no OLD
+    /// TABLE of an UPDATE, and checks its constraints of the row after.
+    set: Option<u64>,
 }
 
 impl Straight {
     /// The tables the SET values of its UPDATE read (`BoundWrite::set_tables`).
     pub(in crate::db) fn set_tables(&self) -> &[QualifiedName] {
         &self.set_tables
+    }
+
+    /// The columns its UPDATE sets, if its write may be told them (`set`).
+    pub(in crate::db) fn set(&self) -> Option<u64> {
+        self.set
     }
 }
 
@@ -59,7 +85,9 @@ impl State {
             return None;
         }
         let straight = self.straight_of(table, (columns.as_deref(), delete))?;
-        Some(Straight { set_tables: bound.set_tables(), ..straight })
+        let mask = |set: &Vec<usize>| set.iter().try_fold(0_u64, |mask, &c| column_bit(c).map(|bit| mask | bit));
+        let set = columns.as_ref().filter(|_| straight.in_hand).and_then(mask);
+        Some(Straight { set_tables: bound.set_tables(), set, ..straight })
     }
 
     /// Of an INSERT of one row into `table`, the constraints its statement
@@ -76,7 +104,8 @@ impl State {
         if !whole || self.catalog.constrained().reading_checks || !self.catalog.assertions().is_empty() {
             return None;
         }
-        let mut straight = Straight { row: Vec::new(), unique: Vec::new(), set_tables: Vec::new() };
+        let in_hand = system_time(desc).is_none();
+        let mut straight = Straight { row: Vec::new(), unique: Vec::new(), set_tables: Vec::new(), in_hand, reads: false, set: None };
         if delete {
             return Some(straight);
         }
@@ -93,12 +122,28 @@ impl State {
                 return None;
             }
             if unique.is_some() {
-                straight.unique.push(c.name.clone());
+                straight.unique.push((c.name.clone(), self.settling(desc, &c.kind)));
             } else {
+                straight.reads |= !matches!(c.kind, ConstraintKind::NotNull(_));
                 straight.row.push(c.clone());
             }
         }
         Some(straight)
+    }
+
+    /// \[DESIGN\] RULES.md D880: the unique indexes of `desc` on exactly
+    /// the key of its UNIQUE constraint of `kind`, where `KeyCheck::row`
+    /// passes over a row whose entry in one was inserted alone: of a
+    /// constraint with no period, of a table that is no other's subtable
+    /// or partition, so the constraint's rows are its own alone. None
+    /// otherwise, and the check is made whole.
+    fn settling(&self, desc: &TableDesc, kind: &ConstraintKind) -> Vec<String> {
+        let ConstraintKind::Unique { columns, period: None, .. } = kind else { return Vec::new() };
+        if !self.above(&desc.name).is_empty() || self.family(&desc.name).len() != 1 {
+            return Vec::new();
+        }
+        let key = desc.key_columns(columns, None);
+        self.catalog.indexes(&desc.name).into_iter().filter(|ix| ix.unique && ix.columns == key).map(|ix| ix.name.clone()).collect()
     }
 
     /// Whether a foreign key references `table`, a row of which is deleted,
@@ -121,7 +166,14 @@ impl State {
     /// [ISO/IEC 9075:1992 §10.6 GR3] The end of the statement of `tx` that
     /// wrote the rows `ids` of `table` by a point change whose constraints
     /// are `straight`'s: its reads checked as `end_statement` checks them,
-    /// and between, each of its rows' constraints.
+    /// and between, each of its rows' constraints. `held` is the one row
+    /// written, as its statement holds it, if it wrote one and holds it.
+    ///
+    /// \[DESIGN\] RULES.md D880: a row constraint is checked of the row
+    /// held, where that is the row stored, with no read of it back; a
+    /// UNIQUE constraint of a row whose entry was inserted alone is
+    /// settled by that note; and where no check then reads a table, the
+    /// participants are not told to check reads and told again not to.
     ///
     /// # Errors
     ///
@@ -131,29 +183,52 @@ impl State {
         tx: &Txn,
         (table, straight): (&QualifiedName, &Straight),
         ids: &[RowId],
+        held: Option<&Row>,
     ) -> Result<()> {
-        // [ISO/IEC 9075:1992 §4.28] serializable at every level.
-        tx.check_reads(true)?;
-        let checked = self.straight_checked(tx, (table, straight), ids);
+        // A row of large objects is stored as its table keeps them.
+        let held = held.filter(|row| straight.in_hand && ids.len() == 1 && !row.iter().any(Value::needs_keeping));
+        let unsettled = |&id: &RowId| straight.unique.iter().any(|(_, alone)| !settled(tx, alone, id));
+        let reads_back = held.is_none() && !straight.row.is_empty();
+        if !ids.is_empty() && (straight.reads || reads_back || ids.iter().any(unsettled)) {
+            // [ISO/IEC 9075:1992 §4.28] serializable at every level.
+            tx.check_reads(true)?;
+        }
+        let checked = self.straight_checked(tx, (table, straight), ids, held);
         let read = tx.check_reads(false);
         checked.and(read)
     }
 
-    /// `end_straight`'s checks of the rows `ids`.
-    fn straight_checked(self: &Arc<Self>, tx: &Txn, (table, straight): (&QualifiedName, &Straight), ids: &[RowId]) -> Result<()> {
+    /// `end_straight`'s checks of the rows `ids`, of `held` if given.
+    fn straight_checked(
+        self: &Arc<Self>,
+        tx: &Txn,
+        (table, straight): (&QualifiedName, &Straight),
+        ids: &[RowId],
+        held: Option<&Row>,
+    ) -> Result<()> {
         let Some(desc) = self.catalog.table(table) else { return Ok(()) };
         let mut checking = Checking::default();
         for &id in ids {
             for c in &straight.row {
-                self.row_now(tx, (desc, c), id, &mut checking)?;
+                match held {
+                    Some(row) => self.check_row_values(tx, (desc, c), row, &mut checking.bound).map_err(|e| broken(e, (desc, c)))?,
+                    None => self.row_now(tx, (desc, c), id, &mut checking)?,
+                }
             }
         }
-        for constraint in &straight.unique {
-            for &id in ids {
+        for (constraint, alone) in &straight.unique {
+            for &id in ids.iter().filter(|&&id| !settled(tx, alone, id)) {
                 let check = Check::Unique { table: table.clone(), constraint: constraint.clone(), id };
                 self.check(tx, &check, &mut checking)?;
             }
         }
         self.end_checking(tx, &mut checking)
     }
+}
+
+/// Whether row `id`'s entry in one of the unique indexes `alone` was its
+/// key's only one as `tx` inserted it, which settles its constraint's
+/// check of the row (`KeyCheck::row`).
+fn settled(tx: &Txn, alone: &[String], id: RowId) -> bool {
+    alone.iter().any(|index| tx.alone(index, id))
 }

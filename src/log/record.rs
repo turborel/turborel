@@ -77,11 +77,16 @@ mod kinds;
 mod lobs;
 pub mod marks;
 
-pub use batch::{delete_record, insert_record, insert_rows_record, update_record};
+pub use batch::{
+    delete_record, insert_record, insert_rows_record, put_delete_record, put_insert_record, put_update_record, put_update_record_of,
+    update_record,
+};
 pub use definitions::DropTarget;
 use definitions::{
-    create_index, defined, dropped, put_altered, put_create_index, put_defined, put_dropped, put_schema, put_sequence, schema, sequence,
+    create_index, defined, dropped, put_altered, put_create_index, put_creator, put_defined, put_dropped, put_schema, put_sequence,
+    put_user, schema, sequence, user,
 };
+pub use images::put_update_of;
 use lobs::{lob_change, put_lob_change};
 
 use kinds::{
@@ -400,53 +405,58 @@ impl Record {
     /// The record's bytes.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
+        self.encode_into(&mut out);
+        out
+    }
+
+    /// Appends the record's bytes to `out`, as `encode` gives them.
+    pub fn encode_into(&self, out: &mut Vec<u8>) {
         out.put_u8(RECORD_VERSION);
         out.put_u8(self.change.kind());
         out.put_u64(self.tx);
         match &self.change {
-            Change::Insert { table, generation, row, after } => put_row_change(&mut out, (table, *generation, *row), &[after]),
-            Change::InsertRows { .. } => batch::put_change(&mut out, &self.change),
+            Change::Insert { table, generation, row, after } => put_row_change(out, (table, *generation, *row), &[after]),
+            Change::InsertRows { .. } => batch::put_change(out, &self.change),
             Change::Update { table, generation, row, before, after } => {
-                images::put_update(&mut out, (table, *generation, *row), before, after);
+                images::put_update(out, (table, *generation, *row), before, after);
             }
-            Change::Delete { table, generation, row, before } => put_row_change(&mut out, (table, *generation, *row), &[before]),
-            Change::Commit { at, wall } => marks::put_commit(&mut out, *at, *wall),
-            Change::RestorePoint { name, wall } => marks::put_point(&mut out, name, *wall),
+            Change::Delete { table, generation, row, before } => put_row_change(out, (table, *generation, *row), &[before]),
+            Change::Commit { at, wall } => marks::put_commit(out, *at, *wall),
+            Change::RestorePoint { name, wall } => marks::put_point(out, name, *wall),
             Change::Abort | Change::Checkpoint => {}
             Change::StatementUndone { from } => out.put_u64(from.0),
             Change::Stale { through, index, row, key } => {
                 out.put_u64(through.0);
                 out.put_str(index);
                 out.put_u64(*row);
-                put_row(&mut out, key);
+                put_row(out, key);
             }
-            Change::LobPut { .. } | Change::LobStale { .. } => put_lob_change(&mut out, &self.change),
+            Change::LobPut { .. } | Change::LobStale { .. } => put_lob_change(out, &self.change),
             Change::Schema { sql, owner, engines, now, epochs, typed } => {
-                put_schema(&mut out, (owner, sql, *now), (engines, epochs), *typed);
+                put_schema(out, (owner, sql, *now), (engines, epochs), *typed);
             }
             Change::Defined { auth, role, schema, now, sql, placed, epochs, typed } => {
-                put_defined(&mut out, ((auth, role.as_deref()), schema, sql, *now), placed.as_ref(), epochs, *typed);
+                put_defined(out, ((auth, role.as_deref()), schema, sql, *now), placed.as_ref(), epochs, *typed);
             }
-            Change::Sequence { name, epoch, resume } => put_sequence(&mut out, name, *epoch, *resume),
-            Change::CreateIndex { .. } => put_create_index(&mut out, &self.change),
+            Change::Sequence { name, epoch, resume } => put_sequence(out, name, *epoch, *resume),
+            Change::CreateIndex { .. } => put_create_index(out, &self.change),
             Change::AlterIndex { name, options } => {
                 out.put_str(name);
-                put_options(&mut out, options);
+                put_options(out, options);
             }
             Change::DropIndex { name } | Change::Owner { name } | Change::Reconfiguration { members: name } => out.put_str(name),
-            Change::Drop { object, cascade } => put_dropped(&mut out, object, *cascade),
+            Change::Drop { object, cascade } => put_dropped(out, object, *cascade),
             Change::AlterTable { table, action, schema, zone, epochs, typed } => {
-                put_altered(&mut out, (table, action, schema, *zone), epochs, *typed);
+                put_altered(out, (table, action, schema, *zone), epochs, *typed);
             }
             Change::Setting { name, value } => {
                 out.put_str(name);
-                put_value(&mut out, value.as_ref().unwrap_or(&Value::Null));
+                put_value(out, value.as_ref().unwrap_or(&Value::Null));
             }
-            Change::User { name, verifier } => put_user(&mut out, name, verifier.as_deref()),
-            Change::RoleCreator { name, allowed } => put_creator(&mut out, name, *allowed),
-            Change::Spatial(change) => crate::catalog::codec::put_spatial_change(&mut out, change),
+            Change::User { name, verifier } => put_user(out, name, verifier.as_deref()),
+            Change::RoleCreator { name, allowed } => put_creator(out, name, *allowed),
+            Change::Spatial(change) => crate::catalog::codec::put_spatial_change(out, change),
         }
-        out
     }
 
     /// The record `bytes` hold.
@@ -521,28 +531,6 @@ pub(super) fn now(r: &mut Reader<'_>) -> Result<Now> {
     let zone = zone(r)?;
     let utc = i64::try_from(r.i128()?).map_err(|_| r.corrupt("an instant is out of range"))?;
     Ok(Now { utc, zone })
-}
-
-/// A user's name, and its verifier if it is kept.
-fn put_user(out: &mut Vec<u8>, name: &str, verifier: Option<&[u8]>) {
-    out.put_str(name);
-    out.put_u8(u8::from(verifier.is_some()));
-    if let Some(verifier) = verifier {
-        out.put_bytes(verifier);
-    }
-}
-
-/// A role creator's name, and whether it may create roles.
-fn put_creator(out: &mut Vec<u8>, name: &str, allowed: bool) {
-    out.put_str(name);
-    out.put_u8(u8::from(allowed));
-}
-
-/// What `put_user` wrote, as a change.
-fn user(r: &mut Reader<'_>) -> Result<Change> {
-    let name = r.str()?;
-    let kept = r.u8()? != 0;
-    Ok(Change::User { name, verifier: if kept { Some(r.bytes()?.to_vec()) } else { None } })
 }
 
 /// Strings, after how many.

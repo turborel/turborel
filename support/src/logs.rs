@@ -24,6 +24,9 @@
     reason = "test code: a panic is a test failure, its fixtures literal, a database rebound once dropped (RULES.md R-TEST-4)"
 )]
 
+#[path = "logs/run.rs"]
+mod run;
+
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -123,6 +126,7 @@ pub fn contract(log: &dyn Log) {
             after.iter().filter_map(|(_, r)| String::from_utf8_lossy(r).strip_prefix(&prefix).map(str::to_owned)).collect();
         assert_eq!(read, (0..25).map(|n| n.to_string()).collect::<Vec<_>>(), "thread {t}'s records read in its order");
     }
+    run::run_contract(log);
 }
 
 /// A transaction's records (rows inserted, updated and deleted, then its

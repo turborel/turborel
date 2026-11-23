@@ -9,9 +9,9 @@
 //! a split (Lehman and Yao 1981, §4). A changed stamp, or an entry not
 //! found from the leaf, sends the change down from the root.
 
-use super::BLinkTree;
 use super::node::{self, Node};
 use super::write::{Mode, Written};
+use super::{BLinkTree, Path, Slot};
 use crate::disk::pager::PageId;
 use crate::error::Result;
 
@@ -68,6 +68,52 @@ impl BLinkTree {
         })
     }
 
+    /// \[DESIGN\] Replaces `key`'s value with the one `f` gives, shown the
+    /// value there where it lies, under one exclusive hold of the leaf
+    /// `found` reached (RULES.md D866): `f` may copy the old value
+    /// elsewhere, and gives the bytes to put, or none to leave the entry.
+    /// Where the entry went; none if `key` is no longer in the tree, `f`
+    /// then not called, or `f` left it. A leaf retired since the read is
+    /// found again by a descent, as `replace_found` does. `f` must not use
+    /// the tree nor wait.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s errors; as `insert`.
+    pub fn replace_found_with<'v>(
+        &self,
+        found: &super::Descended,
+        key: &[u8],
+        f: impl FnOnce(&[u8]) -> Result<Option<&'v [u8]>>,
+    ) -> Result<Option<Placed>> {
+        let _guard = self.epochs.guard();
+        let stamp = self.epochs.stamp();
+        let mut descended = Path::default();
+        let leaf = if stamp == found.stamp { found.leaf } else { self.leaf_for_write(key, &mut descended)? };
+        let path = if stamp == found.stamp { &found.path } else { &descended };
+        let mut held = self.lock(leaf)?;
+        let mut page = self.latched_covering(&mut held, key)?;
+        let (slot, value) = {
+            let node = Node::parse(&page)?;
+            let Ok(at) = node.search(key)? else { return Ok(None) };
+            let Some(value) = f(node.value(at)?)? else { return Ok(None) };
+            (Slot::Replace(at), value)
+        };
+        self.fits(key, value)?;
+        let copy = self.change_latched(&held, &mut page, (key, value), slot)?;
+        drop(page);
+        let splits = match copy {
+            Some(copy) => self.split(held.id, &copy, (key, value), slot)?,
+            None => Vec::new(),
+        };
+        let into = self.posted(path, held, key, splits)?;
+        // A table's row: its leaf noted, as a write notes it (`hints.rs`).
+        if let Some(row) = self.row_of(key) {
+            super::hints::note(row, into.0);
+        }
+        Ok(Some(Placed { leaf: into.0, stamp }))
+    }
+
     /// Changes `key`'s value in place, from the leaf `placed` names, as
     /// `change` says under the leaf's lock, keeping the value's length;
     /// `change`'s answer, or none if the leaf may have left the tree or
@@ -84,9 +130,9 @@ impl BLinkTree {
             return Ok(None);
         }
         let mut held = self.lock(PageId(placed.leaf))?;
-        let at = self.move_right(&mut held, key, |node: &Node<'_>| Ok(node.search(key)?.ok()))?;
-        let Some(at) = at else { return Ok(None) };
-        let mut page = self.pool.write_owned(&held)?;
+        // Searched and changed under one latch, as a write is (`here.rs`).
+        let mut page = self.latched_covering(&mut held, key)?;
+        let Ok(at) = Node::parse(&page)?.search(key)? else { return Ok(None) };
         change(node::value_mut(&mut page, at)?).map(Some)
     }
 }

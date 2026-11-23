@@ -13,7 +13,7 @@
 use std::mem;
 use std::sync::atomic::Ordering;
 
-use super::lists::decode_change;
+use super::lists::{FIXED, decode_change};
 use super::{Change, Dead, Maker, Version};
 use crate::bytes::{Put, Reader};
 use crate::engine::rows::version::stamp_in_place;
@@ -70,14 +70,14 @@ pub(super) struct Unstamped {
 
 impl RowTable {
     /// Commits `tx` at `at` here: its status stored, and what its versions
-    /// superseded made garbage for when `at` is past the horizon, a segment
-    /// of its changes at a time; the rows it wrote first are left to stamp.
+    /// superseded made garbage for when `at` is past the horizon, filed
+    /// once while it is within the bytes held (RULES.md D870); the rows it
+    /// wrote first are left to stamp.
     pub(in crate::engine::rows) fn commit_open(&self, tx: TxId, at: Timestamp) {
         let removed = self.versions.open.remove(tx);
         let Some(open) = removed else { return };
         let (changes, adopted) = {
             let mut open = lock_builtin(&open);
-            open.ended = true;
             (mem::take(&mut open.changes), mem::take(&mut open.adopted))
         };
         let count = u64::try_from(changes.len()).unwrap_or(u64::MAX);
@@ -85,13 +85,15 @@ impl RowTable {
             // It changed nothing here: no list, nor the work areas (RULES.md D783).
             return self.versions.statuses.commit(tx, at, false);
         }
-        let (mut stamps, mut lost) = (SpillList::new(self.versions.space()), false);
+        let held = self.versions.held();
+        let (mut stamps, mut lost) = (SpillList::new(self.versions.space_within(changes.len().saturating_mul(size_of::<Stamp>()))), false);
+        // The garbage gathered, its bytes, and whether some was filed early.
+        let (mut dead, mut bytes, mut filed) = (Vec::new(), 0_usize, false);
         for segment in changes.into_segments(false, &decode_change) {
             let Ok(segment) = segment else {
                 lost = true;
                 continue;
             };
-            let mut dead = Vec::new();
             // A group's making is stamped with its groups (`frozen/stamped.rs`).
             for change in segment.into_iter().filter(|c| !c.group) {
                 // A row's first change by it replaced a committed version or
@@ -99,32 +101,45 @@ impl RowTable {
                 if !change.made && change.before.is_none() {
                     lost |= stamps.push(Stamp(change.id, change.placed), &mut encode_stamp).is_err();
                 }
-                self.committed(change, &adopted, &mut dead);
+                bytes = bytes.saturating_add(self.committed(change, &adopted, &mut dead));
             }
-            self.add_garbage(at, dead);
+            if bytes > held {
+                self.add_garbage(at, mem::take(&mut dead), usize::MAX);
+                (bytes, filed) = (0, true);
+            }
         }
+        // Its deletions are filed with it once stamped (`stamp_all`).
+        let later = if filed { usize::MAX } else { stamps.len().saturating_mul(FIXED) };
+        self.add_garbage(at, dead, later);
         let rows = lost || !stamps.is_empty();
         // Counted before it is queued, so a collection stamping it counts
         // it down after.
         self.versions.statuses.commit(tx, at, rows);
         if rows {
-            lock_builtin(&self.versions.unstamped).push(Unstamped { tx, at, rows: (!lost).then_some(stamps) });
+            self.queue(Unstamped { tx, at, rows: (!lost).then_some(stamps) });
         }
-        if count > 0 {
-            self.gathered.changed(count);
-        }
+        self.gathered.changed(count);
     }
 
-    /// Adds to `dead` the garbage `change` leaves. An object made for no
-    /// version it wrote, as for an attempt that failed, is no one's, and
-    /// freed now.
-    fn committed(&self, change: Change, adopted: &Xxh3Set<u64>, dead: &mut Vec<Dead>) {
+    /// Queues `commit`, its versions here not all stamped, and counts the
+    /// queue, under its lock.
+    fn queue(&self, commit: Unstamped) {
+        let mut unstamped = lock_builtin(&self.versions.unstamped);
+        unstamped.push(commit);
+        self.versions.queued.store(unstamped.len(), Ordering::SeqCst);
+    }
+
+    /// Adds to `dead` the garbage `change` leaves: its bytes. An object
+    /// made for no version it wrote, as for an attempt that failed, is no
+    /// one's, and freed now.
+    fn committed(&self, change: Change, adopted: &Xxh3Set<u64>, dead: &mut Vec<Dead>) -> usize {
         if change.made {
             if !adopted.contains(&change.id) {
                 self.free_objects(&[change.id]);
             }
-            return;
+            return 0;
         }
+        let before = dead.len();
         if !change.dropped.is_empty() {
             dead.push(Dead::Objects(change.dropped));
         }
@@ -141,14 +156,20 @@ impl RowTable {
             }
             (None, None) => {}
         }
+        dead.iter().skip(before).map(ListItem::bytes).fold(0, usize::saturating_add)
     }
 
-    /// Stamps the versions `tx` committed here, its locks released.
+    /// Stamps the versions `tx` committed here, its locks released. With
+    /// no commit queued in the table, as when it only read here, the
+    /// queue's lock is not taken (RULES.md D870).
     pub(in crate::engine::rows) fn settle_open(&self, tx: TxId) {
+        if self.versions.queued.load(Ordering::SeqCst) == 0 {
+            return;
+        }
         let mine: Vec<Unstamped> = {
             let mut unstamped = lock_builtin(&self.versions.unstamped);
-            let (mine, others) = mem::take(&mut *unstamped).into_iter().partition(|u| u.tx == tx);
-            *unstamped = others;
+            let mine = unstamped.extract_if(.., |u| u.tx == tx).collect();
+            self.versions.queued.store(unstamped.len(), Ordering::SeqCst);
             mine
         };
         for commit in mine {
@@ -161,8 +182,8 @@ impl RowTable {
     pub(super) fn stamp_late(&self) {
         let late: Vec<Unstamped> = {
             let mut unstamped = lock_builtin(&self.versions.unstamped);
-            let (late, kept) = mem::take(&mut *unstamped).into_iter().partition(|u| u.rows.is_some());
-            *unstamped = kept;
+            let late = unstamped.extract_if(.., |u| u.rows.is_some()).collect();
+            self.versions.queued.store(unstamped.len(), Ordering::SeqCst);
             late
         };
         for commit in late {
@@ -176,10 +197,10 @@ impl RowTable {
     fn stamp_all(&self, commit: Unstamped) {
         let Unstamped { tx, at, rows } = commit;
         let Some(rows) = rows else {
-            lock_builtin(&self.versions.unstamped).push(Unstamped { tx, at, rows: None });
+            self.queue(Unstamped { tx, at, rows: None });
             return;
         };
-        let mut left = SpillList::new(self.versions.space());
+        let mut left = SpillList::new(self.versions.space_within(rows.len().saturating_mul(size_of::<Stamp>())));
         let (mut lost, mut dead) = (false, Vec::new());
         for segment in rows.into_segments(false, &decode_stamp) {
             let Ok(segment) = segment else {
@@ -195,10 +216,10 @@ impl RowTable {
             }
         }
         if !dead.is_empty() {
-            self.add_garbage(at, dead);
+            self.add_garbage(at, dead, 0);
         }
         if lost || !left.is_empty() {
-            lock_builtin(&self.versions.unstamped).push(Unstamped { tx, at, rows: (!lost).then_some(left) });
+            self.queue(Unstamped { tx, at, rows: (!lost).then_some(left) });
             return;
         }
         self.versions.statuses.stamped(tx, at);
@@ -256,4 +277,4 @@ impl RowTable {
 // Unit tests: commits read through the status table before their stamps,
 // and versions appended stamped (RULES.md R-TEST-1).
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -24,18 +24,18 @@
 //!
 //! Integers are little-endian.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::Ordering as AtomicOrdering;
+use std::sync::{Arc, Weak};
 
-use super::{ALL, Map, ZONE_ROWS, Zone, Zones};
+use super::{ALL, Slot, ZONE_ROWS, Zone, Zones};
 use crate::bytes::{Put, Reader};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::engine::rows::TableFiles;
 use crate::engine::rows::sealing::Sealing;
-use crate::error::{Code, Result};
+use crate::error::{Code, Result, SqlError};
 use crate::storage::RowId;
-use crate::sync::{lock, lock_builtin, read, write};
+use crate::sync::{lock, lock_builtin};
 use crate::value::Value;
 
 /// \[DESIGN\] Zones a segment saves: a page each, written again only as
@@ -104,7 +104,7 @@ impl Zones {
         let saved = self.save_to(place);
         if saved.is_err() {
             // Saved again whole by the next checkpoint.
-            read(&self.map)?.dirty.iter().for_each(|flag| flag.store(true, AtomicOrdering::Release));
+            self.dirty.first(self.dirty.len()).for_each(|flag| flag.store(true, AtomicOrdering::Release));
         }
         saved
     }
@@ -136,20 +136,20 @@ impl Zones {
 
     /// The content of each segment changed since last saved, marked saved.
     fn changed_segments(&self) -> Result<Vec<(usize, Vec<u8>)>> {
-        let map = read(&self.map)?;
         let mut changed = Vec::new();
-        for (segment, flag) in map.dirty.iter().enumerate() {
+        for (segment, flag) in self.dirty.first(self.dirty.len()).enumerate() {
             // Marked saved before it is read: a change meanwhile marks it again.
             if !flag.swap(false, AtomicOrdering::AcqRel) {
                 continue;
             }
             let first = segment.saturating_mul(SEGMENT_ZONES);
-            let zones = map.zones.get(first..first.saturating_add(SEGMENT_ZONES).min(map.zones.len())).unwrap_or_default();
+            let end = first.saturating_add(SEGMENT_ZONES).min(self.slots.len());
+            let zones: Vec<&Slot> = (first..end).filter_map(|at| self.slots.get(at)).collect();
             let mut content = Vec::new();
             content.put_u32(u32::try_from(self.kept.len()).unwrap_or(u32::MAX));
             content.put_u32(u32::try_from(zones.len()).unwrap_or(u32::MAX));
-            for zone in zones {
-                self.put_zone(&lock_builtin(zone), &mut content)?;
+            for slot in zones {
+                self.put_zone(&lock_builtin(&slot.zone), &mut content)?;
             }
             changed.push((segment, content));
         }
@@ -199,15 +199,18 @@ impl Zones {
     /// Reads the zones saved, of a table opened whose rows' ids are below
     /// `below`: those of ids no segment holds not known until summed up;
     /// of a table that keeps no column, a zone of each block of them. Each
-    /// unsettled, its visibility kept in memory alone.
+    /// unsettled, its visibility kept in memory alone. A table cold whose
+    /// last checkpoint saved no zone stays cold, and none is made
+    /// (`zones/cold.rs`).
     ///
     /// # Errors
     ///
     /// The buffer pool's; SQLCODE -916 if a segment is malformed.
     pub(in crate::engine::rows) fn load(&self, below: RowId) -> Result<()> {
-        let mut loaded = Vec::new();
+        let (mut loaded, mut saved) = (Vec::new(), false);
         if let Some(place) = lock(&self.place)?.as_mut().filter(|_| !self.kept.is_empty()) {
             place.segments = segments_of(&place.pool.read(place.file, place.directory.0)?)?;
+            saved = !place.segments.is_empty();
             for (segment, page) in place.segments.iter().enumerate() {
                 let zones = self.segment(place, *page)?;
                 let first = segment.saturating_mul(SEGMENT_ZONES);
@@ -215,21 +218,33 @@ impl Zones {
                 loaded.extend(zones);
             }
         }
+        // A table whose last checkpoint saved no zone was cold then, or
+        // held no row: it opens cold, none read and none to sum up
+        // (`zones/cold.rs`).
+        if !saved && self.cold() {
+            return Ok(());
+        }
+        self.begin_warm();
         let count = usize::try_from(below.div_ceil(ZONE_ROWS)).unwrap_or(usize::MAX).max(loaded.len());
         loaded.resize_with(count, || Zone::empty(false));
         for zone in &mut loaded {
             zone.unsettled = true;
         }
         let stale = loaded.iter().filter(|z| z.stale()).count();
-        let mut map = write(&self.map)?;
+        let _growing = lock_builtin(&self.growing);
+        // The zones only grow (`zones/grown.rs`): read into a table's that
+        // holds none yet, as it opens.
+        if self.slots.len() != 0 {
+            return Err(SqlError::new(Code::Api, "[DESIGN] a table's zones are read once, as it opens"));
+        }
+        self.unknown_below.store(below, AtomicOrdering::Release);
+        // Each not visible, and no segment changed since it was saved.
+        let held = loaded.into_iter().all(|zone| self.slots.push(|slot| *lock_builtin(&slot.zone) = zone));
         let segments = count.div_ceil(SEGMENT_ZONES);
-        *map = Map {
-            zones: loaded.into_iter().map(Mutex::new).collect(),
-            unknown_below: below,
-            dirty: (0..segments).map(|_| AtomicBool::new(false)).collect(),
-            visible: (0..count).map(|_| AtomicBool::new(false)).collect(),
-            pending: (0..count).map(|_| AtomicU64::new(0)).collect(),
-        };
+        let flagged = (0..segments).all(|_| self.dirty.push(|_| {}));
+        if !held || !flagged {
+            return Err(SqlError::new(Code::Unsupported, "[DESIGN] a table has more blocks of row ids than its zones hold"));
+        }
         self.stale.store(stale, AtomicOrdering::Release);
         self.unsettled.store(count, AtomicOrdering::Release);
         Ok(())

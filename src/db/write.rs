@@ -2,6 +2,7 @@
 //! from a query expression [X3.135-1986 §8.7; ISO/IEC 9075:1992 §13.8], and
 //! the object rows of searched UPDATE and DELETE [X3.135-1986 §8.5, §8.12].
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -242,7 +243,7 @@ impl Session {
             // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
             given::given_rows(st, (stmt, target), given, &Runner::new(st, tx.id))?
         } else if let Some(logical) = query {
-            query_rows((self, cx), target, (logical, slots, kept))?
+            query_rows((self, cx), target, (Cow::Owned(logical), slots, kept))?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default, or its generated value.
@@ -392,7 +393,7 @@ impl Session {
 fn query_rows(
     (session, cx): (&Session, StatementContext<'_>),
     target: &Target,
-    (logical, slots, kept): (LogicalPlan, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
+    (logical, slots, kept): (Cow<'_, LogicalPlan>, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
 ) -> Result<HeldRows<Row>> {
     let StatementContext { st, tx } = cx;
     let db = slots.as_ref().map_or_else(|| Db::of(st), |slots| Db::slotted(st, Arc::clone(slots)));
@@ -410,9 +411,10 @@ fn query_rows(
     if let Some(held) = inserted::kept_rows((session, cx), target, kept)? {
         return Ok(held);
     }
+    // Lent by a caller that keeps it, it is copied only to be planned.
     let logical = match &slots {
-        Some(slots) => filled(logical, slots)?,
-        None => logical,
+        Some(slots) => filled(logical.into_owned(), slots)?,
+        None => logical.into_owned(),
     };
     let (optimized, _, physical) = plan(st, logical);
     for t in optimized.tables() {
@@ -487,6 +489,8 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     // A row another transaction changed is written in the version it
     // committed, if it is still one to change, its values computed from it.
     let mut again: HashMap<RowId, Option<Row>> = HashMap::new();
+    // What its writes need of its table, found once (RULES.md D872).
+    let writing = st.writing(&w.bound.table)?;
     changes.visit(&mut |(id, seen, new)| {
         if let Some(guarded) = escrow
             && let Some(deltas) = super::escrow::deltas(&w, (seen, new), &hosted)?
@@ -509,7 +513,7 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
             recomputed = Some(row.clone());
             Ok(Again::Update(row))
         };
-        match st.rewrite_row(tx, (&w.bound.table, *id), Some(new), &mut recheck)? {
+        match st.rewrite_row_in(tx, (&writing, *id), Some(new), &mut recheck)? {
             Some(old) => {
                 leftovers.keep(st, &w, &old, &hosted)?;
                 effects.updated(&w.bound.table, *id, (old, recomputed.as_ref().unwrap_or(new)), &columns)?;
@@ -573,12 +577,14 @@ pub(super) fn delete_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     let runner = Runner::new(&w.db(st), tx.id);
     let mut leftovers = portion::Leftovers::of(st, &w)?;
     let mut count = 0_usize;
+    // What its writes need of its table, found once (RULES.md D872).
+    let writing = st.writing(&w.bound.table)?;
     for object in objects {
         let (id, _) = object?;
         // A row another transaction changed is deleted in the version it
         // committed, if it is still one to delete.
         let mut recheck = |newest: &Row| Ok(if w.holds_of(newest, &runner)? { Again::Delete } else { Again::Skip });
-        if let Some(old) = st.rewrite_row(tx, (&w.bound.table, id), None, &mut recheck)? {
+        if let Some(old) = st.rewrite_row_in(tx, (&writing, id), None, &mut recheck)? {
             leftovers.keep(st, &w, &old, &runner)?;
             effects.deleted(&w.bound.table, id, old)?;
             count = count.saturating_add(1);

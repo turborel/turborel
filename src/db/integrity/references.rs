@@ -15,7 +15,7 @@ use crate::db::{State, api};
 use crate::error::{Code, Result, fail};
 use crate::exec::HeldRows;
 use crate::spill::ListSpace;
-use crate::storage::{Row, RowId, project};
+use crate::storage::{Near, Row, RowId, project};
 use crate::txn::Txn;
 use crate::value::{Value, compare};
 
@@ -87,9 +87,11 @@ impl State {
         let key = ix.key_values(key.ok_or_else(|| api("[DESIGN] an index key is not the values looked up"))?);
         // The key's rows read as they are taken, so a search that stops
         // at the first never holds the rest.
+        // What the table keeps from one row's read to the next.
+        let mut near = Near::default();
         for found in Arc::clone(self.index_of(&ix.name)?).key_rows(&key) {
             let id = found?;
-            if let Some(row) = storage.get(tx.id, id)?.filter(|r| equal(r))
+            if let Some(row) = storage.get_near(tx.id, id, None, &mut near)?.filter(|r| equal(r))
                 && each(id, row)?.is_break()
             {
                 break;
