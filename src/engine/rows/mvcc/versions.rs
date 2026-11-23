@@ -46,7 +46,13 @@ impl RowTable {
     /// finds the entry it read gone or changed is tried once
     /// more: a freeze may have taken out the entry of a row frozen, the same
     /// row then read from its group (`rows/frozen.rs`); else it conflicts.
-    pub(in crate::engine::rows) fn write_version(&self, tx: TxId, id: RowId, mut framed: Option<&mut [u8]>, past: Past) -> Result<Option<Vec<u8>>> {
+    pub(in crate::engine::rows) fn write_version(
+        &self,
+        tx: TxId,
+        id: RowId,
+        mut framed: Option<&mut [u8]>,
+        past: Past,
+    ) -> Result<Option<Vec<u8>>> {
         if tx == NO_TRANSACTION {
             return self.write_latest(id, framed.as_deref().map(|f| f.get(FRAMED..).unwrap_or_default())).map(|()| None);
         }
