@@ -185,6 +185,14 @@ fn a_point_read_passes_over_an_entry_of_a_key_its_row_left() {
     a.commit().unwrap();
     assert_eq!(once(&a, query, 7), ["end"], "the entry of the key it left finds no row");
     assert_eq!(once(&a, query, 2007), ["2007,70", "end"]);
+    // A point UPDATE reads its object row whole, by the same entry.
+    let update = a.prepare("UPDATE T SET A = A + 1 WHERE K = ?").unwrap();
+    let changed = |key: i64| format!("{:?}", a.execute_prepared(&update, &[number(key)]));
+    for _ in 0..4 {
+        assert_eq!(changed(3), changed(4));
+    }
+    assert_eq!(changed(7), changed(5_000), "no row of the key it left is changed");
+    assert_eq!(once(&a, query, 2007), ["2007,70", "end"]);
     assert_eq!(once(&earlier, query, 7), ["7,70", "end"], "the snapshot before still reads it");
     earlier.rollback().unwrap();
     a.rollback().unwrap();

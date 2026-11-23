@@ -15797,6 +15797,12 @@ and the counts from the snapshot and holds none. An entry found by an
 exact key has that key, so the row is checked against the probe's values
 in place of the entry's key decoded. A covering read of a row every
 reader sees still decodes the key, as its values are the row given. A
+read that gives columns of its row, is not covering and gives no row id
+reads the values of the columns it reads alone
+(`TableStorage::get_listed`, D862) into a row kept with its plan, with
+no row of the table's width made. What its table keeps from read to
+read (`storage::Near`) is kept with the plan too, taken by one
+execution at a time. A
 row gone for every reader has its entry taken back as before (D837),
 its key decoded only then.
 
