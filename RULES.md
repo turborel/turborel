@@ -572,6 +572,7 @@ verification approach DO-178C expects (§8).
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 | D872 | A statement's writes of a table resolve it once |
+| D873 | The undo store gathers a batch a stripe of threads, and counts its pins by batch |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
 | D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
@@ -15964,6 +15965,41 @@ none twice (D814). It is counted as a scan from a key is, a lookup in the
 tree's tally and each leaf read noted for EXPLAIN ANALYZE (D621). The
 caller's function runs under a latch, so it may not use the tree nor
 wait, as a scan's visitor may not (D350).
+
+#### D873. The undo store gathers a batch a stripe of threads, and counts its pins by batch
+
+Every first change of a row by a transaction appends the version it
+replaces to the undo store, which every table of a row store shares
+(D31). The store gathered one batch at a time. An append took the one
+lock of its batches, and then the one lock of its pins, to add the
+version's position to a map of every position still needed. A release
+took the pins' lock again. Every writer of every table met on those two
+locks at every row.
+
+Now each of 16 stripes of threads gathers a batch of its own, under a
+lock only its threads take (`undo/gathered.rs`). A batch takes its
+number from the store as it begins, so a position is still a batch's
+number and a place in it, and readers find a version as before. A
+version is pinned by being counted in its batch, which the append does
+anyway, so pinning takes no lock. A release marks the version released
+in its batch, a bit a version, so a position released twice counts once,
+as taking it out of the map did. Only the beginning and the end of a
+batch, a release, and a truncation take a lock the store shares, and a
+release takes the pins' alone.
+
+The log is truncated before the oldest batch holding a pinned version,
+written or still gathered. A truncation holds every stripe while it
+finds that batch and reads the log's end, so no version is pinned and no
+batch taken to be written meanwhile, which is what the one lock gave.
+It is asked for only when a batch's last pinned version is released, not
+at every release. A batch still gathered whose every version is
+released is given up there, never written, and its stripe begins
+another. So a stripe no thread appends through holds nothing back, and a
+transaction collected at once, as each is while no other is open, writes
+none of its versions to the undo log.
+
+A store of no batches, over a log in memory, keeps its map of pinned
+positions.
 
 ## 2. Project layout
 

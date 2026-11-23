@@ -19,8 +19,11 @@
 //! version would carry its record past a page, so a record is one page.
 //! A version's position is then its batch's number and its index in the
 //! batch, and the store keeps where each batch it wrote is in the log.
-//! Versions of a batch not yet written are read from memory: the batch
+//! Versions of a batch not yet written are read from memory: the batches
 //! being gathered, and those being written, which no lock is held over.
+//! Each stripe of threads gathers a batch of its own, and a version is
+//! pinned by its batch's count of it, so an append takes no lock the whole
+//! store shares (`undo/gathered.rs`, RULES.md D873).
 //!
 //! A version read is shared, not copied (`undo/held.rs`): each gathered is
 //! kept alone, and each batch written is kept as its record and where each
@@ -45,6 +48,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::{Log, Lsn};
 use crate::memory::MemoryBudget;
 use crate::sync::lock_builtin;
+use gathered::{Gathering, Pinned, Stripes};
 pub(super) use held::{Held, Seen};
 use kept::Kept;
 use resident::{Batch, Resident, Stored, Versions};
@@ -72,12 +76,20 @@ pub struct UndoStore {
     /// Whether a batch is written before a version would carry its record
     /// past `batch` bytes, rather than once its versions reach them.
     fit: bool,
-    /// The positions still needed, each with how many hold it.
+    /// Of a store of no batches, the positions still needed, each with
+    /// how many hold it.
     pinned: Mutex<BTreeMap<Lsn, usize>>,
-    /// Whether a position was released since the last truncation: only then
-    /// can there be more to remove, and every transaction's end asks.
+    /// Of a store of batches, the pins of each batch (`undo/gathered.rs`).
+    pins: Pinned,
+    /// Whether a position of a store of no batches, or the last pinned
+    /// version of a batch, was released since the last truncation:
+    /// only then can there be more to remove, and every transaction's end
+    /// asks.
     released: AtomicBool,
-    /// Appends, and where the batches written are: taken by readers only
+    /// The batches being gathered, one a stripe of threads.
+    stripes: Stripes,
+    /// The next batch's number, and where the batches written are: taken
+    /// as a batch begins and ends, by a truncation, and by readers only
     /// for a version memory no longer holds.
     batches: Mutex<Batches>,
     /// The batches in memory, which readers find without `batches`.
@@ -89,11 +101,8 @@ pub struct UndoStore {
 
 /// Where the batches of a batched store are.
 struct Batches {
-    /// The number of the batch being gathered, how many versions it holds,
-    /// and their bytes.
+    /// The number the next batch begun takes.
     number: u64,
-    count: usize,
-    bytes: usize,
     /// Batches being written, by number, each with the log's end as it was
     /// taken, which its record will be at or past, so a truncation keeps
     /// what is from there on.
@@ -121,8 +130,6 @@ impl UndoStore {
     pub fn batched(log: Arc<dyn Log>, bytes: usize) -> UndoStore {
         let batches = Batches {
             number: 0,
-            count: 0,
-            bytes: 0,
             writing: BTreeMap::new(),
             written: BTreeMap::new(),
             places: BTreeSet::new(),
@@ -130,7 +137,19 @@ impl UndoStore {
             kept: Kept::none(),
         };
         let (pinned, released, read) = (Mutex::new(BTreeMap::new()), AtomicBool::new(false), Mutex::new(Vec::new()));
-        UndoStore { log, batch: bytes, fit: false, pinned, released, batches: Mutex::new(batches), resident: Resident::new(), read }
+        let (pins, stripes) = (Pinned::default(), Stripes::new());
+        UndoStore {
+            log,
+            batch: bytes,
+            fit: false,
+            pinned,
+            pins,
+            released,
+            stripes,
+            batches: Mutex::new(batches),
+            resident: Resident::new(),
+            read,
+        }
     }
 
     /// An undo store keeping its versions in `log`, as `batched`, each
@@ -167,17 +186,18 @@ impl UndoStore {
             pin(&mut pinned, at);
             return Ok(at);
         }
+        let missing = || SqlError::new(Code::Api, "[DESIGN] a stripe of the undo store's batches is missing");
         let (at, full) = {
-            let mut batches = lock_builtin(&self.batches);
-            let early = self.overflows(&batches, version).then(|| self.take_batch(&mut batches));
-            let at = Lsn(batches.number.checked_shl(INDEX_BITS).unwrap_or(u64::MAX) | index(batches.count));
-            self.resident.push(batches.number, Arc::from(version));
-            batches.count = batches.count.saturating_add(1);
-            batches.bytes = batches.bytes.saturating_add(version.len());
-            pin(&mut lock_builtin(&self.pinned), at);
-            let reached = !self.fit && batches.bytes >= self.batch;
-            let full = reached || batches.count >= MOST_VERSIONS;
-            (at, early.or_else(|| full.then(|| self.take_batch(&mut batches))))
+            let mut stripe = self.stripes.mine().ok_or_else(missing)?;
+            let early = if self.overflows(&stripe, version) { self.take_batch(&mut stripe) } else { None };
+            let number = stripe.number.unwrap_or_else(|| self.begin_batch(&mut stripe));
+            let at = Lsn(number.checked_shl(INDEX_BITS).unwrap_or(u64::MAX) | index(stripe.count));
+            self.resident.push(number, Arc::from(version));
+            // Counted in its batch, it is pinned (`undo/gathered.rs`).
+            stripe.count_one(version.len());
+            let reached = !self.fit && stripe.bytes >= self.batch;
+            let full = reached || stripe.count >= MOST_VERSIONS;
+            (at, early.or_else(|| if full { self.take_batch(&mut stripe) } else { None }))
         };
         if let Some((number, batch)) = full
             && let Err(e) = self.write(number, &batch)
@@ -190,25 +210,38 @@ impl UndoStore {
         Ok(at)
     }
 
-    /// Whether `version`, gathered into `batches`, would carry the record
-    /// of a fitted store's batch past its bytes, the batch holding any:
-    /// its count, then each version's length and bytes (`write`).
-    fn overflows(&self, batches: &Batches, version: &[u8]) -> bool {
-        let lengths = batches.count.saturating_add(2).saturating_mul(LENGTH_BYTES);
-        let record = lengths.saturating_add(batches.bytes).saturating_add(version.len());
-        self.fit && batches.count > 0 && record > self.batch
+    /// Whether `version`, gathered into `stripe`'s batch, would carry the
+    /// record of a fitted store's batch past its bytes, the batch holding
+    /// any: its count, then each version's length and bytes (`write`).
+    fn overflows(&self, stripe: &Gathering, version: &[u8]) -> bool {
+        let lengths = stripe.count.saturating_add(2).saturating_mul(LENGTH_BYTES);
+        let record = lengths.saturating_add(stripe.bytes).saturating_add(version.len());
+        self.fit && stripe.count > 0 && record > self.batch
     }
 
-    /// The batch being gathered, taken to be written, its record to be at
-    /// or past the log's end: its number, and its versions, readable
-    /// meanwhile; the next begun.
-    fn take_batch(&self, batches: &mut Batches) -> (u64, Versions) {
+    /// Begins `stripe`'s next batch: its number, the store's next, its
+    /// pins kept from now.
+    fn begin_batch(&self, stripe: &mut Gathering) -> u64 {
+        let mut batches = lock_builtin(&self.batches);
         let number = batches.number;
-        let versions = self.resident.take(number);
-        batches.writing.insert(number, self.log.end());
-        (batches.count, batches.bytes) = (0, 0);
         batches.number = number.saturating_add(1);
-        (number, versions)
+        self.pins.begin(number, stripe);
+        number
+    }
+
+    /// The batch `stripe` gathers, if it has one, taken to be written, its
+    /// record to be at or past the log's end: its number, and its
+    /// versions, readable meanwhile. The stripe's next version begins
+    /// another.
+    fn take_batch(&self, stripe: &mut Gathering) -> Option<(u64, Versions)> {
+        let taken = std::mem::take(stripe);
+        let number = taken.number?;
+        let versions = self.resident.take(number);
+        lock_builtin(&self.batches).writing.insert(number, self.log.end());
+        if self.pins.close(number, taken.count) {
+            self.released.store(true, Ordering::Release);
+        }
+        Some((number, versions))
     }
 
     /// Writes batch `number`, then records where it is: no lock held over
@@ -267,6 +300,13 @@ impl UndoStore {
 
     /// Releases position `at`: no reader will go back to it.
     pub(super) fn release(&self, at: Lsn) {
+        if self.batch > 0 {
+            let (number, at_index) = (at.0 >> INDEX_BITS, usize::try_from(at.0 & INDEX_MASK).unwrap_or(usize::MAX));
+            if self.pins.release(number, at_index) {
+                self.released.store(true, Ordering::Release);
+            }
+            return;
+        }
         let mut pinned = lock_builtin(&self.pinned);
         if let Some(holders) = pinned.get_mut(&at) {
             *holders = holders.saturating_sub(1);
@@ -303,29 +343,32 @@ impl UndoStore {
     }
 
     /// The log position before which no batch still needed is, once those
-    /// before the oldest pinned position's batch are forgotten, in memory
-    /// too. Batches may be written out of their order, so it is the least
-    /// position of those still needed: of each written, where it is; of
-    /// each being written, the log's end as it was taken, as its record may
-    /// be in the log already, not yet recorded as written; and no later
-    /// than the log's end. The pins are read under the batches' lock, which
-    /// an append holds over its pin, so no batch gains a pin meanwhile; and
-    /// so is the log's end, which a batch taken to be written once the lock
-    /// is let go writes its record at or past. Read after, the end could be
-    /// past such a record, and the truncation remove a batch a reader
-    /// still has pinned, as `alone_before` says of a version alone.
+    /// before the oldest batch holding a pinned version are forgotten, in
+    /// memory too. Batches may be written out of their order, so it is the
+    /// least position of those still needed: of each written, where it is;
+    /// of each being written, the log's end as it was taken, as its record
+    /// may be in the log already, not yet recorded as written; and no
+    /// later than the log's end. Every stripe is held meanwhile, so no
+    /// version is appended, and so pinned, and no batch taken to be
+    /// written, whose record is then at or past the end read here. Read
+    /// once the stripes are let go, the end could be past such a record,
+    /// and the truncation remove a batch a reader still has pinned, as
+    /// `alone_before` says of a version alone. A batch being gathered
+    /// whose every version is released is given up, so a stripe no thread
+    /// appends through holds nothing back.
     fn batches_before(&self) -> Lsn {
         let (least, gone) = {
+            let mut stripes = self.stripes.all();
             let mut batches = lock_builtin(&self.batches);
-            let oldest = lock_builtin(&self.pinned).first_key_value().map(|(&at, _)| at);
-            let needed = oldest.map_or(batches.number, |at| at.0 >> INDEX_BITS);
+            let (gathering, mut gone) = self.gathering_needed(&mut stripes);
+            let needed = gathering.into_iter().chain(self.pins.oldest_written()).min().unwrap_or(batches.number);
             let later = batches.written.split_off(&needed);
             for lsn in std::mem::replace(&mut batches.written, later).into_values() {
                 batches.places.remove(&lsn);
             }
             batches.writing = batches.writing.split_off(&needed);
             batches.kept.forget_before(needed);
-            let gone: Vec<Batch> = (batches.first..needed).filter_map(|n| self.resident.remove(n)).collect();
+            gone.extend((batches.first..needed).filter_map(|n| self.resident.remove(n)));
             batches.first = batches.first.max(needed);
             lock_builtin(&self.read).retain(|r| r.number >= needed);
             let floors = batches.writing.values().min().copied();
@@ -336,9 +379,33 @@ impl UndoStore {
         least
     }
 
+    /// Of the batches `stripes` gather, each held, the oldest holding a
+    /// pinned version, if any does; one holding none is given up, gone
+    /// from memory, its stripe's next version beginning another: what was
+    /// given up, to be dropped once no lock is held.
+    fn gathering_needed(&self, stripes: &mut [std::sync::MutexGuard<'_, Gathering>]) -> (Option<u64>, Vec<Batch>) {
+        let (mut oldest, mut gone) = (None, Vec::new());
+        for stripe in stripes {
+            let Some(number) = stripe.number else { continue };
+            if self.pins.live(number, stripe.count) > 0 {
+                oldest = Some(oldest.map_or(number, |least: u64| least.min(number)));
+            } else {
+                self.pins.forget(number);
+                gone.extend(self.resident.remove(number));
+                **stripe = Gathering::default();
+            }
+        }
+        (oldest, gone)
+    }
+
     /// How many positions are pinned: for tests and statistics.
     pub fn pinned(&self) -> usize {
-        lock_builtin(&self.pinned).len()
+        if self.batch == 0 {
+            return lock_builtin(&self.pinned).len();
+        }
+        let stripes = self.stripes.all();
+        let gathering = stripes.iter().filter_map(|stripe| Some(self.pins.live(stripe.number?, stripe.count)));
+        gathering.fold(self.pins.written(), usize::saturating_add)
     }
 
     /// The bytes of the batches written kept in memory: for tests and
@@ -404,6 +471,7 @@ fn spans(record: &[u8]) -> Result<Vec<(usize, usize)>> {
     Ok(spans)
 }
 
+mod gathered;
 mod held;
 mod kept;
 mod resident;
