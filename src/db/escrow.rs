@@ -16,8 +16,9 @@ use crate::exec::{Subqueries, eval};
 use crate::logical::{Cond, Expr, LogicalPlan, cond_columns, expr_columns};
 use crate::settings::ON;
 use crate::settings::escrow::TRANSACTION_ESCROW;
-use crate::storage::{Row, RowId};
+use crate::storage::{Row, RowId, column_bit};
 use crate::txn::escrow::{Reservation, bit, changed};
+use crate::txn::writing::Writing;
 use crate::txn::{Again, Concurrency, LockWait, Timestamp, Txn, UndoEntry};
 use crate::value::{ArithOp, DataType, Decimal, Value, arith, assign};
 
@@ -230,15 +231,28 @@ impl State {
 
     /// Applies `own`, increments reserved on rows of `table`, in the order
     /// of their rows, each row's as one change of it.
+    ///
+    /// \[DESIGN\] RULES.md D923: the table's writing is found once, and
+    /// told the columns the increments add to, so each row's write is a
+    /// point write's (D875): of the row it replaces it reads those columns
+    /// alone, logs them alone and looks at no index, as no key or index
+    /// names a column reserved on (D452). A column past the last a mask
+    /// tells apart leaves the rows written whole.
     fn fold_rows(&self, tx: &Txn, table: &QualifiedName, own: &[(RowId, Reservation)]) -> Result<()> {
         let Some(desc) = self.catalog.table(table) else { return Ok(()) };
-        let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type.clone()).collect();
+        let set = own.iter().try_fold(0_u64, |set, (_, r)| column_bit(r.column).map(|bit| set | bit));
+        let writing = self.writing(table)?;
+        let writing = match set {
+            Some(set) => writing.setting(set),
+            None => writing,
+        };
         let mut at = 0;
         while let Some((id, _)) = own.get(at) {
             let id = *id;
-            let row: Vec<&Reservation> = own.get(at..).unwrap_or_default().iter().take_while(|(of, _)| *of == id).map(|(_, r)| r).collect();
-            at = at.saturating_add(row.len());
-            self.fold_one(tx, (table, id), (&row, &types))?;
+            let rows = own.get(at..).unwrap_or_default();
+            let deltas = rows.get(..rows.iter().take_while(|(of, _)| *of == id).count()).unwrap_or_default();
+            at = at.saturating_add(deltas.len());
+            self.fold_one(tx, (&writing, id), (deltas, desc))?;
         }
         Ok(())
     }
@@ -246,19 +260,25 @@ impl State {
     /// Row `id`'s increments `deltas` applied over its newest version,
     /// recomputed over a newer one if another transaction commits one
     /// first; none if the row is gone, deleted by `tx` itself.
-    fn fold_one(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), (deltas, types): (&[&Reservation], &[DataType])) -> Result<()> {
-        let Some(row) = self.storage_of(table)?.newest(tx.id, id)?.row else { return Ok(()) };
-        let mut recheck = |newer: &Row| Ok(Again::Update(added(newer, deltas, types)?));
-        self.fold_row(tx, (table, id), &added(&row, deltas, types)?, &mut recheck).map(|_| ())
+    fn fold_one(
+        &self,
+        tx: &Txn,
+        (writing, id): (&Writing<'_>, RowId),
+        (deltas, desc): (&[(RowId, Reservation)], &TableDesc),
+    ) -> Result<()> {
+        let Some(row) = self.storage_of(writing.table())?.newest(tx.id, id)?.row else { return Ok(()) };
+        let mut recheck = |newer: &Row| Ok(Again::Update(added(newer, deltas, desc)?));
+        self.fold_row(tx, (writing, id), &added(&row, deltas, desc)?, &mut recheck).map(|_| ())
     }
 }
 
-/// `row` with `deltas` added, each sum assigned to its column's type.
-fn added(row: &Row, deltas: &[&Reservation], types: &[DataType]) -> Result<Row> {
+/// `row` with `deltas` added, each sum assigned to its column's type in
+/// `desc`.
+fn added(row: &Row, deltas: &[(RowId, Reservation)], desc: &TableDesc) -> Result<Row> {
     let mut out = row.clone();
-    for r in deltas {
-        let (Some(value), Some(ty)) = (out.get(r.column), types.get(r.column)) else { continue };
-        let sum = assign(arith(ArithOp::Add, value, &r.delta)?, ty, BOUND)?;
+    for (_, r) in deltas {
+        let (Some(value), Some(column)) = (out.get(r.column), desc.columns.get(r.column)) else { continue };
+        let sum = assign(arith(ArithOp::Add, value, &r.delta)?, &column.data_type, BOUND)?;
         if let Some(slot) = out.get_mut(r.column) {
             *slot = sum;
         }

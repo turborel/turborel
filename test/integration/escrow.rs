@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use turborel::db::{Database, Opened, Session};
 use turborel::error::Code;
+use turborel::log::record::Change;
 use turborel::value::Value;
 
 use crate::common::{Scratch, exec, reopened_after_crash, rows, until_waiting};
@@ -334,4 +335,82 @@ fn a_crash_keeps_the_increments_committed_alone() {
         assert_eq!(rows(&db.session("A"), "SELECT X FROM T").unwrap(), ["7.50"], "checkpoint {checkpoint}");
         drop((db, open, s, crashed));
     }
+}
+
+/// The update records `log` holds, each its row id, the row before and
+/// the row after, as text.
+fn updates(log: &dyn turborel::log::Log) -> Vec<(u64, String, String)> {
+    let updated = |change: Change| match change {
+        Change::Update { row, before, after, .. } => Some((row, format!("{before:?}"), format!("{after:?}"))),
+        _ => None,
+    };
+    crate::logs::records(log).into_iter().filter_map(|(_, record)| updated(record.change)).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md D923, D452, D875: increments applied as a
+/// transaction commits, each row's write told the columns they add to,
+/// leave what the rows written and held leave (TRANSACTION.ESCROW OFF):
+/// the same rows and the same entries in the table's indexes; and the
+/// same log, as far as one write a row a transaction can be: each update
+/// record holds its row whole, before and after, the row before being
+/// the row after of the record before it of that row, and each row's
+/// last record leaves the row the locked path's last leaves.
+#[test]
+fn increments_applied_leave_the_rows_entries_and_records_of_the_locked_path() {
+    let mut left = Vec::new();
+    for escrow in BOTH {
+        let log = std::sync::Arc::new(turborel::log::MemoryLog::new());
+        let db = database(escrow);
+        db.set_log(std::sync::Arc::clone(&log) as std::sync::Arc<dyn turborel::log::Log>).unwrap();
+        db.create_index("T_ID", "A.T", &["ID"], "btree").unwrap();
+        db.create_index("T_N", "A.T", &["N"], "btree").unwrap();
+        let s = db.session("A");
+        for n in 0..12 {
+            s.run("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap();
+            s.run(&format!("UPDATE T SET X = X + 1.25 WHERE ID = {}", n % 4 + 1)).unwrap();
+            s.run(&format!("UPDATE T SET Y = Y - 3 WHERE ID = {}", n % 4 + 1)).unwrap();
+            s.run(&format!("UPDATE T SET X = X - 0.5 WHERE ID = {}", (n + 1) % 4 + 1)).unwrap();
+            s.commit().unwrap();
+        }
+        db.maintain().unwrap();
+        let entries = (db.index_entries("T_ID").unwrap(), db.index_entries("T_N").unwrap());
+        let records = updates(&*log);
+        // Each record's row before is the row the record before it left.
+        let mut now: std::collections::BTreeMap<u64, String> = std::collections::BTreeMap::new();
+        for (row, before, after) in &records {
+            if let Some(was) = now.insert(*row, after.clone()) {
+                assert_eq!(&was, before, "escrow {escrow}: row {row} whole before its write");
+            }
+        }
+        left.push((table(&s), entries, now, records.len()));
+    }
+    assert_eq!(left[0].0, left[1].0, "the rows");
+    assert_eq!((left[0].1, left[1].1), ((4, 4), (4, 4)), "an entry a row in each index");
+    assert_eq!(left[0].2, left[1].2, "each row as its last record leaves it");
+    assert!(left[0].3 <= left[1].3, "reserved, a row's increments are no more writes: {} of {}", left[0].3, left[1].3);
+}
+
+/// Verifies: [DESIGN] RULES.md D923: a column reserved on past the last a
+/// mask tells apart leaves its row written whole as the transaction
+/// commits, and the sums are those of a column within the mask.
+#[test]
+fn an_increment_of_a_column_past_the_mask_is_applied_whole() {
+    let db = Database::new();
+    db.set_setting("LOCKS.WAIT", &Value::Char("ON".to_owned())).unwrap();
+    let fillers: Vec<String> = (0..70).map(|n| format!("F{n} INTEGER")).collect();
+    db.schema(&format!(
+        "CREATE SCHEMA AUTHORIZATION A CREATE TABLE W (ID INTEGER NOT NULL, NEAR INTEGER, {}, FAR INTEGER)",
+        fillers.join(", ")
+    ))
+    .unwrap();
+    let s = db.session("A");
+    s.run("INSERT INTO W (ID, NEAR, F3, FAR) VALUES (1, 0, 33, 0)").unwrap();
+    s.commit().unwrap();
+    for n in 1..=5 {
+        s.run("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap();
+        s.run(&format!("UPDATE W SET FAR = FAR + {n} WHERE ID = 1")).unwrap();
+        s.run("UPDATE W SET NEAR = NEAR + 1 WHERE ID = 1").unwrap();
+        s.commit().unwrap();
+    }
+    assert_eq!(rows(&s, "SELECT NEAR, F3, FAR FROM W").unwrap(), ["5,33,15"]);
 }

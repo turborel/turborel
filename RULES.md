@@ -589,6 +589,7 @@ verification approach DO-178C expects (§8).
 | D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
 | D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
 | D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
+| D923 | Increments reserved are applied by a write told the columns they add to |
 
 ### The project
 
@@ -16425,6 +16426,37 @@ The semantics hold for these reasons.
 - Maintenance is noted as before. An end notes a table whose engine has
   some due whether or not it collected it.
 - A checkpoint and a close collect every table, waiting, as before.
+
+#### D923. Increments reserved are applied by a write told the columns they add to
+
+A transaction's increments reserved are applied as it commits, each
+row's as one write of the row (D452). That write went the general way.
+The table's storage, lock, seal and indexes were found again for each
+row, the column types were copied for each table, the row replaced was
+read whole a second time by the write, each index's key was compared
+between the two versions, and the log record was made from both rows
+whole. On the order entry bench it was a third of a payment's commit.
+
+The application now finds what a table's writes need once
+(`State::writing`), tells it the columns the increments add to
+(`Writing::setting`), and makes each row's write as a point UPDATE
+written straight makes its own (D875, `db/escrow.rs`). Of the row
+replaced the write reads those columns alone, it looks at no index,
+since no key or index names a column an increment is reserved on, and
+its log record is made of those columns, the bytes a record of the rows
+whole holds. The increments are added using the column types of the
+table's description, which is not copied. A table whose column reserved
+on lies past the last a mask tells apart is written whole, as before.
+
+The semantics hold for these reasons.
+
+- The row written is the row the general write wrote: the newest version
+  with the sums in its columns, recomputed over a version another
+  transaction committed first.
+- The write still passes the reservations of others, waits for a row
+  another transaction is writing, and is undone with its statement, as
+  the same `change_row` makes it.
+- The log holds the same record, so recovery replays it to the same row.
 
 ## 2. Project layout
 

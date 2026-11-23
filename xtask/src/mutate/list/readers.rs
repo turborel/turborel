@@ -1,5 +1,6 @@
 //! The mutations of the read-only path (RULES.md R-TEST-9, D29): what an
 //! end leaves to the maintenance job's pass and what the pass collects,
+//! the log's buffer and the increments applied at commit (D921, D923),
 //! when maintenance is due, the shared bookkeeping every transaction takes and gives
 //! back, its logged first and what cancels its statements, and what a scan
 //! keeps of a transaction's bookkeeping in a table.
@@ -7,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 11] = [
+pub const READERS: [Mutation; 12] = [
     Mutation {
         name: "pass-collects-nothing",
         package: Package::Core,
@@ -46,6 +47,16 @@ pub const READERS: [Mutation; 11] = [
         original: "is_some_and(|past| past >= COLLECT_AFTER)",
         replacement: "is_some()",
         integration: &["collection::a_quiet_table_is_collected_a_batch_of_commits_at_a_time"],
+        unit: &[],
+    },
+    Mutation {
+        name: "fold-told-other-columns",
+        package: Package::Core,
+        breaks: "increments applied tell their write other columns than they add to, so it reads and logs the wrong ones (RULES.md D923)",
+        file: "src/db/escrow.rs",
+        original: "            Some(set) => writing.setting(set),",
+        replacement: "            Some(set) => writing.setting(!set),",
+        integration: &["escrow::increments_applied_leave_the_rows_entries_and_records_of_the_locked_path"],
         unit: &[],
     },
     Mutation {

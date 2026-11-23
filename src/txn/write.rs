@@ -136,8 +136,11 @@ impl State {
     /// row `id` applied as its transaction commits (RULES.md D452): not
     /// kept waiting by the reservations of others, whose increments add to
     /// the same columns as its own and are applied over it.
-    pub(crate) fn fold_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), row: &Row, recheck: Recheck<'_>) -> Result<Option<Row>> {
-        self.change_row(tx, (&self.writing(table)?, id), (Write::Update(Cow::Borrowed(row)), How::Fold), Some(recheck))
+    ///
+    /// \[DESIGN\] RULES.md D923: of a `writing` told the columns the
+    /// increments add to, the write is made as `rewrite_row_set`'s is.
+    pub(crate) fn fold_row(&self, tx: &Txn, (writing, id): (&Writing<'_>, RowId), row: &Row, recheck: Recheck<'_>) -> Result<Option<Row>> {
+        self.change_row(tx, (writing, id), (Write::Update(Cow::Borrowed(row)), How::Fold), Some(recheck))
     }
 
     /// `write` of row `id`, tried again as long as another transaction's
@@ -169,7 +172,8 @@ impl State {
             let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
-                Self::write_once(tx, (writing, id), (&write, stamp.as_ref(), how == How::Set), seen.as_ref())
+                let set = how == How::Set || (how == How::Fold && writing.set_columns().is_some());
+                Self::write_once(tx, (writing, id), (&write, stamp.as_ref(), set), seen.as_ref())
             };
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
