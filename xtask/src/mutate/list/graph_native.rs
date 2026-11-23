@@ -53,7 +53,7 @@ pub const GRAPH_NATIVE: [Mutation; 20] = [
         package: Package::Core,
         breaks: "an endpoint is kept as written, so one node has two texts",
         file: "src/db/graphs/native/rows.rs",
-        original: "put(row, at, Value::Char(id.text()))?;",
+        original: "put(row, at, Value::Char(id.text().into()))?;",
         replacement: "drop(id);",
         integration: &["graph_native::statements::connections_are_enforced_4_2"],
         unit: &[],

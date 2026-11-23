@@ -224,9 +224,59 @@ fn a_fixed_string_is_read_padded_in_either_form() {
         assert_eq!(s.is_inline(), width < INLINE, "CHARACTER({length})");
         assert_eq!(fixed.kind().encode_record(&read, &fixed).unwrap(), "é b".as_bytes());
         let kept = varying.decode_record(b"ab  ").unwrap();
-        assert!(matches!(&kept, Value::Char(s) if s == "ab  "), "{kept:?}");
+        let Value::Char(t) = &kept else { panic!("{kept:?}") };
+        assert_eq!(t, "ab  ");
         assert_eq!(varying.kind().encode_record(&kept, &varying).unwrap(), b"ab  ");
     }
     assert!(DataType::character(5).decode_record(b"\xFF").is_none() && DataType::varying(5).decode_record(b"\xFF").is_none());
     assert!(DataType::character(2).decode_record(b"abc").is_none(), "longer than its type");
+}
+
+/// Strings of every length up to past twice the capacity, of one-octet,
+/// two-octet and four-octet characters and spaces, each in the form it
+/// is made in and in the shared form.
+fn corpus() -> Vec<String> {
+    let pieces = ["a", "é", " ", "😀", "z"];
+    let mut all = Vec::new();
+    for n in 0..=2 * INLINE + 3 {
+        for start in 0..pieces.len() {
+            all.push(pieces.iter().cycle().skip(start).take(n).copied().collect());
+        }
+    }
+    all.push(format!("{}  ", ascii(INLINE - 2)));
+    all
+}
+
+/// Verifies: [DESIGN] (RULES.md D960) against the `String` a character
+/// string was held in before, over strings of up to past twice the
+/// capacity in either form: the same text, octets, length, characters
+/// and trailing spaces left out; equal, ordered and hashed as the
+/// `String`s are; padded and joined to the same text; and octets read as
+/// UTF-8 or refused as the `String` reads them.
+#[test]
+fn every_operation_gives_what_a_string_gives() {
+    let all = corpus();
+    let hasher = RandomState::new();
+    let forms = |t: &String| [CharString::from(t.as_str()), shared(t)];
+    for t in &all {
+        for s in forms(t) {
+            assert_eq!((s.as_str(), s.as_bytes(), s.len(), s.char_count()), (t.as_str(), t.as_bytes(), t.len(), t.chars().count()));
+            assert_eq!(s.unpadded(), t.trim_end_matches(' ').as_bytes());
+            assert_eq!(hasher.hash_one(&s), hasher.hash_one(t), "{t:?}");
+            for pad in [0, 1, INLINE - t.len().min(INLINE), INLINE + 1] {
+                assert_eq!(CharString::padded(&s, pad).as_str(), format!("{t}{}", " ".repeat(pad)));
+            }
+        }
+        assert_eq!(CharString::from(t.as_str()).is_inline(), t.len() <= INLINE, "{t:?}");
+        let mut bad = t.clone().into_bytes();
+        bad.insert(bad.len() >> 1, 0xFF);
+        assert_eq!(CharString::from_utf8(&bad).map(String::from), String::from_utf8(bad).ok());
+    }
+    for (t, u) in all.iter().step_by(7).flat_map(|t| all.iter().step_by(5).map(move |u| (t, u))) {
+        for (s, v) in forms(t).into_iter().zip(forms(u).into_iter().rev()) {
+            assert_eq!((s == v, s.cmp(&v)), (t == u, t.cmp(u)), "{t:?} {u:?}");
+            assert_eq!(s.joined(&v).as_str(), format!("{t}{u}"));
+            assert_eq!(s.joined(&v).is_inline(), t.len() + u.len() <= INLINE);
+        }
+    }
 }

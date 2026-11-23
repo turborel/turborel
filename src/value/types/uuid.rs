@@ -240,7 +240,7 @@ impl SqlType for UuidType {
         if to.is_character() {
             return Some(Value::Char(text(&octets).into()));
         }
-        to.is_binary().then(|| Value::Binary(Binary::of(octets)))
+        to.is_binary().then(|| Value::Binary(Binary::of(&octets)))
     }
 
     fn literal(&self, v: &Value) -> String {

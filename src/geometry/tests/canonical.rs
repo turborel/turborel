@@ -159,6 +159,6 @@ fn canonical_reader_preserves_limits_and_boundary_errors() {
     assert_eq!(GEOMETRY.value(&mut Reader::new(&framed, "test")).unwrap_err().code, Code::Corrupt);
     assert_eq!(GEOMETRY.value(&mut Reader::received(&framed, "test")).unwrap_err().code, Code::Connection);
     let mut key = Vec::new();
-    crate::value::Binary::of(raw.bytes).put_key(&mut key);
+    crate::value::Binary::of(&raw.bytes).put_key(&mut key);
     assert_eq!(GEOMETRY.decode_key(&mut key.as_slice(), &data_type()).unwrap_err().code, Code::Unsupported);
 }

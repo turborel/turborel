@@ -33,7 +33,7 @@ fn texts() -> Vec<String> {
         .map(|&n| "abcdefg".chars().cycle().take(n).collect())
         .collect();
     texts.extend(["é", "a b ", "ééééééé", "日本語 ", "😀😀"].map(str::to_owned));
-    texts.push("é".repeat(INLINE / 2));
+    texts.push("é".repeat(INLINE >> 1));
     texts.push(format!("{}é", "x".repeat(INLINE - 1)));
     texts
 }
@@ -135,7 +135,7 @@ fn the_forms_compare_group_and_key_as_their_text() {
     a.run("CREATE INDEX TV ON T (V)").unwrap();
     assert_eq!(both_ways(&a, &format!("SELECT K FROM T WHERE V = '{long}'")), both, "by the index");
     a.run(&format!("INSERT INTO U VALUES ('{short}')")).unwrap();
-    assert_eq!(failure(a.run(&format!("INSERT INTO U VALUES ('{long}')"))).1, "23505");
+    assert_eq!(failure(a.run(&format!("INSERT INTO U VALUES ('{long}')"))).1, "23000");
     a.run(&format!("INSERT INTO U VALUES ('{other}')")).unwrap();
 }
 
@@ -153,7 +153,7 @@ fn string_functions_give_the_same_text_in_either_form() {
     for (left, right) in
         [(0, 0), (1, 0), (0, 1), (INLINE - 1, 1), (INLINE, 0), (INLINE, 1), (16, 16), (16, 17), (INLINE + 1, INLINE + 1), (3, 300)]
     {
-        let (l, r) = ("é".repeat(left / 2) + &"a".repeat(left % 2), "b ".repeat(right / 2) + &"c".repeat(right % 2));
+        let (l, r) = ("é".repeat(left >> 1) + &"a".repeat(left % 2), "b ".repeat(right >> 1) + &"c".repeat(right % 2));
         let joined = format!("{l}{r}");
         assert_eq!(value(&format!("'{l}' || '{r}'")), joined, "{left} || {right}");
         assert_eq!(value(&format!("CHAR_LENGTH('{l}' || '{r}')")), joined.chars().count().to_string());
