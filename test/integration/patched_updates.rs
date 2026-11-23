@@ -452,6 +452,38 @@ fn a_row_patched_is_seen_as_a_row_written_whole() {
     }
 }
 
+/// FOLDC folds set functions over the row its UPDATE wrote, of columns
+/// the UPDATE does not set and no index keys, and keeps what they gave.
+const FOLDC: &str = "CREATE PROCEDURE FOLDC (IN KK INTEGER) MODIFIES SQL DATA
+   BEGIN DECLARE N INTEGER; DECLARE M VARCHAR(30);
+     SELECT COUNT(C), MAX(TAIL) INTO N, M FROM FINAL TABLE (UPDATE T SET A = A + 1 WHERE K = KK);
+     UPDATE T SET V = CAST(N AS VARCHAR(4)) || COALESCE(M, '-') WHERE K = KK;
+   END";
+
+/// Verifies: [DESIGN] RULES.md D917, D933: set functions folded over the
+/// row a point UPDATE wrote as a patch count and compare the values of
+/// the columns their arguments read, though the UPDATE neither sets them
+/// nor keys an index by them, as the interpreter does; and of a column
+/// made null they count none. A regression test: the patch read of its
+/// row the columns of the select list over the functions' values, taken
+/// as the row's, so COUNT(C) counted the null of a column not read.
+#[test]
+fn set_functions_folded_over_a_patched_row_read_the_columns_it_does_not_set() {
+    let scratch = Scratch::new("patched-updates-folded");
+    let left = |compiled: bool| {
+        let (_db, s) = database(&scratch.path(&format!("compiled-{compiled}")), &os(), (Kind::Plain, compiled));
+        s.run(FOLDC).unwrap();
+        s.commit().unwrap();
+        let calls = (1..=6_i64).flat_map(|k| [format!("CALL FOLDC({k})"), format!("CALL SETC({k}, 'none')"), format!("CALL FOLDC({k})")]);
+        let mut gave = run(&s, &[calls.collect()]);
+        gave.extend(contents(&s, Kind::Plain));
+        gave
+    };
+    let (interpreted, compiled) = (left(false), left(true));
+    assert_eq!(compiled, interpreted);
+    assert!(compiled.iter().any(|line| line.contains("0last 1")), "{compiled:#?}");
+}
+
 /// Verifies: [DESIGN] RULES.md D916, the default
 /// `TableStorage::replace_set`: an engine that is not the row store,
 /// told the columns an update sets and given a row that holds their

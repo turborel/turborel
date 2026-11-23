@@ -17140,6 +17140,16 @@ distribution, and an argument or a select list that reads a subquery,
 a routine or a sequence generator leave the statement to the general
 path, as does every case that left a change to it before.
 
+A point UPDATE written as a patch reads of its row only the columns
+its statement needs (D917), and the rest of the row it holds after is
+null. Under a fold, the select list reads the row of the functions'
+values, so its columns say nothing of the delta table's row. What the
+point UPDATE reads for its delta table is then the columns the
+functions' arguments read at that execution, their CASEs judged as
+D918 judges a select list's. So a COUNT or a MAX of a column the
+UPDATE neither sets nor keys an index by sees that column's value, as
+it does on the general path.
+
 #### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
 
 A prepared CALL kept its binding (D793), its procedure's text was read

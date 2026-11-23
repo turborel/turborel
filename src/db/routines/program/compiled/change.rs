@@ -308,8 +308,12 @@ fn searched(exec: &mut Exec<'_>, contained: &Contained, s: &Searched) -> Result<
         let ran = {
             let _compiling = session.compiling(cx.st, cx.tx.id);
             session.settle_cursors(cx.st, &s.table);
-            // What its select list reads of the row at this execution (D918).
-            let read = s.delta.as_ref().map_or(0, |(_, outputs, _)| read::read_now(outputs, exec.frame.dynamic_values()));
+            // What its select list, or the arguments of the set functions
+            // folded under it, read of the row at this execution (D918,
+            // D933). A folded select list reads the row of the functions'
+            // values, not the delta table's.
+            let over = s.fold.as_ref().map(Folded::read).or_else(|| s.delta.as_ref().map(|(_, outputs, _)| outputs.as_slice()));
+            let read = over.map_or(0, |over| read::read_now(over, exec.frame.dynamic_values()));
             point_change((session, cx), (w, straight, s.delete, (s.shown, read)))?
         };
         match ran {
