@@ -1,7 +1,7 @@
 //! \[DESIGN\] A change of a compiled program run straight on its table
 //! (RULES.md D841): a searched UPDATE or DELETE by a whole unique key,
 //! alone or as the statement of a SELECT ... INTO's FINAL, NEW or OLD
-//! TABLE, and an INSERT of one row of values.
+//! TABLE, and an INSERT of the rows of a query (RULES.md D901).
 //!
 //! A change runs the general path first, which keeps its plans as a
 //! program kept keeps them (RULES.md D406, D792, D793). Once they are
@@ -88,14 +88,15 @@ struct Searched {
     shown: u64,
 }
 
-/// An INSERT of one row of values, its kept target and query.
+/// An INSERT of the rows of a query, VALUES or a query specification,
+/// its kept target and query.
 #[derive(Debug)]
 struct Inserted {
     target: Arc<Target>,
-    query: LogicalPlan,
+    query: Arc<LogicalPlan>,
     clocked: bool,
-    /// The constraints its statement checks of its row, if it may write
-    /// that row straight.
+    /// The constraints its statement checks of each row it inserts, if it
+    /// may write its rows straight.
     straight: Option<Straight>,
     /// Whether its target's defaults are those of every execution
     /// (`Target::fixed_defaults`), so each takes the target as kept.
@@ -171,8 +172,8 @@ fn shape_of(stmt: &SqlStatement) -> Option<Shape> {
     (plain && fits).then_some(Shape::Searched { delete, delta: Some(d.result) })
 }
 
-/// Whether `ins` inserts the rows of a query that reads no delta table:
-/// a VALUES of one row, its kept plan shows.
+/// Whether `ins` inserts the rows of a query that reads no delta table,
+/// VALUES or a query specification.
 fn inserts_values(ins: &InsertStatement) -> bool {
     let InsertSource::Query(q) = &ins.source else { return false };
     matches!(q.body(), QueryExpression::Values(_) | QueryExpression::Spec(_)) && q.deltas().is_empty()
@@ -199,7 +200,7 @@ fn direct_of(exec: &Exec<'_>, contained: &Contained, shape: Shape) -> Result<Opt
     let keeping = session.keeping(st, plans);
     let Shape::Searched { delete, delta } = shape else {
         let Some((KeptPlan::Insert(target, Some(query)), clocked)) = keeping.plan_clocked()? else { return Ok(None) };
-        if !one_row(&query) || !plain_table(st, target.name()) || named_view(exec, contained) {
+        if !plain_table(st, target.name()) || named_view(exec, contained) {
             return Ok(None);
         }
         let (straight, fixed) = (target.straight(st), target.fixed_defaults());
@@ -237,14 +238,6 @@ fn named_view(exec: &Exec<'_>, contained: &Contained) -> bool {
     let SqlStatement::Insert(ins) = contained.statement() else { return true };
     let name = crate::binder::qualify(&ins.table, &exec.session.default_schema());
     exec.cx.st.catalog.table(&name).is_none()
-}
-
-/// Whether `plan`, an INSERT's query, is a VALUES of one row, projected
-/// or not, whose values read nothing.
-fn one_row(plan: &LogicalPlan) -> bool {
-    let (values, projected) = if let LogicalPlan::Project { exprs, input } = plan { (&**input, Some(exprs)) } else { (plan, None) };
-    let LogicalPlan::Values { rows, .. } = values else { return false };
-    rows.len() == 1 && rows.iter().flatten().chain(projected.into_iter().flatten()).all(Expr::reads_nothing)
 }
 
 /// The select list of a query over its delta table alone, as expressions
@@ -430,7 +423,7 @@ fn inserted(exec: &mut Exec<'_>, contained: &Contained, i: &Inserted) -> Result<
     let n = if let (Some(straight), false) = (&i.straight, session.delta_open()) {
         session.insert_straight(cx, (&*target, straight), (&i.query, slots, kept))?
     } else {
-        session.insert_rows(cx, (stmt, &*target), (Some(i.query.clone()), slots, kept), exec.frame)?
+        session.insert_rows(cx, (stmt, &*target), (Some(&*i.query), slots, kept), exec.frame)?
     };
     Ok(Some(session.affected(n)))
 }

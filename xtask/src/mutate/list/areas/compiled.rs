@@ -17,8 +17,15 @@ const ROWS: &str = "compiled_writes::a_point_change_checks_its_rows_constraints"
 /// A point change sent to the general path where its end checks more.
 const MORE: &str = "compiled_writes::a_point_change_falls_back_where_its_end_checks_more";
 
+/// An INSERT of a query's rows run straight, each of its rows checked.
+const QUERIED: &str = "compiled_writes::an_insert_of_a_querys_rows_checks_each";
+
+/// An INSERT of a query's rows whose end checks more, or whose rows are
+/// stamped as they go in, run by the general path.
+const FALLS_BACK: &str = "compiled_writes::an_insert_of_a_querys_rows_falls_back_where_its_end_checks_more";
+
 /// Mechanisms whose removal must fail compiled procedures' requirements.
-pub const COMPILED: [Mutation; 15] = [
+pub const COMPILED: [Mutation; 18] = [
     Mutation {
         name: "compiled-old-table-of-update",
         package: Package::Core,
@@ -122,11 +129,41 @@ pub const COMPILED: [Mutation; 15] = [
     Mutation {
         name: "compiled-straight-insert-unchecked",
         package: Package::Core,
-        breaks: "an INSERT of one row written straight leaves its row's constraints unchecked",
+        breaks: "an INSERT written straight leaves the constraints of the rows it holds unchecked (D901)",
+        file: "src/db/integrity/straight/rows.rs",
+        original: "                for c in &straight.row {",
+        replacement: "                for c in straight.row.iter().take(0) {",
+        integration: &[QUERIED],
+        unit: &[],
+    },
+    Mutation {
+        name: "compiled-straight-insert-unstamped",
+        package: Package::Core,
+        breaks: "an INSERT into a table with a system-time period is written straight, its rows' period unstamped",
         file: "src/db/write/direct.rs",
-        original: "            [_] => rows.visit(&mut |row| st.end_straight(tx, (&target.name, straight), &ids, Some(row)))?,",
-        replacement: "            [_] => rows.visit(&mut |row| st.end_straight(tx, (&target.name, straight), &[], Some(row)))?,",
-        integration: &[CONSTRAINTS],
+        original: "        if !self.checks.is_empty() || super::system_time::system_time(&self.desc).is_some() {",
+        replacement: "        if !self.checks.is_empty() {",
+        integration: &[FALLS_BACK],
+        unit: &[],
+    },
+    Mutation {
+        name: "kept-plan-lent-over-rows",
+        package: Package::Core,
+        breaks: "a kept projection of a collection derived table over other rows is read where it is kept, as if over one row of no column (D903)",
+        file: "src/exec/lent.rs",
+        original: "        let over_one = rows.len() == 1 && rows.iter().all(Vec::is_empty);",
+        replacement: "        let over_one = true;",
+        integration: &[],
+        unit: &["exec::lent::tests::any_other_plan_is_opened_by_the_executor"],
+    },
+    Mutation {
+        name: "compiled-straight-rows-settled-unasked",
+        package: Package::Core,
+        breaks: "an INSERT written straight takes a UNIQUE constraint as settled of a row whose key was not its key's only entry (D901)",
+        file: "src/db/integrity/straight/rows.rs",
+        original: "    (alone && !by.is_empty()) || settled(tx, by, id)",
+        replacement: "    !by.is_empty() || settled(tx, by, id)",
+        integration: &[QUERIED],
         unit: &[],
     },
     Mutation {

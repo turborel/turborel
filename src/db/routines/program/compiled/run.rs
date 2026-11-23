@@ -67,27 +67,20 @@ pub(super) struct Exec<'a> {
 }
 
 /// \[DESIGN\] RULES.md D943. Whether nothing of `nodes` reads the
-/// diagnostics area as it runs. None of them is GET DIAGNOSTICS, no
-/// compound statement has a handler, whose activation keeps the area on
-/// the stack, and each statement the session runs changes or reads rows
-/// and no more. The area of such a program is its own, discarded as its
+/// diagnostics area as it runs. No compound statement has a handler,
+/// whose activation keeps the area on the stack, and each statement the
+/// session runs changes or reads rows and no more, so none is GET
+/// DIAGNOSTICS. The area of such a program is its own, discarded as its
 /// procedure returns [ISO/IEC 9075-2:2023 §9.18 GR14], so what its
 /// statements would place there is read by nothing.
 pub(super) fn unread(nodes: &[Node]) -> bool {
-    nodes.iter().all(|node| {
-        if node.reads_area {
-            return false;
-        }
-        match &node.code {
-            Code::Block(b) => b.handlers.is_empty() && unread(&b.statements),
-            Code::If(b) | Code::Case(b) => b.arms.iter().all(|(_, arm)| unread(arm)) && b.otherwise.as_deref().is_none_or(unread),
-            Code::Loop(l) => unread(&l.statements),
-            Code::For(f) => unread(&f.statements),
-            Code::Statement(s) => rows_alone(s.contained.statement()),
-            Code::Assign(_) | Code::Leave(_) | Code::Iterate(_) | Code::Return(_) | Code::Signal(_) | Code::Into(_) | Code::Cursor(_) => {
-                true
-            }
-        }
+    nodes.iter().all(|node| match &node.code {
+        Code::Block(b) => b.handlers.is_empty() && unread(&b.statements),
+        Code::If(b) | Code::Case(b) => b.arms.iter().all(|(_, arm)| unread(arm)) && b.otherwise.as_deref().is_none_or(unread),
+        Code::Loop(l) => unread(&l.statements),
+        Code::For(f) => unread(&f.statements),
+        Code::Statement(s) => rows_alone(s.contained.statement()),
+        Code::Assign(_) | Code::Leave(_) | Code::Iterate(_) | Code::Return(_) | Code::Signal(_) | Code::Into(_) | Code::Cursor(_) => true,
     })
 }
 

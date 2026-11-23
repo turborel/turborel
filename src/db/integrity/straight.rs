@@ -1,7 +1,7 @@
 //! \[DESIGN\] The constraints of a compiled program's point change, a
-//! searched UPDATE or DELETE of one row by its key or an INSERT of one row
-//! of values, written straight on its table (RULES.md D841), and their
-//! checks at the end of its statement.
+//! searched UPDATE or DELETE of one row by its key, or of its INSERT of a
+//! query's rows (`straight/rows.rs`), written straight on its table
+//! (RULES.md D841, D901), and their checks at the end of its statement.
 //!
 //! What its statement's end checks is known from its table and the columns
 //! it gives values to [ISO/IEC 9075:1992 §10.6 GR3], as `State::checks`
@@ -17,6 +17,8 @@
 //! general path.
 
 use std::sync::Arc;
+
+mod rows;
 
 use super::gather::{assigned, of_row};
 use super::{Check, Checking, broken};
@@ -105,8 +107,8 @@ impl State {
         Some(Straight { set_tables: bound.set_tables(), set, inputs, ..straight })
     }
 
-    /// Of an INSERT of one row into `table`, the constraints its statement
-    /// checks of it, as `straight` finds them.
+    /// Of an INSERT into `table`, the constraints its statement checks of
+    /// each row it inserts, as `straight` finds them.
     pub(in crate::db) fn straight_insert(&self, table: &QualifiedName) -> Option<Straight> {
         self.straight_of(table, (None, false))
     }
