@@ -548,6 +548,7 @@ verification approach DO-178C expects (§8).
 | D838 | A scan priced by a sample of its zones reads at least one zone of the sample |
 | D839 | No estimate makes a scan of a whole unique key, nor of a key's range a scan reads past, and a plan kept is learned again with statistics |
 | D840 | A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer |
+| D841 | A procedure's body runs as the program it is compiled to, its point reads and point changes straight on their tables |
 
 ### The project
 
@@ -15130,6 +15131,48 @@ scan takes its bounds as built (`scan_owned`), and gives its buffers back
 to its thread when done, so the thread's next scan takes them
 (`engine/tree/scan/ready.rs`). So a probe that finds one entry allocates
 nothing in the tree.
+
+#### D841. A procedure's body runs as the program it is compiled to, its point reads and point changes straight on their tables
+
+A CALL of a procedure whose body its session keeps (D406) ran the body's
+program through the interpreter, and each statement of it through the
+session's general path: the statement looked up in the plans the program
+keeps, bound or taken bound, wrapped as a statement the session runs,
+and of a SELECT ... INTO of a delta table, the delta table's query run
+by the executor over the rows the change gave. An order's entry spent
+more than half its time there, and not in its reads and writes. So the
+program is compiled as a CALL first runs it, to a tree of code kept with
+the program (`db/routines/program/compiled.rs`), made again whenever the
+program is: once a definition, privilege, role, schema, time zone or
+setting it was bound with no longer holds (D45, D414).
+
+The tree runs as the interpreter runs a program. Each statement empties
+the diagnostics area as it begins and places its condition there as it
+ends; a condition is offered to the handlers in scope where it is raised;
+each atomic statement is undone alone if it fails; an ATOMIC compound
+statement runs at a savepoint level of its own. Its values are found as
+it was compiled. A row of values that reads nothing is evaluated where
+it is, over the frame's slots. A variable or parameter assigned as a
+whole is its slot, its value cast by store assignment there. A SELECT
+... INTO whose query plans to one point read of a whole unique key
+(D752) reads its row by that point read, its tables locked, its snapshot
+taken and its reads recorded as a leaf's are.
+
+A change runs the general path first, which keeps its plans. Once they
+are kept, a searched UPDATE or DELETE, alone or as a SELECT ... INTO's
+FINAL, NEW or OLD TABLE, and an INSERT of one row of values, run with
+them past the statement's binding and wrapping: its object rows by its
+plan kept as that plan stands, learning or learned (D422), a point read
+once it is one (D752), and its rows by the write functions the general path
+writes with, so its row locks, rechecks, escrow (D452), BEFORE triggers,
+defaults, identity, generated columns, constraints and the unique check
+at its end are the general path's own, as are its ROW_COUNT and its
+errors. The delta table's rows are gathered by the collector the general
+path gathers them with, and the select list is evaluated over them. A
+change of a view, of a typed or partitioned table, of a table some
+trigger is on that the change may write, or with XML options in scope,
+runs the general path always, as does every other statement, cursor and
+FOR. EXECUTOR.COMPILED_PROCEDURES OFF runs each body by the interpreter.
 
 ## 2. Project layout
 

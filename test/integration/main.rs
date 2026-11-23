@@ -40,6 +40,7 @@ mod collection;
 mod commit_restore;
 mod commit_visibility;
 mod common;
+mod compiled_procedures;
 mod composite_columns;
 mod concepts;
 /// The fixtures over a database and the suites every log passes, written

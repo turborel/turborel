@@ -20,11 +20,13 @@
 //! evaluates it, its host the query's (`program/executor.rs`).
 
 mod checked;
+mod compiled;
 mod cursors;
 mod executor;
 mod host;
 mod hosted;
 
+pub(in crate::db) use compiled::Compiled;
 pub(crate) use executor::{run_component, run_unhosted};
 pub(in crate::db) use hosted::{Hosted, hosted_rows};
 
@@ -126,6 +128,9 @@ impl Session {
         }
         let ended = if direct {
             run_program(program, &mut inner, &mut SessionHost::direct(self, cx))?
+        } else if let Some(compiled) = routine.and_then(|_| compiled::compiled_procedures(cx.st, self).then(|| kept.compiled()).flatten()) {
+            // [DESIGN] RULES.md D841: a procedure's body kept runs compiled.
+            compiled::run_compiled((self, cx), (&kept, compiled), &mut inner)?
         } else {
             let kept = routine.is_some().then_some(&kept);
             run_program(program, &mut inner, &mut SessionHost::within(self, cx, kept))?

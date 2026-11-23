@@ -81,6 +81,7 @@ pub fn measure<K: Connect>(bench: &Bench, connect: &K, (set, threads, store): (&
     });
     let f = figures.into_inner();
     report(&f, threads);
+    consistency(&mut connect.connect(USER));
     let (first, last) = (f.seen.len().min(2), f.seen.len());
     statement_rows("rows a CALL in the first, untimed, run:", &f.seen[0], &f.seen[first - 1]);
     statement_rows("rows a CALL in the last run:", &f.seen[last.saturating_sub(2)], &f.seen[last - 1]);
@@ -111,5 +112,49 @@ fn report(f: &Figures, threads: usize) {
     if !f.tally.failed.is_empty() {
         let failed: Vec<String> = f.tally.failed.iter().map(|((t, code), n)| format!("{} SQLCODE {} x{n}", TYPES[*t], code.0)).collect();
         note(&format!("failed: {}", failed.join(", ")));
+    }
+}
+
+/// The TPROC-C consistency conditions, each a count of the warehouses or
+/// districts that break it, checked by SQL once the runs are done.
+const CONSISTENCY: [(&str, &str); 6] = [
+    ("W_YTD is the sum of D_YTD", "SELECT COUNT(*) FROM WAREHOUSE WHERE W_YTD <> (SELECT SUM(D_YTD) FROM DISTRICT WHERE D_W_ID = W_ID)"),
+    (
+        "D_NEXT_O_ID - 1 is the greatest O_ID",
+        "SELECT COUNT(*) FROM DISTRICT WHERE D_NEXT_O_ID - 1 <> (SELECT MAX(O_ID) FROM ORDERS WHERE O_W_ID = D_W_ID AND O_D_ID = D_ID)",
+    ),
+    (
+        "the orders are numbered with no gap",
+        "SELECT COUNT(*) FROM DISTRICT WHERE D_NEXT_O_ID - 1 <> (SELECT COUNT(*) FROM ORDERS WHERE O_W_ID = D_W_ID AND O_D_ID = D_ID)",
+    ),
+    (
+        "D_NEXT_O_ID - 1 is the greatest NO_O_ID",
+        "SELECT COUNT(*) FROM DISTRICT WHERE D_NEXT_O_ID - 1 <> (SELECT MAX(NO_O_ID) FROM NEW_ORDER WHERE NO_W_ID = D_W_ID AND NO_D_ID = D_ID)",
+    ),
+    (
+        "the new orders are numbered with no gap",
+        "SELECT COUNT(*) FROM DISTRICT WHERE 0 <> (SELECT MAX(NO_O_ID) - MIN(NO_O_ID) + 1 - COUNT(*) FROM NEW_ORDER WHERE NO_W_ID = D_W_ID AND NO_D_ID = D_ID)",
+    ),
+    (
+        "the order lines are as many as O_OL_CNT adds to",
+        "SELECT COUNT(*) FROM DISTRICT WHERE (SELECT SUM(O_OL_CNT) FROM ORDERS WHERE O_W_ID = D_W_ID AND O_D_ID = D_ID) \
+         <> (SELECT COUNT(*) FROM ORDER_LINE WHERE OL_W_ID = D_W_ID AND OL_D_ID = D_ID)",
+    ),
+];
+
+/// Each of the TPROC-C consistency conditions checked, and what broke.
+fn consistency(client: &mut impl crate::client::Client) {
+    let mut failed = Vec::new();
+    for (condition, sql) in CONSISTENCY {
+        let rows = client.direct(sql, true).unwrap();
+        let broken = rows.first().and_then(|r| r.first()).map_or_else(String::new, |v| v.to_string().trim().to_owned());
+        if broken != "0" {
+            failed.push(format!("{condition}: {broken} broke it"));
+        }
+    }
+    if failed.is_empty() {
+        note("consistency: all hold");
+    } else {
+        note(&format!("consistency: FAILED: {}", failed.join("; ")));
     }
 }
