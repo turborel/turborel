@@ -22,9 +22,9 @@ pub const USER: &str = "TPCC";
 /// The procedures of set `name`.
 pub fn procedures(name: &str) -> [&'static str; 5] {
     match name {
-        "old" | "native" => [tpcc_procs::NEWORD, tpcc_procs::PAYMENT, tpcc_procs::DELIVERY, tpcc_procs::OSTAT, tpcc_procs::SLEV],
+        "old" => [tpcc_procs::NEWORD, tpcc_procs::PAYMENT, tpcc_procs::DELIVERY, tpcc_procs::OSTAT, tpcc_procs::SLEV],
         "new" => [tpcc_procs_new::NEWORD, tpcc_procs::PAYMENT, tpcc_procs_new::DELIVERY, tpcc_procs::OSTAT, tpcc_procs_new::SLEV],
-        other => panic!("TURBOREL_OLTP_PROCEDURES names old, new or native, not {other}"),
+        other => panic!("TURBOREL_OLTP_PROCEDURES names old or new, not {other}"),
     }
 }
 
@@ -59,7 +59,7 @@ pub fn measure<K: Connect>(bench: &Bench, connect: &K, (set, threads, store): (&
         let run = figures.borrow().totals.runs as u64;
         let (tallies, wall) = on_threads(threads, secs, |t, until| {
             let seed = run * 1_000 + t as u64 + 1;
-            Terminal::new(connect.connect(USER), seed, set == "native").run(until)
+            Terminal::new(connect.connect(USER), seed).run(until)
         });
         let mut tally = Tally::default();
         for t in &tallies {
@@ -115,61 +115,46 @@ fn report(f: &Figures, threads: usize) {
     }
 }
 
-/// The TPROC-C consistency conditions, checked by SQL once the runs are
-/// done: W_YTD is the sum of D_YTD; of each district, D_NEXT_O_ID - 1 is
-/// the greatest O_ID and the greatest NO_O_ID, the orders are numbered
-/// with no gap, the new orders' numbers likewise, and the order lines are
-/// as many as the orders' O_OL_CNT add to.
+/// The TPROC-C consistency conditions, each a count of the warehouses or
+/// districts that break it, checked by SQL once the runs are done.
+const CONSISTENCY: [(&str, &str); 6] = [
+    ("W_YTD is the sum of D_YTD", "SELECT COUNT(*) FROM WAREHOUSE WHERE W_YTD <> (SELECT SUM(D_YTD) FROM DISTRICT WHERE D_W_ID = W_ID)"),
+    (
+        "D_NEXT_O_ID - 1 is the greatest O_ID",
+        "SELECT COUNT(*) FROM DISTRICT WHERE D_NEXT_O_ID - 1 <> (SELECT MAX(O_ID) FROM ORDERS WHERE O_W_ID = D_W_ID AND O_D_ID = D_ID)",
+    ),
+    (
+        "the orders are numbered with no gap",
+        "SELECT COUNT(*) FROM DISTRICT WHERE D_NEXT_O_ID - 1 <> (SELECT COUNT(*) FROM ORDERS WHERE O_W_ID = D_W_ID AND O_D_ID = D_ID)",
+    ),
+    (
+        "D_NEXT_O_ID - 1 is the greatest NO_O_ID",
+        "SELECT COUNT(*) FROM DISTRICT WHERE D_NEXT_O_ID - 1 <> (SELECT MAX(NO_O_ID) FROM NEW_ORDER WHERE NO_W_ID = D_W_ID AND NO_D_ID = D_ID)",
+    ),
+    (
+        "the new orders are numbered with no gap",
+        "SELECT COUNT(*) FROM DISTRICT WHERE 0 <> (SELECT MAX(NO_O_ID) - MIN(NO_O_ID) + 1 - COUNT(*) FROM NEW_ORDER WHERE NO_W_ID = D_W_ID AND NO_D_ID = D_ID)",
+    ),
+    (
+        "the order lines are as many as O_OL_CNT adds to",
+        "SELECT COUNT(*) FROM DISTRICT WHERE (SELECT SUM(O_OL_CNT) FROM ORDERS WHERE O_W_ID = D_W_ID AND O_D_ID = D_ID) \
+         <> (SELECT COUNT(*) FROM ORDER_LINE WHERE OL_W_ID = D_W_ID AND OL_D_ID = D_ID)",
+    ),
+];
+
+/// Each of the TPROC-C consistency conditions checked, and what broke.
 fn consistency(client: &mut impl crate::client::Client) {
-    let mut query = |sql: &str| -> Vec<Vec<f64>> {
-        client.direct(sql, true).unwrap().into_iter().map(|r| r.iter().map(|v| v.as_f64().unwrap_or(f64::NAN)).collect()).collect()
-    };
     let mut failed = Vec::new();
-    let w = query("SELECT W_YTD FROM WAREHOUSE");
-    let d = query("SELECT SUM(D_YTD) FROM DISTRICT");
-    if (w[0][0] - d[0][0]).abs() > 0.001 {
-        failed.push(format!("W_YTD {} <> SUM(D_YTD) {}", w[0][0], d[0][0]));
-    }
-    let next = query("SELECT D_ID, D_NEXT_O_ID FROM DISTRICT ORDER BY D_ID");
-    let orders = query("SELECT O_D_ID, MAX(O_ID), COUNT(*), SUM(O_OL_CNT) FROM ORDERS GROUP BY O_D_ID ORDER BY O_D_ID");
-    let new = query("SELECT NO_D_ID, MAX(NO_O_ID), MIN(NO_O_ID), COUNT(*) FROM NEW_ORDER GROUP BY NO_D_ID ORDER BY NO_D_ID");
-    let lines = query("SELECT OL_D_ID, COUNT(*) FROM ORDER_LINE GROUP BY OL_D_ID ORDER BY OL_D_ID");
-    let (mut order_count, mut line_count) = (0.0_f64, 0.0_f64);
-    for (i, n) in next.iter().enumerate() {
-        let (o, l) = (&orders[i], &lines[i]);
-        order_count += o[2];
-        line_count += l[1];
-        if n[1] - 1.0_f64 != o[1] {
-            failed.push(format!("district {}: D_NEXT_O_ID - 1 {} <> MAX(O_ID) {}", n[0], n[1] - 1.0_f64, o[1]));
-        }
-        if o[2] != o[1] {
-            failed.push(format!("district {}: COUNT(ORDERS) {} <> MAX(O_ID) {}", n[0], o[2], o[1]));
-        }
-        if o[3] != l[1] {
-            failed.push(format!("district {}: SUM(O_OL_CNT) {} <> COUNT(ORDER_LINE) {}", n[0], o[3], l[1]));
-        }
-        match new.iter().find(|r| r[0] == n[0]) {
-            Some(r) => {
-                if r[1] != n[1] - 1.0_f64 {
-                    failed.push(format!("district {}: MAX(NO_O_ID) {} <> D_NEXT_O_ID - 1 {}", n[0], r[1], n[1] - 1.0_f64));
-                }
-                if r[1] - r[2] + 1.0_f64 != r[3] {
-                    failed.push(format!("district {}: NEW_ORDER numbers {}..{} <> COUNT {}", n[0], r[2], r[1], r[3]));
-                }
-            }
-            None => failed.push(format!("district {}: no NEW_ORDER rows", n[0])),
+    for (condition, sql) in CONSISTENCY {
+        let rows = client.direct(sql, true).unwrap();
+        let broken = rows.first().and_then(|r| r.first()).map_or_else(String::new, |v| v.to_string().trim().to_owned());
+        if broken != "0" {
+            failed.push(format!("{condition}: {broken} broke it"));
         }
     }
-    let total: f64 = next.iter().map(|n| n[1] - 1.0_f64).sum();
     if failed.is_empty() {
-        note(&format!(
-            "consistency: all hold (W_YTD {:.2}, {} orders, {} order lines, {} new orders)",
-            w[0][0],
-            order_count,
-            line_count,
-            new.iter().map(|r| r[3]).sum::<f64>()
-        ));
+        note("consistency: all hold");
     } else {
-        note(&format!("consistency: {} FAILED of {total} orders: {}", failed.len(), failed.join("; ")));
+        note(&format!("consistency: FAILED: {}", failed.join("; ")));
     }
 }

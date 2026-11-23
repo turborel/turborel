@@ -109,7 +109,6 @@ mod maintenance;
 mod merge;
 mod modules;
 mod nested;
-pub mod native;
 mod observed;
 pub(crate) mod partitions;
 mod position;

@@ -14,10 +14,10 @@ use crate::value::Value;
 
 /// The statement's subqueries, `inner`, with the frame's values `frame`
 /// and the leaf's outer values `outer`.
-pub(super) struct Framed<'a> {
-    pub(super) inner: &'a dyn Subqueries,
-    pub(super) frame: &'a [Value],
-    pub(super) outer: &'a [Value],
+pub(crate) struct Framed<'a> {
+    pub(crate) inner: &'a dyn Subqueries,
+    pub(crate) frame: &'a [Value],
+    pub(crate) outer: &'a [Value],
 }
 
 impl Subqueries for Framed<'_> {

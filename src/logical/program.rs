@@ -397,6 +397,12 @@ impl Contained {
     pub(crate) fn statement(&self) -> &SqlStatement {
         self.syntax.statement()
     }
+
+    /// Where its statement is held: the same for each copy of it, so a
+    /// compiled program's copy finds the plans the program keeps of it.
+    pub(crate) fn address(&self) -> usize {
+        Arc::as_ptr(&self.syntax).cast::<u8>().addr()
+    }
 }
 
 impl Step {

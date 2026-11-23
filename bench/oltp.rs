@@ -54,8 +54,6 @@ mod sysbench_run;
 mod tpcc;
 #[path = "oltp/tpcc_load.rs"]
 mod tpcc_load;
-#[path = "oltp/tpcc_native.rs"]
-mod tpcc_native;
 #[path = "oltp/tpcc_procs.rs"]
 mod tpcc_procs;
 #[path = "oltp/tpcc_procs_new.rs"]

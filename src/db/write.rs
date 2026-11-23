@@ -218,14 +218,29 @@ impl Session {
         params: &Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<usize> {
-        let StatementContext { st, tx } = cx;
-        let (target, query, clocked) = self.insert_bound(st, stmt, params, keeping)?;
+        let (target, query, clocked) = self.insert_bound(cx.st, stmt, params, keeping)?;
         let slots = keeping.and_then(|k| Some(k.slots_of(params.dynamic_slots()?, clocked)));
+        let kept = keeping.filter(|_| !clocked).map(|k| (k, params));
+        self.insert_rows(cx, (stmt, &target), (query, slots, kept), params)
+    }
+
+    /// The rows of `stmt`, an INSERT into `target` of the rows of `query`,
+    /// if it has one, inserted, their slots' values `slots`, as
+    /// `insert_statement` inserts them: so too of a compiled program's
+    /// INSERT, its target and query kept (RULES.md D839).
+    pub(super) fn insert_rows(
+        &self,
+        cx: StatementContext<'_>,
+        (stmt, target): (&InsertStatement, &Target),
+        (query, slots, kept): (Option<LogicalPlan>, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
+        params: &Params,
+    ) -> Result<usize> {
+        let StatementContext { st, tx } = cx;
         let rows = if let Some(given) = params.given() {
             // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
-            given::given_rows(st, (stmt, &target), given, &Runner::new(st, tx.id))?
+            given::given_rows(st, (stmt, target), given, &Runner::new(st, tx.id))?
         } else if let Some(logical) = query {
-            query_rows((self, cx), &target, (logical, slots, keeping.filter(|_| !clocked).map(|k| (k, params))))?
+            query_rows((self, cx), target, (logical, slots, kept))?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default, or its generated value.

@@ -31,6 +31,9 @@ pub const EXECUTOR_DENSE_JOINS: Key = Key(92);
 /// EXECUTOR.POINT_OPERATIONS (RULES.md D752), at its key's place after
 /// the escrow of TRANSACTION.ESCROW.
 pub const EXECUTOR_POINT_OPERATIONS: Key = Key(94);
+/// EXECUTOR.COMPILED_PROCEDURES (RULES.md D839), at its key's place after
+/// the planner's predicate transfer.
+pub const COMPILED_PROCEDURES: Key = Key(96);
 
 /// The most bytes of EXECUTOR.KERNELS: a kernels set's name.
 const KERNELS_NAME_MAX: usize = 64;
@@ -113,5 +116,14 @@ pub(super) fn point_operations() -> Definition {
         ("EXECUTOR.POINT_OPERATIONS", Kind::Choice(SWITCHES), text(ON)),
         SESSION,
         "Whether a kept query, UPDATE or DELETE whose plan is one probe of a whole unique key reads its row straight from the table: ON; or through the executor's operators, OFF, as to compare the two. Its rows, errors and diagnostics are the same either way.",
+    )
+}
+
+/// EXECUTOR.COMPILED_PROCEDURES (RULES.md D839).
+pub(super) fn compiled_procedures() -> Definition {
+    defined(
+        ("EXECUTOR.COMPILED_PROCEDURES", Kind::Choice(SWITCHES), text(ON)),
+        SESSION,
+        "Whether the body of an SQL-invoked procedure a CALL invokes runs as the program it is compiled to as it is first called, its point reads and point changes straight on their tables: ON; or statement by statement through the general path, OFF, as to compare the two. Its results, errors, warnings and diagnostics are the same either way.",
     )
 }

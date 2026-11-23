@@ -54,6 +54,23 @@ struct Gathered {
 }
 
 impl Collector {
+    /// \[DESIGN\] Of a delta table of result `result` of a statement that
+    /// changes the base table `base` itself, as `run_delta_table` gathers
+    /// one for it: the collector of a compiled program's change (RULES.md
+    /// D839).
+    pub(super) fn of_base(st: &State, base: &QualifiedName, result: DeltaResult) -> Collector {
+        let width = st.catalog.table(base).map_or(0, |t| t.columns.len());
+        let members = delta_members(st, base);
+        let rows = Mutex::new(HeldRows::new(st.list_space()));
+        let gathered = Gathered { table: base.clone(), members, map: (0..width).collect(), result, rows, claimed: AtomicBool::new(false) };
+        Collector(Arc::new(gathered))
+    }
+
+    /// The rows it gathered, taken.
+    pub(super) fn taken(&self, st: &State) -> HeldRows<Row> {
+        std::mem::replace(&mut *lock_builtin(&self.0.rows), HeldRows::new(st.list_space()))
+    }
+
     /// Claims it for the effects of a statement: false if one did.
     pub(super) fn claim(&self) -> bool {
         !self.0.claimed.swap(true, Ordering::SeqCst)
@@ -258,6 +275,12 @@ impl Session {
         let rule = "ISO/IEC 9075-2:2023 §7.6 SR11";
         let target = self.bound(st, params, |b| write_target(b.db, name, (rule, b.user), None))?;
         Ok((target.base.name.clone(), target.map, Some(target.named.columns)))
+    }
+
+    /// `collector` the collector of the statement run next, the one before
+    /// given back.
+    pub(super) fn delta_replaced(&self, collector: Option<Collector>) -> Option<Collector> {
+        std::mem::replace(&mut self.inner.borrow_mut().delta, collector)
     }
 
     /// The collector of the statement whose effects are made now, if one

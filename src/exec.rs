@@ -32,7 +32,6 @@ mod json_table;
 mod limit;
 mod merged;
 mod nearest;
-pub(crate) mod native;
 mod parallel;
 mod partition;
 mod pattern;
@@ -82,7 +81,9 @@ pub use transition::TransitionRows;
 pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIter {
     sort::sort(keys, rows, db, tx)
 }
-pub(crate) use program::{Ended, Host, rows, run_program};
+pub(crate) use program::{
+    Ended, Framed, Host, appropriate_among, assign_target, completed, completion, item_text, raised, rows, run_program, unhandled,
+};
 pub(crate) use subquery::slot_type;
 pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, KeptSubqueries, NoSubqueries, Runner, Subqueries, SubqueryRows};
 

@@ -19,10 +19,11 @@
 mod leaves;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::super::prepared::{DeltaQuery, Key, Plans};
 use super::super::{Session, State};
+use super::program::Compiled;
 use crate::ast::{RoutineDefinition, SqlStatement};
 use crate::binder::{definition_of, sql_statement};
 use crate::catalog::{QualifiedName, SqlRoutineDesc};
@@ -30,7 +31,7 @@ use crate::error::Result;
 use crate::logical::{Contained, Cursor, Program};
 use crate::sync::lock;
 use leaves::KeptLeaves;
-pub(in crate::db) use leaves::KeptRuns;
+pub(in crate::db) use leaves::{KeptRuns, point_of};
 
 /// The procedures a session keeps the bodies of, by specific name.
 #[derive(Debug, Default)]
@@ -62,6 +63,9 @@ pub(in crate::db) struct KeptProgram {
     /// in the order of the addresses: a statement run is found by its
     /// address, not by walking the program each time.
     places: Arc<[(usize, usize)]>,
+    /// Its body compiled as it is first run so (RULES.md D839); none if
+    /// it is not compiled.
+    compiled: Arc<OnceLock<Option<Compiled>>>,
 }
 
 impl KeptProgram {
@@ -72,10 +76,15 @@ impl KeptProgram {
         let cursors = program.cursors.iter().map(|_| Plans::default()).collect();
         let program = Arc::new(program);
         // The program's statements stay where they are while it is shared.
-        let mut places: Vec<(usize, usize)> =
-            program.contained().iter().enumerate().map(|(at, c)| (std::ptr::from_ref(*c).addr(), at)).collect();
+        let mut places: Vec<(usize, usize)> = program.contained().iter().enumerate().map(|(at, c)| (c.address(), at)).collect();
         places.sort_unstable();
-        KeptProgram { program, plans, queries, cursors, leaves: Arc::default(), places: places.into() }
+        KeptProgram { program, plans, queries, cursors, leaves: Arc::default(), places: places.into(), compiled: Arc::default() }
+    }
+
+    /// Its body compiled, compiled the first time it is asked for; none if
+    /// it is not compiled (RULES.md D839).
+    pub(in crate::db) fn compiled(&self) -> Option<&Compiled> {
+        self.compiled.get_or_init(|| Compiled::of(&self.program)).as_ref()
     }
 
     /// The plans the local cursor `c` of its program keeps, if it is one of
@@ -89,7 +98,7 @@ impl KeptProgram {
     /// its own, and those its query over a delta table keeps, if it has
     /// one (RULES.md D793).
     pub(in crate::db) fn plans_of(&self, c: &Contained) -> Option<(&Plans, &DeltaQuery)> {
-        let address = std::ptr::from_ref(c).addr();
+        let address = c.address();
         let found = self.places.binary_search_by_key(&address, |&(a, _)| a).ok()?;
         let &(_, at) = self.places.get(found)?;
         self.plans.get(at).zip(self.queries.get(at))

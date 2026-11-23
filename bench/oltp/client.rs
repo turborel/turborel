@@ -36,12 +36,6 @@ pub trait Client {
 
     /// Rolls the transaction back.
     fn rollback(&mut self) -> Result<(), Failed>;
-
-    /// The session in this process, if it is one: the `native` procedure
-    /// set runs on it.
-    fn session(&self) -> Option<&Session> {
-        None
-    }
 }
 
 /// Makes a terminal's client, on the thread that uses it.
@@ -120,10 +114,6 @@ impl Client for Embedded {
 
     fn rollback(&mut self) -> Result<(), Failed> {
         Ok(self.0.rollback()?)
-    }
-
-    fn session(&self) -> Option<&Session> {
-        Some(&self.0)
     }
 }
 

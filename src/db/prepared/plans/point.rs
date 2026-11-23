@@ -55,3 +55,31 @@ pub(in crate::db) fn written(
     let (opened, _) = plan.opened(Some(Arc::clone(&slots)), crate::optimizer::prepared::budget(st))?;
     Written::slotted(w, Some((opened, reads)), slots)
 }
+
+impl super::Keeping<'_> {
+    /// \[DESIGN\] Of a kept UPDATE or DELETE, its bound write, if it is
+    /// kept with what holds now: what a compiled program's change looks at
+    /// to learn whether it may run straight on its table (RULES.md D839).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a lock is poisoned.
+    pub(in crate::db) fn kept_write(&self) -> Result<Option<Arc<BoundWrite>>> {
+        self.kept(|k| if let Some(super::KeptPlan::Write(w)) = &k.plan { Some(Arc::clone(w)) } else { None })
+    }
+
+    /// \[DESIGN\] A kept UPDATE or DELETE run with the values `slots`, as
+    /// `write_bound` runs it once it is kept, past its binding: its object
+    /// rows by its plan kept, learned or planned with the values as that
+    /// plan stands (RULES.md D839); none if it is not kept.
+    ///
+    /// # Errors
+    ///
+    /// As `write_bound`.
+    pub(in crate::db) fn written_kept(&self, slots: Slots) -> Result<Option<Written>> {
+        let found =
+            |kept: &super::Kept| if let Some(super::KeptPlan::Write(w)) = &kept.plan { Some((Arc::clone(w), kept.clocked)) } else { None };
+        let Some((w, clocked)) = self.kept(found)? else { return Ok(None) };
+        self.written(w, self.slots_of(slots, clocked)).map(Some)
+    }
+}
