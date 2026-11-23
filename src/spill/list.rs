@@ -60,9 +60,29 @@ impl<T> Segment<T> {
     }
 }
 
+/// Where a list spills: a space of its own, or one shared, as by the
+/// transactions of one session (`txn/begin.rs`, RULES.md D844), so making
+/// the list refers to no object every session shares.
+#[derive(Clone)]
+enum Space {
+    Own(ListSpace),
+    Shared(Arc<ListSpace>),
+}
+
+impl std::ops::Deref for Space {
+    type Target = ListSpace;
+
+    fn deref(&self) -> &ListSpace {
+        match self {
+            Space::Own(space) => space,
+            Space::Shared(space) => space,
+        }
+    }
+}
+
 /// \[DESIGN\] The list.
 pub struct SpillList<T> {
-    space: ListSpace,
+    space: Space,
     /// Its area, made when it first spills.
     area: Option<Box<dyn SpillArea>>,
     segments: Vec<Segment<T>>,
@@ -91,7 +111,21 @@ pub type Decode<'a, T> = &'a (dyn Fn(&[u8]) -> Result<T> + Sync);
 impl<T: ListItem> SpillList<T> {
     /// An empty list, spilling in `space`.
     pub fn new(space: ListSpace) -> SpillList<T> {
+        SpillList::in_space(Space::Own(space))
+    }
+
+    /// An empty list, spilling in `space`, shared.
+    pub fn sharing(space: Arc<ListSpace>) -> SpillList<T> {
+        SpillList::in_space(Space::Shared(space))
+    }
+
+    fn in_space(space: Space) -> SpillList<T> {
         SpillList { space, area: None, segments: Vec::new(), held: 0, count: 0 }
+    }
+
+    /// Where it spills.
+    pub fn space(&self) -> &ListSpace {
+        &self.space
     }
 
     /// How many items it has: the place of the next.
@@ -235,7 +269,7 @@ impl<T: ListItem> SpillList<T> {
             Some(Segment::Held(..)) | None => None,
         };
         let mut later = self.segments.split_off(first).into_iter();
-        let mut tail = SpillList::new(self.space.clone());
+        let mut tail = SpillList::in_space(self.space.clone());
         if let Some(cut) = later.next() {
             let mut head = match (cut, read) {
                 (Segment::Held(items, _), _) | (Segment::Spilled(..), Some(items)) => items,

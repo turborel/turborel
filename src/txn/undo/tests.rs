@@ -75,7 +75,7 @@ impl Index for Recorder {
 /// A log holding `limit` bytes of entries, spilling to areas of `spill`,
 /// of a budget of `budget` bytes.
 fn log(spill: Option<Arc<dyn Spill>>, (limit, budget): (usize, usize)) -> UndoLog {
-    UndoLog::new(UndoSpace { limit, batch: 4096, areas: Some(areas(spill, budget)), types: TypeRegistry::default() })
+    UndoLog::new(Arc::new(UndoSpace { limit, batch: 4096, areas: Some(areas(spill, budget)), types: TypeRegistry::default() }))
 }
 
 /// One entry of each kind, of `table` and `index`.

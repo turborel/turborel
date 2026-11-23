@@ -210,6 +210,20 @@ pub(in crate::engine::tree) fn overwrite(content: &mut [u8], at: usize, value: &
     set_u16(content, GARBAGE_AT, garbage)
 }
 
+/// The value of entry `at`, to change in place, keeping its length.
+///
+/// # Errors
+///
+/// SQLCODE -916 if it is not a node or has no entry `at`.
+pub(in crate::engine::tree) fn value_mut(content: &mut [u8], at: usize) -> Result<&mut [u8]> {
+    let (start, len) = {
+        let node = Node::parse(content)?;
+        (node.value_at(at)?, node.value(at)?.len())
+    };
+    let end = start.checked_add(len).ok_or_else(|| corrupt("a field runs past its end"))?;
+    content.get_mut(start..end).ok_or_else(|| corrupt("a field runs past its end"))
+}
+
 /// The bytes the node `node` grows by, besides the entry, as `key` is
 /// inserted: its keys' tails longer by what its prefix loses, if `key`
 /// does not begin with it.

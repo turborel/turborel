@@ -5,7 +5,10 @@
 //! touching the tree. The versions still name the transaction; each is
 //! stamped with the timestamp once the transaction's locks are released
 //! (`TableStorage::settle`), or by a later collection if that fails, and a
-//! writer that replaces one first appends it stamped. See `mvcc.rs`.
+//! writer that replaces one first appends it stamped. A stamp starts at
+//! the leaf the row's write left its entry in, with no descent, while that
+//! leaf is sure to be in the tree, and changes the entry in place
+//! (RULES.md D843). See `mvcc.rs`.
 
 use std::mem;
 use std::sync::atomic::Ordering;
@@ -13,7 +16,9 @@ use std::sync::atomic::Ordering;
 use super::lists::decode_change;
 use super::{Change, Dead, Maker, Version};
 use crate::bytes::{Put, Reader};
+use crate::engine::rows::version::stamp_in_place;
 use crate::engine::rows::{RowTable, key};
+use crate::engine::tree::Placed;
 use crate::error::Result;
 use crate::hash::xxhash::Xxh3Set;
 use crate::spill::{ListItem, SpillList};
@@ -26,26 +31,32 @@ use crate::txn::{Timestamp, TxId};
 /// is not needed or finds the entry again.
 const STAMP_TRIES: usize = 8;
 
-/// A row whose newest version a commit is to stamp.
-pub(super) struct Stamp(RowId);
+/// A row whose newest version a commit is to stamp, and where its write
+/// left its entry.
+pub(super) struct Stamp(RowId, Placed);
 
 impl ListItem for Stamp {
     fn bytes(&self) -> usize {
-        size_of::<RowId>()
+        size_of::<Stamp>()
     }
 }
 
+/// A stamp as a record: the row id, the leaf and the tree's stamp, each
+/// a u64.
 fn encode_stamp(stamp: &Stamp) -> Vec<u8> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(24);
     out.put_u64(stamp.0);
+    out.put_u64(stamp.1.leaf);
+    out.put_u64(stamp.1.stamp);
     out
 }
 
 fn decode_stamp(record: &[u8]) -> Result<Stamp> {
     let mut r = Reader::new(record, "row to stamp");
     let id = r.u64()?;
+    let placed = Placed { leaf: r.u64()?, stamp: r.u64()? };
     r.finish()?;
-    Ok(Stamp(id))
+    Ok(Stamp(id, placed))
 }
 
 /// A commit whose versions in a table are not all stamped: its
@@ -86,7 +97,7 @@ impl RowTable {
                 // A row's first change by it replaced a committed version or
                 // none; its later ones replaced its own.
                 if !change.made && change.before.is_none() {
-                    lost |= stamps.push(Stamp(change.id), &mut encode_stamp).is_err();
+                    lost |= stamps.push(Stamp(change.id, change.placed), &mut encode_stamp).is_err();
                 }
                 self.committed(change, &adopted, &mut dead);
             }
@@ -175,11 +186,11 @@ impl RowTable {
                 lost = true;
                 continue;
             };
-            for Stamp(id) in segment {
-                match self.stamp(tx, id, at) {
+            for Stamp(id, placed) in segment {
+                match self.stamp_placed(tx, (id, placed), at) {
                     Ok(true) => dead.push(Dead::Deletion(id)),
                     Ok(false) => {}
-                    Err(_) => lost |= left.push(Stamp(id), &mut encode_stamp).is_err(),
+                    Err(_) => lost |= left.push(Stamp(id, Placed::default()), &mut encode_stamp).is_err(),
                 }
             }
         }
@@ -191,6 +202,17 @@ impl RowTable {
             return;
         }
         self.versions.statuses.stamped(tx, at);
+    }
+
+    /// As `stamp`, starting at the leaf `placed` names: in place, with no
+    /// descent, unless the leaf may have left the tree or no longer holds
+    /// the row (RULES.md D843).
+    fn stamp_placed(&self, tx: TxId, (id, placed): (RowId, Placed), at: Timestamp) -> Result<bool> {
+        let k = key(id);
+        match self.tree.change_placed(placed, &k, |bytes| stamp_in_place(bytes, tx, at))? {
+            Some(stamped) => Ok(stamped.unwrap_or(false)),
+            None => self.stamp(tx, id, at),
+        }
     }
 
     /// Stamps the newest version of row `id`, made by `tx`, committed at

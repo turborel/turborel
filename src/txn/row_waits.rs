@@ -173,8 +173,8 @@ impl Turn {
     /// wake and find that itself.
     pub(crate) fn hand_over(turn: Option<&Turn>, tx: &Txn, (table, id): (&QualifiedName, RowId)) {
         let Some(turn) = turn else { return };
-        let Some(next) = tx.shared.ends.of(tx.id) else { return };
-        let Ok(mut waits_for) = lock(&tx.shared.waits_for) else { return };
+        let Some(next) = tx.origin.shared.ends.of(tx.id) else { return };
+        let Ok(mut waits_for) = lock(&tx.origin.shared.waits_for) else { return };
         let mut from = lock_builtin(&turn.ending.queue);
         let mut to = lock_builtin(&next.queue);
         if to.ended {
@@ -198,7 +198,7 @@ impl Turn {
         }
         // [DESIGN] RULES.md D456: the row's claim, to the first moved.
         let claim = to.first_for(&(table.clone(), id)).map(|first| Claim { owner: tx.id, line: Arc::clone(&next), first });
-        tx.shared.ends.claims.set((table, id), claim);
+        tx.origin.shared.ends.claims.set((table, id), claim);
     }
 }
 
@@ -259,7 +259,7 @@ impl Txn {
     /// SQLCODE -911 if locking is no-wait, waiting would deadlock, or lasts
     /// past `LOCKS.TIMEOUT_MS`; SQLCODE -920 if its statement is cancelled.
     pub(crate) fn wait_for_row(&self, row: (&QualifiedName, RowId), writer: TxId) -> Result<Option<Turn>> {
-        let Some(ending) = self.shared.ends.of(writer) else { return Ok(None) };
+        let Some(ending) = self.origin.shared.ends.of(writer) else { return Ok(None) };
         self.wait_in_line(row, (ending, writer)).map(Some)
     }
 
@@ -267,7 +267,7 @@ impl Txn {
     /// another transaction's line, which this one queues behind before it
     /// writes the row, if there is one.
     pub(crate) fn claim_of(&self, row: (&QualifiedName, RowId)) -> Option<Claim> {
-        let ends = &self.shared.ends;
+        let ends = &self.origin.shared.ends;
         ends.claims.of(row, self.id, |tx| ends.of(tx).is_some())
     }
 
@@ -298,7 +298,7 @@ impl Txn {
         // (`Transactions::waiting`) already holds its place in line.
         let ticket = lock_builtin(&ending.queue).ticket();
         {
-            let mut waits_for = lock(&self.shared.waits_for).inspect_err(|_| ending.leave(ticket))?;
+            let mut waits_for = lock(&self.origin.shared.waits_for).inspect_err(|_| ending.leave(ticket))?;
             if super::locks::would_deadlock(&waits_for, self.id, &[writer]) {
                 drop(waits_for);
                 ending.leave(ticket);
@@ -309,7 +309,7 @@ impl Txn {
             waits_for.insert(self.id, vec![writer]);
         }
         let claim = Claim { owner: writer, line: Arc::clone(&ending), first: self.id };
-        self.shared.ends.claims.claim((table, id), claim);
+        self.origin.shared.ends.claims.claim((table, id), claim);
         let began = Instant::now();
         // [DESIGN] RULES.md D520: shown waiting, and for whom.
         self.stop.activity().waits_for_lock(format!("a row of {table}"), writer);
@@ -321,7 +321,7 @@ impl Txn {
         });
         let waited = self.queue_on(&seat, began).map_err(|e| if e.code == Code::Conflict { refused(e.msg.clone()) } else { e });
         self.stop.activity().woke();
-        lock(&self.shared.waits_for)?.remove(&self.id);
+        lock(&self.origin.shared.waits_for)?.remove(&self.id);
         // [DESIGN] RULES.md D240: the time waited, for the client.
         self.stop.served().waited(began.elapsed());
         waited
@@ -346,7 +346,7 @@ impl Txn {
             }
             if let Some(e) = self.stopped_waiting(began) {
                 drop(place);
-                seat.leave(&self.shared.ends.claims);
+                seat.leave(&self.origin.shared.ends.claims);
                 return Err(e);
             }
             place = seat.signal.wait_timeout(place, super::locks::STOP_POLL).unwrap_or_else(PoisonError::into_inner).0;
@@ -355,7 +355,7 @@ impl Txn {
 
     /// The turn of `seat` in `ending`'s line.
     fn turn(&self, ending: &Arc<Ending>, seat: &Arc<Seat>) -> Turn {
-        Turn { ending: Arc::clone(ending), seat: Arc::clone(seat), claims: Arc::clone(&self.shared.ends.claims) }
+        Turn { ending: Arc::clone(ending), seat: Arc::clone(seat), claims: Arc::clone(&self.origin.shared.ends.claims) }
     }
 
     /// Why a row wait begun at `began` stops before its turn: a cancel,

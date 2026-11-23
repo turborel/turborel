@@ -75,7 +75,7 @@ impl Txn {
     /// It read a version committed at `at` past its snapshot: nothing it
     /// tells its session goes out before that commit is durable.
     pub(crate) fn depend(&self, at: Timestamp) {
-        if at > self.shared.clock.durable() {
+        if at > self.origin.shared.clock.durable() {
             self.depends.fetch_max(at, Ordering::SeqCst);
         }
     }
@@ -94,7 +94,7 @@ impl Txn {
         }
         // [DESIGN] RULES.md D520: shown waiting for I/O meanwhile.
         self.stop.activity().waits_for_io();
-        let durable = self.shared.wait_durable(at);
+        let durable = self.origin.shared.wait_durable(at);
         self.stop.activity().woke();
         durable.and(result)
     }

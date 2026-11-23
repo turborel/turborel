@@ -102,6 +102,28 @@ impl<'a> Version<'a> {
     }
 }
 
+/// Stamps the version `bytes` hold, in place, committed at `at`, if `tx`
+/// made it and it is open: whether it did, and whether it is a deletion.
+/// Only the flags and the stamp change, so its length is kept (RULES.md
+/// D843).
+///
+/// # Errors
+///
+/// SQLCODE -916 if they are not a version.
+pub(super) fn stamp_in_place(bytes: &mut [u8], tx: TxId, at: Timestamp) -> Result<Option<bool>> {
+    let version = Version::parse(bytes)?;
+    if version.maker != Maker::Open(tx) {
+        return Ok(None);
+    }
+    let deleted = version.deleted;
+    let stamp = bytes.get_mut(STAMP_AT..OLDER_AT).ok_or_else(|| corrupt("it is too short"))?;
+    stamp.copy_from_slice(&at.to_le_bytes());
+    if let Some(flags) = bytes.first_mut() {
+        *flags |= COMMITTED;
+    }
+    Ok(Some(deleted))
+}
+
 // Unit tests: versions read back as written, and malformed ones are refused
 // (RULES.md R-TEST-1, R-TEST-2).
 #[cfg(test)]
@@ -125,6 +147,20 @@ mod tests {
         assert_eq!((open_back.maker, open_back.older, open_back.record), (Maker::Open(9), Some(Lsn(42)), &b"new"[..]));
         let deletion = Version { maker: Maker::Committed(3), deleted: true, older: Some(Lsn(1)), record: b"" };
         assert!(Version::parse(&deletion.encode()).unwrap().deleted);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D843: a stamp in place gives the bytes
+    /// the committed version would encode as, and leaves a version another
+    /// made, or one committed, as it was.
+    #[test]
+    fn a_stamp_in_place_encodes_the_committed_version() {
+        let open = Version { maker: Maker::Open(9), deleted: true, older: Some(Lsn(4)), record: b"" };
+        let mut bytes = open.encode();
+        assert_eq!(stamp_in_place(&mut bytes, 8, 30).unwrap(), None);
+        assert_eq!(bytes, open.encode());
+        assert_eq!(stamp_in_place(&mut bytes, 9, 30).unwrap(), Some(true));
+        assert_eq!(bytes, Version { maker: Maker::Committed(30), ..open }.encode());
+        assert_eq!(stamp_in_place(&mut bytes, 9, 31).unwrap(), None);
     }
 
     /// Verifies: [DESIGN] RULES.md D29, D31, row versions: bytes that are not

@@ -279,7 +279,7 @@ impl TableStorage for Rows_ {
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
         self.write(tx)?.delete(tx, id)
     }
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<&Row>, seen: Timestamp) -> Result<()> {
         self.write(tx)?.write_newest(tx, id, row, seen)
     }
     fn restore(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {

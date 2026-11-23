@@ -198,14 +198,14 @@ impl TableStorage for RowTable {
     }
 
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.write_over(tx, id, Some(row), Past::Snapshot).map(drop)
+        self.write_over(tx, id, Some(&row), Past::Snapshot).map(drop)
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
         self.write_over(tx, id, None, Past::Snapshot).map(drop)
     }
 
-    fn replace(&self, tx: TxId, id: RowId, row: Option<Row>) -> Result<Row> {
+    fn replace(&self, tx: TxId, id: RowId, row: Option<&Row>) -> Result<Row> {
         if tx == NO_TRANSACTION {
             let old = self.get(tx, id)?.map_or_else(|| no_row(id), Ok)?;
             return self.write_over(tx, id, row, Past::Snapshot).map(|_| old);
@@ -213,7 +213,7 @@ impl TableStorage for RowTable {
         self.write_over(tx, id, row, Past::Snapshot)?.map_or_else(|| no_row(id), Ok)
     }
 
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, seen: Timestamp) -> Result<()> {
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<&Row>, seen: Timestamp) -> Result<()> {
         self.write_over(tx, id, row, Past::Stamp(seen)).map(drop)
     }
 

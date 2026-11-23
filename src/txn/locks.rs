@@ -527,7 +527,7 @@ fn wait_on<'l>(
             break Err(refused(&format!("{what} is locked by a transaction running on this thread, which could never release it")));
         }
         let ids: Vec<TxId> = conflicting.iter().map(|h| h.tx).collect();
-        let mut waits_for = lock(&tx.shared.waits_for)?;
+        let mut waits_for = lock(&tx.origin.shared.waits_for)?;
         if would_deadlock(&waits_for, tx.id, &ids) {
             break Err(refused(&format!(
                 "waiting for {what} would deadlock with another transaction (roll back to release this transaction's locks)"
@@ -549,7 +549,7 @@ fn wait_on<'l>(
     };
     if waited {
         tx.stop.activity().woke();
-        lock(&tx.shared.waits_for)?.remove(&tx.id);
+        lock(&tx.origin.shared.waits_for)?.remove(&tx.id);
         // [DESIGN] RULES.md D240: the time waited, for the client.
         tx.stop.served().waited(began.elapsed());
     }
