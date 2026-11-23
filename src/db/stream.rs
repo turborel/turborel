@@ -21,6 +21,7 @@
 use std::sync::{Arc, Mutex};
 
 mod chunks;
+mod ranged;
 
 use super::prepared::Run;
 use super::{Completion, Database, State};
@@ -93,6 +94,9 @@ impl Stream {
                     let row = point.read(st, tx.id, slots.as_deref().unwrap_or_default()).transpose();
                     let rest: RowIter = Box::new(row.into_iter());
                     return Ok(Stream { ready: None, failure: None, rest: Some(rest), reads, space: st.list_space() });
+                }
+                if let Some(read) = ranged::read(st, tx, &kept, (&reads, slots.as_ref()))? {
+                    return Ok(Stream { ready: Some(read), failure: None, rest: None, reads, space: st.list_space() });
                 }
                 let (physical, slots) = kept.opened(slots, crate::optimizer::prepared::budget(st))?;
                 (physical, slots, Some(Arc::clone(kept.subqueries())))

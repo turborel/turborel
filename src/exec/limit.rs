@@ -86,7 +86,7 @@ fn kept(
 }
 
 /// What a count must be, and what it raises if it is not.
-struct Rule {
+pub(super) struct Rule {
     /// The least it may be.
     least: i128,
     /// The exception it raises below that, or null.
@@ -97,13 +97,13 @@ struct Rule {
 
 impl Rule {
     /// [GR6b] An `<offset row count>`.
-    const OFFSET: Rule = Rule {
+    pub(super) const OFFSET: Rule = Rule {
         least: 0,
         state: SqlState::INVALID_ROW_COUNT_IN_RESULT_OFFSET,
         what: "[ISO/IEC 9075-2:2023 §7.17 GR6b] the offset row count",
     };
     /// [GR7c] A `<fetch first row count>`.
-    const FETCH: Rule = Rule {
+    pub(super) const FETCH: Rule = Rule {
         least: 1,
         state: SqlState::INVALID_ROW_COUNT_IN_FETCH_FIRST,
         what: "[ISO/IEC 9075-2:2023 §7.17 GR7c] the fetch first row count",
@@ -112,7 +112,7 @@ impl Rule {
 
 /// The count `e`, evaluated with `subqueries`, as `rule` says it must be: a
 /// number of rows, past `usize::MAX` that.
-fn count(e: &Expr, subqueries: &dyn Subqueries, rule: &Rule) -> Result<usize> {
+pub(super) fn count(e: &Expr, subqueries: &dyn Subqueries, rule: &Rule) -> Result<usize> {
     let v = eval(e, &Vec::new(), subqueries)?;
     if v.is_null() {
         return fail_with(Code::Data, rule.state, format!("{} is null, not a number of rows", rule.what));

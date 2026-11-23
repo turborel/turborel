@@ -603,6 +603,10 @@ verification approach DO-178C expects (§8).
 | D924 | A commit's rows that one leaf holds are stamped with the leaf latched once |
 | D925 | A batch due is collected by the maintenance job's pass, and by a commit only once it is long due |
 | D926 | A database following takes back the entries its image's checkpoint saw awaiting collection as it replays them, and notes what a replay leaves |
+| D930 | A kept plan of one index range is run where it is kept, its rows handed up through its filters, projections, sort, limit and set functions with no operator built |
+| D931 | A cursor of a kept plan that is a direct range read holds its rows as it opens, a range that gives rows as fetched only while it is short |
+| D932 | An index join whose probe is a whole unique key is run, in a direct read, as nested point reads |
+| D933 | A compiled SELECT INTO of set functions over the delta table of a change run straight folds them over the rows it wrote |
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
@@ -16868,6 +16872,146 @@ noted as awaiting collection (D920). Its end now notes each table
 whose versions await collection (`State::note_replayed`), and a
 standby's asks for the maintenance job, so a replica collects what its
 replays leave as its primary does.
+
+#### D930. A kept plan of one index range is run where it is kept, its rows handed up through its filters, projections, sort, limit and set functions with no operator built
+
+A kept plan that was no point read (D752) was opened for each run. The
+plan was copied, an operator was built for each of its nodes, each boxed
+as a stream of rows, and the rows were pulled through them. A query of a
+procedure's body that counts a dozen rows of an index range spent more
+on opening its plan than on reading them.
+
+A kept plan may now be a direct range read (`exec/range.rs`,
+`Kept::range`). It is one index scan under any of a filter, a
+projection, OFFSET and FETCH FIRST of a count, a sort and a grouping,
+with expressions that read their row alone. A subquery, a routine
+invoked or a sequence generator leaves the plan to the executor, as do
+a percentage and WITH TIES. What it needs of the plan is taken once, as
+the plan is first asked for it, and each run reads the statement's
+values where they are.
+
+The range is read as the index scan reads it in place (D821). Its probe
+is placed with the run's values, the index is searched for its entries
+as the tree holds them, and each row is read of the columns listed alone
+(D862) into a row kept with the plan, through what the table keeps from
+read to read. The row is checked against its entry's key as bytes. Its
+values are put in a row as wide as the table, kept with the plan too and
+lent upward, so the expressions of the plan read their columns where the
+plan numbered them. A covering read of a row every reader sees is made
+of its entry's key, as before (D34). The read is told to the table by
+the condition of the key's columns and the probe, entries are counted
+for the statement and the index, a cancel is looked for at each entry,
+and the entry of a row gone for every reader is taken back (D837), all
+as the scan does. An index by a sort key, an expression or a projection
+of its keys, a global index, a probe whose keys must each be checked, a
+scan that decides a conjunct and a located scan are not read so.
+
+Each row is handed to what the plan puts over the range, by a call and
+not through a stream. A filter judges it, a projection makes its row of
+it, and FETCH FIRST stops the read once its rows are given, but for an
+input that can raise, which is read to its end as before. A grouping by
+no column folds each row into its set functions and gives its one row
+at the end, a DISTINCT function's values kept in a bag of the
+statement's work area as the grouping keeps them (`range/fold.rs`). A
+sort gives each row to the executor's sorter as it is read, so rows
+past the work area are written as sorted runs (D38). A grouping by a
+column, and a sort that keeps its first rows alone, take the rows read
+and then group or sort them by the executor's own functions, so their
+order and their groups are the executor's. They hold 1024 rows at most.
+A range of more reads nothing direct and is run by the executor, whose
+operators hold their rows in work areas, and so is every run of that
+plan after it.
+
+A leaf of a kept program whose plan is kept and is such a read runs it
+(`kept/leaves.rs`), compiled or interpreted. A compiled SELECT INTO
+asks its leaf's plan for it with no plan opened, its tables locked and
+its snapshot taken as the session takes them (`compiled/evaluated.rs`).
+A plan still learning, or one whose tables moved, runs as before and
+learns as before (D414). A read that finds it is not read direct with
+its values gives nothing, and the plan is opened and run.
+
+EXECUTOR.POINT_OPERATIONS OFF runs every kept plan through the
+executor, a direct range read as a point read.
+
+#### D931. A cursor of a kept plan that is a direct range read holds its rows as it opens, a range that gives rows as fetched only while it is short
+
+A cursor's rows are read from its plan as it is fetched from, but a plan
+that can raise an exception is read in full at OPEN, and a cursor is
+settled, its rows read, before its transaction changes a table it reads
+(`db/stream.rs`).
+
+A cursor whose plan kept is a direct range read (D930) now reads it as
+it opens and holds the rows for its fetches (`db/stream/ranged.rs`). A
+plan that can raise was read at OPEN already. A plan that sorts or
+groups read its whole range before its first row. Any other gave its
+rows as they were fetched, so a cursor closed early read few. Its range
+is read direct only while it has no more than 128 rows, about the rows
+of a few leaves of an index. A longer one is left to the executor, its
+first rows read twice that once, and so is every range of that plan
+from then on. A plan that cannot raise fails only by its
+reading, at the first fetch, so one whose direct read fails is left to
+the executor, which fails there as before.
+
+The rows a cursor holds from OPEN are those a settled cursor holds, so
+it sees no change its transaction makes after, as before. They are held
+up to the bytes a cursor may hold and spilled past them (D38).
+
+#### D932. An index join whose probe is a whole unique key is run, in a direct read, as nested point reads
+
+An index join built an operator that bound a probe for each row of its
+left operand, searched its index through a boxed iterator of decoded
+keys, read each entry's row whole of the columns used, and made each
+pair by copying the left row (`exec/join/indexed.rs`). A join of a
+range's rows each with the one row of a unique key spent most of its
+time there.
+
+A direct read (D930) now takes an inner index join whose probe fixes
+every column of a unique index by columns of its left operand
+(`join/indexed/direct.rs`). Its left operand is the range, filtered or
+projected to columns, constants and the statement's values. The probe
+of each left row is read as a point read reads (D881), made once with
+the plan. The row's values of the key are its values, its index is
+probed by the whole key with nothing boxed, and the row found is read of the columns
+the statement reads alone into a row kept with the plan. The pair is
+made in a row kept for the run. The left row's values are moved into
+it, as a unique key pairs a left row once, and the rest of the join's
+condition is judged of the pair as the join judges it.
+
+A point read casts each value to its key column's type, where the join
+places it as it is, so the probe is not a point read itself. So the join is taken only if each key column takes
+what its left column gives unchanged, which is a value of the column's
+own type or a constant the cast leaves as it was. A left row with a null
+for a key column pairs with nothing and reads nothing, as in the join.
+Each probe is told to its table, counted for its index and looked to
+for a cancel as a probe of the join is. Its rows are not counted among
+the rows the statement read, as the join's are not, so a procedure's
+ROWS_READ is the same on both paths. An outer, semi or anti join, a probe
+of part of a key, of a range or by a function, a spatial join and a
+located one are the executor's.
+
+#### D933. A compiled SELECT INTO of set functions over the delta table of a change run straight folds them over the rows it wrote
+
+A change of a compiled program ran straight on its table only if the
+query over its delta table was a select list over the table's row
+(D841). A query of set functions, as a sum over the rows an UPDATE
+wrote, ran the general path. That path binds the rows as a table, opens
+the query's kept plan over them and builds its grouping.
+
+Such a query now runs with the change (`compiled/folded.rs`). It is a
+grouping by no column of the delta table's rows alone, under a select
+list that reads its row alone. The change's rows are collected as its
+write functions write them, as before, and each set function is fed
+each row as a direct read's are (D930, `exec/range/fold.rs`). The
+select list is then evaluated over the one row of their values, which
+there is even of no rows, and assigned. A change by a whole unique key
+that is written straight (D880) folds its one row the same way. The
+columns the functions' arguments read are those the delta table shows,
+so an increment of another column may still be reserved (D849).
+
+A grouping by a column, a set function with a filter or an inverse
+distribution, and an argument or a select list that reads a subquery,
+a routine or a sequence generator leave the statement to the general
+path, as does every case that left a change to it before.
 
 #### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
 

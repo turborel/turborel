@@ -27,7 +27,7 @@ use super::super::super::compiled::{plan, plan_slotted};
 use super::super::super::prepared::{Fit, Learned, Learning, Learnt};
 use crate::catalog::{QualifiedName, SequenceDesc};
 use crate::error::{Result, Warnings};
-use crate::exec::{Db, Slots, Subqueries, SubqueryRows, execute};
+use crate::exec::{Db, Framed, RangeAt, Slots, Subqueries, SubqueryRows, execute};
 use crate::fulltext::rank::Statistics;
 use crate::logical::{Expr, Invocation, Leaf, LogicalPlan, Slot, Subquery, filled, map_plan_exprs};
 use crate::physical::{Kept, Plan, keepable, prepared_plan};
@@ -89,6 +89,8 @@ impl LeafPlan {
                 if let Some(still) = kept {
                     let run = if plan.point(st).is_some() {
                         Ok(Run::Point(Arc::clone(&plan)))
+                    } else if plan.range(st).is_some() {
+                        Ok(Run::Range(Arc::clone(&plan)))
                     } else {
                         plan.opened(Some(outer.into()), crate::optimizer::prepared::budget(st)).map(|(p, s)| Run::Plan(Box::new(p), s))
                     };
@@ -99,6 +101,27 @@ impl LeafPlan {
             }
         };
         self.learned(st, outer, learning).map(|(p, s)| Some(Run::Plan(Box::new(p), s)))
+    }
+
+    /// \[DESIGN\] (RULES.md D930) Its plan kept, if it keeps one that
+    /// still fits its tables, measured from their rows now if they drifted
+    /// and its probes did not outgrow it (`prepared/plans/grown.rs`): what
+    /// a compiled program runs where it is, with no plan opened. None of
+    /// a plan learning, varying or to be learned again, which the run by
+    /// its plans kept sees to (`physical`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a lock is poisoned.
+    pub(in crate::db) fn fixed(&self, st: &State) -> Result<Option<Arc<Kept>>> {
+        let mut held = lock(&self.kept)?;
+        let Physical::Fixed(plan, _, learnt) = &mut *held else { return Ok(None) };
+        match learnt.as_ref().map(|l| l.now(st)) {
+            None | Some(Fit::Still) => {}
+            Some(Fit::Grown(grown)) => *learnt = Some(grown),
+            Some(Fit::Moved) => return Ok(None),
+        }
+        Ok(Some(Arc::clone(plan)))
     }
 
     /// A learning run of its plan for `outer`, which `learning` says it
@@ -133,6 +156,8 @@ enum Run {
     Plan(Box<Plan>, Option<Slots>),
     /// As the point read of its plan kept (RULES.md D752).
     Point(Arc<Kept>),
+    /// As the direct range read of its plan kept (RULES.md D930).
+    Range(Arc<Kept>),
 }
 
 /// The plans of a program's leaves, by their subqueries' identities.
@@ -184,6 +209,15 @@ impl Subqueries for KeptRuns<'_> {
                 }
                 None => kept.opened(Some(outer.into()), crate::optimizer::prepared::budget(st))?,
             },
+            Some(Run::Range(kept)) => {
+                let framed = Framed { inner: self.runner, frame: outer, outer: &[] };
+                let at = RangeAt { st, tx, values: outer, subqueries: &framed };
+                // A range not read direct with these values is the executor's.
+                match kept.range(st).map(|range| range.rows(&at, limit)).transpose()?.flatten() {
+                    Some(found) => return Ok(SubqueryRows::held(found, st)),
+                    None => kept.opened(Some(outer.into()), crate::optimizer::prepared::budget(st))?,
+                }
+            }
             Some(Run::Plan(physical, slots)) => (*physical, slots),
         };
         let db = slots.map_or_else(|| Db::of(st), |slots| Db::slotted(st, slots));

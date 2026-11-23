@@ -23,7 +23,7 @@ mod semi;
 
 pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
-pub(in crate::exec) use indexed::{Reads, indexed_over};
+pub(in crate::exec) use indexed::{Direct as DirectJoin, Given, Pairing, Reads, indexed_over};
 pub(super) use mark::mark;
 pub(in crate::exec) use mark::{Marker, Side as MarkSide};
 pub(super) use merge::merged;

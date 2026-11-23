@@ -311,6 +311,7 @@ mod queries;
 mod query_expressions;
 mod random_queries;
 mod range_joins;
+mod range_reads;
 mod read_ahead;
 mod read_committed_waits;
 mod recovery;

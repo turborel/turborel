@@ -13,7 +13,7 @@ use super::valued::{Queried, RowOf, Store, Stores, Valued, stored};
 use crate::ast::ParameterSpecification;
 use crate::db::{Completion, assign_targets};
 use crate::error::{Code, Result, SqlError, fail};
-use crate::exec::{Framed, Host, assign_target, eval, item_text, raised};
+use crate::exec::{Framed, Host, RangeAt, assign_target, eval, item_text, raised};
 use crate::logical::{Expr, Target};
 use crate::storage::Row;
 use crate::value::Value;
@@ -83,18 +83,51 @@ impl Exec<'_> {
     }
 
     /// The rows of the query `q`: by its point read, once it plans to one,
-    /// its tables locked and its snapshot taken as the session takes them
-    /// for a leaf; else as the session runs it.
+    /// or by the direct range read of the plan it keeps, once it keeps
+    /// one, its tables locked and its snapshot taken as the session takes
+    /// them for a leaf; else as the session runs it.
     fn queried(&self, q: &Queried, limit: Option<usize>) -> Result<Vec<Row>> {
         let st = self.cx.st;
         let point = q.point.get_or_init(|| point_of(st, &q.leaf));
-        let Some(read) = point.as_ref().and_then(|p| p.point(st)) else { return self.host.rows(&q.leaf, self.frame, limit) };
-        self.host.fresh(self.cx.tx)?;
-        for (t, needed) in &q.reads {
-            st.read_lock_of(self.cx.tx, (t, *needed))?;
-        }
+        let Some(read) = point.as_ref().and_then(|p| p.point(st)) else {
+            return match self.ranged(q, limit)? {
+                Some(found) => Ok(found),
+                None => self.host.rows(&q.leaf, self.frame, limit),
+            };
+        };
+        self.reading(q)?;
         let found = self.outer_values(&q.leaf.query.outer).and_then(|outer| read.read(st, self.cx.tx.id, &outer));
         Ok(found.map_err(|e| e.or_at(q.leaf.at))?.into_iter().take(limit.unwrap_or(usize::MAX)).collect())
+    }
+
+    /// Before `q` is read where its plan is kept: its snapshot taken and
+    /// its tables locked, as the session does for a leaf.
+    fn reading(&self, q: &Queried) -> Result<()> {
+        self.host.fresh(self.cx.tx)?;
+        for (t, needed) in &q.reads {
+            self.cx.st.read_lock_of(self.cx.tx, (t, *needed))?;
+        }
+        Ok(())
+    }
+
+    /// \[DESIGN\] (RULES.md D930) The rows of the query `q` by the direct
+    /// range read of the plan its program keeps of it, if it keeps one that
+    /// is such a read: the plan the run by its plans kept would open, read
+    /// where it is. None if it keeps none yet, or none read so with these
+    /// values, and the session runs it.
+    fn ranged(&self, q: &Queried, limit: Option<usize>) -> Result<Option<Vec<Row>>> {
+        let st = self.cx.st;
+        let plans = q.plans.get_or_init(|| self.kept.leaves.of(st, &q.leaf).ok().flatten());
+        let Some(plan) = plans.as_ref().and_then(|plans| plans.get(&q.leaf.query.id())) else { return Ok(None) };
+        let Some(kept) = plan.fixed(st)? else { return Ok(None) };
+        let Some(range) = kept.range(st) else { return Ok(None) };
+        self.reading(q)?;
+        let read = || {
+            let outer = self.outer_values(&q.leaf.query.outer)?;
+            let framed = Framed { inner: &self.hosted, frame: &outer, outer: &[] };
+            range.rows(&RangeAt { st, tx: self.cx.tx.id, values: &outer, subqueries: &framed }, limit)
+        };
+        read().map_err(|e| e.or_at(q.leaf.at))
     }
 
     /// [ISO/IEC 9075-4:2006 draft §14.5] The assignment statement `a`: its

@@ -1,12 +1,14 @@
 //! \[DESIGN\] The values of a compiled program (RULES.md D841): a leaf
 //! that is one row of values reading no table is evaluated where it is,
 //! over the frame's slots; a query leaf that plans to one point read of a
-//! whole unique key is read as that point read; any other leaf is run by
-//! the session as the interpreter runs it. And the targets a value is
+//! whole unique key is read as that point read, and one whose plan kept
+//! is a direct range read as that read (RULES.md D930); any other leaf is
+//! run by the session as the interpreter runs it. And the targets a value is
 //! stored in: a variable or parameter as a whole is its slot, found once.
 
 use std::sync::{Arc, OnceLock};
 
+use super::super::super::kept::LeafPlans;
 use crate::ast::{ParameterSpecification, TargetKind};
 use crate::catalog::QualifiedName;
 use crate::error::{At, Result};
@@ -91,6 +93,9 @@ pub(super) struct Queried {
     /// does before it reads.
     pub(super) reads: Vec<(QualifiedName, u64)>,
     pub(super) point: OnceLock<Option<Arc<Kept>>>,
+    /// The plans the program's leaves keep of it (`kept/leaves.rs`), found
+    /// as it is first run: none if it keeps none.
+    pub(super) plans: OnceLock<Option<Arc<LeafPlans>>>,
 }
 
 impl Valued {
@@ -115,7 +120,7 @@ impl Valued {
             return Valued::of(leaf);
         }
         let reads = leaf.query.plan.columns_read();
-        Valued::Query(Box::new(Queried { leaf: leaf.clone(), reads, point: OnceLock::new() }))
+        Valued::Query(Box::new(Queried { leaf: leaf.clone(), reads, point: OnceLock::new(), plans: OnceLock::new() }))
     }
 }
 

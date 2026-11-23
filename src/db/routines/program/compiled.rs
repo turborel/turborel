@@ -11,7 +11,9 @@
 //! is its slot (`valued.rs`, `evaluated.rs`); a SELECT ... INTO of one
 //! point read of a whole unique key reads its row by that point read;
 //! and a change by a whole unique key, or an INSERT of one row, runs
-//! straight on its table once its kept plans show it may (`change.rs`).
+//! straight on its table once its kept plans show it may (`change.rs`),
+//! the set functions of a SELECT ... INTO over its delta table folded
+//! over the rows it wrote (`folded.rs`).
 //!
 //! Every other statement runs as the interpreter runs it, through the
 //! session as its host, from inside the compiled program: so any body
@@ -23,6 +25,7 @@ mod change;
 mod code;
 mod evaluated;
 mod flow;
+mod folded;
 mod run;
 mod valued;
 

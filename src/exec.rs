@@ -40,6 +40,7 @@ mod point;
 mod program;
 mod project;
 mod ptf;
+mod range;
 mod read;
 mod recursive;
 mod scan;
@@ -56,6 +57,7 @@ mod work;
 pub(crate) use batch::storage_counted;
 pub(crate) use lent::Lent;
 pub(crate) use point::{AsIs, PointRead, point_operations};
+pub(crate) use range::{At as RangeAt, Fold as RangeFold, RangeRead};
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};

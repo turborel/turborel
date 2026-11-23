@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 use super::{ProbeSlot, filled_scan, slot_value};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::exec::{KeptSubqueries, PointRead};
+use crate::exec::{KeptSubqueries, PointRead, RangeRead};
 use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Placing, Truth, Unnest, filled_cond_as, filled_expr_as};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
@@ -52,7 +52,7 @@ pub(crate) fn prepared_plan(plan: Plan, budget: Option<&Arc<MemoryBudget>>) -> R
     let fills = filling.fills.get();
     let raising = filling.raising.take();
     let subqueries = Arc::default();
-    Ok(Kept { plan: if fills { plan } else { prepared }, fills, raising, point: OnceLock::new(), subqueries })
+    Ok(Kept { plan: if fills { plan } else { prepared }, fills, raising, point: OnceLock::new(), range: OnceLock::new(), subqueries })
 }
 
 struct Filling<'a> {
@@ -254,6 +254,8 @@ pub(crate) struct Kept {
     raising: Vec<ProbeSlot>,
     /// The point read it is, if one, found as first asked (RULES.md D752).
     point: OnceLock<Option<PointRead>>,
+    /// The direct range read it is, if one, found as first asked (RULES.md D930).
+    range: OnceLock<Option<RangeRead>>,
     /// What its correlated subqueries settled (RULES.md D793).
     subqueries: Arc<KeptSubqueries>,
 }
@@ -304,6 +306,17 @@ impl Kept {
             return None;
         }
         self.point.get_or_init(|| PointRead::of(&self.plan, st)).as_ref()
+    }
+
+    /// The direct range read its plan is, run where it is kept with no
+    /// operator built, if it is one and `st` runs point operations
+    /// (RULES.md D930). Its expressions are read as the plan keeps them,
+    /// so a plan filled at each execution (`fills`) is none.
+    pub(crate) fn range(&self, st: &State) -> Option<&RangeRead> {
+        if self.fills || !crate::exec::point_operations(st) {
+            return None;
+        }
+        self.range.get_or_init(|| RangeRead::of(&self.plan, st)).as_ref()
     }
 }
 

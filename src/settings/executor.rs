@@ -115,7 +115,7 @@ pub(super) fn point_operations() -> Definition {
     defined(
         ("EXECUTOR.POINT_OPERATIONS", Kind::Choice(SWITCHES), text(ON)),
         SESSION,
-        "Whether a kept query, UPDATE or DELETE, or a correlated subquery, whose plan is one probe of a whole unique key reads its row straight from the table: ON; or through the executor's operators, OFF, as to compare the two. Its rows, errors and diagnostics are the same either way.",
+        "Whether a kept query, UPDATE or DELETE, or a correlated subquery, whose plan is one probe of a whole unique key reads its row straight from the table, and a kept query whose plan is one range of an index reads its rows where the plan is kept: ON; or through the executor's operators, OFF, as to compare the two. Its rows, errors and diagnostics are the same either way.",
     )
 }
 
