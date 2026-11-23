@@ -13,9 +13,9 @@ use crate::common::{Kept, Scramble, Scratch, arm, gated, locked, os};
 /// directory tells its sink it was created, of each checkpoint taken, of a
 /// setting changed and a plug-in registered, that it closed, and, opened
 /// again, that it was reopened; a statement's own failure, a syntax error
-/// or a broken constraint, is no event, though the insert it undoes leaves
-/// a zone of the table to narrow, which starts the maintenance thread
-/// (RULES.md D31, D55).
+/// or a broken constraint, is no event; the commit leaves its table
+/// awaiting collection, which starts the maintenance thread (RULES.md
+/// D55, D920).
 #[test]
 fn a_database_tells_its_sink_of_its_life() {
     let scratch = Scratch::new("diagnostics");
@@ -60,12 +60,15 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::IndexMethod, "inverted"),
             registered(Extension::IndexMethod, "hybrid"),
             registered(Extension::IndexMethod, "fulltext"),
-            // No maintenance thread: a table nothing prunes on keeps no
-            // zone to settle (RULES.md D868), so its one row asks for none.
             info("Opened(Created)"),
+            // The commit leaves T awaiting collection, so it asks for the
+            // maintenance job, whose thread is started to run its pass a
+            // second later (RULES.md D920), and stopped by the close.
+            info("Thread { label: \"turborel-maintenance\", change: Started }"),
             info("CheckpointTaken { taken: 1 }"),
             info("SettingChanged { name: \"LOCKS.WAIT\", value: Some(Char(\"ON\")) }"),
             registered(Extension::IndexMethod, "btree"),
+            info("Thread { label: \"turborel-maintenance\", change: Stopped }"),
             info("Closed"),
         ]
     );

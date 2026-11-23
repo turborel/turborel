@@ -125,3 +125,29 @@ fn a_later_execution_reads_by_the_point_read_an_earlier_one_kept() {
     let alone = Runner::new(&st, NO_TRANSACTION);
     assert_eq!(pointed(&alone, &sq, &[int(9)]), None, "a runner of no kept plan settles its own");
 }
+
+/// Verifies: [DESIGN] RULES.md D900: a probe of a unique key of two
+/// columns places each outer value at its own column's place, so the
+/// row read is the one whose key is the two values in their order.
+#[test]
+fn a_key_of_two_columns_is_probed_by_each_value_in_its_place() {
+    let db = crate::db::Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P2 (A INTEGER NOT NULL, B INTEGER NOT NULL, W INTEGER, PRIMARY KEY (A, B))")
+        .unwrap();
+    let s = db.session("A");
+    s.run("INSERT INTO P2 VALUES (1, 2, 12), (2, 1, 21), (1, 1, 11), (2, 2, 22), (3, 5, 35), (5, 3, 53)").unwrap();
+    s.commit().unwrap();
+    let st = db.snapshot().unwrap();
+    let table = QualifiedName { auth: "A".into(), ident: "P2".into() };
+    let scan = LogicalPlan::Scan { table, names: vec!["A".into(), "B".into(), "W".into()], needed: vec![0, 1, 2], located: false };
+    let first = Cond::Compare(Expr::Column(0), CompOp::Eq, Expr::Outer(0, "X.A".into()));
+    let second = Cond::Compare(Expr::Column(1), CompOp::Eq, Expr::Outer(1, "X.B".into()));
+    let filter = LogicalPlan::Filter { cond: Cond::And(Box::new(first), Box::new(second)), input: Box::new(scan) };
+    let plan = LogicalPlan::Project { exprs: vec![Expr::Column(2)], input: Box::new(filter) };
+    let sq = Subquery::new(plan, vec![Expr::Column(0), Expr::Column(1)]);
+    let runner = Runner::new(&st, NO_TRANSACTION);
+    assert_eq!(shown(&runner.rows(&sq, &[int(1), int(1)], None).unwrap()), format!("{:?}", vec![vec![int(11)]]));
+    assert_eq!(pointed(&runner, &sq, &[int(5), int(3)]), Some(format!("{:?}", vec![vec![int(53)]])));
+    assert_eq!(pointed(&runner, &sq, &[int(3), int(5)]), Some(format!("{:?}", vec![vec![int(35)]])));
+    assert_eq!(pointed(&runner, &sq, &[int(3), int(3)]), Some("[]".to_owned()));
+}

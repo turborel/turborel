@@ -425,9 +425,9 @@ verification approach DO-178C expects (§8).
 | D448 | SERIALIZABLE certifies by column, and skips the check when no one read |
 | D449 | A row's turn passed wakes only the waiter whose turn it is |
 | D450 | A served session's transactions are collected once their reply is sent |
-| D451 | A busy table is collected a batch of commits at a time |
+| D451 | A table is collected a batch of commits at a time |
 | D452 | A READ COMMITTED UPDATE that only adds to a column reserves its increments, applied as its transaction commits |
-| D453 | One transaction that wrote nothing collects at a time |
+| D453 | A transaction that wrote nothing collects no table, and a served session collects the tables it wrote |
 | D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
 | D455 | A row a transaction wrote is no read of another's change at its validation |
 | D456 | A row waited for is claimed for the first in its line |
@@ -588,6 +588,9 @@ verification approach DO-178C expects (§8).
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 | D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
 | D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
+| D901 | A compiled program's INSERT of a query's rows runs straight on its table, its rows together, each checked as it is held |
+| D902 | A kept INSERT's table and query are shared with each execution, copied only to be planned or given new defaults |
+| D903 | A kept plan whose rows are made of its slots' values alone is read where it is kept |
 | D910 | A value that is one of a type already is read, cast and assigned as it is, an array with no element copied |
 | D911 | A point change places its probe once, each value read over the slots where they are |
 | D912 | A point change makes its candidate row of the row it read |
@@ -596,6 +599,12 @@ verification approach DO-178C expects (§8).
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
+| D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
+| D941 | An execution's values that hold no large object are taken as given, not read for locators |
+| D942 | A point change whose increments may be reserved reserves them where it reads its row |
+| D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
+| D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
+| D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
 | D960 | A character string of at most 32 octets is held in its value, a longer one in a buffer its clones share |
 | D961 | A binary string of at most 22 octets is held in its value, a longer one in a buffer its clones share |
 
@@ -16545,6 +16554,9 @@ argument that is an expression or reads a table, an output parameter
 whose target is no `?`, a body that is one statement, a program not
 compiled or not kept, and an execution whose argument's cast raises a
 warning or an exception. Such an execution has run nothing when it turns
+warning or an exception. A binding found kept is of a procedure with an
+SQL routine body, so a procedure written in Rust is looked for only
+where none is found. Such an execution has run nothing when it turns
 to the general path, so the condition raised is that path's own. The
 general path itself now takes the scope from the binding and builds a
 program's frame of scopes only when it binds the program.
@@ -16588,6 +16600,180 @@ taken hands the change to the general path as before. That is a row
 changed since it was read, a sum that would leave the column's type, or
 an increment that is not what made the candidate row. The general path
 then reserves or writes it as it always did.
+
+#### D943. A compiled body nothing of which reads the diagnostics area places no statement's condition there
+
+A compiled program emptied the diagnostics area as each statement began
+and placed the statement's condition there as it ended (D841), as the
+interpreter does. That was done for every assignment, every IF, and
+every turn of a loop, and was a good part of what such a statement cost.
+In most bodies nothing reads what was placed.
+
+The area a procedure's statements write is the procedure's own. Its
+context takes a new one as it is pushed and gives the caller's back as
+it returns (`db/nested.rs`), so nothing after the CALL reads it. Within
+the body it is read by GET DIAGNOSTICS, and kept on the stack as a
+handler is activated. A triggered action and a function invoked have
+areas of their own.
+
+So a compiled program is looked at once, as it is compiled
+(`compiled/run.rs`, `unread`). If none of its statements is GET
+DIAGNOSTICS, no compound statement of it has a handler, and each
+statement the session runs for it is an INSERT, MERGE, UPDATE, DELETE,
+SELECT, OPEN, FETCH or CLOSE, its statements leave the area as it is.
+Each still empties the warnings heard as it begins, as emptying the area
+does, and the run empties them once more as it ends, as its last
+statement's condition would. Any other program runs as before. The
+values, rows, exceptions and completions of the CALL are the same, since
+none of them is read from the area.
+#### D920. A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves
+
+With no transaction open in a table, its collection was due at every
+end (D451), so a session writing alone collected each table it wrote at
+every commit, for that one commit's garbage. Each collection entered the
+gate, found the table's lock and storage by name, took the locks of its
+garbage, of its undone versions, of its commits to stamp and of its
+validated transactions, split the garbage list, and truncated the undo
+store. In an order entry workload at one session that was near a third
+of each commit, and it was the committer that paid it, before its reply.
+
+A transaction's end now collects a table it joined only when a batch is
+due, whether or not the table is quiet (`RowTable::due_at`,
+`txn/collect.rs`). One collection then takes the garbage of many commits
+with one set of locks. A table left with garbage is noted as awaiting
+collection, once (D795). The end of a transaction looks only at the
+tables it joined. It no longer walks the set of tables awaiting, and the
+end of a transaction that wrote nothing collects nothing (D453).
+
+What a batch leaves is collected by the maintenance job
+(`db/maintenance.rs`). An end that leaves a table awaiting asks for the
+job a second later, once until its pass begins. The pass collects every
+table awaiting as far as the horizon lets, due or not, waiting for a
+collection under way, and then does the maintenance noted. A run of the
+job before the second is up, as for maintenance a commit noted, makes
+no pass: commits of a busy table note maintenance nearly every time, and
+a pass with each run would be a collection at every commit again, on the
+job's thread.
+`Database::maintain` does the same at once. Under JOBS.POLICY MANUAL the
+program's `run_due` runs the pass, and under PAUSED it waits for the
+policy to change, a batch that comes due being collected meanwhile.
+
+The bound is 64 commits past a table's earliest garbage, the bound D451
+chose for a busy table. A sweep of it on the in-repo order entry bench
+at one session, over 1, 4, 16, 64, 256 and 1024 commits, counted the
+allocations a commit makes, which no load on the machine moves. They
+fall from 1 to 4 to 16 to 64 and are level from there, and a commit's
+time follows them within the spread of the runs, about a sixth under a
+collection at each end. A larger batch saves nothing more and holds more
+versions, so the bound stays the one rule for quiet and busy tables. The
+sweep's figures are in the commit that made the change.
+
+The semantics hold for these reasons.
+
+- The horizon rule is unchanged. A collection removes only what commits
+  at or before the horizon superseded, so no reader, at any isolation
+  level, meets a version collected too early. A batch only comes later.
+- The garbage a table holds is bounded by a batch, 64 commits or 4096
+  versions, whichever comes first, beyond what a lagging horizon keeps
+  as before. Its lists are counted against the memory budget and spill
+  as before (D38, D870).
+- A table no transaction writes again is collected by the pass, within
+  a second of the end that left it, so its zones become visible to all
+  and its undo store is truncated without another commit.
+- Maintenance is noted as before. An end notes a table whose engine has
+  some due whether or not it collected it.
+- A checkpoint and a close collect every table, waiting, as before.
+#### D901. A compiled program's INSERT of a query's rows runs straight on its table, its rows together, each checked as it is held
+
+D841 ran a compiled program's INSERT straight only for one row of
+values that read nothing. An INSERT of a query's rows, such as an
+order's lines from UNNEST of its arrays with a scalar subquery for each,
+ran as a statement the session runs: looked up, wrapped, its rows noted
+one by one in the statement's effects and its end reached through
+`end_statement`.
+
+Now a compiled program's INSERT of any query's rows, VALUES or a query
+specification reading no delta table, runs by its kept target and query
+once they are kept, and straight where D841's conditions hold. Its
+table is a plain one with no trigger a change of it may fire, it is not
+named through a view, and its end checks only its rows' own constraints
+(`integrity/straight.rs`). Every row of the query is found before any is
+inserted, as [X3.135-1986 §8.7 GR1] has it.
+
+The rows go in as the general path puts them (`write/bulk.rs`,
+`insert_straight`). Two or more go together where the table takes its
+rows so, under one log record with one undo entry an index (D530). One
+row, or the rows of a table that takes them one at a time, go each by
+the table's `Writing` (D872). So the log holds what the general path
+would have written, record for record. Rows enough to be a load of
+their own (D532) are handed to the general path once found, which
+begins and ends the load.
+
+The statement's end checks each row as its statement holds it
+(`integrity/straight/rows.rs`), as D880 checks a point change's one row.
+Every row's own constraints come first, row by row, then each UNIQUE
+constraint's rows one after another. That is the order `State::checks`
+gathers them in, so a statement breaking several constraints is refused
+for the one the general path names. A batch tells of each row whether
+its key was its key's only entry in every unique index, and such a row
+is passed over by each UNIQUE constraint an entry inserted alone
+settles. A key twice among the statement's rows is not alone the second
+time, and is checked whole. A row is read back where the row held is
+not the row stored, of a table with a system-time period or of a row
+holding a value its table keeps apart. The participants are told to
+check reads only where a check reads a table, as D880 has it.
+
+An INSERT whose end would check more runs by its kept target and query
+through `insert_rows`, as an INSERT of one row of values already did.
+
+#### D902. A kept INSERT's table and query are shared with each execution, copied only to be planned or given new defaults
+
+A kept INSERT held its table's description and its query's bound plan
+(D45, D793), and each execution took a copy of both. The table's was
+copied so its defaults could be taken again for the user and the instant
+of the execution, and the query's because the functions that find its
+rows took a plan of their own.
+
+Now both are shared (`KeptPlan::Insert`). An execution borrows the query
+as it is kept. `query_rows` reads a row of values where it is, or runs
+the physical plan kept of it (D793), and copies the plan bound only when
+it is to be filled with the execution's values and planned afresh, as
+while its plan is still being learned. The table is taken as kept
+wherever each column's default is the same for every user at every
+instant, a value or none (`Target::fixed_defaults`). It is copied and
+given its defaults again only where one reads the user or the instant
+[ISO/IEC 9075:1992 §11.5 GR2].
+
+#### D903. A kept plan whose rows are made of its slots' values alone is read where it is kept
+
+The executor takes a plan whole, and each operator it opens owns its
+part. So every execution of a kept plan that is no point read ran a
+copy of it (`physical::Kept::opened`), and of an INSERT's query the copy
+was opened as a stream whose rows were held once before a candidate row
+was made of each.
+
+A projection of a collection derived table over nothing before it reads
+no table of its own. An order's lines unnested from its arrays are such
+a query. Its rows are the elements of the collections its slots hold,
+each given to the projection's expressions. A kept INSERT now reads such
+a plan where it is kept (`exec/lent.rs`, `write/inserted.rs`), lent by
+`Kept::lent`, with no copy made and no operator opened.
+
+The rows are made as the operators make them. The collections are
+evaluated once and a row made for each ordinal (`unnest::of_row`, the
+operator's own function). Each expression is evaluated over it in turn,
+its subqueries run by one runner that keeps what they settled with the
+plan (D793), and a row's draws of a sequence generator are one. A cancel
+is looked for before the rows are made and as each is given. The plan's
+tables are locked first, as a stream locks them. Every row is found
+before a candidate row is made of any, as a plan that can raise has its
+rows read as it opens, so the error a statement is refused for is the
+same.
+
+A plan filled and prepared again at each execution, a point read, a
+projection of its input's columns as they are, a JSON table, a
+GRAPH_TABLE, a collection derived table over other rows and every other
+operator are opened by the executor as before.
 
 #### D960. A character string of at most 32 octets is held in its value, a longer one in a buffer its clones share
 
@@ -17057,12 +17243,12 @@ their tables as awaiting collection, and the session collects them with
 `Session::collect`. The server turns this on for every session it
 serves, and collects once it has flushed the replies of a request. A
 request whose reply is held for the next, pipelined, leaves it to that
-one. Until then, the end of any other transaction collects the noted
-tables as it would any awaiting, and a checkpoint waits for them
-(`gc_waiting`). The horizon rule is unchanged, so no version a snapshot
-can read is removed; collection only comes a little later.
+one. Until then the noted tables await collection as any other does.
+The maintenance job's pass collects them (D920), and a checkpoint waits
+for them (`gc_waiting`). The horizon rule is unchanged, so no version a
+snapshot can read is removed; collection only comes a little later.
 
-#### D451. A busy table is collected a batch of commits at a time
+#### D451. A table is collected a batch of commits at a time
 
 Every transaction's end that found a table's garbage past the horizon
 collected it (D29, D445), so a table written by many sessions was
@@ -17070,18 +17256,24 @@ collected after nearly every commit, each time for one commit's garbage,
 and paid the collection's fixed costs each time.
 
 An end now collects a table only when the collection is due
-(`TableStorage::collection_due`). It is due at once when no transaction
-is open in the table, as after every end in a quiet database. In a busy
-table it is due once the horizon is 64 commits past its earliest garbage,
-or once 4096 versions filed as garbage await collection, or while versions undone by rollbacks wait. Those are released
-as soon as the readers that may go back to them end (D29), and rollbacks
-are rare. Until then the table stays awaiting collection, and a later
-end looks again. A checkpoint's collection (`gc_waiting`) takes
+(`TableStorage::collection_due`). It is due once the horizon is 64
+commits past its earliest garbage, or once 4096 versions filed as garbage
+await collection, or while versions undone by rollbacks wait. Those are
+released as soon as the readers that may go back to them end (D29), and
+rollbacks are rare. Until then the table stays awaiting collection, and
+a later end of a transaction that wrote it looks again. A checkpoint's
+collection (`gc_waiting`) and the maintenance job's pass (D920) take
 everything, due or not. Versions left unstamped wait with the garbage,
 a reader resolving an unstamped version by its transaction's status.
 The horizon rule is unchanged, so no version a snapshot can
-read is removed. A busy table keeps at most a batch of commits' garbage
-more than it did.
+read is removed. A table keeps at most a batch of commits' garbage
+more than it did, in lists counted against the memory budget as before
+(D38, D870).
+
+The rule held at first only of a busy table. With no transaction open
+in a table its collection was due at once, as after every end in a quiet
+database. D920 took that case out, so one session writing alone
+collects in batches too.
 
 Eager pruning at write, releasing a superseded version's undo slot as a
 writer passes it, was rejected. The slot belongs to its commit's garbage,
@@ -17135,33 +17327,33 @@ savepoint takes back the reservations made since.
 A procedure's increment through a delta table that shows none of the
 columns it adds to is reserved too (D849).
 
-#### D453. One transaction that wrote nothing collects at a time
+#### D453. A transaction that wrote nothing collects no table, and a served session collects the tables it wrote
 
-The end of a transaction that wrote nothing collects the tables awaiting
+The end of a transaction that wrote nothing collected the tables awaiting
 collection, since its end may move the horizon (D29). Once a served
 session collects after its reply (D450), every session's request did
 so. Many sessions ending at once then took the collection's locks in
 turn, though only one could collect a table (D445) and the others
-found nothing left to do.
+found nothing left to do. Such ends were then let collect one at a time,
+the others passing by.
 
-Such an end now collects only while no other such end is collecting.
-One that finds another under way passes by. The one collecting collects
-the same tables, and what its horizon does not reach waits for any later
-end, as a table passed over does (D445). A transaction that wrote
-still collects its own tables as before.
+Such an end now collects nothing (D920). A table awaits collection
+almost always once tables are collected in batches (D451), so every
+such end would walk the set of them to find none due. The end asks for
+the maintenance job instead, whose pass collects the set, and a
+transaction that wrote collects its own tables when a batch is due.
 
-A served session's collection after its reply first collects the tables
-its own transactions wrote since it last collected, as their ends would
-have, and only then the set, as such an end does. Before, its
-transactions only noted their tables in the set, and its collection was
-one of these ends, so at many writing sessions one session at a time
-collected every table. That one fell behind the commits, each pass took
-longer for the garbage left meanwhile, and a table's transactions kept
-for validation (D448) grew to thousands. The tables a session wrote are
-kept with its cancel flag, each once, and taken by its collection. Each
-is collected as at a transaction's end, one collector at a time and
-only when due (D445, D451), so sessions writing different tables
-collect them at once.
+A served session's collection after its reply collects the tables its
+own transactions wrote since it last collected, as their ends would
+have. Before, its transactions only noted their tables in the set, and
+its collection was one of the ends that collected the set, so at many
+writing sessions one session at a time collected every table. That one
+fell behind the commits, each pass took longer for the garbage left
+meanwhile, and a table's transactions kept for validation (D448) grew to
+thousands. The tables a session wrote are kept with its cancel flag,
+each once, and taken by its collection. Each is collected as at a
+transaction's end, one collector at a time and only when due (D445,
+D451), so sessions writing different tables collect them at once.
 
 #### D454. A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own
 

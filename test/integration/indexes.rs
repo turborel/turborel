@@ -11,12 +11,11 @@ use turborel::params::Params;
 
 use crate::common::{big, count, exec, rows, setup};
 
-/// Ends a transaction on T of `db` with none other open, so every version
-/// no one reads is collected, with its index entries.
+/// Has the maintenance pass collect T of `db` with no transaction open, so
+/// every version no one reads is collected, with its index entries
+/// (RULES.md D920).
 fn settle(db: &Database) {
-    let s = db.session("APP");
-    rows(&s, "SELECT ID FROM T").unwrap();
-    s.commit().unwrap();
+    db.maintain().unwrap();
 }
 
 /// Verifies: [EXTENSION] a transaction that wrote the table before its

@@ -249,13 +249,13 @@ fn a_failed_statement_is_undone_by_the_engine() {
 
 /// Verifies: [DESIGN] RULES.md D29, D31, garbage collection: older versions
 /// stay in the undo store while a transaction may read them, here a
-/// reader that began before many updates, and are released when it ends;
-/// deleted rows leave the table then. With no transaction open, nothing is
+/// reader that began before many updates, and are released once it has
+/// ended and the table is collected; deleted rows leave the table then. With no transaction open, nothing is
 /// pinned.
 #[test]
 fn old_versions_are_collected_once_unread() {
     let scratch = Scratch::new("mvcc-gc");
-    let (_db, files, writer, reader) = accounts(&scratch);
+    let (db, files, writer, reader) = accounts(&scratch);
     assert_eq!(values(&reader, "SELECT SUM(V) FROM T"), ["30"]);
     for v in 0..50 {
         run(&writer, &format!("UPDATE T SET V = {v} WHERE K = 1")).unwrap();
@@ -268,6 +268,7 @@ fn old_versions_are_collected_once_unread() {
     reader.commit().unwrap();
     run(&writer, "UPDATE T SET V = 100 WHERE K = 1").unwrap();
     writer.commit().unwrap();
+    db.maintain().unwrap();
     assert_eq!(files.undo().pinned(), 0, "nothing pinned once no transaction can read it");
     assert_eq!(values(&reader, "SELECT K, V FROM T"), ["1,100"]);
 }
@@ -370,6 +371,7 @@ fn older_versions_of_a_kept_database_are_on_disk() {
         writer.run(&format!("UPDATE T SET V = '{round:x>90}'")).unwrap();
         writer.commit().unwrap();
     }
+    db.maintain().unwrap();
     let kept = undo_segments(&dir);
     assert!(kept < held, "taken back once no reader needs them: {kept} of {held}");
     drop((writer, reader));
@@ -384,9 +386,9 @@ fn older_versions_of_a_kept_database_are_on_disk() {
 
 /// Verifies: [DESIGN] RULES.md D29: versions a reader still held when
 /// their table was last collected are collected once it ends, though no
-/// transaction touches their table again: the horizon moves only as a
-/// transaction ends, and each that ends collects every table with versions
-/// awaiting collection, their index entries going with them.
+/// transaction touches their table again: the maintenance pass collects
+/// every table with versions awaiting collection (RULES.md D920), their
+/// index entries going with them.
 #[test]
 fn an_idle_tables_garbage_is_collected_once_readers_end() {
     let db = Database::new();
@@ -402,5 +404,7 @@ fn an_idle_tables_garbage_is_collected_once_readers_end() {
     s.commit().unwrap();
     assert_eq!(db.index_entries("U_V").unwrap(), 6, "the reader may read the older versions");
     reader.commit().unwrap();
-    assert_eq!(db.index_entries("U_V").unwrap(), 3, "collected as the reader ended");
+    assert_eq!(db.index_entries("U_V").unwrap(), 6, "its end collects no table");
+    db.maintain().unwrap();
+    assert_eq!(db.index_entries("U_V").unwrap(), 3, "collected once the reader ended");
 }

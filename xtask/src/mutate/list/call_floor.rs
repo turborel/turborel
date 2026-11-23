@@ -2,9 +2,9 @@
 //! unnamed cursors a session keeps track of, the state overlaid with its
 //! own settings, and the tables of the INSERTs it runs directly, kept
 //! between statements; and of a prepared CALL run straight (D940), the
-//! binding it is kept beside, its arguments' casts, its output values, its
-//! ATOMIC body and its savepoint level, and the values read for locators
-//! (D941).
+//! binding it is kept beside, its arguments' casts, its output values and
+//! its savepoint level, the values read for locators
+//! (D941), and the diagnostics area of a body that reads it (D943).
 
 use super::{Mutation, Package};
 
@@ -96,16 +96,6 @@ pub const CALL_FLOOR: [Mutation; 11] = [
         unit: &["db::routines::direct::tests::a_prepared_call_runs_straight_as_any_call_runs"],
     },
     Mutation {
-        name: "call-direct-not-atomic",
-        package: Package::Core,
-        breaks: "an ATOMIC body run straight is not undone whole when it fails",
-        file: "src/db/routines/direct.rs",
-        original: "self.run_framed(cx, &running.program, &mut frame, running.atomic))",
-        replacement: "self.run_framed(cx, &running.program, &mut frame, false))",
-        integration: &[],
-        unit: &["db::routines::direct::tests::atomic_bodies_and_savepoint_levels_are_kept"],
-    },
-    Mutation {
         name: "call-direct-callers-level",
         package: Package::Core,
         breaks: "a body of NEW SAVEPOINT LEVEL run straight runs at its caller's savepoint level",
@@ -124,5 +114,15 @@ pub const CALL_FLOOR: [Mutation; 11] = [
         replacement: "        Value::Lob(_) | Value::Structured(_) => false,\n",
         integration: &[],
         unit: &["db::prepared::locators::tests::only_a_large_object_or_what_holds_one_may_hold_a_locator"],
+    },
+    Mutation {
+        name: "compiled-area-unread",
+        package: Package::Core,
+        breaks: "a compiled body with a GET DIAGNOSTICS places no statement's condition, so it reads the CALL's own",
+        file: "src/db/routines/program/compiled/run.rs",
+        original: "        Code::Statement(s) => rows_alone(s.contained.statement()),\n",
+        replacement: "        Code::Statement(_) => true,\n",
+        integration: &["compiled_procedures::a_body_that_reads_no_diagnostics_gives_the_same"],
+        unit: &[],
     },
 ];

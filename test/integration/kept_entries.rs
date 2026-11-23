@@ -40,12 +40,11 @@ fn reader(db: &Database) -> Session {
     s
 }
 
-/// Ends a transaction on T with none other open, so every version no one
-/// reads is collected, with its index entries.
+/// Has the maintenance pass collect T with no transaction open, so every
+/// version no one reads is collected, with its index entries (RULES.md
+/// D920).
 fn settle(db: &Database) {
-    let s = db.session("APP");
-    rows(&s, "SELECT ID FROM T WHERE ID = 0").unwrap();
-    s.commit().unwrap();
+    db.maintain().unwrap();
 }
 
 /// The Y of the rows `s` finds through T_X with X = `x`, the plan checked

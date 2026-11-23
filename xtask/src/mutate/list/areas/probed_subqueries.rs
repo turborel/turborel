@@ -44,7 +44,7 @@ pub const PROBED_SUBQUERIES: [Mutation; 4] = [
         file: "src/exec/point.rs",
         original: "            *at? = values.get(s.slot.index)?.clone();",
         replacement: "            *at? = values.first()?.clone();",
-        integration: &["point_operations::a_subquery_of_a_whole_key_reads_as_the_executor_does"],
-        unit: &[],
+        integration: &[],
+        unit: &["exec::subquery::pointed::tests::a_key_of_two_columns_is_probed_by_each_value_in_its_place"],
     },
 ];
