@@ -41,7 +41,7 @@ pub const READS: [Mutation; 32] = [
         name: "owed-removals",
         package: Package::Core,
         breaks: "collection says an index entry it failed to take back is gone",
-        file: "src/txn/end.rs",
+        file: "src/txn/collect.rs",
         original: "let gone = entries.is_empty();",
         replacement: "let gone = true;",
         integration: &["index_only::entries_not_taken_back_keep_their_zone_read"],

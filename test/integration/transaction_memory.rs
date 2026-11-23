@@ -232,6 +232,7 @@ fn garbage_is_read_and_collected_a_segment_at_a_time() {
     assert!(plan.contains("est. rows=1,"), "{plan}");
     reader.commit().unwrap();
     s.commit().unwrap();
+    db.maintain().unwrap();
     for (v, expected) in [(17, vec![]), (3017, vec![]), (6017, vec!["17".to_owned()])] {
         assert_eq!(rows(&s, &format!("SELECT K FROM T WHERE V = {v}")), Ok(expected), "V = {v}");
     }
@@ -391,7 +392,8 @@ fn a_rollbacks_garbage_waits_for_the_tables_other_readers() {
     let later = db.session("S");
     assert_eq!(rows(&later, same), Ok(vec![ROWS.to_string()]));
     reader.commit().unwrap();
-    assert_eq!((spill_bytes(&db), spill_files(&dir)), (0, 0), "collected as it ends, the later one open");
+    db.maintain().unwrap();
+    assert_eq!((spill_bytes(&db), spill_files(&dir)), (0, 0), "collected once it ended, the later one open");
     assert_eq!(rows(&later, same), Ok(vec![ROWS.to_string()]));
     later.commit().unwrap();
 }

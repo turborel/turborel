@@ -218,6 +218,15 @@ impl Session {
         .map(drop)
     }
 
+    /// The warnings heard emptied, as a statement that begins empties them
+    /// with the diagnostics area (`area.rs`, `emptied`), the area left as
+    /// it is.
+    pub(in crate::db) fn unheard(&self) {
+        let warnings = self.stop.warnings();
+        warnings.take();
+        warnings.take_left_out();
+    }
+
     /// Whether the session runs `kept`, a procedure's body, compiled in
     /// `st` (RULES.md D841).
     pub(in crate::db) fn runs_compiled(&self, st: &State, kept: &KeptProgram) -> bool {
