@@ -36,6 +36,25 @@ impl RowTable {
         old.map(|old| old.map(|(was, _)| was))
     }
 
+    /// As `write_over`, for a caller that does not read the row replaced.
+    /// Of that row only the columns its zone keeps are decoded, none of a
+    /// table whose zones keep none (`widen_past`, RULES.md D835).
+    pub(in crate::engine::rows) fn write_unread(&self, tx: TxId, id: RowId, row: Option<&Row>, past: Past) -> Result<()> {
+        let replaced = match row {
+            Some(row) => {
+                let (mut framed, pages) = self.encode_framed(id, row)?;
+                self.write_version(tx, id, Some(&mut framed), past).inspect_err(|_| self.free(&pages))?
+            }
+            None => self.write_version(tx, id, None, past)?,
+        };
+        let widened = self.widen_past(id, row, replaced.as_deref());
+        if row.is_none() {
+            self.counted.live.fetch_sub(1, Ordering::AcqRel);
+        }
+        self.counted_change(tx);
+        widened
+    }
+
     /// Notes `unchanged` on `tx`'s last change, if it replaced a version of
     /// row `id`; the columns noted: none for a change already spilled, or
     /// another's, whose entries are then each version's own
