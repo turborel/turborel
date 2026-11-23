@@ -99,6 +99,11 @@ pub(super) enum Replaced<'r> {
     Unknown,
     /// The row's newest version, holding these values of the columns kept.
     Row(&'r Row),
+    /// As `Row`, of a table that has frozen rows or held a group: the
+    /// version may have been read from a group, and the zones of such a
+    /// table are of its tree's rows alone, so its values are not taken to
+    /// lie within the zone's bounds (`Zone::hold_changed`).
+    Outside(&'r Row),
 }
 
 /// A zone: of each column kept, its least and greatest value not null and
@@ -148,9 +153,15 @@ struct Map {
 }
 
 impl Map {
-    /// Notes zone `at` changed since its segment was saved.
+    /// Notes zone `at` changed since its segment was saved. The flag is
+    /// written only if clear: every write to the table notes a change, and
+    /// one flag stands for many zones, so a flag set already is read alone
+    /// and its cache line stays shared between the writers. A save clears
+    /// it before it reads the zones (`zones/saved.rs`), so a change it did
+    /// not read finds it clear and sets it.
     fn changed(&self, at: usize) {
-        if let Some(flag) = self.dirty.get(at.checked_div(SEGMENT_ZONES).unwrap_or(0)) {
+        let flag = self.dirty.get(at.checked_div(SEGMENT_ZONES).unwrap_or(0));
+        if let Some(flag) = flag.filter(|flag| !flag.load(AtomicOrdering::Acquire)) {
             flag.store(true, AtomicOrdering::Release);
         }
     }
@@ -271,21 +282,6 @@ impl Zone {
     fn stale(&self) -> bool {
         self.loose != 0
     }
-
-    /// Widens it to hold `values`, those of the `columns` kept.
-    fn hold<'v>(&mut self, columns: usize, values: impl Iterator<Item = &'v Value>) {
-        if self.bounds.len() < columns {
-            self.bounds.resize(columns, None);
-            self.nulls.resize(columns, false);
-        }
-        for ((bounds, null), v) in self.bounds.iter_mut().zip(self.nulls.iter_mut()).zip(values) {
-            if v.is_null() {
-                *null = true;
-            } else {
-                widened(bounds, v);
-            }
-        }
-    }
 }
 
 impl Zones {
@@ -357,7 +353,10 @@ impl Zones {
     /// it visible over the change.
     fn change(&self, (map, at): (&Map, usize), zone: &mut Zone, (row, replaced): (Option<&Row>, Replaced<'_>)) {
         zone.changes = zone.changes.saturating_add(1);
-        if let Some(flag) = map.visible.get(at) {
+        // Written only if set, under the zone's lock, as a sum up sets it:
+        // a flag clear already is read alone, so writers of zones side by
+        // side do not pass its cache line from one to the next.
+        if let Some(flag) = map.visible.get(at).filter(|flag| flag.load(AtomicOrdering::Acquire)) {
             flag.store(false, AtomicOrdering::Release);
         }
         if !zone.unsettled {
@@ -368,9 +367,10 @@ impl Zones {
             zone.rows = zone.rows.saturating_add(1);
         }
         let was_stale = zone.stale();
-        zone.loose |= self.loosened(zone, row, replaced);
+        let (loose, unchanged) = self.loosened(zone, row, replaced);
+        zone.loose |= loose;
         if let Some(row) = row {
-            zone.hold(self.kept.len(), self.kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)));
+            zone.hold_changed(self.kept.len(), self.kept.iter().map(|&c| row.get(c).unwrap_or(&Value::Null)), unchanged);
         }
         if !was_stale && zone.stale() {
             self.stale.fetch_add(1, AtomicOrdering::AcqRel);
@@ -528,7 +528,8 @@ impl RowTable {
     /// (`Zones::widen`): the row the write replaced, decoded once for it
     /// and the write's caller (RULES.md D835).
     pub(super) fn widen_over(&self, id: RowId, row: Option<&Row>, replaced: Option<&Row>) {
-        self.zones.widen(id, row, replaced.map_or(Replaced::Unknown, Replaced::Row));
+        let known = if self.frozen.plain() { Replaced::Row } else { Replaced::Outside };
+        self.zones.widen(id, row, replaced.map_or(Replaced::Unknown, known));
     }
 
     /// Widens the zone of row `id` to hold `version`, a version of it put
