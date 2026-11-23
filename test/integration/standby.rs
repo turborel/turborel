@@ -43,6 +43,8 @@ fn following() -> Database {
 /// What the standby's tests compare: T's rows, a query by index V, and the
 /// entries of each index named.
 fn answers(db: &Database, indexes: &[&str]) -> (Vec<String>, Vec<String>, Vec<usize>) {
+    // What a batch left collected (RULES.md D920): one entry a row.
+    db.maintain().unwrap();
     let s = db.session("APP");
     let all = rows(&s, "SELECT K, V FROM T ORDER BY K").unwrap();
     let by_v = rows(&s, "SELECT K FROM T WHERE V = 'uno'").unwrap();

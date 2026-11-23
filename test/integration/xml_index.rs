@@ -206,6 +206,7 @@ fn indexes_are_kept_with_writes_and_rollbacks() {
     a.commit().unwrap();
     assert_eq!(rows(&a, "SELECT K FROM T").unwrap(), Vec::<String>::new());
     a.commit().unwrap();
+    db.maintain().unwrap();
     for name in names {
         assert_eq!(db.index_entries(name).unwrap(), 0, "{name}: every version collected takes its entries back");
     }

@@ -207,6 +207,11 @@ impl Database {
         self.background().jobs.request(self.background().maintenance, self, self.job_policy());
     }
 
+    /// Asks for the maintenance job, `after` from now.
+    pub(super) fn request_maintenance_after(&self, after: Duration) {
+        self.background().jobs.request_after(self.background().maintenance, self, self.job_policy(), after);
+    }
+
     /// Asks for the job folding kept totals, if a table of them has rows to
     /// fold (`db/assertions/fold.rs`).
     pub(super) fn fold_if_due(&self) {

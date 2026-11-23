@@ -19,6 +19,14 @@
 //! COLUMNSTORE.FREEZE_DELAY. `Database::maintain` does every table's now,
 //! until none does more.
 //!
+//! The job first collects the garbage of every table awaiting collection
+//! (`State::collect_awaiting`, RULES.md D920): a transaction's end
+//! collects a table only once a batch of garbage is due (D451), and one
+//! that leaves a table awaiting asks for the job a second later, so the
+//! garbage of a table gone quiet waits no longer than that. A run of the
+//! job before the second is up, for maintenance noted, makes no pass.
+//! `Database::maintain` collects them at once.
+//!
 //! One table's work is done at a time, under the gate, so a checkpoint
 //! waits for it (`db/checkpoint.rs`), and none while the table's
 //! collection is held back, or its definition is newer than the state
@@ -34,6 +42,7 @@ use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::index::Index;
 use crate::storage::TableStorage;
+use crate::threads::JobPolicy;
 
 impl Database {
     /// \[DESIGN\] Does now the maintenance due of every table, until none
@@ -50,13 +59,22 @@ impl Database {
         let st = self.snapshot()?;
         let tables: Vec<QualifiedName> = st.catalog.tables().iter().map(|t| t.name.clone()).collect();
         let _turn = self.background().maintenance_turn.take("maintenance")?;
+        st.collect_awaiting();
         while st.maintain_round(&tables, true)? {}
         Ok(())
     }
 
-    /// Asks for the maintenance job, if a table has maintenance due.
+    /// Asks for the maintenance job, if a table has maintenance due; or,
+    /// a second from now, if a table awaits collection and the job's pass
+    /// has not been asked for since its last (RULES.md D920).
     pub(super) fn maintain_if_due(&self) {
-        if self.snapshot().is_ok_and(|st| st.tx.maintenance_due()) {
+        let Ok(st) = self.snapshot() else { return };
+        // Asked first: a run for the maintenance noted makes no pass
+        // before its second is up.
+        if st.tx.ask_pass() {
+            self.request_maintenance_after(AGAIN);
+        }
+        if st.tx.maintenance_due() {
             self.request_maintenance();
         }
     }
@@ -72,12 +90,24 @@ impl Database {
 /// noted again.
 pub(super) fn maintained(db: &Database) -> Result<Option<Duration>> {
     let st = db.snapshot()?;
+    let _turn = db.background().maintenance_turn.take("maintenance")?;
+    // Collected first: a table collected may be noted for maintenance.
+    // The pass waits out its second on the job's thread; a program that
+    // runs what is due itself has it made at once (RULES.md D920).
+    let wait = if db.job_policy() == JobPolicy::Automatic { AGAIN } else { Duration::ZERO };
+    let pass = st.tx.pass_wait(wait);
+    if pass == Some(Duration::ZERO) {
+        st.collect_awaiting();
+    }
     let tables: Vec<QualifiedName> = st.tx.take_maintenance().into_iter().collect();
-    let worked = {
-        let _turn = db.background().maintenance_turn.take("maintenance")?;
-        st.maintain_round(&tables, false)?
-    };
-    Ok(if worked { Some(Duration::ZERO) } else { st.tx.maintenance_due().then_some(AGAIN) })
+    let worked = st.maintain_round(&tables, false)?;
+    if worked {
+        return Ok(Some(Duration::ZERO));
+    }
+    // Looked at again once the pass's second is up, or a second later for
+    // a table still due, whichever comes first.
+    let again = st.tx.maintenance_due().then_some(AGAIN);
+    Ok([pass.filter(|wait| !wait.is_zero()), again].into_iter().flatten().min())
 }
 
 impl State {

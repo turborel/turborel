@@ -227,6 +227,8 @@ fn every_kind_of_record_is_written_and_replayed() {
         let (crashed, _) = open(&dir);
         base(&crashed);
         (writer.run)(&crashed);
+        // What a batch left collected (RULES.md D920), as recovery leaves it.
+        crashed.maintain().unwrap();
         let expected = state(&crashed);
         let logged = kinds_logged(&dir);
         assert!(logged.contains(&writer.kind), "kind {} written: {logged:?}", writer.kind);
