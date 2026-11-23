@@ -71,22 +71,22 @@ impl State {
         // published after this commit, which it then counts.
         let validated =
             tx.check_definitions().and_then(|()| tx.check_undone()).and_then(|()| self.validate_participants(tx, &joined)).and_then(
-                |(participants, mut committing)| {
+                |mut committing| {
                     let now = self.clock.now();
                     let lsn = tx.append_commit(committing.at, now)?;
                     if lsn.is_some() {
                         committing.syncs();
                     }
-                    Ok((participants, committing, (lsn, now)))
+                    Ok((committing, (lsn, now)))
                 },
             );
         match validated {
-            Ok((participants, committing, (lsn, now))) => {
+            Ok((committing, (lsn, now))) => {
                 // Phase 2 uses storages already found, so it cannot fail part
                 // way. Each engine makes the changes committed at once, as
                 // the row store does with one store (RULES.md D440).
-                for storage in &participants {
-                    storage.commit(tx.id, committing.at);
+                for participant in &joined {
+                    participant.storage.commit(tx.id, committing.at);
                 }
                 // When each table it wrote last changed (RULES.md D522).
                 tx.stamp_written(now);
@@ -101,8 +101,8 @@ impl State {
                 // [DESIGN] RULES.md D440: written in place once its locks
                 // are released, and before the gate lets a checkpoint
                 // capture the pages, whose record syncs this one's.
-                for storage in participants {
-                    storage.settle(tx.id);
+                for participant in &joined {
+                    participant.storage.settle(tx.id);
                 }
                 drop(gate);
                 let durable = self.durable(tx, lsn, at);
@@ -154,7 +154,7 @@ impl State {
 
     /// Phase 1: takes the commit timestamp, and asks every participant in
     /// `joined` to validate at it. Nothing has committed if this fails.
-    fn validate_participants<'j>(&self, tx: &Txn, joined: &'j [Joined]) -> Result<(Vec<&'j dyn TableStorage>, Committing<'_>)> {
+    fn validate_participants(&self, tx: &Txn, joined: &[Joined]) -> Result<Committing<'_>> {
         let committing = self.tx.commit_timestamp();
         let at = committing.at;
         for Joined { table, storage } in joined {
@@ -176,7 +176,7 @@ impl State {
                 ));
             }
         }
-        Ok((joined.iter().map(|j| &*j.storage).collect(), committing))
+        Ok(committing)
     }
 
     /// After a transaction ends, garbage collection: each of `tables`, and

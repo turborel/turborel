@@ -12,7 +12,7 @@ use crate::db::partitions::dispatch::Dispatched;
 use crate::db::{State, api};
 use crate::error::{Code, Result, SqlError, Subject, fail};
 use crate::index::{Key, KeyOrder, Probe};
-use crate::storage::{Newest, Row, RowId, TableStorage, project};
+use crate::storage::{Near, Newest, Row, RowId, TableStorage, project};
 use crate::txn::Txn;
 use crate::value::CompOp;
 use crate::value::Value;
@@ -68,6 +68,8 @@ pub(in crate::db) struct KeyCheck<'s> {
     /// holds, the index and its rows, read from their partitions (RULES.md
     /// D157).
     global: Option<(&'s IndexDesc, Dispatched)>,
+    /// What its table keeps from one row's read to the next.
+    near: Near,
 }
 
 impl<'s> KeyCheck<'s> {
@@ -127,6 +129,7 @@ impl<'s> KeyCheck<'s> {
             family,
             keyed,
             global,
+            near: Near::default(),
         };
         Ok(Some(check))
     }
@@ -152,7 +155,7 @@ impl<'s> KeyCheck<'s> {
         if !self.overlaps && self.family.is_empty() && self.unique.iter().any(|ix| self.txn.alone(&ix.name, id)) {
             return Ok(());
         }
-        let Some(row) = self.storage.get(self.txn.id, id)? else { return Ok(()) };
+        let Some(row) = self.storage.get_near(self.txn.id, id, None, &mut self.near)? else { return Ok(()) };
         let key = self.key_of(&row)?;
         if self.primary {
             let null = key.0.iter().position(Value::is_null);

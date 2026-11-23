@@ -16,6 +16,7 @@ use crate::value::{DataType, Value};
 
 /// What a read needs of an index to make the key of a row: cheap to hold
 /// for each probe, as the whole `IndexDesc` is not.
+#[derive(Debug, Clone)]
 pub struct KeyShape {
     /// The positions, in the table, of the key's columns.
     pub columns: Vec<usize>,

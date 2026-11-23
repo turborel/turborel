@@ -2,13 +2,15 @@
 //! alone or under a projection of its columns, is one and reads the row
 //! the plan gives, and any other plan is none (RULES.md R-TEST-1).
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::PointRead;
+use super::{PointRead, keyed};
 use crate::db::{Database, State};
 use crate::engine::rows::{COLUMN_STORE, ROW_STORE};
 use crate::error::Result;
 use crate::exec::execute;
+use crate::index::Probe;
 use crate::logical::{Cond, Expr, LogicalPlan};
 use crate::physical::{PhysicalPlanner, Plan};
 use crate::storage::Row;
@@ -110,4 +112,40 @@ fn point_operations_off_run_a_kept_plan_through_the_executor() {
     let off = db.snapshot().unwrap();
     let off_kept = crate::physical::prepared_plan(plan, None).unwrap();
     assert!(off_kept.point(&off).is_none());
+}
+
+/// Verifies: [DESIGN] RULES.md D881: a point read of a primary key is
+/// read through its index's probe of the whole key, of either engine,
+/// its row the plan's and none of a key not there, and its search and
+/// entry counted for the index; a value its column cannot place exactly
+/// is not read so, and is searched, giving what the plan gives.
+#[test]
+fn a_point_read_probes_its_index_by_the_whole_key() {
+    for engine in [ROW_STORE, COLUMN_STORE] {
+        let (_db, st) = filled(engine);
+        let (rows, point) = planned(&st, &probe(0, 7, None));
+        let point = point.unwrap();
+        let before = st.index_uses[&point.index].totals();
+        let keyed::Probed::Read(found) = point.keyed(&st, NO_TRANSACTION, Cow::Borrowed(&point.probe), true).unwrap() else {
+            panic!("{engine}: a whole key is probed")
+        };
+        assert_eq!(shown(&[found.unwrap().1]), shown(&rows), "{engine}");
+        let after = st.index_uses[&point.index].totals();
+        assert_eq!((after.0 - before.0, after.1 - before.1), (1, 1), "{engine}: one search of one entry");
+        let (_, missing) = planned(&st, &probe(0, 5_000, None));
+        let missing = missing.unwrap();
+        assert!(
+            matches!(missing.keyed(&st, NO_TRANSACTION, Cow::Borrowed(&missing.probe), false).unwrap(), keyed::Probed::Read(None)),
+            "{engine}"
+        );
+        let fine = if matches!(point.probe, Probe::Prefix { .. }) {
+            Probe::Prefix { equal: vec![Value::Exact(Decimal::new(75, 1))], then: None }
+        } else {
+            Probe::Compare { op: CompOp::Eq, value: Value::Exact(Decimal::new(75, 1)) }
+        };
+        assert!(
+            matches!(point.keyed(&st, NO_TRANSACTION, Cow::Owned(fine), true).unwrap(), keyed::Probed::Unread(_)),
+            "{engine}: 7.5 has no place"
+        );
+    }
 }

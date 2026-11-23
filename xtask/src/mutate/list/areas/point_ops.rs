@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of point operations whose removal must fail their tests.
-pub const POINT_OPS: [Mutation; 4] = [
+pub const POINT_OPS: [Mutation; 8] = [
     Mutation {
         name: "point-ops-any-probe-a-point",
         package: Package::Core,
@@ -46,5 +46,48 @@ pub const POINT_OPS: [Mutation; 4] = [
         replacement: "        drop(row);",
         integration: &["point_operations::point_operations_read_as_the_executor_does"],
         unit: &[],
+    },
+    Mutation {
+        name: "point-ops-whole-key-inexact",
+        package: Package::Core,
+        breaks: "a value its column cannot place exactly is given a whole key, of the value it was rounded to (D881)",
+        file: "src/index/blink/encoded.rs",
+        original: "        if !anchor_into(value, data_type, &mut out)? {",
+        replacement: "        if anchor_into(value, data_type, &mut out).is_none() {",
+        integration: &[],
+        unit: &[
+            "index::blink::tests::a_whole_key_finds_its_entries_and_no_others",
+            "exec::point::tests::a_point_read_probes_its_index_by_the_whole_key",
+        ],
+    },
+    Mutation {
+        name: "point-ops-whole-key-row-unchecked",
+        package: Package::Core,
+        breaks: "a point read by a whole key keeps a row whose version seen has left the key (D881)",
+        file: "src/exec/point/keyed.rs",
+        original: "        Ok(Key::values_are_of(self.key, &row, &self.keyed.shape.columns).then_some(row))",
+        replacement: "        Ok(Some(row))",
+        integration: &["point_operations::a_point_read_passes_over_an_entry_of_a_key_its_row_left"],
+        unit: &[],
+    },
+    Mutation {
+        name: "point-ops-whole-key-read-untold",
+        package: Package::Core,
+        breaks: "a point read by a whole key is not recorded, so a serializable commit misses a row added under its key (D881)",
+        file: "src/exec/point/keyed.rs",
+        original: "        storage.read_by_condition(tx, &told)?;",
+        replacement: "",
+        integration: &["point_operations::a_point_read_is_recorded_where_reads_are_checked"],
+        unit: &[],
+    },
+    Mutation {
+        name: "point-ops-whole-key-uncounted",
+        package: Package::Core,
+        breaks: "a point read by a whole key counts no search of its index (D881, D522)",
+        file: "src/exec/point/keyed.rs",
+        original: "            uses.add(1, entries);",
+        replacement: "            uses.add(0, entries);",
+        integration: &[],
+        unit: &["exec::point::tests::a_point_read_probes_its_index_by_the_whole_key"],
     },
 ];

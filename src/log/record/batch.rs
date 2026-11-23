@@ -70,37 +70,65 @@ pub fn insert_rows_record(tx: TxId, (table, generation): (&QualifiedName, u32), 
 /// as row `id` into `table`'s storage of `generation`, as `Record::encode`
 /// writes a `Change::Insert`, made from the row as it is held, so it is not
 /// copied for it (RULES.md D531).
-pub fn insert_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, row: &Row) -> Vec<u8> {
-    let mut out = Vec::with_capacity(head_len(table).saturating_add(row_len(row)));
+pub fn insert_record(tx: TxId, table: (&QualifiedName, u32), id: RowId, row: &Row) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_insert_record(&mut out, tx, table, id, row);
+    out
+}
+
+/// \[DESIGN\] (RULES.md D882) As `insert_record`, its bytes appended to
+/// `out`: the buffer a transaction holds its records in, given room for
+/// the record first.
+pub fn put_insert_record(out: &mut Vec<u8>, tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, row: &Row) {
+    out.reserve(head_len(table).saturating_add(row_len(row)));
     out.put_u8(RECORD_VERSION);
     out.put_u8(INSERT);
     out.put_u64(tx);
-    put_row_change(&mut out, (table, generation, id), &[row]);
-    out
+    put_row_change(out, (table, generation, id), &[row]);
 }
 
 /// \[DESIGN\] As `insert_record`, of a `Change::Update` of row `id` made
 /// `after` from `before` (RULES.md D750).
-pub fn update_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, (before, after): (&Row, &Row)) -> Vec<u8> {
+pub fn update_record(tx: TxId, table: (&QualifiedName, u32), id: RowId, images: (&Row, &Row)) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_update_record(&mut out, tx, table, id, images);
+    out
+}
+
+/// \[DESIGN\] (RULES.md D882) As `update_record`, appended to `out` as
+/// `put_insert_record` appends.
+pub fn put_update_record(
+    out: &mut Vec<u8>,
+    tx: TxId,
+    (table, generation): (&QualifiedName, u32),
+    id: RowId,
+    (before, after): (&Row, &Row),
+) {
     // At most the row before whole, each of its columns with its position.
     let images = row_len(after).saturating_add(row_len(before)).saturating_add(before.len().saturating_mul(POSITION_LEN));
-    let mut out = Vec::with_capacity(head_len(table).saturating_add(images));
+    out.reserve(head_len(table).saturating_add(images));
     out.put_u8(RECORD_VERSION);
     out.put_u8(UPDATE);
     out.put_u64(tx);
-    super::images::put_update(&mut out, (table, generation, id), before, after);
-    out
+    super::images::put_update(out, (table, generation, id), before, after);
 }
 
 /// \[DESIGN\] As `insert_record`, of a `Change::Delete` of row `id`, which
 /// was `before` (RULES.md D750).
-pub fn delete_record(tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, before: &Row) -> Vec<u8> {
-    let mut out = Vec::with_capacity(head_len(table).saturating_add(row_len(before)));
+pub fn delete_record(tx: TxId, table: (&QualifiedName, u32), id: RowId, before: &Row) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_delete_record(&mut out, tx, table, id, before);
+    out
+}
+
+/// \[DESIGN\] (RULES.md D882) As `delete_record`, appended to `out` as
+/// `put_insert_record` appends.
+pub fn put_delete_record(out: &mut Vec<u8>, tx: TxId, (table, generation): (&QualifiedName, u32), id: RowId, before: &Row) {
+    out.reserve(head_len(table).saturating_add(row_len(before)));
     out.put_u8(RECORD_VERSION);
     out.put_u8(DELETE);
     out.put_u64(tx);
-    put_row_change(&mut out, (table, generation, id), &[before]);
-    out
+    put_row_change(out, (table, generation, id), &[before]);
 }
 
 /// The bytes of a changed column's position in an update's row before.

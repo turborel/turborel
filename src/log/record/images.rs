@@ -15,6 +15,9 @@
 //! A column is changed if its value's bytes differ, so values that compare
 //! equal but are written apart, as a decimal of another scale, are kept.
 
+use std::cell::RefCell;
+use std::ops::Range;
+
 use super::{Change, put_table, table};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
@@ -34,17 +37,41 @@ pub(super) fn put_update(out: &mut Vec<u8>, (name, generation, id): (&QualifiedN
     out.put_u32(generation);
     out.put_u64(id);
     out.put_u32(u32::try_from(after.len()).unwrap_or(u32::MAX));
-    let mut spans = Vec::with_capacity(after.len());
+    if before.len() != after.len() {
+        put_row_values(out, after);
+        out.put_u8(WHOLE);
+        put_row(out, before);
+        return;
+    }
+    // Where each value of the row after lies, in a vector its thread
+    // keeps, so an update's record allocates none for them.
+    let mut spans = SPANS.take();
+    spans.clear();
     for v in after {
         let start = out.len();
         put_value(out, v);
         spans.push(start..out.len());
     }
-    if before.len() != after.len() {
-        out.put_u8(WHOLE);
-        put_row(out, before);
-        return;
+    put_changed(out, before, &spans);
+    SPANS.set(spans);
+}
+
+thread_local! {
+    /// The places of the last row after an update's record wrote on this
+    /// thread: kept for the next, which clears it.
+    static SPANS: RefCell<Vec<Range<usize>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Writes each value of `row`, as `put_row` does after its count.
+fn put_row_values(out: &mut Vec<u8>, row: &Row) {
+    for v in row {
+        put_value(out, v);
     }
+}
+
+/// Writes of `before` the columns whose bytes are not those at their
+/// place in `spans`, of the row after as `out` holds it.
+fn put_changed(out: &mut Vec<u8>, before: &Row, spans: &[Range<usize>]) {
     // [DESIGN] RULES.md D822: each column of the row before written in
     // place after the count, and taken back if its bytes are those it
     // has after.
@@ -52,7 +79,7 @@ pub(super) fn put_update(out: &mut Vec<u8>, (name, generation, id): (&QualifiedN
     let count_at = out.len();
     out.put_u32(0);
     let mut count = 0_u32;
-    for (at, (v, span)) in before.iter().zip(spans).enumerate() {
+    for (at, (v, span)) in before.iter().zip(spans.iter().cloned()).enumerate() {
         let mark = out.len();
         out.put_u32(u32::try_from(at).unwrap_or(u32::MAX));
         let value_at = out.len();
