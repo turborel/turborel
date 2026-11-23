@@ -38,7 +38,9 @@ use crate::error::Result;
 use crate::storage::Near;
 
 /// \[DESIGN\] The misses in a row after which a scan stops trying its leaf:
-/// its keys are not side by side, and each try costs a page read.
+/// its keys are not side by side, and each try costs a page read. Only a
+/// read the leaf remembered answers ends the row, so what keeps a `Near`
+/// across reads of rows far apart stops trying for good.
 const MOST_MISSES: u8 = 8;
 /// \[DESIGN\] The leaves a read tries before it descends: the one it knows
 /// and its right neighbour, where a scan's next key goes when it leaves one.
@@ -142,7 +144,10 @@ impl BLinkTree {
     fn hinted(&self, key: &[u8], stamp: u64, near: &mut Near) -> Result<Option<bool>> {
         let (bytes, at) = (&mut near.bytes, &mut near.at);
         let Some((leaf, found)) = self.at_noted(key, |node| copied(node, key, (bytes, at)))? else { return Ok(None) };
-        near.misses = 0;
+        // The misses stay as they are: the leaf remembered did not answer,
+        // so the reads are not side by side, and a hint that answers says
+        // nothing else. Cleared here, reads of rows far apart kept trying
+        // the leaf of the last and its neighbour before every hint.
         near.leaf = Some((leaf, stamp));
         Ok(Some(found))
     }

@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 16] = [
+pub const TREE_PATH: [Mutation; 17] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -173,5 +173,15 @@ pub const TREE_PATH: [Mutation; 16] = [
         replacement: "        if expected.is_none() && old.is_empty() {",
         integration: &[],
         unit: &["engine::tree::tests::placed::a_delete_and_an_update_change_the_leaf_covering_their_key"],
+    },
+    Mutation {
+        name: "near-hint-clears-misses",
+        package: Package::Core,
+        breaks: "a hint that answers clears a scan's misses, so reads of rows far apart try the last leaf and its neighbour before every hint",
+        file: "src/engine/tree/near.rs",
+        original: "        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
+        replacement: "        near.misses = 0;\n        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::reads_far_apart_stop_trying_the_leaf_of_the_read_before"],
     },
 ];

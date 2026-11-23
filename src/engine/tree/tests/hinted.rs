@@ -220,3 +220,28 @@ fn a_read_for_a_write_starts_at_the_leaf_noted() {
     assert_eq!(tree.counts().hinted, before, "no leaf noted");
     assert!(descended.path.stack.last().is_some(), "a descent, its path kept");
 }
+
+/// Verifies: [DESIGN] RULES.md D500, D31: reads of rows far apart through
+/// one `Near`, each answered by the leaf noted for its row, stop trying
+/// the leaf of the read before once it has missed eight times in a row,
+/// and read no page but the one noted from then on. Regression test
+/// (R-TEST-7): a hint that answered cleared the misses, so every such
+/// read tried the last leaf and its neighbour first, for ever.
+#[test]
+fn reads_far_apart_stop_trying_the_leaf_of_the_read_before() {
+    let (tree, _scratch) = rows("far-apart", 2_000);
+    let far = [5_u64, 1_000, 1_900, 500, 1_500];
+    let leaves: Vec<PageId> = far.iter().map(|&k| leaf_of(&tree, k)).collect();
+    let mut near = Near::default();
+    let read = |round: usize, kept: &mut Near| {
+        let at = round % far.len();
+        hints::note(far[at], leaves[at].0);
+        assert!(tree.get_near(&key(far[at]), kept).unwrap());
+    };
+    (0..12).for_each(|round| read(round, &mut near));
+    assert_eq!(near.misses, 8, "no longer tried, nor cleared by a hint");
+    let (hits, hinted) = (tree.pool.counts().hits, tree.counts().hinted);
+    (12..22).for_each(|round| read(round, &mut near));
+    assert_eq!(tree.counts().hinted, hinted + 10, "each from the leaf noted");
+    assert!(tree.pool.counts().hits <= hits + 10, "one page a read at most");
+}
