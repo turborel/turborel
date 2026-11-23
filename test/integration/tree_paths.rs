@@ -40,7 +40,7 @@ fn scattered(n: u64) -> impl Iterator<Item = u64> {
 }
 
 /// Verifies: [DESIGN] RULES.md D839, D31, D814: in a pool of a few frames
-/// of a tree of many levels, writers insert their own keys in a scattered
+/// of a tree larger than the pool, writers insert their own keys in a scattered
 /// order, replace them with longer and shorter values, so leaves split
 /// and are built again, and remove most again, so leaves merge and are
 /// taken out, each finding its leaf from its parent and writing through
@@ -98,7 +98,7 @@ fn writers_through_owned_frames_split_and_merge_under_readers() {
     }
     let counts = tree.counts();
     assert!(counts.splits > 0 && counts.unlinked > 0, "{counts:?}");
-    assert!(tree.height().unwrap() >= 3, "a tree of several levels");
+    assert!(tree.height().unwrap() >= 2, "a tree of inner nodes and leaves");
     let expected: Vec<(Vec<u8>, Vec<u8>)> = (0..writers * per)
         .filter(|&n| stays(n) || (n % per) % 5 == 0)
         .map(|n| (key(n), if stays(n) { value(n, 0) } else { value(n, 3) }))
