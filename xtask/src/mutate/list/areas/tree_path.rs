@@ -12,7 +12,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 12] = [
+pub const TREE_PATH: [Mutation; 14] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -132,5 +132,25 @@ pub const TREE_PATH: [Mutation; 12] = [
         replacement: "            if frame.loading.load(Ordering::Acquire) {\n                return None;\n            }\n            frame.pins",
         integration: &[],
         unit: &["disk::buffer::hits::tests::a_page_pinned_through_its_hint_keeps_its_frame"],
+    },
+    Mutation {
+        name: "scan-first-read-whole",
+        package: Package::Core,
+        breaks: "a forward scan's first read copies every entry of its leaf within its bounds, not one",
+        file: "src/engine/tree/scan.rs",
+        original: "            Direction::Forward => self.most,",
+        replacement: "            Direction::Forward => usize::MAX,",
+        integration: &[],
+        unit: &["engine::tree::tests::taken::a_forward_scan_copies_one_entry_then_a_few_then_leaves"],
+    },
+    Mutation {
+        name: "scan-part-not-read-again",
+        package: Package::Core,
+        breaks: "a scan ends at a leaf it took only part of, never reading the rest",
+        file: "src/engine/tree/scan.rs",
+        original: "                    (Taken::Part, Some(leaf)) => Next::Leaf(leaf),",
+        replacement: "                    (Taken::Part, Some(_)) => Next::Done,",
+        integration: &[],
+        unit: &["engine::tree::tests::taken::a_forward_scan_copies_one_entry_then_a_few_then_leaves"],
     },
 ];

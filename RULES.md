@@ -561,6 +561,7 @@ verification approach DO-178C expects (§8).
 | D852 | A writer searches and changes its leaf under one latch, comparing the value found where it lies |
 | D853 | A row read for a write starts at the leaf noted for it, with no descent |
 | D854 | A page held for writing is pinned through its hint under its frame's latch, with no shard locked |
+| D855 | A forward scan copies one entry at its first read, a few at its second, and whole leaves after |
 
 ### The project
 
@@ -12957,6 +12958,7 @@ kernels of a statement's executor, its filters over batches, groupings
 and sorts; a table's storage keeps the set registered, whatever the
 setting, since a table is opened once for many statements.
 
+
 #### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
 
 The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
@@ -15519,6 +15521,29 @@ or a frame loading, and goes the locked way.
 
 A hint is written only when it changes (`Hints::note`), and the shard is
 hashed for the count of waits only when a hold waited.
+
+#### D855. A forward scan copies one entry at its first read, a few at its second, and whole leaves after
+
+A scan copies the entries it wants from a leaf under the leaf's latch
+and gives them once the latch is let go (D31, D809). It copied every
+entry of the leaf from its lower bound to its upper. A probe of a
+unique key is a scan that takes one entry, and a scan of the lowest key
+of a range, a queue's next, takes one too, yet each copied the rest of
+its leaf within its bounds first.
+
+A forward scan now takes one entry at its first read, sixteen at its
+second, and whole leaves from then on (`engine/tree/scan.rs`). A leaf
+not taken whole is read again from past the last key taken, exactly as
+a scan goes on past the last key it returned, so a leaf that split or
+lost entries in between gives each key it still holds once (Lehman and
+Yao 1981, §4). A scan that reads on reads its first leaf three times
+at most. The counts are the one entry a probe wants and the rows of a
+short range, an order's lines. They bound only what is copied, and any
+other counts give the same entries. A leaf read again is noted once for
+EXPLAIN ANALYZE (D621).
+
+A backward scan takes whole leaves, as it finds each leaf by a descent
+and a leaf read again would cost one.
 
 ## 2. Project layout
 

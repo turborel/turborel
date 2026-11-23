@@ -3,6 +3,13 @@
 //! at a time, under that leaf's latch, and returns them before reading the
 //! next, so it holds no latch between entries.
 //!
+//! A forward scan copies one entry at its first read, a few at its second,
+//! and whole leaves from then on (RULES.md D855). Most scans are probes
+//! that take one entry, a unique key's, and copying the rest of the leaf
+//! for each was most of what a probe copied. A leaf not taken whole is
+//! read again from past the last key taken, as a leaf is read past the
+//! last key returned.
+//!
 //! * **Forward**, it follows right links. Keys only ever move right, so
 //!   every key past the last one returned is in the leaf linked to, or
 //!   further right (Lehman and Yao 1981, §4). Each leaf's entries are taken
@@ -21,7 +28,7 @@
 //!   not cover (§6.2, Lemma 2).
 //!
 //! \[EXTENSION\] A scan made for an operator EXPLAIN ANALYZE counts notes
-//! each leaf it reads of it (`noted.rs`, RULES.md D621).
+//! each leaf it reads (`noted.rs`, RULES.md D621).
 //!
 //! Entries added or removed while a scan runs may or may not be seen, as
 //! the scan reaches their leaf before or after the change; isolation is
@@ -94,7 +101,17 @@ pub struct Scan<T: Deref<Target = BLinkTree>> {
     entered: Entered,
     /// The notes of the operator it reads for, if it is counted.
     notes: Option<Arc<Notes>>,
+    /// The most entries its next read takes forward (RULES.md D855).
+    most: usize,
 }
+
+/// \[DESIGN\] The entries a forward scan takes at its first read: the one
+/// a probe of a unique key wants (RULES.md D855).
+const FIRST_TAKEN: usize = 1;
+/// \[DESIGN\] The entries it takes at its second read: the rows of a short
+/// range, an order's lines. A scan that reads on takes whole leaves, so it
+/// reads its first leaf three times at most.
+const NEXT_TAKEN: usize = 16;
 
 impl<T: Deref<Target = BLinkTree>> Drop for Scan<T> {
     fn drop(&mut self) {
@@ -131,6 +148,7 @@ pub fn scan_owned<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<Vec<u8>>, 
         ahead: Ahead::default(),
         entered,
         notes: noted::noting(),
+        most: FIRST_TAKEN,
     }
 }
 
@@ -190,74 +208,81 @@ fn tally(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Res
     Ok((end.saturating_sub(start), further_of(leaf, upper), leaf.high.map(<[u8]>::to_vec)))
 }
 
-/// Takes what is wanted from `leaf` into `ready`, cleared first; its right
-/// neighbour, if keys past its high key may be within `upper`.
-fn take(leaf: &Node<'_>, (lower, upper): (&Bound<Vec<u8>>, &Bound<Vec<u8>>), ready: &mut ready::Ready) -> Result<Option<PageId>> {
+/// What a read took of a leaf.
+#[derive(Clone, Copy)]
+enum Taken {
+    /// Every entry wanted of it, and its right neighbour, if keys past its
+    /// high key may be within the upper bound.
+    Whole(Option<PageId>),
+    /// As many as the read takes, with more wanted left in it.
+    Part,
+}
+
+/// Takes what is wanted from `leaf` into `ready`, cleared first, `most`
+/// entries at most.
+fn take(leaf: &Node<'_>, (lower, upper): (&Bound<Vec<u8>>, &Bound<Vec<u8>>), ready: &mut ready::Ready, most: usize) -> Result<Taken> {
     if leaf.level != 0 {
         return Err(corrupt("a leaf's neighbour is not a leaf"));
     }
     ready.clear();
     // Taken out of the tree, its range is in the node its link leads to.
     if leaf.deleted {
-        return Ok(leaf.right);
+        return Ok(Taken::Whole(leaf.right));
     }
-    for at in start_of(leaf, lower)?..leaf.len() {
+    let start = start_of(leaf, lower)?;
+    for at in start..leaf.len() {
         let (key, value) = leaf.entry(at)?;
         if !below(key, upper) {
             break;
         }
+        if at.saturating_sub(start) >= most {
+            return Ok(Taken::Part);
+        }
         ready.push(key, value);
     }
-    Ok(further_of(leaf, upper))
+    Ok(Taken::Whole(further_of(leaf, upper)))
 }
 
 impl<T: Deref<Target = BLinkTree>> Scan<T> {
     /// Reads the next leaf: its entries made ready, and where to read next
     /// decided.
     fn advance(&mut self) -> Result<()> {
-        let tree = &*self.tree;
-        let ready = &mut self.ready;
-        let (further, low) = match self.next {
+        // Only a forward scan reads a leaf again from past a key.
+        let most = match self.direction {
+            Direction::Forward => self.most,
+            Direction::Backward => usize::MAX,
+        };
+        self.most = if most < NEXT_TAKEN { NEXT_TAKEN } else { usize::MAX };
+        // A leaf read again for the rest of it is noted once.
+        let mut again = false;
+        let (taken, low) = match self.next {
             Next::Done => return Ok(()),
             Next::Leaf(id) => {
+                let tree = &*self.tree;
                 if self.last.and_then(|last| last.0.checked_add(1)) == Some(id.0) {
                     tree.pool.ahead_of(&mut self.ahead, tree.file, id.0);
                 }
+                again = self.last == Some(id);
                 self.last = Some(id);
                 let page = tree.pool.read(tree.file, id.0)?;
-                (take(&Node::parse(&page)?, (&self.lower, &self.upper), ready)?, None)
+                (take(&Node::parse(&page)?, (&self.lower, &self.upper), &mut self.ready, most)?, None)
             }
-            Next::Descend => {
-                let bound = match self.direction {
-                    Direction::Forward => &self.lower,
-                    Direction::Backward => &self.upper,
-                };
-                let target = match (bound, self.direction) {
-                    (Bound::Included(key) | Bound::Excluded(key), _) => Target::Key(key),
-                    (Bound::Unbounded, Direction::Forward) => Target::First,
-                    (Bound::Unbounded, Direction::Backward) => Target::Last,
-                };
-                // A lookup: its first descent, to a key; a backward scan's
-                // next ones go on from where it was.
-                let tallied = self.last.is_none() && matches!(target, Target::Key(_));
-                // Only a backward scan goes on from the key below the leaf,
-                // so only it copies that key on the way down.
-                let track_low = matches!(self.direction, Direction::Backward);
-                let mut path = Path { track_low, tallied, ..Path::default() };
-                let bounds = (&self.lower, &self.upper);
-                let (leaf, further) = tree.descend(target, 0, &mut path, |leaf| take(leaf, bounds, ready))?;
-                self.last = Some(leaf);
-                (further, path.low)
-            }
+            Next::Descend => self.descended(most)?,
         };
         self.next = Next::Done;
-        noted::add(self.notes.as_deref(), Noted::Leaves, 1);
+        if !again {
+            noted::add(self.notes.as_deref(), Noted::Leaves, 1);
+        }
         match self.direction {
             Direction::Forward => {
                 if let Some(key) = self.ready.last_key() {
                     past(&mut self.lower, key);
                 }
-                self.next = further.map_or(Next::Done, Next::Leaf);
+                self.next = match (taken, self.last) {
+                    (Taken::Whole(further), _) => further.map_or(Next::Done, Next::Leaf),
+                    (Taken::Part, Some(leaf)) => Next::Leaf(leaf),
+                    (Taken::Part, None) => Next::Done,
+                };
             }
             Direction::Backward => {
                 // The next leaf down holds `low`, if keys that low are
@@ -272,6 +297,32 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
             }
         }
         Ok(())
+    }
+
+    /// `advance`'s read by a descent to the leaf holding the bound in its
+    /// direction: what it took, `most` entries at most, and the key below
+    /// the leaf, kept by a backward scan.
+    fn descended(&mut self, most: usize) -> Result<(Taken, Option<Vec<u8>>)> {
+        let bound = match self.direction {
+            Direction::Forward => &self.lower,
+            Direction::Backward => &self.upper,
+        };
+        let target = match (bound, self.direction) {
+            (Bound::Included(key) | Bound::Excluded(key), _) => Target::Key(key),
+            (Bound::Unbounded, Direction::Forward) => Target::First,
+            (Bound::Unbounded, Direction::Backward) => Target::Last,
+        };
+        // A lookup: its first descent, to a key; a backward scan's
+        // next ones go on from where it was.
+        let tallied = self.last.is_none() && matches!(target, Target::Key(_));
+        // Only a backward scan goes on from the key below the leaf,
+        // so only it copies that key on the way down.
+        let track_low = matches!(self.direction, Direction::Backward);
+        let mut path = Path { track_low, tallied, ..Path::default() };
+        let (bounds, ready) = ((&self.lower, &self.upper), &mut self.ready);
+        let (leaf, taken) = self.tree.descend(target, 0, &mut path, |leaf| take(leaf, bounds, ready, most))?;
+        self.last = Some(leaf);
+        Ok((taken, path.low))
     }
 }
 
@@ -300,6 +351,12 @@ fn past(lower: &mut Bound<Vec<u8>>, key: &[u8]) {
 }
 
 impl<T: Deref<Target = BLinkTree>> Scan<T> {
+    /// The entries its last read copied, given or not, for tests.
+    #[cfg(test)]
+    pub(super) fn held(&self) -> usize {
+        self.ready.taken()
+    }
+
     /// How many entries a forward scan would give, none known past `most`,
     /// read a leaf at a time as the scan is, no entry copied.
     ///

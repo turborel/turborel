@@ -568,3 +568,6 @@ mod merge;
 
 // Changes in place from where a write left its entry (RULES.md D843).
 mod placed;
+
+// The entries a scan copies at each read (RULES.md D855).
+mod taken;
