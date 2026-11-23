@@ -52,8 +52,8 @@ pub const POINT_OPS: [Mutation; 10] = [
         package: Package::Core,
         breaks: "a value its column cannot place exactly is given a whole key, of the value it was rounded to (D881)",
         file: "src/index/blink/encoded.rs",
-        original: "        if !anchor_into(value, data_type, &mut out)? {",
-        replacement: "        if anchor_into(value, data_type, &mut out).is_none() {",
+        original: "        let exact = |(value, data_type)| anchor_into(value, data_type, out) == Some(true);",
+        replacement: "        let exact = |(value, data_type)| anchor_into(value, data_type, out).is_some();",
         integration: &[],
         unit: &[
             "index::blink::tests::a_whole_key_finds_its_entries_and_no_others",

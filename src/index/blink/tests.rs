@@ -561,10 +561,13 @@ fn a_whole_key_finds_its_entries_and_no_others() {
     }
     let lent = |values: &[Value], most: usize| {
         let probe = index.key_probe().unwrap();
-        let bytes = probe.whole_key(values)?;
+        let mut bytes = vec![0xAA];
+        if !probe.whole_key(values, &mut bytes) {
+            return None;
+        }
         let mut rows = Vec::new();
         probe
-            .entries_of(bytes, &mut |entry: EncodedEntry<'_>| {
+            .entries_of(&bytes, &mut |entry: EncodedEntry<'_>| {
                 assert_eq!(decode_key(entry.key, entry.types).unwrap().len(), 2);
                 rows.push(entry.row);
                 Ok(rows.len() < most)
@@ -583,4 +586,10 @@ fn a_whole_key_finds_its_entries_and_no_others() {
     let searched: Vec<RowId> =
         searched(&index, &Probe::Prefix { equal: key(100, 2).0, then: None }).unwrap().into_iter().map(|(_, row)| row).collect();
     assert_eq!(lent(&key(100, 2).0, 9), Some(searched), "as the search of the equality");
+    // More entries of one key than a probe takes at once: the rest by a scan.
+    for row in 10..30 {
+        index.insert(key(300, 3), row).unwrap();
+    }
+    assert_eq!(lent(&key(300, 3).0, 99), Some((10..30).collect()), "past those taken at once");
+    assert_eq!(lent(&key(300, 3).0, 12), Some((10..22).collect()), "no further than asked, past them");
 }

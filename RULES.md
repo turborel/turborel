@@ -15823,7 +15823,14 @@ and the index as a search counts them.
 Any other index, probe or key is searched as before. A value not of its
 column's type has no exact anchor, and a null has none.
 
-The tree's scan keeps its bounds, so a probe still allocates the two.
+The key's bytes are written into a buffer kept with the plan, and the
+B-link index reads their entries by a probe from the key borrowed
+(`BLinkTree::first_from`, D859), so a probe of a unique key allocates
+nothing. That probe shows each entry under its leaf's latch, where the
+tree is not to be used, so the index takes each entry's row and hint
+there, eight at most, and gives them once the latch is let go, noting
+each row's hint for the table's read as a search does (D500). A key of
+more entries has the rest read by a scan past the last given.
 
 #### D882. A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there
 

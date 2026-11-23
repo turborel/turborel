@@ -24,6 +24,8 @@
     reason = "test code: a panic is a test failure, its fixtures literal, a database rebound once dropped (RULES.md R-TEST-4)"
 )]
 
+mod run;
+
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -123,21 +125,7 @@ pub fn contract(log: &dyn Log) {
             after.iter().filter_map(|(_, r)| String::from_utf8_lossy(r).strip_prefix(&prefix).map(str::to_owned)).collect();
         assert_eq!(read, (0..25).map(|n| n.to_string()).collect::<Vec<_>>(), "thread {t}'s records read in its order");
     }
-    run_contract(log);
-}
-
-/// The contract of `Log::append_run` (RULES.md D882): the records laid
-/// end to end are appended in order, each at a position of its own past
-/// the one before, and read back as `append` of each would be; an empty
-/// run appends none.
-fn run_contract(log: &dyn Log) {
-    let run: Vec<Vec<u8>> = (100..112).map(record).chain([record(3)]).collect();
-    let ends: Vec<usize> = run.iter().scan(0, |end, r| Some(std::mem::replace(end, *end + r.len()) + r.len())).collect();
-    let before = log.end();
-    assert!(log.append_run(&[], &[]).unwrap().is_empty() && log.end() == before, "an empty run");
-    let at = log.append_run(&run.concat(), &ends).unwrap();
-    assert!(at.len() == run.len() && at[0] >= before && at.windows(2).all(|w| w[0] < w[1]), "a position each, in order");
-    assert_eq!(all(log, at[0]), at.iter().copied().zip(run).collect::<Vec<_>>(), "read back as appended");
+    run::run_contract(log);
 }
 
 /// A transaction's records (rows inserted, updated and deleted, then its
