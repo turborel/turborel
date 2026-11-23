@@ -589,6 +589,7 @@ verification approach DO-178C expects (§8).
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
+| D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
 
 ### The project
 
@@ -16382,6 +16383,32 @@ taken hands the change to the general path as before. That is a row
 changed since it was read, a sum that would leave the column's type, or
 an increment that is not what made the candidate row. The general path
 then reserves or writes it as it always did.
+
+#### D943. A compiled body nothing of which reads the diagnostics area places no statement's condition there
+
+A compiled program emptied the diagnostics area as each statement began
+and placed the statement's condition there as it ended (D841), as the
+interpreter does. That was done for every assignment, every IF, and
+every turn of a loop, and was a good part of what such a statement cost.
+In most bodies nothing reads what was placed.
+
+The area a procedure's statements write is the procedure's own. Its
+context takes a new one as it is pushed and gives the caller's back as
+it returns (`db/nested.rs`), so nothing after the CALL reads it. Within
+the body it is read by GET DIAGNOSTICS, and kept on the stack as a
+handler is activated. A triggered action and a function invoked have
+areas of their own.
+
+So a compiled program is looked at once, as it is compiled
+(`compiled/run.rs`, `unread`). If none of its statements is GET
+DIAGNOSTICS, no compound statement of it has a handler, and each
+statement the session runs for it is an INSERT, MERGE, UPDATE, DELETE,
+SELECT, OPEN, FETCH or CLOSE, its statements leave the area as it is.
+Each still empties the warnings heard as it begins, as emptying the area
+does, and the run empties them once more as it ends, as its last
+statement's condition would. Any other program runs as before. The
+values, rows, exceptions and completions of the CALL are the same, since
+none of them is read from the area.
 
 ## 2. Project layout
 

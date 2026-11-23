@@ -455,3 +455,40 @@ fn statement_statistics_count_the_same() {
     let gave = same(&[NEW_ORDER], &script);
     assert!(gave.iter().any(|l| l.contains("[\"2,0,")), "two calls of one text: {gave:?}");
 }
+
+/// Verifies: [DESIGN] RULES.md D943: a compiled body nothing of which
+/// reads the diagnostics area places no statement's condition there, and
+/// gives what the interpreter gives; one with a GET DIAGNOSTICS and no
+/// handler reads the statement before it, its command and its row count,
+/// and a CALL after either reads its own area. MC/DC of what places the
+/// conditions: a GET DIAGNOSTICS in the body or none.
+#[test]
+fn a_body_that_reads_no_diagnostics_gives_the_same() {
+    let plain = "CREATE PROCEDURE PLAIN (IN WH INTEGER, OUT LEFT_Q INTEGER) MODIFIES SQL DATA
+       BEGIN
+         DECLARE N INTEGER DEFAULT 0;
+         WHILE N < 3 DO
+           SET N = N + 1;
+           UPDATE S SET Q = Q - 1 WHERE W = WH AND I = N;
+           IF N = 2 THEN INSERT INTO O VALUES (WH, 1, N, 0); END IF;
+         END WHILE;
+         SELECT Q INTO LEFT_Q FROM S WHERE W = WH AND I = 1;
+         SELECT Q INTO N FROM S WHERE W = WH AND I = 99;
+       END";
+    let reading = "CREATE PROCEDURE READING (IN WH INTEGER, OUT WHAT VARCHAR(30), OUT CHANGED INTEGER) MODIFIES SQL DATA
+       BEGIN
+         UPDATE S SET Q = Q - 1 WHERE W = WH AND I < 4;
+         GET DIAGNOSTICS WHAT = COMMAND_FUNCTION, CHANGED = ROW_COUNT;
+       END";
+    let script = [
+        "CALL PLAIN(1, ?)",
+        "CALL READING(1, ?, ?)",
+        "CALL PLAIN(2, ?)",
+        "CALL READING(2, ?, ?)",
+        "CALL PLAIN(1, ?)",
+        "CALL READING(1, ?, ?)",
+    ];
+    let gave = same(&[plain, reading], &script);
+    assert!(gave[0].contains("\"19\""), "{gave:?}");
+    assert!(gave[5].contains("UPDATE WHERE") && gave[5].contains("\"3\""), "the statement before it: {gave:?}");
+}
