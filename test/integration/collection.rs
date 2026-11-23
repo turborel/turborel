@@ -56,15 +56,17 @@ fn collections_passed_over_are_done_later() {
     assert_eq!(rows(&s, "SELECT SUM(X) FROM T"), Ok(vec!["640".to_owned()]));
 }
 
-/// Verifies: [DESIGN] RULES.md D450, D451, D920: a session collecting
-/// after its reply leaves its commit's garbage, and the versions' index
-/// entries, until it collects, and then until a batch is due, the horizon
-/// `BATCH` commits past it; a rollback's versions go at its next
-/// collection; and the maintenance pass collects what it left all the
-/// same.
+/// Verifies: [DESIGN] RULES.md D450, D451, D920, D925: a session
+/// collecting after its reply leaves its commit's garbage, and the
+/// versions' index entries, until it collects, and then until a batch is
+/// due, the horizon `BATCH` commits past it; a rollback's versions go at
+/// its next collection; and the maintenance pass collects what it left
+/// all the same. The pass runs only when the test asks, since another
+/// table's batch due asks for it at once.
 #[test]
 fn a_session_collects_once_its_reply_is_sent() {
     let db = busy(2);
+    db.set_job_policy(JobPolicy::Manual).unwrap();
     db.maintain().unwrap();
     let (s, u) = (db.session("APP"), db.session("APP"));
     s.collect_after_reply(true);
