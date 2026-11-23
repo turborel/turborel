@@ -558,6 +558,7 @@ verification approach DO-178C expects (§8).
 | D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
+| D854 | A page held for writing is pinned through its hint under its frame's latch, with no shard locked |
 
 ### The project
 
@@ -12954,7 +12955,6 @@ kernels of a statement's executor, its filters over batches, groupings
 and sorts; a table's storage keeps the set registered, whatever the
 setting, since a table is opened once for many statements.
 
-
 #### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
 
 The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
@@ -15448,6 +15448,35 @@ for a row, and its wait is bounded as before but for that one write.
 A waiter does not spin. The waits measured were long where no core was
 free, and a spinning waiter would take a core from the thread it waits
 for.
+
+#### D854. A page held for writing is pinned through its hint under its frame's latch, with no shard locked
+
+A read that hits finds its frame by a hint and takes only the frame's
+latch (D30). A page held to be written or owned went the locked way
+every time: its shard hashed and locked shared, the shard's map
+searched, the pin taken, the shard hashed again for a count, and the
+hint written again though it had not changed. Every write of a row took
+that path once, and the shards' lock words and the hints' cache lines
+moved between the threads writing.
+
+A hold now tries the hint first (`BufferPool::pin_hinted`,
+`disk/buffer/hits.rs`). The frame is latched shared without waiting,
+seen to hold the page and not be filling, pinned, and the latch let go.
+A hint stale, or a frame latched exclusively, sends the hold the locked
+way.
+
+A pin taken under a shard's lock is safe as an eviction locks the shard
+exclusively. A pin taken under the latch is safe by the latch. What
+takes a frame from its page, an eviction or a free, latches the frame
+exclusively and then looks at its pins again under that latch
+(`Frame::taken`). A pin taken before the latch was is seen, and none is
+taken while it is held, as the pin needs the latch shared. A frame is
+marked loading and given its new page under the same latch, so a hold
+that finds the frame through an old hint afterwards sees another page
+or a frame loading, and goes the locked way.
+
+A hint is written only when it changes (`Hints::note`), and the shard is
+hashed for the count of waits only when a hold waited.
 
 ## 2. Project layout
 

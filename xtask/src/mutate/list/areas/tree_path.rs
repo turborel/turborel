@@ -1,8 +1,10 @@
-//! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840):
+//! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840,
+//! D852, D853, D854, D855):
 //! the search over a node's slots, inner copies kept with their headers
 //! parsed, writers that find their leaf from its parent and change it
-//! through the frame they own, paths kept in place, and scans' buffers
-//! and bounds.
+//! through the frame they own, under one latch, from the leaf noted for a
+//! row, their page pinned through its hint, paths kept in place, and
+//! scans' buffers and bounds.
 
 use super::super::{Mutation, Package};
 
@@ -10,7 +12,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 7] = [
+pub const TREE_PATH: [Mutation; 9] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -80,5 +82,25 @@ pub const TREE_PATH: [Mutation; 7] = [
         replacement: "let track_low = matches!(self.direction, Direction::Forward);",
         integration: &["trees::scans_honour_bounds_in_both_directions"],
         unit: &[],
+    },
+    Mutation {
+        name: "pool-taken-pinned",
+        package: Package::Core,
+        breaks: "a frame latched to be taken from its page is taken though pinned under that latch, through its hint",
+        file: "src/disk/buffer/hits.rs",
+        original: "        if self.pins.load(Ordering::Acquire) > 0 {\n            return Err(Kept::Pinned);\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &["disk::buffer::hits::tests::a_page_pinned_through_its_hint_keeps_its_frame"],
+    },
+    Mutation {
+        name: "pool-pin-hinted-page",
+        package: Package::Core,
+        breaks: "a hold pins the frame its hint names though the frame holds another page now",
+        file: "src/disk/buffer/hits.rs",
+        original: "            if frame.loading.load(Ordering::Acquire) || frame.key() != Some(key) {\n                return None;\n            }\n            frame.pins",
+        replacement: "            if frame.loading.load(Ordering::Acquire) {\n                return None;\n            }\n            frame.pins",
+        integration: &[],
+        unit: &["disk::buffer::hits::tests::a_page_pinned_through_its_hint_keeps_its_frame"],
     },
 ];

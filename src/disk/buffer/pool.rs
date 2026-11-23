@@ -3,10 +3,11 @@
 //! and syncing.
 //!
 //! The page table is sharded by page. A frame is pinned under the shard of the page it holds,
-//! locked shared, so threads reading one page (a tree's root) pin it at once; and claimed for
-//! another page under the shards of both, locked exclusively in shard order, after checking it
-//! is still unpinned, and latching it exclusively without waiting, as a read that hit by its
-//! hint holds its latch but no pin (`hits.rs`; how a claim treats frames held, `claim.rs`);
+//! locked shared, so threads reading one page (a tree's root) pin it at once, or, found by its
+//! hint, under its latch held shared (`hits.rs`); and claimed for another page under the shards
+//! of both, locked exclusively in shard order, after latching it exclusively without waiting,
+//! as a read that hit by its hint holds its latch but no pin, and checking under that latch
+//! that it is still unpinned (`hits.rs`; how a claim treats frames held, `claim.rs`);
 //! then it is marked loading, and the old page's content is written back and the new one read
 //! with no lock held. A dirty old page stays mapped to the frame until it is written back, so a
 //! thread wanting it waits for the frame rather than reading the file's older copy. A thread
@@ -29,6 +30,7 @@ pub use capture::Capture;
 pub(super) use capture::Owed;
 pub(super) use dirty::Dirtied;
 
+use super::hits::Kept;
 use super::{BufferPool, Clock, Counters, Eviction, FileId, Frame, Key, PageMut, PageRef, Pin, PoolCounts, SHARDS, Shard, Source, count};
 use crate::disk::block::{BlockFile, BlockId};
 use crate::disk::pager::{Extent, PageId, Pager, PagerCounts};
@@ -362,20 +364,22 @@ impl BufferPool {
                 frame.settled();
                 continue;
             }
-            // Held: pinned, or latched by a read that hit by its hint.
-            let pinned = frame.pins.load(Ordering::Acquire) > 0;
-            let latch = if pinned { None } else { frame.try_latched() };
-            let Some(mut content) = latch else {
-                drop(map);
-                if !wait {
+            // Held: pinned, or latched by a read that hit by its hint. The
+            // pins are looked at again under the latch (`Frame::taken`).
+            let taken = if frame.pins.load(Ordering::Acquire) > 0 { Err(Kept::Pinned) } else { frame.taken() };
+            let mut content = match taken {
+                Ok(content) => content,
+                Err(kept) => {
+                    drop(map);
+                    let rounds = match kept {
+                        Kept::Pinned => claim::FREE_PIN_ROUNDS,
+                        Kept::Latched => claim::FREE_ROUNDS,
+                    };
+                    if wait && claim::latch_wait(&mut round, rounds) {
+                        continue;
+                    }
                     return Err(held());
                 }
-                let rounds = if pinned { claim::FREE_PIN_ROUNDS } else { claim::FREE_ROUNDS };
-                let slept = claim::latch_wait(&mut round, rounds);
-                if slept {
-                    continue;
-                }
-                return Err(held());
             };
             if frame.owed.load(Ordering::Acquire) {
                 self.owed_copy(frame, &content);
@@ -401,6 +405,10 @@ impl BufferPool {
     /// Pins the frame holding `key`, filling one if none does; the hint of
     /// `key` the frame. Whether it filled one.
     pub(super) fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
+        // Found by its hint, it is pinned with no shard locked (`hits.rs`).
+        if let Some(frame) = self.pin_hinted(key) {
+            return Ok((frame, false));
+        }
         loop {
             if let Some(pinned) = self.pin_mapped(key)? {
                 if let Some(frame) = self.settled_holding(pinned, key)? {
@@ -443,10 +451,10 @@ impl BufferPool {
             drop(Pin(frame));
             return Ok(None);
         }
-        let shard = self.shard(Self::shard_of(key))?;
         self.hints.hit();
+        // The shard is found, its page hashed, only for a wait to count.
         if waited {
-            count(&shard.waits);
+            count(&self.shard(Self::shard_of(key))?.waits);
         }
         self.eviction.accessed(index);
         Ok(Some(frame))
