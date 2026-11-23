@@ -63,18 +63,19 @@ impl IdBlocks {
         let thread = thread::current().id();
         let Some(shard) = self.shard(thread) else { return take() };
         let mut blocks = lock_builtin(shard);
-        let current = blocks.get(&thread).copied().filter(|b| b.next < b.end);
-        let block = if let Some(block) = current {
-            block
-        } else {
-            if blocks.len() >= KEPT {
-                blocks.clear();
-            }
-            let start = take()?;
-            Block { next: start, end: start.saturating_add(BLOCK) }
-        };
-        blocks.insert(thread, Block { next: block.next.saturating_add(1), ..block });
-        Ok(block.next)
+        // Its block moved on where it is held: one look into the shard for
+        // an id, and another only as a block is taken.
+        if let Some(block) = blocks.get_mut(&thread).filter(|b| b.next < b.end) {
+            let id = block.next;
+            block.next = id.saturating_add(1);
+            return Ok(id);
+        }
+        if blocks.len() >= KEPT {
+            blocks.clear();
+        }
+        let start = take()?;
+        blocks.insert(thread, Block { next: start.saturating_add(1), end: start.saturating_add(BLOCK) });
+        Ok(start)
     }
 
     /// Forgets every block, so ids are next taken past those given so far:
