@@ -73,6 +73,11 @@ pub(in crate::db) fn point_change(
     let hosted = Hosted::in_db(Some(session), cx, &db);
     // What its write needs of its table, found once (RULES.md D872).
     let writing = st.writing(&w.bound.table)?;
+    // An UPDATE tells its write the columns it sets (RULES.md D875).
+    let writing = match straight.set().filter(|_| !delete) {
+        Some(set) => writing.setting(set),
+        None => writing,
+    };
     let at = (&writing, id);
     let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, &seen), straight.set())? };
     let wrote = rows.as_ref().map(|_| id);
@@ -116,10 +121,12 @@ fn updated(
         recomputed = Some(row.clone());
         Ok(Again::Update(row))
     };
-    // [DESIGN] RULES.md D875: the one write to be told the columns set,
-    // where its statement reads nothing of the row before (`Straight::set`).
+    // [DESIGN] RULES.md D875: the one write told the columns set, where
+    // its statement reads nothing of the row before (`Straight::set`).
+    // The row before it gives holds the columns its write read alone.
     let written = match set {
-        Some(_) | None => cx.st.rewrite_row_in(cx.tx, at, Some(&new), &mut recheck)?,
+        Some(_) => cx.st.rewrite_row_set(cx.tx, at, &new, &mut recheck)?,
+        None => cx.st.rewrite_row_in(cx.tx, at, Some(&new), &mut recheck)?,
     };
     Ok(written.map(|before| (before, Some(recomputed.unwrap_or(new)))))
 }

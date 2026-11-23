@@ -219,9 +219,9 @@ impl TableStorage for RowTable {
         self.write_over(tx, id, row, Past::Snapshot)?.map_or_else(|| no_row(id), Ok)
     }
 
-    /// Every column decoded until `write_over_reading` reads `read` alone (RULES.md D875).
-    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, _read: &[usize]) -> Result<Row> {
-        TableStorage::replace(self, tx, id, row)
+    /// The row replaced with its columns `read` alone decoded (`replace_reading`, RULES.md D875).
+    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, read: &[usize]) -> Result<Row> {
+        self.replace_reading(tx, id, row, read)
     }
 
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<&Row>, seen: Timestamp) -> Result<()> {

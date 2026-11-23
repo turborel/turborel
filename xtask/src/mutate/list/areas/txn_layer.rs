@@ -9,8 +9,11 @@
 
 use super::super::{Mutation, Package};
 
+/// The test of the row an update of the columns set is given.
+const SET_ROW: &str = "txn::writing::tests::an_update_of_the_columns_set_is_given_those_of_the_row_replaced";
+
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 16] = [
+pub const TXN_LAYER: [Mutation; 21] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -169,9 +172,62 @@ pub const TXN_LAYER: [Mutation; 16] = [
         package: Package::Core,
         breaks: "an update compares every key column though its statement said which it sets (D875)",
         file: "src/txn/writing.rs",
-        original: "        let set = self.set.unwrap_or(u64::MAX);",
-        replacement: "        let set = self.set.map_or(u64::MAX, |set| set | u64::MAX);",
+        original: "        let set = self.set.as_ref().map_or(u64::MAX, |set| set.mask);",
+        replacement: "        let set = self.set.as_ref().map_or(u64::MAX, |set| set.mask | u64::MAX);",
         integration: &[],
         unit: &["txn::writing::tests::key_columns_a_statement_does_not_set_are_kept_unread"],
+    },
+    Mutation {
+        name: "writing-read-misses-keys",
+        package: Package::Core,
+        breaks: "an update that says what it sets reads no key column of the indexes its set meets (D875)",
+        file: "src/txn/writing.rs",
+        original: "    keys.filter(|key| key & set != 0).fold(set, |read, key| read | key)",
+        replacement: "    keys.filter(|key| key & set == u64::MAX).fold(set, |read, key| read | key)",
+        integration: &[],
+        unit: &["txn::writing::tests::an_update_reads_the_columns_set_and_the_keys_they_meet"],
+    },
+    Mutation {
+        name: "writing-sparse-of-any-engine",
+        package: Package::Core,
+        breaks: "a row replaced is read by columns of an engine the coordinator undoes by its log, or whose index entries it removes (D875)",
+        file: "src/txn/writing.rs",
+        original: "        self.set.as_ref().filter(|_| lean)",
+        replacement: "        self.set.as_ref().filter(|_| lean || self.set.is_some())",
+        integration: &[],
+        unit: &["txn::writing::tests::a_row_is_read_by_columns_only_where_its_engine_needs_no_more"],
+    },
+    Mutation {
+        name: "write-set-reads-the-row-whole",
+        package: Package::Core,
+        breaks: "an update that says what it sets asks its table for the whole row replaced (D875)",
+        file: "src/txn/write.rs",
+        original: "                Some(sparse) => (storage.replace_set(tx.id, id, new, &sparse.read)?, None),",
+        replacement: "                Some(_) => (storage.replace(tx.id, id, new)?, None),",
+        integration: &[],
+        unit: &[SET_ROW],
+    },
+    Mutation {
+        name: "rows-replace-set-decodes-every-column",
+        package: Package::Core,
+        breaks: "the row store decodes every column of a row replaced, though its caller named those it reads (D875)",
+        file: "src/engine/rows/mvcc/write.rs",
+        original: "        let old = self.replaced(id, replaced.as_deref(), Some(read));",
+        replacement: "        let old = self.replaced(id, replaced.as_deref(), Some(read).filter(|read| read.is_empty()));",
+        integration: &[],
+        unit: &[SET_ROW],
+    },
+    Mutation {
+        name: "write-set-record-of-the-row-given",
+        package: Package::Core,
+        breaks: "an update's record is made of the row replaced as given, its columns not read taken as nulls it had before (D875)",
+        file: "src/txn/write.rs",
+        original: "                Some(set) => put_update_record_of(out, tx.id, (table, generation), id, (old, row, set)),",
+        replacement: "                Some(_) => put_update_record(out, tx.id, (table, generation), id, (old, row)),",
+        integration: &[
+            "sparse_updates::updates_by_the_columns_set_leave_what_whole_updates_leave",
+            "sparse_updates::recovery_replays_updates_by_the_columns_set",
+        ],
+        unit: &[],
     },
 ];

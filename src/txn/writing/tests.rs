@@ -6,19 +6,25 @@
 use std::mem;
 use std::sync::Arc;
 
-use crate::catalog::{Catalog, ColumnDesc, MemoryCatalog, QualifiedName, TableDesc};
+use super::{Entries, columns_of, read_columns};
+use crate::catalog::{Catalog, ColumnDesc, IndexDesc, MemoryCatalog, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::engine::rows::{RowStore, TableOptions};
 use crate::error::{Code, SqlError};
 use crate::storage::{Row, StorageEngine, TableStorage};
-use crate::txn::{TableLock, Txn};
+use crate::txn::{Concurrency, TableLock, Txn, Undo};
 use crate::value::{DataType, Decimal, Spelled, Value};
 
 /// A database with table A.T (K), in the row store, and a transaction open.
 fn database() -> (State, Txn, QualifiedName) {
+    database_of(&["K"])
+}
+
+/// As `database`, of a table of the numeric columns `columns`.
+fn database_of(columns: &[&str]) -> (State, Txn, QualifiedName) {
     let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-    let column = ColumnDesc {
-        name: "K".into(),
+    let column = |column: &&str| ColumnDesc {
+        name: (*column).into(),
         data_type: DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric },
         not_null: false,
         default: None,
@@ -30,7 +36,7 @@ fn database() -> (State, Txn, QualifiedName) {
         periods: Vec::new(),
         typed: None,
         name: name.clone(),
-        columns: vec![column],
+        columns: columns.iter().map(column).collect(),
         constraints: vec![],
         engine: "rowstore".into(),
         options: Vec::new(),
@@ -49,6 +55,11 @@ fn database() -> (State, Txn, QualifiedName) {
 
 fn row(k: i64) -> Row {
     vec![Value::Exact(Decimal::new(k.into(), 0))]
+}
+
+/// A row of the numbers `values`.
+fn numbers(values: &[i64]) -> Row {
+    values.iter().map(|&v| Value::Exact(Decimal::new(v.into(), 0))).collect()
 }
 
 /// Verifies: [DESIGN] RULES.md D872: a write finds its first work done
@@ -132,4 +143,84 @@ fn key_columns_a_statement_does_not_set_are_kept_unread() {
     assert_eq!(first.kept_columns(&old, &new), 0b010, "the first set and changed, the second not set");
     let both = first.setting(0b011);
     assert_eq!(both.kept_columns(&old, &old), 0b011, "set and alike");
+}
+
+/// Verifies: [DESIGN] RULES.md D875: an update reads of the row it
+/// replaces the columns its statement sets, and every column of each
+/// index key that reads one of them; a key that reads none set adds
+/// nothing. MC/DC of a key's columns read: its key meets the set, against
+/// one that misses it. The columns of a mask come in ascending order, the
+/// last bit's among them.
+#[test]
+fn an_update_reads_the_columns_set_and_the_keys_they_meet() {
+    assert_eq!(read_columns(0b0001, [0b0011, 0b1100].into_iter()), 0b0011, "the first key meets the set, the second misses it");
+    assert_eq!(read_columns(0b0001, [0b1100].into_iter()), 0b0001, "no key meets it");
+    assert_eq!(read_columns(0b0101, [0b0011, 0b1100].into_iter()), 0b1111, "both meet it");
+    assert_eq!(read_columns(0b0100, std::iter::empty()), 0b0100, "no index");
+    assert_eq!(columns_of(0b1010 | (1 << 63)), [1, 3, 63]);
+    let (st, _tx, name) = database_of(&["K", "A", "B", "C"]);
+    let mut writing = st.writing(&name).unwrap();
+    assert!(writing.sparse().is_none() && writing.set_columns().is_none(), "nothing said");
+    // As of an index on (K, A) and one on C.
+    let index = IndexDesc {
+        name: "T_KA".into(),
+        table: name.clone(),
+        columns: vec![0, 1],
+        method: crate::index::BTREE_METHOD.into(),
+        unique: false,
+        options: Vec::new(),
+        collations: Vec::new(),
+        nulls: false,
+        expressions: Vec::new(),
+    };
+    writing.indexes =
+        vec![Entries { columns: 0b0011, ..Entries::of(&index, None) }, Entries { columns: 0b1000, ..Entries::of(&index, None) }];
+    let set = writing.setting(0b0110);
+    assert_eq!(set.set_columns(), Some(&[1_usize, 2][..]));
+    assert_eq!(set.sparse().map(|s| (s.columns.clone(), s.read.clone())), Some((vec![1, 2], vec![0, 1, 2])));
+}
+
+/// Verifies: [DESIGN] RULES.md D875: the row replaced is read by columns
+/// only of a table whose engine keeps versions and undoes its own
+/// changes, and only once its statement said what it sets. MC/DC of
+/// `Writing::sparse`: said, own undo and versions, against nothing said,
+/// an engine undone by the coordinator's log, and one whose isolation the
+/// coordinator keeps, each alone refusing.
+#[test]
+fn a_row_is_read_by_columns_only_where_its_engine_needs_no_more() {
+    let (st, _tx, name) = database_of(&["K", "A"]);
+    let native = st.writing(&name).unwrap().caps;
+    assert!((native.undo, native.concurrency) != (Undo::Log, Concurrency::Coordinator), "the row store's own");
+    assert!(st.writing(&name).unwrap().sparse().is_none(), "nothing said");
+    assert!(st.writing(&name).unwrap().setting(0b10).sparse().is_some());
+    let mut logged = st.writing(&name).unwrap().setting(0b10);
+    logged.caps.undo = Undo::Log;
+    assert!(logged.sparse().is_none(), "the whole row is kept to put back");
+    let mut coordinated = st.writing(&name).unwrap().setting(0b10);
+    coordinated.caps.concurrency = Concurrency::Coordinator;
+    assert!(coordinated.sparse().is_none(), "each index's old key is made of the row");
+}
+
+/// Verifies: [DESIGN] RULES.md D875: an update by a statement that said
+/// the columns it sets is given the row it replaced with the columns it
+/// reads alone, every other null, and leaves the row as an update that
+/// read the row whole leaves it; an update through the same `Writing` that
+/// asks for the row whole is given it whole.
+#[test]
+fn an_update_of_the_columns_set_is_given_those_of_the_row_replaced() {
+    let (st, tx, name) = database_of(&["K", "A", "B"]);
+    let writing = st.writing(&name).unwrap().setting(0b100);
+    let storage = Arc::clone(st.storage_of(&name).unwrap());
+    tx.begin_statement(|| false).unwrap();
+    let id = st.insert_row_in(&tx, &writing, &numbers(&[1, 2, 3])).unwrap();
+    let mut recheck = |_: &Row| Ok(crate::txn::Again::Skip);
+    // A row's values as text, a null as `NULL`.
+    let shown = |row: Option<Row>| row.map(|row| row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    let old = st.rewrite_row_set(&tx, (&writing, id), &numbers(&[1, 2, 9]), &mut recheck).unwrap();
+    assert_eq!(shown(old).as_deref(), Some("NULL,NULL,3"), "the column set alone");
+    assert_eq!(shown(storage.get(tx.id, id).unwrap()).as_deref(), Some("1,2,9"));
+    let whole = st.rewrite_row_in(&tx, (&writing, id), Some(&numbers(&[1, 2, 10])), &mut recheck).unwrap();
+    assert_eq!(shown(whole).as_deref(), Some("1,2,9"), "asked for whole");
+    st.commit(&tx).unwrap();
+    assert_eq!(shown(storage.get(crate::txn::NO_TRANSACTION, id).unwrap()).as_deref(), Some("1,2,10"));
 }

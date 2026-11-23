@@ -8,10 +8,10 @@ use std::sync::atomic::Ordering;
 
 use super::Past;
 use super::versions::give_back;
-use crate::engine::rows::RowTable;
 use crate::engine::rows::version::Version;
+use crate::engine::rows::{RowTable, no_row};
 use crate::error::Result;
-use crate::storage::{Row, RowId};
+use crate::storage::{Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, TxId};
 
@@ -64,6 +64,16 @@ impl RowTable {
         }
         self.counted_change(tx);
         widened.and(old).map(|old| old.map(|(was, _)| was))
+    }
+
+    /// \[DESIGN\] `TableStorage::replace_set` (RULES.md D875): row `id`
+    /// made `row` by `tx`, the row it replaced given with its columns
+    /// `read` alone decoded. A deletion, and a write outside any
+    /// transaction, which reads the row before it writes, give it whole as
+    /// `replace` does.
+    pub(in crate::engine::rows) fn replace_reading(&self, tx: TxId, id: RowId, row: Option<&Row>, read: &[usize]) -> Result<Row> {
+        let (Some(new), true) = (row, tx != NO_TRANSACTION) else { return TableStorage::replace(self, tx, id, row) };
+        self.write_over_reading(tx, id, new, (Past::Snapshot, read))?.map_or_else(|| no_row(id), Ok)
     }
 
     /// As `write_over`, for a caller that does not read the row replaced.

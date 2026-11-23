@@ -16067,10 +16067,44 @@ columns it keeps from the replaced version's bytes itself (D835). A
 statement that says nothing is treated as setting every column, as
 before.
 
-The halves outside the coordinator and the row store's versions are the
-storage trait's `replace_set`, the log's `put_update_of`, which compares
-only the columns set, and the callers that say what they set and ask for
-the whole old row only where one is read.
+The coordinator's write of such a statement (`State::rewrite_row_set`)
+asks its table for the row replaced by columns
+(`TableStorage::replace_set`). It reads the columns set, and every
+column of each index key that reads one of them, so the key the row had
+in an index it touches can be made of what was read (`Writing::setting`).
+An index whose key reads no column set is passed over with no value
+compared, its columns noted as kept on the change (D443). The update's
+log record is made of the columns set (`record::put_update_of`). It
+holds the row after whole and, of the row before, the columns set that
+changed, which are the bytes a record of the two rows whole holds (D475),
+so whatever reads the log reads it as any update's.
+
+The row replaced comes back with the columns read and null in every
+other. Such a row never goes where a column outside the set is read. An
+engine the coordinator undoes by its log keeps the whole row to put
+back, and an engine whose index entries the coordinator removes makes
+each old key of it, so a table of either is given the row whole
+(`Writing::sparse`). A storage that does not override `replace_set`
+gives the row whole too. A write made over a version another
+transaction committed since the statement's snapshot holds that version
+whole, and its record is still made of the columns set.
+
+Only a compiled program's point UPDATE written straight says what it
+sets (D841, `Straight::set`). Nothing of such a statement reads the row
+before. It has no trigger, no foreign key referencing a column it sets
+and no OLD TABLE, and it checks its constraints of the row after. It
+says nothing of a table with a system-time period, whose history keeps
+the row before and whose stamp changes columns the statement does not
+name, nor of a column past the last bit of the mask. The general path
+(`update_rows`) keeps the whole row before, which its triggers, its
+delta tables and its end-of-statement checks may read. Telling it the
+columns set would need each of those readers to say which columns it
+reads.
+
+The same UPDATEs written both ways leave the same rows, the same index
+entries and the same log, byte for byte, and recovery replays the
+records of the columns set to the same rows
+(`test/integration/sparse_updates.rs`).
 
 #### D880. A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads
 

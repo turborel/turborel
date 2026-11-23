@@ -113,6 +113,26 @@ pub fn put_update_record(
     super::images::put_update(out, (table, generation, id), before, after);
 }
 
+/// \[DESIGN\] (RULES.md D875) As `put_update_record`, of a change that may
+/// differ only in the columns `set`, in ascending order, each once. Of
+/// the row before only those are read (`images::put_update_of`), so one
+/// holding their values alone gives the bytes the row whole gives.
+pub fn put_update_record_of(
+    out: &mut Vec<u8>,
+    tx: TxId,
+    (table, generation): (&QualifiedName, u32),
+    id: RowId,
+    (before, after, set): (&Row, &Row, &[usize]),
+) {
+    // At most the row before as given, each column set with its position.
+    let images = row_len(after).saturating_add(row_len(before)).saturating_add(set.len().saturating_mul(POSITION_LEN));
+    out.reserve(head_len(table).saturating_add(images));
+    out.put_u8(RECORD_VERSION);
+    out.put_u8(UPDATE);
+    out.put_u64(tx);
+    super::images::put_update_of(out, (table, generation, id), before, after, set);
+}
+
 /// \[DESIGN\] As `insert_record`, of a `Change::Delete` of row `id`, which
 /// was `before` (RULES.md D750).
 pub fn delete_record(tx: TxId, table: (&QualifiedName, u32), id: RowId, before: &Row) -> Vec<u8> {
