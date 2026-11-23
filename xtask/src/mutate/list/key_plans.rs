@@ -2,13 +2,14 @@
 //! R-TEST-9, D839), of a whole unique key probed whatever the table's
 //! size, a key's range never priced above the scan of its conjuncts and
 //! taken at the tie, a scan never priced below one zone, a plan kept
-//! learned again once its tables have statistics, and a join weighing its
-//! probes by its left's index range (D890).
+//! learned again once its tables have statistics, a join weighing its
+//! probes by its left's index range (D890), and a range past the
+//! statistics estimated by its index (D891).
 
 use super::{Mutation, Package};
 
 /// The mutations of key plans, in the order they run.
-pub const KEY_PLANS: [Mutation; 6] = [
+pub const KEY_PLANS: [Mutation; 7] = [
     Mutation {
         name: "key-plans-point-sized",
         package: Package::Core,
@@ -75,5 +76,15 @@ pub const KEY_PLANS: [Mutation; 6] = [
         replacement: "    built.and_then(ranged).map_or(estimated, |rows| estimated.max(rows))\n",
         integration: &[],
         unit: &["physical::indexed::ranged::tests::a_left_reading_an_index_range_is_estimated_at_its_rows_if_fewer"],
+    },
+    Mutation {
+        name: "key-plans-past-range-uncapped",
+        package: Package::Core,
+        breaks: "a range past the greatest value the statistics saw keeps every row written since, so a stock level's plan made with slots hashes a read of the whole of STOCK and is kept",
+        file: "src/physical/cardinality/past.rs",
+        original: "            least = least.min(cost_of(rows) / all.max(1.0_f64));\n",
+        replacement: "            least = least.max(cost_of(rows) / all.max(1.0_f64));\n",
+        integration: &[],
+        unit: &["physical::cardinality::tests::a_range_past_the_statistics_is_estimated_by_its_index"],
     },
 ];
