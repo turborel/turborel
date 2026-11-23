@@ -342,7 +342,7 @@ const FOLDED: [&str; 3] = [
        OUT TOTAL DECIMAL(12,2), OUT LINES INTEGER, OUT PART DECIMAL(14,4))
        MODIFIES SQL DATA
      BEGIN SELECT SUM(V), COUNT(*), SUM(V / N) INTO TOTAL, LINES, PART FROM FINAL TABLE
-       (UPDATE T SET N = N + 1, S = 'done' WHERE W = PW AND D = PD AND K < HI); END",
+       (UPDATE T SET N = N - 2, S = 'done' WHERE W = PW AND D = PD AND K < HI); END",
     "CREATE PROCEDURE DELIVER_ONE (IN PW INTEGER, IN PD INTEGER, IN PK INTEGER, OUT MOST DECIMAL(8,2), OUT LINES INTEGER)
        MODIFIES SQL DATA
      BEGIN SELECT MAX(V) + 1, COUNT(N) INTO MOST, LINES FROM FINAL TABLE
@@ -365,7 +365,7 @@ fn folded(compiled: bool) -> Vec<String> {
     let mut out = Vec::new();
     for round in 0..9_i64 {
         let (w, d) = (round % 2 + 1, round % 10 + 1);
-        // Past the fifth row N is 0 for one row, a division by zero.
+        // Past the first row N is 0 for the second, a division by zero.
         out.push(called(&a, "CALL DELIVER(?,?,?,?,?,?)", &[int(w), int(d), int(round % 3 * 2 + 2)]));
         out.push(called(&a, "CALL DELIVER_ONE(?,?,?,?,?)", &[int(w), int(d), int(round * 20)]));
         out.push(called(&a, "CALL TAKEN(?,?,?,?,?)", &[int(w), int(d), int(116 + round)]));
