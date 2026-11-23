@@ -2,7 +2,6 @@
 //! from a query expression [X3.135-1986 §8.7; ISO/IEC 9075:1992 §13.8], and
 //! the object rows of searched UPDATE and DELETE [X3.135-1986 §8.5, §8.12].
 
-use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,15 +11,15 @@ use super::defaults::default_row;
 use super::generated::{Generating, Inserted};
 use super::integrity::Effects;
 use super::prepared::{Keeping, KeptPlan};
-use super::routines::{Hosted, hosted_rows};
-use super::{Session, State, StatementContext, plan, plan_written, rule, set_columns};
+use super::routines::Hosted;
+use super::{Session, State, StatementContext, plan_written, rule, set_columns};
 use crate::ast::{InsertSource, InsertStatement, QueryExpression, SelectList, SelectSublist};
 use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck};
 use crate::catalog::{ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
-use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
+use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, row_entries};
 use crate::logical::{Expr, LogicalPlan, Truth, filled};
-use crate::params::Params;
+use crate::params::{Load, Params};
 use crate::physical::{Kept as KeptPhysical, Plan};
 use crate::storage::{Row, RowId};
 use crate::txn::{Again, Txn};
@@ -224,7 +223,7 @@ impl Session {
         let (target, query, clocked) = self.insert_bound(cx.st, stmt, params, keeping)?;
         let slots = keeping.and_then(|k| Some(k.slots_of(params.dynamic_slots()?, clocked)));
         let kept = keeping.filter(|_| !clocked).map(|k| (k, params));
-        self.insert_rows(cx, (stmt, &target), (query, slots, kept), params)
+        self.insert_rows(cx, (stmt, &target), (query.as_deref(), slots, kept), params)
     }
 
     /// The rows of `stmt`, an INSERT into `target` of the rows of `query`,
@@ -235,7 +234,7 @@ impl Session {
         &self,
         cx: StatementContext<'_>,
         (stmt, target): (&InsertStatement, &Target),
-        (query, slots, kept): (Option<LogicalPlan>, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
+        (query, slots, kept): (Option<&LogicalPlan>, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
         params: &Params,
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
@@ -243,7 +242,7 @@ impl Session {
             // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
             given::given_rows(st, (stmt, target), given, &Runner::new(st, tx.id))?
         } else if let Some(logical) = query {
-            query_rows((self, cx), target, (Cow::Owned(logical), slots, kept))?
+            inserted::query_rows((self, cx), target, (logical, slots, kept))?
         } else {
             // [ISO/IEC 9075:1992 §13.8 SR2] VALUES (DEFAULT, ...): every
             // column its default, or its generated value.
@@ -251,19 +250,27 @@ impl Session {
             one.push(target.candidate(st, Row::new(), &Runner::new(st, tx.id))?)?;
             one
         };
+        self.insert_found(cx, target, rows, params.load())
+    }
+
+    /// The candidate rows `rows` of an INSERT into `target`, every one
+    /// found, inserted as `insert_statement` inserts them: as part `load`
+    /// of a load, if given.
+    pub(super) fn insert_found(&self, cx: StatementContext<'_>, target: &Target, rows: HeldRows<Row>, load: Option<Load>) -> Result<usize> {
+        let StatementContext { st, tx } = cx;
         let mut effects = self.effects(st);
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted, though its
         // statement-level triggers execute [ISO/IEC 9075-2:2023 §4.46.2].
         if rows.is_empty() && effects.triggered.is_none() {
             // [EXTENSION] of none that ends a load, the load ended (RULES.md D532).
-            bulk::load::end(st, tx, params.load())?;
+            bulk::load::end(st, tx, load)?;
             return Ok(0);
         }
         self.settle_cursors(st, &target.name);
         // [ISO/IEC 9075-2:2023 §15.11 GR4] its BEFORE triggers first.
         let mut rows = effects.before_insert(cx, &target.name, rows)?;
         // [X3.135-1986 §8.7 GR1c], [EXTENSION] in its partition (RULES.md D155), a batch at a time where it may be (D530).
-        bulk::insert_held((st, tx), &target.name, &mut rows, &mut effects, params.load())?;
+        bulk::insert_held((st, tx), &target.name, &mut rows, &mut effects, load)?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
             rows.visit(&mut |row| check_option(&target.checks, [row], ("X3.135-1986 §8.7 GR2", &runner)))?;
@@ -285,11 +292,16 @@ impl Session {
         stmt: &InsertStatement,
         params: &Params,
         keeping: Option<&Keeping<'_>>,
-    ) -> Result<(Target, Option<LogicalPlan>, bool)> {
+    ) -> Result<(Arc<Target>, Option<Arc<LogicalPlan>>, bool)> {
         if let Some((KeptPlan::Insert(target, query), clocked)) = keeping.map(Keeping::plan_clocked).transpose()?.flatten() {
+            // Its defaults taken again only where one reads the user or
+            // the instant: else the target is as kept, shared (D902).
+            if target.fixed_defaults() {
+                return Ok((target, query, clocked));
+            }
             let authorization = self.authorization();
             let target = Arc::unwrap_or_clone(target).refreshed(authorization.of(st.catalog.roles()), self.now.get())?;
-            return Ok((target, query, clocked));
+            return Ok((Arc::new(target), query, clocked));
         }
         let kept = keeping.map(|_| params.keeping_clocked());
         let binding = kept.as_ref().unwrap_or(params);
@@ -300,11 +312,12 @@ impl Session {
             self.insert_target(st, stmt, (binding.noted(), binding.horizon()))?
         };
         let query = match &stmt.source {
-            InsertSource::Query(query) => Some(self.insert_query(st, &target, query, binding)?),
+            InsertSource::Query(query) => Some(Arc::new(self.insert_query(st, &target, query, binding)?)),
             InsertSource::DefaultValues => None,
         };
+        let target = Arc::new(target);
         let Some(k) = keeping else { return Ok((target, query, false)) };
-        k.made_clocked((!binding.held()).then(|| KeptPlan::Insert(Arc::new(target.clone()), query.clone())), binding.clocked())?;
+        k.made_clocked((!binding.held()).then(|| KeptPlan::Insert(Arc::clone(&target), query.clone())), binding.clocked())?;
         Ok((target, query, binding.clocked()))
     }
 
@@ -381,49 +394,6 @@ impl Session {
         }
         Ok(bound.plan)
     }
-}
-
-/// [X3.135-1986 §8.7 GR3, GR4; ISO/IEC 9075:1992 §13.8 GR3, GR4] the
-/// candidate rows of a `<query expression>`, bound as `logical`, one for
-/// each row of its result, which is evaluated in full before any row is
-/// inserted.
-///
-/// Of VALUES that invoke a function that possibly modifies SQL-data, each
-/// row is evaluated in turn by the session (`routines::hosted_rows`).
-fn query_rows(
-    (session, cx): (&Session, StatementContext<'_>),
-    target: &Target,
-    (logical, slots, kept): (Cow<'_, LogicalPlan>, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
-) -> Result<HeldRows<Row>> {
-    let StatementContext { st, tx } = cx;
-    let db = slots.as_ref().map_or_else(|| Db::of(st), |slots| Db::slotted(st, Arc::clone(slots)));
-    let hosted = Hosted::in_db(Some(session), cx, &db);
-    // Held up to MEMORY.WORK_BYTES, the rest spilled (RULES.md D38).
-    let mut rows = HeldRows::new(st.list_space());
-    if let Some(found) = hosted_rows(&logical, &hosted) {
-        for values in found? {
-            rows.push(target.candidate(st, values, &hosted)?)?;
-        }
-        return Ok(rows);
-    }
-    // A query other than a row of values, by its plan kept (RULES.md
-    // D793); else planned with its values, as its paths follow them.
-    if let Some(held) = inserted::kept_rows((session, cx), target, kept)? {
-        return Ok(held);
-    }
-    // Lent by a caller that keeps it, it is copied only to be planned.
-    let logical = match &slots {
-        Some(slots) => filled(logical.into_owned(), slots)?,
-        None => logical.into_owned(),
-    };
-    let (optimized, _, physical) = plan(st, logical);
-    for t in optimized.tables() {
-        st.read_lock(tx, &t)?;
-    }
-    for values in execute(super::explain::analyzing(tx, st, (physical, Some(&optimized))), st, tx.id) {
-        rows.push(target.candidate(st, values?, &hosted)?)?;
-    }
-    Ok(rows)
 }
 
 /// The object rows of a searched UPDATE or DELETE, found before any is

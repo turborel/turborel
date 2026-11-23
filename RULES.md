@@ -586,6 +586,9 @@ verification approach DO-178C expects (§8).
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 | D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
+| D901 | A compiled program's INSERT of a query's rows runs straight on its table, its rows together, each checked as it is held |
+| D902 | A kept INSERT's table and query are shared with each execution, copied only to be planned or given new defaults |
+| D903 | A kept plan whose rows are made of its slots' values alone is read where it is kept |
 
 ### The project
 
@@ -16265,6 +16268,98 @@ subquery is decorrelated follows from the subquery alone, so it is found
 once and kept with its plan kept (`KeptRun::decorrelated`), where each
 run past EXECUTOR.DECORRELATE_AFTER_RUNS that stayed probed made it
 again.
+
+#### D901. A compiled program's INSERT of a query's rows runs straight on its table, its rows together, each checked as it is held
+
+D841 ran a compiled program's INSERT straight only for one row of
+values that read nothing. An INSERT of a query's rows, such as an
+order's lines from UNNEST of its arrays with a scalar subquery for each,
+ran as a statement the session runs: looked up, wrapped, its rows noted
+one by one in the statement's effects and its end reached through
+`end_statement`.
+
+Now a compiled program's INSERT of any query's rows, VALUES or a query
+specification reading no delta table, runs by its kept target and query
+once they are kept, and straight where D841's conditions hold. Its
+table is a plain one with no trigger a change of it may fire, it is not
+named through a view, and its end checks only its rows' own constraints
+(`integrity/straight.rs`). Every row of the query is found before any is
+inserted, as [X3.135-1986 §8.7 GR1] has it.
+
+The rows go in as the general path puts them (`write/bulk.rs`,
+`insert_straight`). Two or more go together where the table takes its
+rows so, under one log record with one undo entry an index (D530). One
+row, or the rows of a table that takes them one at a time, go each by
+the table's `Writing` (D872). So the log holds what the general path
+would have written, record for record. Rows enough to be a load of
+their own (D532) are handed to the general path once found, which
+begins and ends the load.
+
+The statement's end checks each row as its statement holds it
+(`integrity/straight/rows.rs`), as D880 checks a point change's one row.
+Every row's own constraints come first, row by row, then each UNIQUE
+constraint's rows one after another. That is the order `State::checks`
+gathers them in, so a statement breaking several constraints is refused
+for the one the general path names. A batch tells of each row whether
+its key was its key's only entry in every unique index, and such a row
+is passed over by each UNIQUE constraint an entry inserted alone
+settles. A key twice among the statement's rows is not alone the second
+time, and is checked whole. A row is read back where the row held is
+not the row stored, of a table with a system-time period or of a row
+holding a value its table keeps apart. The participants are told to
+check reads only where a check reads a table, as D880 has it.
+
+An INSERT whose end would check more runs by its kept target and query
+through `insert_rows`, as an INSERT of one row of values already did.
+
+#### D902. A kept INSERT's table and query are shared with each execution, copied only to be planned or given new defaults
+
+A kept INSERT held its table's description and its query's bound plan
+(D45, D793), and each execution took a copy of both. The table's was
+copied so its defaults could be taken again for the user and the instant
+of the execution, and the query's because the functions that find its
+rows took a plan of their own.
+
+Now both are shared (`KeptPlan::Insert`). An execution borrows the query
+as it is kept. `query_rows` reads a row of values where it is, or runs
+the physical plan kept of it (D793), and copies the plan bound only when
+it is to be filled with the execution's values and planned afresh, as
+while its plan is still being learned. The table is taken as kept
+wherever each column's default is the same for every user at every
+instant, a value or none (`Target::fixed_defaults`). It is copied and
+given its defaults again only where one reads the user or the instant
+[ISO/IEC 9075:1992 §11.5 GR2].
+
+#### D903. A kept plan whose rows are made of its slots' values alone is read where it is kept
+
+The executor takes a plan whole, and each operator it opens owns its
+part. So every execution of a kept plan that is no point read ran a
+copy of it (`physical::Kept::opened`), and of an INSERT's query the copy
+was opened as a stream whose rows were held once before a candidate row
+was made of each.
+
+A projection of a collection derived table over nothing before it reads
+no table of its own. An order's lines unnested from its arrays are such
+a query. Its rows are the elements of the collections its slots hold,
+each given to the projection's expressions. A kept INSERT now reads such
+a plan where it is kept (`exec/lent.rs`, `write/inserted.rs`), lent by
+`Kept::lent`, with no copy made and no operator opened.
+
+The rows are made as the operators make them. The collections are
+evaluated once and a row made for each ordinal (`unnest::of_row`, the
+operator's own function). Each expression is evaluated over it in turn,
+its subqueries run by one runner that keeps what they settled with the
+plan (D793), and a row's draws of a sequence generator are one. A cancel
+is looked for before the rows are made and as each is given. The plan's
+tables are locked first, as a stream locks them. Every row is found
+before a candidate row is made of any, as a plan that can raise has its
+rows read as it opens, so the error a statement is refused for is the
+same.
+
+A plan filled and prepared again at each execution, a point read, a
+projection of its input's columns as they are, a JSON table, a
+GRAPH_TABLE, a collection derived table over other rows and every other
+operator are opened by the executor as before.
 
 ## 2. Project layout
 

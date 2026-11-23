@@ -11,8 +11,9 @@
 //! wrote alone (`integrity/straight.rs`). A change whose increments would
 //! be reserved (RULES.md D452), or whose plan is not a point read as this
 //! execution runs it, is handed back to the general path. An INSERT of
-//! one row of values is written as `insert_rows` writes a row, and its
-//! end checks the constraints of that row alone, as its end would.
+//! the rows of a query is written as `insert_rows` writes them, a batch
+//! at a time where it may, and its end checks the constraints of those
+//! rows alone, each as it is held, as its end would (RULES.md D901).
 
 use super::{ObjectRows, Written};
 use crate::catalog::ColumnDefault;
@@ -139,11 +140,13 @@ impl super::Target {
         })
     }
 
-    /// Of an INSERT of one row into it, the constraints its statement
-    /// checks of that row, if it may write it straight: none through a
-    /// view WITH CHECK OPTION, or if its end would check more.
+    /// Of an INSERT into it, the constraints its statement checks of each
+    /// row it inserts, if it may write them straight: none through a view
+    /// WITH CHECK OPTION, of a table with a system-time period, whose
+    /// rows the general path stamps before they go in [ISO/IEC
+    /// 9075-2:2023 §15.11 GR3b, GR3c], or if its end would check more.
     pub(in crate::db) fn straight(&self, st: &crate::db::State) -> Option<Straight> {
-        if !self.checks.is_empty() {
+        if !self.checks.is_empty() || super::system_time::system_time(&self.desc).is_some() {
             return None;
         }
         st.straight_insert(&self.name)
@@ -151,10 +154,11 @@ impl super::Target {
 }
 
 impl Session {
-    /// The rows of `query`, one row of values, inserted into `target`
-    /// straight as `insert_rows` inserts them, past the notes it keeps of
-    /// each for its statement's end, which checks the constraints of
-    /// `straight` alone. The rows it inserted.
+    /// The rows of `query`, every one found before any is inserted
+    /// [X3.135-1986 §8.7 GR1], inserted into `target` straight as
+    /// `insert_rows` inserts them, past the notes it keeps of each for
+    /// its statement's end, which checks the constraints of `straight`
+    /// of each alone (RULES.md D901). The rows it inserted.
     ///
     /// # Errors
     ///
@@ -166,25 +170,19 @@ impl Session {
         (query, slots, kept): (&LogicalPlan, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
-        let mut rows = super::query_rows((self, cx), target, (std::borrow::Cow::Borrowed(query), slots, kept))?;
+        let mut rows = super::inserted::query_rows((self, cx), target, (query, slots, kept))?;
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
         if rows.is_empty() && !st.catalog.any_triggers() {
             return Ok(0);
         }
-        self.settle_cursors(st, &target.name);
-        let mut ids = Vec::with_capacity(1);
-        // Its table is not partitioned (`compiled/change.rs`), so each
-        // row is its own, written by what its writes need of it (D872).
-        let writing = st.writing(&target.name)?;
-        rows.visit(&mut |row| {
-            ids.push(st.insert_row_in(tx, &writing, row)?);
-            Ok(())
-        })?;
-        // Of one row inserted, its checks are of the row held (RULES.md D880).
-        match ids.as_slice() {
-            [_] => rows.visit(&mut |row| st.end_straight(tx, (&target.name, straight), &ids, Some(row)))?,
-            [] | [_, _, ..] => st.end_straight(tx, (&target.name, straight), &ids, None)?,
+        // Rows enough to be a load of their own are one (RULES.md D532),
+        // which the general path begins and ends.
+        if super::bulk::loads_alone(rows.len()) {
+            return self.insert_found(cx, target, rows, None);
         }
+        self.settle_cursors(st, &target.name);
+        let gone = super::bulk::insert_straight((st, tx), &target.name, &mut rows)?;
+        st.end_straight_rows(tx, (&target.name, straight), &gone, &mut rows)?;
         self.note_drawn(target.generating.drawn_identity(), &mut rows)?;
         self.note_generated(target.generating.identity_column(), &mut rows)?;
         Ok(rows.len())

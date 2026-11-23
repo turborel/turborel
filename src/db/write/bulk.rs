@@ -263,6 +263,45 @@ pub(super) fn insert_held(
     load::end(st, tx, load)
 }
 
+/// Whether an INSERT of `rows` rows is a load of its own (RULES.md D532).
+pub(super) fn loads_alone(rows: usize) -> bool {
+    rows >= BATCH_ROWS
+}
+
+/// \[DESIGN\] `rows`, of a compiled program's INSERT run straight on
+/// `table` (RULES.md D901), fewer than a load's, put in it as
+/// `insert_held` puts them: together, under one log record, where the
+/// table takes its rows so and there are two or more, else each by what
+/// its writes need of the table, found once (D872). Nothing is noted for
+/// the statement's end, which checks each row as it is held
+/// (`State::end_straight_rows`): the id of each, in order, and whether
+/// its key was its key's only entry in every unique index, which a row
+/// inserted alone notes in its transaction instead.
+///
+/// # Errors
+///
+/// As `insert_held`.
+pub(super) fn insert_straight((st, tx): (&State, &Txn), table: &QualifiedName, rows: &mut HeldRows<Row>) -> Result<Vec<(RowId, bool)>> {
+    let mut gone = Vec::with_capacity(rows.len());
+    if rows.len() < 2 || !st.inserts_together(table)? {
+        let writing = st.writing(table)?;
+        rows.visit(&mut |row| {
+            gone.push((st.insert_row_in(tx, &writing, row)?, false));
+            Ok(())
+        })?;
+        return Ok(gone);
+    }
+    let together = st.together(table)?;
+    rows.visit_slices(&mut |held| {
+        for batch in held.chunks(BATCH_ROWS) {
+            let went = st.insert_rows(tx, &together, batch, false)?;
+            gone.extend(went.ids.into_iter().zip(went.alone));
+        }
+        Ok(())
+    })?;
+    Ok(gone)
+}
+
 /// Inserts `batch` into the table of `together` and notes each row that
 /// needs it in `effects`.
 fn inserted(
