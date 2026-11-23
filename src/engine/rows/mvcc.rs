@@ -503,7 +503,10 @@ impl RowTable {
     /// Ends `tx` without committing it here.
     pub(super) fn end_open(&self, tx: TxId) -> Result<()> {
         let undone = self.undo_changes(tx, 0);
-        self.versions.open.remove(tx);
+        // Its list's spill area goes with it, though a thread keeps it (D871).
+        if let Some(ended) = self.versions.open.remove(tx) {
+            ended.let_go();
+        }
         lock_builtin(&self.versions.validated).retain(|v| v.tx != tx);
         self.versions.statuses.abort(tx);
         undone
