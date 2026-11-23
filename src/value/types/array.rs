@@ -15,7 +15,7 @@ use super::{Descriptor, SqlType, tags};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{cast, uncastable};
-use crate::value::{Bucket, DataType, Value, assign, unassignable};
+use crate::value::{Bucket, DataType, Value, assign, held, unassignable};
 
 /// \[DESIGN\] The maximum cardinality of an array type [ISO/IEC
 /// 9075-2:2023 §4.12.2] (IL008), and of one written without it [§6.1
@@ -145,6 +145,19 @@ pub(crate) fn with_element(array: &Value, i: Option<i128>, (max, value): (u32, V
     Ok(Value::Array(assigned.into()))
 }
 
+/// \[DESIGN\] RULES.md D914: the array of the elements of `held` and
+/// then `value`. An array no other value shares gives its elements up,
+/// each moved and none copied; one shared is copied.
+pub(crate) fn appended(mut held: Arc<[Value]>, value: Value) -> Value {
+    let mut all = Vec::with_capacity(held.len().saturating_add(1));
+    match Arc::get_mut(&mut held) {
+        Some(own) => all.extend(own.iter_mut().map(|e| std::mem::replace(e, Value::Null))),
+        None => all.extend(held.iter().cloned()),
+    }
+    all.push(value);
+    Value::Array(all.into())
+}
+
 impl SqlType for ArrayKind {
     fn name(&self) -> &'static str {
         ARRAY_NAME
@@ -179,6 +192,12 @@ impl SqlType for ArrayKind {
         if given.iter().skip(max).any(|e| !e.is_null()) {
             return truncated("§9.2 GR3b xxii 2B", given.len(), a.max);
         }
+        // [DESIGN] RULES.md D910: within the maximum cardinality, each
+        // element one of the element type already, it is the array
+        // assigned, as it is.
+        if given.len() <= max && given.iter().all(|e| held(e, &a.element)) {
+            return Ok(v);
+        }
         let assigned = given.iter().take(max).map(|e| assign(e.clone(), &a.element, rule)).collect::<Result<Vec<_>>>()?;
         Ok(Value::Array(assigned.into()))
     }
@@ -197,6 +216,12 @@ impl SqlType for ArrayKind {
             return truncated(if of_multiset { "§6.13 GR6b i" } else { "§6.13 GR5c i" }, given.len(), a.max);
         }
         let element = &a.element;
+        // [DESIGN] RULES.md D910: an array whose elements are each one of
+        // the element type already is the array their casts would make,
+        // so it is given as it is, with no element copied.
+        if !of_multiset && given.iter().all(|e| held(e, element)) {
+            return Ok(v);
+        }
         // An array no other value shares is cast where it is, its elements
         // replaced each by its cast, with no copy made; one shared, or a
         // multiset, into an array of its cardinality.
