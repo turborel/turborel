@@ -14,9 +14,12 @@ use turborel::disk::io::FileSystem;
 
 use crate::common::{Scratch, after_crash, bytes_of, holds, os, rows};
 
-/// T, with its primary key's index and one on each of A and B.
+/// T, with its primary key's index and one on each of A and B. Its CHECK
+/// reads a column no UPDATE here reads, so each is written whole from the
+/// row it read, not as a patch (RULES.md D917), and is still told the
+/// columns it sets.
 const SCHEMA: &str = "CREATE SCHEMA AUTHORIZATION A
-   CREATE TABLE T (K INTEGER PRIMARY KEY, A INTEGER, B INTEGER, C CHARACTER(12), D DECIMAL(6,2) NOT NULL)";
+   CREATE TABLE T (K INTEGER PRIMARY KEY, A INTEGER, B INTEGER, C CHARACTER(12), D DECIMAL(6,2) NOT NULL CHECK (D > 0))";
 
 /// One point UPDATE each: of an indexed column, of a column no index
 /// reads, of both, and of an indexed column from its value before. A
