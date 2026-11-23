@@ -112,7 +112,7 @@ fn ran(s: &Session, script: &[&str]) -> Vec<String> {
 /// `setup`, then `script`, run in a database compiled and in one not:
 /// what each gave the same, and its tables as they end. What they gave,
 /// to be checked further.
-fn same(setup: &[&str], script: &[&str]) -> Vec<String> {
+pub(crate) fn same(setup: &[&str], script: &[&str]) -> Vec<String> {
     let mut seen = Vec::new();
     for compiled in [false, true] {
         let (_db, a) = database(compiled);

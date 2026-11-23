@@ -58,9 +58,13 @@ the session keeps, and later calls run that program. A query of the
 body that reads one row by a whole unique key reads it straight from
 its table. A searched UPDATE or DELETE, alone or under FINAL, NEW or
 OLD TABLE, and an INSERT of one row of values run by the plans kept of
-them, without being bound again. Every other statement runs as a
-statement the session runs. The program is compiled again once a definition, privilege, role,
-schema, time zone or setting it was compiled with changes. Its results,
+them, without being bound again. Such a change of one row by its key,
+or of one row of values, writes that row straight to its table and
+checks the constraints of that row alone, unless a constraint it may
+break is deferrable or reads other rows. Every other statement runs as
+a statement the session runs. The program is compiled again once a
+definition, privilege, role, schema, time zone or setting it was
+compiled with changes. Its results,
 errors, warnings and diagnostics are the same as of the body run
 statement by statement, which the setting
 [EXECUTOR.COMPILED_PROCEDURES](../../appendix/c-settings.md) OFF asks for.

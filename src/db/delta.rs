@@ -283,6 +283,13 @@ impl Session {
         std::mem::replace(&mut self.inner.borrow_mut().delta, collector)
     }
 
+    /// Whether a delta table's statement is running, whose collector a
+    /// statement's effects may claim or whose subject table they may not
+    /// change [ISO/IEC 9075-2:2023 §7.6 GR5].
+    pub(super) fn delta_open(&self) -> bool {
+        self.inner.borrow().delta.is_some()
+    }
+
     /// The collector of the statement whose effects are made now, if one
     /// is a delta table's and none took it yet; else, of FINAL, the table
     /// none may change.

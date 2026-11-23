@@ -15169,8 +15169,30 @@ writes with, so its row locks, rechecks, escrow (D452), BEFORE triggers,
 defaults, identity, generated columns, constraints and the unique check
 at its end are the general path's own, as are its ROW_COUNT and its
 errors. The delta table's rows are gathered by the collector the general
-path gathers them with, and the select list is evaluated over them. A
-change of a view, of a typed or partitioned table, of a table some
+path gathers them with, and the select list is evaluated over them.
+
+A searched UPDATE or DELETE whose plan is a point read as the execution
+runs it is written straight on its table (`db/write/direct.rs`), past
+the notes the write functions keep of each row for the statement's end.
+Its row is found by the point read, locked, rechecked and written by the
+same calls, its candidate row made with its casts and generated columns
+as theirs is. Its end checks its reads as any statement's end checks
+them, and between, each constraint of the row it wrote that the end
+would check of it, which are the NOT NULL, foreign key and CHECK
+constraints on the columns it gives values to and each CHECK without a
+subquery, and then its UNIQUE constraints on those columns. An INSERT of
+one row of values is written as the write functions write a row, its end
+checking every constraint of that row so. The delta
+table's one row is the row it wrote, or of OLD TABLE the row it deleted,
+and its ROW_COUNT is the one row or none. The change runs the write
+functions instead wherever its end would check more than its row, or the
+rows it notes would be read by more than its delta table, as of a
+constraint that may be deferred, a foreign key referencing a column it
+gives a value to or a row it deletes, a CHECK that reads tables, an
+assertion, a delta table's statement running around it, or increments
+escrow would reserve.
+
+A change of a view, of a typed or partitioned table, of a table some
 trigger is on that the change may write, or with XML options in scope,
 runs the general path always, as does every other statement, cursor and
 FOR. EXECUTOR.COMPILED_PROCEDURES OFF runs each body by the interpreter.
