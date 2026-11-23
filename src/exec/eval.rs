@@ -145,12 +145,12 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
         // [ISO/IEC 9075:1992 §7.11 GR1, §6.11 GR2] the value of its one row, null
         // if it has no row.
         Expr::Subquery(s, at) => {
-            let rows = subqueries.rows(s, &outer_values(s, row, subqueries)?, Some(2))?.first(2)?;
-            match rows.as_slice() {
+            // Read where its rows are held, none copied (RULES.md D900).
+            subqueries.rows(s, &outer_values(s, row, subqueries)?, Some(2))?.of_first(2, |rows| match rows {
                 [] => Ok(Value::Null),
                 [one] => one.get(*at).cloned().ok_or_else(|| broken("a subquery gave a row shorter than its degree")),
                 _ => fail(Code::Cardinality, "[ISO/IEC 9075:1992 §7.11 GR1] a <scalar subquery> or <row subquery> gives more than one row"),
-            }
+            })
         }
     }
 }

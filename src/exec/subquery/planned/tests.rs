@@ -124,9 +124,9 @@ fn a_unique_probe_is_kept_at_once_and_a_value_of_another_kind_is_planned_alone()
     let sq = subquery();
     let (_, kept) = runner.planned(&sq, &[int(3)], Planned::Untried);
     assert_eq!(named(&kept), "kept");
-    let Planned::Kept(slotted, _) = &kept else { panic!("kept") };
-    assert!(slotted.fits(&[int(4)]) && !slotted.fits(&[Value::Null]));
-    assert!(!slotted.fits(&[Value::Char("4".into())]) && !slotted.fits(&[]), "another kind, or no value");
+    let Planned::Kept(run) = &kept else { panic!("kept") };
+    assert!(run.fits(&[int(4)]) && !run.fits(&[Value::Null]));
+    assert!(!run.fits(&[Value::Char("4".into())]) && !run.fits(&[]), "another kind, or no value");
     let (plan, still) = runner.planned(&sq, &[Value::Approx(4.0_f64)], kept);
     assert_eq!(named(&still), "kept");
     let custom = PhysicalPlanner::new(&st).plan(&runner.optimized(sq.bound(&[Value::Approx(4.0_f64)])));
@@ -211,4 +211,21 @@ fn a_kept_plan_fits_values_of_its_slots_kinds_alone() {
     assert!(of_number.fits(&[Value::Exact(Decimal::new(25, 1))]) && !of_number.fits(&[Value::Char("1".into())]));
     let of_text = slotted(&Value::Char("ab".into()));
     assert!(of_text.fits(&[Value::Char("abcdef".into())]) && !of_text.fits(&[int(1)]));
+}
+
+/// Verifies: [DESIGN] RULES.md D892, D418: outer expressions naming the
+/// same slot, column or outer reference take the first's slot, and any
+/// other its own; a slot and a column of one number are not the same.
+#[test]
+fn a_variable_named_twice_is_one_slot() {
+    use crate::logical::Slot;
+    use crate::value::{DataType, Spelled};
+    let slot = |index: usize| {
+        Expr::Dynamic(Slot { index, data_type: DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, at: 0 })
+    };
+    let outer =
+        [slot(0), slot(1), slot(2), slot(2), Expr::Column(2), Expr::Column(2), Expr::Outer(1, "V".into()), Expr::Outer(1, "V".into())];
+    assert_eq!(places(&outer), [0, 1, 2, 2, 4, 4, 6, 6]);
+    let constants = [Expr::Const(int(1)), Expr::Const(int(1))];
+    assert_eq!(places(&constants), [0, 1], "a constant is no name");
 }
