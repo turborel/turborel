@@ -41,7 +41,7 @@ use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
 use crate::engine::key::{anchor, anchor_into, encode_key, least_present};
-use crate::engine::tree::{BLinkTree, Direction, LEAST_LOOKUPS, Update, scan_of};
+use crate::engine::tree::{BLinkTree, Direction, LEAST_LOOKUPS, Updated, scan_of};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
@@ -196,7 +196,7 @@ mod value;
 
 use entries::{Borrowed, Held};
 use range::{Range, after, from_after, within};
-use value::{HINT, count_of, hint_for, hint_of, noted, value_of};
+use value::{HINT, count_of, hint_for, hint_of, noted, put_value_of, value_of};
 
 fn corrupt() -> SqlError {
     SqlError::new(Code::Corrupt, "[DESIGN] an index entry is malformed")
@@ -323,9 +323,11 @@ impl Index for BLinkIndex {
         // The key's bytes are the same for equal keys (`engine/key.rs`).
         let prefix = entry.len().saturating_sub(ROW_ID);
         self.keys.added(entry.get(..prefix).unwrap_or_default());
-        self.tree.update_alone(&entry, prefix, |old| {
+        // Its value written where its tree keeps one (RULES.md D865).
+        self.tree.update_alone_into(&entry, prefix, |old, into| {
             let count = old.map_or(Ok(0), count_of)?;
-            Ok(Update::Put(value_of(count.saturating_add(1), hint_for(row, old)?)))
+            put_value_of(into, count.saturating_add(1), hint_for(row, old)?);
+            Ok(Updated::Put)
         })
     }
 
@@ -367,12 +369,15 @@ impl Index for BLinkIndex {
     fn remove(&self, key: &Key, row: RowId) -> Result<()> {
         // Counted only if there: a load's entries held back are undone though never inserted (RULES.md D532).
         let mut found = false;
-        self.tree.update(&self.entry(key, row)?, |old| {
+        self.tree.update_alone_into(&self.entry(key, row)?, 0, |old, into| {
             found = old.is_some();
             Ok(match old.map(|v| Ok::<_, SqlError>((count_of(v)?, hint_of(v)?))).transpose()? {
-                None => Update::Keep,
-                Some((0 | 1, _)) => Update::Remove,
-                Some((n, hint)) => Update::Put(value_of(n.saturating_sub(1), hint)),
+                None => Updated::Keep,
+                Some((0 | 1, _)) => Updated::Remove,
+                Some((n, hint)) => {
+                    put_value_of(into, n.saturating_sub(1), hint);
+                    Updated::Put
+                }
             })
         })?;
         if found {

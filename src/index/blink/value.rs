@@ -27,8 +27,18 @@ pub(super) fn hint_of(value: &[u8]) -> Result<u64> {
 /// The value holding `count` and the hint `leaf`, none if it is past what
 /// a hint holds.
 pub(super) fn value_of(count: u32, leaf: u64) -> Vec<u8> {
-    let hint = u32::try_from(leaf).unwrap_or_default().to_le_bytes();
-    if count == 1 { hint.to_vec() } else { [hint, count.to_le_bytes()].concat() }
+    let mut value = Vec::with_capacity(HINT.saturating_mul(2));
+    put_value_of(&mut value, count, leaf);
+    value
+}
+
+/// As `value_of`, appended to `out`: the buffer a tree's change puts its
+/// value in (`BLinkTree::update_alone_into`), so none is allocated.
+pub(super) fn put_value_of(out: &mut Vec<u8>, count: u32, leaf: u64) {
+    out.extend_from_slice(&u32::try_from(leaf).unwrap_or_default().to_le_bytes());
+    if count != 1 {
+        out.extend_from_slice(&count.to_le_bytes());
+    }
 }
 
 /// The hint for row `row`'s entry: the leaf the table noted it in as it

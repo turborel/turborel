@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 26] = [
+pub const TREE_PATH: [Mutation; 27] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -273,5 +273,15 @@ pub const TREE_PATH: [Mutation; 26] = [
         replacement: "        let mut value = VALUE.take();\n",
         integration: &[],
         unit: &["engine::tree::tests::placed::values_are_read_into_and_put_from_buffers_kept"],
+    },
+    Mutation {
+        name: "tree-replace-shown-first",
+        package: Package::Core,
+        breaks: "a write is shown its leaf's first value as the one it replaces, not its key's",
+        file: "src/engine/tree/placed.rs",
+        original: "let Some(value) = f(node.value(at)?)? else { return Ok(None) };",
+        replacement: "let Some(value) = f(node.value(0)?)? else { return Ok(None) };",
+        integration: &[],
+        unit: &["engine::tree::tests::placed::a_write_is_shown_the_value_it_replaces"],
     },
 ];

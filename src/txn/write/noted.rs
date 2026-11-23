@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::storage::RowId;
-use crate::txn::Txn;
+use crate::txn::{Txn, UndoEntry};
 
 /// Notes in `noted` each row of `rows` that was alone, and takes out each
 /// that was not.
@@ -45,21 +45,30 @@ impl Txn {
     }
 
     /// Notes whether row `row`'s entry in the unique index `index`, as it
-    /// was inserted, was its key's only one.
+    /// was inserted, was its key's only one, and records `entry`, which
+    /// undoes the insert, its bookkeeping taken once for both (RULES.md
+    /// D874).
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if the transaction's state is poisoned.
-    pub(crate) fn note_alone(&self, index: &str, row: RowId, alone: bool) -> Result<()> {
-        self.note_alone_rows(index, &mut std::iter::once((row, alone)))
+    /// SQLCODE -910 if the transaction's state is poisoned; as `Txn::log`.
+    pub(crate) fn log_alone(&self, index: &str, (row, alone): (RowId, bool), entry: UndoEntry) -> Result<()> {
+        let mut state = self.state()?;
+        if let Some(noted) = state.alone.get_mut(index) {
+            note_rows(noted, &mut std::iter::once((row, alone)));
+        } else {
+            state.alone.insert(index.to_owned(), HashSet::from_iter(alone.then_some(row)));
+        }
+        state.undo.push(entry)
     }
 
-    /// As `note_alone` of each row and whether it was alone, of `rows`, the
+    /// Notes of each row of `rows` whether its entry in the unique index
+    /// `index`, as it was inserted, was its key's only one, the
     /// transaction's state taken once.
     ///
     /// # Errors
     ///
-    /// As `note_alone`.
+    /// SQLCODE -910 if the transaction's state is poisoned.
     pub(crate) fn note_alone_rows(&self, index: &str, rows: &mut dyn Iterator<Item = (RowId, bool)>) -> Result<()> {
         let mut state = self.state()?;
         // Found by one hash of its name; the name is copied only the first time.

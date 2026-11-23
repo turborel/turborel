@@ -569,6 +569,7 @@ verification approach DO-178C expects (§8).
 | D863 | A read by key shows its value to its caller where it lies, with the notes of a read that copies |
 | D864 | A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed |
 | D865 | A value read for a write and a value put by a change go through buffers their callers and threads keep |
+| D866 | A write is shown the value it replaces where it lies and gives the bytes to put, under one hold of the leaf |
 | D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
@@ -578,6 +579,7 @@ verification approach DO-178C expects (§8).
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 | D872 | A statement's writes of a table resolve it once |
 | D873 | The undo store gathers a batch a stripe of threads, and counts its pins by batch |
+| D874 | A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
 | D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
@@ -15830,7 +15832,14 @@ and the index as a search counts them.
 Any other index, probe or key is searched as before. A value not of its
 column's type has no exact anchor, and a null has none.
 
-The tree's scan keeps its bounds, so a probe still allocates the two.
+The key's bytes are written into a buffer kept with the plan, and the
+B-link index reads their entries by a probe from the key borrowed
+(`BLinkTree::first_from`, D859), so a probe of a unique key allocates
+nothing. That probe shows each entry under its leaf's latch, where the
+tree is not to be used, so the index takes each entry's row and hint
+there, eight at most, and gives them once the latch is let go, noting
+each row's hint for the table's read as a search does (D500). A key of
+more entries has the rest read by a scan past the last given.
 
 #### D882. A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there
 
@@ -16097,6 +16106,46 @@ is left to them, so a plan made with fresh statistics estimates as
 before. The index's estimate costs a count of at most a leaf's entries,
 or the share of its tree a larger range takes, once for each estimate
 of the table's conjuncts.
+
+#### D874. A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps
+
+A transaction's bookkeeping is under a lock only its session takes, so
+each take is cheap, but a commit took it eight times and a row written
+about five. Some takes followed one another with nothing between.
+
+- A commit asked whether its definitions had changed and whether it was
+  doomed, a take each. It asks once (`Txn::check_committable`).
+- Its release took the reservations, the table locks and the pinned
+  snapshots apart. It takes the three together, and gives them up in the
+  order it did.
+- An entry inserted in a unique index noted whether it was alone, and
+  then recorded what undoes it. Both are one take (`Txn::log_alone`).
+
+An update read the version it replaces into a new buffer each time. The
+thread now keeps the buffer its last write read into, given back once
+that write has decoded what it needs of it (`mvcc/versions.rs`,
+`give_back`), and the tree reads the next version into it (D865). A
+buffer past 64 KiB is let go, so one long row does not stay held by
+every thread that wrote it.
+
+#### D866. A write is shown the value it replaces where it lies and gives the bytes to put, under one hold of the leaf
+
+A row's write read its newest version (D446), appended it to the undo
+store, and replaced it only if it was still the version read (D852). So
+the version was copied out of the leaf for the compare, and a writer
+that had changed the row in between sent the write round again.
+
+`BLinkTree::replace_found_with` holds the leaf the read reached once,
+exclusively, and shows the value there to a function of its caller
+(`engine/tree/placed.rs`). The function may copy it elsewhere, into the
+undo batch, and gives the bytes to put, or none to leave the entry. What
+it is shown is the value the write replaces, as no writer comes between
+under the leaf's lock, so nothing is compared and nothing is copied for
+a compare. The entry is found as `replace_found` finds it: from the leaf
+the read reached while the tree's stamp is the read's, moving right past
+a split, else by a descent. A key no longer in the tree shows nothing
+and is told as none, for the caller to read again. The function runs
+under a latch and may not use the tree nor wait.
 
 #### D868. A table's zones are kept cold until a scan or a read asks them
 
