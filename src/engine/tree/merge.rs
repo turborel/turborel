@@ -82,7 +82,7 @@ impl BLinkTree {
         if self.past_merged(node::built_size(right.high.map_or(0, <[u8]>::len), &entries)) {
             return Ok(Merging::Full);
         }
-        Ok(Merging::Content(node::built(&right.shape(), &entries, None, None)?))
+        Ok(Merging::Content(node::built_in(self.capacity, &right.shape(), &entries, None, None)?))
     }
 
     /// Whether a node of `bytes` fills more than `MERGED` of a page.

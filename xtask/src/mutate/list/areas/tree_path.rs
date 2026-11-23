@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 22] = [
+pub const TREE_PATH: [Mutation; 25] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -233,5 +233,35 @@ pub const TREE_PATH: [Mutation; 22] = [
         replacement: "        reader.show(node.value(0)?).map(Tried::Answered)",
         integration: &[],
         unit: &["engine::tree::tests::finger::a_read_is_shown_its_value_where_it_lies"],
+    },
+    Mutation {
+        name: "node-lengthen-slot-unled",
+        package: Package::Core,
+        breaks: "a longer value written in place leaves its slot leading to the old entry, so the old value is read",
+        file: "src/engine/tree/node/build.rs",
+        original: "    put(content, slot.saturating_add(entry), &[&offset])?;\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::tree::node::tests::place::a_longer_value_written_in_place_is_the_entry_removed_and_inserted"],
+    },
+    Mutation {
+        name: "node-hints-left-whatever-slot",
+        package: Package::Core,
+        breaks: "the hints are left as they were whichever slot changed while their step is the same, so a search is narrowed by hints of other slots",
+        file: "src/engine/tree/node/build.rs",
+        original: "step.is_none_or(|step| at > step.saturating_mul(HINTS))",
+        replacement: "step.is_none_or(|_| true)",
+        integration: &[],
+        unit: &["engine::tree::node::tests::place::hints_after_a_change_are_those_sampled_again"],
+    },
+    Mutation {
+        name: "node-built-without-room",
+        package: Package::Core,
+        breaks: "a node is built at its own size whatever room it is given, so its first insert moves it to a new buffer",
+        file: "src/engine/tree/node/build.rs",
+        original: "    let mut out = Vec::with_capacity(size.max(room.min(MOST_ROOM)));",
+        replacement: "    let mut out = Vec::with_capacity(size);",
+        integration: &[],
+        unit: &["engine::tree::node::tests::place::a_node_built_with_room_takes_entries_where_it_is"],
     },
 ];

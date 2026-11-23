@@ -567,6 +567,7 @@ verification approach DO-178C expects (§8).
 | D858 | A thread keeps version-checked copies of the leaves it reads often and finds unchanged, and reads them with no latch |
 | D859 | A probe from a key borrows its key and shows the entries from it where they lie, allocating nothing |
 | D863 | A read by key shows its value to its caller where it lies, with the notes of a read that copies |
+| D864 | A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed |
 | D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
@@ -15981,6 +15982,35 @@ same notes for the next read, the leaf, the place in it and the misses.
 `get_near` is now that read with a function that copies. The function is
 called at most once, not at all for a key absent, and may not use the
 tree nor wait, as a scan's visitor may not (D350).
+
+#### D864. A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed
+
+Three costs of a node changed in place (D31, D847) were found by
+reading the write path.
+
+A node built again, the halves of a split, a node compacted, one whose
+prefix a key shortened, was allocated at its own size, so the first
+entry inserted into it grew the buffer and moved the whole node. Such a
+node is now built in a buffer of its page's size (`node::built_in`), and
+one built again for its prefix keeps the room its buffer had.
+
+A value replaced by a longer one was removed and inserted again. That
+took its slot out and put it back, parsed the node twice and sampled the
+hints twice. With room in the node it is now written in place
+(`node::lengthen`): the entry is written again at the end of the heap
+with its key's tail, the slots move past it once, and its slot is led to
+it. The node is byte for byte what removing and inserting left, the old
+bytes garbage and the entry marked as inserted last, so nothing that
+reads a node can tell the two apart.
+
+The hints (D500) were sampled again after every insert and remove. They
+are the heads of the slots at sixteen even steps of the count over
+seventeen. So they cannot have changed while the step is the same and
+the slot put in or taken out lies past the last one sampled, which is
+so of sixteen in seventeen entries appended to a node, as a table's rows
+are. Then they are left (`build.rs`, `hint_after`), and otherwise sampled
+again as before. The bytes are those sampling again would write, so the
+format and a search are unchanged.
 
 ## 2. Project layout
 
