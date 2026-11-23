@@ -1,13 +1,14 @@
 //! The mutations of access paths no estimate can make a scan (RULES.md
 //! R-TEST-9, D839), of a whole unique key probed whatever the table's
 //! size, a key's range never priced above the scan of its conjuncts and
-//! taken at the tie, a scan never priced below one zone, and a plan kept
-//! learned again once its tables have statistics.
+//! taken at the tie, a scan never priced below one zone, a plan kept
+//! learned again once its tables have statistics, and a join weighing its
+//! probes by its left's index range (D890).
 
 use super::{Mutation, Package};
 
 /// The mutations of key plans, in the order they run.
-pub const KEY_PLANS: [Mutation; 5] = [
+pub const KEY_PLANS: [Mutation; 6] = [
     Mutation {
         name: "key-plans-point-sized",
         package: Package::Core,
@@ -64,5 +65,15 @@ pub const KEY_PLANS: [Mutation; 5] = [
         replacement: "        (read_rows / all).max(if step > 1 { 1.0_f64 / sampled } else { 0.0_f64 })\n",
         integration: &[],
         unit: &["engine::rows::zones::costs::a_sampled_share_is_never_less_than_one_zone_of_it"],
+    },
+    Mutation {
+        name: "key-plans-range-rows-ignored",
+        package: Package::Core,
+        breaks: "a join weighs its probes by the statistics' estimate of its left alone, so a stock level's lines past the last pass, estimated at every line written since, hash a read of the whole of STOCK",
+        file: "src/physical/indexed/ranged.rs",
+        original: "    built.and_then(ranged).map_or(estimated, |rows| estimated.min(rows))\n",
+        replacement: "    built.and_then(ranged).map_or(estimated, |rows| estimated.max(rows))\n",
+        integration: &[],
+        unit: &["physical::indexed::ranged::tests::a_left_reading_an_index_range_is_estimated_at_its_rows_if_fewer"],
     },
 ];

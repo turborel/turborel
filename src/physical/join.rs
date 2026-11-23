@@ -107,7 +107,7 @@ impl PhysicalPlanner<'_> {
         let ordered = !want_left.is_empty() && l.ordered;
         // A few left rows each probing an index of the right's table.
         if let Some(pairs) = plain(&keys)
-            && let Some((probing, rows, rest)) = self.probed_bounded((left, right), (&pairs, rest.clone()), &r.plan)
+            && let Some((probing, rows, rest)) = self.probed_bounded((left, right), (&pairs, rest.clone()), (&r.plan, Some(&l.plan)))
         {
             let join = Equijoin { width, keys: &pairs, rest, outer: EquiKind::Inner };
             return Some(Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered });
@@ -347,9 +347,9 @@ impl PhysicalPlanner<'_> {
         let probed = if !parted.keyed_alone() || pairs.len() != parted.keys.len() {
             None
         } else if kind == OuterJoin::Left {
-            self.probed_instead((left, right), &pairs, &r.plan).map(|p| (p, false))
+            self.probed_instead((left, right), &pairs, (&r.plan, Some(&l.plan))).map(|p| (p, false))
         } else if kind == OuterJoin::Right {
-            self.probed_instead((right, left), &swapped, &l.plan).map(|p| (p, true))
+            self.probed_instead((right, left), &swapped, (&l.plan, Some(&r.plan))).map(|p| (p, true))
         } else {
             None
         };

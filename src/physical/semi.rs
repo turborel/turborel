@@ -166,7 +166,7 @@ impl PhysicalPlanner<'_> {
         if pairs.is_empty() {
             return None;
         }
-        let (probing, rows) = self.probed_instead((left, right), &pairs, read)?;
+        let (probing, rows) = self.probed_instead((left, right), &pairs, (read, None))?;
         Some((probing, rows, pairs, rest))
     }
 }

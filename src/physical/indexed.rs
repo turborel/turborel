@@ -37,6 +37,7 @@ mod fan_out;
 mod fixed;
 pub(super) use fixed::Fixed;
 mod probed;
+mod ranged;
 mod routed;
 mod spatial;
 mod typed;
@@ -224,13 +225,15 @@ impl PhysicalPlanner<'_> {
     /// or its estimate times PLANNER.ESTIMATE_MARGIN, each probe against
     /// `read`, the read of its rows the hash join's right operand would be
     /// (`access_cost`), and each row of either operand hashed (`HASH_ROW`).
+    /// `left`'s estimate is that of `built`, its plan, where that reads a
+    /// range of an index estimating fewer rows (`indexed/ranged.rs`).
     pub(super) fn probed_instead(
         &self,
         (left, right): (&LogicalPlan, &LogicalPlan),
         keys: &[(usize, usize)],
-        read: &Plan,
+        (read, built): (&Plan, Option<&Plan>),
     ) -> Option<(Probing, f64)> {
-        self.probed_bounded((left, right), (keys, Vec::new()), read).map(|(probing, rows, _)| (probing, rows))
+        self.probed_bounded((left, right), (keys, Vec::new()), (read, built)).map(|(probing, rows, _)| (probing, rows))
     }
 
     /// As `probed_instead`, the key's column after those `keys` probe
@@ -241,17 +244,18 @@ impl PhysicalPlanner<'_> {
         &self,
         (left, right): (&LogicalPlan, &LogicalPlan),
         (keys, rest): (&[(usize, usize)], Vec<Cond>),
-        read: &Plan,
+        (read, built): (&Plan, Option<&Plan>),
     ) -> Option<(Probing, f64, Vec<Cond>)> {
         let of_kind = |l: usize, t: &DataType| self.column_type(left, l).is_some_and(|lt| alike(&lt, t));
         let type_at = |l: usize| self.column_type(left, l);
         let (probing, rest) = self.bounded(self.probing(right, keys, &of_kind)?, rest, (left.width(), &type_at));
         let card = self.card(left);
+        let rows = ranged::left_rows(card.rows, built);
         let hash = self.hash_linear((left, right), (read, access_cost(read)?));
         let index = Linear { fixed: 0.0_f64, per_row: probing.cost };
-        let worst = pessimistic(card.rows, card.upper, self.weights().estimate_margin);
-        let probes = choose(&[(false, hash), (true, index)], (card.rows, worst)).unwrap_or(false);
-        probes.then_some((probing, card.rows, rest))
+        let worst = pessimistic(rows, card.upper, self.weights().estimate_margin);
+        let probes = choose(&[(false, hash), (true, index)], (rows, worst)).unwrap_or(false);
+        probes.then_some((probing, rows, rest))
     }
 
     /// The cheapest index of the table `right` reads, filtered by a
