@@ -77,9 +77,9 @@ fn called(s: &Session, call: &str, values: &[Value]) -> String {
         Err(e) => format!("error {} {} {e:?}", e.sqlstate().as_str(), e.sqlcode()),
     };
     if shown.starts_with("ok") {
-        s.commit().unwrap()
+        s.commit().unwrap();
     } else {
-        s.rollback().unwrap()
+        s.rollback().unwrap();
     }
     format!("{call} {values:?}: {shown}")
 }
