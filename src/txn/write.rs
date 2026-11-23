@@ -57,6 +57,12 @@ impl How {
             How::Whole | How::Fold => false,
         }
     }
+
+    /// As a write of `writing` is made: a fold told the columns its
+    /// increments add to as a statement that said them (RULES.md D923).
+    fn told(self, writing: &Writing<'_>) -> How {
+        if self == How::Fold && writing.set_columns().is_some() { How::Set } else { self }
+    }
 }
 
 impl State {
@@ -204,9 +210,7 @@ impl State {
             let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
-                // RULES.md D923: a fold told the columns its increments add to is written as a set.
-                let told = if how == How::Fold && writing.set_columns().is_some() { How::Set } else { how };
-                Self::write_once(tx, (writing, id), (&write, stamp.as_ref(), told), seen.as_ref())
+                Self::write_once(tx, (writing, id), (&write, stamp.as_ref(), how.told(writing)), seen.as_ref())
             };
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
