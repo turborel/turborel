@@ -39,7 +39,7 @@ enum Kind {
     /// no UPDATE here reads: read whole.
     Checked,
     /// A generated column of two columns, of which an UPDATE may set one
-    /// and read neither: read whole.
+    /// and read neither, the other a column no index keys: read whole.
     Generated,
 }
 
@@ -68,15 +68,16 @@ fn schema(kind: Kind) -> String {
             "",
         ),
         Kind::Checked => (", CHECK (D IS NOT NULL)", ""),
-        Kind::Generated => (", G INTEGER GENERATED ALWAYS AS (A + B)", ""),
+        Kind::Generated => (", G DECIMAL(8,2) GENERATED ALWAYS AS (A + D)", ""),
     };
     format!("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T ({COLUMNS}{more}){with}")
 }
 
 /// One point UPDATE each, but PICK's two. A value of -1, of 'none', or a
-/// count of 0, sets null. PICK reads back one of three columns of the row
-/// it wrote, chosen by its argument, and stores it.
-const PROCEDURES: [&str; 12] = [
+/// count of 0, sets null. COPYC's SET value reads a column it does not
+/// set, that no index keys. PICK reads back one of three columns of the
+/// row it wrote, chosen by its argument, and stores it.
+const PROCEDURES: [&str; 13] = [
     "CREATE PROCEDURE SETA (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA BEGIN UPDATE T SET A = NULLIF(X, -1) WHERE K = KK; END",
     "CREATE PROCEDURE SETC (IN KK INTEGER, IN X CHARACTER(12)) MODIFIES SQL DATA
        BEGIN UPDATE T SET C = NULLIF(X, 'none') WHERE K = KK; END",
@@ -99,6 +100,7 @@ const PROCEDURES: [&str; 12] = [
     "CREATE PROCEDURE SETMANY (IN KK INTEGER, IN X INTEGER, IN Y VARCHAR(40), IN Z VARCHAR(30)) MODIFIES SQL DATA
        BEGIN UPDATE T SET A = X, V = Y, TAIL = Z, B = B + X WHERE K = KK; END",
     "CREATE PROCEDURE REKEY (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA BEGIN UPDATE T SET K = X WHERE K = KK; END",
+    "CREATE PROCEDURE COPYC (IN KK INTEGER) MODIFIES SQL DATA BEGIN UPDATE T SET TAIL = TRIM(C) WHERE K = KK; END",
     "CREATE PROCEDURE BUMPB (IN KK INTEGER) MODIFIES SQL DATA BEGIN UPDATE T SET B = B + 1 WHERE K = KK; END",
     "CREATE PROCEDURE PICK (IN KK INTEGER, IN N INTEGER) MODIFIES SQL DATA
        BEGIN DECLARE R VARCHAR(40);
@@ -167,6 +169,7 @@ fn committed() -> Vec<Vec<String>> {
             format!("CALL SETTIMES({k}, {})", k % 2),
             format!("CALL SETBYTES({k}, {})", k % 3),
             format!("CALL BUMPB({k})"),
+            format!("CALL COPYC({k})"),
         ]);
     }
     for k in 1..=6_i64 {
@@ -180,6 +183,7 @@ fn committed() -> Vec<Vec<String>> {
             format!("CALL SETNUM({k}, 0)"),
             format!("CALL SETTIMES({k}, {})", (k + 1) % 2),
             format!("CALL SETBYTES({k}, {})", (k + 1) % 3),
+            format!("CALL COPYC({k})"),
             format!("CALL PICK({k}, {})", k % 3 + 1),
             format!("CALL SETA({k}, -1)"),
             format!("CALL SETA({k}, {})", k + 700),
@@ -252,8 +256,9 @@ fn left(dir: &std::path::Path, (kind, compiled): (Kind, bool)) -> (Vec<String>, 
 /// another, null and a value again; the first column, a key whose index
 /// entry moves with it, columns between and the last; a varying column
 /// grown and shrunk; several at once; a NOT NULL column refused null and
-/// a key refused a duplicate; a column read back through a CASE over an
-/// argument; and a transaction of them rolled back. And of each table
+/// a key refused a duplicate; a SET value of a column it does not set; a
+/// column read back through a CASE over an argument; and a transaction of
+/// them rolled back. And of each table
 /// whose rows are not patched, which falls back to the write it had: a
 /// value out of line before or after, rows sealed, a large object column,
 /// the column store's frozen rows, a system-time period, a CHECK of a
