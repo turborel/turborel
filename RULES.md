@@ -546,7 +546,8 @@ verification approach DO-178C expects (§8).
 | D836 | A routine's variable in a subquery of a change is the subquery's slot, not an outer reference, so the subquery probes a key |
 | D837 | A scan takes back the index entries of rows gone for every reader as it meets them |
 | D838 | A scan priced by a sample of its zones reads at least one zone of the sample |
-| D839 | A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer |
+| D839 | No estimate makes a scan of a whole unique key, nor of a key's range a scan reads past, and a plan kept is learned again with statistics |
+| D840 | A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer |
 
 ### The project
 
@@ -15016,10 +15017,66 @@ sample held it, so the scan was priced at nothing, below the index that
 finds the lines, and the procedure kept that plan, reading every line of
 the table at each call. So a share of a sample is never less than one
 zone of the sample (`rows/zones.rs`): the zones passed over may hold
-the rows asked for, as many as one zone looked at. Of a table whose
-every zone is looked at, the share is what they hold, none if none may.
+the rows asked for, as many as one zone looked at. Nor is the share of
+a table whose every zone is looked at, though none may hold them now,
+as rows written later may (D839).
 
-#### D839. A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer
+#### D839. No estimate makes a scan of a whole unique key, nor of a key's range a scan reads past, and a plan kept is learned again with statistics
+
+Three plans of the TPC-C procedures were made from estimates that no
+estimate should decide. A probe fixing every column of a unique key was
+taken unpriced only of a table of a thousand rows or more and with no
+order asked (D45, D408). DISTRICT and WAREHOUSE are smaller, so every
+payment and order entry scanned them for their one row, as did a plan
+kept while its table was still empty. Such a probe now is the path
+whatever the table's size and whatever order is asked, as it finds one
+row at most, which is in any order (`physical/access.rs`).
+
+A range of an index whose first key columns its probe holds equal, of a
+primary or unique key or of an index holding every column read, finds
+only rows a scan told the same conjuncts reads too, in the zones they
+may lie in. Its cost by its estimated rows, each fetched by row id,
+could still pass that scan's. A stock level's lines of its district's
+last twenty orders were estimated at several times their rows by the
+index's share of its tree, while the scan was priced by the zones of a
+sample, those of the newest orders, which hold every district's. The
+scan then cost the less, so the plan made with the values scanned,
+reading thousands of lines at each run, and the plan made with slots,
+the range, never kept its shape, so it was planned twice at every call.
+Such a range is now never priced above the scan of the conjuncts it
+answers, and so never above a scan of the whole table. Where the two
+are then priced alike, it is taken if it is estimated to read fewer
+rows than the scan, and fewer than the table's rows over
+PLANNER.ESTIMATE_MARGIN, as the joins weigh their estimates (D386). A
+range that reads a share of the scan's rows fetches no more than that
+share. One that reads most of them finds them together, as the zones
+the scan reads hold little else, so its fetches by row id come in
+order and each starts at the leaf of the last. A range of most of the
+table, whose zones may not tell, is left to the costs
+(`physical/access/bounded.rs`).
+
+A stock level's join of its lines to the stock of their items hashed a
+scan of STOCK, of every zone, priced at nothing, as no zone yet held a
+quantity below the threshold asked. A new order's update of a stock
+row writes it again, where zones gain low quantities, and STOCK gains
+no rows, so the plan kept it and read more of the table at each call,
+tens of thousands of rows where its probes by key read a few hundred.
+A scan's share is now never less than one zone of those looked at,
+sampled or not (D838): a zone holding no row asked for now may hold
+rows written later, and a plan kept reads them.
+
+A plan kept by a prepared statement or a procedure's body (D45, D414)
+was learned again when a table it reads gained or lost rows as its
+statistics would be gathered again for. A plan of index probes alone
+was learned again also once a table without statistics got them (D613),
+but a plan with a scan kept the defaults it was made with until its
+table drifted, and a warehouse's tables seldom drift. Every plan kept
+now notes which of its tables had statistics when it was learned, and
+is learned again once one of those without them has them
+(`db/prepared/plans/grown.rs`). Statistics gathered again of a table
+that drifted already have it learn again by its drift.
+
+#### D840. A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer
 
 The storage engine is the floor of a transaction once its procedures
 skip SQL, and the B-link tree was the largest part of it, about a third

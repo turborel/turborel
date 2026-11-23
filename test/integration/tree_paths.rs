@@ -1,4 +1,4 @@
-//! The B-link tree's paths of RULES.md D839: writers that find their leaf
+//! The B-link tree's paths of RULES.md D840: writers that find their leaf
 //! from its parent and change it through the frame they own, readers that
 //! search nodes over their slots and descend through inner copies kept
 //! with their headers parsed, all at once in a pool far smaller than the
@@ -39,7 +39,7 @@ fn scattered(n: u64) -> impl Iterator<Item = u64> {
     (0..n).map(move |i| (i * 7919) % n)
 }
 
-/// Verifies: [DESIGN] RULES.md D839, D31, D814: in a pool of a few frames
+/// Verifies: [DESIGN] RULES.md D840, D31, D814: in a pool of a few frames
 /// of a tree of many levels, writers insert their own keys in a scattered
 /// order, replace them with longer and shorter values, so leaves split
 /// and are built again, and remove most again, so leaves merge and are
@@ -145,7 +145,7 @@ fn answers(s: &Session) -> Vec<Vec<String>> {
     .collect()
 }
 
-/// Verifies: [DESIGN] RULES.md D839, D25, D814: a table and its index
+/// Verifies: [DESIGN] RULES.md D840, D25, D814: a table and its index
 /// filled, so their leaves split, checkpointed; then updated in place and
 /// to longer values, through the frames their writers own, rows deleted
 /// so leaves merge, and more inserted, and checkpointed again mid-way;

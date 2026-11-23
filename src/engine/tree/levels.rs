@@ -1,5 +1,5 @@
 //! \[DESIGN\] The nodes a descent read at each level above the one it
-//! stopped at (RULES.md D839), kept in place, so a descent allocates
+//! stopped at (RULES.md D840), kept in place, so a descent allocates
 //! nothing. The path is only where a writer looks for a parent first: past
 //! its top, or with no node noted for a level, the parent is found again
 //! from the root (`tree.rs`, Lehman and Yao 1981, §5). So a path taller than
@@ -62,7 +62,7 @@ impl Levels {
 mod tests {
     use super::*;
 
-    /// Verifies: [DESIGN] RULES.md D839: a path gives its nodes back lowest
+    /// Verifies: [DESIGN] RULES.md D840: a path gives its nodes back lowest
     /// first, and one taller than it keeps gives up its top nodes, keeping
     /// the lowest `KEPT`.
     #[test]

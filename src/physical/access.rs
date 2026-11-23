@@ -2,6 +2,7 @@
 //! an index's probes (`physical/probe.rs`), one, or one of each range of
 //! an OR, chosen by cost.
 
+mod bounded;
 mod columns;
 mod filter;
 mod geometric;
@@ -29,6 +30,7 @@ use crate::logical::{Cond, SortKey, and_all, filled_cond, pushed_conjuncts};
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
 
+use bounded::fewer_alike;
 use filter::{Filtered, filtered};
 use keys::{index_order, probes};
 use predicate::answerable;
@@ -41,11 +43,6 @@ use spatial::Decision;
 /// row made of the key, an entry at a time as a search gives them, where
 /// a scan reads its rows by batches (RULES.md D34). Measured.
 const ENTRY_SCAN_ROWS: f64 = 2.0;
-
-/// \[DESIGN\] The rows from which a table is taken to have more of them than
-/// a probe finding one could lose to a scan, so a probe fixing a unique key
-/// is chosen unpriced (`point_path`).
-const POINT_ROWS: usize = 1024;
 
 /// A way to read a table: its cost, with and without the sort it may still
 /// need, the rows it yields, whether in the order asked for (backward if
@@ -66,6 +63,27 @@ struct Path {
     /// The share of the rows read its windowed spatial conjuncts keep, by
     /// the spatial probe priced, if any (RULES.md D137).
     windowed: Option<f64>,
+    /// Of an index range, whether the scan of its conjuncts bounds its cost
+    /// (`access/bounded.rs`, RULES.md D839).
+    bounded: bool,
+}
+
+impl Path {
+    /// A path that reads nothing, of no cost, nor rows, nor order.
+    fn unread() -> Path {
+        Path {
+            total: 0.0_f64,
+            cost: 0.0_f64,
+            est: 0.0_f64,
+            ordered: false,
+            reverse: false,
+            index: None,
+            order: Vec::new(),
+            note: String::new(),
+            windowed: None,
+            bounded: false,
+        }
+    }
 }
 
 /// An index probed: its name, its method's, its columns, its probes, one
@@ -158,6 +176,7 @@ impl Probed {
             order: Vec::new(),
             note: String::new(),
             windowed: None,
+            bounded: false,
         }
     }
 
@@ -211,24 +230,14 @@ impl PhysicalPlanner<'_> {
     /// queries of the rows an XML lookup does not answer (D106).
     fn best_path(&self, read: TableRead<'_>, (conds, implied): (&[Cond], &[Cond]), want: &[SortKey]) -> Path {
         let cost = &self.weights();
-        let unread = Path {
-            total: 0.0_f64,
-            cost: 0.0_f64,
-            est: 0.0_f64,
-            ordered: false,
-            reverse: false,
-            index: None,
-            order: Vec::new(),
-            note: String::new(),
-            windowed: None,
-        };
+        let unread = Path::unread();
         let Some((storage, (desc, indexes, keyed))) = self.planned(read.table) else { return unread };
         let (desc, scanned, conds) = (&*desc, conds, &*keyed.substituted(conds));
         let (stats, all) = (self.statistics(read.table), cost_of(storage.row_count()));
         let known = Known { stats: stats.as_deref(), cost };
         let probed = answerable(conds, self.raising);
         let (compared, ors) = comparisons_of(probed, known, (self.values, self.raising));
-        if let Some(path) = want.is_empty().then(|| self.point_path(read, (probed, &compared), known.cost)).flatten() {
+        if let Some(path) = self.point_path(read, (probed, &compared), known.cost) {
             return path;
         }
         let evaluation = geometric::evaluation(conds, known);
@@ -247,14 +256,15 @@ impl PhysicalPlanner<'_> {
             let columns: Option<Vec<_>> = ix.columns.iter().map(|&c| desc.columns.get(c)).collect();
             let (kind, found, types) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), ix.key_types(desc));
             let (Some(kind), Ok(found), Some(columns), Some(types)) = (kind, found, columns, types) else { continue };
+            let (types, columns) = (&types, &columns);
             let on =
-                On { ix, kind: &**kind, found: &**found, types: &types, columns: &columns, storage: &**storage, conds, evaluation, check };
-            for c in self.candidates_of(ix, (&**kind, found, &types), &asked) {
+                On { ix, kind: &**kind, found: &**found, types, columns, storage: &**storage, conds, evaluation, check, scan: seq_cost };
+            for c in self.candidates_of(ix, (&**kind, found, types), &asked) {
                 let Some((path, priced)) = self.candidate_path(read, &on, c, want) else { continue };
                 if priced.is_some_and(|p| spatial.is_none_or(|s| p.probe < s.probe)) {
                     spatial = priced;
                 }
-                if path.total < best.total {
+                if path.total < best.total || fewer_alike(&path, &best, (cost.estimate_margin, all)) {
                     best = path;
                 }
             }
@@ -317,13 +327,16 @@ impl PhysicalPlanner<'_> {
         let clustering = c.stated.map_or(0.0_f64, |s| s.clustering);
         let clustered = geometric::clustered_saving(est, clustering, (storage.fetch_cost(), row));
         let path_cost = probed_cost - visible.map_or(clustered, saved) + est * on.evaluation.per_row;
+        let bounded = bounded::bounded(ix, &c, whole);
+        let path_cost = if bounded { self.bounded_cost((on, &c), read.needed, path_cost) } else { path_cost };
         let checked = if xml::answered(&c.probes) { 0.0_f64 } else { est * on.check };
         let total = path_cost * order.map_or(1.0_f64, |_| self.read_share(want, est))
             + checked
             + self.sort_penalty((want, read), est, order.is_some());
         let stated = geometric::Stated::rows(c.stated.as_ref()).is_some();
         let priced = c.stated.is_some().then_some(geometric::Priced { est, stated, clustering, probe: total });
-        Some((Probed::of(ix, c, (visible.is_some() && whole, decided)).path((est, path_cost, total), order), priced))
+        let path = Probed::of(ix, c, (visible.is_some() && whole, decided)).path((est, path_cost, total), order);
+        Some((Path { bounded, ..path }, priced))
     }
 }
 
@@ -344,6 +357,8 @@ struct On<'a> {
     evaluation: geometric::Evaluation,
     /// What checking the XML queries of a row costs (D106).
     check: f64,
+    /// What the scan of every conjunct costs (`access/bounded.rs`).
+    scan: f64,
 }
 
 impl PhysicalPlanner<'_> {
@@ -404,12 +419,11 @@ impl PhysicalPlanner<'_> {
     /// (`physical/kept.rs`), if there is one among `conds`, whose
     /// comparisons with constants are `compared`. It finds one row at
     /// most, so no other path is priced: not the zones of a scan, nor any
-    /// index's count, nor the rest of the rows' statistics.
+    /// index's count, nor the rest of the rows' statistics. Nor is the
+    /// table's size, which a plan kept may have been made at before its
+    /// rows came (RULES.md D839); and one row is in any order asked.
     fn point_path(&self, read: TableRead<'_>, (conds, compared): (&[Cond], &[Compared]), cost: &CostModel) -> Option<Path> {
         let (storage, desc) = (self.db.storage_of(read.table).ok()?, self.db.catalog.table(read.table)?);
-        if storage.row_count() < POINT_ROWS {
-            return None;
-        }
         let usable =
             |ix: &&IndexDesc| ix_is_point(ix) && !self.db.building.contains(&ix.name) && !crate::catalog::is_global_index(&ix.name);
         self.db.catalog.indexes(read.table).into_iter().filter(usable).find_map(|ix| {
@@ -429,12 +443,13 @@ impl PhysicalPlanner<'_> {
                 total,
                 cost: total,
                 est: 1.0_f64,
-                ordered: false,
+                ordered: true,
                 reverse: false,
                 index: Some(chosen),
                 order: Vec::new(),
                 note: String::new(),
                 windowed: None,
+                bounded: false,
             })
         })
     }

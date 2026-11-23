@@ -258,7 +258,7 @@ impl BLinkTree {
     /// The leaf a writer of `key` locks, `path` the way to it: its page
     /// number read from its parent, the leaf itself not read, as the
     /// writer reads it once it owns it, moving right past a split or a
-    /// leaf taken out, as from a leaf read (RULES.md D839). A root that is
+    /// leaf taken out, as from a leaf read (RULES.md D840). A root that is
     /// a leaf is the leaf.
     fn leaf_for_write(&self, key: &[u8], path: &mut Path) -> Result<PageId> {
         path.above_leaf = true;

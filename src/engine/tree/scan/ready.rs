@@ -7,7 +7,7 @@
 //! to a leaf's entries.
 //!
 //! A scan done gives its buffers back to its thread, and the thread's next
-//! scan takes them (RULES.md D839), so a probe that reads one entry, a
+//! scan takes them (RULES.md D840), so a probe that reads one entry, a
 //! scan of its own, allocates no buffer either.
 
 use std::cell::RefCell;
@@ -155,7 +155,7 @@ mod tests {
         assert_eq!(ready.bytes.as_ptr(), allocation, "the buffer reused");
     }
 
-    /// Verifies: [DESIGN] RULES.md D839: buffers given back are taken by
+    /// Verifies: [DESIGN] RULES.md D840: buffers given back are taken by
     /// the thread's next scan, cleared, with no allocation; at most
     /// `SPARES` are kept, and one past `KEPT_BYTES` is not.
     #[test]

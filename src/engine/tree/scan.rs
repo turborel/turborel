@@ -117,7 +117,7 @@ pub fn scan_of<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<&[u8]>, upper
 }
 
 /// As `scan_of`, its bounds given as the scan keeps them, so a caller that
-/// built them hands them over with no copy (RULES.md D839).
+/// built them hands them over with no copy (RULES.md D840).
 pub fn scan_owned<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<Vec<u8>>, upper: Bound<Vec<u8>>, direction: Direction) -> Scan<T> {
     let entered = tree.epochs.enter();
     Scan {

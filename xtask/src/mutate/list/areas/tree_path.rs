@@ -1,4 +1,4 @@
-//! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D839):
+//! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840):
 //! the search over a node's slots, inner copies kept with their headers
 //! parsed, writers that find their leaf from its parent and change it
 //! through the frame they own, paths kept in place, and scans' buffers

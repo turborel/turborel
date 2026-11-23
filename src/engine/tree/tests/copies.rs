@@ -1,6 +1,6 @@
 //! Unit tests of the inner node copies a thread keeps (RULES.md D807,
 //! `inner.rs`): 256 of them, the one to give way chosen by a clock bit,
-//! each with its own header parsed (D839).
+//! each with its own header parsed (D840).
 
 use super::*;
 
@@ -22,7 +22,7 @@ fn leaves(tree: &BLinkTree, n: u64) -> Vec<u64> {
 /// would drop the ones read. A copy found is put in its place whether
 /// the copies are full or not; one not found is added while they are not
 /// full (MC/DC of `Copies::put`, found or not, full or not). A copy put
-/// in another's place keeps its own header as parsed (D839).
+/// in another's place keeps its own header as parsed (D840).
 #[test]
 fn copies_read_since_the_hand_passed_are_kept() {
     let (tree, _scratch) = tree("copies-clock");
@@ -49,7 +49,7 @@ fn copies_read_since_the_hand_passed_are_kept() {
             }
             assert!(!inner::kept().contains(&page(0)), "the first gave way");
             // The copy that took its place keeps its own header parsed, not
-            // the one it replaced (RULES.md D839).
+            // the one it replaced (RULES.md D840).
             let inner::Read::Copied(bytes, header) = read(inner::KEPT) else { panic!("a copy read") };
             assert_eq!(Node::parsed_again(&bytes, &header).unwrap().parsed(), Node::parse(&bytes).unwrap().parsed());
             for i in 1..10 {

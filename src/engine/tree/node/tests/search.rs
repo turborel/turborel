@@ -1,4 +1,4 @@
-//! Unit tests of a node's search over its slots (RULES.md D839): every
+//! Unit tests of a node's search over its slots (RULES.md D840): every
 //! key, present or not, is placed where a search of the entries one by
 //! one places it, through the hints and without, under a shared prefix
 //! and past it; a node read again from its header as parsed searches the
@@ -26,7 +26,7 @@ fn linear(node: &Node<'_>, key: &[u8]) -> std::result::Result<usize, usize> {
     Err(node.len())
 }
 
-/// Verifies: [DESIGN] RULES.md D839, D500: of nodes of 1, 31 (no hints),
+/// Verifies: [DESIGN] RULES.md D840, D500: of nodes of 1, 31 (no hints),
 /// 32 and 400 entries (hints), every key present, every key between two,
 /// keys below and above all, and keys without the node's prefix are
 /// placed by the search where the entries one by one place them; a node
@@ -47,7 +47,7 @@ fn a_search_over_the_slots_places_keys_as_the_entries_do() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D839, R-ERR-2: a slot whose offset leads
+/// Verifies: [DESIGN] RULES.md D840, R-ERR-2: a slot whose offset leads
 /// past the heap fails the search that reads its tail with SQLCODE -916,
 /// never a panic; a node whose slots do not fill its end in whole slots
 /// is not rebuilt from a header parsed of other bytes.

@@ -9,7 +9,7 @@
 //! before any change, so a descent from it goes where one through the
 //! latch would. Leaves are never copied: a read of one takes its latch.
 //!
-//! Each copy keeps the node's header as parsed beside it (RULES.md D839),
+//! Each copy keeps the node's header as parsed beside it (RULES.md D840),
 //! so a descent through it reads no header and checks nothing again, as a
 //! leaf's copy does (D808).
 //!

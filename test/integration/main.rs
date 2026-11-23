@@ -220,6 +220,7 @@ mod kept_routines;
 mod kept_set_plans;
 mod kept_targets;
 mod kernels;
+mod key_plans;
 mod language;
 mod language_collations;
 mod late_columns;

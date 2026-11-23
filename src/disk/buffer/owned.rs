@@ -12,7 +12,7 @@
 //! so a release never misses a writer and costs nothing when none waits.
 //!
 //! The owner reads and writes its page through the frame it owns
-//! (RULES.md D839): the frame is pinned to the page for as long as it is
+//! (RULES.md D840): the frame is pinned to the page for as long as it is
 //! owned, so no page table is looked in, no shard locked and no hint
 //! hashed for the reads and the write a change to the node makes.
 

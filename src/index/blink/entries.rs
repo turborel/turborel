@@ -37,7 +37,7 @@ impl BLinkIndex {
         (decoded, direction): (bool, Direction),
     ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
         let checked = range.as_ref().is_some_and(|r| r.checked);
-        // The range's bounds handed to the scan, not copied (RULES.md D839).
+        // The range's bounds handed to the scan, not copied (RULES.md D840).
         let mut scan = range.map(|r| scan_owned(tree, r.lower, r.upper, direction));
         // The probe is copied only to check entries by, so an exact probe's
         // search copies none. The types are read through the tree the scan

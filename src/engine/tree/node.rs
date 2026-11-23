@@ -349,7 +349,7 @@ impl<'a> Node<'a> {
     /// `search`'s binary search for `tail` over the slots, by heads, a
     /// tail read only where the heads are equal; none if a slot leads
     /// past the heap. No step builds an error, so the search stays in
-    /// registers (RULES.md D839).
+    /// registers (RULES.md D840).
     #[inline]
     fn find(&self, tail: &[u8]) -> Option<std::result::Result<usize, usize>> {
         let head = head_of(tail);
