@@ -57,3 +57,9 @@ pub trait KeyProbe {
     /// Its storage's, and `each`'s.
     fn entries_of(&self, key: Vec<u8>, each: &mut dyn FnMut(EncodedEntry<'_>) -> Result<bool>) -> Result<()>;
 }
+
+/// Every entry `probe` selects in `index`, in its order: for tests.
+#[cfg(test)]
+pub(crate) fn searched<I: super::Index + ?Sized>(index: &std::sync::Arc<I>, probe: &super::Probe) -> Result<Vec<(Key, RowId)>> {
+    super::Index::search(std::sync::Arc::clone(index), probe, super::KeyOrder::Ascending).collect()
+}
