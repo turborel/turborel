@@ -7,6 +7,7 @@
 use std::sync::atomic::Ordering;
 
 use super::Past;
+use super::versions::give_back;
 use crate::engine::rows::RowTable;
 use crate::engine::rows::version::Version;
 use crate::error::Result;
@@ -23,6 +24,9 @@ impl RowTable {
         let Some(row) = row else {
             let replaced = self.write_version(tx, id, None, past)?;
             let old = self.replaced(id, replaced.as_deref());
+            if let Some(buffer) = replaced {
+                give_back(buffer);
+            }
             self.widen_over(id, None, live(&old));
             self.counted.live.fetch_sub(1, Ordering::AcqRel);
             self.counted_change(tx);
@@ -31,6 +35,9 @@ impl RowTable {
         let (mut framed, pages) = self.encode_framed(id, row)?;
         let replaced = self.write_version(tx, id, Some(&mut framed), past).inspect_err(|_| self.free(&pages))?;
         let old = self.replaced(id, replaced.as_deref());
+        if let Some(buffer) = replaced {
+            give_back(buffer);
+        }
         self.widen_over(id, Some(row), live(&old));
         self.counted_change(tx);
         old.map(|old| old.map(|(was, _)| was))
@@ -48,6 +55,9 @@ impl RowTable {
             None => self.write_version(tx, id, None, past)?,
         };
         let widened = self.widen_past(id, row, replaced.as_deref());
+        if let Some(buffer) = replaced {
+            give_back(buffer);
+        }
         if row.is_none() {
             self.counted.live.fetch_sub(1, Ordering::AcqRel);
         }
