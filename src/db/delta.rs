@@ -51,24 +51,38 @@ struct Gathered {
     /// Whether the statement's effects took it. Those of any statement
     /// after, a trigger's, record nothing.
     claimed: AtomicBool,
+    /// The columns of `table` its reader shows, a bit a column, if it is
+    /// known to read no others: so an increment of a column it does not
+    /// show may be reserved (RULES.md D849).
+    shown: Option<u64>,
 }
 
 impl Collector {
     /// \[DESIGN\] Of a delta table of result `result` of a statement that
     /// changes the base table `base` itself, as `run_delta_table` gathers
     /// one for it: the collector of a compiled program's change (RULES.md
-    /// D841).
-    pub(super) fn of_base(st: &State, base: &QualifiedName, result: DeltaResult) -> Collector {
+    /// D841), whose reader shows the columns of `shown` alone, if it is
+    /// known.
+    pub(super) fn of_base(st: &State, base: &QualifiedName, (result, shown): (DeltaResult, Option<u64>)) -> Collector {
         let width = st.catalog.table(base).map_or(0, |t| t.columns.len());
         let members = delta_members(st, base);
         let rows = Mutex::new(HeldRows::new(st.list_space()));
-        let gathered = Gathered { table: base.clone(), members, map: (0..width).collect(), result, rows, claimed: AtomicBool::new(false) };
+        let map = (0..width).collect();
+        let gathered = Gathered { table: base.clone(), members, map, result, rows, claimed: AtomicBool::new(false), shown };
         Collector(Arc::new(gathered))
     }
 
     /// The rows it gathered, taken.
     pub(super) fn taken(&self, st: &State) -> HeldRows<Row> {
         std::mem::replace(&mut *lock_builtin(&self.0.rows), HeldRows::new(st.list_space()))
+    }
+
+    /// \[DESIGN\] RULES.md D849: the columns of its base table its reader
+    /// shows, a bit a column, of NEW or FINAL rows of the base table
+    /// itself; none if it may read any.
+    pub(super) fn shown(&self) -> Option<u64> {
+        let new = matches!(self.0.result, DeltaResult::New | DeltaResult::Final);
+        self.0.shown.filter(|_| new && self.0.members.is_empty())
     }
 
     /// Claims it for the effects of a statement: false if one did.
@@ -232,7 +246,7 @@ impl Session {
         self.may_run(st, &d.statement)?;
         let members = delta_members(st, &base);
         let rows = Mutex::new(HeldRows::new(st.list_space()));
-        let gathered = Gathered { table: base, members, map, result: d.result, rows, claimed: AtomicBool::new(false) };
+        let gathered = Gathered { table: base, members, map, result: d.result, rows, claimed: AtomicBool::new(false), shown: None };
         let collector = Collector(Arc::new(gathered));
         // A delta table of the statement of another's keeps the other's
         // collector, given back once it ran.

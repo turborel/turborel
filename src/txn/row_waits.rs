@@ -17,8 +17,9 @@
 //! waiter's write (`claims.rs`, RULES.md D456).
 
 mod claims;
+mod overtaken;
 
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use self::claims::{Claim, Claims};
@@ -38,6 +39,8 @@ struct Place {
     ending: Arc<Ending>,
     ticket: u64,
     turn: bool,
+    /// Whether its waiter was overtaken at a turn already (RULES.md D851).
+    lost: bool,
 }
 
 /// A waiter's seat: the row it would change, its place, which a hand-over
@@ -88,9 +91,11 @@ struct Queue {
 }
 
 impl Queue {
-    /// The waiter seated first for `row`, if any is.
-    fn first_for(&self, row: &(QualifiedName, RowId)) -> Option<TxId> {
-        self.seated.iter().filter(|(_, seat)| seat.row == *row).min_by_key(|&&(t, _)| t).map(|(_, seat)| seat.waiter)
+    /// The waiter seated first for `row`, if any is, and whether it was
+    /// overtaken already (RULES.md D851).
+    fn first_for(&self, row: &(QualifiedName, RowId)) -> Option<(TxId, bool)> {
+        let (_, seat) = self.seated.iter().filter(|(_, seat)| seat.row == *row).min_by_key(|&&(t, _)| t)?;
+        Some((seat.waiter, lock_builtin(&seat.place).lost))
     }
 
     /// A ticket, the next in line.
@@ -133,6 +138,11 @@ pub(crate) struct Ending {
 }
 
 impl Ending {
+    /// Whether the transaction has ended.
+    fn has_ended(&self) -> bool {
+        lock_builtin(&self.queue).ended
+    }
+
     /// The transaction has ended: its first waiter goes on.
     fn end(&self) {
         let mut queue = lock_builtin(&self.queue);
@@ -180,25 +190,37 @@ impl Turn {
         if to.ended {
             return;
         }
-        let moves =
-            |seat: &Seat| seat.row.1 == id && seat.row.0 == *table && !super::locks::would_deadlock(&waits_for, seat.waiter, &[tx.id]);
-        let (mut moving, staying): (Vec<_>, Vec<_>) = std::mem::take(&mut from.seated).into_iter().partition(|(_, seat)| moves(seat));
-        from.seated = staying;
-        moving.sort_unstable_by_key(|&(t, _)| t);
-        for (old, seat) in moving {
-            from.left.push(old);
-            let ticket = to.ticket();
-            {
-                let mut place = lock_builtin(&seat.place);
-                place.ending = Arc::clone(&next);
-                place.ticket = ticket;
-            }
-            waits_for.insert(seat.waiter, vec![tx.id]);
-            to.seated.push((ticket, seat));
-        }
+        move_line((&mut from, (&mut to, &next)), (table, id), tx.id, &mut waits_for);
         // [DESIGN] RULES.md D456: the row's claim, to the first moved.
-        let claim = to.first_for(&(table.clone(), id)).map(|first| Claim { owner: tx.id, line: Arc::clone(&next), first });
+        let claim = to.first_for(&(table.clone(), id)).map(|(first, firm)| Claim { owner: tx.id, line: Arc::clone(&next), first, firm });
         tx.origin.shared.ends.claims.set((table, id), claim);
+    }
+}
+
+/// \[DESIGN\] RULES.md D743: the waiters seated in `from` for row `id` of
+/// `table` moved to `to`, `next`'s queue, the end of `writer`, which now
+/// writes the row, in their order and unwoken; but one whose wait on
+/// `writer` would deadlock, which stays to wake and find that itself.
+fn move_line(
+    (from, (to, next)): (&mut Queue, (&mut Queue, &Arc<Ending>)),
+    (table, id): (&QualifiedName, RowId),
+    writer: TxId,
+    waits_for: &mut super::WaitsFor,
+) {
+    let moves = |seat: &Seat| seat.row.1 == id && seat.row.0 == *table && !super::locks::would_deadlock(waits_for, seat.waiter, &[writer]);
+    let (mut moving, staying): (Vec<_>, Vec<_>) = std::mem::take(&mut from.seated).into_iter().partition(|(_, seat)| moves(seat));
+    from.seated = staying;
+    moving.sort_unstable_by_key(|&(t, _)| t);
+    for (old, seat) in moving {
+        from.left.push(old);
+        let ticket = to.ticket();
+        {
+            let mut place = lock_builtin(&seat.place);
+            place.ending = Arc::clone(next);
+            place.ticket = ticket;
+        }
+        waits_for.insert(seat.waiter, vec![writer]);
+        to.seated.push((ticket, seat));
     }
 }
 
@@ -268,7 +290,11 @@ impl Txn {
     /// writes the row, if there is one.
     pub(crate) fn claim_of(&self, row: (&QualifiedName, RowId)) -> Option<Claim> {
         let ends = &self.origin.shared.ends;
-        ends.claims.of(row, self.id, |tx| ends.of(tx).is_some())
+        let claim = ends.claims.of(row, self.id, |tx| ends.of(tx).is_some())?;
+        // [DESIGN] RULES.md D851: once the line's writer has ended, the row
+        // is not kept for a first waiter not yet running, unless it was
+        // overtaken once already.
+        (claim.firm || !claim.line.has_ended()).then_some(claim)
     }
 
     /// \[DESIGN\] RULES.md D456: waits behind the waiters of `claim`'s
@@ -288,11 +314,8 @@ impl Txn {
     /// counting the first waiter would keep that edge once the claim
     /// passed on, and find a cycle that is not there.
     fn wait_in_line(&self, (table, id): (&QualifiedName, RowId), (ending, writer): (Arc<Ending>, TxId)) -> Result<Turn> {
-        let refused = |why: String| {
-            SqlError::new(Code::Conflict, format!("[DESIGN] {why}, so the statement is rejected and undone [X3.135-1986 §7.3 GR3b]"))
-        };
         if self.lock_wait == LockWait::NoWait {
-            return Err(refused(format!("a row of {table} is locked by another transaction; locking is no-wait")));
+            return Err(refused(&format!("a row of {table} is locked by another transaction; locking is no-wait")));
         }
         // The ticket first, so a transaction counted as waiting
         // (`Transactions::waiting`) already holds its place in line.
@@ -302,24 +325,33 @@ impl Txn {
             if super::locks::would_deadlock(&waits_for, self.id, &[writer]) {
                 drop(waits_for);
                 ending.leave(ticket);
-                return Err(refused(format!(
-                    "waiting for a row of {table} would deadlock with another transaction (roll back to release this transaction's locks)"
-                )));
+                return Err(deadlock(table));
             }
             waits_for.insert(self.id, vec![writer]);
         }
-        let claim = Claim { owner: writer, line: Arc::clone(&ending), first: self.id };
+        let claim = Claim { owner: writer, line: Arc::clone(&ending), first: self.id, firm: false };
         self.origin.shared.ends.claims.claim((table, id), claim);
-        let began = Instant::now();
-        // [DESIGN] RULES.md D520: shown waiting, and for whom.
-        self.stop.activity().waits_for_lock(format!("a row of {table}"), writer);
         let seat = Arc::new(Seat {
             waiter: self.id,
             row: (table.clone(), id),
-            place: Mutex::new(Place { ending, ticket, turn: false }),
+            place: Mutex::new(Place { ending, ticket, turn: false, lost: false }),
             signal: Condvar::new(),
         });
-        let waited = self.queue_on(&seat, began).map_err(|e| if e.code == Code::Conflict { refused(e.msg.clone()) } else { e });
+        self.shown_waiting((table, writer), |began| self.queue_on(&seat, began))
+    }
+
+    /// `wait`, a wait for a row of `table` that `writer` changed, given
+    /// the instant it began: shown waiting meanwhile, and for whom
+    /// (RULES.md D520), its time told the client (D240), and a timeout or
+    /// a cancel told as a refusal.
+    ///
+    /// # Errors
+    ///
+    /// The wait's.
+    fn shown_waiting(&self, (table, writer): (&QualifiedName, TxId), wait: impl FnOnce(Instant) -> Result<Turn>) -> Result<Turn> {
+        let began = Instant::now();
+        self.stop.activity().waits_for_lock(format!("a row of {table}"), writer);
+        let waited = wait(began).map_err(|e| if e.code == Code::Conflict { refused(&e.msg) } else { e });
         self.stop.activity().woke();
         lock(&self.origin.shared.waits_for)?.remove(&self.id);
         // [DESIGN] RULES.md D240: the time waited, for the client.
@@ -332,7 +364,7 @@ impl Txn {
     fn queue_on(&self, seat: &Arc<Seat>, began: Instant) -> Result<Turn> {
         // The seat's lock before its queue's only here, as no one else
         // knows the seat until it is seated.
-        let mut place = lock_builtin(&seat.place);
+        let place = lock_builtin(&seat.place);
         {
             let mut queue = lock_builtin(&place.ending.queue);
             if queue.ended && queue.serving == place.ticket {
@@ -340,6 +372,13 @@ impl Txn {
             }
             queue.seated.push((place.ticket, Arc::clone(seat)));
         }
+        self.sleep_on(place, seat, began)
+    }
+
+    /// Sleeps in `seat`, seated, its place's lock `place` held, until its
+    /// turn, looking now and then for a cancel or a timeout, which give the
+    /// seat up.
+    fn sleep_on(&self, mut place: MutexGuard<'_, Place>, seat: &Arc<Seat>, began: Instant) -> Result<Turn> {
         loop {
             if place.turn {
                 return Ok(self.turn(&place.ending, seat));
@@ -370,6 +409,18 @@ impl Txn {
             })
         })
     }
+}
+
+/// A refusal of a write for `why`, which undoes its statement.
+fn refused(why: &str) -> SqlError {
+    SqlError::new(Code::Conflict, format!("[DESIGN] {why}, so the statement is rejected and undone [X3.135-1986 §7.3 GR3b]"))
+}
+
+/// A refusal of a wait for a row of `table` that would close a cycle.
+fn deadlock(table: &QualifiedName) -> SqlError {
+    refused(&format!(
+        "waiting for a row of {table} would deadlock with another transaction (roll back to release this transaction's locks)"
+    ))
 }
 
 #[cfg(test)]

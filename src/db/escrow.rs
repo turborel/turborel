@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
+use crate::db::delta::Collector;
 use crate::db::integrity::Effects;
 use crate::db::write::Written;
 use crate::error::Result;
@@ -272,24 +273,43 @@ fn added(row: &Row, deltas: &[&Reservation], types: &[DataType]) -> Result<Row> 
 /// SET item `c = c + e` or `c = c - e` of an exact numeric `c` and an
 /// `e` that reads neither the row nor a table; its condition reading no
 /// table and none of those columns; nothing that may see a sum before
-/// it is applied: no trigger, delta table, view check, portion, typed
-/// table or partition, generated column, CHECK, assertion or domain,
-/// and none of the columns in a key or an index.
+/// it is applied: no trigger, view check, portion, typed table or
+/// partition, generated column, CHECK, assertion or domain, none of the
+/// columns in a key or an index, and no delta table but one of NEW or
+/// FINAL rows whose reader shows none of the columns added to (D849).
 pub(super) fn escrow_of(st: &Arc<State>, tx: &Txn, w: &Written, effects: &Effects<'_>) -> Option<u64> {
-    let quiet = effects.triggered.is_none() && effects.delta.is_none() && effects.restricted.is_none();
-    escrowed(st, tx, w, quiet)
+    let shown = effects.delta.as_ref().map_or(Some(0), Collector::shown)?;
+    // Of a FINAL delta table, the restriction its own: nothing the
+    // statement writes changes the table once the reservation is taken.
+    let restricted = effects.restricted.is_some() && effects.delta.is_none();
+    if effects.triggered.is_some() || restricted {
+        return None;
+    }
+    reserving(st, tx, w, shown)
 }
 
-/// `escrow_of`'s guard, of a statement `quiet` if no trigger, delta table
-/// or table none may change sees its rows.
-pub(super) fn escrowed(st: &Arc<State>, tx: &Txn, w: &Written, quiet: bool) -> Option<u64> {
+/// \[DESIGN\] RULES.md D849: the columns the reservations of `w` guard,
+/// if it may reserve its increments, its delta table's reader, if any,
+/// showing the columns of `shown`. They guard those as well, so what the
+/// reader shows stays as it was read until the transaction ends, as a
+/// row held would; none if it shows a column added to, whose sum is not
+/// applied before the transaction commits.
+pub(super) fn reserving(st: &Arc<State>, tx: &Txn, w: &Written, shown: u64) -> Option<u64> {
+    let guarded = escrowed(st, tx, w)?;
+    let added = w.bound.set.iter().fold(0, |mask, (c, _)| mask | bit(*c));
+    (shown & added == 0).then_some(guarded | shown)
+}
+
+/// `escrow_of`'s guard, of a statement no trigger, delta table or table
+/// none may change sees the rows of.
+fn escrowed(st: &Arc<State>, tx: &Txn, w: &Written) -> Option<u64> {
     let b = &w.bound;
     let plain = b.checks.is_empty() && b.portion.is_none() && b.generated.is_empty() && b.desc.typed.is_none();
     let on = if let Value::Char(word) = w.db(st).settings.get(TRANSACTION_ESCROW) { word == ON } else { false };
     let engine = st.capabilities(&b.table).is_ok_and(|caps| matches!(caps.concurrency, Concurrency::Engine { .. }));
     // Its application waits for a row as it commits, as a statement
     // waiting for locks would, never refused for want of waiting.
-    let waits = !tx.one_snapshot() && tx.lock_wait == LockWait::Wait && engine && quiet;
+    let waits = !tx.one_snapshot() && tx.lock_wait == LockWait::Wait && engine;
     if !waits || !plain || !on || st.split(&b.table) {
         return None;
     }
