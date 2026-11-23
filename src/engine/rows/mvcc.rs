@@ -155,8 +155,7 @@ struct Change {
     before: Option<Vec<u8>>,
     /// Where it appended the committed version it replaced.
     appended: Option<Lsn>,
-    /// The large objects the version it replaced names and its own does
-    /// not (`rows/lobs/owned.rs`).
+    /// The large objects the version it replaced names and its own does not (`rows/lobs/owned.rs`).
     dropped: Vec<u64>,
     /// Whether it is not a row's change but a large object's making: `id`
     /// is the object's.
