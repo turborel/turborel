@@ -1,5 +1,5 @@
 //! \[DESIGN\] A row in demand passed from writer to writer (RULES.md D456,
-//! D743, D847): once its writer ends, a transaction that is running takes
+//! D743, D851): once its writer ends, a transaction that is running takes
 //! it, and a waiter overtaken so goes first in the next line. Many
 //! sessions taking numbers from one row, at READ COMMITTED and at
 //! SERIALIZABLE, each committing every take or retrying it, take each
@@ -48,7 +48,7 @@ fn taking(s: &Session, level: &str) {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D847, D456; [ISO/IEC 9075:1992 §4.28]: at
+/// Verifies: [DESIGN] RULES.md D851, D456; [ISO/IEC 9075:1992 §4.28]: at
 /// READ COMMITTED and at SERIALIZABLE, sessions taking numbers from one
 /// row at once, its writers passing it to whichever runs, lose no update
 /// and take every number once.

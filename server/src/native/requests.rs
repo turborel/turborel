@@ -304,7 +304,7 @@ impl Held {
         let served = Arc::clone(&self.session.canceller());
         served.served().set_trace(crate::shown::trace(attributes.as_deref()));
         let mark = out.mark();
-        // [DESIGN] RULES.md D846: a completion its request's commit tells,
+        // [DESIGN] RULES.md D850: a completion its request's commit tells,
         // so the statement leaves its row locks with no wait for what it
         // rests on, which the commit's reply waits for.
         let at_end = ends && !more;

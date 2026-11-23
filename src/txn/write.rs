@@ -291,7 +291,7 @@ impl State {
         loop {
             match self.next_after(tx, (table, id), rechecks)? {
                 Next::Wait(writer) => {
-                    // [DESIGN] RULES.md D847: in its turn, overtaken by
+                    // [DESIGN] RULES.md D851: in its turn, overtaken by
                     // a writer that came while it was being woken.
                     *turn = match turn.take() {
                         Some(mine) => tx.overtaken(mine, (table, id), writer)?,

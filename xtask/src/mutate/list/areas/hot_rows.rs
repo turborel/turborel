@@ -1,4 +1,4 @@
-//! The mutations of rows in demand (RULES.md R-TEST-9, D845, D846, D847):
+//! The mutations of rows in demand (RULES.md R-TEST-9, D849, D850, D851):
 //! an increment through a delta table reserved, what its select list shows
 //! guarded and given, and one that shows the sum held; a completion told
 //! at the end with no wait for what it rests on, and a rollback that waits

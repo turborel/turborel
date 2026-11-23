@@ -492,7 +492,7 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
             && let Some(deltas) = super::escrow::deltas(&w, (seen, new), &hosted)?
             && st.reserve_row(tx, (&w.bound.table, *id), (seen, &deltas, guarded))?
         {
-            // [DESIGN] RULES.md D845: its delta table's row, which shows
+            // [DESIGN] RULES.md D849: its delta table's row, which shows
             // none of the columns added to.
             return effects.reserved(&w.bound.table, new);
         }

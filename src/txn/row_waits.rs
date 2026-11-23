@@ -39,7 +39,7 @@ struct Place {
     ending: Arc<Ending>,
     ticket: u64,
     turn: bool,
-    /// Whether its waiter was overtaken at a turn already (RULES.md D847).
+    /// Whether its waiter was overtaken at a turn already (RULES.md D851).
     lost: bool,
 }
 
@@ -92,7 +92,7 @@ struct Queue {
 
 impl Queue {
     /// The waiter seated first for `row`, if any is, and whether it was
-    /// overtaken already (RULES.md D847).
+    /// overtaken already (RULES.md D851).
     fn first_for(&self, row: &(QualifiedName, RowId)) -> Option<(TxId, bool)> {
         let (_, seat) = self.seated.iter().filter(|(_, seat)| seat.row == *row).min_by_key(|&&(t, _)| t)?;
         Some((seat.waiter, lock_builtin(&seat.place).lost))
@@ -291,7 +291,7 @@ impl Txn {
     pub(crate) fn claim_of(&self, row: (&QualifiedName, RowId)) -> Option<Claim> {
         let ends = &self.origin.shared.ends;
         let claim = ends.claims.of(row, self.id, |tx| ends.of(tx).is_some())?;
-        // [DESIGN] RULES.md D847: once the line's writer has ended, the row
+        // [DESIGN] RULES.md D851: once the line's writer has ended, the row
         // is not kept for a first waiter not yet running, unless it was
         // overtaken once already.
         (claim.firm || !claim.line.has_ended()).then_some(claim)

@@ -110,7 +110,7 @@ impl Session {
         }
     }
 
-    /// \[DESIGN\] RULES.md D846: `result`, a statement's completion in
+    /// \[DESIGN\] RULES.md D850: `result`, a statement's completion in
     /// `tx`, told at once if its caller tells it only once the transaction
     /// has ended (`tell_at_end`): the end's own reply then waits for what
     /// it rests on, after the transaction's locks are released. A failure
@@ -126,7 +126,7 @@ impl Session {
         self.replied(tx, result)
     }
 
-    /// \[DESIGN\] RULES.md D846: whether its caller tells the completion
+    /// \[DESIGN\] RULES.md D850: whether its caller tells the completion
     /// of each statement it runs from now on, but of one that opens a
     /// cursor, only once the transaction has ended, as a server's request
     /// that ends its transaction with its statement does. Then such a
@@ -140,7 +140,7 @@ impl Session {
         self.told_at_end.set(at_end);
     }
 
-    /// \[DESIGN\] RULES.md D846: returns once every commit what its open
+    /// \[DESIGN\] RULES.md D850: returns once every commit what its open
     /// transaction did rests on is durable, as a statement's completion
     /// would have waited had `tell_at_end` not been set.
     ///

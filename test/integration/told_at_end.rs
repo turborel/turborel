@@ -1,5 +1,5 @@
 //! \[DESIGN\] A statement whose completion is told only as its transaction
-//! ends (RULES.md D846, D441): it leaves the row it wrote over a commit
+//! ends (RULES.md D850, D441): it leaves the row it wrote over a commit
 //! not yet durable at once, with no wait for that commit's sync, and the
 //! end of its transaction tells nothing before that commit is durable, or
 //! tells SQLCODE -922 when its sync fails.
@@ -37,7 +37,7 @@ fn database() -> (Database, Arc<Slow>, Session, Session) {
     (db, log, first, second)
 }
 
-/// Verifies: [DESIGN] RULES.md D846, D441: a writer over a commit whose
+/// Verifies: [DESIGN] RULES.md D850, D441: a writer over a commit whose
 /// sync is under way, its completion told at the end, returns well
 /// within that sync; its commit returns once that commit is durable, and
 /// both changes hold.
@@ -57,7 +57,7 @@ fn a_completion_told_at_the_end_does_not_wait_for_the_sync() {
     assert_eq!(rows(&db.session("A"), "SELECT V FROM T").unwrap(), ["12"]);
 }
 
-/// Verifies: [DESIGN] RULES.md D846, D441: when the sync of a commit a
+/// Verifies: [DESIGN] RULES.md D850, D441: when the sync of a commit a
 /// writer wrote over fails, the writer's end is in doubt, SQLCODE -922,
 /// whether it commits or rolls back, though its statement was told at
 /// once; a snapshot then sees neither change.

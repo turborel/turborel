@@ -428,7 +428,7 @@ impl State {
         drop(gate);
         tx.release();
         self.collect_ended(tx, &joined);
-        // [DESIGN] RULES.md D846: a completion told only as the
+        // [DESIGN] RULES.md D850: a completion told only as the
         // transaction ends, rolled back, waits as it would have.
         tx.replied(damage)
     }

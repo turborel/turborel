@@ -552,9 +552,9 @@ verification approach DO-178C expects (§8).
 | D842 | A home waits on its client for a second, its permit given up after a millisecond |
 | D843 | A commit stamps each row in place from the leaf its write left it in, with no descent |
 | D844 | A transaction begins from its session's kept origin, its id on its thread's stripe |
-| D845 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
-| D846 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
-| D847 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
+| D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
+| D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
+| D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
 
 ### The project
 
@@ -12007,7 +12007,7 @@ The semantics hold for these reasons.
   with it, so its image claims nothing the log could lose.
 - A statement whose completion its caller tells only as the
   transaction ends does not wait for what it rests on, as its
-  transaction's end waits for it, after its locks are released (D846).
+  transaction's end waits for it, after its locks are released (D850).
 - A commit with LOG.COMMIT_SYNC OFF, a commit that logged nothing and a
   refused commit count as durable as they end, as they did when they
   returned.
@@ -15310,7 +15310,7 @@ when read, which only a close and a status ask. An id stride of 64
 leaves 2^58 transactions, which cannot run out in practice. Ids order
 nothing against timestamps, as before.
 
-#### D845. An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows
+#### D849. An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows
 
 A procedure's `SELECT ... INTO ... FROM FINAL TABLE (UPDATE T SET YTD =
 YTD + ?)` that shows other columns of the row, as TPROC-C's Payment
@@ -15340,7 +15340,7 @@ A select list that shows a column added to, as New Order's next order
 number, makes the row written and held, as does a delta table of the
 general path, whose reader it does not know.
 
-#### D846. A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on
+#### D850. A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on
 
 A statement that wrote over a commit not yet durable held its reply
 until that commit's sync (D441), and held its row locks meanwhile. A
@@ -15365,7 +15365,7 @@ a statement that opens one waits as before. A server whose request
 keeps the transaction after all, as when a locator was sent, waits for
 the statement's dependencies before it replies (`Session::settle_told`).
 
-#### D847. A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already
+#### D851. A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already
 
 The claim of D456 kept a row whose writer had ended for its first
 waiter until that waiter woke and wrote it. Waking took a few
@@ -15861,7 +15861,7 @@ undoing the statement puts them back. A rollback or a rollback to a
 savepoint takes back the reservations made since.
 
 A procedure's increment through a delta table that shows none of the
-columns it adds to is reserved too (D845).
+columns it adds to is reserved too (D849).
 
 #### D453. One transaction that wrote nothing collects at a time
 
@@ -15966,5 +15966,5 @@ waiter has ended is dropped when found. Increments applied by escrow
 claimed a write finds none from one counter, without a look.
 
 A claim holds back a newcomer once the line's writer has ended only if
-its first waiter was overtaken once already (D847).
+its first waiter was overtaken once already (D851).
 

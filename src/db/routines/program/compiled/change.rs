@@ -81,7 +81,7 @@ struct Searched {
     straight: Option<Straight>,
     /// The columns of the delta table's row its select list reads, a bit
     /// a column, 0 of none: an increment of a column it does not read may
-    /// be reserved (RULES.md D845).
+    /// be reserved (RULES.md D849).
     shown: u64,
 }
 

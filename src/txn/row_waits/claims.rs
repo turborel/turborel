@@ -4,7 +4,7 @@
 //! writer that comes later finds the claim before it writes, and queues in
 //! the same line behind the waiters already there, though the row's writer
 //! has ended and the first waiter not yet woken to write, but only once
-//! that waiter was overtaken already (RULES.md D847). So no newcomer
+//! that waiter was overtaken already (RULES.md D851). So no newcomer
 //! writes a row in demand ahead of a transaction waiting for it more than
 //! once.
 
@@ -29,7 +29,7 @@ pub(crate) struct Claim {
     pub(crate) first: TxId,
     /// Whether the first waiter was overtaken once already, so the claim
     /// holds back a newcomer even once the line's writer has ended
-    /// (RULES.md D847).
+    /// (RULES.md D851).
     pub(crate) firm: bool,
 }
 

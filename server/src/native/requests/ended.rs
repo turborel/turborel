@@ -1,7 +1,7 @@
 //! \[EXTENSION\] The end of a transaction with its request's statement:
 //! committed after its completion, rolled back after its failure, and of
 //! a completion told before the end, the wait for what it rests on
-//! (RULES.md D846).
+//! (RULES.md D850).
 
 use turborel_protocol::{Failure, Reply};
 
@@ -37,7 +37,7 @@ impl Held {
         }
     }
 
-    /// \[DESIGN\] RULES.md D846: `last`, told before its transaction ends
+    /// \[DESIGN\] RULES.md D850: `last`, told before its transaction ends
     /// though its statement ran to be told at the end: once what it rests
     /// on is durable, the failure of that wait in its place.
     pub(super) fn settled(&self, last: Reply) -> Reply {

@@ -1,4 +1,4 @@
-//! \[DESIGN\] A waiter overtaken at its turn (RULES.md D847). Once a row's
+//! \[DESIGN\] A waiter overtaken at its turn (RULES.md D851). Once a row's
 //! writer ends, the row is not kept for its first waiter while that waiter
 //! is still to be woken and run: a transaction that is running and comes
 //! to the row writes it at once. The first waiter, waking to find that
@@ -17,7 +17,7 @@ use crate::sync::{lock, lock_builtin};
 use crate::txn::{TxId, Txn};
 
 impl Txn {
-    /// \[DESIGN\] RULES.md D847: in its `turn` for row `id` of `table`,
+    /// \[DESIGN\] RULES.md D851: in its `turn` for row `id` of `table`,
     /// this transaction found `writer` writing the row ahead of it: it
     /// queues first in `writer`'s line, the waiters behind it for the row
     /// with it, its claim of the row firm, and waits for its turn there.

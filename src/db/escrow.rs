@@ -276,7 +276,7 @@ fn added(row: &Row, deltas: &[&Reservation], types: &[DataType]) -> Result<Row> 
 /// it is applied: no trigger, view check, portion, typed table or
 /// partition, generated column, CHECK, assertion or domain, none of the
 /// columns in a key or an index, and no delta table but one of NEW or
-/// FINAL rows whose reader shows none of the columns added to (D845).
+/// FINAL rows whose reader shows none of the columns added to (D849).
 pub(super) fn escrow_of(st: &Arc<State>, tx: &Txn, w: &Written, effects: &Effects<'_>) -> Option<u64> {
     let shown = effects.delta.as_ref().map_or(Some(0), Collector::shown)?;
     // Of a FINAL delta table, the restriction its own: nothing the
@@ -288,7 +288,7 @@ pub(super) fn escrow_of(st: &Arc<State>, tx: &Txn, w: &Written, effects: &Effect
     reserving(st, tx, w, shown)
 }
 
-/// \[DESIGN\] RULES.md D845: the columns the reservations of `w` guard,
+/// \[DESIGN\] RULES.md D849: the columns the reservations of `w` guard,
 /// if it may reserve its increments, its delta table's reader, if any,
 /// showing the columns of `shown`. They guard those as well, so what the
 /// reader shows stays as it was read until the transaction ends, as a

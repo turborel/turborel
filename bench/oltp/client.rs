@@ -92,7 +92,7 @@ impl Client for Embedded {
     fn execute(&mut self, statement: &Prepared, values: &[Value], ends: bool) -> Result<u64, Failed> {
         let outcome = if statement.columns().is_empty() {
             // Told once committed, as a server tells a request that ends
-            // its transaction (RULES.md D846).
+            // its transaction (RULES.md D850).
             self.0.tell_at_end(ends);
             let done = self.0.execute_prepared(statement, values).map(|_| 0);
             self.0.tell_at_end(false);

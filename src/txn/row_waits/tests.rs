@@ -193,7 +193,7 @@ fn a_seat_moves_only_for_the_same_row_free_of_deadlock() {
     assert!(all_went);
 }
 
-/// Verifies: [DESIGN] RULES.md D456, D847: while a row's writer is open, a
+/// Verifies: [DESIGN] RULES.md D456, D851: while a row's writer is open, a
 /// newcomer finds the row claimed for its first waiter and queues behind
 /// it; once the writer ends, the claim holds back no one, so a newcomer
 /// running writes the row while the first waiter, which has its turn, has
@@ -223,7 +223,7 @@ fn a_newcomer_takes_a_row_its_first_waiter_has_not_written() {
     assert!(ended, "once the writer ends, the newcomer goes on");
 }
 
-/// Verifies: [DESIGN] RULES.md D847: a first waiter overtaken at its turn
+/// Verifies: [DESIGN] RULES.md D851: a first waiter overtaken at its turn
 /// queues first in the overtaker's line, the waiter behind it moved there
 /// unwoken after it, and claims the row firmly: a later newcomer queues
 /// behind it even once the overtaker has ended, and the overtaken goes
@@ -278,7 +278,7 @@ fn a_claim_passes_to_the_next_waiter_and_ends_with_the_last() {
         st.rollback(&holder).unwrap();
         drop(a.join().unwrap().unwrap());
         // The claims themselves: once the writer ended, a newcomer passes
-        // an unfirm claim by (RULES.md D847).
+        // an unfirm claim by (RULES.md D851).
         let claims = &newcomer.origin.shared.ends.claims;
         let passed = claims.of((&table, 1), newcomer.id, |_| true).map(|c| c.first);
         drop(b.join().unwrap().unwrap());

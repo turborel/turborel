@@ -292,7 +292,7 @@ pub struct Session {
     /// Set while a call runs, so a plug-in calling back into this session is
     /// refused (RULES.md R-ERR-4).
     busy: Cell<bool>,
-    /// \[DESIGN\] RULES.md D846: whether its caller tells a statement's
+    /// \[DESIGN\] RULES.md D850: whether its caller tells a statement's
     /// completion only once the transaction has ended (`tell_at_end`).
     told_at_end: Cell<bool>,
     /// The constraint modes of its transaction, and the checks of its

@@ -1,4 +1,4 @@
-//! \[DESIGN\] Escrow of increments through a delta table (RULES.md D845):
+//! \[DESIGN\] Escrow of increments through a delta table (RULES.md D849):
 //! a compiled procedure's SELECT ... INTO of a FINAL TABLE of an UPDATE
 //! that only adds to its columns reserves its increments, as a plain
 //! UPDATE does (D452), when its select list shows none of the columns it
@@ -87,7 +87,7 @@ fn holds((escrow, compiled): (&str, &str), held: &str, sql: &str) -> bool {
     refused.is_some()
 }
 
-/// Verifies: [DESIGN] RULES.md D845: an increment through a FINAL TABLE
+/// Verifies: [DESIGN] RULES.md D849: an increment through a FINAL TABLE
 /// whose select list shows another column holds no row: another
 /// session's increment of the row goes on, through the same procedure or
 /// a plain UPDATE, where the locked path waits. One that shows the column
@@ -103,7 +103,7 @@ fn an_increment_through_a_final_table_showing_other_columns_holds_no_row() {
     assert!(holds(("ON", "OFF"), pay, pay));
 }
 
-/// Verifies: [DESIGN] RULES.md D845: a reservation through a FINAL TABLE
+/// Verifies: [DESIGN] RULES.md D849: a reservation through a FINAL TABLE
 /// guards the columns its select list shows, as well as the column it adds
 /// to and those its condition reads: another transaction's change of one
 /// of them waits, as for a held row, so what it showed stays as it was
@@ -123,7 +123,7 @@ fn a_reservation_through_a_final_table_guards_what_it_shows() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D845; [ISO/IEC 9075-2:2023 §7.6 GR5]: two
+/// Verifies: [DESIGN] RULES.md D849; [ISO/IEC 9075-2:2023 §7.6 GR5]: two
 /// sessions paying into one row at once both commit; each FINAL TABLE
 /// shows the row's other column as committed, and both sums are applied;
 /// as the locked path, which waits between them.
@@ -163,7 +163,7 @@ fn trading(s: &Session, t: usize) {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D845; [ISO/IEC 9075:1992 §4.28]: sixteen
+/// Verifies: [DESIGN] RULES.md D849; [ISO/IEC 9075:1992 §4.28]: sixteen
 /// sessions paying into two rows and taking their next numbers at once,
 /// each committing every change, lose no payment, and give each number
 /// once, with no gap: as the rows written and held do.

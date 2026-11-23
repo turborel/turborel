@@ -19,7 +19,7 @@ impl Effects<'_> {
         self.delta.as_ref().map_or(Ok(()), |c| c.record(table, old, new))
     }
 
-    /// \[DESIGN\] RULES.md D845: a row of `table` made `new` by increments
+    /// \[DESIGN\] RULES.md D849: a row of `table` made `new` by increments
     /// reserved rather than written, a row of the statement's delta table,
     /// whose reader shows none of the columns added to. Nothing else
     /// notes it, as the row is not written before its transaction commits.

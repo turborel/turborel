@@ -53,7 +53,7 @@ struct Gathered {
     claimed: AtomicBool,
     /// The columns of `table` its reader shows, a bit a column, if it is
     /// known to read no others: so an increment of a column it does not
-    /// show may be reserved (RULES.md D845).
+    /// show may be reserved (RULES.md D849).
     shown: Option<u64>,
 }
 
@@ -77,7 +77,7 @@ impl Collector {
         std::mem::replace(&mut *lock_builtin(&self.0.rows), HeldRows::new(st.list_space()))
     }
 
-    /// \[DESIGN\] RULES.md D845: the columns of its base table its reader
+    /// \[DESIGN\] RULES.md D849: the columns of its base table its reader
     /// shows, a bit a column, of NEW or FINAL rows of the base table
     /// itself; none if it may read any.
     pub(super) fn shown(&self) -> Option<u64> {
