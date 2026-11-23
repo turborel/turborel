@@ -112,3 +112,24 @@ fn a_writing_held_across_statements_writes_as_the_name_does() {
     st.commit(&tx).unwrap();
     assert_eq!(Arc::clone(&storage).scan(crate::txn::NO_TRANSACTION, &[0]).count(), 2);
 }
+
+/// Verifies: [DESIGN] RULES.md D875: of a statement that said which
+/// columns it sets, the key columns it does not set are taken as kept with
+/// no value compared, and those it sets are compared; of one that said
+/// nothing, every key column is compared. MC/DC of a key column kept: set
+/// and alike, set and changed, not set.
+#[test]
+fn key_columns_a_statement_does_not_set_are_kept_unread() {
+    let (st, _tx, name) = database();
+    let mut writing = st.writing(&name).unwrap();
+    writing.key_columns = 0b011;
+    let (old, new) =
+        (vec![row(1)[0].clone(), row(2)[0].clone(), row(3)[0].clone()], vec![row(9)[0].clone(), row(2)[0].clone(), row(4)[0].clone()]);
+    assert_eq!(writing.kept_columns(&old, &new), 0b010, "nothing said: both key columns compared");
+    let third = writing.setting(0b100);
+    assert_eq!(third.kept_columns(&old, &new), 0b011, "neither key column set: kept, the first not looked at");
+    let first = third.setting(0b001);
+    assert_eq!(first.kept_columns(&old, &new), 0b010, "the first set and changed, the second not set");
+    let both = first.setting(0b011);
+    assert_eq!(both.kept_columns(&old, &old), 0b011, "set and alike");
+}

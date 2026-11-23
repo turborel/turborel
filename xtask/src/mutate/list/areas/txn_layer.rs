@@ -10,7 +10,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 15] = [
+pub const TXN_LAYER: [Mutation; 16] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -163,5 +163,15 @@ pub const TXN_LAYER: [Mutation; 15] = [
         replacement: "    drop(buffer);",
         integration: &[],
         unit: &["engine::rows::mvcc::versions::tests::a_buffer_given_back_is_the_next_taken"],
+    },
+    Mutation {
+        name: "writing-set-ignored",
+        package: Package::Core,
+        breaks: "an update compares every key column though its statement said which it sets (D875)",
+        file: "src/txn/writing.rs",
+        original: "        let set = self.set.unwrap_or(u64::MAX);",
+        replacement: "        let set = self.set.map_or(u64::MAX, |set| set | u64::MAX);",
+        integration: &[],
+        unit: &["txn::writing::tests::key_columns_a_statement_does_not_set_are_kept_unread"],
     },
 ];

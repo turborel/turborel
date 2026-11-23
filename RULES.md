@@ -577,6 +577,7 @@ verification approach DO-178C expects (§8).
 | D872 | A statement's writes of a table resolve it once |
 | D873 | The undo store gathers a batch a stripe of threads, and counts its pins by batch |
 | D874 | A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps |
+| D875 | An update reads of the row it replaces the columns its statement uses, and compares the key columns it sets alone |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
 | D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
@@ -16117,6 +16118,30 @@ that write has decoded what it needs of it (`mvcc/versions.rs`,
 `give_back`), and the tree reads the next version into it (D865). A
 buffer past 64 KiB is let go, so one long row does not stay held by
 every thread that wrote it.
+
+#### D875. An update reads of the row it replaces the columns its statement uses, and compares the key columns it sets alone
+
+A row's update decoded the whole row it replaced, for the log's before
+image, to find which index entries the new version shares (D443), and
+for its caller. It then compared every column an index key reads, set or
+not. An update of a balance in a row of twenty columns paid for all
+twenty, twice.
+
+A statement knows the columns it may change. It tells its `Writing` so
+(`Writing::setting`, a bit a column), answering for every column a
+trigger, a generated column or a period's stamp changes too. The key
+columns it does not set are then kept with no value compared, and only
+those it sets are compared (`Writing::kept_columns`). The row store
+gives the row replaced with only the columns asked for decoded, the
+others null (`RowTable::write_over_reading`), and its zone reads the
+columns it keeps from the replaced version's bytes itself (D835). A
+statement that says nothing is treated as setting every column, as
+before.
+
+The halves outside the coordinator and the row store's versions are the
+storage trait's `replace_set`, the log's `put_update_of`, which compares
+only the columns set, and the callers that say what they set and ask for
+the whole old row only where one is read.
 
 ## 2. Project layout
 
