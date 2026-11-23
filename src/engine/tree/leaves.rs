@@ -34,7 +34,6 @@ use super::inner::Read;
 use super::node::{Node, Parsed};
 use crate::disk::buffer::{BufferPool, FileId, Stamp, Tally};
 use crate::error::Result;
-use crate::hash::xxhash::Words;
 
 /// \[DESIGN\] The leaves a thread keeps track of, copied or not, across
 /// every tree it reads: at most 1 MiB of copies of 8 KiB pages. A power of
@@ -96,18 +95,20 @@ thread_local! {
     static LEAVES: RefCell<Vec<Option<Leaf>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// The place of page `id` of `file` among a thread's leaves: the top bits
-/// of XXH3-64 of the two (RULES.md D460).
-fn place(file: FileId, id: u64) -> usize {
-    usize::try_from(Words::new(0).pair(u64::from(file.0), id).checked_shr(SHIFT).unwrap_or_default()).unwrap_or_default()
+/// The place among a thread's leaves of the page whose hash is `hash`
+/// (`BufferPool::page_hash`, XXH3-64 of its file and number, RULES.md
+/// D460): its top bits. The pool places the page by the same hash, so a
+/// read of a leaf hashes its page once (D951).
+fn place(hash: u64) -> usize {
+    usize::try_from(hash.checked_shr(SHIFT).unwrap_or_default()).unwrap_or_default()
 }
 
-/// The thread's copy of page `id` of `file`, if it has one that is still
-/// the page's content.
-pub(super) fn current(pool: &BufferPool, file: FileId, id: u64) -> Option<(Rc<[u8]>, Parsed)> {
+/// The thread's copy of page `id` of `file`, whose hash is `hash`, if it
+/// has one that is still the page's content.
+pub(super) fn current_at(pool: &BufferPool, (file, id): (FileId, u64), hash: u64) -> Option<(Rc<[u8]>, Parsed)> {
     LEAVES.with(|leaves| {
         let mut leaves = leaves.try_borrow_mut().ok()?;
-        let leaf = leaves.get_mut(place(file, id))?.as_mut().filter(|leaf| (leaf.file, leaf.id) == (file, id))?;
+        let leaf = leaves.get_mut(place(hash))?.as_mut().filter(|leaf| (leaf.file, leaf.id) == (file, id))?;
         let (bytes, parsed) = leaf.copy.as_ref().filter(|_| pool.unchanged(file, id, leaf.stamp))?;
         let found = (Rc::clone(bytes), *parsed);
         leaf.used = true;
@@ -115,15 +116,16 @@ pub(super) fn current(pool: &BufferPool, file: FileId, id: u64) -> Option<(Rc<[u
     })
 }
 
-/// Notes that the thread read page `id` of `file` latched, with `stamp`,
-/// its content `page`, and copies it once it is due (`Leaf::read_latched`).
-pub(super) fn seen((file, id, stamp): (FileId, u64, Stamp), page: &[u8]) {
+/// Notes that the thread read page `id` of `file`, whose hash is `hash`,
+/// latched, with `stamp`, its content `page`, and copies it once it is
+/// due (`Leaf::read_latched`).
+pub(super) fn seen_at((file, id, stamp): (FileId, u64, Stamp), page: &[u8], hash: u64) {
     LEAVES.with(|leaves| {
         let Ok(mut leaves) = leaves.try_borrow_mut() else { return };
         if leaves.is_empty() {
             leaves.resize_with(KEPT, || None);
         }
-        let Some(slot) = leaves.get_mut(place(file, id)) else { return };
+        let Some(slot) = leaves.get_mut(place(hash)) else { return };
         if let Some(leaf) = slot.as_mut() {
             if (leaf.file, leaf.id) == (file, id) {
                 return leaf.read_latched(stamp, page);
@@ -138,11 +140,11 @@ pub(super) fn seen((file, id, stamp): (FileId, u64, Stamp), page: &[u8]) {
     });
 }
 
-/// Notes `read`, page `id` of `file`, a leaf a descent read: if it was
-/// read latched, as `seen` notes it.
-pub(super) fn noted(read: &Read<'_>, (file, id): (FileId, u64)) {
+/// Notes `read`, page `id` of `file` whose hash is `hash`, a leaf a
+/// descent read: if it was read latched, as `seen_at` notes it.
+pub(super) fn noted(read: &Read<'_>, (file, id): (FileId, u64), hash: u64) {
     if let Read::Held(page, stamp) = read {
-        seen((file, id, *stamp), page);
+        seen_at((file, id, *stamp), page, hash);
     }
 }
 
@@ -150,11 +152,12 @@ pub(super) fn noted(read: &Read<'_>, (file, id): (FileId, u64)) {
 /// copy if it is current, else the page latched, as `read_tallied` reads
 /// it, and noted as read.
 pub(super) fn read<'p>(pool: &'p BufferPool, (file, id): (FileId, u64), tally: Option<&Tally>) -> Result<Read<'p>> {
-    if let Some((bytes, parsed)) = current(pool, file, id) {
+    let hash = BufferPool::page_hash(file, id);
+    if let Some((bytes, parsed)) = current_at(pool, (file, id), hash) {
         return Ok(Read::Copied(bytes, parsed));
     }
-    let (page, stamp) = pool.read_stamped(file, id, tally)?;
-    seen((file, id, stamp), &page);
+    let (page, stamp) = pool.read_stamped_at((file, id), hash, tally)?;
+    seen_at((file, id, stamp), &page, hash);
     Ok(Read::Held(page, stamp))
 }
 
@@ -162,12 +165,13 @@ pub(super) fn read<'p>(pool: &'p BufferPool, (file, id): (FileId, u64), tally: O
 /// holds it, and nothing read from the file (`BufferPool::read_resident`).
 /// A copy still current is of a page a frame holds.
 pub(super) fn read_resident(pool: &BufferPool, (file, id): (FileId, u64)) -> Result<Option<Read<'_>>> {
-    if let Some((bytes, parsed)) = current(pool, file, id) {
+    let hash = BufferPool::page_hash(file, id);
+    if let Some((bytes, parsed)) = current_at(pool, (file, id), hash) {
         return Ok(Some(Read::Copied(bytes, parsed)));
     }
-    let Some(page) = pool.read_resident(file, id)? else { return Ok(None) };
+    let Some(page) = pool.read_resident_at(file, id, hash)? else { return Ok(None) };
     let stamp = pool.stamp_of(&page);
-    seen((file, id, stamp), &page);
+    seen_at((file, id, stamp), &page, hash);
     Ok(Some(Read::Held(page, stamp)))
 }
 

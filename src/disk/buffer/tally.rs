@@ -93,7 +93,12 @@ impl BufferPool {
     ///
     /// As `read`.
     pub fn read_tallied(&self, file: FileId, id: u64, tally: Option<&Tally>) -> Result<PageRef<'_>> {
-        let (page, missed) = self.read_noting(Key { file, id })?;
+        self.read_tallied_at((file, id), BufferPool::page_hash(file, id), tally)
+    }
+
+    /// As `read_tallied`, of the page whose hash is `hash` (`page_hash`).
+    pub(super) fn read_tallied_at(&self, (file, id): (FileId, u64), hash: u64, tally: Option<&Tally>) -> Result<PageRef<'_>> {
+        let (page, missed) = self.read_noting_at(Key { file, id }, hash)?;
         if missed && let Some(tally) = tally {
             tally.missed();
         }

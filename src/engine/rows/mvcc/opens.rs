@@ -9,13 +9,13 @@
 //! turn, and reads only the counts to tell whether any is.
 
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::Open;
 use crate::hash::xxhash::Xxh3Map;
 use crate::sync::{Alone, lock_builtin};
-use crate::txn::TxId;
+use crate::txn::{Timestamp, TxId};
 
 /// Shards of the map.
 const SHARDS: u64 = 32;
@@ -26,10 +26,40 @@ const SHARDS: u64 = 32;
 /// a scan's `Near` or a thread (`found.rs`), finds so before it uses it.
 pub(super) struct Opened {
     ended: AtomicBool,
+    /// \[DESIGN\] The snapshot it reads at while its reads are not
+    /// checked, `CHECKED` while they are: set under its lock as its
+    /// bookkeeping's are, and read without it (RULES.md D954).
+    unchecked: AtomicU64,
     open: Mutex<Open>,
 }
 
+/// No snapshot, of a transaction whose reads are checked: later than any
+/// timestamp a clock gives.
+const CHECKED: Timestamp = Timestamp::MAX;
+
 impl Opened {
+    /// Notes how it reads from now: at `snapshot`, its reads `checked` or
+    /// not. The caller holds its lock and has set its bookkeeping so.
+    pub(super) fn reads_as(&self, snapshot: Timestamp, checked: bool) {
+        self.unchecked.store(if checked { CHECKED } else { snapshot }, Ordering::Release);
+    }
+
+    /// \[DESIGN\] The snapshot it reads at, if its reads are not checked
+    /// (RULES.md D954): such a read records nothing, so it needs of the
+    /// bookkeeping only this, and takes no lock for it. None while its
+    /// reads are checked; they are recorded under the lock.
+    #[inline]
+    pub(super) fn unchecked(&self) -> Option<Timestamp> {
+        Some(self.unchecked.load(Ordering::Acquire)).filter(|&snapshot| snapshot != CHECKED)
+    }
+
+    /// The bookkeeping `open` of a transaction beginning, its reads
+    /// checked or not as `open` says.
+    fn new(open: Open) -> Opened {
+        let unchecked = if open.checked { CHECKED } else { open.snapshot };
+        Opened { ended: AtomicBool::new(false), unchecked: AtomicU64::new(unchecked), open: Mutex::new(open) }
+    }
+
     /// Whether its transaction has ended in the table.
     pub(super) fn ended(&self) -> bool {
         self.ended.load(Ordering::Acquire)
@@ -106,7 +136,7 @@ impl Opens {
     pub(super) fn begin(&self, tx: TxId, made: impl FnOnce() -> Open) {
         let Some(shard) = self.shard(tx) else { return };
         let mut map = Self::write(shard);
-        map.entry(tx).or_insert_with(|| Arc::new(Opened { ended: AtomicBool::new(false), open: Mutex::new(made()) }));
+        map.entry(tx).or_insert_with(|| Arc::new(Opened::new(made())));
         shard.len.store(map.len(), Ordering::SeqCst);
     }
 

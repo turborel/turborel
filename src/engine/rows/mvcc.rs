@@ -388,21 +388,23 @@ impl RowTable {
 
     /// From now, `tx` reads as `mode` says.
     pub(super) fn read_mode_of(&self, tx: TxId, mode: ReadMode) -> Result<()> {
-        let open = self.open_of(tx)?;
+        let opened = self.open_of(tx)?;
         self.seen(mode.snapshot);
-        let mut open = lock_builtin(&open);
+        let mut open = lock_builtin(&opened);
         open.snapshot = open.snapshot.max(mode.snapshot);
         open.checked = mode.checked && !open.preserving;
+        opened.reads_as(open.snapshot, open.checked);
         Ok(())
     }
 
     /// Marks `tx`'s writes as keeping what every snapshot reads, and its
     /// reads unchecked (`TableStorage::preserving`).
     pub(super) fn preserving_of(&self, tx: TxId) -> Result<()> {
-        let open = self.open_of(tx)?;
-        let mut open = lock_builtin(&open);
+        let opened = self.open_of(tx)?;
+        let mut open = lock_builtin(&opened);
         open.preserving = true;
         open.checked = false;
+        opened.reads_as(open.snapshot, false);
         open.reads = Reads::default();
         Ok(())
     }

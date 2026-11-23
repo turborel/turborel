@@ -54,6 +54,18 @@ impl BufferPool {
         Ok((page, stamp))
     }
 
+    /// \[DESIGN\] As `read_stamped`, of the page whose hash is `hash`
+    /// (`page_hash`, RULES.md D951).
+    ///
+    /// # Errors
+    ///
+    /// As `read_tallied`.
+    pub fn read_stamped_at(&self, (file, id): (FileId, u64), hash: u64, tally: Option<&Tally>) -> Result<(PageRef<'_>, Stamp)> {
+        let page = self.read_tallied_at((file, id), hash, tally)?;
+        let stamp = self.stamp_of(&page);
+        Ok((page, stamp))
+    }
+
     /// The stamp of `page`, held for reading in this pool: of the frame
     /// that holds it, whose version stays while the page is latched.
     pub fn stamp_of(&self, page: &PageRef<'_>) -> Stamp {

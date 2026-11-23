@@ -72,14 +72,15 @@ fn a_copy_of_a_leaf_split_since_is_not_read() {
     assert!(!tree.get_near(&key(end.checked_add(1).unwrap()), &mut near).unwrap(), "odd keys past it are not in");
 }
 
-/// Verifies: [DESIGN] RULES.md D808: a copy's header parsed once and
-/// rebuilt gives the node parsing gives, field for field; keys read in
-/// order, backwards and skipping through the copy are each found, and a
-/// key not in the leaf is not. For MC/DC of `in_copy`'s decision, a key at
-/// the next slot is taken with the leaf's range unchecked; one elsewhere
-/// is taken if the leaf answers for it, and read past the copy if not.
+/// Verifies: [DESIGN] RULES.md D808, D950: keys read in order, backwards
+/// and skipping through the copy of a leaf `near` keeps are each found,
+/// at their slots, with no page read, and a key not in the leaf is not.
+/// For MC/DC of `in_copy`'s decision, a key at the slot after the last
+/// found is taken there; one elsewhere in the copy is searched for; one
+/// the copy answers for and does not hold is not found; and one past the
+/// leaf is read from the next, from the pool.
 #[test]
-fn a_copy_parsed_once_reads_as_one_parsed_again() {
+fn keys_of_a_leaf_copied_are_read_at_their_slots() {
     let (tree, _scratch) = tree("finger-parsed");
     for k in (2..=600).step_by(2) {
         assert!(tree.insert(&key(k), &VALUE).unwrap());
@@ -89,18 +90,12 @@ fn a_copy_parsed_once_reads_as_one_parsed_again() {
     for &k in run.iter().take(3) {
         assert!(tree.get_near(&key(k), &mut near).unwrap());
     }
-    let (page, parsed) = (near.page.clone(), near.parsed.unwrap());
-    let again = Node::parsed_again(&page, &parsed).unwrap();
-    assert_eq!(again.parsed(), Node::parse(&page).unwrap().parsed());
-    assert_eq!((again.len(), again.high, again.right), {
-        let node = Node::parse(&page).unwrap();
-        (node.len(), node.high, node.right)
-    });
+    assert!(near.kept.is_some(), "the leaf copied");
     let hits = tree.pool.counts().hits;
     let order = run.iter().skip(3).chain(run.iter().rev()).chain(run.iter().step_by(3));
     for &k in order {
         assert!(tree.get_near(&key(k), &mut near).unwrap(), "key {k}");
-        assert_eq!(near.at.map(|at| again.key(at).unwrap().is(&key(k))), Some(true), "key {k} at its slot");
+        assert_eq!(near.at, run.iter().position(|&held| held == k), "key {k} at its slot");
     }
     assert!(!tree.get_near(&key(3), &mut near).unwrap(), "an odd key is not in the leaf");
     assert_eq!(tree.pool.counts().hits, hits, "all from the copy");

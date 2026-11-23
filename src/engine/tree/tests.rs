@@ -580,3 +580,6 @@ mod leaf_copies;
 
 // A probe from a key (RULES.md D859).
 mod probed;
+
+// Reads that find their leaf through the inner nodes' copies (RULES.md D955).
+mod by_copies;

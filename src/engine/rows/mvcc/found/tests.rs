@@ -9,6 +9,8 @@ use turborel_test_support::Scratch;
 
 use super::super::stamps::tests::table;
 use crate::storage::TableStorage;
+use crate::sync::lock_builtin;
+use crate::txn::ReadMode;
 use crate::value::Value;
 
 fn row(text: &str) -> Vec<Value> {
@@ -66,4 +68,46 @@ fn bookkeeping_kept_is_of_its_transaction_and_table_while_open() {
     assert_eq!(table.savepoint(10), 0, "begun again, its bookkeeping is new");
     table.update(10, id, row("again")).unwrap();
     assert_eq!(table.savepoint(10), 1);
+}
+
+/// Verifies: [DESIGN] RULES.md D954: a transaction whose reads are not
+/// checked reads with no lock of its bookkeeping taken, at the snapshot
+/// last given it, which never goes back, and records nothing; one whose
+/// reads are checked records each under the lock. MC/DC of the lock:
+/// (not checked) none taken, the read returning while another holds it,
+/// against (checked), the read recorded; and of what is noted as its mode
+/// changes: checked, not checked, checked again, and preserving.
+#[test]
+fn a_read_not_checked_takes_no_lock_of_its_bookkeeping() {
+    let scratch = Scratch::new("unit-found-unchecked");
+    let (_files, table, id) = table(&scratch);
+    let table = Arc::new(table);
+    table.begin(10, 9).unwrap();
+    let opened = table.versions.open.get(10).unwrap();
+    assert_eq!(opened.unchecked(), None, "begun with its reads checked");
+    table.read_mode(10, ReadMode { snapshot: 9, checked: false }).unwrap();
+    assert_eq!(opened.unchecked(), Some(9));
+    let held = lock_builtin(&opened);
+    let (done, finished) = channel();
+    let session = Arc::clone(&table);
+    let reader = std::thread::spawn(move || {
+        let found = session.get(10, id).unwrap().is_some();
+        session.note_read(10, || panic!("not checked: no read is made to record")).unwrap();
+        done.send((found, session.reader(10).is_ok())).unwrap();
+    });
+    let read = finished.recv_timeout(Duration::from_secs(5));
+    drop(held);
+    reader.join().unwrap();
+    assert_eq!(read.ok(), Some((true, true)), "the read waited on the bookkeeping's lock");
+    assert!(!lock_builtin(&opened).reads.any(), "nothing recorded");
+    table.read_mode(10, ReadMode { snapshot: 12, checked: false }).unwrap();
+    table.read_mode(10, ReadMode { snapshot: 5, checked: false }).unwrap();
+    assert_eq!(opened.unchecked(), Some(12), "a later snapshot, never an earlier one");
+    table.read_mode(10, ReadMode { snapshot: 12, checked: true }).unwrap();
+    assert_eq!(opened.unchecked(), None, "checked again");
+    assert!(table.get(10, id).unwrap().is_some());
+    assert!(lock_builtin(&opened).reads.rows.contains_key(&id), "recorded under the lock");
+    table.preserving(10).unwrap();
+    assert_eq!(opened.unchecked(), Some(12), "preserving, its reads are not checked");
+    assert!(!lock_builtin(&opened).reads.any());
 }

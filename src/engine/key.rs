@@ -33,7 +33,7 @@
 //! compares with the value as with the anchor, and only the anchor's own key needs comparing with the value.
 
 use crate::error::{Code, Result, SqlError};
-use crate::value::types::{malformed, take};
+use crate::value::types::{malformed, narrow_key, take};
 use crate::value::{DataType, Value};
 
 /// \[DESIGN\] Whether a value of type `t` is the same value decoded from
@@ -195,7 +195,19 @@ pub fn anchor(value: &Value, data_type: &DataType) -> Option<Anchor> {
 /// \[DESIGN\] As `anchor`, its key appended to `out`, which a caller
 /// building a key of several values keeps for them all: whether it is
 /// exact, or none, `out` then to be discarded.
+/// An integer of an integer column, as a key's value mostly is, is
+/// written as it is, with no anchor made of it first (RULES.md D956).
 pub fn anchor_into(value: &Value, data_type: &DataType, out: &mut Vec<u8>) -> Option<bool> {
+    if let Some(word) = narrow_key(value, data_type) {
+        out.push(PRESENT);
+        out.extend_from_slice(&word);
+        return Some(true);
+    }
+    anchored_into(value, data_type, out)
+}
+
+/// `anchor_into`, its anchor made by its type (`SqlType::anchor`).
+fn anchored_into(value: &Value, data_type: &DataType, out: &mut Vec<u8>) -> Option<bool> {
     if value.is_null() {
         return None;
     }
@@ -415,5 +427,48 @@ mod tests {
         {
             assert_eq!(anchor(&value, data_type), None, "{value:?}");
         }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D956: an integer of an integer column
+    /// is written as its key with no anchor made of it, and gives the key
+    /// and exactness the anchor made by its type gives, appended after
+    /// what the key holds already. MC/DC of the shortcut: (an exact
+    /// number, of a column 64 bits hold, at its scale, within 64 bits)
+    /// taken, against a value of another kind, a wide column, another
+    /// scale, and units past 64 bits, each made as before.
+    #[test]
+    fn an_integer_is_anchored_as_its_type_anchors_it() {
+        let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
+        let money = DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric };
+        let wide = DataType::Exact { precision: 30, scale: 0, spelled: Spelled::Numeric };
+        let past = i128::from(i64::MAX).checked_add(1).unwrap();
+        let values = [
+            exact(0, 0),
+            exact(-1, 0),
+            exact(7, 0),
+            exact(i128::from(i64::MIN), 0),
+            exact(i128::from(i64::MAX), 0),
+            exact(past, 0),
+            exact(-past - 1, 0),
+            exact(155, 2),
+            exact(1_555, 3),
+            exact(20, 1),
+            Value::Null,
+            Value::Approx(1.0),
+            Value::Char("a".into()),
+        ];
+        let mut taken = 0_usize;
+        for data_type in [&integer, &money, &wide, &DataType::character(3)] {
+            for value in &values {
+                let (mut fast, mut made) = (vec![9_u8], vec![9_u8]);
+                let exactness = anchor_into(value, data_type, &mut fast);
+                assert_eq!(exactness, anchored_into(value, data_type, &mut made), "{value:?} of {data_type:?}");
+                if exactness.is_some() {
+                    assert_eq!(fast, made, "{value:?} of {data_type:?}");
+                }
+                taken = taken.saturating_add(usize::from(narrow_key(value, data_type).is_some()));
+            }
+        }
+        assert_eq!(taken, 6, "the integers of 64 bits at scale 0, and 155 at scale 2");
     }
 }

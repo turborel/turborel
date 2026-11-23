@@ -53,6 +53,24 @@ pub fn narrow_scale(t: &DataType) -> Option<u32> {
     (*precision <= NARROW_EXACT_PRECISION).then_some(*scale)
 }
 
+/// \[DESIGN\] (RULES.md D956) The key of `v` among the keys of a column of
+/// `t`, and so its anchor, exactly, if `t` is an exact numeric type whose
+/// values 64 bits hold and `v` an exact number at its scale that 64 bits
+/// hold: its units, sign bit flipped, big-endian, as `encode_key` writes
+/// them. None of any other, whose anchor is made as `anchor` makes it.
+#[inline]
+pub(crate) fn narrow_key(v: &Value, t: &DataType) -> Option<[u8; NUMBER_BYTES]> {
+    let (Value::Exact(d), Some(scale)) = (v, narrow_scale(t)) else { return None };
+    let units = i64::try_from(d.units).ok().filter(|_| d.scale == scale)?;
+    Some(narrow_word(units))
+}
+
+/// The key of `units` of a column whose values 64 bits hold.
+#[inline]
+fn narrow_word(units: i64) -> [u8; NUMBER_BYTES] {
+    (u64::from_be_bytes(units.to_be_bytes()) ^ SIGN).to_be_bytes()
+}
+
 /// The precision and scale of `t`, an exact numeric type.
 fn shape(t: &DataType) -> (u32, u32) {
     if let DataType::Exact { precision, scale, .. } = t { (*precision, *scale) } else { (0, 0) }
@@ -83,6 +101,11 @@ pub(crate) fn units_at(value: &Decimal, scale: u32) -> Result<i64> {
 /// SQLCODE -910 if `value` has more digits after the point than `scale`
 /// keeps, or more digits in all than 128 bits hold.
 fn wide_units_at(value: &Decimal, scale: u32) -> Result<i128> {
+    // At the column's scale already, as a key's value mostly is, its
+    // units are those, with no power of ten made nor multiplied by.
+    if value.scale == scale {
+        return Ok(value.units);
+    }
     let units = if value.scale <= scale {
         pow10(scale.saturating_sub(value.scale)).and_then(|f| value.units.checked_mul(f))
     } else {
@@ -100,6 +123,9 @@ fn unstorable(value: &Decimal, scale: u32, bits: &str) -> SqlError {
 /// bits.
 fn floor_units(d: &Decimal, scale: u32) -> i128 {
     let clamp = |negative: bool| if negative { i128::MIN } else { i128::MAX };
+    if d.scale == scale {
+        return d.units;
+    }
     if d.scale <= scale {
         return pow10(scale.saturating_sub(d.scale)).and_then(|f| d.units.checked_mul(f)).unwrap_or_else(|| clamp(d.units < 0));
     }
@@ -315,8 +341,7 @@ impl SqlType for Exact {
             out.extend_from_slice(&(units ^ WIDE_SIGN).to_be_bytes());
             return Ok(());
         }
-        let units = u64::from_be_bytes(units_at(d, scale)?.to_be_bytes());
-        out.extend_from_slice(&(units ^ SIGN).to_be_bytes());
+        out.extend_from_slice(&narrow_word(units_at(d, scale)?));
         Ok(())
     }
 

@@ -80,7 +80,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 pub use counts::TreeCounts;
 use counts::{Counters, count};
-pub(crate) use node::Parsed;
 
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
 pub use pin::Pinned;
@@ -394,12 +393,13 @@ impl BLinkTree {
             // thread's copy; a root of no known level only for a leaf. A
             // leaf, or a root that may be one, from its own (`leaves.rs`).
             let copied = expected.map_or(level == 0, |l| l > level);
-            let page = inner::read_at(&self.pool, (self.file, id.0), tally, (copied, expected.unwrap_or(level) == 0))?;
+            let hash = BufferPool::page_hash(self.file, id.0);
+            let page = inner::read_at(&self.pool, (self.file, id.0, hash), tally, (copied, expected.unwrap_or(level) == 0))?;
             let node = page.node()?;
             if node.level > 0 {
                 inner::keep(&page, (self.file, id.0), node.parsed());
             } else {
-                leaves::noted(&page, (self.file, id.0));
+                leaves::noted(&page, (self.file, id.0), hash);
             }
             if expected.is_some_and(|l| l != node.level) || node.level < level {
                 return Err(corrupt(&format!("node {} is not at the level its parent says", id.0)));

@@ -32,8 +32,9 @@
 
 use std::cmp::Ordering;
 
-use super::node::Node;
+use super::node::{self, Held, Node};
 use super::{BLinkTree, Path, Target, hints, leaves};
+use crate::disk::buffer::Stamp;
 use crate::error::Result;
 use crate::storage::Near;
 
@@ -113,6 +114,9 @@ impl BLinkTree {
         if let Tried::Answered(found) = self.hinted(key, stamp, near, &mut reader)? {
             return Ok(found);
         }
+        if let Tried::Answered(found) = self.down_copies(key, stamp, near, &mut reader)? {
+            return Ok(found);
+        }
         let at = &mut near.at;
         let mut path = Path { tallied: true, ..Path::default() };
         let (leaf, found) = self.descend(Target::Key(key), 0, &mut path, |leaf| located(leaf, key, at, &mut reader))?;
@@ -120,11 +124,43 @@ impl BLinkTree {
         Ok(found)
     }
 
+    /// \[DESIGN\] (RULES.md D955) What the reader makes of `key`'s value,
+    /// none if it is not in the tree, if the thread's copies of the inner
+    /// nodes lead to `key`'s leaf (`inner.rs`) and the leaf, read with no
+    /// node made of it (`node/lean.rs`), is one of the tree, in it, whose
+    /// range ends at or after `key`. The copies say its range begins
+    /// before `key`, so a key it does not hold is not in the tree.
+    /// Elsewhere if any of that fails; the caller then descends as before. `near`
+    /// is left as a descent leaves it, and the lookup is tallied as one.
+    fn down_copies<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        let Some(leaf) = self.leaf_by_copies(key) else { return Ok(Tried::Elsewhere) };
+        let page = leaves::read(&self.pool, (self.file, leaf), Some(&self.tally))?;
+        let found = match node::held(&page, self.meta.0, key, None) {
+            Held::At(slot, value) => {
+                near.at = Some(slot);
+                reader.show(value)?
+            }
+            Held::Absent => {
+                near.at = None;
+                None
+            }
+            Held::Unknown => return Ok(Tried::Elsewhere),
+        };
+        self.tally.lookup();
+        near.leaf = Some((leaf, stamp));
+        Ok(Tried::Answered(found))
+    }
+
     /// What the reader makes of `key`'s value, none if it is not in the
     /// tree, if the leaf `near` remembers answers, or the one right of it,
     /// for a key past its range. A leaf that answers twice in a row is
     /// copied into `near`, and later reads of it take the copy while its
-    /// frame's version holds (`in_copy`).
+    /// frame's version holds (`in_copy`). A key the leaf holds is found
+    /// with no node made of it, at the slot after the last found if it is
+    /// there (`node/lean.rs`, RULES.md D950).
     fn in_leaf<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
     where
         F: FnOnce(&[u8]) -> Result<R>,
@@ -137,17 +173,18 @@ impl BLinkTree {
         for _ in 0..LEAVES_TRIED {
             let Some(leaf) = next else { break };
             let (page, version) = self.pool.read_stamped(self.file, leaf, Some(&self.tally))?;
+            let after = near.at.and_then(|at| at.checked_add(1));
+            if let Held::At(slot, value) = node::held(&page, self.meta.0, key, after) {
+                self.tally.lookup();
+                (near.misses, near.at, near.leaf) = (0, Some(slot), Some((leaf, stamp)));
+                keep(near, (leaf, first), (&page, version));
+                return reader.show(value).map(Tried::Answered);
+            }
             let node = Node::parse(&page)?;
             if answers(&node, key)? {
                 self.tally.lookup();
-                near.misses = 0;
-                near.leaf = Some((leaf, stamp));
-                if leaf == first {
-                    near.page.clear();
-                    near.page.extend_from_slice(&page);
-                    near.kept = Some((leaf, version));
-                    near.parsed = Some(node.parsed());
-                }
+                (near.misses, near.leaf) = (0, Some((leaf, stamp)));
+                keep(near, (leaf, first), (&page, version));
                 return located(&node, key, &mut near.at, reader).map(Tried::Answered);
             }
             next = node.right.filter(|_| node.level == 0 && !node.deleted && !node.covers(key)).map(|right| right.0);
@@ -157,10 +194,12 @@ impl BLinkTree {
     }
 
     /// As `in_leaf`, if `near` keeps a copy of leaf `leaf` that is still
-    /// the leaf's content and answers for `key`. Such a read reads no
-    /// page, takes no latch and writes no shared word (RULES.md D806). The
-    /// copy is not parsed again, and a key at the slot after the last one
-    /// found is taken with one comparison (D808).
+    /// the leaf's content and holds `key`. Such a read reads no page,
+    /// takes no latch and writes no shared word (RULES.md D806). The key
+    /// is found in the copy's bytes with no node made of them, at the slot
+    /// after the last one found with one comparison (D808, D950). One
+    /// the copy does not hold is not in the tree if the copy answers for
+    /// it, as a read of the leaf would find.
     fn in_copy<R, F>(&self, key: &[u8], leaf: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
     where
         F: FnOnce(&[u8]) -> Result<R>,
@@ -170,24 +209,31 @@ impl BLinkTree {
             near.kept = None;
             return Ok(Tried::Elsewhere);
         }
-        let Near { page, at, misses, parsed, .. } = near;
-        let node = match parsed.as_ref().and_then(|parsed| Node::parsed_again(page, parsed)) {
-            Some(node) => node,
-            None => Node::parse(page)?,
-        };
-        let next = at.and_then(|at| at.checked_add(1)).filter(|&next| next < node.len());
-        let stepped = match next {
-            Some(next) => node.key(next)?.is(key).then_some(next),
-            None => None,
-        };
-        if stepped.is_none() && !answers(&node, key)? {
+        let Near { page, at, misses, .. } = near;
+        let after = at.and_then(|at| at.checked_add(1));
+        if let Held::At(slot, value) = node::held(page, self.meta.0, key, after) {
+            self.tally.lookup();
+            (*misses, *at) = (0, Some(slot));
+            return reader.show(value).map(Tried::Answered);
+        }
+        let node = Node::parse(page)?;
+        if !answers(&node, key)? {
             return Ok(Tried::Elsewhere);
         }
         self.tally.lookup();
         *misses = 0;
-        let Some(slot) = stepped else { return located(&node, key, at, reader).map(Tried::Answered) };
-        *at = Some(slot);
-        reader.show(node.value(slot)?).map(Tried::Answered)
+        located(&node, key, at, reader).map(Tried::Answered)
+    }
+}
+
+/// Copies leaf `leaf`'s page `page`, read with `version`, into `near`, if
+/// it is the leaf `near` remembered, `first`, so it answered twice in a
+/// row (`BLinkTree::in_copy`).
+fn keep(near: &mut Near, (leaf, first): (u64, u64), (page, version): (&[u8], Stamp)) {
+    if leaf == first {
+        near.page.clear();
+        near.page.extend_from_slice(page);
+        near.kept = Some((leaf, version));
     }
 }
 
@@ -198,6 +244,9 @@ impl BLinkTree {
     where
         F: FnOnce(&[u8]) -> Result<R>,
     {
+        if let Some(found) = self.in_noted(key, stamp, near, reader)? {
+            return Ok(Tried::Answered(Some(found)));
+        }
         let at = &mut near.at;
         let Some((leaf, found)) = self.at_noted(key, |node| located(node, key, at, reader))? else { return Ok(Tried::Elsewhere) };
         // The misses stay as they are: the leaf remembered did not answer,
@@ -206,6 +255,27 @@ impl BLinkTree {
         // the leaf of the last and its neighbour before every hint.
         near.leaf = Some((leaf, stamp));
         Ok(Tried::Answered(found))
+    }
+
+    /// \[DESIGN\] (RULES.md D950) What the reader makes of `key`'s value
+    /// if the leaf noted for `key`'s row holds `key`, read with no node
+    /// made of it (`node/lean.rs`): the leaf need only be one of this
+    /// tree, in it, as it then holds no key but of its range, so neither
+    /// its first key nor its high key is read. None of a leaf without
+    /// the key, and of no leaf noted or held by a frame; the caller then
+    /// reads as `at_noted` does. `near` is left as `hinted` leaves it.
+    fn in_noted<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Option<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        let Some(id) = self.row_of(key).and_then(hints::leaf_of) else { return Ok(None) };
+        let Some(page) = leaves::read_resident(&self.pool, (self.file, id))? else { return Ok(None) };
+        let Held::At(slot, value) = node::held(&page, self.meta.0, key, None) else { return Ok(None) };
+        self.tally.lookup();
+        self.counters.hinted.add();
+        // The misses stay as they are, as `hinted` leaves them.
+        (near.at, near.leaf) = (Some(slot), Some((id, stamp)));
+        reader.show(value)
     }
 
     /// What `at` finds in the leaf for `key`, and that leaf, if the leaf
