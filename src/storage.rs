@@ -92,6 +92,12 @@ pub trait TableStorage: Send + Sync {
     fn insert_from(&self, tx: TxId, row: &Row) -> Result<RowId> {
         self.insert(tx, row.clone())
     }
+    /// \[DESIGN\] Pins the table for the calling thread until the pin is dropped, so its reads and writes of the table meanwhile
+    /// enter no epoch of their own (`BLinkTree::pin`, RULES.md D857): for a statement, never held while the thread waits for a
+    /// client, and never sent to another thread. Default: none, of an engine with nothing to pin.
+    fn pin(&self) -> Option<crate::engine::tree::Pinned<'_>> {
+        None
+    }
     /// Replaces the live row `id` with `row`.
     ///
     /// # Errors
@@ -563,11 +569,9 @@ pub trait TableStorage: Send + Sync {
     fn apply_lob(&self, id: u64, _body: &[u8]) -> Result<()> {
         Err(SqlError::new(Code::Api, format!("[DESIGN] the table keeps no large object, and is given object {id} of the log")))
     }
-    /// \[DESIGN\] Notes the objects `ids` as awaiting collection when the
-    /// checkpoint recovery began from was taken (`stale_lobs`).
+    /// \[DESIGN\] Notes the objects `ids` as awaiting collection when the checkpoint recovery began from was taken (`stale_lobs`).
     fn note_stale_lobs(&self, _ids: &[u64]) {}
-    /// \[DESIGN\] Ends recovery: frees the large objects it left that no
-    /// row's newest version names (RULES.md D79).
+    /// \[DESIGN\] Ends recovery: frees the large objects it left that no row's newest version names (RULES.md D79).
     ///
     /// # Errors
     ///
@@ -575,8 +579,7 @@ pub trait TableStorage: Send + Sync {
     fn recovered(&self) -> Result<()> {
         Ok(())
     }
-    /// \[DESIGN\] The large objects awaiting collection, which a crash
-    /// would leave kept: a checkpoint logs them, for recovery from it to
+    /// \[DESIGN\] The large objects awaiting collection, which a crash would leave kept: a checkpoint logs them, for recovery from it to
     /// free (RULES.md D79).
     ///
     /// # Errors
@@ -585,8 +588,7 @@ pub trait TableStorage: Send + Sync {
     fn stale_lobs(&self) -> Result<Vec<u64>> {
         Ok(Vec::new())
     }
-    /// Undo every change `tx` made that the engine keeps itself, and forget
-    /// the transaction. Also called after a failed `validate`.
+    /// Undo every change `tx` made that the engine keeps itself, and forget the transaction. Also called after a failed `validate`.
     ///
     /// # Errors
     ///
