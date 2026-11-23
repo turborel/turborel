@@ -338,7 +338,13 @@ fn pointed_done(exec: &mut Exec<'_>, contained: &Contained, s: &Searched, pointe
     // [ISO/IEC 9075-2:2023 §7.6 GR5] the row as the base table's columns
     // show it.
     let width = exec.cx.st.catalog.table(&s.table).map_or(0, |t| t.columns.len());
-    let shown: Vec<Row> = row.into_iter().map(|r| (0..width).map(|c| r.get(c).cloned().unwrap_or(Value::Null)).collect()).collect();
+    let shown: Vec<Row> = row
+        .into_iter()
+        .map(|mut r| {
+            r.resize(width, Value::Null);
+            r
+        })
+        .collect();
     selected(exec, contained, (outputs, stores), &shown)
 }
 
