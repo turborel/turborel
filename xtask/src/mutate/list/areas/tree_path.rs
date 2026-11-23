@@ -1,6 +1,6 @@
 //! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840,
 //! D852, D853, D854, D855, D856, D857,
-//! D858, D859):
+//! D858, D859, D863 to D866):
 //! the search over a node's slots, inner copies kept with their headers
 //! parsed, writers that find their leaf from its parent and change it
 //! through the frame they own, under one latch, from the leaf noted for a
@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 21] = [
+pub const TREE_PATH: [Mutation; 26] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -109,8 +109,8 @@ pub const TREE_PATH: [Mutation; 21] = [
         package: Package::Core,
         breaks: "a row read for a write no longer starts at the leaf noted for it, and descends from the root",
         file: "src/engine/tree/write.rs",
-        original: "        if let Some((leaf, value)) = self.at_noted(key, |leaf| value_of(leaf, key))? {",
-        replacement: "        if let Some((leaf, value)) = None::<(u64, Option<Vec<u8>>)> {",
+        original: "        if let Some((leaf, found)) = self.at_noted(key, |leaf| value_into(leaf, key, into))? {",
+        replacement: "        if let Some((leaf, found)) = None::<(u64, bool)> {",
         integration: &[],
         unit: &["engine::tree::tests::hinted::a_read_for_a_write_starts_at_the_leaf_noted"],
     },
@@ -209,8 +209,8 @@ pub const TREE_PATH: [Mutation; 21] = [
         package: Package::Core,
         breaks: "a hint that answers clears a scan's misses, so reads of rows far apart try the last leaf and its neighbour before every hint",
         file: "src/engine/tree/near.rs",
-        original: "        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
-        replacement: "        near.misses = 0;\n        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
+        original: "        near.leaf = Some((leaf, stamp));\n        Ok(Tried::Answered(found))",
+        replacement: "        near.misses = 0;\n        near.leaf = Some((leaf, stamp));\n        Ok(Tried::Answered(found))",
         integration: &[],
         unit: &["engine::tree::tests::hinted::reads_far_apart_stop_trying_the_leaf_of_the_read_before"],
     },
@@ -223,5 +223,55 @@ pub const TREE_PATH: [Mutation; 21] = [
         replacement: "        0",
         integration: &[],
         unit: &["engine::tree::tests::probed::a_probe_shows_the_entries_from_its_key_until_stopped"],
+    },
+    Mutation {
+        name: "near-shown-first-entry",
+        package: Package::Core,
+        breaks: "a read from a scan's copy of its leaf is shown the leaf's first value, not its key's",
+        file: "src/engine/tree/near.rs",
+        original: "        reader.show(node.value(slot)?).map(Tried::Answered)",
+        replacement: "        reader.show(node.value(0)?).map(Tried::Answered)",
+        integration: &[],
+        unit: &["engine::tree::tests::finger::a_read_is_shown_its_value_where_it_lies"],
+    },
+    Mutation {
+        name: "node-lengthen-slot-unled",
+        package: Package::Core,
+        breaks: "a longer value written in place leaves its slot leading to the old entry, so the old value is read",
+        file: "src/engine/tree/node/build.rs",
+        original: "    put(content, slot.saturating_add(entry), &[&offset])?;\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::tree::node::tests::place::a_longer_value_written_in_place_is_the_entry_removed_and_inserted"],
+    },
+    Mutation {
+        name: "node-hints-left-whatever-slot",
+        package: Package::Core,
+        breaks: "the hints are left as they were whichever slot changed while their step is the same, so a search is narrowed by hints of other slots",
+        file: "src/engine/tree/node/build.rs",
+        original: "step.is_none_or(|step| at > step.saturating_mul(HINTS))",
+        replacement: "step.is_none_or(|_| true)",
+        integration: &[],
+        unit: &["engine::tree::node::tests::place::hints_after_a_change_are_those_sampled_again"],
+    },
+    Mutation {
+        name: "node-built-without-room",
+        package: Package::Core,
+        breaks: "a node is built at its own size whatever room it is given, so its first insert moves it to a new buffer",
+        file: "src/engine/tree/node/build.rs",
+        original: "    let mut out = Vec::with_capacity(size.max(room.min(MOST_ROOM)));",
+        replacement: "    let mut out = Vec::with_capacity(size);",
+        integration: &[],
+        unit: &["engine::tree::node::tests::place::a_node_built_with_room_takes_entries_where_it_is"],
+    },
+    Mutation {
+        name: "tree-put-buffer-uncleared",
+        package: Package::Core,
+        breaks: "a change is handed the buffer of the thread's last change with that change's value still in it",
+        file: "src/engine/tree/write.rs",
+        original: "        let mut value = VALUE.take();\n        value.clear();\n",
+        replacement: "        let mut value = VALUE.take();\n",
+        integration: &[],
+        unit: &["engine::tree::tests::placed::values_are_read_into_and_put_from_buffers_kept"],
     },
 ];

@@ -6,7 +6,7 @@
 use super::key::{self, KeyRef, head_of};
 use super::{
     COUNT_AT, DELETED, FLAGS_AT, GARBAGE_AT, HAS_HIGH, HEADER, HINTS, HINTS_AT, LAST_AT, LEN, NO_LAST, NO_PAGE, Node, RIGHT_AT, SLOT,
-    corrupt, hint_step,
+    corrupt, hint_step, slice,
 };
 use crate::disk::pager::PageId;
 use crate::error::Result;
@@ -46,8 +46,12 @@ fn set_u16(bytes: &mut [u8], at: usize, value: usize) -> Result<()> {
 /// SQLCODE -916 if a key, a value or the node is longer than its fields hold.
 pub(in crate::engine::tree) fn build(shape: &Shape<'_>, entries: &[(&[u8], &[u8])]) -> Result<Vec<u8>> {
     let keyed: Vec<(KeyRef<'_>, &[u8])> = entries.iter().map(|&(k, v)| (KeyRef::whole(k), v)).collect();
-    built(shape, &keyed, None, None)
+    built_in(0, shape, &keyed, None, None)
 }
+
+/// \[DESIGN\] The most room a node is built with: the largest page, past
+/// which no node's fields reach.
+const MOST_ROOM: usize = 65_536;
 
 /// The prefix a node holding `entries` keeps: what its first key and its
 /// last share, which every key between them shares.
@@ -67,12 +71,17 @@ pub(in crate::engine::tree) fn built_size(high: usize, entries: &[(KeyRef<'_>, &
 
 /// As `build`, of keys as they lie in other nodes, entry `last` marked as
 /// the one inserted last, keeping the first `prefix` bytes its keys share
-/// if given, else its own (`prefix_of`).
+/// if given, else its own (`prefix_of`); in a buffer of at least `room`
+/// bytes, its page's, up to the largest page (RULES.md D864). A node
+/// built to its own size was grown by the first entry inserted into it,
+/// its whole content moved to a new buffer; a node its tree writes is
+/// built with its page's room, and takes entries where it is.
 ///
 /// # Errors
 ///
 /// As `build`.
-pub(in crate::engine::tree) fn built(
+pub(in crate::engine::tree) fn built_in(
+    room: usize,
     shape: &Shape<'_>,
     entries: &[(KeyRef<'_>, &[u8])],
     last: Option<usize>,
@@ -84,7 +93,7 @@ pub(in crate::engine::tree) fn built(
     let size = entries.iter().fold(HEADER.saturating_add(high.len()).saturating_add(prefix.len()), |n, (k, v)| {
         n.saturating_add(super::entry_size(&[], v)).saturating_add(k.len().saturating_sub(prefix.len()))
     });
-    let mut out = Vec::with_capacity(size);
+    let mut out = Vec::with_capacity(size.max(room.min(MOST_ROOM)));
     out.push(shape.level);
     out.push(if shape.high.is_some() { HAS_HIGH } else { 0 });
     out.extend_from_slice(&u16_of(entries.len())?);
@@ -124,8 +133,23 @@ fn head_of_pieces(a: &[u8], b: &[u8]) -> u16 {
     u16::from_be_bytes(first)
 }
 
+/// Samples the hints again after entry `at` was inserted into, or removed
+/// from, the node `content` holds, which had `before` entries and has
+/// `after`, if a hint may have changed (RULES.md D864). The hints are the
+/// heads of the slots at sixteen even steps, so they stay as they are
+/// while the step is the same and the slot changed lies past the last
+/// one sampled, as an entry appended to a node, a table's next row, does
+/// sixteen times in seventeen. The bytes are those sampling again gives.
+fn hint_after(content: &mut [u8], (before, after): (usize, usize), at: usize) -> Result<()> {
+    let step = hint_step(after);
+    if hint_step(before) == step && step.is_none_or(|step| at > step.saturating_mul(HINTS)) {
+        return Ok(());
+    }
+    hint(content)
+}
+
 /// Samples the hints of the node `content` holds from its heads.
-fn hint(content: &mut [u8]) -> Result<()> {
+pub(super) fn hint(content: &mut [u8]) -> Result<()> {
     let mut hints = [0_u8; HINTS * key::HEAD];
     {
         let node = Node::parse(content)?;
@@ -271,7 +295,7 @@ pub(in crate::engine::tree) fn insert(content: &mut Vec<u8>, at: usize, key: &[u
     let parsed = {
         let node = Node::parse(content)?;
         let kept = key::common(node.prefix, key);
-        if kept < node.prefix.len() { Err(built(&node.shape(), &node.entries()?, node.last, Some(kept))?) } else { Ok(fields(&node)) }
+        if kept < node.prefix.len() { Err(rebuilt(&node, kept, content.capacity())?) } else { Ok(fields(&node)) }
     };
     let (heap, slots, count, prefix) = match parsed {
         Ok(found) => found,
@@ -295,7 +319,47 @@ pub(in crate::engine::tree) fn insert(content: &mut Vec<u8>, at: usize, key: &[u
     put(content, written.saturating_add(slot_from.saturating_sub(slots)), &[&offset, &head_of(tail).to_be_bytes()])?;
     set_u16(content, LAST_AT, at)?;
     set_u16(content, COUNT_AT, count.saturating_add(1))?;
-    hint(content)
+    hint_after(content, (count, count.saturating_add(1)), at)
+}
+
+/// `node` built again keeping the first `kept` bytes of its prefix, in a
+/// buffer of at least `room` bytes.
+fn rebuilt(node: &Node<'_>, kept: usize, room: usize) -> Result<Vec<u8>> {
+    built_in(room, &node.shape(), &node.entries()?, node.last, Some(kept))
+}
+
+/// Writes `value`, longer than the value of entry `at` of the node
+/// `content` holds, in its place (RULES.md D864): the entry written again
+/// at the end of the heap with its key's tail, the slots moved past it
+/// once, and its slot led to it. The old entry's bytes are garbage, and
+/// the entry is marked as the one inserted last, as an entry removed and
+/// inserted again leaves them. No slot is taken out or put in and no head
+/// changes, so the hints stay.
+///
+/// # Errors
+///
+/// SQLCODE -916 if `content` is not a node, has no entry `at`, or grows
+/// past the fields' 65,535 bytes.
+pub(in crate::engine::tree) fn lengthen(content: &mut Vec<u8>, at: usize, value: &[u8]) -> Result<()> {
+    let (heap, slots, tail, garbage, slot) = {
+        let node = Node::parse(content)?;
+        let (tail, value_at) = node.tail_at(at)?;
+        let old = slice(node.front, value_at.saturating_add(LEN), super::u16_at(node.front, value_at)?)?;
+        let tail_from = value_at.saturating_sub(tail.len());
+        let freed = tail.len().saturating_add(old.len()).saturating_add(LEN.saturating_mul(2));
+        (node.heap, node.slots, (tail_from, tail.len()), node.garbage.saturating_add(freed), node.slot(at)?)
+    };
+    let (tail_len, value_len, offset) = (u16_of(tail.1)?, u16_of(value.len())?, u16_of(slots.saturating_sub(heap))?);
+    let entry = LEN.saturating_mul(2).saturating_add(tail.1).saturating_add(value.len());
+    let end = content.len();
+    content.resize(end.saturating_add(entry), 0);
+    content.copy_within(slots..end, slots.saturating_add(entry));
+    let tail_to = put(content, slots, &[&tail_len])?;
+    content.copy_within(tail.0..tail.0.saturating_add(tail.1), tail_to);
+    put(content, tail_to.saturating_add(tail.1), &[&value_len, value])?;
+    put(content, slot.saturating_add(entry), &[&offset])?;
+    set_u16(content, LAST_AT, at)?;
+    set_u16(content, GARBAGE_AT, garbage)
 }
 
 /// Writes `parts` one after another into `bytes` from `at`: where they end.
@@ -328,15 +392,16 @@ pub(in crate::engine::tree) fn remove(content: &mut Vec<u8>, at: usize) -> Resul
     set_u16(content, LAST_AT, last)?;
     set_u16(content, COUNT_AT, count.saturating_sub(1))?;
     set_u16(content, GARBAGE_AT, garbage)?;
-    hint(content)
+    hint_after(content, (count, count.saturating_sub(1)), at)
 }
 
-/// The node `content` holds, built again without its garbage.
+/// The node `content` holds, built again without its garbage, in a buffer
+/// of at least `room` bytes (`built_in`).
 ///
 /// # Errors
 ///
 /// As `build`.
-pub(in crate::engine::tree) fn compact(content: &[u8]) -> Result<Vec<u8>> {
+pub(in crate::engine::tree) fn compact_in(content: &[u8], room: usize) -> Result<Vec<u8>> {
     let node = Node::parse(content)?;
-    built(&node.shape(), &node.entries()?, node.last_insert()?, None)
+    built_in(room, &node.shape(), &node.entries()?, node.last_insert()?, None)
 }

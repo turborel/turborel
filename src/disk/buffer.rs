@@ -248,6 +248,7 @@ impl Frame {
     }
 
     /// The key of the page it holds.
+    #[inline]
     fn key(&self) -> Option<Key> {
         let file = self.key_file.load(Ordering::Acquire).checked_sub(1)?;
         Some(Key { file: FileId(u32::try_from(file).ok()?), id: self.key_id.load(Ordering::Acquire) })

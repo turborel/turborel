@@ -94,7 +94,7 @@ impl BLinkTree {
     /// its first and last keys now share (RULES.md D500); if it does, the
     /// node is left built again.
     pub(super) fn fits_compacted(&self, page: &mut Vec<u8>, key: &[u8], added: usize) -> Result<bool> {
-        let compacted = node::compact(page)?;
+        let compacted = node::compact_in(page, self.capacity)?;
         let grown = node::grown(&Node::parse(&compacted)?, key);
         let fits = compacted.len().saturating_add(grown).saturating_add(added) <= self.capacity;
         if fits {

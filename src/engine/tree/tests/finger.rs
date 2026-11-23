@@ -108,3 +108,46 @@ fn a_copy_parsed_once_reads_as_one_parsed_again() {
     assert!(tree.get_near(&key(past), &mut near).unwrap(), "the next leaf's first key");
     assert!(tree.pool.counts().hits > hits, "read from the pool, not the copy");
 }
+
+/// Verifies: [DESIGN] RULES.md D863: a read shown its value where it lies
+/// is shown the value of its key from every place a read looks in, a
+/// descent, the leaf remembered, the copy of it and the leaf noted for
+/// the row; a key absent shows nothing; the bytes `near` keeps are not
+/// touched; and `near` is left for the next read as a copying read
+/// leaves it, which then reads from the same copy.
+#[test]
+fn a_read_is_shown_its_value_where_it_lies() {
+    let (tree, _scratch) = tree("shown");
+    tree.note_rows();
+    for k in 1..=200_u64 {
+        assert!(tree.insert(&key(k), &[u8::try_from(k).unwrap(); 92]).unwrap());
+    }
+    let first_byte = |value: &[u8]| Ok((value[0], value.len()));
+    let mut near = Near::default();
+    near.bytes.extend_from_slice(b"kept");
+    // Rows noted by the inserts are pushed out, so the first read descends.
+    hints::note(10, hints::NO_LEAF);
+    for k in 10..=20_u8 {
+        hints::note(u64::from(k), hints::NO_LEAF);
+        assert_eq!(tree.get_near_with(&key(u64::from(k)), &mut near, first_byte).unwrap(), Some((k, 92)), "key {k}");
+    }
+    assert!(near.kept.is_some(), "its leaf copied, the later reads from the copy");
+    assert_eq!(near.bytes, b"kept", "nothing copied");
+    let hits = tree.pool.counts().hits;
+    assert!(tree.get_near(&key(21), &mut near).unwrap());
+    assert_eq!((near.bytes[0], tree.pool.counts().hits), (21, hits), "the next read goes on from the copy");
+    let mut called = false;
+    let never = |_: &[u8]| {
+        called = true;
+        Ok(())
+    };
+    assert_eq!(tree.get_near_with(&key(900), &mut near, never).unwrap(), None);
+    assert!(!called, "absent, nothing shown");
+    let leaf = tree.descend(Target::Key(&key(150)), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
+    hints::note(150, leaf.0);
+    let hinted = tree.counts().hinted;
+    assert_eq!(tree.get_near_with(&key(150), &mut Near::default(), first_byte).unwrap(), Some((150, 92)));
+    assert_eq!(tree.counts().hinted, hinted + 1, "from the leaf noted");
+    let refused = tree.get_near_with(&key(5), &mut near, |_| Err::<(), _>(SqlError::new(Code::Api, "[DESIGN] refused")));
+    assert_eq!(refused.unwrap_err().code, Code::Api);
+}
