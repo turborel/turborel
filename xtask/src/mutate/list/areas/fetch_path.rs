@@ -1,12 +1,12 @@
 //! The mutations of a row's fetch by its id (RULES.md R-TEST-9, D950,
-//! D955, D954): a key found in a leaf's bytes, the leaf found through
-//! the inner nodes' copies, and the snapshot of a transaction whose
-//! reads are not checked.
+//! D954 to D956): a key found in a leaf's bytes, the leaf found through
+//! the inner nodes' copies, the snapshot of a transaction whose reads
+//! are not checked, and an integer key written straight.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of a fetch whose removal must fail their tests.
-pub const FETCH_PATH: [Mutation; 4] = [
+pub const FETCH_PATH: [Mutation; 5] = [
     Mutation {
         name: "fetch-lean-taken-out",
         package: Package::Core,
@@ -46,5 +46,15 @@ pub const FETCH_PATH: [Mutation; 4] = [
         replacement: "self.unchecked.store(snapshot, Ordering::Release);",
         integration: &[],
         unit: &["engine::rows::mvcc::found::tests::a_read_not_checked_takes_no_lock_of_its_bookkeeping"],
+    },
+    Mutation {
+        name: "fetch-integer-key-any-scale",
+        package: Package::Core,
+        breaks: "an exact number of another scale than its column's is written as its key unscaled",
+        file: "src/value/types/exact.rs",
+        original: "i64::try_from(d.units).ok().filter(|_| d.scale == scale)?;",
+        replacement: "i64::try_from(d.units).ok()?;",
+        integration: &[],
+        unit: &["engine::key::tests::an_integer_is_anchored_as_its_type_anchors_it"],
     },
 ];

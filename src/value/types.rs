@@ -57,6 +57,7 @@ pub(crate) use decfloat::arith as decfloat_arith;
 pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
 pub use descriptor::{Descriptor, XmlSchemaNamed};
 pub use distinct::{DISTINCT, DistinctKind, DistinctType, USER_DEFINED_NAME};
+pub(crate) use exact::narrow_key;
 pub use exact::{BIGINT_NAME, EXACT, Exact, narrow_scale};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
 pub use json::{JSON, JSON_NAME, JsonKind};

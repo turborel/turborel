@@ -609,6 +609,7 @@ verification approach DO-178C expects (§8).
 | D951 | A page read hashes its page once, for the thread's leaf copies and the pool's hint alike |
 | D954 | A transaction whose reads are not checked reads its snapshot with no lock of its bookkeeping |
 | D955 | A read by key finds its leaf through the thread's copies of the inner nodes, with no node made of them |
+| D956 | An integer of an integer column is written as its key with no anchor made of it |
 
 ### The project
 
@@ -16844,6 +16845,17 @@ key. A key it does not hold, within its high key, is not in the tree.
 Where a copy is missing or changed, as past a split not yet posted, the
 walk gives up and the read descends as before. The walk goes down at
 most 16 levels, more than a tree of 4 KiB pages has.
+
+#### D956. An integer of an integer column is written as its key with no anchor made of it
+
+A probe of a whole key (D881) made each value's anchor (`anchor_into`),
+a value rounded down at the column's scale and checked for exactness,
+and then encoded the anchor, building a value and comparing scales for
+each integer of the key. An exact number at its column's scale, of a
+column whose values 64 bits hold, and within 64 bits, is its own
+anchor, exactly. Its key is now written straight from its units
+(`value/types/exact.rs`, `narrow_key`), the bytes `encode_key` writes.
+Every other value is anchored as before.
 
 ## 2. Project layout
 
