@@ -47,6 +47,7 @@ mod point_ops;
 mod probed_subqueries;
 mod range_joins;
 mod range_path;
+mod range_reads;
 mod rewrites;
 mod row_path;
 mod server_lines;
@@ -76,7 +77,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 30] {
+pub fn core() -> [&'static [Mutation]; 31] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -107,6 +108,7 @@ pub fn core() -> [&'static [Mutation]; 30] {
         &dirty_frames::DIRTY_FRAMES,
         &range_path::RANGE_PATH,
         &point_ops::POINT_OPS,
+        &range_reads::RANGE_READS,
         &checkpoint_cost::CHECKPOINT_COST,
     ]
 }

@@ -31,7 +31,7 @@ use crate::error::Result;
 use crate::logical::{Contained, Cursor, Program};
 use crate::sync::lock;
 use leaves::KeptLeaves;
-pub(in crate::db) use leaves::{KeptRuns, point_of};
+pub(in crate::db) use leaves::{KeptRuns, LeafPlans, point_of};
 
 /// The procedures a session keeps the bodies of, by specific name.
 #[derive(Debug, Default)]

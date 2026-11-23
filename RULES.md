@@ -585,6 +585,8 @@ verification approach DO-178C expects (§8).
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
+| D930 | A kept plan of one index range is run where it is kept, its rows handed up through its filters, projections, sort, limit and set functions with no operator built |
+| D931 | A cursor of a kept plan that is a direct range read holds its rows as it opens, a range that gives rows as fetched only while it is short |
 
 ### The project
 
@@ -16215,6 +16217,83 @@ versions are in the undo store, a record its encodings open, and a
 value on a page of its own. Nothing is decided differently, only where
 the bytes are read. A row whose newest version is a deletion takes the
 copy too, so the commit of the deletion is told as before (D837).
+
+#### D930. A kept plan of one index range is run where it is kept, its rows handed up through its filters, projections, sort, limit and set functions with no operator built
+
+A kept plan that was no point read (D752) was opened for each run. The
+plan was copied, an operator was built for each of its nodes, each boxed
+as a stream of rows, and the rows were pulled through them. A query of a
+procedure's body that counts a dozen rows of an index range spent more
+on opening its plan than on reading them.
+
+A kept plan may now be a direct range read (`exec/range.rs`,
+`Kept::range`). It is one index scan under any of a filter, a
+projection, OFFSET and FETCH FIRST of a count, a sort and a grouping,
+with expressions that read their row alone. A subquery, a routine
+invoked or a sequence generator leaves the plan to the executor, as do
+a percentage and WITH TIES. What it needs of the plan is taken once, as
+the plan is first asked for it, and each run reads the statement's
+values where they are.
+
+The range is read as the index scan reads it in place (D821). Its probe
+is placed with the run's values, the index is searched for its entries
+as the tree holds them, and each row is read of the columns listed alone
+(D862) into a row kept with the plan, through what the table keeps from
+read to read. The row is checked against its entry's key as bytes. Its
+values are put in a row as wide as the table, kept with the plan too and
+lent upward, so the expressions of the plan read their columns where the
+plan numbered them. A covering read of a row every reader sees is made
+of its entry's key, as before (D34). The read is told to the table by
+the condition of the key's columns and the probe, entries are counted
+for the statement and the index, a cancel is looked for at each entry,
+and the entry of a row gone for every reader is taken back (D837), all
+as the scan does. An index by a sort key, an expression or a projection
+of its keys, a global index, a probe whose keys must each be checked, a
+scan that decides a conjunct and a located scan are not read so.
+
+Each row is handed to what the plan puts over the range, by a call and
+not through a stream. A filter judges it, a projection makes its row of
+it, and FETCH FIRST stops the read once its rows are given, but for an
+input that can raise, which is read to its end as before. A grouping by
+no column folds each row into its set functions and gives its one row
+at the end, a DISTINCT function's values kept in a bag of the
+statement's work area as the grouping keeps them (`range/fold.rs`). A
+sort and a grouping by a column take the rows read and then sort or
+group them by the executor's own functions, so their order, their spill
+and their groups are the executor's.
+
+A leaf of a kept program whose plan is kept and is such a read runs it
+(`kept/leaves.rs`), compiled or interpreted. A compiled SELECT INTO
+asks its leaf's plan for it with no plan opened, its tables locked and
+its snapshot taken as the session takes them (`compiled/evaluated.rs`).
+A plan still learning, or one whose tables moved, runs as before and
+learns as before (D414). A read that finds it is not read direct with
+its values gives nothing, and the plan is opened and run.
+
+EXECUTOR.POINT_OPERATIONS OFF runs every kept plan through the
+executor, a direct range read as a point read.
+
+#### D931. A cursor of a kept plan that is a direct range read holds its rows as it opens, a range that gives rows as fetched only while it is short
+
+A cursor's rows are read from its plan as it is fetched from, but a plan
+that can raise an exception is read in full at OPEN, and a cursor is
+settled, its rows read, before its transaction changes a table it reads
+(`db/stream.rs`).
+
+A cursor whose plan kept is a direct range read (D930) now reads it as
+it opens and holds the rows for its fetches (`db/stream/ranged.rs`). A
+plan that can raise was read at OPEN already. A plan that sorts or
+groups read its whole range before its first row. Any other gave its
+rows as they were fetched, so a cursor closed early read few. Its range
+is read direct only while it has no more than 128 rows, about the rows
+of a few leaves of an index, and a longer one is left to the executor,
+its first rows read twice. A plan that cannot raise fails only by its
+reading, at the first fetch, so one whose direct read fails is left to
+the executor, which fails there as before.
+
+The rows a cursor holds from OPEN are those a settled cursor holds, so
+it sees no change its transaction makes after, as before. They are held
+up to the bytes a cursor may hold and spilled past them (D38).
 
 ## 2. Project layout
 
