@@ -1,11 +1,12 @@
 //! The mutations of a row's fetch by its id (RULES.md R-TEST-9, D950,
-//! D955): a key found in a leaf's bytes and the leaf found through the
-//! inner nodes' copies.
+//! D955, D954): a key found in a leaf's bytes, the leaf found through
+//! the inner nodes' copies, and the snapshot of a transaction whose
+//! reads are not checked.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of a fetch whose removal must fail their tests.
-pub const FETCH_PATH: [Mutation; 3] = [
+pub const FETCH_PATH: [Mutation; 4] = [
     Mutation {
         name: "fetch-lean-taken-out",
         package: Package::Core,
@@ -35,5 +36,15 @@ pub const FETCH_PATH: [Mutation; 3] = [
         replacement: "child_in(&copies.kept.get(*copies.at.get(&(file, id))?)?.bytes, key)",
         integration: &[],
         unit: &["engine::tree::tests::by_copies::a_copy_changed_since_is_not_followed"],
+    },
+    Mutation {
+        name: "fetch-unchecked-always",
+        package: Package::Core,
+        breaks: "a transaction's bookkeeping says its reads are not checked even while they are, so a serializable read records nothing",
+        file: "src/engine/rows/mvcc/opens.rs",
+        original: "self.unchecked.store(if checked { CHECKED } else { snapshot }, Ordering::Release);",
+        replacement: "self.unchecked.store(snapshot, Ordering::Release);",
+        integration: &[],
+        unit: &["engine::rows::mvcc::found::tests::a_read_not_checked_takes_no_lock_of_its_bookkeeping"],
     },
 ];

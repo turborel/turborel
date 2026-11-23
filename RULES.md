@@ -607,6 +607,7 @@ verification approach DO-178C expects (§8).
 | D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
 | D950 | A read by key finds its entry in a leaf's bytes with no node made of them, and trusts a leaf of its tree that holds the key |
 | D951 | A page read hashes its page once, for the thread's leaf copies and the pool's hint alike |
+| D954 | A transaction whose reads are not checked reads its snapshot with no lock of its bookkeeping |
 | D955 | A read by key finds its leaf through the thread's copies of the inner nodes, with no node made of them |
 
 ### The project
@@ -16811,6 +16812,22 @@ two words. The pool now gives the hash it places a page by
 `read_stamped_at`, so a leaf read hashes its page once. A hint found
 through the hash is still checked against the frame's page, as a stale
 hint always was.
+
+#### D954. A transaction whose reads are not checked reads its snapshot with no lock of its bookkeeping
+
+Every read of a row by a transaction took the lock of its bookkeeping
+in the table (`Mutex<Open>`, D871) to read its snapshot and to record
+the read where its reads are checked for serializability. A transaction
+whose reads are not checked, at READ COMMITTED or preserving, records
+nothing, and needs of its bookkeeping only the snapshot. The
+bookkeeping now carries that snapshot in an atomic word beside its lock
+(`Opened::unchecked`), a value no clock gives while its reads are
+checked. The word is set under the lock as the snapshot and the mode
+are, after them, and read with no lock. A read not checked takes the
+snapshot from the word and records nothing. One checked takes the lock
+as before. A snapshot only moves forward, so a read that finds the word
+just before a change of mode reads at a snapshot the transaction held a
+moment before, as it would had it read a moment earlier.
 
 #### D955. A read by key finds its leaf through the thread's copies of the inner nodes, with no node made of them
 

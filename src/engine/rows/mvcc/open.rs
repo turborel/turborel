@@ -23,7 +23,7 @@ impl RowTable {
             return Ok(Reader::Latest);
         }
         let open = self.open_of(tx)?;
-        let snapshot = lock_builtin(&open).snapshot;
+        let snapshot = open.unchecked().unwrap_or_else(|| lock_builtin(&open).snapshot);
         Ok(Reader::At { tx, snapshot })
     }
 
@@ -48,14 +48,19 @@ impl RowTable {
             return Ok(());
         }
         let open = self.open_of(tx)?;
-        self.record(&mut lock_builtin(&open), read);
+        // Not checked, nothing is recorded, and no lock taken to find so.
+        if open.unchecked().is_none() {
+            self.record(&mut lock_builtin(&open), read);
+        }
         Ok(())
     }
 
     /// Who `tx` is as a reader of row `id`, the read recorded as
     /// `note_read` records it, both under one lock of its bookkeeping. That
     /// is found from what `near` keeps of the scan's last read while `tx`
-    /// is open here, and kept there for the next.
+    /// is open here, and kept there for the next. A transaction whose
+    /// reads are not checked has nothing recorded, and its snapshot is
+    /// read with no lock taken (RULES.md D954).
     pub(in crate::engine::rows) fn read_row(&self, tx: TxId, (id, columns): (RowId, u64), near: &mut Near) -> Result<Reader> {
         if tx == NO_TRANSACTION {
             return Ok(Reader::Latest);
@@ -63,13 +68,21 @@ impl RowTable {
         let table = std::ptr::from_ref(self).addr();
         let kept = near.open.as_ref().filter(|&&(by, of, _)| by == tx && of == table);
         if let Some(opened) = kept.and_then(|(_, _, open)| open.downcast_ref::<Opened>()).filter(|opened| !opened.ended()) {
-            return Ok(self.read_by(&mut lock_builtin(opened), tx, (id, columns)));
+            return Ok(self.read_through(opened, tx, (id, columns)));
         }
         let open = self.open_of(tx)?;
-        let reader = self.read_by(&mut lock_builtin(&open), tx, (id, columns));
+        let reader = self.read_through(&open, tx, (id, columns));
         let held: Arc<dyn Any + Send + Sync> = open;
         near.open = Some((tx, table, held));
         Ok(reader)
+    }
+
+    /// `read_by`, under the lock of `opened` only if its reads are checked.
+    fn read_through(&self, opened: &Opened, tx: TxId, read: (RowId, u64)) -> Reader {
+        match opened.unchecked() {
+            Some(snapshot) => Reader::At { tx, snapshot },
+            None => self.read_by(&mut lock_builtin(opened), tx, read),
+        }
     }
 
     fn read_by(&self, open: &mut Open, tx: TxId, (id, columns): (RowId, u64)) -> Reader {
