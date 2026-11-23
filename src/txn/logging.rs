@@ -219,8 +219,10 @@ impl Txn {
         let Some(log) = &self.origin.log else { return Ok(()) };
         self.origin.shared.taking_changes()?;
         let record = Record { tx: self.id, change };
-        let bytes = if let Some((pipeline, row)) = seal { sealed::seal(&record, row, pipeline)? } else { record.encode() };
-        self.hold(log, bytes)
+        match seal {
+            Some((pipeline, row)) => self.hold(log, &sealed::seal(&record, row, pipeline)?),
+            None => self.hold_written(log, |out| record.encode_into(out)),
+        }
     }
 
     /// \[EXTENSION\] Holds `bytes`, the record of `changes` row changes as
@@ -232,10 +234,23 @@ impl Txn {
     /// # Errors
     ///
     /// As `log_change`.
-    pub(crate) fn log_encoded(&self, bytes: Vec<u8>, changes: u64) -> Result<()> {
+    pub(crate) fn log_encoded(&self, bytes: &[u8], changes: u64) -> Result<()> {
+        self.log_written(changes, |out| out.extend_from_slice(bytes))
+    }
+
+    /// \[DESIGN\] (RULES.md D882) As `log_encoded`, of the record `write`
+    /// appends to the buffer its records are held in, so a row change is
+    /// encoded where it is kept, with no vector of its own. `write` is
+    /// not called if it has no log; it appends one record, as
+    /// `Record::encode` gives it, and nothing else.
+    ///
+    /// # Errors
+    ///
+    /// As `log_change`.
+    pub(crate) fn log_written(&self, changes: u64, write: impl FnOnce(&mut Vec<u8>)) -> Result<()> {
         let Some(log) = &self.origin.log else { return Ok(()) };
         self.origin.shared.taking_changes()?;
-        self.hold(log, bytes)?;
+        self.hold_written(log, write)?;
         self.origin.shared.logged.fetch_add(changes.saturating_sub(1), Ordering::Relaxed);
         Ok(())
     }
@@ -263,7 +278,7 @@ impl Txn {
         let (Some(log), Some(from)) = (&self.origin.log, from) else { return };
         let held = match self.drop_held_from(from) {
             Undone::Nothing => Ok(()),
-            Undone::From(from) => self.hold_unmarked(log, Record { tx: self.id, change: Change::StatementUndone { from } }.encode()),
+            Undone::From(from) => self.hold_unmarked(log, &Record { tx: self.id, change: Change::StatementUndone { from } }),
             Undone::Unknown => Err(SqlError::new(Code::Api, "[DESIGN] the place undone to is not known")),
         };
         if held.is_err() {
@@ -298,10 +313,10 @@ impl Txn {
         let refused =
             |why: String| SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §8.2] {why}, so the transaction was rolled back"));
         self.origin.shared.taking_changes().map_err(|e| refused(e.described()))?;
-        let record = Record { tx: self.id, change: Change::Commit { at, wall } }.encode();
+        let record = Record { tx: self.id, change: Change::Commit { at, wall } };
         // [DESIGN] RULES.md D470: its held records and the commit record, one write.
         let lsn =
-            self.write_with(log, record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
+            self.write_with(log, &record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
         // [DESIGN] RULES.md D194: its position, for the client's read-after.
         self.stop.served().committed_at(lsn.0);
         if !self.sync_commit.load(Ordering::Relaxed) {

@@ -124,6 +124,17 @@ pub trait Log: Send + Sync {
     fn append_all(&self, records: &[Vec<u8>]) -> Result<Vec<Lsn>> {
         records.iter().map(|record| self.append(record)).collect()
     }
+    /// \[DESIGN\] (RULES.md D882) Appends the records laid end to end
+    /// in `bytes`, each ending at its place in `ends`, in order, as
+    /// `append_all` appends them: a transaction's at its commit, which it
+    /// holds in one buffer. Default: `append_all` of a copy of each.
+    ///
+    /// # Errors
+    ///
+    /// As `append_all`.
+    fn append_run(&self, bytes: &[u8], ends: &[usize]) -> Result<Vec<Lsn>> {
+        self.append_all(&run_records(bytes, ends).map(<[u8]>::to_vec).collect::<Vec<_>>())
+    }
     /// Makes the record at `through`, and every earlier one, durable.
     ///
     /// # Errors
@@ -184,6 +195,17 @@ pub trait Log: Send + Sync {
     }
     /// The position after the last record appended.
     fn end(&self) -> Lsn;
+}
+
+/// \[DESIGN\] (RULES.md D882) The records of a run laid end to end in
+/// `bytes`, each ending at its place in `ends`, in order
+/// (`Log::append_run`): an end past `bytes`, or before the one before it,
+/// gives an empty record.
+pub fn run_records<'r>(bytes: &'r [u8], ends: &'r [usize]) -> impl ExactSizeIterator<Item = &'r [u8]> + Clone {
+    (0..ends.len()).map(move |at| {
+        let start = at.checked_sub(1).and_then(|before| ends.get(before)).copied().unwrap_or(0);
+        ends.get(at).and_then(|&end| bytes.get(start..end)).unwrap_or_default()
+    })
 }
 
 /// \[DESIGN\] A log in memory: records survive only as long as the process,
