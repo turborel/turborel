@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::entries::{Held, Keyed};
 use super::value::noted;
 use super::{BLinkIndex, split};
-use crate::engine::tree::{Direction, Scan, scan_of};
+use crate::engine::tree::{Direction, Scan, scan_owned};
 use crate::error::Result;
 use crate::index::{Encoded, EncodedEntries, EncodedEntry, KeyOrder, Probe};
 
@@ -22,7 +22,7 @@ pub(super) fn searched(index: Arc<BLinkIndex>, probe: &Probe, order: KeyOrder) -
         KeyOrder::Ascending => Direction::Forward,
         KeyOrder::Descending => Direction::Backward,
     };
-    Some(Box::new(Lent(scan_of(Held(index), range.lower.as_ref().map(Vec::as_slice), range.upper.as_ref().map(Vec::as_slice), direction))))
+    Some(Box::new(Lent(scan_owned(Held(index), range.lower, range.upper, direction))))
 }
 
 /// The scan of a search, its entries lent.

@@ -134,8 +134,12 @@ fn descents_read_inner_nodes_from_current_copies() {
     assert!(tree.height().unwrap() > 1);
     let root = tree.root.load(Ordering::Acquire);
     let read_root = || inner::read(&tree.pool, (tree.file, root), None, true).unwrap();
-    inner::keep(&read_root(), (tree.file, root));
-    assert!(matches!(read_root(), inner::Read::Copied(_)), "kept, and current");
+    {
+        let got = read_root();
+        let parsed = got.node().unwrap().parsed();
+        inner::keep(&got, (tree.file, root), parsed);
+    }
+    assert!(matches!(read_root(), inner::Read::Copied(..)), "kept, and current");
     let before = tree.pool.read_stamped(tree.file, root, None).unwrap().1;
     for k in (1..=2_000).step_by(97) {
         assert_eq!(tree.get(&key(k)).unwrap(), Some(VALUE.to_vec()), "key {k}");

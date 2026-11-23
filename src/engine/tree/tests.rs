@@ -57,7 +57,7 @@ fn stale_paths_move_right_and_find_their_parent_again() {
     let (tree, _scratch) = tree("stale-paths");
     let mut path = Path::default();
     let (first, ()) = tree.descend(Target::Key(&key(0)), 0, &mut path, |_| Ok(())).unwrap();
-    assert_eq!(path.stack, [], "the tree was one leaf");
+    assert!(path.stack.as_slice().is_empty(), "the tree was one leaf");
     let n = 20_000;
     fill(&tree, n);
     assert_eq!(tree.height().unwrap(), 3);

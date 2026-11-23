@@ -99,6 +99,7 @@ pub struct Scan<T: Deref<Target = BLinkTree>> {
 impl<T: Deref<Target = BLinkTree>> Drop for Scan<T> {
     fn drop(&mut self) {
         self.tree.epochs.leave(self.entered);
+        std::mem::take(&mut self.ready).give_back();
     }
 }
 
@@ -112,13 +113,19 @@ impl BLinkTree {
 /// The entries of the tree `tree` reaches, with keys within `lower` and
 /// `upper`, in `direction`.
 pub fn scan_of<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<&[u8]>, upper: Bound<&[u8]>, direction: Direction) -> Scan<T> {
+    scan_owned(tree, lower.map(<[u8]>::to_vec), upper.map(<[u8]>::to_vec), direction)
+}
+
+/// As `scan_of`, its bounds given as the scan keeps them, so a caller that
+/// built them hands them over with no copy (RULES.md D839).
+pub fn scan_owned<T: Deref<Target = BLinkTree>>(tree: T, lower: Bound<Vec<u8>>, upper: Bound<Vec<u8>>, direction: Direction) -> Scan<T> {
     let entered = tree.epochs.enter();
     Scan {
         tree,
-        lower: lower.map(<[u8]>::to_vec),
-        upper: upper.map(<[u8]>::to_vec),
+        lower,
+        upper,
         direction,
-        ready: ready::Ready::default(),
+        ready: ready::Ready::reused(),
         next: Next::Descend,
         last: None,
         ahead: Ahead::default(),
@@ -233,7 +240,10 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                 // A lookup: its first descent, to a key; a backward scan's
                 // next ones go on from where it was.
                 let tallied = self.last.is_none() && matches!(target, Target::Key(_));
-                let mut path = Path { track_low: true, tallied, ..Path::default() };
+                // Only a backward scan goes on from the key below the leaf,
+                // so only it copies that key on the way down.
+                let track_low = matches!(self.direction, Direction::Backward);
+                let mut path = Path { track_low, tallied, ..Path::default() };
                 let bounds = (&self.lower, &self.upper);
                 let (leaf, further) = tree.descend(target, 0, &mut path, |leaf| take(leaf, bounds, ready))?;
                 self.last = Some(leaf);

@@ -158,7 +158,7 @@ impl BLinkTree {
     pub fn delete_if(&self, key: &[u8], expected: &[u8]) -> Result<bool> {
         let _guard = self.epochs.guard();
         let mut path = Path::default();
-        let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
+        let leaf = self.leaf_for_write(key, &mut path)?;
         Ok(self.delete_from(&path, leaf, key, Some(expected))?.is_some())
     }
 
@@ -172,7 +172,7 @@ impl BLinkTree {
     pub fn delete(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let _guard = self.epochs.guard();
         let mut path = Path::default();
-        let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
+        let leaf = self.leaf_for_write(key, &mut path)?;
         self.delete_from(&path, leaf, key, None)
     }
 
@@ -195,7 +195,7 @@ impl BLinkTree {
     fn remove_at(&self, path: &Path, held: NodeLock<'_>, at: usize) -> Result<()> {
         let leaf = held.id;
         let sparse = {
-            let mut page = self.pool.write(self.file, leaf)?;
+            let mut page = self.pool.write_owned(&held)?;
             node::remove(&mut page, at)?;
             self.underfull(&Node::parse(&page)?)
         };
@@ -228,7 +228,7 @@ impl BLinkTree {
     pub fn update_alone(&self, key: &[u8], prefix: usize, change: impl FnOnce(Option<&[u8]>) -> Result<Update>) -> Result<bool> {
         let _guard = self.epochs.guard();
         let mut path = Path::default();
-        let (leaf, ()) = self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?;
+        let leaf = self.leaf_for_write(key, &mut path)?;
         let mut held = self.lock(leaf)?;
         let begins = key.get(..prefix).unwrap_or(key);
         let (found, alone) = self.move_right(&mut held, key, |node| {
@@ -255,6 +255,27 @@ impl BLinkTree {
         self.place(&path, held, (key, &value), slot).map(|_| alone)
     }
 
+    /// The leaf a writer of `key` locks, `path` the way to it: its page
+    /// number read from its parent, the leaf itself not read, as the
+    /// writer reads it once it owns it, moving right past a split or a
+    /// leaf taken out, as from a leaf read (RULES.md D839). A root that is
+    /// a leaf is the leaf.
+    fn leaf_for_write(&self, key: &[u8], path: &mut Path) -> Result<PageId> {
+        path.above_leaf = true;
+        let found = self.descend(Target::Key(key), 0, path, |node| match node.level {
+            0 => Ok(None),
+            _ => node.child(key).map(|(child, _)| Some(child)),
+        });
+        path.above_leaf = false;
+        Ok(match found? {
+            (parent, Some(child)) => {
+                path.stack.push(parent);
+                child
+            }
+            (leaf, None) => leaf,
+        })
+    }
+
     /// Refuses an entry longer than `max_entry`.
     fn fits(&self, key: &[u8], value: &[u8]) -> Result<()> {
         if key.len().saturating_add(value.len().max(CHILD)) > self.max_entry() {
@@ -277,7 +298,7 @@ impl BLinkTree {
         let mut path = Path::default();
         let leaf = match self.edge_for(key)? {
             Some(leaf) => leaf,
-            None => self.descend(Target::Key(key), 0, &mut path, |_| Ok(()))?.0,
+            None => self.leaf_for_write(key, &mut path)?,
         };
         let written = self.write_from(&path, leaf, (key, value), mode)?;
         // A table's row: its leaf noted for its index entries (`hints.rs`).
@@ -341,7 +362,7 @@ impl BLinkTree {
     fn post<'a>(&'a self, path: &Path, held: NodeLock<'a>, splits: Vec<Split>) -> Result<()> {
         let mut held = Some(held);
         for done in splits {
-            let mut up = Path { stack: path.stack.clone(), ..Path::default() };
+            let mut up = Path { stack: path.stack, ..Path::default() };
             let Some((parent, at)) = self.lock_parent(&mut up, &done)? else { continue };
             drop(held.take());
             let more = self.change(&parent, &done.separator, &done.right.0.to_le_bytes(), Slot::Insert(at))?;

@@ -5,9 +5,27 @@
 //! entry of every range. A reader that borrows each entry
 //! (`Scan::next_entry`) now allocates nothing once the buffer has grown
 //! to a leaf's entries.
+//!
+//! A scan done gives its buffers back to its thread, and the thread's next
+//! scan takes them (RULES.md D839), so a probe that reads one entry, a
+//! scan of its own, allocates no buffer either.
+
+use std::cell::RefCell;
 
 use super::Direction;
 use crate::engine::tree::node::KeyRef;
+
+/// \[DESIGN\] The buffers a thread keeps for its next scans: one for each
+/// scan a statement step may have open at once, an index's and a table's
+/// and an outer one's.
+const SPARES: usize = 4;
+/// \[DESIGN\] The most bytes a buffer kept may hold: a few leaves' entries,
+/// so a scan of long values leaves no large buffer behind.
+const KEPT_BYTES: usize = 65_536;
+
+std::thread_local! {
+    static SPARE: RefCell<Vec<Ready>> = const { RefCell::new(Vec::new()) };
+}
 
 /// Entries taken from one leaf, in key order, given from the front going
 /// forward and from the back going backward.
@@ -25,6 +43,27 @@ pub(super) struct Ready {
 }
 
 impl Ready {
+    /// Buffers the thread kept from a scan done, or new ones.
+    pub(super) fn reused() -> Ready {
+        SPARE.with(|spare| spare.try_borrow_mut().ok().and_then(|mut spare| spare.pop())).unwrap_or_default()
+    }
+
+    /// Gives its buffers, cleared, to the thread's next scan, if they are
+    /// not too large and the thread keeps fewer than `SPARES`.
+    pub(super) fn give_back(mut self) {
+        if self.bytes.capacity() > KEPT_BYTES {
+            return;
+        }
+        self.clear();
+        SPARE.with(|spare| {
+            if let Ok(mut spare) = spare.try_borrow_mut()
+                && spare.len() < SPARES
+            {
+                spare.push(self);
+            }
+        });
+    }
+
     /// None taken, the buffers kept.
     pub(super) fn clear(&mut self) {
         self.bytes.clear();
@@ -114,5 +153,31 @@ mod tests {
         assert_eq!(ready.give(Direction::Backward), Some((&b"x"[..], &b"9"[..])));
         assert_eq!(ready.give(Direction::Backward), None);
         assert_eq!(ready.bytes.as_ptr(), allocation, "the buffer reused");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D839: buffers given back are taken by
+    /// the thread's next scan, cleared, with no allocation; at most
+    /// `SPARES` are kept, and one past `KEPT_BYTES` is not.
+    #[test]
+    fn buffers_given_back_are_reused() {
+        SPARE.with(|spare| spare.borrow_mut().clear());
+        let mut ready = Ready::reused();
+        ready.push(KeyRef::whole(b"k"), b"v");
+        let allocation = ready.bytes.as_ptr();
+        ready.give_back();
+        let again = Ready::reused();
+        assert!(again.is_empty() && again.last_key().is_none(), "cleared");
+        assert_eq!(again.bytes.as_ptr(), allocation, "the buffer reused");
+        for _ in 0..SPARES + 2 {
+            let mut more = Ready::default();
+            more.push(KeyRef::whole(b"k"), b"v");
+            more.give_back();
+        }
+        assert_eq!(SPARE.with(|spare| spare.borrow().len()), SPARES, "at most SPARES kept");
+        SPARE.with(|spare| spare.borrow_mut().clear());
+        let mut large = Ready::default();
+        large.bytes.reserve(KEPT_BYTES + 1);
+        large.give_back();
+        assert_eq!(SPARE.with(|spare| spare.borrow().len()), 0, "too large to keep");
     }
 }

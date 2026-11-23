@@ -434,6 +434,7 @@ mod topped_sorts;
 mod tpcc_plans;
 mod transaction_memory;
 mod transactions;
+mod tree_paths;
 mod trees;
 mod trigger_definition_rules;
 mod trigger_views;

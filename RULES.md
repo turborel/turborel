@@ -546,6 +546,7 @@ verification approach DO-178C expects (§8).
 | D836 | A routine's variable in a subquery of a change is the subquery's slot, not an outer reference, so the subquery probes a key |
 | D837 | A scan takes back the index entries of rows gone for every reader as it meets them |
 | D838 | A scan priced by a sample of its zones reads at least one zone of the sample |
+| D839 | A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer |
 
 ### The project
 
@@ -15017,6 +15018,61 @@ the table at each call. So a share of a sample is never less than one
 zone of the sample (`rows/zones.rs`): the zones passed over may hold
 the rows asked for, as many as one zone looked at. Of a table whose
 every zone is looked at, the share is what they hold, none if none may.
+
+#### D839. A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer
+
+The storage engine is the floor of a transaction once its procedures
+skip SQL, and the B-link tree was the largest part of it, about a third
+of the time of a TPROC-C transaction. Each probe of a table or index
+paid for work the tree's design does not need. The node format of D500
+already searches the page's bytes over a slot array of key heads, but
+every step of the search read a slot through a field reader returning a
+`Result` whose error is a `SqlError` of many words. So each head and
+each tail was a call that returned that large value through memory, and
+none was inlined. Parsing a node read each header field the same way.
+
+A node parsed now borrows its slots as an array of four-byte slots,
+checked once to fill the end of the page in whole slots, and its bytes
+before them (`engine/tree/node.rs`). Its header is read as one array of
+fixed size, so no field read can fail. The search runs over the slots
+with each step an `Option`, and an error is built once, only if a slot
+leads past the heap. The bytes searched and the order found are those of
+D500.
+
+A descent read each inner node from the thread's copy of D502 and parsed
+the copy again at every visit. Each copy now keeps its node's header as
+parsed beside it, as a leaf's copy does (D808), and a descent rebuilds
+the node from it with no header read and no check made again
+(`engine/tree/inner.rs`). The copy is current exactly while its frame's
+version holds, so its header parsed is too.
+
+A writer went down to the leaf, read it under its latch only to learn
+its page, owned it, read it again, then held it for writing. Each of the
+owning, the second read and the write found the frame in the page table
+again, a shard locked, a map searched and a pin taken. A writer now
+stops at the node above the leaves and takes the leaf's page from it
+(`engine/tree/write.rs`), as the leaf is read once it is owned. A leaf
+split or taken out in between is moved right from once owned, as before,
+since Lehman and Yao's move right (§5) needs only a page the key was once
+reachable from, and the writer's epoch keeps a page taken out from being
+freed (D814). The owner then reads and writes the page through the frame
+it owns (`disk/buffer/owned.rs`). The frame is pinned to the page while
+owned, so no page table is looked in, and the write marks the page dirty
+and gives a checkpoint's capture its copy exactly as a write through the
+page table does (D30). A frame owned of another pool is written through
+its page table.
+
+A descent kept its path in a vector, allocated at its first level, and
+every scan copied the key below each node on the way down, though only a
+backward scan uses it. An index probe built its range's bounds, and the
+scan copied them, and each scan allocated its buffers of D809. The path
+is now kept in place, at most 24 levels, a taller one giving up its top,
+which only makes a writer find a parent again from the root
+(`engine/tree/levels.rs`). Only a backward scan copies the key below. A
+scan takes its bounds as built (`scan_owned`), and gives its buffers back
+to its thread when done, so the thread's next scan takes them
+(`engine/tree/scan/ready.rs`). So a probe that finds one entry allocates
+nothing in the tree.
 
 ## 2. Project layout
 
