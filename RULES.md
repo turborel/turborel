@@ -565,6 +565,7 @@ verification approach DO-178C expects (§8).
 | D856 | An update of an entry and a delete search, show and change their leaf under one latch |
 | D857 | A thread pins a tree for a statement and is counted in its epoch once, its operations counting nothing meanwhile |
 | D858 | A thread keeps version-checked copies of the leaves it reads often and finds unchanged, and reads them with no latch |
+| D859 | A probe from a key borrows its key and shows the entries from it where they lie, allocating nothing |
 | D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
@@ -15941,6 +15942,28 @@ rows alike. The margin still weighs the probes against the left giving
 some times those rows, and the upper bound the statistics prove is
 kept. A semi join's left plan is not built before its method is chosen,
 and is weighed by the statistics alone, as before.
+
+#### D859. A probe from a key borrows its key and shows the entries from it where they lie, allocating nothing
+
+A probe of a unique key was a scan (D31). A scan keeps its bounds as
+bytes of its own, as it may outlive the call that began it, so each
+probe allocated two keys, and copied the entry it took (D809, D855).
+
+`BLinkTree::first_from` shows a caller the entries at or after a key, in
+key order, until the caller has seen enough (`engine/tree/probe.rs`). The
+key is borrowed. Each entry is shown under its leaf's latch, or from the
+thread's copy of the leaf (D858), its value where it lies and its key
+put together from the node's prefix in a buffer the thread keeps from
+probe to probe. A probe that ends in the leaf it began in, as one of a
+unique key does, allocates nothing once that buffer has grown to a key.
+
+Past a leaf the probe moves right as a scan does (Lehman and Yao 1981,
+§4). It shows of each leaf only the entries past the last key it showed,
+which the buffer holds, so a leaf merged into the next in between shows
+none twice (D814). It is counted as a scan from a key is, a lookup in the
+tree's tally and each leaf read noted for EXPLAIN ANALYZE (D621). The
+caller's function runs under a latch, so it may not use the tree nor
+wait, as a scan's visitor may not (D350).
 
 ## 2. Project layout
 

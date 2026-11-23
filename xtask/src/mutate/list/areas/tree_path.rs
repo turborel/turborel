@@ -1,6 +1,6 @@
 //! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840,
 //! D852, D853, D854, D855, D856, D857,
-//! D858):
+//! D858, D859):
 //! the search over a node's slots, inner copies kept with their headers
 //! parsed, writers that find their leaf from its parent and change it
 //! through the frame they own, under one latch, from the leaf noted for a
@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 20] = [
+pub const TREE_PATH: [Mutation; 21] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -213,5 +213,15 @@ pub const TREE_PATH: [Mutation; 20] = [
         replacement: "        near.misses = 0;\n        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
         integration: &[],
         unit: &["engine::tree::tests::hinted::reads_far_apart_stop_trying_the_leaf_of_the_read_before"],
+    },
+    Mutation {
+        name: "probe-from-the-leafs-first",
+        package: Package::Core,
+        breaks: "a probe shows its leaf's entries from the first, not from its key",
+        file: "src/engine/tree/probe.rs",
+        original: "        leaf.search(key)?.unwrap_or_else(|at| at)",
+        replacement: "        0",
+        integration: &[],
+        unit: &["engine::tree::tests::probed::a_probe_shows_the_entries_from_its_key_until_stopped"],
     },
 ];
