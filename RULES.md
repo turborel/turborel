@@ -562,6 +562,7 @@ verification approach DO-178C expects (§8).
 | D853 | A row read for a write starts at the leaf noted for it, with no descent |
 | D854 | A page held for writing is pinned through its hint under its frame's latch, with no shard locked |
 | D855 | A forward scan copies one entry at its first read, a few at its second, and whole leaves after |
+| D856 | An update of an entry and a delete search, show and change their leaf under one latch |
 
 ### The project
 
@@ -12958,7 +12959,6 @@ kernels of a statement's executor, its filters over batches, groupings
 and sorts; a table's storage keeps the set registered, whatever the
 setting, since a table is opened once for many statements.
 
-
 #### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
 
 The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
@@ -15544,6 +15544,23 @@ EXPLAIN ANALYZE (D621).
 
 A backward scan takes whole leaves, as it finds each leaf by a descent
 and a leaf read again would cost one.
+
+#### D856. An update of an entry and a delete search, show and change their leaf under one latch
+
+A write of one key latches its leaf once (D852). A change that asks its
+caller what to do with the value found (`BLinkTree::update_alone`), which
+every index entry written or removed makes, and a delete still read the
+leaf under its latch held shared, copied the value found, and latched
+the leaf again to change it.
+
+Both now latch the leaf once, exclusively (`engine/tree/write.rs`,
+`BLinkTree::latched_covering`). The caller's change is shown the value
+where it lies, under the latch, and no copy of it is made. A delete
+compares the value expected in place and copies the one it gives back.
+The change is a few instructions that may not use the tree, as before,
+so readers of the leaf wait no longer than for the write itself. A
+change that keeps the entry, or a delete that finds none, has latched
+the leaf exclusively and changed nothing, as a write refused has (D852).
 
 ## 2. Project layout
 

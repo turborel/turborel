@@ -215,8 +215,8 @@ fn a_read_for_a_write_starts_at_the_leaf_noted() {
     assert!(tree.replace_found(&right, &key(k), (&VALUE, &newer)).unwrap());
     assert_eq!(tree.get(&key(k)).unwrap(), Some(newer.to_vec()));
     hints::note(7, hints::NO_LEAF);
-    let hinted = tree.counts().hinted;
+    let before = tree.counts().hinted;
     let (_, descended) = tree.get_for_write(&key(7)).unwrap().unwrap();
-    assert_eq!(tree.counts().hinted, hinted, "no leaf noted");
+    assert_eq!(tree.counts().hinted, before, "no leaf noted");
     assert!(descended.path.stack.last().is_some(), "a descent, its path kept");
 }

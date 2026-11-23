@@ -32,9 +32,8 @@
 
 use std::cmp::Ordering;
 
-use super::hints;
 use super::node::Node;
-use super::{BLinkTree, Path, Target};
+use super::{BLinkTree, Path, Target, hints};
 use crate::error::Result;
 use crate::storage::Near;
 
@@ -142,7 +141,7 @@ impl BLinkTree {
     /// or one right of it within `HOPS` links.
     fn hinted(&self, key: &[u8], stamp: u64, near: &mut Near) -> Result<Option<bool>> {
         let (bytes, at) = (&mut near.bytes, &mut near.at);
-        let Some((leaf, found)) = self.from_noted(key, |node| copied(node, key, (bytes, at)))? else { return Ok(None) };
+        let Some((leaf, found)) = self.at_noted(key, |node| copied(node, key, (bytes, at)))? else { return Ok(None) };
         near.misses = 0;
         near.leaf = Some((leaf, stamp));
         Ok(Some(found))
@@ -152,7 +151,7 @@ impl BLinkTree {
     /// noted for `key`'s row is it, or leads to it within `HOPS` links;
     /// none if the tree is no table's, no leaf is noted, or the one noted
     /// may not be trusted. The caller is in its epoch.
-    pub(super) fn from_noted<R>(&self, key: &[u8], at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<Option<(u64, R)>> {
+    pub(super) fn at_noted<R>(&self, key: &[u8], at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<Option<(u64, R)>> {
         let Some(mut id) = self.row_of(key).and_then(hints::leaf_of) else { return Ok(None) };
         let Some(mut page) = self.pool.read_resident(self.file, id)? else { return Ok(None) };
         for hop in 0..=HOPS {

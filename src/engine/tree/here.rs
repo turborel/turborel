@@ -10,10 +10,16 @@
 //! A leaf that no longer covers the key, split or taken out since its
 //! page was found, is left as it is, and the writer moves right from it
 //! (Lehman and Yao 1981, §5) and tries the leaf it reaches.
+//!
+//! A change that asks its caller what to do with the value found
+//! (`BLinkTree::update_alone`), and a delete, are made the same way
+//! (RULES.md D856): the caller is shown the value where it lies, under
+//! the latch, and copies none.
 
 use super::node::Node;
 use super::write::Mode;
 use super::{BLinkTree, NodeLock, Slot, Split};
+use crate::disk::buffer::PageMut;
 use crate::error::Result;
 
 /// What a write found in the node it looked in.
@@ -60,6 +66,21 @@ fn sought(node: &Node<'_>, key: &[u8], mode: Mode<'_>) -> Result<Sought> {
 }
 
 impl BLinkTree {
+    /// The node covering `key`, latched for writing: `held`, or the node
+    /// reached by moving right from it while it does not cover `key`,
+    /// which `held` then is (§5, move.right).
+    pub(super) fn latched_covering<'a>(&'a self, held: &mut NodeLock<'a>, key: &[u8]) -> Result<PageMut<'a>> {
+        loop {
+            let page = self.pool.write_owned(held)?;
+            let node = Node::parse(&page)?;
+            if !node.deleted && node.covers(key) {
+                return Ok(page);
+            }
+            drop(page);
+            self.move_right(held, key, |_| Ok(()))?;
+        }
+    }
+
     /// Writes `key` with `value` as `mode` says into the node `held`, if
     /// it covers `key`: searched and changed under one latch, split if the
     /// change does not fit.

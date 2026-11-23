@@ -85,16 +85,8 @@ impl BLinkTree {
         }
         let mut held = self.lock(PageId(placed.leaf))?;
         // Searched and changed under one latch, as a write is (`here.rs`).
-        loop {
-            let mut page = self.pool.write_owned(&held)?;
-            let node = Node::parse(&page)?;
-            if node.deleted || !node.covers(key) {
-                drop(page);
-                self.move_right(&mut held, key, |_| Ok(()))?;
-                continue;
-            }
-            let Ok(at) = node.search(key)? else { return Ok(None) };
-            return change(node::value_mut(&mut page, at)?).map(Some);
-        }
+        let mut page = self.latched_covering(&mut held, key)?;
+        let Ok(at) = Node::parse(&page)?.search(key)? else { return Ok(None) };
+        change(node::value_mut(&mut page, at)?).map(Some)
     }
 }

@@ -1,5 +1,6 @@
 //! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840,
-//! D852, D853, D854, D855):
+//! D852, D853, D854, D855, D856, D857,
+//! D858):
 //! the search over a node's slots, inner copies kept with their headers
 //! parsed, writers that find their leaf from its parent and change it
 //! through the frame they own, under one latch, from the leaf noted for a
@@ -12,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 14] = [
+pub const TREE_PATH: [Mutation; 16] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -108,7 +109,7 @@ pub const TREE_PATH: [Mutation; 14] = [
         package: Package::Core,
         breaks: "a row read for a write no longer starts at the leaf noted for it, and descends from the root",
         file: "src/engine/tree/write.rs",
-        original: "        if let Some((leaf, value)) = self.from_noted(key, |leaf| value_of(leaf, key))? {",
+        original: "        if let Some((leaf, value)) = self.at_noted(key, |leaf| value_of(leaf, key))? {",
         replacement: "        if let Some((leaf, value)) = None::<(u64, Option<Vec<u8>>)> {",
         integration: &[],
         unit: &["engine::tree::tests::hinted::a_read_for_a_write_starts_at_the_leaf_noted"],
@@ -152,5 +153,25 @@ pub const TREE_PATH: [Mutation; 14] = [
         replacement: "                    (Taken::Part, Some(_)) => Next::Done,",
         integration: &[],
         unit: &["engine::tree::tests::taken::a_forward_scan_copies_one_entry_then_a_few_then_leaves"],
+    },
+    Mutation {
+        name: "tree-latched-covering",
+        package: Package::Core,
+        breaks: "a change latches the leaf it owns though the key moved right of it with a split, and finds no entry there",
+        file: "src/engine/tree/here.rs",
+        original: "            if !node.deleted && node.covers(key) {",
+        replacement: "            if !node.deleted {",
+        integration: &[],
+        unit: &["engine::tree::tests::placed::a_change_starts_where_the_write_left_the_entry"],
+    },
+    Mutation {
+        name: "tree-delete-uncompared",
+        package: Package::Core,
+        breaks: "a delete of a value expected removes the entry whatever its value",
+        file: "src/engine/tree/write.rs",
+        original: "        if expected.is_some_and(|expected| expected != old) {",
+        replacement: "        if expected.is_none() && old.is_empty() {",
+        integration: &[],
+        unit: &["engine::tree::tests::placed::a_delete_and_an_update_change_the_leaf_covering_their_key"],
     },
 ];
