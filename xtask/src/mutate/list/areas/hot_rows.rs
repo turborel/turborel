@@ -1,6 +1,8 @@
-//! The mutations of rows in demand (RULES.md R-TEST-9, D849, D850, D851):
-//! an increment through a delta table reserved, what its select list shows
-//! guarded and given, and one that shows the sum held; a completion told
+//! The mutations of rows in demand (RULES.md R-TEST-9, D849, D850, D851,
+//! D942): an increment through a delta table reserved, what its select
+//! list shows guarded and given, and one that shows the sum held; an
+//! increment by a whole key reserved by its point change, and what it
+//! shows guarded; a completion told
 //! at the end with no wait for what it rests on, and a rollback that waits
 //! for it; a row whose writer ended taken by a newcomer, and the waiter
 //! overtaken so queued first, the line behind it, its claim firm.
@@ -11,7 +13,7 @@ use super::super::{Mutation, Package};
 const HOLDS: &str = "escrow_delta::an_increment_through_a_final_table_showing_other_columns_holds_no_row";
 
 /// The mutations of rows in demand, in the order they run.
-pub const HOT_ROWS: [Mutation; 9] = [
+pub const HOT_ROWS: [Mutation; 11] = [
     Mutation {
         name: "escrow-delta-refused",
         package: Package::Core,
@@ -101,5 +103,25 @@ pub const HOT_ROWS: [Mutation; 9] = [
         replacement: "            let _ = (&mut from, &mut waits_for);",
         integration: &[],
         unit: &["txn::row_waits::tests::a_waiter_overtaken_once_is_never_overtaken_again"],
+    },
+    Mutation {
+        name: "escrow-point-unreserved",
+        package: Package::Core,
+        breaks: "a point change shows its increment's row and reserves nothing, so the sum is never applied",
+        file: "src/db/write/direct.rs",
+        original: "    if !st.reserve_row(tx, (&w.bound.table, id), (&seen, &added, guarded))? {\n        return Ok(None);\n    }\n",
+        replacement: "    if added.is_empty() && guarded == 0 {\n        return Ok(None);\n    }\n",
+        integration: &["escrow_point::a_payment_by_a_key_gives_what_the_general_path_gives"],
+        unit: &[],
+    },
+    Mutation {
+        name: "escrow-point-unguarded",
+        package: Package::Core,
+        breaks: "a reservation a point change takes guards no column, so what it showed changes under it",
+        file: "src/db/write/direct.rs",
+        original: "    if !st.reserve_row(tx, (&w.bound.table, id), (&seen, &added, guarded))? {\n",
+        replacement: "    if !st.reserve_row(tx, (&w.bound.table, id), (&seen, &added, guarded & 0))? {\n",
+        integration: &["escrow_point::a_reservation_by_a_key_guards_what_it_shows"],
+        unit: &[],
     },
 ];

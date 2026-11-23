@@ -25,7 +25,7 @@ use crate::db::State;
 use crate::disk::encoding::Pipeline;
 use crate::error::{Code, Result, SqlError};
 use crate::index::Index;
-use crate::storage::TableStorage;
+use crate::storage::{COLUMN_BITS, Row, TableStorage, column_bit, unchanged};
 
 /// One index a table's rows have entries in, as a statement's writes find
 /// it: the table's own, or \[EXTENSION\] a global index over a partition,
@@ -80,9 +80,81 @@ pub(crate) struct Writing<'s> {
     pub(super) checked: bool,
     /// Whether it has a system-time period, whose columns a write stamps.
     pub(super) stamped: bool,
+    /// The columns its statement may change, if it said (`setting`):
+    /// every other column an update leaves as it was.
+    set: Option<Set>,
 }
 
-impl Writing<'_> {
+/// \[DESIGN\] The columns a statement said it sets (RULES.md D875), and
+/// what an update that sets no other reads of the row it replaces.
+pub(super) struct Set {
+    /// The columns set, as bits (`storage::column_bit`).
+    mask: u64,
+    /// The columns set, in ascending order, each once: those whose values
+    /// before an update's log record may hold (`record::put_update_of`).
+    pub(super) columns: Vec<usize>,
+    /// The columns read of the row replaced, in ascending order: those
+    /// set, and the key columns of each index whose key reads one set, so
+    /// the key the row had in such an index can be made of them.
+    pub(super) read: Vec<usize>,
+}
+
+/// The columns of `mask`, in ascending order.
+fn columns_of(mask: u64) -> Vec<usize> {
+    (0..COLUMN_BITS).filter(|&c| column_bit(c).is_some_and(|bit| mask & bit != 0)).collect()
+}
+
+/// RULES.md D875: of a statement setting the columns `set`, the columns
+/// an update reads of the row it replaces, as bits: those set, with every
+/// column of each key of `keys`, an index's key columns as bits, that
+/// reads one set. A key reading none set is not read, as its entry is
+/// kept with no value compared.
+fn read_columns(set: u64, keys: impl Iterator<Item = u64>) -> u64 {
+    keys.filter(|key| key & set != 0).fold(set, |read, key| read | key)
+}
+
+impl<'s> Writing<'s> {
+    /// \[DESIGN\] This, of a statement that changes no column but those
+    /// of `set`, a bit a column (`storage::column_bit`). A statement
+    /// setting a column past the last bit has no such mask and says
+    /// nothing (RULES.md D875). What the statement's rows keep of the
+    /// columns it does not set is then known with no row looked at. The
+    /// caller answers for `set`: a column a trigger, a generated column or
+    /// a period's stamp changes is one the statement changes.
+    #[must_use]
+    pub(crate) fn setting(mut self, set: u64) -> Writing<'s> {
+        let read = read_columns(set, self.indexes.iter().map(|entries| entries.columns));
+        self.set = Some(Set { mask: set, columns: columns_of(set), read: columns_of(read) });
+        self
+    }
+
+    /// \[DESIGN\] RULES.md D875: the columns its statement said it sets,
+    /// if an update of its table may read of the row it replaces those of
+    /// `Set::read` alone. That is so where the table's engine keeps
+    /// versions and undoes its own changes. The coordinator then reads the
+    /// row replaced only for its log record, of the columns set, and to
+    /// find the index entries the new version shares (`kept_columns`). An
+    /// engine the coordinator undoes by its log keeps the whole row to put
+    /// back, and one whose index entries the coordinator removes makes
+    /// each index's key of it, so each is given the row whole.
+    pub(super) fn sparse(&self) -> Option<&Set> {
+        let lean = self.caps.undo != Undo::Log && self.caps.concurrency != Concurrency::Coordinator;
+        self.set.as_ref().filter(|_| lean)
+    }
+
+    /// The columns its statement said it sets, in ascending order.
+    pub(super) fn set_columns(&self) -> Option<&[usize]> {
+        self.set.as_ref().map(|set| set.columns.as_slice())
+    }
+
+    /// RULES.md D443, D875: of `row` written over `old`, the columns the
+    /// keys of the table's indexes read that both hold alike. Only those
+    /// the statement sets are compared, the others taken as kept.
+    pub(super) fn kept_columns(&self, old: &Row, row: &Row) -> u64 {
+        let set = self.set.as_ref().map_or(u64::MAX, |set| set.mask);
+        unchanged(old, row, self.key_columns & set) | (self.key_columns & !set)
+    }
+
     /// The table's name.
     pub(crate) fn table(&self) -> &QualifiedName {
         self.name
@@ -130,6 +202,7 @@ impl State {
             indexes,
             checked: !self.catalog.spatial().columns().is_empty() || !self.catalog.partitioning().is_empty(),
             stamped: desc.is_some_and(|desc| desc.period_columns(crate::ast::SYSTEM_TIME).is_some()),
+            set: None,
         })
     }
 }

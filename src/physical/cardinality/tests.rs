@@ -382,29 +382,61 @@ fn a_range_past_the_statistics_is_estimated_by_its_index() {
         grown(&db, &s, (from, 100_i32), true);
     }
     grown(&db, &s, (301_i32, 1_700_i32), false);
-    let past = rows(&s, "SELECT * FROM G WHERE G = 3 AND K >= 1991 AND K < 2001");
+    let past = rows(&s, "SELECT * FROM G WHERE G = 3 AND K >= 1991");
     assert!(near(past, 10.0_f64), "past the pass: {past}");
-    let within = rows(&s, "SELECT * FROM G WHERE G = 3 AND K >= 51 AND K < 61");
+    let within = rows(&s, "SELECT * FROM G WHERE G = 3 AND K >= 251");
     assert!(within > 20.0_f64, "within the pass, left to the statistics: {within}");
     let slotted = slotted_share(&s, 2_001);
     assert!(near(slotted * 20_000.0_f64, 10.0_f64), "a slot less a constant, by its value: {slotted}");
 }
 
-/// The share of X.G's rows that `G = 3 AND K >= ? - 10 AND K < ?` keeps,
-/// capped past the statistics, its slot `value` as an execution gives it.
-fn slotted_share(s: &Session, value: i128) -> f64 {
+/// `G = 3 AND K >= ? - 10 AND K < ?` of X.G, its slot the first.
+fn slotted() -> [Cond; 3] {
     use crate::logical::Slot;
     use crate::value::{ArithOp, DataType, Spelled};
-    let (st, _) = s.optimized("SELECT * FROM G").unwrap();
     let slot = || Expr::Dynamic(Slot { index: 0, data_type: DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, at: 0 });
     let int = |n: i128| Expr::Const(Value::Exact(Decimal::new(n, 0)));
     let low = Expr::Arith(Box::new(slot()), ArithOp::Sub, Box::new(int(10)));
-    let conds = [
+    [
         Cond::Compare(Expr::Column(0), CompOp::Eq, int(3)),
         Cond::Compare(Expr::Column(1), CompOp::Ge, low),
         Cond::Compare(Expr::Column(1), CompOp::Lt, slot()),
-    ];
+    ]
+}
+
+/// The share of X.G's rows `slotted` keeps, capped past the statistics,
+/// its slot `value` as an execution gives it.
+fn slotted_share(s: &Session, value: i128) -> f64 {
+    let (st, _) = s.optimized("SELECT * FROM G").unwrap();
     let table = QualifiedName { auth: "X".into(), ident: "G".into() };
     let values = [Value::Exact(Decimal::new(value, 0))];
-    crate::physical::estimate::valued(Some(&values), || Estimates::new(&st).past_capped(&table, &conds, 1.0_f64))
+    crate::physical::estimate::valued(Some(&values), || Estimates::new(&st).past_capped(&table, &slotted(), 1.0_f64))
+}
+
+/// Verifies: [DESIGN] RULES.md D892: with no values at hand, a range
+/// between a slot less ten and the slot, its index's first column held
+/// equal, keeps at most ten values' rows of the key under that column,
+/// as the pass saw them, not the rows written since; the cap of a range
+/// past the statistics has no range to ask without them.
+///
+/// Regression test (R-TEST-7): a stock level's plan made with no values
+/// estimated its lines at about 1,100 rows, five times them, and hashed
+/// a read of the whole of STOCK.
+#[test]
+fn a_range_of_a_slot_is_estimated_by_its_width() {
+    let db = Database::new();
+    db.set_job_policy(crate::threads::JobPolicy::Manual).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE G (G INTEGER NOT NULL, K INTEGER NOT NULL, PRIMARY KEY (G, K))").unwrap();
+    let s = db.session("X");
+    for from in [1_i32, 101_i32, 201_i32] {
+        grown(&db, &s, (from, 100_i32), true);
+    }
+    grown(&db, &s, (301_i32, 1_700_i32), false);
+    let (st, _) = s.optimized("SELECT * FROM G").unwrap();
+    let table = QualifiedName { auth: "X".into(), ident: "G".into() };
+    let estimates = Estimates::new(&st);
+    let past = estimates.past_capped(&table, &slotted(), 1.0_f64);
+    assert!((past - 1.0_f64).abs() < f64::EPSILON, "no range to ask: {past}");
+    let wide = estimates.width_capped(&table, &slotted(), 1.0_f64);
+    assert!(near(wide * 20_000.0_f64, 10.0_f64), "ten values of K under G: {wide}");
 }

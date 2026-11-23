@@ -11,8 +11,8 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
-use crate::log::record::{put_delete_record, put_update_record};
-use crate::storage::{Row, RowId, unchanged};
+use crate::log::record::{put_delete_record, put_update_record, put_update_record_of};
+use crate::storage::{Row, RowId};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
 use escrowed::Guarded;
@@ -32,6 +32,18 @@ enum Next {
     /// Rechecks its search condition over the row's newest committed
     /// version, of this stamp, none if deleted.
     Over(Timestamp, Option<Row>),
+}
+
+/// How a row's change is made.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum How {
+    /// As its statement gives it, the row replaced read whole.
+    Whole,
+    /// Applying the increments reserved on the row (RULES.md D452).
+    Fold,
+    /// By a statement that said the columns it sets, which reads no other
+    /// of the row replaced (RULES.md D875).
+    Set,
 }
 
 impl State {
@@ -64,7 +76,7 @@ impl State {
 
     /// As `update_row`, of a row of the table of `writing` (RULES.md D872).
     pub(crate) fn update_row_in(&self, tx: &Txn, writing: &Writing<'_>, id: RowId, row: &Row) -> Result<()> {
-        self.change_row(tx, (writing, id), (Write::Update(Cow::Borrowed(row)), false), None).map(|_| ())
+        self.change_row(tx, (writing, id), (Write::Update(Cow::Borrowed(row)), How::Whole), None).map(|_| ())
     }
 
     /// [X3.135-1986 §8.4, §8.5] Deletes row `id`, as `update_row` replaces it.
@@ -74,7 +86,7 @@ impl State {
 
     /// As `delete_row`, of a row of the table of `writing` (RULES.md D872).
     pub(crate) fn delete_row_in(&self, tx: &Txn, writing: &Writing<'_>, id: RowId) -> Result<()> {
-        self.change_row(tx, (writing, id), (Write::Delete, false), None).map(|_| ())
+        self.change_row(tx, (writing, id), (Write::Delete, How::Whole), None).map(|_| ())
     }
 
     /// As `update_row` with `row`, or `delete_row` with none; of a row
@@ -101,7 +113,23 @@ impl State {
         recheck: Recheck<'_>,
     ) -> Result<Option<Row>> {
         let write = row.map_or(Write::Delete, |row| Write::Update(Cow::Borrowed(row)));
-        self.change_row(tx, (writing, id), (write, false), Some(recheck))
+        self.change_row(tx, (writing, id), (write, How::Whole), Some(recheck))
+    }
+
+    /// \[DESIGN\] As `rewrite_row_in` with `row`, of a statement that told
+    /// `writing` the columns it sets (`Writing::setting`), and reads of the
+    /// row replaced none but those `writing` reads (RULES.md D875). The
+    /// row replaced holds those columns, and null in every other where its
+    /// table's engine read them alone (`Writing::sparse`). It is the whole
+    /// row where the write was made over a version rechecked.
+    pub(crate) fn rewrite_row_set(
+        &self,
+        tx: &Txn,
+        (writing, id): (&Writing<'_>, RowId),
+        row: &Row,
+        recheck: Recheck<'_>,
+    ) -> Result<Option<Row>> {
+        self.change_row(tx, (writing, id), (Write::Update(Cow::Borrowed(row)), How::Set), Some(recheck))
     }
 
     /// \[DESIGN\] As `rewrite_row` with `row`, the increments reserved on
@@ -109,7 +137,7 @@ impl State {
     /// kept waiting by the reservations of others, whose increments add to
     /// the same columns as its own and are applied over it.
     pub(crate) fn fold_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), row: &Row, recheck: Recheck<'_>) -> Result<Option<Row>> {
-        self.change_row(tx, (&self.writing(table)?, id), (Write::Update(Cow::Borrowed(row)), true), Some(recheck))
+        self.change_row(tx, (&self.writing(table)?, id), (Write::Update(Cow::Borrowed(row)), How::Fold), Some(recheck))
     }
 
     /// `write` of row `id`, tried again as long as another transaction's
@@ -121,7 +149,7 @@ impl State {
         &self,
         tx: &Txn,
         (writing, id): (&Writing<'_>, RowId),
-        (mut write, fold): (Write<'_>, bool),
+        (mut write, how): (Write<'_>, How),
         mut recheck: Option<Recheck<'_>>,
     ) -> Result<Option<Row>> {
         let table = writing.table();
@@ -141,11 +169,11 @@ impl State {
             let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
-                Self::write_once(tx, (writing, id), (&write, stamp.as_ref()), seen.as_ref())
+                Self::write_once(tx, (writing, id), (&write, stamp.as_ref(), how == How::Set), seen.as_ref())
             };
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
-            let attempt = match Self::unreserved(tx, (writing, id), (&write, fold), (&mut turn, write_once))? {
+            let attempt = match Self::unreserved(tx, (writing, id), (&write, how == How::Fold), (&mut turn, write_once))? {
                 Guarded::Written(attempt) => attempt,
                 Guarded::Waited => continue,
             };
@@ -277,13 +305,19 @@ impl State {
     /// its index entries and what undoes it: the row it replaced, and the
     /// history it is kept in, if `stamp`, of the table's system-time
     /// period, says it is [ISO/IEC 9075-2:2023 §15.14 GR10a iii].
+    ///
+    /// \[DESIGN\] RULES.md D875: of a statement that `set`, said the
+    /// columns it sets, the row replaced is read by those `writing` reads
+    /// alone where its engine allows (`Writing::sparse`), and its record
+    /// is made of the columns set, never of the row replaced whole.
     fn write_once(
         tx: &Txn,
         (writing, id): (&Writing<'_>, RowId),
-        (write, system): (&Write<'_>, Option<&Stamp>),
+        (write, system, set): (&Write<'_>, Option<&Stamp>, bool),
         seen: Option<&(Timestamp, Row)>,
     ) -> Result<(Row, Option<QualifiedName>)> {
         let (table, storage) = (writing.table(), writing.storage);
+        let sparse = if set { writing.sparse() } else { None };
         // Borrowed: the engine encodes it, and the caller keeps it for its
         // index entries and its log record, with no copy made (RULES.md D417).
         let new = match write {
@@ -304,10 +338,14 @@ impl State {
                 let history = Self::history_of(system, &row)?;
                 (storage.replace(tx.id, id, new)?, history)
             }
-            (None, None) => (storage.replace(tx.id, id, new)?, None),
+            (None, None) => match sparse {
+                Some(sparse) => (storage.replace_set(tx.id, id, new, &sparse.read)?, None),
+                None => (storage.replace(tx.id, id, new)?, None),
+            },
         };
+        let set = if set { writing.set_columns() } else { None };
         match write {
-            Write::Update(row) => Self::updated(tx, (writing, id), (&old, row))?,
+            Write::Update(row) => Self::updated(tx, (writing, id), (&old, row), set)?,
             Write::Delete => Self::deleted(tx, writing, id, &old)?,
         }
         Ok((old, history))
@@ -324,14 +362,22 @@ impl State {
     }
 
     /// Of row `id` of the table of `writing` made `row` from `old`: what
-    /// undoes it, its log record and its index entries.
-    fn updated(tx: &Txn, (writing, id): (&Writing<'_>, RowId), (old, row): (&Row, &Row)) -> Result<()> {
+    /// undoes it, its log record and its index entries. Of a statement
+    /// that said the columns it sets, `set`, `old` may hold the columns
+    /// `writing` reads alone (RULES.md D875): its record is then made of
+    /// the columns set, the bytes a record of the rows whole would be, and
+    /// its index entries are found by `Writing::kept_columns`, which reads
+    /// no column the statement does not set.
+    fn updated(tx: &Txn, (writing, id): (&Writing<'_>, RowId), (old, row): (&Row, &Row), set: Option<&[usize]>) -> Result<()> {
         let (table, caps) = (writing.table(), writing.caps);
         if caps.undo == Undo::Log {
             tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(writing.storage), id, old: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            Self::log_row(tx, (writing, id), |out, generation| put_update_record(out, tx.id, (table, generation), id, (old, row)))?;
+            Self::log_row(tx, (writing, id), |out, generation| match set {
+                Some(set) => put_update_record_of(out, tx.id, (table, generation), id, (old, row, set)),
+                None => put_update_record(out, tx.id, (table, generation), id, (old, row)),
+            })?;
         }
         // An engine keeping versions keeps the old version's entries for
         // the readers that still see it, until the version is removed
@@ -362,7 +408,7 @@ impl State {
     /// from `old` by `tx`, the columns both hold alike of those its indexes
     /// read, noted by its storage on the change; those it noted.
     fn keep_entries(tx: &Txn, (writing, id): (&Writing<'_>, RowId), (old, row): (&Row, &Row)) -> u64 {
-        match unchanged(old, row, writing.key_columns) {
+        match writing.kept_columns(old, row) {
             0 => 0,
             kept => writing.storage.keep_entries(tx.id, id, kept),
         }

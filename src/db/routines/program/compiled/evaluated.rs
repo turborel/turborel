@@ -14,7 +14,7 @@ use crate::ast::ParameterSpecification;
 use crate::db::{Completion, assign_targets};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::exec::{Framed, Host, RangeAt, assign_target, eval, item_text, raised};
-use crate::logical::Target;
+use crate::logical::{Expr, Target};
 use crate::storage::Row;
 use crate::value::Value;
 
@@ -35,6 +35,14 @@ impl Exec<'_> {
     /// The value of `v`: of the first column of its row, the null value if
     /// it has none.
     pub(super) fn value(&self, v: &Valued) -> Result<Value> {
+        // A row of one value read straight over the frame is that value,
+        // with no row made of it (RULES.md D913).
+        if let Valued::Row(r) = v
+            && let Some(([only], frame)) = self.direct(r)
+        {
+            let framed = Framed { inner: &self.hosted, frame, outer: &[] };
+            return eval(only, &Row::new(), &framed).map_err(|e| e.or_at(r.at));
+        }
         Ok(self.rows(v, Some(1))?.into_iter().next().and_then(|r| r.into_iter().next()).unwrap_or(Value::Null))
     }
 
@@ -44,14 +52,27 @@ impl Exec<'_> {
     }
 
     /// The values the leaf's outer expressions `outer` take over the frame.
-    fn outer_values(&self, outer: &[crate::logical::Expr]) -> Result<Vec<Value>> {
+    fn outer_values(&self, outer: &[Expr]) -> Result<Vec<Value>> {
         let framed = Framed { inner: &self.hosted, frame: self.frame.dynamic_values(), outer: &[] };
         let none = Row::new();
         outer.iter().map(|e| eval(e, &none, &framed)).collect()
     }
 
+    /// The row of `r` written over the frame's slots and the frame, if it
+    /// has one and each slot it reads holds a value of its type now
+    /// (RULES.md D913).
+    fn direct<'r>(&'r self, r: &'r RowOf) -> Option<(&'r [Expr], &'r [Value])> {
+        let frame = self.frame.dynamic_values();
+        r.direct.as_ref().filter(|d| d.holds(frame)).map(|d| (d.row.as_slice(), frame))
+    }
+
     /// The row of values `r`, evaluated where it is.
-    fn row_of(&self, r: &RowOf) -> Result<Row> {
+    pub(super) fn row_of(&self, r: &RowOf) -> Result<Row> {
+        if let Some((row, frame)) = self.direct(r) {
+            let framed = Framed { inner: &self.hosted, frame, outer: &[] };
+            let none = Row::new();
+            return row.iter().map(|e| eval(e, &none, &framed)).collect::<Result<Row>>().map_err(|e| e.or_at(r.at));
+        }
         let evaluated = || {
             let outer = self.outer_values(&r.outer)?;
             let framed = Framed { inner: &self.hosted, frame: self.frame.dynamic_values(), outer: &outer };
@@ -118,6 +139,11 @@ impl Exec<'_> {
     /// SQLSTATE 21000 if its subquery gives more than one row; the store
     /// assignment's.
     pub(super) fn assignment(&mut self, a: &Assign) -> Result<Completion> {
+        if let Some(append) = &a.append
+            && let Some(done) = self.appended(a, append)?
+        {
+            return Ok(done);
+        }
         let row = match &a.source {
             None => vec![Value::Null; a.targets.len()],
             Some(Valued::Row(r)) => self.row_of(r)?,

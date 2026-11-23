@@ -54,7 +54,7 @@ mod window;
 mod work;
 
 pub(crate) use batch::storage_counted;
-pub(crate) use point::{PointRead, point_operations};
+pub(crate) use point::{AsIs, PointRead, point_operations};
 pub(crate) use range::{At as RangeAt, RangeRead};
 
 use crate::db::State;

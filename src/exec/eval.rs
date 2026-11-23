@@ -10,7 +10,7 @@ use crate::logical::{Cond, DomainChecks, Expr, Quantifier, Slot, Subquery, Truth
 use crate::spill::norm_row;
 use crate::storage::Row;
 use crate::value::types::rows_hold;
-use crate::value::{CompOp, Value, arith, cast_warned, compare, distinct, proxies, row_proxies};
+use crate::value::{CompOp, Value, arith, cast_warned, compare, distinct, held, proxies, row_proxies};
 
 mod called;
 #[cfg(test)]
@@ -18,7 +18,7 @@ mod calls;
 mod compared;
 mod context;
 
-use called::{argument, called, called_warned};
+use called::{argument, called, called_warned, operand};
 
 /// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
 /// by the `Warnings` it holds: a session's, or the optimizer's own, to
@@ -63,7 +63,7 @@ pub fn eval(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
     match e {
         Expr::Column(i) => column(row, *i).cloned(),
         Expr::Const(v) => Ok(v.clone()),
-        Expr::Arith(a, op, b) => arith(*op, &eval(a, row, subqueries)?, &eval(b, row, subqueries)?),
+        Expr::Arith(a, op, b) => arith(*op, &*operand(a, row, subqueries)?, &*operand(b, row, subqueries)?),
         Expr::Neg(_)
         | Expr::Call(..)
         | Expr::Outer(..)
@@ -87,6 +87,11 @@ fn slot_value(slot: &Slot, subqueries: &dyn Subqueries) -> Result<Value> {
     let Some(value) = subqueries.slot(slot.index) else {
         return Err(broken(&format!("<dynamic parameter specification> {} has no value", slot.index.saturating_add(1))));
     };
+    // [DESIGN] RULES.md D910: a value of the slot's type already is what
+    // its cast gives, so none is made.
+    if held(value, &slot.data_type) {
+        return Ok(value.clone());
+    }
     let (v, warning) = cast_warned(value.clone(), &slot.data_type).map_err(|e| e.or_at(slot.at))?;
     if let Some(state) = warning {
         warn(subqueries, state);
@@ -145,12 +150,12 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
         // [ISO/IEC 9075:1992 §7.11 GR1, §6.11 GR2] the value of its one row, null
         // if it has no row.
         Expr::Subquery(s, at) => {
-            let rows = subqueries.rows(s, &outer_values(s, row, subqueries)?, Some(2))?.first(2)?;
-            match rows.as_slice() {
+            // Read where its rows are held, none copied (RULES.md D900).
+            subqueries.rows(s, &outer_values(s, row, subqueries)?, Some(2))?.of_first(2, |rows| match rows {
                 [] => Ok(Value::Null),
                 [one] => one.get(*at).cloned().ok_or_else(|| broken("a subquery gave a row shorter than its degree")),
                 _ => fail(Code::Cardinality, "[ISO/IEC 9075:1992 §7.11 GR1] a <scalar subquery> or <row subquery> gives more than one row"),
-            }
+            })
         }
     }
 }

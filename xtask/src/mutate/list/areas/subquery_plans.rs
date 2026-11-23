@@ -67,7 +67,7 @@ pub const SUBQUERY_PLANS: [Mutation; 9] = [
         package: Package::Core,
         breaks: "a plan learned is not kept, so each run is planned",
         file: PLANNED,
-        original: "        Learned::Kept(plan) => Planned::Kept(slotted, plan),",
+        original: "        Learned::Kept(plan) => KeptRun::of(*slotted, *plan),",
         replacement: "        Learned::Kept(_) => Planned::Varies,",
         integration: &[],
         unit: &[KEPT],
