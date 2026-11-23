@@ -1,6 +1,6 @@
 //! Unit tests of the undo store's batches: versions read wherever their
 //! batch is, the log truncated by batch, and a batch that cannot be
-//! written; a truncation racing an append; batches fitted to a page; and
+//! written; a truncation racing an append, alone or in batches; batches fitted to a page; and
 //! batches written kept in memory within the budget's share, past it read
 //! from the log, read on many threads; on the log of `hooked.rs`.
 
@@ -101,6 +101,43 @@ fn a_version_appended_while_the_store_is_truncated_is_kept() {
     store.truncate().unwrap();
     let taken = lock_builtin(&appended).take();
     let at = taken.unwrap_or_else(|| store.append(&version(1)).unwrap());
+    assert_eq!(store.read(at).unwrap().to_vec(), version(1), "pinned, so kept");
+    assert_eq!(store.read(first).err().map(|e| e.code), Some(Code::Corrupt), "released, so gone");
+}
+
+/// Verifies: [DESIGN] RULES.md D31: in a batched store, a batch appended
+/// and written while the store is truncated, with nothing pinned, is
+/// kept: the log's end the truncation goes to is read under the batches'
+/// lock, where no batch can be taken and written between it and the pins.
+///
+/// Regression test (R-TEST-7): the end was read once that lock was let
+/// go, so a batch written in between was before it, and removed; a reader
+/// of a version pinned in it could not find it (SQLCODE -916), as readers
+/// on many threads found on CI.
+#[test]
+fn a_batch_appended_while_the_batched_store_is_truncated_is_kept() {
+    let log = Arc::new(Hooked::default());
+    let store = Arc::new(UndoStore::batched(shared(&log), 1));
+    let first = store.append(&version(0)).unwrap();
+    store.release(first);
+    let meddler = Arc::clone(&store);
+    let (tell, told) = std::sync::mpsc::channel();
+    let appender = Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&appender);
+    *lock_builtin(&log.on_end) = Some(Box::new(move || {
+        // Where the race would fall: an append on another thread, done
+        // at once if the batches' lock is free, else once it is.
+        let writer = std::thread::spawn(move || {
+            let at = meddler.append(&version(1)).unwrap();
+            let _ = tell.send(());
+            at
+        });
+        let _ = told.recv_timeout(std::time::Duration::from_millis(300));
+        *lock_builtin(&slot) = Some(writer);
+    }));
+    store.truncate().unwrap();
+    let writer = lock_builtin(&appender).take().unwrap();
+    let at = writer.join().unwrap();
     assert_eq!(store.read(at).unwrap().to_vec(), version(1), "pinned, so kept");
     assert_eq!(store.read(first).err().map(|e| e.code), Some(Code::Corrupt), "released, so gone");
 }

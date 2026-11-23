@@ -309,7 +309,11 @@ impl UndoStore {
     /// each being written, the log's end as it was taken, as its record may
     /// be in the log already, not yet recorded as written; and no later
     /// than the log's end. The pins are read under the batches' lock, which
-    /// an append holds over its pin, so no batch gains a pin meanwhile.
+    /// an append holds over its pin, so no batch gains a pin meanwhile; and
+    /// so is the log's end, which a batch taken to be written once the lock
+    /// is let go writes its record at or past. Read after, the end could be
+    /// past such a record, and the truncation remove a batch a reader
+    /// still has pinned, as `alone_before` says of a version alone.
     fn batches_before(&self) -> Lsn {
         let (least, gone) = {
             let mut batches = lock_builtin(&self.batches);
@@ -325,10 +329,11 @@ impl UndoStore {
             batches.first = batches.first.max(needed);
             lock_builtin(&self.read).retain(|r| r.number >= needed);
             let floors = batches.writing.values().min().copied();
-            (batches.places.first().copied().into_iter().chain(floors).min(), gone)
+            let end = self.log.end();
+            (batches.places.first().copied().into_iter().chain(floors).min().map_or(end, |least| least.min(end)), gone)
         };
         drop(gone);
-        least.map_or_else(|| self.log.end(), |least| least.min(self.log.end()))
+        least
     }
 
     /// How many positions are pinned: for tests and statistics.
