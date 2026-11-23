@@ -558,6 +558,7 @@ verification approach DO-178C expects (§8).
 | D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
+| D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 
 ### The project
 
@@ -14436,6 +14437,8 @@ holds one (`mvcc/status.rs`). The latest snapshot and the horizon the
 statuses keep are each alone on their lines, so raising one moves no
 line a commit reads the slots by.
 
+D870 does the same for the lists a commit makes in a table it wrote.
+
 #### D784. A table's open transactions are kept in shards, by id, each alone on its cache lines
 
 A table kept the bookkeeping of the transactions open in it in one map
@@ -15448,6 +15451,33 @@ for a row, and its wait is bounded as before but for that one write.
 A waiter does not spin. The waits measured were long where no core was
 free, and a spinning waiter would take a core from the thread it waits
 for.
+
+#### D870. A commit takes a table's shared lists and the work areas only for what it left there
+
+A transaction validated, committed and settled in every table it had
+joined, whatever it did there. In a table it only read below
+SERIALIZABLE it still took the lock of the table's validated
+transactions and was kept among them, though with no change and no read
+recorded nothing can be ordered against it (D448), and it took the lock
+of the queue of commits to stamp, which it copied into two new lists to
+find it had none. A table every transaction reads, as a catalogue of
+items is, had every commit queue on those two locks. In a table it
+wrote, it took the store's work areas three more times (D783 covers the
+first): for the list of rows to stamp, for the garbage of each segment
+of its changes, one a statement, and for the rows a stamp left. Each is
+a read of the store's lock and a copy of an `Arc` every session shares.
+
+So a transaction with no change and no recorded read in a table is not
+validated there (`mvcc/commit.rs`). The queue of commits to stamp is
+counted under its lock, and a settle that finds the count at zero takes
+no lock; one that takes it moves its own commits out and allocates
+nothing for the rest (`mvcc/stamps.rs`). A list whose every item is
+known to fit the bytes held (TRANSACTIONS.HELD_BYTES) is made with no
+work areas, as it never spills (`Versions::space_within`). Those are
+the rows to stamp, the rows a stamp leaves, and the garbage of a commit
+together with the deletions its stamping may file. A commit's garbage is filed
+once, or each time it passes the bytes held, not once a statement. A
+list that may pass the bytes held is made as before.
 
 ## 2. Project layout
 

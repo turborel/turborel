@@ -2,15 +2,19 @@
 //! (RULES.md R-TEST-9, D782-D784): a value alone on its lines, a reader's
 //! commit taking no lock of the statuses' map, and a table's open
 //! transactions in shards; a transaction's id on its thread's stripe, and
-//! its session's kept origin replaced as its setting changes (D844).
+//! its session's kept origin replaced as its setting changes (D844); and a
+//! commit taking a table's shared lists only for what it left there (D870).
 
 use super::super::{Mutation, Package};
 
 /// The open transactions' file.
 const OPENS: &str = "src/engine/rows/mvcc/opens.rs";
 
+/// The test of a transaction that left nothing in a table.
+const NOTHING_LEFT: &str = "engine::rows::mvcc::stamps::tests::a_transaction_that_left_nothing_takes_no_lock_of_the_table";
+
 /// The shared lines' mutations, in the order they run.
-pub const SHARED_LINES: [Mutation; 6] = [
+pub const SHARED_LINES: [Mutation; 9] = [
     Mutation {
         name: "alone-unaligned",
         package: Package::Core,
@@ -70,5 +74,35 @@ pub const SHARED_LINES: [Mutation; 6] = [
         replacement: "            areas && s.types.same(&self.types)",
         integration: &["transaction_memory::a_sessions_work_memory_is_its_next_transactions"],
         unit: &[],
+    },
+    Mutation {
+        name: "validated-kept-for-nothing",
+        package: Package::Core,
+        breaks: "a transaction that neither changed nor read a table takes the lock of its validated transactions and is kept among them (D870)",
+        file: "src/engine/rows/mvcc/commit.rs",
+        original: "            if open.changes.is_empty() && !open.reads.any() {\n                return Ok(());\n            }\n",
+        replacement: "",
+        integration: &[],
+        unit: &[NOTHING_LEFT],
+    },
+    Mutation {
+        name: "settle-locks-an-empty-queue",
+        package: Package::Core,
+        breaks: "a settle of a table with no commit queued takes the queue's lock, which every commit of the table takes (D870)",
+        file: "src/engine/rows/mvcc/stamps.rs",
+        original: "        if self.versions.queued.load(Ordering::SeqCst) == 0 {\n            return;\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &[NOTHING_LEFT],
+    },
+    Mutation {
+        name: "small-lists-take-work-areas",
+        package: Package::Core,
+        breaks: "a commit within the bytes held takes the store's work areas for lists that never spill (D870)",
+        file: "src/engine/rows/mvcc.rs",
+        original: "if bytes <= self.held() { ListSpace::default() } else { self.space() }",
+        replacement: "if bytes < self.held().min(0) { ListSpace::default() } else { self.space() }",
+        integration: &[],
+        unit: &["engine::rows::mvcc::stamps::tests::a_commit_within_the_bytes_held_takes_no_work_areas"],
     },
 ];

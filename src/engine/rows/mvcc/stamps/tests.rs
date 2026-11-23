@@ -101,3 +101,83 @@ fn a_commit_stamps_its_rows_where_their_writes_left_them() {
     assert_eq!(value(&table, 11, ids[3]), None, "the deletion committed");
     assert_eq!(value(&table, 11, ids[599]).as_deref(), Some("many "));
 }
+
+/// Whether `work`, run on a thread of its own, returns within five
+/// seconds: not if it waits on a lock the test holds.
+fn returns(work: impl FnOnce() + Send + 'static) -> bool {
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        work();
+        done.send(()).unwrap();
+    });
+    finished.recv_timeout(std::time::Duration::from_secs(5)).is_ok()
+}
+
+/// Verifies: [DESIGN] RULES.md D870: a commit whose rows to stamp and
+/// garbage are within the bytes held makes its lists with no work areas,
+/// so it commits and settles though another holds the store's work areas.
+#[test]
+fn a_commit_within_the_bytes_held_takes_no_work_areas() {
+    let scratch = Scratch::new("unit-stamps-no-areas");
+    let (files, table, id) = table(&scratch);
+    let table = Arc::new(table);
+    table.begin(10, 9).unwrap();
+    table.update(10, id, vec![Value::Char("new  ".into())]).unwrap();
+    let extra = table.insert(10, vec![Value::Char("more ".into())]).unwrap();
+    table.delete(10, extra).unwrap();
+    let held = files.work.write().unwrap();
+    let committing = Arc::clone(&table);
+    let returned = returns(move || {
+        committing.commit(10, 10);
+        committing.settle(10);
+    });
+    drop(held);
+    assert!(returned, "the commit waited on the work areas");
+    assert_eq!(maker(&table, id), Maker::Committed(10));
+    assert!(table.awaits_collection(), "its garbage is filed");
+}
+
+/// Verifies: [DESIGN] RULES.md D448, D870: a transaction that changed
+/// nothing in a table and recorded no read there validates, commits and
+/// settles though another holds the table's validated transactions and its
+/// queue of commits to stamp, and is not kept among the validated. MC/DC
+/// of keeping it: (no change, no read) not kept, against (change, no read)
+/// and (no change, read), each kept.
+#[test]
+fn a_transaction_that_left_nothing_takes_no_lock_of_the_table() {
+    let scratch = Scratch::new("unit-stamps-nothing-left");
+    let (_files, table, id) = table(&scratch);
+    let table = Arc::new(table);
+    let unchecked = crate::txn::ReadMode { snapshot: 9, checked: false };
+    table.begin(10, 9).unwrap();
+    table.read_mode(10, unchecked).unwrap();
+    assert_eq!(value(&table, 10, id).as_deref(), Some("old  "));
+    let (validated, unstamped) = (table.versions.validated.lock().unwrap(), table.versions.unstamped.lock().unwrap());
+    let ending = Arc::clone(&table);
+    let returned = returns(move || {
+        ending.validate(10, 10).unwrap();
+        ending.commit(10, 10);
+        ending.settle(10);
+    });
+    drop((validated, unstamped));
+    assert!(returned, "its end waited on a lock of the table");
+    assert!(table.versions.validated.lock().unwrap().is_empty(), "nothing read or changed is not kept");
+    // A change with no read is kept.
+    table.begin(11, 10).unwrap();
+    table.read_mode(11, unchecked).unwrap();
+    table.update(11, id, vec![Value::Char("new  ".into())]).unwrap();
+    table.validate(11, 11).unwrap();
+    assert!(!table.versions.validated.lock().unwrap().is_empty(), "a change is kept");
+    table.commit(11, 11);
+    assert_eq!(table.versions.queued.load(std::sync::atomic::Ordering::SeqCst), 1, "its commit is queued to stamp");
+    table.settle(11);
+    assert_eq!(table.versions.queued.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(maker(&table, id), Maker::Committed(11));
+    table.gc(12, &mut |_, _, _| true).unwrap();
+    assert!(table.versions.validated.lock().unwrap().is_empty(), "collected past the horizon");
+    // A read with no change is kept.
+    table.begin(12, 11).unwrap();
+    assert_eq!(value(&table, 12, id).as_deref(), Some("new  "));
+    table.validate(12, 12).unwrap();
+    assert!(!table.versions.validated.lock().unwrap().is_empty(), "a read recorded is kept");
+}
