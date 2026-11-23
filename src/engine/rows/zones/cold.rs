@@ -8,8 +8,9 @@
 //! A cold table has no zone, so every block of its row ids is read and
 //! none of its rows counts as visible to every reader: a zone is never
 //! narrower than its rows, as one not known is not. The first scan whose
-//! conditions read a column kept, the first read that asks whether a row
-//! is visible to all, and the first count warm the table. Warming makes a
+//! conditions read a column kept, the first plan that weighs an index-only
+//! read of the table or read that asks whether a row is visible to all,
+//! and the first count warm the table. Warming makes a
 //! zone not known for every block of row ids given so far, to be summed
 //! up by the maintenance thread as a table opened has its zones summed
 //! up, and from then on every write keeps its zone as before. A table

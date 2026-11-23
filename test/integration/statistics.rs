@@ -407,6 +407,11 @@ fn a_filters_estimate_is_no_more_than_its_scan_reads() {
     }
     s.commit().unwrap();
     let sql = "SELECT K FROM L WHERE C LIKE '0001234%'";
+    // A table keeps zones from the first scan told a condition (RULES.md
+    // D868): read once, then its zones summed up.
+    assert_eq!(rows(&s, sql).map(|found| found.len()), Ok(10));
+    s.commit().unwrap();
+    db.maintain().unwrap();
     let est = kept(&s, sql).unwrap();
     assert!(est <= 2048.0_f64, "at most the rows of the zones read: {est}");
     let found = rows(&s, sql).unwrap();

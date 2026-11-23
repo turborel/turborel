@@ -87,6 +87,9 @@ impl Zones {
     /// The share of the zones visible to every reader, of `SAMPLED` at
     /// most, evenly apart; none of no zone.
     pub(in crate::engine::rows) fn visible_share(&self) -> f64 {
+        // Asked by a plan weighing an index-only read: kept from now on
+        // (`zones/cold.rs`).
+        self.warm();
         let zones = self.slots.len();
         let step = zones.div_ceil(SAMPLED).max(1);
         let (mut all, mut seen) = (0_u32, 0_u32);
