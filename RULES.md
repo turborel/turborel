@@ -573,6 +573,7 @@ verification approach DO-178C expects (§8).
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
 | D868 | A table's zones are kept cold until a scan or a read asks them |
+| D869 | A read by row id decodes the row where it lies in its leaf |
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 | D872 | A statement's writes of a table resolve it once |
@@ -16111,15 +16112,20 @@ scan reads every block of its row ids and no row of it counts as
 visible to every reader (D34): an index-only scan reads the row, which
 is always right. No zone is narrower than its rows, as none is there.
 
-The first scan told a condition of a column kept, the first read that
-asks whether a row is visible to all, and the first count of its rows warm
-the table. Warming makes a zone not known for every block of row ids
+The first scan told a condition of a column kept, the first plan that
+weighs an index-only read of the table (`visible_share`), the first read
+that asks whether a row is visible to all, and the first count of its
+rows warm the table. Warming makes a zone not known for every block of row ids
 given so far, and the maintenance thread sums them up as it does a
 table's opened (D770, D771). Until a zone is summed up it prunes
 nothing. From the warming on, every write keeps its zone as before, and
 a zone made for row ids given after it is known from its first row. A
 table stays warm while it is open. The planner's question of the share
-a scan reads (`scan_share`) does not warm a table, and is answered all.
+a scan reads (`scan_share`) does not warm a table, and is answered all:
+it is asked of every table a condition is planned for, an order entry's
+read by key among them. So a scan is priced by its zones only once one
+has run, and an index-only read is chosen only once the table was asked
+and its zones settled.
 
 A write that found the table cold had its row in the tree, and its id
 given, before it looked. Warming sets the table warm and then reads the
@@ -16141,6 +16147,25 @@ longer has every table's zones summed up behind it. Opening cold a
 table whose zones were saved would leave zones on its pages that no
 write keeps, for a later opening to trust. A table of the column store
 is warm from its first row, as its scans read its tree by zone.
+
+#### D869. A read by row id decodes the row where it lies in its leaf
+
+A read by row id copied the row's newest version out of its leaf into
+the bytes its caller keeps (`Near`), then checked the version and decoded
+the copy. Every row read by key was copied once before a value of it was
+made.
+
+The tree now shows the version to the read where it lies (D863), and
+the read decodes it there (`rows/scan.rs`), whole, by its columns, or
+its columns listed (D862). It does so for a version the reader sees as
+it is stamped, that is no deletion, whose record is not sealed and
+keeps no value asked for out of line. That is the common row. Any other
+is copied out and read as before, after the leaf is let go, as a scan by
+batch does (D350): a version whose maker is looked up or whose older
+versions are in the undo store, a record its encodings open, and a
+value on a page of its own. Nothing is decided differently, only where
+the bytes are read. A row whose newest version is a deletion takes the
+copy too, so the commit of the deletion is told as before (D837).
 
 ## 2. Project layout
 

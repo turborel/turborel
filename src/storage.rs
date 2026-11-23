@@ -114,6 +114,15 @@ pub trait TableStorage: Send + Sync {
         let old = self.get(tx, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id}")))?;
         row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row.clone())).map(|()| old)
     }
+    /// \[DESIGN\] As `replace`, of a caller that reads only the columns `read` of the row replaced: those hold their values, the
+    /// others null (RULES.md D875). Default: `replace`, every column read.
+    ///
+    /// # Errors
+    ///
+    /// As `replace`.
+    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, _read: &[usize]) -> Result<Row> {
+        self.replace(tx, id, row)
+    }
     /// Removes the live row `id`.
     ///
     /// # Errors
@@ -356,15 +365,11 @@ pub trait TableStorage: Send + Sync {
     fn begin(&self, _tx: TxId, _snapshot: Timestamp) -> Result<()> {
         Ok(())
     }
-    /// \[EXTENSION\] How `tx` reads from now, at a level below SERIALIZABLE
-    /// [ISO/IEC 9075:1992 §4.28] (RULES.md D29): as of `mode.snapshot`,
-    /// later than or the same as the one before, and, unless `mode.checked`,
-    /// with what it reads not checked at `validate`; a write to a row
-    /// committed after the snapshot is refused still, so no update is lost.
-    /// Told once `tx` has begun here, and whenever the mode changes. Default:
-    /// nothing, for an engine that reads at the snapshot `tx` began at and
-    /// checks every read, as SERIALIZABLE, which shows none of the
-    /// phenomena a weaker level would [§14.1 GR5].
+    /// \[EXTENSION\] How `tx` reads from now, at a level below SERIALIZABLE [ISO/IEC 9075:1992 §4.28] (RULES.md D29): as of
+    /// `mode.snapshot`, later than or the same as the one before, and, unless `mode.checked`, with what it reads not checked at `validate`;
+    /// a write to a row committed after the snapshot is refused still, so no update is lost. Told once `tx` has begun here, and whenever
+    /// the mode changes. Default: nothing, for an engine that reads at the snapshot `tx` began at and checks every read, as SERIALIZABLE,
+    /// which shows none of the phenomena a weaker level would [§14.1 GR5].
     ///
     /// # Errors
     ///
@@ -372,16 +377,11 @@ pub trait TableStorage: Send + Sync {
     fn read_mode(&self, _tx: TxId, _mode: ReadMode) -> Result<()> {
         Ok(())
     }
-    /// \[DESIGN\] (RULES.md D34) Whether every reader sees row `id`'s one
-    /// version, whose index entries are then all there are of it: an
-    /// index-only scan takes the row's indexed values from an entry of it
-    /// without reading the row. True only once nothing a reader may still
-    /// see of the row differs, and false from before a write of it is made,
-    /// and before its index entries are, so a reader that finds an entry of
-    /// a version it may not see finds it false. No read of the row is
-    /// noted: the scan's of its condition (`read_by_condition`), which
-    /// every entry it finds matches, covers it. Default: false, every row
-    /// read.
+    /// \[DESIGN\] (RULES.md D34) Whether every reader sees row `id`'s one version, whose index entries are then all there are of it: an
+    /// index-only scan takes the row's indexed values from an entry of it without reading the row. True only once nothing a reader may
+    /// still see of the row differs, and false from before a write of it is made, and before its index entries are, so a reader that finds
+    /// an entry of a version it may not see finds it false. No read of the row is noted: the scan's of its condition (`read_by_condition`),
+    /// which every entry it finds matches, covers it. Default: false, every row read.
     fn visible_to_all(&self, _id: RowId) -> bool {
         false
     }
@@ -424,18 +424,12 @@ pub trait TableStorage: Send + Sync {
     fn rollback_to(&self, _tx: TxId, _savepoint: u64) -> Result<()> {
         Ok(())
     }
-    /// Commit, phase 1: `tx` is to commit at timestamp `at`, later than every
-    /// timestamp given out before it. The engine checks what its isolation
-    /// needs (RULES.md D29): that `tx` committing at `at` keeps what its
-    /// concurrency control promises. That is all a `Persistence::Logged`
-    /// or `None` engine promises here: its changes are as durable as the
-    /// log's commit record, written after this (RULES.md D25), and its
-    /// `commit` has nothing left that could fail. An engine that keeps its
-    /// own durability (`Forced`, `External`) promises too that its `commit`
-    /// will succeed, as a participant of a two-phase commit prepares. Until
-    /// `commit` or `rollback`, the changes of `tx` are committing at `at`: a
-    /// transaction that started after `at` must not read past them as if
-    /// they were not there.
+    /// Commit, phase 1: `tx` is to commit at timestamp `at`, later than every timestamp given out before it. The engine checks what its
+    /// isolation needs (RULES.md D29): that `tx` committing at `at` keeps what its concurrency control promises. That is all a
+    /// `Persistence::Logged` or `None` engine promises here: its changes are as durable as the log's commit record, written after this
+    /// (RULES.md D25), and its `commit` has nothing left that could fail. An engine that keeps its own durability (`Forced`, `External`)
+    /// promises too that its `commit` will succeed, as a participant of a two-phase commit prepares. Until `commit` or `rollback`, the
+    /// changes of `tx` are committing at `at`: a transaction that started after `at` must not read past them as if they were not there.
     ///
     /// # Errors
     ///

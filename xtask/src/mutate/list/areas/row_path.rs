@@ -7,7 +7,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the row path whose removal must fail their tests.
-pub const ROW_PATH: [Mutation; 9] = [
+pub const ROW_PATH: [Mutation; 12] = [
     Mutation {
         name: "row-path-update-images-swapped",
         package: Package::Core,
@@ -97,5 +97,35 @@ pub const ROW_PATH: [Mutation; 9] = [
         replacement: "stripe.0.fetch_add(by, order);",
         integration: &[],
         unit: &["engine::rows::counted::tests::a_count_moved_by_threads_at_once_sums_exactly"],
+    },
+    Mutation {
+        name: "row-path-standing-unseen",
+        package: Package::Core,
+        breaks: "a read by row id decodes the newest version where it lies whoever made it, so a reader sees a change not committed for it",
+        file: "src/engine/rows/scan.rs",
+        original: "    let read = reader.sees(version.maker) && !version.deleted && !sealed(version.record);",
+        replacement: "    let read = !version.deleted && !sealed(version.record);",
+        integration: &[],
+        unit: &["engine::rows::scan::tests::a_read_of_listed_columns_gives_them_in_their_order"],
+    },
+    Mutation {
+        name: "row-path-standing-outside",
+        package: Package::Core,
+        breaks: "a read by row id fails on a row with a value kept out of line, not read from a copy",
+        file: "src/engine/rows/scan.rs",
+        original: "            if outside {\n                Ok(Shown::Later)",
+        replacement: "            if outside && false {\n                Ok(Shown::Later)",
+        integration: &[],
+        unit: &["engine::rows::scan::tests::a_row_read_where_it_lies_is_the_row_read_from_a_copy"],
+    },
+    Mutation {
+        name: "row-path-framed-not-kept",
+        package: Package::Core,
+        breaks: "a record's buffer is not given back to its thread, so every row written allocates one",
+        file: "src/engine/rows/framed.rs",
+        original: "        if self.0.capacity() <= MOST_KEPT {",
+        replacement: "        if self.0.capacity() <= MOST_KEPT && self.0.is_empty() {",
+        integration: &[],
+        unit: &["engine::rows::framed::tests::a_buffer_let_go_is_the_next_writes"],
     },
 ];

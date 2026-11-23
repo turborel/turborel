@@ -43,6 +43,7 @@ mod counted;
 mod discard;
 mod engine;
 mod files;
+mod framed;
 mod frozen;
 mod gathered;
 mod ids;
@@ -216,6 +217,11 @@ impl TableStorage for RowTable {
             return self.write_over(tx, id, row, Past::Snapshot).map(|_| old);
         }
         self.write_over(tx, id, row, Past::Snapshot)?.map_or_else(|| no_row(id), Ok)
+    }
+
+    /// Every column decoded until `write_over_reading` reads `read` alone (RULES.md D875).
+    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, _read: &[usize]) -> Result<Row> {
+        TableStorage::replace(self, tx, id, row)
     }
 
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<&Row>, seen: Timestamp) -> Result<()> {

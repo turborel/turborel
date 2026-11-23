@@ -3,11 +3,12 @@
 //! checked against its row and column as it is read, and freed with its
 //! row; and a record decoded, all its columns or those asked for.
 
+use super::framed::Framed;
 use super::gathered::Gathering;
 use super::version::FRAMED;
 use super::{KEY, OWNER, RowTable, corrupt};
 use crate::disk::pager::PageId;
-use crate::engine::record::{Reference, Spill};
+use crate::engine::record::{Reference, Spill, not_fetched};
 use crate::error::{Code, Result, SqlError};
 use crate::storage::{Row, RowId};
 use crate::value::Value;
@@ -17,23 +18,25 @@ impl RowTable {
     /// The record of row `id`, holding `row`, and the pages of its values
     /// out of line; on failure, none is left allocated.
     pub(in crate::engine::rows) fn encode(&self, id: RowId, row: &Row) -> Result<(Vec<u8>, Vec<PageId>)> {
-        self.encode_after(id, row, 0)
+        self.encode_after(id, row, (0, Vec::new()))
     }
 
     /// As `encode`, the record behind `FRAMED` bytes kept for its version's
     /// header, so the version is written in the same buffer (RULES.md
-    /// D846).
-    pub(in crate::engine::rows) fn encode_framed(&self, id: RowId, row: &Row) -> Result<(Vec<u8>, Vec<PageId>)> {
-        self.encode_after(id, row, FRAMED)
+    /// D846): in the buffer its thread keeps, which goes back to it as the
+    /// record is let go (`rows/framed.rs`, D875).
+    pub(in crate::engine::rows) fn encode_framed(&self, id: RowId, row: &Row) -> Result<(Framed, Vec<PageId>)> {
+        let (record, pages) = self.encode_after(id, row, (FRAMED, Framed::buffer()))?;
+        Ok((Framed::of(record), pages))
     }
 
-    /// As `encode`, the record behind `room` bytes.
-    fn encode_after(&self, id: RowId, row: &Row, room: usize) -> Result<(Vec<u8>, Vec<PageId>)> {
+    /// As `encode`, the record behind `room` bytes, in `record`, empty.
+    fn encode_after(&self, id: RowId, row: &Row, (room, mut record): (usize, Vec<u8>)) -> Result<(Vec<u8>, Vec<PageId>)> {
         self.check_lobs(row)?;
         let mut pages = Vec::new();
         // Sized for the record written in line, as most are, so the room
         // and the record are one allocation, not one grown into another.
-        let mut record = Vec::with_capacity(room.saturating_add(self.format.in_line_room(row)));
+        record.reserve(room.saturating_add(self.format.in_line_room(row)));
         record.resize(room, 0);
         // A record sealed takes more: room is kept for it.
         let spill = Spill { most: self.spill.most.saturating_sub(self.sealing.overhead()), ..self.spill };
@@ -128,6 +131,56 @@ impl RowTable {
         Ok(row)
     }
 
+    /// The row a record not sealed holds, read where it lies in its leaf
+    /// (RULES.md D869), `columns` decoded, or all: `outside` is set, and
+    /// the read refused, if a value asked for is kept out of line, as its
+    /// page is not read under the leaf's latch.
+    pub(in crate::engine::rows) fn decode_standing(&self, record: &[u8], columns: Option<&[usize]>, outside: &mut bool) -> Result<Row> {
+        let mut fetch = |reference: Reference| {
+            *outside = true;
+            not_fetched(reference)
+        };
+        let mut row = match columns {
+            Some(columns) => self.format.decode_columns_with(record, columns, &mut fetch)?,
+            None => self.format.decode_with(record, &mut fetch)?,
+        };
+        if !self.lobs.columns().is_empty() {
+            self.lobs.resolve(&mut row);
+        }
+        Ok(row)
+    }
+
+    /// As `decode_standing`, the values of `columns` alone appended to
+    /// `out`, in their order (`decode_listed`).
+    pub(in crate::engine::rows) fn listed_standing(
+        &self,
+        record: &[u8],
+        columns: &[usize],
+        (out, outside): (&mut Row, &mut bool),
+    ) -> Result<()> {
+        let mut fetch = |reference: Reference| {
+            *outside = true;
+            not_fetched(reference)
+        };
+        let base = out.len();
+        self.format.decode_listed_with(record, columns, &mut fetch, out)?;
+        self.resolve_listed(columns, out, base);
+        Ok(())
+    }
+
+    /// Makes the large objects among the values of `columns` appended to
+    /// `out` from `base` on values the table reads.
+    fn resolve_listed(&self, columns: &[usize], out: &mut Row, base: usize) {
+        if self.lobs.columns().is_empty() {
+            return;
+        }
+        for (value, &column) in out.iter_mut().skip(base).zip(columns) {
+            if let Ok(one) = <&mut [Value; 1]>::try_from(std::slice::from_mut(value)) {
+                self.lobs.resolve_column(column, one);
+            }
+        }
+    }
+
     /// Appends to `out` the values of `columns` of the row `record` holds,
     /// row `id`'s, in their order, and no other (`record/listed.rs`,
     /// RULES.md D862).
@@ -136,13 +189,7 @@ impl RowTable {
         let record = self.sealing.plain_record(id, record)?;
         let base = out.len();
         self.format.decode_listed_with(&record, columns, &mut fetch, out)?;
-        if !self.lobs.columns().is_empty() {
-            for (value, &column) in out.iter_mut().skip(base).zip(columns) {
-                if let Ok(one) = <&mut [Value; 1]>::try_from(std::slice::from_mut(value)) {
-                    self.lobs.resolve_column(column, one);
-                }
-            }
-        }
+        self.resolve_listed(columns, out, base);
         Ok(())
     }
 

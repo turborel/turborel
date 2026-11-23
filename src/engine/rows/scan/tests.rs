@@ -83,3 +83,31 @@ fn a_read_of_listed_columns_gives_them_in_their_order() {
     assert!(pinned.is_some());
     assert_eq!(read(11, b, &[0]), (true, "a2 ".to_owned()));
 }
+
+/// Verifies: [DESIGN] RULES.md D869: a row read where it lies and one
+/// read from a copy give the same values, whole, by columns and listed:
+/// a row whose long value is kept out of line is read from the copy when
+/// that value is asked for, and where it lies when it is not.
+#[test]
+fn a_row_read_where_it_lies_is_the_row_read_from_a_copy() {
+    let scratch = Scratch::new("unit-standing");
+    let pager =
+        Pager::create(&OsFileSystem, &scratch.path("rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(64, Box::new(Clock::new(64))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+    let table = RowTable::create(&files, &[DataType::character(3), DataType::varying(9000)], TableOptions::default()).unwrap();
+    let long = "x".repeat(6000);
+    let short = table.insert(NO_TRANSACTION, vec![Value::Char("a  ".into()), Value::Char("b".into())]).unwrap();
+    let spilled = table.insert(NO_TRANSACTION, vec![Value::Char("c  ".into()), Value::Char(long.clone())]).unwrap();
+    let shown = |row: Option<Row>| row.map(|r| r.iter().map(ToString::to_string).collect::<Vec<_>>().join("|"));
+    assert_eq!(shown(table.get(NO_TRANSACTION, short).unwrap()), Some("a  |b".to_owned()));
+    assert_eq!(shown(table.get(NO_TRANSACTION, spilled).unwrap()), Some(format!("c  |{long}")), "from a copy");
+    assert_eq!(shown(table.get_columns(NO_TRANSACTION, spilled, &[0]).unwrap()).map(|s| s.starts_with("c  |")), Some(true));
+    let (mut near, mut out) = (Near::default(), Vec::new());
+    assert!(table.get_listed(NO_TRANSACTION, spilled, &[1, 0], (&mut near, &mut out)).unwrap());
+    assert_eq!(out.iter().map(ToString::to_string).collect::<Vec<_>>(), [long.clone(), "c  ".to_owned()]);
+    out.clear();
+    assert!(table.get_listed(NO_TRANSACTION, spilled, &[0], (&mut near, &mut out)).unwrap());
+    assert_eq!(out.len(), 1, "where it lies: the long value not asked for");
+}

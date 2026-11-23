@@ -7,7 +7,9 @@ use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
 use super::frozen::{Batched, Merged, Merging, Ordered};
-use super::mvcc::{EVERY_COLUMN, Read, columns_mask};
+use super::mvcc::{EVERY_COLUMN, Read, Reader, columns_mask};
+use super::sealing::sealed;
+use super::version::Version;
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, Visit, Visited, scan_of};
 use crate::error::Result;
@@ -65,11 +67,64 @@ impl Ranged {
     }
 }
 
+/// \[DESIGN\] The record of a row's newest version, `newest`, if a read by
+/// row id decodes it where it lies in its leaf (RULES.md D869): `reader`
+/// sees the version as it is stamped, it is no deletion, and its record is
+/// not sealed. None of any other, which is copied out and read after, as a
+/// scan by batch reads it (`rows/in_place.rs`): one whose maker is looked
+/// up, one the reader goes behind, to the undo store, and one its
+/// encodings open.
+fn standing(newest: &[u8], reader: Reader) -> Result<Option<&[u8]>> {
+    let version = Version::parse(newest)?;
+    let read = reader.sees(version.maker) && !version.deleted && !sealed(version.record);
+    Ok(read.then_some(version.record))
+}
+
+/// What a read by row id made of an entry where it lies.
+enum Shown<T> {
+    /// Its answer, decoded there.
+    Read(T),
+    /// The tree has no entry of the row.
+    Absent,
+    /// The entry is to be copied out and read after: one that did not
+    /// stand for the reader (`standing`), or one with a value asked for
+    /// kept out of line.
+    Later,
+}
+
+/// What a read where the entry lies gave, `shown`, none of a tree with no
+/// entry: an error raised for a value `outside` the record is a read to
+/// make after, from a copy.
+fn later<T>(shown: Result<Option<Shown<T>>>, outside: bool) -> Result<Shown<T>> {
+    match shown {
+        Ok(None) => Ok(Shown::Absent),
+        Ok(Some(shown)) => Ok(shown),
+        Err(e) => {
+            if outside {
+                Ok(Shown::Later)
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
 impl RowTable {
     /// Row `id` as `tx` sees it, `columns` decoded, or all.
     pub(super) fn get_of(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
         let reader = self.read_row(tx, (id, columns.map_or(EVERY_COLUMN, |c| columns_mask(c.iter().copied()))), near)?;
         near.gone = None;
+        // Decoded where it lies in its leaf, if it can be (RULES.md D869).
+        let mut outside = false;
+        let shown = self.tree.get_near_with(&key(id), near, |newest| {
+            let Some(record) = standing(newest, reader)? else { return Ok(Shown::Later) };
+            self.decode_standing(record, columns, &mut outside).map(Shown::Read)
+        });
+        match later(shown, outside)? {
+            Shown::Read(row) => return Ok(Some(row)),
+            Shown::Absent => return self.frozen_seen(id, columns, reader),
+            Shown::Later => {}
+        }
         if !self.tree.get_near(&key(id), near)? {
             // Frozen, so committed before every snapshot (`rows/frozen.rs`),
             // unless a load made it (`frozen/stamped.rs`).
@@ -95,7 +150,18 @@ impl RowTable {
     pub fn get_listed(&self, tx: TxId, id: RowId, columns: &[usize], (near, out): (&mut Near, &mut Row)) -> Result<bool> {
         let reader = self.read_row(tx, (id, columns_mask(columns.iter().copied())), near)?;
         near.gone = None;
-        if !self.tree.get_near(&key(id), near)? {
+        // Decoded where it lies in its leaf, if it can be (RULES.md D869).
+        let mut outside = false;
+        let shown = self.tree.get_near_with(&key(id), near, |newest| {
+            let Some(record) = standing(newest, reader)? else { return Ok(Shown::Later) };
+            self.listed_standing(record, columns, (&mut *out, &mut outside)).map(Shown::Read)
+        });
+        let frozen = match later(shown, outside)? {
+            Shown::Read(()) => return Ok(true),
+            Shown::Absent => true,
+            Shown::Later => false,
+        };
+        if frozen || !self.tree.get_near(&key(id), near)? {
             let Some(row) = self.frozen_seen(id, Some(columns), reader)? else { return Ok(false) };
             out.extend(columns.iter().map(|&c| row.get(c).cloned().unwrap_or(Value::Null)));
             return Ok(true);
