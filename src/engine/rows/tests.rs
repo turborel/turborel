@@ -142,14 +142,14 @@ fn the_newest_version_is_written_over_by_its_stamp() {
     table.update(11, a, row("y")).unwrap();
     let open = table.newest(10, a).unwrap();
     assert_eq!((open.writer, open.stamp, shown(open.row)), (Some(11), 0, shown(Some(row("x")))));
-    assert_eq!(code(table.write_newest(10, a, Some(row("z")), 0)), Some(Code::Conflict), "a change open");
+    assert_eq!(code(table.write_newest(10, a, Some(&row("z")), 0)), Some(Code::Conflict), "a change open");
     table.validate(11, 2).unwrap();
     table.commit(11, 2);
     let committed = table.newest(10, a).unwrap();
     assert_eq!((committed.writer, committed.stamp, shown(committed.row)), (None, 2, shown(Some(row("y")))));
     assert_eq!(code(table.update(10, a, row("z"))), Some(Code::Conflict), "after its snapshot");
-    assert_eq!(code(table.write_newest(10, a, Some(row("z")), 1)), Some(Code::Conflict), "another stamp");
-    table.write_newest(10, a, Some(row("z")), 2).unwrap();
+    assert_eq!(code(table.write_newest(10, a, Some(&row("z")), 1)), Some(Code::Conflict), "another stamp");
+    table.write_newest(10, a, Some(&row("z")), 2).unwrap();
     assert_eq!(shown(table.newest(10, a).unwrap().row), shown(Some(row("z"))), "its own change");
 }
 

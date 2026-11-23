@@ -89,7 +89,7 @@ fn a_commit_stamps_its_rows_where_their_writes_left_them() {
     let (_files, table, id) = table(&scratch);
     table.begin(10, 9).unwrap();
     table.update(10, id, vec![Value::Char("new  ".into())]).unwrap();
-    let ids: Vec<RowId> = (0..600).map(|_| table.insert(10, vec![Value::Char("many ".into())]).unwrap()).collect();
+    let ids: Vec<RowId> = (0..600_u32).map(|_| table.insert(10, vec![Value::Char("many ".into())]).unwrap()).collect();
     table.delete(10, ids[3]).unwrap();
     table.commit(10, 10);
     table.settle(10);
