@@ -14034,6 +14034,40 @@ request left in the slot. That gives the loan back failed, so the
 connection ends rather than waits. A request a retired home refuses is
 handed back, and runs on a new home or on any free thread.
 
+#### D839. A home waits on its client for a second, its permit given up after a millisecond
+
+A worker waited for a client's next request only `lent::WAITED`, a
+millisecond (D42). A client slower than that, as one that thinks between
+its requests or one whose threads outnumber its processors, had its next
+request read by the connection's task: the socket handed back to the
+runtime and registered with it again, the task woken by the runtime, the
+request handed to the home under its lock and the home woken, and the
+loan given back to the task as the reply went out. Two moves between
+threads and two of the socket at every request, and a client near the
+millisecond moved between the two paths request by request.
+
+Now a connection's home waits on, after `WAITED`, as long as
+`waiting::HOME_WAITED`, a second, in slices of `lent::LOOKED`
+(`native/waiting.rs`). Between slices it looks whether the operator
+ended the connection or the server stopped, and if so gives the client
+back to the task, which ends the connection as before. Its wait ends
+sooner than SERVER.IDLE_TIMEOUT_MS, and SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS
+while a transaction is active, and the task counts the client's idle time
+from when the home began to wait (`Lent::idle_since`), so a client is
+closed as idle at the time it was. A home waits whether or not its client
+was fast, so a client once slow is not read by the task from then on. A
+worker that is not the connection's home still waits only `WAITED`.
+
+Past `WAITED` the worker gives its permit to run statements up, whether
+or not another waits for one, so a statement waiting for a permit waits
+for a home's client no longer than D815 allows. A client slower than a
+millisecond then takes the limit's lock again at its next request, as
+every request of a client did before D815, but no longer moves between
+threads. A client that thinks longer than a second pays the two moves
+once a second at most, under a ten-thousandth of its time, and a waiting
+home is woken fifty times a second, so a longer wait gains nothing
+measurable and keeps a thread from the pool longer.
+
 #### D773. A comparison with an uncorrelated subquery of one row at most is a semi join with its row
 
 DELIVERY takes the least new order of a district and deletes it, which a

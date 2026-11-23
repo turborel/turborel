@@ -264,17 +264,20 @@ impl Services {
         self.0.stop.is(Stage::Hurried)
     }
 
-    /// `work`, if it is done within SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS
-    /// and SERVER.IDLE_TIMEOUT_MS, the shorter: as the server waits for the
-    /// next request of a client whose transaction is active, its locks
-    /// held.
+    /// `work`, if it is done within SERVER.IDLE_TIMEOUT_MS of `from`, and
+    /// within SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS of it too if
+    /// `in_transaction`: as the server waits for a client's next request,
+    /// the wait of its worker on the client counted from `from` (RULES.md
+    /// D839), its locks held while its transaction is active.
     ///
     /// # Errors
     ///
     /// `work`'s; a connection failure if the time ran out.
-    pub async fn idle_in_transaction<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
+    pub async fn idle_since<T>(&self, from: Instant, in_transaction: bool, work: impl Future<Output = Result<T>>) -> Result<T> {
         let waiting = "with its transaction active and nothing from the client";
-        self.idle(self.bounded(IDLE_IN_TRANSACTION_TIMEOUT_MS, Instant::now(), work, waiting)).await
+        let work =
+            async { if in_transaction { self.bounded(IDLE_IN_TRANSACTION_TIMEOUT_MS, from, work, waiting).await } else { work.await } };
+        self.bounded(IDLE_TIMEOUT_MS, from, work, IDLE_WAITING).await
     }
 
     /// Whether the server still takes statements.

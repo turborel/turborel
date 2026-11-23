@@ -47,6 +47,7 @@ mod requests;
 mod seen;
 mod served;
 mod status;
+mod waiting;
 mod wire;
 
 use std::future::Future;
