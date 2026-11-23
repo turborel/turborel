@@ -197,6 +197,11 @@ impl TableStorage for RowTable {
         }
     }
 
+    /// Its tree's (`BLinkTree::pin`).
+    fn pin(&self) -> Option<crate::engine::tree::Pinned<'_>> {
+        Some(self.tree.pin())
+    }
+
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
         self.write_over(tx, id, Some(&row), Past::Snapshot).map(drop)
     }

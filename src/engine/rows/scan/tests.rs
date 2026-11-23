@@ -78,4 +78,8 @@ fn a_read_of_listed_columns_gives_them_in_their_order() {
     assert_eq!(read(11, b, &[1]), (true, "b2".to_owned()));
     assert_eq!(read(11, b, &[]), (true, String::new()), "no column");
     assert_eq!(read(11, 999, &[1]), (false, String::new()), "no row of the id");
+    // Pinned for a statement (RULES.md D857), the table reads the same.
+    let pinned = TableStorage::pin(&table);
+    assert!(pinned.is_some());
+    assert_eq!(read(11, b, &[0]), (true, "a2 ".to_owned()));
 }
