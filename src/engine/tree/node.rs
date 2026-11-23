@@ -371,23 +371,21 @@ impl<'a> Node<'a> {
     }
 
     /// The slots a key of head `head` may be among, as the hints bound it:
-    /// past every hint below it, up to the first above it.
+    /// past every hint below it, up to the first above it. The hints are
+    /// in key order, so each bound is found by a binary search over them,
+    /// four steps rather than a walk that reads all sixteen for a key past
+    /// the last, as a table's newest rows are (RULES.md D847).
     #[inline]
     fn hinted(&self, head: u16) -> (usize, usize) {
-        let (mut low, mut high) = (0, self.count);
-        let Some(step) = hint_step(self.count) else { return (low, high) };
-        let Some(hints) = self.bytes.get(HINTS_AT..).and_then(<[u8]>::first_chunk::<HINT_BYTES>) else { return (low, high) };
-        let mut at = 0_usize;
-        for &hint in hints.as_chunks::<{ key::HEAD }>().0 {
-            at = at.saturating_add(step);
-            let hint = u16::from_be_bytes(hint);
-            if hint < head {
-                low = at.saturating_add(1);
-            } else if hint > head {
-                high = at;
-                break;
-            }
-        }
+        let all = (0, self.count);
+        let Some(step) = hint_step(self.count) else { return all };
+        let Some(hints) = self.bytes.get(HINTS_AT..).and_then(<[u8]>::first_chunk::<HINT_BYTES>) else { return all };
+        let hints = hints.as_chunks::<{ key::HEAD }>().0;
+        // Hint `k` is the head of slot `(k + 1) * step`.
+        let below = hints.partition_point(|&hint| u16::from_be_bytes(hint) < head);
+        let through = hints.partition_point(|&hint| u16::from_be_bytes(hint) <= head);
+        let low = if below == 0 { 0 } else { below.saturating_mul(step).saturating_add(1) };
+        let high = if through == HINTS { self.count } else { through.saturating_add(1).saturating_mul(step) };
         (low.min(self.count), high.max(low).min(self.count))
     }
 

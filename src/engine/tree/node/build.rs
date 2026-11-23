@@ -258,40 +258,53 @@ pub(in crate::engine::tree) fn lengthens(node: &Node<'_>, key: &[u8]) -> Result<
 /// marked as the entry inserted last. A key without the node's prefix
 /// first makes the node be built again with the prefix they share.
 ///
+/// [DESIGN] RULES.md D847: the node is parsed once unless built again,
+/// and grown once, the slots moved over the room made, the entry and
+/// its slot written into the gaps left, with nothing put together apart.
+///
 /// # Errors
 ///
 /// SQLCODE -916 if `content` is not a node, `at` is past its entries, or
 /// the node grows past the fields' 65,535 bytes.
 pub(in crate::engine::tree) fn insert(content: &mut Vec<u8>, at: usize, key: &[u8], value: &[u8]) -> Result<()> {
-    let shorter = {
+    let fields = |node: &Node<'_>| (node.heap, node.slots, node.count, node.prefix.len());
+    let parsed = {
         let node = Node::parse(content)?;
         let kept = key::common(node.prefix, key);
-        (kept < node.prefix.len()).then(|| node.entries().and_then(|e| built(&node.shape(), &e, node.last, Some(kept)))).transpose()?
+        if kept < node.prefix.len() { Err(built(&node.shape(), &node.entries()?, node.last, Some(kept))?) } else { Ok(fields(&node)) }
     };
-    if let Some(rebuilt) = shorter {
-        *content = rebuilt;
-    }
-    let (heap, slots, count, prefix) = {
-        let node = Node::parse(content)?;
-        (node.heap, node.slots, node.count, node.prefix.len())
+    let (heap, slots, count, prefix) = match parsed {
+        Ok(found) => found,
+        Err(rebuilt) => {
+            *content = rebuilt;
+            fields(&Node::parse(content)?)
+        }
     };
-    if at > count {
-        return Err(corrupt("an entry is inserted past its end"));
-    }
     let tail = key.get(prefix..).unwrap_or_default();
-    let mut entry = Vec::with_capacity(tail.len().saturating_add(value.len()).saturating_add(LEN.saturating_mul(2)));
-    entry.extend_from_slice(&u16_of(tail.len())?);
-    entry.extend_from_slice(tail);
-    entry.extend_from_slice(&u16_of(value.len())?);
-    entry.extend_from_slice(value);
-    let mut slot = u16_of(slots.saturating_sub(heap))?.to_vec();
-    slot.extend_from_slice(&head_of(tail).to_be_bytes());
-    let slot_at = slots.saturating_add(entry.len()).saturating_add(at.saturating_mul(SLOT));
-    content.splice(slots..slots, entry);
-    content.splice(slot_at..slot_at, slot);
+    let (tail_len, value_len, offset) = (u16_of(tail.len())?, u16_of(value.len())?, u16_of(slots.saturating_sub(heap))?);
+    let entry = LEN.saturating_mul(2).saturating_add(tail.len()).saturating_add(value.len());
+    let end = content.len();
+    let slot_from = at.checked_mul(SLOT).and_then(|s| slots.checked_add(s)).filter(|&s| at <= count && s <= end);
+    let slot_from = slot_from.ok_or_else(|| corrupt("an entry is inserted past its end"))?;
+    content.resize(end.saturating_add(entry).saturating_add(SLOT), 0);
+    // The slots from `at` on go past the entry and the new slot, those
+    // before it past the entry alone.
+    content.copy_within(slot_from..end, slot_from.saturating_add(entry).saturating_add(SLOT));
+    content.copy_within(slots..slot_from, slots.saturating_add(entry));
+    let written = put(content, slots, &[&tail_len, tail, &value_len, value])?;
+    put(content, written.saturating_add(slot_from.saturating_sub(slots)), &[&offset, &head_of(tail).to_be_bytes()])?;
     set_u16(content, LAST_AT, at)?;
     set_u16(content, COUNT_AT, count.saturating_add(1))?;
     hint(content)
+}
+
+/// Writes `parts` one after another into `bytes` from `at`: where they end.
+fn put(bytes: &mut [u8], at: usize, parts: &[&[u8]]) -> Result<usize> {
+    parts.iter().try_fold(at, |from, part| {
+        let to = from.checked_add(part.len()).ok_or_else(|| corrupt("a field runs past its end"))?;
+        bytes.get_mut(from..to).ok_or_else(|| corrupt("a field runs past its end"))?.copy_from_slice(part);
+        Ok(to)
+    })
 }
 
 /// Removes entry `at` of the node `content` holds, in place: its slot

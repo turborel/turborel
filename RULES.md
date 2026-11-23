@@ -553,6 +553,7 @@ verification approach DO-178C expects (§8).
 | D843 | A commit stamps each row in place from the leaf its write left it in, with no descent |
 | D844 | A transaction begins from its session's kept origin, its id on its thread's stripe |
 | D846 | A row's version is framed in the buffer its record is encoded in |
+| D847 | A node takes an entry in place in one move of its slots, and a search finds its hints' bounds by binary search |
 
 ### The project
 
@@ -15325,6 +15326,25 @@ with no older version begins a word in, so the bytes the tree gets are
 those the version encoded as before, and the format is unchanged. A
 sealed record keeps the room in front of the bytes it seals. A
 deletion's version is its header alone and is built as before.
+
+#### D847. A node takes an entry in place in one move of its slots, and a search finds its hints' bounds by binary search
+
+An entry inserted into a leaf in place (D31) was put together in a
+vector of its own, and its slot in another. Each was then spliced into
+the node, which moved the bytes behind it twice. The node was parsed
+twice as well. In a profile of TPROC-C and oltp_read_write at one thread,
+the splices were 1.6% of the time and the tree's changes 5.5%.
+
+The node is now parsed once, unless a key without its prefix makes it be
+built again. It grows once. The slots from the new one on move past the
+entry and the new slot, those before it past the entry alone, and the
+entry and its slot are written into the gaps left.
+
+A search narrowed its slots by the hints with a walk that stopped at the
+first hint above the key's head. A key past the last hint, as a table's
+newest rows are, read all sixteen. The hints are in key order, so the
+two bounds are now found by binary search over them, four steps each.
+The bounds are the same.
 
 ## 2. Project layout
 
