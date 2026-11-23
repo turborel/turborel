@@ -585,6 +585,8 @@ verification approach DO-178C expects (§8).
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
+| D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
+| D941 | An execution's values that hold no large object are taken as given, not read for locators |
 
 ### The project
 
@@ -15930,6 +15932,70 @@ capabilities decide, damage, the table's generation and a change of its
 definitions, are made at every write as before. A table whose changes
 the log does not hold is prepared in full at every write, as the
 policy's refusals of it depend on the setting as it stands.
+#### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
+
+A prepared CALL kept its binding (D793), its procedure's text was read
+once (D406) and its body ran compiled (D841). Each execution still did
+around the body what a first execution does. It filled a VALUES plan
+with its arguments and evaluated it as a row. It built the procedure's
+scope from the catalog's description, parameter by parameter, and
+copied it to look for the program. It looked the procedure up by its
+specific name and compared its text. It made a frame of the arguments,
+copied that into a second frame with the variables, and copied the
+parameters back after. The body's own statements aside, that was most
+of what a short procedure cost.
+
+Now the binding holds the procedure's scope, made as the CALL is bound,
+and how each parameter takes its value where every argument is a `?` of
+the parameter's type or a constant (`routines/call.rs`, `Given`). Once
+an execution has run the CALL as any is run, the session keeps beside
+that binding the body's program as it keeps it, whether the body is
+ATOMIC and runs at a savepoint level of its own, the owner its context
+runs as, and a frame (`routines/direct.rs`). An execution that finds the
+same binding kept takes them and runs the compiled program over the
+frame. Each `?` is cast to its parameter's type, as a kept plan's slot
+is filled, and assigned to the parameter's slot. Each variable's slot is
+set to the null value. The output parameters are read from the frame.
+No plan is filled, no row is evaluated, no scope is built, and the frame
+is neither made nor copied.
+
+The binding found kept was kept with the definitions, authorization,
+schema, time zone and settings that hold now (D45). The program was kept
+with those that held when the session took it beside the binding, and
+the binding was kept with them too. So the program is the one a lookup
+would find now. A CALL bound again is another binding and finds nothing
+beside it, and runs as any CALL until it is kept in turn. The session
+keeps this for a fixed number of bindings and forgets the oldest.
+
+A value cast to its parameter's type with no warning is assigned to that
+type unchanged where the type is an exact number, a character string, a
+truth value, a date, or an array of one of these. The cast gave it the
+type's scale, length or cardinality already. Such a value is not
+assigned again, so an array is copied once. A value of another type is
+assigned after its cast as before.
+
+Everything else runs as any CALL does and gives what it gave. That is an
+argument that is an expression or reads a table, an output parameter
+whose target is no `?`, a body that is one statement, a program not
+compiled or not kept, and an execution whose argument's cast raises a
+warning or an exception. Such an execution has run nothing when it turns
+to the general path, so the condition raised is that path's own. The
+general path itself now takes the scope from the binding and builds a
+program's frame of scopes only when it binds the program.
+
+#### D941. An execution's values that hold no large object are taken as given, not read for locators
+
+Each execution of a prepared statement read its values for large objects
+sent by their locators (`db/lobs.rs`), which made a copy of every value,
+arrays element by element. It then made a second copy of them all only
+to count them.
+
+Now the values are looked at first (`prepared/locators.rs`). A large
+object, a structured value, and an array, multiset or row that holds one
+at any depth are read for locators as before. Where there is none, the
+values are copied once into the execution's parameters. The count is
+checked without a copy. The values an execution runs with are the same.
+
 #### D890. A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more
 
 A range past the greatest value a pass of the statistics saw, of a
