@@ -8,22 +8,25 @@
 //! note of each row for the end of the statement is left out: no trigger
 //! may read it, no delta table but the one its caller makes of the row it
 //! returns, and the constraints its end checks are those of the row it
-//! wrote alone (`integrity/straight.rs`). A change whose increments would
-//! be reserved (RULES.md D452), or whose plan is not a point read as this
-//! execution runs it, is handed back to the general path. An INSERT of
-//! one row of values is written as `insert_rows` writes a row, and its
-//! end checks the constraints of that row alone, as its end would.
+//! wrote alone (`integrity/straight.rs`). A change whose increments may
+//! be reserved (RULES.md D452) reserves them where it is and writes
+//! nothing (D942). One whose reservation is not taken, or whose plan is
+//! not a point read as this execution runs it, is handed back to the
+//! general path. An INSERT of the rows of a query is written as
+//! `insert_rows` writes them, a batch at a time where it may, and its
+//! end checks the constraints of those rows alone, each as it is held,
+//! as its end would (RULES.md D901).
 
 use super::{ObjectRows, Written};
-use crate::catalog::ColumnDefault;
-use crate::db::assignment::candidate;
-use crate::db::escrow::reserving;
+use crate::catalog::{ColumnDefault, QualifiedName};
+use crate::db::assignment::{candidate, candidate_of};
+use crate::db::escrow::{deltas, reserving};
 use crate::db::integrity::Straight;
 use crate::db::prepared::Keeping;
 use crate::db::routines::Hosted;
 use crate::db::{Session, StatementContext};
 use crate::error::Result;
-use crate::exec::Slots;
+use crate::exec::{PointRead, Slots};
 use crate::logical::LogicalPlan;
 use crate::params::Params;
 use crate::storage::{Row, RowId};
@@ -48,20 +51,27 @@ pub(in crate::db) enum Pointed {
 /// As `update_rows` and `delete_rows`, and the statement's end.
 pub(in crate::db) fn point_change(
     (session, cx): (&Session, StatementContext<'_>),
-    (w, straight, delete, shown): (Written, &Straight, bool, u64),
+    (mut w, straight, delete, shown): (Written, &Straight, bool, u64),
 ) -> Result<std::result::Result<Pointed, Written>> {
     let StatementContext { st, tx } = cx;
-    let ObjectRows::Point(kept, reads) = &w.rows else { return Ok(Err(w)) };
+    let placed = if let ObjectRows::Point(_, _, placed) = &mut w.rows { placed.take() } else { None };
+    let ObjectRows::Point(kept, reads, _) = &w.rows else { return Ok(Err(w)) };
     let Some(point) = kept.point(st) else { return Ok(Err(w)) };
-    if !delete && reserving(st, tx, &w, shown).is_some() {
-        return Ok(Err(w));
+    if !delete && let Some(guarded) = reserving(st, tx, &w, shown) {
+        let reserved = escrowed((session, cx), (&w, straight), (point, reads), guarded)?;
+        return Ok(reserved.ok_or(w));
     }
     // T, to be written, and the tables its condition and SET values read.
     st.update_lock(tx, &w.bound.table)?;
     for t in reads.iter().chain(straight.set_tables()) {
         st.read_lock(tx, t)?;
     }
-    let Some((id, seen)) = point.entry(st, tx.id, w.slots.as_deref().unwrap_or_default())? else {
+    // Its probe as its plan placed it, if it did (RULES.md D911).
+    let found = match placed {
+        Some(probe) => point.entry_under(st, tx.id, std::borrow::Cow::Owned(probe))?,
+        None => point.entry(st, tx.id, w.slots.as_deref().unwrap_or_default())?,
+    };
+    let Some((id, seen)) = found else {
         // Of a catalog with triggers, its statement ends with no row
         // changed, as `update_rows` ends it.
         if st.catalog.any_triggers() {
@@ -79,12 +89,52 @@ pub(in crate::db) fn point_change(
         None => writing,
     };
     let at = (&writing, id);
-    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, &seen), straight.set())? };
+    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, seen), straight.set())? };
     let wrote = rows.as_ref().map(|_| id);
     // The row an UPDATE wrote, as it holds it (RULES.md D880).
     let held = rows.as_ref().and_then(|(_, new)| new.as_ref());
     st.end_straight(tx, (&w.bound.table, straight), wrote.as_slice(), held)?;
     Ok(Ok(Pointed::Wrote(rows)))
+}
+
+/// \[DESIGN\] RULES.md D942. `w`, an UPDATE of `session` whose increments
+/// may be reserved guarding the columns of `guarded`, its row found by
+/// `point` after the locks `update_rows` takes, of its table and of the
+/// tables of `reads`. Its increments are reserved as `update_rows`
+/// reserves them (D452, D849) and its statement ended with nothing
+/// written. What it did is the row read and that row with the increments
+/// added, which its transaction writes as it commits. None if the
+/// increments are not reserved, and `w` is then to run the general path.
+///
+/// # Errors
+///
+/// As `update_rows`, and the statement's end.
+fn escrowed(
+    (session, cx): (&Session, StatementContext<'_>),
+    (w, straight): (&Written, &Straight),
+    (point, reads): (&PointRead, &[QualifiedName]),
+    guarded: u64,
+) -> Result<Option<Pointed>> {
+    let StatementContext { st, tx } = cx;
+    st.update_lock(tx, &w.bound.table)?;
+    for t in reads.iter().chain(straight.set_tables()) {
+        st.read_lock(tx, t)?;
+    }
+    let Some((id, seen)) = point.entry(st, tx.id, w.slots.as_deref().unwrap_or_default())? else {
+        if st.catalog.any_triggers() {
+            st.end_straight(tx, (&w.bound.table, straight), &[], None)?;
+        }
+        return Ok(Some(Pointed::Unfound));
+    };
+    let db = w.db(st);
+    let hosted = Hosted::in_db(Some(session), cx, &db);
+    let new = candidate(w, &seen, ("ISO/IEC 9075:1992 §13.10 GR8", &hosted))?;
+    let Some(added) = deltas(w, (&seen, &new), &hosted)? else { return Ok(None) };
+    if !st.reserve_row(tx, (&w.bound.table, id), (&seen, &added, guarded))? {
+        return Ok(None);
+    }
+    st.end_straight(tx, (&w.bound.table, straight), &[], None)?;
+    Ok(Some(Pointed::Wrote(Some((seen, Some(new))))))
 }
 
 /// Row `id` deleted by `w`, its condition read by `hosted`: the row it
@@ -106,10 +156,11 @@ fn deleted(
 fn updated(
     cx: StatementContext<'_>,
     (w, hosted): (&Written, &Hosted<'_>),
-    (at, seen): ((&Writing<'_>, RowId), &Row),
+    (at, seen): ((&Writing<'_>, RowId), Row),
     set: Option<u64>,
 ) -> Result<Option<(Row, Option<Row>)>> {
-    let new = candidate(w, seen, ("ISO/IEC 9075:1992 §13.10 GR8", hosted))?;
+    // The candidate row is made of the row seen itself (RULES.md D912).
+    let new = candidate_of(w, seen, ("ISO/IEC 9075:1992 §13.10 GR8", hosted))?;
     // A row another transaction changed is written in the version it
     // committed, if it is still one to change, its values computed from it.
     let mut recomputed = None;
@@ -146,11 +197,13 @@ impl super::Target {
         })
     }
 
-    /// Of an INSERT of one row into it, the constraints its statement
-    /// checks of that row, if it may write it straight: none through a
-    /// view WITH CHECK OPTION, or if its end would check more.
+    /// Of an INSERT into it, the constraints its statement checks of each
+    /// row it inserts, if it may write them straight: none through a view
+    /// WITH CHECK OPTION, of a table with a system-time period, whose
+    /// rows the general path stamps before they go in [ISO/IEC
+    /// 9075-2:2023 §15.11 GR3b, GR3c], or if its end would check more.
     pub(in crate::db) fn straight(&self, st: &crate::db::State) -> Option<Straight> {
-        if !self.checks.is_empty() {
+        if !self.checks.is_empty() || super::system_time::system_time(&self.desc).is_some() {
             return None;
         }
         st.straight_insert(&self.name)
@@ -158,10 +211,11 @@ impl super::Target {
 }
 
 impl Session {
-    /// The rows of `query`, one row of values, inserted into `target`
-    /// straight as `insert_rows` inserts them, past the notes it keeps of
-    /// each for its statement's end, which checks the constraints of
-    /// `straight` alone. The rows it inserted.
+    /// The rows of `query`, every one found before any is inserted
+    /// [X3.135-1986 §8.7 GR1], inserted into `target` straight as
+    /// `insert_rows` inserts them, past the notes it keeps of each for
+    /// its statement's end, which checks the constraints of `straight`
+    /// of each alone (RULES.md D901). The rows it inserted.
     ///
     /// # Errors
     ///
@@ -173,25 +227,19 @@ impl Session {
         (query, slots, kept): (&LogicalPlan, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
-        let mut rows = super::query_rows((self, cx), target, (std::borrow::Cow::Borrowed(query), slots, kept))?;
+        let mut rows = super::inserted::query_rows((self, cx), target, (query, slots, kept))?;
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
         if rows.is_empty() && !st.catalog.any_triggers() {
             return Ok(0);
         }
-        self.settle_cursors(st, &target.name);
-        let mut ids = Vec::with_capacity(1);
-        // Its table is not partitioned (`compiled/change.rs`), so each
-        // row is its own, written by what its writes need of it (D872).
-        let writing = st.writing(&target.name)?;
-        rows.visit(&mut |row| {
-            ids.push(st.insert_row_in(tx, &writing, row)?);
-            Ok(())
-        })?;
-        // Of one row inserted, its checks are of the row held (RULES.md D880).
-        match ids.as_slice() {
-            [_] => rows.visit(&mut |row| st.end_straight(tx, (&target.name, straight), &ids, Some(row)))?,
-            [] | [_, _, ..] => st.end_straight(tx, (&target.name, straight), &ids, None)?,
+        // Rows enough to be a load of their own are one (RULES.md D532),
+        // which the general path begins and ends.
+        if super::bulk::loads_alone(rows.len()) {
+            return self.insert_found(cx, target, rows, None);
         }
+        self.settle_cursors(st, &target.name);
+        let gone = super::bulk::insert_straight((st, tx), &target.name, &mut rows)?;
+        st.end_straight_rows(tx, (&target.name, straight), &gone, &mut rows)?;
         self.note_drawn(target.generating.drawn_identity(), &mut rows)?;
         self.note_generated(target.generating.identity_column(), &mut rows)?;
         Ok(rows.len())

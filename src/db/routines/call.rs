@@ -38,9 +38,13 @@ use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRo
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::exec::execute;
 use crate::logical::{Expr, LogicalPlan, filled};
-use crate::params::{ParameterType, Params, RoutineScope};
+use crate::params::{ParameterType, Params, RoutineScope, conformed};
 use crate::storage::Row;
-use crate::value::{Value, assign};
+use crate::value::{DataType, Value, assign};
+
+/// [ISO/IEC 9075-2:2023 §9.18 GR4c i] The rule that assigns an argument's
+/// value to its parameter.
+const ASSIGNS: &str = "ISO/IEC 9075-2:2023 §9.18 GR4c i";
 
 /// [ISO/IEC 9075-2:2023 §16.1] A CALL, bound.
 #[derive(Debug)]
@@ -57,6 +61,76 @@ pub(crate) struct BoundCall {
     /// position, from 0, whose argument is a `?`, and that `?`'s place
     /// among the statement's.
     pub(crate) dynamic: Vec<(usize, usize)>,
+    /// The scope of the procedure's body, made once as the CALL is bound
+    /// and shared by its executions (RULES.md D940).
+    pub(super) scope: Arc<RoutineScope>,
+    /// How each parameter takes its value with no plan run, in order, if
+    /// each argument is a `?` or a constant (RULES.md D940).
+    pub(super) given: Option<Vec<Given>>,
+}
+
+/// \[DESIGN\] How a parameter of a CALL takes its argument's value with no
+/// plan run (RULES.md D940).
+#[derive(Debug)]
+pub(super) enum Given {
+    /// The value of the `?` at this place among the statement's, cast to
+    /// the parameter's type [ISO/IEC 9075:1992 §17.9 GR5f] and assigned
+    /// to it [ISO/IEC 9075-2:2023 §9.18 GR4c i]. `settled` if a value
+    /// cast to that type is assigned to it unchanged, so it is not
+    /// assigned again.
+    Slot {
+        /// The place of the `?`.
+        index: usize,
+        /// Whether the cast value is the assigned one.
+        settled: bool,
+    },
+    /// A constant, assigned to the parameter's type as the CALL was bound.
+    Constant(Value),
+}
+
+impl Given {
+    /// How the parameter of type `to` takes the value of its argument
+    /// `input`. None if the argument is neither a `?` of that type nor a
+    /// constant the type takes.
+    pub(super) fn of(input: &Expr, to: &DataType) -> Option<Given> {
+        if let Expr::Dynamic(slot) = input {
+            return (slot.data_type == *to).then(|| Given::Slot { index: slot.index, settled: settled(to) });
+        }
+        let Expr::Const(v) = input else { return None };
+        assign(v.clone(), to, ASSIGNS).ok().map(Given::Constant)
+    }
+
+    /// The value the parameter of type `to` takes in an execution whose
+    /// `?`s hold `slots`. None if it is not given that type cleanly, with
+    /// neither a warning nor an exception.
+    pub(super) fn value(&self, to: &DataType, slots: &[Value]) -> Option<Value> {
+        match self {
+            Given::Constant(v) => Some(v.clone()),
+            Given::Slot { index, settled } => {
+                let (value, warning) = conformed(slots.get(*index)?.clone(), to).ok()?;
+                if warning.is_some() {
+                    return None;
+                }
+                if *settled { Some(value) } else { assign(value, to, ASSIGNS).ok() }
+            }
+        }
+    }
+}
+
+/// \[DESIGN\] Whether a value cast to `t` with no warning is assigned to
+/// `t` unchanged (RULES.md D940). It holds of an exact number, which the
+/// cast gives the type's scale within its precision, of a character
+/// string, which the cast gives the type's length or a length within it,
+/// of a truth value and a date, and of an array of one of these, which
+/// the cast keeps within the maximum cardinality.
+pub(super) fn settled(t: &DataType) -> bool {
+    if let DataType::Array(a) = t { settled_scalar(&a.element) } else { settled_scalar(t) }
+}
+
+/// Whether `t` is an exact number, a character string, a truth value or a
+/// date (`settled`).
+fn settled_scalar(t: &DataType) -> bool {
+    matches!(t, DataType::Exact { .. } | DataType::Character { .. } | DataType::Varying { .. } | DataType::Boolean | DataType::Date)
 }
 
 /// The target of an output parameter's argument.
@@ -219,7 +293,11 @@ impl State {
         let specs: Vec<ParameterSpecification> = targets.iter().map(|(_, t)| t.clone()).collect();
         // [SR9h iii 4, 5] Each output parameter's type assignable to its target.
         check_targets(&columns, &specs, cx.params, "§9.18 SR9h iii", "§9.18 SR9h iii 4")?;
-        Ok(BoundCall { desc, inputs, targets, dynamic })
+        let scope = Arc::new(RoutineScope::of(&desc, routine_path(&*cx.db.catalog, &desc)));
+        // An output parameter's target that is no `?` is assigned as any CALL assigns it.
+        let each = || inputs.iter().zip(&desc.parameters).map(|(input, p)| Given::of(input, &p.data_type)).collect();
+        let given = if targets.is_empty() { each() } else { None };
+        Ok(BoundCall { desc, inputs, targets, dynamic, scope, given })
     }
 
     /// Whether `call`, its names in schema `schema`, invokes a procedure
@@ -288,14 +366,38 @@ impl Session {
         params: &mut Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
-        if let Some(p) = Session::rust_procedure(cx.st, call) {
+        // [DESIGN] RULES.md D940: a prepared CALL found kept runs straight.
+        // Its binding is of a procedure of an SQL routine body, kept with
+        // the functions registered as they are now, so none written in
+        // Rust is of its name.
+        let found = keeping.map(Keeping::plan).transpose()?.flatten();
+        let found = if let Some(KeptPlan::Call(bound)) = found { Some(bound) } else { None };
+        if let Some(bound) = &found
+            && self.call_direct(cx, bound, params)?.is_some()
+        {
+            return Ok(Completion::Success);
+        }
+        if let (None, Some(p)) = (&found, Session::rust_procedure(cx.st, call)) {
             return self.rust_call(cx, &*p, call, params);
         }
-        let (bound, kept) = self.call_bound(cx.st, call, params, keeping)?;
-        let values = call_values((self, cx), &bound, kept.then(|| params.dynamic_values()))?;
+        let (bound, kept) = match found {
+            Some(bound) => (bound, true),
+            None => self.call_bound(cx.st, call, params, keeping)?,
+        };
+        let done = self.call_general(cx, &bound, params, kept)?;
+        if let Some(k) = keeping.filter(|_| kept) {
+            self.keep_call(cx, &bound, k);
+        }
+        Ok(done)
+    }
+
+    /// `call_statement`, of the CALL `bound` binds, its arguments' slots
+    /// filled if `kept`: the arguments evaluated as a row of values, and
+    /// the body run over a frame of its own.
+    fn call_general(&self, cx: StatementContext<'_>, bound: &BoundCall, params: &mut Params, kept: bool) -> Result<Completion> {
+        let values = call_values((self, cx), bound, kept.then(|| params.dynamic_values()))?;
         let desc = &bound.desc;
-        let scope = RoutineScope::of(desc, routine_path(&*cx.st.catalog, desc));
-        let mut inner = Params::of_routine(values, Arc::new(scope));
+        let mut inner = Params::of_routine(values, Arc::clone(&bound.scope));
         // Its text read once while it stays the same (RULES.md D406).
         let routine = self.kept_routine(desc)?;
         let body = routine.body()?;
@@ -325,10 +427,10 @@ impl Session {
 }
 
 impl Session {
-    /// `call` bound with `params`; of a prepared statement, as it keeps it,
-    /// bound once with its `?`s slots unless the binding holds a value
-    /// (RULES.md D793), and then whether its arguments' slots are to be
-    /// filled.
+    /// `call`, which its statement keeps no binding of, bound with
+    /// `params`; of a prepared statement, kept, bound with its `?`s slots
+    /// unless the binding holds a value (RULES.md D793), and then whether
+    /// its arguments' slots are to be filled.
     ///
     /// # Errors
     ///
@@ -340,9 +442,6 @@ impl Session {
         params: &Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<(Arc<BoundCall>, bool)> {
-        if let Some(KeptPlan::Call(bound)) = keeping.map(Keeping::plan).transpose()?.flatten() {
-            return Ok((bound, true));
-        }
         let Some(k) = keeping else { return Ok((Arc::new(self.bound(st, params, |b| State::bind_call(b, call))?), false)) };
         let binding = params.keeping();
         let bound = Arc::new(self.bound(st, &binding, |b| State::bind_call(b, call))?);

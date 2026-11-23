@@ -588,12 +588,24 @@ verification approach DO-178C expects (§8).
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 | D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
 | D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
+| D901 | A compiled program's INSERT of a query's rows runs straight on its table, its rows together, each checked as it is held |
+| D902 | A kept INSERT's table and query are shared with each execution, copied only to be planned or given new defaults |
+| D903 | A kept plan whose rows are made of its slots' values alone is read where it is kept |
+| D910 | A value that is one of a type already is read, cast and assigned as it is, an array with no element copied |
+| D911 | A point change places its probe once, each value read over the slots where they are |
+| D912 | A point change makes its candidate row of the row it read |
+| D913 | A compiled program's row of values is evaluated over the frame's slots where they hold values of their types |
+| D914 | A compiled program appends in place where it assigns an array its own concatenation with one element |
 | D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
 | D921 | The log holds a segment's records in a buffer, and a commit that does not wait for its sync makes no write of its own |
 | D922 | A commit takes its participants without copying them, and names the tables it wrote only for the embedders |
 | D923 | Increments reserved are applied by a write told the columns they add to |
 | D924 | A commit's rows that one leaf holds are stamped with the leaf latched once |
 | D925 | A batch due is collected by the maintenance job's pass, and by a commit only once it is long due |
+| D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
+| D941 | An execution's values that hold no large object are taken as given, not read for locators |
+| D942 | A point change whose increments may be reserved reserves them where it reads its row |
+| D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
 
 ### The project
 
@@ -16374,6 +16386,221 @@ subquery is decorrelated follows from the subquery alone, so it is found
 once and kept with its plan kept (`KeptRun::decorrelated`), where each
 run past EXECUTOR.DECORRELATE_AFTER_RUNS that stayed probed made it
 again.
+
+#### D901. A compiled program's INSERT of a query's rows runs straight on its table, its rows together, each checked as it is held
+
+D841 ran a compiled program's INSERT straight only for one row of
+values that read nothing. An INSERT of a query's rows, such as an
+order's lines from UNNEST of its arrays with a scalar subquery for each,
+ran as a statement the session runs: looked up, wrapped, its rows noted
+one by one in the statement's effects and its end reached through
+`end_statement`.
+
+Now a compiled program's INSERT of any query's rows, VALUES or a query
+specification reading no delta table, runs by its kept target and query
+once they are kept, and straight where D841's conditions hold. Its
+table is a plain one with no trigger a change of it may fire, it is not
+named through a view, and its end checks only its rows' own constraints
+(`integrity/straight.rs`). Every row of the query is found before any is
+inserted, as [X3.135-1986 §8.7 GR1] has it.
+
+The rows go in as the general path puts them (`write/bulk.rs`,
+`insert_straight`). Two or more go together where the table takes its
+rows so, under one log record with one undo entry an index (D530). One
+row, or the rows of a table that takes them one at a time, go each by
+the table's `Writing` (D872). So the log holds what the general path
+would have written, record for record. Rows enough to be a load of
+their own (D532) are handed to the general path once found, which
+begins and ends the load.
+
+The statement's end checks each row as its statement holds it
+(`integrity/straight/rows.rs`), as D880 checks a point change's one row.
+Every row's own constraints come first, row by row, then each UNIQUE
+constraint's rows one after another. That is the order `State::checks`
+gathers them in, so a statement breaking several constraints is refused
+for the one the general path names. A batch tells of each row whether
+its key was its key's only entry in every unique index, and such a row
+is passed over by each UNIQUE constraint an entry inserted alone
+settles. A key twice among the statement's rows is not alone the second
+time, and is checked whole. A row is read back where the row held is
+not the row stored, of a table with a system-time period or of a row
+holding a value its table keeps apart. The participants are told to
+check reads only where a check reads a table, as D880 has it.
+
+An INSERT whose end would check more runs by its kept target and query
+through `insert_rows`, as an INSERT of one row of values already did.
+
+#### D902. A kept INSERT's table and query are shared with each execution, copied only to be planned or given new defaults
+
+A kept INSERT held its table's description and its query's bound plan
+(D45, D793), and each execution took a copy of both. The table's was
+copied so its defaults could be taken again for the user and the instant
+of the execution, and the query's because the functions that find its
+rows took a plan of their own.
+
+Now both are shared (`KeptPlan::Insert`). An execution borrows the query
+as it is kept. `query_rows` reads a row of values where it is, or runs
+the physical plan kept of it (D793), and copies the plan bound only when
+it is to be filled with the execution's values and planned afresh, as
+while its plan is still being learned. The table is taken as kept
+wherever each column's default is the same for every user at every
+instant, a value or none (`Target::fixed_defaults`). It is copied and
+given its defaults again only where one reads the user or the instant
+[ISO/IEC 9075:1992 §11.5 GR2].
+
+#### D903. A kept plan whose rows are made of its slots' values alone is read where it is kept
+
+The executor takes a plan whole, and each operator it opens owns its
+part. So every execution of a kept plan that is no point read ran a
+copy of it (`physical::Kept::opened`), and of an INSERT's query the copy
+was opened as a stream whose rows were held once before a candidate row
+was made of each.
+
+A projection of a collection derived table over nothing before it reads
+no table of its own. An order's lines unnested from its arrays are such
+a query. Its rows are the elements of the collections its slots hold,
+each given to the projection's expressions. A kept INSERT now reads such
+a plan where it is kept (`exec/lent.rs`, `write/inserted.rs`), lent by
+`Kept::lent`, with no copy made and no operator opened.
+
+The rows are made as the operators make them. The collections are
+evaluated once and a row made for each ordinal (`unnest::of_row`, the
+operator's own function). Each expression is evaluated over it in turn,
+its subqueries run by one runner that keeps what they settled with the
+plan (D793), and a row's draws of a sequence generator are one. A cancel
+is looked for before the rows are made and as each is given. The plan's
+tables are locked first, as a stream locks them. Every row is found
+before a candidate row is made of any, as a plan that can raise has its
+rows read as it opens, so the error a statement is refused for is the
+same.
+
+A plan filled and prepared again at each execution, a point read, a
+projection of its input's columns as they are, a JSON table, a
+GRAPH_TABLE, a collection derived table over other rows and every other
+operator are opened by the executor as before.
+
+#### D910. A value that is one of a type already is read, cast and assigned as it is, an array with no element copied
+
+A slot of a kept plan is read cast to its type (D610), since a `?`'s
+value comes as the caller gave it. An SQL parameter or variable is a
+slot too (D406), and holds a value of its declared type already, as
+store assignment put it there. Each read of one cast it again. Of an
+array that made a new array, each element cast and copied, to take one
+element of it. A procedure that walks three array parameters in a loop
+made three arrays at every turn.
+
+`value::held` says whether a value is one of a type already, so that
+CAST to the type [ISO/IEC 9075-2:2023 §6.13] and store assignment to it
+[§9.2] both give the value itself and raise neither an exception nor a
+warning. It answers for the null value, an exact number of the type's
+scale within its precision, a character string of a fixed type's length
+or within a varying type's, a truth value, and an array within the
+maximum cardinality whose elements are each so. Of any other value it
+says no, and the value is cast or assigned as before. A unit test holds
+it to what `cast_warned` and `assign` give.
+
+Where it says yes, the cast is not made. An array is cast and assigned
+as it is where each element is held (`ArrayKind::cast`, `assign`), with
+no element copied. A slot read gives its value with no cast
+(`exec/eval.rs`). An operand of an operator, a comparison or a call
+that is a slot holding such a value, or an outer reference, is borrowed
+where the statement holds it (`eval/called.rs`), so `A[i]` of an array
+in a slot reads one element. The check reads each element of an array
+and allocates nothing.
+
+#### D911. A point change places its probe once, each value read over the slots where they are
+
+A kept UPDATE or DELETE whose plan is a point read (D752) learned
+whether its values place its probe (`Kept::places`, D793) by evaluating
+each probe value that may raise, and threw the values away. The point
+read then placed the probe and evaluated them all again. Each
+evaluation copied the value's expression, replaced its slots by
+constants cast to their types, and evaluated the copy.
+
+A probe value is now read over the slots where they are
+(`physical/kept.rs`, `read`). A slot alone is its value, cast unless
+held of its type (D910). A sum, a difference or an element of an array
+is evaluated as it stands, its slots read as an execution reads them.
+If that raises anything, or the slot's own cast warns, the value is
+found as before by filling a copy, which raises what it raised. So a
+value that places gives the same value by less work, and one that does
+not takes the old path whole.
+
+The plan of a point change places its probe once
+(`prepared/plans/point.rs`). Placed, every value raised nothing, so the
+values place it, and the change carries the probe to its read
+(`PointRead::entry_under`), which looks under it and places nothing. A
+probe that does not place is judged as before. If a value that may
+raise raised, the change runs the plan made with its values. If
+another did, the read places the probe again and raises the error where
+it raised it before.
+
+#### D912. A point change makes its candidate row of the row it read
+
+The candidate row of an UPDATE is a copy of the object row with each
+SET value [X3.135-1986 §8.12 GR2, GR3]. A point change (D841) read its
+row, copied every value the update leaves into a new row, and dropped
+the row it read. A row of many strings was copied whole to change one
+number.
+
+`assignment::candidate_of` takes the row itself. It computes every SET
+value from the row and assigns each to its column's type, in the order
+written, before any takes its place, so each is computed from the
+object row before any value of it is updated, and raises what
+`candidate` raises in the same order. Then each value takes its
+column's place, and the generated columns are computed of the row so
+made [ISO/IEC 9075-2:2023 §15.14 GR9]. A row another transaction
+changed first is still recomputed from the version it committed by
+`candidate`, which copies.
+
+#### D913. A compiled program's row of values is evaluated over the frame's slots where they hold values of their types
+
+A leaf of a program that is one row of values reads its variables and
+parameters as outer references, each bound to the frame's slot (D841).
+Each evaluation read every outer value out of the frame into a list,
+then evaluated the row over the list, then wrapped the row in a list of
+rows to give its first value. A WHILE condition over two integers
+allocated three times at each test.
+
+As it is compiled, such a row is also written over the slots
+themselves, each outer reference replaced by the slot it names
+(`compiled/valued.rs`, `Direct`). At each evaluation, if every slot it
+reads holds a value of its type (D910), the row so written is evaluated
+over the frame. Each slot read then gives what the outer value was, as
+its cast gives it as it is and raises nothing, so the row has the same
+values and raises the same. If any slot holds another value, the row is
+evaluated as bound, its outer values read first and cast once each. A
+row of one value read so is given with no row made of it.
+
+#### D914. A compiled program appends in place where it assigns an array its own concatenation with one element
+
+`SET A = A || ARRAY[x]` read `A`, made an array of its elements and
+`x` [ISO/IEC 9075-2:2023 §6.47 GR2], and assigned it to `A` element by
+element [§9.2 GR3b xxii]. Each step copied every element, so a loop
+that gathers a value at each turn copied what it had gathered twice a
+turn.
+
+The compiled program recognises the assignment as it is compiled
+(`compiled/append.rs`). Its one target is an SQL variable or parameter
+of an array type as a whole. Its source is the concatenation of that
+same variable, as it is or cast to an array type of its element type
+and no smaller maximum cardinality, with an array constructor of one
+element, of the element type or cast to an array of it. A function says
+which of these operations it is (`ScalarFunction::array_operation`), so
+no name is matched.
+
+At each run, if `A` holds an array of its type with room for one
+element more, the assignment as bound would leave its elements as they
+are and put `x` after them, cast and assigned to the element type. So
+`x` alone is evaluated, cast as the constructor's array is cast, and
+assigned by the rule that assigns the array, raising what each raises
+at the place the assignment raises it. The array is taken out of the
+frame (`Params::take_slot`), so nothing else holds it, and gives its
+elements to the longer array, moved. An array that is null, full or
+not of its type is assigned as bound. That keeps the null result, the
+null element dropped past the maximum cardinality, and the error of any
+other element there [§9.2 GR3b xxii 2].
+
 #### D920. A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves
 
 With no transaction open in a table, its collection was due at every
@@ -16609,6 +16836,126 @@ The work is not less. It is the job's thread's, not the committer's, so
 a commit is shorter and the database uses more of a second processor
 while commits come. The semantics hold as D920's do: the horizon rule
 is unchanged, and a collection only comes at another moment.
+
+#### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
+
+A prepared CALL kept its binding (D793), its procedure's text was read
+once (D406) and its body ran compiled (D841). Each execution still did
+around the body what a first execution does. It filled a VALUES plan
+with its arguments and evaluated it as a row. It built the procedure's
+scope from the catalog's description, parameter by parameter, and
+copied it to look for the program. It looked the procedure up by its
+specific name and compared its text. It made a frame of the arguments,
+copied that into a second frame with the variables, and copied the
+parameters back after. The body's own statements aside, that was most
+of what a short procedure cost.
+
+Now the binding holds the procedure's scope, made as the CALL is bound,
+and how each parameter takes its value where every argument is a `?` of
+the parameter's type or a constant (`routines/call.rs`, `Given`). Once
+an execution has run the CALL as any is run, the session keeps beside
+that binding the body's program as it keeps it, whether the body is
+ATOMIC and runs at a savepoint level of its own, the owner its context
+runs as, and a frame (`routines/direct.rs`). An execution that finds the
+same binding kept takes them and runs the compiled program over the
+frame. Each `?` is cast to its parameter's type, as a kept plan's slot
+is filled, and assigned to the parameter's slot. Each variable's slot is
+set to the null value. The output parameters are read from the frame.
+No plan is filled, no row is evaluated, no scope is built, and the frame
+is neither made nor copied.
+
+The binding found kept was kept with the definitions, authorization,
+schema, time zone and settings that hold now (D45). The program was kept
+with those that held when the session took it beside the binding, and
+the binding was kept with them too. So the program is the one a lookup
+would find now. A CALL bound again is another binding and finds nothing
+beside it, and runs as any CALL until it is kept in turn. The session
+keeps this for a fixed number of bindings and forgets the oldest.
+
+A value cast to its parameter's type with no warning is assigned to that
+type unchanged where the type is an exact number, a character string, a
+truth value, a date, or an array of one of these. The cast gave it the
+type's scale, length or cardinality already. Such a value is not
+assigned again, so an array is copied once. A value of another type is
+assigned after its cast as before.
+
+Everything else runs as any CALL does and gives what it gave. That is an
+argument that is an expression or reads a table, an output parameter
+whose target is no `?`, a body that is one statement, a program not
+compiled or not kept, and an execution whose argument's cast raises a
+warning or an exception. Such an execution has run nothing when it turns
+warning or an exception. A binding found kept is of a procedure with an
+SQL routine body, so a procedure written in Rust is looked for only
+where none is found. Such an execution has run nothing when it turns
+to the general path, so the condition raised is that path's own. The
+general path itself now takes the scope from the binding and builds a
+program's frame of scopes only when it binds the program.
+
+#### D941. An execution's values that hold no large object are taken as given, not read for locators
+
+Each execution of a prepared statement read its values for large objects
+sent by their locators (`db/lobs.rs`), which made a copy of every value,
+arrays element by element. It then made a second copy of them all only
+to count them.
+
+Now the values are looked at first (`prepared/locators.rs`). A large
+object, a structured value, and an array, multiset or row that holds one
+at any depth are read for locators as before. Where there is none, the
+values are copied once into the execution's parameters. The count is
+checked without a copy. The values an execution runs with are the same.
+
+#### D942. A point change whose increments may be reserved reserves them where it reads its row
+
+A compiled program's UPDATE by a whole unique key runs straight on its
+table (D841), but one whose increments may be reserved (D452, D849) was
+handed to the general path, which alone took reservations. TPROC-C's
+Payment adds to the warehouse's and the district's year to date this
+way, so its two cheapest changes were its dearest. The general path
+collected the row, noted it for the statement's end and gave it to the
+delta table's collector to be read back.
+
+Now the point change reserves the increments itself
+(`write/direct.rs`, `escrowed`). It takes the locks the general path
+takes, reads the row by its point read, makes the candidate row,
+derives the increments from it and reserves them by the same
+`State::reserve_row`, guarding the same columns. The statement ends as
+a point change that wrote no row ends. The delta table's row is the
+candidate row, which shows the columns read and the sums not yet
+applied, as the general path's collector held it. Nothing is written
+until the transaction commits.
+
+What is reserved, what is guarded, what waits for it and when it is
+applied are those of D452 and D849 unchanged. A reservation that is not
+taken hands the change to the general path as before. That is a row
+changed since it was read, a sum that would leave the column's type, or
+an increment that is not what made the candidate row. The general path
+then reserves or writes it as it always did.
+
+#### D943. A compiled body nothing of which reads the diagnostics area places no statement's condition there
+
+A compiled program emptied the diagnostics area as each statement began
+and placed the statement's condition there as it ended (D841), as the
+interpreter does. That was done for every assignment, every IF, and
+every turn of a loop, and was a good part of what such a statement cost.
+In most bodies nothing reads what was placed.
+
+The area a procedure's statements write is the procedure's own. Its
+context takes a new one as it is pushed and gives the caller's back as
+it returns (`db/nested.rs`), so nothing after the CALL reads it. Within
+the body it is read by GET DIAGNOSTICS, and kept on the stack as a
+handler is activated. A triggered action and a function invoked have
+areas of their own.
+
+So a compiled program is looked at once, as it is compiled
+(`compiled/run.rs`, `unread`). If none of its statements is GET
+DIAGNOSTICS, no compound statement of it has a handler, and each
+statement the session runs for it is an INSERT, MERGE, UPDATE, DELETE,
+SELECT, OPEN, FETCH or CLOSE, its statements leave the area as it is.
+Each still empties the warnings heard as it begins, as emptying the area
+does, and the run empties them once more as it ends, as its last
+statement's condition would. Any other program runs as before. The
+values, rows, exceptions and completions of the CALL are the same, since
+none of them is read from the area.
 
 ## 2. Project layout
 

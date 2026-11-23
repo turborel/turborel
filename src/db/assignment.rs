@@ -91,6 +91,53 @@ pub(super) fn candidate(w: &Written, old: &Row, (assign_rule, subqueries): (&str
     assigned.candidate((old, old), (assign_rule, subqueries))
 }
 
+/// \[DESIGN\] RULES.md D912: `candidate`, made of the object row `old`
+/// itself. Every SET value is computed from it and assigned to its
+/// column's type before any is placed, as `candidate` computes them, and
+/// then each takes its column's place in the row, so no value the update
+/// leaves is copied.
+///
+/// # Errors
+///
+/// As `candidate`.
+pub(super) fn candidate_of(w: &Written, old: Row, (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
+    let a = Assigned { desc: &w.bound.desc, set: w.set(), generated: &w.bound.generated };
+    // [ISO/IEC 9075-2:2023 §4.29.1] the row's draws of one generator are one.
+    let subqueries = &Drawn::new(subqueries);
+    let mut values = Vec::with_capacity(a.set.len());
+    for (i, value) in a.set {
+        let v = match value {
+            None => Value::Null,
+            Some(e) => eval(e, &old, subqueries)?,
+        };
+        let Some(column) = a.desc.columns.get(*i).filter(|_| *i < old.len()) else {
+            return Err(api(format!("[DESIGN] {} has no column {i}", a.desc.name)));
+        };
+        values.push(assign(v, &column.data_type, assign_rule)?);
+    }
+    let mut new = old;
+    for ((i, _), value) in a.set.iter().zip(values) {
+        if let Some(slot) = new.get_mut(*i) {
+            *slot = value;
+        }
+    }
+    generated(&a, &mut new, subqueries)?;
+    Ok(new)
+}
+
+/// [ISO/IEC 9075-2:2023 §15.14 GR9] Each generated column of `a` given its
+/// value, of the row `new` so made.
+fn generated(a: &Assigned<'_>, new: &mut Row, subqueries: &dyn Subqueries) -> Result<()> {
+    let desc = a.desc;
+    let missing = |at: usize| api(format!("[DESIGN] {} has no column {at}", desc.name));
+    for (at, e) in a.generated {
+        let column = desc.columns.get(*at).ok_or_else(|| missing(*at))?;
+        let v = assign(eval(e, new, subqueries)?, &column.data_type, "ISO/IEC 9075-2:2023 §15.14 GR9")?;
+        *new.get_mut(*at).ok_or_else(|| missing(*at))? = v;
+    }
+    Ok(())
+}
+
 /// [ISO/IEC 9075:1992 §13.10 GR6] Each row of `objects` with the values
 /// the UPDATE `w` gives it, every value computed before any row is
 /// updated, as a subquery of one may read the table; \[EXTENSION\] not a
@@ -159,14 +206,7 @@ fn assigned(a: &Assigned<'_>, (old, read): (&Row, &Row), (assign_rule, subquerie
         };
         *slot = assign(v, &column.data_type, assign_rule)?;
     }
-    // [ISO/IEC 9075-2:2023 §15.14 GR9] each generated column's value, of the
-    // row so made.
-    let missing = |at: usize| api(format!("[DESIGN] {} has no column {at}", desc.name));
-    for (at, e) in a.generated {
-        let column = desc.columns.get(*at).ok_or_else(|| missing(*at))?;
-        let v = assign(eval(e, &new, subqueries)?, &column.data_type, "ISO/IEC 9075-2:2023 §15.14 GR9")?;
-        *new.get_mut(*at).ok_or_else(|| missing(*at))? = v;
-    }
+    generated(a, &mut new, subqueries)?;
     Ok(new)
 }
 

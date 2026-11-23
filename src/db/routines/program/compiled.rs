@@ -18,6 +18,7 @@
 //! runs, its semantics the interpreter's. EXECUTOR.COMPILED_PROCEDURES OFF
 //! runs each body by the interpreter instead.
 
+mod append;
 mod change;
 mod code;
 mod evaluated;
@@ -40,6 +41,9 @@ use run::{Exec, Flow, Stop};
 #[derive(Debug)]
 pub(in crate::db) struct Compiled {
     body: Node,
+    /// Whether nothing of it reads the diagnostics area as it runs
+    /// (`run.rs`, `unread`, RULES.md D943).
+    unread: bool,
 }
 
 impl Compiled {
@@ -53,7 +57,9 @@ impl Compiled {
             }
             work.extend(step.steps());
         }
-        Some(Compiled { body: code::compiled(program) })
+        let body = code::compiled(program);
+        let unread = run::unread(std::slice::from_ref(&body));
+        Some(Compiled { body, unread })
     }
 }
 
@@ -69,9 +75,15 @@ pub(in crate::db) fn run_compiled(
     frame: &mut Params,
 ) -> Result<Ended> {
     let mut exec = Exec::new(session, cx, kept, frame);
+    exec.unread = compiled.unread;
     let execution = exec.host.execution();
     exec.frame.set_execution(execution);
-    match exec.list(std::slice::from_ref(&compiled.body)) {
+    let ran = exec.list(std::slice::from_ref(&compiled.body));
+    // What its last statement's condition would take as it is placed.
+    if compiled.unread {
+        session.unheard();
+    }
+    match ran {
         Ok((Flow::Return(v), _)) => Ok(Ended::Returned(v)),
         Ok((Flow::Next | Flow::Leave(_) | Flow::Iterate(_), completion)) => Ok(Ended::Completed(completion)),
         Err(Stop::Raised(e) | Stop::Unhandled(e)) => Err(unhandled(e)),

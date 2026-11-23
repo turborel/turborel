@@ -179,7 +179,28 @@ impl PointRead {
     ///
     /// As `read`.
     pub(crate) fn entry(&self, st: &State, tx: TxId, values: &[Value]) -> Result<Option<(RowId, Row)>> {
-        let probe = match self.keyed(st, tx, placed(&self.probe, &self.slots, values)?, true)? {
+        self.entry_under(st, tx, self.placed(values)?)
+    }
+
+    /// Its probe placed with `values`, its slots' values: what `read` and
+    /// `entry` look under. A caller that places it once, to learn whether
+    /// its values place it, gives it to `entry_under` and it is not placed
+    /// again (RULES.md D911).
+    ///
+    /// # Errors
+    ///
+    /// As `physical::placed`.
+    pub(crate) fn placed(&self, values: &[Value]) -> Result<Cow<'_, Probe>> {
+        placed(&self.probe, &self.slots, values)
+    }
+
+    /// `entry`, under `probe`, its probe placed already (`placed`).
+    ///
+    /// # Errors
+    ///
+    /// As `read`.
+    pub(crate) fn entry_under(&self, st: &State, tx: TxId, probe: Cow<'_, Probe>) -> Result<Option<(RowId, Row)>> {
+        let probe = match self.keyed(st, tx, probe, true)? {
             keyed::Probed::Read(found) => return Ok(found),
             // A read of the whole row is never of some columns alone.
             keyed::Probed::Given(_) => return Ok(None),
