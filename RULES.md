@@ -550,6 +550,7 @@ verification approach DO-178C expects (§8).
 | D840 | A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer |
 | D841 | A procedure's body runs as the program it is compiled to, its point reads and point changes straight on their tables |
 | D842 | A home waits on its client for a second, its permit given up after a millisecond |
+| D843 | A commit stamps each row in place from the leaf its write left it in, with no descent |
 
 ### The project
 
@@ -11922,7 +11923,8 @@ the garbage is filed without touching the tree. The versions are stamped
 once the locks are released, still inside the checkpoint gate
 (`TableStorage::settle`). A writer that replaces a version not yet stamped
 appends it to the undo store stamped, so only a row's newest version is
-ever unstamped. A stamp replaces an entry only as it read it.
+ever unstamped. A stamp replaces an entry only as it read it, and starts
+at the leaf the row's write left it in (D843).
 
 The semantics hold for these reasons.
 
@@ -15212,6 +15214,36 @@ threads. A client that thinks longer than a second pays the two moves
 once a second at most, under a ten-thousandth of its time, and a waiting
 home is woken fifty times a second, so a longer wait gains nothing
 measurable and keeps a thread from the pool longer.
+
+#### D843. A commit stamps each row in place from the leaf its write left it in, with no descent
+
+A commit's stamp of each row it wrote (D440) read the row's entry by a
+descent of the table's tree and wrote it back by another, a version
+encoded anew each time. In an order entry that was most of the commit's
+cost, two walks from the root for every row, though the write that made
+the entry had held its leaf.
+
+Now a write of a row's version tells where it left the entry, its leaf
+and the tree's stamp read before the write (`engine/tree/placed.rs`), and
+the transaction keeps that with the change. Its stamp locks that leaf,
+moves right past the splits since, finds the entry, and writes the
+commit timestamp and its flag over the version in place, under the
+leaf's lock (`RowTable::stamp_placed`). The stamp's bytes are as long as
+the transaction id they replace, so nothing in the leaf moves.
+
+The leaf is trusted only while the tree's stamp is unchanged. A leaf
+leaves the tree only by being retired, which moves the stamp first, so
+an unchanged stamp means the leaf is still a leaf of this tree and the
+entry is in it or to its right (D446, D500). A moved stamp, or an entry
+not found from the leaf, sends the stamp down from the root as before.
+Under the leaf's lock the version is stamped only if the transaction
+still made it, as a stamp replaced an entry only as it read it, so a
+writer that wrote over it meanwhile keeps its own.
+
+Nothing else changes. The stamping runs when it did, after the locks are
+released and inside the checkpoint gate, so visibility, validation,
+recovery, checkpoints and the collection of old versions read the same
+versions as before.
 
 ## 2. Project layout
 

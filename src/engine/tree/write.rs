@@ -277,7 +277,7 @@ impl BLinkTree {
     }
 
     /// Refuses an entry longer than `max_entry`.
-    fn fits(&self, key: &[u8], value: &[u8]) -> Result<()> {
+    pub(super) fn fits(&self, key: &[u8], value: &[u8]) -> Result<()> {
         if key.len().saturating_add(value.len().max(CHILD)) > self.max_entry() {
             return Err(SqlError::new(
                 Code::Api,
@@ -292,7 +292,7 @@ impl BLinkTree {
     }
 
     /// Inserts or replaces `key`'s entry, as `mode` says (§5, insert).
-    fn write(&self, key: &[u8], value: &[u8], mode: Mode<'_>) -> Result<Written> {
+    pub(super) fn write(&self, key: &[u8], value: &[u8], mode: Mode<'_>) -> Result<Written> {
         let _guard = self.epochs.guard();
         self.fits(key, value)?;
         let mut path = Path::default();
@@ -376,7 +376,7 @@ impl BLinkTree {
 /// \[DESIGN\] Where `BLinkTree::get_for_write`'s descent found a key: the
 /// path to its leaf, the leaf, and the tree's stamp then.
 pub struct Descended {
-    path: Path,
-    leaf: PageId,
-    stamp: u64,
+    pub(super) path: Path,
+    pub(super) leaf: PageId,
+    pub(super) stamp: u64,
 }

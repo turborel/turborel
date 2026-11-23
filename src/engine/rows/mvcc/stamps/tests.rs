@@ -79,3 +79,25 @@ fn an_unstamped_version_is_appended_stamped() {
     table.begin(12, 11).unwrap();
     assert_eq!(value(&table, 12, id).as_deref(), Some("first"));
 }
+
+/// Verifies: [DESIGN] RULES.md D843: a commit of many rows, their leaves
+/// split by the transaction's own later inserts, stamps each in place from
+/// where its write left it, an update, an insert and a deletion alike.
+#[test]
+fn a_commit_stamps_its_rows_where_their_writes_left_them() {
+    let scratch = Scratch::new("unit-stamps-placed");
+    let (_files, table, id) = table(&scratch);
+    table.begin(10, 9).unwrap();
+    table.update(10, id, vec![Value::Char("new  ".into())]).unwrap();
+    let ids: Vec<RowId> = (0..600).map(|_| table.insert(10, vec![Value::Char("many ".into())]).unwrap()).collect();
+    table.delete(10, ids[3]).unwrap();
+    table.commit(10, 10);
+    table.settle(10);
+    for &row in ids.iter().chain([&id]) {
+        assert_eq!(maker(&table, row), Maker::Committed(10), "row {row}");
+    }
+    table.begin(11, 10).unwrap();
+    assert_eq!(value(&table, 11, id).as_deref(), Some("new  "));
+    assert_eq!(value(&table, 11, ids[3]), None, "the deletion committed");
+    assert_eq!(value(&table, 11, ids[599]).as_deref(), Some("many "));
+}

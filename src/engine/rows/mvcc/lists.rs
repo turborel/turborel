@@ -7,7 +7,8 @@
 //!          appended, 2 if it made an object, 4 a group; the position u64
 //!          if it has one; the columns kept u64; the objects it dropped,
 //!          their count u32 and each id u64; then the entry it replaced, if
-//!          its own
+//!          its own; 8 if it has where it left the row's entry, its leaf
+//!          u64 and the tree's stamp u64 after the flags
 //! garbage: kind u8, then by kind: 0 own version, its row id, the columns
 //!          kept u64 and its bytes; 1 older version, its row id, position
 //!          and the columns kept u64; 2 deletion, its row
@@ -17,6 +18,7 @@
 
 use super::{Change, Dead};
 use crate::bytes::{Put, Reader};
+use crate::engine::tree::Placed;
 use crate::error::Result;
 use crate::log::Lsn;
 use crate::spill::ListItem;
@@ -44,6 +46,8 @@ impl ListItem for Dead {
 const MADE: u8 = 2;
 /// The flag of a change that made a group (`frozen/stamped.rs`).
 const GROUP: u8 = 4;
+/// The flag of a change that knows where it left the row's entry.
+const PLACED: u8 = 8;
 
 /// Writes `ids`, their count then each.
 fn put_ids(ids: &[u64], out: &mut Vec<u8>) {
@@ -63,7 +67,12 @@ fn read_ids(r: &mut Reader<'_>) -> Result<Vec<u64>> {
 pub(super) fn encode_change(change: &Change) -> Vec<u8> {
     let mut out = Vec::new();
     out.put_u64(change.id);
-    out.put_u8(u8::from(change.appended.is_some()) | if change.made { MADE } else { 0 } | if change.group { GROUP } else { 0 });
+    let placed = if change.placed.is_some() { PLACED } else { 0 };
+    out.put_u8(u8::from(change.appended.is_some()) | if change.made { MADE } else { 0 } | if change.group { GROUP } else { 0 } | placed);
+    if change.placed.is_some() {
+        out.put_u64(change.placed.leaf);
+        out.put_u64(change.placed.stamp);
+    }
     if let Some(at) = change.appended {
         out.put_u64(at.0);
     }
@@ -78,12 +87,13 @@ pub(super) fn decode_change(record: &[u8]) -> Result<Change> {
     let mut r = Reader::new(record, "row change");
     let id = r.u64()?;
     let flags = r.u8()?;
+    let placed = if flags & PLACED == PLACED { Placed { leaf: r.u64()?, stamp: r.u64()? } } else { Placed::default() };
     let appended = if flags & 1 == 1 { Some(Lsn(r.u64()?)) } else { None };
     let unchanged = r.u64()?;
     let dropped = read_ids(&mut r)?;
     let rest = r.rest();
     let (made, group) = (flags & MADE == MADE, flags & GROUP == GROUP);
-    Ok(Change { id, before: (!rest.is_empty()).then(|| rest.to_vec()), appended, dropped, made, unchanged, group })
+    Ok(Change { id, before: (!rest.is_empty()).then(|| rest.to_vec()), appended, dropped, made, unchanged, group, placed })
 }
 
 /// `dead` as a record.
@@ -154,11 +164,12 @@ mod tests {
             Change { made: true, ..Change::of_row(4, None, None, Vec::new()) },
             Change { unchanged: 0b101, ..Change::of_row(5, Some(vec![6]), None, Vec::new()) },
             Change { group: true, ..Change::of_row(7, None, None, Vec::new()) },
+            Change { placed: Placed { leaf: 11, stamp: 12 }, ..Change::of_row(8, None, Some(Lsn(3)), Vec::new()) },
         ] {
             let back = decode_change(&encode_change(&change)).unwrap();
             assert_eq!(
-                (back.id, back.before.clone(), back.appended, back.dropped.clone(), back.made, back.unchanged, back.group),
-                (change.id, change.before.clone(), change.appended, change.dropped.clone(), change.made, change.unchanged, change.group)
+                (back.id, back.before.clone(), back.appended, back.dropped.clone(), back.made, back.unchanged, back.group, back.placed),
+                (change.id, change.before.clone(), change.appended, change.dropped.clone(), change.made, change.unchanged, change.group, change.placed)
             );
             assert!(back.bytes() >= FIXED);
         }

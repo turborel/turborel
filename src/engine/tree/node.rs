@@ -75,7 +75,7 @@ mod parsed;
 mod split;
 
 pub(super) use build::{
-    Shape, build, built, built_size, compact, deleted, grown, insert, lengthens, overwrite, remove, set_child, set_right, stored,
+    Shape, build, built, built_size, compact, deleted, grown, insert, lengthens, overwrite, remove, set_child, set_right, stored, value_mut,
 };
 pub(super) use key::KeyRef;
 use key::head_of;
