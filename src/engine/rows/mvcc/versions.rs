@@ -4,8 +4,10 @@
 //! a write outside any transaction, committed at once; and the objects a
 //! transaction made, noted so undoing it frees them.
 
+use std::sync::Mutex;
+
 use super::lists::encode_change;
-use super::{Change, Found, Past, conflict};
+use super::{Change, Found, Open, Past, conflict};
 use crate::engine::rows::version::{FRAMED, Maker, Version, frame};
 use crate::engine::rows::{RowTable, key, no_row};
 use crate::error::Result;
@@ -65,10 +67,25 @@ impl RowTable {
     /// `write_version`'s work: the version it replaced, none if the entry
     /// it read was gone or changed by then.
     fn try_write(&self, tx: TxId, id: RowId, framed: Option<&mut [u8]>, past: Past) -> Result<Option<Vec<u8>>> {
-        let open = self.open_of(tx)?;
-        let snapshot = lock_builtin(&open).snapshot;
+        let opened = self.open_of(tx)?;
+        let open: &Mutex<Open> = &opened;
+        let Some(newest) = self.newest_or_frozen(id)? else { return no_row(id) };
+        self.write_found((tx, open), id, newest, (framed, past))
+    }
+
+    /// `try_write`'s work over `newest`, row `id`'s newest version as it
+    /// was read, by `tx`, whose bookkeeping is `open`. A caller that makes
+    /// the new record of that version's bytes reads it first, and writes
+    /// over it here (`mvcc/patch.rs`, RULES.md D916).
+    pub(super) fn write_found(
+        &self,
+        (tx, open): (TxId, &Mutex<Open>),
+        id: RowId,
+        (newest, found): Found,
+        (framed, past): (Option<&mut [u8]>, Past),
+    ) -> Result<Option<Vec<u8>>> {
+        let snapshot = lock_builtin(open).snapshot;
         let k = key(id);
-        let Some((newest, found)) = self.newest_or_frozen(id)? else { return no_row(id) };
         self.versions.statuses.claim(tx);
         let (older, appended) = self.older_of((tx, snapshot), id, &newest, past)?;
         let record = framed.as_deref().map(|f| f.get(FRAMED..).unwrap_or_default());
@@ -106,7 +123,7 @@ impl RowTable {
             self.frozen.shadow();
         }
         let before = appended.is_none().then(|| newest.clone());
-        let mut open = lock_builtin(&open);
+        let mut open = lock_builtin(open);
         open.adopted.extend(added);
         open.changes_in(&self.versions).push(Change { placed, ..Change::of_row(id, before, appended, dropped) }, &mut encode_change)?;
         Ok(Some(newest))
@@ -160,7 +177,7 @@ impl RowTable {
     /// frozen, a version holding its frozen values, to change it over, its
     /// entry to be inserted (`rows/frozen.rs`), with the pages of its values
     /// out of line; none if neither.
-    fn newest_or_frozen(&self, id: RowId) -> Result<Option<Found>> {
+    pub(super) fn newest_or_frozen(&self, id: RowId) -> Result<Option<Found>> {
         // Read into the buffer the thread's last write gave back, so an
         // update allocates none for it (RULES.md D874).
         let mut newest = spare();

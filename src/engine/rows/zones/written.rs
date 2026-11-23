@@ -39,6 +39,23 @@ impl RowTable {
         old.map(drop)
     }
 
+    /// \[DESIGN\] Widens the zone of row `id` to hold `record`, written
+    /// over the version `replaced`, as `widen_past` widens it to a row
+    /// (RULES.md D916): the columns the zones keep are decoded of the
+    /// record, for an update that holds no value but those it set. Of a
+    /// table cold, nothing is read.
+    ///
+    /// # Errors
+    ///
+    /// As `widen_past`; SQLCODE -916 if `record` is malformed.
+    pub(in crate::engine::rows) fn widen_patched(&self, id: RowId, record: &[u8], replaced: &[u8]) -> Result<()> {
+        if self.zones.cold() {
+            return Ok(());
+        }
+        let row = self.decode(id, record, Some(&self.zones.kept))?;
+        self.widen_past(id, Some(&row), Some(replaced))
+    }
+
     /// Widens the zone of row `id` to hold `version`, a version of it put
     /// back in its tree, as a write widens it once written: a zone summed
     /// up while the version was not the row's newest holds it again.

@@ -26,9 +26,9 @@ use crate::error::Result;
 use crate::exec::Slots;
 use crate::logical::LogicalPlan;
 use crate::params::Params;
-use crate::storage::{Row, RowId};
+use crate::storage::{COLUMN_BITS, Row, RowId};
 use crate::txn::Again;
-use crate::txn::writing::Writing;
+use crate::txn::writing::{Columns, Writing};
 
 /// What a point change did: no row found [X3.135-1986 §7.3 GR3a iv]; or
 /// the row it found written, as it was before and is now, none of a row
@@ -38,17 +38,42 @@ pub(in crate::db) enum Pointed {
     Wrote(Option<(Row, Option<Row>)>),
 }
 
+/// \[DESIGN\] (RULES.md D917) What an UPDATE's write needs of its table,
+/// found before its row is read, and the columns it reads of that row if
+/// it is written as a patch: those its SET values read, those it sets,
+/// those its table's index keys read and those its caller reads of the
+/// row written.
+struct Ahead<'s> {
+    writing: Writing<'s>,
+    columns: Option<Columns>,
+}
+
+/// What the UPDATE `w`, its constraints `straight`'s, needs ahead of its
+/// row, its caller reading the columns `read` of the row it writes.
+fn ahead<'s>(st: &'s crate::db::State, w: &Written, (straight, read): (&Straight, u64)) -> Result<Ahead<'s>> {
+    let writing = st.writing(&w.bound.table)?;
+    // An UPDATE tells its write the columns it sets (RULES.md D875).
+    let Some(set) = straight.set() else { return Ok(Ahead { writing, columns: None }) };
+    let writing = writing.setting(set);
+    // Every column of the table has a bit, so each mask names all it means.
+    let narrow = w.bound.desc.columns.len() <= COLUMN_BITS;
+    let held = straight.inputs().zip(writing.patched()).filter(|_| narrow);
+    let columns = held.map(|(inputs, keys)| Columns::of(inputs | keys | read));
+    Ok(Ahead { writing, columns })
+}
+
 /// `w`, an UPDATE, or DELETE if `delete`, of `session`, run straight on
 /// its table, its statement ended with the checks of `straight`, its delta
-/// table's reader, if any, showing the columns of `shown`: what it did; or
-/// `w` again, if it is to run the general path.
+/// table's reader, if any, showing the columns of `shown`, and reading at
+/// this execution those of `read`: what it did; or `w` again, if it is to
+/// run the general path.
 ///
 /// # Errors
 ///
 /// As `update_rows` and `delete_rows`, and the statement's end.
 pub(in crate::db) fn point_change(
     (session, cx): (&Session, StatementContext<'_>),
-    (mut w, straight, delete, shown): (Written, &Straight, bool, u64),
+    (mut w, straight, delete, (shown, read)): (Written, &Straight, bool, (u64, u64)),
 ) -> Result<std::result::Result<Pointed, Written>> {
     let StatementContext { st, tx } = cx;
     let placed = if let ObjectRows::Point(_, _, placed) = &mut w.rows { placed.take() } else { None };
@@ -62,11 +87,16 @@ pub(in crate::db) fn point_change(
     for t in reads.iter().chain(straight.set_tables()) {
         st.read_lock(tx, t)?;
     }
+    // An UPDATE finds what its write needs first: written as a patch, it
+    // reads of its row the columns that needs alone (RULES.md D917).
+    let ahead = if delete { None } else { Some(ahead(st, &w, (straight, read))?) };
+    let columns = ahead.as_ref().and_then(|ahead| ahead.columns.as_deref());
     // Its probe as its plan placed it, if it did (RULES.md D911).
-    let found = match placed {
-        Some(probe) => point.entry_under(st, tx.id, std::borrow::Cow::Owned(probe))?,
-        None => point.entry(st, tx.id, w.slots.as_deref().unwrap_or_default())?,
+    let probe = match placed {
+        Some(probe) => std::borrow::Cow::Owned(probe),
+        None => point.placed(w.slots.as_deref().unwrap_or_default())?,
     };
+    let found = point.entry_reading(st, tx.id, probe, columns)?;
     let Some((id, seen)) = found else {
         // Of a catalog with triggers, its statement ends with no row
         // changed, as `update_rows` ends it.
@@ -78,14 +108,13 @@ pub(in crate::db) fn point_change(
     let db = w.db(st);
     let hosted = Hosted::in_db(Some(session), cx, &db);
     // What its write needs of its table, found once (RULES.md D872).
-    let writing = st.writing(&w.bound.table)?;
-    // An UPDATE tells its write the columns it sets (RULES.md D875).
-    let writing = match straight.set().filter(|_| !delete) {
-        Some(set) => writing.setting(set),
-        None => writing,
+    let patched = columns.is_some();
+    let writing = match ahead {
+        Some(ahead) => ahead.writing,
+        None => st.writing(&w.bound.table)?,
     };
     let at = (&writing, id);
-    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, seen), straight.set())? };
+    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, seen), (straight.set(), patched))? };
     let wrote = rows.as_ref().map(|_| id);
     // The row an UPDATE wrote, as it holds it (RULES.md D880).
     let held = rows.as_ref().and_then(|(_, new)| new.as_ref());
@@ -108,12 +137,14 @@ fn deleted(
 
 /// Row `id`, seen as `seen`, updated by `w`, its values computed by
 /// `hosted`: the row it was and the row it is, none if another
-/// transaction deleted it first.
+/// transaction deleted it first. Written as a patch, if `patched`, the
+/// row it is holds the columns its statement read and set, and null in
+/// every other (RULES.md D917).
 fn updated(
     cx: StatementContext<'_>,
     (w, hosted): (&Written, &Hosted<'_>),
     (at, seen): ((&Writing<'_>, RowId), Row),
-    set: Option<u64>,
+    (set, patched): (Option<u64>, bool),
 ) -> Result<Option<(Row, Option<Row>)>> {
     // The candidate row is made of the row seen itself (RULES.md D912).
     let new = candidate_of(w, seen, ("ISO/IEC 9075:1992 §13.10 GR8", hosted))?;
@@ -131,9 +162,12 @@ fn updated(
     // [DESIGN] RULES.md D875: the one write told the columns set, where
     // its statement reads nothing of the row before (`Straight::set`).
     // The row before it gives holds the columns its write read alone.
-    let written = match set {
-        Some(_) => cx.st.rewrite_row_set(cx.tx, at, &new, &mut recheck)?,
-        None => cx.st.rewrite_row_in(cx.tx, at, Some(&new), &mut recheck)?,
+    // D917: `patched`, the row seen holds the columns its statement reads
+    // alone, and so does the candidate, written as the columns it sets.
+    let written = match (set, patched) {
+        (Some(_), true) => cx.st.rewrite_row_patch(cx.tx, at, &new, &mut recheck)?,
+        (Some(_), false) => cx.st.rewrite_row_set(cx.tx, at, &new, &mut recheck)?,
+        (None, _) => cx.st.rewrite_row_in(cx.tx, at, Some(&new), &mut recheck)?,
     };
     Ok(written.map(|before| (before, Some(recomputed.unwrap_or(new)))))
 }

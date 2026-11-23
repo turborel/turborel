@@ -219,9 +219,9 @@ impl TableStorage for RowTable {
         self.write_over(tx, id, row, Past::Snapshot)?.map_or_else(|| no_row(id), Ok)
     }
 
-    /// The row replaced with its columns `read` alone decoded (`replace_reading`, RULES.md D875).
-    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, read: &[usize]) -> Result<Row> {
-        self.replace_reading(tx, id, row, read)
+    /// The row replaced with its columns read alone decoded, its record patched if told the columns set (D875, D916).
+    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, told: (Option<crate::storage::Patch<'_>>, &[usize])) -> Result<Row> {
+        self.replace_reading(tx, id, row, told)
     }
 
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<&Row>, seen: Timestamp) -> Result<()> {

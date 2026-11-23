@@ -78,8 +78,8 @@ mod lobs;
 pub mod marks;
 
 pub use batch::{
-    delete_record, insert_record, insert_rows_record, put_delete_record, put_insert_record, put_update_record, put_update_record_of,
-    update_record,
+    delete_record, insert_record, insert_rows_record, put_delete_record, put_insert_record, put_update_record, put_update_record_image,
+    put_update_record_of, update_record,
 };
 pub use definitions::DropTarget;
 use definitions::{

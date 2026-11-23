@@ -25,7 +25,7 @@ use crate::db::State;
 use crate::disk::encoding::Pipeline;
 use crate::error::{Code, Result, SqlError};
 use crate::index::Index;
-use crate::storage::{COLUMN_BITS, Row, TableStorage, column_bit, unchanged};
+use crate::storage::{COLUMN_BITS, Row, TableStorage, unchanged};
 
 /// One index a table's rows have entries in, as a statement's writes find
 /// it: the table's own, or \[EXTENSION\] a global index over a partition,
@@ -88,20 +88,60 @@ pub(crate) struct Writing<'s> {
 /// \[DESIGN\] The columns a statement said it sets (RULES.md D875), and
 /// what an update that sets no other reads of the row it replaces.
 pub(super) struct Set {
-    /// The columns set, as bits (`storage::column_bit`).
+    /// The columns set, as bits (`storage::column_bit`): those whose
+    /// values before an update's log record may hold
+    /// (`record::put_update_of`).
     mask: u64,
-    /// The columns set, in ascending order, each once: those whose values
-    /// before an update's log record may hold (`record::put_update_of`).
-    pub(super) columns: Vec<usize>,
-    /// The columns read of the row replaced, in ascending order: those
-    /// set, and the key columns of each index whose key reads one set, so
-    /// the key the row had in such an index can be made of them.
-    pub(super) read: Vec<usize>,
+    /// The columns read of the row replaced, as bits: those set, and the
+    /// key columns of each index whose key reads one set, so the key the
+    /// row had in such an index can be made of them.
+    read: u64,
 }
 
-/// The columns of `mask`, in ascending order.
-fn columns_of(mask: u64) -> Vec<usize> {
-    (0..COLUMN_BITS).filter(|&c| column_bit(c).is_some_and(|bit| mask & bit != 0)).collect()
+impl Set {
+    /// The columns set, in ascending order, each once.
+    pub(super) fn columns(&self) -> Columns {
+        Columns::of(self.mask)
+    }
+
+    /// The columns read of the row replaced, in ascending order.
+    pub(super) fn read(&self) -> Columns {
+        Columns::of(self.read)
+    }
+}
+
+/// \[DESIGN\] The columns of a mask, in ascending order, held where they
+/// are made (RULES.md D917): each write of a row names the columns it
+/// sets and reads, and a list made for each would be an allocation a row.
+pub(crate) struct Columns {
+    list: [usize; COLUMN_BITS],
+    len: usize,
+}
+
+impl Columns {
+    /// The columns of `mask`, a bit a column (`storage::column_bit`).
+    pub(crate) fn of(mask: u64) -> Columns {
+        let mut columns = Columns { list: [0; COLUMN_BITS], len: 0 };
+        let mut left = mask;
+        // Its lowest bit, then the mask without it, until none is left.
+        while left != 0 {
+            let column = usize::try_from(left.trailing_zeros()).unwrap_or(COLUMN_BITS);
+            if let Some(slot) = columns.list.get_mut(columns.len) {
+                *slot = column;
+            }
+            columns.len = columns.len.saturating_add(1);
+            left &= left.wrapping_sub(1);
+        }
+        columns
+    }
+}
+
+impl std::ops::Deref for Columns {
+    type Target = [usize];
+
+    fn deref(&self) -> &[usize] {
+        self.list.get(..self.len).unwrap_or_default()
+    }
 }
 
 /// RULES.md D875: of a statement setting the columns `set`, the columns
@@ -124,7 +164,7 @@ impl<'s> Writing<'s> {
     #[must_use]
     pub(crate) fn setting(mut self, set: u64) -> Writing<'s> {
         let read = read_columns(set, self.indexes.iter().map(|entries| entries.columns));
-        self.set = Some(Set { mask: set, columns: columns_of(set), read: columns_of(read) });
+        self.set = Some(Set { mask: set, read });
         self
     }
 
@@ -142,9 +182,21 @@ impl<'s> Writing<'s> {
         self.set.as_ref().filter(|_| lean)
     }
 
+    /// \[DESIGN\] RULES.md D917: whether an update of its table may be
+    /// written as a patch, its row holding the columns set and those given
+    /// here, the columns its index keys read, and null in every other. So
+    /// it is where the row replaced is read by its columns alone
+    /// (`sparse`), no check reads the row written beside its table, no
+    /// period stamps it, and each index's key is of columns told here,
+    /// which makes the entry of a row whose key it changes.
+    pub(crate) fn patched(&self) -> Option<u64> {
+        let plain = !self.checked && !self.stamped && self.indexes.iter().all(|entries| entries.columns != 0);
+        self.sparse().filter(|_| plain).map(|set| set.mask | self.key_columns)
+    }
+
     /// The columns its statement said it sets, in ascending order.
-    pub(super) fn set_columns(&self) -> Option<&[usize]> {
-        self.set.as_ref().map(|set| set.columns.as_slice())
+    pub(super) fn set_columns(&self) -> Option<Columns> {
+        self.set.as_ref().map(Set::columns)
     }
 
     /// RULES.md D443, D875: of `row` written over `old`, the columns the
@@ -185,11 +237,16 @@ impl State {
         let lock = self.lock_of(table)?;
         let desc = self.catalog.table(table);
         let seal = desc.map(|desc| self.seal_of_desc(desc)).transpose()?.flatten();
-        let mut indexes = Vec::new();
-        for (ix, partition) in self.table_indexes(table) {
-            let columns = if partition.is_none() { key_columns(&ix) } else { 0 };
+        // The table's own indexes, then the global ones over it
+        // (`State::table_indexes`), with no list made of them between.
+        let (own, globals) = (self.catalog.indexes(table), self.globals_over(table));
+        let mut indexes = Vec::with_capacity(own.len().saturating_add(globals.len()));
+        for ix in own {
+            indexes.push(Entries { columns: key_columns(ix), index: self.indexes.get(&ix.name), ix: Cow::Borrowed(ix), partition: None });
+        }
+        for (ix, partition) in globals {
             let index = self.indexes.get(&ix.name);
-            indexes.push(Entries { ix, partition, columns, index });
+            indexes.push(Entries { ix: Cow::Owned(ix), partition: Some(partition), columns: 0, index });
         }
         Ok(Writing {
             name,

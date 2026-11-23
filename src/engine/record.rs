@@ -45,8 +45,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::storage::Row;
 use crate::value::{DataType, Value};
 
+mod image;
 mod inline;
 mod listed;
+mod patched;
 
 /// The record's header byte as this code writes it.
 const HEADER: u8 = 0;

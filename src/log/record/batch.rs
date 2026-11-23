@@ -15,7 +15,7 @@ use super::{Change, RECORD_VERSION, put_row_change, put_table, table};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
-use crate::storage::{Row, RowId};
+use crate::storage::{AfterImage, Row, RowId};
 use crate::txn::TxId;
 use crate::value::codec::{put_row, row, row_len};
 
@@ -131,6 +131,26 @@ pub fn put_update_record_of(
     out.put_u8(UPDATE);
     out.put_u64(tx);
     super::images::put_update_of(out, (table, generation, id), before, after, set);
+}
+
+/// \[DESIGN\] (RULES.md D916) As `put_update_record_of`, the row after
+/// given as `image` (`images::put_update_image`): the bytes it writes of
+/// the row the image is of.
+pub fn put_update_record_image(
+    out: &mut Vec<u8>,
+    tx: TxId,
+    (table, generation): (&QualifiedName, u32),
+    id: RowId,
+    (before, image): (&Row, &AfterImage),
+) {
+    let (values, _, set) = image.parts();
+    // At most the row before as given, each column set with its position.
+    let images = values.len().saturating_add(row_len(before)).saturating_add(set.len().saturating_mul(POSITION_LEN));
+    out.reserve(head_len(table).saturating_add(images));
+    out.put_u8(RECORD_VERSION);
+    out.put_u8(UPDATE);
+    out.put_u64(tx);
+    super::images::put_update_image(out, (table, generation, id), before, image);
 }
 
 /// \[DESIGN\] As `insert_record`, of a `Change::Delete` of row `id`, which

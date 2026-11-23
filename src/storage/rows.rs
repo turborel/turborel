@@ -32,6 +32,33 @@ pub(super) fn listed(row: Option<Row>, columns: &[usize], out: &mut Row) -> bool
     true
 }
 
+/// \[DESIGN\] Row `id` of `storage` as `tx` sees it, read whole, with each
+/// column of `set` given its value in `row` (RULES.md D916): the row an
+/// update that holds the values it sets alone writes, where it is written
+/// whole.
+pub(super) fn whole_set<S: super::TableStorage + ?Sized>(storage: &S, tx: TxId, id: RowId, (row, set): (&Row, &[usize])) -> Result<Row> {
+    let mut whole = storage.get(tx, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id}")))?;
+    for &column in set {
+        if let (Some(slot), Some(value)) = (whole.get_mut(column), row.get(column)) {
+            slot.clone_from(value);
+        }
+    }
+    Ok(whole)
+}
+
+/// The default `TableStorage::replace_set`: `replace`, of `row` as it is,
+/// or, with a `patch`, of the row read whole and given the values `row`
+/// holds of the columns set (`Patch::whole`).
+pub(super) fn replace_whole<S: super::TableStorage + ?Sized>(
+    storage: &S,
+    (tx, id): (TxId, RowId),
+    row: Option<&Row>,
+    patch: Option<super::Patch<'_>>,
+) -> Result<Row> {
+    let (Some(new), Some(mut patch)) = (row, patch) else { return storage.replace(tx, id, row) };
+    storage.replace(tx, id, Some(&patch.whole(storage, tx, id, new)?))
+}
+
 /// \[DESIGN\] The row of `values`, of `len` values at most, made once per
 /// row read or computed: sized once, as a vector collected through
 /// `Result` does not know its length and grows from a few values by

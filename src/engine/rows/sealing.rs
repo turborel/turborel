@@ -81,6 +81,12 @@ impl Sealing {
         }
     }
 
+    /// Whether a record written now is stored as it is, through no
+    /// encoding.
+    pub(super) fn passes_none(&self) -> bool {
+        self.unsealed.load(Ordering::Acquire)
+    }
+
     /// The pipeline new rows pass through.
     fn pipeline(&self) -> Result<Arc<Pipeline>> {
         read(&self.current)?.clone().map_err(|why| SqlError::new(Code::Api, why))

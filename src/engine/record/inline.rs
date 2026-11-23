@@ -80,7 +80,7 @@ impl RecordFormat {
     /// Whether `spill` keeps `record`, written in line, whole: no value of
     /// varying width longer than its threshold, and the record no longer
     /// than its most.
-    fn keeps_whole(&self, record: &[u8], spill: Spill) -> bool {
+    pub(super) fn keeps_whole(&self, record: &[u8], spill: Spill) -> bool {
         if record.len() > spill.most {
             return false;
         }
@@ -100,7 +100,7 @@ impl RecordFormat {
 
 /// The bytes of a string `v` is, none of another value: the most its
 /// record holds of it.
-fn string_len(v: &Value) -> usize {
+pub(super) fn string_len(v: &Value) -> usize {
     match v {
         Value::Char(s) => s.len(),
         Value::Binary(b) => b.bytes().len(),
@@ -126,7 +126,7 @@ fn string_len(v: &Value) -> usize {
 /// Appends the bytes of non-null `value` in a column of `data_type` to
 /// `out`, as its kind encodes them: a call to the kinds most columns are of
 /// made directly, so it is inlined.
-fn encode_into(value: &Value, data_type: &DataType, out: &mut Vec<u8>) -> Result<()> {
+pub(super) fn encode_into(value: &Value, data_type: &DataType, out: &mut Vec<u8>) -> Result<()> {
     match data_type {
         DataType::Exact { .. } => EXACT.encode_record_into(value, data_type, out),
         DataType::Character { .. } => CHARACTER.encode_record_into(value, data_type, out),

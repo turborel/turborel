@@ -11,7 +11,7 @@ use super::versions::give_back;
 use crate::engine::rows::version::Version;
 use crate::engine::rows::{RowTable, no_row};
 use crate::error::Result;
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Patch, Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, TxId};
 
@@ -70,10 +70,24 @@ impl RowTable {
     /// made `row` by `tx`, the row it replaced given with its columns
     /// `read` alone decoded. A deletion, and a write outside any
     /// transaction, which reads the row before it writes, give it whole as
-    /// `replace` does.
-    pub(in crate::engine::rows) fn replace_reading(&self, tx: TxId, id: RowId, row: Option<&Row>, read: &[usize]) -> Result<Row> {
-        let (Some(new), true) = (row, tx != NO_TRANSACTION) else { return TableStorage::replace(self, tx, id, row) };
-        self.write_over_reading(tx, id, new, (Past::Snapshot, read))?.map_or_else(|| no_row(id), Ok)
+    /// `replace` does. With a `patch`, `row` holds the values of the
+    /// columns set alone, and the record is made of the one it replaces
+    /// (`mvcc/patch.rs`, D916).
+    pub(in crate::engine::rows) fn replace_reading(
+        &self,
+        tx: TxId,
+        id: RowId,
+        row: Option<&Row>,
+        (patch, read): (Option<Patch<'_>>, &[usize]),
+    ) -> Result<Row> {
+        let (Some(new), true) = (row, tx != NO_TRANSACTION) else {
+            let whole = row.zip(patch).map(|(new, mut patch)| patch.whole(self, tx, id, new)).transpose()?;
+            return TableStorage::replace(self, tx, id, whole.as_ref().or(row));
+        };
+        match patch {
+            Some(patch) => self.replace_patching(tx, id, new, (patch, read)),
+            None => self.write_over_reading(tx, id, new, (Past::Snapshot, read))?.map_or_else(|| no_row(id), Ok),
+        }
     }
 
     /// As `write_over`, for a caller that does not read the row replaced.
@@ -119,7 +133,7 @@ impl RowTable {
     /// out of line are freed only as the transaction ends, so they are
     /// still there to read. It is decoded once, for the write's caller and
     /// its zone alike (RULES.md D835), only the columns `read` if given.
-    fn replaced(&self, id: RowId, replaced: Option<&[u8]>, read: Option<&[usize]>) -> Result<Option<(Row, bool)>> {
+    pub(super) fn replaced(&self, id: RowId, replaced: Option<&[u8]>, read: Option<&[usize]>) -> Result<Option<(Row, bool)>> {
         let decoded = |bytes| {
             let version = Version::parse(bytes)?;
             Ok((self.decode(id, version.record, read)?, version.deleted))

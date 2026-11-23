@@ -26,6 +26,7 @@ use crate::db::State;
 use crate::db::assignment::set_columns_of;
 use crate::db::write::system_time::system_time;
 use crate::error::Result;
+use crate::logical::{Expr, expr_columns};
 use crate::storage::{Row, RowId, column_bit};
 use crate::txn::Txn;
 use crate::value::Value;
@@ -57,6 +58,12 @@ pub(in crate::db) struct Straight {
     /// trigger, no foreign key referencing a column it sets and no OLD
     /// TABLE of an UPDATE, and checks its constraints of the row after.
     set: Option<u64>,
+    /// \[DESIGN\] (RULES.md D917) Of such an UPDATE, the columns its SET
+    /// values read, a bit a column, if the row it writes need hold only
+    /// those, the columns set and what its caller reads of it: its SET
+    /// values read nothing but the row, it has no generated column, and
+    /// its row constraints are NOT NULL alone, each of a column it sets.
+    inputs: Option<u64>,
 }
 
 impl Straight {
@@ -68,6 +75,12 @@ impl Straight {
     /// The columns its UPDATE sets, if its write may be told them (`set`).
     pub(in crate::db) fn set(&self) -> Option<u64> {
         self.set
+    }
+
+    /// The columns its UPDATE's SET values read, if the row it writes may
+    /// hold the columns it reads alone (`inputs`).
+    pub(in crate::db) fn inputs(&self) -> Option<u64> {
+        self.inputs
     }
 }
 
@@ -87,7 +100,9 @@ impl State {
         let straight = self.straight_of(table, (columns.as_deref(), delete))?;
         let mask = |set: &Vec<usize>| set.iter().try_fold(0_u64, |mask, &c| column_bit(c).map(|bit| mask | bit));
         let set = columns.as_ref().filter(|_| straight.in_hand).and_then(mask);
-        Some(Straight { set_tables: bound.set_tables(), set, ..straight })
+        let lean = set.is_some() && !straight.reads && bound.generated.is_empty();
+        let inputs = if lean { inputs_of(&bound.set) } else { None };
+        Some(Straight { set_tables: bound.set_tables(), set, inputs, ..straight })
     }
 
     /// Of an INSERT of one row into `table`, the constraints its statement
@@ -105,7 +120,8 @@ impl State {
             return None;
         }
         let in_hand = system_time(desc).is_none();
-        let mut straight = Straight { row: Vec::new(), unique: Vec::new(), set_tables: Vec::new(), in_hand, reads: false, set: None };
+        let mut straight =
+            Straight { row: Vec::new(), unique: Vec::new(), set_tables: Vec::new(), in_hand, reads: false, set: None, inputs: None };
         if delete {
             return Some(straight);
         }
@@ -224,6 +240,20 @@ impl State {
         }
         self.end_checking(tx, &mut checking)
     }
+}
+
+/// The columns the SET values `set` read, a bit a column: none if one reads
+/// more than its row, by a subquery, a routine or a sequence generator, or
+/// a column past the last bit.
+fn inputs_of(set: &[(usize, Option<Expr>)]) -> Option<u64> {
+    let mut read = Vec::new();
+    for value in set.iter().filter_map(|(_, value)| value.as_ref()) {
+        if !value.reads_nothing() {
+            return None;
+        }
+        expr_columns(value, &mut read);
+    }
+    read.into_iter().try_fold(0_u64, |mask, c| column_bit(c).map(|bit| mask | bit))
 }
 
 /// Whether row `id`'s entry in one of the unique indexes `alone` was its

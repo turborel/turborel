@@ -22,7 +22,7 @@ use super::{Change, put_table, table};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
-use crate::storage::{Row, RowId};
+use crate::storage::{AfterImage, Row, RowId};
 use crate::value::codec::{put_row, put_value, row, value};
 
 /// The row before follows whole.
@@ -44,6 +44,31 @@ pub(super) fn put_update(out: &mut Vec<u8>, head: (&QualifiedName, u32, RowId), 
 /// is given.
 pub fn put_update_of(out: &mut Vec<u8>, head: (&QualifiedName, u32, RowId), before: &Row, after: &Row, set: &[usize]) {
     put_images(out, head, (before, after), Some(set));
+}
+
+/// \[DESIGN\] (RULES.md D916) As `put_update_of`, the row after given as
+/// `image`, its values as they are written here and where those of the
+/// columns set lie: of an update that holds the values it set alone, whose
+/// table gave the image. The bytes are those `put_update_of` writes of the
+/// row the image is of.
+pub fn put_update_image(out: &mut Vec<u8>, (name, generation, id): (&QualifiedName, u32, RowId), before: &Row, image: &AfterImage) {
+    let (values, columns, set) = image.parts();
+    put_table(out, name);
+    out.put_u32(generation);
+    out.put_u64(id);
+    out.put_u32(u32::try_from(columns).unwrap_or(u32::MAX));
+    let base = out.len();
+    out.extend_from_slice(values);
+    if before.len() != columns {
+        out.put_u8(WHOLE);
+        put_row(out, before);
+        return;
+    }
+    let mut spans = SPANS.take();
+    spans.clear();
+    spans.extend(set.iter().map(|(at, span)| (*at, base.saturating_add(span.start)..base.saturating_add(span.end))));
+    put_changed(out, before, &spans);
+    SPANS.set(spans);
 }
 
 /// `put_update`'s body, of the columns `set` of the row before alone if
