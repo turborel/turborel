@@ -3,13 +3,15 @@
 //! size, a key's range never priced above the scan of its conjuncts and
 //! taken at the tie, a scan never priced below one zone, a plan kept
 //! learned again once its tables have statistics, a join weighing its
-//! probes by its left's index range (D890), and a range past the
-//! statistics estimated by its index (D891).
+//! probes by its left's index range (D890), a range past the
+//! statistics estimated by its index (D891), a range of bounds a
+//! constant apart by its width, and a variable named twice one slot of a
+//! correlated subquery's plan (D892).
 
 use super::{Mutation, Package};
 
 /// The mutations of key plans, in the order they run.
-pub const KEY_PLANS: [Mutation; 7] = [
+pub const KEY_PLANS: [Mutation; 9] = [
     Mutation {
         name: "key-plans-point-sized",
         package: Package::Core,
@@ -86,5 +88,25 @@ pub const KEY_PLANS: [Mutation; 7] = [
         replacement: "            least = least.max(cost_of(rows) / all.max(1.0_f64));\n",
         integration: &[],
         unit: &["physical::cardinality::tests::a_range_past_the_statistics_is_estimated_by_its_index"],
+    },
+    Mutation {
+        name: "key-plans-slot-width-uncapped",
+        package: Package::Core,
+        breaks: "a range between two bounds of one slot is weighed by the statistics alone with no values at hand, so a stock level's plan made with none hashes a read of the whole of STOCK",
+        file: "src/physical/cardinality/width.rs",
+        original: "            least = least.min(width * rows / all.max(1.0_f64));\n",
+        replacement: "            least = least.max(width * rows / all.max(1.0_f64));\n",
+        integration: &[],
+        unit: &["physical::cardinality::tests::a_range_of_a_slot_is_estimated_by_its_width"],
+    },
+    Mutation {
+        name: "key-plans-outer-slots-apart",
+        package: Package::Core,
+        breaks: "a variable named twice in a procedure's statement is two slots of its plan, so a range between it less twenty and it bounds no width and is weighed by the statistics alone",
+        file: "src/exec/subquery/planned.rs",
+        original: "    found.iter().enumerate().map(|(at, n)| n.and_then(|n| found.iter().position(|m| *m == Some(n))).unwrap_or(at)).collect()\n",
+        replacement: "    found.iter().enumerate().map(|(at, _)| at).collect()\n",
+        integration: &[],
+        unit: &["exec::subquery::planned::tests::a_variable_named_twice_is_one_slot"],
     },
 ];

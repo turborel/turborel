@@ -144,3 +144,35 @@ fn borrowed_scalar_preserves_temporary_large_objects() {
         assert!(context.0.made() > 0);
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D910. An operand that is a slot is read
+/// where the statement holds it only if its value is one of the slot's
+/// type; any other is cast to that type as the slot is read [ISO/IEC
+/// 9075:1992 §17.9 GR5f], in an operator, a comparison and a call alike,
+/// and an outer reference is read as it is held.
+#[test]
+fn an_operand_slot_not_of_its_type_is_cast() {
+    use crate::exec::Framed;
+    use crate::logical::{Cond, Slot};
+    use crate::value::{ArithOp, CompOp};
+    let tenths = DataType::Exact { precision: 4, scale: 1, spelled: Spelled::Decimal };
+    let slot = |index| Expr::Dynamic(Slot { index, data_type: tenths.clone(), at: 0 });
+    let exact = |units, scale| Value::Exact(Decimal::new(units, scale));
+    // Slot 0 is to be cast, slot 1 is of its type, slot 2 has no value of it.
+    let frame = [exact(5, 0), exact(25, 1), Value::Char("x".to_owned())];
+    let outer = [exact(7, 0)];
+    let framed = Framed { inner: &NoSubqueries, frame: &frame, outer: &outer };
+    let none = Vec::new();
+    let sum = |a, b| eval(&Expr::Arith(Box::new(a), ArithOp::Add, Box::new(b)), &none, &framed);
+    assert_eq!(sum(slot(0), Expr::Const(exact(1, 0))).unwrap().to_string(), "6.0");
+    assert_eq!(sum(slot(1), Expr::Outer(0, "O".to_owned())).unwrap().to_string(), "9.5");
+    assert_eq!(sum(slot(2), slot(1)).unwrap_err().sqlstate().as_str(), "22018");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let collect = ScalarRef(Arc::new(Function { value: None, seen }));
+    let Value::Row(args) = eval(&Expr::Call(collect, vec![slot(0), slot(1)]), &none, &framed).unwrap() else { panic!("no row") };
+    assert_eq!(args.iter().map(ToString::to_string).collect::<Vec<_>>(), ["5.0", "2.5"]);
+    let less = Cond::Compare(slot(2), CompOp::Lt, slot(1));
+    assert_eq!(eval_cond(&less, &none, &framed).unwrap_err().sqlstate().as_str(), "22018");
+    let equal = Cond::Compare(slot(0), CompOp::Eq, Expr::Const(exact(50, 1)));
+    assert_eq!(eval_cond(&equal, &none, &framed).unwrap(), Truth::True);
+}

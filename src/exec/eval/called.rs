@@ -1,12 +1,14 @@
 //! Calls of scalar functions in an expression evaluated for a row: their
 //! arguments evaluated, or borrowed from the row where they are its own.
 
+use std::borrow::Cow;
+
 use super::{Subqueries, column, context, eval, values, warn};
 use crate::error::Result;
 use crate::functions::ScalarRef;
 use crate::logical::Expr;
 use crate::storage::Row;
-use crate::value::Value;
+use crate::value::{Value, held};
 
 /// A call of a function that may raise a warning (`ScalarFunction::warns`)
 /// [ISO/IEC 9075:1992 §3.3.4.1]: its result, the warning raised, if any,
@@ -30,11 +32,11 @@ pub(super) fn called(function: &ScalarRef, args: &[Expr], row: &Row, subqueries:
     let temp = subqueries.temp_lobs();
     match args {
         [] => function.0.call_with(&[], temp),
-        [one] => match argument(one, row) {
+        [one] => match argument(one, row, subqueries) {
             Some(value) => function.0.call_borrowed(&[value?], temp),
             None => function.0.call_with(&[eval(one, row, subqueries)?], temp),
         },
-        [left, right] => match (argument(left, row), argument(right, row)) {
+        [left, right] => match (argument(left, row, subqueries), argument(right, row, subqueries)) {
             (Some(left), Some(right)) => function.0.call_borrowed(&[left?, right?], temp),
             _ => function.0.call_with(&[eval(left, row, subqueries)?, eval(right, row, subqueries)?], temp),
         },
@@ -45,18 +47,36 @@ pub(super) fn called(function: &ScalarRef, args: &[Expr], row: &Row, subqueries:
     }
 }
 
+/// The value of `expr` for `row`: borrowed where it is held (`argument`),
+/// else evaluated. An operand of an operator or a comparison is read so,
+/// with no copy of a value the row, a constant or the statement holds.
+///
+/// # Errors
+///
+/// As `eval`.
+pub(super) fn operand<'a>(expr: &'a Expr, row: &'a Row, subqueries: &'a dyn Subqueries) -> Result<Cow<'a, Value>> {
+    match argument(expr, row, subqueries) {
+        Some(held) => held.map(Cow::Borrowed),
+        None => eval(expr, row, subqueries).map(Cow::Owned),
+    }
+}
+
 /// Direct arguments already live long enough for a call. In particular,
 /// borrowing an extension value avoids atomic reference-count traffic on
-/// its type and payload shared by concurrent readers.
-pub(super) fn argument<'a>(expr: &'a Expr, row: &'a Row) -> Option<Result<&'a Value>> {
+/// its type and payload shared by concurrent readers. An outer reference
+/// is borrowed where the statement holds it, and so is a slot whose value
+/// is one of its type already, which its cast would give as it is
+/// (RULES.md D910): an element of an array held in a slot is read with no
+/// copy of the array.
+pub(super) fn argument<'a>(expr: &'a Expr, row: &'a Row, subqueries: &'a dyn Subqueries) -> Option<Result<&'a Value>> {
     match expr {
         Expr::Column(at) => Some(column(row, *at)),
         Expr::Const(value) => Some(Ok(value)),
+        Expr::Outer(at, _) => subqueries.outer(*at).map(Ok),
+        Expr::Dynamic(slot) => subqueries.slot(slot.index).filter(|value| held(value, &slot.data_type)).map(Ok),
         Expr::Neg(_)
         | Expr::Arith(..)
         | Expr::Call(..)
-        | Expr::Outer(..)
-        | Expr::Dynamic(_)
         | Expr::Case(..)
         | Expr::Cast(..)
         | Expr::Domain(..)

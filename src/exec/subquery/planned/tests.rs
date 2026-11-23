@@ -212,3 +212,20 @@ fn a_kept_plan_fits_values_of_its_slots_kinds_alone() {
     let of_text = slotted(&Value::Char("ab".into()));
     assert!(of_text.fits(&[Value::Char("abcdef".into())]) && !of_text.fits(&[int(1)]));
 }
+
+/// Verifies: [DESIGN] RULES.md D892, D418: outer expressions naming the
+/// same slot, column or outer reference take the first's slot, and any
+/// other its own; a slot and a column of one number are not the same.
+#[test]
+fn a_variable_named_twice_is_one_slot() {
+    use crate::logical::Slot;
+    use crate::value::{DataType, Spelled};
+    let slot = |index: usize| {
+        Expr::Dynamic(Slot { index, data_type: DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, at: 0 })
+    };
+    let outer =
+        [slot(0), slot(1), slot(2), slot(2), Expr::Column(2), Expr::Column(2), Expr::Outer(1, "V".into()), Expr::Outer(1, "V".into())];
+    assert_eq!(places(&outer), [0, 1, 2, 2, 4, 4, 6, 6]);
+    let constants = [Expr::Const(int(1)), Expr::Const(int(1))];
+    assert_eq!(places(&constants), [0, 1], "a constant is no name");
+}

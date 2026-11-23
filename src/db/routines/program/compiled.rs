@@ -18,6 +18,7 @@
 //! runs, its semantics the interpreter's. EXECUTOR.COMPILED_PROCEDURES OFF
 //! runs each body by the interpreter instead.
 
+mod append;
 mod change;
 mod code;
 mod evaluated;

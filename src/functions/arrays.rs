@@ -31,6 +31,16 @@ pub const ARRAY_ELEMENT: &str = "ARRAY ELEMENT";
 const ASSIGN_ELEMENT: &str = "ARRAY ELEMENT ASSIGNMENT";
 const ARRAY_CONCATENATION: &str = "ARRAY CONCATENATION";
 
+/// \[DESIGN\] The operations on arrays a compiled program recognises, to
+/// run `A || ARRAY[x]` assigned to `A` in place (RULES.md D914).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArrayOperation {
+    /// `<array value constructor by enumeration>` [ISO/IEC 9075-2:2023 §6.49].
+    Constructor,
+    /// `<array concatenation>` [ISO/IEC 9075-2:2023 §6.47].
+    Concatenation,
+}
+
 /// IL008 as a count.
 fn most() -> usize {
     usize::try_from(MAX_ARRAY_CARDINALITY).unwrap_or(usize::MAX)
@@ -70,6 +80,9 @@ impl ScalarFunction for ArrayOf {
     /// (RULES.md D774).
     fn raise_free(&self) -> bool {
         true
+    }
+    fn array_operation(&self) -> Option<ArrayOperation> {
+        Some(ArrayOperation::Constructor)
     }
 }
 
@@ -161,6 +174,9 @@ impl ScalarFunction for ArrayConcatenation {
             return crate::value::types::array::truncated("§6.47 GR2b", total, MAX_ARRAY_CARDINALITY);
         }
         Ok(Value::Array(a.iter().chain(b.iter()).cloned().collect()))
+    }
+    fn array_operation(&self) -> Option<ArrayOperation> {
+        Some(ArrayOperation::Concatenation)
     }
 }
 

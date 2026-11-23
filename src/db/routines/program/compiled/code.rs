@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::super::super::super::area::commands::Command;
 use super::super::{diagnostics, step_command};
+use super::append::Append;
 use super::change::Change;
 use super::valued::{Stores, Valued};
 use crate::ast::FetchOrientation;
@@ -82,6 +83,9 @@ pub(super) struct Assign {
     pub(super) source: Option<Valued>,
     pub(super) scope: Arc<RoutineScope>,
     pub(super) at: usize,
+    /// What it appends to its target in place, if it is `SET A = A ||
+    /// ARRAY[x]` (RULES.md D914).
+    pub(super) append: Option<Append>,
 }
 
 /// [§14.6, §14.7] IF or CASE compiled.
@@ -163,13 +167,7 @@ fn node(step: &Step) -> Node {
 fn code(step: &Step) -> Code {
     match step {
         Step::Block(b) => Code::Block(Box::new(block(b))),
-        Step::Assign(a) => Code::Assign(Box::new(Assign {
-            stores: Stores::of_targets(&a.targets, &a.scope),
-            targets: a.targets.clone(),
-            source: a.source.as_ref().map(Valued::of),
-            scope: Arc::clone(&a.scope),
-            at: a.at,
-        })),
+        Step::Assign(a) => Code::Assign(Box::new(assign(a))),
         Step::If(b) => Code::If(Box::new(branches(b))),
         Step::Case(b) => Code::Case(Box::new(branches(b))),
         Step::Loop(l) => Code::Loop(Box::new(Looped { label: l.label, kind: repeat(&l.kind), statements: nodes(&l.statements) })),
@@ -197,6 +195,14 @@ fn code(step: &Step) -> Code {
         // A body holding one is not compiled (`Compiled::of`).
         Step::Call(_) => Code::Leave(usize::MAX),
     }
+}
+
+/// [§14.5] The assignment statement `a` compiled.
+fn assign(a: &logical::Assign) -> Assign {
+    let stores = Stores::of_targets(&a.targets, &a.scope);
+    let source = a.source.as_ref().map(Valued::of);
+    let append = Append::of(source.as_ref(), &stores);
+    Assign { stores, targets: a.targets.clone(), source, scope: Arc::clone(&a.scope), at: a.at, append }
 }
 
 /// [§14.1] The compound statement `b` compiled.

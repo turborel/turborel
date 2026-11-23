@@ -15,6 +15,7 @@ pub mod datetime;
 pub mod decfloat;
 mod decimal;
 mod distinct;
+mod held;
 pub mod interval;
 pub mod json;
 mod like;
@@ -37,6 +38,7 @@ pub use datetime::Datetime;
 pub use decfloat::DecFloat;
 pub use decimal::{Decimal, MIN_QUOTIENT_SCALE, bound_of, pow10, quotient_bound};
 pub use distinct::{distinct, key_bucket, key_equal};
+pub(crate) use held::held;
 pub use like::{
     LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern, constant_prefix, constant_rest_is_any, like,
 };

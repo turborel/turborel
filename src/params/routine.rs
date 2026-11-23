@@ -183,6 +183,20 @@ impl Params {
         self.set_dynamic(slot, value)
     }
 
+    /// \[DESIGN\] RULES.md D914: the value of the slot `slot` of a
+    /// program's frame taken out of it, the null value left there until
+    /// `set_slot` puts one back: a collection held there alone is then
+    /// held by no other, and is changed where it is.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there is no such slot.
+    pub(crate) fn take_slot(&mut self, slot: usize) -> Result<Value> {
+        let held = self.dynamic.as_mut().and_then(|d| d.values_mut()).and_then(|v| v.get_mut(slot));
+        held.map(|v| std::mem::replace(v, Value::Null))
+            .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] there is no dynamic value {slot}")))
+    }
+
     /// The SQL parameters of the procedure whose body these are the
     /// parameters of, if they are a procedure's.
     pub(crate) fn routine_scope(&self) -> Option<&RoutineScope> {

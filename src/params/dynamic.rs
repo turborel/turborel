@@ -65,6 +65,14 @@ pub(crate) struct Dynamic {
     implicit: Option<TableName>,
 }
 
+impl Dynamic {
+    /// Its values, to change where they are: its own, copied first if a
+    /// plan an execution opened still reads them (RULES.md D610).
+    pub(super) fn values_mut(&mut self) -> Option<&mut [Value]> {
+        self.values.as_mut().map(Arc::make_mut)
+    }
+}
+
 /// [ISO/IEC 9075:1992 §17.6 GR4] A `?` where its context gives it no type
 /// (SQLSTATE 37000).
 fn untyped() -> SqlError {

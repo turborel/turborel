@@ -11,6 +11,7 @@ pub(super) use call::{BoundCall, out_column};
 mod call;
 mod define;
 mod dependents;
+mod direct;
 mod kept;
 mod privileges;
 mod program;
