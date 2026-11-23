@@ -145,7 +145,7 @@ impl State {
             };
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
-            let attempt = match self.unreserved(tx, (writing, id), (&write, fold), (&mut turn, write_once))? {
+            let attempt = match Self::unreserved(tx, (writing, id), (&write, fold), (&mut turn, write_once))? {
                 Guarded::Written(attempt) => attempt,
                 Guarded::Waited => continue,
             };
