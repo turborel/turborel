@@ -601,6 +601,7 @@ verification approach DO-178C expects (§8).
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
 | D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
 | D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
+| D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
 
 ### The project
 
