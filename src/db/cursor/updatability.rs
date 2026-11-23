@@ -208,7 +208,7 @@ pub(super) fn open_updatable(
         changed: Vec::new(),
         on: None,
     };
-    Ok(OpenCursor { columns: c.columns, rows: CursorRows::Updatable(Box::new(rows)) })
+    Ok(OpenCursor { columns: c.columns.into(), rows: CursorRows::Updatable(Box::new(rows)) })
 }
 
 /// [ISO/IEC 9075:1992 §13.9 SR4, SR8] The columns a positioned UPDATE `w`

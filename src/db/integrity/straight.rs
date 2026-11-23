@@ -30,11 +30,19 @@ use crate::txn::Txn;
 
 /// The constraints a point change checks of the row it writes, each
 /// immediate and not deferrable: its row constraints, then its UNIQUE
-/// ones.
+/// ones; and of an UPDATE, the tables its SET values read, found once.
 #[derive(Debug)]
 pub(in crate::db) struct Straight {
     row: Vec<ConstraintDesc>,
     unique: Vec<QualifiedName>,
+    set_tables: Vec<QualifiedName>,
+}
+
+impl Straight {
+    /// The tables the SET values of its UPDATE read (`BoundWrite::set_tables`).
+    pub(in crate::db) fn set_tables(&self) -> &[QualifiedName] {
+        &self.set_tables
+    }
 }
 
 impl State {
@@ -50,7 +58,8 @@ impl State {
         if self.referenced_by(table, columns.as_deref()) {
             return None;
         }
-        self.straight_of(table, (columns.as_deref(), delete))
+        let straight = self.straight_of(table, (columns.as_deref(), delete))?;
+        Some(Straight { set_tables: bound.set_tables(), ..straight })
     }
 
     /// Of an INSERT of one row into `table`, the constraints its statement
@@ -67,7 +76,7 @@ impl State {
         if !whole || self.catalog.constrained().reading_checks || !self.catalog.assertions().is_empty() {
             return None;
         }
-        let mut straight = Straight { row: Vec::new(), unique: Vec::new() };
+        let mut straight = Straight { row: Vec::new(), unique: Vec::new(), set_tables: Vec::new() };
         if delete {
             return Some(straight);
         }

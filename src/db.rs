@@ -227,7 +227,7 @@ struct DeclaredCursor {
 }
 
 struct OpenCursor {
-    columns: Vec<OutColumn>,
+    columns: Arc<[OutColumn]>,
     rows: CursorRows,
 }
 

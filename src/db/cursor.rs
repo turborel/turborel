@@ -28,7 +28,7 @@ use crate::txn::Txn;
 use crate::value::datetime::show_in;
 
 /// The columns of a cursor and the row it is on, if it is on one.
-type Fetched = Option<(Vec<OutColumn>, Row)>;
+type Fetched = Option<(Arc<[OutColumn]>, Row)>;
 
 /// Rows a single-row SELECT reads: enough to tell one row from more than one
 /// [X3.135-1986 §8.10 GR2].
@@ -271,7 +271,10 @@ impl Session {
         } else {
             // [X3.135-1986 §8.8 GR3b] "that table ... is effectively created".
             let (columns, rows) = self.open_rows(st, tx, &spec, (params, keeping))?;
-            OpenCursor { columns, rows: if flags.1 { CursorRows::Kept(Kept::new(rows, st)) } else { CursorRows::Table(rows) } }
+            OpenCursor {
+                columns: columns.into(),
+                rows: if flags.1 { CursorRows::Kept(Kept::new(rows, st)) } else { CursorRows::Table(rows) },
+            }
         };
         // [X3.135-1986 §8.8 GR3c] open, positioned before the first row.
         let mut inner = self.inner.borrow_mut();
@@ -317,7 +320,7 @@ impl Session {
             let Some(open) = c.open.as_ref() else {
                 return cursor_error(&name.name, format!("[X3.135-1986 §8.6 GR1] cursor {name} is not open"));
             };
-            (to, open.columns.clone())
+            (to, Arc::clone(&open.columns))
         };
         // Run with no borrow of the session held: it may read the session.
         let checked = check(&columns, params)?;

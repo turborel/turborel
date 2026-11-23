@@ -56,8 +56,8 @@ pub(in crate::db) fn point_change(
     }
     // T, to be written, and the tables its condition and SET values read.
     st.update_lock(tx, &w.bound.table)?;
-    for t in reads.iter().cloned().chain(w.bound.set_tables()) {
-        st.read_lock(tx, &t)?;
+    for t in reads.iter().chain(straight.set_tables()) {
+        st.read_lock(tx, t)?;
     }
     let Some((id, seen)) = point.entry(st, tx.id, w.slots.as_deref().unwrap_or_default())? else {
         // Of a catalog with triggers, its statement ends with no row
