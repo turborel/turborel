@@ -301,7 +301,9 @@ An index nested-loop join is taken only where its probes would stay
 cheap even if the other side gave several times the rows estimated, at
 most as many as the statistics allow, since an estimate too low makes
 its probes far dearer than one hash join. PLANNER.ESTIMATE_MARGIN sets
-how many times; 1 trusts the estimate.
+how many times; 1 trusts the estimate. Where the other side reads a
+range of an index, its rows are the fewer of the statistics' estimate
+and the index's estimate of the range.
 
 A table whose every column of a primary key or unique constraint is
 held equal to a value, a parameter or a variable is read by that key's

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use turborel::binder::bindings;
 use turborel::db::{Database, Prepared, Session};
+use turborel::params::Params;
 use turborel::physical::plannings;
 use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
@@ -379,4 +380,55 @@ fn tpcc_procedures_read_by_index_under_any_statistics() {
         assert!(each.iter().zip(ROUND_READS).all(|(n, most)| *n <= most), "round {round}: {each:?}");
         before = now;
     }
+}
+
+/// The physical plan of STOCK LEVEL's join, by EXPLAIN, for district 3's
+/// last twenty orders and a threshold of 15.
+fn stock_level_plan(s: &Session) -> String {
+    let next = rows(s, "SELECT D_NEXT_O_ID FROM DISTRICT WHERE D_W_ID = 1 AND D_ID = 3").unwrap();
+    let n = next.first().unwrap().trim().to_owned();
+    let sql = format!(
+        "SELECT COUNT(DISTINCT S_I_ID) FROM ORDER_LINE, STOCK WHERE OL_W_ID = 1 AND OL_D_ID = 3 \
+         AND OL_O_ID < {n} AND OL_O_ID >= {n} - 20 AND S_W_ID = 1 AND S_I_ID = OL_I_ID AND S_QUANTITY < 15"
+    );
+    let plan = s.explain(&sql, &Params::new()).unwrap();
+    s.commit().unwrap();
+    plan.split("-- physical:").nth(1).unwrap_or_default().to_owned()
+}
+
+/// Verifies: [DESIGN] RULES.md D890, D381, D386: once ORDER_LINE's order
+/// numbers have risen at two passes of its statistics, so are taken to
+/// grow, and orders are then written with no pass, STOCK LEVEL still
+/// probes STOCK by its key for the lines of the last twenty orders, by
+/// EXPLAIN and by the rows each round's CALL reads.
+///
+/// Regression test (R-TEST-7): the lines' range, past the greatest order
+/// number the last pass saw, was estimated at every line written since,
+/// which grew with each order until the probes cost more, at the margin,
+/// than a hash join reading the whole of STOCK at each CALL.
+#[test]
+fn stock_level_probes_stock_as_orders_grow_past_the_statistics() {
+    let (db, s) = defined();
+    filled(&s);
+    let calls = Calls::of(&s);
+    let mut r = Sequence(11);
+    for _ in 0..2 {
+        db.analyze("TPCC.ORDER_LINE").unwrap();
+        db.analyze("TPCC.STOCK").unwrap();
+        for _ in 0..5 {
+            calls.round(&s, &mut r);
+        }
+    }
+    db.analyze("TPCC.ORDER_LINE").unwrap();
+    let mut before = rows_read(&s);
+    for round in 0..40 {
+        calls.round(&s, &mut r);
+        let now = rows_read(&s);
+        let slev = now[4].saturating_sub(before[4]);
+        assert!(slev <= ROUND_READS[4], "round {round}: STOCK LEVEL read {slev} rows");
+        before = now;
+    }
+    let plan = stock_level_plan(&s);
+    assert!(plan.contains("IndexNestedLoop TPCC.STOCK"), "{plan}");
+    assert!(!plan.contains("HashJoin"), "{plan}");
 }

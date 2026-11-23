@@ -577,3 +577,6 @@ mod pinned;
 
 // The copies of read-mostly leaves a thread keeps (RULES.md D858).
 mod leaf_copies;
+
+// A probe from a key (RULES.md D859).
+mod probed;
