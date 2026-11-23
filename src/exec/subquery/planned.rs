@@ -22,16 +22,20 @@
 //! A subquery decorrelated after fewer runs than `MOST_LEARNING_RUNS`
 //! (EXECUTOR.DECORRELATE_AFTER_RUNS) is planned at each run until then, as
 //! its learning would cost more runs than it saves.
+//!
+//! A plan kept is shared by the runners of its statement's executions and
+//! lent to each run, never copied but to be filled (RULES.md D900). One
+//! that is a point read is run as one (`pointed.rs`).
 
 use std::collections::HashMap;
 use std::fmt;
 use std::mem::discriminant;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
-use super::super::{RowIter, execute};
+use super::super::{PointRead, RowIter, execute, point_operations};
 use super::Runner;
 use crate::db::prepared::{Learned, Learning, MOST_LEARNING_RUNS};
-use crate::logical::{Expr, LogicalPlan, Slot, Subquery, filled, map_plan_exprs};
+use crate::logical::{Decorrelated, Expr, LogicalPlan, Slot, Subquery, filled, map_plan_exprs};
 use crate::optimizer::RuleContext;
 use crate::optimizer::prepared::budget;
 use crate::physical::{PhysicalPlanner, Plan, filled_plan_as_is, keepable};
@@ -50,20 +54,62 @@ pub(super) enum Planned {
     Untried,
     /// Its plan with slots, learning.
     Learning(Box<Slotted>, Learning),
-    /// Its plan with slots, and its physical plan with slots, kept.
-    Kept(Box<Slotted>, Box<Plan>),
+    /// Its plan with slots, and its physical plan with slots, kept, shared
+    /// by every runner that settled it or found it settled.
+    Kept(Arc<KeptRun>),
     /// Planned at each run.
     Varies,
 }
 
 impl Planned {
-    /// A copy of it, once it is kept or planned at each run.
+    /// It again, once it is kept or planned at each run: a plan kept is
+    /// shared, not copied.
     fn settled(&self) -> Option<Planned> {
         match self {
-            Planned::Kept(slotted, plan) => Some(Planned::Kept(slotted.clone(), plan.clone())),
+            Planned::Kept(kept) => Some(Planned::Kept(Arc::clone(kept))),
             Planned::Varies => Some(Planned::Varies),
             Planned::Untried | Planned::Learning(..) => None,
         }
+    }
+}
+
+/// \[DESIGN\] A correlated subquery's plan kept: its plan with slots, its
+/// physical plan with slots, and the point read that plan is, if it is
+/// one, found the first time a run asks (RULES.md D900).
+pub(super) struct KeptRun {
+    slotted: Slotted,
+    plan: Plan,
+    point: OnceLock<Option<PointRead>>,
+    /// How its subquery is decorrelated, if it can be, found the first
+    /// time a runner asks (`probed.rs`).
+    decorrelated: OnceLock<Option<Arc<Decorrelated>>>,
+}
+
+impl KeptRun {
+    /// `plan`, the physical plan of `slotted`, kept.
+    fn of(slotted: Slotted, plan: Plan) -> Planned {
+        Planned::Kept(Arc::new(KeptRun { slotted, plan, point: OnceLock::new(), decorrelated: OnceLock::new() }))
+    }
+
+    /// How `subquery`, whose plan it keeps, is decorrelated, if it can be
+    /// (`Subquery::decorrelated`), found once.
+    pub(super) fn decorrelated(&self, subquery: &Subquery) -> Option<Arc<Decorrelated>> {
+        self.decorrelated.get_or_init(|| subquery.decorrelated().map(Arc::new)).clone()
+    }
+
+    /// Whether `outer` are values its slots take (`Slotted::fits`).
+    pub(super) fn fits(&self, outer: &[Value]) -> bool {
+        self.slotted.fits(outer)
+    }
+
+    /// The point read its plan is, if it is one and `st` runs point
+    /// operations (RULES.md D752), as `physical::Kept::point` finds a
+    /// kept statement's.
+    pub(super) fn point(&self, st: &crate::db::State) -> Option<&PointRead> {
+        if !point_operations(st) {
+            return None;
+        }
+        self.point.get_or_init(|| PointRead::of(&self.plan, st)).as_ref()
     }
 }
 
@@ -82,7 +128,7 @@ impl fmt::Debug for KeptSubqueries {
 
 impl KeptSubqueries {
     /// What the subquery `at` settled, if it did.
-    fn get(&self, at: u64) -> Option<Planned> {
+    pub(super) fn get(&self, at: u64) -> Option<Planned> {
         self.0.lock().ok()?.get(&at).and_then(Planned::settled)
     }
 
@@ -96,7 +142,6 @@ impl KeptSubqueries {
 
 /// A subquery's plan, each outer reference a slot, optimized: the slots'
 /// types, of its first outer values none of which was null.
-#[derive(Clone)]
 pub(super) struct Slotted {
     types: Vec<DataType>,
     plan: LogicalPlan,
@@ -227,14 +272,14 @@ impl Runner {
                 }
                 self.learn(custom(), outer, slotted, learning)
             }
-            Planned::Kept(slotted, plan) => {
-                if !slotted.fits(outer) {
-                    return (custom(), Planned::Kept(slotted, plan));
+            Planned::Kept(kept) => {
+                if !kept.fits(outer) {
+                    return (custom(), Planned::Kept(kept));
                 }
                 // A kept plan that fails to fill holds an operator a kept
                 // plan does not; the run is planned instead, as each after.
-                match filled_plan_as_is((*plan).clone(), outer, budget(&self.db)) {
-                    Ok(filled) => (filled, Planned::Kept(slotted, plan)),
+                match filled_plan_as_is(kept.plan.clone(), outer, budget(&self.db)) {
+                    Ok(filled) => (filled, Planned::Kept(kept)),
                     Err(_) => (custom(), Planned::Varies),
                 }
             }
@@ -262,7 +307,7 @@ impl Runner {
         let with_slots = PhysicalPlanner::slotted(&self.db, outer).plan(&slotted.plan);
         let custom = PhysicalPlanner::new(&self.db).plan(&self.optimized(subquery.bound(outer)));
         if keepable(&with_slots, &self.db) {
-            return Ok((custom, Planned::Kept(slotted, Box::new(with_slots))));
+            return Ok((custom, KeptRun::of(*slotted, with_slots)));
         }
         if self.decorrelated_soon(subquery) {
             return Ok((custom, Planned::Varies));
@@ -289,7 +334,7 @@ impl Runner {
 /// What a subquery keeps once `learning` says what it learned.
 fn learned(slotted: Box<Slotted>, learning: Learning) -> Planned {
     match learning.outcome() {
-        Learned::Kept(plan) => Planned::Kept(slotted, plan),
+        Learned::Kept(plan) => KeptRun::of(*slotted, *plan),
         Learned::Learning(learning) => Planned::Learning(slotted, learning),
         Learned::Stopped => Planned::Varies,
     }
