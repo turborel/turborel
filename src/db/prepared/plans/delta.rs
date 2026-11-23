@@ -30,7 +30,7 @@ impl KeptPlan {
     pub(super) fn query(&self) -> Option<(Vec<OutColumn>, &LogicalPlan)> {
         match self {
             KeptPlan::Query(columns, logical) => Some((columns.clone(), logical)),
-            KeptPlan::Insert(_, Some(logical)) => Some((Vec::new(), logical)),
+            KeptPlan::Insert(_, Some(logical)) => Some((Vec::new(), &**logical)),
             KeptPlan::Write(_) | KeptPlan::Insert(_, None) | KeptPlan::Merge(..) | KeptPlan::Call(_) => None,
         }
     }
