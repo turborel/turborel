@@ -83,6 +83,7 @@ use definitions::{
     create_index, defined, dropped, put_altered, put_create_index, put_creator, put_defined, put_dropped, put_schema, put_sequence,
     put_user, schema, sequence, user,
 };
+pub use images::put_update_of;
 use lobs::{lob_change, put_lob_change};
 
 use kinds::{
