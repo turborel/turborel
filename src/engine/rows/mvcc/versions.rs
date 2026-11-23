@@ -6,7 +6,7 @@
 
 use super::lists::encode_change;
 use super::{Change, Found, Past, conflict};
-use crate::engine::rows::version::{Maker, Version};
+use crate::engine::rows::version::{FRAMED, Maker, Version, frame};
 use crate::engine::rows::{RowTable, key, no_row};
 use crate::error::Result;
 use crate::log::Lsn;
@@ -15,15 +15,17 @@ use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 
 impl RowTable {
-    /// Inserts row `id`, whose record is `record`, by `tx`.
-    pub(in crate::engine::rows) fn insert_version(&self, tx: TxId, id: RowId, record: &[u8]) -> Result<bool> {
+    /// Inserts row `id` by `tx`, whose record `framed` holds behind the
+    /// room for its version's header (`version::frame`).
+    pub(in crate::engine::rows) fn insert_version(&self, tx: TxId, id: RowId, framed: &mut [u8]) -> Result<bool> {
         let maker = if tx == NO_TRANSACTION { Maker::Committed(0) } else { Maker::Open(tx) };
-        let version = Version { maker, deleted: false, older: None, record }.encode();
+        let version = frame(framed, (maker, None))?;
+        let record = Version::parse(version)?.record;
         if tx != NO_TRANSACTION {
             // Claimed before its first version is in the tree (`status.rs`).
             self.versions.statuses.claim(tx);
         }
-        let Some(placed) = self.tree.insert_placed(&key(id), &version)? else { return Ok(false) };
+        let Some(placed) = self.tree.insert_placed(&key(id), version)? else { return Ok(false) };
         self.mark_shadow(id);
         if tx != NO_TRANSACTION {
             let named = self.objects(id, record)?;
@@ -36,32 +38,34 @@ impl RowTable {
         Ok(true)
     }
 
-    /// Makes `record` the new version of row `id` by `tx`, or with none,
+    /// Makes the record `framed` holds behind the room for its version's
+    /// header (`version::frame`) the new version of row `id` by `tx`, or with none,
     /// deletes it: the version it replaced, for its zone. Outside any
     /// transaction, the newest is replaced at once, committed, and what it
     /// held freed, as recovery writes, and none is given back. A write that
     /// finds the entry it read gone or changed is tried once
     /// more: a freeze may have taken out the entry of a row frozen, the same
     /// row then read from its group (`rows/frozen.rs`); else it conflicts.
-    pub(in crate::engine::rows) fn write_version(&self, tx: TxId, id: RowId, record: Option<&[u8]>, past: Past) -> Result<Option<Vec<u8>>> {
+    pub(in crate::engine::rows) fn write_version(&self, tx: TxId, id: RowId, mut framed: Option<&mut [u8]>, past: Past) -> Result<Option<Vec<u8>>> {
         if tx == NO_TRANSACTION {
-            return self.write_latest(id, record).map(|()| None);
+            return self.write_latest(id, framed.as_deref().map(|f| f.get(FRAMED..).unwrap_or_default())).map(|()| None);
         }
-        if let Some(replaced) = self.try_write(tx, id, record, past)? {
+        if let Some(replaced) = self.try_write(tx, id, framed.as_deref_mut(), past)? {
             return Ok(Some(replaced));
         }
-        self.try_write(tx, id, record, past)?.map(Some).ok_or_else(conflict)
+        self.try_write(tx, id, framed, past)?.map(Some).ok_or_else(conflict)
     }
 
     /// `write_version`'s work: the version it replaced, none if the entry
     /// it read was gone or changed by then.
-    fn try_write(&self, tx: TxId, id: RowId, record: Option<&[u8]>, past: Past) -> Result<Option<Vec<u8>>> {
+    fn try_write(&self, tx: TxId, id: RowId, framed: Option<&mut [u8]>, past: Past) -> Result<Option<Vec<u8>>> {
         let open = self.open_of(tx)?;
         let snapshot = lock_builtin(&open).snapshot;
         let k = key(id);
         let Some((newest, found)) = self.newest_or_frozen(id)? else { return no_row(id) };
         self.versions.statuses.claim(tx);
         let (older, appended) = self.older_of((tx, snapshot), id, &newest, past)?;
+        let record = framed.as_deref().map(|f| f.get(FRAMED..).unwrap_or_default());
         let (dropped, added) = self.owned_change(id, Version::parse(&newest)?.record, record)?;
         if let Err(e) = self.owns(tx, &added) {
             if let Some(at) = appended {
@@ -69,12 +73,20 @@ impl RowTable {
             }
             return Err(e);
         }
-        let new = Version { maker: Maker::Open(tx), deleted: record.is_none(), older, record: record.unwrap_or_default() }.encode();
+        // A deletion's version is its header alone; a row's is framed in
+        // the buffer its record was encoded in, not copied (RULES.md D846).
+        let deletion;
+        let new = if let Some(framed) = framed {
+            frame(framed, (Maker::Open(tx), older))?
+        } else {
+            deletion = Version { maker: Maker::Open(tx), deleted: true, older, record: &[] }.encode();
+            &deletion
+        };
         // In the tree, written from the leaf the read found it in, with no
         // second descent (RULES.md D446).
         let (written, thawed) = match found {
-            Ok(descended) => (self.tree.replace_found_placed(&descended, &k, (&newest, &new))?, None),
-            Err(pages) => (self.tree.insert_placed(&k, &new)?, Some(pages)),
+            Ok(descended) => (self.tree.replace_found_placed(&descended, &k, (&newest, new))?, None),
+            Err(pages) => (self.tree.insert_placed(&k, new)?, Some(pages)),
         };
         let Some(placed) = written else {
             if let Some(at) = appended {

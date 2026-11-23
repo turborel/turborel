@@ -552,6 +552,7 @@ verification approach DO-178C expects (§8).
 | D842 | A home waits on its client for a second, its permit given up after a millisecond |
 | D843 | A commit stamps each row in place from the leaf its write left it in, with no descent |
 | D844 | A transaction begins from its session's kept origin, its id on its thread's stripe |
+| D846 | A row's version is framed in the buffer its record is encoded in |
 
 ### The project
 
@@ -15310,6 +15311,20 @@ checkpoint keeps, which ids, given 64 apart, run ahead of. Filled through
 an id, every later commit looked older than the fill, so collection took
 back the entries its versions shared with the ones they replaced (D443),
 and after a recovery the rows were no longer found by their keys.
+
+#### D846. A row's version is framed in the buffer its record is encoded in
+
+An insert or an update encoded the row's record into one buffer, then
+built its version in a second (D843), copying the record behind the
+version's header. Every row written was copied once more than needed.
+
+The record is now encoded behind 17 bytes kept for the header, the
+longest one, with an older version (`version::FRAMED`). The version is
+written over the bytes in front of the record (`version::frame`). One
+with no older version begins a word in, so the bytes the tree gets are
+those the version encoded as before, and the format is unchanged. A
+sealed record keeps the room in front of the bytes it seals. A
+deletion's version is its header alone and is built as before.
 
 ## 2. Project layout
 
