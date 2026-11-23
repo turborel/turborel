@@ -589,6 +589,7 @@ verification approach DO-178C expects (§8).
 | D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
 | D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
 | D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
+| D921 | The log holds a segment's records in a buffer, and a commit that does not wait for its sync makes no write of its own |
 | D922 | A commit takes its participants without copying them, and names the tables it wrote only for the embedders |
 | D923 | Increments reserved are applied by a write told the columns they add to |
 | D924 | A commit's rows that one leaf holds are stamped with the leaf latched once |
@@ -2160,10 +2161,11 @@ log with group commit. A database in a directory opens its log through a
 `LogStorage` and its catalog through a `CatalogStorage` (`db/stores.rs`).
 
 With LOG.COMMIT_SYNC OFF (D36) the session is answered once its commit
-record is written, before it is synced. A crash before the next sync loses
-that commit and every commit after it, so recovery still finds a prefix of
-the commits. The job `turborel-log-sync` (D55) limits how long this lasts
-to LOG.SYNC_AFTER_MS.
+record is in the log's buffer (D921), before it is written and synced. A
+crash before the next sync loses that commit and every commit after it,
+so recovery still finds a prefix of the commits. The job
+`turborel-log-sync` (D55) limits how long this lasts to
+LOG.SYNC_AFTER_MS.
 
 LOG.DURABILITY (D36) sets what a sync does, and a change applies from the
 next sync. Only a sync that reaches the disk claims records durable. A
@@ -16428,6 +16430,77 @@ The semantics hold for these reasons.
 - Maintenance is noted as before. An end notes a table whose engine has
   some due whether or not it collected it.
 - A checkpoint and a close collect every table, waiting, as before.
+
+#### D921. The log holds a segment's records in a buffer, and a commit that does not wait for its sync makes no write of its own
+
+A commit wrote its records to the log's segment with one positional
+write (D470, D882), whether or not it then waited for a sync. With
+LOG.COMMIT_SYNC OFF that write was the one call into the system a commit
+made, about a seventh of it, and many sessions' writes took the file's
+lock in turn.
+
+The database's file log now writes its segments through a buffer
+(`log/file/buffered.rs`, `FileLogOptions::buffer`, 64 KiB). An append
+copies its records into the buffer and returns. The buffer is written to
+the segment, in one write for the records of many commits, when it
+fills, when a sync, a rotation or a cut of the segment needs the file
+whole, when the log is dropped, when the log sync job runs
+(`Log::write_buffered`), and with the first append made a second after
+the oldest record it holds. Records are read back from the buffer from
+the moment they are appended, so the undo of a statement, a reader of the
+log and recovery's replay find them as before. A position is given as
+before, by the block file, so the order of records is unchanged.
+
+A commit that waits (LOG.COMMIT_SYNC ON) appends and then syncs. Its
+sync writes the buffer, its own records and those of the commits before
+it together, and syncs the segment, so a lone committer still makes one
+write and one sync, and a group commit one write and one sync for the
+group. A log that syncs nothing (LOG.DURABILITY NONE) still writes the
+buffer at each sync asked of it. Under LOG.SYNC_AFTER_MS 0 the log sync
+job is asked for a second after a commit left unsynced and only has the
+log write its buffer.
+
+What a failure may lose is what LOG.COMMIT_SYNC OFF promised before: a
+commit that did not wait is lost by a failure before the log's next
+sync, with every commit after it, so recovery finds a prefix of the
+commits (D25). The log's next sync comes within LOG.SYNC_AFTER_MS as
+before. One case changes inside that promise. A failure of the process
+alone, the system going on, used to keep such a commit once its record
+was written, and now loses it while the record is still in the buffer,
+which is at most a second while commits come, or until the log sync job
+runs, a second after the commit by default. A failure of the system
+loses the same commits as before, those not synced. A commit that waits
+is durable when it returns, as before, under either failure.
+
+A write of the buffer that fails is kept by the file, and every later
+append, sync and cut of the segment fails with it. The log then fails
+its next sync, and the database takes no change until it is opened
+again, as after any failed write of the log (D25).
+
+A segment keeps zeros written past its records so that a commit's sync
+carries no growth of the file (`disk/block/fill.rs`). While no commit
+waits for a sync those zeros bought nothing, and every byte of the log
+was written twice, the zeros being most of the time a commit spent in
+the system. A buffered log's segments are now refilled only once the
+segment has been synced since its last refill
+(`BlockOptions::ahead_once_synced`). A database whose commits wait keeps
+its zeros as before, one whose commits do not writes them once after
+each sync of the log sync job, and a block past the zeros is written
+past the file's end, as in a file given none.
+
+The undo stores, the replicated journal and a log a program opens for
+itself are not buffered. Their options leave the buffer at 0.
+
+The buffer is 64 KiB. A sweep on the in-repo order entry bench at one
+session, of none, 4, 16, 64 and 256 KiB, showed no difference between
+the sizes beyond the spread of the runs, and little against none: at one
+session a commit's write of its own is a small write over zeros already
+there. What the buffer takes away is that write from each commit, and
+with it the file's lock each session's commit took in turn. 64 KiB
+holds the records of some tens of order entry commits, and stays under
+half of the zeros a segment keeps written ahead (`DEFAULT_FILL_AHEAD`),
+so a refill of those never passes through it. The sweep's figures are
+in the commit that made the change.
 
 #### D922. A commit takes its participants without copying them, and names the tables it wrote only for the embedders
 

@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 14] = [
+pub const READERS: [Mutation; 18] = [
     Mutation {
         name: "pass-collects-nothing",
         package: Package::Core,
@@ -47,6 +47,46 @@ pub const READERS: [Mutation; 14] = [
         original: "is_some_and(|past| past >= COLLECT_AFTER)",
         replacement: "is_some()",
         integration: &["collection::a_quiet_table_is_collected_a_batch_of_commits_at_a_time"],
+        unit: &[],
+    },
+    Mutation {
+        name: "log-buffer-kept-at-sync",
+        package: Package::Core,
+        breaks: "a sync of a buffered segment leaves the records in memory, so a commit that waited is not in the file (RULES.md D921)",
+        file: "src/log/file/buffered.rs",
+        original: "            self.write_held(&mut tail)?;\n        }\n        match durability {",
+        replacement: "        }\n        match durability {",
+        integration: &["log_buffer::a_failure_of_the_process_loses_only_the_commits_still_buffered"],
+        unit: &["log::file::buffered::tests::appended_writes_reach_the_file_in_one_write_at_a_sync"],
+    },
+    Mutation {
+        name: "log-buffer-unread",
+        package: Package::Core,
+        breaks: "a read of a buffered segment reads the file alone, so a record appended is not read back until written (RULES.md D921)",
+        file: "src/log/file/buffered.rs",
+        original: "            if offset < tail.end() {",
+        replacement: "            if false {",
+        integration: &[],
+        unit: &["log::file::buffered::tests::appended_writes_reach_the_file_in_one_write_at_a_sync"],
+    },
+    Mutation {
+        name: "log-buffer-off",
+        package: Package::Core,
+        breaks: "the database's log holds no record in memory, so each commit that does not wait writes its own (RULES.md D921)",
+        file: "src/db/files.rs",
+        original: "            buffer: LOG_BUFFER,",
+        replacement: "            buffer: 0,",
+        integration: &["log_buffer::a_lone_commit_that_waits_makes_one_write_and_one_sync"],
+        unit: &[],
+    },
+    Mutation {
+        name: "log-buffer-job-writes-nothing",
+        package: Package::Core,
+        breaks: "under LOG.SYNC_AFTER_MS 0 the log sync job leaves the log's buffer unwritten (RULES.md D921)",
+        file: "src/db/log_sync.rs",
+        original: "        return st.tx.unwritten().map_or(Ok(None), |log| log.write_buffered().map(|()| None));",
+        replacement: "        return Ok(None);",
+        integration: &["log_buffer::a_failure_of_the_process_loses_only_the_commits_still_buffered"],
         unit: &[],
     },
     Mutation {

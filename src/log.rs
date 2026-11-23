@@ -20,8 +20,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 pub use file::{
-    DEFAULT_DURABILITY, DEFAULT_SEGMENT_SIZE, FileLog, FileLogOptions, LogCounts, LogRecovery, MAX_SEGMENT_SIZE, MIN_SEGMENT_SIZE,
-    OFFSET_BITS,
+    DEFAULT_DURABILITY, DEFAULT_SEGMENT_SIZE, FileLog, FileLogOptions, LOG_BUFFER, LogCounts, LogRecovery, MAX_SEGMENT_SIZE,
+    MIN_SEGMENT_SIZE, OFFSET_BITS,
 };
 
 use crate::disk::encoding::Pipeline;
@@ -157,6 +157,23 @@ pub trait Log: Send + Sync {
     fn sync_reached(&self, through: Lsn) -> Result<Lsn> {
         self.sync(through)?;
         Ok(Lsn(through.0.saturating_add(1)))
+    }
+    /// \[DESIGN\] Whether it holds records in memory before it writes
+    /// them (`write_buffered`, RULES.md D921). Default: no.
+    fn buffers(&self) -> bool {
+        false
+    }
+    /// \[DESIGN\] Writes the records it holds in memory, if it holds any
+    /// before it writes them, as the file log holds a segment's (RULES.md
+    /// D921): they are then where a failure of the process leaves them,
+    /// though durable only once synced. Default: nothing, a log that holds
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// As `append`.
+    fn write_buffered(&self) -> Result<()> {
+        Ok(())
     }
     /// The records at or after `from`, in order.
     fn read_from(&self, from: Lsn) -> Records<'_>;

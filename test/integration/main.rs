@@ -240,6 +240,7 @@ mod lob_storage;
 mod lob_types;
 mod local_datetimes;
 mod log;
+mod log_buffer;
 mod log_durability;
 mod log_sync;
 mod manifest_settings;

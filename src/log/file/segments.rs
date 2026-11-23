@@ -193,6 +193,9 @@ impl FileLog {
         }
         self.healthy()?;
         segment.drain();
+        // The records it holds in memory are written, whatever the log
+        // syncs (RULES.md D921).
+        self.written(segment).map_err(|e| self.failed(e, &format!("segment {}", segment.number)))?;
         // Its zeros filled ahead go before the sync, which then makes its
         // size the end of its records durably (`known_through`).
         segment.blocks.trim().map_err(|e| self.failed(e, &format!("segment {}", segment.number)))?;
@@ -204,6 +207,24 @@ impl FileLog {
         }
         segment.sealed.store(true, Ordering::Release);
         Ok(())
+    }
+
+    /// Writes to its file the records the current segment holds in memory
+    /// (`Log::write_buffered`, RULES.md D921): a segment before it wrote
+    /// its own as it was sealed.
+    pub(super) fn write_held(&self) -> Result<()> {
+        let active = Arc::clone(&self.active.read().unwrap_or_else(PoisonError::into_inner));
+        self.written(&active)
+    }
+
+    /// Has `segment` write the records it holds in memory, if the log
+    /// buffers any: a sync that syncs nothing, which its buffer takes as
+    /// the asking and passes to no file (`buffered.rs`).
+    fn written(&self, segment: &Segment) -> Result<()> {
+        if self.options.buffer == 0 {
+            return Ok(());
+        }
+        segment.blocks.sync(Durability::None)
     }
 
     /// Syncs the directory, and the one it is in, if a segment's entry in

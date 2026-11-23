@@ -450,6 +450,51 @@ fn a_file_filled_ahead_keeps_zeros_past_its_blocks() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D921, D25: a file whose zeros are refilled
+/// only once it is synced writes none while no sync follows its appends,
+/// growing by them alone; a sync that syncs asks for them, the next
+/// append then writing over zeros already there; a sync that syncs
+/// nothing asks for none; once the zeros are used up and no sync came,
+/// the file grows by its appends again; and every block reads back as
+/// appended, from the file open and opened again. The decision "the
+/// zeros are refilled" is shown by its pairs: synced since against not
+/// synced, each with the zeros short.
+#[test]
+fn a_file_filled_once_synced_writes_no_zeros_until_a_sync() {
+    let scratch = Scratch::new("blocks-fill-synced");
+    let path = scratch.path("lazy");
+    let options = BlockOptions { ahead: 4096, ahead_once_synced: true, ..BlockOptions::default() };
+    let file = BlockFile::create(&OsFileSystem, &path, crc32c(), Pipeline::none(), options).unwrap();
+    let payloads: Vec<Vec<u8>> = (0..200).map(|n| nonzero(50 + n * 3)).collect();
+    let mut ids = Vec::new();
+    for payload in &payloads[..40] {
+        ids.push(file.append(payload).unwrap());
+        assert_eq!(file_len(&path), file.end().0, "no zeros while no sync came");
+    }
+    file.sync(Durability::None).unwrap();
+    ids.push(file.append(&payloads[40]).unwrap());
+    assert_eq!(file_len(&path), file.end().0, "a sync that syncs nothing asks for none");
+    file.sync(Durability::Data).unwrap();
+    ids.push(file.append(&payloads[41]).unwrap());
+    let filled = file_len(&path);
+    assert!(filled >= file.end().0 + 2048, "refilled after the sync: {filled} for {}", file.end().0);
+    ids.push(file.append(&payloads[42]).unwrap());
+    assert_eq!(file_len(&path), filled, "written over the zeros");
+    for payload in &payloads[43..] {
+        ids.push(file.append(payload).unwrap());
+    }
+    assert_eq!(file_len(&path), file.end().0, "the zeros used up, no sync since: grown by its appends alone");
+    for (id, payload) in ids.iter().zip(&payloads) {
+        assert_eq!(&file.read(*id).unwrap(), payload);
+    }
+    drop(file);
+    let (again, recovery) = BlockFile::open(&OsFileSystem, &path, &[crc32c()], &[], options).unwrap();
+    assert_eq!(recovery.cut, 0);
+    for (id, payload) in ids.iter().zip(&payloads) {
+        assert_eq!(&again.read(*id).unwrap(), payload);
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D25, D30, block manager: zeros alone after
 /// the valid blocks of a file filled ahead are its fill, kept on open and
 /// written over by the next append; opened with no fill, the same zeros

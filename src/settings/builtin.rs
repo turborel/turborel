@@ -277,7 +277,7 @@ fn switches() -> [Definition; 2] {
         defined(
             ("LOG.COMMIT_SYNC", Kind::Choice(SWITCHES), text(ON)),
             SESSION,
-            "Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing.",
+            "Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is in the log's buffer, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing, or if the database's process fails before the buffer is written, within a second.",
         ),
         defined(
             ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text(ON)),

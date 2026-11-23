@@ -57,6 +57,12 @@ impl Log for SeededLog {
         // A seed's record is in its backup or archive already.
         if through < self.start { Ok(()) } else { self.log.sync(through) }
     }
+    fn buffers(&self) -> bool {
+        self.log.buffers()
+    }
+    fn write_buffered(&self) -> Result<()> {
+        self.log.write_buffered()
+    }
     fn read_from(&self, from: Lsn) -> Records<'_> {
         let seed = lock_builtin(&self.seed).clone();
         match seed.filter(|_| from < self.start) {

@@ -73,7 +73,7 @@ use crate::files::FileManager;
 use crate::index::{
     AdjacencyMethod, BTreeMethod, FullTextMethod, HashMethod, JsonMethod, LabelsMethod, RTreeMethod, ReachabilityMethod, XmlMethod, xml,
 };
-use crate::log::{FileLogOptions, Log, Lsn, Records};
+use crate::log::{FileLogOptions, LOG_BUFFER, Log, Lsn, Records};
 use crate::storage::TableStorage;
 use crate::txn::Persistence;
 use crate::value::Value;
@@ -250,6 +250,7 @@ impl<'a> Place<'a> {
             segment_size,
             durability: self.layout.durability,
             pipeline: self.layout.formats.pipeline.clone(),
+            buffer: LOG_BUFFER,
             ..FileLogOptions::default()
         }
     }

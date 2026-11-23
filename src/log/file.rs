@@ -62,10 +62,12 @@ use crate::error::{Code, Result, SqlError};
 use crate::hash::HashFunction;
 use crate::sync::{Signal, lock_builtin};
 
+mod buffered;
 mod open;
 mod reader;
 mod segments;
 
+pub use buffered::LOG_BUFFER;
 use reader::Reader;
 
 /// Bits of a position that hold the block id within its segment: segments
@@ -106,6 +108,9 @@ pub struct FileLogOptions {
     pub pipeline: Pipeline,
     /// The block files' options.
     pub blocks: BlockOptions,
+    /// \[DESIGN\] The bytes of records a segment holds in memory before
+    /// it writes them, 0 for none (`buffered.rs`, RULES.md D921).
+    pub buffer: usize,
 }
 
 impl Default for FileLogOptions {
@@ -115,6 +120,7 @@ impl Default for FileLogOptions {
             durability: DEFAULT_DURABILITY,
             pipeline: Pipeline::none(),
             blocks: BlockOptions { ahead: DEFAULT_FILL_AHEAD, ..BlockOptions::default() },
+            buffer: 0,
         }
     }
 }
@@ -438,6 +444,7 @@ fn segment_file(
     (options, durability): (&FileLogOptions, Durability),
 ) -> Result<BlockFile> {
     let blocks = segment_blocks(options);
+    let fs = &buffered::Buffering { fs, bytes: options.buffer };
     match durability {
         Durability::None => BlockFile::create_unsynced(fs, path, hash, pipeline, blocks),
         Durability::Data | Durability::Full => BlockFile::create(fs, path, hash, pipeline, blocks),
@@ -447,7 +454,7 @@ fn segment_file(
 /// The block files' options of a log of `options`: zeros filled ahead no
 /// further than a segment's size.
 fn segment_blocks(options: &FileLogOptions) -> BlockOptions {
-    BlockOptions { ahead: options.blocks.ahead.min(options.segment_size), ..options.blocks }
+    BlockOptions { ahead: options.blocks.ahead.min(options.segment_size), ahead_once_synced: options.buffer > 0, ..options.blocks }
 }
 
 /// Checks a segment size.
@@ -508,6 +515,14 @@ impl Log for FileLog {
         self.sync_reached(through).map(|_| ())
     }
 
+    fn buffers(&self) -> bool {
+        self.options.buffer > 0
+    }
+
+    fn write_buffered(&self) -> Result<()> {
+        self.write_held()
+    }
+
     /// The group's sync reaches the end of the segment's blocks durable
     /// when it began, past `through`; a log syncing nothing claims just
     /// past `through`, as it claims nothing durable.
@@ -527,9 +542,10 @@ impl Log for FileLog {
             self.seal(&older)?;
         }
         let durability = self.durability();
-        // A log syncing nothing claims nothing durable.
+        // A log syncing nothing claims nothing durable; the records it
+        // holds are written all the same (RULES.md D921).
         if durability == Durability::None {
-            return Ok(Lsn(through.0.saturating_add(1)));
+            return self.write_held().map(|()| Lsn(through.0.saturating_add(1)));
         }
         self.sync_entries(number)?;
         self.sync_through(&segment, id, durability).map(|end| lsn(number, end))

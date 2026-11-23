@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of zeros filled ahead, in the order they run.
-pub const FILL: [Mutation; 3] = [
+pub const FILL: [Mutation; 4] = [
     Mutation {
         name: "fill-ahead",
         package: Package::Core,
@@ -37,6 +37,16 @@ pub const FILL: [Mutation; 3] = [
         original: "        segment.blocks.trim().map_err(|e| self.failed(e, &format!(\"segment {}\", segment.number)))?;\n",
         replacement: "",
         integration: &["log::segments_keep_zeros_ahead_until_sealed"],
+        unit: &[],
+    },
+    Mutation {
+        name: "fill-ahead-unsynced",
+        package: Package::Core,
+        breaks: "zeros filled ahead: a file filled once synced is refilled though no sync came, so a log no commit waits for writes each byte twice (RULES.md D921)",
+        file: "src/disk/block/fill.rs",
+        original: "        if self.options.ahead_once_synced && !self.synced.swap(false, Ordering::AcqRel) {",
+        replacement: "        if false {",
+        integration: &["blocks::a_file_filled_once_synced_writes_no_zeros_until_a_sync"],
         unit: &[],
     },
 ];

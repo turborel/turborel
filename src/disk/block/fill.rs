@@ -8,11 +8,14 @@
 //! `BlockOptions::ahead` keeps that many bytes past its blocks written with
 //! zeros, and an append writes over them. The zeros are refilled once
 //! appends come within half of `ahead` of their end, by one appender while
-//! the others go on; an append past them waits for the refill. Zeros are
-//! written only past `filled`, and blocks only below it, so a refill never
-//! writes over a block. Opening takes zeros from the last valid block to
-//! the end of the file as this fill, not as a torn write (`tail.rs`), and
-//! `trim` cuts them off a file appended to no more.
+//! the others go on; an append past them waits for the refill. A file of
+//! `BlockOptions::ahead_once_synced` is refilled only once it has been
+//! synced since its last refill, so one whose appends no sync follows, as
+//! a log's while no commit waits for it, writes no zeros (RULES.md D921).
+//! Zeros are written only past `filled`, and blocks only below it, so a
+//! refill never writes over a block. Opening takes zeros from the last
+//! valid block to the end of the file as this fill, not as a torn write
+//! (`tail.rs`), and `trim` cuts them off a file appended to no more.
 
 use std::sync::atomic::Ordering;
 use std::sync::{PoisonError, TryLockError};
@@ -54,6 +57,14 @@ impl BlockFile {
         if self.ahead_of(end) {
             return Ok(());
         }
+        // [DESIGN] RULES.md D921: a file not synced since its last refill
+        // takes none. A block past the zeros is then written past the
+        // file's end, the end noted here, under the lock, so a later
+        // refill starts past it.
+        if self.options.ahead_once_synced && !self.synced.swap(false, Ordering::AcqRel) {
+            self.filled.fetch_max(end, Ordering::AcqRel);
+            return Ok(());
+        }
         let from = self.filled.load(Ordering::Acquire);
         let to = end.saturating_add(ahead);
         let zeros = vec![0; usize::try_from(to.saturating_sub(from)).unwrap_or(0)];
@@ -61,6 +72,14 @@ impl BlockFile {
         self.filled.store(to, Ordering::Release);
         drop(held);
         Ok(())
+    }
+
+    /// Notes a sync of the file as `durability` says: one that syncs asks
+    /// for the zeros to be refilled (`BlockOptions::ahead_once_synced`).
+    pub(super) fn synced_as(&self, durability: crate::disk::io::Durability) {
+        if durability != crate::disk::io::Durability::None && !self.synced.load(Ordering::Acquire) {
+            self.synced.store(true, Ordering::Release);
+        }
     }
 
     /// Whether the zeros reach half of `ahead` past `end`: far enough that

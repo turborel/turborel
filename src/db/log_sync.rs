@@ -1,14 +1,17 @@
 //! \[DESIGN\] The log synced at a pace of its own (RULES.md D25, D55): a
 //! commit of LOG.COMMIT_SYNC OFF is answered once its commit record is
-//! written, and is durable only at the log's next sync. So that a trickle
-//! of such commits, then a database at rest, is not left unsynced for
-//! good, the first commit left unsynced asks for the log sync job
+//! in the log's buffer, and is durable only at the log's next sync. So
+//! that a trickle of such commits, then a database at rest, is not left
+//! unsynced for good, the first commit left unsynced asks for the log sync job
 //! (`turborel-log-sync`) LOG.SYNC_AFTER_MS later, which the thread manager
 //! runs as JOBS.POLICY says (`db/background.rs`). The job syncs the log
 //! through the last commit left unsynced, if another sync (a commit that
 //! waits, a definition, a checkpoint) has not; a commit after it asks
-//! anew. LOG.SYNC_AFTER_MS 0 asks for none, the commits then synced only
-//! by the log's next sync for another reason.
+//! anew. Under LOG.SYNC_AFTER_MS 0 the commits are synced only by the
+//! log's next sync for another reason; the job is then asked for only of
+//! a log that holds records in memory before it writes them, a second
+//! later, and only has it write them (`Log::write_buffered`, RULES.md
+//! D921).
 //!
 //! The job syncs through `Log::sync`, as every sync of the log, so a
 //! memory log, the file log and a log plug-in alike; a failed sync stops
@@ -45,14 +48,17 @@ impl Database {
     }
 
     /// Asks for the log sync job, LOG.SYNC_AFTER_MS from now, if a commit
-    /// left the log unsynced since it was last asked for, and the setting
-    /// is not 0.
+    /// left the log unsynced since it was last asked for; if the setting
+    /// is 0, only of a log that holds records in memory, a second from now.
     pub(super) fn sync_log_if_due(&self) {
         let Ok(st) = self.snapshot() else { return };
         let Ok(after) = u64::try_from(st.settings.integer(LOG_SYNC_AFTER_MS)) else { return };
-        if after == 0 {
+        // [DESIGN] RULES.md D921: with no sync to come, the job still has
+        // a log that holds records in memory write them, a second later.
+        if after == 0 && !st.tx.unsynced_buffered() {
             return;
         }
+        let after = if after == 0 { SYNC_AFTER_MS } else { after };
         let asked = st.tx.ask_sync();
         if asked {
             self.request_log_sync(Duration::from_millis(after));
@@ -61,7 +67,8 @@ impl Database {
 }
 
 /// The log sync job's work: syncs the log through the last commit left
-/// unsynced, if one is, and LOG.SYNC_AFTER_MS is not 0. It is asked for
+/// unsynced, if one is; or, if LOG.SYNC_AFTER_MS is 0, has the log write
+/// the records it holds in memory, synced by no one. It is asked for
 /// again by the next commit left unsynced. A change of the setting needs
 /// no asking: it is a definition, logged and synced (RULES.md D36), which
 /// syncs every commit before it.
@@ -74,7 +81,8 @@ impl Database {
 pub(super) fn log_synced(db: &Database) -> Result<Option<Duration>> {
     let st = db.snapshot()?;
     if st.settings.integer(LOG_SYNC_AFTER_MS) == 0 {
-        return Ok(None);
+        // [DESIGN] RULES.md D921: written, not synced.
+        return st.tx.unwritten().map_or(Ok(None), |log| log.write_buffered().map(|()| None));
     }
     if let Some((log, through)) = st.tx.take_unsynced() {
         st.tx.sync(&*log, through)?;

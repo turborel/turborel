@@ -169,6 +169,22 @@ impl Transactions {
         lock_builtin(&self.unsynced).as_mut().is_some_and(|u| !std::mem::replace(&mut u.asked, true))
     }
 
+    /// \[DESIGN\] Whether the log of the unsynced commits holds records
+    /// in memory before it writes them (RULES.md D921).
+    pub(crate) fn unsynced_buffered(&self) -> bool {
+        lock_builtin(&self.unsynced).as_ref().is_some_and(|u| u.log.buffers())
+    }
+
+    /// \[DESIGN\] The log of the unsynced commits, to be asked to write
+    /// the records it holds in memory (RULES.md D921): they stay noted
+    /// unsynced, and a commit written from now asks for the job again.
+    pub(crate) fn unwritten(&self) -> Option<Arc<dyn Log>> {
+        lock_builtin(&self.unsynced).as_mut().map(|u| {
+            u.asked = false;
+            Arc::clone(&u.log)
+        })
+    }
+
     /// The log of the unsynced commits, and the last one's position, no
     /// longer noted: to be synced. A commit written after is noted anew.
     pub(crate) fn take_unsynced(&self) -> Option<(Arc<dyn Log>, Lsn)> {

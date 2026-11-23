@@ -100,11 +100,15 @@ pub struct BlockOptions {
     /// none, so a sync after an append carries no growth of the file
     /// (`fill.rs`).
     pub ahead: u64,
+    /// Whether the zeros are refilled only once the file has been synced
+    /// since they were last, so a file never synced grows by its appends
+    /// alone (`fill.rs`, RULES.md D921).
+    pub ahead_once_synced: bool,
 }
 
 impl Default for BlockOptions {
     fn default() -> Self {
-        BlockOptions { max_block: DEFAULT_MAX_BLOCK, tail: TailPolicy::Truncate, ahead: 0 }
+        BlockOptions { max_block: DEFAULT_MAX_BLOCK, tail: TailPolicy::Truncate, ahead: 0, ahead_once_synced: false }
     }
 }
 
@@ -172,6 +176,8 @@ pub struct BlockFile {
     /// of them; only the thread holding `filling` raises it.
     filled: AtomicU64,
     filling: Mutex<()>,
+    /// Whether it was synced since its zeros were last refilled.
+    synced: AtomicBool,
     counters: Counters,
 }
 
@@ -287,6 +293,7 @@ impl BlockFile {
             parking: Mutex::new(BTreeMap::new()),
             filled: AtomicU64::new(end),
             filling: Mutex::new(()),
+            synced: AtomicBool::new(false),
             counters: Counters::default(),
         }
     }
@@ -482,6 +489,7 @@ impl BlockFile {
     /// SQLCODE -915 if the sync fails.
     pub fn sync(&self, durability: Durability) -> Result<()> {
         add(&self.counters.syncs, 1);
+        self.synced_as(durability);
         self.file.sync(durability)
     }
 

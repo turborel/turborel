@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use super::buffered::Buffering;
 use super::{FileLog, FileLogOptions, LogRecovery, Segment, check_segment_size, segment_blocks, segment_number, split};
 use crate::disk::block::{BlockFile, BlockId, HEADER_LEN, ReadWith, Recovery};
 use crate::disk::io::{Durability, FileSystem, OpenMode};
@@ -58,8 +59,10 @@ impl FileLog {
                 return Err(SqlError::new(Code::Corrupt, format!("[DESIGN] the log in {} is missing segment {expected}", dir.display())));
             }
         }
-        let (opened, half) = open_segments(&*fs, &numbered, (formats, &options), split(through))?;
-        let cut = settle(&*fs, dir, (&opened, &numbered, half.as_deref()), (formats, &options))?;
+        // A segment written to is written through the log's buffer (RULES.md D921).
+        let files = Buffering { fs: &*fs, bytes: options.buffer };
+        let (opened, half) = open_segments(&files, &numbered, (formats, &options), split(through))?;
+        let cut = settle(&files, dir, (&opened, &numbered, half.as_deref()), (formats, &options))?;
         let mut segments = Vec::with_capacity(opened.len());
         for (number, _, blocks, _) in opened {
             segments.push(Segment::new(number, blocks));
