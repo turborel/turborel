@@ -269,6 +269,7 @@ mod partial_groups;
 mod partition_deltas;
 mod partitioned_joins;
 mod partitioning;
+mod patched_updates;
 mod period_predicates;
 mod periods;
 mod plan_space;
