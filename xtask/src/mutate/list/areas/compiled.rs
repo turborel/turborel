@@ -18,7 +18,7 @@ const ROWS: &str = "compiled_writes::a_point_change_checks_its_rows_constraints"
 const MORE: &str = "compiled_writes::a_point_change_falls_back_where_its_end_checks_more";
 
 /// Mechanisms whose removal must fail compiled procedures' requirements.
-pub const COMPILED: [Mutation; 11] = [
+pub const COMPILED: [Mutation; 14] = [
     Mutation {
         name: "compiled-old-table-of-update",
         package: Package::Core,
@@ -94,8 +94,8 @@ pub const COMPILED: [Mutation; 11] = [
         package: Package::Core,
         breaks: "a point change written straight leaves the UNIQUE constraints on the columns it writes unchecked",
         file: "src/db/integrity/straight.rs",
-        original: "        for constraint in &straight.unique {",
-        replacement: "        for constraint in straight.unique.iter().take(0) {",
+        original: "        for (constraint, alone) in &straight.unique {",
+        replacement: "        for (constraint, alone) in straight.unique.iter().take(0) {",
         integration: &[ROWS],
         unit: &[],
     },
@@ -124,9 +124,39 @@ pub const COMPILED: [Mutation; 11] = [
         package: Package::Core,
         breaks: "an INSERT of one row written straight leaves its row's constraints unchecked",
         file: "src/db/write/direct.rs",
-        original: "        st.end_straight(tx, (&target.name, straight), &ids)?;",
-        replacement: "        st.end_straight(tx, (&target.name, straight), &[])?;",
+        original: "            [_] => rows.visit(&mut |row| st.end_straight(tx, (&target.name, straight), &ids, Some(row)))?,",
+        replacement: "            [_] => rows.visit(&mut |row| st.end_straight(tx, (&target.name, straight), &[], Some(row)))?,",
         integration: &[CONSTRAINTS],
+        unit: &[],
+    },
+    Mutation {
+        name: "compiled-straight-held-unchecked",
+        package: Package::Core,
+        breaks: "a point change written straight leaves the constraints of the row it holds unchecked (D880)",
+        file: "src/db/integrity/straight.rs",
+        original: "                    Some(row) => self.check_row_values(tx, (desc, c), row, &mut checking.bound).map_err(|e| broken(e, (desc, c)))?,",
+        replacement: "                    Some(_) => {}",
+        integration: &[ROWS],
+        unit: &[],
+    },
+    Mutation {
+        name: "compiled-straight-settled-unasked",
+        package: Package::Core,
+        breaks: "a point change written straight takes a UNIQUE constraint as settled though its row's entry was not inserted alone (D880)",
+        file: "src/db/integrity/straight.rs",
+        original: "    alone.iter().any(|index| tx.alone(index, id))",
+        replacement: "    !alone.is_empty()",
+        integration: &[ROWS],
+        unit: &[],
+    },
+    Mutation {
+        name: "compiled-straight-reads-unchecked",
+        package: Package::Core,
+        breaks: "a point change written straight checks its foreign key with reads no commit checks (D880)",
+        file: "src/db/integrity/straight.rs",
+        original: "        if !ids.is_empty() && (straight.reads || reads_back || ids.iter().any(unsettled)) {",
+        replacement: "        if !ids.is_empty() && (reads_back || ids.iter().any(unsettled)) {",
+        integration: &["compiled_writes::a_point_change_checks_its_reference_serializably"],
         unit: &[],
     },
 ];

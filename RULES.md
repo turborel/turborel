@@ -558,6 +558,7 @@ verification approach DO-178C expects (§8).
 | D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
+| D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
 
 ### The project
 
@@ -15448,6 +15449,37 @@ for a row, and its wait is bounded as before but for that one write.
 A waiter does not spin. The waits measured were long where no core was
 free, and a spinning waiter would take a core from the thread it waits
 for.
+
+#### D880. A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads
+
+A point change written straight (D841) ended its statement as the
+general path does. Each row constraint read the row back from its table
+by its id, a descent and a decode of a row the statement held a moment
+before. Each UNIQUE constraint built its whole check, with its table's
+indexes, its family and its names, and only then found that the row's
+entry had been inserted alone (`Txn::alone`), which settles it. And
+below SERIALIZABLE the transaction told every table it had joined to
+check its reads, and told each again to stop, around checks that often
+read nothing.
+
+Now `State::end_straight` is given the one row written as its statement
+holds it (`integrity/straight.rs`). A row constraint is checked of that
+row. The row held is the row stored unless the table has a system-time
+period, whose rows are stamped as they are written, or the row holds a
+value its table keeps apart, a large object or one inside another value.
+Of those the row is read back as before. A UNIQUE constraint keeps, from
+when the program is learned, the unique indexes of exactly its key, and
+a row whose entry in one was inserted alone is passed over before any
+check is built. This holds where `KeyCheck::row` would pass it over. That
+is a constraint with no period, of a table that is no subtable and no
+partition. Any other is checked whole.
+
+The participants are told to check reads only where a check reads a
+table. That is a row constraint other than NOT NULL, a row read back, or
+a UNIQUE check not settled. A participant already reads as the
+transaction does, told as it joined and at each new snapshot, so telling
+it to check and then not to, with no read between, changed nothing. The
+last call, which ends checked reads, is made as before.
 
 ## 2. Project layout
 

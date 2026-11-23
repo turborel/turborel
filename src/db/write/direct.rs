@@ -63,7 +63,7 @@ pub(in crate::db) fn point_change(
         // Of a catalog with triggers, its statement ends with no row
         // changed, as `update_rows` ends it.
         if st.catalog.any_triggers() {
-            st.end_straight(tx, (&w.bound.table, straight), &[])?;
+            st.end_straight(tx, (&w.bound.table, straight), &[], None)?;
         }
         return Ok(Ok(Pointed::Unfound));
     };
@@ -71,7 +71,9 @@ pub(in crate::db) fn point_change(
     let hosted = Hosted::in_db(Some(session), cx, &db);
     let rows = if delete { deleted(cx, (&w, &hosted), id)? } else { updated(cx, (&w, &hosted), (id, &seen))? };
     let wrote = rows.as_ref().map(|_| id);
-    st.end_straight(tx, (&w.bound.table, straight), wrote.as_slice())?;
+    // The row an UPDATE wrote, as it holds it (RULES.md D880).
+    let held = rows.as_ref().and_then(|(_, new)| new.as_ref());
+    st.end_straight(tx, (&w.bound.table, straight), wrote.as_slice(), held)?;
     Ok(Ok(Pointed::Wrote(rows)))
 }
 
@@ -147,7 +149,11 @@ impl Session {
             ids.push(st.insert_routed(tx, &target.name, row)?.1);
             Ok(())
         })?;
-        st.end_straight(tx, (&target.name, straight), &ids)?;
+        // Of one row inserted, its checks are of the row held (RULES.md D880).
+        match ids.as_slice() {
+            [_] => rows.visit(&mut |row| st.end_straight(tx, (&target.name, straight), &ids, Some(row)))?,
+            [] | [_, _, ..] => st.end_straight(tx, (&target.name, straight), &ids, None)?,
+        }
         self.note_drawn(target.generating.drawn_identity(), &mut rows)?;
         self.note_generated(target.generating.identity_column(), &mut rows)?;
         Ok(rows.len())
