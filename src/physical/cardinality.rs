@@ -38,6 +38,7 @@ mod nodes;
 mod past;
 mod semi;
 mod tables;
+mod width;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};

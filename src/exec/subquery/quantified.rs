@@ -106,7 +106,7 @@ impl SubqueryRows {
     /// with it where neither is null, else false. A row of no null is
     /// looked for first, as the patterns are in order of their nulls.
     fn some_equal(&self, xs: &[Value], summary: &Summary) -> Result<Truth> {
-        let mut agreeing = lock_builtin(&self.agreeing);
+        let mut agreeing = lock_builtin(&self.of.agreeing);
         let Agreeing { whole, nulled } = &mut *agreeing;
         let of_r = nulls(xs);
         let hashes = if of_r.contains(&true) { nulled.entry(of_r.clone()).or_default() } else { whole };
@@ -132,7 +132,7 @@ impl SubqueryRows {
             let of_pattern = pattern.to_vec();
             let rows = self.rows()?.filter(move |r| !r.as_ref().is_ok_and(|row| nulls(row) != of_pattern));
             let keys = on.iter().map(|&i| JoinKey { left: i, right: i, nulls: false }).collect();
-            let Right::Held(built) = Built::of(rows, keys, (&mut Work::new(&self.db), Full::Table))? else {
+            let Right::Held(built) = Built::of(rows, keys, (&mut Work::new(&self.of.db), Full::Table))? else {
                 return Err(super::broken("a subquery's rows were partitioned"));
             };
             *hash = Some(built);
@@ -149,7 +149,7 @@ impl SubqueryRows {
 
     /// Its summary, made the first time it is asked for.
     fn summary(&self) -> Result<Arc<Summary>> {
-        let mut summary = lock_builtin(&self.summary);
+        let mut summary = lock_builtin(&self.of.summary);
         if let Some(made) = &*summary {
             return Ok(Arc::clone(made));
         }

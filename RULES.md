@@ -586,6 +586,8 @@ verification approach DO-178C expects (§8).
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
+| D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
+| D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
@@ -16291,6 +16293,84 @@ before. The index's estimate costs a count of at most a leaf's entries,
 or the share of its tree a larger range takes, once for each estimate
 of the table's conjuncts.
 
+#### D892. A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns
+
+D891 asks the index of a range whose bounds the execution planned for
+gives. A plan made with slots and no values has no range to ask, and on
+the bench such plans still weighed STOCK LEVEL's lines by the
+statistics alone, at about five times their rows, and hashed a read of
+the whole of STOCK. Yet `OL_O_ID < ? AND OL_O_ID >= ? - 20` of one slot
+holds twenty values of the column whatever the slot's value.
+
+So where the conjuncts hold an index's first columns equal, to values
+or slots, and bound its next column from both sides by one slot, plus
+or less an integer, the share they keep is at most the values between
+the bounds times the rows of one value under those columns, over the
+table's rows (`physical/cardinality/width.rs`). An inclusive bound adds
+a value, an exclusive lower one takes one. The rows of a value are
+those the pass saw over the distinct combinations of the columns, so
+they do not grow with the rows written since. Only an exact numeric
+column of scale 0 is asked, as only there a width counts values.
+
+Two integers bound a width as well. With the slots filled, the bench's
+last runs still hashed STOCK for a range such as `[6081, 6101)` of a
+district, of about two hundred lines. The index counts a range of at
+most 128 entries, and estimates a larger one by its share of the tree,
+there at eight times its entries, and the statistics past their pass
+gave as many. Twenty values of ten lines each bound it at two hundred.
+A range whose values hold more rows than the average one is estimated
+low by it, as by any average, and the margin still weighs the probes
+against some times the rows estimated (D386).
+
+A procedure's statement runs as a correlated subquery of its frame,
+whose runner gave each reference to a variable its own slot (D675), so
+the two bounds were of two slots and bounded no width. Its outer
+expressions that name the same slot, column or outer reference now
+take the first one's slot, as of a kept program's leaf (D418), so a
+variable named twice is one slot and one value.
+
+#### D900. A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent
+
+A correlated subquery keeps its plan with its outer references as slots
+(D675), and a kept statement's subqueries keep theirs across its
+executions (D793). Each run of a plan kept still copied the plan, filled
+the copy with the run's outer values, opened the executor's operators
+over it and gathered the row they gave into rows that may be read again.
+Each execution's runner copied the plan once more as it found it kept.
+A scalar subquery reading a price by an item's key did all of that for
+every row of its statement, where a kept query of the same shape reads
+its row as a point read (D752, D881).
+
+Now a subquery's plan kept is held once and shared
+(`exec/subquery/planned.rs`, `KeptRun`). The runner that settles it, the
+kept statement's plan and every later execution's runner hold the same
+one. A run that is planned alone, as of a null or of a value of another
+kind, leaves it as it is.
+
+A plan kept that is a point read is run as one
+(`exec/subquery/pointed.rs`). That is a probe of a whole unique key
+alone or under a projection of its columns, as `PointRead::of` finds
+it. The run's outer values are placed in the probe as they are, not cast
+(`PointRead::read_as_is`), as filling the plan would place them, and
+the row is read by the index's probe of the whole key. The read is
+recorded, its entries are counted and a cancel is looked for as the
+plan's scan does, so the rows, the errors and the conflicts are the
+plan's. Its rows are kept for its outer values as any run's are, and
+its runs count toward decorrelation as before (D790).
+
+A subquery still learning its plan, one planned at each run, a plan
+with a filter or a limit above its scan, a slot placed by an expression
+and a run whose values its slots do not take are run through the
+executor as before. So is every subquery with EXECUTOR.POINT_OPERATIONS
+OFF or EXECUTOR.KEEP_SUBQUERY_PLANS OFF.
+
+A scalar subquery's value is read from its rows where they are held
+(`SubqueryRows::of_first`), where it was read from a copy of them, and
+the rows a run gave are held once, shared by their copies. How a
+subquery is decorrelated follows from the subquery alone, so it is found
+once and kept with its plan kept (`KeptRun::decorrelated`), where each
+run past EXECUTOR.DECORRELATE_AFTER_RUNS that stayed probed made it
+again.
 #### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
 
 A prepared CALL kept its binding (D793), its procedure's text was read
