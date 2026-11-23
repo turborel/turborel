@@ -21,13 +21,13 @@ use crate::value::Value;
 
 /// The set functions of a grouping by no column.
 #[derive(Debug, Clone)]
-pub(super) struct Fold {
+pub(crate) struct Fold {
     aggs: Vec<AggCall>,
 }
 
 /// One run's fold: each function's state, and the values the DISTINCT
 /// ones took.
-pub(super) struct Folding {
+pub(crate) struct Folding {
     states: Vec<Box<dyn Accumulator>>,
     seen: Option<Bag>,
     key: Vec<u8>,
@@ -35,18 +35,24 @@ pub(super) struct Folding {
 
 impl Fold {
     /// The fold the aggregation `plan` is, if it is one: by no column,
-    /// no group made before its rows, no inverse distribution function,
-    /// and no expression that reads beyond its row.
+    /// no group made before its rows, and set functions `of_aggs` folds.
     pub(super) fn of(plan: &Plan) -> Option<Fold> {
         let Plan::Aggregate { groups, collations, aggs, seeds, .. } = plan else { return None };
+        let whole = groups.is_empty() && collations.is_empty() && seeds.is_empty();
+        whole.then(|| Fold::of_aggs(aggs)).flatten()
+    }
+
+    /// The fold of the set functions `aggs` of a grouping by no column,
+    /// if none is an inverse distribution function and no expression of
+    /// them reads beyond its row.
+    pub(crate) fn of_aggs(aggs: &[AggCall]) -> Option<Fold> {
         let own = aggs.iter().all(|a| a.distribution.is_none() && a.exprs().into_iter().all(crate::logical::Expr::reads_nothing));
-        let folded = groups.is_empty() && collations.is_empty() && seeds.is_empty() && own;
         let whole = aggs.iter().all(|a| a.filter.as_ref().is_none_or(|c| !c.has_subquery()));
-        (folded && whole).then(|| Fold { aggs: aggs.clone() })
+        (own && whole).then(|| Fold { aggs: aggs.to_vec() })
     }
 
     /// A fold begun, of no row yet.
-    pub(super) fn begun(&self, at: &At<'_>) -> Folding {
+    pub(crate) fn begun(&self, at: &At<'_>) -> Folding {
         let states = self.aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect();
         let seen = self.aggs.iter().any(|a| a.distinct).then(|| Bag::new(Work::of(at.st, at.tx)));
         Folding { states, seen, key: Vec::new() }
@@ -57,7 +63,7 @@ impl Fold {
     /// # Errors
     ///
     /// An argument's or a filter's, the function's, or the bag's spill's.
-    pub(super) fn feed(&self, folding: &mut Folding, row: &Row, at: &At<'_>) -> Result<()> {
+    pub(crate) fn feed(&self, folding: &mut Folding, row: &Row, at: &At<'_>) -> Result<()> {
         let Folding { states, seen, key } = folding;
         for (n, (a, state)) in self.aggs.iter().zip(states.iter_mut()).enumerate() {
             // [ISO/IEC 9075-2:2023 §10.9 GR4] a row its filter is not true
@@ -100,7 +106,7 @@ impl Folding {
     /// # Errors
     ///
     /// A function's, as its result is out of range.
-    pub(super) fn finished(self) -> Result<Row> {
+    pub(crate) fn finished(self) -> Result<Row> {
         self.states.into_iter().map(|state| state.finish()).collect()
     }
 }

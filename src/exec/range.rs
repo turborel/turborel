@@ -23,9 +23,12 @@ mod fold;
 mod scan;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::join::{DirectJoin, Given, Pairing};
 use super::limit::{Rule, count};
+use super::sort::Sorter;
+use super::work::Work;
 use super::{Db, Subqueries, broken, eval, eval_cond, group, sort};
 use crate::db::State;
 use crate::error::Result;
@@ -34,13 +37,21 @@ use crate::physical::Plan;
 use crate::storage::{Row, sized_row};
 use crate::txn::TxId;
 use crate::value::Value;
-use fold::Fold;
+pub(crate) use fold::Fold;
 use scan::Scan;
 
 /// \[DESIGN\] How many operators deep a plan read direct may be: a range
 /// under each of the operators it may be under, twice over, which bounds
 /// the recursion of `Node::of` and `Node::run` (RULES.md R-CF-6).
 const MOST_DEPTH: usize = 12;
+
+/// \[DESIGN\] The most rows a direct read holds outside a work area,
+/// before it groups them or keeps the first of them sorted: a thousand
+/// and some, a few hundred kilobytes of rows of a hundred bytes. A range
+/// of more is left to the executor, whose operators hold their rows in
+/// work areas that spill (RULES.md D38), and its plan is read direct no
+/// more.
+const MOST_HELD: usize = 1024;
 
 /// Where a direct read runs: the state and transaction it reads in, its
 /// statement's slot values, and what evaluates its expressions.
@@ -77,10 +88,11 @@ pub(crate) struct RangeRead {
 
 /// What a direct read keeps from one run to the next (`scan::Held`), held
 /// with the plan. One execution takes it at a time: another running at
-/// once, or under it, reads with one of its own. A copy of the plan
-/// starts with none.
+/// once, or under it, reads with one of its own. And whether a run found
+/// the plan's range longer than a direct read holds, after which its
+/// runs are the executor's. A copy of the plan starts with neither.
 #[derive(Default)]
-struct KeptHeld(Mutex<scan::Held>);
+struct KeptHeld(Mutex<scan::Held>, AtomicBool);
 
 impl Clone for KeptHeld {
     fn clone(&self) -> KeptHeld {
@@ -266,13 +278,19 @@ impl Node {
     }
 }
 
-/// Every row of `input`, taken: none if nothing was read.
+/// Every row of `input`, taken: none if nothing was read, or if it has
+/// more than `MOST_HELD` rows, which the read is then said to have
+/// outgrown.
 fn taken(input: &Node, (at, held): (&At<'_>, &mut scan::Held)) -> Result<Option<Vec<Result<Row>>>> {
     let mut rows: Vec<Result<Row>> = Vec::new();
     let ran = input.run(at, held, None, &mut |row| {
         rows.push(Ok(std::mem::take(row)));
-        Ok(true)
+        Ok(rows.len() <= MOST_HELD)
     })?;
+    if rows.len() > MOST_HELD {
+        held.outgrown();
+        return Ok(None);
+    }
     Ok((ran == Ran::Done).then_some(rows))
 }
 
@@ -324,14 +342,26 @@ fn limited((limit, drain): (&Limit, bool), input: &Node, (at, held): (&At<'_>, &
 }
 
 /// [X3.135-1986 §8.3 GR3b] The rows of `input` sorted by `keys`, or the
-/// first of them if `most` says how many are asked for, lent to `each`:
-/// read first, then sorted as the executor sorts them (`sort.rs`).
+/// first of them if `most` says how many are asked for, lent to `each`,
+/// sorted by the executor's own sorter (`sort.rs`).
 fn sorted((keys, most): (&[SortKey], Option<Most>), input: &Node, (at, held): (&At<'_>, &mut scan::Held), each: Each<'_>) -> Result<Ran> {
-    let Some(rows) = taken(input, (at, held))? else { return Ok(Ran::Unread) };
-    let read = Box::new(rows.into_iter());
-    let sorted = match most {
-        Some(most) => sort::first(keys, read, most, at.st, at.tx),
-        None => sort::sort(keys, read, at.st, at.tx),
+    let sorted = if let Some(most) = most {
+        let Some(rows) = taken(input, (at, held))? else { return Ok(Ran::Unread) };
+        sort::first(keys, Box::new(rows.into_iter()), most, at.st, at.tx)
+    } else {
+        // As `sort::sort`: each row given to the sorter as it is read, so
+        // rows past the work area are written as sorted runs.
+        let (mut work, mut sorter) = (Work::of(at.st, at.tx), Sorter::new(keys.to_vec()));
+        let ran = input.run(at, held, None, &mut |row| {
+            if let Some(k) = keys.iter().find(|k| row.get(k.column).is_none()) {
+                return Err(broken(&format!("sort column {} is not in the rows sorted", k.column)));
+            }
+            sorter.push(std::mem::take(row), &mut work).map(|()| true)
+        })?;
+        if ran == Ran::Unread {
+            return Ok(ran);
+        }
+        sorter.sorted(&mut work)?
     };
     for row in sorted {
         if !each(&mut row?)? {
@@ -375,8 +405,22 @@ impl RangeRead {
     ///
     /// The plan's, as the executor raises them.
     pub(crate) fn run(&self, at: &At<'_>, each: Each<'_>) -> Result<Ran> {
+        if self.held.1.load(Ordering::Relaxed) {
+            return Ok(Ran::Unread);
+        }
         let (mut kept, mut own) = (self.held.0.try_lock().ok(), scan::Held::default());
-        self.node.run(at, kept.as_deref_mut().unwrap_or(&mut own), None, each)
+        let held = kept.as_deref_mut().unwrap_or(&mut own);
+        let ran = self.node.run(at, held, None, each);
+        if held.outgrew() {
+            self.outgrown();
+        }
+        ran
+    }
+
+    /// Says a run found its range longer than a direct read holds: its
+    /// runs from now on read nothing, and are the executor's.
+    pub(crate) fn outgrown(&self) {
+        self.held.1.store(true, Ordering::Relaxed);
     }
 
     /// The first `limit` rows of the plan, or all of them, as `run` reads

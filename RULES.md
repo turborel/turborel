@@ -596,6 +596,7 @@ verification approach DO-178C expects (§8).
 | D930 | A kept plan of one index range is run where it is kept, its rows handed up through its filters, projections, sort, limit and set functions with no operator built |
 | D931 | A cursor of a kept plan that is a direct range read holds its rows as it opens, a range that gives rows as fetched only while it is short |
 | D932 | An index join whose probe is a whole unique key is run, in a direct read, as nested point reads |
+| D933 | A compiled SELECT INTO of set functions over the delta table of a change run straight folds them over the rows it wrote |
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
@@ -16539,9 +16540,14 @@ input that can raise, which is read to its end as before. A grouping by
 no column folds each row into its set functions and gives its one row
 at the end, a DISTINCT function's values kept in a bag of the
 statement's work area as the grouping keeps them (`range/fold.rs`). A
-sort and a grouping by a column take the rows read and then sort or
-group them by the executor's own functions, so their order, their spill
-and their groups are the executor's.
+sort gives each row to the executor's sorter as it is read, so rows
+past the work area are written as sorted runs (D38). A grouping by a
+column, and a sort that keeps its first rows alone, take the rows read
+and then group or sort them by the executor's own functions, so their
+order and their groups are the executor's. They hold 1024 rows at most.
+A range of more reads nothing direct and is run by the executor, whose
+operators hold their rows in work areas, and so is every run of that
+plan after it.
 
 A leaf of a kept program whose plan is kept and is such a read runs it
 (`kept/leaves.rs`), compiled or interpreted. A compiled SELECT INTO
@@ -16567,8 +16573,9 @@ plan that can raise was read at OPEN already. A plan that sorts or
 groups read its whole range before its first row. Any other gave its
 rows as they were fetched, so a cursor closed early read few. Its range
 is read direct only while it has no more than 128 rows, about the rows
-of a few leaves of an index, and a longer one is left to the executor,
-its first rows read twice. A plan that cannot raise fails only by its
+of a few leaves of an index. A longer one is left to the executor, its
+first rows read twice that once, and so is every range of that plan
+from then on. A plan that cannot raise fails only by its
 reading, at the first fetch, so one whose direct read fails is left to
 the executor, which fails there as before.
 
@@ -16606,6 +16613,30 @@ Each probe is recorded, counted and looked to for a cancel by the point
 read, as a probe of the join is. An outer, semi or anti join, a probe
 of part of a key, of a range or by a function, a spatial join and a
 located one are the executor's.
+
+#### D933. A compiled SELECT INTO of set functions over the delta table of a change run straight folds them over the rows it wrote
+
+A change of a compiled program ran straight on its table only if the
+query over its delta table was a select list over the table's row
+(D841). A query of set functions, as a sum over the rows an UPDATE
+wrote, ran the general path. That path binds the rows as a table, opens
+the query's kept plan over them and builds its grouping.
+
+Such a query now runs with the change (`compiled/folded.rs`). It is a
+grouping by no column of the delta table's rows alone, under a select
+list that reads its row alone. The change's rows are collected as its
+write functions write them, as before, and each set function is fed
+each row as a direct read's are (D930, `exec/range/fold.rs`). The
+select list is then evaluated over the one row of their values, which
+there is even of no rows, and assigned. A change by a whole unique key
+that is written straight (D880) folds its one row the same way. The
+columns the functions' arguments read are those the delta table shows,
+so an increment of another column may still be reserved (D849).
+
+A grouping by a column, a set function with a filter or an inverse
+distribution, and an argument or a select list that reads a subquery,
+a routine or a sequence generator leave the statement to the general
+path, as does every case that left a change to it before.
 
 #### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
 

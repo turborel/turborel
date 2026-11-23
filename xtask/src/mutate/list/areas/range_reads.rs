@@ -5,12 +5,13 @@
 //! over a null; a column given twice is copied, not moved; a cursor of a
 //! long range is left to the executor (D931); and a join by a whole
 //! unique key pairs no left row with a null key, and keeps only the pairs
-//! the rest of its condition is true of (D932).
+//! the rest of its condition is true of (D932); and the set functions of a
+//! query over a delta table are fed each row the change wrote (D933).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 9] = [
+pub const RANGE_READS: [Mutation; 10] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -100,5 +101,15 @@ pub const RANGE_READS: [Mutation; 9] = [
         replacement: "            Some(_) => Ok(true),",
         integration: &["range_reads::ranges_are_read_direct_as_the_executor_reads_them"],
         unit: &["exec::range::tests::a_join_by_a_whole_unique_key_is_read_as_its_plan_reads"],
+    },
+    Mutation {
+        name: "delta-fold-first-rows-alone",
+        package: Package::Core,
+        breaks: "the set functions of a query over a delta table are folded over none of the rows the change wrote (D933)",
+        file: "src/db/routines/program/compiled/folded.rs",
+        original: "        visit(&mut |row| self.fold.feed(&mut folding, row, &at))?;",
+        replacement: "        visit(&mut |_| Ok(()))?;",
+        integration: &["range_reads::set_functions_over_a_delta_table_are_folded_as_the_general_path_makes_them"],
+        unit: &[],
     },
 ];

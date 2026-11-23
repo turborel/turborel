@@ -26,6 +26,7 @@ use super::super::super::super::prepared::KeptPlan;
 use super::super::super::super::write::{Pointed, Target, Written, delete_rows, point_change, update_rows};
 use super::super::super::super::{Completion, Session, State};
 use super::evaluated::store_row;
+use super::folded::Folded;
 use super::run::Exec;
 use super::valued::Stores;
 use crate::ast::{DeltaResult, InsertSource, InsertStatement, QueryExpression, SqlStatement, TableReference};
@@ -84,6 +85,9 @@ struct Searched {
     /// a column, 0 of none: an increment of a column it does not read may
     /// be reserved (RULES.md D849).
     shown: u64,
+    /// The set functions its query folds over the delta table's rows, if
+    /// it has any, its select list then over their values (`folded.rs`).
+    fold: Option<Folded>,
 }
 
 /// An INSERT of one row of values, its kept target and query.
@@ -209,15 +213,22 @@ fn direct_of(exec: &Exec<'_>, contained: &Contained, shape: Shape) -> Result<Opt
     }
     let (table, straight) = (bound.table.clone(), st.straight(&bound, delete));
     let Some(result) = delta else {
-        return Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: None, straight, shown: 0 }))));
+        return Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: None, straight, shown: 0, fold: None }))));
     };
     let Some(KeptPlan::Query(_, plan)) = keeping.querying(Some(delta_query)).query().map(|q| q.plan()).transpose()?.flatten() else {
         return Ok(None);
     };
-    let (Some(outputs), SqlStatement::Select { targets, .. }) = (outputs_of(&plan), contained.statement()) else { return Ok(None) };
+    let SqlStatement::Select { targets, .. } = contained.statement() else { return Ok(None) };
+    // A select list over the delta table's row, or over the values of
+    // the set functions folded over its rows (RULES.md D933).
+    let (outputs, fold) = match (outputs_of(&plan), Folded::of(&plan)) {
+        (Some(outputs), _) => (outputs, None),
+        (None, Some((outputs, fold))) => (outputs, Some(fold)),
+        (None, None) => return Ok(None),
+    };
     let stores = Stores::of_specs(targets, &contained.scope);
-    let shown = shown_of(&outputs);
-    Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: Some((result, outputs, stores)), straight, shown }))))
+    let shown = shown_of(fold.as_ref().map_or(&outputs, Folded::read));
+    Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: Some((result, outputs, stores)), straight, shown, fold }))))
 }
 
 /// The columns of the delta table's row `outputs` read, a bit a column.
@@ -264,7 +275,7 @@ fn outputs_of(plan: &LogicalPlan) -> Option<Vec<Expr>> {
 /// `e`, over a row whose column `i` is column `columns[i]` of the delta
 /// table's, as an expression over the delta table's row; none if it reads
 /// a column the row has not.
-fn remapped(e: Expr, columns: &[usize]) -> Option<Expr> {
+pub(super) fn remapped(e: Expr, columns: &[usize]) -> Option<Expr> {
     let missing = std::cell::Cell::new(false);
     let mapped = remap(e, columns, &missing);
     (!missing.get()).then_some(mapped)
@@ -333,6 +344,10 @@ fn collected(exec: &mut Exec<'_>, contained: &Contained, s: &Searched, w: Writte
     }
     let done = ran?;
     let (Some((_, outputs, stores)), Some(collector)) = (&s.delta, collector) else { return Ok(done) };
+    if let Some(fold) = &s.fold {
+        let row = fold.row(exec, |each| collector.taken(exec.cx.st).visit(each))?;
+        return selected(exec, contained, (outputs, stores), &[row]);
+    }
     let mut rows: Vec<Row> = Vec::with_capacity(2);
     collector.taken(exec.cx.st).visit(&mut |row| {
         if rows.len() < 2 {
@@ -366,6 +381,10 @@ fn pointed_done(exec: &mut Exec<'_>, contained: &Contained, s: &Searched, pointe
             r
         })
         .collect();
+    if let Some(fold) = &s.fold {
+        let folded = fold.row(exec, |each| shown.iter().try_for_each(each))?;
+        return selected(exec, contained, (outputs, stores), &[folded]);
+    }
     selected(exec, contained, (outputs, stores), &shown)
 }
 

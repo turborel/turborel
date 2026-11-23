@@ -333,3 +333,64 @@ fn cursors_of_ranges_read_direct_give_what_the_executor_gives() {
     let has = |part: &str| through.iter().any(|line| line.contains(part));
     assert!(has("error at open 22012") && has("error at") && has("4329 rows of long ranges"), "{through:#?}");
 }
+
+/// The procedures whose SELECT ... INTO folds set functions over a delta
+/// table: of the rows an UPDATE of a range wrote, of the one row an
+/// UPDATE by the whole key wrote, and of the rows a DELETE took.
+const FOLDED: [&str; 3] = [
+    "CREATE PROCEDURE DELIVER (IN PW INTEGER, IN PD INTEGER, IN HI INTEGER,
+       OUT TOTAL DECIMAL(12,2), OUT LINES INTEGER, OUT PART DECIMAL(14,4))
+       MODIFIES SQL DATA
+     BEGIN SELECT SUM(V), COUNT(*), SUM(V / N) INTO TOTAL, LINES, PART FROM FINAL TABLE
+       (UPDATE T SET N = N + 1, S = 'done' WHERE W = PW AND D = PD AND K < HI); END",
+    "CREATE PROCEDURE DELIVER_ONE (IN PW INTEGER, IN PD INTEGER, IN PK INTEGER, OUT MOST DECIMAL(8,2), OUT LINES INTEGER)
+       MODIFIES SQL DATA
+     BEGIN SELECT MAX(V) + 1, COUNT(N) INTO MOST, LINES FROM FINAL TABLE
+       (UPDATE T SET V = V + 1 WHERE W = PW AND D = PD AND K = PK); END",
+    "CREATE PROCEDURE TAKEN (IN PW INTEGER, IN PD INTEGER, IN LO INTEGER, OUT LEAST INTEGER, OUT KINDS INTEGER) MODIFIES SQL DATA
+     BEGIN SELECT MIN(K), COUNT(DISTINCT N) INTO LEAST, KINDS FROM OLD TABLE
+       (DELETE FROM T WHERE W = PW AND D = PD AND K > LO); END",
+];
+
+/// What the procedures of `FOLDED` gave, compiled or not, and the rows
+/// of T they left.
+fn folded(compiled: bool) -> Vec<String> {
+    let db = defined();
+    let a = db.session("A");
+    for p in FOLDED {
+        a.run(p).unwrap();
+    }
+    a.commit().unwrap();
+    a.run(&format!("SET EXECUTOR.COMPILED_PROCEDURES = '{}'", if compiled { "ON" } else { "OFF" })).unwrap();
+    let mut out = Vec::new();
+    for round in 0..9_i64 {
+        let (w, d) = (round % 2 + 1, round % 10 + 1);
+        // Past the fifth row N is 0 for one row, a division by zero.
+        out.push(called(&a, "CALL DELIVER(?,?,?,?,?,?)", &[int(w), int(d), int(round % 3 * 2 + 2)]));
+        out.push(called(&a, "CALL DELIVER_ONE(?,?,?,?,?)", &[int(w), int(d), int(round * 20)]));
+        out.push(called(&a, "CALL TAKEN(?,?,?,?,?)", &[int(w), int(d), int(116 + round)]));
+    }
+    let mut c = a.open_cursor("SELECT W, D, K, N, V, S FROM T WHERE K < 8 OR K > 110 ORDER BY W, D, K").unwrap();
+    while let Some(row) = c.fetch().unwrap() {
+        out.push(row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    }
+    out
+}
+
+/// Verifies: [DESIGN] RULES.md D933: a compiled SELECT ... INTO of set
+/// functions over the delta table of a change it runs straight gives the
+/// values, the errors and the rows written that the interpreter gives:
+/// over the rows of a range, over the one row of a whole key, over no
+/// row, DISTINCT among them, a select list computed of their values, and
+/// a division by zero in an argument (SQLSTATE 22012), which undoes the
+/// change.
+#[test]
+fn set_functions_over_a_delta_table_are_folded_as_the_general_path_makes_them() {
+    let (interpreted, compiled) = (folded(false), folded(true));
+    for (n, (c, i)) in compiled.iter().zip(&interpreted).enumerate() {
+        assert_eq!(c, i, "line {n}: compiled, then interpreted");
+    }
+    assert_eq!(compiled.len(), interpreted.len());
+    let has = |part: &str| compiled.iter().any(|line| line.contains(part));
+    assert!(has("error 22012") && has("CALL DELIVER(?,?,?,?,?,?)") && has("ok Success"), "{compiled:#?}");
+}

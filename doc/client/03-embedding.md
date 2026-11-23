@@ -257,7 +257,11 @@ to compare the two. Another query keeps its access paths once
 five executions in a row choose the same ones, as `WHERE K BETWEEN ? AND
 ?` does whose ranges are short, and is then planned no more, until a
 table it reads gains or loses a tenth of its rows and 50 more, or one
-that had no statistics as it chose gets them, when it looks again; one
+that had no statistics as it chose gets them, when it looks again. Once
+kept, a query that reads one range of an index, filtered, projected,
+sorted, counted or summed, or joined by a unique key to another table's
+rows, is read where its plan is kept too, with no operator made. Its
+rows and errors are the same with EXECUTOR.POINT_OPERATIONS OFF. A query
 whose values keep choosing other paths is planned at
 each execution after twenty. The plan is made again when the definitions change (a table
 altered, an index made or dropped, a local temporary table declared, a

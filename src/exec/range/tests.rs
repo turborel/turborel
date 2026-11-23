@@ -257,3 +257,31 @@ fn a_null_key_of_a_direct_join_reads_nothing() {
     let after = st.index_uses[&**index].totals();
     assert_eq!((after.0 - before.0, after.1 - before.1), (103, 103), "a search and an entry for each of the 103 rows not null");
 }
+
+/// Verifies: [DESIGN] RULES.md D930: a direct read that groups, or keeps
+/// the first rows of a sort, holds no more than its bound of rows. A
+/// range longer than that reads nothing direct and is the executor's, as
+/// are the plan's runs after it; a whole sort gives its rows to the
+/// executor's sorter as it reads them, however many.
+#[test]
+fn a_range_longer_than_a_direct_read_holds_is_left_to_the_executor() {
+    let (_db, a) = filled();
+    a.run("CREATE TABLE B (W INTEGER NOT NULL, K INTEGER NOT NULL, G INTEGER, PRIMARY KEY (W, K))").unwrap();
+    for thousand in 0..12_i64 {
+        let rows: Vec<String> =
+            (0..1000_i64).map(|k| format!("(1, {}, {})", thousand.saturating_mul(1000).saturating_add(k), k % 7)).collect();
+        a.run(&format!("INSERT INTO B VALUES {}", rows.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    let read = |sql: &str| {
+        let (st, plan) = planned(&a, sql);
+        let range = RangeRead::of(&plan, &st).unwrap_or_else(|| panic!("{sql} is read direct"));
+        let runner = Runner::new(&st, NO_TRANSACTION);
+        let at = At { st: &st, tx: NO_TRANSACTION, values: &[], subqueries: &runner };
+        let first = range.rows(&at, None).unwrap().map(|rows| rows.len());
+        (first, range.rows(&at, None).unwrap().map(|rows| rows.len()))
+    };
+    assert_eq!(read("SELECT G, COUNT(*) FROM B WHERE W = 1 AND K < 1100 GROUP BY G"), (None, None), "1100 rows grouped");
+    assert_eq!(read("SELECT G, COUNT(*) FROM B WHERE W = 1 AND K < 1000 GROUP BY G"), (Some(7), Some(7)), "1000 rows grouped");
+    assert_eq!(read("SELECT K, G FROM B WHERE W = 1 AND K < 1100 ORDER BY G DESC, K"), (Some(1100), Some(1100)), "a whole sort");
+}

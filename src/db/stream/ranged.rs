@@ -10,7 +10,7 @@
 //! other gives its rows as they are fetched, so a cursor closed early
 //! reads few: its range is read direct only while it is short, no more
 //! than `MOST_AHEAD` rows, and a longer one is left to the executor, which
-//! reads it as it is fetched. A plan that cannot raise fails only as its
+//! reads it as it is fetched, as are the plan's ranges after it. A plan that cannot raise fails only as its
 //! range is read, at the first fetch, so one whose direct read fails is
 //! left to the executor too, which fails there.
 //!
@@ -63,6 +63,8 @@ pub(super) fn read(
     // A plan that cannot raise fails as it is fetched from.
     let Ok(Some(rows)) = read else { return Ok(None) };
     if most.is_some_and(|most| rows.len() >= most) {
+        // A range this long once is the executor's from now on.
+        range.outgrown();
         return Ok(None);
     }
     let mut held = HeldRows::new(st.list_space());

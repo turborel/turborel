@@ -64,6 +64,20 @@ pub(super) struct Held {
     listed: Row,
     wide: Row,
     key: Vec<u8>,
+    /// Whether this run found the range longer than a direct read holds.
+    outgrown: bool,
+}
+
+impl Held {
+    /// Notes that this run found the range longer than a direct read holds.
+    pub(super) fn outgrown(&mut self) {
+        self.outgrown = true;
+    }
+
+    /// Whether a run noted so, the note taken.
+    pub(super) fn outgrew(&mut self) -> bool {
+        std::mem::take(&mut self.outgrown)
+    }
 }
 
 impl Scan {
@@ -187,7 +201,7 @@ impl Reading<'_> {
     fn row(&mut self, entry: &EncodedEntry<'_>) -> Result<bool> {
         let scan = self.scan;
         self.counts[0] = self.counts[0].saturating_add(1);
-        let Held { near, listed, wide, key } = &mut *self.held;
+        let Held { near, listed, wide, key, .. } = &mut *self.held;
         // A reader that took the row lent leaves none: another is made.
         if wide.len() != scan.width {
             wide.clear();
