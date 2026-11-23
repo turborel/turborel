@@ -32,6 +32,7 @@
 
 mod drawn;
 mod planned;
+mod pointed;
 mod probed;
 mod quantified;
 
@@ -67,26 +68,31 @@ pub const DEFAULT_DECORRELATE_AFTER: usize = 8;
 
 /// \[DESIGN\] The rows a subquery gave, read from the first each time: in
 /// memory, or, once they outgrew the work area, in a run of its spill area
-/// (RULES.md D38).
+/// (RULES.md D38). A copy shares them, held once.
 #[derive(Clone)]
 pub struct SubqueryRows {
-    rows: Arc<Mutex<Rescanned>>,
+    of: Arc<Gave>,
+}
+
+/// What a `SubqueryRows` and its copies share.
+struct Gave {
+    rows: Mutex<Rescanned>,
     /// The database, in whose work areas what is made of the rows is kept.
     db: Arc<State>,
     /// Whether the rows spilled.
     spilled: bool,
     /// What the comparisons of a value with every row ask of them, made the
     /// first time one does (`subquery/quantified.rs`).
-    summary: Arc<Mutex<Option<Arc<quantified::Summary>>>>,
-    agreeing: Arc<Mutex<quantified::Agreeing>>,
+    summary: Mutex<Option<Arc<quantified::Summary>>>,
+    agreeing: Mutex<quantified::Agreeing>,
 }
 
 impl SubqueryRows {
     /// The rows `rows`, of a spill area if `spilled`, of `db`.
     fn of(rows: Rescanned, db: &Arc<State>) -> SubqueryRows {
         let spilled = matches!(rows, Rescanned::Spilled(..));
-        let (summary, agreeing) = (Arc::new(Mutex::new(None)), Arc::new(Mutex::new(quantified::Agreeing::default())));
-        SubqueryRows { rows: Arc::new(Mutex::new(rows)), db: Arc::clone(db), spilled, summary, agreeing }
+        let (summary, agreeing) = (Mutex::new(None), Mutex::new(quantified::Agreeing::default()));
+        SubqueryRows { of: Arc::new(Gave { rows: Mutex::new(rows), db: Arc::clone(db), spilled, summary, agreeing }) }
     }
 
     /// The rows `rows`, held in memory, of `db`: a few, as one probe of a
@@ -101,7 +107,7 @@ impl SubqueryRows {
     ///
     /// The spill area's, reading them.
     pub fn rows(&self) -> Result<RowIter> {
-        lock_builtin(&self.rows).pass()
+        lock_builtin(&self.of.rows).pass()
     }
 
     /// Its first `n` rows, or as many as it has.
@@ -111,6 +117,24 @@ impl SubqueryRows {
     /// As `rows`.
     pub fn first(&self, n: usize) -> Result<Vec<Row>> {
         self.rows()?.take(n).collect()
+    }
+
+    /// What `read` makes of its first `n` rows, or as many as it has,
+    /// read where they are held, with no copy made of them (RULES.md
+    /// D900); of rows that spilled, of a copy.
+    ///
+    /// # Errors
+    ///
+    /// As `rows`, and `read`'s.
+    pub fn of_first<T>(&self, n: usize, read: impl FnOnce(&[Row]) -> Result<T>) -> Result<T> {
+        let held = match &*lock_builtin(&self.of.rows) {
+            Rescanned::Held(rows) => Some(Arc::clone(rows)),
+            Rescanned::Spilled(..) => None,
+        };
+        match held {
+            Some(rows) => read(rows.get(..n).unwrap_or(&rows)),
+            None => read(&self.first(n)?),
+        }
     }
 
     /// [ISO/IEC 9075-2:2023 §8.11 GR2] Whether no two of its rows are
@@ -123,8 +147,8 @@ impl SubqueryRows {
     /// As `rows`; the work area's.
     pub fn unique(&self, nulls_distinct: bool) -> Result<bool> {
         let rows = self.rows()?;
-        if self.spilled {
-            let mut seen = Bag::new(Work::new(&self.db));
+        if self.of.spilled {
+            let mut seen = Bag::new(Work::new(&self.of.db));
             return super::eval::unique(rows, nulls_distinct, &mut |key| seen.add_new(&key));
         }
         let mut seen = HashSet::new();
@@ -283,7 +307,7 @@ fn exact_norm(v: &Value) -> NormKey {
 /// table of the spill area (`exec/join.rs`); rows with a null key are
 /// none's.
 struct Keyed {
-    how: Decorrelated,
+    how: Arc<Decorrelated>,
     rows: Mutex<Built>,
 }
 
@@ -384,7 +408,7 @@ impl Runner {
         if runs <= self.db.settings.count(crate::settings::DECORRELATE_AFTER_RUNS) {
             return Ok(None);
         }
-        let how = subquery.decorrelated();
+        let how = self.decorrelation_of(subquery, at);
         if how.as_ref().is_some_and(|how| self.probes_pay(at, runs, how)) {
             return Ok(None);
         }
@@ -426,7 +450,7 @@ impl Runner {
     /// each of its operators has a work area of its own.
     fn keep(&self, key: Run, outer: &[Value], found: &SubqueryRows) {
         let limit = crate::settings::held_bytes(self.db.settings.get(crate::settings::MEMORY_WORK_BYTES));
-        let rows = if found.spilled { limit } else { lock_builtin(&found.rows).held_bytes().saturating_mul(2) };
+        let rows = if found.of.spilled { limit } else { lock_builtin(&found.of.rows).held_bytes().saturating_mul(2) };
         let held = outer.iter().fold(0usize, |sum, v| sum.saturating_add(heap_bytes(v)));
         let of_key = outer.len().saturating_mul(size_of::<NormKey>()).saturating_add(held).saturating_add(ENTRY_BYTES);
         let bytes = rows.saturating_add(of_key).saturating_add(size_of::<SubqueryRows>());
@@ -473,7 +497,11 @@ impl Subqueries for Runner {
         }
         let found = match self.keyed(subquery, at)? {
             Some(keyed) => SubqueryRows::of(rows_for(&keyed, outer, (limit, &mut Work::of(&self.db, self.tx)))?, &self.db),
-            None => self.gathered(self.per_run(subquery, outer), limit)?,
+            // By its plan kept as a point read, if it is one (RULES.md D900).
+            None => match self.pointed(subquery, outer, limit)? {
+                Some(read) => read,
+                None => self.gathered(self.per_run(subquery, outer), limit)?,
+            },
         };
         // Kept while what is kept fits the work area; past that, run again
         // for each set of outer values.

@@ -15,9 +15,11 @@
 //! not such a probe is decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS
 //! runs, as before.
 
+use std::sync::Arc;
+
 use super::Runner;
 use super::planned::Planned;
-use crate::logical::Decorrelated;
+use crate::logical::{Decorrelated, Subquery};
 use crate::physical::estimated_rows;
 
 /// \[DESIGN\] The rows built into a keyed table that cost as much as one
@@ -30,6 +32,22 @@ use crate::physical::estimated_rows;
 pub(super) const PROBE_ROWS: f64 = 15.0;
 
 impl Runner {
+    /// How `subquery`, at `at`, is decorrelated, if it can be. Of one
+    /// whose plan is kept that is found once and kept with the plan
+    /// (RULES.md D900), as it follows from the subquery alone, where each
+    /// run past EXECUTOR.DECORRELATE_AFTER_RUNS that stayed probed made
+    /// it again.
+    pub(super) fn decorrelation_of(&self, subquery: &Subquery, at: u64) -> Option<Arc<Decorrelated>> {
+        let kept = match self.seen.borrow().get(&at).map(|seen| &seen.planned) {
+            Some(Planned::Kept(kept)) => Some(Arc::clone(kept)),
+            Some(Planned::Untried | Planned::Learning(..) | Planned::Varies) | None => None,
+        };
+        match kept {
+            Some(kept) => kept.decorrelated(subquery),
+            None => subquery.decorrelated().map(Arc::new),
+        }
+    }
+
     /// Whether the subquery at `at`, run `runs` times so far, decorrelated
     /// as `how` says, is still cheaper probed: its run's plan is kept as a
     /// probe of a whole unique key, and its probes, weighed as `PROBE_ROWS`

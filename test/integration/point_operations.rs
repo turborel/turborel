@@ -1,7 +1,8 @@
 //! \[DESIGN\] Point operations (RULES.md D752). A kept query that probes a
 //! whole unique key, prepared or a kept body's, reads its row straight
 //! from the table, and gives the rows, errors and diagnostics it gives
-//! with EXECUTOR.POINT_OPERATIONS OFF, through the executor.
+//! with EXECUTOR.POINT_OPERATIONS OFF, through the executor. So does a
+//! correlated subquery that probes one (RULES.md D900).
 
 use turborel::db::{Database, Session};
 use turborel::value::{Decimal, Value};
@@ -222,4 +223,143 @@ fn a_point_read_is_recorded_where_reads_are_checked() {
     };
     assert_eq!(outcome("SERIALIZABLE", 5_000), Err("40001".to_owned()));
     assert_eq!(outcome("READ COMMITTED", 5_001), Ok(()));
+}
+
+/// The rows `query` gives `s`, each its values as text joined by commas;
+/// or its error.
+fn queried(s: &Session, query: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    match s.open_cursor(query) {
+        Ok(mut c) => loop {
+            match c.fetch() {
+                Ok(Some(row)) => out.push(row.iter().map(|v| v.to_string().trim_end().to_owned()).collect::<Vec<_>>().join(",")),
+                Ok(None) => break,
+                Err(e) => break out.push(format!("error at fetch {e}")),
+            }
+        },
+        Err(e) => out.push(format!("error {e}")),
+    }
+    out
+}
+
+/// S (K, V, D), the outer rows of the subquery cases: V names a row of T
+/// by its key, found, found twice, missing and null, and D names it as a
+/// decimal, whole or not. P2 has a key of two columns.
+const OUTER: [&str; 4] = [
+    "CREATE TABLE P2 (A INTEGER NOT NULL, B INTEGER NOT NULL, V INTEGER, PRIMARY KEY (A, B))",
+    "INSERT INTO P2 VALUES (1, 2, 12), (2, 1, 21), (1, 1, 11), (2, 2, 22), (3, 5, 35), (5, 3, 53)",
+    "CREATE TABLE S (K INTEGER NOT NULL PRIMARY KEY, V INTEGER, D DECIMAL(6, 1))",
+    "INSERT INTO S VALUES (1, 3, 3.0), (2, 5, 5.5), (3, 2000, 7.0), (4, NULL, NULL), (5, 3, 9.0), (6, 9, 2000.0), (7, 11, 11.0),
+       (8, 12, 12.0), (9, 13, 13.5), (10, 14, 14.0), (11, 15, 15.0), (12, 5, 5.0)",
+];
+
+/// What the statements with a scalar subquery that probes T's whole key
+/// give a session of `db` with EXECUTOR.POINT_OPERATIONS `how`: queries
+/// with the subquery in the select list and in the condition, by an
+/// integer and by a decimal, a prepared one run several times, an INSERT
+/// and an UPDATE of its rows, and what it reads of a row it changed and
+/// of one another session changed and did not commit.
+fn subqueried(db: &Database, how: &str) -> Vec<String> {
+    let a = db.session("A");
+    a.run(&format!("SET EXECUTOR.POINT_OPERATIONS = '{how}'")).unwrap();
+    let mut out = queried(&a, "SELECT K, (SELECT A FROM T WHERE T.K = S.V) FROM S ORDER BY K");
+    // The elements of an array, as an order's lines are read.
+    let lines = "UNNEST(ARRAY[3, 5, 2000, 3, 9, CAST(NULL AS INTEGER), 11, 12, 13, 14, 15, 5], ARRAY[1, 2, 2, 1, 5, 3, 3, 5, 1, 1, 2, 2])
+       WITH ORDINALITY AS X (I, J, N)";
+    out.extend(queried(
+        &a,
+        &format!("SELECT X.N, (SELECT A FROM T WHERE T.K = X.I), (SELECT C FROM T WHERE T.K = X.I + 0.5) FROM {lines}"),
+    ));
+    out.extend(queried(&a, &format!("SELECT X.N, (SELECT V FROM P2 WHERE P2.A = X.J AND P2.B = MOD(X.I, 6)) FROM {lines}")));
+    out.extend(queried(&a, &format!("SELECT X.N FROM {lines} WHERE EXISTS (SELECT * FROM T WHERE T.K = X.I)")));
+    out.push(format!("{:?}", a.run(&format!("INSERT INTO L SELECT X.N, (SELECT A FROM T WHERE T.K = X.I) FROM {lines}"))));
+    out.extend(queried(&a, "SELECT K, (SELECT C FROM T WHERE T.K = S.D), (SELECT B FROM T WHERE T.K = S.V) FROM S ORDER BY K"));
+    out.extend(queried(&a, "SELECT K FROM S WHERE (SELECT A FROM T WHERE T.K = S.V) > 40 ORDER BY K"));
+    out.extend(queried(&a, "SELECT K FROM S WHERE EXISTS (SELECT * FROM T WHERE T.K = S.V) ORDER BY K"));
+    out.extend(queried(&a, "SELECT K FROM S WHERE V IN (SELECT K FROM T WHERE T.K = S.V AND A > 40) ORDER BY K"));
+    for least in [0, 3, 6, 9, 0] {
+        out.extend(prepared(&a, "SELECT K, (SELECT A FROM T WHERE T.K = S.V) FROM S WHERE K > ? ORDER BY K", &[number(least)]));
+        let lines = "UNNEST(ARRAY[3, 5, 2000, 9, 11, 12, 13, 14, 15]) AS X (I)";
+        out.extend(prepared(&a, &format!("SELECT X.I, (SELECT A + ? FROM T WHERE T.K = X.I) FROM {lines}"), &[number(least)]));
+    }
+    let other = db.session("A");
+    other.run("UPDATE T SET A = -1 WHERE K = 5").unwrap();
+    a.run("UPDATE T SET A = -2 WHERE K = 3").unwrap();
+    a.run("DELETE FROM T WHERE K = 9").unwrap();
+    out.extend(queried(&a, "SELECT K, (SELECT A FROM T WHERE T.K = S.V) FROM S ORDER BY K"));
+    for _ in 0..3 {
+        out.push(format!("{:?}", a.run("INSERT INTO L SELECT K, (SELECT A FROM T WHERE T.K = S.V) FROM S")));
+        out.push(format!("{:?}", a.run("UPDATE S SET V = (SELECT A FROM T WHERE T.K = S.V) / 10 WHERE K < 12")));
+    }
+    out.extend(queried(&a, "SELECT K, GOT FROM L ORDER BY K, GOT"));
+    out.extend(queried(&a, "SELECT K, V FROM S ORDER BY K"));
+    other.rollback().unwrap();
+    a.rollback().unwrap();
+    out
+}
+
+/// Verifies: [DESIGN] RULES.md D900: a correlated scalar subquery that
+/// probes a whole unique key, run as a point read from its second run,
+/// gives the rows and errors it gives through the executor, with
+/// EXECUTOR.POINT_OPERATIONS OFF: in a select list, a condition, an
+/// EXISTS, an INSERT and an UPDATE, of a prepared query's later
+/// executions, by a key found, found twice, missing and null, and by a
+/// decimal of the key or between two; a row its transaction changed or
+/// deleted seen so, and one another changed seen as committed.
+#[test]
+fn a_subquery_of_a_whole_key_reads_as_the_executor_does() {
+    let (db, a) = defined();
+    for sql in OUTER {
+        a.run(sql).unwrap();
+    }
+    a.commit().unwrap();
+    let on = subqueried(&db, "ON");
+    let off = subqueried(&db, "OFF");
+    assert_eq!(on, off);
+    assert!(on.starts_with(&["1,30", "2,50", "3,NULL", "4,NULL", "5,30", "6,90"].map(str::to_owned)), "{on:?}");
+    assert!(on.contains(&"1,c3,b3".to_owned()) && on.contains(&"2,NULL,b5".to_owned()), "by a decimal: {on:?}");
+    assert!(on.contains(&"1,-2".to_owned()) && on.contains(&"6,NULL".to_owned()), "its own changes: {on:?}");
+    assert!(on.contains(&"2,50,NULL".to_owned()) && on.contains(&"7,110,NULL".to_owned()), "an array's elements: {on:?}");
+    assert!(
+        on.contains(&"1,NULL".to_owned()) && on.contains(&"2,NULL".to_owned()) && on.contains(&"4,NULL".to_owned()),
+        "two columns: {on:?}"
+    );
+    assert!(!on.iter().any(|r| r.starts_with("error")), "{on:?}");
+}
+
+/// Verifies: [DESIGN] RULES.md D900, D29: a subquery's row read by its
+/// point read is recorded as read where reads are checked, as its plan's
+/// read is. A SERIALIZABLE transaction that inserted the rows of a query
+/// whose subquery read a row of T by its key, or found none of a key, is
+/// refused at its commit (SQLSTATE 40001) once another committed a change
+/// of that row, or a row of that key; at READ COMMITTED it commits. So
+/// with EXECUTOR.POINT_OPERATIONS OFF, through the executor.
+#[test]
+fn a_subquerys_point_read_is_recorded_where_reads_are_checked() {
+    let outcome = |how: &str, level: &str, change: &str| {
+        let (db, a) = defined();
+        for sql in OUTER {
+            a.run(sql).unwrap();
+        }
+        a.commit().unwrap();
+        a.run(&format!("SET EXECUTOR.POINT_OPERATIONS = '{how}'")).unwrap();
+        a.run(&format!("SET TRANSACTION ISOLATION LEVEL {level}")).unwrap();
+        a.run(
+            "INSERT INTO L SELECT X.I, (SELECT A FROM T WHERE T.K = X.I)
+               FROM UNNEST(ARRAY[3, 5, 2000, 3, 9, 11, 12, 13, 14, 15]) AS X (I)",
+        )
+        .unwrap();
+        let other = db.session("A");
+        other.run(change).unwrap();
+        other.commit().unwrap();
+        a.commit().map_err(|e| e.sqlstate().as_str().to_owned())
+    };
+    for how in ["ON", "OFF"] {
+        // Row 15 and key 2000 are read by runs after the subquery's first.
+        for change in ["UPDATE T SET A = 0 WHERE K = 15", "INSERT INTO T VALUES (2000, 1, 'b', 'c')"] {
+            assert_eq!(outcome(how, "SERIALIZABLE", change), Err("40001".to_owned()), "{how}: {change}");
+            assert_eq!(outcome(how, "READ COMMITTED", change), Ok(()), "{how}: {change}");
+        }
+        assert_eq!(outcome(how, "SERIALIZABLE", "UPDATE T SET A = 0 WHERE K = 700"), Ok(()), "{how}: a row it did not read");
+    }
 }

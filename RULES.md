@@ -585,6 +585,7 @@ verification approach DO-178C expects (§8).
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
+| D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
 
 ### The project
 
@@ -16215,6 +16216,49 @@ versions are in the undo store, a record its encodings open, and a
 value on a page of its own. Nothing is decided differently, only where
 the bytes are read. A row whose newest version is a deletion takes the
 copy too, so the commit of the deletion is told as before (D837).
+
+#### D900. A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent
+
+A correlated subquery keeps its plan with its outer references as slots
+(D675), and a kept statement's subqueries keep theirs across its
+executions (D793). Each run of a plan kept still copied the plan, filled
+the copy with the run's outer values, opened the executor's operators
+over it and gathered the row they gave into rows that may be read again.
+Each execution's runner copied the plan once more as it found it kept.
+A scalar subquery reading a price by an item's key did all of that for
+every row of its statement, where a kept query of the same shape reads
+its row as a point read (D752, D881).
+
+Now a subquery's plan kept is held once and shared
+(`exec/subquery/planned.rs`, `KeptRun`). The runner that settles it, the
+kept statement's plan and every later execution's runner hold the same
+one. A run that is planned alone, as of a null or of a value of another
+kind, leaves it as it is.
+
+A plan kept that is a point read is run as one
+(`exec/subquery/pointed.rs`). That is a probe of a whole unique key
+alone or under a projection of its columns, as `PointRead::of` finds
+it. The run's outer values are placed in the probe as they are, not cast
+(`PointRead::read_as_is`), as filling the plan would place them, and
+the row is read by the index's probe of the whole key. The read is
+recorded, its entries are counted and a cancel is looked for as the
+plan's scan does, so the rows, the errors and the conflicts are the
+plan's. Its rows are kept for its outer values as any run's are, and
+its runs count toward decorrelation as before (D790).
+
+A subquery still learning its plan, one planned at each run, a plan
+with a filter or a limit above its scan, a slot placed by an expression
+and a run whose values its slots do not take are run through the
+executor as before. So is every subquery with EXECUTOR.POINT_OPERATIONS
+OFF or EXECUTOR.KEEP_SUBQUERY_PLANS OFF.
+
+A scalar subquery's value is read from its rows where they are held
+(`SubqueryRows::of_first`), where it was read from a copy of them, and
+the rows a run gave are held once, shared by their copies. How a
+subquery is decorrelated follows from the subquery alone, so it is found
+once and kept with its plan kept (`KeptRun::decorrelated`), where each
+run past EXECUTOR.DECORRELATE_AFTER_RUNS that stayed probed made it
+again.
 
 ## 2. Project layout
 
