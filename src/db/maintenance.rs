@@ -74,7 +74,9 @@ impl Database {
         if st.tx.ask_pass() {
             self.request_maintenance_after(AGAIN);
         }
-        if st.tx.maintenance_due() {
+        // [DESIGN] RULES.md D925: at once for a batch due.
+        let soon = st.tx.take_pass_soon();
+        if soon || st.tx.maintenance_due() {
             self.request_maintenance();
         }
     }

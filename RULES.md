@@ -593,6 +593,7 @@ verification approach DO-178C expects (§8).
 | D922 | A commit takes its participants without copying them, and names the tables it wrote only for the embedders |
 | D923 | Increments reserved are applied by a write told the columns they add to |
 | D924 | A commit's rows that one leaf holds are stamped with the leaf latched once |
+| D925 | A batch due is collected by the maintenance job's pass, and by a commit only once it is long due |
 
 ### The project
 
@@ -16578,6 +16579,36 @@ replaces first is saved either way, as that writer appends it stamped.
 The semantics are unchanged. Each row is stamped as it was, a version
 another writer replaced meanwhile left alone, a deletion filed as
 garbage, and a row that cannot be stamped queued for collection.
+
+#### D925. A batch due is collected by the maintenance job's pass, and by a commit only once it is long due
+
+A commit that found a table's batch due collected it (D451, D920). The
+fixed costs of a collection were then paid once a batch, but the work a
+version takes, its undo slot released, its values freed, its index
+entries and its deleted row taken out of their trees, was still the
+committer's, before its reply: on the order entry bench at one session a
+quarter of a new order's commit.
+
+The end of a transaction that finds a batch due now leaves the table
+noted and asks for the maintenance job at once, whose pass collects
+every table awaiting (`txn/collect.rs`, `db/maintenance.rs`). The end
+collects a table itself only once its batch has been due for 256 commits
+of the horizon, four batches, or 4096 versions wait, or a rollback's
+versions do. So the versions a table holds are bounded as before when
+the job does not run, as under JOBS.POLICY PAUSED, or falls behind many
+sessions' commits, and the committers then take the work back. A
+session that collects once its reply is sent collects its tables' batches
+itself, after the reply, as before (D450, D453).
+
+Four batches is a derivation, not a sweep. A pass that keeps up takes a
+batch within the one after it, so the bound is not met while it does,
+and four leaves the job's thread time to be woken and to run while
+bounding the versions held to five batches.
+
+The work is not less. It is the job's thread's, not the committer's, so
+a commit is shorter and the database uses more of a second processor
+while commits come. The semantics hold as D920's do: the horizon rule
+is unchanged, and a collection only comes at another moment.
 
 ## 2. Project layout
 

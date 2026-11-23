@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 18] = [
+pub const READERS: [Mutation; 19] = [
     Mutation {
         name: "pass-collects-nothing",
         package: Package::Core,
@@ -46,7 +46,7 @@ pub const READERS: [Mutation; 18] = [
         file: "src/engine/rows/mvcc/gc.rs",
         original: "is_some_and(|past| past >= COLLECT_AFTER)",
         replacement: "is_some()",
-        integration: &["collection::a_quiet_table_is_collected_a_batch_of_commits_at_a_time"],
+        integration: &["collection::a_batch_long_due_is_collected_by_the_commit"],
         unit: &[],
     },
     Mutation {
@@ -118,6 +118,16 @@ pub const READERS: [Mutation; 18] = [
         replacement: "            let Some(at) = found else { return Ok(keys.len()) };",
         integration: &[],
         unit: &["engine::tree::tests::placed::a_run_of_keys_is_changed_from_the_leaf_that_holds_them"],
+    },
+    Mutation {
+        name: "batch-due-collected-by-the-commit",
+        package: Package::Core,
+        breaks: "a commit collects a table as soon as its batch is due, not leaving it to the maintenance pass (RULES.md D925)",
+        file: "src/txn/collect.rs",
+        original: "            if storage.collection_due(horizon.saturating_sub(COLLECT_BEHIND)) {",
+        replacement: "            if storage.collection_due(horizon) {",
+        integration: &["collection::a_batch_due_is_left_to_the_maintenance_pass"],
+        unit: &[],
     },
     Mutation {
         name: "first-kept-by-writer",

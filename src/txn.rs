@@ -306,8 +306,13 @@ pub(crate) struct Transactions {
     /// has not begun: an end that leaves a table awaiting asks once
     /// (RULES.md D920).
     pass_asked: AtomicBool,
-    /// When it was asked for, while it is.
+    /// When it was asked for, while it is: none if it is to be made at
+    /// once (RULES.md D925).
     pass_since: Mutex<Option<std::time::Instant>>,
+    /// Whether it was asked for at once and has not begun, and whether
+    /// its job was asked for since.
+    pass_now: AtomicBool,
+    pass_told: AtomicBool,
     /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
     maintenance: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `maintenance` names any table.
@@ -372,6 +377,8 @@ impl Default for Transactions {
             awaiting: Alone(AtomicBool::new(false)),
             pass_asked: AtomicBool::new(false),
             pass_since: Mutex::new(None),
+            pass_now: AtomicBool::new(false),
+            pass_told: AtomicBool::new(false),
             maintenance: Mutex::new(BTreeSet::new()),
             noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),

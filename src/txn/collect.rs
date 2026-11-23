@@ -20,16 +20,25 @@ use crate::index::{Index, Key};
 use crate::storage::{Kept, Needed, Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 
+/// \[DESIGN\] The commits a table's batch may be due before the end of a
+/// transaction that wrote it collects it itself (RULES.md D925): four
+/// batches (D451). A pass that keeps up takes a batch within the one
+/// after it, so the bound is met only when the pass does not run, or
+/// runs behind the commits, and the versions held stay bounded by it.
+const COLLECT_BEHIND: Timestamp = 256;
+
 impl State {
     /// \[DESIGN\] After `tx` ended, the garbage collection of the tables of
-    /// `joined` (RULES.md D29, D451, D920): each whose collection is due
-    /// removes the versions no open transaction can read, their index
-    /// entries with them; one not due is left noted as awaiting collection,
-    /// for a later end of a transaction that wrote it, or the maintenance
-    /// job's pass. A failure leaves the garbage for a later collection:
-    /// the transaction has already committed or rolled back. A temporary
-    /// table's instances are each collected by their session instead
-    /// (`db/temporary.rs`).
+    /// `joined` (RULES.md D29, D451, D920, D925). A table is left noted as
+    /// awaiting collection, for the maintenance job's pass. One with a
+    /// batch due has the pass asked for at once, so the pass, not the
+    /// end, removes the versions no open transaction can read, their
+    /// index entries with them. Only a table whose batch has been due for
+    /// `COLLECT_BEHIND` commits, the pass not keeping up or not running,
+    /// is collected here. A failure leaves the garbage for a later
+    /// collection: the transaction has already committed or rolled back.
+    /// A temporary table's instances are each collected by their session
+    /// instead (`db/temporary.rs`).
     ///
     /// A session that collects once its reply is sent (RULES.md D450) only
     /// notes them, for that collection, which collects them itself (D453).
@@ -38,15 +47,20 @@ impl State {
             return self.collect_later(tx, joined);
         }
         let horizon = self.tx.horizon();
-        // The gate is entered for the first table due: most ends find none.
-        let mut gate = None;
+        // The gate is entered for the first table collected: most ends
+        // find none.
+        let (mut gate, mut due) = (None, false);
         for Joined { table, storage } in joined {
-            if storage.collection_due(horizon) {
+            if storage.collection_due(horizon.saturating_sub(COLLECT_BEHIND)) {
                 gate.get_or_insert_with(|| self.tx.gate.enter());
                 self.collect_noting(table, horizon, false);
             } else {
+                due |= storage.collection_due(horizon);
                 self.leave_awaiting(table, storage);
             }
+        }
+        if due {
+            self.tx.pass_soon();
         }
     }
 
@@ -342,8 +356,26 @@ impl Transactions {
         if !self.pass_asked.load(Ordering::Acquire) {
             return None;
         }
+        // With no time noted it was asked for at once (`pass_soon`).
         let waited = lock_builtin(&self.pass_since).map_or(after, |since| since.elapsed());
         Some(after.saturating_sub(waited))
+    }
+
+    /// \[DESIGN\] A table has a batch due (RULES.md D925): the pass is
+    /// asked for, to be made at once.
+    fn pass_soon(&self) {
+        if self.pass_now.load(Ordering::Acquire) {
+            return;
+        }
+        *lock_builtin(&self.pass_since) = None;
+        self.pass_asked.store(true, Ordering::Release);
+        self.pass_now.store(true, Ordering::Release);
+    }
+
+    /// Whether the pass's job is to be asked for at once: a pass was, and
+    /// its job has not been since. It counts as asked from now.
+    pub(crate) fn take_pass_soon(&self) -> bool {
+        self.pass_now.load(Ordering::Acquire) && !self.pass_told.swap(true, Ordering::AcqRel)
     }
 
     /// The pass begins: an end that leaves a table awaiting from now asks
@@ -351,6 +383,8 @@ impl Transactions {
     fn pass_begun(&self) {
         *lock_builtin(&self.pass_since) = None;
         self.pass_asked.store(false, Ordering::Release);
+        self.pass_now.store(false, Ordering::Release);
+        self.pass_told.store(false, Ordering::Release);
     }
 }
 

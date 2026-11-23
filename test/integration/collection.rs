@@ -17,6 +17,9 @@ const ROWS: usize = 64;
 /// The commits a table's earliest garbage waits past the horizon for
 /// before an end collects it (RULES.md D451).
 const BATCH: usize = 64;
+/// The commits a batch may be due before a commit collects it itself
+/// (RULES.md D925).
+const BEHIND: usize = 256;
 
 /// Verifies: [DESIGN] RULES.md D29, D445: sixteen sessions changing the
 /// key of an index's rows at once, each end passing over a collection
@@ -161,25 +164,46 @@ fn the_maintenance_thread_collects_a_quiet_table_after_its_time() {
     assert_eq!(db.index_entries("T_X").unwrap(), 1, "collected by the job's thread");
 }
 
-/// Verifies: [DESIGN] RULES.md D451, D920: a quiet table, no transaction
-/// open in it, is collected a batch of commits at a time too: each commit
-/// leaves its garbage until the horizon is `BATCH` commits past the
-/// earliest, and the commit that takes it there collects all of it, its
-/// own with it.
+/// Verifies: [DESIGN] RULES.md D451, D920, D925: a quiet table, no
+/// transaction open in it, is collected a batch of commits at a time too,
+/// and by the maintenance job, not by the commits: each commit leaves its
+/// garbage, the one that takes the horizon `BATCH` commits past the
+/// earliest too, and that one asks for the job, which the program runs
+/// and which collects all of it.
 #[test]
-fn a_quiet_table_is_collected_a_batch_of_commits_at_a_time() {
+fn a_batch_due_is_left_to_the_maintenance_pass() {
+    let db = busy(1);
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.maintain().unwrap();
+    let w = db.session("APP");
+    for n in 1..=BATCH + 1 {
+        w.run(&format!("UPDATE T SET X = {n} WHERE ID = 0")).unwrap();
+        w.commit().unwrap();
+        assert_eq!(db.index_entries("T_X").unwrap(), n + 1, "commit {n}: every old version's entry kept");
+    }
+    db.run_due().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 1, "the batch collected by the pass");
+    assert_eq!(rows(&w, "SELECT X FROM T"), Ok(vec![(BATCH + 1).to_string()]));
+}
+
+/// Verifies: [DESIGN] RULES.md D925: with the maintenance job not running
+/// (JOBS.POLICY PAUSED), a table's garbage is bounded all the same: the
+/// commit that finds its batch due for `BEHIND` commits collects it
+/// itself, its own garbage with it, and no commit before that does.
+#[test]
+fn a_batch_long_due_is_collected_by_the_commit() {
     let db = busy(1);
     db.set_job_policy(JobPolicy::Paused).unwrap();
     db.maintain().unwrap();
     let w = db.session("APP");
-    for n in 1..=BATCH {
+    for n in 1..=BATCH + BEHIND {
         w.run(&format!("UPDATE T SET X = {n} WHERE ID = 0")).unwrap();
         w.commit().unwrap();
         assert_eq!(db.index_entries("T_X").unwrap(), n + 1, "commit {n}: every old version's entry kept");
     }
     w.run("UPDATE T SET X = 0 WHERE ID = 0").unwrap();
     w.commit().unwrap();
-    assert_eq!(db.index_entries("T_X").unwrap(), 1, "the batch collected by the commit that made it due");
+    assert_eq!(db.index_entries("T_X").unwrap(), 1, "collected by the commit that found it long due");
     assert_eq!(rows(&w, "SELECT X FROM T"), Ok(vec!["0".to_owned()]));
 }
 
@@ -225,9 +249,10 @@ fn busy(rows: usize) -> Database {
     db
 }
 
-/// Verifies: [DESIGN] RULES.md D451: while a transaction is open in a
-/// table, the ends of those that write it pass its garbage over until the
-/// horizon is a batch of commits past it, then one collects it.
+/// Verifies: [DESIGN] RULES.md D451, D925: while a transaction is open in
+/// a table and the maintenance job does not run, the ends of those that
+/// write it pass its garbage over until its batch has been due for
+/// `BEHIND` commits of the horizon, then one collects it.
 #[test]
 fn a_busy_table_is_collected_a_batch_of_commits_at_a_time() {
     let db = busy(2);
@@ -241,7 +266,7 @@ fn a_busy_table_is_collected_a_batch_of_commits_at_a_time() {
     // Each round a reader begins in T, the other ends, and a commit that
     // changes no key of T moves the clock: T is never without a
     // transaction open.
-    for n in 1..=BATCH + 4 {
+    for n in 1..=BATCH + BEHIND + 4 {
         rows(&readers[n % 2], "SELECT X FROM T").unwrap();
         readers[(n + 1) % 2].commit().unwrap();
         w.run("UPDATE T SET ID = 1 WHERE ID = 1").unwrap();
@@ -250,7 +275,7 @@ fn a_busy_table_is_collected_a_batch_of_commits_at_a_time() {
             assert_eq!(db.index_entries("T_X").unwrap(), 3, "the old version's entry kept while T is busy");
         }
     }
-    assert_eq!(db.index_entries("T_X").unwrap(), 2, "collected once the horizon passed the batch");
+    assert_eq!(db.index_entries("T_X").unwrap(), 2, "collected once the batch was long due");
 }
 
 /// Verifies: [DESIGN] RULES.md D451: a table whose garbage passes the
