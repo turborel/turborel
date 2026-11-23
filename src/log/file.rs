@@ -190,6 +190,9 @@ pub struct FileLog {
     /// Whether a segment's entry in its directory may not be durable: one
     /// made, or found as it was opened, while its durability was `None`.
     entries_unsynced: AtomicBool,
+    /// Whether a segment's file was removed since its directory was last
+    /// synced (`truncate_before`, RULES.md D848).
+    removals_unsynced: AtomicBool,
     /// The segment appends go to.
     active: RwLock<Arc<Segment>>,
     /// Every segment not truncated, by number.
@@ -366,6 +369,7 @@ impl FileLog {
             rotate_asked: AtomicBool::new(false),
             durability: AtomicU8::new(durability_code(options.durability)),
             entries_unsynced: AtomicBool::new(unsynced),
+            removals_unsynced: AtomicBool::new(false),
             options,
             active: RwLock::new(active),
             segments: Mutex::new(segments.into_iter().map(|s| (s.number, s)).collect()),
@@ -487,15 +491,21 @@ impl Log for FileLog {
 
     /// As many as the active segment has room for go in one write
     /// (`BlockFile::append_all`), at least one, then the rest, so a run
-    /// grows a segment past its size no more than one record does.
+    /// grows a segment past its size no more than one record does. A run
+    /// written whole, as a transaction's at its commit nearly always is,
+    /// gives back the vector of its blocks' ids made positions in place.
     fn append_all(&self, records: &[Vec<u8>]) -> Result<Vec<Lsn>> {
-        let mut lsns = Vec::with_capacity(records.len());
+        let mut lsns = Vec::new();
         let mut rest = records;
         while !rest.is_empty() {
             let (now, later) = rest.split_at_checked(self.fitting(rest)).unwrap_or((rest, &[]));
             let bytes = now.iter().map(Vec::len).sum();
             let (number, ids) = self.on_active(|blocks| blocks.append_all(now), now.len(), bytes)?;
-            lsns.extend(ids.into_iter().map(|id| lsn(number, id)));
+            let positions = ids.into_iter().map(|id| lsn(number, id));
+            if lsns.is_empty() && later.is_empty() {
+                return Ok(positions.collect());
+            }
+            lsns.extend(positions);
             rest = later;
         }
         Ok(lsns)
@@ -548,12 +558,25 @@ impl Log for FileLog {
             // readable, rather than its records being lost to readers.
             self.fs.remove(&self.dir.join(segment_name(n)))?;
             lock_builtin(&self.segments).remove(&n);
+            self.removals_unsynced.store(true, Ordering::Release);
+        }
+        // [DESIGN] RULES.md D848: the directory is synced only for a
+        // removal not yet synced, so a truncation that removes nothing, as
+        // most of a row store's collections do, costs no sync. Taken
+        // before the sync, so a removal made meanwhile is synced by it or
+        // by the next; a failed sync leaves its removals to the next.
+        if !self.removals_unsynced.swap(false, Ordering::AcqRel) {
+            return Ok(());
         }
         // A log syncing nothing does not sync its removals either.
-        match self.durability() {
-            Durability::None => Ok(()),
-            Durability::Data | Durability::Full => self.fs.sync_dir(&self.dir),
-        }
+        let synced = match self.durability() {
+            Durability::None => Err(None),
+            Durability::Data | Durability::Full => self.fs.sync_dir(&self.dir).map_err(Some),
+        };
+        synced.or_else(|failed| {
+            self.removals_unsynced.store(true, Ordering::Release);
+            failed.map_or(Ok(()), Err)
+        })
     }
 
     fn end(&self) -> Lsn {

@@ -1,6 +1,8 @@
 //! The mutations of the fixed costs cut from a write and its commit
 //! (RULES.md R-TEST-9): an entry inserted into the room made for it in a
-//! node, and the hints bounding a search found by binary search (D847).
+//! node, and the hints bounding a search found by binary search (D847);
+//! a log's truncation syncing its directory only for removals not yet
+//! synced (D848).
 
 use super::super::{Mutation, Package};
 
@@ -10,7 +12,7 @@ const SEARCHED: &str = "engine::tree::node::tests::search::a_search_over_the_slo
 const INSERTED: &str = "engine::tree::node::tests::search::entries_inserted_in_place_read_back_in_key_order";
 
 /// Mechanisms of the cuts whose removal must fail their tests.
-pub const WRITE_COSTS: [Mutation; 2] = [
+pub const WRITE_COSTS: [Mutation; 3] = [
     Mutation {
         name: "write-costs-hints-through",
         package: Package::Core,
@@ -30,5 +32,15 @@ pub const WRITE_COSTS: [Mutation; 2] = [
         replacement: "content.copy_within(slot_from..end, slot_from.saturating_add(entry));",
         integration: &[],
         unit: &[INSERTED],
+    },
+    Mutation {
+        name: "write-costs-truncation-sync",
+        package: Package::Core,
+        breaks: "a truncation syncs the log's directory though it removed nothing and no removal awaits a sync",
+        file: "src/log/file.rs",
+        original: "if !self.removals_unsynced.swap(false, Ordering::AcqRel) {\n            return Ok(());\n        }",
+        replacement: "self.removals_unsynced.store(false, Ordering::Release);",
+        integration: &["log_durability::a_truncation_syncs_the_directory_only_for_removals_not_yet_synced"],
+        unit: &[],
     },
 ];

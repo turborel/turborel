@@ -554,6 +554,7 @@ verification approach DO-178C expects (§8).
 | D844 | A transaction begins from its session's kept origin, its id on its thread's stripe |
 | D846 | A row's version is framed in the buffer its record is encoded in |
 | D847 | A node takes an entry in place in one move of its slots, and a search finds its hints' bounds by binary search |
+| D848 | A log's truncation syncs its directory only for a removal not yet synced |
 
 ### The project
 
@@ -15345,6 +15346,22 @@ first hint above the key's head. A key past the last hint, as a table's
 newest rows are, read all sixteen. The hints are in key order, so the
 two bounds are now found by binary search over them, four steps each.
 The bounds are the same.
+
+#### D848. A log's truncation syncs its directory only for a removal not yet synced
+
+A file log's truncation removed the sealed segments before the position
+given, then synced the log's directory, whether it had removed any or
+not (D25). A row store's undo store truncates its log after each
+collection that released a version (D29), and most remove no segment.
+At LOG.DURABILITY DATA or FULL, each such collection on the commit path
+synced a directory that had not changed.
+
+The log now notes a removal until its directory is synced. A truncation
+syncs only while one is noted. The note is taken before the sync, so a
+removal made meanwhile is synced by this sync or by the next. A sync
+that fails puts the note back, and the next truncation syncs again,
+though it removes nothing. Under NONE nothing is synced, and the note
+stays for the first truncation after the durability is raised.
 
 ## 2. Project layout
 
