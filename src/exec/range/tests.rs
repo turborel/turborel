@@ -86,7 +86,8 @@ fn both(s: &Session, sql: &str, limit: Option<usize>) -> (Vec<String>, Option<Ve
 /// column, filtered beside it, projected to columns, to one twice and to
 /// values computed, its first rows after an offset, sorted by a column
 /// the index does not order, and its set functions, DISTINCT and
-/// filtered ones among them, of many rows, of one and of none.
+/// filtered ones among them, of many rows, of one and of none; and its
+/// first rows of values that could raise, read on to the range's end.
 #[test]
 fn a_range_of_an_index_is_read_as_its_plan_reads() {
     let (_db, a) = filled();
@@ -111,6 +112,7 @@ fn a_range_of_an_index_is_read_as_its_plan_reads() {
         "SELECT K FROM T WHERE W = 3 AND D = 1",
         "SELECT N, COUNT(*), MAX(K) FROM T WHERE W = 1 AND D = 3 GROUP BY N",
         "SELECT S, SUM(V) FROM T WHERE W = 1 AND D = 3 AND S < 'S3' GROUP BY S",
+        "SELECT 600 / K FROM T WHERE W = 1 AND D = 5 FETCH FIRST 3 ROWS ONLY",
     ];
     for sql in queries {
         let (through, direct) = both(&a, sql, None);

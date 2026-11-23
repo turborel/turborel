@@ -45,10 +45,10 @@ pub const RANGE_READS: [Mutation; 10] = [
     Mutation {
         name: "range-read-limit-reads-on",
         package: Package::Core,
-        breaks: "FETCH FIRST read direct gives rows past its count",
+        breaks: "FETCH FIRST read direct over an input that can raise, read to its end, gives the rows past its count too",
         file: "src/exec/range.rs",
-        original: "        Ok(each(row)? && (left != Some(0) || drain))",
-        replacement: "        each(row)",
+        original: "        if left == Some(0) {\n            return Ok(drain);\n        }\n",
+        replacement: "",
         integration: &[],
         unit: &["exec::range::tests::a_range_of_an_index_is_read_as_its_plan_reads"],
     },

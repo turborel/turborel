@@ -164,8 +164,9 @@ fn ranges_are_read_direct_as_the_executor_reads_them() {
 /// Verifies: [DESIGN] RULES.md D930, D29: a range read direct is recorded
 /// as read where reads are checked. A SERIALIZABLE transaction that read
 /// a range by a kept body, and wrote, is refused at its commit (SQLSTATE
-/// 40001) once another committed a row in the range; at READ COMMITTED it
-/// commits, and its next read sees the row.
+/// 40001) once another committed a row in the range, by the range's
+/// condition it recorded; at READ COMMITTED it commits, and its next read
+/// sees the row.
 #[test]
 fn a_range_read_direct_is_recorded_where_reads_are_checked() {
     let outcome = |level: &str, how: &str| {
@@ -173,18 +174,22 @@ fn a_range_read_direct_is_recorded_where_reads_are_checked() {
         let a = db.session("A");
         a.run(&format!("SET EXECUTOR.POINT_OPERATIONS = '{how}'")).unwrap();
         let counted = |s: &Session| called(s, "CALL CNT(?,?,?)", &[int(1), int(3)]);
-        for _ in 0..8 {
-            assert!(counted(&a).ends_with("[\"103\"]"));
-        }
-        a.commit().unwrap();
         a.run(&format!("SET TRANSACTION ISOLATION LEVEL {level}")).unwrap();
+        // Its plan learned and kept by reads of another range, in this
+        // transaction, so the one read of this range is the direct one.
+        for _ in 0..8 {
+            assert!(called(&a, "CALL CNT(?,?,?)", &[int(2), int(5)]).ends_with("[\"103\"]"));
+        }
         assert!(counted(&a).ends_with("[\"103\"]"));
         a.run("INSERT INTO L VALUES (1, 0)").unwrap();
         let other = db.session("A");
         other.run("INSERT INTO T VALUES (1, 3, 500, 1, 1.00, 'S1')").unwrap();
         other.commit().unwrap();
-        let seen = counted(&a);
-        (a.commit().map_err(|e| e.sqlstate().as_str().to_owned()), seen.ends_with("[\"104\"]"))
+        // Read again, a serializable transaction would come on the row's
+        // entry and refuse for that, so it is not, and its first read's
+        // condition alone refuses it.
+        let seen = level != "SERIALIZABLE" && counted(&a).ends_with("[\"104\"]");
+        (a.commit().map_err(|e| e.sqlstate().as_str().to_owned()), seen)
     };
     for how in ["ON", "OFF"] {
         assert_eq!(outcome("SERIALIZABLE", how), (Err("40001".to_owned()), false), "{how}");
@@ -215,6 +220,11 @@ fn a_range_read_direct_passes_over_an_entry_of_a_key_its_row_left() {
     a.commit().unwrap();
     for how in ["ON", "OFF"] {
         a.run(&format!("SET EXECUTOR.POINT_OPERATIONS = '{how}'")).unwrap();
+        // A setting changed has the body bound again: its plan learned
+        // and kept again by reads of another range.
+        for _ in 0..8 {
+            assert!(called(&a, "CALL CNT(?,?,?)", &[int(2), int(5)]).ends_with("[\"103\"]"), "{how}");
+        }
         assert!(counted(&a, 3).ends_with("[\"102\"]"), "{how}: the entry of the key it left finds no row");
         assert!(counted(&a, 4).ends_with("[\"104\"]"), "{how}");
     }
