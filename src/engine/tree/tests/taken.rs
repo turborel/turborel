@@ -54,6 +54,7 @@ fn a_leaf_changed_between_a_scans_reads_of_it_gives_each_key_once() {
     assert!(tree.counts().splits > splits, "split since its first read");
     assert!(tree.delete(&key(200)).unwrap().is_some());
     seen.extend(scan.map(|e| e.unwrap().0));
-    let want: Vec<Vec<u8>> = (1..=40_u64).flat_map(|k| (0..=5).map(move |n| k * 100 + n)).filter(|&k| k != 200).map(|k| key(k).to_vec()).collect();
+    let want: Vec<Vec<u8>> =
+        (1..=40_u64).flat_map(|k| (0..=5).map(move |n| k * 100 + n)).filter(|&k| k != 200).map(|k| key(k).to_vec()).collect();
     assert_eq!(seen, want);
 }
