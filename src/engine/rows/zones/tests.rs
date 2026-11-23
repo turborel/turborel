@@ -455,8 +455,7 @@ fn stale(table: &RowTable) -> bool {
 
 /// The rows the zone of row `id` of `table` counts.
 fn zone_rows(table: &RowTable, id: RowId) -> u32 {
-    let map = table.zones.map.read().unwrap();
-    lock_builtin(&map.zones[super::zone_at(id)]).rows
+    lock_builtin(&table.zones.slots.get(super::zone_at(id)).unwrap().zone).rows
 }
 
 /// Verifies: [DESIGN] RULES.md D31, zone maps: a write stales its zone

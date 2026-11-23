@@ -30,11 +30,11 @@
 //! thread as a deletion's is.
 //!
 //! Each zone also knows whether every row of it is visible to every
-//! reader (`Map::visible`), as an index-only scan asks
+//! reader (`Slot::visible`), as an index-only scan asks
 //! (`TableStorage::visible_to_all`, RULES.md D34): every row's newest
 //! version committed at or before the horizon, none a deletion, and no
 //! version it superseded left to collect, whose index entries would
-//! still be there (`Map::pending`). A write makes it not, before its index
+//! still be there (`Slot::pending`). A write makes it not, before its index
 //! entries are written, so a reader that finds a
 //! new entry finds its zone not visible; and leaves it unsettled, for the
 //! maintenance thread to settle as it sums it up, or, a zone not stale,
@@ -62,16 +62,13 @@
 //! zone takes a few bytes of each row.
 
 use std::cmp::Ordering;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Mutex, RwLock};
 use std::time::Instant;
 
-use super::RowTable;
-use super::version::Version;
 use crate::engine::record::RecordFormat;
-use crate::error::Result;
 use crate::storage::{Conjunct, Conjunction, Row, RowId};
-use crate::sync::{lock_builtin, read, write};
+use crate::sync::lock_builtin;
 use crate::value::{DataType, Value, compare};
 
 /// \[DESIGN\] The row ids of a zone: a thread's block of them is four
@@ -122,7 +119,7 @@ struct Zone {
     /// stale if any is, every one if it is not known at all.
     loose: u64,
     known: bool,
-    /// Whether its rows' visibility is to be settled (`Map::visible`).
+    /// Whether its rows' visibility is to be settled (`Slot::visible`).
     unsettled: bool,
     /// Of a zone summed up, what its rows showed of their visibility.
     seen: Seen,
@@ -133,58 +130,33 @@ struct Zone {
     wait: u64,
 }
 
-/// The zones of a table, by the first row id of each over `ZONE_ROWS`,
-/// each locked alone, so writers of different blocks of row ids, as
-/// threads are given (`rows/ids.rs`), do not wait for one another.
+/// A zone as its table holds it, locked alone, so writers of different
+/// blocks of row ids, as threads are given (`rows/ids.rs`), do not wait for
+/// one another; with what is read of it without its lock.
 #[derive(Default)]
-struct Map {
-    zones: Vec<Mutex<Zone>>,
-    /// Zones made for row ids below this are not known until summed up.
-    unknown_below: RowId,
-    /// Of each `SEGMENT_ZONES` zones, whether one changed since they were
-    /// last saved (`zones/saved.rs`).
-    dirty: Vec<AtomicBool>,
-    /// Of each zone, whether every row of it is visible to every reader,
-    /// read without its lock.
-    visible: Vec<AtomicBool>,
-    /// Of each zone, the versions its rows' commits superseded not yet
-    /// collected, with their index entries.
-    pending: Vec<AtomicU64>,
-}
-
-impl Map {
-    /// Notes zone `at` changed since its segment was saved. The flag is
-    /// written only if clear: every write to the table notes a change, and
-    /// one flag stands for many zones, so a flag set already is read alone
-    /// and its cache line stays shared between the writers. A save clears
-    /// it before it reads the zones (`zones/saved.rs`), so a change it did
-    /// not read finds it clear and sets it.
-    fn changed(&self, at: usize) {
-        let flag = self.dirty.get(at.checked_div(SEGMENT_ZONES).unwrap_or(0));
-        if let Some(flag) = flag.filter(|flag| !flag.load(AtomicOrdering::Acquire)) {
-            flag.store(true, AtomicOrdering::Release);
-        }
-    }
-
-    /// Adds the zone `zone`, its segment noted changed: visible if
-    /// settled, as one of no row is.
-    fn push(&mut self, zone: Zone) {
-        self.visible.push(AtomicBool::new(!zone.unsettled));
-        self.zones.push(Mutex::new(zone));
-        self.pending.push(AtomicU64::new(0));
-        while self.dirty.len().saturating_mul(SEGMENT_ZONES) < self.zones.len() {
-            self.dirty.push(AtomicBool::new(true));
-        }
-        self.changed(self.zones.len().saturating_sub(1));
-    }
+pub(super) struct Slot {
+    zone: Mutex<Zone>,
+    /// Whether every row of it is visible to every reader.
+    visible: AtomicBool,
+    /// The versions its rows' commits superseded not yet collected, with
+    /// their index entries.
+    pending: AtomicU64,
 }
 
 /// \[DESIGN\] A table's zone maps.
 pub(super) struct Zones {
     /// The columns kept, by their places in a row.
     kept: Vec<usize>,
-    /// Locked to be written only to add zones.
-    map: RwLock<Map>,
+    /// The zones, by the first row id of each over `ZONE_ROWS`, found
+    /// with no lock (`zones/grown.rs`, RULES.md D860).
+    slots: Grown<Slot>,
+    /// Of each `SEGMENT_ZONES` zones, whether one changed since they were
+    /// last saved (`zones/saved.rs`).
+    dirty: Grown<AtomicBool>,
+    /// Held while zones are added.
+    growing: Mutex<()>,
+    /// Zones made for row ids below this are not known until summed up.
+    unknown_below: AtomicU64,
     /// The zones stale or not known.
     stale: AtomicUsize,
     /// The zones unsettled.
@@ -295,7 +267,10 @@ impl Zones {
         let place = place.filter(|_| !kept_columns.is_empty());
         Zones {
             kept: kept_columns,
-            map: RwLock::new(Map::default()),
+            slots: Grown::default(),
+            dirty: Grown::default(),
+            growing: Mutex::new(()),
+            unknown_below: AtomicU64::new(0),
             stale: AtomicUsize::new(0),
             unsettled: AtomicUsize::new(0),
             next_sum: AtomicUsize::new(0),
@@ -313,32 +288,61 @@ impl Zones {
         self.directory
     }
 
-    /// Widens the zone of row `id` to hold `row`, once it is written, the
-    /// row's version it `replaced` taken out of it: its columns marked
-    /// loose that this may leave wider than its rows (`Zones::loosened`).
-    pub(super) fn widen(&self, id: RowId, row: Option<&Row>, replaced: Replaced<'_>) {
-        let at = zone_at(id);
-        if let Ok(map) = read(&self.map)
-            && let Some(zone) = map.zones.get(at)
-        {
-            self.change((&map, at), &mut lock_builtin(zone), (row, replaced));
-            map.changed(at);
-            return;
+    /// Notes zone `at` changed since its segment was saved. The flag is
+    /// written only if clear: every write to the table notes a change, and
+    /// one flag stands for many zones, so a flag set already is read alone
+    /// and its cache line stays shared between the writers. A save clears
+    /// it before it reads the zones (`zones/saved.rs`), so a change it did
+    /// not read finds it clear and sets it.
+    fn changed(&self, at: usize) {
+        let flag = self.dirty.get(at.checked_div(SEGMENT_ZONES).unwrap_or(0));
+        if let Some(flag) = flag.filter(|flag| !flag.load(AtomicOrdering::Acquire)) {
+            flag.store(true, AtomicOrdering::Release);
         }
-        let Ok(mut map) = write(&self.map) else { return };
-        while map.zones.len() <= at {
-            let first = u64::try_from(map.zones.len()).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
-            let known = first >= map.unknown_below;
-            if !known {
+    }
+
+    /// Adds the zone `zone`, under `growing`, its segment noted changed:
+    /// visible if settled, as one of no row is. Whether it was added.
+    fn push(&self, zone: Zone) -> bool {
+        let pushed = self.slots.push(|slot| {
+            slot.visible.store(!zone.unsettled, AtomicOrdering::Release);
+            *lock_builtin(&slot.zone) = zone;
+        });
+        let mut flagged = pushed;
+        while flagged && self.dirty.len().saturating_mul(SEGMENT_ZONES) < self.slots.len() {
+            flagged = self.dirty.push(|flag| flag.store(true, AtomicOrdering::Release));
+        }
+        self.changed(self.slots.len().saturating_sub(1));
+        pushed
+    }
+
+    /// Adds zones until there is a zone `at`, each of no row yet.
+    fn grow_to(&self, at: usize) {
+        let _growing = lock_builtin(&self.growing);
+        let mut added = true;
+        while added && self.slots.len() <= at {
+            let first = u64::try_from(self.slots.len()).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
+            let known = first >= self.unknown_below.load(AtomicOrdering::Acquire);
+            added = self.push(Zone::empty(known));
+            if added && !known {
                 self.stale.fetch_add(1, AtomicOrdering::AcqRel);
                 self.unsettled.fetch_add(1, AtomicOrdering::AcqRel);
             }
-            map.push(Zone::empty(known));
         }
-        if let Some(zone) = map.zones.get(at) {
-            self.change((&map, at), &mut lock_builtin(zone), (row, replaced));
+    }
+
+    /// Widens the zone of row `id` to hold `row`, once it is written, the
+    /// row's version it `replaced` taken out of it: its columns marked
+    /// loose that this may leave wider than its rows (`Zones::loosened`).
+    /// The zone is found with no lock, and locked alone (RULES.md D860).
+    pub(super) fn widen(&self, id: RowId, row: Option<&Row>, replaced: Replaced<'_>) {
+        let at = zone_at(id);
+        if self.slots.get(at).is_none() {
+            self.grow_to(at);
         }
-        map.changed(at);
+        let Some(slot) = self.slots.get(at) else { return };
+        self.change(slot, &mut lock_builtin(&slot.zone), (row, replaced));
+        self.changed(at);
     }
 
     /// Marks the zone of row `id` stale, an insert of it undone: the row
@@ -347,16 +351,17 @@ impl Zones {
         self.widen(id, None, Replaced::Unknown);
     }
 
-    /// `widen`'s change of `zone`, zone `at` of `map`, under its lock: not
+    /// `widen`'s change of `zone`, the zone of `slot`, under its lock: not
     /// visible from now, before the row's index entries are written, and
     /// unsettled; under the lock a sum up settles it under, so none settles
     /// it visible over the change.
-    fn change(&self, (map, at): (&Map, usize), zone: &mut Zone, (row, replaced): (Option<&Row>, Replaced<'_>)) {
+    fn change(&self, slot: &Slot, zone: &mut Zone, (row, replaced): (Option<&Row>, Replaced<'_>)) {
         zone.changes = zone.changes.saturating_add(1);
         // Written only if set, under the zone's lock, as a sum up sets it:
         // a flag clear already is read alone, so writers of zones side by
         // side do not pass its cache line from one to the next.
-        if let Some(flag) = map.visible.get(at).filter(|flag| flag.load(AtomicOrdering::Acquire)) {
+        let flag = &slot.visible;
+        if flag.load(AtomicOrdering::Acquire) {
             flag.store(false, AtomicOrdering::Release);
         }
         if !zone.unsettled {
@@ -382,15 +387,16 @@ impl Zones {
     pub(super) fn ranges(&self, conditions: Option<&Conjunction>) -> Vec<(RowId, Option<RowId>)> {
         let all = vec![(0, None)];
         let (Some(conditions), false) = (conditions, self.kept.is_empty()) else { return all };
-        let Ok(map) = read(&self.map) else { return all };
         let tests = prepared(conditions, &self.kept);
         let mut ranges: Vec<(RowId, Option<RowId>)> = Vec::new();
-        for (at, zone) in map.zones.iter().enumerate() {
-            if passes(&lock_builtin(zone), &tests) {
+        // Of the zones there are now: a row of one added meanwhile is past them.
+        let zones = self.slots.len();
+        for (at, slot) in self.slots.first(zones).enumerate() {
+            if passes(&lock_builtin(&slot.zone), &tests) {
                 joined(&mut ranges, at);
             }
         }
-        past(&mut ranges, &map);
+        past(&mut ranges, zones);
         ranges
     }
 
@@ -423,16 +429,16 @@ impl Zones {
     /// whose rows may match now may hold rows written later, which a plan
     /// kept for later executions reads (D839).
     pub(super) fn share(&self, conditions: &Conjunction) -> f64 {
-        let Ok(map) = read(&self.map) else { return 1.0_f64 };
-        if self.kept.is_empty() || map.zones.is_empty() {
+        let zones = self.slots.len();
+        if self.kept.is_empty() || zones == 0 {
             return 1.0_f64;
         }
         let tests = prepared(conditions, &self.kept);
-        let step = map.zones.len().div_ceil(SAMPLED).max(1);
+        let step = zones.div_ceil(SAMPLED).max(1);
         let (mut all, mut read_rows, mut sampled) = (0.0_f64, 0.0_f64, 0.0_f64);
-        for slot in map.zones.iter().step_by(step) {
+        for slot in self.slots.first(zones).step_by(step) {
             sampled += 1.0_f64;
-            let zone = lock_builtin(slot);
+            let zone = lock_builtin(&slot.zone);
             // A zone not known holds as many rows as a block may.
             let rows = if zone.known { f64::from(zone.rows) } else { f64::from(u32::try_from(ZONE_ROWS).unwrap_or(u32::MAX)) };
             all += rows;
@@ -464,10 +470,10 @@ fn joined(ranges: &mut Vec<(RowId, Option<RowId>)>, at: usize) {
     }
 }
 
-/// Adds to `ranges` the row ids past the last zone of `map`, of rows
+/// Adds to `ranges` the row ids past the last of `zones` zones, of rows
 /// written as a scan begins.
-fn past(ranges: &mut Vec<(RowId, Option<RowId>)>, map: &Map) {
-    let first = u64::try_from(map.zones.len()).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
+fn past(ranges: &mut Vec<(RowId, Option<RowId>)>, zones: usize) {
+    let first = u64::try_from(zones).unwrap_or(u64::MAX).saturating_mul(ZONE_ROWS);
     ranges.push((first, None));
 }
 
@@ -522,32 +528,14 @@ fn passes(zone: &Zone, tests: &[Test<'_>]) -> bool {
     })
 }
 
-impl RowTable {
-    /// Widens the zone of row `id` to hold `row`, or a deletion, written
-    /// over the row's newest version, holding `replaced`, if known
-    /// (`Zones::widen`): the row the write replaced, decoded once for it
-    /// and the write's caller (RULES.md D835).
-    pub(super) fn widen_over(&self, id: RowId, row: Option<&Row>, replaced: Option<&Row>) {
-        let known = if self.frozen.plain() { Replaced::Row } else { Replaced::Outside };
-        self.zones.widen(id, row, replaced.map_or(Replaced::Unknown, known));
-    }
-
-    /// Widens the zone of row `id` to hold `version`, a version of it put
-    /// back in its tree, as a write widens it once written: a zone summed
-    /// up while the version was not the row's newest holds it again.
-    pub(super) fn widen_to(&self, id: RowId, version: &[u8]) -> Result<()> {
-        let version = Version::parse(version)?;
-        let row = if version.deleted { None } else { Some(self.decode(id, version.record, Some(&self.zones.kept))?) };
-        self.zones.widen(id, row.as_ref(), Replaced::Unknown);
-        Ok(())
-    }
-}
-
+mod grown;
 mod loose;
 mod saved;
 mod summed;
 mod visible;
+mod written;
 
+use grown::Grown;
 use loose::ALL;
 pub(super) use saved::Place;
 use saved::SEGMENT_ZONES;

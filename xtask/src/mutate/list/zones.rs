@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of zone maintenance, in the order they run.
-pub const ZONES: [Mutation; 11] = [
+pub const ZONES: [Mutation; 13] = [
     Mutation {
         name: "zone-stale-inside",
         package: Package::Core,
@@ -120,5 +120,25 @@ pub const ZONES: [Mutation; 11] = [
         replacement: "        let summing = self.zones.due();",
         integration: &[],
         unit: &["engine::rows::zones::costs::resting_zones_are_summed_up_only_now"],
+    },
+    Mutation {
+        name: "zone-grown-misplaced",
+        package: Package::Core,
+        breaks: "zone maintenance: a zone past the first chunk is looked for a chunk's length off, so a write finds another row's zone or none",
+        file: "src/engine/rows/zones/grown.rs",
+        original: "    let before = size.checked_sub(FIRST)?;",
+        replacement: "    let before = size;",
+        integration: &[],
+        unit: &["engine::rows::zones::grown::tests::items_are_found_where_they_were_added"],
+    },
+    Mutation {
+        name: "zone-kept-outside",
+        package: Package::Core,
+        breaks: "zone maintenance: a frozen row changed is taken to lie within its zone's bounds in the columns it keeps, so a scan skips it",
+        file: "src/engine/rows/zones/loose.rs",
+        original: "            if same && within {",
+        replacement: "            if same {",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::thawed::a_frozen_row_changed_is_held_by_its_zone_in_the_columns_it_keeps"],
     },
 ];
