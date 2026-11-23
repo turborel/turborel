@@ -566,6 +566,7 @@ verification approach DO-178C expects (§8).
 | D857 | A thread pins a tree for a statement and is counted in its epoch once, its operations counting nothing meanwhile |
 | D858 | A thread keeps version-checked copies of the leaves it reads often and finds unchanged, and reads them with no latch |
 | D859 | A probe from a key borrows its key and shows the entries from it where they lie, allocating nothing |
+| D863 | A read by key shows its value to its caller where it lies, with the notes of a read that copies |
 | D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
@@ -12972,7 +12973,6 @@ kernels of a statement's executor, its filters over batches, groupings
 and sorts; a table's storage keeps the set registered, whatever the
 setting, since a table is opened once for many statements.
 
-
 #### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
 
 The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
@@ -15964,6 +15964,23 @@ none twice (D814). It is counted as a scan from a key is, a lookup in the
 tree's tally and each leaf read noted for EXPLAIN ANALYZE (D621). The
 caller's function runs under a latch, so it may not use the tree nor
 wait, as a scan's visitor may not (D350).
+
+#### D863. A read by key shows its value to its caller where it lies, with the notes of a read that copies
+
+A read of a row by its id copied the entry's value into the bytes its
+`Near` keeps (D31), and the row store then judged the version and
+decoded the row from the copy. For a version visible as it stands that
+copy was the whole row, moved once for nothing.
+
+`BLinkTree::get_near_with` shows the value to a function of its caller
+where it lies (`engine/tree/near.rs`): under the leaf's latch, or over a
+copy of the leaf, the scan's own (D806) or the thread's (D858). It looks
+where `get_near` looks, in the same order, the leaf remembered and its
+copy, the leaf noted for the row (D500), then a descent, and leaves the
+same notes for the next read, the leaf, the place in it and the misses.
+`get_near` is now that read with a function that copies. The function is
+called at most once, not at all for a key absent, and may not use the
+tree nor wait, as a scan's visitor may not (D350).
 
 ## 2. Project layout
 

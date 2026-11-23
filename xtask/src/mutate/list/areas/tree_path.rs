@@ -1,6 +1,6 @@
 //! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840,
 //! D852, D853, D854, D855, D856, D857,
-//! D858, D859):
+//! D858, D859, D863 to D866):
 //! the search over a node's slots, inner copies kept with their headers
 //! parsed, writers that find their leaf from its parent and change it
 //! through the frame they own, under one latch, from the leaf noted for a
@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 21] = [
+pub const TREE_PATH: [Mutation; 22] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -209,8 +209,8 @@ pub const TREE_PATH: [Mutation; 21] = [
         package: Package::Core,
         breaks: "a hint that answers clears a scan's misses, so reads of rows far apart try the last leaf and its neighbour before every hint",
         file: "src/engine/tree/near.rs",
-        original: "        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
-        replacement: "        near.misses = 0;\n        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
+        original: "        near.leaf = Some((leaf, stamp));\n        Ok(Tried::Answered(found))",
+        replacement: "        near.misses = 0;\n        near.leaf = Some((leaf, stamp));\n        Ok(Tried::Answered(found))",
         integration: &[],
         unit: &["engine::tree::tests::hinted::reads_far_apart_stop_trying_the_leaf_of_the_read_before"],
     },
@@ -223,5 +223,15 @@ pub const TREE_PATH: [Mutation; 21] = [
         replacement: "        0",
         integration: &[],
         unit: &["engine::tree::tests::probed::a_probe_shows_the_entries_from_its_key_until_stopped"],
+    },
+    Mutation {
+        name: "near-shown-first-entry",
+        package: Package::Core,
+        breaks: "a read from a scan's copy of its leaf is shown the leaf's first value, not its key's",
+        file: "src/engine/tree/near.rs",
+        original: "        reader.show(node.value(slot)?).map(Tried::Answered)",
+        replacement: "        reader.show(node.value(0)?).map(Tried::Answered)",
+        integration: &[],
+        unit: &["engine::tree::tests::finger::a_read_is_shown_its_value_where_it_lies"],
     },
 ];
