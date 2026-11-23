@@ -19,6 +19,6 @@ impl Binder<'_> {
         let names = self.own.transforms();
         let name = udt.map_or(names.default.as_str(), |t| names.for_udt(&t.name, &t.supertypes));
         let t = DataType::Varying { length: TRANSFORM_GROUP_LENGTH, units: CharUnits::Characters };
-        (Expr::Const(Value::Char(name.to_owned())), t)
+        (Expr::Const(Value::Char(name.into())), t)
     }
 }

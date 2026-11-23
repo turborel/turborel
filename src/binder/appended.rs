@@ -34,7 +34,7 @@ impl Binder<'_> {
             && let Some(index) = self.ranking_index(args.first())
         {
             let length = u32::try_from(index.chars().count()).unwrap_or(u32::MAX).max(1);
-            out.push((Expr::Const(Value::Char(index)), DataType::Varying { length, units: CharUnits::Characters }));
+            out.push((Expr::Const(Value::Char(index.into())), DataType::Varying { length, units: CharUnits::Characters }));
         }
         let given: Vec<Expr> = exprs.iter().cloned().chain(out.iter().map(|(e, _)| e.clone())).collect();
         out.extend(self.appended(f, (&given, types), scope)?);

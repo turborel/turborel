@@ -127,7 +127,7 @@ fn errors_9_29() {
     assert_eq!(rows(&s, "VALUES TRANSLATE_REGEX('z' IN 'baa' WITH '$')"), expected(&["baa"]));
     exec(&s, "CREATE TABLE LONG (L VARCHAR(20000))").unwrap();
     let p = s.prepare("INSERT INTO LONG VALUES (?)").unwrap();
-    s.execute_prepared(&p, &[Value::Char("a".repeat(20_000))]).unwrap();
+    s.execute_prepared(&p, &[Value::Char("a".repeat(20_000).into())]).unwrap();
     assert_eq!(state(&s, "SELECT TRANSLATE_REGEX('a' IN L WITH 'bb') FROM LONG"), Err("22001".into()));
     assert_eq!(rows(&s, "SELECT CHAR_LENGTH(TRANSLATE_REGEX('a' IN L WITH 'b')) FROM LONG"), expected(&["20000"]));
 }

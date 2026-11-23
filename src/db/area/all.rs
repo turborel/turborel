@@ -45,7 +45,7 @@ pub(super) fn concatenated(presented: Vec<(&'static str, Value)>) -> Result<Valu
 /// shortest literal of its value.
 fn charform(value: &Value) -> String {
     match value {
-        Value::Char(s) => s.clone(),
+        Value::Char(s) => s.to_string(),
         Value::Exact(_)
         | Value::Approx(_)
         | Value::DecFloat(_)
@@ -71,13 +71,13 @@ fn charform(value: &Value) -> String {
 /// those after are all spaces.
 fn within_longest(s: String) -> Result<Value> {
     let longest = usize::try_from(MAX_CHARACTER_LENGTH).unwrap_or(usize::MAX);
-    let Some((cut, _)) = s.char_indices().nth(longest) else { return Ok(Value::Char(s)) };
+    let Some((cut, _)) = s.char_indices().nth(longest) else { return Ok(Value::Char(s.into())) };
     if s.get(cut..).is_some_and(|past| past.chars().any(|c| c != ' ')) {
         let msg =
             format!("[ISO/IEC 9075-2:2023 §6.32 GR2b ii 3 B] ALL's string of {} characters is longer than {longest}", s.chars().count());
         return fail_with(Code::Data, SqlState::STRING_DATA_RIGHT_TRUNCATION, msg);
     }
-    Ok(Value::Char(s.get(..cut).unwrap_or_default().to_owned()))
+    Ok(Value::Char(s.get(..cut).unwrap_or_default().into()))
 }
 
 // Unit tests: the presentations joined, values of no characters left

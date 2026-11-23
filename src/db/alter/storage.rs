@@ -59,7 +59,7 @@ fn named_columns(declared: &[TableOption], next: &TableDesc) -> Result<()> {
 /// The value a `<table option>` is written with.
 pub(in crate::db) fn value_of(value: &OptionValue) -> Value {
     match value {
-        OptionValue::Literal(Literal::Character(s)) | OptionValue::Word(s) => Value::Char(s.clone()),
+        OptionValue::Literal(Literal::Character(s)) | OptionValue::Word(s) => Value::Char(s.clone().into()),
         OptionValue::Literal(Literal::Exact(d)) => Value::Exact(*d),
         OptionValue::Literal(Literal::Approximate(x)) => Value::Approx(*x),
         OptionValue::Literal(Literal::Binary(b)) => Value::Binary(b.clone()),
@@ -142,7 +142,8 @@ impl State {
             *names = self
                 .encodings
                 .canonical(names)?
-                .map_err(|missing| refused(&format!("no encoding {missing} is registered, for the table option {name}")))?;
+                .map_err(|missing| refused(&format!("no encoding {missing} is registered, for the table option {name}")))?
+                .into();
         }
         Ok(())
     }

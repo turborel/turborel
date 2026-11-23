@@ -199,7 +199,7 @@ pub(super) fn hash_of(value: &Value, reading: &Reading) -> Result<Option<DocHash
 
 /// The key an entry of a document of hash `hash` is counted under.
 pub(super) fn hash_key(hash: &DocHash) -> Key {
-    Key(vec![Value::Binary(Binary::new(hash.to_vec()))])
+    Key(vec![Value::Binary(Binary::of(hash))])
 }
 
 /// The hash a key names: of its document, or the hash itself if the key

@@ -63,7 +63,7 @@ fn within(name: &str, mapped: String) -> Result<Value> {
         let why = format!("[EXTENSION] {name} gives {n} characters, more than CHARACTER VARYING({MAX_CHARACTER_LENGTH}) holds");
         return Err(SqlError::new(Code::Data, why).with_state(SqlState::STRING_DATA_RIGHT_TRUNCATION));
     }
-    Ok(Value::Char(mapped))
+    Ok(Value::Char(mapped.into()))
 }
 
 /// The one argument of `args`, of the function `name`.

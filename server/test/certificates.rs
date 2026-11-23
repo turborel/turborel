@@ -17,7 +17,7 @@ use crate::common::{Kept, Pki, Running, client_certificate, over_tls, pki, secur
 
 /// Sets `db`'s text setting `name` to `value`.
 fn text(db: &Database, name: &str, value: &str) {
-    db.set_setting(name, &Value::Char(value.to_owned())).unwrap();
+    db.set_setting(name, &Value::Char(value.into())).unwrap();
 }
 
 /// A server of `pki`, its TLS offered, asking clients for certificates of

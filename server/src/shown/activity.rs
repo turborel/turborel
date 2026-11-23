@@ -78,10 +78,10 @@ pub(crate) fn values(doing: &Doing<'_>, holders: &HashMap<TxId, u64>) -> Vec<Val
     let transaction = now.as_ref().and_then(|n| n.transaction).map_or(Value::Null, |(_, began)| time(began));
     let (waiting, name, holder) = match now.as_ref().and_then(|n| n.waiting.clone()) {
         Some(Waiting::Lock { what, holder }) => {
-            (Value::Char(LOCK.to_owned()), cut(&what), holders.get(&holder).map_or(Value::Null, |&id| count(id)))
+            (Value::Char(LOCK.into()), cut(&what), holders.get(&holder).map_or(Value::Null, |&id| count(id)))
         }
-        Some(Waiting::Io) => (Value::Char(IO.to_owned()), Value::Null, Value::Null),
-        None => (if doing.queued { Value::Char(WORKER.to_owned()) } else { Value::Null }, Value::Null, Value::Null),
+        Some(Waiting::Io) => (Value::Char(IO.into()), Value::Null, Value::Null),
+        None => (if doing.queued { Value::Char(WORKER.into()) } else { Value::Null }, Value::Null, Value::Null),
     };
     vec![
         statement.map_or(Value::Null, |(t, _)| cut(t.raw())),

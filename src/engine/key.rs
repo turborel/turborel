@@ -309,7 +309,7 @@ mod tests {
         for values in [
             [Value::Char("é€".into()), exact(-12_345, 2), Value::Approx(-2.5)],
             [Value::Null, exact(7, 0), Value::Approx(-0.0)],
-            [Value::Char(String::new()), Value::Null, Value::Null],
+            [Value::Char(String::new().into()), Value::Null, Value::Null],
         ] {
             let decoded = decode_key(&key(&values, &types), &types).unwrap();
             let shown = |v: &[Value]| v.iter().map(|v| format!("{:?}", v.norm())).collect::<Vec<_>>();

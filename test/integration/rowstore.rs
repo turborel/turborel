@@ -131,7 +131,7 @@ fn statements_give_the_memory_engines_results() {
 }
 
 fn chars(s: &str, length: u32) -> Value {
-    Value::Char(format!("{s:<width$}", width = usize::try_from(length).unwrap()))
+    Value::Char(format!("{s:<width$}", width = usize::try_from(length).unwrap()).into())
 }
 
 /// A table of an integer and a CHAR(`length`), in `store`.

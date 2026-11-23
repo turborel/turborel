@@ -313,7 +313,7 @@ fn the_kernels_registered_measure_vectors_and_checksum_files() {
     let (sums, crcs) = (Arc::new(std::sync::atomic::AtomicUsize::new(0)), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
     let db = Database::new();
     db.register_kernels(Box::new(Measuring { sums: Arc::clone(&sums), crcs: Arc::clone(&crcs) })).unwrap();
-    db.set_setting("STORAGE.CHECKSUM", &turborel::value::Value::Char("CRC-32/ISCSI".to_owned())).unwrap();
+    db.set_setting("STORAGE.CHECKSUM", &turborel::value::Value::Char("CRC-32/ISCSI".into())).unwrap();
     db.open_files(&os(), &scratch.dir, &OpenOptions::default()).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A CREATE TABLE V (K INTEGER PRIMARY KEY, E VECTOR(40), H VECTOR(40, FLOAT16), I VECTOR(40, INT8))",

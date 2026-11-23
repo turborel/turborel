@@ -70,7 +70,7 @@ pub(super) fn schema_name(v: Option<&Value>, rules: (&str, &str), invalid: SqlSt
     if name.is_empty() || name.chars().count() > MAX_NETWORK_NAME {
         return Err(fault(rules.1, invalid, &format!("'{name}' is no valid schema name")));
     }
-    Ok(name.clone())
+    Ok(name.to_string())
 }
 
 /// [§12.3 Description 2a, 2b] The network's name `v`, of the routine

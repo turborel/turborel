@@ -29,7 +29,7 @@ struct SettingOf;
 impl Scalar for SettingOf {
     fn call(&mut self, cx: &mut Cx<'_>, args: &[Value]) -> Answer<Value> {
         let Some(Value::Char(name)) = args.first() else { return Ok(Value::Null) };
-        Ok(cx.setting(name).map_or(Value::Null, |v| Value::Char(v.to_string())))
+        Ok(cx.setting(name).map_or(Value::Null, |v| Value::Char(v.to_string().into())))
     }
 }
 

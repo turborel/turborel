@@ -127,13 +127,13 @@ fn script() -> Vec<(&'static str, Vec<Value>)> {
     }
     let payment = "CALL PAYMENT(?,?,?,?,?,?,?,?)";
     for (d, c, by_name, last) in [(1, 1, 0, "LAST1"), (2, 0, 1, "LAST2"), (1, 2, 0, "LAST2"), (4, 0, 1, "LAST0")] {
-        calls.push((payment, vec![int(1), int(d), int(1), int(d), int(c), int(by_name), int(125), Value::Char(last.to_owned())]));
+        calls.push((payment, vec![int(1), int(d), int(1), int(d), int(c), int(by_name), int(125), Value::Char(last.into())]));
     }
     calls.push(("CALL DELIVERY(?,?)", vec![int(1), int(7)]));
     calls.push(("CALL SLEV(?,?,?)", vec![int(1), int(1), int(15)]));
     calls.push(("CALL SLEV(?,?,?)", vec![int(1), int(2), int(30)]));
-    calls.push(("CALL OSTAT(?,?,?,?,?)", vec![int(1), int(1), int(2), int(0), Value::Char("LAST2".to_owned())]));
-    calls.push(("CALL OSTAT(?,?,?,?,?)", vec![int(1), int(2), int(0), int(1), Value::Char("LAST0".to_owned())]));
+    calls.push(("CALL OSTAT(?,?,?,?,?)", vec![int(1), int(1), int(2), int(0), Value::Char("LAST2".into())]));
+    calls.push(("CALL OSTAT(?,?,?,?,?)", vec![int(1), int(2), int(0), int(1), Value::Char("LAST0".into())]));
     calls.push(("CALL DELIVERY(?,?)", vec![int(1), int(3)]));
     calls
 }

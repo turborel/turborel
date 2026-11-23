@@ -30,7 +30,7 @@ const HOLD: Duration = Duration::from_millis(2);
 fn database() -> Database {
     let db = Database::new();
     db.set_lock_wait(LockWait::Wait).unwrap();
-    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".to_owned())).unwrap();
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER) CREATE TABLE L (X INTEGER)").unwrap();
     let s = db.session("A");
     s.run("INSERT INTO T VALUES (1, 0), (2, 20)").unwrap();
@@ -76,7 +76,7 @@ fn many_writers_of_one_row_lose_nothing_and_are_never_refused_4_28() {
 fn a_procedure_statement_after_a_wait_reads_what_was_committed_4_28() {
     let db = database();
     // Its increment waits for the row's writer, not reserved (RULES.md D452).
-    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".to_owned())).unwrap();
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".into())).unwrap();
     let a = db.session("A");
     a.run(
         "CREATE PROCEDURE P () MODIFIES SQL DATA BEGIN DECLARE X INTEGER; \

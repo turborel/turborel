@@ -98,7 +98,7 @@ pub(crate) fn start(
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone())).unwrap();
     settings::declare_replication(&db).unwrap();
-    let text = |s: &str| Value::Char(s.to_owned());
+    let text = |s: &str| Value::Char(s.into());
     let number = |n: u32| Value::Exact(Decimal::new(i128::from(n), 0));
     match pki {
         Some(pki) => {

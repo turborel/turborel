@@ -46,7 +46,7 @@ fn tls_required_refuses_clients_in_the_clear() {
     #[cfg(any(unix, windows))]
     let socket = pki.scratch.socket("s");
     #[cfg(any(unix, windows))]
-    db.set_setting(settings::SOCKET, &Value::Char(socket.display().to_string())).unwrap();
+    db.set_setting(settings::SOCKET, &Value::Char(socket.display().to_string().into())).unwrap();
     let server = start(&db, &[]);
     let refused = connection::connect(server.address, "X", &mut Trust).err().unwrap();
     assert_eq!(state(&refused), ("08004", -919));
@@ -177,12 +177,12 @@ fn tls_says_why_it_cannot_be_taken() {
     let refused = |db: &Database| listening::tls(db).err().map(|e| (e.code, e.msg)).unwrap();
     assert!(refused(&db).1.contains("name its files"));
     secured(&db, &pki, "ON");
-    db.set_setting(TLS_KEY, &Value::Char(other.key.display().to_string())).unwrap();
+    db.set_setting(TLS_KEY, &Value::Char(other.key.display().to_string().into())).unwrap();
     assert_eq!(refused(&db).0, Code::Io, "a key of another");
-    db.set_setting(TLS_CERTIFICATE, &Value::Char(pki.scratch.path("none.pem").display().to_string())).unwrap();
+    db.set_setting(TLS_CERTIFICATE, &Value::Char(pki.scratch.path("none.pem").display().to_string().into())).unwrap();
     assert!(refused(&db).1.contains("cannot take TLS"));
     std::fs::write(pki.scratch.path("empty.pem"), b"").unwrap();
-    db.set_setting(TLS_CERTIFICATE, &Value::Char(pki.scratch.path("empty.pem").display().to_string())).unwrap();
+    db.set_setting(TLS_CERTIFICATE, &Value::Char(pki.scratch.path("empty.pem").display().to_string().into())).unwrap();
     assert!(refused(&db).1.contains("no certificate"));
     assert_eq!(state(&tls::trusting(&pki.scratch.path("none.pem")).err().unwrap()).0, "08006");
     assert!(tls::trusting(&pki.scratch.path("empty.pem")).err().unwrap().message.contains("no certificate"));

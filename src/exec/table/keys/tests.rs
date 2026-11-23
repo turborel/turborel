@@ -32,10 +32,10 @@ fn tried() -> Vec<Value> {
         instant(0, 0),
         Value::Bool(true),
         Value::Bool(false),
-        Value::Char("ab".to_owned()),
-        Value::Char("ab   ".to_owned()),
-        Value::Char("ab c".to_owned()),
-        Value::Char(String::new()),
+        Value::Char("ab".into()),
+        Value::Char("ab   ".into()),
+        Value::Char("ab c".into()),
+        Value::Char(String::new().into()),
         Value::Null,
     ]
 }
@@ -75,7 +75,7 @@ fn lanes_equal_as_their_keys_bytes() {
 fn a_lane_widens_to_values_once() {
     let mut scratch = Vec::new();
     let mut lane = Lane::default();
-    for v in [Value::Null, exact(5, 0), exact(150, 2), Value::Char("x".to_owned())] {
+    for v in [Value::Null, exact(5, 0), exact(150, 2), Value::Char("x".into())] {
         lane.push(Cell::Value(&v));
     }
     assert!(matches!(lane.data, Data::Values { .. }));
@@ -111,7 +111,7 @@ fn a_lane_truncated_keeps_its_first_groups() {
     let mut held = Lane::default();
     held.push(Cell::Value(&Value::Approx(1.5)));
     held.push(Cell::Value(&exact(1, 0)));
-    held.push(Cell::Value(&Value::Char("long text".to_owned())));
+    held.push(Cell::Value(&Value::Char("long text".into())));
     let before = held.bytes();
     held.truncate(1);
     assert!(held.bytes() < before);

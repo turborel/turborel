@@ -247,30 +247,28 @@ pub(crate) fn accepted(name: &str, kind: &Kind, value: &Value) -> Result<Value> 
         }
         Kind::Choice(words) => {
             let word = given.map(canonical).filter(|w| words.contains(&w.as_str())).ok_or_else(refused)?;
-            Ok(Value::Char(word))
+            Ok(Value::Char(word.into()))
         }
-        Kind::Engine | Kind::IndexMethod | Kind::HashFunction => given.map(|s| Value::Char(s.trim().to_owned())).ok_or_else(refused),
+        Kind::Engine | Kind::IndexMethod | Kind::HashFunction => given.map(|s| Value::Char(s.trim().into())).ok_or_else(refused),
         Kind::Encodings => {
             let names: Vec<&str> = given.ok_or_else(refused)?.split(',').map(str::trim).filter(|n| !n.is_empty()).collect();
-            Ok(Value::Char(names.join(",")))
+            Ok(Value::Char(names.join(",").into()))
         }
         // Each a column of the table: `stored` checks them.
         Kind::Columns { most } => {
             let names = given.and_then(column_names).filter(|n| n.len() <= *most).ok_or_else(refused)?;
-            Ok(Value::Char(column_list(&names)))
+            Ok(Value::Char(column_list(&names).into()))
         }
         Kind::Identifier => {
             let body = given.map(str::trim).filter(|s| !s.is_empty() && s.chars().count() <= crate::lexer::MAX_IDENTIFIER_LENGTH);
-            body.map(|s| Value::Char(s.to_owned())).ok_or_else(refused)
+            body.map(|s| Value::Char(s.into())).ok_or_else(refused)
         }
         Kind::Displacement => given
             .map(str::trim)
             .and_then(crate::value::datetime::parse_displacement)
-            .map(|z| Value::Char(crate::value::Datetime::displacement_text(z)))
+            .map(|z| Value::Char(crate::value::Datetime::displacement_text(z).into()))
             .ok_or_else(refused),
-        Kind::Text { max } => {
-            given.map(str::trim).filter(|s| s.chars().count() <= *max).map(|s| Value::Char(s.to_owned())).ok_or_else(refused)
-        }
+        Kind::Text { max } => given.map(str::trim).filter(|s| s.chars().count() <= *max).map(|s| Value::Char(s.into())).ok_or_else(refused),
     }
 }
 

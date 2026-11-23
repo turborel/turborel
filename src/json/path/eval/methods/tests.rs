@@ -17,7 +17,7 @@ fn datetime_names(moment: Moment) -> Vec<String> {
             let got = parse_path("strict $d.type()", Clocked::default()).unwrap().evaluate(&json("0"), &variables).unwrap();
             let [Item::Scalar(name)] = got.as_slice() else { panic!("{got:?}") };
             let Value::Char(name) = name.value() else { panic!("{name:?}") };
-            name.clone()
+            name.to_string()
         })
         .collect()
 }

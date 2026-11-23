@@ -596,6 +596,8 @@ verification approach DO-178C expects (§8).
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
+| D960 | A character string of at most 32 octets is held in its value, a longer one in a buffer its clones share |
+| D961 | A binary string of at most 22 octets is held in its value, a longer one in a buffer its clones share |
 
 ### The project
 
@@ -16586,6 +16588,79 @@ taken hands the change to the general path as before. That is a row
 changed since it was read, a sum that would leave the column's type, or
 an increment that is not what made the candidate row. The general path
 then reserves or writes it as it always did.
+
+#### D960. A character string of at most 32 octets is held in its value, a longer one in a buffer its clones share
+
+`Value::Char` held a `String`, so every character column of every row
+read, cloned, cast, padded or assigned took an allocation and gave it
+back. A row of STOCK has eleven character columns. On the order entry
+path the padding of a CHARACTER read from its record alone was over a
+third of all allocations, and the clones of values a seventh.
+
+A character string is now a `CharString` (`value/chars.rs`). One of at
+most 32 octets of UTF-8 is held in the value itself, an array and a
+length. A longer one is an `Arc<str>`, never changed, so a clone of it
+adds to a count and copies nothing. A `Value` is 48 octets, as it was.
+Its tag takes the first octet, and the 40 past its alignment hold the
+widest values, a large object and an XML value. A character string
+takes those 40 and no more.
+
+The crate has no unsafe code (R-SAFE-1), so the text of a string held
+in the value can only be handed out as a `str` through
+`str::from_utf8`, each time. That check reads sixteen octets at a time
+only from an aligned address. So the array is aligned as a word is, and
+the check reads the whole of it, the string and the zeros past it. The
+zeros are UTF-8, so the array is UTF-8 exactly when the string is, and
+the string is then cut at its length, which ends a character. Aligning
+the array leaves it 32 octets of the 40, where an unaligned one would
+have 38. Measured over strings of 2 to 38 ASCII octets, on the build
+server, a `String` lends its text in 0.9 ns, an unaligned array of 38
+checked to its length in 9 to 16 ns, an aligned array of 32 checked to
+its length in 4 to 8 ns, and an aligned array of 32 checked whole in
+3.3 ns whatever the length. Twelve characters of two octets take 25 to
+37 ns in any of them. The octets of either form are read with no check
+in 1.5 ns. The aligned array of 32 was chosen. In the order entry
+load every string fits it but the data of customers and about seven in
+ten of the data of stock and of items.
+
+So a string is shown to be UTF-8 once, where it is made, and the paths
+taken for every row read its octets, not its text. A record is decoded
+and encoded, a key encoded, two strings compared, trailing spaces left
+out and characters counted over the octets. A CHARACTER padded to its
+length is built in the value where it fits. A longer one of at most 256
+octets is built on the stack and copied to its buffer, the one
+allocation. Two strings concatenated are joined in the value where both
+fit. `CharString` lends its text by `Deref`, compares and orders by its
+octets, and hashes as its text does, so equal text is equal and hashes
+equal in either form and a table keyed by strings is asked by a `str`.
+
+What a statement returns is unchanged. Comparison, collation, padding,
+truncation, the limits of length, the errors and the encodings on the
+wire and in a record are those of the text, whatever holds it.
+
+#### D961. A binary string of at most 22 octets is held in its value, a longer one in a buffer its clones share
+
+A binary string held its octets in a box, so each one read from a
+record, cloned or cut took an allocation, as a character string did
+before D960. A reference value holds a binary string too.
+
+`Binary` now holds at most 22 octets in the value itself and a longer
+string in an `Arc<[u8]>` its clones share (`value/binary.rs`). It needs
+no check to lend its octets, so the array is not aligned and the
+capacity is what leaves a `Binary` three words. That is the width of
+the `String` a normalized key and a bucket hold, so nothing that holds
+a binary string grows. A UUID's sixteen octets and a reference's fit.
+`Binary::of` makes one of a slice, with no vector between, where a
+record, a key or a message is read. It compares, orders and hashes by
+its octets, whatever holds them.
+
+The other values that a row of an order entry table holds allocate
+nothing. An exact number is its units and its scale, a decimal
+floating-point number its coefficient and exponent, a datetime its
+instant, zone and precision, an interval its units and qualifier, a
+truth value itself. A large object, a value of the JSON type, an
+array, a multiset, a row, a structured value and an XML value were
+already shared by count.
 
 ## 2. Project layout
 

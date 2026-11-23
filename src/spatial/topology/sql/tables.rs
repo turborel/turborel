@@ -116,7 +116,7 @@ impl TableFunction for TopoReader {
                 let optional = |n: Option<i32>| n.map_or(Value::Null, int_value);
                 Ok(problems
                     .into_iter()
-                    .map(|p| vec![Value::Char(p.error.to_owned()), optional(p.primitive1), optional(p.primitive2)])
+                    .map(|p| vec![Value::Char(p.error.into()), optional(p.primitive1), optional(p.primitive2)])
                     .collect())
             }
         }

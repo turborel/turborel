@@ -84,7 +84,7 @@ pub fn plugged(test: &str) -> (Scratch, Database) {
 
 /// PLUGINS.DIRECTORIES set to `root`.
 pub fn allow(db: &Database, root: &Path) {
-    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(root.display().to_string())).unwrap();
+    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(root.display().to_string().into())).unwrap();
 }
 
 /// The processes of extension `name` running now.

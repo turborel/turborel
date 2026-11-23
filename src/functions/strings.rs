@@ -313,8 +313,13 @@ impl ScalarFunction for Concatenation {
         if matches!(a, Value::Binary(_)) || matches!(b, Value::Binary(_)) {
             return Ok(Value::Null);
         }
+        // Two strings held as values are joined as they are held: in the
+        // value, with no allocation, where both fit (RULES.md D960).
+        if let (Value::Char(a), Value::Char(b)) = (a, b) {
+            return Ok(Value::Char(a.joined(b)));
+        }
         Ok(match (text(a)?, text(b)?) {
-            (Some(a), Some(b)) => Value::Char(format!("{a}{b}")),
+            (Some(a), Some(b)) => Value::Char(format!("{a}{b}").into()),
             (None, _) | (_, None) => Value::Null,
         })
     }
@@ -468,7 +473,7 @@ impl ScalarFunction for Substring {
         let Some(c) = text(source)? else { return Ok(Value::Null) };
         if self.units == Some(CharUnits::Octets) {
             let Some((from, to)) = span(args, length_of(c.len()))? else { return Ok(Value::Null) };
-            return Ok(Value::Char(octets_within(c, index(from), index(to))));
+            return Ok(Value::Char(octets_within(c, index(from), index(to)).into()));
         }
         let chars: Vec<char> = c.chars().collect();
         let Some((from, to)) = span(args, length_of(chars.len()))? else { return Ok(Value::Null) };
@@ -518,7 +523,8 @@ impl ScalarFunction for Fold {
         if let Value::Lob(l) = s {
             return Ok(Value::Lob(fold(l, self.upper, temp)?));
         }
-        Ok(text(s)?.map_or(Value::Null, |s| Value::Char(if self.upper { s.to_ascii_uppercase() } else { s.to_ascii_lowercase() })))
+        Ok(text(s)?
+            .map_or(Value::Null, |s| Value::Char(if self.upper { s.to_ascii_uppercase().into() } else { s.to_ascii_lowercase().into() })))
     }
     /// \[DESIGN\] (RULES.md D363) Of a vector of character strings, its
     /// text folded whole (`over_vectors::folded`).

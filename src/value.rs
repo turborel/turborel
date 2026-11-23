@@ -8,6 +8,7 @@ use crate::error::{Code, Result, SqlState, fail_with};
 
 mod binary;
 pub(crate) mod cast;
+pub mod chars;
 pub(crate) mod codec;
 pub mod collation;
 pub(crate) mod comparison;
@@ -29,10 +30,9 @@ mod spelled;
 pub mod types;
 mod units;
 pub mod xml;
-pub use units::CharUnits;
-
 pub use binary::{BYTE_BITS, Binary};
 pub use cast::{cast, cast_warned};
+pub use chars::CharString;
 pub use comparison::{Bucket, LobEquality, any_lob, bucket, compare, compare_checked, compare_strings, lob_proxies, proxies, row_proxies};
 pub use datetime::Datetime;
 pub use decfloat::DecFloat;
@@ -46,6 +46,7 @@ pub use operators::{ArithOp, CompOp, arith};
 pub use order::SortOrder;
 pub use spelled::{Spelled, spelling};
 pub use types::{Descriptor, SqlType};
+pub use units::CharUnits;
 
 // ---------------------------------------------------------------------------
 // Implementor-defined choices. The standard leaves each of these to us.
@@ -291,7 +292,7 @@ pub enum Value {
     /// The null value [X3.135-1986 §4.2].
     Null,
     /// A character string.
-    Char(String),
+    Char(CharString),
     /// An exact number.
     Exact(Decimal),
     /// An approximate number.
@@ -594,7 +595,6 @@ pub fn sort_cmp(a: &Value, b: &Value) -> Ordering {
     }
 }
 
-// Unit tests: the decisions of arithmetic and assignment, one test per
-// decision, with MC/DC cases written out (RULES.md R-TEST-1, R-COV-3).
+// Unit tests: a test per decision of arithmetic and assignment, its MC/DC cases written out (RULES.md R-TEST-1, R-COV-3).
 #[cfg(test)]
 mod tests;

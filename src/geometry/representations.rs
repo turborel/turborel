@@ -177,7 +177,7 @@ impl Systems {
     fn of(rows: &Value) -> Systems {
         let Value::Array(items) = rows else { return Systems(Vec::new()) };
         let int = |v: Option<&Value>| if let Some(Value::Exact(d)) = v { i32::try_from(d.units).ok() } else { None };
-        let text = |v: Option<&Value>| if let Some(Value::Char(s)) = v { Some(s.clone()) } else { None };
+        let text = |v: Option<&Value>| if let Some(Value::Char(s)) = v { Some(s.to_string()) } else { None };
         Systems(
             items
                 .iter()

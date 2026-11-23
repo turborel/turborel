@@ -55,7 +55,7 @@ fn large_objects_are_imported_by_their_locators() {
     let mut c = server.connect("X");
     let (long, chars) = (70_000_usize, 35_000_usize);
     let records = vec![
-        vec![exact(1), Value::Char("é".repeat(chars)), Value::Binary(Binary::new(vec![7; long]))],
+        vec![exact(1), Value::Char("é".repeat(chars).into()), Value::Binary(Binary::new(vec![7; long]))],
         vec![exact(2), Value::Char("short".into()), Value::Null],
     ];
     let mut source = Given::of(&["ID", "C", "B"], records);

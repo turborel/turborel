@@ -153,7 +153,7 @@ impl Item {
         let scalar = match value {
             Value::Null => return Ok(Item::Null),
             Value::Lob(lob) => match lob.kind() {
-                LobKind::Character => Value::Char(held_text(lob, ARGUMENT_TEXT)?),
+                LobKind::Character => Value::Char(held_text(lob, ARGUMENT_TEXT)?.into()),
                 LobKind::Binary => cast(value.clone(), &ARGUMENT_STRING)?,
             },
             Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Bool(_) | Value::Datetime(_) => value.clone(),
@@ -225,7 +225,7 @@ pub(super) fn json_input(value: &Value, rule: &str, keys: Keys) -> Result<Option
 pub(super) fn json_text(value: &Value, rule: &str) -> Result<Option<String>> {
     match value {
         Value::Null => Ok(None),
-        Value::Char(text) => Ok(Some(text.clone())),
+        Value::Char(text) => Ok(Some(text.to_string())),
         Value::Lob(lob) => match lob.kind() {
             LobKind::Character => held_text(lob, JSON_TEXT).map(Some),
             LobKind::Binary => Err(binary_text()),

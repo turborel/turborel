@@ -32,7 +32,7 @@ impl Session {
                     Some(auth) => format!("{}.{}", identifier(auth), identifier(&name.ident)),
                     None => identifier(&name.ident),
                 };
-                self.set_setting(GRAPH, &Value::Char(written))?;
+                self.set_setting(GRAPH, &Value::Char(written.into()))?;
                 Ok(Completion::Success)
             }
             GqlSession::SetTimeZone(zone) => {

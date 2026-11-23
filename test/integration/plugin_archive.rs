@@ -17,8 +17,8 @@ use crate::plugins::fixture::{install, manifest};
 /// plug-in VAULTED serving the archive `vault`.
 fn declaring(root: &Path) -> Database {
     let db = Database::new();
-    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(root.display().to_string())).unwrap();
-    db.set_setting("PLUGINS.HOST", &Value::Char(format!("VAULTED={}", root.join("VAULTED").join("1.0.0").display()))).unwrap();
+    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(root.display().to_string().into())).unwrap();
+    db.set_setting("PLUGINS.HOST", &Value::Char(format!("VAULTED={}", root.join("VAULTED").join("1.0.0").display()).into())).unwrap();
     db
 }
 

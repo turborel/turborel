@@ -28,7 +28,7 @@ const HIDDEN: RowId = 101;
 
 /// The key of text `k`.
 fn key(k: &str) -> Key {
-    Key(vec![Value::Char(k.to_owned())])
+    Key(vec![Value::Char(k.into())])
 }
 
 /// The rows of the two vertex tables and their edges.

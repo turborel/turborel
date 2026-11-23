@@ -241,19 +241,19 @@ pub fn replication() -> [Definition; 7] {
         node(
             MEMBERS,
             text.clone(),
-            Value::Char(String::new()),
+            Value::Char(String::new().into()),
             "The members of the replica group: each its number, =, and the host and port its replica takes frames at, by commas, as 1=db1.example.com:7423,2=db2.example.com:7423.",
         ),
         node(
             LISTEN,
             text.clone(),
-            Value::Char(String::new()),
+            Value::Char(String::new().into()),
             "The host and port this node takes the other members' frames at; empty, those its own member names in REPLICATION.MEMBERS.",
         ),
         node(
             REPLICATION_CA,
             text,
-            Value::Char(String::new()),
+            Value::Char(String::new().into()),
             "The PEM file of the authorities the members' certificates are verified against, each member presenting SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY to the others.",
         ),
         node(
@@ -326,21 +326,21 @@ fn proofs() -> [Definition; 4] {
         setting(
             TLS_CERTIFICATE,
             text.clone(),
-            Value::Char(String::new()),
+            Value::Char(String::new().into()),
             Effect::Connection,
             "The PEM file of the server's certificate chain, taken again for the connections after a change.",
         ),
         setting(
             TLS_KEY,
             text.clone(),
-            Value::Char(String::new()),
+            Value::Char(String::new().into()),
             Effect::Connection,
             "The PEM file of the server's private key, taken again for the connections after a change.",
         ),
         setting(
             TLS_CLIENT_CA,
             text,
-            Value::Char(String::new()),
+            Value::Char(String::new().into()),
             Effect::Connection,
             "The PEM file of the authorities whose certificates a TLS client may present to log in by; none asked for if empty.",
         ),
@@ -373,7 +373,7 @@ fn started() -> [Definition; 6] {
             Effect::Start,
             "The TCP port connections are taken at.",
         ),
-        setting(SOCKET, text, Value::Char(String::new()), Effect::Start, "The Unix socket or named pipe taken at, unless empty."),
+        setting(SOCKET, text, Value::Char(String::new().into()), Effect::Start, "The Unix socket or named pipe taken at, unless empty."),
         setting(
             TLS,
             Kind::Choice(TLS_MODES),
@@ -540,7 +540,7 @@ pub fn millis(db: &Database, name: &str) -> Option<std::time::Duration> {
 /// the server's.
 pub fn text(db: &Database, name: &str) -> String {
     match value(db, name) {
-        Some(Value::Char(s)) => s,
+        Some(Value::Char(s)) => s.to_string(),
         Some(
             Value::Exact(_)
             | Value::Approx(_)

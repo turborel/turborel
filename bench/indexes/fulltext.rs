@@ -80,7 +80,7 @@ fn insert(index: &dyn Index, threads: usize, total: u64) -> u64 {
     on_threads(threads, |t| {
         for n in 0..DOCUMENTS {
             let row = scatter(t as u64 * DOCUMENTS + n, total);
-            index.insert(Key(vec![Value::Char(document(row))]), row).unwrap();
+            index.insert(Key(vec![Value::Char(document(row).into())]), row).unwrap();
         }
     });
     total
@@ -101,5 +101,5 @@ fn document(row: u64) -> String {
 /// The TEXT_MATCHES lookup of `words`.
 fn matches(words: &str) -> Probe {
     let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument: Some(0) });
-    Probe::Predicate { predicate, value: Value::Char(words.to_owned()) }
+    Probe::Predicate { predicate, value: Value::Char(words.into()) }
 }

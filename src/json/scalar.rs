@@ -55,7 +55,7 @@ impl ScalarFunction for JsonScalar {
         let value = match value {
             Value::Null => return Ok(Value::Null),
             Value::Lob(lob) => match lob.kind() {
-                LobKind::Character => Value::Char(held_text(lob, SCALAR_TEXT)?),
+                LobKind::Character => Value::Char(held_text(lob, SCALAR_TEXT)?.into()),
                 LobKind::Binary => return Err(unscalar(value)),
             },
             Value::Char(_)

@@ -110,7 +110,7 @@ pub(crate) fn of_ordering(columns: &[(String, bool, bool)]) -> Descriptor {
 fn top_named(name: &str) -> Item {
     let mut item = Item::default();
     item.set(DescriptorItem::Level, exact(0));
-    item.set(DescriptorItem::Name, Value::Char(name.to_owned()));
+    item.set(DescriptorItem::Name, Value::Char(name.into()));
     item
 }
 

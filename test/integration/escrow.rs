@@ -23,8 +23,8 @@ const BOTH: [&str; 2] = ["ON", "OFF"];
 /// rows 1 to 4 of X 100, Y 0 and N 0.
 fn database(escrow: &str) -> Database {
     let db = Database::new();
-    db.set_setting("LOCKS.WAIT", &Value::Char("ON".to_owned())).unwrap();
-    db.set_setting("TRANSACTION.ESCROW", &Value::Char(escrow.to_owned())).unwrap();
+    db.set_setting("LOCKS.WAIT", &Value::Char("ON".into())).unwrap();
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char(escrow.into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (ID INTEGER NOT NULL, X DECIMAL(6,2), Y INTEGER, N INTEGER)").unwrap();
     let s = db.session("A");
     s.run("INSERT INTO T VALUES (1, 100, 0, 0), (2, 100, 0, 0), (3, 100, 0, 0), (4, 100, 0, 0)").unwrap();
@@ -278,7 +278,7 @@ fn what_could_see_a_reserved_sum_holds_the_row() {
         assert!(holds("ON", setup, (held, other)), "{setup:?}: {held}");
     }
     let db = database("ON");
-    db.set_setting("LOCKS.WAIT", &Value::Char("OFF".to_owned())).unwrap();
+    db.set_setting("LOCKS.WAIT", &Value::Char("OFF".into())).unwrap();
     let (a, b) = (db.session("A"), db.session("A"));
     a.run(plain).unwrap();
     assert_eq!(exec(&b, other).err(), Some(Code::Conflict), "no-wait: held");
@@ -315,7 +315,7 @@ fn a_crash_keeps_the_increments_committed_alone() {
         let scratch = Scratch::new("escrow-crash");
         let dir = scratch.path("db");
         let (crashed, _) = reopened_after_crash(&dir);
-        crashed.set_setting("LOCKS.WAIT", &Value::Char("ON".to_owned())).unwrap();
+        crashed.set_setting("LOCKS.WAIT", &Value::Char("ON".into())).unwrap();
         crashed.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (ID INTEGER NOT NULL, X DECIMAL(6,2))").unwrap();
         let s = crashed.session("A");
         s.run("INSERT INTO T VALUES (1, 0)").unwrap();

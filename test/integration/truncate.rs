@@ -80,7 +80,7 @@ fn rows_deleted_14_10() {
     b.rollback().unwrap();
     assert_eq!(a.run("TRUNCATE TABLE T").unwrap(), Completion::NoData, "GR7");
     a.run("INSERT INTO T VALUES (4, 40)").unwrap();
-    let mut p = Params::new().declare("TXT", DataType::varying(64), Value::Char("TRUNCATE TABLE T".to_owned()));
+    let mut p = Params::new().declare("TXT", DataType::varying(64), Value::Char("TRUNCATE TABLE T".into()));
     a.execute("PREPARE S FROM TXT", &mut p).unwrap();
     a.execute("EXECUTE S", &mut p).unwrap();
     assert_eq!(query(&a, "SELECT COUNT(*) FROM T"), ["0"], "prepared");

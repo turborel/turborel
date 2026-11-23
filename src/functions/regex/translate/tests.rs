@@ -9,7 +9,7 @@ use crate::value::lob::fixtures::{Temp, chunked, text};
 
 /// A character literal's value.
 fn chars(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// An exact number's value.

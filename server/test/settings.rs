@@ -40,7 +40,7 @@ fn a_served_database_waits_for_locks_by_default() {
     assert_eq!(shown(&db), "OFF");
     let server = Server::new(db.clone()).unwrap();
     assert_eq!(shown(&db), "ON");
-    db.set_setting("LOCKS.WAIT", &Value::Char("OFF".to_owned())).unwrap();
+    db.set_setting("LOCKS.WAIT", &Value::Char("OFF".into())).unwrap();
     assert_eq!(shown(&db), "OFF", "a value set stands");
     db.reset_setting("LOCKS.WAIT").unwrap();
     assert_eq!(shown(&db), "ON", "its default the server's");

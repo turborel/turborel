@@ -106,7 +106,7 @@ fn checksummed(dir: &Path, hash: Box<dyn HashFunction>) -> turborel::error::Resu
     let db = Database::new();
     let name = hash.name();
     db.register_hash_function(hash)?;
-    db.set_setting("STORAGE.CHECKSUM", &Value::Char(name.to_ascii_lowercase()))?;
+    db.set_setting("STORAGE.CHECKSUM", &Value::Char(name.to_ascii_lowercase().into()))?;
     db.set_setting("JOBS.POLICY", &Value::Char("MANUAL".into()))?;
     let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
     db.open_files(&fs, dir, &OpenOptions::default())?;

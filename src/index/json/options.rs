@@ -32,7 +32,7 @@ pub(super) fn options() -> Vec<TableOption> {
     let most = i128::try_from(MAX_NESTING).unwrap_or(i128::MAX);
     vec![
         TableOption::new(
-            (PATHS_ONLY_OPTION, Kind::Choice(SWITCHES), Value::Char(OFF.to_owned())),
+            (PATHS_ONLY_OPTION, Kind::Choice(SWITCHES), Value::Char(OFF.into())),
             Rebuild::Yes,
             "ON to post the paths of a document's nodes alone, not its values: smaller, and a filter of a value finds every document with its path.",
         ),

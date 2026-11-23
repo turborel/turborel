@@ -132,7 +132,7 @@ fn int(n: i128) -> Value {
 
 /// Rows of T of keys `keys`, each its key's V and W.
 fn given(keys: std::ops::Range<i128>) -> Vec<Vec<Value>> {
-    keys.map(|k| vec![int(k), Value::Char(format!("g{}", k % 10)), int(k % 97)]).collect()
+    keys.map(|k| vec![int(k), Value::Char(format!("g{}", k % 10).into()), int(k % 97)]).collect()
 }
 
 /// Verifies: [ISO/IEC 9075:1992 §17.9 GR5a, §13.8]; [EXTENSION] RULES.md

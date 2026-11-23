@@ -53,8 +53,8 @@ impl Reader {
     pub(super) fn value(&mut self) -> Result<Value, Refusal> {
         let at = self.at;
         match self.peek() {
-            Some('"') => self.basic_string().map(Value::Char),
-            Some('\'') => self.literal_string().map(Value::Char),
+            Some('"') => self.basic_string().map(|s| Value::Char(s.into())),
+            Some('\'') => self.literal_string().map(|s| Value::Char(s.into())),
             Some('[') => self.array(),
             Some('{') => refuse(at, "inline tables, {...}, are not taken"),
             Some('+' | '-' | '0'..='9') => self.number(),
@@ -81,8 +81,8 @@ impl Reader {
             self.bump();
         }
         match word.as_str() {
-            TRUE => Ok(Value::Char(ON.to_owned())),
-            FALSE => Ok(Value::Char(OFF.to_owned())),
+            TRUE => Ok(Value::Char(ON.into())),
+            FALSE => Ok(Value::Char(OFF.into())),
             INF | NAN => refuse(at, "infinite and not-a-number floats are not taken"),
             other => refuse(at, &format!("{other} is not a value: a string is quoted, \"{other}\"; a boolean is true or false")),
         }
@@ -201,7 +201,7 @@ impl Reader {
             }
         }
         self.bump();
-        Ok(Value::Char(strings.join(SEPARATOR)))
+        Ok(Value::Char(strings.join(SEPARATOR).into()))
     }
 
     /// A string of an array, holding no comma, as the strings are given

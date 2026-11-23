@@ -41,7 +41,7 @@ fn uuid_texts_are_read_in_each_form() {
 /// number cannot be cast (22005).
 #[test]
 fn uuid_casts_both_ways() {
-    let u = cast(Value::Char(SAMPLE.to_uppercase()), &UuidType::data_type()).unwrap();
+    let u = cast(Value::Char(SAMPLE.to_uppercase().into()), &UuidType::data_type()).unwrap();
     assert_eq!(u.to_string(), SAMPLE);
     assert_eq!(cast(u.clone(), &DataType::varying(40)).unwrap().to_string(), SAMPLE);
     let bytes = cast(u.clone(), &DataType::VarBinary { length: 16 }).unwrap();

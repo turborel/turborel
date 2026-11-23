@@ -100,7 +100,7 @@ impl ScalarFunction for FamilySpecificType {
         let most =
             self.family.most_specific(v).ok_or_else(|| crate::error::SqlError::new(Code::Corrupt, "a value of no type of its family"))?;
         let quoted = |part: &str| format!("\"{}\"", part.replace('"', "\"\""));
-        Ok(Value::Char(format!("{}.{}.{}", quoted(&self.catalog), quoted(crate::system::INFORMATION_SCHEMA), quoted(most.name()))))
+        Ok(Value::Char(format!("{}.{}.{}", quoted(&self.catalog), quoted(crate::system::INFORMATION_SCHEMA), quoted(most.name())).into()))
     }
     fn deterministic(&self) -> bool {
         true

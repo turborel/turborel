@@ -84,7 +84,7 @@ fn integers(all: &[i64]) -> Value {
 fn values(r: Row) -> Vec<Value> {
     let (x, y, z) = r.point.map_or((None, None, None), |(x, y, z)| (Some(x), Some(y), z));
     vec![
-        Value::Char(r.item),
+        Value::Char(r.item.into()),
         whole(r.order),
         or_null(x, Value::Approx),
         or_null(y, Value::Approx),
@@ -92,7 +92,7 @@ fn values(r: Row) -> Vec<Value> {
         or_null(r.triangle, |t| integers(&t)),
         or_null(r.visibility, whole),
         or_null(r.id, whole),
-        or_null(r.tag, Value::Char),
+        or_null(r.tag, |s| Value::Char(s.into())),
         or_null(r.element, |e| integers(&e)),
     ]
 }
@@ -157,7 +157,7 @@ fn row(v: &Value) -> Result<Option<Row>> {
         return Err(invalid("the table has not the ten columns"));
     };
     let (Value::Char(item), Value::Exact(order)) = (item, order) else { return Ok(None) };
-    let text = |field: &Value| if let Value::Char(s) = field { Some(s.clone()) } else { None };
+    let text = |field: &Value| if let Value::Char(s) = field { Some(s.to_string()) } else { None };
     let opt = |field: &Value| if field.is_null() { Ok(None) } else { number(field).map(Some) };
     let z = opt(z)?;
     let point = opt(x)?.zip(opt(y)?).map(|(x, y)| (x, y, z));

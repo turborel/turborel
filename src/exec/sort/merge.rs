@@ -314,7 +314,9 @@ mod tests {
         let int = |n: i128| Value::Exact(Decimal::new(n, 0_u32));
         let columns: [Box<dyn Fn(i128) -> Value>; 4] = [
             Box::new(move |n| if n % 7_i128 == 0 { Value::Null } else { int(n * 7919_i128 % 13_i128) }),
-            Box::new(|n| if n % 5_i128 == 0 { Value::Null } else { Value::Char(format!("a shared start {}", n * 31_i128 % 11_i128)) }),
+            Box::new(
+                |n| if n % 5_i128 == 0 { Value::Null } else { Value::Char(format!("a shared start {}", n * 31_i128 % 11_i128).into()) },
+            ),
             Box::new(|n| {
                 if n % 6_i128 == 0 {
                     Value::Null

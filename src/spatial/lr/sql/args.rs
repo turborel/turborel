@@ -128,7 +128,7 @@ fn not_of(at: usize, what: &str) -> SqlError {
 /// As reading the large object.
 pub fn text_of(v: &Value) -> Result<Option<String>> {
     if let Value::Char(s) = v {
-        return Ok(Some(s.clone()));
+        return Ok(Some(s.to_string()));
     }
     let Value::Lob(lob) = v else { return Ok(None) };
     if !matches!(lob.kind(), crate::value::lob::LobKind::Character) {
@@ -148,7 +148,7 @@ pub fn int(n: i32) -> Value {
 
 /// The CHARACTER VARYING `s`.
 pub fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// `v`, or the null value.

@@ -20,7 +20,7 @@ fn read(text: &[u8], dialect: Dialect) -> Result<Vec<(Vec<Got>, Position)>, Sour
 fn got(v: Value) -> Got {
     match v {
         Value::Null => None,
-        Value::Char(s) => Some(s),
+        Value::Char(s) => Some(s.to_string()),
         other @ (Value::Exact(_)
         | Value::Approx(_)
         | Value::DecFloat(_)

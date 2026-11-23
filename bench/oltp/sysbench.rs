@@ -172,7 +172,7 @@ impl<'a, C: Client> Terminal<'a, C> {
                 self.run_on((t, INDEX_UPDATE), &[int(id)], ends)
             }
             Step::NonIndexUpdate => {
-                let c = Value::Char(self.random.template(C_TEMPLATE));
+                let c = Value::Char(self.random.template(C_TEMPLATE).into());
                 let id = self.id();
                 self.run_on((t, NON_INDEX_UPDATE), &[c, int(id)], ends)
             }
@@ -180,7 +180,7 @@ impl<'a, C: Client> Terminal<'a, C> {
                 let (id, k) = (self.id(), self.id());
                 self.run_on((t, DELETE), &[int(id)], ends)?;
                 let (c, pad) = (self.random.template(C_TEMPLATE), self.random.template(PAD_TEMPLATE));
-                self.run_on((t, INSERT), &[int(id), int(k), Value::Char(c), Value::Char(pad)], ends)
+                self.run_on((t, INSERT), &[int(id), int(k), Value::Char(c.into()), Value::Char(pad.into())], ends)
             }
             Step::Delete => {
                 let id = self.id();

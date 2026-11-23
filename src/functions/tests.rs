@@ -85,7 +85,7 @@ impl Accumulator for Listed {
         Ok(())
     }
     fn finish(&self) -> Result<Value> {
-        Ok(Value::Char(self.0.join(",")))
+        Ok(Value::Char(self.0.join(",").into()))
     }
 }
 
@@ -185,7 +185,7 @@ fn set_functions_merge_their_states_as_their_values() {
         let (all, split) = merged(function, DataType::Interval(q), &intervals, 1_usize);
         assert_eq!(all, split, "{} of intervals", function.name());
     }
-    let ties = [Value::Char("a".to_owned()), Value::Char("a  ".to_owned())];
+    let ties = [Value::Char("a".into()), Value::Char("a  ".into())];
     let text = DataType::varying(3);
     assert_eq!(merged(&Extreme { max: true }, text, &ties, 1_usize).1, "Ok(Char(\"a\"))");
     let double = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };

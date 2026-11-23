@@ -32,7 +32,7 @@ fn vector(v: &[f64]) -> Value {
 
 /// The key of `text`, or null, and the vector `v`, or null.
 fn key(text: Option<&str>, v: Option<&[f64]>) -> Key {
-    Key(vec![text.map_or(Value::Null, |t| Value::Char(t.to_owned())), v.map_or(Value::Null, vector)])
+    Key(vec![text.map_or(Value::Null, |t| Value::Char(t.into())), v.map_or(Value::Null, vector)])
 }
 
 /// Every row the index holds, in order.
@@ -112,7 +112,7 @@ fn a_change_reaches_both_parts_or_neither() {
     index.insert(key(Some("lazy dog"), None), 3).unwrap();
     index.insert(key(None, None), 4).unwrap();
     assert_eq!(every_row(&index), [1, 2, 3]);
-    let wide = Key(vec![Value::Char("ghost words".to_owned()), vector(&WIDE)]);
+    let wide = Key(vec![Value::Char("ghost words".into()), vector(&WIDE)]);
     assert!(index.insert(wide.clone(), 5).is_err());
     assert_eq!(every_row(&index), [1, 2, 3], "the text part's entry taken back");
     assert!(index.insert(Key(vec![Value::Null]), 6).is_err());
@@ -136,9 +136,9 @@ fn a_change_reaches_both_parts_or_neither() {
 #[test]
 fn each_part_has_its_options_and_locator() {
     let options = vec![
-        (VECTOR_METHOD_OPTION.to_owned(), Value::Char("IVF".to_owned())),
-        ("IVF.METRIC".to_owned(), Value::Char("EUCLIDEAN".to_owned())),
-        ("HNSW.M".to_owned(), Value::Char("8".to_owned())),
+        (VECTOR_METHOD_OPTION.to_owned(), Value::Char("IVF".into())),
+        ("IVF.METRIC".to_owned(), Value::Char("EUCLIDEAN".into())),
+        ("HNSW.M".to_owned(), Value::Char("8".into())),
         ("FULLTEXT.K1".to_owned(), Value::Approx(1.5_f64)),
     ];
     let (text, vector) = parts(&desc(options));
@@ -174,7 +174,7 @@ fn the_method_serves_each_column_as_its_part_does() {
     assert_eq!(method.supports_nearest(&query(TEXT, &ONES, 2), &both), NearestSupport::No);
     assert_eq!(method.supports_nearest(&query(2, &ONES, 2), &both), NearestSupport::No);
     assert_eq!(method.supports_nearest(&query(VECTOR, &ONES, 2), &both[..1]), NearestSupport::No);
-    let ivf = desc(vec![(VECTOR_METHOD_OPTION.to_owned(), Value::Char("IVF".to_owned()))]);
+    let ivf = desc(vec![(VECTOR_METHOD_OPTION.to_owned(), Value::Char("IVF".into()))]);
     assert_eq!(method.metric(&ivf), IvfMethod::in_memory().metric(&parts(&ivf).1));
     assert!(method.metric(&desc(Vec::new())).is_some());
     assert!(method.create(&both[..1]).is_ok(), "a text alone");
@@ -237,7 +237,7 @@ fn a_predicate_of_the_text_column_reads_the_text_part() {
     index.insert(key(Some("quick brown fox"), Some(&EAST)), 1).unwrap();
     index.insert(key(Some("lazy dog"), None), 2).unwrap();
     index.insert(key(None, Some(&NORTH)), 3).unwrap();
-    let probe = |column: usize| Probe::Predicate { predicate: Box::new(predicate(column)), value: Value::Char("fox".to_owned()) };
+    let probe = |column: usize| Probe::Predicate { predicate: Box::new(predicate(column)), value: Value::Char("fox".into()) };
     let found: Vec<(Key, RowId)> = Arc::clone(&index).search(&probe(0), KeyOrder::Ascending).map(Result::unwrap).collect();
     assert_eq!(found, [(Key(vec![Value::Binary(crate::value::Binary::new(Vec::new()))]), 1)]);
     assert!(index.estimate(&probe(0)).is_some());
@@ -254,12 +254,12 @@ fn a_text_alone_is_its_text_part() {
     let method = in_memory();
     let text = [DataType::varying(100)];
     let index: Arc<dyn Index> = Arc::from(method.create(&text).unwrap());
-    index.insert(Key(vec![Value::Char("quick brown fox".to_owned())]), 1).unwrap();
-    index.insert(Key(vec![Value::Char("lazy dog".to_owned())]), 2).unwrap();
+    index.insert(Key(vec![Value::Char("quick brown fox".into())]), 1).unwrap();
+    index.insert(Key(vec![Value::Char("lazy dog".into())]), 2).unwrap();
     let function = ScalarRef(Arc::new(crate::fulltext::matches::TextMatches));
     let predicate = Predicate { function, column: 0, argument: Some(0) };
     assert!(method.supports_predicate(&predicate, &text));
-    let probe = Probe::Predicate { predicate: Box::new(predicate), value: Value::Char("fox".to_owned()) };
+    let probe = Probe::Predicate { predicate: Box::new(predicate), value: Value::Char("fox".into()) };
     let rows: Vec<RowId> = Arc::clone(&index).search(&probe, KeyOrder::Ascending).map(|e| e.unwrap().1).collect();
     assert_eq!(rows, [1]);
     assert_eq!(method.supports_nearest(&query(1, &EAST, 2), &text), NearestSupport::No);

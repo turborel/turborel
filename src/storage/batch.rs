@@ -189,7 +189,7 @@ impl Texts {
 
     /// The values, made the first time they are asked for.
     pub fn values(&self) -> &[Value] {
-        self.made.get_or_init(|| (0..self.len()).map(|n| self.get(n).map_or(Value::Null, |s| Value::Char(s.to_owned()))).collect())
+        self.made.get_or_init(|| (0..self.len()).map(|n| self.get(n).map_or(Value::Null, |s| Value::Char(s.into()))).collect())
     }
 
     /// Its values, owned.
@@ -507,7 +507,7 @@ impl Cell<'_> {
             Cell::Value(v) => (*v).clone(),
             Cell::Exact(units, scale) => Value::Exact(Decimal::new(i128::from(*units), *scale)),
             Cell::Approx(f) => Value::Approx(*f),
-            Cell::Text(text) => Value::Char((*text).to_owned()),
+            Cell::Text(text) => Value::Char((*text).into()),
             Cell::Datetime(d) => Value::Datetime(*d),
             Cell::Bool(b) => Value::Bool(*b),
             Cell::Null => Value::Null,

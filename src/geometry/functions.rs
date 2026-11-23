@@ -402,7 +402,7 @@ impl GeometryFunction {
         let most = kind::most_specific(bytes).ok_or_else(|| invalid("the value's type code names no geometry type"))?;
         let basic = wkb.get(1..5).is_some_and(|code| matches!(code, [1..=7, 0, 0, 0]));
         Ok(Some(match self {
-            Self::TypeName => Value::Char(most.sql_name().to_owned()),
+            Self::TypeName => Value::Char(most.sql_name().into()),
             Self::Srid => Value::Exact(Decimal::new(i128::from(srid), 0)),
             Self::AsBinary => Value::Lob(Lob::of_octets(wkb)),
             Self::SetSrid => {

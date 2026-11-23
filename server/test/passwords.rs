@@ -33,7 +33,7 @@ fn served(pki: &Pki) -> (Database, Running) {
     db.set_owner("ANN").unwrap();
     let password = Arc::new(pbkdf2::Password::new(db.clone(), &made).unwrap());
     #[cfg(any(unix, windows))]
-    db.set_setting(turborel_server::settings::SOCKET, &turborel::value::Value::Char(pki.scratch.socket("s").display().to_string()))
+    db.set_setting(turborel_server::settings::SOCKET, &turborel::value::Value::Char(pki.scratch.socket("s").display().to_string().into()))
         .unwrap();
     let server = start_with(&db, &[], vec![password]);
     (db, server)

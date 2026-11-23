@@ -17,7 +17,7 @@ use crate::logical::{Cond, Expr, Truth, expr_columns};
 use crate::params::Params;
 use crate::storage::{Row, RowId};
 use crate::value::cast::cast;
-use crate::value::{DataType, Decimal, Value, assign};
+use crate::value::{CharString, DataType, Decimal, Value, assign};
 
 /// [ISO/IEC 9075:1992 §11.19 GR11] Rows inserted or updated by an update
 /// operation, which spans the views WITH CHECK OPTION `checks`, are rows of
@@ -371,16 +371,17 @@ fn retrieved(fetched: &Value, target: &DataType, assign_rule: &str) -> Result<(V
             let (m, l) = (units.count(s), usize::try_from(*length).unwrap_or(usize::MAX));
             if m > l {
                 let kept = units.prefix(s, l);
-                let padded = format!("{kept}{}", " ".repeat(l.saturating_sub(units.count(kept))));
+                let padded = CharString::padded(kept, l.saturating_sub(units.count(kept)));
                 return Ok((Value::Char(padded), indicator_of(m)?, cut));
             }
-            Ok((Value::Char(format!("{s}{}", " ".repeat(l.saturating_sub(m)))), 0, None))
+            // Of its length already: itself, its buffer shared.
+            Ok((Value::Char(if m == l { s.clone() } else { CharString::padded(s, l.saturating_sub(m)) }), 0, None))
         }
         // [§9.1 GR3d, GR3e] as it is, or its first L characters.
         (DataType::Varying { length, units }, Value::Char(s)) => {
             let (m, l) = (units.count(s), usize::try_from(*length).unwrap_or(usize::MAX));
             if m > l {
-                return Ok((Value::Char(units.prefix(s, l).to_owned()), indicator_of(m)?, cut));
+                return Ok((Value::Char(units.prefix(s, l).into()), indicator_of(m)?, cut));
             }
             Ok((Value::Char(s.clone()), 0, None))
         }

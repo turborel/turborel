@@ -142,7 +142,7 @@ impl ColumnDesc {
         let of_domain = self.domain.as_ref().and_then(|d| d.default.as_ref());
         match self.default.as_ref().or(of_domain) {
             Some(ColumnDefault::Value(v)) => v.clone(),
-            Some(ColumnDefault::User(f)) => user.value(*f).map_or(Value::Null, |s| Value::Char(s.to_owned())),
+            Some(ColumnDefault::User(f)) => user.value(*f).map_or(Value::Null, |s| Value::Char(s.into())),
             Some(ColumnDefault::Datetime(moment, precision, false)) => current(*moment, *precision, now.instant()),
             Some(ColumnDefault::Datetime(moment, precision, true)) => current_local(*moment, *precision, now.instant()),
             None => Value::Null,

@@ -116,10 +116,10 @@ mod tests {
     /// tree, and a left row's value not comparable finds nothing known.
     #[test]
     fn values_not_comparable_are_found_out() {
-        let mixed = vec![exact(1), Value::Char("a".to_owned())];
+        let mixed = vec![exact(1), Value::Char("a".into())];
         assert!(Tree::of(mixed, CompOp::Gt).is_none());
         let tree = Tree::of(vec![exact(1), exact(2)], CompOp::Gt).unwrap();
-        assert!(tree.found(0..2, &Value::Char("a".to_owned()), &mut Vec::new()).is_none());
+        assert!(tree.found(0..2, &Value::Char("a".into()), &mut Vec::new()).is_none());
         assert!(Tree::of(Vec::new(), CompOp::Lt).is_some());
     }
 }

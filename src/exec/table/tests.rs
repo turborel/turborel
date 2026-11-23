@@ -64,9 +64,9 @@ fn keys_hash_by_xxh3_in_any_vector() {
     assert_eq!(hash_values(&seed, &[exact(-5, 0)]), word);
     let long = "z".repeat(300);
     let text = xxh3_64_with_seed(long.as_bytes(), 0x00C0_FFEE);
-    assert_eq!(hash_values(&seed, &[Value::Char(format!("{long}   "))]), text);
+    assert_eq!(hash_values(&seed, &[Value::Char(format!("{long}   ").into())]), text);
     let both: Vec<u8> = word.to_le_bytes().into_iter().chain(text.to_le_bytes()).collect();
-    assert_eq!(hash_values(&seed, &[exact(-5, 0), Value::Char(long.clone())]), xxh3_64_with_seed(&both, 0x00C0_FFEE));
+    assert_eq!(hash_values(&seed, &[exact(-5, 0), Value::Char(long.clone().into())]), xxh3_64_with_seed(&both, 0x00C0_FFEE));
     let entries = std::sync::Arc::new(Texts::new(format!("ab{long}c  "), vec![2, 302, 305], None));
     let nulls = Mask::from_bools(&[false, true, false, false, false]);
     let coded = Texts::coded(Coded { codes: vec![1, 0, 2, 0, 1], entries }, Some(nulls));

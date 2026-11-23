@@ -80,7 +80,7 @@ pub fn xml_lexical(v: &Value, encoding: BinaryEncoding, charmapping: bool) -> Re
 fn as_string(v: &Value) -> Result<String> {
     let varying = DataType::Varying { length: MAX_CHARACTER_LENGTH, units: CharUnits::default() };
     let cast = crate::value::cast(v.clone(), &varying)?;
-    if let Value::Char(s) = cast { Ok(s) } else { Ok(cast.to_string()) }
+    if let Value::Char(s) = cast { Ok(s.to_string()) } else { Ok(cast.to_string()) }
 }
 
 /// [§9.8 GR9a] The string `s` as XML text: each character an XML 1.1

@@ -114,7 +114,7 @@ pub(super) fn trimmed(source: &Value, octet: u8, ends: Ends) -> Result<Value> {
         Value::Binary(b) => {
             let (lead, trail) = counts(b.bytes(), octet, ends);
             let kept = b.bytes().get(lead..b.bytes().len().saturating_sub(trail)).unwrap_or_default();
-            Ok(Value::Binary(Binary::new(kept.to_vec())))
+            Ok(Value::Binary(Binary::of(kept)))
         }
         Value::Lob(l) => Ok(Value::Lob(trimmed_lob(l, octet, ends)?)),
         Value::Null

@@ -27,7 +27,7 @@ fn int(n: i128) -> Value {
 }
 
 pub(super) fn row(n: i128) -> Row {
-    vec![int(n), Value::Char(format!("text {n}"))]
+    vec![int(n), Value::Char(format!("text {n}").into())]
 }
 
 /// `table`, its zones kept from its first row, as those of a table a scan

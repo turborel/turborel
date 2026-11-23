@@ -83,7 +83,7 @@ impl Session {
     /// the module says.
     fn embedded_remade(&self, st: &State, ix: &IndexDesc, given: &[(String, Option<Value>)]) -> Result<()> {
         let mut building = given.to_vec();
-        building.push((STATE_OPTION.to_owned(), Some(Value::Char(STATES[1].to_owned()))));
+        building.push((STATE_OPTION.to_owned(), Some(Value::Char(STATES[1].into()))));
         let spec = self.checked(st, ix, &building)?;
         self.db.noted(self.db.altered_index(&ix.name, &building, false))?;
         let made = self

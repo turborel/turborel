@@ -6,7 +6,7 @@ use crate::value::{Binary, Value};
 
 /// A character string.
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// `s IS JSON kind keys`, a truth value.

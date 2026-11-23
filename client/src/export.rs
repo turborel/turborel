@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
         assert_eq!(csv_field(" pad"), "\" pad\"");
         assert_eq!(csv_field("two\nlines"), "\"two\nlines\"");
-        assert_eq!(csv_value(&Value::Char(String::new())), "\"\"");
+        assert_eq!(csv_value(&Value::Char(String::new().into())), "\"\"");
         assert_eq!(csv_value(&Value::Null), "");
         assert_eq!(csv_record(["1".to_owned(), String::new()].into_iter()), b"1,\r\n");
     }

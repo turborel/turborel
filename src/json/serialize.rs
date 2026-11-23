@@ -87,7 +87,7 @@ pub fn serialize_as(item: &Item, target: &DataType) -> Result<Value> {
         )
         .with_state(SqlState::STRING_DATA_RIGHT_TRUNCATION));
     }
-    cast(Value::Char(text), target)
+    cast(Value::Char(text.into()), target)
 }
 
 /// [§9.43 SR2a] That `target` is a character string type, which JSON text

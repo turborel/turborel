@@ -14,7 +14,7 @@ fn table() -> QualifiedName {
 fn edge_row() -> Row {
     vec![
         Value::Null,
-        Value::Char(String::new()),
+        Value::Char(String::new().into()),
         Value::Char("héllo ✓".into()),
         Value::Exact(Decimal::new(i128::MIN, 0)),
         Value::Exact(Decimal::new(i128::MAX, 18)),

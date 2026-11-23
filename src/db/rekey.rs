@@ -251,7 +251,7 @@ impl Database {
         if st.rekey.untold.swap(false, Ordering::AcqRel) {
             let Some((pool, file)) = st.rekey.data() else { return };
             let Ok((current, _)) = pool.formats_of(file) else { return };
-            let encodings = if let Value::Char(s) = st.settings.get(ENCODINGS) { s.clone() } else { String::new() };
+            let encodings = if let Value::Char(s) = st.settings.get(ENCODINGS) { s.to_string() } else { String::new() };
             self.emit(&Event::FormatsSettled { encodings, checksum_key: current.key });
         }
     }

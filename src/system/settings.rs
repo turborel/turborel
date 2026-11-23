@@ -72,7 +72,7 @@ impl SystemTable for Settings {
                     shown(&l.value),
                     text(source),
                     shown(&d.default),
-                    shown(&Value::Char(d.kind.described())),
+                    shown(&Value::Char(d.kind.described().into())),
                     yes(d.per_session),
                     text(effect),
                     text(&d.doc),

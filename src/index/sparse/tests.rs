@@ -100,11 +100,11 @@ fn refusals() {
 fn options_give_the_layout_and_change_in_place() {
     let named = |n: &str, v: Value| vec![(n.to_owned(), v)];
     assert_eq!(options::layout_of(&desc(Vec::new())).unwrap(), Layout { quantization: Quantization::Uint8, block: 128 });
-    let half = named(QUANTIZATION_OPTION, Value::Char("FLOAT16".to_owned()));
+    let half = named(QUANTIZATION_OPTION, Value::Char("FLOAT16".into()));
     assert_eq!(options::layout_of(&desc(half.clone())).unwrap().quantization, Quantization::Float16);
     let small = named(BLOCK_SIZE_OPTION, Value::Exact(crate::value::Decimal::new(8, 0)));
     assert_eq!(options::layout_of(&desc(small)).unwrap_err().code, Code::SyntaxRule);
-    let unknown = named(QUANTIZATION_OPTION, Value::Char("PQ".to_owned()));
+    let unknown = named(QUANTIZATION_OPTION, Value::Char("PQ".into()));
     assert_eq!(options::layout_of(&desc(unknown)).unwrap_err().code, Code::SyntaxRule);
     let (method, index) = index();
     assert_eq!(method.index_options().len(), 2);

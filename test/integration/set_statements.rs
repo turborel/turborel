@@ -105,7 +105,7 @@ fn transaction_modes_are_checked_14_1() {
 /// is READ ONLY, as it is written [§14.1 SR4].
 #[test]
 fn transaction_isolation_is_the_level_of_one_that_names_none() {
-    let word = |w: &str| Value::Char(w.to_owned());
+    let word = |w: &str| Value::Char(w.into());
     let level = |s: &Session| {
         count(s, "SELECT ID FROM T");
         let mode = s.transaction_mode().unwrap();

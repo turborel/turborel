@@ -305,7 +305,7 @@ fn setting(text: &str) -> Result<(String, Value), String> {
     let value = match (given.parse::<i128>(), given.parse::<f64>()) {
         (Ok(n), _) => Value::Exact(Decimal::new(n, 0)),
         (Err(_), Ok(x)) => Value::Approx(x),
-        (Err(_), Err(_)) => Value::Char(given.to_owned()),
+        (Err(_), Err(_)) => Value::Char(given.into()),
     };
     Ok((name.trim().to_owned(), value))
 }

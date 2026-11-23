@@ -22,7 +22,7 @@ fn space(broken: bool) -> ListSpace {
 }
 
 fn row(n: u64) -> Row {
-    vec![number(n), Value::Char(format!("row {n}"))]
+    vec![number(n), Value::Char(format!("row {n}").into())]
 }
 
 /// `item`, as its debugging form shows it: values compare so.

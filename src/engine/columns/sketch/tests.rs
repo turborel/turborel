@@ -42,14 +42,19 @@ fn url(n: u32) -> Value {
         return Value::Null;
     }
     if n % 7 == 3 {
-        return Value::Char("http://often.example/".to_owned());
+        return Value::Char("http://often.example/".into());
     }
     let pad = if n.is_multiple_of(13) { "  " } else { "" };
-    Value::Char(format!("http://site{}.example/page{}{pad}", n.wrapping_mul(7919) % 500, n.wrapping_mul(104_729) % 100_000))
+    Value::Char(format!("http://site{}.example/page{}{pad}", n.wrapping_mul(7919) % 500, n.wrapping_mul(104_729) % 100_000).into())
 }
 
 fn row(n: u32) -> Row {
-    vec![Value::Exact(Decimal::new(i128::from(n), 0)), url(n), Value::Char(format!("w{}", n % 6)), Value::Char(format!("c{}", n % 900))]
+    vec![
+        Value::Exact(Decimal::new(i128::from(n), 0)),
+        url(n),
+        Value::Char(format!("w{}", n % 6).into()),
+        Value::Char(format!("c{}", n % 900).into()),
+    ]
 }
 
 /// Verifies: [DESIGN] RULES.md D525, texts ordered padded: of texts with
@@ -91,7 +96,7 @@ fn bins_order_as_values(edges: &Edges, values: &[&Value], more: &[&str]) {
 /// of order or of too many codes refused.
 #[test]
 fn codes_order_as_their_values() {
-    let few: Vec<Value> = (0_u32..1000).map(|n| Value::Char(format!("w{}", n % 40))).collect();
+    let few: Vec<Value> = (0_u32..1000).map(|n| Value::Char(format!("w{}", n % 40).into())).collect();
     let few: Vec<&Value> = few.iter().collect();
     let edges = Edges::of(&few);
     assert_eq!(edges.each().count(), 40);

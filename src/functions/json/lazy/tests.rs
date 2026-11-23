@@ -18,7 +18,7 @@ fn integer() -> DataType {
 fn taken(path: &str, context: &str, on_empty: ValueSlot, on_error: ValueSlot) -> Result<Value> {
     let operation = JsonOperation::Value { returning: integer(), on_empty, on_error };
     let call = JsonCall::new(path, parse_path(path, Clocked::default())?, Vec::new(), operation);
-    JsonValueTaken::new(call).call(&[Value::Char(context.to_owned())])
+    JsonValueTaken::new(call).call(&[Value::Char(context.into())])
 }
 
 /// The code `n` of a behavior taken, as a value shows it.
@@ -60,9 +60,9 @@ fn the_behavior_taken() {
 #[test]
 fn whether_a_cast_fails() {
     let fails = JsonCastFails::new(integer());
-    assert!(matches!(fails.call(&[Value::Char("x".to_owned())]).unwrap(), Value::Bool(true)));
-    assert!(matches!(fails.call(&[Value::Char("99999999999".to_owned())]).unwrap(), Value::Bool(true)));
-    assert!(matches!(fails.call(&[Value::Char("12".to_owned())]).unwrap(), Value::Bool(false)));
+    assert!(matches!(fails.call(&[Value::Char("x".into())]).unwrap(), Value::Bool(true)));
+    assert!(matches!(fails.call(&[Value::Char("99999999999".into())]).unwrap(), Value::Bool(true)));
+    assert!(matches!(fails.call(&[Value::Char("12".into())]).unwrap(), Value::Bool(false)));
     assert!(matches!(fails.call(&[Value::Null]).unwrap(), Value::Bool(false)));
     assert_eq!(fails.call(&[]).unwrap_err().code, Code::Api);
     assert_eq!(fails.return_type(&[]).unwrap(), DataType::Boolean);

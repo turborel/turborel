@@ -51,7 +51,7 @@ pub const ENCODINGS: &str = "ENCODINGS";
 /// The option `ENCODINGS`, as the database declares it.
 pub fn encodings_option() -> TableOption {
     TableOption::new(
-        (ENCODINGS, Kind::Encodings, Value::Char(String::new())),
+        (ENCODINGS, Kind::Encodings, Value::Char(String::new().into())),
         Rebuild::No,
         "The registered encodings, by commas, such as a compression or an encryption with its key (AES-256-GCM:KEY), that the table's rows pass through as they are written, in its storage and the log; rows written before a change are read through their own.",
     )

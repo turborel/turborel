@@ -47,7 +47,7 @@ const LOCATOR_VERSION: u8 = 1;
 /// The option the method declares of its own.
 fn own() -> TableOption {
     TableOption::new(
-        (VECTOR_METHOD_OPTION, Kind::Choice(&VECTOR_METHODS), Value::Char(DEFAULT_VECTOR_METHOD.to_owned())),
+        (VECTOR_METHOD_OPTION, Kind::Choice(&VECTOR_METHODS), Value::Char(DEFAULT_VECTOR_METHOD.into())),
         Rebuild::Yes,
         "The index method of the vector part: HNSW, IVF, DISKANN, or INVERTED for a SPARSE column.",
     )
@@ -58,19 +58,19 @@ fn own() -> TableOption {
 /// (`db/index_statements/hybrid_embedded.rs`).
 pub(super) fn declared() -> Vec<TableOption> {
     let text = |name: &'static str, help: &'static str| {
-        TableOption::new((name, Kind::Text { max: MOST_TEXT }, Value::Char(String::new())), Rebuild::No, help)
+        TableOption::new((name, Kind::Text { max: MOST_TEXT }, Value::Char(String::new().into())), Rebuild::No, help)
     };
     vec![
         own(),
         text(MODEL_OPTION, "The embedding model that embeds the chunks of the text, if the index embeds it (§11.1)."),
         text(CHUNKER_OPTION, "How the text is cut into chunks, as CHUNK_TEXT reads it, if the index embeds it (§12.3)."),
         TableOption::new(
-            (MODE_OPTION, Kind::Choice(&MODES), Value::Char(MODES[0].to_owned())),
+            (MODE_OPTION, Kind::Choice(&MODES), Value::Char(MODES[0].into())),
             Rebuild::No,
             "SYNC to embed a chunk as it is written, ASYNC after commit, if the index embeds its text (R12.6).",
         ),
         TableOption::new(
-            (STATE_OPTION, Kind::Choice(&STATES), Value::Char(STATES[0].to_owned())),
+            (STATE_OPTION, Kind::Choice(&STATES), Value::Char(STATES[0].into())),
             Rebuild::No,
             "READY, or BUILDING or DROPPING while an index that embeds its text makes or drops its chunks; set by the index alone.",
         ),

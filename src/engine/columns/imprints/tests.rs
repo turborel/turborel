@@ -47,7 +47,7 @@ fn file() -> (Arc<BufferPool>, FileId) {
 /// those of 400 rows in a row.
 fn row(n: i128, shape: fn(i128) -> i128) -> Row {
     let v = shape(n);
-    let text = Value::Char(format!("v{:05}", v.rem_euclid(100_000)));
+    let text = Value::Char(format!("v{:05}", v.rem_euclid(100_000)).into());
     let last = if n % 11 == 0 || (3000..3400).contains(&n) { Value::Null } else { int(v) };
     vec![int(v), text, last]
 }

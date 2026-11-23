@@ -58,7 +58,7 @@ impl State {
     fn node_exists(&self, tx: &Txn, table: &QualifiedName, text: &str) -> Result<bool> {
         let Some(at) = self.catalog.table(table).and_then(|t| t.pseudo_column(NODE_ID)) else { return Ok(false) };
         let mut found = false;
-        self.each_row_with(tx, table, (&[at], &[Value::Char(text.to_owned())]), &mut |_, _| {
+        self.each_row_with(tx, table, (&[at], &[Value::Char(text.into())]), &mut |_, _| {
             found = true;
             Ok(ControlFlow::Break(()))
         })?;
@@ -117,7 +117,7 @@ impl State {
     fn edges_of(&self, tx: &Txn, e: &TableDesc, id: &str) -> Result<Vec<(RowId, Row)>> {
         let name = crate::db::graphs::native::adjacency_name(&e.name);
         let adjacency = Arc::clone(self.index_of(&name)?).adjacency().ok_or_else(|| api(format!("[DESIGN] {name} keeps no adjacency")))?;
-        let key = Key(vec![Value::Char(id.to_owned())]);
+        let key = Key(vec![Value::Char(id.into())]);
         let mut steps: Vec<Step> = Vec::new();
         adjacency.steps(&key, Direction::Out, &mut steps)?;
         adjacency.steps(&key, Direction::In, &mut steps)?;

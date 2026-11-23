@@ -47,8 +47,8 @@ fn installed(scratch: &Scratch) -> PathBuf {
 /// A node's database declaring REPL in `dir`, and its parts so plugged.
 fn node(scratch: &Scratch, dir: &Path) -> (Database, Plugged) {
     let db = Database::new();
-    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(scratch.dir.display().to_string())).unwrap();
-    db.set_setting("PLUGINS.HOST", &Value::Char(format!("REPL={}", dir.display()))).unwrap();
+    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(scratch.dir.display().to_string().into())).unwrap();
+    db.set_setting("PLUGINS.HOST", &Value::Char(format!("REPL={}", dir.display()).into())).unwrap();
     let members = [Member { id: ReplicaId(1), address: "one".into() }, Member { id: ReplicaId(2), address: "two".into() }];
     let plugs = plugged(&db, &scratch.path("node"), (&members, ReplicaId(1))).unwrap();
     (db, plugs)

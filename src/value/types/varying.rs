@@ -22,12 +22,13 @@
 
 use std::cmp::Ordering;
 
-use super::character::{cut, octets_of, put_units, read_units, string, unwarned, written_as};
+use super::character::{chars, count, cut, octets_of, put_units, read_units, string, unwarned, written_as};
 use super::{Descriptor, SqlType, malformed, take};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{approximate_literal, uncastable};
-use crate::value::{Bucket, CharUnits, DataType, Value, assignment_rule, compare_strings, unassignable};
+use crate::value::comparison::compare_octets;
+use crate::value::{Bucket, CharString, CharUnits, DataType, Value, assignment_rule, unassignable};
 
 /// The kind of CHARACTER VARYING(length).
 #[derive(Debug)]
@@ -67,7 +68,7 @@ fn mismatch(v: &Value, t: &DataType) -> SqlError {
 fn within(text: String, t: &DataType) -> Result<Value> {
     let (length, units) = length_of(t);
     if u32::try_from(units.count(&text)).is_ok_and(|n| n <= length) {
-        return Ok(Value::Char(text));
+        return Ok(Value::Char(text.into()));
     }
     fail_with(
         Code::Data,
@@ -76,9 +77,9 @@ fn within(text: String, t: &DataType) -> Result<Value> {
     )
 }
 
-/// Appends the key of `s` to `out`, as the module's documentation says.
-fn encode(s: &str, out: &mut Vec<u8>) {
-    let bytes = s.trim_end_matches(' ').as_bytes();
+/// Appends the key of the string `bytes` are, without its trailing spaces,
+/// to `out`, as the module's documentation says.
+fn encode(bytes: &[u8], out: &mut Vec<u8>) {
     // Where the first byte not a space at or after a chunk's end is: found
     // once for each run of spaces, so the key is made in linear time.
     let (mut at, mut next) = (0_usize, 0_usize);
@@ -103,7 +104,7 @@ fn encode(s: &str, out: &mut Vec<u8>) {
 }
 
 /// The string whose key begins `rest`, without its trailing spaces.
-fn decode(rest: &mut &[u8]) -> Result<String> {
+fn decode(rest: &mut &[u8]) -> Result<CharString> {
     let mut bytes = Vec::new();
     loop {
         bytes.extend_from_slice(take(rest, CHUNK)?);
@@ -115,7 +116,7 @@ fn decode(rest: &mut &[u8]) -> Result<String> {
     }
     let kept = bytes.iter().rposition(|&b| b != SPACE).map_or(0, |at| at.saturating_add(1));
     bytes.truncate(kept);
-    String::from_utf8(bytes).map_err(|_| malformed())
+    CharString::from_utf8(&bytes).ok_or_else(malformed)
 }
 
 impl SqlType for Varying {
@@ -136,7 +137,7 @@ impl SqlType for Varying {
 
     /// [ISO/IEC 9075:1992 §8.2 GR3a] after padding the shorter with spaces.
     fn compare(&self, a: &Value, b: &Value) -> Option<Ordering> {
-        Some(compare_strings(string(a)?, string(b)?))
+        Some(compare_octets(chars(a)?.as_bytes(), chars(b)?.as_bytes()))
     }
 
     /// A string without its trailing spaces.
@@ -150,13 +151,13 @@ impl SqlType for Varying {
     fn assign(&self, v: Value, t: &DataType, rule: &str) -> Result<Value> {
         let Value::Char(s) = v else { return unassignable(&v, t, rule) };
         let (length, units) = length_of(t);
-        let (count, most) = (units.count(&s), usize::try_from(length).unwrap_or(usize::MAX));
+        let (count, most) = (count(units, &s), usize::try_from(length).unwrap_or(usize::MAX));
         if count <= most {
             return Ok(Value::Char(s));
         }
         let kept = units.prefix(&s, most);
         if s.get(kept.len()..).unwrap_or_default().chars().all(|c| c == ' ') {
-            return Ok(Value::Char(kept.to_owned()));
+            return Ok(Value::Char(kept.into()));
         }
         let unit = if units == CharUnits::Octets { "octets" } else { "characters" };
         fail_with(
@@ -239,7 +240,7 @@ impl SqlType for Varying {
     }
 
     fn value(&self, r: &mut Reader<'_>) -> Result<Value> {
-        Ok(Value::Char(r.str()?))
+        Ok(Value::Char(r.str()?.into()))
     }
 
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>) {
@@ -259,20 +260,20 @@ impl SqlType for Varying {
 
     /// As it is, trailing spaces and all.
     fn encode_record(&self, v: &Value, t: &DataType) -> Result<Vec<u8>> {
-        Ok(string(v).ok_or_else(|| mismatch(v, t))?.as_bytes().to_vec())
+        Ok(chars(v).ok_or_else(|| mismatch(v, t))?.as_bytes().to_vec())
     }
 
     fn encode_record_into(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
-        out.extend_from_slice(string(v).ok_or_else(|| mismatch(v, t))?.as_bytes());
+        out.extend_from_slice(chars(v).ok_or_else(|| mismatch(v, t))?.as_bytes());
         Ok(())
     }
 
     fn decode_record(&self, field: &[u8], _: &DataType) -> Option<Value> {
-        std::str::from_utf8(field).ok().map(|s| Value::Char(s.to_owned()))
+        CharString::from_utf8(field).map(Value::Char)
     }
 
     fn encode_key(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
-        encode(string(v).ok_or_else(|| mismatch(v, t))?, out);
+        encode(chars(v).ok_or_else(|| mismatch(v, t))?.unpadded(), out);
         Ok(())
     }
 

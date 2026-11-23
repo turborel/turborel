@@ -318,7 +318,7 @@ fn a_statement_is_cancelled_over_tls_and_a_socket() {
     #[cfg(any(unix, windows))]
     let socket = pki.scratch.socket("s");
     #[cfg(any(unix, windows))]
-    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(socket.display().to_string())).unwrap();
+    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(socket.display().to_string().into())).unwrap();
     let server = start(&db, &[]);
     let secure = crate::common::over_tls(&server, &pki, "localhost").unwrap();
     let canceller = secure.canceller().unwrap();

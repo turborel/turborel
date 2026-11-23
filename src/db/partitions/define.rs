@@ -220,7 +220,7 @@ pub(in crate::db) fn bound_value(spec: &BoundSpec, zone: i16) -> PartitionBound 
 /// The value of `l`, a datetime of displacement `zone` if it writes none.
 fn literal(l: &Literal, zone: i16) -> Value {
     match l {
-        Literal::Character(s) => Value::Char(s.clone()),
+        Literal::Character(s) => Value::Char(s.clone().into()),
         Literal::Exact(d) => Value::Exact(*d),
         Literal::Approximate(f) => Value::Approx(*f),
         Literal::Binary(b) => Value::Binary(b.clone()),

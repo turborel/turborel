@@ -29,7 +29,7 @@ fn predefined() -> Vec<Sample> {
     vec![
         one("value-null", Value::Null, "tag 0 null"),
         one("value-character", Value::Char("abc".into()), "tag 1 character string abc"),
-        one("value-character-empty", Value::Char(String::new()), "tag 1 the empty string, length 0"),
+        one("value-character-empty", Value::Char(String::new().into()), "tag 1 the empty string, length 0"),
         one("value-character-utf8", Value::Char("é€".into()), "tag 1 é€, 5 octets of UTF-8"),
         one("value-exact", Value::Exact(Decimal::new(12_345, 2)), "tag 2 exact number 123.45, units 12345, scale 2"),
         one("value-exact-negative", Value::Exact(Decimal::new(-1, 0)), "tag 2 exact number -1, units -1, scale 0"),

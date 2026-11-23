@@ -71,7 +71,7 @@ impl State {
     /// SQLCODE -910 if a hash function or encoding they name is not
     /// registered, or a size is out of range.
     pub(super) fn layout(&self, values: &Settings) -> Result<FileLayout> {
-        let named = |key| if let Value::Char(s) = values.get(key) { s.clone() } else { String::new() };
+        let named = |key| if let Value::Char(s) = values.get(key) { s.to_string() } else { String::new() };
         let hash = self.checksum_hash(values)?;
         let pipeline = self.encodings.named(&named(ENCODINGS))?;
         let size = |key, what: &str| u64::try_from(values.integer(key)).map_err(|_| api(format!("[DESIGN] {what} is out of range")));
@@ -96,7 +96,7 @@ impl State {
     /// SQLCODE -910 if the function is not registered, or a key is named
     /// and the function is not keyed, or cannot take it.
     pub(super) fn checksum_hash(&self, values: &Settings) -> Result<Arc<dyn HashFunction>> {
-        let named = |key| if let Value::Char(s) = values.get(key) { s.clone() } else { String::new() };
+        let named = |key| if let Value::Char(s) = values.get(key) { s.to_string() } else { String::new() };
         let hash = self.checksum_function(values)?;
         let key = named(CHECKSUM_KEY);
         if key.is_empty() {
@@ -116,7 +116,7 @@ impl State {
     ///
     /// SQLCODE -910 if it is not registered.
     pub(super) fn checksum_function(&self, values: &Settings) -> Result<Arc<dyn HashFunction>> {
-        let checksum = if let Value::Char(s) = values.get(CHECKSUM) { s.clone() } else { String::new() };
+        let checksum = if let Value::Char(s) = values.get(CHECKSUM) { s.to_string() } else { String::new() };
         self.hashes
             .iter()
             .find(|h| h.name().eq_ignore_ascii_case(&checksum))

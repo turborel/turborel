@@ -45,7 +45,7 @@ fn int(n: i64) -> Value {
 }
 
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// `v` as it is shown whole, to compare values by.

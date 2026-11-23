@@ -60,7 +60,7 @@ fn a_prepared_call_gives_back_its_outputs_20_7() {
     let both = a.prepare("CALL MIXED(?, ?, ?)").unwrap();
     assert_eq!(both.parameters().len(), 2);
     assert_eq!(both.columns().iter().map(|c| c.name.clone().unwrap_or_default()).collect::<Vec<_>>(), ["TOTAL", "TAG"]);
-    let out = a.execute_prepared_out(&both, &[int(2), Value::Char("A".to_owned())]).unwrap().1;
+    let out = a.execute_prepared_out(&both, &[int(2), Value::Char("A".into())]).unwrap().1;
     assert_eq!(shown(&out), ["60", "AX"]);
     assert_eq!(a.execute_prepared(&find, &[int(1)]).unwrap(), Completion::Success, "the outputs may be left");
     let named = a.prepare("CALL FIND(GOT => ?, WANTED => 1)").unwrap();

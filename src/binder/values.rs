@@ -21,7 +21,7 @@ pub fn value_specification(v: &ValueSpecification, user: Principal<'_>, params: 
         ValueSpecification::Parameter(p) => params.input(p).or_at(p.at)?,
         // [X3.135-1986 §5.6 GR3]
         ValueSpecification::Literal(Literal::Character(s)) => {
-            (Value::Char(s.clone()), DataType::Character { length: char_length(s), units: CharUnits::Characters })
+            (Value::Char(s.clone().into()), DataType::Character { length: char_length(s), units: CharUnits::Characters })
         }
         ValueSpecification::Literal(Literal::Exact(d)) => {
             (Value::Exact(*d), DataType::Exact { precision: d.digits().max(d.scale), scale: d.scale, spelled: Spelled::Numeric })
@@ -46,7 +46,7 @@ pub fn value_specification(v: &ValueSpecification, user: Principal<'_>, params: 
         // of the identifier's own length, or of a null value, CHARACTER
         // VARYING of the longest identifier.
         ValueSpecification::User(f) => match user.value(*f) {
-            Some(s) => (Value::Char(s.to_owned()), DataType::Character { length: char_length(s), units: CharUnits::Characters }),
+            Some(s) => (Value::Char(s.into()), DataType::Character { length: char_length(s), units: CharUnits::Characters }),
             None => (Value::Null, DataType::varying(u32::try_from(MAX_IDENTIFIER_LENGTH).unwrap_or(u32::MAX))),
         },
         // [ISO/IEC 9075:1992 §17.6 GR4] where nothing gives it a type: the

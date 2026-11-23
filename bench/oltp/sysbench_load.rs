@@ -27,7 +27,7 @@ pub fn load(s: &Session, rows: i64) {
             let mut insert = Insert::new(s, &format!("sbtest{t}"), "k, c, \"pad\"");
             for _ in 0..rows {
                 let k = int(r.number(1, rows));
-                insert.push(vec![k, Value::Char(r.template(C_TEMPLATE)), Value::Char(r.template(PAD_TEMPLATE))]);
+                insert.push(vec![k, Value::Char(r.template(C_TEMPLATE).into()), Value::Char(r.template(PAD_TEMPLATE).into())]);
             }
         }
         s.run(&format!("CREATE INDEX k_{t} ON sbtest{t}(k)")).unwrap();

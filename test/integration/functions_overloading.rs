@@ -54,7 +54,7 @@ impl ScalarFunction for Tagged {
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let shown: Vec<String> = args.iter().map(ToString::to_string).collect();
-        Ok(Value::Char(format!("{}:{}", self.tag, shown.join(","))))
+        Ok(Value::Char(format!("{}:{}", self.tag, shown.join(",")).into()))
     }
     fn parameter_types(&self) -> Option<Vec<DataType>> {
         self.parameters.clone()

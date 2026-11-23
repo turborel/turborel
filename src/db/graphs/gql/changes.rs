@@ -149,7 +149,7 @@ impl Session {
         let at = b.at(&column);
         let mut now = String::new();
         if let Some(Value::Char(s)) = at.and_then(|i| row.get(i)) {
-            now.clone_from(s);
+            now.push_str(s);
         }
         let labels = relabeled(&now, label, add);
         let table = Session::open_table(&graph.desc.name, kind_of(b, variable));

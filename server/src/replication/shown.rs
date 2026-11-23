@@ -107,8 +107,8 @@ impl SystemTable for Replicas {
         if !seen.is_owner() {
             return Ok(Vec::new());
         }
-        let yes = |is: bool| Value::Char(if is { "YES" } else { "NO" }.to_owned());
-        let shown = |s: &str| Value::Char(s.to_owned());
+        let yes = |is: bool| Value::Char(if is { "YES" } else { "NO" }.into());
+        let shown = |s: &str| Value::Char(s.into());
         let links = self.0.known.lock().unwrap_or_else(PoisonError::into_inner).clone();
         let view = self.0.view();
         let epoch = *self.0.epoch.lock().unwrap_or_else(PoisonError::into_inner);

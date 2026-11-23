@@ -106,7 +106,7 @@ fn the_document_is_a_string_or_an_xml_document_4_2_6() {
         a.run(&format!("CREATE XML SCHEMA {name} AS {document}")).unwrap_or_else(|e| panic!("{name}: {e:?}"));
     }
     let prepared = a.prepare("CREATE XML SCHEMA PARAM AS ?").unwrap();
-    a.execute_prepared(&prepared, &[Value::Char(text.clone())]).unwrap();
+    a.execute_prepared(&prepared, &[Value::Char(text.clone().into())]).unwrap();
     a.commit().unwrap();
     for name in ["BIN", "PARSED", "QUERIED", "PARAM"] {
         assert_eq!(refusal(&a, name, &text).0, -103, "{name} is registered");
@@ -141,7 +141,7 @@ fn includes_and_imports_resolve_among_registered_schemas() {
            <xs:element name="n" xmlns:o="urn:o" type="o:ct"/>"#,
     );
     let sql = "CREATE XML SCHEMA MAIN LOCATION 'main.xsd' AS CAST(? AS CLOB(1M))";
-    a.execute_prepared(&a.prepare(sql).unwrap(), &[Value::Char(main)]).unwrap();
+    a.execute_prepared(&a.prepare(sql).unwrap(), &[Value::Char(main.into())]).unwrap();
     a.commit().unwrap();
     let included = doc("urn:m", r#"<xs:include schemaLocation="nowhere.xsd"/><xs:element name="m" type="t:pt"/>"#);
     assert_eq!(refusal(&a, "LOST", &included), (-301, "22000".to_owned()), "no registered XML Schema is at nowhere.xsd");
@@ -234,7 +234,7 @@ fn registered_schemas_survive_reopening() {
         let a = crashed.session("A");
         register(&a, "PART", ("part.xsd", &doc("urn:m", r#"<xs:complexType name="ct"/>"#)));
         let main = doc("urn:m", "<xs:include schemaLocation=\"part.xsd\"/>\n<xs:element name=\"m\" type=\"t:ct\"/>");
-        a.execute_prepared(&a.prepare("CREATE XML SCHEMA MAIN LOCATION 'main.xsd' AS ?").unwrap(), &[Value::Char(main)]).unwrap();
+        a.execute_prepared(&a.prepare("CREATE XML SCHEMA MAIN LOCATION 'main.xsd' AS ?").unwrap(), &[Value::Char(main.into())]).unwrap();
         a.commit().unwrap();
         if checkpointed {
             crashed.checkpoint().unwrap();

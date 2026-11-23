@@ -12,7 +12,8 @@ use super::{Descriptor, SqlType};
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::value::cast::{approximate_literal, padded, uncastable};
-use crate::value::{Bucket, CharUnits, DataType, Value, assignment_rule, compare_strings, unassignable};
+use crate::value::comparison::compare_octets;
+use crate::value::{Bucket, CharString, CharUnits, DataType, Value, assignment_rule, unassignable};
 
 /// The kind of CHARACTER(length).
 #[derive(Debug)]
@@ -67,6 +68,20 @@ pub(super) fn string(v: &Value) -> Option<&str> {
     if let Value::Char(s) = v { Some(s) } else { None }
 }
 
+/// The value's string as it is held, if it is one: its octets read with
+/// no check (RULES.md D960).
+pub(super) fn chars(v: &Value) -> Option<&CharString> {
+    if let Value::Char(s) = v { Some(s) } else { None }
+}
+
+/// How many of `units` the string `s` is, counted over its octets.
+pub(super) fn count(units: CharUnits, s: &CharString) -> usize {
+    match units {
+        CharUnits::Characters => s.char_count(),
+        CharUnits::Octets => s.len(),
+    }
+}
+
 /// A value cast with no warning.
 pub(super) fn unwarned(v: Value) -> (Value, Option<SqlState>) {
     (v, None)
@@ -76,31 +91,13 @@ pub(super) fn unwarned(v: Value) -> (Value, Option<SqlState>) {
 /// characters of `s`, or whole characters of no more than `length` octets
 /// [ISO/IEC 9075-2:2023 §6.1 SR16b], and the warning string data, right
 /// truncation if any after them is not a space.
-pub(super) fn cut(s: &str, length: u32, units: CharUnits) -> (String, Option<SqlState>) {
+pub(super) fn cut(s: &str, length: u32, units: CharUnits) -> (CharString, Option<SqlState>) {
     let kept = units.prefix(s, usize::try_from(length).unwrap_or(usize::MAX));
     let lost = s.get(kept.len()..).unwrap_or_default().chars().any(|c| c != ' ');
-    (kept.to_owned(), lost.then_some(SqlState::STRING_TRUNCATED))
+    (kept.into(), lost.then_some(SqlState::STRING_TRUNCATED))
 }
 
 /// A value not of a column of `t`'s type.
-/// `s` followed by `pad` spaces. As every CHARACTER read takes this path,
-/// it allocates once, formats nothing, and copies the spaces a run at a
-/// time rather than pushing each as a character.
-fn spaced(s: &str, pad: usize) -> String {
-    let mut text = String::with_capacity(s.len().saturating_add(pad));
-    text.push_str(s);
-    let mut left = pad;
-    while left > 0 {
-        let run = left.min(SPACES.len());
-        text.push_str(SPACES.get(..run).unwrap_or_default());
-        left = left.saturating_sub(run);
-    }
-    text
-}
-
-/// A run of spaces, copied whole into a value padded.
-const SPACES: &str = "                                                                ";
-
 fn mismatch(v: &Value, t: &DataType) -> SqlError {
     SqlError::new(Code::Api, format!("[DESIGN] {v} is not a value of a column of type {t}"))
 }
@@ -123,7 +120,7 @@ impl SqlType for Character {
 
     /// [X3.135-1986 §5.11 GR5] after padding the shorter with spaces.
     fn compare(&self, a: &Value, b: &Value) -> Option<Ordering> {
-        Some(compare_strings(string(a)?, string(b)?))
+        Some(compare_octets(chars(a)?.as_bytes(), chars(b)?.as_bytes()))
     }
 
     /// A string without its trailing spaces.
@@ -137,17 +134,17 @@ impl SqlType for Character {
     fn assign(&self, v: Value, t: &DataType, rule: &str) -> Result<Value> {
         let Value::Char(s) = v else { return unassignable(&v, t, rule) };
         let (length, units) = length_of(t);
-        let (count, fits) = (units.count(&s), usize::try_from(length).unwrap_or(usize::MAX));
+        let (count, fits) = (count(units, &s), usize::try_from(length).unwrap_or(usize::MAX));
         // Of its length already: itself, not copied.
         if count == fits {
             return Ok(Value::Char(s));
         }
         if count <= fits {
-            return Ok(Value::Char(spaced(&s, fits.saturating_sub(count))));
+            return Ok(Value::Char(CharString::padded(&s, fits.saturating_sub(count))));
         }
         let kept = units.prefix(&s, fits);
         if s.get(kept.len()..).unwrap_or_default().chars().all(|c| c == ' ') {
-            return Ok(Value::Char(spaced(kept, fits.saturating_sub(units.count(kept)))));
+            return Ok(Value::Char(CharString::padded(kept, fits.saturating_sub(units.count(kept)))));
         }
         let unit = if units == CharUnits::Octets { "octets" } else { "characters" };
         fail_with(
@@ -179,7 +176,7 @@ impl SqlType for Character {
             Value::Extension(ref e) => padded(&e.kind.text(&v), length).map(unwarned),
             Value::Char(s) => {
                 // Of its length already: itself, as cut and padded it would be.
-                if units.count(&s) == usize::try_from(length).unwrap_or(usize::MAX) {
+                if count(units, &s) == usize::try_from(length).unwrap_or(usize::MAX) {
                     return Ok((Value::Char(s), None));
                 }
                 let (kept, warning) = cut(&s, length, units);
@@ -233,7 +230,7 @@ impl SqlType for Character {
     }
 
     fn value(&self, r: &mut Reader<'_>) -> Result<Value> {
-        Ok(Value::Char(r.str()?))
+        Ok(Value::Char(r.str()?.into()))
     }
 
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>) {
@@ -253,29 +250,30 @@ impl SqlType for Character {
 
     /// Without its trailing spaces.
     fn encode_record(&self, v: &Value, t: &DataType) -> Result<Vec<u8>> {
-        Ok(string(v).ok_or_else(|| mismatch(v, t))?.trim_end_matches(' ').as_bytes().to_vec())
+        Ok(chars(v).ok_or_else(|| mismatch(v, t))?.unpadded().to_vec())
     }
 
     fn encode_record_into(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
-        out.extend_from_slice(string(v).ok_or_else(|| mismatch(v, t))?.trim_end_matches(' ').as_bytes());
+        out.extend_from_slice(chars(v).ok_or_else(|| mismatch(v, t))?.unpadded());
         Ok(())
     }
 
-    /// Padded again to the length.
+    /// Padded again to the length: held in the value, with no allocation,
+    /// where the padded string fits there (RULES.md D960).
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
         let s = std::str::from_utf8(field).ok()?;
         let (length, units) = length_of(t);
         let pad = usize::try_from(length).ok()?.checked_sub(units.count(s))?;
-        Some(Value::Char(spaced(s, pad)))
+        Some(Value::Char(CharString::padded(s, pad)))
     }
 
     /// Padded with spaces to the length [X3.135-1986 §5.11 GR5]: Unicode
     /// scalar order [GR6, implementor-defined] is the order of the UTF-8
     /// bytes.
     fn encode_key(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
-        let s = string(v).ok_or_else(|| mismatch(v, t))?;
+        let s = chars(v).ok_or_else(|| mismatch(v, t))?;
         let (length, units) = length_of(t);
-        let pad = usize::try_from(length).ok().and_then(|n| n.checked_sub(units.count(s))).ok_or_else(|| mismatch(v, t))?;
+        let pad = usize::try_from(length).ok().and_then(|n| n.checked_sub(count(units, s))).ok_or_else(|| mismatch(v, t))?;
         out.extend_from_slice(s.as_bytes());
         out.resize(out.len().saturating_add(pad), b' ');
         Ok(())
@@ -289,7 +287,7 @@ impl SqlType for Character {
         let length = usize::try_from(length).map_err(|_| super::malformed())?;
         if units == CharUnits::Octets {
             let s = std::str::from_utf8(super::take(rest, length)?).map_err(|_| super::malformed())?;
-            return Ok(Value::Char(s.to_owned()));
+            return Ok(Value::Char(s.into()));
         }
         let starts = rest.iter().enumerate().filter(|&(_, b)| b & 0xC0 != 0x80).map(|(i, _)| i);
         let end = starts.clone().nth(length).unwrap_or(rest.len());
@@ -297,7 +295,7 @@ impl SqlType for Character {
         if s.chars().count() != length {
             return Err(super::malformed());
         }
-        Ok(Value::Char(s.to_owned()))
+        Ok(Value::Char(s.into()))
     }
 
     /// Cut to the length.
@@ -305,6 +303,6 @@ impl SqlType for Character {
         let s = string(v)?;
         let (length, units) = length_of(t);
         let length = usize::try_from(length).ok()?;
-        Some((Value::Char(units.prefix(s, length).to_owned()), units.count(s) <= length))
+        Some((Value::Char(units.prefix(s, length).into()), units.count(s) <= length))
     }
 }

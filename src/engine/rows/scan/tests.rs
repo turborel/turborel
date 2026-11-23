@@ -62,7 +62,7 @@ fn a_read_of_listed_columns_gives_them_in_their_order() {
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
     let types = [DataType::character(3), DataType::varying(8), DataType::character(2)];
     let table = RowTable::create(&files, &types, TableOptions::default()).unwrap();
-    let row = |n: u8| vec![Value::Char(format!("a{n} ")), Value::Char(format!("b{n}")), Value::Char(format!("c{n}"))];
+    let row = |n: u8| vec![Value::Char(format!("a{n} ").into()), Value::Char(format!("b{n}").into()), Value::Char(format!("c{n}").into())];
     let (a, b) = (table.insert(NO_TRANSACTION, row(1)).unwrap(), table.insert(NO_TRANSACTION, row(2)).unwrap());
     table.begin(10, 1).unwrap();
     table.update(10, a, row(3)).unwrap();
@@ -99,7 +99,7 @@ fn a_row_read_where_it_lies_is_the_row_read_from_a_copy() {
     let table = RowTable::create(&files, &[DataType::character(3), DataType::varying(9000)], TableOptions::default()).unwrap();
     let long = "x".repeat(6000);
     let short = table.insert(NO_TRANSACTION, vec![Value::Char("a  ".into()), Value::Char("b".into())]).unwrap();
-    let spilled = table.insert(NO_TRANSACTION, vec![Value::Char("c  ".into()), Value::Char(long.clone())]).unwrap();
+    let spilled = table.insert(NO_TRANSACTION, vec![Value::Char("c  ".into()), Value::Char(long.clone().into())]).unwrap();
     let shown = |row: Option<Row>| row.map(|r| r.iter().map(ToString::to_string).collect::<Vec<_>>().join("|"));
     assert_eq!(shown(table.get(NO_TRANSACTION, short).unwrap()), Some("a  |b".to_owned()));
     assert_eq!(shown(table.get(NO_TRANSACTION, spilled).unwrap()), Some(format!("c  |{long}")), "from a copy");

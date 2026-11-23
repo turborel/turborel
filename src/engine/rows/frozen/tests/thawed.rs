@@ -20,7 +20,7 @@ fn a_frozen_row_changed_is_held_by_its_zone_in_the_columns_it_keeps() {
     // Its zone holds a row of the tree, of another key.
     table.update(5, ids[0], row(-7)).unwrap();
     // Its key kept, its text changed.
-    table.update(5, ids[1], vec![Value::Exact(Decimal::new(1, 0)), Value::Char("changed".to_owned())]).unwrap();
+    table.update(5, ids[1], vec![Value::Exact(Decimal::new(1, 0)), Value::Char("changed".into())]).unwrap();
     table.validate(5, 5).unwrap();
     table.commit(5, 5);
     let one =

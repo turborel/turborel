@@ -120,7 +120,7 @@ const QUERIES: &[(&str, &str, u64)] = &[
 
 /// Switches unnesting and inlining `on` or off.
 fn switched(db: &Database, on: bool) {
-    let value = Value::Char(if on { "ON" } else { "OFF" }.to_owned());
+    let value = Value::Char(if on { "ON" } else { "OFF" }.into());
     for rule in [SEMI_JOINS, MARK_JOINS, UNNEST_SUBQUERIES, INLINE_FUNCTIONS] {
         db.set_setting(&switch_name(rule), &value).unwrap();
     }

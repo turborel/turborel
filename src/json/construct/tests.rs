@@ -11,13 +11,13 @@ use crate::value::{Binary, Decimal, compare};
 
 /// A character string.
 pub(super) fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// The JSON text `value` is, a character string.
 pub(super) fn json(value: &Value) -> String {
     let Value::Char(s) = value else { panic!("{value:?}: no character string") };
-    s.clone()
+    s.to_string()
 }
 
 /// An input without FORMAT JSON.

@@ -45,7 +45,7 @@ pub fn hosted(test: &str, objects: &str) -> (Scratch, PathBuf, String) {
 /// A database whose PLUGINS.HOST is `spec`, its host plug-ins started.
 pub fn started(spec: &str) -> Database {
     let db = Database::new();
-    db.set_setting("PLUGINS.HOST", &Value::Char(spec.to_owned())).unwrap();
+    db.set_setting("PLUGINS.HOST", &Value::Char(spec.into())).unwrap();
     db.start_host_plugins().unwrap();
     db
 }
@@ -125,16 +125,16 @@ fn host_plugins_are_declared_by_the_host_alone() {
         &manifest("MIXED", "1.0.0", "", "HOST CLOCK SYSTEM; FUNCTION PID() RETURNS BIGINT;"),
     );
     let db = Database::new();
-    db.set_setting("PLUGINS.HOST", &Value::Char(format!("MIXED={}", mixed.display()))).unwrap();
+    db.set_setting("PLUGINS.HOST", &Value::Char(format!("MIXED={}", mixed.display()).into())).unwrap();
     let refused = db.start_host_plugins().unwrap_err();
     assert!(refused.msg.contains("D229"), "{refused:?}");
     let extension = install(&scratch.path("ext"), ("EXT", "1.0.0"), &manifest("EXT", "1.0.0", "", "FUNCTION PID() RETURNS BIGINT;"));
     let db = Database::new();
-    db.set_setting("PLUGINS.HOST", &Value::Char(format!("EXT={}", extension.display()))).unwrap();
+    db.set_setting("PLUGINS.HOST", &Value::Char(format!("EXT={}", extension.display()).into())).unwrap();
     assert!(db.start_host_plugins().unwrap_err().msg.contains("CREATE EXTENSION"));
     let crypto = install(&scratch.path("crypto"), ("CRYPTO", "1.0.0"), &manifest("CRYPTO", "1.0.0", "", "HOST PACKAGE CRYPTO DIGESTS;"));
     let db = Database::new();
-    db.set_setting("PLUGINS.HOST", &Value::Char(format!("CRYPTO={}", crypto.display()))).unwrap();
+    db.set_setting("PLUGINS.HOST", &Value::Char(format!("CRYPTO={}", crypto.display()).into())).unwrap();
     assert!(db.start_host_plugins().unwrap_err().msg.contains("pin"));
     db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
     let s = db.session("U");

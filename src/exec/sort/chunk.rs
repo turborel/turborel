@@ -368,7 +368,7 @@ mod tests {
                 Column::Floats(Floats::new(vec![1.5_f64, -0.0_f64, 2.0_f64], None)),
                 Column::Texts(texts),
                 Column::Texts(coded),
-                Column::Values(vec![exact(1_i128, 0_u32), Value::Char("a".to_owned()), Value::Null]),
+                Column::Values(vec![exact(1_i128, 0_u32), Value::Char("a".into()), Value::Null]),
                 Column::Values(vec![exact(i128::MAX, 0_u32), exact(1_i128, 0_u32), exact(2_i128, 0_u32)]),
                 Column::Values(vec![exact(1_i128, 0_u32), exact(1_i128, 1_u32), Value::Null]),
                 Column::Values(vec![Value::Binary(Binary::new(vec![0xA0])), Value::Null, Value::Null]),

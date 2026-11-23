@@ -146,7 +146,7 @@ impl ScalarFunction for FullTextRoutine {
             return Ok(Value::Null);
         }
         let (language, contents) = parts(text)?;
-        Ok(Value::Char(if matches!(self, Self::Language) { language.name().to_owned() } else { contents.to_owned() }))
+        Ok(Value::Char(if matches!(self, Self::Language) { language.name().into() } else { contents.into() }))
     }
 
     fn deterministic(&self) -> bool {

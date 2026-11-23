@@ -23,7 +23,7 @@ fn spec(separator: &str, truncation: Option<Truncation>, (distinct, descending):
 
 /// The row of `text` and its key `key`, as LISTAGG's argument is.
 fn row(text: &str, key: i128) -> Value {
-    Value::Row(Arc::from(vec![Value::Char(text.to_owned()), Value::Exact(Decimal::new(key, 0))]))
+    Value::Row(Arc::from(vec![Value::Char(text.into()), Value::Exact(Decimal::new(key, 0))]))
 }
 
 /// LISTAGG of `spec` given `values` in turn, each with its key.
@@ -38,7 +38,7 @@ fn listagg(spec: &Arc<ListaggSpec>, values: &[(String, i128)]) -> Result<Value> 
 /// The string `v` is.
 fn text(v: Result<Value>) -> String {
     let Value::Char(s) = v.unwrap() else { panic!("not a string") };
-    s
+    s.to_string()
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.9 GR11a, GR11g iii];

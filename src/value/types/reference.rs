@@ -144,7 +144,7 @@ impl SqlType for ReferenceKind {
     }
 
     fn value(&self, r: &mut Reader<'_>) -> Result<Value> {
-        Ok(Value::Reference(Binary::new(r.bytes()?.to_vec())))
+        Ok(Value::Reference(Binary::of(r.bytes()?)))
     }
 
     /// Its referenced type's names (`structured::put_names`), then 0, or 1
@@ -183,7 +183,7 @@ impl SqlType for ReferenceKind {
     }
 
     fn decode_record(&self, field: &[u8], _: &DataType) -> Option<Value> {
-        Some(Value::Reference(Binary::new(field.to_vec())))
+        Some(Value::Reference(Binary::of(field)))
     }
 
     /// Its octets, as a binary string's key.

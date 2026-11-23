@@ -90,7 +90,7 @@ impl Item {
         if f == DescriptorItem::Data {
             Value::Null
         } else if is_text(f) {
-            Value::Char(String::new())
+            Value::Char(String::new().into())
         } else {
             exact(0)
         }
@@ -117,7 +117,7 @@ impl Item {
     /// The value of the character string field `f`.
     pub(super) fn text(&self, f: DescriptorItem) -> String {
         match self.fields.get(&f) {
-            Some(Value::Char(s)) => s.clone(),
+            Some(Value::Char(s)) => s.to_string(),
             Some(_) | None => String::new(),
         }
     }
@@ -159,14 +159,14 @@ impl Item {
     /// The name of three parts `parts` in the fields `fields`.
     fn names(&mut self, fields: [DescriptorItem; 3], parts: [&str; 3]) {
         for (f, part) in fields.into_iter().zip(parts) {
-            self.set(f, Value::Char(part.to_owned()));
+            self.set(f, Value::Char(part.into()));
         }
     }
 
     /// The `<character set name>` of SQL_TEXT in the fields `fields`.
     fn sql_text(&mut self, fields: [DescriptorItem; 3], catalog: &str) {
         for (f, part) in fields.into_iter().zip([catalog, INFORMATION_SCHEMA, SQL_TEXT]) {
-            self.set(f, Value::Char(part.to_owned()));
+            self.set(f, Value::Char(part.into()));
         }
     }
 
@@ -187,7 +187,7 @@ impl Item {
         item.set_number(DescriptorItem::KeyMember, 0);
         item.set_number(DescriptorItem::Type, type_code(&t.clone()));
         item.set_number(DescriptorItem::Nullable, i64::from(nullable));
-        item.set(DescriptorItem::Name, Value::Char(name.unwrap_or_default().to_owned()));
+        item.set(DescriptorItem::Name, Value::Char(name.unwrap_or_default().into()));
         item.set_number(DescriptorItem::Unnamed, i64::from(name.is_none()));
         item.describe_type(t, catalog);
         item

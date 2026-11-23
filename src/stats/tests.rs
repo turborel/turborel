@@ -119,7 +119,7 @@ fn statistics_are_deterministic() {
     let strings = || {
         let mut builder = StatsBuilder::new(1);
         for i in 0..30_000_u32 {
-            builder.add(&vec![Value::Char(format!("{i:06}"))], 6);
+            builder.add(&vec![Value::Char(format!("{i:06}").into())], 6);
         }
         builder.finish()
     };
@@ -142,7 +142,7 @@ fn statistics_are_deterministic() {
 /// value by its beginning, the least and greatest kept whole.
 #[test]
 fn long_values_are_sampled_by_their_prefixes() {
-    let long = |i: u32| Value::Char(format!("{i:05}{}", "\u{e9}".repeat(10_000)));
+    let long = |i: u32| Value::Char(format!("{i:05}{}", "\u{e9}".repeat(10_000)).into());
     let mut builder = StatsBuilder::new(1);
     let mut sample = Reservoir::keeping(100);
     for i in 0..1_000_u32 {

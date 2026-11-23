@@ -7,7 +7,7 @@ use crate::functions::{AggregateFunction, JsonObjectAggregate};
 
 /// A character string's value.
 fn text(t: &str) -> Value {
-    Value::Char(t.to_owned())
+    Value::Char(t.into())
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §20.7 GR5a] RULES.md R-TEST-8:

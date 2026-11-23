@@ -86,7 +86,7 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
         put_u32(&mut out, count32(edges.each().count())?);
         for (text, point) in edges.each() {
             out.push(u8::from(point));
-            put_bound(&mut out, &Value::Char(text.to_owned()), t)?;
+            put_bound(&mut out, &Value::Char(text.into()), t)?;
         }
     }
     Ok(out)
@@ -199,7 +199,7 @@ impl<'a> Reader<'a> {
                 _ => return Err(corrupt("a sketch's edge is of another format")),
             });
             let Value::Char(text) = self.bound(t)? else { return Err(corrupt("a sketch's edge is not a string")) };
-            texts.push(text);
+            texts.push(text.into());
         }
         if texts.is_empty() {
             return Ok(Edges::default());

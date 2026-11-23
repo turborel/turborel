@@ -91,7 +91,7 @@ fn through_cursors(bench: &Bench, s: &Session) {
         s.commit().unwrap();
         EXECUTIONS
     });
-    p.set("TEXT", Value::Char("SELECT NAME FROM T WHERE K = ?".to_owned()));
+    p.set("TEXT", Value::Char("SELECT NAME FROM T WHERE K = ?".into()));
     s.execute("PREPARE S FROM TEXT", &mut p).unwrap();
     s.declare_cursor("DECLARE C CURSOR FOR S").unwrap();
     bench.measure(Case::new("open a dynamic cursor by its key", "executions"), || {
@@ -130,7 +130,7 @@ fn inserts(bench: &Bench, s: &Session) {
         for _ in 0..EXECUTIONS {
             let k = next.get();
             next.set(k + 1);
-            s.execute_prepared(&insert, &[int(k), Value::Char(format!("name {k}"))]).unwrap();
+            s.execute_prepared(&insert, &[int(k), Value::Char(format!("name {k}").into())]).unwrap();
         }
         s.commit().unwrap();
         EXECUTIONS
@@ -142,10 +142,10 @@ fn inserts(bench: &Bench, s: &Session) {
 fn host() -> Params {
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
     Params::new()
-        .declare("TEXT", DataType::varying(100), Value::Char(String::new()))
+        .declare("TEXT", DataType::varying(100), Value::Char(String::new().into()))
         .declare("KV", integer.clone(), int(0))
         .declare("FK", integer, int(0))
-        .declare("NM", DataType::character(20), Value::Char(String::new()))
+        .declare("NM", DataType::character(20), Value::Char(String::new().into()))
 }
 
 /// `k` as an INTEGER's value.

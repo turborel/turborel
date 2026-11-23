@@ -90,7 +90,7 @@ fn furnished(db: &Database) -> Vec<Arc<dyn Authenticator>> {
     session.direct("INSERT INTO ONE VALUES (1)").unwrap();
     let insert = session.prepare("INSERT INTO BIG VALUES (?, ?)").unwrap();
     for k in 0..BIG_ROWS {
-        session.execute_prepared(&insert, &[Value::Exact(Decimal::new(k as i128, 0)), Value::Char(BIG_TEXT.to_owned())]).unwrap();
+        session.execute_prepared(&insert, &[Value::Exact(Decimal::new(k as i128, 0)), Value::Char(BIG_TEXT.into())]).unwrap();
     }
     session.commit().unwrap();
     let made = Pbkdf2::new(NonZeroU32::new(ITERATIONS).unwrap());
@@ -107,7 +107,7 @@ impl Served {
         let clear = Database::new();
         settings::declare(&clear).unwrap();
         let socket = pki.scratch.socket("s");
-        clear.set_setting(SOCKET, &Value::Char(socket.display().to_string())).unwrap();
+        clear.set_setting(SOCKET, &Value::Char(socket.display().to_string().into())).unwrap();
         clear.set_setting(SCRAM_WITHOUT_TLS, &Value::Char("ON".into())).unwrap();
         let clear_running = start_with(&clear, &[(MAX_CONNECTIONS, CONNECTIONS)], furnished(&clear));
         let secure = Database::new();

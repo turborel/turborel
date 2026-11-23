@@ -155,7 +155,9 @@ pub static ROUTINES: &[Routine] = &[
         let edge = EdgeParts { topology_type: a.character(5)?, topology_name: a.text(6)?, edge_id: a.int(7)? };
         edge_out(Some(LrDirectedEdge::new(parts(a)?, edge)?))
     }),
-    null_call("ST_TOPOLOGYTYPE", &[EDGE], P::Char, |a| Ok(or_null(a.edge(0)?.map(|e| e.topology_type()), |c| Value::Char(c.to_string())))),
+    null_call("ST_TOPOLOGYTYPE", &[EDGE], P::Char, |a| {
+        Ok(or_null(a.edge(0)?.map(|e| e.topology_type()), |c| Value::Char(c.to_string().into())))
+    }),
     called("ST_TOPOLOGYTYPE", &[EDGE, P::Char], EDGE, |a| {
         edge_out(LrDirectedEdge::with_topology_type(a.edge(0)?.as_ref(), a.character(1)?)?)
     }),

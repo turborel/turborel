@@ -33,6 +33,6 @@ impl Session {
                 format!("[ISO/IEC 9075-2:2023 §19.4 GR1b ii] {} is no time zone displacement {}", value.to_literal(), displacement_range());
             return fail_with(Code::Data, SqlState::INVALID_TIME_ZONE_DISPLACEMENT, msg);
         };
-        self.own.borrow_mut().set(&st.settings, &name, Some(&Value::Char(Datetime::displacement_text(zone))))
+        self.own.borrow_mut().set(&st.settings, &name, Some(&Value::Char(Datetime::displacement_text(zone).into())))
     }
 }

@@ -48,7 +48,7 @@ fn records_gather_as_their_rows_decode() {
     let format = RecordFormat::new(&types());
     let rows: Vec<Vec<Value>> = vec![
         vec![Value::Exact(Decimal::new(-150, 2)), Value::Char("ab    ".into()), Value::Char("x ".into()), Value::Approx(1.5_f64)],
-        vec![Value::Exact(Decimal::new(7, 2)), Value::Null, Value::Char("y".repeat(30)), Value::Null],
+        vec![Value::Exact(Decimal::new(7, 2)), Value::Null, Value::Char("y".repeat(30).into()), Value::Null],
         vec![Value::Null, Value::Char("éü    ".into()), Value::Null, Value::Approx(-2.0_f64)],
     ];
     let (records, store) = encoded(&format, &rows);

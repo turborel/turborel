@@ -19,7 +19,7 @@ fn plugged() -> Box<dyn HashFunction> {
 }
 
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// A database opened from `dir`, `prepare`d first.

@@ -21,7 +21,7 @@ use crate::common::{RunLength, Scratch, number, os, rows};
 /// Turns archiving on in `db`, to `archive`, its jobs run only when asked.
 fn archiving(db: &Database, archive: &str) {
     db.set_job_policy(JobPolicy::Manual).unwrap();
-    db.set_setting("ARCHIVE.TARGET", &Value::Char(archive.to_owned())).unwrap();
+    db.set_setting("ARCHIVE.TARGET", &Value::Char(archive.into())).unwrap();
     db.set_setting("ARCHIVE.MODE", &Value::Char("ON".into())).unwrap();
 }
 

@@ -222,14 +222,14 @@ mod tests {
     /// compare padded; a set holding a number is no set of strings.
     #[test]
     fn a_set_of_strings_finds_them_padded() {
-        let texts: Vec<Value> = (0_i32..10_i32).map(|n| Value::Char(format!("t{n}  "))).chain([Value::Null]).collect();
+        let texts: Vec<Value> = (0_i32..10_i32).map(|n| Value::Char(format!("t{n}  ").into())).chain([Value::Null]).collect();
         let set = InSet::of(texts);
         assert!(set.of_strings());
         assert_eq!(set.text_truth("t3"), Some(Truth::True));
         assert_eq!(set.text_truth("t3 "), Some(Truth::True));
         assert_eq!(set.text_truth("t3\t"), Some(Truth::Unknown), "not equal, and a null among them");
         assert_eq!(set.truth(&Value::Char("t9".into())), Truth::True);
-        let mixed: Vec<Value> = (0_i32..10_i32).map(|n| Value::Char(format!("t{n}"))).chain([int(1)]).collect();
+        let mixed: Vec<Value> = (0_i32..10_i32).map(|n| Value::Char(format!("t{n}").into())).chain([int(1)]).collect();
         assert_eq!(InSet::of(mixed).text_truth("t1"), None, "not strings alone");
     }
 

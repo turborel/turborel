@@ -161,7 +161,7 @@ impl Session {
         let id = identity_of(e, &keys)?;
         let labels: Vec<&str> = e.labels.iter().map(|l| l.name.as_str()).collect();
         let set = format!("{LABEL_BAR}{}{LABEL_BAR}", labels.join(LABEL_BAR));
-        let mut written = vec![id_value(&id), (Value::Char(set), DataType::varying(1000))];
+        let mut written = vec![id_value(&id), (Value::Char(set.into()), DataType::varying(1000))];
         written.extend(row);
         Ok((id, written))
     }

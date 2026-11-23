@@ -76,7 +76,7 @@ fn only_values_far_more_frequent_than_others_are_common() {
     sorted.sort_by(|a, b| compare(a, b).unwrap());
     assert!(common_of(sorted, 1.0, 100.0).0.is_empty(), "evenly spread");
     assert!(common_of(vec![number(1), number(2)], 1.0, 1.0).0.is_empty(), "each seen once");
-    let long = Value::Char("x".repeat(SAMPLED_CHARACTERS));
+    let long = Value::Char("x".repeat(SAMPLED_CHARACTERS).into());
     let short = Value::Char("short".into());
     let values = vec![long.clone(), long.clone(), long, number(5), short.clone(), short.clone(), short.clone()];
     let (common, rest) = common_of(values, 0.5, 4.0);

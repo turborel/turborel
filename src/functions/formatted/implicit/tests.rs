@@ -84,7 +84,7 @@ fn templates_refused_9_46() {
 /// replaces.
 #[test]
 fn strings_read_by_templates_9_46() {
-    let read = |template: &str, text: &str| cast(template).unwrap().call(&[Value::Char(text.to_owned())]);
+    let read = |template: &str, text: &str| cast(template).unwrap().call(&[Value::Char(text.into())]);
     let Value::Datetime(date) = read("YYYY-MM-DD", "2024-02-29").unwrap() else { panic!("a date") };
     assert_eq!((date.moment, date.to_string()), (Moment::Date, "2024-02-29".to_owned()));
     let Value::Datetime(year) = read("YY-MM-DD", "25-01-02").unwrap() else { panic!("a date") };

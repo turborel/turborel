@@ -68,7 +68,7 @@ pub(super) fn topology_name(v: Option<&Value>, rule: &str) -> Result<String> {
     if name.is_empty() || name.chars().count() > MAX_TOPOLOGY_NAME {
         return Err(fault(&format!("{rule} 2b"), SqlState::SPATIAL_INVALID_TOPOLOGY_NAME, &format!("'{name}' is no valid schema name")));
     }
-    Ok(name.clone())
+    Ok(name.to_string())
 }
 
 /// The integer `v`, none if it is null.

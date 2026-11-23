@@ -6,7 +6,7 @@ use super::*;
 use crate::value::Decimal;
 
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 fn number(n: i128) -> Value {

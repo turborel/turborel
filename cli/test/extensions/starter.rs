@@ -60,7 +60,7 @@ fn a_starter_is_made_packed_installed_and_called() {
     assert!(lock.ends_with("license LicenseRef-Proprietary\nlicense file LICENSE\n"), "{lock}");
     let db = Database::new();
     db.set_package_crypto(Arc::new(turborel_client::packages::Crypto)).unwrap();
-    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(f.plugins.display().to_string())).unwrap();
+    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(f.plugins.display().to_string().into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
     let s = db.session("U");
     s.run("CREATE EXTENSION hello").unwrap();

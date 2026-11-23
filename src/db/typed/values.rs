@@ -24,7 +24,7 @@ use crate::value::{Binary, Value};
 /// SQLCODE -910 if `next` is no integer.
 pub(in crate::db) fn system_reference(next: &Value) -> Result<Value> {
     let Value::Exact(d) = next else { return Err(api(format!("[DESIGN] a sequence generator gave {next}, no integer"))) };
-    Ok(Value::Reference(Binary::new(d.units.to_be_bytes().to_vec())))
+    Ok(Value::Reference(Binary::of(&d.units.to_be_bytes())))
 }
 
 /// [ISO/IEC 9075-2:2023 §14.11 GR7d ii] The value of a derived
@@ -103,7 +103,7 @@ mod tests {
         let same: Row = vec![Value::Char("Z".into()), Value::Exact(Decimal::new(7, 0)), Value::Char("B".into())];
         assert_eq!(octets(derived_reference(&row, &[1, 2])), octets(derived_reference(&same, &[1, 2])));
         assert_ne!(octets(derived_reference(&row, &[0, 1])), octets(derived_reference(&same, &[0, 1])));
-        let long: Row = vec![Value::Char("X".repeat(REF_OCTETS))];
+        let long: Row = vec![Value::Char("X".repeat(REF_OCTETS).into())];
         assert_eq!(derived_reference(&long, &[0]).unwrap_err().code, Code::Unsupported);
         assert_eq!(derived_reference(&row, &[3]).unwrap_err().code, Code::Api);
     }

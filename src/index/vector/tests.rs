@@ -35,7 +35,11 @@ fn vector(v: &[f32]) -> Value {
     let text: Vec<String> = v.iter().map(f32::to_string).collect();
     call(
         "TO_VECTOR",
-        &[Value::Char(format!("[{}]", text.join(","))), Value::Exact(Decimal::new(i128::from(DIMS), 0)), Value::Char("FLOAT32".into())],
+        &[
+            Value::Char(format!("[{}]", text.join(",")).into()),
+            Value::Exact(Decimal::new(i128::from(DIMS), 0)),
+            Value::Char("FLOAT32".into()),
+        ],
     )
 }
 

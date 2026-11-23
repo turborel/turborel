@@ -132,7 +132,7 @@ fn views_privileges_and_parameters_reach_the_partitions() {
     assert!(exec(&u, "SELECT ID FROM S.S2025").is_err());
     let p = s.prepare("SELECT ID FROM SALES WHERE SOLD = CAST(? AS DATE)").unwrap();
     for (day, want) in [("2025-03-01", "1"), ("2026-03-01", "2"), ("2025-03-01", "1"), ("2026-03-01", "2"), ("2024-01-01", "")] {
-        let mut c = s.open_prepared(&p, &[Value::Char(day.to_owned())]).unwrap();
+        let mut c = s.open_prepared(&p, &[Value::Char(day.into())]).unwrap();
         let got = c.fetch().unwrap().map(|r| r[0].to_string()).unwrap_or_default();
         assert_eq!(got, want, "{day}");
     }

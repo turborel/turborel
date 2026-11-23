@@ -86,7 +86,7 @@ impl Reading<'_> {
     /// match maps it to, null if it maps it to none.
     fn classifier(&self, scene: &Scene<'_>, place: usize) -> Value {
         let mapped = place.checked_sub(scene.start).and_then(|j| scene.mapped.get(j));
-        mapped.and_then(|m| self.matching.variables.get(m.variable)).map_or(Value::Null, |v| Value::Char(v.name.clone()))
+        mapped.and_then(|m| self.matching.variables.get(m.variable)).map_or(Value::Null, |v| Value::Char(v.name.clone().into()))
     }
 
     /// The `place`th row of the partition in `scene`, then its classifier,

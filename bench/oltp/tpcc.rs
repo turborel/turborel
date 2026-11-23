@@ -73,7 +73,7 @@ fn array(values: Vec<i64>) -> Value {
 }
 
 fn name(last: String) -> Value {
-    Value::Char(last)
+    Value::Char(last.into())
 }
 
 impl<C: Client> Terminal<C> {

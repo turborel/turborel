@@ -99,7 +99,7 @@ fn index_contract(method: &dyn IndexMethod, types: &[DataType], key: fn(i128) ->
     index.remove(&key(5), 14).unwrap();
     assert_eq!(rows(5), Vec::<RowId>::new(), "{}", method.name());
     // A key it cannot encode: an error given as a row is, and no more.
-    let wrong: Vec<Result<RowId>> = Arc::clone(&index).key_rows(&Key(vec![Value::Char("x".to_owned())])).collect();
+    let wrong: Vec<Result<RowId>> = Arc::clone(&index).key_rows(&Key(vec![Value::Char("x".into())])).collect();
     assert!(matches!(wrong.as_slice(), [Err(_)]), "{}: {wrong:?}", method.name());
 }
 
@@ -293,13 +293,13 @@ const DOCUMENTS: [&str; 4] = ["the quick fox", "a lazy dog", "the quick fox", "q
 
 /// A document as a key of one column.
 fn document(text: &str) -> Key {
-    Key(vec![Value::Char(text.to_owned())])
+    Key(vec![Value::Char(text.into())])
 }
 
 /// The ids a TEXT_MATCHES lookup of `words` selects in `index`, sorted.
 fn matched(index: &Arc<dyn Index>, words: &str) -> Vec<RowId> {
     let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument: Some(0) });
-    let probe = Probe::Predicate { predicate, value: Value::Char(words.to_owned()) };
+    let probe = Probe::Predicate { predicate, value: Value::Char(words.into()) };
     let mut ids: Vec<RowId> = searched(index, &probe).unwrap().into_iter().map(|(_, id)| id).collect();
     ids.sort_unstable();
     ids

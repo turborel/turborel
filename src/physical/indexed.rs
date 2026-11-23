@@ -524,7 +524,7 @@ fn sample(t: &DataType) -> Option<Value> {
         DataType::Exact { .. } => Some(Value::Exact(Decimal::new(0, 0))),
         DataType::Approximate { .. } => Some(Value::Approx(0.0_f64)),
         DataType::DecFloat { .. } => Some(Value::DecFloat(crate::value::DecFloat::ZERO)),
-        DataType::Character { .. } | DataType::Varying { .. } => Some(Value::Char(String::new())),
+        DataType::Character { .. } | DataType::Varying { .. } => Some(Value::Char(String::new().into())),
         DataType::Binary { .. } | DataType::VarBinary { .. } => Some(Value::Binary(Binary::new(vec![0]))),
         DataType::Boolean => Some(Value::Bool(false)),
         DataType::Date => Some(moment(Moment::Date, false)),

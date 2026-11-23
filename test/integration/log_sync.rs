@@ -27,7 +27,7 @@ fn job(db: &Database) -> JobInfo {
 
 /// LOG.COMMIT_SYNC OFF, as a value.
 fn off() -> Value {
-    Value::Char("OFF".to_owned())
+    Value::Char("OFF".into())
 }
 
 /// The database of `setup`, under `policy`, logging to a fresh watched

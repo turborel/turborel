@@ -86,8 +86,8 @@ fn exact(n: i128) -> Value {
 
 impl SystemTable for Facts {
     fn rows(&mut self, _user: &str, owner: bool) -> Answer<Vec<Vec<Value>>> {
-        let mut rows = vec![vec![Value::Char("OWNER".to_owned()), exact(i128::from(owner))]];
-        rows.extend((1..=2500).map(|i| vec![Value::Char("ROW".to_owned()), exact(i)]));
+        let mut rows = vec![vec![Value::Char("OWNER".into()), exact(i128::from(owner))]];
+        rows.extend((1..=2500).map(|i| vec![Value::Char("ROW".into()), exact(i)]));
         Ok(rows)
     }
 }

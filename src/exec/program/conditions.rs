@@ -172,7 +172,7 @@ pub(crate) fn raised(s: &Signal, items: Vec<(&'static str, String)>, handling: O
 /// itself; of the null value, a zero-length string; else as shown.
 pub(crate) fn item_text(value: Value) -> String {
     if let Value::Char(text) = value {
-        text
+        text.to_string()
     } else if value.is_null() {
         String::new()
     } else {

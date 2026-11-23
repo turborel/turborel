@@ -285,5 +285,5 @@ pub fn clob(text: &str) -> Value {
 
 /// A CHARACTER VARYING result.
 pub fn varchar(text: String) -> Value {
-    Value::Char(text)
+    Value::Char(text.into())
 }

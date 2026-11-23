@@ -33,7 +33,7 @@ fn a_restore_point_among_pipelined_commits_holds_what_was_logged_before_it() {
     let clock = Arc::new(FixedClock::at(1_000));
     let db = open(&scratch.path("db"), &clock);
     let archive = dir_target(&scratch.path("archive"));
-    db.set_setting("ARCHIVE.TARGET", &Value::Char(archive.clone())).unwrap();
+    db.set_setting("ARCHIVE.TARGET", &Value::Char(archive.clone().into())).unwrap();
     db.set_setting("ARCHIVE.MODE", &Value::Char("ON".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL PRIMARY KEY, V INTEGER)").unwrap();
     let location = dir_target(&scratch.path("target"));

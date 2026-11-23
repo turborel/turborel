@@ -168,7 +168,7 @@ fn long_and_malformed_entries_are_refused() {
     let most = index(&[MONEY]).tree.max_key();
     let length = u32::try_from(most).unwrap();
     let index = index(&[DataType::character(length)]);
-    let long = Key(vec![Value::Char("x".repeat(most))]);
+    let long = Key(vec![Value::Char("x".repeat(most).into())]);
     assert_eq!(index.insert(long, 1).err().map(|e| e.code), Some(Code::Unsupported));
     assert_eq!(searched(&index, &Probe::All).unwrap().len(), 0);
     index.tree.insert(&[1, b'a'], &[]).unwrap();
@@ -273,7 +273,7 @@ fn prefix_probes_find_what_sql_compares() {
         index.insert(key.clone(), row).unwrap();
     }
     let firsts = [exact(1_055, 2), exact(10_550, 3), exact(10_555, 3), Value::Approx(10.56)];
-    let seconds = [Value::Char("AB".into()), Value::Char("AB    ".into()), Value::Char("ABC ".into()), Value::Char(String::new())];
+    let seconds = [Value::Char("AB".into()), Value::Char("AB    ".into()), Value::Char("ABC ".into()), Value::Char(String::new().into())];
     let ops = [CompOp::Eq, CompOp::Lt, CompOp::Le, CompOp::Gt, CompOp::Ge, CompOp::Ne];
     let mut probes = vec![Probe::Prefix { equal: vec![Value::Null], then: None }];
     for first in &firsts {
@@ -307,7 +307,7 @@ fn an_entry_alone_is_its_keys_only_one() {
     for row in 1..=6000_u64 {
         // Keys scattered, a third of them held by an earlier row too.
         let k = row.checked_mul(7919).and_then(|n| n.checked_rem(4000)).unwrap();
-        let key = Key(vec![Value::Char(format!("key {k:05} and a long tail to fill leaves"))]);
+        let key = Key(vec![Value::Char(format!("key {k:05} and a long tail to fill leaves").into())]);
         let others = held.get(&k).is_some_and(|rows| !rows.is_empty());
         let said = index.insert_alone(key, row).unwrap();
         assert!(!(said && others), "row {row}, key {k}: an entry of another row holds it");

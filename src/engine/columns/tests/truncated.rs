@@ -6,7 +6,7 @@ use super::*;
 
 /// One chunk of each encoding, its type, and the encoding's tag.
 fn samples() -> Vec<(DataType, Vec<Value>, u8)> {
-    let texts = |n: u32, f: &dyn Fn(u32) -> String| -> Vec<Value> { (0..n).map(|k| Value::Char(f(k))).collect() };
+    let texts = |n: u32, f: &dyn Fn(u32) -> String| -> Vec<Value> { (0..n).map(|k| Value::Char(f(k).into())).collect() };
     let mut all = vec![
         (INTEGER, (-3..9000).step_by(1000).enumerate().map(|(k, n)| if k % 4 == 1 { Value::Null } else { int(n) }).collect(), FIXED),
         (TEXT, texts(6, &|k| "x".repeat(usize::try_from(k).unwrap())), VARYING),

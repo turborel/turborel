@@ -225,7 +225,10 @@ impl Source for Made<'_> {
             assert!(server.operator.end(id));
         }
         let id = Value::Exact(Decimal::new(i128::from(self.next), 0));
-        Ok(Some(Record { values: vec![id, Value::Char(format!("n{}", self.next))], position: Position { record: self.next, line: None } }))
+        Ok(Some(Record {
+            values: vec![id, Value::Char(format!("n{}", self.next).into())],
+            position: Position { record: self.next, line: None },
+        }))
     }
 }
 

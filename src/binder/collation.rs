@@ -142,7 +142,7 @@ impl ScalarFunction for Collated {
         // substrings, up to a chunk (`functions/lobs/like.rs`).
         let text = |v: Option<&Value>, what: &str| -> Result<Option<String>> {
             if let Some(Value::Char(s)) = v {
-                return Ok(Some(s.clone()));
+                return Ok(Some(s.to_string()));
             }
             if let Some(Value::Lob(l)) = v
                 && l.kind() == LobKind::Character
@@ -491,9 +491,9 @@ impl Binder<'_> {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.4 SR5] COLLATION FOR is of a character string, not {t}")));
         }
         let named = |name: Option<QualifiedName>| match name {
-            Some(n) if n.auth == INFORMATION_SCHEMA => Value::Char(n.ident),
-            Some(n) => Value::Char(n.to_string()),
-            None => Value::Char(SQL_TEXT.to_owned()),
+            Some(n) if n.auth == INFORMATION_SCHEMA => Value::Char(n.ident.into()),
+            Some(n) => Value::Char(n.to_string().into()),
+            None => Value::Char(SQL_TEXT.into()),
         };
         let value = match self.derived(e)? {
             Derived::Explicit(name) => named(Some(name)),

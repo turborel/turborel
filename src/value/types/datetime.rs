@@ -227,7 +227,7 @@ pub fn fitted(text: String, length: u32, fixed: bool) -> Result<Value> {
         let msg = format!("[ISO/IEC 9075:1992 §6.10 GR5e iv, GR6e iii] '{text}' is longer than {length} characters");
         return fail_with(Code::Data, SqlState::STRING_DATA_RIGHT_TRUNCATION, msg);
     }
-    Ok(Value::Char(if fixed { format!("{text}{}", " ".repeat(fits.saturating_sub(count))) } else { text }))
+    Ok(Value::Char(if fixed { crate::value::CharString::padded(&text, fits.saturating_sub(count)) } else { text.into() }))
 }
 
 /// `utc` as a 64-bit word's bits.

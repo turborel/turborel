@@ -105,8 +105,10 @@ fn numbered(n: usize) -> Database {
     let filling = db.session("X");
     let insert = filling.prepare("INSERT INTO T VALUES (?, ?)").unwrap();
     for k in 0..n {
-        let values =
-            [turborel::value::Value::Exact(turborel::value::Decimal::new(k as i128, 0)), turborel::value::Value::Char("s".repeat(500))];
+        let values = [
+            turborel::value::Value::Exact(turborel::value::Decimal::new(k as i128, 0)),
+            turborel::value::Value::Char("s".repeat(500).into()),
+        ];
         filling.execute_prepared(&insert, &values).unwrap();
     }
     filling.commit().unwrap();

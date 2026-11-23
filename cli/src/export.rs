@@ -142,7 +142,7 @@ impl Writer<'_> {
 impl Sink for Writer<'_> {
     fn columns(&mut self, columns: &[Column]) {
         if self.how.header {
-            let names = columns.iter().map(|c| self.how.field(&Value::Char(c.name.clone().unwrap_or_default()))).collect();
+            let names = columns.iter().map(|c| self.how.field(&Value::Char(c.name.clone().unwrap_or_default().into()))).collect();
             self.line(names);
         }
     }

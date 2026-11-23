@@ -120,7 +120,7 @@ fn shown(v: &Value) -> String {
     match v {
         Value::Null => "-".into(),
         Value::Exact(d) => d.to_string(),
-        Value::Char(s) => s.clone(),
+        Value::Char(s) => s.to_string(),
         Value::Approx(_)
         | Value::DecFloat(_)
         | Value::Binary(_)

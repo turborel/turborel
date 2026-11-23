@@ -26,7 +26,7 @@ fn alias_of(id: &str) -> Result<String> {
     if let Some(Item::Scalar(s)) = table
         && let Value::Char(alias) = s.value()
     {
-        return Ok(alias.clone());
+        return Ok(alias.to_string());
     }
     Err(SqlError::new(Code::Data, format!("[EXTENSION] {id} is no element's identity")))
 }

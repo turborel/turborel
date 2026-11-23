@@ -135,7 +135,8 @@ fn cosine() -> Arc<dyn ScalarFunction> {
 /// `v` as a VECTOR value, by TO_VECTOR.
 fn vector_value(v: &[f32]) -> Value {
     let text: Vec<String> = v.iter().map(f32::to_string).collect();
-    let args = [Value::Char(format!("[{}]", text.join(","))), Value::Exact(Decimal::new(DIMS as i128, 0)), Value::Char("FLOAT32".into())];
+    let args =
+        [Value::Char(format!("[{}]", text.join(",")).into()), Value::Exact(Decimal::new(DIMS as i128, 0)), Value::Char("FLOAT32".into())];
     function("TO_VECTOR").call(&args).unwrap()
 }
 

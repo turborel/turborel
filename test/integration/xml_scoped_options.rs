@@ -232,7 +232,7 @@ fn statement_options_14_3_to_14_7() {
     a.run(&positioned).unwrap();
     assert_eq!(one(&a, "SELECT V FROM X WHERE ID = 1"), p(BASE64), "[§14.6] positioned");
     let prepared = a.prepare(&format!("UPDATE WITH XMLBINARY BASE64 X SET V = (SELECT {ELEMENT} || ? FROM E) WHERE ID = 2")).unwrap();
-    a.execute_prepared(&prepared, &[turborel::value::Value::Char("!".to_owned())]).unwrap();
+    a.execute_prepared(&prepared, &[turborel::value::Value::Char("!".into())]).unwrap();
     assert_eq!(one(&a, "SELECT V FROM X WHERE ID = 2"), "<p>D7c=</p>!");
     a.run(&format!("INSERT INTO X SELECT 4, {ELEMENT} FROM E")).unwrap();
     assert_eq!(one(&a, "SELECT V FROM X WHERE ID = 4"), p("0FB7"), "none after the statement");

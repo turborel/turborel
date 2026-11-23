@@ -57,7 +57,7 @@ fn lookahead_is_lazy_bounded_and_releases_its_reservation() {
 #[test]
 fn lookahead_refusal_preserves_the_prefix_and_overflow_row() {
     let mut expected: Vec<_> = (0_i32..200_i32).map(row).collect();
-    expected[3] = vec![Value::Char("x".repeat(16_384)), Value::Null];
+    expected[3] = vec![Value::Char("x".repeat(16_384).into()), Value::Null];
     let normal = headers(ROWS).saturating_add(ROWS.saturating_mul(row_bytes(&row(0))));
     for (bytes, limit) in [(0, usize::MAX), (usize::MAX, 0), (usize::MAX, normal), (normal, usize::MAX)] {
         let budget = MemoryBudget::new(bytes);

@@ -281,7 +281,7 @@ type Run = (u64, Vec<NormKey>);
 /// strings that compare equal, by a collation of NO PAD or CHAR_LENGTH.
 fn exact_norm(v: &Value) -> NormKey {
     match v {
-        Value::Char(s) => NormKey::Char(s.clone()),
+        Value::Char(s) => NormKey::Char(s.to_string()),
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)

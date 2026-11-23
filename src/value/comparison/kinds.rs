@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::*;
 
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §8.2] [DESIGN] RULES.md D68, a

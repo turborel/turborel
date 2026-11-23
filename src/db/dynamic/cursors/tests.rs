@@ -31,7 +31,7 @@ fn cursor_for(text: &str) -> (Database, Session, Params) {
     s.commit().unwrap();
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
     let mut p = Params::new()
-        .declare("TEXT", DataType::varying(100), Value::Char(text.to_owned()))
+        .declare("TEXT", DataType::varying(100), Value::Char(text.into()))
         .declare("V", integer.clone(), int(0))
         .declare("FK", integer, int(0));
     s.execute("PREPARE S FROM TEXT", &mut p).unwrap();
@@ -77,7 +77,7 @@ fn a_dynamic_cursors_query_keeps_its_plan_between_opens() {
 #[test]
 fn an_updatable_dynamic_cursor_keeps_its_plan_between_opens() {
     let (_db, s, mut p) = cursor_for("SELECT K FROM T WHERE K >= ?");
-    p.set("TEXT", Value::Char("UPDATE T SET N = ? WHERE CURRENT OF C".to_owned()));
+    p.set("TEXT", Value::Char("UPDATE T SET N = ? WHERE CURRENT OF C".into()));
     s.execute("PREPARE U FROM TEXT", &mut p).unwrap();
     for v in 1..=3 {
         let k = first(&s, &mut p, v);

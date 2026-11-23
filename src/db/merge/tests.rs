@@ -10,7 +10,7 @@ use crate::value::Value;
 
 /// A joined row telling its pairs apart by `n`.
 fn row(n: u8) -> Row {
-    vec![Value::Char(n.to_string())]
+    vec![Value::Char(n.to_string().into())]
 }
 
 /// Of each subject row, its clause, its row id and its row, shown.

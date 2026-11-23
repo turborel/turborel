@@ -133,7 +133,7 @@ impl IndexMethod for Method {
         let own = format!("{}.METRIC", self.name.to_ascii_uppercase());
         let set =
             index.options.iter().find(|(n, _)| *n == own).and_then(|(_, v)| if let Value::Char(m) = v { Some(m.clone()) } else { None });
-        Some(set.unwrap_or_else(|| METRIC.to_owned()))
+        Some(set.unwrap_or_else(|| METRIC.into()).to_string())
     }
     fn index_options(&self) -> Vec<TableOption> {
         let group = self.name.to_ascii_uppercase();

@@ -31,7 +31,7 @@ fn name_length() -> u32 {
 
 /// The value of `attributes`' `application`, or null.
 pub(crate) fn application(attributes: &Attributes) -> Value {
-    attributes.iter().find(|(name, _)| name == APPLICATION).map_or(Value::Null, |(_, value)| Value::Char(value.clone()))
+    attributes.iter().find(|(name, _)| name == APPLICATION).map_or(Value::Null, |(_, value)| Value::Char(value.clone().into()))
 }
 
 /// \[DESIGN\] INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES.
@@ -56,7 +56,7 @@ impl SystemTable for ConnectionAttributes {
             .flat_map(|(id, attributes)| {
                 attributes
                     .iter()
-                    .map(|(name, value)| vec![count(id), Value::Char(name.clone()), Value::Char(value.clone())])
+                    .map(|(name, value)| vec![count(id), Value::Char(name.clone().into()), Value::Char(value.clone().into())])
                     .collect::<Vec<_>>()
             })
             .collect())

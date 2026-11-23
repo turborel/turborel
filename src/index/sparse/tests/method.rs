@@ -32,7 +32,7 @@ fn table() -> TableDesc {
 #[test]
 fn indexes_are_made_and_opened_by_descriptor() {
     let method = SparseMethod::in_memory();
-    let half = desc(vec![(QUANTIZATION_OPTION.to_owned(), Value::Char("FLOAT16".to_owned()))]);
+    let half = desc(vec![(QUANTIZATION_OPTION.to_owned(), Value::Char("FLOAT16".into()))]);
     let made = method.create_on(&[column()], (&table(), &half)).unwrap();
     made.insert(key(&sparse(&[(1, 1.0)])), 1).unwrap();
     let locator = made.locator();
@@ -68,7 +68,7 @@ fn counts_rows_and_refused_keys() {
     let two = Key(vec![Value::Null, Value::Null]);
     assert_eq!(index.rows(&two).unwrap_err().code, Code::Unsupported);
     assert!(Arc::clone(&index).key_rows(&two).next().unwrap().is_err());
-    assert_eq!(index.insert(Key(vec![Value::Char("x".to_owned())]), 3).unwrap_err().code, Code::Unsupported);
+    assert_eq!(index.insert(Key(vec![Value::Char("x".into())]), 3).unwrap_err().code, Code::Unsupported);
     index.discard();
     drop(index);
 }

@@ -337,7 +337,8 @@ impl<R: BufRead> Source for Delimited<R> {
         let Some((fields, line)) = self.fields(number)? else { return Ok(None) };
         self.records = number;
         let null = &self.dialect.null;
-        let values = fields.into_iter().map(|f| if !f.quoted && f.text == *null { Value::Null } else { Value::Char(f.text) }).collect();
+        let values =
+            fields.into_iter().map(|f| if !f.quoted && f.text == *null { Value::Null } else { Value::Char(f.text.into()) }).collect();
         Ok(Some(Record { values, position: Position { record: number, line: Some(line) } }))
     }
 }

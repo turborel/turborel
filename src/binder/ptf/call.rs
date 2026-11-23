@@ -228,7 +228,7 @@ pub(super) fn bound(b: Bounds<'_>, inv: &PtfInvocation, depth: usize) -> Result<
                     resolved.push((c.name.clone(), t));
                 }
                 described = Some(resolved);
-                (Expr::Const(Value::Char(String::new())), Value::Char(String::new()))
+                (Expr::Const(Value::Char(String::new().into())), Value::Char(String::new().into()))
             }
             (Some(_), _) => (Expr::Const(Value::Null), Value::Null),
             (None, a) => data_argument(b, (&desc, &p.name, &p.data_type), a)?,

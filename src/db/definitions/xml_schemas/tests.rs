@@ -110,7 +110,7 @@ fn a_document_is_kept_octet_for_octet() {
         crashed.open_files(&fs, dir, &OpenOptions::default()).unwrap();
         crashed.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
         let a = crashed.session("A");
-        a.execute_prepared(&a.prepare("CREATE XML SCHEMA S AS ?").unwrap(), &[Value::Char(DOCUMENT.to_owned())]).unwrap();
+        a.execute_prepared(&a.prepare("CREATE XML SCHEMA S AS ?").unwrap(), &[Value::Char(DOCUMENT.into())]).unwrap();
         a.commit().unwrap();
         let registered = kept(&crashed);
         assert_eq!(registered.0, DOCUMENT);

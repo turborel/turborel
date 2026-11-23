@@ -441,7 +441,7 @@ impl Observer for ParameterMethod {
             (Self::EndDistance, Curve::Clothoid(k)) => double(k.as_ref().map(|k| k.end)),
             (Self::StartCurvature, Curve::Spiral(s)) => double(s.as_ref().map(|s| s.start_curvature)),
             (Self::EndCurvature, Curve::Spiral(s)) => double(s.as_ref().map(|s| s.end_curvature)),
-            (Self::SpiralType, Curve::Spiral(s)) => s.as_ref().map_or(Value::Null, |s| Value::Char(s.kind.name().to_owned())),
+            (Self::SpiralType, Curve::Spiral(s)) => s.as_ref().map_or(Value::Null, |s| Value::Char(s.kind.name().into())),
             (
                 Self::UAxisLength
                 | Self::VAxisLength

@@ -43,7 +43,7 @@ impl NetReader {
 /// The row of `p`.
 fn row(p: &Problem) -> Vec<Value> {
     let optional = |n: Option<i32>| n.map_or(Value::Null, int_value);
-    vec![Value::Char(p.error.to_owned()), optional(p.primitive1), optional(p.primitive2)]
+    vec![Value::Char(p.error.into()), optional(p.primitive1), optional(p.primitive2)]
 }
 
 impl TableFunction for NetReader {

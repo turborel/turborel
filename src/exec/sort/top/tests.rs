@@ -109,11 +109,9 @@ fn strings(state: &mut u64, n: i128, scale: u32) -> Vec<Row> {
         .map(|place| {
             let key = match below(state, 6) {
                 0 => Value::Null,
-                k => Value::Char(format!(
-                    "{}{}",
-                    "a long shared start of a key ".repeat(usize::try_from(k % 2).unwrap().saturating_add(1)),
-                    k
-                )),
+                k => Value::Char(
+                    format!("{}{}", "a long shared start of a key ".repeat(usize::try_from(k % 2).unwrap().saturating_add(1)), k).into(),
+                ),
             };
             vec![key, Value::Exact(Decimal::new(below(state, 5), scale)), Value::Exact(Decimal::new(place, 0))]
         })

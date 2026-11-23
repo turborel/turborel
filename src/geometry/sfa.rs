@@ -254,7 +254,7 @@ impl ScalarFunction for SimpleFunction {
         let most = kind::most_specific(bytes).ok_or_else(|| super::invalid("the value's type code names no geometry type"))?;
         let differs = matches!(most, Kind::Triangle | Kind::PolyhdrlSurface | Kind::Tin);
         match (self, differs) {
-            (Self::GeometryType, _) => Ok(Value::Char(type_name(most).to_owned())),
+            (Self::GeometryType, _) => Ok(Value::Char(type_name(most).into())),
             (Self::AsText | Self::AsBinary, false) => self.sql_mm().call(args),
             (Self::AsText, true) => Ok(Value::Lob(Lob::of_text(&wkt::write_simple_geom(&model::Geom::decode(bytes)?)?))),
             (Self::AsBinary, true) => Ok(Value::Lob(Lob::of_octets(&model::write_simple_wkb(&model::Geom::decode(bytes)?)))),

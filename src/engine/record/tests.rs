@@ -112,7 +112,7 @@ fn long_values_go_out_of_line() {
         DataType::character(100),
     ]);
     let long = format!("{}{}", "é".repeat(10), "x".repeat(30));
-    let row = vec![exact(1, 0), Value::Char(format!("{long:<100}")), Value::Char(format!("{:<100}", "short"))];
+    let row = vec![exact(1, 0), Value::Char(format!("{long:<100}").into()), Value::Char(format!("{:<100}", "short").into())];
     let mut store = Vec::new();
     let bytes = spill(&format, &row, Spill { threshold: 5, most: 1000 }, &mut store).unwrap();
     assert_eq!(store, [(1, long.as_bytes().to_vec())], "\"short\" is at the threshold, so stays");
@@ -138,7 +138,7 @@ fn long_values_go_out_of_line() {
 #[test]
 fn rows_too_long_move_their_longest_values_out() {
     let format = RecordFormat::new(&[DataType::character(200), DataType::character(200), DataType::character(20)]);
-    let row = vec![Value::Char("a".repeat(100)), Value::Char("b".repeat(150)), Value::Char("c".repeat(20))];
+    let row = vec![Value::Char("a".repeat(100).into()), Value::Char("b".repeat(150).into()), Value::Char("c".repeat(20).into())];
     let mut store = Vec::new();
     let bytes = spill(&format, &row, Spill { threshold: 1000, most: 180 }, &mut store).unwrap();
     assert_eq!(store.iter().map(|(c, _)| *c).collect::<Vec<_>>(), [1], "the longest, 150, was enough");
@@ -162,7 +162,7 @@ fn rows_too_long_move_their_longest_values_out() {
 #[test]
 fn values_of_every_varying_type_are_measured() {
     let format = RecordFormat::new(&[DataType::varying(1000), DataType::VarBinary { length: 8000 }]);
-    let row = vec![Value::Char(format!("{:<300}", "x")), Value::Binary(crate::value::Binary::new(vec![0xAB; 300]))];
+    let row = vec![Value::Char(format!("{:<300}", "x").into()), Value::Binary(crate::value::Binary::new(vec![0xAB; 300]))];
     let mut store = Vec::new();
     let bytes = spill(&format, &row, Spill { threshold: 100, most: 4000 }, &mut store).unwrap();
     assert_eq!(store.iter().map(|(c, _)| *c).collect::<Vec<_>>(), [0, 1], "both past the threshold");
@@ -224,7 +224,7 @@ fn malformed_records_are_refused() {
 fn columns_asked_for_are_decoded_once() {
     let format = RecordFormat::new(&[DataType::character(100), DataType::character(3)]);
     let long = "x".repeat(40);
-    let row = vec![Value::Char(format!("{long:<100}")), Value::Char("ab ".into())];
+    let row = vec![Value::Char(format!("{long:<100}").into()), Value::Char("ab ".into())];
     let mut store = Vec::new();
     let bytes = spill(&format, &row, Spill { threshold: 5, most: 1000 }, &mut store).unwrap();
     let mut fetched = 0_u32;

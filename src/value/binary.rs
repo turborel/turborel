@@ -11,8 +11,15 @@
 //! ```text
 //! key: { octet other than 0 | 0 ESCAPE (255) }... 0 END (0)
 //! ```
+//!
+//! \[DESIGN\] (RULES.md D961) A string of at most `INLINE` octets is held
+//! in the value itself, with no allocation. A longer one is one buffer,
+//! never changed, that every clone of the value shares.
 
+use std::cmp::Ordering;
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// The bits of an octet.
 pub const BYTE_BITS: u32 = u8::BITS;
@@ -23,16 +30,51 @@ const END: u8 = 0;
 /// The radix of a `<hexit>` [§5.3].
 const HEX_RADIX: u32 = 16;
 
+/// The octets a binary string held in its value takes at most: what
+/// leaves the value three words, as a `String` is, so nothing that holds
+/// one grows past what holds a character string's text (RULES.md D961).
+pub const INLINE: usize = 22;
+
 /// A binary string's value.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
-pub struct Binary {
-    octets: Box<[u8]>,
+#[derive(Clone)]
+pub struct Binary(Form);
+
+/// How a binary string is held.
+#[derive(Clone)]
+enum Form {
+    /// In the value: its first `len` octets.
+    Inline {
+        /// The octets of the string.
+        len: u8,
+        /// The string, then zeros.
+        octets: [u8; INLINE],
+    },
+    /// In a buffer its clones share.
+    Shared(Arc<[u8]>),
+}
+
+/// `octets` in the form held in a value, if they are few enough.
+fn held(octets: &[u8]) -> Option<Form> {
+    let mut all = [0_u8; INLINE];
+    all.get_mut(..octets.len())?.copy_from_slice(octets);
+    Some(Form::Inline { len: u8::try_from(octets.len()).ok()?, octets: all })
 }
 
 impl Binary {
     /// The string of `octets`.
     pub fn new(octets: Vec<u8>) -> Binary {
-        Binary { octets: octets.into_boxed_slice() }
+        Binary(held(&octets).unwrap_or_else(|| Form::Shared(Arc::from(octets))))
+    }
+
+    /// The string of `octets`, copied from where they are: into the value
+    /// with no allocation if they fit.
+    pub fn of(octets: &[u8]) -> Binary {
+        Binary(held(octets).unwrap_or_else(|| Form::Shared(Arc::from(octets))))
+    }
+
+    /// Whether it is held in the value, with no buffer.
+    pub fn is_inline(&self) -> bool {
+        matches!(self.0, Form::Inline { .. })
     }
 
     /// The octets `hexits` writes, two to each [ISO/IEC 9075-2:2023 §5.3
@@ -50,17 +92,20 @@ impl Binary {
 
     /// Its octets.
     pub fn bytes(&self) -> &[u8] {
-        &self.octets
+        match &self.0 {
+            Form::Inline { len, octets } => octets.get(..usize::from(*len)).unwrap_or_default(),
+            Form::Shared(octets) => octets,
+        }
     }
 
     /// How many octets it has, the most a `u32` counts.
     pub fn len(&self) -> u32 {
-        u32::try_from(self.octets.len()).unwrap_or(u32::MAX)
+        u32::try_from(self.bytes().len()).unwrap_or(u32::MAX)
     }
 
     /// Whether it has no octets.
     pub fn is_empty(&self) -> bool {
-        self.octets.is_empty()
+        self.bytes().is_empty()
     }
 
     /// The octets `from` (the first 1) on, `count` of them at most, or all
@@ -70,7 +115,7 @@ impl Binary {
         let start = from.saturating_sub(1).min(self.len());
         let end = start.saturating_add(count).min(self.len());
         let range = usize::try_from(start).unwrap_or(usize::MAX)..usize::try_from(end).unwrap_or(usize::MAX);
-        Binary::new(self.octets.get(range).unwrap_or_default().to_vec())
+        Binary::of(self.bytes().get(range).unwrap_or_default())
     }
 
     /// Its octets, then `other`'s [ISO/IEC 9075-2:2023 §6.32 GR3].
@@ -86,7 +131,7 @@ impl Binary {
         if needle.is_empty() {
             return 1;
         }
-        let at = self.octets.windows(needle.octets.len()).position(|w| w == needle.bytes());
+        let at = self.bytes().windows(needle.bytes().len()).position(|w| w == needle.bytes());
         at.and_then(|i| u32::try_from(i).ok()).map_or(0, |i| i.saturating_add(1))
     }
 
@@ -127,7 +172,51 @@ impl Binary {
 /// writes them [ISO/IEC 9075-2:2023 §5.3].
 impl fmt::Display for Binary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.octets.iter().try_for_each(|b| write!(f, "{b:02X}"))
+        self.bytes().iter().try_for_each(|b| write!(f, "{b:02X}"))
+    }
+}
+
+/// The empty string.
+impl Default for Binary {
+    fn default() -> Binary {
+        Binary(Form::Inline { len: 0, octets: [0; INLINE] })
+    }
+}
+
+/// Its octets, whatever the form.
+impl fmt::Debug for Binary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Binary").field("octets", &self.bytes()).finish()
+    }
+}
+
+/// Equal octets are equal whatever the form.
+impl PartialEq for Binary {
+    fn eq(&self, other: &Binary) -> bool {
+        self.bytes() == other.bytes()
+    }
+}
+
+impl Eq for Binary {}
+
+/// Octet by octet, a string before every longer one it begins [ISO/IEC
+/// 9075-2:2023 §8.2 GR5].
+impl Ord for Binary {
+    fn cmp(&self, other: &Binary) -> Ordering {
+        self.bytes().cmp(other.bytes())
+    }
+}
+
+impl PartialOrd for Binary {
+    fn partial_cmp(&self, other: &Binary) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// As its octets hash, so equal strings hash equal whatever the form.
+impl Hash for Binary {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.bytes().hash(state);
     }
 }
 
@@ -199,6 +288,52 @@ mod tests {
         assert_eq!(s.concat(&Binary::new(vec![0])).to_string(), "0AFF1B00");
         let needle = |h: &str| s.position(&Binary::of_hex(h).unwrap());
         assert_eq!((needle("FF1B"), needle(""), needle("1B0A"), needle("0A")), (2, 1, 0, 1));
+    }
+
+    /// Verifies: [DESIGN] (RULES.md D961) a binary string of at most
+    /// `INLINE` octets is held in its value and a longer one in a buffer
+    /// its clones share; either gives back its octets, made of a vector or
+    /// of a slice, and a value is no wider for it.
+    #[test]
+    fn a_binary_string_is_held_inline_up_to_the_capacity() {
+        assert_eq!((size_of::<Binary>(), size_of::<crate::value::Value>()), (24, 48));
+        for n in [0, 1, INLINE - 1, INLINE, INLINE + 1, 300] {
+            let octets: Vec<u8> = (0..=u8::MAX).cycle().take(n).collect();
+            let (made, copied) = (Binary::new(octets.clone()), Binary::of(&octets));
+            assert_eq!((made.is_inline(), copied.is_inline()), (n <= INLINE, n <= INLINE), "{n} octets");
+            assert_eq!((made.bytes(), copied.bytes(), usize::try_from(made.len()).unwrap()), (&octets[..], &octets[..], n));
+            let clone = made.clone();
+            assert_eq!(clone, made);
+            assert_eq!(std::ptr::eq(clone.bytes(), made.bytes()), n > INLINE, "a long string's clone shares its buffer");
+        }
+        assert!(Binary::default().is_inline() && Binary::default().is_empty());
+    }
+
+    /// Verifies: [ISO/IEC 9075-2:2023 §8.2 GR5] equal octets are equal,
+    /// order equal and hash equal whatever holds them, a string orders
+    /// before every longer one it begins across the forms, and a string
+    /// shows its octets alone.
+    #[test]
+    fn the_forms_of_a_binary_string_compare_and_hash_as_their_octets() {
+        use std::hash::{BuildHasher, RandomState};
+        let (held, buffered) = (Binary::of(&[1, 0, 2]), Binary(Form::Shared(Arc::from(&[1_u8, 0, 2][..]))));
+        assert!(held.is_inline() && !buffered.is_inline());
+        assert_eq!(held, buffered);
+        assert_eq!((held.cmp(&buffered), held.partial_cmp(&buffered)), (Ordering::Equal, Some(Ordering::Equal)));
+        let hasher = RandomState::new();
+        assert_eq!(hasher.hash_one(&held), hasher.hash_one(&buffered));
+        assert_eq!(hasher.hash_one(&held), hasher.hash_one(&[1_u8, 0, 2][..]), "as its octets hash");
+        assert_ne!(held, Binary::of(&[1, 0, 3]));
+        let (short, long) = (Binary::of(&[7; INLINE]), Binary::of(&[7; INLINE + 1]));
+        assert_eq!(
+            (short.cmp(&long), long.cmp(&short), Binary::of(&[8]).cmp(&long)),
+            (Ordering::Less, Ordering::Greater, Ordering::Greater)
+        );
+        assert_eq!(format!("{held:?}"), "Binary { octets: [1, 0, 2] }");
+        assert_eq!(format!("{buffered:?}"), format!("{held:?}"));
+        let joined = short.concat(&Binary::of(&[9]));
+        assert_eq!((joined.bytes().len(), joined.bytes().last(), joined.is_inline()), (INLINE + 1, Some(&9), false));
+        assert_eq!(long.substring(2, 3), Binary::of(&[7; 3]));
     }
 
     /// Verifies: [DESIGN] a key that is cut short, or of a marker after a

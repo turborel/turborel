@@ -66,7 +66,7 @@ fn a_prepared_statement_keeps_its_plan_between_executions() {
     for k in 1..=4 {
         s.execute_prepared(&update, &[int(100), int(k)]).unwrap();
         s.execute_prepared(&delete, &[int(k + 10)]).unwrap();
-        s.execute_prepared(&insert, &[int(k + 30), Value::Char(format!("I{k}"))]).unwrap();
+        s.execute_prepared(&insert, &[int(k + 30), Value::Char(format!("I{k}").into())]).unwrap();
     }
     assert_eq!([update.plans_made(), delete.plans_made(), insert.plans_made()], [1, 1, 1]);
     let changed = rows(&s, "SELECT K, N, S FROM T WHERE K < 5 OR K BETWEEN 11 AND 14 OR K > 30 ORDER BY K").unwrap();
@@ -285,7 +285,7 @@ fn a_session_with_declared_tables_keeps_its_plans() {
     let declared = s.prepare("SELECT V FROM MODULE.D WHERE K = ?").unwrap();
     let query = s.prepare("SELECT S FROM T WHERE K = ?").unwrap();
     for k in 1..=4 {
-        s.execute_prepared(&insert, &[int(k), Value::Char(format!("D{k}"))]).unwrap();
+        s.execute_prepared(&insert, &[int(k), Value::Char(format!("D{k}").into())]).unwrap();
         assert_eq!(opened(&s, &declared, &[int(k)]), [format!("D{k}")]);
         assert_eq!(opened(&s, &query, &[int(k)]), [format!("S{k}")]);
         s.commit().unwrap();

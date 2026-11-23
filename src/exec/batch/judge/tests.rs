@@ -247,7 +247,7 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
     let texts = crate::storage::Texts::new(text, ends, Some(nulls.into()));
     let values = texts.values().to_vec();
     let all: Vec<u32> = rows_of(0..values.len());
-    let char_of = |s: &str| Value::Char(s.to_owned());
+    let char_of = |s: &str| Value::Char(s.into());
     let mut judged = vec![
         Judged::Like(0, constant_pattern(&char_of("a%"), None).unwrap()),
         Judged::Like(0, constant_pattern(&char_of("_b"), None).unwrap()),

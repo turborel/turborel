@@ -266,7 +266,7 @@ impl<'a> Node<'a> {
                 Value::DecFloat(d)
             }
             APPROXIMATE => Value::Approx(f64::from_bits(u64::from_le_bytes(array_at(body, 0)?))),
-            STRING => Value::Char(string_at(body, 0)?.0.to_owned()),
+            STRING => Value::Char(string_at(body, 0)?.0.into()),
             DATETIME => Value::Datetime(datetime_at(body)?),
             _ => return Err(corrupt("a node's tag is no kind's")),
         };

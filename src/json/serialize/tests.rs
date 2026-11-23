@@ -27,7 +27,7 @@ fn scalar(value: Value) -> Item {
 }
 
 fn date() -> Item {
-    scalar(cast(Value::Char("2020-01-02".to_owned()), &DataType::Date).unwrap())
+    scalar(cast(Value::Char("2020-01-02".into()), &DataType::Date).unwrap())
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.43 GR2a ii] [RFC 8259

@@ -46,7 +46,7 @@ pub struct JsonContains;
 fn text_of(value: &Value) -> Result<Option<String>> {
     match value {
         Value::Null => Ok(None),
-        Value::Char(text) => Ok(Some(text.clone())),
+        Value::Char(text) => Ok(Some(text.to_string())),
         Value::Lob(lob) => match lob.kind() {
             LobKind::Character => held_text(lob, JSON_TEXT).map(Some),
             LobKind::Binary => Err(not_text(value)),

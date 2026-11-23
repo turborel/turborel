@@ -107,7 +107,7 @@ fn spills_pass_through_the_encodings_named() {
     let db = database(&dir);
     let (plain, plain_bytes) = sorting(&db, &dir);
     assert_eq!(plain, vec![Vec::<u32>::new()]);
-    let set = |names: &str| db.set_setting("SPILL.ENCODINGS", &Value::Char(names.to_owned()));
+    let set = |names: &str| db.set_setting("SPILL.ENCODINGS", &Value::Char(names.into()));
     set("test run-length").unwrap();
     let (compressed, compressed_bytes) = sorting(&db, &dir);
     assert_eq!(compressed, vec![vec![RUN_LENGTH]]);

@@ -7,6 +7,7 @@ mod batches;
 mod btree;
 mod budget;
 mod bulk;
+mod char_strings;
 mod checkpoint;
 mod checkpoint_cost;
 mod io_path;
@@ -76,7 +77,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 30] {
+pub fn core() -> [&'static [Mutation]; 31] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -103,6 +104,7 @@ pub fn core() -> [&'static [Mutation]; 30] {
         &steady::STEADY_PLANS,
         &alloc::ALLOC,
         &tpcc_allocs::TPCC_ALLOCS,
+        &char_strings::CHAR_STRINGS,
         &commit_path::COMMIT_PATH,
         &dirty_frames::DIRTY_FRAMES,
         &range_path::RANGE_PATH,

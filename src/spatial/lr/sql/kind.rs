@@ -166,7 +166,7 @@ impl SqlType for LrType {
             return Ok(v);
         }
         if let Some(text) = text_of(&v)? {
-            return self.cast(Value::Char(text), &data_type_of(self.kind));
+            return self.cast(Value::Char(text.into()), &data_type_of(self.kind));
         }
         self.fits(&v)?;
         Ok(v)
