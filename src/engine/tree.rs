@@ -58,6 +58,7 @@ mod estimate;
 mod fit;
 pub(crate) mod hints;
 mod inner;
+mod levels;
 mod load;
 mod merge;
 mod near;
@@ -78,7 +79,7 @@ pub(crate) use node::Parsed;
 
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
 pub(crate) use reclaim::{Entered, Epochs};
-pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of};
+pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of, scan_owned};
 pub use write::{Descended, Update};
 #[cfg(test)]
 use write::{Mode, Written};
@@ -162,11 +163,14 @@ impl Target<'_> {
 struct Path {
     /// The rightmost node read at each level above the one it stopped at,
     /// the top first (§5).
-    stack: Vec<PageId>,
+    stack: levels::Levels,
     /// Whether to keep `low`.
     track_low: bool,
     /// Whether the descent is a lookup the tree's tally counts.
     tallied: bool,
+    /// Whether a descent to a leaf stops at the node above it, a writer's,
+    /// which locks the leaf before it reads it (`write.rs`).
+    above_leaf: bool,
     /// The key below the range of the node it stopped at; none for the
     /// leftmost node of its level.
     low: Option<Vec<u8>>,
@@ -383,9 +387,9 @@ impl BLinkTree {
             // thread's copy; a root of no known level only for a leaf.
             let copied = expected.map_or(level == 0, |l| l > level);
             let page = inner::read(&self.pool, (self.file, id.0), tally, copied)?;
-            let node = Node::parse(&page)?;
+            let node = page.node()?;
             if node.level > 0 {
-                inner::keep(&page, (self.file, id.0));
+                inner::keep(&page, (self.file, id.0), node.parsed());
             }
             if expected.is_some_and(|l| l != node.level) || node.level < level {
                 return Err(corrupt(&format!("node {} is not at the level its parent says", id.0)));
@@ -406,7 +410,7 @@ impl BLinkTree {
                 count(&self.counters.right_moves);
                 continue;
             }
-            if node.level == level {
+            if node.level == level || (path.above_leaf && node.level == 1) {
                 return Ok((id, at(&node)?));
             }
             path.stack.push(id);
@@ -425,7 +429,8 @@ impl BLinkTree {
     fn move_right<'t, R>(&'t self, held: &mut NodeLock<'t>, key: &[u8], at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<R> {
         loop {
             let right = {
-                let page = self.pool.read(self.file, held.id.0)?;
+                // Through the frame it owns (`disk/buffer/owned.rs`).
+                let page = held.read();
                 let node = Node::parse(&page)?;
                 // A node taken out leads to the one that took its range
                 // (`reclaim.rs`).
@@ -443,7 +448,7 @@ impl BLinkTree {
     /// then fits its page, else by splitting it. The splits, if any.
     fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Vec<Split>> {
         let copy = {
-            let mut page = self.pool.write(self.file, held.id)?;
+            let mut page = self.pool.write_owned(held)?;
             let room = self.room(held, &Node::parse(&page)?, (key, value), slot)?;
             let Some(room) = room else {
                 if let Slot::Replace(at) = slot {

@@ -44,13 +44,21 @@ const CLEARED: [ConditionItem; 11] = [
 /// compound statements `scopes`, the innermost last, and the place of its
 /// compound statement there; none if none handles it.
 pub(super) fn appropriate<'p, M>(scopes: &[Scope<'p, M>], condition: &SqlError) -> Option<(usize, &'p Handler)> {
+    let handlers: Vec<&'p [Handler]> = scopes.iter().map(|s| s.block.handlers.as_slice()).collect();
+    let (k, h) = appropriate_among(&handlers, condition)?;
+    handlers.get(k).and_then(|of| of.get(h)).map(|handler| (k, handler))
+}
+
+/// [§14.2 GR1] As `appropriate`, of the handlers of each compound
+/// statement in scope, the innermost last: the place of the compound
+/// statement and of its handler among its own.
+pub(crate) fn appropriate_among(scopes: &[&[Handler]], condition: &SqlError) -> Option<(usize, usize)> {
     if !handleable(condition) {
         return None;
     }
-    for (k, scope) in scopes.iter().enumerate().rev() {
-        let of = |specific: bool| {
-            scope.block.handlers.iter().find(|h| h.conditions.iter().any(|c| c.specific() == specific && handles(c, condition)))
-        };
+    for (k, handlers) in scopes.iter().enumerate().rev() {
+        let of =
+            |specific: bool| handlers.iter().position(|h| h.conditions.iter().any(|c| c.specific() == specific && handles(c, condition)));
         if let Some(h) = of(true).or_else(|| of(false)) {
             return Some((k, h));
         }
@@ -91,14 +99,14 @@ fn named(e: &SqlError) -> Option<&str> {
 }
 
 /// The completion condition `completion`, as a handler is found for it.
-pub(super) fn completion(completion: Completion) -> SqlError {
+pub(crate) fn completion(completion: Completion) -> SqlError {
     let state = completion.sqlstate();
     SqlError::new(Code::Signalled, format!("completion condition {}", state.as_str())).with_state(state)
 }
 
 /// [§17.3 GR6a iii] The completion condition SIGNAL or RESIGNAL raised as
 /// `e`, of an SQLSTATE value of class 01 or 02; none of an exception.
-pub(super) fn completed(e: &SqlError) -> Option<Completion> {
+pub(crate) fn completed(e: &SqlError) -> Option<Completion> {
     let state = e.state.filter(|_| e.code == Code::Signalled && named(e).is_none())?;
     match state.class() {
         "02" if state == SqlState::NO_DATA => Some(Completion::NoData),
@@ -111,7 +119,7 @@ pub(super) fn completed(e: &SqlError) -> Option<Completion> {
 /// declared for no SQLSTATE value, "unhandled user-defined exception",
 /// the SQLSTATE `signalled` gave it, its zero-length RETURNED_SQLSTATE
 /// dropped.
-pub(super) fn unhandled(mut e: SqlError) -> SqlError {
+pub(crate) fn unhandled(mut e: SqlError) -> SqlError {
     if named(&e).is_some()
         && let Some(s) = e.subject.as_mut().and_then(|s| s.signalled.as_mut())
     {
@@ -133,26 +141,42 @@ impl<H: Host> Run<'_, '_, H> {
         let mut items = Vec::new();
         for (item, leaf) in &s.items {
             let value = leaves::value(self.host, leaf, self.frame).map_err(Stop::Raised)?;
-            let text = if let Value::Char(text) = value {
-                text
-            } else if value.is_null() {
-                String::new()
-            } else {
-                value.to_string()
-            };
-            items.push((item.name(), text));
+            items.push((item.name(), item_text(value)));
         }
-        if !s.resignal {
-            return Ok(signalled(s, items, false));
-        }
-        let Some(handled) = self.handling.last() else {
-            let msg = "[ISO/IEC 9075-4:2006 draft §17.3 GR1] RESIGNAL where no handler is executing";
-            return Err(Stop::Raised(SqlError::new(Code::Data, msg).with_state(SqlState::RESIGNAL_NOT_ACTIVE).or_at(s.at)));
-        };
-        if s.state.is_some() || s.name.is_some() {
-            return Ok(signalled(s, items, true));
-        }
-        Ok(resignalled(handled.clone(), items))
+        raised(s, items, self.handling.last()).map_err(Stop::Raised)
+    }
+}
+
+/// [§17.2, §17.3] The condition SIGNAL or RESIGNAL `s` raises, its items
+/// set `items`: of RESIGNAL of no `<signal value>`, the condition
+/// `handling`, the one the innermost handler executing handles, with them.
+///
+/// # Errors
+///
+/// SQLSTATE 0K000 of RESIGNAL where no handler is executing [§17.3 GR1].
+pub(crate) fn raised(s: &Signal, items: Vec<(&'static str, String)>, handling: Option<&SqlError>) -> Result<SqlError, SqlError> {
+    if !s.resignal {
+        return Ok(signalled(s, items, false));
+    }
+    let Some(handled) = handling else {
+        let msg = "[ISO/IEC 9075-4:2006 draft §17.3 GR1] RESIGNAL where no handler is executing";
+        return Err(SqlError::new(Code::Data, msg).with_state(SqlState::RESIGNAL_NOT_ACTIVE).or_at(s.at));
+    };
+    if s.state.is_some() || s.name.is_some() {
+        return Ok(signalled(s, items, true));
+    }
+    Ok(resignalled(handled.clone(), items))
+}
+
+/// [§17.2 GR3] An item's value as SIGNAL sets it: of a character string,
+/// itself; of the null value, a zero-length string; else as shown.
+pub(crate) fn item_text(value: Value) -> String {
+    if let Value::Char(text) = value {
+        text
+    } else if value.is_null() {
+        String::new()
+    } else {
+        value.to_string()
     }
 }
 

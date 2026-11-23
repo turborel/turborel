@@ -47,6 +47,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | DIAGNOSTICS.LEVEL | INFO | ONE OF ERROR, WARNING, INFO | at once |  |
 | DIAGNOSTICS.SLOW_STATEMENT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | EXECUTOR.BATCHES | ON | ONE OF ON, OFF | at once | *session* |
+| EXECUTOR.COMPILED_PROCEDURES | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.DECORRELATE_AFTER_RUNS | 8 | INTEGER FROM 0 TO 1000000 | at once |  |
 | EXECUTOR.DEGREE | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.DENSE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
@@ -172,6 +173,7 @@ Each in a sentence:
 - **DIAGNOSTICS.LEVEL**: The least level of the events told to the diagnostics: ERROR, those alone; WARNING, warnings too; INFO, every event.
 - **DIAGNOSTICS.SLOW_STATEMENT_MS**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.
+- **EXECUTOR.COMPILED_PROCEDURES**: Whether the body of an SQL-invoked procedure a CALL invokes runs as the program it is compiled to as it is first called, its point reads and point changes straight on their tables: ON; or statement by statement through the general path, OFF, as to compare the two. Its results, errors, warnings and diagnostics are the same either way.
 - **EXECUTOR.DECORRELATE_AFTER_RUNS**: The runs of a correlated subquery, for as many sets of values, after which it is run once for all of them.
 - **EXECUTOR.DEGREE**: The most threads a statement's query runs on at once, its own among them; 0, the default, for as many as the workers, and 1 for its own thread alone. Its rows are the same either way.
 - **EXECUTOR.DENSE_JOINS**: Whether a hash join whose one key is of whole numbers dense in their span, at most four times as wide as its built rows, finds a probe's rows at its key's place in the span, no hash made: ON; or hashes every key, OFF, as to compare the two. Its rows are the same either way.
@@ -228,7 +230,7 @@ Each in a sentence:
 - **OPTIMIZER.UNNEST_SUBQUERIES**: Whether the optimizer's rule unnest_subqueries rewrites plans: ON; or OFF, as to compare plans made without it.
 - **PLANNER.DP_BUDGET**: The connected subsets of a query's joined tables up to which ADAPTIVE join ordering finds the cheapest plan exactly. Past it the search is linearized, and parts of a greedy plan are planned again by dynamic programming until this many table entries are made.
 - **PLANNER.EQUAL_SELECTIVITY**: The fraction of rows an equality keeps when the statistics do not tell.
-- **PLANNER.ESTIMATE_MARGIN**: How many times its estimated rows the planner takes a join's operand to give at worst, at most the bound its statistics prove, as it weighs probing an index for each of them against hashing: it takes the method whose cost is nearest the cheapest at both. 1 trusts the estimate alone.
+- **PLANNER.ESTIMATE_MARGIN**: How many times its estimated rows the planner takes a join's operand to give at worst, at most the bound its statistics prove, as it weighs probing an index for each of them against hashing: it takes the method whose cost is nearest the cheapest at both. A key's range priced as a scan is read for it where it is estimated at fewer rows than the scan and than the table's rows over this. 1 trusts the estimate alone.
 - **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, its page held by the buffer pool, a row read in sequence costing 1.
 - **PLANNER.JOIN_ENUMERATION**: How the joins of a query are ordered. ADAPTIVE orders them by dynamic programming over bushy plans, outer joins among them, linearized or guided greedily as the query grows, and GREEDY orders them left-deep, each next join the cheapest, as to compare the two.
 - **PLANNER.LINEARIZED_RELATIONS**: The most tables ADAPTIVE join ordering plans whole by linearized dynamic programming when exact search is past its budget, and the size of the parts of a greedy plan it plans again so for larger queries.

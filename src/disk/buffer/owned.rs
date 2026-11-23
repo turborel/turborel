@@ -10,11 +10,16 @@
 //! One that finds the page owned waits on the frame's signal; the owner
 //! wakes it only if someone waits, counted before the wait is checked,
 //! so a release never misses a writer and costs nothing when none waits.
+//!
+//! The owner reads and writes its page through the frame it owns
+//! (RULES.md D840): the frame is pinned to the page for as long as it is
+//! owned, so no page table is looked in, no shard locked and no hint
+//! hashed for the reads and the write a change to the node makes.
 
 use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 
-use super::{BufferPool, FileId, Frame, Key, Pin};
+use super::{BufferPool, FileId, Frame, Key, PageMut, PageRef, Pin};
 use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::sync::lock_builtin;
@@ -25,6 +30,8 @@ pub struct Owned<'a> {
     _pin: Pin<'a>,
     /// The page owned.
     pub id: PageId,
+    /// Its file.
+    file: FileId,
     waited: bool,
 }
 
@@ -58,7 +65,33 @@ impl BufferPool {
         let (frame, _) = self.hold(Key { file, id: id.0 }, super::pool::Fill::Read)?;
         let pin = Pin(frame);
         let waited = frame.own();
-        Ok(Owned { frame, _pin: pin, id, waited })
+        Ok(Owned { frame, _pin: pin, id, file, waited })
+    }
+
+    /// The page `owned` owns, held for writing as `write` holds it, through
+    /// the frame it owns; through the page table only if `owned` is of
+    /// another pool.
+    ///
+    /// # Errors
+    ///
+    /// As `write`, for a page owned in another pool.
+    pub fn write_owned<'a>(&'a self, owned: &Owned<'a>) -> Result<PageMut<'a>> {
+        let frame = owned.frame;
+        if !self.frames.get(frame.index).is_some_and(|mine| std::ptr::eq(mine, frame)) {
+            return self.write(owned.file, owned.id);
+        }
+        // Pinned once more, for the guard, as `hold` pins the frame it gives.
+        frame.pins.fetch_add(1, Ordering::AcqRel);
+        Ok(self.held_for_writing(frame))
+    }
+}
+
+impl<'a> Owned<'a> {
+    /// The page owned, held for reading through its frame, latched shared.
+    /// The latch keeps the frame, as a read found by its hint is kept, so
+    /// the guard takes no pin of its own.
+    pub fn read(&self) -> PageRef<'a> {
+        PageRef { content: self.frame.content.read().unwrap_or_else(PoisonError::into_inner), frame: self.frame, _pin: None }
     }
 }
 

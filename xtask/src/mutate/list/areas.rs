@@ -13,6 +13,7 @@ mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
 mod commit_path;
+mod compiled;
 mod cost_model;
 #[path = "count.rs"]
 mod count;
@@ -55,6 +56,7 @@ mod subquery_plans;
 mod tpcc;
 mod tpcc_allocs;
 mod transfer;
+mod tree_path;
 mod txn_layer;
 mod undo_memory;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
@@ -199,9 +201,10 @@ fn second() -> [&'static [Mutation]; 47] {
 }
 
 /// The planner's newest areas, in order: join estimates, range joins, the
-/// cost model, orders, probed subqueries, predicate transfer, and dead
-/// entries taken back by a scan and scans priced by sampled zones.
-fn planner() -> [&'static [Mutation]; 7] {
+/// cost model, orders, probed subqueries, predicate transfer, dead entries
+/// taken back by a scan and scans priced by sampled zones, key plans, and
+/// a B-link tree probe's path.
+fn planner() -> [&'static [Mutation]; 9] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
@@ -210,6 +213,8 @@ fn planner() -> [&'static [Mutation]; 7] {
         &probed_subqueries::PROBED_SUBQUERIES,
         &transfer::TRANSFER,
         &super::dead_entries::DEAD_ENTRIES,
+        &super::key_plans::KEY_PLANS,
+        &tree_path::TREE_PATH,
     ]
 }
 
@@ -259,9 +264,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
-/// sessions' own copies', the shared lines', the server's lines' and the
-/// kernels' last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 19] {
+/// sessions' own copies', the shared lines', the server's lines', the
+/// kernels' and compiled procedures' last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 20] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -282,6 +287,7 @@ fn closing() -> [&'static [Mutation]; 19] {
         &shared_lines::SHARED_LINES,
         &server_lines::SERVER_LINES,
         &kernels::KERNELS,
+        &compiled::COMPILED,
     ]
 }
 

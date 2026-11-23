@@ -14,7 +14,7 @@ mod backup;
 mod builtin;
 mod configurable;
 pub(crate) mod escrow;
-mod executor;
+pub(crate) mod executor;
 mod extension;
 mod graph;
 mod hosted;

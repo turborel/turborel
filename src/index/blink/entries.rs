@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::value::noted;
 use super::{BLinkIndex, Probe, Range, split};
 use crate::engine::key::decode_key;
-use crate::engine::tree::{BLinkTree, Direction, scan_of};
+use crate::engine::tree::{BLinkTree, Direction, scan_owned};
 use crate::error::Result;
 use crate::index::Key;
 use crate::storage::RowId;
@@ -37,7 +37,8 @@ impl BLinkIndex {
         (decoded, direction): (bool, Direction),
     ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
         let checked = range.as_ref().is_some_and(|r| r.checked);
-        let mut scan = range.map(|r| scan_of(tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), direction));
+        // The range's bounds handed to the scan, not copied (RULES.md D840).
+        let mut scan = range.map(|r| scan_owned(tree, r.lower, r.upper, direction));
         // The probe is copied only to check entries by, so an exact probe's
         // search copies none. The types are read through the tree the scan
         // holds, so no reference count every search shares is written.

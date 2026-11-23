@@ -546,6 +546,10 @@ verification approach DO-178C expects (§8).
 | D836 | A routine's variable in a subquery of a change is the subquery's slot, not an outer reference, so the subquery probes a key |
 | D837 | A scan takes back the index entries of rows gone for every reader as it meets them |
 | D838 | A scan priced by a sample of its zones reads at least one zone of the sample |
+| D839 | No estimate makes a scan of a whole unique key, nor of a key's range a scan reads past, and a plan kept is learned again with statistics |
+| D840 | A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer |
+| D841 | A procedure's body runs as the program it is compiled to, its point reads and point changes straight on their tables |
+| D842 | A home waits on its client for a second, its permit given up after a millisecond |
 
 ### The project
 
@@ -15015,8 +15019,199 @@ sample held it, so the scan was priced at nothing, below the index that
 finds the lines, and the procedure kept that plan, reading every line of
 the table at each call. So a share of a sample is never less than one
 zone of the sample (`rows/zones.rs`): the zones passed over may hold
-the rows asked for, as many as one zone looked at. Of a table whose
-every zone is looked at, the share is what they hold, none if none may.
+the rows asked for, as many as one zone looked at. Nor is the share of
+a table whose every zone is looked at, though none may hold them now,
+as rows written later may (D839).
+
+#### D839. No estimate makes a scan of a whole unique key, nor of a key's range a scan reads past, and a plan kept is learned again with statistics
+
+Three plans of the TPC-C procedures were made from estimates that no
+estimate should decide. A probe fixing every column of a unique key was
+taken unpriced only of a table of a thousand rows or more and with no
+order asked (D45, D408). DISTRICT and WAREHOUSE are smaller, so every
+payment and order entry scanned them for their one row, as did a plan
+kept while its table was still empty. Such a probe now is the path
+whatever the table's size and whatever order is asked, as it finds one
+row at most, which is in any order (`physical/access.rs`).
+
+A range of an index whose first key columns its probe holds equal, of a
+primary or unique key or of an index holding every column read, finds
+only rows a scan told the same conjuncts reads too, in the zones they
+may lie in. Its cost by its estimated rows, each fetched by row id,
+could still pass that scan's. A stock level's lines of its district's
+last twenty orders were estimated at several times their rows by the
+index's share of its tree, while the scan was priced by the zones of a
+sample, those of the newest orders, which hold every district's. The
+scan then cost the less, so the plan made with the values scanned,
+reading thousands of lines at each run, and the plan made with slots,
+the range, never kept its shape, so it was planned twice at every call.
+Such a range is now never priced above the scan of the conjuncts it
+answers, and so never above a scan of the whole table. Where the two
+are then priced alike, it is taken if it is estimated to read fewer
+rows than the scan, and fewer than the table's rows over
+PLANNER.ESTIMATE_MARGIN, as the joins weigh their estimates (D386). A
+range that reads a share of the scan's rows fetches no more than that
+share. One that reads most of them finds them together, as the zones
+the scan reads hold little else, so its fetches by row id come in
+order and each starts at the leaf of the last. A range of most of the
+table, whose zones may not tell, is left to the costs
+(`physical/access/bounded.rs`).
+
+A stock level's join of its lines to the stock of their items hashed a
+scan of STOCK, of every zone, priced at nothing, as no zone yet held a
+quantity below the threshold asked. A new order's update of a stock
+row writes it again, where zones gain low quantities, and STOCK gains
+no rows, so the plan kept it and read more of the table at each call,
+tens of thousands of rows where its probes by key read a few hundred.
+A scan's share is now never less than one zone of those looked at,
+sampled or not (D838): a zone holding no row asked for now may hold
+rows written later, and a plan kept reads them.
+
+A plan kept by a prepared statement or a procedure's body (D45, D414)
+was learned again when a table it reads gained or lost rows as its
+statistics would be gathered again for. A plan of index probes alone
+was learned again also once a table without statistics got them (D613),
+but a plan with a scan kept the defaults it was made with until its
+table drifted, and a warehouse's tables seldom drift. Every plan kept
+now notes which of its tables had statistics when it was learned, and
+is learned again once one of those without them has them
+(`db/prepared/plans/grown.rs`). Statistics gathered again of a table
+that drifted already have it learn again by its drift.
+
+#### D840. A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer
+
+The storage engine is the floor of a transaction once its procedures
+skip SQL, and the B-link tree was the largest part of it, about a third
+of the time of a TPROC-C transaction. Each probe of a table or index
+paid for work the tree's design does not need. The node format of D500
+already searches the page's bytes over a slot array of key heads, but
+every step of the search read a slot through a field reader returning a
+`Result` whose error is a `SqlError` of many words. So each head and
+each tail was a call that returned that large value through memory, and
+none was inlined. Parsing a node read each header field the same way.
+
+A node parsed now borrows its slots as an array of four-byte slots,
+checked once to fill the end of the page in whole slots, and its bytes
+before them (`engine/tree/node.rs`). Its header is read as one array of
+fixed size, so no field read can fail. The search runs over the slots
+with each step an `Option`, and an error is built once, only if a slot
+leads past the heap. The bytes searched and the order found are those of
+D500.
+
+A descent read each inner node from the thread's copy of D502 and parsed
+the copy again at every visit. Each copy now keeps its node's header as
+parsed beside it, as a leaf's copy does (D808), and a descent rebuilds
+the node from it with no header read and no check made again
+(`engine/tree/inner.rs`). The copy is current exactly while its frame's
+version holds, so its header parsed is too.
+
+A writer went down to the leaf, read it under its latch only to learn
+its page, owned it, read it again, then held it for writing. Each of the
+owning, the second read and the write found the frame in the page table
+again, a shard locked, a map searched and a pin taken. A writer now
+stops at the node above the leaves and takes the leaf's page from it
+(`engine/tree/write.rs`), as the leaf is read once it is owned. A leaf
+split or taken out in between is moved right from once owned, as before,
+since Lehman and Yao's move right (§5) needs only a page the key was once
+reachable from, and the writer's epoch keeps a page taken out from being
+freed (D814). The owner then reads and writes the page through the frame
+it owns (`disk/buffer/owned.rs`). The frame is pinned to the page while
+owned, so no page table is looked in, and the write marks the page dirty
+and gives a checkpoint's capture its copy exactly as a write through the
+page table does (D30). A frame owned of another pool is written through
+its page table.
+
+A descent kept its path in a vector, allocated at its first level, and
+every scan copied the key below each node on the way down, though only a
+backward scan uses it. An index probe built its range's bounds, and the
+scan copied them, and each scan allocated its buffers of D809. The path
+is now kept in place, at most 24 levels, a taller one giving up its top,
+which only makes a writer find a parent again from the root
+(`engine/tree/levels.rs`). Only a backward scan copies the key below. A
+scan takes its bounds as built (`scan_owned`), and gives its buffers back
+to its thread when done, so the thread's next scan takes them
+(`engine/tree/scan/ready.rs`). So a probe that finds one entry allocates
+nothing in the tree.
+
+#### D841. A procedure's body runs as the program it is compiled to, its point reads and point changes straight on their tables
+
+A CALL of a procedure whose body its session keeps (D406) ran the body's
+program through the interpreter, and each statement of it through the
+session's general path: the statement looked up in the plans the program
+keeps, bound or taken bound, wrapped as a statement the session runs,
+and of a SELECT ... INTO of a delta table, the delta table's query run
+by the executor over the rows the change gave. An order's entry spent
+more than half its time there, and not in its reads and writes. So the
+program is compiled as a CALL first runs it, to a tree of code kept with
+the program (`db/routines/program/compiled.rs`), made again whenever the
+program is: once a definition, privilege, role, schema, time zone or
+setting it was bound with no longer holds (D45, D414).
+
+The tree runs as the interpreter runs a program. Each statement empties
+the diagnostics area as it begins and places its condition there as it
+ends; a condition is offered to the handlers in scope where it is raised;
+each atomic statement is undone alone if it fails; an ATOMIC compound
+statement runs at a savepoint level of its own. Its values are found as
+it was compiled. A row of values that reads nothing is evaluated where
+it is, over the frame's slots. A variable or parameter assigned as a
+whole is its slot, its value cast by store assignment there. A SELECT
+... INTO whose query plans to one point read of a whole unique key
+(D752) reads its row by that point read, its tables locked, its snapshot
+taken and its reads recorded as a leaf's are.
+
+A change runs the general path first, which keeps its plans. Once they
+are kept, a searched UPDATE or DELETE, alone or as a SELECT ... INTO's
+FINAL, NEW or OLD TABLE, and an INSERT of one row of values, run with
+them past the statement's binding and wrapping: its object rows by its
+plan kept as that plan stands, learning or learned (D422), a point read
+once it is one (D752), and its rows by the write functions the general path
+writes with, so its row locks, rechecks, escrow (D452), BEFORE triggers,
+defaults, identity, generated columns, constraints and the unique check
+at its end are the general path's own, as are its ROW_COUNT and its
+errors. The delta table's rows are gathered by the collector the general
+path gathers them with, and the select list is evaluated over them. A
+change of a view, of a typed or partitioned table, of a table some
+trigger is on that the change may write, or with XML options in scope,
+runs the general path always, as does every other statement, cursor and
+FOR. EXECUTOR.COMPILED_PROCEDURES OFF runs each body by the interpreter.
+
+#### D842. A home waits on its client for a second, its permit given up after a millisecond
+
+A worker waited for a client's next request only `lent::WAITED`, a
+millisecond (D42). A client slower than that, as one that thinks between
+its requests or one whose threads outnumber its processors, had its next
+request read by the connection's task: the socket handed back to the
+runtime and registered with it again, the task woken by the runtime, the
+request handed to the home under its lock and the home woken, and the
+loan given back to the task as the reply went out. Two moves between
+threads and two of the socket at every request, and a client near the
+millisecond moved between the two paths request by request.
+
+Now a connection's home waits on, after `WAITED`, as long as
+`waiting::HOME_WAITED`, a second, in slices of `lent::LOOKED`
+(`native/waiting.rs`). Between slices it looks whether the operator
+ended the connection or the server stopped, and if so gives the client
+back to the task, which ends the connection as before. Its wait ends
+sooner than SERVER.IDLE_TIMEOUT_MS, and SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS
+while a transaction is active, and the task counts the client's idle time
+from when the home began to wait (`Lent::idle_since`), so a client is
+closed as idle at the time it was. A home waits whether or not its client
+was fast, so a client once slow is not read by the task from then on. A
+worker that is not the connection's home still waits only `WAITED`.
+
+Past `WAITED` the worker gives its permit to run statements up, whether
+or not another waits for one, so a statement waiting for a permit waits
+for a home's client no longer than D815 allows. A home whose client's last
+request came later than `WAITED` waits in slices of `LOOKED` from the
+first, its permit given up at once, so a client that thinks is not woken
+for in vain after a millisecond at every request; once a request comes
+within `WAITED` again the client counts as fast. A client slower than a
+millisecond then takes the limit's lock again at its next request, as
+every request of a client did before D815, but no longer moves between
+threads. A client that thinks longer than a second pays the two moves
+once a second at most, under a ten-thousandth of its time, and a waiting
+home is woken fifty times a second, so a longer wait gains nothing
+measurable and keeps a thread from the pool longer.
 
 ## 2. Project layout
 

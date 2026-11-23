@@ -278,6 +278,21 @@ fn kept(st: &State, query: &Subquery, slots: &[(usize, DataType)]) -> Option<Lea
     Some(LeafPlan { slotted, kept: Mutex::new(kept) })
 }
 
+/// \[DESIGN\] The plan `leaf`, a query of the frame's slots, keeps fixed
+/// at once, if it is one point read of a whole unique key (RULES.md D752,
+/// D841): the plan the leaf's run by its plans kept runs as its point
+/// read, so a compiled program reads the same row through it.
+pub(in crate::db) fn point_of(st: &State, leaf: &Leaf) -> Option<Arc<Kept>> {
+    let query = &leaf.query;
+    if let LogicalPlan::Values { .. } = &query.plan {
+        return None;
+    }
+    let slots = query.outer.iter().map(frame_slot).collect::<Option<Vec<(usize, DataType)>>>()?;
+    let planned = kept(st, query, &slots)?;
+    let Ok(Physical::Fixed(plan, _, None)) = planned.kept.into_inner() else { return None };
+    plan.point(st).is_some().then_some(plan)
+}
+
 /// The scalar subqueries of `e`, at any depth of its expressions, not
 /// those nested in them.
 fn scalar_subqueries<'e>(e: &'e Expr, found: &mut Vec<&'e Subquery>) {

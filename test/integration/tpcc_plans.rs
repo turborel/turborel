@@ -12,6 +12,8 @@ use turborel::physical::plannings;
 use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
 
+use crate::common::rows;
+
 /// The procedures, one after another.
 const PROCEDURES: &str = include_str!("tpcc_plans/procedures.sql");
 
@@ -98,16 +100,26 @@ fn generated(s: &Session) {
     s.run("DROP TABLE DIGIT RESTRICT").unwrap();
 }
 
-/// One warehouse loaded, its statistics gathered, its procedures defined,
-/// in schema TPCC.
-fn loaded() -> (Database, Session) {
+/// The tables and procedures of one warehouse defined in a database whose
+/// statistics are gathered only when a test asks, in schema TPCC.
+fn defined() -> (Database, Session) {
     let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION TPCC").unwrap();
     let s = db.session("TPCC");
     for t in TABLES {
         s.run(t).unwrap();
         s.commit().unwrap();
     }
+    for p in PROCEDURES.split("CREATE PROCEDURE").skip(1) {
+        s.run(&format!("CREATE PROCEDURE{p}")).unwrap();
+    }
+    s.commit().unwrap();
+    (db, s)
+}
+
+/// The warehouse's rows loaded by `s`.
+fn filled(s: &Session) {
     let districts: Vec<String> =
         (1..=10).map(|d| format!("(1, {d}, 30000.00, 0.1000, {}, 'D', 'S1', 'S2', 'C', 'ST', '123456789')", ORDERS + 1)).collect();
     let mut customers = Vec::new();
@@ -121,13 +133,18 @@ fn loaded() -> (Database, Session) {
         }
     }
     s.run("INSERT INTO WAREHOUSE VALUES (1, 300000.00, 0.1000, 'W', 'S1', 'S2', 'C', 'ST', '123456789')").unwrap();
-    load(&s, "DISTRICT", &districts);
-    load(&s, "CUSTOMER", &customers);
-    generated(&s);
-    for p in PROCEDURES.split("CREATE PROCEDURE").skip(1) {
-        s.run(&format!("CREATE PROCEDURE{p}")).unwrap();
-    }
+    load(s, "DISTRICT", &districts);
+    load(s, "CUSTOMER", &customers);
+    generated(s);
     s.commit().unwrap();
+}
+
+/// One warehouse loaded, its statistics gathered, its procedures defined,
+/// in schema TPCC.
+fn loaded() -> (Database, Session) {
+    let (db, s) = defined();
+    db.set_job_policy(JobPolicy::Automatic).unwrap();
+    filled(&s);
     db.maintain().unwrap();
     (db, s)
 }
@@ -307,4 +324,59 @@ fn a_probes_plan_learned_before_statistics_is_learned_again_once_they_are() {
     grouped(&s, (1, 500), (30, 3));
     db.analyze("X.G").unwrap();
     assert!(group_plannings(&s, &p, 40) > 0, "sixteen times the rows of each group");
+}
+
+/// The rows the CALLs of each procedure, NEWORD, PAYMENT, DELIVERY, OSTAT
+/// and SLEV, have read in all, by their statement statistics.
+fn rows_read(s: &Session) -> [u64; 5] {
+    let read = |name: &str| {
+        let sql = format!("SELECT ROWS_READ FROM INFORMATION_SCHEMA.STATEMENT_STATISTICS WHERE STATEMENT_TEXT LIKE 'CALL {name}%'");
+        rows(s, &sql).unwrap().first().map_or(0, |n| n.trim().parse::<u64>().unwrap())
+    };
+    let found = ["NEWORD", "PAYMENT", "DELIVERY", "OSTAT", "SLEV"].map(read);
+    s.commit().unwrap();
+    found
+}
+
+/// The most rows a round's CALLs of each procedure read, by index: ten
+/// NEWORDs of up to fifteen lines, their stock and keys; a PAYMENT by name;
+/// a DELIVERY of ten districts' oldest orders and their lines; an ORDER
+/// STATUS by name; a STOCK LEVEL of twenty orders' lines and their stock.
+/// A scan of ORDER_LINE or NEW_ORDER, or of one district's lines, reads
+/// more than any of them.
+const ROUND_READS: [u64; 5] = [600, 60, 300, 60, 450];
+
+/// Verifies: [DESIGN] RULES.md D839, D414, D45: the five TPC-C
+/// procedures, defined and first CALLed while their tables were empty,
+/// then run on the loaded warehouse with no statistics, then with
+/// statistics gathered after a few rounds, which go stale as the orders
+/// grow, read by index in every round: no round's CALLs of a procedure
+/// read more rows than its index reads may.
+///
+/// Regression test (R-TEST-7): once the statistics were gathered, STOCK
+/// LEVEL planned its order lines by a scan of ORDER_LINE's zones at each
+/// run, as the key's range was estimated at several times its rows, and
+/// the plan made with slots, a range of the key, never kept its shape.
+#[test]
+fn tpcc_procedures_read_by_index_under_any_statistics() {
+    let (db, s) = defined();
+    let calls = Calls::of(&s);
+    s.execute_prepared(&calls.delivery, &[int(1), int(1)]).unwrap();
+    s.execute_prepared(&calls.slev, &[int(1), int(1), int(15)]).unwrap();
+    s.commit().unwrap();
+    filled(&s);
+    let mut r = Sequence(7);
+    let mut before = rows_read(&s);
+    for round in 0..30 {
+        if round == 10 {
+            for table in ["WAREHOUSE", "DISTRICT", "CUSTOMER", "NEW_ORDER", "ORDERS", "ORDER_LINE", "STOCK", "ITEM"] {
+                db.analyze(&format!("TPCC.{table}")).unwrap();
+            }
+        }
+        calls.round(&s, &mut r);
+        let now = rows_read(&s);
+        let each: Vec<u64> = now.iter().zip(before).map(|(n, b)| n.saturating_sub(b)).collect();
+        assert!(each.iter().zip(ROUND_READS).all(|(n, most)| *n <= most), "round {round}: {each:?}");
+        before = now;
+    }
 }

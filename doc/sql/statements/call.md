@@ -53,6 +53,18 @@ invoke a function that changes SQL-data, which runs before the
 procedure, its changes the CALL's. A function's body may call a
 procedure that changes none, which runs where the function does.
 
+As a session first calls a procedure, its body is compiled to a program
+the session keeps, and later calls run that program. A query of the
+body that reads one row by a whole unique key reads it straight from
+its table. A searched UPDATE or DELETE, alone or under FINAL, NEW or
+OLD TABLE, and an INSERT of one row of values run by the plans kept of
+them, without being bound again. Every other statement runs as a
+statement the session runs. The program is compiled again once a definition, privilege, role,
+schema, time zone or setting it was compiled with changes. Its results,
+errors, warnings and diagnostics are the same as of the body run
+statement by statement, which the setting
+[EXECUTOR.COMPILED_PROCEDURES](../../appendix/c-settings.md) OFF asks for.
+
 GET DIAGNOSTICS after a CALL shows CALL as its COMMAND_FUNCTION, and of
 a failure the procedure as ROUTINE_SCHEMA, ROUTINE_NAME and
 SPECIFIC_NAME, and of an argument stored in a parameter the parameter

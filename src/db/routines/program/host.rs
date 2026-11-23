@@ -86,7 +86,7 @@ impl<'s, 'c> SessionHost<'s, 'c> {
     /// session runs does, unless a cursor is open. A function's or a
     /// triggered action's reads at the snapshot of the statement that runs
     /// it, which is still reading.
-    fn fresh(&self, tx: &Txn) -> Result<()> {
+    pub(super) fn fresh(&self, tx: &Txn) -> Result<()> {
         if self.session.nesting.savepoints.borrow().in_statement() {
             return Ok(());
         }

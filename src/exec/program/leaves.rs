@@ -113,7 +113,7 @@ pub(super) fn assignment<H: Host>(host: &H, a: &Assign, frame: &mut Params) -> R
 
 /// [§14.5 GR1, GR3 to GR5] `value` assigned to `target`: of a field, the
 /// row its target holds with that field the value [GR4b].
-fn assign_target(target: &Target, value: Value, frame: &mut Params) -> Result<()> {
+pub(crate) fn assign_target(target: &Target, value: Value, frame: &mut Params) -> Result<()> {
     let spec = &target.spec;
     let value = if target.fields.is_empty() {
         value

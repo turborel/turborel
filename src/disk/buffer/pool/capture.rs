@@ -195,7 +195,7 @@ impl BufferPool {
 
     /// `frame` latched for writing, dirty; copied first if a checkpoint's
     /// capture owes it (`capture.rs`).
-    pub(super) fn held_for_writing<'a>(&self, frame: &'a Frame) -> PageMut<'a> {
+    pub(in crate::disk::buffer) fn held_for_writing<'a>(&self, frame: &'a Frame) -> PageMut<'a> {
         let pin = Pin(frame);
         let content = frame.latched();
         if frame.owed.load(Ordering::Acquire) {

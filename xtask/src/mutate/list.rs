@@ -50,6 +50,7 @@ mod json_path;
 mod json_table;
 mod json_type;
 mod kept;
+mod key_plans;
 mod limits;
 mod listagg;
 mod lobs;
