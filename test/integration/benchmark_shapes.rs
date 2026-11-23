@@ -116,6 +116,11 @@ fn customers() -> Database {
     s.commit().unwrap();
     db.create_index("CU_KEY", "C.CU", &["W", "D", "ID"], "btree").unwrap();
     db.create_index("CU_NAME", "C.CU", &["W", "D", "LNAME", "ID"], "btree").unwrap();
+    // A table keeps zones from the first scan told a condition of a column
+    // kept (RULES.md D868): scanned once by a column no index reads, then
+    // its zones summed up.
+    assert_eq!(sorted(&s, "SELECT ID FROM CU WHERE BAL < 0").len(), 0);
+    s.commit().unwrap();
     db.maintain().unwrap();
     db
 }

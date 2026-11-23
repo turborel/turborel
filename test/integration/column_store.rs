@@ -252,7 +252,7 @@ fn a_column_table_is_scanned_where_a_row_table_is_probed() {
     }
     // A table of the row store keeps zones from the first plan that weighs
     // an index-only read of it (RULES.md D868): asked, then summed up.
-    assert!(!physical(&a, "SELECT COUNT(*) FROM R WHERE G = 3").is_empty());
+    assert_ne!(physical(&a, "SELECT COUNT(*) FROM R WHERE G = 3"), "");
     db.maintain().unwrap();
     let physical = |sql: &str| physical(&a, sql);
     let some = "SELECT COUNT(*) FROM {t} WHERE G = 3";

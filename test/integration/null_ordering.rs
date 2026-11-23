@@ -151,7 +151,7 @@ fn physical(s: &Session, sql: &str) -> String {
 /// ordering where it is not the one implied.
 #[test]
 fn an_ordered_read_serves_the_null_ordering_it_places_10_10() {
-    let (_db, a) = many();
+    let (db, a) = many();
     a.run("CREATE TABLE O (I INTEGER, K INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048, COLUMNSTORE.ORDER = 'K')").unwrap();
     a.run("INSERT INTO O SELECT I, K FROM B").unwrap();
     a.run("CREATE TABLE X (I INTEGER NOT NULL, K INTEGER)").unwrap();
@@ -159,6 +159,10 @@ fn an_ordered_read_serves_the_null_ordering_it_places_10_10() {
     a.run("CREATE INDEX X_I ON X (I)").unwrap();
     a.run("INSERT INTO X SELECT I, K FROM B").unwrap();
     a.commit().unwrap();
+    // A table of the row store keeps zones from the first plan that weighs
+    // an index-only read of it (RULES.md D868): asked, then settled.
+    assert_ne!(physical(&a, "SELECT I FROM X ORDER BY I"), "");
+    db.maintain().unwrap();
     for (order, kept) in [("K", true), ("K DESC", true), ("K NULLS FIRST", false), ("K DESC NULLS LAST", false)] {
         let sql = format!("SELECT K FROM O ORDER BY {order}");
         let plan = physical(&a, &sql);
