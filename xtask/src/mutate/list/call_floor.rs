@@ -3,13 +3,13 @@
 //! own settings, and the tables of the INSERTs it runs directly, kept
 //! between statements; and of a prepared CALL run straight (D940), the
 //! binding it is kept beside, its arguments' casts, its output values, its
-//! ATOMIC body and its savepoint level, and the values read for locators
-//! (D941).
+//! ATOMIC body and its savepoint level, the values read for locators
+//! (D941), and the diagnostics area of a body that reads it (D943).
 
 use super::{Mutation, Package};
 
 /// The mutations of a statement's fixed cost, in the order they run.
-pub const CALL_FLOOR: [Mutation; 11] = [
+pub const CALL_FLOOR: [Mutation; 12] = [
     Mutation {
         name: "call-floor-closed-cursors-kept",
         package: Package::Core,
@@ -124,5 +124,15 @@ pub const CALL_FLOOR: [Mutation; 11] = [
         replacement: "        Value::Lob(_) | Value::Structured(_) => false,\n",
         integration: &[],
         unit: &["db::prepared::locators::tests::only_a_large_object_or_what_holds_one_may_hold_a_locator"],
+    },
+    Mutation {
+        name: "compiled-area-unread",
+        package: Package::Core,
+        breaks: "a compiled body with a GET DIAGNOSTICS places no statement's condition, so it reads the CALL's own",
+        file: "src/db/routines/program/compiled/run.rs",
+        original: "        if node.reads_area {\n            return false;\n        }\n",
+        replacement: "",
+        integration: &["compiled_procedures::a_body_that_reads_no_diagnostics_gives_the_same"],
+        unit: &[],
     },
 ];

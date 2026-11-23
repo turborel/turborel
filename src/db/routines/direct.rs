@@ -49,8 +49,9 @@ struct KeptCall {
     bound: Arc<BoundCall>,
     /// What runs it straight. None if it runs as any CALL does.
     running: Option<Arc<Running>>,
-    /// A frame of its program's size no execution is using.
-    frame: Option<Params>,
+    /// A frame of its program's size no execution is using, kept where
+    /// it lies so taking it and leaving it move no values.
+    frame: Option<Box<Params>>,
 }
 
 /// What runs a prepared CALL straight.
@@ -96,14 +97,14 @@ impl Session {
 
     /// What runs `bound` straight and the frame kept for it, taken, if the
     /// session keeps them.
-    fn kept_call(&self, bound: &Arc<BoundCall>) -> Option<(Arc<Running>, Option<Params>)> {
+    fn kept_call(&self, bound: &Arc<BoundCall>) -> Option<(Arc<Running>, Option<Box<Params>>)> {
         let mut inner = self.inner.borrow_mut();
         let kept = inner.routines.1.0.iter_mut().find(|k| Arc::ptr_eq(&k.bound, bound))?;
         Some((Arc::clone(kept.running.as_ref()?), kept.frame.take()))
     }
 
     /// Keeps `frame` for the next execution of `bound`.
-    fn spare_frame(&self, bound: &Arc<BoundCall>, frame: Params) {
+    fn spare_frame(&self, bound: &Arc<BoundCall>, frame: Box<Params>) {
         if let Some(kept) = self.inner.borrow_mut().routines.1.0.iter_mut().find(|k| Arc::ptr_eq(&k.bound, bound)) {
             kept.frame = Some(frame);
         }
@@ -149,11 +150,11 @@ impl Session {
 }
 
 /// The frame of `running`'s program for an execution of `bound` with
-/// `slots`, the values of its `?`s. Each parameter's slot holds its
-/// argument's value as `given` gives it, each variable's the null value,
-/// in `spare` if it is of the program's size. None if an argument is not
+/// `slots`, the values of its `?`s, in `spare` if it is of the program's
+/// size. Each parameter's slot holds its argument's value as `given`
+/// gives it, each variable's the null value. None if an argument is not
 /// given its parameter's type cleanly.
-fn framed(bound: &BoundCall, given: &[Given], (running, spare): (&Running, Option<Params>), slots: &[Value]) -> Option<Params> {
+fn framed(bound: &BoundCall, given: &[Given], (running, spare): (&Running, Option<Box<Params>>), slots: &[Value]) -> Option<Box<Params>> {
     let program = &running.program.program;
     let size = program.base.saturating_add(program.variables.len());
     let mut frame = match spare.filter(|f| f.dynamic_values().len() == size) {
@@ -161,7 +162,7 @@ fn framed(bound: &BoundCall, given: &[Given], (running, spare): (&Running, Optio
             frame.set_routine(Arc::clone(&program.scope));
             frame
         }
-        None => Params::of_routine(vec![Value::Null; size], Arc::clone(&program.scope)),
+        None => Box::new(Params::of_routine(vec![Value::Null; size], Arc::clone(&program.scope))),
     };
     for (k, (g, p)) in given.iter().zip(&bound.desc.parameters).enumerate() {
         frame.set_slot(k, g.value(&p.data_type, slots)?).ok()?;
