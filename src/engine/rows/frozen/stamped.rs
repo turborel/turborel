@@ -163,6 +163,10 @@ impl RowTable {
     /// Stamps the groups `tx` made committed at `at`, its load ended.
     pub(in crate::engine::rows) fn stamp_groups(&self, tx: TxId, at: Timestamp) {
         self.end_direct(tx);
+        // A table that never held a group has none of `tx` to stamp.
+        if self.frozen.plain() {
+            return;
+        }
         let Ok(directory) = self.frozen.directory() else { return };
         if directory.pending {
             for e in directory.groups.iter().filter(|e| e.stamp() == OPEN | tx) {
@@ -207,9 +211,14 @@ impl RowTable {
         self.frozen.directory().is_ok_and(|d| d.pending && d.groups.iter().any(|e| e.stamp() != 0 && e.stamp() & OPEN == 0))
     }
 
-    /// Ends the load of `tx` straight to groups, if one is under way.
+    /// Ends the load of `tx` straight to groups, if one is under way: the
+    /// word read first, as every insert and every end of a transaction
+    /// asks, and an exchange that fails still takes its cache line from
+    /// the other sessions.
     pub(in crate::engine::rows) fn end_direct(&self, tx: TxId) {
-        let _ = self.frozen.loads.direct.compare_exchange(tx, NO_TRANSACTION, Ordering::AcqRel, Ordering::Acquire);
+        if tx != NO_TRANSACTION && self.frozen.loads.direct.load(Ordering::Acquire) == tx {
+            let _ = self.frozen.loads.direct.compare_exchange(tx, NO_TRANSACTION, Ordering::AcqRel, Ordering::Acquire);
+        }
     }
 
     /// Takes the group `tx` made holding row `first` out of the directory,

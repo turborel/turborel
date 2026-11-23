@@ -213,6 +213,11 @@ pub(super) struct Frozen {
     /// One past the last row id of its groups, 0 if it has none: a write
     /// of a row from it on marks no group's shadow bits.
     groups_end: AtomicU64,
+    /// Whether it has never frozen rows nor held a group, as a table of
+    /// the row store has not: its writes and commits then read this alone,
+    /// not the locks of `columns` and `directory`, words every session
+    /// writing the table would share. Never set again once clear.
+    plain: std::sync::atomic::AtomicBool,
     /// Whether scans trust the shadow bits, as they do but in tests that
     /// read the tree over every group as if every bit were set.
     trust_bits: std::sync::atomic::AtomicBool,
@@ -228,6 +233,7 @@ impl Frozen {
     /// A table of no groups, freezing as `columns` says, if at all.
     pub(super) fn new(columns: Option<Columns>) -> Frozen {
         Frozen {
+            plain: std::sync::atomic::AtomicBool::new(columns.is_none()),
             columns: RwLock::new(columns),
             directory: RwLock::default(),
             stored: AtomicU64::new(0),
@@ -263,8 +269,24 @@ impl Frozen {
         read(&self.columns).ok().and_then(|c| *c)
     }
 
+    /// Whether it has never frozen rows nor held a group (`plain`).
+    pub(super) fn plain(&self) -> bool {
+        self.plain.load(Ordering::Acquire)
+    }
+
+    /// Notes its groups end before row `end`, 0 for no group.
+    pub(super) fn end_groups(&self, end: RowId) {
+        if end != 0 {
+            self.plain.store(false, Ordering::Release);
+        }
+        self.groups_end.store(end, Ordering::SeqCst);
+    }
+
     /// How its rows are frozen now.
     pub(super) fn reconfigure(&self, columns: Option<Columns>) {
+        if columns.is_some() {
+            self.plain.store(false, Ordering::Release);
+        }
         if let Ok(mut held) = self.columns.write() {
             *held = columns;
         }
@@ -364,7 +386,7 @@ impl RowTable {
         }
         let end = groups.last().map_or(0, |e| e.summary.last.saturating_add(1));
         *crate::sync::write(&self.frozen.directory)? = Arc::new(Directory::of(groups));
-        self.frozen.groups_end.store(end, Ordering::SeqCst);
+        self.frozen.end_groups(end);
         self.frozen.stored.store(first, Ordering::Release);
         self.mark_opened()
     }
@@ -535,6 +557,9 @@ impl RowTable {
 
     /// Notes a commit at `at`, for COLUMNSTORE.FREEZE_DELAY.
     pub(super) fn note_commit(&self, at: Timestamp) {
+        if self.frozen.plain() {
+            return;
+        }
         let Some(columns) = read(&self.frozen.columns).ok().and_then(|c| *c) else { return };
         if columns.freeze_delay > 0 {
             freeze::noted(&mut lock_builtin(&self.frozen.commits), at, columns.freeze_delay);
