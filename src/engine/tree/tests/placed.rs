@@ -126,3 +126,58 @@ fn values_are_read_into_and_put_from_buffers_kept() {
     assert_eq!(tree.get(&key(500)).unwrap(), None);
     assert_eq!(keys(&tree, Direction::Forward).len(), 100);
 }
+
+/// Verifies: [DESIGN] RULES.md D866: a write shown the value it replaces
+/// sees its key's value, may copy it, and puts the bytes it gives, shorter
+/// or longer, telling where the entry went; and one that gives none leaves
+/// the entry.
+#[test]
+fn a_write_is_shown_the_value_it_replaces() {
+    let (tree, _scratch) = tree("replace-with");
+    for k in 1..=200_u8 {
+        assert!(tree.insert(&key(u64::from(k)), &[k; 92]).unwrap());
+    }
+    let mut value = Vec::new();
+    let seven = tree.get_for_write_into(&key(7), &mut value).unwrap().unwrap();
+    let (mut undo, newer) = (Vec::new(), [9_u8; 92]);
+    let copy = |old: &[u8]| {
+        undo.extend_from_slice(old);
+        Ok(Some(&newer[..]))
+    };
+    let placed = tree.replace_found_with(&seven, &key(7), copy).unwrap().unwrap();
+    assert_eq!((undo, tree.get(&key(7)).unwrap()), (vec![7_u8; 92], Some(newer.to_vec())));
+    assert_eq!(tree.change_placed(placed, &key(7), |bytes| Ok(bytes.len())).unwrap(), Some(92), "where it went");
+    assert_eq!(tree.replace_found_with(&seven, &key(7), |_| Ok(None)).unwrap(), None, "left");
+    let longer = [5_u8; 300];
+    assert!(tree.replace_found_with(&seven, &key(7), |old| Ok((old == newer).then_some(&longer[..]))).unwrap().is_some());
+    assert_eq!(tree.get(&key(7)).unwrap(), Some(longer.to_vec()));
+}
+
+/// Verifies: [DESIGN] RULES.md D866: a write shown the value it replaces
+/// is shown nothing of a key gone since its read, and told none; and
+/// after a leaf was retired since the read it finds its entry by a
+/// descent.
+#[test]
+fn a_write_shown_its_value_finds_its_entry_gone_or_by_a_descent() {
+    let (tree, _scratch) = tree("replace-with-gone");
+    for k in 1..=200_u8 {
+        assert!(tree.insert(&key(u64::from(k)), &[k; 92]).unwrap());
+    }
+    let mut value = Vec::new();
+    let seven = tree.get_for_write_into(&key(7), &mut value).unwrap().unwrap();
+    let fifty = tree.get_for_write_into(&key(50), &mut value).unwrap().unwrap();
+    assert!(tree.delete(&key(7)).unwrap().is_some());
+    let mut called = false;
+    let unshown = |_: &[u8]| {
+        called = true;
+        Ok(None)
+    };
+    assert_eq!(tree.replace_found_with(&seven, &key(7), unshown).unwrap(), None);
+    assert!(!called, "gone, nothing shown");
+    for k in 100..=200_u8 {
+        assert!(tree.delete(&key(u64::from(k))).unwrap().is_some());
+    }
+    assert!(tree.counts().unlinked > 0, "a leaf retired since the read");
+    assert!(tree.replace_found_with(&fifty, &key(50), |old| Ok((old == [50_u8; 92]).then_some(b"fifty"))).unwrap().is_some());
+    assert_eq!(tree.get(&key(50)).unwrap(), Some(b"fifty".to_vec()));
+}

@@ -569,6 +569,7 @@ verification approach DO-178C expects (§8).
 | D863 | A read by key shows its value to its caller where it lies, with the notes of a read that copies |
 | D864 | A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed |
 | D865 | A value read for a write and a value put by a change go through buffers their callers and threads keep |
+| D866 | A write is shown the value it replaces where it lies and gives the bytes to put, under one hold of the leaf |
 | D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
@@ -16033,6 +16034,25 @@ the node's copy, its entries, its halves and the separator. A change
 with no split builds an empty list of splits, which allocates nothing,
 and the path of a descent and the place of a write are kept in place
 (D840, D843).
+
+#### D866. A write is shown the value it replaces where it lies and gives the bytes to put, under one hold of the leaf
+
+A row's write read its newest version (D446), appended it to the undo
+store, and replaced it only if it was still the version read (D852). So
+the version was copied out of the leaf for the compare, and a writer
+that had changed the row in between sent the write round again.
+
+`BLinkTree::replace_found_with` holds the leaf the read reached once,
+exclusively, and shows the value there to a function of its caller
+(`engine/tree/placed.rs`). The function may copy it elsewhere, into the
+undo batch, and gives the bytes to put, or none to leave the entry. What
+it is shown is the value the write replaces, as no writer comes between
+under the leaf's lock, so nothing is compared and nothing is copied for
+a compare. The entry is found as `replace_found` finds it: from the leaf
+the read reached while the tree's stamp is the read's, moving right past
+a split, else by a descent. A key no longer in the tree shows nothing
+and is told as none, for the caller to read again. The function runs
+under a latch and may not use the tree nor wait.
 
 ## 2. Project layout
 

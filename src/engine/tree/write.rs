@@ -350,7 +350,7 @@ impl BLinkTree {
     /// writer reads it once it owns it, moving right past a split or a
     /// leaf taken out, as from a leaf read (RULES.md D840). A root that is
     /// a leaf is the leaf.
-    fn leaf_for_write(&self, key: &[u8], path: &mut Path) -> Result<PageId> {
+    pub(super) fn leaf_for_write(&self, key: &[u8], path: &mut Path) -> Result<PageId> {
         path.above_leaf = true;
         let found = self.descend(Target::Key(key), 0, path, |node| match node.level {
             0 => Ok(None),
@@ -423,7 +423,7 @@ impl BLinkTree {
     /// Posts `splits`, those a change of `key` in the leaf `held` caused,
     /// up the tree from `path`. The leaf the entry is in: the right page
     /// of the highest separator it is past, if any.
-    fn posted<'a>(&'a self, path: &Path, held: NodeLock<'a>, key: &[u8], splits: Vec<Split>) -> Result<PageId> {
+    pub(super) fn posted<'a>(&'a self, path: &Path, held: NodeLock<'a>, key: &[u8], splits: Vec<Split>) -> Result<PageId> {
         let leaf = splits
             .iter()
             .filter(|s| key > s.separator.as_slice())
