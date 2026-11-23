@@ -18,7 +18,7 @@ const ROWS: &str = "compiled_writes::a_point_change_checks_its_rows_constraints"
 const MORE: &str = "compiled_writes::a_point_change_falls_back_where_its_end_checks_more";
 
 /// Mechanisms whose removal must fail compiled procedures' requirements.
-pub const COMPILED: [Mutation; 14] = [
+pub const COMPILED: [Mutation; 15] = [
     Mutation {
         name: "compiled-old-table-of-update",
         package: Package::Core,
@@ -157,6 +157,16 @@ pub const COMPILED: [Mutation; 14] = [
         original: "        if !ids.is_empty() && (straight.reads || reads_back || ids.iter().any(unsettled)) {",
         replacement: "        if !ids.is_empty() && (reads_back || ids.iter().any(unsettled)) {",
         integration: &["compiled_writes::a_point_change_checks_its_reference_serializably"],
+        unit: &[],
+    },
+    Mutation {
+        name: "compiled-insert-defaults-kept",
+        package: Package::Core,
+        breaks: "an INSERT of a compiled program takes its target as kept though a default reads the instant, so each row has the instant its target was kept at",
+        file: "src/db/write/direct.rs",
+        original: "                Some(ColumnDefault::User(_) | ColumnDefault::Datetime(..)) => false,",
+        replacement: "                Some(ColumnDefault::User(_) | ColumnDefault::Datetime(..)) => true,",
+        integration: &["compiled_writes::an_insert_takes_its_defaults_at_each_execution"],
         unit: &[],
     },
 ];
