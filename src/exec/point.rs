@@ -19,7 +19,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::index::Probe;
 use crate::logical::Expr;
-use crate::physical::{Plan, ProbeSlot, keepable, placed};
+use crate::physical::{Place, Plan, ProbeSlot, keepable, placed};
 use crate::storage::{Row, RowId};
 use crate::txn::{TxId, counted};
 use crate::value::Value;
@@ -52,6 +52,14 @@ pub(crate) struct PointRead {
     distinct: bool,
     /// What probes its index by a whole key, if it is read so (`keyed.rs`).
     keyed: Option<keyed::Keyed>,
+}
+
+/// What `PointRead::read_as_is` gave.
+pub(crate) enum AsIs {
+    /// The row its transaction sees under the probe, none if it sees none.
+    Read(Option<Row>),
+    /// Nothing was read: its probe's slots are not placed as they are.
+    Unplaced,
 }
 
 impl PointRead {
@@ -100,7 +108,48 @@ impl PointRead {
     /// no index, the engine's refusal of the read (SQLCODE -911) or a
     /// failed read.
     pub(crate) fn read(&self, st: &State, tx: TxId, values: &[Value]) -> Result<Option<Row>> {
-        let probe = match self.keyed(st, tx, placed(&self.probe, &self.slots, values)?, keyed::Asked::Given)? {
+        self.read_by(st, tx, placed(&self.probe, &self.slots, values)?)
+    }
+
+    /// As `read`, each of `values` placed as it is, not cast to its
+    /// slot's type: of a correlated subquery's plan kept, whose slots are
+    /// its outer references (RULES.md D675, D900). Its row is not read
+    /// where a slot of its probe is not placed so here, an expression of
+    /// its slot or a place that is no key column's, and the plan is
+    /// filled and run instead.
+    ///
+    /// # Errors
+    ///
+    /// As `read`.
+    pub(crate) fn read_as_is(&self, st: &State, tx: TxId, values: &[Value]) -> Result<AsIs> {
+        let Some(probe) = self.placed_as_is(values) else { return Ok(AsIs::Unplaced) };
+        self.read_by(st, tx, Cow::Owned(probe)).map(AsIs::Read)
+    }
+
+    /// Its probe, each slot's value of `values` in its place as it is,
+    /// as `physical::filled_plan_as_is` fills it.
+    fn placed_as_is(&self, values: &[Value]) -> Option<Probe> {
+        let mut probe = self.probe.clone();
+        for s in &self.slots {
+            let (None, Place::Key(n)) = (&s.expr, s.place) else { return None };
+            let at = match &mut probe {
+                Probe::Compare { value, .. } => (n == 0).then_some(value),
+                Probe::Prefix { equal, then: None } => equal.get_mut(n),
+                Probe::Prefix { then: Some(_), .. }
+                | Probe::All
+                | Probe::Columns(_)
+                | Probe::Range { .. }
+                | Probe::Predicate { .. }
+                | Probe::Xml(_) => None,
+            };
+            *at? = values.get(s.slot.index)?.clone();
+        }
+        Some(probe)
+    }
+
+    /// `read`'s row, under `probe`, its slots placed.
+    fn read_by(&self, st: &State, tx: TxId, probe: Cow<'_, Probe>) -> Result<Option<Row>> {
+        let probe = match self.keyed(st, tx, probe, keyed::Asked::Given)? {
             keyed::Probed::Read(found) => return Ok(found.map(|found| self.given(read_row(self.located, found)))),
             keyed::Probed::Given(row) => return Ok(row),
             keyed::Probed::Unread(probe) => probe,

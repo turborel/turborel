@@ -151,6 +151,7 @@ mod engine_settings;
 mod equated_joins;
 mod escrow;
 mod escrow_delta;
+mod escrow_point;
 mod explain_analyze;
 mod expression_indexes;
 mod expressions;

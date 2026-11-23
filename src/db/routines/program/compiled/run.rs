@@ -61,6 +61,53 @@ pub(super) struct Exec<'a> {
     /// How many ATOMIC compound statements, out of scope of the handlers
     /// being executed, are being executed all the same.
     hidden_atomic: usize,
+    /// Whether nothing of the program reads the diagnostics area
+    /// (`unread`), so no statement's condition is placed there.
+    pub(super) unread: bool,
+}
+
+/// \[DESIGN\] RULES.md D943. Whether nothing of `nodes` reads the
+/// diagnostics area as it runs. None of them is GET DIAGNOSTICS, no
+/// compound statement has a handler, whose activation keeps the area on
+/// the stack, and each statement the session runs changes or reads rows
+/// and no more. The area of such a program is its own, discarded as its
+/// procedure returns [ISO/IEC 9075-2:2023 §9.18 GR14], so what its
+/// statements would place there is read by nothing.
+pub(super) fn unread(nodes: &[Node]) -> bool {
+    nodes.iter().all(|node| {
+        if node.reads_area {
+            return false;
+        }
+        match &node.code {
+            Code::Block(b) => b.handlers.is_empty() && unread(&b.statements),
+            Code::If(b) | Code::Case(b) => b.arms.iter().all(|(_, arm)| unread(arm)) && b.otherwise.as_deref().is_none_or(unread),
+            Code::Loop(l) => unread(&l.statements),
+            Code::For(f) => unread(&f.statements),
+            Code::Statement(s) => rows_alone(s.contained.statement()),
+            Code::Assign(_) | Code::Leave(_) | Code::Iterate(_) | Code::Return(_) | Code::Signal(_) | Code::Into(_) | Code::Cursor(_) => {
+                true
+            }
+        }
+    })
+}
+
+/// Whether `stmt` is a statement that changes or reads rows and no more.
+/// Any other, as a CALL, a dynamic statement or one of a savepoint, may
+/// read the area or run what does.
+fn rows_alone(stmt: &SqlStatement) -> bool {
+    matches!(
+        stmt,
+        SqlStatement::Insert(_)
+            | SqlStatement::Merge(_)
+            | SqlStatement::UpdateSearched { .. }
+            | SqlStatement::DeleteSearched { .. }
+            | SqlStatement::UpdatePositioned { .. }
+            | SqlStatement::DeletePositioned { .. }
+            | SqlStatement::Select { .. }
+            | SqlStatement::Open(_)
+            | SqlStatement::Fetch { .. }
+            | SqlStatement::Close(_)
+    )
 }
 
 impl<'a> Exec<'a> {
@@ -68,7 +115,7 @@ impl<'a> Exec<'a> {
     pub(super) fn new(session: &'a Session, cx: StatementContext<'a>, kept: &'a KeptProgram, frame: &'a mut Params) -> Exec<'a> {
         let host = SessionHost::within(session, cx, Some(kept));
         let hosted = Hosted::new(Some(session), cx);
-        Exec { session, cx, kept, host, hosted, frame, scopes: Vec::new(), handling: Vec::new(), hidden_atomic: 0 }
+        Exec { session, cx, kept, host, hosted, frame, scopes: Vec::new(), handling: Vec::new(), hidden_atomic: 0, unread: false }
     }
 
     /// [§14.1 GR3] The statements `nodes` run in turn, each condition one
@@ -142,8 +189,15 @@ impl<'a> Exec<'a> {
     }
 
     /// The statement `node` run, the diagnostics area emptied as it
-    /// begins and its condition placed there as it ends.
+    /// begins and its condition placed there as it ends. Of a program
+    /// nothing of which reads the area (`unread`), the warnings heard are
+    /// emptied as it begins, as the area's emptying empties them, and the
+    /// area is left as it is.
     fn statement(&mut self, node: &'a Node) -> Ran {
+        if self.unread {
+            self.session.unheard();
+            return self.dispatch(&node.code);
+        }
         if !node.reads_area {
             self.session.emptied((node.command, commands::UNRECOGNIZED));
         }

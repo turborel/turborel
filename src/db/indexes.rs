@@ -329,6 +329,10 @@ impl Database {
         // is shut, so a wait for it never holds the gate.
         let holder = current.begin();
         current.acquire(&holder, qn, LockMode::Shared)?;
+        // [DESIGN] RULES.md D920: the table collected as far as the horizon
+        // lets before it is filled, which counts every version it finds,
+        // so one of a quiet table finds none a batch left.
+        current.gc_waiting(std::iter::once(qn));
         // 1. Published shut; the build's snapshot taken there.
         let shut = current.tx.gate.shut();
         let tx = current.begin();

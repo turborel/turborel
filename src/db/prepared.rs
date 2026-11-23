@@ -16,6 +16,7 @@
 //! The same preparation serves PREPARE in SQL text (`db/dynamic.rs`).
 
 mod given;
+mod locators;
 mod outputs;
 mod plans;
 mod shared;
@@ -505,8 +506,8 @@ impl Session {
         }
         // [ISO/IEC 9075-2:2023 §4.37.5] a large object sent by its locator
         // is the value it names.
-        let values = self.unlocated(values)?;
-        Self::values_for(p, &values)?;
+        let values = if values.iter().any(locators::may_hold) { self.unlocated(values)? } else { values.to_vec() };
+        Self::one_each(p, values.len())?;
         self.run_prepared_out(p, values, commands::EXECUTE)
     }
 

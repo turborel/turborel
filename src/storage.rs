@@ -516,7 +516,8 @@ pub trait TableStorage: Send + Sync {
     fn collection_due(&self, _horizon: Timestamp) -> bool {
         true
     }
-    /// Whether versions of it await collection (`gc`), so it is collected as any transaction ends. Default: none.
+    /// Whether versions of it await collection (`gc`): by the end of a transaction that wrote it once a batch is due,
+    /// or by the maintenance job's pass (RULES.md D920). Default: none.
     fn uncollected(&self) -> bool {
         false
     }

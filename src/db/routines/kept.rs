@@ -33,9 +33,10 @@ use crate::sync::lock;
 use leaves::KeptLeaves;
 pub(in crate::db) use leaves::{KeptRuns, point_of};
 
-/// The procedures a session keeps the bodies of, by specific name.
+/// The procedures a session keeps the bodies of, by specific name, and
+/// the prepared CALLs it runs straight (`direct.rs`).
 #[derive(Debug, Default)]
-pub(in crate::db) struct KeptRoutines(HashMap<QualifiedName, Arc<KeptRoutine>>);
+pub(in crate::db) struct KeptRoutines(HashMap<QualifiedName, Arc<KeptRoutine>>, pub(super) super::direct::KeptCalls);
 
 /// A procedure's text, read, and its body's program once bound.
 #[derive(Debug)]
@@ -141,6 +142,14 @@ impl KeptRoutine {
             *lock(&self.program)? = Some((Key::now(st, session), kept.clone()));
         }
         Ok(kept)
+    }
+
+    /// Its program, if it keeps one with what holds now for `session` in
+    /// `st`. It binds none.
+    pub(in crate::db) fn current(&self, st: &State, session: &Session) -> Option<KeptProgram> {
+        let kept = lock(&self.program).ok()?;
+        let (with, program) = kept.as_ref()?;
+        with.holds(st, session).then(|| program.clone())
     }
 }
 

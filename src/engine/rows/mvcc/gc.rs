@@ -18,7 +18,7 @@ use crate::storage::{Kept, Removed, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 
-/// The commits a busy table's earliest garbage waits past the horizon for
+/// The commits a table's earliest garbage waits past the horizon for
 /// before a transaction's end collects it (`RowTable::due_at`).
 const COLLECT_AFTER: u64 = 64;
 /// The versions filed as garbage that make a collection due at once.
@@ -138,12 +138,11 @@ impl RowTable {
         }
     }
 
-    /// \[DESIGN\] Whether a collection at `horizon` is due (RULES.md D451):
-    /// with no transaction open in the table, as after every end in a quiet
-    /// database, at once; else once the horizon is `COLLECT_AFTER` commits
-    /// past the earliest garbage, or `COLLECT_ITEMS` versions are filed, so
-    /// a busy table is collected a batch of commits at a time and not by
-    /// every end; or while versions undone by rollbacks wait, released as
+    /// \[DESIGN\] Whether a collection at `horizon` is due (RULES.md D451,
+    /// D920): once the horizon is `COLLECT_AFTER` commits past the earliest
+    /// garbage, or `COLLECT_ITEMS` versions are filed, so a table is
+    /// collected a batch of commits at a time and not by every end, busy
+    /// or quiet; or while versions undone by rollbacks wait, released as
     /// soon as the readers that may go back to them end (RULES.md D29).
     /// Stamps left wait with the garbage, a reader resolving an unstamped
     /// version by its transaction's status.
@@ -152,13 +151,20 @@ impl RowTable {
         horizon.checked_sub(due).is_some_and(|past| past >= COLLECT_AFTER)
             || self.versions.garbage_items.load(Ordering::Relaxed) >= COLLECT_ITEMS
             || self.versions.undone_waiting.load(Ordering::Relaxed)
-            || self.versions.open.is_empty()
     }
 
     /// Whether anything awaits collection: garbage, versions undone changes
     /// appended, transactions validated that others may be ordered
     /// against, or stamps left to make.
     pub(in crate::engine::rows) fn awaits_collection(&self) -> bool {
+        // [DESIGN] RULES.md D920: asked by every end that leaves the table,
+        // so answered without a lock where there is nothing. Each word is
+        // stored under its list's lock as the list is added to.
+        let versions = &self.versions;
+        let listed = versions.garbage_due.load(Ordering::SeqCst).min(versions.validated_due.load(Ordering::SeqCst)) != u64::MAX;
+        if !listed && !versions.undone_waiting.load(Ordering::Relaxed) && versions.queued.load(Ordering::SeqCst) == 0 {
+            return false;
+        }
         !lock_builtin(&self.versions.garbage).is_empty()
             || !lock_builtin(&self.versions.undone).is_empty()
             || !lock_builtin(&self.versions.validated).is_empty()

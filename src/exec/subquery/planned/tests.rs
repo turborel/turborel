@@ -124,9 +124,9 @@ fn a_unique_probe_is_kept_at_once_and_a_value_of_another_kind_is_planned_alone()
     let sq = subquery();
     let (_, kept) = runner.planned(&sq, &[int(3)], Planned::Untried);
     assert_eq!(named(&kept), "kept");
-    let Planned::Kept(slotted, _) = &kept else { panic!("kept") };
-    assert!(slotted.fits(&[int(4)]) && !slotted.fits(&[Value::Null]));
-    assert!(!slotted.fits(&[Value::Char("4".into())]) && !slotted.fits(&[]), "another kind, or no value");
+    let Planned::Kept(run) = &kept else { panic!("kept") };
+    assert!(run.fits(&[int(4)]) && !run.fits(&[Value::Null]));
+    assert!(!run.fits(&[Value::Char("4".into())]) && !run.fits(&[]), "another kind, or no value");
     let (plan, still) = runner.planned(&sq, &[Value::Approx(4.0_f64)], kept);
     assert_eq!(named(&still), "kept");
     let custom = PhysicalPlanner::new(&st).plan(&runner.optimized(sq.bound(&[Value::Approx(4.0_f64)])));
