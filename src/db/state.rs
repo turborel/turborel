@@ -37,7 +37,7 @@ use crate::stats::Statistics;
 use crate::stats::keyed::{KeyIndex, Keyed};
 use crate::storage::{StorageEngine, TableOption, TableStorage};
 use crate::system::SystemTables;
-use crate::txn::{Beginning, LockWait, Policy, Reading, TableLock, Transactions, Txn, UndoSpace};
+use crate::txn::{Beginning, LockWait, Origin, Policy, Reading, TableLock, Transactions, Txn, UndoSpace};
 use crate::value::collation::Collation;
 use crate::value::types::TypeRegistry;
 
@@ -312,14 +312,31 @@ impl State {
     /// [X3.135-1986 §7.3 GR2a] a transaction is effectively initiated,
     /// writing to this snapshot's log.
     pub(crate) fn begin(&self) -> Txn {
-        self.begin_waiting((self.lock_wait(), Reading::Serializable, Arc::default()))
+        self.begin_waiting((self.lock_wait(), Reading::Serializable, Arc::default()), &mut None)
     }
 
     /// A transaction, as `begin`, that waits for locks as `beginning` says,
     /// its session's own setting, if it has one, reads as it says, and is
-    /// cancelled by its session's stop.
-    pub(crate) fn begin_waiting(&self, beginning: Beginning) -> Txn {
-        self.tx.begin(self.log.as_ref().map(Arc::clone), beginning, self.list_space())
+    /// cancelled by its session's stop. It begins from `kept`, its
+    /// session's origin, if that is this snapshot's, else from a new one
+    /// kept there in its place (RULES.md D844).
+    pub(crate) fn begin_waiting(&self, beginning: Beginning, kept: &mut Option<Arc<Origin>>) -> Txn {
+        self.origin(kept).begin(beginning)
+    }
+
+    /// `kept`, if it is this snapshot's origin of transactions: of its
+    /// coordinator and log, spilling as it says. Else a new one, kept
+    /// there. Looking makes no reference to anything every session shares.
+    fn origin<'k>(&self, kept: &'k mut Option<Arc<Origin>>) -> &'k Arc<Origin> {
+        let (limit, batch) = (held_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)));
+        let space = |s: &UndoSpace| {
+            let areas = s.areas.as_ref().is_some_and(|a| Arc::ptr_eq(a, &self.work));
+            (s.limit, s.batch) == (limit, batch) && areas && s.types.same(&self.types)
+        };
+        if !kept.as_ref().is_some_and(|o| o.is_of(&self.tx, self.log.as_ref()) && space(o.space())) {
+            *kept = None;
+        }
+        kept.get_or_insert_with(|| Arc::new(Origin::new(&self.tx, self.log.as_ref(), self.list_space())))
     }
 
     /// \[DESIGN\] Where a list of this snapshot's spills (RULES.md D38): as

@@ -265,6 +265,9 @@ struct SessionState {
     injected: Option<Arc<crate::physical::Injected>>,
     /// The procedures' bodies it keeps (`db/routines/kept.rs`).
     routines: routines::KeptRoutines,
+    /// What its transactions begin from, while its snapshots give the same
+    /// (`txn/begin.rs`, RULES.md D844).
+    origin: Option<Arc<crate::txn::Origin>>,
 }
 
 /// \[DESIGN\] An application program bound to a `<module>`: an authorization
@@ -460,7 +463,8 @@ impl Session {
             self.begin_mode(st);
         }
         let reading = self.mode.get().reading();
-        Arc::clone(inner.tx.get_or_insert_with(|| Arc::new(st.begin_waiting((wait, reading, Arc::clone(&self.stop))))))
+        let SessionState { tx, origin, .. } = &mut *inner;
+        Arc::clone(tx.get_or_insert_with(|| Arc::new(st.begin_waiting((wait, reading, Arc::clone(&self.stop)), origin))))
     }
 
     /// Take the current transaction, closing every cursor it opened

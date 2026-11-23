@@ -135,27 +135,56 @@ impl FreeList {
     /// Why, if an extent is empty, reaches past the file, or overlaps a
     /// page already free; nothing is freed then.
     pub(super) fn free(&mut self, extents: &[Extent]) -> Result<(), String> {
-        let mut after = self.clone();
+        self.check(extents)?;
         for e in extents {
-            after.free_one(*e)?;
+            self.free_one(*e)?;
         }
-        after.changed = after.changed || !extents.is_empty();
-        *self = after;
+        self.changed = self.changed || !extents.is_empty();
         Ok(())
     }
 
-    fn free_one(&mut self, e: Extent) -> Result<(), String> {
+    /// Whether `free` would free `extents`: each within the file, none
+    /// overlapping a free page or another of them. Checked before any is
+    /// freed, so a refusal frees nothing, with no copy of the list made:
+    /// a copy costs a pass over every free run, at each page a delete
+    /// frees (RULES.md D30).
+    ///
+    /// # Errors
+    ///
+    /// As `free`'s.
+    pub(super) fn check(&self, extents: &[Extent]) -> Result<(), String> {
+        let mut sorted = extents.to_vec();
+        sorted.sort_by_key(|e| e.start.0);
+        let mut last_end = 0;
+        for e in &sorted {
+            let end = self.within(*e)?;
+            if e.start.0 < last_end {
+                return Err(format!("pages from {} to {} are freed twice", e.start.0, last_end.saturating_sub(1)));
+            }
+            last_end = end;
+        }
+        Ok(())
+    }
+
+    /// The end of `e`, if it is within the file and overlaps no free page.
+    fn within(&self, e: Extent) -> Result<u64, String> {
         let (start, count) = (e.start.0, e.count);
         let end = start.checked_add(count).filter(|&end| count > 0 && end <= self.pages);
         let Some(end) = end else {
             return Err(format!("{count} pages from page {start} are not within the {} pages of the file", self.pages));
         };
-        let before = self.runs.range(..start).next_back().map(|(&s, &c)| (s, s.saturating_add(c)));
-        let overlaps_before = before.is_some_and(|(_, before_end)| before_end > start);
+        let overlaps_before = self.runs.range(..start).next_back().is_some_and(|(&s, &c)| s.saturating_add(c) > start);
         let overlaps_after = self.runs.range(start..end).next().is_some();
         if overlaps_before || overlaps_after {
             return Err(format!("pages from {start} to {} include a free page", end.saturating_sub(1)));
         }
+        Ok(end)
+    }
+
+    fn free_one(&mut self, e: Extent) -> Result<(), String> {
+        let (start, count) = (e.start.0, self.within(e).map(|_| e.count)?);
+        let end = start.saturating_add(count);
+        let before = self.runs.range(..start).next_back().map(|(&s, &c)| (s, s.saturating_add(c)));
         let mut run = (start, count);
         if let Some((before_start, before_end)) = before.filter(|&(_, before_end)| before_end == start) {
             self.runs.remove(&before_start);
@@ -284,5 +313,24 @@ mod tests {
         assert_eq!((f.pages(), f.runs()), (7, vec![extent(4, 3)]));
         f.grow_free(5).unwrap();
         assert_eq!(f.pages(), 7, "never shrinks");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D30, free list: extents of one call that
+    /// overlap each other, though no free page, are refused before any is
+    /// freed, in either order; extents of one call that touch are freed
+    /// and merged. A regression test: the check made without a copy of the
+    /// list must still free nothing on a refusal.
+    #[test]
+    fn a_call_freeing_a_page_twice_frees_nothing() {
+        let mut f = FreeList::new(10);
+        for twice in [[extent(1, 2), extent(2, 2)], [extent(2, 2), extent(1, 2)], [extent(3, 1), extent(3, 1)]] {
+            assert!(f.free(&twice).is_err(), "{twice:?}");
+            assert_eq!((f.runs(), f.changed()), (vec![], false), "{twice:?}: nothing freed");
+        }
+        f.free(&[extent(2, 1), extent(1, 1)]).unwrap();
+        assert_eq!(f.runs(), vec![extent(1, 2)]);
+        assert!(f.check(&[extent(0, 1), extent(3, 7)]).is_ok());
+        assert!(f.check(&[extent(0, 2)]).is_err());
+        assert_eq!(f.runs(), vec![extent(1, 2)], "a check frees nothing");
     }
 }

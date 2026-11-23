@@ -14,7 +14,7 @@ mod backup;
 mod builtin;
 mod configurable;
 pub(crate) mod escrow;
-mod executor;
+pub(crate) mod executor;
 mod extension;
 mod graph;
 mod hosted;
@@ -50,9 +50,8 @@ pub use builtin::{
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
 pub use executor::{
-    COMPILED_PROCEDURES, DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_DENSE_JOINS, EXECUTOR_KERNELS,
-    EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_POINT_OPERATIONS, EXECUTOR_RUNTIME_FILTERS, EXECUTOR_WORKERS,
-    KEEP_SUBQUERY_PLANS,
+    DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_DENSE_JOINS, EXECUTOR_KERNELS, EXECUTOR_MORSEL_ROWS,
+    EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_POINT_OPERATIONS, EXECUTOR_RUNTIME_FILTERS, EXECUTOR_WORKERS, KEEP_SUBQUERY_PLANS,
 };
 pub use extension::Owner;
 pub use graph::{

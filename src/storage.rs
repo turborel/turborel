@@ -104,9 +104,9 @@ pub trait TableStorage: Send + Sync {
     /// # Errors
     ///
     /// As `update` and `delete`; SQLCODE -910 if there is no such row.
-    fn replace(&self, tx: TxId, id: RowId, row: Option<Row>) -> Result<Row> {
+    fn replace(&self, tx: TxId, id: RowId, row: Option<&Row>) -> Result<Row> {
         let old = self.get(tx, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id}")))?;
-        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row)).map(|()| old)
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row.clone())).map(|()| old)
     }
     /// Removes the live row `id`.
     ///
@@ -271,8 +271,8 @@ pub trait TableStorage: Send + Sync {
     ///
     /// SQLCODE -911 if another open transaction changed the row, or its
     /// newest committed version's stamp is not `seen`; as `update`.
-    fn write_newest(&self, tx: TxId, id: RowId, row: Option<Row>, _seen: Timestamp) -> Result<()> {
-        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row))
+    fn write_newest(&self, tx: TxId, id: RowId, row: Option<&Row>, _seen: Timestamp) -> Result<()> {
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row.clone()))
     }
     /// \[DESIGN\] RULES.md D443: notes that the version `tx`'s write of row `id` replaced shares the entries of
     /// each index whose key reads only columns of `unchanged`: those columns, which `gc` gives back. Default: none.

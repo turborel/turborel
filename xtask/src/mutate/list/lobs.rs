@@ -148,7 +148,7 @@ pub const LOBS: [Mutation; 20] = [
         package: Package::Core,
         breaks: "a READ COMMITTED transaction's locator reads a value its statement's snapshot no longer holds",
         file: "src/txn/lobs.rs",
-        original: "            self.shared.clock.hold(self.id, at);",
+        original: "            self.origin.shared.clock.hold(self.id, at);",
         replacement: "            let _ = at;",
         integration: &["lob_locators::a_read_committed_locator_keeps_its_value"],
         unit: &[],

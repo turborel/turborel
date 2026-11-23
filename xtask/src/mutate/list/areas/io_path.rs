@@ -9,7 +9,7 @@ use super::super::{Mutation, Package};
 const IN_USE: &str = "pages::pages_in_use_are_those_the_free_list_holds";
 
 /// Mechanisms of the I/O path whose removal must fail their tests.
-pub const IO_PATH: [Mutation; 4] = [
+pub const IO_PATH: [Mutation; 5] = [
     Mutation {
         name: "io-freed-still-in-use",
         package: Package::Core,
@@ -49,5 +49,15 @@ pub const IO_PATH: [Mutation; 4] = [
         replacement: "            let trailing = free.take_trailing();\n            let trunk: Vec<Extent> = free.allocate(needed);\n            self.in_use.mark(&trunk, true);\n",
         integration: &["pages::a_trunk_taken_where_the_file_is_cut_survives_the_cut"],
         unit: &[],
+    },
+    Mutation {
+        name: "io-free-twice-in-one-call",
+        package: Package::Core,
+        breaks: "a free's check lets extents of one call overlap, so a refusal frees the extents before the overlap",
+        file: "src/disk/pager/free.rs",
+        original: "            if e.start.0 < last_end {",
+        replacement: "            if e.start.0 < last_end.min(0) {",
+        integration: &[],
+        unit: &["disk::pager::free::tests::a_call_freeing_a_page_twice_frees_nothing"],
     },
 ];

@@ -101,7 +101,7 @@ impl State {
     /// them, none copied for it (RULES.md D750).
     fn log_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), record: impl FnOnce(u32) -> Vec<u8>) -> Result<()> {
         let seal = self.seal_of(table)?;
-        if tx.log.is_none() {
+        if tx.origin.log.is_none() {
             return Ok(());
         }
         let plain = record(self.generation_of(table));
@@ -357,8 +357,10 @@ impl State {
         seen: Option<&(Timestamp, Row)>,
     ) -> Result<(Row, Option<QualifiedName>)> {
         let storage = self.storage_of(table)?;
+        // Borrowed: the engine encodes it, and the caller keeps it for its
+        // index entries and its log record, with no copy made (RULES.md D417).
         let new = match write {
-            Write::Update(row) => Some(row.clone()),
+            Write::Update(row) => Some(row),
             Write::Delete => None,
         };
         // The row replaced, as the write found it, not read before it

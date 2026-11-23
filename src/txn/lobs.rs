@@ -59,7 +59,7 @@ impl Txn {
         let mut st = lock_builtin(&self.state);
         if !st.pinned.contains(&at) {
             st.pinned.push(at);
-            self.shared.clock.hold(self.id, at);
+            self.origin.shared.clock.hold(self.id, at);
         }
     }
 }

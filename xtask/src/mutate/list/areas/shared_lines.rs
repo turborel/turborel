@@ -1,7 +1,8 @@
 //! The mutations of what keeps transactions off each other's cache lines
 //! (RULES.md R-TEST-9, D782-D784): a value alone on its lines, a reader's
 //! commit taking no lock of the statuses' map, and a table's open
-//! transactions in shards.
+//! transactions in shards; a transaction's id on its thread's stripe, and
+//! its session's kept origin replaced as its setting changes (D844).
 
 use super::super::{Mutation, Package};
 
@@ -9,7 +10,7 @@ use super::super::{Mutation, Package};
 const OPENS: &str = "src/engine/rows/mvcc/opens.rs";
 
 /// The shared lines' mutations, in the order they run.
-pub const SHARED_LINES: [Mutation; 4] = [
+pub const SHARED_LINES: [Mutation; 6] = [
     Mutation {
         name: "alone-unaligned",
         package: Package::Core,
@@ -49,5 +50,25 @@ pub const SHARED_LINES: [Mutation; 4] = [
         replacement: "        map.entry(tx).or_insert_with(|| Arc::new(Mutex::new(made())));",
         integration: &[],
         unit: &["engine::rows::mvcc::opens::tests::open_transactions_are_kept_in_shards_of_their_own"],
+    },
+    Mutation {
+        name: "ids-off-their-stripe",
+        package: Package::Core,
+        breaks: "a transaction's id is not on its thread's stripe, so its registries by id are on lines other cores write (D844)",
+        file: "src/txn/clock.rs",
+        original: ".saturating_add(u64::try_from(thread_stripe(ID_STRIPES)).unwrap_or_default());",
+        replacement: ".saturating_add(u64::try_from(thread_stripe(ID_STRIPES)).unwrap_or_default().min(0));",
+        integration: &[],
+        unit: &["txn::clock::tests::ids_go_on_in_order_each_on_its_threads_stripe"],
+    },
+    Mutation {
+        name: "origin-kept-past-its-setting",
+        package: Package::Core,
+        breaks: "a session's kept origin outlives its MEMORY.WORK_BYTES, so its undo spills as the setting no longer says (D844)",
+        file: "src/db/state.rs",
+        original: "            (s.limit, s.batch) == (limit, batch) && areas && s.types.same(&self.types)",
+        replacement: "            areas && s.types.same(&self.types)",
+        integration: &["transaction_memory::a_sessions_work_memory_is_its_next_transactions"],
+        unit: &[],
     },
 ];

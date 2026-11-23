@@ -595,3 +595,6 @@ mod copies;
 
 // Sparse leaves merged into their right neighbour (RULES.md D814).
 mod merge;
+
+// Changes in place from where a write left its entry (RULES.md D843).
+mod placed;

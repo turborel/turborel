@@ -109,7 +109,7 @@ impl Txn {
         let (loading, mut tail, targets, types) = {
             let mut st = self.state()?;
             let Some(loading) = st.undo.loading.take() else { return Ok(()) };
-            let (targets, types) = (st.undo.targets.clone(), st.undo.types.clone());
+            let (targets, types) = (st.undo.targets.clone(), st.undo.list.space().types.clone());
             let decode = |record: &[u8]| entry_of((&targets, &types), record);
             let tail = st.undo.list.take_from(loading.mark, &decode)?;
             (loading, tail, targets, types)

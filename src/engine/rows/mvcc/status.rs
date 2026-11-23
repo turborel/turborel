@@ -35,6 +35,11 @@ use crate::txn::{Timestamp, TxId};
 const SLOTS: u64 = 16384;
 /// Half of `SLOTS`.
 const HALF: u64 = 8192;
+/// The bits of an id that are its thread's stripe, and their mask.
+const STRIPE_BITS: u32 = 6;
+const STRIPE_MASK: u64 = 63;
+/// The bits of a stripe's run of slots: `SLOTS` over the 64 stripes.
+const RUN_BITS: u32 = 8;
 /// An owner while a slot is being claimed: neither its old transaction
 /// nor its new one.
 const CLAIMING: TxId = TxId::MAX;
@@ -96,7 +101,12 @@ fn raise(atomic: &AtomicU64, value: u64) {
 
 impl Statuses {
     fn slot(&self, tx: TxId) -> Option<&Slot> {
-        let i = tx % SLOTS;
+        // Ids are given 64 apart, the last bits their thread's stripe
+        // (`txn/clock.rs`, RULES.md D844): a stripe's ids take the slots of
+        // a run of its own one after another, so one thread's transactions
+        // go through every slot in turn, not one in 64.
+        let (seq, stripe) = (tx >> STRIPE_BITS, tx & STRIPE_MASK);
+        let i = seq.wrapping_add(stripe << RUN_BITS) % SLOTS;
         let at = if i & 1_u64 == 0 { i >> 1_u32 } else { (i >> 1_u32) | HALF };
         usize::try_from(at).ok().and_then(|at| self.slots.get(at))
     }
