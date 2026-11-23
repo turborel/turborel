@@ -50,10 +50,10 @@ impl State {
         self.end_load(tx)?;
         let (joined, wrote) = {
             let mut st = tx.state()?;
-            // One that wrote keeps its participants, for its rollback if the commit fails; one that read alone
-            // is done with them.
-            let joined = if st.wrote { st.joined.clone() } else { mem::take(&mut st.joined) };
-            (joined, st.wrote)
+            // [DESIGN] RULES.md D922: its participants are taken, not
+            // copied. One that wrote is given them back for its rollback
+            // if the commit fails; one that read alone is done with them.
+            (mem::take(&mut st.joined), st.wrote)
         };
         if !wrote {
             return Self::commit_read(tx, &joined);
@@ -102,6 +102,7 @@ impl State {
             }
             Err(e) => {
                 drop(gate);
+                tx.state()?.joined = joined;
                 self.rollback(tx)?;
                 // The transaction was rolled back: a conflict is a
                 // serialization failure [ISO/IEC 9075:1992 §22.1].

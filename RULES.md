@@ -589,6 +589,7 @@ verification approach DO-178C expects (§8).
 | D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
 | D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
 | D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
+| D922 | A commit takes its participants without copying them, and names the tables it wrote only for the embedders |
 | D923 | Increments reserved are applied by a write told the columns they add to |
 | D924 | A commit's rows that one leaf holds are stamped with the leaf latched once |
 
@@ -16427,6 +16428,22 @@ The semantics hold for these reasons.
 - Maintenance is noted as before. An end notes a table whose engine has
   some due whether or not it collected it.
 - A checkpoint and a close collect every table, waiting, as before.
+
+#### D922. A commit takes its participants without copying them, and names the tables it wrote only for the embedders
+
+A commit of a transaction that wrote copied its list of participants, to
+keep the list for a rollback should the commit fail, and its session
+named every table it wrote, a copy of each name, for the queue of
+embeddings after commit, which reads the names only while a column
+waits for an embedder. An order entry's new order writes five tables,
+so each of its commits made eleven allocations for names nothing read.
+
+The commit now takes the list, and gives it back to the transaction
+before the rollback of a commit that fails (`txn/end.rs`). The session
+names the tables written only while the embedders watch (`db.rs`), read
+once the commit has ended, as the queue's mark was. Nothing else changes:
+a failed commit rolls back in the same participants, and a commit while
+a column waits for an embedder marks the same tables.
 
 #### D923. Increments reserved are applied by a write told the columns they add to
 

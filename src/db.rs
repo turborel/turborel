@@ -514,7 +514,7 @@ impl Session {
         let staged = self.take_staged();
         let ending = self.end_transaction();
         let id = ending.as_ref().map(|tx| tx.id);
-        let (wrote, tables) = ending.as_ref().map_or((false, Vec::new()), |tx| (tx.wrote(), tx.written_tables()));
+        let wrote = ending.as_ref().is_some_and(|tx| tx.wrote());
         if let Some(tx) = &ending {
             tx.set_sync_commit(st.settings.is_on(COMMIT_SYNC));
         }
@@ -525,6 +525,10 @@ impl Session {
             (Some(tx), Some(staged)) => self.db.commit_staged(tx, &staged, &committed),
             (None, _) => return Ok(()),
         };
+        // [DESIGN] RULES.md D922: the tables it wrote are named only for
+        // the embedders, while a column waits for them.
+        let watched = wrote && st.embedders.watching();
+        let tables = ending.as_ref().filter(|_| watched).map_or_else(Vec::new, |tx| tx.written_tables());
         if let (Some(tx), true) = (ending, self.commit_ended(&ended, committed.get())) {
             self.db.hold_in_doubt(tx);
         }
