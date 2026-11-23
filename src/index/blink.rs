@@ -36,11 +36,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::stats::KeyCounts;
-use super::{BTREE_METHOD, Encoded, Entries, Index, IndexMethod, IndexSizes, Key, KeyOrder, Probe, RowIds};
+use super::{BTREE_METHOD, Encoded, Entries, Index, IndexMethod, IndexSizes, Key, KeyOrder, KeyProbe, Probe, RowIds};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
 use crate::disk::pager::PageId;
-use crate::engine::key::{anchor, encode_key, least_present};
+use crate::engine::key::{anchor, anchor_into, encode_key, least_present};
 use crate::engine::tree::{BLinkTree, Direction, LEAST_LOOKUPS, Update, scan_of};
 use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
@@ -54,6 +54,10 @@ use crate::value::{CompOp, DataType, Value};
 
 /// Bytes of a row id at the end of an entry's key.
 const ROW_ID: usize = 8;
+/// \[DESIGN\] The bytes an encoded key is given room for of each of its
+/// values before it is written: an exact number's, as most keys are of
+/// (`engine/key.rs`), a longer value growing the buffer as before.
+const KEY_VALUE_ROOM: usize = 16;
 /// \[DESIGN\] The most entries an estimate counts. Fixed, not a setting (RULES.md D36): what an index method spends on
 /// its own estimate, as it states its costs.
 const MOST_COUNTED: usize = 1_000;
@@ -201,7 +205,8 @@ fn corrupt() -> SqlError {
 /// The least key past every entry's key beginning with `prefix`: no row id
 /// is all 0xFF bytes and one more.
 fn past(prefix: &[u8]) -> Vec<u8> {
-    let mut end = prefix.to_vec();
+    let mut end = Vec::with_capacity(prefix.len().saturating_add(ROW_ID).saturating_add(1));
+    end.extend_from_slice(prefix);
     end.resize(prefix.len().saturating_add(ROW_ID).saturating_add(1), u8::MAX);
     end
 }
@@ -215,7 +220,9 @@ fn split(entry: &[u8]) -> Result<(&[u8], RowId)> {
 impl BLinkIndex {
     /// The encoded key of `key`.
     fn prefix(&self, key: &Key) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
+        // Room for its values and a row id after them, so neither it nor
+        // the entry made of it grows as it is written.
+        let mut out = Vec::with_capacity(key.0.len().saturating_mul(KEY_VALUE_ROOM).saturating_add(ROW_ID).saturating_add(1));
         encode_key(&key.0, &self.types, &mut out)?;
         Ok(out)
     }
@@ -265,16 +272,11 @@ impl BLinkIndex {
         if equal.iter().any(Value::is_null) || then.is_some_and(|(_, v)| v.is_null()) {
             return None;
         }
-        let (mut prefix, mut checked) = (Vec::new(), false);
+        // Each anchor's key written after the last, in one buffer.
+        let (mut prefix, mut checked) = (Vec::with_capacity(equal.len().saturating_mul(KEY_VALUE_ROOM)), false);
         for (value, data_type) in equal.iter().zip(self.types.iter()) {
-            let Some(at) = anchor(value, data_type) else { return Some(Range::all(true)) };
-            checked |= !at.exact;
-            // The first anchor's key is the prefix so far, not copied.
-            if prefix.is_empty() {
-                prefix = at.key;
-            } else {
-                prefix.extend(at.key);
-            }
+            let Some(exact) = anchor_into(value, data_type, &mut prefix) else { return Some(Range::all(true)) };
+            checked |= !exact;
         }
         let Some((op, value)) = then else { return Some(within(prefix, checked)) };
         let Some(at) = self.types.get(equal.len()).and_then(|t| anchor(value, t)) else { return Some(within(prefix, true)) };
@@ -484,6 +486,11 @@ impl Index for BLinkIndex {
         let range = self.range(probe);
         let found = Self::entries_within(Held(self), (probe, range), (true, direction));
         Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
+    }
+
+    /// By its tree's keys (`encoded.rs`).
+    fn key_probe(&self) -> Option<&dyn KeyProbe> {
+        Some(self)
     }
 
     /// Its keys as its tree holds them, of a range no key of which is

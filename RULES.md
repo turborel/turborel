@@ -559,6 +559,7 @@ verification approach DO-178C expects (§8).
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
+| D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 
 ### The project
@@ -15481,6 +15482,53 @@ a UNIQUE check not settled. A participant already reads as the
 transaction does, told as it joined and at each new snapshot, so telling
 it to check and then not to, with no read between, changed nothing. The
 last call, which ends checked reads, is made as before.
+
+#### D881. A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied
+
+A point read (D752) ran its one probe as any search runs. It found its
+table, its index and the index's counts by name and took a reference to
+each, which wrote counts every session shares. It rebuilt the key's
+shape from the catalog. It copied its probe to say what it read, and the
+row store copied it again where reads are checked. The index built a
+range of two bounds from a vector for each value, and gave a boxed
+iterator that decoded each entry's key into values.
+
+Now an index may say it finds a whole key's entries by their first
+bytes (`Index::key_probe`, which gives a `KeyProbe`). `whole_key` gives
+those bytes for a value of each key column, if it places each exactly.
+`entries_of` then lends each entry beginning with them to a callback,
+in the search's order, until the callback wants no more. The default is
+none, and the B-link index answers. It anchors each value into one buffer (`key::anchor_into`),
+which becomes the scan's lower bound, and reads through its tree
+borrowed.
+
+`PointRead` keeps, from when its plan is kept, what it needs of its
+index's definition (`exec/point/keyed.rs`). It is read so only for an
+equality on the key's first columns, on an index of its table's own
+rows, keyed by the columns as they are, with no sort key, expression or
+projection. A plan is kept for one generation of the definitions, so
+what it keeps of them stays true. Each read borrows the table, the index
+and the counts from the snapshot and holds none. An entry found by an
+exact key has that key, so the row is checked against the probe's values
+in place of the entry's key decoded. A covering read of a row every
+reader sees still decodes the key, as its values are the row given. A
+row gone for every reader has its entry taken back as before (D837),
+its key decoded only then.
+
+The read is told to the table as before, by the condition of the
+key's columns and the probe (`TableStorage::read_by_condition`). The
+probe placed for the read is moved into that condition, where it was
+copied, and the key's values are then read from it. So a read at READ
+COMMITTED copies no probe, and one at SERIALIZABLE records what it
+recorded before, the row store copying the condition it keeps. A
+cancel is looked for before the probe, as each entry comes and after
+the last, and the entries are counted for the statement, the operator
+and the index as a search counts them.
+
+Any other index, probe or key is searched as before. A value not of its
+column's type has no exact anchor, and a null has none.
+
+The tree's scan keeps its bounds, so a probe still allocates the two.
 
 #### D882. A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there
 

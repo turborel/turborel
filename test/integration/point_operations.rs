@@ -158,3 +158,60 @@ fn a_kept_body_reads_each_calls_row_by_point_operations() {
         a.rollback().unwrap();
     }
 }
+
+/// What `query`, prepared in `s`, gives for `arg`, read to its end.
+fn once(s: &Session, query: &str, arg: i64) -> Vec<String> {
+    prepared(s, query, &[number(arg)])
+}
+
+/// Verifies: [DESIGN] RULES.md D881, D443: a point read through its
+/// index's whole key keeps a row only if the version its transaction sees
+/// has the key. A row whose key was changed keeps the entry of its old
+/// key while a snapshot before the change is open, and a read of the old
+/// key gives no row, of the new key the row.
+#[test]
+fn a_point_read_passes_over_an_entry_of_a_key_its_row_left() {
+    let (db, a) = defined();
+    let query = "SELECT K, A FROM T WHERE K = ?";
+    for _ in 0..4 {
+        assert_eq!(once(&a, query, 7), ["7,70", "end"]);
+    }
+    a.commit().unwrap();
+    // A snapshot from before the change, so the old version is kept.
+    let earlier = db.session("A");
+    earlier.run("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE").unwrap();
+    assert_eq!(once(&earlier, query, 7), ["7,70", "end"]);
+    a.run("UPDATE T SET K = 2007 WHERE K = 7").unwrap();
+    a.commit().unwrap();
+    assert_eq!(once(&a, query, 7), ["end"], "the entry of the key it left finds no row");
+    assert_eq!(once(&a, query, 2007), ["2007,70", "end"]);
+    assert_eq!(once(&earlier, query, 7), ["7,70", "end"], "the snapshot before still reads it");
+    earlier.rollback().unwrap();
+    a.rollback().unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D881, D29: a point read through its
+/// index's whole key is recorded as read where reads are checked. A
+/// SERIALIZABLE transaction that read a key with no row, and wrote, is
+/// refused at its commit (SQLSTATE 40001) once another committed a row of
+/// that key; at READ COMMITTED it commits.
+#[test]
+fn a_point_read_is_recorded_where_reads_are_checked() {
+    let outcome = |level: &str, key: i64| {
+        let (db, a) = defined();
+        let query = "SELECT K, A FROM T WHERE K = ?";
+        for _ in 0..4 {
+            assert_eq!(once(&a, query, 3), ["3,30", "end"]);
+        }
+        a.commit().unwrap();
+        a.run(&format!("SET TRANSACTION ISOLATION LEVEL {level}")).unwrap();
+        assert_eq!(once(&a, query, key), ["end"]);
+        a.run(&format!("INSERT INTO L VALUES ({key}, 0)")).unwrap();
+        let other = db.session("A");
+        other.run(&format!("INSERT INTO T VALUES ({key}, 1, 'b', 'c')")).unwrap();
+        other.commit().unwrap();
+        a.commit().map_err(|e| e.sqlstate().as_str().to_owned())
+    };
+    assert_eq!(outcome("SERIALIZABLE", 5_000), Err("40001".to_owned()));
+    assert_eq!(outcome("READ COMMITTED", 5_001), Ok(()));
+}

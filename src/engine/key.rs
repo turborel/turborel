@@ -187,13 +187,21 @@ pub struct Anchor {
 /// length. None for NULL or a value of another kind, which every key must
 /// be compared with.
 pub fn anchor(value: &Value, data_type: &DataType) -> Option<Anchor> {
+    let mut key = Vec::with_capacity(ANCHOR_BYTES);
+    let exact = anchor_into(value, data_type, &mut key)?;
+    Some(Anchor { key, exact })
+}
+
+/// \[DESIGN\] As `anchor`, its key appended to `out`, which a caller
+/// building a key of several values keeps for them all: whether it is
+/// exact, or none, `out` then to be discarded.
+pub fn anchor_into(value: &Value, data_type: &DataType, out: &mut Vec<u8>) -> Option<bool> {
     if value.is_null() {
         return None;
     }
     let (anchored, exact) = data_type.kind().anchor(value, data_type)?;
-    let mut key = Vec::with_capacity(ANCHOR_BYTES);
-    encode_column(&anchored, data_type, &mut key).ok()?;
-    Some(Anchor { key, exact })
+    encode_column(&anchored, data_type, out).ok()?;
+    Some(exact)
 }
 
 // Unit tests: keys sort as SQL compares their values (RULES.md R-TEST-1,
