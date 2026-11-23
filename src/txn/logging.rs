@@ -307,8 +307,7 @@ impl Txn {
     ///
     /// SQLCODE -913 if the transaction must roll back instead: the commit
     /// record could not be written.
-    pub(super) fn append_commit(&self, at: Timestamp, wall: i64) -> Result<Option<Lsn>> {
-        let logged = self.state()?.logged;
+    pub(super) fn append_commit(&self, (at, wall): (Timestamp, i64), logged: bool) -> Result<Option<Lsn>> {
         let Some(log) = self.origin.log.as_ref().filter(|_| logged) else { return Ok(None) };
         let refused =
             |why: String| SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §8.2] {why}, so the transaction was rolled back"));

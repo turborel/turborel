@@ -14,16 +14,19 @@ impl Txn {
     pub(super) fn release(&self) {
         // [DESIGN] RULES.md D452: its increments reserved end with it,
         // before the writers waiting for them go on.
-        for escrow in mem::take(&mut lock_builtin(&self.state).escrowed) {
+        // What it holds, taken under its lock once (RULES.md D874).
+        let (escrowed, held, pinned) = {
+            let mut st = lock_builtin(&self.state);
+            (mem::take(&mut st.escrowed), mem::take(&mut st.held), mem::take(&mut st.pinned))
+        };
+        for escrow in escrowed {
             escrow.end(self.id);
         }
-        let held = mem::take(&mut lock_builtin(&self.state).held);
         for table in held {
             table.release(self.id);
         }
         // [DESIGN] RULES.md D442: the waiters for its rows go on, in turn.
         self.origin.shared.ends.end(self.id);
-        let pinned = mem::take(&mut lock_builtin(&self.state).pinned);
         if self.open.swap(false, Ordering::AcqRel) {
             self.origin.shared.clock.end(self.id, self.snapshot());
             for at in pinned {

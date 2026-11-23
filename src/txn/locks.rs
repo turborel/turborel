@@ -120,17 +120,26 @@ impl Txn {
         Ok(())
     }
 
-    /// Whether it may commit: not once a statement of it could not be
-    /// undone, or its undoing could not be logged (RULES.md D19, D25).
+    /// Whether it may commit, its bookkeeping taken once (RULES.md D874):
+    /// not if a table it wrote has had an index added since
+    /// (`check_definitions`), nor once a statement of it could not be
+    /// undone, or its undoing could not be logged (RULES.md D19, D25). If
+    /// it may, whether it wrote a change to the log, whose end its commit
+    /// record is.
     ///
     /// # Errors
     ///
-    /// SQLCODE -913, the transaction to be rolled back.
-    pub(crate) fn check_undone(&self) -> Result<()> {
-        if let Some(why) = self.state()?.doomed {
+    /// As `check_definitions`; else SQLCODE -913, the transaction to be
+    /// rolled back.
+    pub(crate) fn committable(&self) -> Result<bool> {
+        let st = self.state()?;
+        if let Some((table, ..)) = st.written.iter().find(|(_, lock, generation)| lock.changed_after(*generation)) {
+            return Err(index_added(table));
+        }
+        if let Some(why) = st.doomed {
             return Err(SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §7.3 GR3b i] {why}, so the transaction was rolled back")));
         }
-        Ok(())
+        Ok(st.logged)
     }
 
     /// \[DESIGN\] Whether it may go on: not if a table it wrote has had an
@@ -146,12 +155,17 @@ impl Txn {
         let st = self.state()?;
         match st.written.iter().find(|(_, lock, generation)| lock.changed_after(*generation)) {
             None => Ok(()),
-            Some((table, ..)) => Err(SqlError::new(
-                Code::Conflict,
-                format!("[DESIGN] an index was added to {table} after this transaction wrote it: roll back and run the transaction again"),
-            )),
+            Some((table, ..)) => Err(index_added(table)),
         }
     }
+}
+
+/// SQLCODE -911: an index was added to `table` after a transaction wrote it.
+fn index_added(table: &QualifiedName) -> SqlError {
+    SqlError::new(
+        Code::Conflict,
+        format!("[DESIGN] an index was added to {table} after this transaction wrote it: roll back and run the transaction again"),
+    )
 }
 
 /// The rule every refusal cites: the statement is undone, and the

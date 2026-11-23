@@ -69,17 +69,16 @@ impl State {
         let gate = self.tx.gate.enter();
         // Under the gate: an index published shut is either seen here, or
         // published after this commit, which it then counts.
-        let validated =
-            tx.check_definitions().and_then(|()| tx.check_undone()).and_then(|()| self.validate_participants(tx, &joined)).and_then(
-                |mut committing| {
-                    let now = self.clock.now();
-                    let lsn = tx.append_commit(committing.at, now)?;
-                    if lsn.is_some() {
-                        committing.syncs();
-                    }
-                    Ok((committing, (lsn, now)))
-                },
-            );
+        let validated = tx.committable().and_then(|logged| Ok((self.validate_participants(tx, &joined)?, logged))).and_then(
+            |(mut committing, logged)| {
+                let now = self.clock.now();
+                let lsn = tx.append_commit((committing.at, now), logged)?;
+                if lsn.is_some() {
+                    committing.syncs();
+                }
+                Ok((committing, (lsn, now)))
+            },
+        );
         match validated {
             Ok((committing, (lsn, now))) => {
                 // Phase 2 uses storages already found, so it cannot fail part
