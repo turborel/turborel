@@ -15302,7 +15302,14 @@ counts divide 64, are then its thread's, and stay on its core. The
 count of open transactions is kept in each snapshot stripe and summed
 when read, which only a close and a status ask. An id stride of 64
 leaves 2^58 transactions, which cannot run out in practice. Ids order
-nothing against timestamps, as before.
+nothing against timestamps, as before. So nothing compared with a commit
+timestamp may be taken from an id: an index filled with the table's
+writers kept out is filled through the latest commit timestamp
+(`Transactions::latest_commit`), not the highest id or timestamp a
+checkpoint keeps, which ids, given 64 apart, run ahead of. Filled through
+an id, every later commit looked older than the fill, so collection took
+back the entries its versions shared with the ones they replaced (D443),
+and after a recovery the rows were no longer found by their keys.
 
 ## 2. Project layout
 
