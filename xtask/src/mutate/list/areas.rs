@@ -19,6 +19,7 @@ mod cost_model;
 #[path = "count.rs"]
 mod count;
 mod declared_types;
+mod write_costs;
 // The decode kernels' mutations, beside the areas as `list.rs` holds no
 // more modules.
 #[path = "decode.rs"]
@@ -204,8 +205,8 @@ fn second() -> [&'static [Mutation]; 47] {
 /// The planner's newest areas, in order: join estimates, range joins, the
 /// cost model, orders, probed subqueries, predicate transfer, dead entries
 /// taken back by a scan and scans priced by sampled zones, key plans, a
-/// B-link tree probe's path, and a commit's stamps in place.
-fn planner() -> [&'static [Mutation]; 10] {
+/// B-link tree probe's path, a commit's stamps in place, and the fixed costs cut from a write.
+fn planner() -> [&'static [Mutation]; 11] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
@@ -217,6 +218,7 @@ fn planner() -> [&'static [Mutation]; 10] {
         &super::key_plans::KEY_PLANS,
         &tree_path::TREE_PATH,
         &commit_stamps::COMMIT_STAMPS,
+        &write_costs::WRITE_COSTS,
     ]
 }
 

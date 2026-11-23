@@ -84,13 +84,22 @@ pub(super) fn cut(s: &str, length: u32, units: CharUnits) -> (String, Option<Sql
 
 /// A value not of a column of `t`'s type.
 /// `s` followed by `pad` spaces. As every CHARACTER read takes this path,
-/// it allocates once and formats nothing.
+/// it allocates once, formats nothing, and copies the spaces a run at a
+/// time rather than pushing each as a character.
 fn spaced(s: &str, pad: usize) -> String {
     let mut text = String::with_capacity(s.len().saturating_add(pad));
     text.push_str(s);
-    text.extend(std::iter::repeat_n(' ', pad));
+    let mut left = pad;
+    while left > 0 {
+        let run = left.min(SPACES.len());
+        text.push_str(SPACES.get(..run).unwrap_or_default());
+        left = left.saturating_sub(run);
+    }
     text
 }
+
+/// A run of spaces, copied whole into a value padded.
+const SPACES: &str = "                                                                ";
 
 fn mismatch(v: &Value, t: &DataType) -> SqlError {
     SqlError::new(Code::Api, format!("[DESIGN] {v} is not a value of a column of type {t}"))

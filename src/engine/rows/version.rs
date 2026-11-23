@@ -102,6 +102,35 @@ impl<'a> Version<'a> {
     }
 }
 
+/// The bytes kept in front of a record for its version's header, the
+/// longest one, with an older version (RULES.md D846).
+pub(super) const FRAMED: usize = 17;
+
+/// The version made by `maker`, of the record `framed` holds past its first
+/// `FRAMED` bytes, naming `older`: its header written over the bytes in
+/// front of the record, so the record is not copied (RULES.md D846). One
+/// with no older version begins a word in.
+///
+/// # Errors
+///
+/// SQLCODE -916 if `framed` is shorter than `FRAMED`.
+pub(super) fn frame(framed: &mut [u8], (maker, older): (Maker, Option<Lsn>)) -> Result<&[u8]> {
+    let (committed, stamp) = match maker {
+        Maker::Committed(at) => (COMMITTED, at),
+        Maker::Open(tx) => (0, tx),
+    };
+    let start = if older.is_some() { 0 } else { WORD };
+    let header = framed.get_mut(start..FRAMED).ok_or_else(|| corrupt("its frame is too short"))?;
+    let (flags, rest) = header.split_first_mut().ok_or_else(|| corrupt("its frame is too short"))?;
+    *flags = committed | if older.is_some() { OLDER } else { 0 };
+    let (stamped, after) = rest.split_at_mut_checked(WORD).ok_or_else(|| corrupt("its frame is too short"))?;
+    stamped.copy_from_slice(&stamp.to_le_bytes());
+    if let Some(older) = older {
+        after.copy_from_slice(&older.0.to_le_bytes());
+    }
+    framed.get(start..).ok_or_else(|| corrupt("its frame is too short"))
+}
+
 /// Stamps the version `bytes` hold, in place, committed at `at`, if `tx`
 /// made it and it is open: whether it did, and whether it is a deletion.
 /// Only the flags and the stamp change, so its length is kept (RULES.md
@@ -147,6 +176,20 @@ mod tests {
         assert_eq!((open_back.maker, open_back.older, open_back.record), (Maker::Open(9), Some(Lsn(42)), &b"new"[..]));
         let deletion = Version { maker: Maker::Committed(3), deleted: true, older: Some(Lsn(1)), record: b"" };
         assert!(Version::parse(&deletion.encode()).unwrap().deleted);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D846: a record framed gives the bytes
+    /// its version encodes as, with an older version or none, open or
+    /// committed, and a frame too short is refused.
+    #[test]
+    fn a_framed_record_is_its_version() {
+        for (maker, older) in [(Maker::Open(9), Some(Lsn(42))), (Maker::Committed(7), None), (Maker::Open(3), None)] {
+            let mut framed = vec![0xAA; FRAMED];
+            framed.extend_from_slice(b"row");
+            let expected = Version { maker, deleted: false, older, record: b"row" }.encode();
+            assert_eq!(frame(&mut framed, (maker, older)).unwrap(), expected.as_slice());
+        }
+        assert_eq!(frame(&mut [0; 8], (Maker::Open(1), None)).err().map(|e| e.code), Some(Code::Corrupt));
     }
 
     /// Verifies: [DESIGN] RULES.md D843: a stamp in place gives the bytes

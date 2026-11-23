@@ -2,7 +2,8 @@
 //! key, present or not, is placed where a search of the entries one by
 //! one places it, through the hints and without, under a shared prefix
 //! and past it; a node read again from its header as parsed searches the
-//! same; a slot leading past the heap is refused.
+//! same; a slot leading past the heap is refused; entries inserted in
+//! place read back in key order (D847).
 
 use super::*;
 
@@ -65,4 +66,29 @@ fn a_slot_past_the_heap_is_refused_by_the_search() {
     assert_eq!(node.search(&probe).unwrap(), Ok(1), "a slot not read is not checked");
     let parsed = node.parsed();
     assert!(Node::parsed_again(&content[..content.len() - 1], &parsed).is_none(), "not whole slots");
+}
+
+/// Verifies: [DESIGN] RULES.md D847: entries inserted in place into a
+/// node, first, last and between, read back in key order with their
+/// values, and every key is then placed by the search where the entries
+/// one by one place it, through the hints.
+#[test]
+fn entries_inserted_in_place_read_back_in_key_order() {
+    let mut content = leaf_of(40);
+    let mut adding: Vec<Vec<u8>> = (1_u16..80).step_by(2).rev().map(|i| format!("p{i:04}x").into_bytes()).collect();
+    adding.extend([b"p0000".to_vec(), b"p9999x".to_vec()]);
+    for key in &adding {
+        let at = Node::parse(&content).unwrap().search(key).unwrap().unwrap_err();
+        insert(&mut content, at, key, key).unwrap();
+    }
+    let node = Node::parse(&content).unwrap();
+    let mut expected: Vec<Vec<u8>> = (0_u16..80).map(|i| format!("p{i:04}x").into_bytes()).collect();
+    expected.extend([b"p0000".to_vec(), b"p9999x".to_vec()]);
+    expected.sort();
+    assert_eq!(keys(&content), expected);
+    for (i, key) in expected.iter().enumerate() {
+        assert_eq!(node.search(key).unwrap(), Ok(i));
+        let value = node.value(i).unwrap();
+        assert!(value == key.as_slice() || value == b"v", "entry {i}'s value");
+    }
 }
