@@ -4,21 +4,30 @@
 //! standard's rules give of the text, whatever holds it. Each expectation
 //! is made here of a `String`, as values held their text before.
 
-use turborel::db::{Database, Session};
+use std::path::Path;
+
+use turborel::db::{Database, OpenOptions, Session};
 use turborel::error::Code;
 use turborel::value::chars::INLINE;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{both_ways, failure, rows};
+use crate::common::{Scratch, both_ways, failure, rows};
 
 /// The fixed lengths of F's columns: below, at and past what a value
 /// holds itself, and past what a padded string is built in on the stack.
 const FIXED: [usize; 4] = [8, INLINE, INLINE + 1, 300];
 
-/// Schema A: F, of an ID, a CHARACTER column of each length of `FIXED`
-/// and a CHARACTER VARYING(400).
-fn fixed() -> Database {
+/// The database kept in `dir`, opened.
+fn on_files(dir: &Path) -> Database {
     let db = Database::new();
+    db.open_files(&crate::common::os(), dir, &OpenOptions::default()).unwrap();
+    db
+}
+
+/// Schema A, kept in `dir`: F, of an ID, a CHARACTER column of each length
+/// of `FIXED` and a CHARACTER VARYING(400).
+fn fixed(dir: &Path) -> Database {
+    let db = on_files(dir);
     let columns: Vec<String> = FIXED.iter().map(|n| format!("F{n} CHARACTER({n})")).collect();
     db.schema(&format!("CREATE SCHEMA AUTHORIZATION A CREATE TABLE F (ID INTEGER NOT NULL, {}, V VARCHAR(400))", columns.join(", ")))
         .unwrap();
@@ -59,12 +68,16 @@ fn read(s: &Session, id: usize) -> Vec<String> {
 /// spaces to its length, and one assigned to a CHARACTER VARYING column as
 /// it was given, at every length around what a value holds itself, of
 /// characters of one octet and of several, given as a parameter and as a
-/// literal, and after an UPDATE; [§9.2 GR3b ii] one longer than the
+/// literal, after an UPDATE, and once the database is opened again read
+/// by batches and from its record row by row; [§9.2 GR3b ii] one longer than the
 /// column by more than spaces is refused, SQLSTATE 22001.
 #[test]
 fn strings_read_back_as_assigned_at_every_length() {
-    let db = fixed();
+    let scratch = Scratch::new("char-strings");
+    let dir = scratch.path("db");
+    let db = fixed(&dir);
     let a = db.session("A");
+    let mut all = Vec::new();
     let insert = a.prepare("INSERT INTO F VALUES (?, ?, ?, ?, ?, ?)").unwrap();
     for (id, text) in texts().iter().enumerate() {
         let count = text.chars().count();
@@ -73,6 +86,7 @@ fn strings_read_back_as_assigned_at_every_length() {
         row.extend(given);
         row.push(Value::Char(text.as_str().into()));
         a.execute_prepared(&insert, &row).unwrap();
+        a.commit().unwrap();
         let expected = |text: &str| -> Vec<String> {
             let mut all: Vec<String> =
                 FIXED.iter().map(|&n| if count <= n { padded(text, n) } else { "not a string: NULL".to_owned() }).collect();
@@ -84,7 +98,9 @@ fn strings_read_back_as_assigned_at_every_length() {
         let quoted = format!("'{text}'");
         let sets: Vec<String> = FIXED.iter().filter(|&&n| count <= n).map(|n| format!("F{n} = {quoted}")).collect();
         a.run(&format!("UPDATE F SET {}, V = {quoted} WHERE ID = {id}", sets.join(", ")).replace("SET , ", "SET ")).unwrap();
+        a.commit().unwrap();
         assert_eq!(read(&a, id), expected(text), "{text:?} as a literal");
+        all.push(expected(text));
         for &n in FIXED.iter().filter(|&&n| count > n) {
             let refused = a.run(&format!("UPDATE F SET F{n} = {quoted} WHERE ID = {id}"));
             let cut = text.chars().skip(n).all(|c| c == ' ');
@@ -95,6 +111,17 @@ fn strings_read_back_as_assigned_at_every_length() {
         }
     }
     a.commit().unwrap();
+    drop((a, db));
+    // Opened again, each row is read by batches and then row by row, from
+    // its record.
+    let db = on_files(&dir);
+    let a = db.session("A");
+    for batches in ["ON", "OFF"] {
+        a.run(&format!("SET EXECUTOR.BATCHES = '{batches}'")).unwrap();
+        for (id, expected) in all.iter().enumerate() {
+            assert_eq!(&read(&a, id), expected, "row {id} read with EXECUTOR.BATCHES {batches}");
+        }
+    }
 }
 
 /// Schema A: T, of a key K and a string V CHARACTER VARYING(100), indexed.

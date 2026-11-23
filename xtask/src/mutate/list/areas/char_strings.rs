@@ -53,7 +53,7 @@ pub const CHAR_STRINGS: [Mutation; 11] = [
         file: CHARS,
         original: "self.as_bytes().iter().filter(|&&b| !continues(b)).count()",
         replacement: "self.as_bytes().len()",
-        integration: &[READ_BACK],
+        integration: &[FUNCTIONS],
         unit: &[TRIMMED],
     },
     Mutation {
