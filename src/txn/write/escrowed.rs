@@ -31,7 +31,7 @@ impl State {
         &self,
         tx: &Txn,
         (table, id): (&QualifiedName, RowId),
-        (write, fold): (&Write, bool),
+        (write, fold): (&Write<'_>, bool),
         (turn, f): (&mut Option<crate::txn::row_waits::Turn>, F),
     ) -> Result<Guarded<T>> {
         if fold {
@@ -72,7 +72,7 @@ impl State {
     /// \[DESIGN\] Another transaction whose increments reserved on row `id`
     /// `write` by `tx` must wait for (RULES.md D452): one guarding a column
     /// the write changes, or any, for a delete.
-    fn reserved_by(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), write: &Write) -> Result<Option<TxId>> {
+    fn reserved_by(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), write: &Write<'_>) -> Result<Option<TxId>> {
         let lock = self.lock_of(table)?;
         if !lock.escrow.any() {
             return Ok(None);
