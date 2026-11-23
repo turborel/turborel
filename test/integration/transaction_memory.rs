@@ -6,6 +6,7 @@
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
+use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
 
 use crate::common::{Scratch, exec, locking_database, os, rows, spill_bytes};
@@ -143,10 +144,17 @@ fn reads_and_writes_past_the_rows_tracked_count_as_every_row() {
 /// row store's TRANSACTIONS.HELD_BYTES: a transaction's changes to a table
 /// past them are written to a spill area reserved of the budget; a
 /// statement that fails after them is undone, read back; the rest commit,
-/// and once their garbage is collected the area is given back.
+/// and once their garbage is collected the area is given back. The
+/// maintenance job runs only when the test asks (JOBS.POLICY MANUAL). Run
+/// on its own thread, as the ends ask for it (RULES.md D920, D925), it
+/// may be collecting the table as the commit ends: the commit then
+/// passes the table over (D445), and the job gives the area back later. So the test has the pass
+/// collect before it looks.
+/// Regression test (R-TEST-7): the last assert failed once under load.
 #[test]
 fn row_store_changes_spill_and_are_read_back() {
     let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V CHARACTER(40)) WITH (TRANSACTIONS.HELD_BYTES = 4096)",
     )
@@ -168,6 +176,7 @@ fn row_store_changes_spill_and_are_read_back() {
     s.commit().unwrap();
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T WHERE V = 'changed'"), Ok(vec!["1500".into()]));
     s.commit().unwrap();
+    db.maintain().unwrap();
     assert_eq!(spill_bytes(&db), 0, "the areas given back");
 }
 
