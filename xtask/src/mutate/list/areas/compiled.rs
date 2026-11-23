@@ -1,4 +1,4 @@
-//! The mutations of compiled procedures (RULES.md R-TEST-9, D839): a
+//! The mutations of compiled procedures (RULES.md R-TEST-9, D841): a
 //! delta table's statement shape, no data of a SELECT ... INTO of a delta
 //! table or of a point read, the CASE statement with no WHEN true, the
 //! end of a change run straight, an atomic statement undone, and of a

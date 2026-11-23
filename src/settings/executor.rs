@@ -31,7 +31,7 @@ pub const EXECUTOR_DENSE_JOINS: Key = Key(92);
 /// EXECUTOR.POINT_OPERATIONS (RULES.md D752), at its key's place after
 /// the escrow of TRANSACTION.ESCROW.
 pub const EXECUTOR_POINT_OPERATIONS: Key = Key(94);
-/// EXECUTOR.COMPILED_PROCEDURES (RULES.md D839), at its key's place after
+/// EXECUTOR.COMPILED_PROCEDURES (RULES.md D841), at its key's place after
 /// the planner's predicate transfer.
 pub const COMPILED_PROCEDURES: Key = Key(96);
 
@@ -119,7 +119,7 @@ pub(super) fn point_operations() -> Definition {
     )
 }
 
-/// EXECUTOR.COMPILED_PROCEDURES (RULES.md D839).
+/// EXECUTOR.COMPILED_PROCEDURES (RULES.md D841).
 pub(super) fn compiled_procedures() -> Definition {
     defined(
         ("EXECUTOR.COMPILED_PROCEDURES", Kind::Choice(SWITCHES), text(ON)),

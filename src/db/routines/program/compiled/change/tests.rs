@@ -1,5 +1,5 @@
 //! Unit tests: which changes of a compiled program may run straight on
-//! their table (RULES.md D839, R-TEST-8).
+//! their table (RULES.md D841, R-TEST-8).
 
 use std::collections::HashSet;
 
@@ -24,7 +24,7 @@ fn shaped(text: &str) -> &'static str {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a searched UPDATE and DELETE, an
+/// Verifies: [DESIGN] RULES.md D841, a searched UPDATE and DELETE, an
 /// INSERT of a query reading no delta table, and a SELECT ... INTO of an
 /// UPDATE's FINAL or NEW TABLE or of a DELETE's OLD TABLE alone may run
 /// straight; each other change runs the general path. MC/DC pairs of the

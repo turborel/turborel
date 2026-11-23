@@ -1,5 +1,5 @@
 //! \[DESIGN\] The control statements of a compiled program run (RULES.md
-//! D839): compound statements, IF and CASE, the iterated statements, FOR,
+//! D841): compound statements, IF and CASE, the iterated statements, FOR,
 //! and the statements of local cursors, as the interpreter runs them
 //! [ISO/IEC 9075-4:2006 draft Clause 14].
 

@@ -66,4 +66,5 @@ mod timeouts;
 mod tls;
 mod transport;
 mod uuids;
+mod waiting;
 mod xml;

@@ -270,11 +270,12 @@ fn share_of(zones: &Zones, n: i128) -> f64 {
     zones.share(&Conjunction::of(Condition { columns: vec![0], probe }))
 }
 
-/// Verifies: [DESIGN] RULES.md D838: a scan's share of a sample of the
-/// zones is never less than one zone of the sample, as the zones passed
-/// over may hold the rows asked for: of a value in a zone the sample
-/// passes over, as of one in a zone it reads. Of every zone looked at, a
-/// value no zone may hold is read in none.
+/// Verifies: [DESIGN] RULES.md D838, D839: a scan's share of a sample of
+/// the zones is never less than one zone of the sample, as the zones
+/// passed over may hold the rows asked for, of a value in a zone the
+/// sample passes over, as of one in a zone it reads. Of every zone looked
+/// at, a value no zone holds now is still read in one, as rows written
+/// later may hold it.
 #[test]
 fn a_sampled_share_is_never_less_than_one_zone_of_it() {
     let zones = one_a_zone(SAMPLED + 44);
@@ -282,6 +283,7 @@ fn a_sampled_share_is_never_less_than_one_zone_of_it() {
     assert!((share_of(&zones, 1) - 1.0_f64 / sampled).abs() < 1e-9_f64, "passed over: {}", share_of(&zones, 1));
     assert!((share_of(&zones, 0) - 1.0_f64 / sampled).abs() < 1e-9_f64, "read: {}", share_of(&zones, 0));
     let every = one_a_zone(SAMPLED);
-    assert!(share_of(&every, -5).abs() < 1e-12_f64, "every zone looked at");
-    assert!((share_of(&every, 7) - 1.0_f64 / f64::from(u32::try_from(SAMPLED).unwrap())).abs() < 1e-9_f64);
+    let one = 1.0_f64 / f64::from(u32::try_from(SAMPLED).unwrap());
+    assert!((share_of(&every, -5) - one).abs() < 1e-9_f64, "every zone looked at, none holding it");
+    assert!((share_of(&every, 7) - one).abs() < 1e-9_f64);
 }

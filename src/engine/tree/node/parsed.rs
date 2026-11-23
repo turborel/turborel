@@ -3,7 +3,7 @@
 //! read of the copy rebuilds the node from these fields with no header read
 //! and no check made again.
 
-use super::{HEADER, Node, PageId};
+use super::{HEADER, Node, PageId, split_slots};
 
 /// The fields `Node::parse` reads from a node's header, its keys' prefix
 /// and high key as places in the bytes.
@@ -48,6 +48,10 @@ impl<'a> Node<'a> {
     /// are too short for it, so are not those bytes.
     pub(crate) fn parsed_again(bytes: &'a [u8], parsed: &Parsed) -> Option<Node<'a>> {
         let part = |(at, len): (usize, usize)| bytes.get(at..at.checked_add(len)?);
+        let (front, slotted) = split_slots(bytes, parsed.slots)?;
+        if slotted.len() != parsed.count {
+            return None;
+        }
         Some(Node {
             bytes,
             level: parsed.level,
@@ -65,6 +69,8 @@ impl<'a> Node<'a> {
             last: parsed.last,
             heap: parsed.heap,
             slots: parsed.slots,
+            front,
+            slotted,
         })
     }
 }

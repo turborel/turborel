@@ -59,7 +59,7 @@ pub(in crate::db) fn written(
 impl super::Keeping<'_> {
     /// \[DESIGN\] Of a kept UPDATE or DELETE, its bound write, if it is
     /// kept with what holds now: what a compiled program's change looks at
-    /// to learn whether it may run straight on its table (RULES.md D839).
+    /// to learn whether it may run straight on its table (RULES.md D841).
     ///
     /// # Errors
     ///
@@ -71,7 +71,7 @@ impl super::Keeping<'_> {
     /// \[DESIGN\] A kept UPDATE or DELETE run with the values `slots`, as
     /// `write_bound` runs it once it is kept, past its binding: its object
     /// rows by its plan kept, learned or planned with the values as that
-    /// plan stands (RULES.md D839); none if it is not kept.
+    /// plan stands (RULES.md D841); none if it is not kept.
     ///
     /// # Errors
     ///

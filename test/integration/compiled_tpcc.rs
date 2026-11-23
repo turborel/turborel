@@ -1,5 +1,5 @@
 //! \[DESIGN\] The TPROC-C-style procedures the oltp bench installs, both
-//! procedure sets, run compiled and by the interpreter (RULES.md D839):
+//! procedure sets, run compiled and by the interpreter (RULES.md D841):
 //! each CALL's outputs, completion or error, and the tables as they end
 //! are the same of both.
 
@@ -152,7 +152,7 @@ fn ran(compiled: bool, set: &str) -> Vec<String> {
     gave
 }
 
-/// Verifies: [DESIGN] RULES.md D839, the oltp bench's procedures, of both
+/// Verifies: [DESIGN] RULES.md D841, the oltp bench's procedures, of both
 /// sets, give the same compiled as interpreted.
 #[test]
 fn the_benchs_procedures_run_as_interpreted() {

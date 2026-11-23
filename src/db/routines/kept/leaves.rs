@@ -280,7 +280,7 @@ fn kept(st: &State, query: &Subquery, slots: &[(usize, DataType)]) -> Option<Lea
 
 /// \[DESIGN\] The plan `leaf`, a query of the frame's slots, keeps fixed
 /// at once, if it is one point read of a whole unique key (RULES.md D752,
-/// D839): the plan the leaf's run by its plans kept runs as its point
+/// D841): the plan the leaf's run by its plans kept runs as its point
 /// read, so a compiled program reads the same row through it.
 pub(in crate::db) fn point_of(st: &State, leaf: &Leaf) -> Option<Arc<Kept>> {
     let query = &leaf.query;

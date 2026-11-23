@@ -57,7 +57,7 @@ impl Collector {
     /// \[DESIGN\] Of a delta table of result `result` of a statement that
     /// changes the base table `base` itself, as `run_delta_table` gathers
     /// one for it: the collector of a compiled program's change (RULES.md
-    /// D839).
+    /// D841).
     pub(super) fn of_base(st: &State, base: &QualifiedName, result: DeltaResult) -> Collector {
         let width = st.catalog.table(base).map_or(0, |t| t.columns.len());
         let members = delta_members(st, base);

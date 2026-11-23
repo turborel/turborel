@@ -63,7 +63,7 @@ pub(in crate::db) struct KeptProgram {
     /// in the order of the addresses: a statement run is found by its
     /// address, not by walking the program each time.
     places: Arc<[(usize, usize)]>,
-    /// Its body compiled as it is first run so (RULES.md D839); none if
+    /// Its body compiled as it is first run so (RULES.md D841); none if
     /// it is not compiled.
     compiled: Arc<OnceLock<Option<Compiled>>>,
 }
@@ -82,7 +82,7 @@ impl KeptProgram {
     }
 
     /// Its body compiled, compiled the first time it is asked for; none if
-    /// it is not compiled (RULES.md D839).
+    /// it is not compiled (RULES.md D841).
     pub(in crate::db) fn compiled(&self) -> Option<&Compiled> {
         self.compiled.get_or_init(|| Compiled::of(&self.program)).as_ref()
     }

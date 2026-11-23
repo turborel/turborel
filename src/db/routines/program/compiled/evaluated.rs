@@ -1,5 +1,5 @@
 //! \[DESIGN\] The values of a compiled program evaluated, and what assigns
-//! them (RULES.md D839): the assignment statement [ISO/IEC 9075-4:2006
+//! them (RULES.md D841): the assignment statement [ISO/IEC 9075-4:2006
 //! draft §14.5], SELECT INTO [ISO/IEC 9075-2:2023 §14.7], and the items of
 //! SIGNAL and RESIGNAL [§17.2, §17.3], as the interpreter evaluates and
 //! assigns them (`exec/program/leaves.rs`).

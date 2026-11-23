@@ -6,6 +6,7 @@ use super::*;
 
 mod damage;
 mod layout;
+mod search;
 
 /// The tree the nodes of these tests are of.
 const TREE: u64 = 77;

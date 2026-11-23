@@ -122,8 +122,11 @@ whether TLS is offered at all, takes effect as the server starts.
 
 Each connection's statements run on one thread of the server's, the
 connection's own while its requests keep coming, so what a statement
-allocates is freed on the thread that took it. A connection idle for ten
-seconds gives its thread back and takes another at its next request.
+allocates is freed on the thread that took it. That thread reads the
+client's next request itself while it comes within a second, so a client
+that thinks between its requests is answered with no move between
+threads. A connection idle for ten seconds gives its thread back and
+takes another at its next request.
 SERVER.WORKERS still bounds how many statements run at once, and an idle
 connection's thread runs none.
 

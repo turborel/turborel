@@ -1,4 +1,4 @@
-//! \[DESIGN\] A procedure's body compiled (RULES.md D839).
+//! \[DESIGN\] A procedure's body compiled (RULES.md D841).
 //!
 //! As a CALL first runs a procedure whose body its session keeps (RULES.md
 //! D406), the body's program is compiled to a tree of code (`code.rs`),

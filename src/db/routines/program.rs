@@ -129,7 +129,7 @@ impl Session {
         let ended = if direct {
             run_program(program, &mut inner, &mut SessionHost::direct(self, cx))?
         } else if let Some(compiled) = routine.and_then(|_| compiled::compiled_procedures(cx.st, self).then(|| kept.compiled()).flatten()) {
-            // [DESIGN] RULES.md D839: a procedure's body kept runs compiled.
+            // [DESIGN] RULES.md D841: a procedure's body kept runs compiled.
             compiled::run_compiled((self, cx), (&kept, compiled), &mut inner)?
         } else {
             let kept = routine.is_some().then_some(&kept);

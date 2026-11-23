@@ -9,6 +9,10 @@
 //! before any change, so a descent from it goes where one through the
 //! latch would. Leaves are never copied: a read of one takes its latch.
 //!
+//! Each copy keeps the node's header as parsed beside it (RULES.md D840),
+//! so a descent through it reads no header and checks nothing again, as a
+//! leaf's copy does (D808).
+//!
 //! A thread keeps 256 copies, found by their page, across all the trees it
 //! reads; the one to give way is chosen by a clock bit set as a descent
 //! reads it (RULES.md D807).
@@ -17,6 +21,7 @@ use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
 
+use super::node::{Node, Parsed};
 use crate::disk::buffer::{BufferPool, FileId, PageRef, Stamp, Tally};
 use crate::error::Result;
 use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Map};
@@ -33,6 +38,7 @@ struct Copy {
     id: u64,
     stamp: Stamp,
     bytes: Rc<[u8]>,
+    parsed: Parsed,
     used: bool,
 }
 
@@ -68,11 +74,11 @@ impl Copies {
     /// place, or a free one, or the victim's; into the bytes of the copy
     /// it replaces when no descent holds them, so a page read again
     /// allocates nothing.
-    fn put(&mut self, (file, id, stamp): (FileId, u64, Stamp), bytes: &[u8]) {
+    fn put(&mut self, (file, id, stamp): (FileId, u64, Stamp), bytes: &[u8], parsed: Parsed) {
         let found = self.at.get(&(file, id)).copied();
         if found.is_none() && self.kept.len() < KEPT {
             self.at.insert((file, id), self.kept.len());
-            self.kept.push(Copy { file, id, stamp, bytes: Rc::from(bytes), used: true });
+            self.kept.push(Copy { file, id, stamp, bytes: Rc::from(bytes), parsed, used: true });
             return;
         }
         let at = found.unwrap_or_else(|| self.victim());
@@ -85,7 +91,7 @@ impl Copies {
             Some(kept) => kept.copy_from_slice(bytes),
             None => old.bytes = Rc::from(bytes),
         }
-        (old.file, old.id, old.stamp, old.used) = (file, id, stamp, true);
+        (old.file, old.id, old.stamp, old.parsed, old.used) = (file, id, stamp, parsed, true);
     }
 }
 
@@ -93,10 +99,26 @@ thread_local! {
     static COPIES: RefCell<Copies> = RefCell::default();
 }
 
-/// A node's page as a descent reads it: latched in its frame, or a copy.
+/// A node's page as a descent reads it: latched in its frame, or a copy
+/// and its header as parsed.
 pub(super) enum Read<'p> {
     Held(PageRef<'p>, Stamp),
-    Copied(Rc<[u8]>),
+    Copied(Rc<[u8]>, Parsed),
+}
+
+impl Read<'_> {
+    /// The node it holds: a copy's from its header as parsed, with no
+    /// check made again; one latched parsed.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if a page latched is not a node.
+    pub(super) fn node(&self) -> Result<Node<'_>> {
+        match self {
+            Read::Held(page, _) => Node::parse(page),
+            Read::Copied(bytes, parsed) => Node::parsed_again(bytes, parsed).map_or_else(|| Node::parse(bytes), Ok),
+        }
+    }
 }
 
 impl Deref for Read<'_> {
@@ -104,7 +126,7 @@ impl Deref for Read<'_> {
     fn deref(&self) -> &[u8] {
         match self {
             Read::Held(page, _) => page,
-            Read::Copied(bytes) => bytes,
+            Read::Copied(bytes, _) => bytes,
         }
     }
 }
@@ -112,8 +134,8 @@ impl Deref for Read<'_> {
 /// Page `id` of `file` in `pool`: from a copy still current, if `copied`
 /// and the thread keeps one; else latched, as `read_tallied` reads it.
 pub(super) fn read<'p>(pool: &'p BufferPool, (file, id): (FileId, u64), tally: Option<&Tally>, copied: bool) -> Result<Read<'p>> {
-    if let Some(bytes) = copied.then(|| current(pool, file, id)).flatten() {
-        return Ok(Read::Copied(bytes));
+    if let Some((bytes, parsed)) = copied.then(|| current(pool, file, id)).flatten() {
+        return Ok(Read::Copied(bytes, parsed));
     }
     let (page, stamp) = pool.read_stamped(file, id, tally)?;
     Ok(Read::Held(page, stamp))
@@ -121,24 +143,24 @@ pub(super) fn read<'p>(pool: &'p BufferPool, (file, id): (FileId, u64), tally: O
 
 /// The thread's copy of page `id` of `file`, if it is still current; its
 /// clock bit set.
-fn current(pool: &BufferPool, file: FileId, id: u64) -> Option<Rc<[u8]>> {
+fn current(pool: &BufferPool, file: FileId, id: u64) -> Option<(Rc<[u8]>, Parsed)> {
     COPIES.with(|copies| {
         let mut copies = copies.try_borrow_mut().ok()?;
         let Copies { kept, at, .. } = &mut *copies;
         let copy = kept.get_mut(*at.get(&(file, id))?).filter(|c| pool.unchanged(file, id, c.stamp))?;
         copy.used = true;
-        Some(Rc::clone(&copy.bytes))
+        Some((Rc::clone(&copy.bytes), copy.parsed))
     })
 }
 
 /// Keeps a copy of `read`, page `id` of `file`, an inner node read
-/// latched; one kept already of the page gives way to it, else the one
-/// the clock finds unused (D807).
-pub(super) fn keep(read: &Read<'_>, (file, id): (FileId, u64)) {
+/// latched, whose header parsed is `parsed`; one kept already of the page
+/// gives way to it, else the one the clock finds unused (D807).
+pub(super) fn keep(read: &Read<'_>, (file, id): (FileId, u64), parsed: Parsed) {
     let Read::Held(page, stamp) = read else { return };
     COPIES.with(|copies| {
         if let Ok(mut copies) = copies.try_borrow_mut() {
-            copies.put((file, id, *stamp), page);
+            copies.put((file, id, *stamp), page, parsed);
         }
     });
 }

@@ -108,6 +108,8 @@ const HINTS_AT: usize = 36;
 const HINTS: usize = 16;
 /// The slots below which a search uses no hints: fewer than two a step.
 const HINTED: usize = 32;
+/// Bytes of the hints.
+const HINT_BYTES: usize = HINTS * key::HEAD;
 /// No entry inserted last, as in a node just built.
 const NO_LAST: usize = 0xFFFF;
 const HAS_HIGH: u8 = 1;
@@ -132,15 +134,26 @@ fn u16_at(bytes: &[u8], at: usize) -> Result<usize> {
     Ok(usize::from(u16::from_le_bytes(field)))
 }
 
-/// A key head at `at`, big-endian, so heads order as their bytes do.
-fn head_at(bytes: &[u8], at: usize) -> Result<u16> {
-    let field = <[u8; 2]>::try_from(slice(bytes, at, 2)?).map_err(|_| corrupt("a field runs past its end"))?;
-    Ok(u16::from_be_bytes(field))
+/// `N` bytes of a header from `at`, a place every header has, so the read
+/// cannot fail and builds no error.
+#[inline]
+fn field<const N: usize>(header: &[u8; HEADER], at: usize) -> [u8; N] {
+    header.get(at..).and_then(<[u8]>::first_chunk::<N>).copied().unwrap_or([0; N])
 }
 
-fn u64_at(bytes: &[u8], at: usize) -> Result<u64> {
-    let field = <[u8; 8]>::try_from(slice(bytes, at, 8)?).map_err(|_| corrupt("a field runs past its end"))?;
-    Ok(u64::from_le_bytes(field))
+/// A u16 field of a header.
+#[inline]
+fn u16_of(header: &[u8; HEADER], at: usize) -> usize {
+    usize::from(u16::from_le_bytes(field(header, at)))
+}
+
+/// A node's bytes before its slots, which begin at `slots`, and the slots;
+/// none if the slots do not run to the end in whole slots.
+#[inline]
+fn split_slots(bytes: &[u8], slots: usize) -> Option<(&[u8], &[[u8; SLOT]])> {
+    let (front, back) = bytes.split_at_checked(slots)?;
+    let (slotted, rest) = back.as_chunks::<SLOT>();
+    rest.is_empty().then_some((front, slotted))
 }
 
 /// The page number of an inner entry's value.
@@ -179,6 +192,11 @@ pub(super) struct Node<'a> {
     last: Option<usize>,
     heap: usize,
     slots: usize,
+    /// Its bytes before the slots: header, high key, prefix and heap.
+    front: &'a [u8],
+    /// Its slots, each its entry's offset in the heap and its key's head,
+    /// found to lie within its bytes as it was parsed.
+    slotted: &'a [[u8; SLOT]],
 }
 
 impl<'a> Node<'a> {
@@ -188,11 +206,10 @@ impl<'a> Node<'a> {
     ///
     /// SQLCODE -916 if they are not a node.
     pub(super) fn parse(bytes: &'a [u8]) -> Result<Node<'a>> {
-        let header = slice(bytes, 0, HEADER).map_err(|_| corrupt("it is shorter than its header"))?;
-        let (level, flags) = (header.get(LEVEL_AT).copied().unwrap_or_default(), header.get(FLAGS_AT).copied().unwrap_or_default());
-        let count = u16_at(bytes, COUNT_AT)?;
-        let high_len = u16_at(bytes, HIGH_LEN_AT)?;
-        let right = Some(u64_at(bytes, RIGHT_AT)?).filter(|&r| r != NO_PAGE).map(PageId);
+        let header = bytes.first_chunk::<HEADER>().ok_or_else(|| corrupt("it is shorter than its header"))?;
+        let flags = u8::from_le_bytes(field(header, FLAGS_AT));
+        let (count, high_len) = (u16_of(header, COUNT_AT), u16_of(header, HIGH_LEN_AT));
+        let right = Some(u64::from_le_bytes(field(header, RIGHT_AT))).filter(|&r| r != NO_PAGE).map(PageId);
         let high_key = slice(bytes, HEADER, high_len)?;
         let high = (flags & HAS_HIGH != 0).then_some(high_key);
         let deleted = flags & DELETED != 0;
@@ -200,27 +217,30 @@ impl<'a> Node<'a> {
             return Err(corrupt("it has a high key but no right neighbour, or one but not the other"));
         }
         let prefix_at = HEADER.saturating_add(high_len);
-        let prefix = slice(bytes, prefix_at, u16_at(bytes, PREFIX_AT)?).map_err(|_| corrupt("its prefix runs past its end"))?;
+        let prefix = slice(bytes, prefix_at, u16_of(header, PREFIX_AT)).map_err(|_| corrupt("its prefix runs past its end"))?;
         let heap = prefix_at.saturating_add(prefix.len());
         let slots = count
             .checked_mul(SLOT)
             .and_then(|s| bytes.len().checked_sub(s))
             .filter(|&s| s >= heap)
             .ok_or_else(|| corrupt("its slots overlap its header"))?;
+        let (front, slotted) = split_slots(bytes, slots).ok_or_else(|| corrupt("its slots overlap its header"))?;
         Ok(Node {
             bytes,
-            level,
+            level: u8::from_le_bytes(field(header, LEVEL_AT)),
             high,
             right,
             deleted,
-            tree: u64_at(bytes, TREE_AT)?,
+            tree: u64::from_le_bytes(field(header, TREE_AT)),
             prefix,
-            first: PageId(u64_at(bytes, FIRST_AT)?),
+            first: PageId(u64::from_le_bytes(field(header, FIRST_AT))),
             count,
-            garbage: u16_at(bytes, GARBAGE_AT)?,
-            last: Some(u16_at(bytes, LAST_AT)?).filter(|&l| l != NO_LAST),
+            garbage: u16_of(header, GARBAGE_AT),
+            last: Some(u16_of(header, LAST_AT)).filter(|&l| l != NO_LAST),
             heap,
             slots,
+            front,
+            slotted,
         })
     }
 
@@ -244,23 +264,33 @@ impl<'a> Node<'a> {
         i.checked_mul(SLOT).and_then(|s| self.slots.checked_add(s)).ok_or_else(|| corrupt("a slot is past its end"))
     }
 
-    /// Where entry `i` begins in the node's bytes.
-    fn entry_at(&self, i: usize) -> Result<usize> {
-        self.heap.checked_add(u16_at(self.bytes, self.slot(i)?)?).ok_or_else(|| corrupt("an entry is past its end"))
+    /// Slot `i`: where its entry begins in the node's bytes, and its
+    /// key's head. None past the last slot.
+    #[inline]
+    fn slot_of(&self, i: usize) -> Option<(usize, u16)> {
+        let &[o0, o1, h0, h1] = self.slotted.get(i)?;
+        Some((self.heap.checked_add(usize::from(u16::from_le_bytes([o0, o1])))?, u16::from_be_bytes([h0, h1])))
+    }
+
+    /// The tail of the entry beginning at `at`, and where its value's
+    /// length is; none if it runs past the heap.
+    #[inline]
+    fn tail_from(&self, at: usize) -> Option<(&'a [u8], usize)> {
+        let start = at.checked_add(LEN)?;
+        let len = usize::from(u16::from_le_bytes(*self.front.get(at..)?.first_chunk::<LEN>()?));
+        let end = start.checked_add(len)?;
+        Some((self.front.get(start..end)?, end))
     }
 
     /// The head of entry `i`'s key.
     fn head(&self, i: usize) -> Result<u16> {
-        head_at(self.bytes, self.slot(i)?.saturating_add(LEN))
+        self.slot_of(i).map(|(_, head)| head).ok_or_else(|| corrupt("a slot is past its end"))
     }
 
     /// Entry `i`'s tail, the key past the prefix, and where its value's
     /// length is.
     fn tail_at(&self, i: usize) -> Result<(&'a [u8], usize)> {
-        let at = self.entry_at(i)?;
-        let heap = self.bytes.get(..self.slots).ok_or_else(|| corrupt("its heap is past its end"))?;
-        let len = u16_at(heap, at)?;
-        Ok((slice(heap, at.saturating_add(LEN), len)?, at.saturating_add(LEN).saturating_add(len)))
+        self.slot_of(i).and_then(|(at, _)| self.tail_from(at)).ok_or_else(|| corrupt("a field runs past its end"))
     }
 
     /// Entry `i`, in key order: its key and value.
@@ -270,8 +300,7 @@ impl<'a> Node<'a> {
     /// SQLCODE -916 if there is no entry `i`, or it is malformed.
     pub(super) fn entry(&self, i: usize) -> Result<(KeyRef<'a>, &'a [u8])> {
         let (tail, value_at) = self.tail_at(i)?;
-        let heap = self.bytes.get(..self.slots).ok_or_else(|| corrupt("its heap is past its end"))?;
-        let value = slice(heap, value_at.saturating_add(LEN), u16_at(heap, value_at)?)?;
+        let value = slice(self.front, value_at.saturating_add(LEN), u16_at(self.front, value_at)?)?;
         Ok((KeyRef::new(self.prefix, tail), value))
     }
 
@@ -314,31 +343,44 @@ impl<'a> Node<'a> {
         let Some(tail) = key.strip_prefix(self.prefix) else {
             return Ok(Err(if key < self.prefix { 0 } else { self.count }));
         };
+        self.find(tail).ok_or_else(|| corrupt("an entry is past its end"))
+    }
+
+    /// `search`'s binary search for `tail` over the slots, by heads, a
+    /// tail read only where the heads are equal; none if a slot leads
+    /// past the heap. No step builds an error, so the search stays in
+    /// registers (RULES.md D840).
+    #[inline]
+    fn find(&self, tail: &[u8]) -> Option<std::result::Result<usize, usize>> {
         let head = head_of(tail);
-        let (mut low, mut high) = self.hinted(head)?;
+        let (mut low, mut high) = self.hinted(head);
         while low < high {
             let mid = low.midpoint(high);
-            let order = match self.head(mid)?.cmp(&head) {
-                std::cmp::Ordering::Equal => self.tail_at(mid)?.0.cmp(tail),
+            let (at, found) = self.slot_of(mid)?;
+            let order = match found.cmp(&head) {
+                std::cmp::Ordering::Equal => self.tail_from(at)?.0.cmp(tail),
                 unequal @ (std::cmp::Ordering::Less | std::cmp::Ordering::Greater) => unequal,
             };
             match order {
                 std::cmp::Ordering::Less => low = mid.saturating_add(1),
                 std::cmp::Ordering::Greater => high = mid,
-                std::cmp::Ordering::Equal => return Ok(Ok(mid)),
+                std::cmp::Ordering::Equal => return Some(Ok(mid)),
             }
         }
-        Ok(Err(low))
+        Some(Err(low))
     }
 
     /// The slots a key of head `head` may be among, as the hints bound it:
     /// past every hint below it, up to the first above it.
-    fn hinted(&self, head: u16) -> Result<(usize, usize)> {
+    #[inline]
+    fn hinted(&self, head: u16) -> (usize, usize) {
         let (mut low, mut high) = (0, self.count);
-        let Some(step) = hint_step(self.count) else { return Ok((low, high)) };
-        for i in 0..HINTS {
-            let at = step.saturating_mul(i.saturating_add(1));
-            let hint = head_at(self.bytes, HINTS_AT.saturating_add(i.saturating_mul(key::HEAD)))?;
+        let Some(step) = hint_step(self.count) else { return (low, high) };
+        let Some(hints) = self.bytes.get(HINTS_AT..).and_then(<[u8]>::first_chunk::<HINT_BYTES>) else { return (low, high) };
+        let mut at = 0_usize;
+        for &hint in hints.as_chunks::<{ key::HEAD }>().0 {
+            at = at.saturating_add(step);
+            let hint = u16::from_be_bytes(hint);
             if hint < head {
                 low = at.saturating_add(1);
             } else if hint > head {
@@ -346,7 +388,7 @@ impl<'a> Node<'a> {
                 break;
             }
         }
-        Ok((low.min(self.count), high.max(low).min(self.count)))
+        (low.min(self.count), high.max(low).min(self.count))
     }
 
     /// Whether `key` is in its range: not above its high key. A key above

@@ -1,4 +1,4 @@
-//! \[DESIGN\] A procedure's body compiled (RULES.md D839): each body here
+//! \[DESIGN\] A procedure's body compiled (RULES.md D841): each body here
 //! runs both compiled and by the interpreter, EXECUTOR.COMPILED_PROCEDURES
 //! ON and OFF, in databases made alike, and each statement's completion
 //! or error, each value read back and each table as it ends are the same
@@ -161,7 +161,7 @@ const NEW_ORDER: &str = "CREATE PROCEDURE NEW_ORDER (IN WH INTEGER, IN DI INTEGE
      END WHILE;
    END";
 
-/// Verifies: [DESIGN] RULES.md D839, a body of the shapes that run
+/// Verifies: [DESIGN] RULES.md D841, a body of the shapes that run
 /// straight on their table (a SELECT ... INTO of a whole key, an UPDATE's
 /// FINAL TABLE, an UPDATE by key, an INSERT of one row) runs compiled as
 /// it does interpreted, CALLed again and again, with an item missing
@@ -178,7 +178,7 @@ fn a_body_of_point_shapes_runs_as_interpreted() {
     assert!(gave.contains(&"1,1,4,0.10".to_owned()), "district 1 of warehouse 1 took three orders: {gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, the values OUT parameters take, the
+/// Verifies: [DESIGN] RULES.md D841, the values OUT parameters take, the
 /// error store assignment raises of a value too long for its target
 /// [ISO/IEC 9075-2:2023 §9.2 GR3b ii, 22001], a duplicate key, ROW_COUNT
 /// after each change and no data of a change that changes no row are the
@@ -206,7 +206,7 @@ fn out_values_errors_and_row_counts_are_kept() {
     assert!(gave.iter().any(|l| l.contains("error 23000")), "the second K = 4 is a duplicate: {gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, an error a direct change raises is
+/// Verifies: [DESIGN] RULES.md D841, an error a direct change raises is
 /// the interpreter's, SQLSTATE and SQLCODE and message alike, and undoes
 /// that statement alone: a CHECK constraint broken by an UPDATE by key,
 /// a primary key duplicated by an INSERT of one row, a foreign key with
@@ -239,7 +239,7 @@ fn constraint_errors_are_the_interpreters() {
     assert!(gave.iter().any(|l| l.starts_with("1,6,") && l.ends_with(",item 6")), "{gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, control flow compiled as the
+/// Verifies: [DESIGN] RULES.md D841, control flow compiled as the
 /// interpreter runs it: CASE with no WHEN true and no ELSE (SQLSTATE
 /// 20000), LEAVE and ITERATE, REPEAT, a labelled loop, SIGNAL and RESIGNAL
 /// with an EXIT handler, an UNDO handler of an ATOMIC compound statement,
@@ -279,7 +279,7 @@ fn control_flow_and_conditions_are_the_interpreters() {
     assert!(gave.iter().any(|l| l.contains("again")), "resignalled: {gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a statement of a table some trigger
+/// Verifies: [DESIGN] RULES.md D841, a statement of a table some trigger
 /// is on runs the general path, its triggers fired as interpreted; a
 /// cursor and FOR, which fall back too, read the same rows.
 #[test]
@@ -307,7 +307,7 @@ fn triggers_cursors_and_for_fall_back_alike() {
     assert!(gave.iter().any(|l| l.contains(",stock,")), "the trigger fired: {gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a DELETE's OLD TABLE read by a
+/// Verifies: [DESIGN] RULES.md D841, a DELETE's OLD TABLE read by a
 /// SELECT ... INTO, a DELETE by key, an INSERT of defaults, identity and a
 /// generated column, and an INSERT ... SELECT, the same compiled.
 #[test]
@@ -326,7 +326,7 @@ fn old_tables_deletes_and_generated_values_alike() {
     assert!(gave.iter().any(|l| l.ends_with(",given,16,32")), "{gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a procedure CALLed, then its tables
+/// Verifies: [DESIGN] RULES.md D841, a procedure CALLed, then its tables
 /// changed (a column added, an index made, a row trigger made) and its
 /// definer's privilege revoked, runs as interpreted after each: its
 /// compiled body is made again with its program.
@@ -386,7 +386,7 @@ fn definitions_and_privileges_changed_compile_again() {
     assert!(seen[1].iter().any(|l| l.starts_with("error")), "the revoked privilege refuses a CALL: {:?}", seen[1]);
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a procedure whose statements name
+/// Verifies: [DESIGN] RULES.md D841, a procedure whose statements name
 /// tables unqualified reads its own schema's, the session's schema set
 /// elsewhere, compiled as interpreted.
 #[test]
@@ -400,7 +400,7 @@ fn a_schema_set_changes_nothing_a_body_names() {
     assert!(gave.iter().any(|l| l.contains("[\"500\"]")), "B.S is not changed: {gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, RULES.md D454: at READ COMMITTED a
+/// Verifies: [DESIGN] RULES.md D841, RULES.md D454: at READ COMMITTED a
 /// compiled body's point read reads at a snapshot taken as its statement
 /// begins, seeing what another committed since; at SERIALIZABLE its reads
 /// are recorded, so of two transactions each reading what the other
@@ -441,7 +441,7 @@ fn isolation_levels_are_kept() {
     assert_eq!(seen[1], seen[0], "compiled, then interpreted");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, INFORMATION_SCHEMA.STATEMENT_STATISTICS
+/// Verifies: [DESIGN] RULES.md D841, INFORMATION_SCHEMA.STATEMENT_STATISTICS
 /// counts each CALL of a compiled body once, with the rows it read, as of
 /// one interpreted.
 #[test]

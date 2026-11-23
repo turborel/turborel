@@ -1,4 +1,4 @@
-//! \[DESIGN\] The values of a compiled program (RULES.md D839): a leaf
+//! \[DESIGN\] The values of a compiled program (RULES.md D841): a leaf
 //! that is one row of values reading no table is evaluated where it is,
 //! over the frame's slots; a query leaf that plans to one point read of a
 //! whole unique key is read as that point read; any other leaf is run by

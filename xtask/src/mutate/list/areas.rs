@@ -56,6 +56,7 @@ mod subquery_plans;
 mod tpcc;
 mod tpcc_allocs;
 mod transfer;
+mod tree_path;
 mod txn_layer;
 mod undo_memory;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
@@ -200,9 +201,10 @@ fn second() -> [&'static [Mutation]; 47] {
 }
 
 /// The planner's newest areas, in order: join estimates, range joins, the
-/// cost model, orders, probed subqueries, predicate transfer, and dead
-/// entries taken back by a scan and scans priced by sampled zones.
-fn planner() -> [&'static [Mutation]; 7] {
+/// cost model, orders, probed subqueries, predicate transfer, dead entries
+/// taken back by a scan and scans priced by sampled zones, key plans, and
+/// a B-link tree probe's path.
+fn planner() -> [&'static [Mutation]; 9] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
@@ -211,6 +213,8 @@ fn planner() -> [&'static [Mutation]; 7] {
         &probed_subqueries::PROBED_SUBQUERIES,
         &transfer::TRANSFER,
         &super::dead_entries::DEAD_ENTRIES,
+        &super::key_plans::KEY_PLANS,
+        &tree_path::TREE_PATH,
     ]
 }
 

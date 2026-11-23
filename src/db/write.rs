@@ -229,7 +229,7 @@ impl Session {
     /// The rows of `stmt`, an INSERT into `target` of the rows of `query`,
     /// if it has one, inserted, their slots' values `slots`, as
     /// `insert_statement` inserts them: so too of a compiled program's
-    /// INSERT, its target and query kept (RULES.md D839).
+    /// INSERT, its target and query kept (RULES.md D841).
     pub(super) fn insert_rows(
         &self,
         cx: StatementContext<'_>,

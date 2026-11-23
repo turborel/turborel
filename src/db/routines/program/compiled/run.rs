@@ -1,4 +1,4 @@
-//! \[DESIGN\] A compiled program run (RULES.md D839), with the semantics
+//! \[DESIGN\] A compiled program run (RULES.md D841), with the semantics
 //! the interpreter gives a program (`exec/program/run.rs`): each
 //! statement's diagnostics area emptied as it begins and its condition
 //! placed there as it ends; a condition a statement raises offered to the

@@ -1,5 +1,5 @@
 //! \[DESIGN\] A change of a compiled program run straight on its table
-//! (RULES.md D839): a searched UPDATE or DELETE by a whole unique key,
+//! (RULES.md D841): a searched UPDATE or DELETE by a whole unique key,
 //! alone or as the statement of a SELECT ... INTO's FINAL, NEW or OLD
 //! TABLE, and an INSERT of one row of values.
 //!
@@ -399,7 +399,7 @@ fn inserted(exec: &mut Exec<'_>, contained: &Contained, i: &Inserted) -> Result<
 }
 
 /// Whether `session` runs a procedure's body compiled
-/// (EXECUTOR.COMPILED_PROCEDURES, RULES.md D839).
+/// (EXECUTOR.COMPILED_PROCEDURES, RULES.md D841).
 pub(in crate::db) fn compiled_procedures(st: &State, session: &Session) -> bool {
     st.settings.is_on_for(crate::settings::COMPILED_PROCEDURES, &session.own.borrow())
 }
