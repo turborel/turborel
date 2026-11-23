@@ -39,8 +39,9 @@ pub(super) fn unnested(plan: Plan, db: &Db, tx: TxId) -> RowIter {
 }
 
 /// The rows `u` makes of the input row `row`: `row`, then its elements of
-/// each ordinal, then the ordinal if it is asked for.
-fn of_row(u: &Unnest<()>, row: Row, runner: &Runner) -> Result<Vec<Row>> {
+/// each ordinal, then the ordinal if it is asked for. Its input is not
+/// read here, so a plan kept is read as it is, lent (`lent.rs`).
+pub(super) fn of_row<P>(u: &Unnest<P>, row: Row, runner: &Runner) -> Result<Vec<Row>> {
     let collections = u.collections.iter().map(|e| collection(eval(e, &row, runner)?)).collect::<Result<Vec<_>>>()?;
     // [SR8f to SR8h] MAXCARD, a null collection's cardinality 0.
     let most = collections.iter().map(|c| c.as_ref().map_or(0, |a| a.len())).max().unwrap_or(0);

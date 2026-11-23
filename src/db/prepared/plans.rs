@@ -185,8 +185,8 @@ pub(in crate::db) enum KeptPlan {
     /// A searched or positioned UPDATE's or DELETE's, shared with each
     /// execution, which fills its own SET values and object rows' plan.
     Write(Arc<BoundWrite>),
-    /// An INSERT's table, and its query's plan, if it has one.
-    Insert(Arc<Target>, Option<LogicalPlan>),
+    /// An INSERT's table and its query's plan, if any, shared (D902).
+    Insert(Arc<Target>, Option<Arc<LogicalPlan>>),
     /// A MERGE, bound, and where each of its WHEN NOT MATCHED clauses
     /// inserts, in order.
     Merge(Arc<BoundMerge>, Arc<[Inserting]>),

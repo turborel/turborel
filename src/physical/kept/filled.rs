@@ -289,6 +289,13 @@ impl Kept {
         Ok((filled_plan(self.plan.clone(), slots.as_deref().unwrap_or_default(), budget)?, None))
     }
 
+    /// Its plan, lent to an execution that reads it where it is kept
+    /// (RULES.md D903): none of a plan filled and prepared again at each
+    /// execution (`fills`), which is a copy of its own.
+    pub(crate) fn lent(&self) -> Option<&Plan> {
+        (!self.fills).then_some(&self.plan)
+    }
+
     /// The point read its plan is, run without the executor's operators,
     /// if it is one and `st` runs point operations (RULES.md D752). A
     /// point read gives its columns as they are and places its probe's

@@ -29,6 +29,7 @@ mod held;
 mod invoked;
 mod join;
 mod json_table;
+mod lent;
 mod limit;
 mod merged;
 mod nearest;
@@ -54,6 +55,7 @@ mod window;
 mod work;
 
 pub(crate) use batch::storage_counted;
+pub(crate) use lent::Lent;
 pub(crate) use point::{AsIs, PointRead, point_operations};
 pub(crate) use range::{At as RangeAt, Fold as RangeFold, RangeRead};
 
