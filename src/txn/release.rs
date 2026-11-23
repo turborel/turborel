@@ -12,13 +12,13 @@ impl Txn {
     /// for them, and forgets its snapshot. Called when it ends, and again
     /// when it is dropped, which finds nothing left to release.
     pub(super) fn release(&self) {
-        // [DESIGN] RULES.md D452: its increments reserved end with it,
-        // before the writers waiting for them go on.
-        // What it holds, taken under its lock once (RULES.md D874).
+        // What it holds, taken under its lock once.
         let (escrowed, held, pinned) = {
             let mut st = lock_builtin(&self.state);
             (mem::take(&mut st.escrowed), mem::take(&mut st.held), mem::take(&mut st.pinned))
         };
+        // [DESIGN] RULES.md D452: its increments reserved end with it,
+        // before the writers waiting for them go on.
         for escrow in escrowed {
             escrow.end(self.id);
         }

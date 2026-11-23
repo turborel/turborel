@@ -126,7 +126,9 @@ impl State {
         }
         let one_at_a_time = rows.len() < 2 || rows.iter().flatten().any(Value::needs_keeping) || !self.inserts_together(table)?;
         if one_at_a_time {
-            let ids = rows.iter().map(|row| self.insert_row(tx, table, row)).collect::<Result<Vec<_>>>()?;
+            // What each needs of the table, found once (RULES.md D872).
+            let writing = self.writing(table)?;
+            let ids = rows.iter().map(|row| self.insert_row_in(tx, &writing, row)).collect::<Result<Vec<_>>>()?;
             return Ok(Gone { alone: vec![false; ids.len()], ids });
         }
         self.prepare_write(tx, table)?;
@@ -234,7 +236,15 @@ pub(super) fn insert_held(
 ) -> Result<()> {
     let load = load.or_else(|| (rows.len() >= BATCH_ROWS).then_some(Load::Alone));
     if rows.len() < 2 || !st.inserts_together(table)? {
-        rows.visit(&mut |row| st.insert_routed(tx, table, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))?;
+        // [DESIGN] RULES.md D872: of a table that is not partitioned,
+        // each row is its own, written by what its writes need of it,
+        // found once; of a partitioned one, each where it is routed.
+        if st.catalog.partitioning().is_partitioned(table) {
+            rows.visit(&mut |row| st.insert_routed(tx, table, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))?;
+        } else {
+            let writing = st.writing(table)?;
+            rows.visit(&mut |row| st.insert_row_in(tx, &writing, row).and_then(|id| effects.inserted(table, id, row)))?;
+        }
         return load::end(st, tx, load);
     }
     // Checked as each goes in where it may be, so most need no note.

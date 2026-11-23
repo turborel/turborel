@@ -16103,10 +16103,8 @@ A transaction's bookkeeping is under a lock only its session takes, so
 each take is cheap, but a commit took it eight times and a row written
 about five. Some takes followed one another with nothing between.
 
-- A commit asked whether its definitions had changed, whether it was
-  doomed, and whether it had logged a change, a take each. It asks once
-  (`Txn::committable`), and the commit record's writer is told the
-  answer.
+- A commit asked whether its definitions had changed and whether it was
+  doomed, a take each. It asks once (`Txn::check_committable`).
 - Its release took the reservations, the table locks and the pinned
   snapshots apart. It takes the three together, and gives them up in the
   order it did.

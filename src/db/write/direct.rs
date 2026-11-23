@@ -28,6 +28,7 @@ use crate::logical::LogicalPlan;
 use crate::params::Params;
 use crate::storage::{Row, RowId};
 use crate::txn::Again;
+use crate::txn::writing::Writing;
 
 /// What a point change did: no row found [X3.135-1986 §7.3 GR3a iv]; or
 /// the row it found written, as it was before and is now, none of a row
@@ -70,7 +71,10 @@ pub(in crate::db) fn point_change(
     };
     let db = w.db(st);
     let hosted = Hosted::in_db(Some(session), cx, &db);
-    let rows = if delete { deleted(cx, (&w, &hosted), id)? } else { updated(cx, (&w, &hosted), (id, &seen))? };
+    // What its write needs of its table, found once (RULES.md D872).
+    let writing = st.writing(&w.bound.table)?;
+    let at = (&writing, id);
+    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, &seen))? };
     let wrote = rows.as_ref().map(|_| id);
     // The row an UPDATE wrote, as it holds it (RULES.md D880).
     let held = rows.as_ref().and_then(|(_, new)| new.as_ref());
@@ -80,11 +84,15 @@ pub(in crate::db) fn point_change(
 
 /// Row `id` deleted by `w`, its condition read by `hosted`: the row it
 /// was, none if another transaction deleted it first.
-fn deleted(cx: StatementContext<'_>, (w, hosted): (&Written, &Hosted<'_>), id: RowId) -> Result<Option<(Row, Option<Row>)>> {
+fn deleted(
+    cx: StatementContext<'_>,
+    (w, hosted): (&Written, &Hosted<'_>),
+    at: (&Writing<'_>, RowId),
+) -> Result<Option<(Row, Option<Row>)>> {
     // A row another transaction changed is deleted in the version it
     // committed, if it is still one to delete.
     let mut recheck = |newest: &Row| Ok(if w.holds_of(newest, hosted.runner())? { Again::Delete } else { Again::Skip });
-    Ok(cx.st.rewrite_row(cx.tx, (&w.bound.table, id), None, &mut recheck)?.map(|gone| (gone, None)))
+    Ok(cx.st.rewrite_row_in(cx.tx, at, None, &mut recheck)?.map(|gone| (gone, None)))
 }
 
 /// Row `id`, seen as `seen`, updated by `w`, its values computed by
@@ -93,7 +101,7 @@ fn deleted(cx: StatementContext<'_>, (w, hosted): (&Written, &Hosted<'_>), id: R
 fn updated(
     cx: StatementContext<'_>,
     (w, hosted): (&Written, &Hosted<'_>),
-    (id, seen): (RowId, &Row),
+    (at, seen): ((&Writing<'_>, RowId), &Row),
 ) -> Result<Option<(Row, Option<Row>)>> {
     let new = candidate(w, seen, ("ISO/IEC 9075:1992 §13.10 GR8", hosted))?;
     // A row another transaction changed is written in the version it
@@ -107,7 +115,7 @@ fn updated(
         recomputed = Some(row.clone());
         Ok(Again::Update(row))
     };
-    let written = cx.st.rewrite_row(cx.tx, (&w.bound.table, id), Some(&new), &mut recheck)?;
+    let written = cx.st.rewrite_row_in(cx.tx, at, Some(&new), &mut recheck)?;
     Ok(written.map(|before| (before, Some(recomputed.unwrap_or(new)))))
 }
 
@@ -160,8 +168,11 @@ impl Session {
         }
         self.settle_cursors(st, &target.name);
         let mut ids = Vec::with_capacity(1);
+        // Its table is not partitioned (`compiled/change.rs`), so each
+        // row is its own, written by what its writes need of it (D872).
+        let writing = st.writing(&target.name)?;
         rows.visit(&mut |row| {
-            ids.push(st.insert_routed(tx, &target.name, row)?.1);
+            ids.push(st.insert_row_in(tx, &writing, row)?);
             Ok(())
         })?;
         // Of one row inserted, its checks are of the row held (RULES.md D880).

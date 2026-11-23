@@ -120,26 +120,18 @@ impl Txn {
         Ok(())
     }
 
-    /// Whether it may commit, its bookkeeping taken once (RULES.md D874):
-    /// not if a table it wrote has had an index added since
-    /// (`check_definitions`), nor once a statement of it could not be
-    /// undone, or its undoing could not be logged (RULES.md D19, D25). If
-    /// it may, whether it wrote a change to the log, whose end its commit
-    /// record is.
+    /// Whether it may commit: `check_definitions`, and not once a
+    /// statement of it could not be undone, or its undoing could not be
+    /// logged (RULES.md D19, D25), its state's lock taken once.
     ///
     /// # Errors
     ///
-    /// As `check_definitions`; else SQLCODE -913, the transaction to be
-    /// rolled back.
-    pub(crate) fn committable(&self) -> Result<bool> {
+    /// As `check_definitions`; SQLCODE -913, the transaction to be rolled
+    /// back.
+    pub(crate) fn check_committable(&self) -> Result<()> {
         let st = self.state()?;
-        if let Some((table, ..)) = st.written.iter().find(|(_, lock, generation)| lock.changed_after(*generation)) {
-            return Err(index_added(table));
-        }
-        if let Some(why) = st.doomed {
-            return Err(SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §7.3 GR3b i] {why}, so the transaction was rolled back")));
-        }
-        Ok(st.logged)
+        defined(&st.written)?;
+        undone(st.doomed)
     }
 
     /// \[DESIGN\] Whether it may go on: not if a table it wrote has had an
@@ -152,20 +144,28 @@ impl Txn {
     ///
     /// SQLCODE -911, naming the table.
     pub(crate) fn check_definitions(&self) -> Result<()> {
-        let st = self.state()?;
-        match st.written.iter().find(|(_, lock, generation)| lock.changed_after(*generation)) {
-            None => Ok(()),
-            Some((table, ..)) => Err(index_added(table)),
-        }
+        defined(&self.state()?.written)
     }
 }
 
-/// SQLCODE -911: an index was added to `table` after a transaction wrote it.
-fn index_added(table: &QualifiedName) -> SqlError {
-    SqlError::new(
-        Code::Conflict,
-        format!("[DESIGN] an index was added to {table} after this transaction wrote it: roll back and run the transaction again"),
-    )
+/// SQLCODE -913 of what dooms a transaction, if anything does.
+fn undone(doomed: Option<&'static str>) -> Result<()> {
+    match doomed {
+        Some(why) => Err(SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §7.3 GR3b i] {why}, so the transaction was rolled back"))),
+        None => Ok(()),
+    }
+}
+
+/// `Txn::check_definitions`, of the tables its transaction wrote, each
+/// with its lock and the generation it was written under.
+fn defined(written: &[(QualifiedName, Arc<TableLock>, u64)]) -> Result<()> {
+    match written.iter().find(|(_, lock, generation)| lock.changed_after(*generation)) {
+        None => Ok(()),
+        Some((table, ..)) => Err(SqlError::new(
+            Code::Conflict,
+            format!("[DESIGN] an index was added to {table} after this transaction wrote it: roll back and run the transaction again"),
+        )),
+    }
 }
 
 /// The rule every refusal cites: the statement is undone, and the

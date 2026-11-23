@@ -69,16 +69,14 @@ impl State {
         let gate = self.tx.gate.enter();
         // Under the gate: an index published shut is either seen here, or
         // published after this commit, which it then counts.
-        let validated = tx.committable().and_then(|logged| Ok((self.validate_participants(tx, &joined)?, logged))).and_then(
-            |(mut committing, logged)| {
-                let now = self.clock.now();
-                let lsn = tx.append_commit((committing.at, now), logged)?;
-                if lsn.is_some() {
-                    committing.syncs();
-                }
-                Ok((committing, (lsn, now)))
-            },
-        );
+        let validated = tx.check_committable().and_then(|()| self.validate_participants(tx, &joined)).and_then(|mut committing| {
+            let now = self.clock.now();
+            let lsn = tx.append_commit(committing.at, now)?;
+            if lsn.is_some() {
+                committing.syncs();
+            }
+            Ok((committing, (lsn, now)))
+        });
         match validated {
             Ok((committing, (lsn, now))) => {
                 // Phase 2 uses storages already found, so it cannot fail part
@@ -268,8 +266,9 @@ impl State {
     /// Collects `table` at `horizon` (`collect_table`), and notes in the
     /// set of tables awaiting collection whether it still does.
     fn collect_noting(&self, table: &QualifiedName, horizon: Timestamp, wait: bool) {
-        let left = self.collect_table(table, horizon, wait);
-        let lock = self.lock_of(table).ok();
+        // Its lock and its storage, found once for its collection.
+        let (lock, storage) = (self.lock_of(table).ok(), self.storage_of(table).ok());
+        let left = self.collect_table(table, (lock, storage), horizon, wait);
         if unchanged(left, lock.map(|lock| lock.noted())) {
             return;
         }
@@ -277,7 +276,7 @@ impl State {
         // Asked again under the lock: a commit that added garbage while
         // this one collected, and was passed over (RULES.md D445), has
         // noted the table, and its note must not be taken out.
-        let still = || self.storage_of(table).is_ok_and(|s| s.uncollected());
+        let still = || storage.is_some_and(|s| s.uncollected());
         let keep = match left {
             Some(true) => true,
             Some(false) => still(),
@@ -318,7 +317,7 @@ impl State {
     /// temporary table: an instance of one is collected by its session as
     /// its transactions end (`db/temporary.rs`), the definition's storage
     /// holding nothing.
-    fn collect_table(&self, table: &QualifiedName, horizon: Timestamp, wait: bool) -> Option<bool> {
+    fn collect_table(&self, table: &QualifiedName, found: Resolved<'_>, horizon: Timestamp, wait: bool) -> Option<bool> {
         if self.catalog.table(table).is_none_or(|t| t.temporary.is_some()) {
             return None;
         }
@@ -326,8 +325,7 @@ impl State {
         // finds; nor with definitions older than its indexes, whose entries
         // for the versions removed would stay. A later transaction collects
         // them.
-        let lock = self.lock_of(table).ok()?;
-        let storage = self.storage_of(table).ok()?;
+        let (lock, storage) = (found.0?, found.1?);
         if lock.collection_held() || lock.changed_after(self.generation) {
             return Some(true);
         }
@@ -452,6 +450,10 @@ pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc, Sharing)], id: 
     }
     failed
 }
+
+/// A table's lock and its storage, each if the definitions hold it, found
+/// once for its collection.
+type Resolved<'a> = (Option<&'a Arc<TableLock>>, Option<&'a Arc<dyn TableStorage>>);
 
 /// An index of a table collected: its name, the index and its description.
 type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
