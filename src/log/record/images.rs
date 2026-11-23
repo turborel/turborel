@@ -32,7 +32,28 @@ const CHANGED: u8 = 1;
 
 /// Writes an update's body: its row, the row after whole, and of the row
 /// before the columns changed, or all of it if its width differs.
-pub(super) fn put_update(out: &mut Vec<u8>, (name, generation, id): (&QualifiedName, u32, RowId), before: &Row, after: &Row) {
+pub(super) fn put_update(out: &mut Vec<u8>, head: (&QualifiedName, u32, RowId), before: &Row, after: &Row) {
+    put_images(out, head, (before, after), None);
+}
+
+/// \[DESIGN\] (RULES.md D875) As `put_update`, of a change that may differ
+/// only in the columns `set`, in ascending order, each once: of the row
+/// before, only those are read, so one of which only they hold their
+/// values gives the bytes `put_update` gives of the rows whole. A row
+/// before of another width than the row after is written whole, as it
+/// is given.
+pub fn put_update_of(out: &mut Vec<u8>, head: (&QualifiedName, u32, RowId), before: &Row, after: &Row, set: &[usize]) {
+    put_images(out, head, (before, after), Some(set));
+}
+
+/// `put_update`'s body, of the columns `set` of the row before alone if
+/// given, else of them all.
+fn put_images(
+    out: &mut Vec<u8>,
+    (name, generation, id): (&QualifiedName, u32, RowId),
+    (before, after): (&Row, &Row),
+    set: Option<&[usize]>,
+) {
     put_table(out, name);
     out.put_u32(generation);
     out.put_u64(id);
@@ -43,23 +64,28 @@ pub(super) fn put_update(out: &mut Vec<u8>, (name, generation, id): (&QualifiedN
         put_row(out, before);
         return;
     }
-    // Where each value of the row after lies, in a vector its thread
-    // keeps, so an update's record allocates none for them.
+    // Where each value of the row after that may have changed lies, with
+    // its column, in a vector its thread keeps, so an update's record
+    // allocates none for them.
     let mut spans = SPANS.take();
     spans.clear();
-    for v in after {
+    let mut wanted = set.map(|columns| columns.iter().copied().peekable());
+    for (at, v) in after.iter().enumerate() {
         let start = out.len();
         put_value(out, v);
-        spans.push(start..out.len());
+        if wanted.as_mut().is_none_or(|left| left.next_if_eq(&at).is_some()) {
+            spans.push((at, start..out.len()));
+        }
     }
     put_changed(out, before, &spans);
     SPANS.set(spans);
 }
 
 thread_local! {
-    /// The places of the last row after an update's record wrote on this
-    /// thread: kept for the next, which clears it.
-    static SPANS: RefCell<Vec<Range<usize>>> = const { RefCell::new(Vec::new()) };
+    /// The places of the values of the last row after an update's record
+    /// wrote on this thread, each with its column: kept for the next,
+    /// which clears it.
+    static SPANS: RefCell<Vec<(usize, Range<usize>)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Writes each value of `row`, as `put_row` does after its count.
@@ -69,9 +95,9 @@ fn put_row_values(out: &mut Vec<u8>, row: &Row) {
     }
 }
 
-/// Writes of `before` the columns whose bytes are not those at their
-/// place in `spans`, of the row after as `out` holds it.
-fn put_changed(out: &mut Vec<u8>, before: &Row, spans: &[Range<usize>]) {
+/// Writes of `before` the columns of `spans` whose bytes are not those at
+/// their place there, of the row after as `out` holds it.
+fn put_changed(out: &mut Vec<u8>, before: &Row, spans: &[(usize, Range<usize>)]) {
     // [DESIGN] RULES.md D822: each column of the row before written in
     // place after the count, and taken back if its bytes are those it
     // has after.
@@ -79,13 +105,14 @@ fn put_changed(out: &mut Vec<u8>, before: &Row, spans: &[Range<usize>]) {
     let count_at = out.len();
     out.put_u32(0);
     let mut count = 0_u32;
-    for (at, (v, span)) in before.iter().zip(spans.iter().cloned()).enumerate() {
+    for (at, span) in spans {
+        let Some(v) = before.get(*at) else { continue };
         let mark = out.len();
-        out.put_u32(u32::try_from(at).unwrap_or(u32::MAX));
+        out.put_u32(u32::try_from(*at).unwrap_or(u32::MAX));
         let value_at = out.len();
         put_value(out, v);
         let (written, was) = out.split_at(value_at);
-        if written.get(span).is_some_and(|now| now == was) {
+        if written.get(span.clone()).is_some_and(|now| now == was) {
             out.truncate(mark);
         } else {
             count = count.saturating_add(1);
@@ -171,6 +198,36 @@ mod tests {
         let table = QualifiedName { auth: "A".into(), ident: "T".into() };
         let insert = Record { tx: 3, change: Change::Insert { table, generation: 1, row: 7, after: wide(2) } }.encode().len();
         assert!(one < insert + 40, "{one} bytes against an insert's {insert}");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D875, `put_update_of`: given the
+    /// columns set, in order, and a row before holding only their values,
+    /// nulls elsewhere, it writes the bytes `put_update` writes of the
+    /// rows whole: of one column set and changed, of two set with one
+    /// left as it was, of none set, and of a row before of another width.
+    #[test]
+    fn an_update_of_the_columns_set_writes_the_same_bytes() {
+        let table = QualifiedName { auth: "A".into(), ident: "T".into() };
+        let head = (&table, 1_u32, 7_u64);
+        let (before, mut after) = (wide(1), wide(1));
+        after[0] = Value::Exact(Decimal::new(2, 0));
+        after[4] = Value::Char("changed".into());
+        // Whether the record of the rows whole is that of the columns `set` of `sparse`.
+        let same = |was: &Row, sparse: &Row, now: &Row, set: &[usize]| {
+            let (mut whole, mut of_set) = (vec![0xEE], vec![0xEE]);
+            super::put_update(&mut whole, head, was, now);
+            super::put_update_of(&mut of_set, head, sparse, now, set);
+            whole == of_set
+        };
+        for set in [vec![0_usize, 4], vec![0, 3, 4], vec![0, 4, 9]] {
+            let mut sparse = vec![Value::Null; before.len()];
+            for &c in &set {
+                sparse[c] = before[c].clone();
+            }
+            assert!(same(&before, &sparse, &after, &set), "{set:?}");
+        }
+        assert!(same(&before, &vec![Value::Null; before.len()], &before, &[]), "none set");
+        assert!(same(&vec![Value::Null], &vec![Value::Null], &after, &[0]), "another width");
     }
 
     /// Verifies: [DESIGN] RULES.md D475, an update's record whose changed

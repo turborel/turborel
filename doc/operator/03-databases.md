@@ -258,7 +258,11 @@ another or a pattern beginning with `%`. An index's count of its
 distinct keys gives the distinct combinations of its columns. Between
 passes, the planner reads the statistics with the rows written since, so
 a value past the greatest the pass saw, as a key that grows with each
-insert is, is not estimated to match no row. Of a geometry column, the pass
+insert is, is not estimated to match no row. A range past it of an
+index whose first columns are held equal, such as a district's newest
+orders, is estimated at no more rows than the index estimates the range
+to hold now, so the estimate does not grow with every row written until
+the next pass. Of a geometry column, the pass
 also keeps a grid of its envelopes, the coordinates a value holds on
 average, and how closely rows near in the table lie near in space, which
 price a search of an `rtree` index against a scan

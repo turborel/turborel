@@ -10,7 +10,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 14] = [
+pub const TXN_LAYER: [Mutation; 15] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -153,5 +153,15 @@ pub const TXN_LAYER: [Mutation; 14] = [
         replacement: "        Ok(written && (unchanged || st.wrote) && joined && saved)",
         integration: &[],
         unit: &["txn::writing::tests::a_write_finds_its_first_work_done_only_while_it_holds"],
+    },
+    Mutation {
+        name: "write-buffer-not-kept",
+        package: Package::Core,
+        breaks: "the buffer a write read the replaced version into is dropped, so every update allocates one (D874)",
+        file: "src/engine/rows/mvcc/versions.rs",
+        original: "    let _ = SPARE.try_with(|kept| *kept.borrow_mut() = buffer);",
+        replacement: "    drop(buffer);",
+        integration: &[],
+        unit: &["engine::rows::mvcc::versions::tests::a_buffer_given_back_is_the_next_taken"],
     },
 ];

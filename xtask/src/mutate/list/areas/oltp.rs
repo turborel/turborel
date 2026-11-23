@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 28] = [
+pub const OLTP: [Mutation; 29] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -265,7 +265,7 @@ pub const OLTP: [Mutation; 28] = [
         package: Package::Core,
         breaks: "an update's log record holds every column of the row before, changed or not, so an update of one column of a wide row logs the row twice",
         file: "src/log/record/images.rs",
-        original: "        if written.get(span).is_some_and(|now| now == was) {",
+        original: "        if written.get(span.clone()).is_some_and(|now| now == was) {",
         replacement: "        if false {",
         integration: &[],
         unit: &["log::record::images::tests::an_update_logs_the_columns_it_changed"],
@@ -289,5 +289,15 @@ pub const OLTP: [Mutation; 28] = [
         replacement: "",
         integration: &["held_records::a_checkpoint_mid_transaction_recovers_what_committed"],
         unit: &[],
+    },
+    Mutation {
+        name: "oltp-update-of-set-reads-every-column",
+        package: Package::Core,
+        breaks: "an update's record made of the columns set compares every column of the row before, so one holding only those set logs the others as changed (D875)",
+        file: "src/log/record/images.rs",
+        original: "        if wanted.as_mut().is_none_or(|left| left.next_if_eq(&at).is_some()) {",
+        replacement: "        if wanted.as_mut().is_none_or(|left| left.next_if_eq(&at).is_some() || at > 0) {",
+        integration: &[],
+        unit: &["log::record::images::tests::an_update_of_the_columns_set_writes_the_same_bytes"],
     },
 ];

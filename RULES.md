@@ -576,10 +576,13 @@ verification approach DO-178C expects (§8).
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 | D872 | A statement's writes of a table resolve it once |
+| D873 | The undo store gathers a batch a stripe of threads, and counts its pins by batch |
+| D874 | A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
 | D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
+| D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 
 ### The project
 
@@ -15827,7 +15830,14 @@ and the index as a search counts them.
 Any other index, probe or key is searched as before. A value not of its
 column's type has no exact anchor, and a null has none.
 
-The tree's scan keeps its bounds, so a probe still allocates the two.
+The key's bytes are written into a buffer kept with the plan, and the
+B-link index reads their entries by a probe from the key borrowed
+(`BLinkTree::first_from`, D859), so a probe of a unique key allocates
+nothing. That probe shows each entry under its leaf's latch, where the
+tree is not to be used, so the index takes each entry's row and hint
+there, eight at most, and gives them once the latch is let go, noting
+each row's hint for the table's read as a search does (D500). A key of
+more entries has the rest read by a scan past the last given.
 
 #### D882. A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there
 
@@ -16034,6 +16044,87 @@ the node's copy, its entries, its halves and the separator. A change
 with no split builds an empty list of splits, which allocates nothing,
 and the path of a descent and the place of a write are kept in place
 (D840, D843).
+#### D873. The undo store gathers a batch a stripe of threads, and counts its pins by batch
+
+Every first change of a row by a transaction appends the version it
+replaces to the undo store, which every table of a row store shares
+(D31). The store gathered one batch at a time. An append took the one
+lock of its batches, and then the one lock of its pins, to add the
+version's position to a map of every position still needed. A release
+took the pins' lock again. Every writer of every table met on those two
+locks at every row.
+
+Now each of 16 stripes of threads gathers a batch of its own, under a
+lock only its threads take (`undo/gathered.rs`). A batch takes its
+number from the store as it begins, so a position is still a batch's
+number and a place in it, and readers find a version as before. A
+version is pinned by being counted in its batch, which the append does
+anyway, so pinning takes no lock. A release marks the version released
+in its batch, a bit a version, so a position released twice counts once,
+as taking it out of the map did. Only the beginning and the end of a
+batch, a release, and a truncation take a lock the store shares, and a
+release takes the pins' alone.
+
+The log is truncated before the oldest batch holding a pinned version,
+written or still gathered. A truncation holds every stripe while it
+finds that batch and reads the log's end, so no version is pinned and no
+batch taken to be written meanwhile, which is what the one lock gave.
+It is asked for only when a batch's last pinned version is released, not
+at every release. A batch still gathered whose every version is
+released is given up there, never written, and its stripe begins
+another. So a stripe no thread appends through holds nothing back, and a
+transaction collected at once, as each is while no other is open, writes
+none of its versions to the undo log.
+
+A store of no batches, over a log in memory, keeps its map of pinned
+positions.
+#### D891. A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range
+
+D890 mended one choice of many fed by the estimate of a range past the
+statistics. The join's order, the size of a hash table, whether a
+grouping over the rows runs on several threads, and the plan a
+prepared statement or a procedure's body learns all read the same
+estimate (D370), and swung with it between passes. A plan made with
+slots shows the swing worst. Its range's probe holds no value until an
+execution fills it, so the index estimates nothing of it, and its join
+weighed the statistics' estimate alone. Kept, such a plan read the
+whole of STOCK at every later stock level.
+
+The estimator now asks the index where the statistics cannot know.
+Where a table's conjuncts hold an index's first columns equal to
+values, and bound its next column from below past the greatest value
+the pass saw of it, it builds the probe of that range, with a slot's
+value of the execution planned for (D613) and a slot less a constant
+folded (D760), and asks the index's estimate of it
+(`physical/cardinality/past.rs`). A plan made with slots and no values
+has no range to ask, and is weighed by the statistics alone. The share the
+conjuncts keep is at most that estimate's share of the table's rows,
+as every row they keep lies in the range. A range the statistics saw
+is left to them, so a plan made with fresh statistics estimates as
+before. The index's estimate costs a count of at most a leaf's entries,
+or the share of its tree a larger range takes, once for each estimate
+of the table's conjuncts.
+
+#### D874. A transaction's bookkeeping is taken once where it was taken several times in a row, and a write reads the version it replaces into a buffer its thread keeps
+
+A transaction's bookkeeping is under a lock only its session takes, so
+each take is cheap, but a commit took it eight times and a row written
+about five. Some takes followed one another with nothing between.
+
+- A commit asked whether its definitions had changed and whether it was
+  doomed, a take each. It asks once (`Txn::check_committable`).
+- Its release took the reservations, the table locks and the pinned
+  snapshots apart. It takes the three together, and gives them up in the
+  order it did.
+- An entry inserted in a unique index noted whether it was alone, and
+  then recorded what undoes it. Both are one take (`Txn::log_alone`).
+
+An update read the version it replaces into a new buffer each time. The
+thread now keeps the buffer its last write read into, given back once
+that write has decoded what it needs of it (`mvcc/versions.rs`,
+`give_back`), and the tree reads the next version into it (D865). A
+buffer past 64 KiB is let go, so one long row does not stay held by
+every thread that wrote it.
 
 #### D866. A write is shown the value it replaces where it lies and gives the bytes to put, under one hold of the leaf
 

@@ -37,7 +37,7 @@ pub(in crate::physical) fn valued<T>(values: Option<&[Value]>, f: impl FnOnce() 
 
 /// `cond`, its slots filled with the thread's values, if it has values
 /// and they fill it (`estimated`).
-pub(super) fn filled(cond: &Cond) -> Option<Cond> {
+pub(in crate::physical) fn filled(cond: &Cond) -> Option<Cond> {
     let values = VALUES.with(|v| v.borrow().clone())?;
     estimated(cond, &values)
 }

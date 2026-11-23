@@ -61,7 +61,11 @@ struct Listed {
 /// at once, or under it, reads with one of its own. A copy of the plan
 /// starts with none.
 #[derive(Default)]
-struct KeptNear(Mutex<(Near, Row)>);
+struct KeptNear(Mutex<Kept>);
+
+/// What `KeptNear` keeps: what the table keeps, the row a listed read
+/// reads into, and the bytes of the key probed.
+type Kept = (Near, Row, Vec<u8>);
 
 impl Clone for KeptNear {
     fn clone(&self) -> KeptNear {
@@ -233,8 +237,14 @@ impl PointRead {
         };
         // An index naming the region its search reads is searched.
         let regional = keyed.shape.columns.len() == 1 && index.read_region(&probe).is_some();
-        let probed = index.key_probe().filter(|_| !regional).and_then(|by| Some((by, by.whole_key(key_of(&probe)?)?)));
-        let Some((by, bytes)) = probed else { return Ok(Probed::Unread(probe)) };
+        let Some(by) = index.key_probe().filter(|_| !regional) else { return Ok(Probed::Unread(probe)) };
+        // What the plan keeps from read to read: its table's, the row a
+        // listed read reads into, and the key's bytes.
+        let (mut kept, mut own) = (keyed.near.0.try_lock().ok(), Kept::default());
+        let (near, held, bytes) = kept.as_deref_mut().unwrap_or(&mut own);
+        if !key_of(&probe).is_some_and(|key| by.whole_key(key, bytes)) {
+            return Ok(Probed::Unread(probe));
+        }
         // What it read, told with the probe it holds, moved, not copied:
         // the condition `scan::asked` makes of a key of its columns.
         let told = Condition { columns: keyed.shape.columns.clone(), probe: probe.into_owned() };
@@ -243,14 +253,12 @@ impl PointRead {
         let stop = st.tx.stop_of(tx);
         looked(stop.as_deref())?;
         let notes = noted::noting();
-        let (mut kept, mut own) = (keyed.near.0.try_lock().ok(), <(Near, Row)>::default());
-        let (near, held) = kept.as_deref_mut().unwrap_or(&mut own);
         let listed = keyed.listed.as_ref().filter(|_| !whole);
         let mut probing = Probing { st, keyed, storage: &**storage, index, key, tx, near, held, counts: [0; 2] };
         let (mut found, mut entries) = (None, 0_u64);
         // Each entry is counted and looked to for a cancel as the search's
         // are (RULES.md D44, D521).
-        let read = by.entries_of(bytes, &mut |entry| {
+        let read = by.entries_of(bytes.as_slice(), &mut |entry| {
             looked(stop.as_deref())?;
             entries = entries.saturating_add(1);
             let row = match listed {

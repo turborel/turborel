@@ -161,9 +161,13 @@ impl RowTable {
     /// entry to be inserted (`rows/frozen.rs`), with the pages of its values
     /// out of line; none if neither.
     fn newest_or_frozen(&self, id: RowId) -> Result<Option<Found>> {
-        if let Some((newest, descended)) = self.tree.get_for_write(&key(id))? {
+        // Read into the buffer the thread's last write gave back, so an
+        // update allocates none for it (RULES.md D874).
+        let mut newest = spare();
+        if let Some(descended) = self.tree.get_for_write_into(&key(id), &mut newest)? {
             return Ok(Some((newest, Ok(descended))));
         }
+        give_back(newest);
         Ok(self.frozen_version(id)?.map(|(version, pages)| (version, Err(pages))))
     }
 
@@ -216,5 +220,54 @@ impl RowTable {
         let open = self.open_of(tx)?;
         let open = lock_builtin(&open);
         Ok(ids.iter().all(|id| open.made.contains(id) && !open.adopted.contains(id)))
+    }
+}
+
+/// \[DESIGN\] The most bytes of a buffer a thread keeps between writes: a
+/// longer version's is let go, so a thread that once wrote a long row does
+/// not hold its bytes for good.
+const KEPT_BYTES: usize = 64 * 1024;
+
+thread_local! {
+    /// The buffer this thread's last write read the version it replaced
+    /// into, given back once the write was done with it.
+    static SPARE: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The thread's spare buffer, taken; an empty one if it keeps none.
+fn spare() -> Vec<u8> {
+    SPARE.try_with(|kept| std::mem::take(&mut *kept.borrow_mut())).unwrap_or_default()
+}
+
+/// \[DESIGN\] Gives `buffer`, the version a write replaced, back to the
+/// thread for its next write to read into (RULES.md D874), unless it is
+/// longer than a thread keeps.
+pub(super) fn give_back(buffer: Vec<u8>) {
+    if buffer.capacity() > KEPT_BYTES {
+        return;
+    }
+    // A thread ending keeps none.
+    let _ = SPARE.try_with(|kept| *kept.borrow_mut() = buffer);
+}
+
+// Unit tests: a buffer given back is the next taken (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies: [DESIGN] RULES.md D874: the buffer a write gives back is
+    /// the one the thread's next write reads into, its room kept; one
+    /// longer than a thread keeps is let go.
+    #[test]
+    fn a_buffer_given_back_is_the_next_taken() {
+        let mut buffer = spare();
+        buffer.reserve(100);
+        let room = buffer.capacity();
+        give_back(buffer);
+        let again = spare();
+        assert!(again.capacity() >= 100 && again.capacity() == room, "the room given back");
+        assert_eq!(spare().capacity(), 0, "taken, so none is kept");
+        give_back(Vec::with_capacity(KEPT_BYTES + 1));
+        assert_eq!(spare().capacity(), 0, "too long to keep");
     }
 }

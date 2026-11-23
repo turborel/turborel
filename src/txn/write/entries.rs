@@ -56,10 +56,9 @@ impl State {
             // constraint need not look for another row (`Txn::alone`).
             if ix.unique {
                 let alone = index.insert_alone(key.clone(), id)?;
-                tx.note_alone(&ix.name, id, alone)?;
-            } else {
-                index.insert(key.clone(), id)?;
+                return tx.log_alone(&ix.name, (id, alone), UndoEntry::IndexInserted { table: ix.table.clone(), index, key, id });
             }
+            index.insert(key.clone(), id)?;
             tx.log(UndoEntry::IndexInserted { table: ix.table.clone(), index, key, id })?;
         }
         Ok(())
