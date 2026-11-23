@@ -46,6 +46,7 @@ impl Tally {
     }
 
     /// Counts a lookup begun.
+    #[inline]
     pub fn lookup(&self) {
         if let Some(stripe) = self.stripe() {
             count(&stripe.lookups);

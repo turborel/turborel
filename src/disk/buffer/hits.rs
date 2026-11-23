@@ -55,6 +55,7 @@ impl Hints {
     }
 
     /// The slot of `key`.
+    #[inline]
     fn slot(&self, key: Key) -> Option<&AtomicU64> {
         // The top bits of XXH3-64 of the page (RULES.md D460), as its shard's.
         let hash = crate::hash::xxhash::Words::new(0).pair(u64::from(key.file.0), key.id);
@@ -74,12 +75,14 @@ impl Hints {
     }
 
     /// The frame `key` was last found in, if any.
+    #[inline]
     pub(super) fn frame_of(&self, key: Key) -> Option<usize> {
         let hinted = self.slot(key)?.load(Ordering::Relaxed);
         usize::try_from(hinted.checked_sub(1)?).ok()
     }
 
     /// Counts a hit, on the thread's stripe.
+    #[inline]
     pub(super) fn hit(&self) {
         if let Some(stripe) = self.stripes.get(thread_stripe(STRIPES)) {
             count(&stripe.0);
