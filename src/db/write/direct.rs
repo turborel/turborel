@@ -74,7 +74,7 @@ pub(in crate::db) fn point_change(
     // What its write needs of its table, found once (RULES.md D872).
     let writing = st.writing(&w.bound.table)?;
     let at = (&writing, id);
-    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, &seen))? };
+    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, &seen), straight.set())? };
     let wrote = rows.as_ref().map(|_| id);
     // The row an UPDATE wrote, as it holds it (RULES.md D880).
     let held = rows.as_ref().and_then(|(_, new)| new.as_ref());
@@ -102,6 +102,7 @@ fn updated(
     cx: StatementContext<'_>,
     (w, hosted): (&Written, &Hosted<'_>),
     (at, seen): ((&Writing<'_>, RowId), &Row),
+    set: Option<u64>,
 ) -> Result<Option<(Row, Option<Row>)>> {
     let new = candidate(w, seen, ("ISO/IEC 9075:1992 §13.10 GR8", hosted))?;
     // A row another transaction changed is written in the version it
@@ -115,7 +116,11 @@ fn updated(
         recomputed = Some(row.clone());
         Ok(Again::Update(row))
     };
-    let written = cx.st.rewrite_row_in(cx.tx, at, Some(&new), &mut recheck)?;
+    // [DESIGN] RULES.md D875: the one write to be told the columns set,
+    // where its statement reads nothing of the row before (`Straight::set`).
+    let written = match set {
+        Some(_) | None => cx.st.rewrite_row_in(cx.tx, at, Some(&new), &mut recheck)?,
+    };
     Ok(written.map(|before| (before, Some(recomputed.unwrap_or(new)))))
 }
 

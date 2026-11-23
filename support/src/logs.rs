@@ -24,6 +24,7 @@
     reason = "test code: a panic is a test failure, its fixtures literal, a database rebound once dropped (RULES.md R-TEST-4)"
 )]
 
+#[path = "logs/run.rs"]
 mod run;
 
 use std::path::Path;

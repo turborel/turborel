@@ -26,7 +26,7 @@ use crate::db::State;
 use crate::db::assignment::set_columns_of;
 use crate::db::write::system_time::system_time;
 use crate::error::Result;
-use crate::storage::{Row, RowId};
+use crate::storage::{Row, RowId, column_bit};
 use crate::txn::Txn;
 use crate::value::Value;
 
@@ -48,12 +48,26 @@ pub(in crate::db) struct Straight {
     in_hand: bool,
     /// Whether a row constraint may read a table: any but NOT NULL.
     reads: bool,
+    /// \[DESIGN\] (RULES.md D875) Of an UPDATE whose row before nothing
+    /// of its statement reads, the columns it sets, a bit a column: its
+    /// write may then be told them, and read no other of the row it
+    /// replaces. None of a DELETE or an INSERT, of a table with a
+    /// system-time period, whose history keeps the row before, or of a
+    /// column past the last bit. A statement written straight has no
+    /// trigger, no foreign key referencing a column it sets and no OLD
+    /// TABLE of an UPDATE, and checks its constraints of the row after.
+    set: Option<u64>,
 }
 
 impl Straight {
     /// The tables the SET values of its UPDATE read (`BoundWrite::set_tables`).
     pub(in crate::db) fn set_tables(&self) -> &[QualifiedName] {
         &self.set_tables
+    }
+
+    /// The columns its UPDATE sets, if its write may be told them (`set`).
+    pub(in crate::db) fn set(&self) -> Option<u64> {
+        self.set
     }
 }
 
@@ -71,7 +85,9 @@ impl State {
             return None;
         }
         let straight = self.straight_of(table, (columns.as_deref(), delete))?;
-        Some(Straight { set_tables: bound.set_tables(), ..straight })
+        let mask = |set: &Vec<usize>| set.iter().try_fold(0_u64, |mask, &c| column_bit(c).map(|bit| mask | bit));
+        let set = columns.as_ref().filter(|_| straight.in_hand).and_then(mask);
+        Some(Straight { set_tables: bound.set_tables(), set, ..straight })
     }
 
     /// Of an INSERT of one row into `table`, the constraints its statement
@@ -89,7 +105,7 @@ impl State {
             return None;
         }
         let in_hand = system_time(desc).is_none();
-        let mut straight = Straight { row: Vec::new(), unique: Vec::new(), set_tables: Vec::new(), in_hand, reads: false };
+        let mut straight = Straight { row: Vec::new(), unique: Vec::new(), set_tables: Vec::new(), in_hand, reads: false, set: None };
         if delete {
             return Some(straight);
         }
