@@ -256,6 +256,11 @@ impl TableStorage for RowTable {
         self.get_of(tx, id, columns, near)
     }
 
+    /// Only `columns` decoded, into the row held (`rows/scan.rs`).
+    fn get_listed(&self, tx: TxId, id: RowId, columns: &[usize], held: (&mut Near, &mut Row)) -> Result<bool> {
+        RowTable::get_listed(self, tx, id, columns, held)
+    }
+
     /// Only `columns` are decoded, and only their values out of line read.
     fn scan(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Rows {
         self.scan_rows(tx, columns, None)
@@ -383,7 +388,7 @@ impl TableStorage for RowTable {
 
     /// Writes the row's newest version outright (`rows/recovery.rs`).
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
-        self.apply_newest(id, row.clone())?;
+        self.apply_newest(id, row.as_ref())?;
         self.zones.widen(id, row.as_ref(), Replaced::Unknown);
         Ok(())
     }

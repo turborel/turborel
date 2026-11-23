@@ -46,6 +46,7 @@ use crate::storage::Row;
 use crate::value::{DataType, Value};
 
 mod inline;
+mod listed;
 
 /// The record's header byte as this code writes it.
 const HEADER: u8 = 0;
@@ -391,10 +392,11 @@ impl RecordFormat {
     /// Each column of `columns` is decoded once, where it is named, and one
     /// that is not a column of the record is passed over (RULES.md D751).
     fn decode_some(&self, bytes: &[u8], columns: Option<&[usize]>, fetch: &mut impl FnMut(Reference) -> Result<Vec<u8>>) -> Result<Row> {
+        self.check(bytes)?;
         let Some(columns) = columns else {
             let mut row = Vec::with_capacity(self.types.len());
             for i in 0..self.types.len() {
-                row.push(self.column_with(bytes, i, fetch)?);
+                row.push(self.value_in(bytes, i, fetch)?);
             }
             return Ok(row);
         };
@@ -403,7 +405,7 @@ impl RecordFormat {
             // Named again, a column already decoded is not; a null one is
             // found null again at once.
             if let Some(slot) = row.get_mut(i).filter(|slot| slot.is_null()) {
-                *slot = self.column_with(bytes, i, fetch)?;
+                *slot = self.value_in(bytes, i, fetch)?;
             }
         }
         Ok(row)
@@ -485,9 +487,21 @@ impl RecordFormat {
 
     /// Column `i`'s field in a record.
     fn field<'a>(&self, bytes: &'a [u8], i: usize) -> Result<Field<'a>> {
+        self.check(bytes)?;
+        self.field_in(bytes, i)
+    }
+
+    /// Whether `bytes` are of this format and long enough for its fixed
+    /// part and its ends: checked once for a record, not for each column.
+    fn check(&self, bytes: &[u8]) -> Result<()> {
         if bytes.first() != Some(&HEADER) || bytes.len() < self.variable_at() {
             return Err(corrupt("it is too short or of another format"));
         }
+        Ok(())
+    }
+
+    /// Column `i`'s field in a record already checked (`check`).
+    fn field_in<'a>(&self, bytes: &'a [u8], i: usize) -> Result<Field<'a>> {
         let place = self.places.get(i).copied().ok_or_else(|| corrupt(&format!("it has no column {i}")))?;
         let (null_at, mask) = null_bit(i);
         if bytes.get(null_at).copied().unwrap_or_default() & mask != 0 {

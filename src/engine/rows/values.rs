@@ -128,6 +128,24 @@ impl RowTable {
         Ok(row)
     }
 
+    /// Appends to `out` the values of `columns` of the row `record` holds,
+    /// row `id`'s, in their order, and no other (`record/listed.rs`,
+    /// RULES.md D862).
+    pub(in crate::engine::rows) fn decode_listed(&self, (id, record): (RowId, &[u8]), columns: &[usize], out: &mut Row) -> Result<()> {
+        let mut fetch = |reference: Reference| self.get_value(id, reference);
+        let record = self.sealing.plain_record(id, record)?;
+        let base = out.len();
+        self.format.decode_listed_with(&record, columns, &mut fetch, out)?;
+        if !self.lobs.columns().is_empty() {
+            for (value, &column) in out.iter_mut().skip(base).zip(columns) {
+                if let Ok(one) = <&mut [Value; 1]>::try_from(std::slice::from_mut(value)) {
+                    self.lobs.resolve_column(column, one);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Each of `columns`, given with a place of the caller's, of the row
     /// `record` holds, row `id`'s, decoded alone and handed to `each` with
     /// its place: no row is made, as a zone's sum up reads a few columns of

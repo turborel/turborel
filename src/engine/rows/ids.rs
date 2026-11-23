@@ -18,7 +18,7 @@
 
 use std::hash::BuildHasher;
 use std::sync::Mutex;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, ThreadId};
 
 use super::meta::Meta;
@@ -46,11 +46,15 @@ struct Block {
 /// \[DESIGN\] The blocks of row ids the threads inserting into a table hold.
 pub(super) struct IdBlocks {
     shards: Vec<Mutex<Xxh3Map<ThreadId, Block>>>,
+    /// Whether a block was taken since they were last forgotten: none
+    /// held, forgetting them all locks no shard, as recovery asks once for
+    /// every row it writes.
+    taken: AtomicBool,
 }
 
 impl IdBlocks {
     pub(super) fn new() -> IdBlocks {
-        IdBlocks { shards: (0..SHARDS).map(|_| Mutex::new(Xxh3Map::default())).collect() }
+        IdBlocks { shards: (0..SHARDS).map(|_| Mutex::new(Xxh3Map::default())).collect(), taken: AtomicBool::new(false) }
     }
 
     fn shard(&self, thread: ThreadId) -> Option<&Mutex<Xxh3Map<ThreadId, Block>>> {
@@ -73,6 +77,8 @@ impl IdBlocks {
         if blocks.len() >= KEPT {
             blocks.clear();
         }
+        // Noted before the block is held, so forgetting them finds it.
+        self.taken.store(true, Ordering::Release);
         let start = take()?;
         blocks.insert(thread, Block { next: start.saturating_add(1), end: start.saturating_add(BLOCK) });
         Ok(start)
@@ -81,6 +87,9 @@ impl IdBlocks {
     /// Forgets every block, so ids are next taken past those given so far:
     /// a row restored under an id may lie in a block.
     pub(super) fn clear(&self) {
+        if !self.taken.swap(false, Ordering::AcqRel) {
+            return;
+        }
         for shard in &self.shards {
             lock_builtin(shard).clear();
         }
