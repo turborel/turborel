@@ -2,8 +2,14 @@
 //! D25, D470): each row change is encoded as it is made, as before, but
 //! kept in the transaction's own buffer, with no lock another session
 //! takes and no write; at its commit the records and the commit record go
-//! to the log together, one write (`Log::append_all`). So a transaction
+//! to the log together, one write (`Log::append_run`). So a transaction
 //! writes the log once, where it wrote it for every change.
+//!
+//! The records are held end to end in one buffer, each encoded where it
+//! is kept, with where each ends beside them (RULES.md D882). The log
+//! frames them from there. A transaction's buffers go to its thread as it
+//! ends, for the next one begun there, so holding a record allocates
+//! nothing once a thread has run a transaction of its size.
 //!
 //! The data file moves only at a checkpoint, so no page holding a change
 //! is durable before a checkpoint is; and a checkpoint, while its gate is
@@ -22,6 +28,7 @@
 //! cancelled, as before (`Change::StatementUndone`), for which a write
 //! notes the places of the records the transaction marked (`wanted`).
 
+use std::cell::RefCell;
 use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -30,6 +37,7 @@ use std::time::{Duration, Instant};
 use super::{Transactions, TxId, TxState, Txn};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::xxhash::Xxh3Map;
+use crate::log::record::Record;
 use crate::log::{Log, Lsn};
 use crate::sync::{Alone, lock_builtin};
 
@@ -69,10 +77,10 @@ pub(crate) enum Undone {
 /// written.
 #[derive(Default)]
 struct Held {
-    /// The records held, oldest first.
-    records: Vec<Vec<u8>>,
-    /// Their bytes.
-    bytes: usize,
+    /// The records held, oldest first, laid end to end.
+    bytes: Vec<u8>,
+    /// Where each ends in `bytes`.
+    ends: Vec<usize>,
     /// The number of the first held: those before it are written.
     base: u64,
     /// The numbers of records a place undone to may name: a write notes
@@ -96,9 +104,24 @@ impl Held {
     /// Drops the records held from the one numbered `n`, if held.
     fn truncate_from(&mut self, n: u64) {
         let keep = usize::try_from(n.saturating_sub(self.base)).unwrap_or(usize::MAX);
-        self.records.truncate(keep);
-        self.bytes = self.records.iter().map(Vec::len).sum();
+        if keep >= self.ends.len() {
+            return;
+        }
+        let end = keep.checked_sub(1).and_then(|last| self.ends.get(last)).copied().unwrap_or(0);
+        self.ends.truncate(keep);
+        self.bytes.truncate(end);
     }
+
+    /// How many records it holds.
+    fn count(&self) -> u64 {
+        u64::try_from(self.ends.len()).unwrap_or(u64::MAX)
+    }
+}
+
+thread_local! {
+    /// \[DESIGN\] RULES.md D882: the buffers of the last transaction that
+    /// ended on this thread, empty, for the next begun here.
+    static SPARE: RefCell<(Vec<u8>, Vec<usize>)> = const { RefCell::new((Vec::new(), Vec::new())) };
 }
 
 /// \[DESIGN\] A transaction's held records and the log they go to: the
@@ -118,33 +141,43 @@ impl TxLog {
     ///
     /// The error of an earlier write that failed; the log's. A failure
     /// leaves the transaction able only to roll back.
-    fn write(&self, shared: &Transactions, tx: TxId, last: Option<Vec<u8>>) -> Result<Option<Lsn>> {
+    fn write(&self, shared: &Transactions, tx: TxId, last: Option<&Record>) -> Result<Option<Lsn>> {
         let ends = last.is_some();
-        let (mut records, from) = {
+        let (mut bytes, mut record_ends, from) = {
             let mut held = lock_builtin(&self.held);
             if let Some(lost) = &held.lost {
                 return Err(lost.clone());
             }
+            if held.ends.is_empty() && last.is_none() {
+                return Ok(None);
+            }
             let from = held.base;
-            held.base = from.saturating_add(u64::try_from(held.records.len()).unwrap_or(u64::MAX));
-            held.bytes = 0;
-            (mem::take(&mut held.records), from)
+            held.base = from.saturating_add(held.count());
+            (mem::take(&mut held.bytes), mem::take(&mut held.ends), from)
         };
-        let count = records.len();
-        records.extend(last);
-        if records.is_empty() {
-            return Ok(None);
+        let count = record_ends.len();
+        if let Some(last) = last {
+            last.encode_into(&mut bytes);
+            record_ends.push(bytes.len());
         }
         // Appended with the buffer unlocked: the log is a plug-in (RULES.md
         // R-ERR-4). Its session writes under the gate, and a checkpoint
         // with the gate shut, so the two never write it at once.
-        let written = self.log.append_all(&records);
+        let written = self.log.append_run(&bytes, &record_ends);
         let mut held = lock_builtin(&self.held);
+        // Its buffers hold its next records, unless it holds some already.
+        if held.ends.is_empty() {
+            bytes.clear();
+            record_ends.clear();
+            (held.bytes, held.ends) = (bytes, record_ends);
+        }
         held.reached = true;
         let lsns = written.inspect_err(|e| {
             held.lost.get_or_insert_with(|| e.clone());
         })?;
-        for (n, at) in (from..).zip(lsns.iter().take(count)) {
+        // Most transactions mark no place, and note none.
+        let noted = if held.wanted.is_empty() { 0 } else { count };
+        for (n, at) in (from..).zip(lsns.iter().take(noted)) {
             if held.wanted.contains(&n) {
                 held.found.push((n, *at));
             }
@@ -210,7 +243,8 @@ impl Txn {
     /// first holds one.
     fn tx_log(&self, log: &Arc<dyn Log>) -> &Arc<TxLog> {
         self.pending.get_or_init(|| {
-            let made = Arc::new(TxLog { log: Arc::clone(log), held: Mutex::new(Held::default()) });
+            let (bytes, ends) = SPARE.take();
+            let made = Arc::new(TxLog { log: Arc::clone(log), held: Mutex::new(Held { bytes, ends, ..Held::default() }) });
             if let Some(shard) = self.origin.shared.pending.shard(self.id) {
                 lock_builtin(shard).insert(self.id, Arc::clone(&made));
             }
@@ -228,19 +262,31 @@ impl Txn {
     ///
     /// SQLCODE -910 if its state's lock is poisoned; the log's, if what it
     /// holds was to be written and could not be.
-    pub(super) fn hold(&self, log: &Arc<dyn Log>, record: Vec<u8>) -> Result<()> {
+    pub(super) fn hold(&self, log: &Arc<dyn Log>, record: &[u8]) -> Result<()> {
+        self.hold_written(log, |out| out.extend_from_slice(record))
+    }
+
+    /// As `hold`, of the record `write` appends to the buffer its records
+    /// are held in, encoded where it is kept (RULES.md D882). `write`
+    /// appends one record and nothing else.
+    ///
+    /// # Errors
+    ///
+    /// As `hold`.
+    pub(super) fn hold_written(&self, log: &Arc<dyn Log>, write: impl FnOnce(&mut Vec<u8>)) -> Result<()> {
         let tx_log = self.tx_log(log);
         let full = {
             let mut st = self.state()?;
             let mut held = lock_builtin(&tx_log.held);
-            let n = held.base.saturating_add(u64::try_from(held.records.len()).unwrap_or(u64::MAX));
-            held.bytes = held.bytes.saturating_add(record.len());
-            held.records.push(record);
+            let n = held.base.saturating_add(held.count());
+            write(&mut held.bytes);
+            let end = held.bytes.len();
+            held.ends.push(end);
             st.logged = true;
             if st.logged_at(LogPos::Held(n)) {
                 held.wanted.push(n);
             }
-            held.bytes > HELD_BYTES || st.forced
+            end > HELD_BYTES || st.forced
         };
         if full {
             let _gate = self.origin.shared.gate.enter();
@@ -254,13 +300,14 @@ impl Txn {
     /// # Errors
     ///
     /// As `hold`.
-    pub(super) fn hold_unmarked(&self, log: &Arc<dyn Log>, record: Vec<u8>) -> Result<()> {
+    pub(super) fn hold_unmarked(&self, log: &Arc<dyn Log>, record: &Record) -> Result<()> {
         let tx_log = self.tx_log(log);
         let full = {
             let mut held = lock_builtin(&tx_log.held);
-            held.bytes = held.bytes.saturating_add(record.len());
-            held.records.push(record);
-            held.bytes > HELD_BYTES
+            record.encode_into(&mut held.bytes);
+            let end = held.bytes.len();
+            held.ends.push(end);
+            end > HELD_BYTES
         };
         if full {
             let _gate = self.origin.shared.gate.enter();
@@ -287,7 +334,7 @@ impl Txn {
     /// # Errors
     ///
     /// The log's, or that of an earlier write of its records that failed.
-    pub(super) fn write_with(&self, log: &Arc<dyn Log>, last: Vec<u8>) -> Result<Lsn> {
+    pub(super) fn write_with(&self, log: &Arc<dyn Log>, last: &Record) -> Result<Lsn> {
         let written = self.tx_log(log).write(&self.origin.shared, self.id, Some(last))?;
         written.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the log gave no position for the commit record"))
     }
@@ -350,12 +397,22 @@ impl Txn {
         }
     }
 
-    /// Forgets its held records' buffer among the database's, as it ends.
+    /// Forgets its held records' buffer among the database's, as it ends:
+    /// its buffers, emptied, are its thread's for the next transaction
+    /// (RULES.md D882), unless they grew past what one holds.
     pub(super) fn forget_held(&self) {
-        if self.pending.get().is_some()
-            && let Some(shard) = self.origin.shared.pending.shard(self.id)
-        {
+        let Some(tx_log) = self.pending.get() else { return };
+        if let Some(shard) = self.origin.shared.pending.shard(self.id) {
             lock_builtin(shard).remove(&self.id);
+        }
+        let (mut bytes, mut ends) = {
+            let mut held = lock_builtin(&tx_log.held);
+            (mem::take(&mut held.bytes), mem::take(&mut held.ends))
+        };
+        if bytes.capacity() <= HELD_BYTES.saturating_mul(2) {
+            bytes.clear();
+            ends.clear();
+            SPARE.set((bytes, ends));
         }
     }
 }

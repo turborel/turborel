@@ -559,6 +559,7 @@ verification approach DO-178C expects (§8).
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
+| D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 
 ### The project
 
@@ -15480,6 +15481,40 @@ a UNIQUE check not settled. A participant already reads as the
 transaction does, told as it joined and at each new snapshot, so telling
 it to check and then not to, with no read between, changed nothing. The
 last call, which ends checked reads, is made as before.
+
+#### D882. A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there
+
+A transaction held each row change's record in a vector of its own
+until its commit (D470), so a transaction of twenty changes allocated
+and freed twenty-one vectors and the list of them. At the commit the
+block file framed them into a buffer it allocated for the run.
+
+Now the records are held end to end in one buffer, with where each ends
+in a second (`txn/pending.rs`). A row change is encoded where it is
+kept (`Txn::log_written`, `record::put_insert_record` and its kin), and
+so is the commit record. A record of a table with encodings is sealed
+in a buffer of its own first, as the sealing reads it whole. A place
+undone to cuts the buffer at the end of the record before it. As a
+transaction ends, its two buffers go to its thread, emptied, for the
+next transaction begun there, unless they grew past twice what a
+transaction holds before it writes. A checkpoint that writes a
+transaction's records takes its buffers for the write and gives them
+back if it holds none by then.
+
+`Log::append_run` takes the buffer and the ends. Its default appends a
+copy of each record by `append_all`, so a log that knows neither is
+given what it was given before. The file log frames each record from the
+buffer (`BlockFile::append_each`) into a buffer of frames its thread
+keeps, up to a megabyte. The bytes written are those `append_all` wrote.
+The record and block formats are unchanged.
+
+The records are still copied once into their frames. A frame is its
+payload's length, its digest, the payload and the length again, of the
+segment's hash, and through the segment's encodings, both of which may
+change at a rotation between a record's encoding and its write. Framing
+in place would have the transaction lay its records out for one
+segment's format before it knows the segment. The copy of a commit's
+few kilobytes was judged not worth that coupling.
 
 ## 2. Project layout
 

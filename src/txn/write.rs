@@ -13,7 +13,7 @@ use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{Index, Key};
-use crate::log::record::{delete_record, insert_record, update_record};
+use crate::log::record::{put_delete_record, put_insert_record, put_update_record};
 use crate::log::sealed::seal_plain;
 use crate::storage::{Row, RowId, TableStorage, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
@@ -92,22 +92,27 @@ impl State {
     /// Logs the insert of `row` as row `id` of `table`, made from the row
     /// as it is held (RULES.md D531).
     fn log_insert(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        self.log_row(tx, (table, id), |generation| insert_record(tx.id, (table, generation), id, row))
+        self.log_row(tx, (table, id), |out, generation| put_insert_record(out, tx.id, (table, generation), id, row))
     }
 
     /// Logs the record `record` makes, given the generation of `table`'s
     /// storage, of a change of its row `id`, sealed if its rows are; none
     /// made without a log. Made from the images as the statement holds
     /// them, none copied for it (RULES.md D750).
-    fn log_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), record: impl FnOnce(u32) -> Vec<u8>) -> Result<()> {
+    fn log_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), record: impl FnOnce(&mut Vec<u8>, u32)) -> Result<()> {
         let seal = self.seal_of(table)?;
         if tx.origin.log.is_none() {
             return Ok(());
         }
-        let plain = record(self.generation_of(table));
+        let generation = self.generation_of(table);
         match seal {
-            Some(pipeline) => tx.log_encoded(seal_plain(&plain, id, &pipeline)?, 1),
-            None => tx.log_encoded(plain, 1),
+            Some(pipeline) => {
+                let mut plain = Vec::new();
+                record(&mut plain, generation);
+                tx.log_encoded(&seal_plain(&plain, id, &pipeline)?, 1)
+            }
+            // Encoded where the transaction holds it (RULES.md D882).
+            None => tx.log_written(1, |out| record(out, generation)),
         }
     }
 
@@ -409,7 +414,7 @@ impl State {
             tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(storage), id, old: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            self.log_row(tx, (table, id), |generation| update_record(tx.id, (table, generation), id, (old, row)))?;
+            self.log_row(tx, (table, id), |out, generation| put_update_record(out, tx.id, (table, generation), id, (old, row)))?;
         }
         // An engine keeping versions keeps the old version's entries for
         // the readers that still see it, until the version is removed
@@ -475,7 +480,7 @@ impl State {
             tx.log(UndoEntry::Deleted { table: table.clone(), storage: Arc::clone(storage), id, row: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            self.log_row(tx, (table, id), |generation| delete_record(tx.id, (table, generation), id, old))?;
+            self.log_row(tx, (table, id), |out, generation| put_delete_record(out, tx.id, (table, generation), id, old))?;
         }
         Ok(())
     }

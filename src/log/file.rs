@@ -495,26 +495,13 @@ impl Log for FileLog {
         Ok(lsn(number, id))
     }
 
-    /// As many as the active segment has room for go in one write
-    /// (`BlockFile::append_all`), at least one, then the rest, so a run
-    /// grows a segment past its size no more than one record does. A run
-    /// written whole, as a transaction's at its commit nearly always is,
-    /// gives back the vector of its blocks' ids made positions in place.
     fn append_all(&self, records: &[Vec<u8>]) -> Result<Vec<Lsn>> {
-        let mut lsns = Vec::new();
-        let mut rest = records;
-        while !rest.is_empty() {
-            let (now, later) = rest.split_at_checked(self.fitting(rest)).unwrap_or((rest, &[]));
-            let bytes = now.iter().map(Vec::len).sum();
-            let (number, ids) = self.on_active(|blocks| blocks.append_all(now), now.len(), bytes)?;
-            let positions = ids.into_iter().map(|id| lsn(number, id));
-            if lsns.is_empty() && later.is_empty() {
-                return Ok(positions.collect());
-            }
-            lsns.extend(positions);
-            rest = later;
-        }
-        Ok(lsns)
+        self.append_records(records.iter().map(Vec::as_slice))
+    }
+
+    /// Framed from the buffer the run is held in (RULES.md D882).
+    fn append_run(&self, bytes: &[u8], ends: &[usize]) -> Result<Vec<Lsn>> {
+        self.append_records(super::run_records(bytes, ends))
     }
 
     fn sync(&self, through: Lsn) -> Result<()> {

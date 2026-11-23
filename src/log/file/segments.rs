@@ -4,11 +4,12 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 
-use super::{FileLog, Segment, add, segment_file, segment_name};
+use super::{FileLog, Segment, add, lsn, segment_file, segment_name};
 use crate::diagnostics::Event;
 use crate::disk::block::{BlockFile, BlockId};
 use crate::disk::io::Durability;
 use crate::error::{Result, SqlError};
+use crate::log::Lsn;
 use crate::sync::lock_builtin;
 
 impl FileLog {
@@ -33,13 +34,38 @@ impl FileLog {
         Ok((segment.number, written))
     }
 
+    /// Appends `records`, in order: their positions. As many as the
+    /// active segment has room for go in one write
+    /// (`BlockFile::append_each`), at least one, then the rest, so a run
+    /// grows a segment past its size no more than one record does. A run
+    /// written whole, as a transaction's at its commit nearly always is,
+    /// gives back the vector of its blocks' ids made positions in place.
+    pub(super) fn append_records<'r>(&self, records: impl ExactSizeIterator<Item = &'r [u8]> + Clone) -> Result<Vec<Lsn>> {
+        let mut lsns = Vec::new();
+        let mut rest = records;
+        while rest.len() > 0 {
+            let fit = self.fitting(rest.clone());
+            let now = rest.clone().take(fit);
+            let bytes = now.clone().map(<[u8]>::len).sum();
+            let (number, ids) = self.on_active(|blocks| blocks.append_each(now), fit, bytes)?;
+            let positions = ids.into_iter().map(|id| lsn(number, id));
+            if lsns.is_empty() && fit >= rest.len() {
+                return Ok(positions.collect());
+            }
+            lsns.extend(positions);
+            for _ in 0..fit {
+                rest.next();
+            }
+        }
+        Ok(lsns)
+    }
+
     /// How many of `records`, at least one, the active segment has room
     /// for, by their lengths.
-    pub(super) fn fitting(&self, records: &[Vec<u8>]) -> usize {
+    fn fitting<'r>(&self, records: impl Iterator<Item = &'r [u8]>) -> usize {
         let end = self.active.read().unwrap_or_else(PoisonError::into_inner).blocks.end().0;
         let mut room = self.options.segment_size.saturating_sub(end);
         let fit = records
-            .iter()
             .take_while(|record| {
                 let len = u64::try_from(record.len()).unwrap_or(u64::MAX);
                 room.checked_sub(len).map(|left| room = left).is_some()
