@@ -211,7 +211,7 @@ impl Txn {
     fn tx_log(&self, log: &Arc<dyn Log>) -> &Arc<TxLog> {
         self.pending.get_or_init(|| {
             let made = Arc::new(TxLog { log: Arc::clone(log), held: Mutex::new(Held::default()) });
-            if let Some(shard) = self.shared.pending.shard(self.id) {
+            if let Some(shard) = self.origin.shared.pending.shard(self.id) {
                 lock_builtin(shard).insert(self.id, Arc::clone(&made));
             }
             made
@@ -243,8 +243,8 @@ impl Txn {
             held.bytes > HELD_BYTES || st.forced
         };
         if full {
-            let _gate = self.shared.gate.enter();
-            tx_log.write(&self.shared, self.id, None)?;
+            let _gate = self.origin.shared.gate.enter();
+            tx_log.write(&self.origin.shared, self.id, None)?;
         }
         Ok(())
     }
@@ -263,8 +263,8 @@ impl Txn {
             held.bytes > HELD_BYTES
         };
         if full {
-            let _gate = self.shared.gate.enter();
-            tx_log.write(&self.shared, self.id, None)?;
+            let _gate = self.origin.shared.gate.enter();
+            tx_log.write(&self.origin.shared, self.id, None)?;
         }
         Ok(())
     }
@@ -277,8 +277,8 @@ impl Txn {
     /// As `write_with`.
     pub(crate) fn write_held_now(&self) -> Result<()> {
         let Some(tx_log) = self.pending.get() else { return Ok(()) };
-        let _gate = self.shared.gate.enter();
-        tx_log.write(&self.shared, self.id, None).map(|_| ())
+        let _gate = self.origin.shared.gate.enter();
+        tx_log.write(&self.origin.shared, self.id, None).map(|_| ())
     }
 
     /// Writes what it holds and then `last`, its commit record, in one run:
@@ -288,7 +288,7 @@ impl Txn {
     ///
     /// The log's, or that of an earlier write of its records that failed.
     pub(super) fn write_with(&self, log: &Arc<dyn Log>, last: Vec<u8>) -> Result<Lsn> {
-        let written = self.tx_log(log).write(&self.shared, self.id, Some(last))?;
+        let written = self.tx_log(log).write(&self.origin.shared, self.id, Some(last))?;
         written.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the log gave no position for the commit record"))
     }
 
@@ -353,7 +353,7 @@ impl Txn {
     /// Forgets its held records' buffer among the database's, as it ends.
     pub(super) fn forget_held(&self) {
         if self.pending.get().is_some()
-            && let Some(shard) = self.shared.pending.shard(self.id)
+            && let Some(shard) = self.origin.shared.pending.shard(self.id)
         {
             lock_builtin(shard).remove(&self.id);
         }

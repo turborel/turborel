@@ -88,7 +88,7 @@ use super::version::{Maker, Version};
 use super::{RowTable, key};
 use crate::catalog::TableDesc;
 use crate::disk::pager::PageId;
-use crate::engine::tree::Descended;
+use crate::engine::tree::{Descended, Placed};
 use crate::error::{Code, Result, SqlError};
 use crate::hash::xxhash::Xxh3Set;
 use crate::log::Lsn;
@@ -165,6 +165,8 @@ struct Change {
     /// Whether it is not a row's change but a group's making, of a load:
     /// `id` is its first row's (`frozen/stamped.rs`).
     group: bool,
+    /// Where its write left the row's entry, for its stamp (RULES.md D843).
+    placed: Placed,
 }
 
 impl Change {
@@ -172,7 +174,7 @@ impl Change {
     /// committed one it appended at `appended`, or neither, dropping the
     /// objects `dropped`.
     fn of_row(id: RowId, before: Option<Vec<u8>>, appended: Option<Lsn>, dropped: Vec<u64>) -> Change {
-        Change { id, before, appended, dropped, made: false, unchanged: 0, group: false }
+        Change { id, before, appended, dropped, made: false, unchanged: 0, group: false, placed: Placed::default() }
     }
 }
 

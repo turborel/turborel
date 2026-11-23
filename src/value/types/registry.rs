@@ -47,6 +47,17 @@ impl TypeRegistry {
         TypeRegistry { owner, ..self }
     }
 
+    /// Whether it is `other`, or a clone of it: the same kinds, of the same
+    /// database. A clone of either is one of the other's.
+    pub(crate) fn same(&self, other: &TypeRegistry) -> bool {
+        let kinds = match (&self.kinds, &other.kinds) {
+            (Some(mine), Some(theirs)) => Arc::ptr_eq(mine, theirs),
+            (None, None) => true,
+            (Some(_), None) | (None, Some(_)) => false,
+        };
+        kinds && self.owner == other.owner
+    }
+
     /// The database whose registry it is, 0 for none.
     pub(crate) fn owner(&self) -> u64 {
         self.owner

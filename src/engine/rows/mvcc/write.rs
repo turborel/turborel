@@ -19,7 +19,7 @@ impl RowTable {
     /// committed version checked as `past` says: the row it replaced,
     /// decoded from the version the write replaced, so the row is not read
     /// before it is written (RULES.md D417); none outside a transaction.
-    pub(in crate::engine::rows) fn write_over(&self, tx: TxId, id: RowId, row: Option<Row>, past: Past) -> Result<Option<Row>> {
+    pub(in crate::engine::rows) fn write_over(&self, tx: TxId, id: RowId, row: Option<&Row>, past: Past) -> Result<Option<Row>> {
         let Some(row) = row else {
             let replaced = self.write_version(tx, id, None, past)?;
             let old = self.replaced(id, replaced.as_deref());
@@ -28,10 +28,10 @@ impl RowTable {
             self.counted_change(tx);
             return old.map(|old| old.map(|(was, _)| was));
         };
-        let (record, pages) = self.encode(id, &row)?;
+        let (record, pages) = self.encode(id, row)?;
         let replaced = self.write_version(tx, id, Some(&record), past).inspect_err(|_| self.free(&pages))?;
         let old = self.replaced(id, replaced.as_deref());
-        self.widen_over(id, Some(&row), live(&old));
+        self.widen_over(id, Some(row), live(&old));
         self.counted_change(tx);
         old.map(|old| old.map(|(was, _)| was))
     }

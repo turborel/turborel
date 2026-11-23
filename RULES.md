@@ -550,6 +550,8 @@ verification approach DO-178C expects (§8).
 | D840 | A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer |
 | D841 | A procedure's body runs as the program it is compiled to, its point reads and point changes straight on their tables |
 | D842 | A home waits on its client for a second, its permit given up after a millisecond |
+| D843 | A commit stamps each row in place from the leaf its write left it in, with no descent |
+| D844 | A transaction begins from its session's kept origin, its id on its thread's stripe |
 
 ### The project
 
@@ -11843,7 +11845,9 @@ the committed one its snapshot shows, as the write refuses any other
 (SQLCODE -911); its values out of line are freed only as the transaction
 ends. Another engine reads the row and writes it, as before. A row of a
 system-time period is read first still, so that its period refuses a
-write before it is made.
+write before it is made. `replace` and `write_newest` borrow the new row
+(D843): the row store only encodes it, and the caller keeps it for its
+index entries and its log record, so no copy of the row is made per write.
 #### D418. A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot
 
 A kept or learned plan held no join (D45), so a query joining two
@@ -11922,7 +11926,8 @@ the garbage is filed without touching the tree. The versions are stamped
 once the locks are released, still inside the checkpoint gate
 (`TableStorage::settle`). A writer that replaces a version not yet stamped
 appends it to the undo store stamped, so only a row's newest version is
-ever unstamped. A stamp replaces an entry only as it read it.
+ever unstamped. A stamp replaces an entry only as it read it, and starts
+at the leaf the row's write left it in (D843).
 
 The semantics hold for these reasons.
 
@@ -15234,6 +15239,70 @@ threads. A client that thinks longer than a second pays the two moves
 once a second at most, under a ten-thousandth of its time, and a waiting
 home is woken fifty times a second, so a longer wait gains nothing
 measurable and keeps a thread from the pool longer.
+
+#### D843. A commit stamps each row in place from the leaf its write left it in, with no descent
+
+A commit's stamp of each row it wrote (D440) read the row's entry by a
+descent of the table's tree and wrote it back by another, a version
+encoded anew each time. In an order entry that was most of the commit's
+cost, two walks from the root for every row, though the write that made
+the entry had held its leaf.
+
+Now a write of a row's version tells where it left the entry, its leaf
+and the tree's stamp read before the write (`engine/tree/placed.rs`), and
+the transaction keeps that with the change. Its stamp locks that leaf,
+moves right past the splits since, finds the entry, and writes the
+commit timestamp and its flag over the version in place, under the
+leaf's lock (`RowTable::stamp_placed`). The stamp's bytes are as long as
+the transaction id they replace, so nothing in the leaf moves.
+
+The leaf is trusted only while the tree's stamp is unchanged. A leaf
+leaves the tree only by being retired, which moves the stamp first, so
+an unchanged stamp means the leaf is still a leaf of this tree and the
+entry is in it or to its right (D446, D500). A moved stamp, or an entry
+not found from the leaf, sends the stamp down from the root as before.
+Under the leaf's lock the version is stamped only if the transaction
+still made it, as a stamp replaced an entry only as it read it, so a
+writer that wrote over it meanwhile keeps its own.
+
+Nothing else changes. The stamping runs when it did, after the locks are
+released and inside the checkpoint gate, so visibility, validation,
+recovery, checkpoints and the collection of old versions read the same
+versions as before.
+
+#### D844. A transaction begins from its session's kept origin, its id on its thread's stripe
+
+A transaction's begin wrote lines every core shares. It took a reference
+to the coordinator, the log, the work areas and the type registry, each
+an object every session shares, and dropped them again at its end, so
+each count's line moved between cores at every begin and end. It added
+one to a count of open transactions that every begin wrote. Its id came
+from one counter, and its snapshot's stripe, its end (D442) and its stop
+(D44) were placed by that id, so consecutive transactions of one session
+landed on stripes another core had written last. In point selects and
+deletes on many threads the begin was the largest function of the
+server, its cost in those atomic writes and the cache misses after them.
+
+A session now keeps what its transactions begin from, an `Origin`
+holding the coordinator, the log and the space its undo entries spill
+in (`txn/begin.rs`). A begin takes one reference to the session's own
+origin, whose count only its thread writes. The session keeps it while
+the snapshot it begins against has the same coordinator, log, work
+areas, type registry and work memory, which a look tells without
+taking a reference to any of them. Else it makes a new one, so a
+session that sets MEMORY.WORK_BYTES spills its next transaction's undo
+by its own setting. The undo log holds the origin's space shared, not a
+copy.
+
+An id is still later than every one given before, so ids keep the order
+transactions begin in, but ids are 64 apart, and each id's last six bits
+are its thread's stripe (`sync::thread_stripe`). The stripes of the
+snapshots and the shards of the ends, stops and held records, whose
+counts divide 64, are then its thread's, and stay on its core. The
+count of open transactions is kept in each snapshot stripe and summed
+when read, which only a close and a status ask. An id stride of 64
+leaves 2^58 transactions, which cannot run out in practice. Ids order
+nothing against timestamps, as before.
 
 ## 2. Project layout
 

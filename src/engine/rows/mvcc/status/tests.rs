@@ -1,5 +1,9 @@
 use super::*;
 
+/// Ids of one stripe that share a slot: `SLOTS` of the stripe's ids apart,
+/// which are 64 apart (RULES.md D844).
+const SHARED: u64 = 64 * SLOTS;
+
 /// Verifies: [DESIGN] RULES.md D440: a transaction is open until its
 /// commit's one store, then committed at its timestamp; one rolled back is
 /// forgotten and read as open; claiming again changes nothing.
@@ -17,16 +21,16 @@ fn a_commit_is_one_store() {
     assert_eq!(statuses.committed(7), None, "never claimed");
 }
 
-/// Verifies: [DESIGN] RULES.md D440: two transactions `SLOTS` apart share a
-/// slot; the second waits on the map while the first is unstamped, or
-/// stamped but not yet before the horizon, and each reads as its own; the
+/// Verifies: [DESIGN] RULES.md D440: two transactions of one stripe
+/// `SLOTS` ids of it apart share a slot; the second waits on the map
+/// while the first is unstamped, or stamped but not yet before the horizon, and each reads as its own; the
 /// slot is claimed again once the horizon passes the first's mark, the
 /// first then read as open. MC/DC of `free`: owner none, claiming, count
 /// above none, mark none, mark not before the horizon, each taken alone.
 #[test]
 fn a_slot_is_claimed_again_only_past_the_horizon() {
     let statuses = Statuses::default();
-    let (a, b, c) = (3, 3 + SLOTS, 3 + 2 * SLOTS);
+    let (a, b, c) = (3, 3 + SHARED, 3 + 2 * SHARED);
     statuses.claim(a);
     statuses.seen(20);
     statuses.commit(a, 10, true);
@@ -81,21 +85,21 @@ fn every_table_of_a_commit_is_stamped_first() {
 fn the_map_keeps_statuses_as_slots_do() {
     let statuses = Statuses::default();
     statuses.claim(2);
-    statuses.claim(2 + SLOTS);
-    statuses.claim(2 + 2 * SLOTS);
+    statuses.claim(2 + SHARED);
+    statuses.claim(2 + 2 * SHARED);
     assert_eq!(statuses.overflowing.load(Ordering::SeqCst), 2);
-    statuses.commit(2 + SLOTS, 8, true);
-    statuses.commit(2 + SLOTS, 8, false);
-    assert_eq!(statuses.committed(2 + SLOTS), Some(8));
-    statuses.abort(2 + 2 * SLOTS);
+    statuses.commit(2 + SHARED, 8, true);
+    statuses.commit(2 + SHARED, 8, false);
+    assert_eq!(statuses.committed(2 + SHARED), Some(8));
+    statuses.abort(2 + 2 * SHARED);
     assert_eq!(statuses.overflowing.load(Ordering::SeqCst), 1);
     statuses.collected(50);
     statuses.sweep();
     assert_eq!(statuses.overflowing.load(Ordering::SeqCst), 1, "not stamped");
-    statuses.stamped(2 + SLOTS, 8);
+    statuses.stamped(2 + SHARED, 8);
     statuses.sweep();
     assert_eq!(statuses.overflowing.load(Ordering::SeqCst), 0);
-    assert_eq!(statuses.committed(2 + SLOTS), None);
+    assert_eq!(statuses.committed(2 + SHARED), None);
 }
 
 /// Verifies: [DESIGN] RULES.md D783: the commit of a transaction that
@@ -118,4 +122,16 @@ fn a_readers_commit_takes_no_lock() {
     statuses.overflowing.store(1, Ordering::SeqCst);
     statuses.commit(13, 5, false);
     assert_eq!(statuses.committed(13), None, "looked for in the map, not there");
+}
+
+/// Verifies: [DESIGN] RULES.md D440, D844: the ids one thread is given, 64
+/// apart on its stripe, take every slot in turn, and two stripes' ids given
+/// at once take slots apart.
+#[test]
+fn a_stripes_ids_take_every_slot() {
+    let statuses = Statuses::default();
+    let place = |tx: u64| std::ptr::from_ref(statuses.slot(tx).unwrap()).addr();
+    let taken: std::collections::HashSet<usize> = (0..SLOTS).map(|n| place(n * 64 + 5)).collect();
+    assert_eq!(taken.len(), usize::try_from(SLOTS).unwrap());
+    assert_ne!(place(70 * 64 + 5), place(70 * 64 + 6));
 }

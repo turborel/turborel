@@ -72,16 +72,16 @@
 //! waits for every commit before it to end, whatever tables they touch.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread::ThreadId;
 
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlError};
-use crate::log::Log;
 use crate::sync::{Alone, Gate, lock, lock_builtin};
 
 mod access;
+mod begin;
 mod capabilities;
 mod clock;
 mod durable;
@@ -104,6 +104,7 @@ mod stop;
 mod undo;
 mod write;
 
+pub(crate) use begin::Origin;
 pub use capabilities::{Concurrency, Persistence, Policy, TxCapabilities, Undo};
 use clock::Clock;
 pub(crate) use durable::Committing;
@@ -250,8 +251,8 @@ pub(crate) struct TxState {
 /// (RULES.md D29, `txn/clock.rs`), how many are open, and who waits for
 /// whom.
 pub(crate) struct Transactions {
+    /// The clock, which counts the transactions open too.
     clock: Clock,
-    active: Alone<AtomicUsize>,
     /// For each waiting transaction, the transactions it waits for.
     waits_for: Mutex<WaitsFor>,
     /// Taken by every change a checkpoint writes (`db/checkpoint.rs`).
@@ -344,7 +345,6 @@ impl Default for Transactions {
     fn default() -> Self {
         Transactions {
             clock: Clock::new(FIRST_TRANSACTION),
-            active: Alone(AtomicUsize::new(0)),
             waits_for: Mutex::new(HashMap::new()),
             gate: Gate::default(),
             firsts: Mutex::new(BTreeMap::new()),
@@ -376,35 +376,6 @@ impl Default for Transactions {
 }
 
 impl Transactions {
-    /// [X3.135-1986 §7.3 GR2a] a transaction is effectively initiated. Its id
-    /// is new; 2^64 ids cannot run out in practice. Its snapshot is the
-    /// stable timestamp then. Its changes and its end go to `log`, if there
-    /// is one (RULES.md D25).
-    /// Its undo entries spill in `space`.
-    pub(crate) fn begin(self: &Arc<Self>, log: Option<Arc<dyn Log>>, (lock_wait, reading, stop): Beginning, space: UndoSpace) -> Txn {
-        let (id, snapshot) = self.clock.begin();
-        self.active.fetch_add(1, Ordering::SeqCst);
-        self.stops.insert(id, Arc::clone(&stop));
-        self.ends.begin(id);
-        Txn {
-            id,
-            snapshot: AtomicU64::new(snapshot),
-            reading,
-            checking: AtomicBool::new(false),
-            lock_wait,
-            sync_commit: AtomicBool::new(true),
-            open: AtomicBool::new(true),
-            shared: Arc::clone(self),
-            log,
-            state: Mutex::new(TxState { undo: UndoLog::new(space), ..TxState::default() }),
-            running: Arc::new(Mutex::new(None)),
-            stop,
-            stamp: OnceLock::new(),
-            pending: OnceLock::new(),
-            depends: AtomicU64::new(0),
-        }
-    }
-
     /// Whether a transaction that wrote nothing is collecting: for tests
     /// that hold such a collection under way (RULES.md D453).
     #[cfg(test)]
@@ -442,7 +413,7 @@ impl Transactions {
 
     /// How many transactions are open.
     pub(crate) fn active(&self) -> usize {
-        self.active.load(Ordering::SeqCst)
+        self.clock.active()
     }
 }
 
@@ -470,9 +441,9 @@ pub(crate) struct Txn {
     sync_commit: AtomicBool,
     /// Whether its snapshot is still counted open.
     open: AtomicBool,
-    shared: Arc<Transactions>,
-    /// The log its changes and its end are written to, if any.
-    log: Option<Arc<dyn Log>>,
+    /// What it began from: the coordinator, and the log its changes and
+    /// its end are written to, if any (`txn/begin.rs`).
+    origin: Arc<Origin>,
     state: Mutex<TxState>,
     /// The thread its running call is on, if one is; shared with the locks it holds.
     running: Arc<Mutex<Option<ThreadId>>>,
@@ -552,7 +523,7 @@ impl Txn {
     /// A participant's, told of the new snapshot.
     pub(crate) fn renew_snapshot(&self, fresh: impl FnOnce() -> bool) -> Result<()> {
         if self.reading == Reading::Statement && self.open.load(Ordering::Acquire) && fresh() {
-            self.snapshot.store(self.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);
+            self.snapshot.store(self.origin.shared.clock.moved(self.id, self.snapshot()), Ordering::SeqCst);
             self.tell_participants()?;
         }
         Ok(())
@@ -570,11 +541,11 @@ impl Drop for Txn {
         // Only one whose records were written before its end has a first
         // to forget.
         if self.pinned_log() {
-            lock_builtin(&self.shared.firsts).remove(&self.id);
+            lock_builtin(&self.origin.shared.firsts).remove(&self.id);
         }
         self.forget_held();
-        self.shared.stops.remove(self.id);
-        self.shared.active.fetch_sub(1, Ordering::SeqCst);
+        self.origin.shared.stops.remove(self.id);
+        self.origin.shared.clock.dropped(self.id);
     }
 }
 

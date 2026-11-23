@@ -23,9 +23,7 @@ impl RowTable {
             // Claimed before its first version is in the tree (`status.rs`).
             self.versions.statuses.claim(tx);
         }
-        if !self.tree.insert(&key(id), &version)? {
-            return Ok(false);
-        }
+        let Some(placed) = self.tree.insert_placed(&key(id), &version)? else { return Ok(false) };
         self.mark_shadow(id);
         if tx != NO_TRANSACTION {
             let named = self.objects(id, record)?;
@@ -33,7 +31,7 @@ impl RowTable {
             let open = self.open_of(tx)?;
             let mut open = lock_builtin(&open);
             open.adopted.extend(named);
-            open.changes_in(&self.versions).push(Change::of_row(id, None, None, Vec::new()), &mut encode_change)?;
+            open.changes_in(&self.versions).push(Change { placed, ..Change::of_row(id, None, None, Vec::new()) }, &mut encode_change)?;
         }
         Ok(true)
     }
@@ -75,16 +73,16 @@ impl RowTable {
         // In the tree, written from the leaf the read found it in, with no
         // second descent (RULES.md D446).
         let (written, thawed) = match found {
-            Ok(descended) => (self.tree.replace_found(&descended, &k, (&newest, &new))?, None),
-            Err(pages) => (self.tree.insert(&k, &new)?, Some(pages)),
+            Ok(descended) => (self.tree.replace_found_placed(&descended, &k, (&newest, &new))?, None),
+            Err(pages) => (self.tree.insert_placed(&k, &new)?, Some(pages)),
         };
-        if !written {
+        let Some(placed) = written else {
             if let Some(at) = appended {
                 self.undo.release(at);
             }
             self.free(&thawed.unwrap_or_default());
             return Ok(None);
-        }
+        };
         self.mark_shadow(id);
         if thawed.is_some() {
             self.frozen.shadow();
@@ -92,7 +90,7 @@ impl RowTable {
         let before = appended.is_none().then(|| newest.clone());
         let mut open = lock_builtin(&open);
         open.adopted.extend(added);
-        open.changes_in(&self.versions).push(Change::of_row(id, before, appended, dropped), &mut encode_change)?;
+        open.changes_in(&self.versions).push(Change { placed, ..Change::of_row(id, before, appended, dropped) }, &mut encode_change)?;
         Ok(Some(newest))
     }
 

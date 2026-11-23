@@ -24,7 +24,7 @@ fn a_tables_defaults_do_nothing_of_their_own() {
     let id = t.insert(1, vec![Value::Bool(true)]).unwrap();
     assert!(Arc::clone(&t).scan_ordered(1, &[0], (&[0], false, None), None).is_none());
     assert!(Arc::clone(&t).scan_ordered_batches(1, &[0], (&[0], true, Some(1)), None).is_none());
-    t.write_newest(1, id, Some(vec![Value::Bool(false)]), 0).unwrap();
+    t.write_newest(1, id, Some(&vec![Value::Bool(false)]), 0).unwrap();
     assert_eq!(t.get(1, id).unwrap().map(|r| r[0].to_string()).as_deref(), Some("FALSE"), "an update");
     t.write_newest(1, id, None, 0).unwrap();
     assert!(t.get(1, id).unwrap().is_none(), "a delete");

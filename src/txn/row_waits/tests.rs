@@ -56,12 +56,12 @@ fn a_wait_for_seats_that_never_come_fails() {
 
 /// A transaction of `st` that waits for locks.
 fn waiting(st: &State) -> Txn {
-    st.begin_waiting((LockWait::Wait, Reading::Serializable, Arc::default()))
+    st.begin_waiting((LockWait::Wait, Reading::Serializable, Arc::default()), &mut None)
 }
 
 /// The end of open transaction `tx`.
 fn end_of(tx: &Txn) -> Arc<Ending> {
-    tx.shared.ends.of(tx.id).unwrap()
+    tx.origin.shared.ends.of(tx.id).unwrap()
 }
 
 /// Verifies: [DESIGN] RULES.md D743: a waiter whose turn's write is made
@@ -90,7 +90,7 @@ fn a_rows_waiters_are_handed_to_its_next_writer() {
         let firsts = a.join().unwrap().unwrap().unwrap();
         super::Turn::hand_over(Some(&firsts), &first, (&table, 1));
         let (stayed, moved) = (seated(&held), seated(&end_of(&first)));
-        let graph = lock_builtin(&first.shared.waits_for).get(&second.id).cloned();
+        let graph = lock_builtin(&first.origin.shared.waits_for).get(&second.id).cloned();
         drop(firsts);
         // The other row's waiter goes on now, unless it was moved too.
         let mut c = Some(c);
@@ -176,9 +176,9 @@ fn a_seat_moves_only_for_the_same_row_free_of_deadlock() {
         st.rollback(&holder).unwrap();
         let firsts = a.join().unwrap().unwrap().unwrap();
         // The next writer waiting for `cyclic`, as if for a row it holds.
-        lock_builtin(&first.shared.waits_for).insert(first.id, vec![cyclic.id]);
+        lock_builtin(&first.origin.shared.waits_for).insert(first.id, vec![cyclic.id]);
         super::Turn::hand_over(Some(&firsts), &first, (&table, 1));
-        lock_builtin(&first.shared.waits_for).remove(&first.id);
+        lock_builtin(&first.origin.shared.waits_for).remove(&first.id);
         let (moved, stayed) = (seated(&end_of(&first)), seated(&held));
         drop(firsts);
         st.rollback(&first).unwrap();
