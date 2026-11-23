@@ -22,8 +22,10 @@ use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
 
-use super::leaves;
-use super::node::{Node, Parsed};
+use std::sync::atomic::Ordering;
+
+use super::node::{Node, Parsed, child_in};
+use super::{BLinkTree, leaves};
 use crate::disk::buffer::{BufferPool, FileId, PageRef, Stamp, Tally};
 use crate::error::Result;
 use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Map};
@@ -32,6 +34,10 @@ use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Map};
 /// D807): the roots and the levels below them of the tables a transaction
 /// mix reads together, at most 2 MiB of 8 KiB pages.
 pub(super) const KEPT: usize = 256;
+/// \[DESIGN\] The most levels a descent through the copies goes down: a
+/// tree of 4 KiB pages holding four entries a node is no taller over
+/// 2^32 pages. A taller one is descended node by node.
+const LEVELS: usize = 16;
 
 /// A copy of page `id` of `file`, read with `stamp`, and its clock bit,
 /// set when a descent reads it and cleared as the hand passes.
@@ -135,6 +141,7 @@ impl Deref for Read<'_> {
 
 /// Page `id` of `file` in `pool`: from a copy still current, if `copied`
 /// and the thread keeps one; else latched, as `read_tallied` reads it.
+#[cfg(test)]
 pub(super) fn read<'p>(pool: &'p BufferPool, (file, id): (FileId, u64), tally: Option<&Tally>, copied: bool) -> Result<Read<'p>> {
     if let Some((bytes, parsed)) = copied.then(|| current(pool, file, id)).flatten() {
         return Ok(Read::Copied(bytes, parsed));
@@ -148,26 +155,81 @@ pub(super) fn read<'p>(pool: &'p BufferPool, (file, id): (FileId, u64), tally: O
 fn current(pool: &BufferPool, file: FileId, id: u64) -> Option<(Rc<[u8]>, Parsed)> {
     COPIES.with(|copies| {
         let mut copies = copies.try_borrow_mut().ok()?;
-        let Copies { kept, at, .. } = &mut *copies;
-        let copy = kept.get_mut(*at.get(&(file, id))?).filter(|c| pool.unchanged(file, id, c.stamp))?;
-        copy.used = true;
+        let copy = copies.current(pool, (file, id))?;
         Some((Rc::clone(&copy.bytes), copy.parsed))
     })
 }
 
+impl Copies {
+    /// Its copy of page `id` of `file`, if it is still current; its clock
+    /// bit set.
+    fn current(&mut self, pool: &BufferPool, (file, id): (FileId, u64)) -> Option<&Copy> {
+        let Copies { kept, at, .. } = self;
+        let copy = kept.get_mut(*at.get(&(file, id))?).filter(|c| pool.unchanged(file, id, c.stamp))?;
+        copy.used = true;
+        Some(copy)
+    }
+}
+
 /// As `read`, of a page that may be a leaf if `leaf`: then from the
 /// thread's copy of the leaf, if it has one still current (`leaves.rs`,
-/// RULES.md D858).
+/// RULES.md D858). `hash` is the page's (`BufferPool::page_hash`), made
+/// once for the leaf's place and the pool's (D951).
 pub(super) fn read_at<'p>(
     pool: &'p BufferPool,
-    (file, id): (FileId, u64),
+    (file, id, hash): (FileId, u64, u64),
     tally: Option<&Tally>,
     (copied, leaf): (bool, bool),
 ) -> Result<Read<'p>> {
-    if let Some((bytes, parsed)) = leaf.then(|| leaves::current(pool, file, id)).flatten() {
+    if let Some((bytes, parsed)) = leaf.then(|| leaves::current_at(pool, (file, id), hash)).flatten() {
         return Ok(Read::Copied(bytes, parsed));
     }
-    read(pool, (file, id), tally, copied)
+    if let Some((bytes, parsed)) = copied.then(|| current(pool, file, id)).flatten() {
+        return Ok(Read::Copied(bytes, parsed));
+    }
+    let (page, stamp) = pool.read_stamped_at((file, id), hash, tally)?;
+    Ok(Read::Held(page, stamp))
+}
+
+/// \[DESIGN\] (RULES.md D955) The child of inner node `id` of `file`
+/// whose range holds `key`, and the node's level, read from the thread's
+/// copy of the node where it is kept, with no node made of it
+/// (`node/lean.rs`) and no count of the copy's holders moved: none if the
+/// thread keeps no copy still current, or the copy is no inner node in
+/// its tree whose range holds `key`.
+fn child_in_copy(pool: &BufferPool, (file, id): (FileId, u64), key: &[u8]) -> Option<(u64, u8)> {
+    COPIES.with(|copies| {
+        let mut copies = copies.try_borrow_mut().ok()?;
+        child_in(&copies.current(pool, (file, id))?.bytes, key)
+    })
+}
+
+impl BLinkTree {
+    /// \[DESIGN\] (RULES.md D955) The leaf `key` is in, found through the
+    /// thread's copies of the inner nodes alone, from the root down: each
+    /// copy still its node's content, an inner node in the tree whose
+    /// range holds `key`, at the level its parent says. So the leaf is
+    /// the one a descent that latched each node now would reach, and its
+    /// range begins before `key`. A root with no copy is given itself, as
+    /// it may be a leaf, which the caller checks. None where a copy is
+    /// missing or does not hold `key`'s range, as past a split not yet
+    /// posted; the caller descends then. The caller is in the tree's
+    /// epoch, so the page given is not freed under it.
+    pub(super) fn leaf_by_copies(&self, key: &[u8]) -> Option<u64> {
+        let root = self.root.load(Ordering::Acquire);
+        let (mut id, mut above) = (root, None::<u8>);
+        for _ in 0..LEVELS {
+            let Some((child, level)) = child_in_copy(&self.pool, (self.file, id), key) else { break };
+            if above.is_some_and(|above| level.checked_add(1) != Some(above)) {
+                return None;
+            }
+            if level == 1 {
+                return Some(child);
+            }
+            (id, above) = (child, Some(level));
+        }
+        (id == root).then_some(root)
+    }
 }
 
 /// Keeps a copy of `read`, page `id` of `file`, an inner node read

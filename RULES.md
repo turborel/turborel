@@ -605,6 +605,9 @@ verification approach DO-178C expects (§8).
 | D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
 | D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
 | D943 | A compiled body nothing of which reads the diagnostics area places no statement's condition there |
+| D950 | A read by key finds its entry in a leaf's bytes with no node made of them, and trusts a leaf of its tree that holds the key |
+| D951 | A page read hashes its page once, for the thread's leaf copies and the pool's hint alike |
+| D955 | A read by key finds its leaf through the thread's copies of the inner nodes, with no node made of them |
 
 ### The project
 
@@ -16772,6 +16775,58 @@ A plan filled and prepared again at each execution, a point read, a
 projection of its input's columns as they are, a JSON table, a
 GRAPH_TABLE, a collection derived table over other rows and every other
 operator are opened by the executor as before.
+
+#### D950. A read by key finds its entry in a leaf's bytes with no node made of them, and trusts a leaf of its tree that holds the key
+
+A fetch of a row by id from an index's entry read the leaf noted for the
+row (D500), parsed every field of its header (`Node::parse`), compared
+the key with the leaf's first key and its high key to learn the leaf
+answers for it, and then searched its slots. The first key and the high
+key are each a cache line the fetch has no other use for.
+
+A read by key now looks for its key in the leaf's bytes as they are
+(`engine/tree/node/lean.rs`). It reads the header's level, flags, tree,
+prefix and count, bounds the slots by the header's hints (D847), and
+compares heads before tails, as `Node::search` does, with no node
+built. A key found in a leaf of its tree that is in the tree, not
+marked taken out, is the key's entry, with no check of the leaf's
+range. A split and a merge move keys only right (D814), and write the
+leaf they move them to before they take them from the first, under the
+first's latch, so a key in two leaves at once has one value in both,
+and a key found in any leaf of the tree is found where a descent would
+find it. A key not found in a leaf noted or remembered says nothing, as
+it may lie right of the leaf or left of it, and the read goes on as
+before, checking the leaf's range. A read from the leaf it last read,
+or from the copy of it its `Near` keeps (D806), tries the slot after
+the last one found first, with one comparison, and the copy keeps no
+header parsed for it (D808).
+
+#### D951. A page read hashes its page once, for the thread's leaf copies and the pool's hint alike
+
+A read of a leaf hashed its page with XXH3 to find the thread's copy of
+it (D858), again to find the pool's hint slot for it, and a third time
+to note it among the thread's leaves. The three hashes are of the same
+two words. The pool now gives the hash it places a page by
+(`BufferPool::page_hash`), and takes it back in `read_resident_at` and
+`read_stamped_at`, so a leaf read hashes its page once. A hint found
+through the hash is still checked against the frame's page, as a stale
+hint always was.
+
+#### D955. A read by key finds its leaf through the thread's copies of the inner nodes, with no node made of them
+
+A descent read each inner node from the thread's copy of it (D807), but
+parsed the copy's header into a node, searched it through fallible
+steps, and counted its holders, about a fifth of a fetch's time. A read
+by key and a probe from a key now first walk the copies alone
+(`BLinkTree::leaf_by_copies`). Each level's copy must be current, be an
+inner node of the tree not taken out whose range holds the key, and be
+at the level its parent says. The child is found in the copy's bytes as
+D950 finds an entry. The leaf reached is the one a descent that latched
+each node at that moment would reach, so its range begins before the
+key. A key it does not hold, within its high key, is not in the tree.
+Where a copy is missing or changed, as past a split not yet posted, the
+walk gives up and the read descends as before. The walk goes down at
+most 16 levels, more than a tree of 4 KiB pages has.
 
 ## 2. Project layout
 

@@ -27,6 +27,7 @@ mod decode;
 mod dirty_frames;
 mod distinct_aggregates;
 mod expr;
+mod fetch_path;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
 mod alloc;
 #[path = "estimates.rs"]
@@ -207,8 +208,8 @@ fn second() -> [&'static [Mutation]; 47] {
 /// The planner's newest areas, in order: join estimates, range joins, the
 /// cost model, orders, probed subqueries, predicate transfer, dead entries
 /// taken back by a scan and scans priced by sampled zones, key plans, a
-/// B-link tree probe's path, a commit's stamps in place, and the fixed costs cut from a write.
-fn planner() -> [&'static [Mutation]; 11] {
+/// B-link tree probe's path, a commit's stamps in place, the fixed costs cut from a write, and a row's fetch by its id.
+fn planner() -> [&'static [Mutation]; 12] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
@@ -221,6 +222,7 @@ fn planner() -> [&'static [Mutation]; 11] {
         &tree_path::TREE_PATH,
         &commit_stamps::COMMIT_STAMPS,
         &write_costs::WRITE_COSTS,
+        &fetch_path::FETCH_PATH,
     ]
 }
 

@@ -19,7 +19,7 @@ use std::cell::Cell;
 
 use super::node::Node;
 use super::scan::Visit;
-use super::{BLinkTree, Path, Target, corrupt};
+use super::{BLinkTree, Path, Target, corrupt, leaves};
 use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::noted::{self, Noted};
@@ -69,6 +69,14 @@ fn show(leaf: &Node<'_>, key: &[u8], shown: &mut Shown, f: &mut impl FnMut(&[u8]
     Ok(leaf.right)
 }
 
+/// What came of a probe's walk through the inner nodes' copies.
+enum ByCopies {
+    /// The entries of the key's leaf shown, and the leaf to go on to.
+    Shown(Option<PageId>),
+    /// Nothing shown: the probe descends.
+    Descend,
+}
+
 impl BLinkTree {
     /// \[DESIGN\] Shows `f` the entries with keys at or after `key`, in key
     /// order, each key and value borrowed where it lies, until `f` answers
@@ -90,11 +98,32 @@ impl BLinkTree {
         done
     }
 
+    /// \[DESIGN\] (RULES.md D955) Shows `f` the entries of `key`'s leaf
+    /// as `show` does, if the thread's copies of the inner nodes lead to
+    /// it (`inner.rs`) and it is a leaf of the tree, in it, whose range
+    /// holds `key`: the leaf to go on to. `Descend` if not, nothing shown;
+    /// the probe descends then.
+    fn shown_by_copies(&self, key: &[u8], shown: &mut Shown, f: &mut impl FnMut(&[u8], &[u8]) -> Result<Visit>) -> Result<ByCopies> {
+        let Some(leaf) = self.leaf_by_copies(key) else { return Ok(ByCopies::Descend) };
+        let page = leaves::read(&self.pool, (self.file, leaf), Some(&self.tally))?;
+        let node = page.node()?;
+        if node.level != 0 || node.deleted || node.tree != self.meta.0 || !node.covers(key) {
+            return Ok(ByCopies::Descend);
+        }
+        self.tally.lookup();
+        show(&node, key, shown, f).map(ByCopies::Shown)
+    }
+
     /// `first_from`, its keys put together in `shown`.
     fn probe(&self, key: &[u8], shown: &mut Shown, f: &mut impl FnMut(&[u8], &[u8]) -> Result<Visit>) -> Result<()> {
         let notes = noted::noting();
-        let mut path = Path { tallied: true, ..Path::default() };
-        let (_, mut next) = self.descend(Target::Key(key), 0, &mut path, |leaf| show(leaf, key, &mut *shown, &mut *f))?;
+        let mut next = match self.shown_by_copies(key, shown, f)? {
+            ByCopies::Shown(next) => next,
+            ByCopies::Descend => {
+                let mut path = Path { tallied: true, ..Path::default() };
+                self.descend(Target::Key(key), 0, &mut path, |leaf| show(leaf, key, &mut *shown, &mut *f))?.1
+            }
+        };
         noted::add(notes.as_deref(), Noted::Leaves, 1);
         while let Some(right) = next {
             let page = self.pool.read(self.file, right.0)?;

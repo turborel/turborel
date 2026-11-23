@@ -54,12 +54,23 @@ impl Hints {
         Hints { slots: (0..slots).map(|_| AtomicU64::new(0)).collect(), shift, stripes: (0..STRIPES).map(|_| Stripe::default()).collect() }
     }
 
+    /// The hash a page is placed by: XXH3-64 of its file and number
+    /// (RULES.md D460), as its shard's.
+    #[inline]
+    pub(super) fn hash(key: Key) -> u64 {
+        crate::hash::xxhash::Words::new(0).pair(u64::from(key.file.0), key.id)
+    }
+
+    /// The slot of the page whose hash is `hash`: its top bits.
+    #[inline]
+    fn slot_at(&self, hash: u64) -> Option<&AtomicU64> {
+        self.slots.get(usize::try_from(hash.checked_shr(self.shift).unwrap_or_default()).unwrap_or_default())
+    }
+
     /// The slot of `key`.
     #[inline]
     fn slot(&self, key: Key) -> Option<&AtomicU64> {
-        // The top bits of XXH3-64 of the page (RULES.md D460), as its shard's.
-        let hash = crate::hash::xxhash::Words::new(0).pair(u64::from(key.file.0), key.id);
-        self.slots.get(usize::try_from(hash.checked_shr(self.shift).unwrap_or_default()).unwrap_or_default())
+        self.slot_at(Hints::hash(key))
     }
 
     /// Notes `key` found in frame `index`. The slot is written only when
@@ -74,11 +85,17 @@ impl Hints {
         }
     }
 
+    /// The frame the page whose hash is `hash` was last found in, if any.
+    #[inline]
+    pub(super) fn frame_at(&self, hash: u64) -> Option<usize> {
+        let hinted = self.slot_at(hash)?.load(Ordering::Relaxed);
+        usize::try_from(hinted.checked_sub(1)?).ok()
+    }
+
     /// The frame `key` was last found in, if any.
     #[inline]
     pub(super) fn frame_of(&self, key: Key) -> Option<usize> {
-        let hinted = self.slot(key)?.load(Ordering::Relaxed);
-        usize::try_from(hinted.checked_sub(1)?).ok()
+        self.frame_at(Hints::hash(key))
     }
 
     /// Counts a hit, on the thread's stripe.
@@ -142,13 +159,17 @@ impl BufferPool {
         Some(frame)
     }
 
-    /// Page or block `key`, held for reading if its hint finds it at once:
+    /// Page or block `key`, whose hash is `hash` (`page_hash`), held for
+    /// reading if its hint finds it at once:
     /// its frame latched shared, holding it, not filling. The eviction
     /// policy is told of the use of the frame hinted before the latch is
     /// taken, no lock held (RULES.md R-ERR-4): for a hint gone stale, of a
     /// frame not used, which its contract allows.
-    pub(super) fn read_hinted(&self, key: Key) -> Option<PageRef<'_>> {
-        let index = self.hints.frame_of(key)?;
+    /// The hash is given by a caller that places the page by it too, so it
+    /// is made once a read (RULES.md D951).
+    #[inline]
+    pub(super) fn read_hinted_at(&self, key: Key, hash: u64) -> Option<PageRef<'_>> {
+        let index = self.hints.frame_at(hash)?;
         let frame = self.frames.get(index)?;
         self.eviction.accessed(index);
         let content = match frame.content.try_read() {
@@ -163,6 +184,16 @@ impl BufferPool {
         Some(PageRef { content, frame, _pin: None })
     }
 
+    /// \[DESIGN\] The hash the pool places page `id` of `file` by, for a
+    /// caller that keeps its own note of the page in a place of the same
+    /// hash and reads it through `read_resident_at` or `read_stamped_at`,
+    /// so the page is hashed once a read (RULES.md D951).
+    #[inline]
+    #[must_use]
+    pub fn page_hash(file: FileId, id: u64) -> u64 {
+        Hints::hash(Key { file, id })
+    }
+
     /// \[DESIGN\] Page `id` of pager file `file`, held for reading if a frame
     /// holds it now; none if none does, and nothing read from the file: for
     /// a page whose number is only a guess, which may be free (RULES.md
@@ -173,8 +204,18 @@ impl BufferPool {
     /// SQLCODE -910 if the pool's maps are missing a shard, which `new`
     /// prevents.
     pub fn read_resident(&self, file: FileId, id: u64) -> Result<Option<PageRef<'_>>> {
+        self.read_resident_at(file, id, BufferPool::page_hash(file, id))
+    }
+
+    /// \[DESIGN\] As `read_resident`, of the page whose hash is `hash`
+    /// (`page_hash`).
+    ///
+    /// # Errors
+    ///
+    /// As `read_resident`.
+    pub fn read_resident_at(&self, file: FileId, id: u64, hash: u64) -> Result<Option<PageRef<'_>>> {
         let key = Key { file, id };
-        if let Some(page) = self.read_hinted(key) {
+        if let Some(page) = self.read_hinted_at(key, hash) {
             return Ok(Some(page));
         }
         let Some(pinned) = self.pin_mapped(key)? else { return Ok(None) };

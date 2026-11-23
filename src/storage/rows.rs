@@ -5,7 +5,6 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::disk::buffer::Stamp;
-use crate::engine::tree::Parsed;
 use crate::error::{Code, Result, SqlError};
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 use crate::value::{Decimal, Value};
@@ -101,8 +100,6 @@ pub struct Near {
     /// reads of it take the copy while the stamp holds (`tree/near.rs`).
     pub(crate) page: Vec<u8>,
     pub(crate) kept: Option<(u64, Stamp)>,
-    /// The copy's header as parsed once, so a read of it parses nothing.
-    pub(crate) parsed: Option<Parsed>,
     /// The reading transaction, the table and its bookkeeping there, found
     /// by the last read (`rows/mvcc/open.rs`).
     pub(crate) open: Option<(TxId, usize, Arc<dyn Any + Send + Sync>)>,

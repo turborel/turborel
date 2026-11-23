@@ -6,6 +6,7 @@ use super::*;
 
 mod damage;
 mod layout;
+mod lean;
 mod place;
 mod search;
 

@@ -277,7 +277,12 @@ impl BufferPool {
     /// Holds `key` for reading, as `read`; and whether the pool missed it
     /// (`tally.rs`).
     pub(super) fn read_noting(&self, key: Key) -> Result<(PageRef<'_>, bool)> {
-        if let Some(page) = self.read_hinted(key) {
+        self.read_noting_at(key, super::hits::Hints::hash(key))
+    }
+
+    /// As `read_noting`, of the page whose hash is `hash` (`page_hash`).
+    pub(super) fn read_noting_at(&self, key: Key, hash: u64) -> Result<(PageRef<'_>, bool)> {
+        if let Some(page) = self.read_hinted_at(key, hash) {
             return Ok((page, false));
         }
         let (frame, missed) = self.hold(key, Fill::Read)?;
