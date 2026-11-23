@@ -276,8 +276,14 @@ fn added(row: &Row, deltas: &[&Reservation], types: &[DataType]) -> Result<Row> 
 /// table or partition, generated column, CHECK, assertion or domain,
 /// and none of the columns in a key or an index.
 pub(super) fn escrow_of(st: &Arc<State>, tx: &Txn, w: &Written, effects: &Effects<'_>) -> Option<u64> {
-    let b = &w.bound;
     let quiet = effects.triggered.is_none() && effects.delta.is_none() && effects.restricted.is_none();
+    escrowed(st, tx, w, quiet)
+}
+
+/// `escrow_of`'s guard, of a statement `quiet` if no trigger, delta table
+/// or table none may change sees its rows.
+pub(super) fn escrowed(st: &Arc<State>, tx: &Txn, w: &Written, quiet: bool) -> Option<u64> {
+    let b = &w.bound;
     let plain = b.checks.is_empty() && b.portion.is_none() && b.generated.is_empty() && b.desc.typed.is_none();
     let on = if let Value::Char(word) = w.db(st).settings.get(TRANSACTION_ESCROW) { word == ON } else { false };
     let engine = st.capabilities(&b.table).is_ok_and(|caps| matches!(caps.concurrency, Concurrency::Engine { .. }));

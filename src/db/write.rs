@@ -28,6 +28,7 @@ use crate::value::{Value, assign};
 
 mod bulk;
 mod degree;
+mod direct;
 mod given;
 mod inserted;
 mod into;
@@ -37,6 +38,7 @@ pub(crate) mod system_time;
 mod targets;
 
 use degree::degree_at;
+pub(super) use direct::{Pointed, point_change};
 pub(super) use given::not_given;
 pub(super) use into::{INSERT_RULES, InsertInto, InsertRules, object_columns};
 pub(super) use targets::{Targets, insert_target_in};
