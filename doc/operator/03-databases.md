@@ -262,7 +262,10 @@ insert is, is not estimated to match no row. A range past it of an
 index whose first columns are held equal, such as a district's newest
 orders, is estimated at no more rows than the index estimates the range
 to hold now, so the estimate does not grow with every row written until
-the next pass. Of a geometry column, the pass
+the next pass. A range between a parameter less a number and the
+parameter, as `K >= ? - 20 AND K < ?`, is estimated at no more than
+that many values' rows, before any value is given. Of a geometry
+column, the pass
 also keeps a grid of its envelopes, the coordinates a value holds on
 average, and how closely rows near in the table lie near in space, which
 price a search of an `rtree` index against a scan

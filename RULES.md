@@ -560,6 +560,7 @@ verification approach DO-178C expects (§8).
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
+| D892 | A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns |
 
 ### The project
 
@@ -15506,6 +15507,42 @@ is left to them, so a plan made with fresh statistics estimates as
 before. The index's estimate costs a count of at most a leaf's entries,
 or the share of its tree a larger range takes, once for each estimate
 of the table's conjuncts.
+
+#### D892. A table's rows between two bounds a constant apart are at most the range's width times the rows of a value under the index's first columns
+
+D891 asks the index of a range whose bounds the execution planned for
+gives. A plan made with slots and no values has no range to ask, and on
+the bench such plans still weighed STOCK LEVEL's lines by the
+statistics alone, at about five times their rows, and hashed a read of
+the whole of STOCK. Yet `OL_O_ID < ? AND OL_O_ID >= ? - 20` of one slot
+holds twenty values of the column whatever the slot's value.
+
+So where the conjuncts hold an index's first columns equal, to values
+or slots, and bound its next column from both sides by one slot, plus
+or less an integer, the share they keep is at most the values between
+the bounds times the rows of one value under those columns, over the
+table's rows (`physical/cardinality/width.rs`). An inclusive bound adds
+a value, an exclusive lower one takes one. The rows of a value are
+those the pass saw over the distinct combinations of the columns, so
+they do not grow with the rows written since. Only an exact numeric
+column of scale 0 is asked, as only there a width counts values.
+
+Two integers bound a width as well. With the slots filled, the bench's
+last runs still hashed STOCK for a range such as `[6081, 6101)` of a
+district, of about two hundred lines. The index counts a range of at
+most 128 entries, and estimates a larger one by its share of the tree,
+there at eight times its entries, and the statistics past their pass
+gave as many. Twenty values of ten lines each bound it at two hundred.
+A range whose values hold more rows than the average one is estimated
+low by it, as by any average, and the margin still weighs the probes
+against some times the rows estimated (D386).
+
+A procedure's statement runs as a correlated subquery of its frame,
+whose runner gave each reference to a variable its own slot (D675), so
+the two bounds were of two slots and bounded no width. Its outer
+expressions that name the same slot, column or outer reference now
+take the first one's slot, as of a kept program's leaf (D418), so a
+variable named twice is one slot and one value.
 
 ## 2. Project layout
 

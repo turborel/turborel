@@ -152,12 +152,37 @@ pub(crate) fn slot_type(v: &Value) -> Option<DataType> {
     })
 }
 
-/// `e`, each outer reference the slot of its place, of its type of `types`.
-fn slotted(e: Expr, types: &[DataType]) -> Expr {
-    if let Expr::Outer(index, name) = e {
-        return types.get(index).map_or(Expr::Outer(index, name), |t| Expr::Dynamic(Slot { index, data_type: t.clone(), at: 0 }));
+/// `e`, each outer reference the slot `places` gives its place, of its
+/// type of `types`.
+fn slotted(e: Expr, types: &[DataType], places: &[usize]) -> Expr {
+    if let Expr::Outer(at, name) = e {
+        let index = places.get(at).copied().unwrap_or(at);
+        return types.get(index).map_or(Expr::Outer(at, name), |t| Expr::Dynamic(Slot { index, data_type: t.clone(), at: 0 }));
     }
-    e.map_children(&mut |child| slotted(child, types))
+    e.map_children(&mut |child| slotted(child, types, places))
+}
+
+/// \[DESIGN\] The slot of each of the outer expressions `outer`: the
+/// first's of those naming the same column, outer reference or slot, so a
+/// variable named twice is one slot of the plan and one value, as of a
+/// kept program's leaf (RULES.md D418). A range between a variable less a
+/// constant and the variable is then one slot's, whose width the
+/// planner reads with no value at hand (D892).
+pub(super) fn places(outer: &[Expr]) -> Vec<usize> {
+    let named = |e: &Expr| -> Option<(u8, usize)> {
+        if let Expr::Dynamic(slot) = e {
+            return Some((0, slot.index));
+        }
+        if let Expr::Column(at) = e {
+            return Some((1, *at));
+        }
+        if let Expr::Outer(at, _) = e {
+            return Some((2, *at));
+        }
+        None
+    };
+    let found: Vec<Option<(u8, usize)>> = outer.iter().map(named).collect();
+    found.iter().enumerate().map(|(at, n)| n.and_then(|n| found.iter().position(|m| *m == Some(n))).unwrap_or(at)).collect()
 }
 
 impl Runner {
@@ -231,7 +256,8 @@ impl Runner {
         if filled(subquery.plan.clone(), &[]).is_err() {
             return Err(Planned::Varies);
         }
-        let plan = self.optimized(map_plan_exprs(subquery.plan.clone(), &mut |e| slotted(e, &types)));
+        let places = places(&subquery.outer);
+        let plan = self.optimized(map_plan_exprs(subquery.plan.clone(), &mut |e| slotted(e, &types, &places)));
         let slotted = Box::new(Slotted { types, plan });
         let with_slots = PhysicalPlanner::slotted(&self.db, outer).plan(&slotted.plan);
         let custom = PhysicalPlanner::new(&self.db).plan(&self.optimized(subquery.bound(outer)));
