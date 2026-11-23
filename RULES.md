@@ -558,6 +558,8 @@ verification approach DO-178C expects (§8).
 | D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
+| D852 | A writer searches and changes its leaf under one latch, comparing the value found where it lies |
+| D853 | A row read for a write starts at the leaf noted for it, with no descent |
 | D854 | A page held for writing is pinned through its hint under its frame's latch, with no shard locked |
 
 ### The project
@@ -15448,6 +15450,46 @@ for a row, and its wait is bounded as before but for that one write.
 A waiter does not spin. The waits measured were long where no core was
 free, and a spinning waiter would take a core from the thread it waits
 for.
+
+#### D852. A writer searches and changes its leaf under one latch, comparing the value found where it lies
+
+A writer of one key owns its leaf (D503), read it under its latch held
+shared, let the latch go, and took it again exclusively to change it
+(D840). The read copied the value found into a vector, a row's whole
+version, only to compare it with the one expected. The node was parsed
+under each latch.
+
+No other writer changes a leaf owned, so the two latches guarded one
+change. The leaf is now latched once, exclusively
+(`engine/tree/here.rs`). Under it the node is parsed, the key searched,
+the value found compared where it lies, and the change made in place if
+it fits, or the node copied to split, as before. Only a write that gives
+the old value back copies it (`BLinkTree::replace`). A leaf that no
+longer covers the key is left as it is, and the writer moves right from
+it (Lehman and Yao 1981, §5) and writes the leaf it reaches the same
+way. A commit's stamp in place (D843) latches its leaf once too.
+
+A write refused, its key absent or its value not the one expected, has
+latched the leaf exclusively and changed nothing. The page is then
+written back once more than it needed, which a refused write is too
+rare to count.
+
+#### D853. A row read for a write starts at the leaf noted for it, with no descent
+
+An update of a row read its newest version by a descent of the table's
+tree (D446), though the read of the row just before it, through an
+index, had noted the row's leaf on the thread (D500).
+
+`BLinkTree::get_for_write` now tries the leaf noted for the row first
+(`engine/tree/near.rs`), trusted as a read's is: a frame holds it, it is
+a leaf of this tree, not deleted, and its first key is at or below the
+key. It follows the right links a few leaves past a split, as a read
+does. The write then starts from the leaf found, with no path, so a
+split of it finds its parent again from the root, as a write from a
+remembered leaf does. With no leaf noted, or one that cannot answer, the
+read descends as before. The stamp terms of D446 are unchanged: the
+tree's stamp is loaded inside the read's epoch, before the leaf is
+looked at.
 
 #### D854. A page held for writing is pinned through its hint under its frame's latch, with no shard locked
 

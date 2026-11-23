@@ -12,7 +12,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 9] = [
+pub const TREE_PATH: [Mutation; 12] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -82,6 +82,36 @@ pub const TREE_PATH: [Mutation; 9] = [
         replacement: "let track_low = matches!(self.direction, Direction::Forward);",
         integration: &["trees::scans_honour_bounds_in_both_directions"],
         unit: &[],
+    },
+    Mutation {
+        name: "tree-here-covers",
+        package: Package::Core,
+        breaks: "a writer searches the leaf it owns though the key moved right of it with a split, and finds no entry there",
+        file: "src/engine/tree/here.rs",
+        original: "    if node.deleted || !node.covers(key) {",
+        replacement: "    if node.deleted {",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_replace_starts_at_the_leaf_a_read_left"],
+    },
+    Mutation {
+        name: "tree-here-compares",
+        package: Package::Core,
+        breaks: "a replace of a value expected compares only its length, so it writes over a value changed since it was read",
+        file: "src/engine/tree/here.rs",
+        original: "            if node.value(at)? == expected {",
+        replacement: "            if node.value(at)?.len() == expected.len() {",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_replace_starts_at_the_leaf_a_read_left"],
+    },
+    Mutation {
+        name: "tree-noted-for-write",
+        package: Package::Core,
+        breaks: "a row read for a write no longer starts at the leaf noted for it, and descends from the root",
+        file: "src/engine/tree/write.rs",
+        original: "        if let Some((leaf, value)) = self.from_noted(key, |leaf| value_of(leaf, key))? {",
+        replacement: "        if let Some((leaf, value)) = None::<(u64, Option<Vec<u8>>)> {",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_read_for_a_write_starts_at_the_leaf_noted"],
     },
     Mutation {
         name: "pool-taken-pinned",

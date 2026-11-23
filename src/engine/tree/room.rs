@@ -34,10 +34,24 @@ pub(super) struct Room {
     pub(super) run: bool,
     /// Whether its garbage is reclaimed for the room (`reclaims`).
     pub(super) reclaim: bool,
-    /// Whether building it again may give it room: its garbage reclaimed,
-    /// or its prefix changed, shorter for the key or longer as keys added
-    /// since it was built share more.
+    /// Whether building it again gives it room for certain: its garbage
+    /// reclaimed, or its prefix shortened for the key. A prefix that may
+    /// be longer is looked for only once the entry does not fit
+    /// (`compactable`).
     pub(super) rebuild: bool,
+}
+
+/// Whether building the node `page` holds again may give `slot`'s insert
+/// of `key` room: as `room` found, or its prefix longer, as keys added
+/// since it was built share more. Asked only of an entry that does not
+/// fit in place: the prefix a node built again would keep takes its first
+/// key, its last and `key` compared whole, two by two, which an insert
+/// that fits need not pay.
+pub(super) fn compactable(page: &[u8], room: &Room, key: &[u8], slot: Slot) -> Result<bool> {
+    if room.run || !matches!(slot, Slot::Insert(_)) {
+        return Ok(false);
+    }
+    Ok(room.rebuild || node::lengthens(&Node::parse(page)?, key)?)
 }
 
 impl BLinkTree {
@@ -61,7 +75,7 @@ impl BLinkTree {
         };
         let reclaim = self.reclaims(node);
         // An insert that shortens the prefix builds the node again anyway.
-        let rebuild = reclaim || grown > 0 || (matches!(slot, Slot::Insert(_)) && node::lengthens(node, key)?);
+        let rebuild = reclaim || grown > 0;
         let run = starts_run(node, slot)? || self.crowded(held, node, slot);
         Ok(Some(Room { after, stored, run, reclaim, rebuild }))
     }
