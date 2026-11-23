@@ -21,6 +21,8 @@ mod key;
 pub use key::Key;
 mod counted;
 mod entries;
+#[cfg(test)]
+pub(crate) use entries::searched;
 pub use entries::{Encoded, EncodedEntries, EncodedEntry, Entries, KeyProbe, RowIds};
 pub mod expression;
 pub mod fulltext;
@@ -544,9 +546,12 @@ pub trait Index: Send + Sync {
     fn search_encoded(self: Arc<Self>, _probe: &Probe, _order: KeyOrder) -> Option<Encoded> {
         None
     }
-    /// \[DESIGN\] (RULES.md D881) Itself as it finds a whole key's entries by their first bytes, if it does. Default: none, and it is
-    /// searched.
+    /// \[DESIGN\] (RULES.md D881) Itself as it finds a whole key's entries by their first bytes, if it does. Default: none.
     fn key_probe(&self) -> Option<&dyn KeyProbe> {
+        None
+    }
+    /// \[DESIGN\] (RULES.md D857) Pins the index for the calling thread until the pin is dropped, as `TableStorage::pin` pins a table.
+    fn pin(&self) -> Option<crate::engine::tree::Pinned<'_>> {
         None
     }
     /// \[DESIGN\] (RULES.md D297) The entries `search` finds in ascending order, cut by keys
@@ -583,12 +588,6 @@ pub trait Index: Send + Sync {
     fn xml_cost(self: Arc<Self>, _lookup: &xml::XmlLookup) -> Option<xml::XmlCost> {
         None
     }
-}
-
-/// Every entry `probe` selects in `index`, in its order: for tests.
-#[cfg(test)]
-pub(crate) fn searched<I: Index + ?Sized>(index: &Arc<I>, probe: &Probe) -> Result<Vec<(Key, RowId)>> {
-    Index::search(Arc::clone(index), probe, KeyOrder::Ascending).collect()
 }
 
 /// The name of `BTreeMethod`, which also enforces UNIQUE constraints unless told otherwise.

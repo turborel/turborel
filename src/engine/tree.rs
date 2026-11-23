@@ -67,6 +67,7 @@ mod near;
 mod node;
 mod pin;
 mod placed;
+mod probe;
 mod reclaim;
 mod retired;
 mod room;

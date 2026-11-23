@@ -15,6 +15,7 @@
 //! end checks the constraints of that row alone, as its end would.
 
 use super::{ObjectRows, Written};
+use crate::catalog::ColumnDefault;
 use crate::db::assignment::candidate;
 use crate::db::escrow::reserving;
 use crate::db::integrity::Straight;
@@ -111,6 +112,20 @@ fn updated(
 }
 
 impl super::Target {
+    /// Whether each column's default is the same for every user at every
+    /// instant: a value, or none. Its defaults as it was kept are then
+    /// those of any statement (`Target::refreshed`), and an execution
+    /// takes it as it is, with no copy.
+    pub(in crate::db) fn fixed_defaults(&self) -> bool {
+        self.desc.columns.iter().all(|c| {
+            let of_domain = c.domain.as_ref().and_then(|d| d.default.as_ref());
+            match c.default.as_ref().or(of_domain).filter(|_| c.generated.is_none()) {
+                Some(ColumnDefault::Value(_)) | None => true,
+                Some(ColumnDefault::User(_) | ColumnDefault::Datetime(..)) => false,
+            }
+        })
+    }
+
     /// Of an INSERT of one row into it, the constraints its statement
     /// checks of that row, if it may write it straight: none through a
     /// view WITH CHECK OPTION, or if its end would check more.
@@ -135,10 +150,10 @@ impl Session {
         &self,
         cx: StatementContext<'_>,
         (target, straight): (&super::Target, &Straight),
-        (query, slots, kept): (LogicalPlan, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
+        (query, slots, kept): (&LogicalPlan, Option<Slots>, Option<(&Keeping<'_>, &Params)>),
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
-        let mut rows = super::query_rows((self, cx), target, (query, slots, kept))?;
+        let mut rows = super::query_rows((self, cx), target, (std::borrow::Cow::Borrowed(query), slots, kept))?;
         // [X3.135-1986 §8.7 GR4] R is empty: no row is inserted.
         if rows.is_empty() && !st.catalog.any_triggers() {
             return Ok(0);

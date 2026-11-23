@@ -504,7 +504,7 @@ fn covers(method: &dyn IndexMethod, (columns, types): (&[usize], &[DataType]), n
 
 /// Whether `probe` reads the keys of a value or a range of them, which an
 /// index counts.
-fn keyed(probe: &Probe) -> bool {
+pub(super) fn keyed(probe: &Probe) -> bool {
     match probe {
         Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => true,
         Probe::All | Probe::Columns(_) | Probe::Predicate { .. } | Probe::Xml(_) => false,

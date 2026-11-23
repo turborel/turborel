@@ -488,6 +488,11 @@ impl Index for BLinkIndex {
         Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
     }
 
+    /// Its tree's (`BLinkTree::pin`).
+    fn pin(&self) -> Option<crate::engine::tree::Pinned<'_>> {
+        Some(self.tree.pin())
+    }
+
     /// By its tree's keys (`encoded.rs`).
     fn key_probe(&self) -> Option<&dyn KeyProbe> {
         Some(self)
