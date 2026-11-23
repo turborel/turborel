@@ -31,6 +31,7 @@ mod alloc;
 #[path = "estimates.rs"]
 mod estimates;
 mod group_table;
+mod hot_rows;
 mod insert_values;
 mod join_estimates;
 mod join_table;
@@ -267,8 +268,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
-/// kernels' and compiled procedures' last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 20] {
+/// kernels', compiled procedures' and rows in demand's last, as `last`
+/// holds no more.
+fn closing() -> [&'static [Mutation]; 21] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -290,6 +292,7 @@ fn closing() -> [&'static [Mutation]; 20] {
         &server_lines::SERVER_LINES,
         &kernels::KERNELS,
         &compiled::COMPILED,
+        &hot_rows::HOT_ROWS,
     ]
 }
 

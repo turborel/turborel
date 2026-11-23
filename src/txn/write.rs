@@ -291,8 +291,12 @@ impl State {
         loop {
             match self.next_after(tx, (table, id), rechecks)? {
                 Next::Wait(writer) => {
-                    drop(turn.take());
-                    *turn = tx.wait_for_row((table, id), writer)?;
+                    // [DESIGN] RULES.md D847: in its turn, overtaken by
+                    // a writer that came while it was being woken.
+                    *turn = match turn.take() {
+                        Some(mine) => tx.overtaken(mine, (table, id), writer)?,
+                        None => tx.wait_for_row((table, id), writer)?,
+                    };
                 }
                 next @ (Next::Again | Next::Refused | Next::Over(..)) => return Ok(next),
             }

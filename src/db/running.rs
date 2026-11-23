@@ -110,6 +110,52 @@ impl Session {
         }
     }
 
+    /// \[DESIGN\] RULES.md D846: `result`, a statement's completion in
+    /// `tx`, told at once if its caller tells it only once the transaction
+    /// has ended (`tell_at_end`): the end's own reply then waits for what
+    /// it rests on, after the transaction's locks are released. A failure
+    /// is told as `replied` tells it.
+    ///
+    /// # Errors
+    ///
+    /// As `replied`.
+    pub(super) fn completed<T>(&self, tx: &Txn, result: Result<T>) -> Result<T> {
+        if self.told_at_end.get() && result.is_ok() {
+            return result;
+        }
+        self.replied(tx, result)
+    }
+
+    /// \[DESIGN\] RULES.md D846: whether its caller tells the completion
+    /// of each statement it runs from now on, but of one that opens a
+    /// cursor, only once the transaction has ended, as a server's request
+    /// that ends its transaction with its statement does. Then such a
+    /// statement returns with no wait for the commits it read past its
+    /// snapshot to be durable, while it holds its row locks. The commit
+    /// that ends its transaction returns once its own commit is durable,
+    /// and so every commit before it; a rollback, or a commit refused,
+    /// once those it rests on are. A caller that tells a completion
+    /// before the transaction ends calls `settle_told` first.
+    pub fn tell_at_end(&self, at_end: bool) {
+        self.told_at_end.set(at_end);
+    }
+
+    /// \[DESIGN\] RULES.md D846: returns once every commit what its open
+    /// transaction did rests on is durable, as a statement's completion
+    /// would have waited had `tell_at_end` not been set.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -922 if a failed sync of the log left such a commit in
+    /// doubt; SQLCODE -910 if called back from a plug-in.
+    pub fn settle_told(&self) -> Result<()> {
+        let _call = self.enter()?;
+        match self.current_transaction() {
+            Some(tx) => tx.replied(Ok(())),
+            None => Ok(()),
+        }
+    }
+
     /// [ISO/IEC 9075-2:2023 §17.7, §17.8] COMMIT if `commit`, else
     /// ROLLBACK, run by an SQL control statement run directly: its
     /// transaction ended within it, every cursor of it not holdable closed

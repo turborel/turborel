@@ -28,6 +28,7 @@ use super::status::Status;
 use crate::settings::DEFAULT_LOB_INLINE_BYTES;
 use crate::shown::Requests;
 
+mod ended;
 mod replied;
 mod timed;
 
@@ -303,7 +304,13 @@ impl Held {
         let served = Arc::clone(&self.session.canceller());
         served.served().set_trace(crate::shown::trace(attributes.as_deref()));
         let mark = out.mark();
+        // [DESIGN] RULES.md D846: a completion its request's commit tells,
+        // so the statement leaves its row locks with no wait for what it
+        // rests on, which the commit's reply waits for.
+        let at_end = ends && !more;
+        self.session.tell_at_end(at_end);
         let done = self.done(work, out, max_statements);
+        self.session.tell_at_end(false);
         served.served().set_trace(None);
         drop(running);
         let last = match done {
@@ -320,8 +327,13 @@ impl Held {
         };
         // Counted before the transaction ends, as the statement left them.
         let last = self.counted(last, counted);
-        // A locator sent is valid until the transaction ends: it is kept.
-        let last = if ends && !out.located { self.ended(last) } else { last };
+        // A locator sent is valid until the transaction ends: it is kept,
+        // and the completion told now, once what it rests on is durable.
+        let last = match (ends && !out.located, at_end) {
+            (true, _) => self.ended(last),
+            (false, true) => self.settled(last),
+            (false, false) => last,
+        };
         let last = self.timed(last, counted);
         let last = self.finished(last, more);
         let last = self.told(last, out);
@@ -354,35 +366,6 @@ impl Held {
             | Work::CopyIn { .. }
             | Work::CopyData(_)
             | Work::CopyEnd(_) => None,
-        }
-    }
-
-    /// \[EXTENSION\] `last`, the reply of a statement whose request ends the
-    /// transaction with it, once it is ended: committed after a
-    /// completion, the commit's failure in its place if it fails; rolled
-    /// back after a failure, the rollback's failure in its place if that
-    /// fails, the tables then damaged (RULES.md D19). A query's cursor
-    /// left open, its rows not all sent, keeps the transaction.
-    fn ended(&mut self, last: Reply) -> Reply {
-        let outcome = match &last {
-            Reply::Complete(_) => self.session.commit(),
-            Reply::Error(_) => self.session.rollback(),
-            Reply::Suspended
-            | Reply::Lob(_)
-            | Reply::Prepared { .. }
-            | Reply::Description(_)
-            | Reply::Rows(_)
-            | Reply::Challenge(_)
-            | Reply::Ready { .. }
-            | Reply::Notice(_)
-            | Reply::Status { .. }
-            | Reply::Pong => {
-                return last;
-            }
-        };
-        match outcome {
-            Ok(()) => last,
-            Err(e) => Reply::Error(Failure::from(&e)),
         }
     }
 

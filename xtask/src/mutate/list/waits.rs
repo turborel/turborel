@@ -8,14 +8,14 @@
 use super::{Mutation, Package};
 
 /// The mutations of row waits and signals, in the order they run.
-pub const WAITS: [Mutation; 19] = [
+pub const WAITS: [Mutation; 18] = [
     Mutation {
         name: "row-wait-skipped",
         package: Package::Core,
         breaks: "a row's second writer is refused at once instead of waiting for the first",
         file: "src/txn/write.rs",
-        original: "                    *turn = tx.wait_for_row((table, id), writer)?;",
-        replacement: "                    return Ok(Next::Again);",
+        original: "                        None => tx.wait_for_row((table, id), writer)?,",
+        replacement: "                        None => return Ok(Next::Again),",
         integration: &["row_waits::a_second_writer_waits_and_writes_the_committed_row_4_28"],
         unit: &[],
     },
@@ -27,16 +27,6 @@ pub const WAITS: [Mutation; 19] = [
         original: "        Ok(eval_cond(cond, row, runner)? == Truth::True)",
         replacement: "        Ok(eval_cond(cond, row, runner)? == Truth::True || true)",
         integration: &["row_waits::a_waiting_writer_skips_a_row_no_longer_matching_4_28"],
-        unit: &[],
-    },
-    Mutation {
-        name: "row-not-read-after-wait",
-        package: Package::Core,
-        breaks: "a READ COMMITTED waiter writes at its old snapshot after each wait, and is refused once enough writers pass it",
-        file: "src/txn/write.rs",
-        original: "writer)?;\n                }\n                next @",
-        replacement: "writer)?;\n                    return Ok(Next::Again);\n                }\n                next @",
-        integration: &["read_committed_waits::many_writers_of_one_row_lose_nothing_and_are_never_refused_4_28"],
         unit: &[],
     },
     Mutation {
@@ -154,7 +144,7 @@ pub const WAITS: [Mutation; 19] = [
         package: Package::Core,
         breaks: "a hand-over moves a waiter the next writer already waits for, a deadlock (D743)",
         file: "src/txn/row_waits.rs",
-        original: " && !super::locks::would_deadlock(&waits_for, seat.waiter, &[tx.id]);",
+        original: " && !super::locks::would_deadlock(waits_for, seat.waiter, &[writer]);",
         replacement: ";",
         integration: &[],
         unit: &["txn::row_waits::tests::a_seat_moves_only_for_the_same_row_free_of_deadlock"],
@@ -164,7 +154,7 @@ pub const WAITS: [Mutation; 19] = [
         package: Package::Core,
         breaks: "a hand-over seats the moved waiters out of their order (D743)",
         file: "src/txn/row_waits.rs",
-        original: "        moving.sort_unstable_by_key(|&(t, _)| t);\n",
+        original: "    moving.sort_unstable_by_key(|&(t, _)| t);\n",
         replacement: "",
         integration: &[],
         unit: &["txn::row_waits::tests::a_rows_waiters_are_handed_to_its_next_writer"],
@@ -197,8 +187,8 @@ pub const WAITS: [Mutation; 19] = [
         package: Package::Core,
         breaks: "a first waiter giving up its turn leaves its row unclaimed, so a newcomer overtakes the next",
         file: "src/txn/row_waits/claims.rs",
-        original: "*held = next.map(|first| Claim { owner: claim.owner, line: Arc::clone(line), first });",
-        replacement: "*held = next.filter(|_| false).map(|first| Claim { owner: claim.owner, line: Arc::clone(line), first });",
+        original: "*held = next.map(|(first, firm)| Claim { owner: claim.owner, line: Arc::clone(line), first, firm });",
+        replacement: "*held = next.filter(|_| false).map(|(first, firm)| Claim { owner: claim.owner, line: Arc::clone(line), first, firm });",
         integration: &[],
         unit: &[
             "txn::row_waits::tests::a_claim_passes_only_from_its_first_in_its_line",

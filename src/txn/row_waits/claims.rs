@@ -3,8 +3,10 @@
 //! its line, until that waiter has written it or given up its place. A
 //! writer that comes later finds the claim before it writes, and queues in
 //! the same line behind the waiters already there, though the row's writer
-//! has ended and the first waiter not yet woken to write. So no newcomer
-//! writes a row in demand ahead of the transactions waiting for it.
+//! has ended and the first waiter not yet woken to write, but only once
+//! that waiter was overtaken already (RULES.md D847). So no newcomer
+//! writes a row in demand ahead of a transaction waiting for it more than
+//! once.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -25,6 +27,10 @@ pub(crate) struct Claim {
     pub(super) line: Arc<Ending>,
     /// The first waiter in it, whose write of the row comes next.
     pub(crate) first: TxId,
+    /// Whether the first waiter was overtaken once already, so the claim
+    /// holds back a newcomer even once the line's writer has ended
+    /// (RULES.md D847).
+    pub(crate) firm: bool,
 }
 
 /// The claims of one shard's rows, by row id, each by its table.
@@ -114,7 +120,7 @@ impl Claims {
         self.with((table, *id), |held| {
             let Some(claim) = held.as_ref().filter(|c| c.first == seat.waiter && Arc::ptr_eq(&c.line, line)) else { return };
             let next = queue.first_for(&seat.row);
-            *held = next.map(|first| Claim { owner: claim.owner, line: Arc::clone(line), first });
+            *held = next.map(|(first, firm)| Claim { owner: claim.owner, line: Arc::clone(line), first, firm });
         });
     }
 }

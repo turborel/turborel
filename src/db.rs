@@ -292,6 +292,9 @@ pub struct Session {
     /// Set while a call runs, so a plug-in calling back into this session is
     /// refused (RULES.md R-ERR-4).
     busy: Cell<bool>,
+    /// \[DESIGN\] RULES.md D846: whether its caller tells a statement's
+    /// completion only once the transaction has ended (`tell_at_end`).
+    told_at_end: Cell<bool>,
     /// The constraint modes of its transaction, and the checks of its
     /// deferred constraints waiting [ISO/IEC 9075:1992 §14.2].
     deferral: RefCell<Deferral>,
@@ -398,6 +401,7 @@ impl Session {
             started: auth.to_string(),
             inner: RefCell::new(SessionState::default()),
             busy: Cell::new(false),
+            told_at_end: Cell::new(false),
             deferral: RefCell::new(Deferral::default()),
             own: RefCell::new(settings::OwnValues::default()),
             schema: RefCell::new(auth.to_owned()),

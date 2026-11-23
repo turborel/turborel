@@ -266,7 +266,7 @@ impl Session {
         self.begin_in(st, &tx, matches!(params.load(), Some(Load::Going | Load::Ending)))?;
         let cx = StatementContext { st, tx: &tx };
         let ran = self.run_statement(cx, stmt, params, keeping);
-        self.db.noted(self.replied(&tx, settled(cx, stmt, ran)))
+        self.db.noted(self.completed(&tx, settled(cx, stmt, ran)))
     }
 
     /// [X3.135-1986 §8.4, §8.11] The positioned DELETE or UPDATE of

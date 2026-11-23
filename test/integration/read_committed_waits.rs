@@ -25,10 +25,12 @@ const INCREMENTS: usize = 20;
 const HOLD: Duration = Duration::from_millis(2);
 
 /// A database of `T (K, V)` holding (1, 0) and (2, 20), and `L (X)`,
-/// empty, committed, whose sessions wait.
+/// empty, committed, whose sessions wait, and write the rows an increment
+/// changes rather than reserve it (RULES.md D452), so they wait for them.
 fn database() -> Database {
     let db = Database::new();
     db.set_lock_wait(LockWait::Wait).unwrap();
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".to_owned())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER) CREATE TABLE L (X INTEGER)").unwrap();
     let s = db.session("A");
     s.run("INSERT INTO T VALUES (1, 0), (2, 20)").unwrap();
