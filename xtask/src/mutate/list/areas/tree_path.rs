@@ -38,7 +38,7 @@ pub const TREE_PATH: [Mutation; 7] = [
         file: "src/engine/tree/write.rs",
         original: "                path.stack.push(parent);\n                child\n",
         replacement: "                path.stack.push(parent);\n                parent\n",
-        integration: &["trees::entries_are_added_replaced_and_removed", THREADS],
+        integration: &[THREADS, "trees::trees_grow_levels_and_keep_order"],
         unit: &[],
     },
     Mutation {
