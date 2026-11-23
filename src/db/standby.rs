@@ -343,11 +343,16 @@ impl Database {
         let open = |held: Result<Followed>| held.and_then(|f| Ok((f.at, sealed::open(&f.bytes, &encodings, &types)?)));
         let mut streams: Vec<Stream<'_>> = vec![Box::new(now.into_iter().map(Ok))];
         streams.extend(ended.into_iter().map(|held| -> Stream<'_> { Box::new(held.into_records().map(open)) }));
-        let (_, mut touched) = self.replay_records(&mut Merged::new(streams), Definitions::All)?;
+        // The entries its checkpoint saw awaiting collection, met after it.
+        let image = lock_builtin(&self.snapshot()?.tx.following).image;
+        let (_, mut touched) = self.replay_records(&mut Merged::new(streams), Definitions::Following(image))?;
         // Counted toward its next checkpoint, as the changes it would log.
         let changes = u64::try_from(touched.len()).unwrap_or(u64::MAX);
         self.snapshot()?.tx.logged.fetch_add(changes, std::sync::atomic::Ordering::Relaxed);
         self.change(|st: &mut State| st.mend_indexes(&mut touched, |_| true))?;
+        // [DESIGN] RULES.md D920: the pass asked for, for the garbage the
+        // replay left (`State::note_replayed`).
+        self.maintain_if_due();
         self.apply_settings()
     }
 }

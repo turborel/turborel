@@ -12,8 +12,10 @@ use turborel::db::{Database, LogStorage, OpenOptions, OpenedLog, Standby, StoreP
 use turborel::disk::io::FileSystem;
 use turborel::disk::memory::MemoryFileSystem;
 use turborel::error::{Code, Result};
+use turborel::log::record::{Change, Record};
 use turborel::log::{Log, Lsn, MemoryLog};
 use turborel::value::Value;
+use turborel::value::types::TypeRegistry;
 
 use crate::common::{exec, rows};
 
@@ -381,4 +383,90 @@ fn a_following_database_whose_log_was_cut_is_made_again() {
         give(&again, &log, holds, last(&log));
         assert_eq!(values(&again), values(&source), "seed {seed}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D57, D920, D25: a database following that
+/// installs an export of a checkpoint which saw versions awaiting
+/// collection, their index entries in its image, takes those entries back
+/// as it meets the records the checkpoint logged them in, after the
+/// position the export holds the log through, as recovery from that
+/// checkpoint would; its entries are then its primary's, one a row, after
+/// the maintenance pass of each. Given the records one call each, in the
+/// log's order and with a row's change back to its stale entry's key
+/// moved before them, as a writer going on during the checkpoint may log
+/// it, the row keeps the entry of its version now. Regression test
+/// (R-TEST-7): a commit leaving its versions for a later batch (D920)
+/// made a checkpoint's stale entries common, and a replica that installed
+/// an export kept them for good (the replication simulation's
+/// `transfer`, seed 0).
+#[test]
+fn a_following_database_takes_back_the_stale_entries_of_its_export() {
+    for moved in [false, true] {
+        let log = Arc::new(MemoryLog::new());
+        let source = stale_at_checkpoint(&log);
+        // The replica's log holds what the export carries as it installs
+        // it, the rest given after, as replication gives it.
+        let (given, rest) = until_stale(&log, moved);
+        let (db, _) = following(&(Arc::new(MemoryFileSystem::new()) as Arc<dyn FileSystem>), &given);
+        let holds = Standby::import(&db, source.export().unwrap()).unwrap();
+        for bytes in &rest {
+            given.append(bytes).unwrap();
+        }
+        for at in holds.0 + 1..=last(&given).0 {
+            give(&db, &given, Lsn(at - 1), Lsn(at));
+        }
+        assert_eq!(shown(&db), shown(&source), "moved {moved}");
+        source.maintain().unwrap();
+        db.maintain().unwrap();
+        let indexes = rows(&source.session("APP"), "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.INDEXES").unwrap();
+        assert_eq!(indexes.len(), 2, "T_V and the UNIQUE key's: {indexes:?}");
+        for ix in indexes.iter().map(|ix| ix.trim()) {
+            assert_eq!(db.index_entries(ix).unwrap(), 10, "{ix}, moved {moved}: one entry a row");
+            assert_eq!(db.index_entries(ix).unwrap(), source.index_entries(ix).unwrap(), "{ix}, moved {moved}");
+        }
+        let by_a = "SELECT K FROM T WHERE V = 'a' ORDER BY K";
+        assert_eq!(rows(&db.session("APP"), by_a).unwrap(), rows(&source.session("APP"), by_a).unwrap(), "moved {moved}");
+    }
+}
+
+/// A database serving from files of its own, logging to `log`: T of ten
+/// rows of V 'a', five then changed to 'b', whose versions of 'a' await
+/// collection as a checkpoint is taken (RULES.md D920); after it, row 0
+/// changed back to 'a' and row 1 to 'c'.
+fn stale_at_checkpoint(log: &Arc<MemoryLog>) -> Database {
+    let fs: Arc<dyn FileSystem> = Arc::new(MemoryFileSystem::new());
+    let source = Database::new();
+    source.set_log_storage(Box::new(Given(Arc::clone(log)))).unwrap();
+    source.open_files(&fs, Path::new("/source"), &OpenOptions::default()).unwrap();
+    source.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V CHAR(10))").unwrap();
+    source.create_index("T_V", "APP.T", &["V"], "btree").unwrap();
+    let inserts: Vec<String> = (0..10).map(|k| format!("INSERT INTO T VALUES ({k}, 'a')")).collect();
+    committed(&source, &inserts.iter().map(String::as_str).collect::<Vec<_>>());
+    committed(&source, &["UPDATE T SET V = 'b' WHERE K < 5"]);
+    source.checkpoint().unwrap();
+    committed(&source, &["UPDATE T SET V = 'a' WHERE K = 0", "UPDATE T SET V = 'c' WHERE K = 1"]);
+    source
+}
+
+/// `log`'s records before its first stale entry (`Change::Stale`), at
+/// their positions, and the records from it, those of the first
+/// transaction after it moved before it if `moved`.
+fn until_stale(log: &MemoryLog, moved: bool) -> (Arc<MemoryLog>, Vec<Vec<u8>>) {
+    let records: Vec<(Lsn, Vec<u8>)> = log.read_from(Lsn(1)).map(Result::unwrap).collect();
+    let decoded = |bytes: &[u8]| Record::decode(bytes, &TypeRegistry::default()).unwrap();
+    let first_stale = records.iter().position(|(_, bytes)| matches!(decoded(bytes).change, Change::Stale { .. })).unwrap();
+    let after = records.iter().skip(first_stale).map(|(_, bytes)| decoded(bytes));
+    let first = after.filter(|r| matches!(r.change, Change::Update { .. })).map(|r| r.tx).next().unwrap();
+    let of_moved = |bytes: &[u8]| moved && decoded(bytes).tx == first;
+    let (before, rest) = records.split_at(first_stale);
+    let given = Arc::new(MemoryLog::new());
+    // Its positions those of `log`: those let go of before are empty.
+    for _ in 1..records.first().map_or(1, |(at, _)| at.0) {
+        given.append(&[]).unwrap();
+    }
+    for (_, bytes) in before {
+        given.append(bytes).unwrap();
+    }
+    let order = rest.iter().filter(|(_, b)| of_moved(b)).chain(rest.iter().filter(|(_, b)| !of_moved(b)));
+    (given, order.map(|(_, bytes)| bytes.clone()).collect())
 }

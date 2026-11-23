@@ -104,6 +104,19 @@ impl State {
         self.awaiting(&uncollected);
     }
 
+    /// \[DESIGN\] Notes as awaiting collection each table whose versions
+    /// await it after a replay of the log (RULES.md D920): a replay ends
+    /// no transaction, so no end notes the tables it changed, and the
+    /// garbage of their last commits would wait for a checkpoint. A
+    /// standby's and a recovery's replays alike.
+    pub(crate) fn note_replayed(&self) {
+        for table in self.catalog.tables() {
+            if let Ok(storage) = self.storage_of(&table.name) {
+                self.leave_awaiting(&table.name, storage);
+            }
+        }
+    }
+
     /// \[DESIGN\] The maintenance job's pass (RULES.md D920): collects
     /// every table awaiting collection as far as the horizon lets, due or
     /// not, waiting for a collection under way, so one pass takes the

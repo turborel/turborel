@@ -93,8 +93,12 @@ pub const RUNNING: [&str; 6] = ["FILES", "INDEX_STATISTICS", "JOBS", "MEMORY_RES
 /// What `db` holds, as its users see it: each Information Schema table's
 /// rows but those of `RUNNING`, each base table's rows, and each index's
 /// entries, through a session of each of `readers`, sorted. Two databases
-/// that hold the same rows and the same catalog give the same.
+/// that hold the same rows and the same catalog give the same. The
+/// maintenance pass runs first, so the versions a commit leaves for a later
+/// batch (RULES.md D920) are collected and each index counts only the
+/// entries of rows its table holds.
 pub fn contents(db: &Database, readers: &[&str]) -> Vec<String> {
+    db.maintain().unwrap();
     let mut found = Vec::new();
     for &user in readers {
         let s = db.session(user);

@@ -64,13 +64,19 @@ use crate::txn::{NO_TRANSACTION, Persistence, TxId};
 use crate::value::types::TypeRegistry;
 
 /// Which of the log's definitions reading it replays: those after the
-/// checkpoint whose image gave the others (`db/files.rs`), or all.
+/// checkpoint whose image gave the others (`db/files.rs`), or all; and
+/// whose entries of versions awaiting collection it takes back
+/// (`recovery/stale.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Definitions {
     /// Every one.
     All,
     /// Those at or after this position.
     From(Lsn),
+    /// Every one, read by a database following from the checkpoint
+    /// holding every record before this position, whose entries it takes
+    /// back as it meets them (RULES.md D57, D920).
+    Following(Lsn),
 }
 
 /// How reading the log replays definitions: which (`Definitions`), and
@@ -97,7 +103,7 @@ impl Replaying {
     /// Whether a definition made at `lsn` is replayed.
     fn replays(&self, lsn: Lsn) -> bool {
         match self.definitions {
-            Definitions::All => true,
+            Definitions::All | Definitions::Following(_) => true,
             Definitions::From(at) => lsn >= at,
         }
     }
@@ -257,7 +263,10 @@ impl Database {
         let committed = u64::try_from(analysis.committed.len()).unwrap_or(u64::MAX);
         report.committed = committed;
         report.not_committed = u64::try_from(analysis.transactions.len()).unwrap_or(u64::MAX).saturating_sub(committed);
-        self.snapshot()?.tx.advance_past(analysis.highest);
+        let st = self.snapshot()?;
+        st.tx.advance_past(analysis.highest);
+        // [DESIGN] RULES.md D920: the garbage it left, for the pass.
+        st.note_replayed();
         Ok((report, changes))
     }
 

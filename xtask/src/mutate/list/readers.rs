@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 19] = [
+pub const READERS: [Mutation; 21] = [
     Mutation {
         name: "pass-collects-nothing",
         package: Package::Core,
@@ -118,6 +118,26 @@ pub const READERS: [Mutation; 19] = [
         replacement: "            let Some(at) = found else { return Ok(keys.len()) };",
         integration: &[],
         unit: &["engine::tree::tests::placed::a_run_of_keys_is_changed_from_the_leaf_that_holds_them"],
+    },
+    Mutation {
+        name: "follower-keeps-stale-entries",
+        package: Package::Core,
+        breaks: "a database following an export keeps the entries its checkpoint saw awaiting collection (RULES.md D926)",
+        file: "src/db/recovery/stale.rs",
+        original: "                    self.mend_stale(name, row, key)\n",
+        replacement: "                    Ok(())\n",
+        integration: &["following::a_following_database_takes_back_the_stale_entries_of_its_export"],
+        unit: &[],
+    },
+    Mutation {
+        name: "follower-stale-unmended",
+        package: Package::Core,
+        breaks: "a follower takes back a stale entry without making again the row's own under its key (RULES.md D926)",
+        file: "src/db/recovery/stale.rs",
+        original: "        st.restore_entry(&change, &|d: &IndexDesc| d.name == name)\n",
+        replacement: "        drop(change);\n        Ok(())\n",
+        integration: &["following::a_following_database_takes_back_the_stale_entries_of_its_export"],
+        unit: &[],
     },
     Mutation {
         name: "batch-due-collected-by-the-commit",

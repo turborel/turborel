@@ -602,6 +602,7 @@ verification approach DO-178C expects (§8).
 | D923 | Increments reserved are applied by a write told the columns they add to |
 | D924 | A commit's rows that one leaf holds are stamped with the leaf latched once |
 | D925 | A batch due is collected by the maintenance job's pass, and by a commit only once it is long due |
+| D926 | A database following takes back the entries its image's checkpoint saw awaiting collection as it replays them, and notes what a replay leaves |
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
 | D942 | A point change whose increments may be reserved reserves them where it reads its row |
@@ -16836,6 +16837,37 @@ The work is not less. It is the job's thread's, not the committer's, so
 a commit is shorter and the database uses more of a second processor
 while commits come. The semantics hold as D920's do: the horizon rule
 is unchanged, and a collection only comes at another moment.
+
+#### D926. A database following takes back the entries its image's checkpoint saw awaiting collection as it replays them, and notes what a replay leaves
+
+A checkpoint logs the index entries of the versions awaiting collection
+after its position (`Change::Stale`), and recovery from it takes them
+back (D25). An export carries the records recovery reads through the
+checkpoint's position, not those after it (D57), so a database
+following that installed one held the image's stale entries and met
+their records only as it replayed what came after, which it passed
+over. Its tables then kept an entry more for each such version for
+good. Before D920 a checkpoint seldom found a version awaiting
+collection; with commits leaving a batch for later, most do, and the
+replication simulation's replicas held an entry more than their
+primaries.
+
+A database following now replays the log knowing the checkpoint its
+image came from (`Definitions::Following`, `recovery/stale.rs`). A
+stale entry that names it is mended as `State::mend_indexes` mends a
+row a change touched: every entry of the row under the key taken back,
+then the entry of its version now made again if that version has the
+key. A change of the row replayed in an earlier call may have mended
+its entries under that key already, so taking back one entry, as
+recovery does before it redoes the changes after, could take the
+row's own. Every other reading of the log passes such an entry over as
+before.
+
+A replay ends no transaction, so no end leaves the tables it changed
+noted as awaiting collection (D920). Its end now notes each table
+whose versions await collection (`State::note_replayed`), and a
+standby's asks for the maintenance job, so a replica collects what its
+replays leave as its primary does.
 
 #### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
 
