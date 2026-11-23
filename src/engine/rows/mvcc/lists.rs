@@ -169,7 +169,16 @@ mod tests {
             let back = decode_change(&encode_change(&change)).unwrap();
             assert_eq!(
                 (back.id, back.before.clone(), back.appended, back.dropped.clone(), back.made, back.unchanged, back.group, back.placed),
-                (change.id, change.before.clone(), change.appended, change.dropped.clone(), change.made, change.unchanged, change.group, change.placed)
+                (
+                    change.id,
+                    change.before.clone(),
+                    change.appended,
+                    change.dropped.clone(),
+                    change.made,
+                    change.unchanged,
+                    change.group,
+                    change.placed
+                )
             );
             assert!(back.bytes() >= FIXED);
         }

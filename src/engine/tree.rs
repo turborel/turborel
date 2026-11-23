@@ -79,9 +79,9 @@ use counts::{Counters, count};
 pub(crate) use node::Parsed;
 
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
+pub use placed::Placed;
 pub(crate) use reclaim::{Entered, Epochs};
 pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of, scan_owned};
-pub use placed::Placed;
 pub use write::{Descended, Update};
 #[cfg(test)]
 use write::{Mode, Written};

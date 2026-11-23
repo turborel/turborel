@@ -9,9 +9,9 @@
 //! a split (Lehman and Yao 1981, §4). A changed stamp, or an entry not
 //! found from the leaf, sends the change down from the root.
 
+use super::BLinkTree;
 use super::node::{self, Node};
 use super::write::{Mode, Written};
-use super::BLinkTree;
 use crate::disk::pager::PageId;
 use crate::error::Result;
 
