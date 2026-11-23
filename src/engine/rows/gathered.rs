@@ -230,8 +230,6 @@ impl Gathering {
     }
 }
 
-// Unit tests: records gathered as their rows decode, malformed fields
-// refused (RULES.md R-TEST-1, R-TEST-2).
 /// The datetime of type `t` a record's `field` of column `at` holds, none
 /// if null.
 ///
@@ -259,5 +257,7 @@ fn bool_of(field: Option<&[u8]>, at: usize) -> Result<Option<bool>> {
     }
 }
 
+// Unit tests: records gathered as their rows decode, malformed fields
+// refused (RULES.md R-TEST-1, R-TEST-2).
 #[cfg(test)]
 mod tests;
