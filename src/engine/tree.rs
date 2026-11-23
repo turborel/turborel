@@ -87,7 +87,7 @@ pub use pin::Pinned;
 pub use placed::Placed;
 pub(crate) use reclaim::{Entered, Epochs};
 pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of, scan_owned};
-pub use write::{Descended, Update};
+pub use write::{Descended, Update, Updated};
 #[cfg(test)]
 use write::{Mode, Written};
 
@@ -463,39 +463,6 @@ impl BLinkTree {
             copy
         };
         self.split(held.id, &copy, (key, value), slot)
-    }
-
-    /// `change`, of node `held` latched for writing as `page`: made in
-    /// place if the node then fits its page, else not made, and the node's
-    /// content given to split with the change (`split`).
-    fn change_latched(&self, held: &NodeLock<'_>, page: &mut Vec<u8>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<Option<Vec<u8>>> {
-        let room = self.room(held, &Node::parse(page)?, (key, value), slot)?;
-        let Some(room) = room else {
-            if let Slot::Replace(at) = slot {
-                node::overwrite(page, at, value)?;
-            }
-            return Ok(None);
-        };
-        // Garbage is reclaimed only once it is worth a node built
-        // again (`room.rs`); short of that a node with no room splits.
-        let in_place = room.after <= self.capacity && (room.reclaim || page.len().saturating_add(room.stored) <= self.capacity);
-        let fits =
-            in_place || (room::compactable(page, &room, key, slot)? && self.fits_compacted(page, key, node::entry_size(key, value))?);
-        if room.run || !fits {
-            return Ok(Some(page.clone()));
-        }
-        let at = match slot {
-            Slot::Insert(at) => at,
-            Slot::Replace(at) => {
-                node::remove(page, at)?;
-                at
-            }
-        };
-        if page.len().saturating_add(room.stored) > self.capacity {
-            *page = node::compact(page)?;
-        }
-        node::insert(page, at, key, value)?;
-        Ok(None)
     }
 
     /// Splits node `id`, whose content was `copy`, making `slot`'s change

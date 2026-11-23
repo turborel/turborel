@@ -3,6 +3,8 @@
 //! past splits, and changes it in place or splits it, posting the split up
 //! the tree (`tree.rs`, §5).
 
+use std::cell::Cell;
+
 use super::here::Here;
 use super::node::{self, CHILD, Node};
 use super::{BLinkTree, Path, Slot, Split, Target};
@@ -30,6 +32,27 @@ pub enum Update {
     Put(Vec<u8>),
     /// Removes it, if there.
     Remove,
+}
+
+/// \[DESIGN\] What `update_alone_into`'s change does to an entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Updated {
+    /// Leaves it as it is, or absent.
+    Keep,
+    /// Gives it the value written into the buffer, adding it if absent.
+    Put,
+    /// Removes it, if there.
+    Remove,
+}
+
+/// \[DESIGN\] The most bytes of the buffer a thread keeps for the values
+/// its changes put: an entry is at most a quarter of a page, and the
+/// largest page is 64 KiB.
+const KEPT_BYTES: usize = 65_536;
+
+thread_local! {
+    /// The buffer of the thread's last change that put a value.
+    static VALUE: Cell<Vec<u8>> = const { Cell::new(Vec::new()) };
 }
 
 /// What a write did.
@@ -63,15 +86,28 @@ impl BLinkTree {
     ///
     /// As `get`.
     pub fn get_for_write(&self, key: &[u8]) -> Result<Option<(Vec<u8>, Descended)>> {
+        let mut value = Vec::new();
+        Ok(self.get_for_write_into(key, &mut value)?.map(|found| (value, found)))
+    }
+
+    /// \[DESIGN\] As `get_for_write`, the value found left in `into`,
+    /// cleared first, so a caller that keeps a buffer from write to write
+    /// allocates none for the value (RULES.md D865).
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    pub fn get_for_write_into(&self, key: &[u8], into: &mut Vec<u8>) -> Result<Option<Descended>> {
         let _guard = self.epochs.guard();
         let stamp = self.epochs.stamp();
-        if let Some((leaf, value)) = self.at_noted(key, |leaf| value_of(leaf, key))? {
-            return Ok(value.map(|value| (value, Descended { path: Path::default(), leaf: PageId(leaf), stamp })));
+        into.clear();
+        if let Some((leaf, found)) = self.at_noted(key, |leaf| value_into(leaf, key, into))? {
+            return Ok(found.then(|| Descended { path: Path::default(), leaf: PageId(leaf), stamp }));
         }
         let mut path = Path { tallied: true, ..Path::default() };
-        let (leaf, value) = self.descend(Target::Key(key), 0, &mut path, |leaf| value_of(leaf, key))?;
+        let (leaf, found) = self.descend(Target::Key(key), 0, &mut path, |leaf| value_into(leaf, key, into))?;
         path.tallied = false;
-        Ok(value.map(|value| (value, Descended { path, leaf, stamp })))
+        Ok(found.then_some(Descended { path, leaf, stamp }))
     }
 
     /// As `replace_if`, from where `get_for_write`'s read reached: the
@@ -177,7 +213,8 @@ impl BLinkTree {
     }
 
     /// The rest of `delete`, from `leaf`, reached by `path`, which may have
-    /// split since it was read; only if the value is `expected`, if given.
+    /// split since it was read; only if the value is `expected`, if given,
+    /// and then an empty value stands for the one removed.
     /// The leaf is searched, the value compared and the entry removed
     /// under one latch (`here.rs`).
     pub(super) fn delete_from(&self, path: &Path, leaf: PageId, key: &[u8], expected: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
@@ -189,7 +226,9 @@ impl BLinkTree {
         if expected.is_some_and(|expected| expected != old) {
             return Ok(None);
         }
-        let old = old.to_vec();
+        // Only a delete of whatever is there gives the value back: one of
+        // a value expected has it, and copies none.
+        let old = if expected.is_some() { Vec::new() } else { old.to_vec() };
         self.removed(path, held, page, (key, at))?;
         Ok(Some(old))
     }
@@ -230,6 +269,49 @@ impl BLinkTree {
     ///
     /// As `update`.
     pub fn update_alone(&self, key: &[u8], prefix: usize, change: impl FnOnce(Option<&[u8]>) -> Result<Update>) -> Result<bool> {
+        self.update_alone_into(key, prefix, |old, into| {
+            Ok(match change(old)? {
+                Update::Keep => Updated::Keep,
+                Update::Remove => Updated::Remove,
+                Update::Put(value) => {
+                    *into = value;
+                    Updated::Put
+                }
+            })
+        })
+    }
+
+    /// \[DESIGN\] As `update_alone`, `change` writing the value it puts
+    /// into the buffer it is given, empty, which the thread keeps from one
+    /// such change to the next (RULES.md D865): a change that puts a value
+    /// allocates none for it.
+    ///
+    /// # Errors
+    ///
+    /// As `update`.
+    pub fn update_alone_into(
+        &self,
+        key: &[u8],
+        prefix: usize,
+        change: impl FnOnce(Option<&[u8]>, &mut Vec<u8>) -> Result<Updated>,
+    ) -> Result<bool> {
+        let mut value = VALUE.take();
+        value.clear();
+        let alone = self.updated_into(key, prefix, &mut value, change);
+        if value.capacity() <= KEPT_BYTES {
+            VALUE.set(value);
+        }
+        alone
+    }
+
+    /// `update_alone_into`, the value put written into `value`.
+    fn updated_into(
+        &self,
+        key: &[u8],
+        prefix: usize,
+        value: &mut Vec<u8>,
+        change: impl FnOnce(Option<&[u8]>, &mut Vec<u8>) -> Result<Updated>,
+    ) -> Result<bool> {
         let _guard = self.epochs.guard();
         let mut path = Path::default();
         let leaf = self.leaf_for_write(key, &mut path)?;
@@ -245,19 +327,19 @@ impl BLinkTree {
                 Ok(at) => Some(node.value(at)?),
                 Err(_) => None,
             };
-            (found, alone_at(&node, found, begins)?, change(old)?)
+            (found, alone_at(&node, found, begins)?, change(old, value)?)
         };
-        let (slot, value) = match (update, found) {
-            (Update::Keep, _) | (Update::Remove, Err(_)) => return Ok(alone),
-            (Update::Remove, Ok(at)) => return self.removed(&path, held, page, (key, at)).map(|()| alone),
-            (Update::Put(value), Ok(at)) => (Slot::Replace(at), value),
-            (Update::Put(value), Err(at)) => (Slot::Insert(at), value),
+        let slot = match (update, found) {
+            (Updated::Keep, _) | (Updated::Remove, Err(_)) => return Ok(alone),
+            (Updated::Remove, Ok(at)) => return self.removed(&path, held, page, (key, at)).map(|()| alone),
+            (Updated::Put, Ok(at)) => Slot::Replace(at),
+            (Updated::Put, Err(at)) => Slot::Insert(at),
         };
-        self.fits(key, &value)?;
-        let copy = self.change_latched(&held, &mut page, (key, &value), slot)?;
+        self.fits(key, value)?;
+        let copy = self.change_latched(&held, &mut page, (key, value), slot)?;
         drop(page);
         let splits = match copy {
-            Some(copy) => self.split(held.id, &copy, (key, &value), slot)?,
+            Some(copy) => self.split(held.id, &copy, (key, value), slot)?,
             None => Vec::new(),
         };
         self.posted(&path, held, key, splits).map(|_| alone)
@@ -384,6 +466,13 @@ fn alone_at(node: &Node<'_>, found: std::result::Result<usize, usize>, begins: &
     let none_before = before.map(shares).transpose()?.is_some_and(|s| !s);
     let none_after = if after < node.len() { !shares(after)? } else { node.high.is_none_or(|h| !h.starts_with(begins)) };
     Ok(none_before && none_after)
+}
+
+/// Whether `key` is in `leaf`, its value appended to `into`.
+fn value_into(leaf: &Node<'_>, key: &[u8], into: &mut Vec<u8>) -> Result<bool> {
+    let Ok(at) = leaf.search(key)? else { return Ok(false) };
+    into.extend_from_slice(leaf.value(at)?);
+    Ok(true)
 }
 
 /// The value of `key` in `leaf`, copied, if it is there.

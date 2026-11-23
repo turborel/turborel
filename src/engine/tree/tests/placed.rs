@@ -75,7 +75,7 @@ fn a_delete_and_an_update_change_the_leaf_covering_their_key() {
     let leaf = tree.descend(Target::Key(&key(3_000)), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
     fill(&tree, 2_999);
     assert_eq!(tree.delete_from(&Path::default(), leaf, &key(3_000), Some(b"other")).unwrap(), None, "not the value expected");
-    assert_eq!(tree.delete_from(&Path::default(), leaf, &key(3_000), Some(&VALUE)).unwrap(), Some(VALUE.to_vec()));
+    assert!(tree.delete_from(&Path::default(), leaf, &key(3_000), Some(&VALUE)).unwrap().is_some());
     assert_eq!(tree.get(&key(3_000)).unwrap(), None);
     let mut shown = None;
     let keep = |old: Option<&[u8]>| {
@@ -91,4 +91,38 @@ fn a_delete_and_an_update_change_the_leaf_covering_their_key() {
     let put = |old: Option<&[u8]>| Ok(if old.is_none() { Update::Put(VALUE.to_vec()) } else { Update::Keep });
     tree.update(&key(7), put).unwrap();
     assert_eq!(tree.get(&key(7)).unwrap(), Some(VALUE.to_vec()));
+}
+
+/// Verifies: [DESIGN] RULES.md D865: a read for a write leaves the value
+/// in the buffer it is given, cleared first, and none for a key absent;
+/// a change that writes its value into the buffer it is handed puts,
+/// keeps and removes as one that returns its value does, the buffer
+/// handed in empty each time; and a value put longer than the one there,
+/// with room in the leaf, is written in its place.
+#[test]
+fn values_are_read_into_and_put_from_buffers_kept() {
+    let (tree, _scratch) = tree("buffers");
+    fill(&tree, 100);
+    let mut value = b"stale".to_vec();
+    let found = tree.get_for_write_into(&key(7), &mut value).unwrap().unwrap();
+    assert_eq!(value, VALUE);
+    assert!(tree.replace_found(&found, &key(7), (&VALUE, b"seven")).unwrap());
+    assert!(tree.get_for_write_into(&key(900), &mut value).unwrap().is_none());
+    assert!(value.is_empty(), "cleared");
+    let put = |text: &'static [u8]| {
+        move |_: Option<&[u8]>, into: &mut Vec<u8>| {
+            assert!(into.is_empty(), "handed in empty");
+            into.extend_from_slice(text);
+            Ok(Updated::Put)
+        }
+    };
+    tree.update_alone_into(&key(7), 0, put(b"a value longer than seven")).unwrap();
+    assert_eq!(tree.get(&key(7)).unwrap(), Some(b"a value longer than seven".to_vec()));
+    tree.update_alone_into(&key(500), 0, put(b"new")).unwrap();
+    assert_eq!(tree.get(&key(500)).unwrap(), Some(b"new".to_vec()));
+    tree.update_alone_into(&key(500), 0, |old, _| Ok(if old == Some(&b"new"[..]) { Updated::Keep } else { Updated::Remove })).unwrap();
+    assert_eq!(tree.get(&key(500)).unwrap(), Some(b"new".to_vec()), "kept");
+    tree.update_alone_into(&key(500), 0, |_, _| Ok(Updated::Remove)).unwrap();
+    assert_eq!(tree.get(&key(500)).unwrap(), None);
+    assert_eq!(keys(&tree, Direction::Forward).len(), 100);
 }

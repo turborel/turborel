@@ -222,6 +222,7 @@ impl Gate {
 /// \[DESIGN\] The thread's stripe of `stripes`: given in turn as threads
 /// first ask, so threads working at once seldom share one, for counters
 /// and marks kept by stripe, each on cache lines of its own.
+#[inline]
 pub(crate) fn thread_stripe(stripes: usize) -> usize {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     thread_local! {

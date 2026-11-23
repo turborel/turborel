@@ -16,9 +16,9 @@
 //! (RULES.md D856): the caller is shown the value where it lies, under
 //! the latch, and copies none.
 
-use super::node::Node;
+use super::node::{self, Node};
 use super::write::Mode;
-use super::{BLinkTree, NodeLock, Slot, Split};
+use super::{BLinkTree, NodeLock, Slot, Split, room};
 use crate::disk::buffer::PageMut;
 use crate::error::Result;
 
@@ -66,6 +66,51 @@ fn sought(node: &Node<'_>, key: &[u8], mode: Mode<'_>) -> Result<Sought> {
 }
 
 impl BLinkTree {
+    /// `change`, of node `held` latched for writing as `page`: made in
+    /// place if the node then fits its page, else not made, and the node's
+    /// content given to split with the change (`split`). A value replaced
+    /// by a longer one with room for it is written in place
+    /// (`node::lengthen`, RULES.md D864).
+    pub(super) fn change_latched(
+        &self,
+        held: &NodeLock<'_>,
+        page: &mut Vec<u8>,
+        (key, value): (&[u8], &[u8]),
+        slot: Slot,
+    ) -> Result<Option<Vec<u8>>> {
+        let room = self.room(held, &Node::parse(page)?, (key, value), slot)?;
+        let Some(room) = room else {
+            if let Slot::Replace(at) = slot {
+                node::overwrite(page, at, value)?;
+            }
+            return Ok(None);
+        };
+        // Garbage is reclaimed only once it is worth a node built
+        // again (`room.rs`); short of that a node with no room splits.
+        let past = page.len().saturating_add(room.stored) > self.capacity;
+        let in_place = room.after <= self.capacity && (room.reclaim || !past);
+        let fits =
+            in_place || (room::compactable(page, &room, key, slot)? && self.fits_compacted(page, key, node::entry_size(key, value))?);
+        if room.run || !fits {
+            return Ok(Some(page.clone()));
+        }
+        let at = match slot {
+            Slot::Insert(at) => at,
+            Slot::Replace(at) => {
+                if !past {
+                    return node::lengthen(page, at, value).map(|()| None);
+                }
+                node::remove(page, at)?;
+                at
+            }
+        };
+        if page.len().saturating_add(room.stored) > self.capacity {
+            *page = node::compact_in(page, self.capacity)?;
+        }
+        node::insert(page, at, key, value)?;
+        Ok(None)
+    }
+
     /// The node covering `key`, latched for writing: `held`, or the node
     /// reached by moving right from it while it does not cover `key`,
     /// which `held` then is (§5, move.right).

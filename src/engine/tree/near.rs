@@ -49,6 +49,29 @@ const LEAVES_TRIED: usize = 2;
 /// descends: splits since the note, each moving keys only right.
 const HOPS: usize = 4;
 
+/// A reader shown a value once: what `get_near_with` was given, until one
+/// of the places a read looks in has the key.
+struct Reader<F>(Option<F>);
+
+impl<F> Reader<F> {
+    /// What the reader makes of `value`, shown where it lies.
+    fn show<R>(&mut self, value: &[u8]) -> Result<Option<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        self.0.take().map(|f| f(value)).transpose()
+    }
+}
+
+/// What came of looking for a key in one of the places a read looks in.
+enum Tried<R> {
+    /// Nothing: the place does not answer for the key.
+    Elsewhere,
+    /// What the reader made of the key's value, none if the key is not in
+    /// the tree.
+    Answered(Option<R>),
+}
+
 impl BLinkTree {
     /// Whether `key` is in the tree; its value left in `near`, which is
     /// kept from read to read of one scan.
@@ -57,29 +80,58 @@ impl BLinkTree {
     ///
     /// As `get`.
     pub fn get_near(&self, key: &[u8], near: &mut Near) -> Result<bool> {
+        let mut bytes = std::mem::take(&mut near.bytes);
+        bytes.clear();
+        let copy = |value: &[u8]| {
+            bytes.extend_from_slice(value);
+            Ok(())
+        };
+        let found = self.get_near_with(key, near, copy);
+        near.bytes = bytes;
+        Ok(found?.is_some())
+    }
+
+    /// \[DESIGN\] As `get_near`, the value of `key` shown to `f` where it
+    /// lies, not copied (RULES.md D863): under its leaf's latch, or over a
+    /// copy of the leaf, `near`'s or the thread's. What `f` makes of it,
+    /// or none if `key` is not in the tree, `f` then not called. The leaf
+    /// remembered, the leaf noted and the descent are tried in `get_near`'s
+    /// order, and `near` is left for the next read as `get_near` leaves
+    /// it, but for its bytes, which are not touched. `f` must not use the
+    /// tree nor wait.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s errors; as `get`.
+    pub fn get_near_with<R>(&self, key: &[u8], near: &mut Near, f: impl FnOnce(&[u8]) -> Result<R>) -> Result<Option<R>> {
         let _guard = self.epochs.guard();
         let stamp = self.epochs.stamp();
-        if let Some(found) = self.in_leaf(key, stamp, near)? {
+        let mut reader = Reader(Some(f));
+        if let Tried::Answered(found) = self.in_leaf(key, stamp, near, &mut reader)? {
             return Ok(found);
         }
-        if let Some(found) = self.hinted(key, stamp, near)? {
+        if let Tried::Answered(found) = self.hinted(key, stamp, near, &mut reader)? {
             return Ok(found);
         }
-        let (bytes, at) = (&mut near.bytes, &mut near.at);
+        let at = &mut near.at;
         let mut path = Path { tallied: true, ..Path::default() };
-        let (leaf, found) = self.descend(Target::Key(key), 0, &mut path, |leaf| copied(leaf, key, (bytes, at)))?;
+        let (leaf, found) = self.descend(Target::Key(key), 0, &mut path, |leaf| located(leaf, key, at, &mut reader))?;
         near.leaf = Some((leaf.0, stamp));
         Ok(found)
     }
 
-    /// Whether `key` is in the tree, if the leaf `near` remembers answers,
-    /// or the one right of it, for a key past its range. A leaf that
-    /// answers twice in a row is copied into `near`, and later reads of it
-    /// take the copy while its frame's version holds (`in_copy`).
-    fn in_leaf(&self, key: &[u8], stamp: u64, near: &mut Near) -> Result<Option<bool>> {
-        let Some((first, _)) = near.leaf.filter(|&(_, at)| at == stamp && near.misses < MOST_MISSES) else { return Ok(None) };
-        if let Some(found) = self.in_copy(key, first, near)? {
-            return Ok(Some(found));
+    /// What the reader makes of `key`'s value, none if it is not in the
+    /// tree, if the leaf `near` remembers answers, or the one right of it,
+    /// for a key past its range. A leaf that answers twice in a row is
+    /// copied into `near`, and later reads of it take the copy while its
+    /// frame's version holds (`in_copy`).
+    fn in_leaf<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        let Some((first, _)) = near.leaf.filter(|&(_, at)| at == stamp && near.misses < MOST_MISSES) else { return Ok(Tried::Elsewhere) };
+        if let Tried::Answered(found) = self.in_copy(key, first, near, reader)? {
+            return Ok(Tried::Answered(found));
         }
         let mut next = Some(first);
         for _ in 0..LEAVES_TRIED {
@@ -96,26 +148,29 @@ impl BLinkTree {
                     near.kept = Some((leaf, version));
                     near.parsed = Some(node.parsed());
                 }
-                return copied(&node, key, (&mut near.bytes, &mut near.at)).map(Some);
+                return located(&node, key, &mut near.at, reader).map(Tried::Answered);
             }
             next = node.right.filter(|_| node.level == 0 && !node.deleted && !node.covers(key)).map(|right| right.0);
         }
         near.misses = near.misses.saturating_add(1);
-        Ok(None)
+        Ok(Tried::Elsewhere)
     }
 
-    /// Whether `key` is in the tree, if `near` keeps a copy of leaf `leaf`
-    /// that is still the leaf's content and answers for it. Such a read
-    /// reads no page, takes no latch and writes no shared word (RULES.md
-    /// D806). The copy is not parsed again, and a key at the slot after
-    /// the last one found is taken with one comparison (D808).
-    fn in_copy(&self, key: &[u8], leaf: u64, near: &mut Near) -> Result<Option<bool>> {
-        let Some((_, version)) = near.kept.filter(|&(kept, _)| kept == leaf) else { return Ok(None) };
+    /// As `in_leaf`, if `near` keeps a copy of leaf `leaf` that is still
+    /// the leaf's content and answers for `key`. Such a read reads no
+    /// page, takes no latch and writes no shared word (RULES.md D806). The
+    /// copy is not parsed again, and a key at the slot after the last one
+    /// found is taken with one comparison (D808).
+    fn in_copy<R, F>(&self, key: &[u8], leaf: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        let Some((_, version)) = near.kept.filter(|&(kept, _)| kept == leaf) else { return Ok(Tried::Elsewhere) };
         if !self.pool.unchanged(self.file, leaf, version) {
             near.kept = None;
-            return Ok(None);
+            return Ok(Tried::Elsewhere);
         }
-        let Near { page, bytes, at, misses, parsed, .. } = near;
+        let Near { page, at, misses, parsed, .. } = near;
         let node = match parsed.as_ref().and_then(|parsed| Node::parsed_again(page, parsed)) {
             Some(node) => node,
             None => Node::parse(page)?,
@@ -126,30 +181,31 @@ impl BLinkTree {
             None => None,
         };
         if stepped.is_none() && !answers(&node, key)? {
-            return Ok(None);
+            return Ok(Tried::Elsewhere);
         }
         self.tally.lookup();
         *misses = 0;
-        let Some(slot) = stepped else { return copied(&node, key, (bytes, at)).map(Some) };
-        bytes.clear();
-        bytes.extend_from_slice(node.entry(slot)?.1);
+        let Some(slot) = stepped else { return located(&node, key, at, reader).map(Tried::Answered) };
         *at = Some(slot);
-        Ok(Some(true))
+        reader.show(node.value(slot)?).map(Tried::Answered)
     }
 }
 
 impl BLinkTree {
-    /// Whether `key` is in the tree, if the leaf noted for its row answers,
-    /// or one right of it within `HOPS` links.
-    fn hinted(&self, key: &[u8], stamp: u64, near: &mut Near) -> Result<Option<bool>> {
-        let (bytes, at) = (&mut near.bytes, &mut near.at);
-        let Some((leaf, found)) = self.at_noted(key, |node| copied(node, key, (bytes, at)))? else { return Ok(None) };
+    /// As `in_leaf`, if the leaf noted for `key`'s row answers, or one
+    /// right of it within `HOPS` links.
+    fn hinted<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        let at = &mut near.at;
+        let Some((leaf, found)) = self.at_noted(key, |node| located(node, key, at, reader))? else { return Ok(Tried::Elsewhere) };
         // The misses stay as they are: the leaf remembered did not answer,
         // so the reads are not side by side, and a hint that answers says
         // nothing else. Cleared here, reads of rows far apart kept trying
         // the leaf of the last and its neighbour before every hint.
         near.leaf = Some((leaf, stamp));
-        Ok(Some(found))
+        Ok(Tried::Answered(found))
     }
 
     /// What `at` finds in the leaf for `key`, and that leaf, if the leaf
@@ -199,12 +255,15 @@ fn answers(node: &Node<'_>, key: &[u8]) -> Result<bool> {
     Ok(node.level == 0 && !node.deleted && node.len() > 0 && node.covers(key) && node.key(0)?.cmp_bytes(key) != Ordering::Greater)
 }
 
-/// Whether `leaf` holds `key`, its value copied to `bytes` and its place
-/// left in `at`. The entry after the one at `at` is tried first, as a scan
-/// through an index asks for the rows of a range in order; its key is
-/// compared, so a place left by another leaf costs one comparison.
-fn copied(leaf: &Node<'_>, key: &[u8], (bytes, at): (&mut Vec<u8>, &mut Option<usize>)) -> Result<bool> {
-    bytes.clear();
+/// What the reader makes of `key`'s value in `leaf`, shown where it lies,
+/// none if `leaf` does not hold `key`; its place left in `at`. The entry
+/// after the one at `at` is tried first, as a scan through an index asks
+/// for the rows of a range in order; its key is compared, so a place left
+/// by another leaf costs one comparison.
+fn located<R, F>(leaf: &Node<'_>, key: &[u8], at: &mut Option<usize>, reader: &mut Reader<F>) -> Result<Option<R>>
+where
+    F: FnOnce(&[u8]) -> Result<R>,
+{
     let next = at.and_then(|at| at.checked_add(1)).filter(|&next| next < leaf.len());
     let found = match next {
         Some(next) if leaf.key(next)?.is(key) => Ok(next),
@@ -212,10 +271,7 @@ fn copied(leaf: &Node<'_>, key: &[u8], (bytes, at): (&mut Vec<u8>, &mut Option<u
     };
     *at = found.ok();
     match found {
-        Ok(found) => {
-            bytes.extend_from_slice(leaf.entry(found)?.1);
-            Ok(true)
-        }
-        Err(_) => Ok(false),
+        Ok(found) => reader.show(leaf.value(found)?),
+        Err(_) => Ok(None),
     }
 }
