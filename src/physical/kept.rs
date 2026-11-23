@@ -20,7 +20,7 @@ use crate::db::State;
 use crate::error::{Code, Result, fail};
 use crate::index::Probe;
 use crate::logical::{Cond, Expr, Placing, Slot, filled_expr_as};
-use crate::value::{CompOp, DataType, Value};
+use crate::value::{CompOp, DataType, Value, cast_warned, held};
 
 mod filled;
 mod shape;
@@ -240,8 +240,50 @@ fn filled_scan(mut plan: Plan, values: &[Value], placing: Placing) -> Result<Pla
 /// As `logical::filled`; SQLCODE -910 if the slot is not filled by a
 /// constant.
 pub(super) fn slot_value(s: &ProbeSlot, values: &[Value], placing: Placing) -> Result<Value> {
+    if let (Placing::Cast, Some(value)) = (placing, read(s, values)) {
+        return Ok(value);
+    }
     let expr = s.expr.as_deref().map_or_else(|| Expr::Dynamic(s.slot.clone()), Clone::clone);
     evaluated(expr, values, placing)
+}
+
+/// \[DESIGN\] RULES.md D911: the value of `s`'s slot cast to its type, or
+/// of its expression of the slot, read where `values` hold it, the
+/// expression evaluated over them as it stands and not copied with them
+/// filled in. None if that raises anything, an exception or a warning of
+/// the slot's own cast, or the expression is of another shape: its value
+/// is then found as before, by `evaluated`, which raises what it raises.
+fn read(s: &ProbeSlot, values: &[Value]) -> Option<Value> {
+    let Some(expr) = s.expr.as_deref() else {
+        let value = values.get(s.slot.index)?;
+        if held(value, &s.slot.data_type) {
+            return Some(value.clone());
+        }
+        return match cast_warned(value.clone(), &s.slot.data_type) {
+            Ok((cast, None)) => Some(cast),
+            Ok((_, Some(_))) | Err(_) => None,
+        };
+    };
+    match expr {
+        Expr::Arith(..) | Expr::Call(..) => {
+            let framed = crate::exec::Framed { inner: &crate::exec::NoSubqueries, frame: values, outer: &[] };
+            crate::exec::eval(expr, &Vec::new(), &framed).ok()
+        }
+        Expr::Column(_)
+        | Expr::Const(_)
+        | Expr::Dynamic(_)
+        | Expr::Neg(_)
+        | Expr::Outer(..)
+        | Expr::Cast(..)
+        | Expr::Case(..)
+        | Expr::Subquery(..)
+        | Expr::SortKey(..)
+        | Expr::Domain(..)
+        | Expr::Warned(..)
+        | Expr::Truth(_)
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => None,
+    }
 }
 
 /// The value of `expr`, a slot, a sum or difference of one and a constant

@@ -19,6 +19,7 @@ use crate::binder::{self, BoundWrite, INSERT_RULE, ObjectColumn, ViewCheck};
 use crate::catalog::{ColumnDesc, Horizon, Principal, QualifiedName, TableDesc};
 use crate::error::{At, Result};
 use crate::exec::{Db, HeldRows, Runner, Slots, Subqueries, eval_cond, execute, row_entries};
+use crate::index::Probe;
 use crate::logical::{Expr, LogicalPlan, Truth, filled};
 use crate::params::Params;
 use crate::physical::{Kept as KeptPhysical, Plan};
@@ -153,7 +154,9 @@ enum ObjectRows {
     Kept(Plan, Arc<[QualifiedName]>),
     /// Its kept plan, a point read, its row read without the executor's
     /// operators (RULES.md D752); the tables it reads.
-    Point(Arc<KeptPhysical>, Arc<[QualifiedName]>),
+    /// And its probe, placed with this execution's values, if it placed
+    /// it already (RULES.md D911).
+    Point(Arc<KeptPhysical>, Arc<[QualifiedName]>, Option<Probe>),
 }
 
 impl Written {
@@ -180,7 +183,17 @@ impl Written {
     /// `bound`, kept, whose plan kept `kept` is a point read, run with
     /// `slots` (RULES.md D752).
     pub(super) fn pointed(bound: Arc<BoundWrite>, (kept, reads): (Arc<KeptPhysical>, Arc<[QualifiedName]>), slots: Slots) -> Written {
-        Written { bound, rows: ObjectRows::Point(kept, reads), slots: Some(slots) }
+        Written { bound, rows: ObjectRows::Point(kept, reads, None), slots: Some(slots) }
+    }
+
+    /// It, whose plan is a point read, with that read's probe `probe`,
+    /// placed with its slots' values already (RULES.md D911).
+    #[must_use]
+    pub(super) fn probing(mut self, probe: Probe) -> Written {
+        if let ObjectRows::Point(_, _, placed) = &mut self.rows {
+            *placed = Some(probe);
+        }
+        self
     }
 
     /// Its SET values: column position and new value (`None` is NULL), in
@@ -438,7 +451,7 @@ pub(super) fn object_rows(st: &Arc<State>, tx: &Txn, w: Written) -> Result<(Writ
         ObjectRows::Bound => (Some(bound.rows.clone()), None),
         ObjectRows::Filled(logical) => (Some(logical), None),
         ObjectRows::Kept(plan, reads) => (None, Some((plan, reads))),
-        ObjectRows::Point(kept, reads) => {
+        ObjectRows::Point(kept, reads, _) => {
             let entries = pointed::object_row(st, tx, (&bound, &kept, &reads), (&db, slots.as_deref().unwrap_or_default()))?;
             return Ok((Written { bound, rows: ObjectRows::Bound, slots }, entries));
         }

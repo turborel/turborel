@@ -12,6 +12,7 @@ mod check_rebind;
 mod cli;
 mod client;
 mod collations;
+mod compiled_points;
 mod composite;
 mod contents;
 mod dead_entries;
