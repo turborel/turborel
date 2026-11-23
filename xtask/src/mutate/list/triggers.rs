@@ -85,7 +85,7 @@ pub const TRIGGERS: [Mutation; 40] = [
         name: "triggers-statement-skipped-for-no-rows",
         package: Package::Core,
         breaks: "a DELETE of no rows returns before its statement triggers execute",
-        file: "src/db/write.rs",
+        file: "src/db/write/deleted.rs",
         original: "    if objects.is_empty() && effects.triggered.is_none() {\n        return Ok(None);\n    }\n    // [ISO/IEC 9075-2:2023 §15.8 GR2]",
         replacement: "    if objects.is_empty() {\n        return Ok(None);\n    }\n    // [ISO/IEC 9075-2:2023 §15.8 GR2]",
         integration: &["triggers::a_statement_trigger_runs_for_no_rows"],
