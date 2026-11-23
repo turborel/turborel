@@ -25,6 +25,9 @@
 //! a page taken out in epoch e is freed once the epoch is e + 2, when every
 //! operation that began before it was taken out has ended.
 //!
+//! A thread that makes many operations on one tree pins it, and is counted
+//! once for all of them (`pin.rs`).
+//!
 //! Reads that start from a leaf remembered from the last read (`near.rs`)
 //! rely on two orderings here. A leaf is marked deleted, under its lock,
 //! before its page is retired, so a leaf read not deleted is still in the
@@ -42,6 +45,9 @@ use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::sync::{lock_builtin, thread_stripe};
 
+/// The epochs made so far, so each has a number of its own.
+static MADE: AtomicU64 = AtomicU64::new(1);
+
 /// \[DESIGN\] Stripes of the epoch counters: more than the threads that use
 /// a tree at once, so they seldom share one.
 const STRIPES: usize = 64;
@@ -53,6 +59,8 @@ struct Stripe([AtomicU64; 2]);
 
 /// The epochs of a tree, and the pages taken out of it, to free.
 pub(crate) struct Epochs {
+    /// Its number, its own among the process's trees (`pin.rs`).
+    number: u64,
     current: AtomicU64,
     under_way: Box<[Stripe]>,
     retired: Mutex<Vec<(u64, PageId)>>,
@@ -82,6 +90,7 @@ impl Drop for Guard<'_> {
 impl Epochs {
     pub(crate) fn new() -> Epochs {
         Epochs {
+            number: MADE.fetch_add(1, Ordering::Relaxed),
             current: AtomicU64::new(0),
             under_way: (0..STRIPES).map(|_| Stripe::default()).collect(),
             retired: Mutex::new(Vec::new()),
@@ -105,9 +114,15 @@ impl Epochs {
         }
     }
 
-    /// An operation guarded until the guard is dropped.
-    pub(super) fn guard(&self) -> Guard<'_> {
+    /// An operation counted until the guard is dropped, whether or not
+    /// the thread has the tree pinned (`pin.rs`).
+    pub(super) fn guarded(&self) -> Guard<'_> {
         Guard { epochs: self, entered: self.enter() }
+    }
+
+    /// Its number, never 0.
+    pub(super) fn number(&self) -> u64 {
+        self.number
     }
 
     /// Counts the operation `entered` ended.

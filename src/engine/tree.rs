@@ -64,6 +64,7 @@ mod load;
 mod merge;
 mod near;
 mod node;
+mod pin;
 mod placed;
 mod reclaim;
 mod retired;
@@ -80,6 +81,7 @@ use counts::{Counters, count};
 pub(crate) use node::Parsed;
 
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
+pub use pin::Pinned;
 pub use placed::Placed;
 pub(crate) use reclaim::{Entered, Epochs};
 pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of, scan_owned};
@@ -472,7 +474,8 @@ impl BLinkTree {
         // Garbage is reclaimed only once it is worth a node built
         // again (`room.rs`); short of that a node with no room splits.
         let in_place = room.after <= self.capacity && (room.reclaim || page.len().saturating_add(room.stored) <= self.capacity);
-        let fits = in_place || (room::compactable(page, &room, key, slot)? && self.fits_compacted(page, key, node::entry_size(key, value))?);
+        let fits =
+            in_place || (room::compactable(page, &room, key, slot)? && self.fits_compacted(page, key, node::entry_size(key, value))?);
         if room.run || !fits {
             return Ok(Some(page.clone()));
         }

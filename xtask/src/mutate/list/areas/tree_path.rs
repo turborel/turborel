@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 17] = [
+pub const TREE_PATH: [Mutation; 18] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -173,6 +173,16 @@ pub const TREE_PATH: [Mutation; 17] = [
         replacement: "        if expected.is_none() && old.is_empty() {",
         integration: &[],
         unit: &["engine::tree::tests::placed::a_delete_and_an_update_change_the_leaf_covering_their_key"],
+    },
+    Mutation {
+        name: "tree-pin-left-noted",
+        package: Package::Core,
+        breaks: "a pin dropped stays noted, so its thread's later operations enter no epoch and may read a page freed",
+        file: "src/engine/tree/pin.rs",
+        original: "                    *slot = 0;\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::tree::tests::pinned::a_pin_guards_its_threads_operations_until_it_is_dropped"],
     },
     Mutation {
         name: "near-hint-clears-misses",

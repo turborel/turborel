@@ -563,6 +563,7 @@ verification approach DO-178C expects (§8).
 | D854 | A page held for writing is pinned through its hint under its frame's latch, with no shard locked |
 | D855 | A forward scan copies one entry at its first read, a few at its second, and whole leaves after |
 | D856 | An update of an entry and a delete search, show and change their leaf under one latch |
+| D857 | A thread pins a tree for a statement and is counted in its epoch once, its operations counting nothing meanwhile |
 
 ### The project
 
@@ -15561,6 +15562,37 @@ The change is a few instructions that may not use the tree, as before,
 so readers of the leaf wait no longer than for the write itself. A
 change that keeps the entry, or a delete that finds none, has latched
 the leaf exclusively and changed nothing, as a write refused has (D852).
+
+#### D857. A thread pins a tree for a statement and is counted in its epoch once, its operations counting nothing meanwhile
+
+Every operation on a B-link tree is counted in the tree's epoch as it
+begins and uncounted as it ends (D814), so a page taken out is freed
+only once no operation that may hold its number is left. The two counts
+are writes of a counter in one total order, and a statement makes many
+operations on each tree it uses, a transaction of order entry over a
+hundred.
+
+A thread may now pin a tree (`BLinkTree::pin`, `engine/tree/pin.rs`). The
+pin is the count an operation takes, held until it is dropped, and the
+thread notes it in one of sixteen places it alone reads. An operation
+looks there first and, finding its tree pinned by its own thread, counts
+nothing. What holds of an operation under way holds of everything the
+thread does while pinned, as the pin's count is in an epoch no later
+than any of them would have taken. So pages taken out meanwhile stay
+unfreed, and the stamps by which a leaf remembered is trusted (D446,
+D843) are read inside the pin's epoch as they were inside an
+operation's.
+
+A pin cannot be sent to another thread, so the note is true of the
+thread that reads it. A second pin of a tree is counted but not noted,
+so whichever is dropped first the note stays with the first. A thread
+with every place taken pins unnoted, and its operations count
+themselves. A scan counts itself as before, as it may move to another
+thread with its cursor.
+
+A pin delays the freeing of pages taken out, as a long scan does. It is
+for a statement or a step of a transaction, and is not held while the
+thread waits for a client.
 
 ## 2. Project layout
 

@@ -571,3 +571,6 @@ mod placed;
 
 // The entries a scan copies at each read (RULES.md D855).
 mod taken;
+
+// A tree pinned by a thread (RULES.md D857).
+mod pinned;
