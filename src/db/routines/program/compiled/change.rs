@@ -29,7 +29,7 @@ use super::valued::Stores;
 use crate::ast::{DeltaResult, InsertSource, InsertStatement, QueryExpression, SqlStatement, TableReference};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, fail};
-use crate::exec::{Host, eval};
+use crate::exec::{Framed, Host, eval};
 use crate::logical::{Contained, Expr, LogicalPlan};
 use crate::storage::Row;
 
@@ -309,9 +309,11 @@ fn selected(
 ) -> Result<Completion> {
     let mut held = collector.taken(exec.cx.st);
     let mut rows: Vec<Row> = Vec::with_capacity(2);
+    // The select list reads the frame's variables and parameters as slots.
+    let framed = Framed { inner: &exec.hosted, frame: exec.frame.dynamic_values(), outer: &[] };
     held.visit(&mut |row| {
         if rows.len() < 2 {
-            rows.push(outputs.iter().map(|e| eval(e, row, &exec.hosted)).collect::<Result<Row>>()?);
+            rows.push(outputs.iter().map(|e| eval(e, row, &framed)).collect::<Result<Row>>()?);
         }
         Ok(())
     })?;
