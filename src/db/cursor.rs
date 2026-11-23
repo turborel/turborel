@@ -271,7 +271,10 @@ impl Session {
         } else {
             // [X3.135-1986 §8.8 GR3b] "that table ... is effectively created".
             let (columns, rows) = self.open_rows(st, tx, &spec, (params, keeping))?;
-            OpenCursor { columns: columns.into(), rows: if flags.1 { CursorRows::Kept(Kept::new(rows, st)) } else { CursorRows::Table(rows) } }
+            OpenCursor {
+                columns: columns.into(),
+                rows: if flags.1 { CursorRows::Kept(Kept::new(rows, st)) } else { CursorRows::Table(rows) },
+            }
         };
         // [X3.135-1986 §8.8 GR3c] open, positioned before the first row.
         let mut inner = self.inner.borrow_mut();
