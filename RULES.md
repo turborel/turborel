@@ -558,6 +558,7 @@ verification approach DO-178C expects (§8).
 | D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
+| D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 
 ### The project
 
@@ -15448,6 +15449,35 @@ for a row, and its wait is bounded as before but for that one write.
 A waiter does not spin. The waits measured were long where no core was
 free, and a spinning waiter would take a core from the thread it waits
 for.
+
+#### D890. A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more
+
+A range past the greatest value a pass of the statistics saw, of a
+column taken to grow with insertion, keeps the share of the rows written
+since the pass (D381). A stock level's lines of its district's last
+twenty orders lie past that value from the first order written after
+the pass. Between two passes their estimate grew with every order
+written, to several times their rows, and faster as more terminals
+wrote at once. The join of the lines to STOCK weighs its probes at that
+estimate and at PLANNER.ESTIMATE_MARGIN times it (D386). Once the
+estimate passed about seven times the real rows, the probes
+lost to a hash join reading the whole of STOCK. Every later stock level
+then read tens of thousands of rows where its probes read a few hundred,
+until the next pass. On the in-repo TPROC-C at eight terminals a stock
+level read about thirty thousand rows a call.
+
+The plan of the left operand is built before the join's method is
+chosen, and where it reads a range of an index, the index estimated the
+range as it is now. It counts the entries of a small range and takes a
+larger one's share of its tree (`index/blink.rs`), with no lag behind
+the writes. A filter over the range keeps no more rows than the range
+holds. So the join now takes its left operand's rows as the lesser of
+the statistics' estimate and the range's (`physical/indexed/ranged.rs`),
+for an inner join and for an outer join probing its preserved side's
+rows alike. The margin still weighs the probes against the left giving
+some times those rows, and the upper bound the statistics prove is
+kept. A semi join's left plan is not built before its method is chosen,
+and is weighed by the statistics alone, as before.
 
 ## 2. Project layout
 
