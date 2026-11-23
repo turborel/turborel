@@ -20,8 +20,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use super::super::super::super::delta::Collector;
+use super::super::super::super::integrity::Straight;
 use super::super::super::super::prepared::KeptPlan;
-use super::super::super::super::write::{Target, delete_rows, update_rows};
+use super::super::super::super::write::{Pointed, Target, Written, delete_rows, point_change, update_rows};
 use super::super::super::super::{Completion, Session, State};
 use super::evaluated::store_row;
 use super::run::Exec;
@@ -32,6 +33,7 @@ use crate::error::{Code, Result, fail};
 use crate::exec::{Framed, Host, eval};
 use crate::logical::{Contained, Expr, LogicalPlan};
 use crate::storage::Row;
+use crate::value::Value;
 
 /// \[DESIGN\] How many runs of the general path a change waits for its
 /// plans to be kept in a shape it may take, before it runs the general
@@ -73,6 +75,9 @@ struct Searched {
     /// Of a SELECT ... INTO's delta table: its result, its select list
     /// over the delta table's row, and where its targets store.
     delta: Option<(DeltaResult, Vec<Expr>, Stores)>,
+    /// The constraints its statement checks of the row it writes, if they
+    /// are all it checks, so it may write that row straight.
+    straight: Option<Straight>,
 }
 
 /// An INSERT of one row of values, its kept target and query.
@@ -81,6 +86,9 @@ struct Inserted {
     target: Arc<Target>,
     query: LogicalPlan,
     clocked: bool,
+    /// The constraints its statement checks of its row, if it may write
+    /// that row straight.
+    straight: Option<Straight>,
 }
 
 impl Change {
@@ -183,20 +191,21 @@ fn direct_of(exec: &Exec<'_>, contained: &Contained, shape: Shape) -> Result<Opt
         if !one_row(&query) || !plain_table(st, target.name()) || named_view(exec, contained) {
             return Ok(None);
         }
-        return Ok(Some(Direct::Insert(Box::new(Inserted { target, query, clocked }))));
+        let straight = target.straight(st);
+        return Ok(Some(Direct::Insert(Box::new(Inserted { target, query, clocked, straight }))));
     };
     let Some(bound) = keeping.kept_write()? else { return Ok(None) };
     if bound.named != bound.table || !plain_table(st, &bound.table) {
         return Ok(None);
     }
-    let table = bound.table.clone();
-    let Some(result) = delta else { return Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: None })))) };
+    let (table, straight) = (bound.table.clone(), st.straight(&bound, delete));
+    let Some(result) = delta else { return Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: None, straight })))) };
     let Some(KeptPlan::Query(_, plan)) = keeping.querying(Some(delta_query)).query().map(|q| q.plan()).transpose()?.flatten() else {
         return Ok(None);
     };
     let (Some(outputs), SqlStatement::Select { targets, .. }) = (outputs_of(&plan), contained.statement()) else { return Ok(None) };
     let stores = Stores::of_specs(targets, &contained.scope);
-    Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: Some((result, outputs, stores)) }))))
+    Ok(Some(Direct::Searched(Box::new(Searched { delete, table, delta: Some((result, outputs, stores)), straight }))))
 }
 
 /// Whether the INSERT `contained` names a view, whose INSTEAD OF trigger
@@ -254,7 +263,9 @@ fn remap(e: Expr, columns: &[usize], missing: &std::cell::Cell<bool>) -> Expr {
     e.map_children(&mut |child| remap(child, columns, missing))
 }
 
-/// `contained`, the searched change `s`, run straight on its table.
+/// `contained`, the searched change `s`, run straight on its table: its
+/// row written straight if its plan is a point read and its constraints
+/// allow (`write/direct.rs`), else by the write functions.
 fn searched(exec: &mut Exec<'_>, contained: &Contained, s: &Searched) -> Result<Option<Completion>> {
     let (session, cx) = (exec.session, exec.cx);
     let Some((plans, _)) = exec.kept.plans_of(contained) else { return Ok(None) };
@@ -262,10 +273,28 @@ fn searched(exec: &mut Exec<'_>, contained: &Contained, s: &Searched) -> Result<
     exec.host.fresh(cx.tx)?;
     session.may_run(cx.st, change_of(contained.statement()))?;
     let keeping = session.keeping(cx.st, plans);
-    let Some(w) = keeping.written_kept(exec.frame.dynamic_slots().unwrap_or_default())? else { return Ok(None) };
+    let Some(mut w) = keeping.written_kept(exec.frame.dynamic_slots().unwrap_or_default())? else { return Ok(None) };
     if w.bound.table != s.table {
         return Ok(None);
     }
+    if let (Some(straight), false) = (&s.straight, session.delta_open()) {
+        let ran = {
+            let _compiling = session.compiling(cx.st, cx.tx.id);
+            session.settle_cursors(cx.st, &s.table);
+            point_change((session, cx), (w, straight, s.delete))?
+        };
+        match ran {
+            Ok(pointed) => return pointed_done(exec, contained, s, pointed).map(Some),
+            Err(back) => w = back,
+        }
+    }
+    collected(exec, contained, s, w).map(Some)
+}
+
+/// `contained`, the searched change `s`, its plans kept `w`, run by the
+/// write functions, its delta table's rows collected as they write them.
+fn collected(exec: &mut Exec<'_>, contained: &Contained, s: &Searched, w: Written) -> Result<Completion> {
+    let (session, cx) = (exec.session, exec.cx);
     let collector = s.delta.as_ref().map(|(result, _, _)| Collector::of_base(cx.st, &s.table, *result));
     let outer = collector.clone().map(|c| session.delta_replaced(Some(c)));
     let ran = (|| {
@@ -282,8 +311,35 @@ fn searched(exec: &mut Exec<'_>, contained: &Contained, s: &Searched) -> Result<
         session.delta_replaced(outer);
     }
     let done = ran?;
-    let (Some((_, outputs, stores)), Some(collector)) = (&s.delta, collector) else { return Ok(Some(done)) };
-    selected(exec, contained, (outputs, stores), &collector).map(Some)
+    let (Some((_, outputs, stores)), Some(collector)) = (&s.delta, collector) else { return Ok(done) };
+    let mut rows: Vec<Row> = Vec::with_capacity(2);
+    collector.taken(exec.cx.st).visit(&mut |row| {
+        if rows.len() < 2 {
+            rows.push(row.clone());
+        }
+        Ok(())
+    })?;
+    selected(exec, contained, (outputs, stores), &rows)
+}
+
+/// What the point change `s` did, `pointed`: the rows it wrote, and of a
+/// delta table, its row, as its collector would show it, selected.
+fn pointed_done(exec: &mut Exec<'_>, contained: &Contained, s: &Searched, pointed: Pointed) -> Result<Completion> {
+    let wrote = match pointed {
+        Pointed::Unfound | Pointed::Wrote(None) => None,
+        Pointed::Wrote(Some(rows)) => Some(rows),
+    };
+    let done = exec.session.affected(usize::from(wrote.is_some()));
+    let Some((result, outputs, stores)) = &s.delta else { return Ok(done) };
+    let row = wrote.and_then(|(old, new)| match result {
+        DeltaResult::Old => Some(old),
+        DeltaResult::New | DeltaResult::Final => new,
+    });
+    // [ISO/IEC 9075-2:2023 §7.6 GR5] the row as the base table's columns
+    // show it.
+    let width = exec.cx.st.catalog.table(&s.table).map_or(0, |t| t.columns.len());
+    let shown: Vec<Row> = row.into_iter().map(|r| (0..width).map(|c| r.get(c).cloned().unwrap_or(Value::Null)).collect()).collect();
+    selected(exec, contained, (outputs, stores), &shown)
 }
 
 /// The statement whose rows `stmt` changes: of a SELECT ... INTO of a
@@ -297,28 +353,17 @@ fn change_of(stmt: &SqlStatement) -> &SqlStatement {
     stmt
 }
 
-/// [X3.135-1986 §8.10] SELECT ... INTO of the delta table's rows
-/// `collector` gathered: its select list `outputs` of the one row
-/// assigned to its targets; of none, no data; of more than one,
-/// SQLSTATE 21000.
-fn selected(
-    exec: &mut Exec<'_>,
-    contained: &Contained,
-    (outputs, stores): (&[Expr], &Stores),
-    collector: &Collector,
-) -> Result<Completion> {
-    let mut held = collector.taken(exec.cx.st);
-    let mut rows: Vec<Row> = Vec::with_capacity(2);
+/// [X3.135-1986 §8.10] SELECT ... INTO of the delta table's rows `rows`,
+/// the first two at most: its select list `outputs` of the one row
+/// assigned to its targets; of none, no data; of more than one, SQLSTATE
+/// 21000.
+fn selected(exec: &mut Exec<'_>, contained: &Contained, (outputs, stores): (&[Expr], &Stores), rows: &[Row]) -> Result<Completion> {
     // The select list reads the frame's variables and parameters as slots.
     let framed = Framed { inner: &exec.hosted, frame: exec.frame.dynamic_values(), outer: &[] };
-    held.visit(&mut |row| {
-        if rows.len() < 2 {
-            rows.push(outputs.iter().map(|e| eval(e, row, &framed)).collect::<Result<Row>>()?);
-        }
-        Ok(())
-    })?;
+    let mut values: Vec<Row> =
+        rows.iter().map(|row| outputs.iter().map(|e| eval(e, row, &framed)).collect::<Result<Row>>()).collect::<Result<_>>()?;
     let SqlStatement::Select { targets, .. } = contained.statement() else { return Ok(Completion::Success) };
-    match rows.as_mut_slice() {
+    match values.as_mut_slice() {
         [] => Ok(Completion::NoData),
         [row] => {
             exec.host.present(row);
@@ -345,7 +390,11 @@ fn inserted(exec: &mut Exec<'_>, contained: &Contained, i: &Inserted) -> Result<
     let slots = exec.frame.dynamic_slots().map(|s| keeping.slots_of(s, i.clocked));
     let _compiling = session.compiling(cx.st, cx.tx.id);
     let kept = (!i.clocked).then_some((&keeping, &*exec.frame));
-    let n = session.insert_rows(cx, (stmt, &target), (Some(i.query.clone()), slots, kept), exec.frame)?;
+    let n = if let (Some(straight), false) = (&i.straight, session.delta_open()) {
+        session.insert_straight(cx, (&target, straight), (i.query.clone(), slots, kept))?
+    } else {
+        session.insert_rows(cx, (stmt, &target), (Some(i.query.clone()), slots, kept), exec.frame)?
+    };
     Ok(Some(session.affected(n)))
 }
 

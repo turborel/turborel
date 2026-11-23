@@ -39,6 +39,7 @@ mod keys;
 mod modes;
 mod references;
 mod rewritten;
+mod straight;
 mod temporal;
 
 use std::cell::RefCell;
@@ -47,6 +48,7 @@ use std::sync::Arc;
 
 use self::keys::KeyCheck;
 pub(super) use self::modes::{Deferral, Whole};
+pub(super) use self::straight::Straight;
 use super::assertions::Asserted;
 use super::{State, plan};
 use crate::catalog::{Authorization, ConstraintDesc, ConstraintKind, Horizon, QualifiedName, TableDesc};

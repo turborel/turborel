@@ -151,7 +151,7 @@ impl State {
 
 /// Whether `columns` given values, or every column if none, include one of
 /// `of`.
-fn assigned(of: &[usize], columns: Option<&[usize]>) -> bool {
+pub(super) fn assigned(of: &[usize], columns: Option<&[usize]>) -> bool {
     columns.is_none_or(|set| of.iter().any(|x| set.contains(x)))
 }
 
@@ -159,7 +159,7 @@ fn assigned(of: &[usize], columns: Option<&[usize]>) -> bool {
 /// giving values to `columns`, or to every column if none: one on a column
 /// given a value, but a UNIQUE one (`State::checks`), or a CHECK without
 /// a subquery.
-fn of_row(desc: Option<&TableDesc>, c: &ConstraintDesc, columns: Option<&[usize]>) -> bool {
+pub(super) fn of_row(desc: Option<&TableDesc>, c: &ConstraintDesc, columns: Option<&[usize]>) -> bool {
     match &c.kind {
         ConstraintKind::NotNull(at) => assigned(std::slice::from_ref(at), columns),
         ConstraintKind::ForeignKey(fk) => assigned(&desc.map_or_else(|| fk.columns.clone(), |d| fk.referencing_key(d)), columns),
