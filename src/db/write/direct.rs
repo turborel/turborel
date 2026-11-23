@@ -1,6 +1,6 @@
 //! \[DESIGN\] A compiled program's searched UPDATE or DELETE of one row by
 //! its key, its plan kept a point read, written straight on its table
-//! (RULES.md D839).
+//! (RULES.md D841).
 //!
 //! It writes as `update_rows` and `delete_rows` write, by the same row
 //! lock, conflict wait and recheck (`State::rewrite_row`), the candidate

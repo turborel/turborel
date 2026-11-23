@@ -1,5 +1,5 @@
 //! \[DESIGN\] A compiled program's point change written straight on its
-//! table (RULES.md D839): each body here runs compiled and interpreted,
+//! table (RULES.md D841): each body here runs compiled and interpreted,
 //! as `compiled_procedures` runs them, and gives the same of each. A
 //! point change checks the constraints of the row it writes as its
 //! statement's end checks them; one whose end would check more, or whose
@@ -21,7 +21,7 @@ const SETUP: [&str; 4] = [
 
 /// The procedures of these cases, one point change each.
 const PROCEDURES: [&str; 8] = [
-    "CREATE PROCEDURE SETV (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET V = X WHERE K = KK",
+    "CREATE PROCEDURE SETV (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET V = NULLIF(X, -1) WHERE K = KK",
     "CREATE PROCEDURE SETU (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET U = X WHERE K = KK",
     "CREATE PROCEDURE SETPK (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET PK = X WHERE K = KK",
     "CREATE PROCEDURE SETDK (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET DK = X WHERE K = KK",
@@ -29,8 +29,8 @@ const PROCEDURES: [&str; 8] = [
     "CREATE PROCEDURE DROPP (IN KK INTEGER) MODIFIES SQL DATA DELETE FROM P WHERE K = KK",
     "CREATE PROCEDURE DROPC (IN KK INTEGER, OUT X INTEGER) MODIFIES SQL DATA
        SELECT V INTO X FROM OLD TABLE (DELETE FROM C WHERE K = KK)",
-    "CREATE PROCEDURE BUMP (IN KK INTEGER, IN BY INTEGER, OUT X INTEGER) MODIFIES SQL DATA
-       SELECT V INTO X FROM FINAL TABLE (UPDATE C SET V = V + BY WHERE K = KK)",
+    "CREATE PROCEDURE BUMP (IN KK INTEGER, IN AMT INTEGER, OUT X INTEGER) MODIFIES SQL DATA
+       SELECT V INTO X FROM FINAL TABLE (UPDATE C SET V = V + AMT WHERE K = KK)",
 ];
 
 /// `setup` and `PROCEDURES`, then `script`, compiled and interpreted.
@@ -46,25 +46,25 @@ fn calls(call: &str, args: &[&str]) -> Vec<String> {
     args.iter().map(|a| format!("CALL {call}({a})")).collect()
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a point UPDATE checks the NOT NULL,
+/// Verifies: [DESIGN] RULES.md D841, a point UPDATE checks the NOT NULL,
 /// foreign key and UNIQUE constraints of the columns it writes, and a
 /// CHECK of its row, at its end as the general path checks them: SQLSTATE
 /// 23000 of each broken, the row left as it was.
 #[test]
 fn a_point_change_checks_its_rows_constraints() {
-    let mut script = calls("SETV", &["1, 10", "1, 11", "2, 12", "1, 13", "2, NULL", "9, 1"]);
+    let mut script = calls("SETV", &["1, 10", "1, 11", "2, 12", "1, 13", "2, -1", "9, 1"]);
     script.extend(calls("SETPK", &["1, 2", "1, 3", "2, 4", "1, 1", "2, 9"]));
     script.extend(calls("SETU", &["1, 10", "1, 11", "2, 12", "1, 13", "2, 13"]));
     script.extend(calls("BUMP", &["1, 1, ?", "1, 1, ?", "2, 1, ?", "9, 1, ?", "1, 1, ?"]));
     script.extend(calls("DROPC", &["9, ?", "3, ?", "3, ?"]));
     let gave = alike(&[], &script);
     assert!(gave.iter().any(|l| l.starts_with("CALL SETU(2, 13): error 23000")), "unique: {gave:?}");
-    assert!(gave.iter().any(|l| l.starts_with("CALL SETV(2, NULL): error 23000")), "NOT NULL: {gave:?}");
+    assert!(gave.iter().any(|l| l.starts_with("CALL SETV(2, -1): error 23000")), "NOT NULL: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL SETPK(2, 9): error 23000")), "foreign key: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL DROPC(3, ?): ok")), "OLD TABLE: {gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a point change whose statement's end
+/// Verifies: [DESIGN] RULES.md D841, a point change whose statement's end
 /// checks more than its row runs the general path, as interpreted: of a
 /// deferrable constraint, immediate or deferred, a key a foreign key references, updated or
 /// deleted.
@@ -81,7 +81,7 @@ fn a_point_change_falls_back_where_its_end_checks_more() {
     assert!(gave.iter().any(|l| l.starts_with("CALL DROPP(2): error 23000")), "referenced: {gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a point change of a catalog with an
+/// Verifies: [DESIGN] RULES.md D841, a point change of a catalog with an
 /// assertion runs the general path, the assertion broken as interpreted.
 #[test]
 fn a_point_change_alongside_an_assertion() {
@@ -91,7 +91,7 @@ fn a_point_change_alongside_an_assertion() {
     assert!(gave.iter().any(|l| l.starts_with("CALL BUMP(1, 200, ?): error 23000")), "assertion: {gave:?}");
 }
 
-/// Verifies: [DESIGN] RULES.md D839, a point change of a catalog with a
+/// Verifies: [DESIGN] RULES.md D841, a point change of a catalog with a
 /// trigger on another table, finding no row or one, and one whose
 /// increments TRANSACTION.ESCROW may reserve, give what interpreted gives.
 #[test]
@@ -99,10 +99,10 @@ fn a_point_change_alongside_triggers_and_escrow() {
     let setup = [
         "CREATE TRIGGER ON_S AFTER UPDATE ON S FOR EACH STATEMENT INSERT INTO P VALUES (99, 99)",
         "SET TRANSACTION.ESCROW = 'ON'",
-        "CREATE PROCEDURE ADD (IN KK INTEGER, IN BY INTEGER) MODIFIES SQL DATA UPDATE P SET V = V + BY WHERE K = KK",
+        "CREATE PROCEDURE GROW (IN KK INTEGER, IN AMT INTEGER) MODIFIES SQL DATA UPDATE P SET V = V + AMT WHERE K = KK",
     ];
     let mut script = calls("BUMP", &["1, 1, ?", "1, 1, ?", "9, 1, ?", "1, 1, ?"]);
-    script.extend(calls("ADD", &["2, 1", "2, 1", "9, 1", "2, 1", "2, 300"]));
+    script.extend(calls("GROW", &["2, 1", "2, 1", "9, 1", "2, 1", "2, 300"]));
     script.push("UPDATE S SET Q = Q WHERE W = 1 AND I = 1".to_owned());
     let gave = alike(&setup, &script);
     assert!(gave.iter().any(|l| l == "SELECT K, V FROM P ORDER BY K: [\"1,0\", \"2,303\", \"3,0\", \"4,0\", \"99,99\"]"), "{gave:?}");

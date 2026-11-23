@@ -1,6 +1,6 @@
 //! \[DESIGN\] The constraints of a compiled program's point change, a
 //! searched UPDATE or DELETE of one row by its key or an INSERT of one row
-//! of values, written straight on its table (RULES.md D839), and their
+//! of values, written straight on its table (RULES.md D841), and their
 //! checks at the end of its statement.
 //!
 //! What its statement's end checks is known from its table and the columns
