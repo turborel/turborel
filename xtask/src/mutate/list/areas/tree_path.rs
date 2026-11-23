@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 18] = [
+pub const TREE_PATH: [Mutation; 20] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -183,6 +183,26 @@ pub const TREE_PATH: [Mutation; 18] = [
         replacement: "",
         integration: &[],
         unit: &["engine::tree::tests::pinned::a_pin_guards_its_threads_operations_until_it_is_dropped"],
+    },
+    Mutation {
+        name: "tree-leaf-copy-unchecked",
+        package: Package::Core,
+        breaks: "a leaf's copy is read though its frame's version moved on, so a read gives a value written over since",
+        file: "src/engine/tree/leaves.rs",
+        original: "leaf.copy.as_ref().filter(|_| pool.unchanged(file, id, leaf.stamp))?",
+        replacement: "leaf.copy.as_ref()?",
+        integration: &[],
+        unit: &["engine::tree::tests::leaf_copies::a_leaf_is_copied_once_read_unchanged_and_never_read_stale"],
+    },
+    Mutation {
+        name: "tree-leaf-copied-at-once",
+        package: Package::Core,
+        breaks: "a leaf is copied at every latched read, however often it is written",
+        file: "src/engine/tree/leaves.rs",
+        original: "        if self.seen < needed || self.copy.is_some() {",
+        replacement: "        if self.copy.is_some() {",
+        integration: &[],
+        unit: &["engine::tree::tests::leaf_copies::a_leaf_is_copied_once_read_unchanged_and_never_read_stale"],
     },
     Mutation {
         name: "near-hint-clears-misses",

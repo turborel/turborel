@@ -574,3 +574,6 @@ mod taken;
 
 // A tree pinned by a thread (RULES.md D857).
 mod pinned;
+
+// The copies of read-mostly leaves a thread keeps (RULES.md D858).
+mod leaf_copies;

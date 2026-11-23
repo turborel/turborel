@@ -564,6 +564,7 @@ verification approach DO-178C expects (§8).
 | D855 | A forward scan copies one entry at its first read, a few at its second, and whole leaves after |
 | D856 | An update of an entry and a delete search, show and change their leaf under one latch |
 | D857 | A thread pins a tree for a statement and is counted in its epoch once, its operations counting nothing meanwhile |
+| D858 | A thread keeps version-checked copies of the leaves it reads often and finds unchanged, and reads them with no latch |
 
 ### The project
 
@@ -12960,6 +12961,7 @@ kernels of a statement's executor, its filters over batches, groupings
 and sorts; a table's storage keeps the set registered, whatever the
 setting, since a table is opened once for many statements.
 
+
 #### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
 
 The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
@@ -15593,6 +15595,42 @@ thread with its cursor.
 A pin delays the freeing of pages taken out, as a long scan does. It is
 for a statement or a step of a transaction, and is not held while the
 thread waits for a client.
+
+#### D858. A thread keeps version-checked copies of the leaves it reads often and finds unchanged, and reads them with no latch
+
+A descent reads inner nodes from the thread's copies (D502) and a scan
+of rows side by side keeps a copy of its leaf (D806), but every other
+read of a leaf took its frame's latch. That is two writes of a word
+every reader of the leaf shares. The leaves all threads read and few
+write, a small table's, an index's of rows never changed, a catalogue
+of items, moved one cache line between every thread at every read.
+
+A thread now keeps copies of such leaves (`engine/tree/leaves.rs`). A
+copy is read exactly as an inner node's is. It was taken under the
+leaf's latch held shared, with the stamp of its frame, and it is read
+only while the frame holds the page at that version
+(`BufferPool::unchanged`). The version moves on as the latch is taken
+exclusively, before a byte changes or the frame is given another page.
+So a copy whose version holds was read whole between two writes, and no
+write has begun since, and a read from it is a read under the latch let
+go at that moment. Every check a reader makes of a leaf latched, its
+tree, its level, its range, whether it is deleted, it makes of the copy.
+
+Which leaves are copied is a rule of counts, and no count can make a
+read wrong. A leaf is copied at the third latched read in a row that
+finds its stamp as the read before left it. A read that finds it
+changed counts a strike, at most six, and each strike doubles the reads
+in a row then needed. So a leaf written as often as it is read is never
+copied, and one written now and then costs a copy only after reads that
+would each have used it. A thread tracks at most 128 leaves, each in the
+place its page's hash gives, found with one hash and no map, at most
+1 MiB of copies of 8 KiB pages. A leaf new to a place takes it, but a
+copy read since the place was last asked for is spared once.
+
+The copies serve a descent's read of its leaf and a read from the leaf
+noted for a row (D500). A scan's reads of the leaves after its first,
+and a read from the leaf a scan remembered, latch as before, as a scan
+passes each leaf once.
 
 ## 2. Project layout
 
