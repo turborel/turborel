@@ -99,6 +99,11 @@ impl Scan {
         })
     }
 
+    /// The table it reads.
+    pub(super) fn table(&self) -> &QualifiedName {
+        &self.table
+    }
+
     /// Lends `each` every row `at`'s transaction sees in the range, in the
     /// index's order or reversed, until it wants no more: or says it read
     /// nothing, for a probe or an index it is not read direct by.

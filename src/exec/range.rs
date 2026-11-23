@@ -9,7 +9,9 @@
 //! its rows, and set functions fold it (`range/fold.rs`). A sort holds the
 //! rows read and sorts them as the executor sorts (`sort.rs`), and a
 //! grouping by a column holds them and groups them as it groups
-//! (`group.rs`).
+//! (`group.rs`). An inner join that probes a whole unique key for each
+//! row of the range pairs it with the row a point read finds
+//! (`join/indexed/direct.rs`).
 //!
 //! Each part does what its operator does, by the functions the operator
 //! evaluates with, so the rows, the errors and the reads recorded are the
@@ -22,6 +24,7 @@ mod scan;
 
 use std::sync::Mutex;
 
+use super::join::{DirectJoin, Given, Pairing};
 use super::limit::{Rule, count};
 use super::{Db, Subqueries, broken, eval, eval_cond, group, sort};
 use crate::db::State;
@@ -106,6 +109,8 @@ enum Node {
     /// A grouping `Fold` does not fold, and whether its rows come in the
     /// order of its grouping columns (`Plan::Aggregate`).
     Group(Grouping, bool, Box<Node>),
+    /// An index join by a whole unique key, over its left operand.
+    Join(Box<DirectJoin>, Box<Node>),
 }
 
 /// A grouping of a direct read: its grouping columns, their collations,
@@ -189,7 +194,45 @@ impl Node {
             let grouping = Grouping { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
             return read.then(|| under(input)).flatten().map(|input| Node::Group(grouping, *streamed, input));
         }
+        if let Plan::IndexJoin { left, .. } = plan {
+            let left = under(left)?;
+            return DirectJoin::of(plan, &left.given(st)?, st).map(|join| Node::Join(Box::new(join), left));
+        }
         Scan::of(plan, st).map(|scan| Node::Scan(Box::new(scan)))
+    }
+
+    /// What each column of its rows gives, if each is a column of its
+    /// range's table as it is, a constant or one of the statement's
+    /// values: of a range, filtered or projected to those.
+    fn given(&self, st: &State) -> Option<Vec<Given>> {
+        match self {
+            Node::Scan(scan) => Some(st.catalog.table(scan.table())?.columns.iter().map(|c| Given::Typed(c.data_type.clone())).collect()),
+            Node::Filter(_, input) => input.given(st),
+            Node::Project(projection, input) => {
+                let under = input.given(st)?;
+                let given = |e: &Expr| match e {
+                    Expr::Column(c) => under.get(*c).cloned(),
+                    Expr::Const(value) => Some(Given::Constant(value.clone())),
+                    // A slot's value is cast to its type as it is read.
+                    Expr::Dynamic(slot) => Some(Given::Typed(slot.data_type.clone())),
+                    Expr::Arith(..)
+                    | Expr::Neg(_)
+                    | Expr::Outer(..)
+                    | Expr::Call(..)
+                    | Expr::Cast(..)
+                    | Expr::Case(..)
+                    | Expr::Subquery(..)
+                    | Expr::SortKey(..)
+                    | Expr::Domain(..)
+                    | Expr::Warned(..)
+                    | Expr::Truth(_)
+                    | Expr::NextValue(_)
+                    | Expr::Invoked(_) => None,
+                };
+                projection.exprs.iter().map(given).collect()
+            }
+            Node::Limit(..) | Node::Sort(..) | Node::Fold(..) | Node::Group(..) | Node::Join(..) => None,
+        }
     }
 
     /// Lends `each` its rows, in its order, until it wants no more: or
@@ -215,6 +258,10 @@ impl Node {
                 Ok(ran)
             }
             Node::Group(grouping, streamed, input) => grouped((grouping, *streamed), input, (at, held), each),
+            Node::Join(join, input) => {
+                let mut pairing = Pairing::default();
+                input.run(at, held, None, &mut |left| if join.pair(at, left, &mut pairing)? { each(pairing.row()) } else { Ok(true) })
+            }
         }
     }
 }
@@ -315,7 +362,7 @@ impl RangeRead {
             node = match node {
                 Node::Scan(_) => return false,
                 Node::Sort(..) | Node::Fold(..) | Node::Group(..) => return true,
-                Node::Filter(_, input) | Node::Project(_, input) | Node::Limit(_, _, input) => input,
+                Node::Filter(_, input) | Node::Project(_, input) | Node::Limit(_, _, input) | Node::Join(_, input) => input,
             };
         }
     }

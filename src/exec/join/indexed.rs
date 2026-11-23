@@ -30,11 +30,13 @@ use crate::txn::{Stop, TxId, checked};
 use crate::value::Value;
 
 mod adaptive;
+mod direct;
 mod paired;
 mod preserved;
 mod refined;
 mod routed;
 
+pub(in crate::exec) use direct::{Direct, Given, Pairing};
 use preserved::Matched;
 use refined::Binding;
 use routed::{Opened, Routes};

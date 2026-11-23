@@ -10,15 +10,16 @@ use turborel::value::{Decimal, Value};
 
 /// Schema A: T (W, D, K, N, V, S), its primary key (W, D, K), of 2400
 /// rows, 120 of each of 20 districts, N null of every seventh row and S
-/// one of thirteen names, with an index by name; and the procedures of
-/// `PROCEDURES`.
+/// one of thirteen names, with an index by name; P (W, K, NAME, Q), its
+/// primary key (W, K), of 601 rows a W; and the procedures of `PROCEDURES`.
 fn defined() -> Database {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE T (W INTEGER NOT NULL, D INTEGER NOT NULL, K INTEGER NOT NULL, N INTEGER, V DECIMAL(8,2), S VARCHAR(12),
              PRIMARY KEY (W, D, K))
-           CREATE TABLE L (K INTEGER, GOT INTEGER)",
+           CREATE TABLE L (K INTEGER, GOT INTEGER)
+           CREATE TABLE P (W INTEGER NOT NULL, K INTEGER NOT NULL, NAME VARCHAR(12), Q INTEGER, PRIMARY KEY (W, K))",
     )
     .unwrap();
     let a = db.session("A");
@@ -33,6 +34,10 @@ fn defined() -> Database {
             a.run(&format!("INSERT INTO T VALUES {}", rows.join(", "))).unwrap();
         }
     }
+    for w in 1..=2_i64 {
+        let rows: Vec<String> = (0..=600_i64).map(|k| format!("({w}, {k}, 'P{k}', {})", k % 9)).collect();
+        a.run(&format!("INSERT INTO P VALUES {}", rows.join(", "))).unwrap();
+    }
     a.commit().unwrap();
     a.run("CREATE INDEX T_S ON T (W, D, S, K)").unwrap();
     for p in PROCEDURES {
@@ -44,7 +49,7 @@ fn defined() -> Database {
 
 /// The procedures: each reads one range of an index of T into its OUT
 /// parameters.
-const PROCEDURES: [&str; 8] = [
+const PROCEDURES: [&str; 10] = [
     "CREATE PROCEDURE CNT (IN PW INTEGER, IN PD INTEGER, OUT C INTEGER) READS SQL DATA
      BEGIN SELECT COUNT(N) INTO C FROM T WHERE W = PW AND D = PD; END",
     "CREATE PROCEDURE AGG (IN PW INTEGER, IN PD INTEGER, IN LO INTEGER, IN HI INTEGER,
@@ -65,6 +70,13 @@ const PROCEDURES: [&str; 8] = [
     "CREATE PROCEDURE SORTED (IN PW INTEGER, IN PD INTEGER, IN PS VARCHAR(12), OUT GOT_K INTEGER, OUT GOT_N INTEGER) READS SQL DATA
      BEGIN SELECT K, N INTO GOT_K, GOT_N FROM (SELECT K, N FROM T WHERE W = PW AND D = PD AND S = PS
        ORDER BY V DESC, K OFFSET 2 ROWS FETCH FIRST 1 ROW ONLY) AS THIRD; END",
+    "CREATE PROCEDURE PAIRED (IN PW INTEGER, IN PD INTEGER, IN PK INTEGER, OUT GOT_V DECIMAL(8,2), OUT GOT_NAME VARCHAR(12))
+       READS SQL DATA
+     BEGIN SELECT V, NAME INTO GOT_V, GOT_NAME FROM T, P
+       WHERE P.W = PW AND P.K = PK AND T.W = PW AND T.D = PD AND T.K = PK; END",
+    "CREATE PROCEDURE STOCKED (IN PW INTEGER, IN PD INTEGER, IN HI INTEGER, IN LESS INTEGER, OUT KINDS INTEGER) READS SQL DATA
+     BEGIN SELECT COUNT(DISTINCT P.K) INTO KINDS FROM T, P
+       WHERE T.W = PW AND T.D = PD AND T.K < HI AND T.K >= HI - 20 AND P.W = PW AND P.K = T.N AND P.Q < LESS; END",
 ];
 
 /// The exact number `n`.
@@ -100,7 +112,11 @@ fn script() -> Vec<(&'static str, Vec<Value>)> {
         calls.push(("CALL ONE_ROW(?,?,?,?,?)", vec![int(w), int(d), int(112 + round)]));
         calls.push(("CALL SHARED(?,?,?,?,?)", vec![int(w), int(d), int(9 - round)]));
         calls.push(("CALL SORTED(?,?,?,?,?)", vec![int(w), int(d), text(&format!("S{round}"))]));
+        calls.push(("CALL PAIRED(?,?,?,?,?)", vec![int(w), int(d), int(round * 20)]));
+        calls.push(("CALL STOCKED(?,?,?,?,?)", vec![int(w), int(d), int(round * 14 + 8), int(round % 5)]));
     }
+    calls.push(("CALL PAIRED(?,?,?,?,?)", vec![int(1), Value::Null, int(20)]));
+    calls.push(("CALL STOCKED(?,?,?,?,?)", vec![int(1), int(1), Value::Null, int(3)]));
     calls.push(("CALL CNT(?,?,?)", vec![int(3), int(1)]));
     calls.push(("CALL CNT(?,?,?)", vec![Value::Null, int(1)]));
     calls.push(("CALL CNT(?,?,?)", vec![text("x"), int(1)]));
@@ -124,7 +140,8 @@ fn ran(how: &str, compiled: bool) -> Vec<String> {
 /// Verifies: [DESIGN] RULES.md D930: a kept body's query of one range of
 /// an index gives the same outputs, completions and errors read direct as
 /// through the executor, compiled and interpreted: set functions of a
-/// range of many rows, of one and of none, DISTINCT among them, the first
+/// range of many rows, of one and of none, DISTINCT among them, a join by
+/// a whole unique key of one row and of a range's (D932), the first
 /// row of an order the index gives and the third of one it does not, a
 /// filter beside the range, a null or a value of another type for a
 /// bound, more than one row (SQLSTATE 21000), and a division by zero in a

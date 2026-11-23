@@ -587,6 +587,7 @@ verification approach DO-178C expects (§8).
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 | D930 | A kept plan of one index range is run where it is kept, its rows handed up through its filters, projections, sort, limit and set functions with no operator built |
 | D931 | A cursor of a kept plan that is a direct range read holds its rows as it opens, a range that gives rows as fetched only while it is short |
+| D932 | An index join whose probe is a whole unique key is run, in a direct read, as nested point reads |
 
 ### The project
 
@@ -16294,6 +16295,37 @@ the executor, which fails there as before.
 The rows a cursor holds from OPEN are those a settled cursor holds, so
 it sees no change its transaction makes after, as before. They are held
 up to the bytes a cursor may hold and spilled past them (D38).
+
+#### D932. An index join whose probe is a whole unique key is run, in a direct read, as nested point reads
+
+An index join built an operator that bound a probe for each row of its
+left operand, searched its index through a boxed iterator of decoded
+keys, read each entry's row whole of the columns used, and made each
+pair by copying the left row (`exec/join/indexed.rs`). A join of a
+range's rows each with the one row of a unique key spent most of its
+time there.
+
+A direct read (D930) now takes an inner index join whose probe fixes
+every column of a unique index by columns of its left operand
+(`join/indexed/direct.rs`). Its left operand is the range, filtered or
+projected to columns, constants and the statement's values. The probe
+of each left row is a point read (D752, D881), made once with the plan.
+The row's values of the key are its values, its index is probed by the
+whole key with nothing boxed, and the row found is read of the columns
+the statement reads alone into a row kept with the plan. The pair is
+made in a row kept for the run. The left row's values are moved into
+it, as a unique key pairs a left row once, and the rest of the join's
+condition is judged of the pair as the join judges it.
+
+A point read casts each value to its key column's type, where the join
+places it as it is. So the join is taken only if each key column takes
+what its left column gives unchanged, which is a value of the column's
+own type or a constant the cast leaves as it was. A left row with a null
+for a key column pairs with nothing and reads nothing, as in the join.
+Each probe is recorded, counted and looked to for a cancel by the point
+read, as a probe of the join is. An outer, semi or anti join, a probe
+of part of a key, of a range or by a function, a spatial join and a
+located one are the executor's.
 
 ## 2. Project layout
 
