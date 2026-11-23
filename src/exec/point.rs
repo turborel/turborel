@@ -149,7 +149,7 @@ impl PointRead {
 
     /// `read`'s row, under `probe`, its slots placed.
     fn read_by(&self, st: &State, tx: TxId, probe: Cow<'_, Probe>) -> Result<Option<Row>> {
-        let probe = match self.keyed(st, tx, probe, false)? {
+        let probe = match self.keyed(st, tx, probe, keyed::Asked::Given)? {
             keyed::Probed::Read(found) => return Ok(found.map(|found| self.given(read_row(self.located, found)))),
             keyed::Probed::Given(row) => return Ok(row),
             keyed::Probed::Unread(probe) => probe,
@@ -200,7 +200,27 @@ impl PointRead {
     ///
     /// As `read`.
     pub(crate) fn entry_under(&self, st: &State, tx: TxId, probe: Cow<'_, Probe>) -> Result<Option<(RowId, Row)>> {
-        let probe = match self.keyed(st, tx, probe, true)? {
+        self.entry_reading(st, tx, probe, None)
+    }
+
+    /// \[DESIGN\] `entry_under`, of a caller that reads only `columns` of
+    /// the row, if given (RULES.md D917): a row of its table's width with
+    /// those in their places, and in every other whatever the table had at
+    /// hand, null if it read none (`TableStorage::get_columns`). Read
+    /// whole where its index is not probed by a key of those columns.
+    ///
+    /// # Errors
+    ///
+    /// As `read`.
+    pub(crate) fn entry_reading(
+        &self,
+        st: &State,
+        tx: TxId,
+        probe: Cow<'_, Probe>,
+        columns: Option<&[usize]>,
+    ) -> Result<Option<(RowId, Row)>> {
+        let asked = columns.filter(|columns| self.keyed_within(columns)).map_or(keyed::Asked::Whole, keyed::Asked::Of);
+        let probe = match self.keyed(st, tx, probe, asked)? {
             keyed::Probed::Read(found) => return Ok(found),
             // A read of the whole row is never of some columns alone.
             keyed::Probed::Given(_) => return Ok(None),

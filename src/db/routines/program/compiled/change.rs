@@ -16,6 +16,8 @@
 //! of a table it may write is on, of a view, of a typed or partitioned
 //! table, or of XML options in scope, runs the general path always.
 
+mod read;
+
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -306,7 +308,9 @@ fn searched(exec: &mut Exec<'_>, contained: &Contained, s: &Searched) -> Result<
         let ran = {
             let _compiling = session.compiling(cx.st, cx.tx.id);
             session.settle_cursors(cx.st, &s.table);
-            point_change((session, cx), (w, straight, s.delete, s.shown))?
+            // What its select list reads of the row at this execution (D918).
+            let read = s.delta.as_ref().map_or(0, |(_, outputs, _)| read::read_now(outputs, exec.frame.dynamic_values()));
+            point_change((session, cx), (w, straight, s.delete, (s.shown, read)))?
         };
         match ran {
             Ok(pointed) => return pointed_done(exec, contained, s, pointed).map(Some),

@@ -64,8 +64,9 @@ struct Listed {
 struct KeptNear(Mutex<Kept>);
 
 /// What `KeptNear` keeps: what the table keeps, the row a listed read
-/// reads into, and the bytes of the key probed.
-type Kept = (Near, Row, Vec<u8>);
+/// reads into, the bytes of the key probed, and the list of the key's
+/// columns its read is told with, its room kept from read to read.
+type Kept = (Near, Row, Vec<u8>, Vec<usize>);
 
 impl Clone for KeptNear {
     fn clone(&self) -> KeptNear {
@@ -106,6 +107,19 @@ impl Keyed {
             .filter(|_| !needed.1)
             .and_then(|(outputs, distinct)| Some(Listed { key: place(&shape.columns)?, outputs: place(outputs)?, distinct }));
         Some(Keyed { shape, fetched, width, near: KeptNear::default(), listed })
+    }
+}
+
+impl Keyed {
+    /// What a read under `probe` tells its table it read, the condition
+    /// `scan::asked` makes of a key of its columns. Its list of them is
+    /// made in `room`, which the last read left, so none is allocated
+    /// for each read.
+    fn told(&self, room: &mut Vec<usize>, probe: Cow<'_, Probe>) -> Condition {
+        let mut columns = std::mem::take(room);
+        columns.clear();
+        columns.extend_from_slice(&self.shape.columns);
+        Condition { columns, probe: probe.into_owned() }
     }
 }
 
@@ -206,6 +220,18 @@ impl Probing<'_> {
     }
 }
 
+/// What a point read reads of the row under its key.
+#[derive(Clone, Copy)]
+pub(super) enum Asked<'a> {
+    /// The columns it gives.
+    Given,
+    /// The row whole, with its id.
+    Whole,
+    /// \[DESIGN\] (RULES.md D917) The row with its id, these columns
+    /// alone decoded, each in its place, the key's among them.
+    Of(&'a [usize]),
+}
+
 /// What a point read's probe of a whole key gave.
 pub(super) enum Probed<'p> {
     /// Nothing was done: it is not read so, and the caller searches for
@@ -223,14 +249,21 @@ fn looked(stop: Option<&Stop>) -> Result<()> {
 }
 
 impl PointRead {
+    /// Whether its index is probed by a whole key whose columns are all
+    /// among `columns`: a row read of those alone is then checked against
+    /// its key as one read whole is.
+    pub(super) fn keyed_within(&self, columns: &[usize]) -> bool {
+        self.keyed.as_ref().is_some_and(|keyed| keyed.shape.columns.iter().all(|c| columns.contains(c)))
+    }
+
     /// The row under `probe`, its slots placed, read through the index's
-    /// probe of a whole key, `whole` or of the columns given: the row and
-    /// its id, none if `tx` sees none; or that it is not read so.
+    /// probe of a whole key, as `asked`: the row and its id, none if `tx`
+    /// sees none; or that it is not read so.
     ///
     /// # Errors
     ///
     /// As `read`.
-    pub(super) fn keyed<'p>(&self, st: &State, tx: TxId, probe: Cow<'p, Probe>, whole: bool) -> Result<Probed<'p>> {
+    pub(super) fn keyed<'p>(&self, st: &State, tx: TxId, probe: Cow<'p, Probe>, asked: Asked<'_>) -> Result<Probed<'p>> {
         let Some(keyed) = &self.keyed else { return Ok(Probed::Unread(probe)) };
         let (Ok(storage), Ok(index)) = (st.storage_of(&self.table), st.index_of(&self.index)) else {
             return Ok(Probed::Unread(probe));
@@ -241,19 +274,22 @@ impl PointRead {
         // What the plan keeps from read to read: its table's, the row a
         // listed read reads into, and the key's bytes.
         let (mut kept, mut own) = (keyed.near.0.try_lock().ok(), Kept::default());
-        let (near, held, bytes) = kept.as_deref_mut().unwrap_or(&mut own);
+        let (near, held, bytes, told_by) = kept.as_deref_mut().unwrap_or(&mut own);
         if !key_of(&probe).is_some_and(|key| by.whole_key(key, bytes)) {
             return Ok(Probed::Unread(probe));
         }
         // What it read, told with the probe it holds, moved, not copied:
         // the condition `scan::asked` makes of a key of its columns.
-        let told = Condition { columns: keyed.shape.columns.clone(), probe: probe.into_owned() };
+        let told = keyed.told(told_by, probe);
         storage.read_by_condition(tx, &told)?;
         let key = key_of(&told.probe).unwrap_or_default();
         let stop = st.tx.stop_of(tx);
         looked(stop.as_deref())?;
         let notes = noted::noting();
-        let listed = keyed.listed.as_ref().filter(|_| !whole);
+        let listed = match asked {
+            Asked::Given => keyed.listed.as_ref(),
+            Asked::Whole | Asked::Of(_) => None,
+        };
         let mut probing = Probing { st, keyed, storage: &**storage, index, key, tx, near, held, counts: [0; 2] };
         let (mut found, mut entries) = (None, 0_u64);
         // Each entry is counted and looked to for a cancel as the search's
@@ -261,15 +297,17 @@ impl PointRead {
         let read = by.entries_of(bytes.as_slice(), &mut |entry| {
             looked(stop.as_deref())?;
             entries = entries.saturating_add(1);
-            let row = match listed {
-                Some(listed) => probing.listed(&entry, listed)?,
-                None if whole => probing.fetch(&entry, None)?,
-                None => probing.row(&entry)?,
+            let row = match (listed, asked) {
+                (Some(listed), _) => probing.listed(&entry, listed)?,
+                (None, Asked::Whole) => probing.fetch(&entry, None)?,
+                (None, Asked::Of(columns)) => probing.fetch(&entry, Some(columns))?,
+                (None, Asked::Given) => probing.row(&entry)?,
             };
             found = row.map(|row| (entry.row, row));
             Ok(found.is_none())
         });
         let [read_entries, fetched] = probing.counts;
+        *told_by = told.columns;
         noted::add(notes.as_deref(), Noted::Entries, read_entries);
         noted::add(notes.as_deref(), Noted::Fetched, fetched);
         if let Some(uses) = st.index_uses.get(&self.index) {

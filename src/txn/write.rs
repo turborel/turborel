@@ -10,9 +10,9 @@ use super::writing::Writing;
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
-use crate::error::{Code, Result, SqlError};
-use crate::log::record::{put_delete_record, put_update_record, put_update_record_of};
-use crate::storage::{Row, RowId};
+use crate::error::{Code, Result, SqlError, fail};
+use crate::log::record::{put_delete_record, put_update_record, put_update_record_image, put_update_record_of};
+use crate::storage::{AfterImage, Patch, Row, RowId};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
 use escrowed::Guarded;
@@ -44,6 +44,19 @@ enum How {
     /// By a statement that said the columns it sets, which reads no other
     /// of the row replaced (RULES.md D875).
     Set,
+    /// As `Set`, its row holding the values of the columns set and of
+    /// those its table's index keys read, and no other (RULES.md D917).
+    Patch,
+}
+
+impl How {
+    /// Whether its statement said the columns it sets.
+    fn set(self) -> bool {
+        match self {
+            How::Set | How::Patch => true,
+            How::Whole | How::Fold => false,
+        }
+    }
 }
 
 impl State {
@@ -132,6 +145,25 @@ impl State {
         self.change_row(tx, (writing, id), (Write::Update(Cow::Borrowed(row)), How::Set), Some(recheck))
     }
 
+    /// \[DESIGN\] As `rewrite_row_set`, of a statement whose `row` holds
+    /// the values of the columns it sets and of those `writing` names
+    /// (`Writing::patched`), every other null (RULES.md D917): the write
+    /// is told the columns set, and keeps every other column of the row
+    /// as its table holds it. A version rechecked is written whole, from
+    /// the row its recheck gives.
+    pub(crate) fn rewrite_row_patch(
+        &self,
+        tx: &Txn,
+        (writing, id): (&Writing<'_>, RowId),
+        row: &Row,
+        recheck: Recheck<'_>,
+    ) -> Result<Option<Row>> {
+        if writing.patched().is_none() {
+            return fail(Code::Api, format!("[DESIGN] a row of {} is not written by the columns set alone", writing.table()));
+        }
+        self.change_row(tx, (writing, id), (Write::Update(Cow::Borrowed(row)), How::Patch), Some(recheck))
+    }
+
     /// \[DESIGN\] As `rewrite_row` with `row`, the increments reserved on
     /// row `id` applied as its transaction commits (RULES.md D452): not
     /// kept waiting by the reservations of others, whose increments add to
@@ -152,7 +184,7 @@ impl State {
         &self,
         tx: &Txn,
         (writing, id): (&Writing<'_>, RowId),
-        (mut write, how): (Write<'_>, How),
+        (mut write, mut how): (Write<'_>, How),
         mut recheck: Option<Recheck<'_>>,
     ) -> Result<Option<Row>> {
         let table = writing.table();
@@ -172,8 +204,9 @@ impl State {
             let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
-                let set = how == How::Set || (how == How::Fold && writing.set_columns().is_some());
-                Self::write_once(tx, (writing, id), (&write, stamp.as_ref(), set), seen.as_ref())
+                // RULES.md D923: a fold told the columns its increments add to is written as a set.
+                let told = if how == How::Fold && writing.set_columns().is_some() { How::Set } else { how };
+                Self::write_once(tx, (writing, id), (&write, stamp.as_ref(), told), seen.as_ref())
             };
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
@@ -209,6 +242,8 @@ impl State {
                         Again::Delete => Write::Delete,
                         Again::Skip => return Ok(None),
                     };
+                    // The row its recheck gives is whole (RULES.md D917).
+                    how = if how == How::Patch { How::Set } else { how };
                     // A recheck of a version newer than the last is no
                     // failed try (RULES.md D454).
                     if before != Some(committed) {
@@ -310,18 +345,24 @@ impl State {
     /// history it is kept in, if `stamp`, of the table's system-time
     /// period, says it is [ISO/IEC 9075-2:2023 §15.14 GR10a iii].
     ///
-    /// \[DESIGN\] RULES.md D875: of a statement that `set`, said the
-    /// columns it sets, the row replaced is read by those `writing` reads
-    /// alone where its engine allows (`Writing::sparse`), and its record
-    /// is made of the columns set, never of the row replaced whole.
+    /// \[DESIGN\] RULES.md D875: of a statement that said the columns it
+    /// sets (`How::set`), the row replaced is read by those `writing`
+    /// reads alone where its engine allows (`Writing::sparse`), and its
+    /// log record is made of the columns set, never of the row replaced
+    /// whole. D917: one whose row holds those columns alone tells its
+    /// engine so, which keeps every other column as it holds it.
     fn write_once(
         tx: &Txn,
         (writing, id): (&Writing<'_>, RowId),
-        (write, system, set): (&Write<'_>, Option<&Stamp>, bool),
+        (write, system, how): (&Write<'_>, Option<&Stamp>, How),
         seen: Option<&(Timestamp, Row)>,
     ) -> Result<(Row, Option<QualifiedName>)> {
         let (table, storage) = (writing.table(), writing.storage);
-        let sparse = if set { writing.sparse() } else { None };
+        let sparse = if how.set() { writing.sparse() } else { None };
+        // RULES.md D917: a row of the columns set alone is written as one,
+        // and its table gives the row after for its log record, in the
+        // image this thread keeps from one update to the next.
+        let mut image = sparse.filter(|_| how == How::Patch).map(|_| IMAGE.take());
         // Borrowed: the engine encodes it, and the caller keeps it for its
         // index entries and its log record, with no copy made (RULES.md D417).
         let new = match write {
@@ -343,16 +384,36 @@ impl State {
                 (storage.replace(tx.id, id, new)?, history)
             }
             (None, None) => match sparse {
-                Some(sparse) => (storage.replace_set(tx.id, id, new, &sparse.read)?, None),
+                Some(sparse) => {
+                    let (set, read) = (sparse.columns(), sparse.read());
+                    let patch = image.as_mut().map(|image| Patch { set: &set, image });
+                    let old = storage.replace_set(tx.id, id, new, (patch, &read))?;
+                    Self::imaged(writing, image.as_ref(), new)?;
+                    (old, None)
+                }
                 None => (storage.replace(tx.id, id, new)?, None),
             },
         };
-        let set = if set { writing.set_columns() } else { None };
-        match write {
-            Write::Update(row) => Self::updated(tx, (writing, id), (&old, row), set)?,
-            Write::Delete => Self::deleted(tx, writing, id, &old)?,
+        let set = if how.set() { writing.set_columns() } else { None };
+        let logged = match write {
+            Write::Update(row) => Self::updated(tx, (writing, id), (&old, row), (set.as_deref(), image.as_ref())),
+            Write::Delete => Self::deleted(tx, writing, id, &old),
+        };
+        if let Some(image) = image {
+            IMAGE.set(image);
         }
-        Ok((old, history))
+        logged.map(|()| (old, history))
+    }
+
+    /// That the table of `writing` gave `image`, if one was asked of it,
+    /// as the image of a row of the width of `new`, the row it patched:
+    /// an engine that took the patch and left its image is refused, not
+    /// logged as a row of nothing.
+    fn imaged(writing: &Writing<'_>, image: Option<&AfterImage>, new: Option<&Row>) -> Result<()> {
+        match image.zip(new).filter(|(image, new)| image.parts().1 != new.len()) {
+            Some(_) => fail(Code::Api, format!("[DESIGN] the engine of {} gave no image of the row it patched", writing.table())),
+            None => Ok(()),
+        }
     }
 
     /// The history `old`, a row about to be replaced, is kept in, if
@@ -371,16 +432,24 @@ impl State {
     /// `writing` reads alone (RULES.md D875): its record is then made of
     /// the columns set, the bytes a record of the rows whole would be, and
     /// its index entries are found by `Writing::kept_columns`, which reads
-    /// no column the statement does not set.
-    fn updated(tx: &Txn, (writing, id): (&Writing<'_>, RowId), (old, row): (&Row, &Row), set: Option<&[usize]>) -> Result<()> {
+    /// no column the statement does not set. Where `row` too holds the
+    /// columns set and its keys' alone, its record is made of `image`, the
+    /// row after as its table gave it (D917).
+    fn updated(
+        tx: &Txn,
+        (writing, id): (&Writing<'_>, RowId),
+        (old, row): (&Row, &Row),
+        (set, image): (Option<&[usize]>, Option<&AfterImage>),
+    ) -> Result<()> {
         let (table, caps) = (writing.table(), writing.caps);
         if caps.undo == Undo::Log {
             tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(writing.storage), id, old: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            Self::log_row(tx, (writing, id), |out, generation| match set {
-                Some(set) => put_update_record_of(out, tx.id, (table, generation), id, (old, row, set)),
-                None => put_update_record(out, tx.id, (table, generation), id, (old, row)),
+            Self::log_row(tx, (writing, id), |out, generation| match (image, set) {
+                (Some(image), _) => put_update_record_image(out, tx.id, (table, generation), id, (old, image)),
+                (None, Some(set)) => put_update_record_of(out, tx.id, (table, generation), id, (old, row, set)),
+                (None, None) => put_update_record(out, tx.id, (table, generation), id, (old, row)),
             })?;
         }
         // An engine keeping versions keeps the old version's entries for
@@ -437,6 +506,12 @@ impl State {
         }
         Ok(())
     }
+}
+
+thread_local! {
+    /// The image of the row after the last patch this thread wrote
+    /// (RULES.md D917), its room kept for the next.
+    static IMAGE: std::cell::Cell<AfterImage> = const { std::cell::Cell::new(AfterImage::new()) };
 }
 
 /// A row's change as a statement writes it: its row borrowed from the

@@ -126,7 +126,7 @@ fn a_point_read_probes_its_index_by_the_whole_key() {
         let (rows, point) = planned(&st, &probe(0, 7, None));
         let point = point.unwrap();
         let before = st.index_uses[&point.index].totals();
-        let keyed::Probed::Read(found) = point.keyed(&st, NO_TRANSACTION, Cow::Borrowed(&point.probe), true).unwrap() else {
+        let keyed::Probed::Read(found) = point.keyed(&st, NO_TRANSACTION, Cow::Borrowed(&point.probe), keyed::Asked::Whole).unwrap() else {
             panic!("{engine}: a whole key is probed")
         };
         assert_eq!(shown(&[found.unwrap().1]), shown(&rows), "{engine}");
@@ -135,7 +135,10 @@ fn a_point_read_probes_its_index_by_the_whole_key() {
         let (_, missing) = planned(&st, &probe(0, 5_000, None));
         let missing = missing.unwrap();
         assert!(
-            matches!(missing.keyed(&st, NO_TRANSACTION, Cow::Borrowed(&missing.probe), false).unwrap(), keyed::Probed::Read(None)),
+            matches!(
+                missing.keyed(&st, NO_TRANSACTION, Cow::Borrowed(&missing.probe), keyed::Asked::Given).unwrap(),
+                keyed::Probed::Read(None)
+            ),
             "{engine}"
         );
         let fine = if matches!(point.probe, Probe::Prefix { .. }) {
@@ -144,8 +147,32 @@ fn a_point_read_probes_its_index_by_the_whole_key() {
             Probe::Compare { op: CompOp::Eq, value: Value::Exact(Decimal::new(75, 1)) }
         };
         assert!(
-            matches!(point.keyed(&st, NO_TRANSACTION, Cow::Owned(fine), true).unwrap(), keyed::Probed::Unread(_)),
+            matches!(point.keyed(&st, NO_TRANSACTION, Cow::Owned(fine), keyed::Asked::Whole).unwrap(), keyed::Probed::Unread(_)),
             "{engine}: 7.5 has no place"
         );
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D917: an entry read for some columns is
+/// the row of its table's width with its id, those columns in their
+/// places, the key's among them; the row store decodes no other, which
+/// are null. A list without the key's column is not read so: the row is
+/// read whole, as with no list, and checked against its key all the same.
+/// Of a key not there, none either way.
+#[test]
+fn an_entry_is_read_by_the_columns_asked_for() {
+    let (_db, st) = filled(ROW_STORE);
+    let (rows, point) = planned(&st, &probe(0, 7, None));
+    let point = point.unwrap();
+    let under = || Cow::Borrowed(&point.probe);
+    let whole = point.entry_under(&st, NO_TRANSACTION, under()).unwrap().unwrap();
+    assert_eq!(shown(std::slice::from_ref(&whole.1)), shown(&rows));
+    let some = point.entry_reading(&st, NO_TRANSACTION, under(), Some(&[0, 2])).unwrap().unwrap();
+    assert_eq!(some.0, whole.0, "the same row");
+    assert_eq!(shown(&[some.1]), [format!("7|{}|70", Value::Null)], "N is not decoded");
+    let keyless = point.entry_reading(&st, NO_TRANSACTION, under(), Some(&[2])).unwrap().unwrap();
+    assert_eq!(shown(&[keyless.1]), shown(&rows), "read whole");
+    let (_, missing) = planned(&st, &probe(0, 5_000, None));
+    let missing = missing.unwrap();
+    assert!(missing.entry_reading(&st, NO_TRANSACTION, Cow::Borrowed(&missing.probe), Some(&[0, 2])).unwrap().is_none());
 }

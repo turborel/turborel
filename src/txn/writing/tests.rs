@@ -6,7 +6,7 @@
 use std::mem;
 use std::sync::Arc;
 
-use super::{Entries, columns_of, read_columns};
+use super::{Columns, Entries, read_columns};
 use crate::catalog::{Catalog, ColumnDesc, IndexDesc, MemoryCatalog, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::engine::rows::{RowStore, TableOptions};
@@ -55,6 +55,21 @@ fn database_of(columns: &[&str]) -> (State, Txn, QualifiedName) {
 
 fn row(k: i64) -> Row {
     vec![Value::Exact(Decimal::new(k.into(), 0))]
+}
+
+/// An index of `table` on its first two columns, to make `Entries` of.
+fn index_of(table: &QualifiedName) -> IndexDesc {
+    IndexDesc {
+        name: "T_KA".into(),
+        table: table.clone(),
+        columns: vec![0, 1],
+        method: crate::index::BTREE_METHOD.into(),
+        unique: false,
+        options: Vec::new(),
+        collations: Vec::new(),
+        nulls: false,
+        expressions: Vec::new(),
+    }
 }
 
 /// A row of the numbers `values`.
@@ -157,27 +172,18 @@ fn an_update_reads_the_columns_set_and_the_keys_they_meet() {
     assert_eq!(read_columns(0b0001, [0b1100].into_iter()), 0b0001, "no key meets it");
     assert_eq!(read_columns(0b0101, [0b0011, 0b1100].into_iter()), 0b1111, "both meet it");
     assert_eq!(read_columns(0b0100, std::iter::empty()), 0b0100, "no index");
-    assert_eq!(columns_of(0b1010 | (1 << 63)), [1, 3, 63]);
+    assert_eq!(Columns::of(0b1010 | (1 << 63)).to_vec(), [1, 3, 63]);
+    assert!(Columns::of(0).is_empty() && Columns::of(u64::MAX).len() == 64, "none, and every one");
     let (st, _tx, name) = database_of(&["K", "A", "B", "C"]);
     let mut writing = st.writing(&name).unwrap();
     assert!(writing.sparse().is_none() && writing.set_columns().is_none(), "nothing said");
     // As of an index on (K, A) and one on C.
-    let index = IndexDesc {
-        name: "T_KA".into(),
-        table: name.clone(),
-        columns: vec![0, 1],
-        method: crate::index::BTREE_METHOD.into(),
-        unique: false,
-        options: Vec::new(),
-        collations: Vec::new(),
-        nulls: false,
-        expressions: Vec::new(),
-    };
+    let index = index_of(&name);
     writing.indexes =
         vec![Entries { columns: 0b0011, ..Entries::of(&index, None) }, Entries { columns: 0b1000, ..Entries::of(&index, None) }];
     let set = writing.setting(0b0110);
-    assert_eq!(set.set_columns(), Some(&[1_usize, 2][..]));
-    assert_eq!(set.sparse().map(|s| (s.columns.clone(), s.read.clone())), Some((vec![1, 2], vec![0, 1, 2])));
+    assert_eq!(set.set_columns().as_deref(), Some(&[1_usize, 2][..]));
+    assert_eq!(set.sparse().map(|s| (s.columns().to_vec(), s.read().to_vec())), Some((vec![1, 2], vec![0, 1, 2])));
 }
 
 /// Verifies: [DESIGN] RULES.md D875: the row replaced is read by columns
@@ -223,4 +229,62 @@ fn an_update_of_the_columns_set_is_given_those_of_the_row_replaced() {
     assert_eq!(shown(whole).as_deref(), Some("1,2,9"), "asked for whole");
     st.commit(&tx).unwrap();
     assert_eq!(shown(storage.get(crate::txn::NO_TRANSACTION, id).unwrap()).as_deref(), Some("1,2,10"));
+}
+
+/// Verifies: [DESIGN] RULES.md D917: an update is written by the columns
+/// set, its row holding those and its index keys' columns, only where
+/// nothing reads another column of it. MC/DC of `Writing::patched`: a
+/// statement that said what it sets, of a table read by columns, with
+/// nothing checked beside it, no period and every index's key columns
+/// known, against each taken away alone: nothing said, an engine undone
+/// by the coordinator's log, a check beside the table, a system-time
+/// period, and an index whose key columns are not known.
+#[test]
+fn a_row_is_written_by_the_columns_set_only_where_nothing_reads_another() {
+    let (st, _tx, name) = database_of(&["K", "A", "B"]);
+    let index = index_of(&name);
+    let said = || {
+        let mut writing = st.writing(&name).unwrap();
+        writing.key_columns = 0b011;
+        writing.indexes = vec![Entries { columns: 0b011, ..Entries::of(&index, None) }];
+        writing.setting(0b100)
+    };
+    assert_eq!(said().patched(), Some(0b111), "the columns set and those the keys read");
+    assert!(st.writing(&name).unwrap().patched().is_none(), "nothing said");
+    let mut logged = said();
+    logged.caps.undo = Undo::Log;
+    assert!(logged.patched().is_none(), "the whole row is kept to put back");
+    let mut checked = said();
+    checked.checked = true;
+    assert!(checked.patched().is_none(), "a check beside the table reads the row written");
+    let mut stamped = said();
+    stamped.stamped = true;
+    assert!(stamped.patched().is_none(), "a period stamps the row written");
+    let mut unknown = said();
+    unknown.indexes.push(Entries { columns: 0, ..Entries::of(&index, None) });
+    assert!(unknown.patched().is_none(), "an index's key is made of columns not known");
+}
+
+/// Verifies: [DESIGN] RULES.md D917, D916: an update whose row holds the
+/// values of the columns it sets alone leaves every other column as the
+/// table holds it, and is given the row it replaced by the columns it
+/// reads; through a `Writing` that may not be written so, here one told
+/// no columns, it is refused (SQLCODE -910) and nothing is written.
+#[test]
+fn an_update_holding_the_columns_set_alone_keeps_every_other() {
+    let (st, tx, name) = database_of(&["K", "A", "B"]);
+    let writing = st.writing(&name).unwrap().setting(0b100);
+    let storage = Arc::clone(st.storage_of(&name).unwrap());
+    tx.begin_statement(|| false).unwrap();
+    let id = st.insert_row_in(&tx, &writing, &numbers(&[1, 2, 3])).unwrap();
+    let mut recheck = |_: &Row| Ok(crate::txn::Again::Skip);
+    let shown = |row: Option<Row>| row.map(|row| row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    let set = vec![Value::Null, Value::Null, numbers(&[9])[0].clone()];
+    let old = st.rewrite_row_patch(&tx, (&writing, id), &set, &mut recheck).unwrap();
+    assert_eq!(shown(old).as_deref(), Some("NULL,NULL,3"), "the column set alone");
+    assert_eq!(shown(storage.get(tx.id, id).unwrap()).as_deref(), Some("1,2,9"), "the columns not set are kept");
+    let unsaid = st.writing(&name).unwrap();
+    assert_eq!(st.rewrite_row_patch(&tx, (&unsaid, id), &set, &mut recheck).err().map(|e| e.code), Some(Code::Api));
+    st.commit(&tx).unwrap();
+    assert_eq!(shown(storage.get(crate::txn::NO_TRANSACTION, id).unwrap()).as_deref(), Some("1,2,9"));
 }

@@ -46,8 +46,12 @@ impl Sharing {
 }
 
 /// The columns `ix`'s key reads, as bits; none if one is past the last bit.
+/// Of a key of columns as they are, they are its columns, read where the
+/// index holds them: every write of a row asks, and a list made of them
+/// for each would be an allocation a row and an index.
 pub(crate) fn key_columns(ix: &IndexDesc) -> u64 {
-    ix.reads().into_iter().try_fold(0u64, |mask, c| column_bit(c).map(|bit| mask | bit)).unwrap_or(0)
+    let bits = |columns: &[usize]| columns.iter().try_fold(0u64, |mask, &c| column_bit(c).map(|bit| mask | bit)).unwrap_or(0);
+    if ix.has_expressions() { bits(&ix.reads()) } else { bits(&ix.columns) }
 }
 
 /// Whether collection reads the row of a version its successor `kept`, to

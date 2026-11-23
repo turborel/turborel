@@ -15,6 +15,7 @@ mod batch;
 mod condition;
 mod cost;
 mod engine;
+mod image;
 mod kept;
 mod loading;
 mod newest;
@@ -30,6 +31,7 @@ pub use batch::{
 pub use condition::{Condition, Conjunct, Conjunction, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
+pub use image::{AfterImage, Patch};
 pub use kept::{COLUMN_BITS, Garbage, Kept, Needed, Removal, Removed, column_bit, same, unchanged};
 pub use loading::Loading;
 pub use newest::Newest;
@@ -115,13 +117,14 @@ pub trait TableStorage: Send + Sync {
         row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row.clone())).map(|()| old)
     }
     /// \[DESIGN\] As `replace`, of a caller that reads only the columns `read` of the row replaced: those hold their values, the
-    /// others null (RULES.md D875). Default: `replace`, every column read.
+    /// others null (RULES.md D875). With a `patch`, `row` holds the values of its columns set alone, the row keeps every other as it
+    /// is, and its image is given (D916). Default: `replace`, every column read, of a row patched read whole (`Patch::whole`).
     ///
     /// # Errors
     ///
     /// As `replace`.
-    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, _read: &[usize]) -> Result<Row> {
-        self.replace(tx, id, row)
+    fn replace_set(&self, tx: TxId, id: RowId, row: Option<&Row>, (patch, _read): (Option<Patch<'_>>, &[usize])) -> Result<Row> {
+        rows::replace_whole(self, (tx, id), row, patch)
     }
     /// Removes the live row `id`.
     ///

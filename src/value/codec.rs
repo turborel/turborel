@@ -80,6 +80,17 @@ const JSON: u8 = 20;
 /// binary large object's (`types::xml`).
 const XML: u8 = 21;
 
+/// \[DESIGN\] Appends the character string of the UTF-8 bytes `text`
+/// followed by `pad` spaces, as `put_value` appends it as a value: for a
+/// writer that holds the string's bytes, not a value of it (RULES.md
+/// D916).
+pub(crate) fn put_spaced(out: &mut Vec<u8>, text: &[u8], pad: usize) {
+    out.put_u8(CHARACTER);
+    out.put_u32(u32::try_from(text.len().saturating_add(pad)).unwrap_or(u32::MAX));
+    out.extend_from_slice(text);
+    out.resize(out.len().saturating_add(pad), b' ');
+}
+
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
 pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {

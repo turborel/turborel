@@ -65,6 +65,7 @@ mod order_by;
 mod overloading;
 mod partitioned_joins;
 mod partitioning;
+mod patched;
 mod patterns;
 mod plugins;
 mod predicates;

@@ -69,6 +69,7 @@ mod gc;
 mod lists;
 mod open;
 mod opens;
+mod patch;
 mod pending;
 mod reads;
 mod stamps;
