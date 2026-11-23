@@ -32,11 +32,11 @@ pub const COMPILED: [Mutation; 11] = [
     Mutation {
         name: "compiled-delta-no-data",
         package: Package::Core,
-        breaks: "a SELECT ... INTO of a delta table of no row run straight completes successfully",
+        breaks: "a SELECT ... INTO of a delta table of no row completes successfully, unseen by a NOT FOUND handler",
         file: "src/db/routines/program/compiled/change.rs",
         original: "        [] => Ok(Completion::NoData),",
         replacement: "        [] => Ok(Completion::Success),",
-        integration: &["compiled_procedures::old_tables_deletes_and_generated_values_alike"],
+        integration: &[ROWS],
         unit: &[],
     },
     Mutation {
@@ -62,11 +62,11 @@ pub const COMPILED: [Mutation; 11] = [
     Mutation {
         name: "compiled-change-unended",
         package: Package::Core,
-        breaks: "a change run straight leaves its statement's effects unchecked at its end",
+        breaks: "a change run by the write functions leaves its statement's effects unchecked at its end",
         file: "src/db/routines/program/compiled/change.rs",
         original: "        if done.is_some() {",
         replacement: "        if done.is_none() {",
-        integration: &[CONSTRAINTS],
+        integration: &[MORE],
         unit: &[],
     },
     Mutation {

@@ -22,7 +22,7 @@ const SETUP: [&str; 6] = [
 ];
 
 /// The procedures of these cases, one point change each.
-const PROCEDURES: [&str; 9] = [
+const PROCEDURES: [&str; 11] = [
     "CREATE PROCEDURE SETV (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA BEGIN UPDATE C SET V = NULLIF(X, -1) WHERE K = KK; END",
     "CREATE PROCEDURE SETU (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA BEGIN UPDATE C SET U = X WHERE K = KK; END",
     "CREATE PROCEDURE SETPK (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA BEGIN UPDATE C SET PK = X WHERE K = KK; END",
@@ -34,6 +34,12 @@ const PROCEDURES: [&str; 9] = [
        BEGIN SELECT V INTO X FROM OLD TABLE (DELETE FROM C WHERE K = KK); END",
     "CREATE PROCEDURE BUMP (IN KK INTEGER, IN AMT INTEGER, OUT X INTEGER) MODIFIES SQL DATA
        BEGIN SELECT V INTO X FROM FINAL TABLE (UPDATE C SET V = V + AMT WHERE K = KK); END",
+    "CREATE PROCEDURE DROPH (IN KK INTEGER, OUT X INTEGER) MODIFIES SQL DATA
+       BEGIN DECLARE CONTINUE HANDLER FOR NOT FOUND SET X = -1; SET X = 0;
+         SELECT V INTO X FROM OLD TABLE (DELETE FROM C WHERE K = KK); END",
+    "CREATE PROCEDURE DROPPH (IN KK INTEGER, OUT X INTEGER) MODIFIES SQL DATA
+       BEGIN DECLARE CONTINUE HANDLER FOR NOT FOUND SET X = -1; SET X = 0;
+         SELECT V INTO X FROM OLD TABLE (DELETE FROM P WHERE K = KK); END",
 ];
 
 /// `setup` and `PROCEDURES`, then `script`, compiled and interpreted.
@@ -52,7 +58,9 @@ fn calls(call: &str, args: &[&str]) -> Vec<String> {
 /// Verifies: [DESIGN] RULES.md D841, a point UPDATE checks the NOT NULL,
 /// foreign key and UNIQUE constraints of the columns it writes, and a
 /// CHECK of its row, at its end as the general path checks them: SQLSTATE
-/// 23000 of each broken, the row left as it was.
+/// 23000 of each broken, the row left as it was; and its OLD TABLE of no
+/// row read as no data, which a NOT FOUND handler handles, straight and on
+/// the general path alike.
 #[test]
 fn a_point_change_checks_its_rows_constraints() {
     let mut script = calls("SETV", &["1, 10", "1, 11", "2, 12", "1, 13", "2, -1", "9, 1"]);
@@ -61,12 +69,18 @@ fn a_point_change_checks_its_rows_constraints() {
     script.extend(calls("SETCK", &["1, 10", "1, 11", "2, 12", "1, 13", "2, 0"]));
     script.extend(calls("BUMP", &["1, 1, ?", "1, 1, ?", "2, 1, ?", "9, 1, ?", "1, 1, ?"]));
     script.extend(calls("DROPC", &["9, ?", "3, ?", "3, ?"]));
+    script.extend(calls("DROPH", &["9, ?", "2, ?", "2, ?"]));
+    script.extend(calls("DROPPH", &["9, ?", "8, ?", "4, ?"]));
     let gave = alike(&[], &script);
     assert!(gave.iter().any(|l| l.starts_with("CALL SETU(2, 13): error 23000")), "unique: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL SETCK(2, 0): error 23000")), "CHECK: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL SETV(2, -1): error 23000")), "NOT NULL: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL SETPK(2, 9): error 23000")), "foreign key: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL DROPC(3, ?): ok")), "OLD TABLE: {gave:?}");
+    let handled = |l: &String| l.starts_with("CALL DROPH(9, ?): ok") && l.contains("\"-1\"");
+    assert!(gave.iter().any(handled), "no data handled: {gave:?}");
+    let fell_back = |l: &String| l.starts_with("CALL DROPPH(9, ?): ok") && l.contains("\"-1\"");
+    assert!(gave.iter().any(fell_back), "no data handled on the general path: {gave:?}");
 }
 
 /// Verifies: [DESIGN] RULES.md D841, a point change whose statement's end
