@@ -56,13 +56,16 @@ mod cuts;
 mod edge;
 mod estimate;
 mod fit;
+mod here;
 pub(crate) mod hints;
 mod inner;
+mod leaves;
 mod levels;
 mod load;
 mod merge;
 mod near;
 mod node;
+mod pin;
 mod placed;
 mod reclaim;
 mod retired;
@@ -79,6 +82,7 @@ use counts::{Counters, count};
 pub(crate) use node::Parsed;
 
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
+pub use pin::Pinned;
 pub use placed::Placed;
 pub(crate) use reclaim::{Entered, Epochs};
 pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of, scan_owned};
@@ -386,12 +390,15 @@ impl BLinkTree {
         tally.inspect(|t| t.lookup());
         loop {
             // An inner node above the level asked for may be read from the
-            // thread's copy; a root of no known level only for a leaf.
+            // thread's copy; a root of no known level only for a leaf. A
+            // leaf, or a root that may be one, from its own (`leaves.rs`).
             let copied = expected.map_or(level == 0, |l| l > level);
-            let page = inner::read(&self.pool, (self.file, id.0), tally, copied)?;
+            let page = inner::read_at(&self.pool, (self.file, id.0), tally, (copied, expected.unwrap_or(level) == 0))?;
             let node = page.node()?;
             if node.level > 0 {
                 inner::keep(&page, (self.file, id.0), node.parsed());
+            } else {
+                leaves::noted(&page, (self.file, id.0));
             }
             if expected.is_some_and(|l| l != node.level) || node.level < level {
                 return Err(corrupt(&format!("node {} is not at the level its parent says", id.0)));
@@ -451,36 +458,43 @@ impl BLinkTree {
     fn change(&self, held: &NodeLock<'_>, key: &[u8], value: &[u8], slot: Slot) -> Result<Vec<Split>> {
         let copy = {
             let mut page = self.pool.write_owned(held)?;
-            let room = self.room(held, &Node::parse(&page)?, (key, value), slot)?;
-            let Some(room) = room else {
-                if let Slot::Replace(at) = slot {
-                    node::overwrite(&mut page, at, value)?;
-                }
-                return Ok(Vec::new());
-            };
-            // Garbage is reclaimed only once it is worth a node built
-            // again (`room.rs`); short of that a node with no room splits.
-            let in_place = room.after <= self.capacity && (room.reclaim || page.len().saturating_add(room.stored) <= self.capacity);
-            let compactable = room.rebuild && !room.run && matches!(slot, Slot::Insert(_));
-            let fits = in_place || (compactable && self.fits_compacted(&mut page, key, node::entry_size(key, value))?);
-            if room.run || !fits {
-                page.clone()
-            } else {
-                let at = match slot {
-                    Slot::Insert(at) => at,
-                    Slot::Replace(at) => {
-                        node::remove(&mut page, at)?;
-                        at
-                    }
-                };
-                if page.len().saturating_add(room.stored) > self.capacity {
-                    *page = node::compact(&page)?;
-                }
-                node::insert(&mut page, at, key, value)?;
-                return Ok(Vec::new());
-            }
+            let Some(copy) = self.change_latched(held, &mut page, (key, value), slot)? else { return Ok(Vec::new()) };
+            copy
         };
         self.split(held.id, &copy, (key, value), slot)
+    }
+
+    /// `change`, of node `held` latched for writing as `page`: made in
+    /// place if the node then fits its page, else not made, and the node's
+    /// content given to split with the change (`split`).
+    fn change_latched(&self, held: &NodeLock<'_>, page: &mut Vec<u8>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<Option<Vec<u8>>> {
+        let room = self.room(held, &Node::parse(page)?, (key, value), slot)?;
+        let Some(room) = room else {
+            if let Slot::Replace(at) = slot {
+                node::overwrite(page, at, value)?;
+            }
+            return Ok(None);
+        };
+        // Garbage is reclaimed only once it is worth a node built
+        // again (`room.rs`); short of that a node with no room splits.
+        let in_place = room.after <= self.capacity && (room.reclaim || page.len().saturating_add(room.stored) <= self.capacity);
+        let fits =
+            in_place || (room::compactable(page, &room, key, slot)? && self.fits_compacted(page, key, node::entry_size(key, value))?);
+        if room.run || !fits {
+            return Ok(Some(page.clone()));
+        }
+        let at = match slot {
+            Slot::Insert(at) => at,
+            Slot::Replace(at) => {
+                node::remove(page, at)?;
+                at
+            }
+        };
+        if page.len().saturating_add(room.stored) > self.capacity {
+            *page = node::compact(page)?;
+        }
+        node::insert(page, at, key, value)?;
+        Ok(None)
     }
 
     /// Splits node `id`, whose content was `copy`, making `slot`'s change

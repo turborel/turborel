@@ -85,6 +85,12 @@ impl Ready {
         self.back = self.spans.len();
     }
 
+    /// The entries taken, given or not, for tests.
+    #[cfg(test)]
+    pub(super) fn taken(&self) -> usize {
+        self.spans.len()
+    }
+
     /// Whether every entry taken was given.
     pub(super) fn is_empty(&self) -> bool {
         self.front >= self.back

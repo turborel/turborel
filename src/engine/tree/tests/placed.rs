@@ -1,5 +1,6 @@
 //! Unit tests of changes in place from the leaf a write left its entry in
-//! (RULES.md D843, `placed.rs`).
+//! (RULES.md D843, `placed.rs`), and of writes from where a read found
+//! its key (RULES.md D446, `write.rs`).
 
 use super::*;
 
@@ -31,4 +32,63 @@ fn a_change_starts_where_the_write_left_the_entry() {
         tree.delete(&key(n)).unwrap();
     }
     assert_eq!(tree.change_placed(five, &key(5), flip).unwrap(), None, "a leaf was retired since");
+}
+
+/// Verifies: [DESIGN] RULES.md D446: a write from where a read's descent
+/// found its key replaces the value it read, though the leaf split since,
+/// and refuses one changed since; one whose leaf was retired since, its
+/// page freed and taken again, descends again.
+#[test]
+fn a_write_starts_where_its_read_found_the_key() {
+    let (tree, _scratch) = tree("found-writes");
+    tree.insert(&key(0), b"zero").unwrap();
+    let (old, found) = tree.get_for_write(&key(0)).unwrap().unwrap();
+    assert_eq!(old, b"zero");
+    fill(&tree, 5_000);
+    assert!(tree.replace_found(&found, &key(0), (b"zero", b"ZERO")).unwrap(), "moved right past the splits");
+    assert_eq!(tree.get(&key(0)).unwrap(), Some(b"ZERO".to_vec()));
+    let (_, six) = tree.get_for_write(&key(6)).unwrap().unwrap();
+    tree.replace(&key(6), b"six").unwrap();
+    assert!(!tree.replace_found(&six, &key(6), (&VALUE, b"SIX")).unwrap(), "changed since it was read");
+    let (_, middle) = tree.get_for_write(&key(2_500)).unwrap().unwrap();
+    for n in 2_000..3_000 {
+        tree.delete(&key(n)).unwrap();
+    }
+    tree.free_retired().unwrap();
+    assert!(tree.insert(&key(2_500), &VALUE).unwrap());
+    for n in 10_000..14_000 {
+        assert!(tree.insert(&key(n), &VALUE).unwrap());
+    }
+    assert!(tree.replace_found(&middle, &key(2_500), (&VALUE, b"middle")).unwrap(), "its leaf freed and taken again: descended");
+    assert_eq!(tree.get(&key(2_500)).unwrap(), Some(b"middle".to_vec()));
+    assert!(tree.get_for_write(&key(4_000_000)).unwrap().is_none());
+}
+
+/// Verifies: [DESIGN] RULES.md D856: a delete from a leaf split since
+/// finds its entry to the right, and removes it only if its value is the
+/// one expected; an update is shown its key's value, or none, and keeps,
+/// puts or removes the entry as it says.
+#[test]
+fn a_delete_and_an_update_change_the_leaf_covering_their_key() {
+    let (tree, _scratch) = tree("covering");
+    assert!(tree.insert(&key(3_000), &VALUE).unwrap());
+    let leaf = tree.descend(Target::Key(&key(3_000)), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
+    fill(&tree, 2_999);
+    assert_eq!(tree.delete_from(&Path::default(), leaf, &key(3_000), Some(b"other")).unwrap(), None, "not the value expected");
+    assert_eq!(tree.delete_from(&Path::default(), leaf, &key(3_000), Some(&VALUE)).unwrap(), Some(VALUE.to_vec()));
+    assert_eq!(tree.get(&key(3_000)).unwrap(), None);
+    let mut shown = None;
+    let keep = |old: Option<&[u8]>| {
+        shown = old.map(<[u8]>::to_vec);
+        Ok(Update::Keep)
+    };
+    tree.update(&key(7), keep).unwrap();
+    assert_eq!(shown, Some(VALUE.to_vec()), "the value where it lies");
+    tree.update(&key(7), |_| Ok(Update::Put(b"seven".to_vec()))).unwrap();
+    assert_eq!(tree.get(&key(7)).unwrap(), Some(b"seven".to_vec()));
+    tree.update(&key(7), |_| Ok(Update::Remove)).unwrap();
+    assert_eq!(tree.get(&key(7)).unwrap(), None);
+    let put = |old: Option<&[u8]>| Ok(if old.is_none() { Update::Put(VALUE.to_vec()) } else { Update::Keep });
+    tree.update(&key(7), put).unwrap();
+    assert_eq!(tree.get(&key(7)).unwrap(), Some(VALUE.to_vec()));
 }

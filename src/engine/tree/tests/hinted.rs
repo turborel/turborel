@@ -184,3 +184,64 @@ fn a_replace_starts_at_the_leaf_a_read_left() {
         assert_eq!(tree.get(&key(k)).unwrap(), Some(newer.to_vec()), "key {k}");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D853: a read of a table's row for a write
+/// takes it from the leaf noted for the row, with no descent and no path,
+/// and the write over it starts at that leaf; a row absent from the range
+/// of the leaf noted is none; a leaf noted that split since leads right to
+/// the row, and the write moves right too; a row noted with no leaf is
+/// read by a descent, which keeps its path.
+#[test]
+fn a_read_for_a_write_starts_at_the_leaf_noted() {
+    let (tree, _scratch) = rows("noted-write", 40);
+    let old = leaf_of(&tree, 5);
+    hints::note(5, old.0);
+    let hinted = tree.counts().hinted;
+    let (value, found) = tree.get_for_write(&key(5)).unwrap().unwrap();
+    assert_eq!((value.as_slice(), found.leaf), (&VALUE[..], old));
+    assert_eq!(tree.counts().hinted, hinted + 1, "from the leaf noted");
+    assert!(found.path.stack.last().is_none(), "no descent, so no path");
+    let mut newer = VALUE;
+    newer[0] = 8;
+    assert!(tree.replace_found(&found, &key(5), (&VALUE, &newer)).unwrap());
+    assert_eq!(tree.get(&key(5)).unwrap(), Some(newer.to_vec()));
+    hints::note(41, leaf_of(&tree, 41).0);
+    assert!(tree.get_for_write(&key(41)).unwrap().is_none(), "absent, in the range of the leaf noted");
+    fill_from(&tree, 41, 400);
+    let k = (41..=400).find(|&k| (1..=4).contains(&leaf_hops(&tree, old, k))).unwrap();
+    hints::note(k, old.0);
+    let (_, right) = tree.get_for_write(&key(k)).unwrap().unwrap();
+    assert_eq!(right.leaf, leaf_of(&tree, k), "moved right from the leaf noted");
+    assert!(tree.replace_found(&right, &key(k), (&VALUE, &newer)).unwrap());
+    assert_eq!(tree.get(&key(k)).unwrap(), Some(newer.to_vec()));
+    hints::note(7, hints::NO_LEAF);
+    let before = tree.counts().hinted;
+    let (_, descended) = tree.get_for_write(&key(7)).unwrap().unwrap();
+    assert_eq!(tree.counts().hinted, before, "no leaf noted");
+    assert!(descended.path.stack.last().is_some(), "a descent, its path kept");
+}
+
+/// Verifies: [DESIGN] RULES.md D500, D31: reads of rows far apart through
+/// one `Near`, each answered by the leaf noted for its row, stop trying
+/// the leaf of the read before once it has missed eight times in a row,
+/// and read no page but the one noted from then on. Regression test
+/// (R-TEST-7): a hint that answered cleared the misses, so every such
+/// read tried the last leaf and its neighbour first, for ever.
+#[test]
+fn reads_far_apart_stop_trying_the_leaf_of_the_read_before() {
+    let (tree, _scratch) = rows("far-apart", 2_000);
+    let far = [5_u64, 1_000, 1_900, 500, 1_500];
+    let leaves: Vec<PageId> = far.iter().map(|&k| leaf_of(&tree, k)).collect();
+    let mut near = Near::default();
+    let read = |round: usize, kept: &mut Near| {
+        let at = round % far.len();
+        hints::note(far[at], leaves[at].0);
+        assert!(tree.get_near(&key(far[at]), kept).unwrap());
+    };
+    (0..12).for_each(|round| read(round, &mut near));
+    assert_eq!(near.misses, 8, "no longer tried, nor cleared by a hint");
+    let (hits, hinted) = (tree.pool.counts().hits, tree.counts().hinted);
+    (12..22).for_each(|round| read(round, &mut near));
+    assert_eq!(tree.counts().hinted, hinted + 10, "each from the leaf noted");
+    assert!(tree.pool.counts().hits <= hits + 10, "one page a read at most");
+}
