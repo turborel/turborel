@@ -87,10 +87,10 @@ pub const STEADY_PLANS: [Mutation; 11] = [
     Mutation {
         name: "steady-probes-known-ignored",
         package: Package::Core,
-        breaks: "a probe's plan learned before its table's statistics keeps the whole table's rows as its figure",
+        breaks: "a plan learned before its tables' statistics keeps the plan of the defaults, and a probe's the whole table's rows as its figure",
         file: "src/db/prepared/plans/grown.rs",
-        original: "        if probes.iter().any(|p| !p.known && st.statistics(&p.table).is_some()) {",
-        replacement: "        if probes.iter().any(|p| !p.known && st.statistics(&p.table).is_none()) {",
+        original: "        if reads.iter().zip(self.known.iter()).any(|(t, &known)| !known && st.statistics(t).is_some()) {",
+        replacement: "        if reads.iter().zip(self.known.iter()).any(|(t, &known)| !known && st.statistics(t).is_none()) {",
         integration: &[UNKNOWN],
         unit: &[],
     },

@@ -303,6 +303,16 @@ most as many as the statistics allow, since an estimate too low makes
 its probes far dearer than one hash join. PLANNER.ESTIMATE_MARGIN sets
 how many times; 1 trusts the estimate.
 
+A table whose every column of a primary key or unique constraint is
+held equal to a value, a parameter or a variable is read by that key's
+probe, whatever its size or statistics, as at most one row matches. A
+range of a primary or unique key, or of an index holding every column
+read, whose first columns are held equal, finds only rows a scan would
+read too, so it is never priced above that scan. Where the two are
+priced alike, the range is read if it is estimated to read fewer rows
+than the scan, and fewer than the table's rows over
+PLANNER.ESTIMATE_MARGIN.
+
 A few keys given as a set probe the table's index once each, where the
 probes cost less than reading the table. An IN of a subquery, of a row
 value or of VALUES, and an EXISTS whose subquery equates the key with its
