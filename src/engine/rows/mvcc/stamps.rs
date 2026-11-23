@@ -202,19 +202,29 @@ impl RowTable {
         };
         let mut left = SpillList::new(self.versions.space_within(rows.len().saturating_mul(size_of::<Stamp>())));
         let (mut lost, mut dead) = (false, Vec::new());
+        let mut unread = false;
+        let mut note = |id, stamped: Result<bool>| match stamped {
+            Ok(true) => dead.push(Dead::Deletion(id)),
+            Ok(false) => {}
+            Err(_) => lost |= left.push(Stamp(id, Placed::default()), &mut encode_stamp).is_err(),
+        };
         for segment in rows.into_segments(false, &decode_stamp) {
-            let Ok(segment) = segment else {
-                lost = true;
+            let Ok(mut segment) = segment else {
+                unread = true;
                 continue;
             };
-            for Stamp(id, placed) in segment {
-                match self.stamp_placed(tx, (id, placed), at) {
-                    Ok(true) => dead.push(Dead::Deletion(id)),
-                    Ok(false) => {}
-                    Err(_) => lost |= left.push(Stamp(id, Placed::default()), &mut encode_stamp).is_err(),
-                }
+            // [DESIGN] RULES.md D924: the rows a leaf holds one after
+            // another, so each leaf is latched once for them all.
+            segment.sort_unstable_by_key(|Stamp(id, placed)| (placed.stamp, placed.leaf, *id));
+            let mut from = 0;
+            while let Some(Stamp(_, placed)) = segment.get(from) {
+                let rest = segment.get(from..).unwrap_or_default();
+                let run = rest.get(..rest.iter().take_while(|s| s.1 == *placed).count()).unwrap_or_default();
+                self.stamp_run(tx, at, run, &mut note);
+                from = from.saturating_add(run.len().max(1));
             }
         }
+        lost |= unread;
         if !dead.is_empty() {
             self.add_garbage(at, dead, 0);
         }
@@ -223,6 +233,30 @@ impl RowTable {
             return;
         }
         self.versions.statuses.stamped(tx, at);
+    }
+
+    /// \[DESIGN\] Stamps the rows of `run`, ascending, each left by its
+    /// write in the one leaf, with the leaf latched once for those it
+    /// still holds (`BLinkTree::change_placed_run`, RULES.md D924), and
+    /// each of the others as `stamp_placed` does; `note` is told of each
+    /// whether it is a deletion, or that it could not be stamped.
+    fn stamp_run(&self, tx: TxId, at: Timestamp, run: &[Stamp], note: &mut dyn FnMut(RowId, Result<bool>)) {
+        let mut done = 0_usize;
+        if let (Some(Stamp(_, placed)), true) = (run.first(), run.len() > 1) {
+            let keys: Vec<_> = run.iter().map(|Stamp(id, _)| key(*id)).collect();
+            // Counted as they are noted: a failure of the leaf past some
+            // leaves those stamped, and the rest to be stamped alone.
+            let _ = self.tree.change_placed_run(*placed, &keys, |n, bytes| {
+                if let Some(Stamp(id, _)) = run.get(n) {
+                    note(*id, stamp_in_place(bytes, tx, at).map(|stamped| stamped.unwrap_or(false)));
+                    done = done.saturating_add(1);
+                }
+                Ok(())
+            });
+        }
+        for Stamp(id, placed) in run.iter().skip(done) {
+            note(*id, self.stamp_placed(tx, (*id, *placed), at));
+        }
     }
 
     /// As `stamp`, starting at the leaf `placed` names: in place, with no

@@ -590,6 +590,7 @@ verification approach DO-178C expects (§8).
 | D900 | A correlated subquery whose plan kept probes a whole unique key runs as a point read, its plan shared and lent |
 | D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
 | D923 | Increments reserved are applied by a write told the columns they add to |
+| D924 | A commit's rows that one leaf holds are stamped with the leaf latched once |
 
 ### The project
 
@@ -16457,6 +16458,36 @@ The semantics hold for these reasons.
   another transaction is writing, and is undone with its statement, as
   the same `change_row` makes it.
 - The log holds the same record, so recovery replays it to the same row.
+
+#### D924. A commit's rows that one leaf holds are stamped with the leaf latched once
+
+A commit stamps each row it wrote first, from the leaf its write left
+the entry in (D440, D843). Each stamp latched its leaf, searched it and
+wrote. A transaction that inserts a run of rows, as an order's lines,
+leaves them in one leaf, and latched and searched that leaf once a row.
+
+The rows of a commit are now sorted by the leaf their writes named, and
+those of one leaf are stamped under one hold of it
+(`BLinkTree::change_placed_run`, `mvcc/stamps.rs`). A row the node no
+longer holds, as after a split moved it right, ends the run, and it and
+the rows after it are stamped one at a time as before, by the leaf or
+by a descent.
+
+Leaving the stamps to the first reader or to collection was weighed and
+not done. The statuses of a store's transactions (D440) already let a
+reader resolve a version left unstamped, and a slot is taken again only
+once every table of its commit is stamped, so readers would be safe. A
+checkpoint is not: its image must hold stamps, since recovery resolves
+an unstamped version by the log, and redoes only commits whose records
+lie after the checkpoint (`db/recovery.rs`). Stamps left to collection
+would have every checkpoint stamp each table's backlog with the gate
+shut, and a stamp made long after its write goes down from the root
+whenever a leaf of its tree was retired meanwhile (D843). The stamp of a version a later writer
+replaces first is saved either way, as that writer appends it stamped.
+
+The semantics are unchanged. Each row is stamped as it was, a version
+another writer replaced meanwhile left alone, a deletion filed as
+garbage, and a row that cannot be stamped queued for collection.
 
 ## 2. Project layout
 

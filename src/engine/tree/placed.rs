@@ -135,4 +135,39 @@ impl BLinkTree {
         let Ok(at) = Node::parse(&page)?.search(key)? else { return Ok(None) };
         change(node::value_mut(&mut page, at)?).map(Some)
     }
+
+    /// \[DESIGN\] As `change_placed`, of each of `keys`, ascending, that
+    /// the leaf `placed` names holds, under one hold of the leaf (RULES.md
+    /// D924): a commit's rows a statement left in one leaf are stamped
+    /// with the leaf latched once, not once a row. `change` is given each
+    /// key's place among `keys` and its value. How many of `keys`, from
+    /// the first, were changed there: the first not changed is not in the
+    /// node that covers the first, which the caller then changes alone.
+    /// None of them if the leaf may have left the tree. `change` must not
+    /// use the tree.
+    ///
+    /// # Errors
+    ///
+    /// `change`'s errors; the buffer pool's; SQLCODE -916 if a node is
+    /// malformed.
+    pub fn change_placed_run<K: AsRef<[u8]>>(
+        &self,
+        placed: Placed,
+        keys: &[K],
+        mut change: impl FnMut(usize, &mut [u8]) -> Result<()>,
+    ) -> Result<usize> {
+        let _guard = self.epochs.guard();
+        let Some(first) = keys.first().filter(|_| placed.is_some() && self.epochs.stamp() == placed.stamp) else { return Ok(0) };
+        let mut held = self.lock(PageId(placed.leaf))?;
+        let mut page = self.latched_covering(&mut held, first.as_ref())?;
+        for (n, key) in keys.iter().enumerate() {
+            let found = {
+                let node = Node::parse(&page)?;
+                if node.covers(key.as_ref()) { node.search(key.as_ref())?.ok() } else { None }
+            };
+            let Some(at) = found else { return Ok(n) };
+            change(n, node::value_mut(&mut page, at)?)?;
+        }
+        Ok(keys.len())
+    }
 }

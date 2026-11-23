@@ -181,3 +181,53 @@ fn a_write_shown_its_value_finds_its_entry_gone_or_by_a_descent() {
     assert!(tree.replace_found_with(&fifty, &key(50), |old| Ok((old == [50_u8; 92]).then_some(b"fifty"))).unwrap().is_some());
     assert_eq!(tree.get(&key(50)).unwrap(), Some(b"fifty".to_vec()));
 }
+
+/// Verifies: [DESIGN] RULES.md D924: a run of keys is changed in place
+/// from the leaf their writes left them in, in order, each told its place
+/// in the run; the run ends at the first key the node covering the first
+/// does not hold, here one not in the tree and, once the leaf has split,
+/// one moved to its right, the keys before it changed; with no leaf, or
+/// after a leaf was retired, none is.
+#[test]
+fn a_run_of_keys_is_changed_from_the_leaf_that_holds_them() {
+    let (tree, _scratch) = tree("placed-run");
+    let placed = tree.insert_placed(&key(1), &VALUE).unwrap().unwrap();
+    fill_from(&tree, 2, 20);
+    let mut seen = Vec::new();
+    let mut flip = |n: usize, bytes: &mut [u8]| {
+        bytes[0] = 1;
+        seen.push(n);
+        Ok(())
+    };
+    let run = [key(1), key(2), key(4), key(9_999), key(5)];
+    assert_eq!(tree.change_placed_run(placed, &run, &mut flip).unwrap(), 3, "up to the key not there");
+    assert_eq!(tree.change_placed_run(Placed::default(), &run, &mut flip).unwrap(), 0, "no leaf");
+    let none: [[u8; 8]; 0] = [];
+    assert_eq!(tree.change_placed_run(placed, &none, &mut flip).unwrap(), 0, "no key");
+    assert_eq!(seen, [0, 1, 2]);
+    let flipped = |k: u64| tree.get(&key(k)).unwrap().unwrap()[0] == 1;
+    assert_eq!([1, 2, 3, 4, 5].map(flipped), [true, true, false, true, false]);
+    // The leaf splits many times: a key far to its right is no longer in
+    // the node that covers the first.
+    fill_from(&tree, 21, 3_000);
+    seen.clear();
+    let mut again = |n: usize, bytes: &mut [u8]| {
+        bytes[0] = 2;
+        seen.push(n);
+        Ok(())
+    };
+    let changed = tree.change_placed_run(placed, &[key(3), key(5), key(2_900)], &mut again).unwrap();
+    assert_eq!((changed, seen.as_slice()), (2, &[0, 1][..]), "the key moved right is left to its caller");
+    assert_eq!(tree.get(&key(2_900)).unwrap().unwrap()[0], 7);
+    for n in 1_000..2_000 {
+        tree.delete(&key(n)).unwrap();
+    }
+    assert_eq!(tree.change_placed_run(placed, &[key(3)], |_, _| Ok(())).unwrap(), 0, "a leaf was retired since");
+}
+
+/// Inserts keys `from..=to` in order.
+fn fill_from(tree: &BLinkTree, from: u64, to: u64) {
+    for i in from..=to {
+        assert!(tree.insert(&key(i), &VALUE).unwrap());
+    }
+}

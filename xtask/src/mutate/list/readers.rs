@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 12] = [
+pub const READERS: [Mutation; 14] = [
     Mutation {
         name: "pass-collects-nothing",
         package: Package::Core,
@@ -58,6 +58,26 @@ pub const READERS: [Mutation; 12] = [
         replacement: "            Some(set) => writing.setting(!set),",
         integration: &["escrow::increments_applied_leave_the_rows_entries_and_records_of_the_locked_path"],
         unit: &[],
+    },
+    Mutation {
+        name: "stamp-run-rest-left",
+        package: Package::Core,
+        breaks: "the rows of a run their leaf no longer holds are left unstamped by their commit (RULES.md D924)",
+        file: "src/engine/rows/mvcc/stamps.rs",
+        original: "        for Stamp(id, placed) in run.iter().skip(done) {",
+        replacement: "        for Stamp(id, placed) in run.iter().skip(run.len()) {",
+        integration: &[],
+        unit: &["engine::rows::mvcc::stamps::tests::a_commit_stamps_its_rows_where_their_writes_left_them"],
+    },
+    Mutation {
+        name: "placed-run-claims-all",
+        package: Package::Core,
+        breaks: "a run of keys changed from their leaf counts the keys the leaf does not hold as changed (RULES.md D924)",
+        file: "src/engine/tree/placed.rs",
+        original: "            let Some(at) = found else { return Ok(n) };",
+        replacement: "            let Some(at) = found else { return Ok(keys.len()) };",
+        integration: &[],
+        unit: &["engine::tree::tests::placed::a_run_of_keys_is_changed_from_the_leaf_that_holds_them"],
     },
     Mutation {
         name: "first-kept-by-writer",
